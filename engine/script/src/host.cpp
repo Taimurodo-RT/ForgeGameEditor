@@ -283,6 +283,7 @@ bool ScriptHost::load(std::string_view name, std::string_view source, const Sour
         for (const std::vector<int>& refs : it->second.fn)
             for (int r : refs) lua_unref(L_, r);
         im.profile.erase(m.name); // its nodes may have changed
+        im.forget_profile();
         it->second = std::move(m);
     } else {
         im.modules.emplace(m.name, std::move(m));
@@ -307,7 +308,10 @@ std::vector<NodeTime> ScriptHost::node_profile() const {
     return out;
 }
 
-void ScriptHost::reset_node_profile() { impl_->profile.clear(); }
+void ScriptHost::reset_node_profile() {
+    impl_->profile.clear();
+    impl_->forget_profile();
+}
 
 bool ScriptHost::loaded(std::string_view name) const { return impl_->modules.count(std::string(name)) != 0; }
 

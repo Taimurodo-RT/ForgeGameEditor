@@ -536,7 +536,8 @@ void GraphCompiler::emit_pure(u32 uid, int ind) {
         args = d->graph.empty() ? "" : "self";
         for (const PinDef& p : d->inputs) args += (args.empty() ? "" : ", ") + input_expr(uid, p);
     };
-    if (opt_.profile && !inner_) em_.line(ind, "forge.prof.enter(" + std::to_string(uid) + ")");
+    const bool timed = opt_.profile && !inner_ && d->graph.empty();
+    if (timed) em_.line(ind, "forge.prof.enter(" + std::to_string(uid) + ")");
     if (!d->call.empty()) {
         collect_args();
         em_.line(ind, "local " + names + " = forge." + d->call + "(" + args + ")");
@@ -552,7 +553,7 @@ void GraphCompiler::emit_pure(u32 uid, int ind) {
         std::replace(flat.begin(), flat.end(), '\n', ' ');
         em_.line(ind, "local " + out_var(uid, d->outputs[0].id) + " = " + expand(uid, trim(flat)));
     }
-    if (opt_.profile && !inner_) em_.line(ind, "forge.prof.leave(" + std::to_string(uid) + ")");
+    if (timed) em_.line(ind, "forge.prof.leave(" + std::to_string(uid) + ")");
     em_.node = saved;
 }
 
@@ -561,7 +562,9 @@ void GraphCompiler::emit_node_code(u32 uid, int ind) {
     if (d->kind == NodeKind::Comment) return;
     std::string outs;
     for (const PinDef& p : d->outputs) outs += (outs.empty() ? "" : ", ") + out_var(uid, p.id);
-    const bool timed = opt_.profile && !inner_ && d->kind == NodeKind::Action && !d->latent;
+    // Blocks that may wait (latent ones, graph nodes) are not timed: a wait
+    // would count other scripts' time.
+    const bool timed = opt_.profile && !inner_ && d->kind == NodeKind::Action && !d->latent && d->graph.empty();
     if (timed) em_.line(ind, "forge.prof.enter(" + std::to_string(uid) + ")");
     if (d->id == "std.graph.return") {
         std::string vals;

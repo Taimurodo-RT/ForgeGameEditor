@@ -1,0 +1,29 @@
+{
+  "kind": "script",
+  "name": "door",
+  "variables": [ { "name": "inside", "type": "number", "value": "0", "title": { "ru": "Внутри", "en": "Inside" } } ],
+  "nodes": [
+    { "uid": 1, "def": "std.event.start", "x": 0, "y": 0 },
+    { "uid": 2, "def": "demo.door_column", "x": 220, "y": 0, "values": [ { "pin": "tile", "value": "3" } ] },
+
+    { "uid": 3, "def": "std.event.enter", "x": 0, "y": 160, "comment": "Кто-то подошёл: открыть" },
+    { "uid": 4, "def": "std.var.add", "x": 220, "y": 160, "values": [ { "pin": "name", "value": "inside" }, { "pin": "amount", "value": "1" } ] },
+    { "uid": 5, "def": "demo.door_column", "x": 440, "y": 160, "values": [ { "pin": "tile", "value": "0" } ] },
+
+    { "uid": 6, "def": "std.event.leave", "x": 0, "y": 320, "comment": "Последний ушёл: закрыть" },
+    { "uid": 7, "def": "std.var.add", "x": 220, "y": 320, "values": [ { "pin": "name", "value": "inside" }, { "pin": "amount", "value": "-1" } ] },
+    { "uid": 8, "def": "std.flow.if", "x": 440, "y": 320, "slots": [ { "slot": "then", "nodes": [ 11 ] } ] },
+    { "uid": 9, "def": "std.compare", "x": 260, "y": 440, "values": [ { "pin": "op", "value": "≤" }, { "pin": "b", "value": "0" } ] },
+    { "uid": 10, "def": "std.var.get", "x": 100, "y": 440, "values": [ { "pin": "name", "value": "inside" } ] },
+    { "uid": 11, "def": "demo.door_column", "x": 460, "y": 400, "values": [ { "pin": "tile", "value": "3" } ] }
+  ],
+  "links": [
+    { "from_node": 1, "from_pin": "next", "to_node": 2, "to_pin": "in" },
+    { "from_node": 3, "from_pin": "next", "to_node": 4, "to_pin": "in" },
+    { "from_node": 4, "from_pin": "next", "to_node": 5, "to_pin": "in" },
+    { "from_node": 6, "from_pin": "next", "to_node": 7, "to_pin": "in" },
+    { "from_node": 7, "from_pin": "next", "to_node": 8, "to_pin": "in" },
+    { "from_node": 10, "from_pin": "value", "to_node": 9, "to_pin": "a" },
+    { "from_node": 9, "from_pin": "result", "to_node": 8, "to_pin": "cond" }
+  ]
+}

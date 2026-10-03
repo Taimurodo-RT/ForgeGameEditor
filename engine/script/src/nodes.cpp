@@ -113,6 +113,8 @@ const SlotDef* NodeDef::slot(std::string_view slot_id) const {
 
 NodeLibrary::NodeLibrary() = default;
 NodeLibrary::~NodeLibrary() = default;
+NodeLibrary::NodeLibrary(NodeLibrary&&) noexcept = default;
+NodeLibrary& NodeLibrary::operator=(NodeLibrary&&) noexcept = default;
 
 void NodeLibrary::add(NodeDef def) {
     auto it = index_.find(def.id);

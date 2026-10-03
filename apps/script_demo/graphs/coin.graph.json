@@ -1,0 +1,29 @@
+{
+  "kind": "script",
+  "name": "coin",
+  "nodes": [
+    { "uid": 1, "def": "std.event.start", "x": 0, "y": 0, "comment": "Вылетает из сундука, падает и через 4 секунды исчезает" },
+    { "uid": 2, "def": "api.add", "x": 220, "y": 0, "values": [ { "pin": "component", "value": "Body" } ] },
+    { "uid": 3, "def": "comp.Body.vy.set", "x": 440, "y": 0 },
+    { "uid": 4, "def": "api.random", "x": 260, "y": 120, "values": [ { "pin": "min", "value": "-20" }, { "pin": "max", "value": "-12" } ] },
+    { "uid": 5, "def": "comp.Body.vx.set", "x": 660, "y": 0 },
+    { "uid": 6, "def": "api.random", "x": 480, "y": 120, "values": [ { "pin": "min", "value": "-6" }, { "pin": "max", "value": "6" } ] },
+    { "uid": 7, "def": "api.add", "x": 880, "y": 0, "values": [ { "pin": "component", "value": "DemoLook" } ] },
+    { "uid": 8, "def": "comp.DemoLook.frame.set", "x": 1100, "y": 0, "values": [ { "pin": "value", "value": "19" } ] },
+    { "uid": 11, "def": "comp.DemoLook.b.set", "x": 1100, "y": 120, "comment": "Золотая", "values": [ { "pin": "value", "value": "0.1" } ] },
+    { "uid": 9, "def": "api.wait", "x": 1320, "y": 0, "values": [ { "pin": "seconds", "value": "4" } ] },
+    { "uid": 10, "def": "api.entity.destroy", "x": 1540, "y": 0 }
+  ],
+  "links": [
+    { "from_node": 1, "from_pin": "next", "to_node": 2, "to_pin": "in" },
+    { "from_node": 2, "from_pin": "next", "to_node": 3, "to_pin": "in" },
+    { "from_node": 4, "from_pin": "value", "to_node": 3, "to_pin": "value" },
+    { "from_node": 3, "from_pin": "next", "to_node": 5, "to_pin": "in" },
+    { "from_node": 6, "from_pin": "value", "to_node": 5, "to_pin": "value" },
+    { "from_node": 5, "from_pin": "next", "to_node": 7, "to_pin": "in" },
+    { "from_node": 7, "from_pin": "next", "to_node": 8, "to_pin": "in" },
+    { "from_node": 8, "from_pin": "next", "to_node": 11, "to_pin": "in" },
+    { "from_node": 11, "from_pin": "next", "to_node": 9, "to_pin": "in" },
+    { "from_node": 9, "from_pin": "next", "to_node": 10, "to_pin": "in" }
+  ]
+}

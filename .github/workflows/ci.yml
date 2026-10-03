@@ -52,6 +52,9 @@ jobs:
       - name: Factory benchmark (10 000 always-on production blocks)
         shell: bash
         run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_factory --ticks 300
+      - name: Script benchmark (10 000 scripted objects)
+        shell: bash
+        run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_script --frames 300
       - name: World demo, 600 headless frames
         shell: bash
         run: ./${{ format(matrix.bin, 'apps/world_demo') }}/forge_world_demo --headless 600
@@ -64,6 +67,7 @@ jobs:
           ./build/apps/render_demo/forge_render_demo --sprites 20000 --particles 4000 --zoom 16 --screenshot world-night.png
           ./build/apps/sim_demo/forge_sim_demo --screenshot world-sim.png
           ./build/apps/factory_demo/forge_factory_demo --screenshot world-factory.png
+          ./build/apps/script_demo/forge_script_demo --screenshot world-scripts.png
       - name: Render sprites, particles and light offscreen (software Vulkan, checks it works, not speed)
         if: runner.os == 'Linux'
         run: ./build/apps/render_demo/forge_render_demo --bench 3 --sprites 200000 --particles 200000

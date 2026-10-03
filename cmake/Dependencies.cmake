@@ -104,6 +104,13 @@ FetchContent_Declare(luau
 
 FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross flecs box2d luau)
 
+# Luau also defines its type checker and tools; the engine needs none of them.
+foreach(t Luau.Analysis Luau.Config Luau.EqSat Luau.Require Luau.RequireNavigator Luau.CLI.lib Luau.Bytecode.Analysis)
+  if(TARGET ${t})
+    set_target_properties(${t} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  endif()
+endforeach()
+
 add_library(xxhash_headers INTERFACE)
 target_include_directories(xxhash_headers SYSTEM INTERFACE ${xxhash_SOURCE_DIR})
 add_library(stb_headers INTERFACE)

@@ -50,9 +50,16 @@ struct ScriptHost::Impl {
     struct Timing {
         u64 calls = 0;
         u64 ns = 0;
-        std::vector<u64> started; // nested entries (a node calling into a graph node)
     };
     std::unordered_map<std::string, std::unordered_map<u32, Timing>> profile;
+    // The profiled node running now. Timed nodes never wait, so they never
+    // overlap: one start is enough.
+    Timing* prof_open = nullptr;
+    u64 prof_t0 = 0;
+    // profile[current module], looked up once per module change.
+    const Module* prof_module = nullptr;
+    std::unordered_map<u32, Timing>* prof_nodes = nullptr;
+    void forget_profile() { prof_module = nullptr, prof_nodes = nullptr, prof_open = nullptr; }
     std::unordered_map<std::string, Exposed> exposed;
     std::vector<lua_State*> pool;               // idle threads, reset
     std::unordered_map<lua_State*, int> refs;   // every thread we made -> its registry ref

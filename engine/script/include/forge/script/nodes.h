@@ -134,6 +134,8 @@ class NodeLibrary {
 public:
     NodeLibrary();
     ~NodeLibrary();
+    NodeLibrary(NodeLibrary&&) noexcept;
+    NodeLibrary& operator=(NodeLibrary&&) noexcept;
 
     // The built-in standard library (events, flow, logic, math, variables…).
     bool add_standard(std::vector<std::string>* errors = nullptr);

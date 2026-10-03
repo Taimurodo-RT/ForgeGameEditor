@@ -23,7 +23,7 @@ class EmptyGenerator final : public Generator {
 public:
     void generate(ChunkCoord, const ChunkTiles& out) const override {
         for (u32 l = 0; l < out.layer_count; ++l)
-            for (i32 i = 0; i < kChunkTiles; ++i) out.layer(l)[i] = 0;
+            for (u32 i = 0; i < kChunkTiles; ++i) out.layer(l)[i] = 0;
     }
 };
 

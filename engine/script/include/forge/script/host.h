@@ -103,7 +103,7 @@ struct NodeTime {
     std::string script;
     u32 node = 0;
     u64 calls = 0;
-    f64 ms = 0; // total, including the nodes in its slots
+    f64 ms = 0; // total; blocks that may wait (flow, latent, graph nodes) are not timed
 };
 
 struct ScriptStats {

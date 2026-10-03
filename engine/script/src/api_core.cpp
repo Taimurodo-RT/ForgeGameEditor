@@ -574,19 +574,21 @@ int api_set_time_scale(lua_State* L) {
 int api_prof_enter(lua_State* L) {
     Impl& im = *impl_of(L);
     if (!im.current_module) return 0;
-    Impl::Timing& t = im.profile[im.current_module->name][static_cast<u32>(luaL_checkinteger(L, 1))];
-    t.started.push_back(time_now_ns());
+    if (im.prof_module != im.current_module) {
+        im.prof_nodes = &im.profile[im.current_module->name];
+        im.prof_module = im.current_module;
+    }
+    im.prof_open = &(*im.prof_nodes)[static_cast<u32>(lua_tointeger(L, 1))];
+    im.prof_t0 = time_now_ns();
     return 0;
 }
 
 int api_prof_leave(lua_State* L) {
     Impl& im = *impl_of(L);
-    if (!im.current_module) return 0;
-    Impl::Timing& t = im.profile[im.current_module->name][static_cast<u32>(luaL_checkinteger(L, 1))];
-    if (t.started.empty()) return 0;
-    t.ns += time_now_ns() - t.started.back();
-    t.started.pop_back();
-    ++t.calls;
+    if (!im.prof_open) return 0;
+    im.prof_open->ns += time_now_ns() - im.prof_t0;
+    ++im.prof_open->calls;
+    im.prof_open = nullptr;
     return 0;
 }
 

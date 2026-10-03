@@ -1,4 +1,6 @@
+#include "forge/core/file.h"
 #include "forge/core/jobs.h"
+#include "forge/core/path.h"
 #include "forge/script/compiler.h"
 #include "forge/script/graph.h"
 #include "forge/script/host.h"
@@ -8,6 +10,19 @@
 
 #include <algorithm>
 #include <memory>
+
+// The demo's look component, the same fields under the same name.
+struct DemoLook {
+    forge::u32 frame = 0;
+    forge::f32 r = 1, g = 1, b = 1;
+};
+FORGE_REFLECT_DECLARE(DemoLook)
+FORGE_REFLECT(DemoLook, 1) {
+    t.field("frame", &DemoLook::frame);
+    t.field("r", &DemoLook::r);
+    t.field("g", &DemoLook::g);
+    t.field("b", &DemoLook::b);
+}
 
 using namespace forge;
 using namespace forge::world;
@@ -26,7 +41,7 @@ class FlatGenerator final : public Generator {
 public:
     void generate(ChunkCoord, const ChunkTiles& out) const override {
         for (u32 l = 0; l < out.layer_count; ++l)
-            for (i32 i = 0; i < kChunkTiles; ++i) out.layer(l)[i] = 0;
+            for (u32 i = 0; i < kChunkTiles; ++i) out.layer(l)[i] = 0;
     }
 };
 
@@ -542,4 +557,70 @@ TEST_CASE("profiled graphs report time per node and runtime errors point at node
     REQUIRE(s.scripts.errors().size() == 1);
     CHECK(s.scripts.errors()[0].node == compare);
     CHECK(s.scripts.errors()[0].message.find("<=>") != std::string::npos);
+}
+
+TEST_CASE("the demo's graphs compile and work") {
+    GraphPool pool;
+    Stage s;
+    s.scene.register_component<DemoLook>();
+    s.scripts.expose<DemoLook>();
+    s.lib.add_components(s.scripts.exposed_types());
+    std::vector<Graph> graphs;
+    for (const char* name : {"door_column", "door", "chest", "coin", "critter"}) {
+        CAPTURE(name);
+        std::vector<u8> bytes;
+        REQUIRE(read_file(utf8_path(std::string(FORGE_SOURCE_DIR "/apps/script_demo/graphs/") + name + ".graph.json"), bytes));
+        Graph g;
+        std::string err;
+        REQUIRE_MESSAGE(g.from_json(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &err), err);
+        CHECK(g.name == name);
+        if (g.as_node.enabled) REQUIRE(s.lib.add_graph_node(g));
+        else graphs.push_back(std::move(g));
+    }
+    for (const Graph& g : graphs) {
+        CAPTURE(g.name);
+        CHECK(s.load(g).diagnostics.empty());
+    }
+
+    // A floor at y = 10; the door's column is the three tiles above it.
+    for (i32 x = 0; x < 40; ++x) s.world.set_tile(1, x, 10, 3);
+    s.sim.collision().set(3, TileShape::Solid);
+    flecs::entity door = s.thing("door", 5.5, 8.5);
+    door.set<Trigger>({2.5f});
+    flecs::entity chest = s.thing("chest", 30.5, 9.5);
+    chest.set<Trigger>({1.5f});
+    chest.set<DemoLook>({29, 1, 1, 1});
+    s.run(2);
+    for (i32 y = 7; y <= 9; ++y) CHECK(s.world.tile(1, 5, y) == 3);
+
+    // Someone comes near: the door opens, then closes behind them.
+    flecs::entity walker = s.scene.spawn(Position::at_tile(1.5, 9.5));
+    walker.set<Body>({});
+    for (u32 i = 0; i < 20; ++i) {
+        walker.get_mut<Position>() = Position::at_tile(1.5 + i * 0.5, 9.5);
+        s.run(1);
+        if (i == 6) CHECK(s.world.tile(1, 5, 8) == 0);
+    }
+    CHECK(s.world.tile(1, 5, 8) == 3);
+
+    // At the chest coins fly out, once, then disappear.
+    walker.get_mut<Position>() = Position::at_tile(30.5, 9.5);
+    s.run(10);
+    CHECK(chest.try_get<DemoLook>()->b == doctest::Approx(0.3));
+    u32 coins = 0;
+    s.scene.ecs().each([&](const Body& b, const DemoLook& look) {
+        if (look.frame == 19) {
+            ++coins;
+            CHECK(b.gravity == 1);
+        }
+    });
+    CHECK(coins == 8);
+    walker.get_mut<Position>() = Position::at_tile(20.5, 9.5);
+    s.run(10);
+    walker.get_mut<Position>() = Position::at_tile(30.5, 9.5);
+    s.run(300);
+    coins = 0;
+    s.scene.ecs().each([&](const DemoLook& look) { coins += look.frame == 19; });
+    CHECK(coins == 0);
+    CHECK(s.scripts.errors().empty());
 }

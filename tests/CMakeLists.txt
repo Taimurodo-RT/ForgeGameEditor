@@ -18,4 +18,5 @@ add_executable(forge_tests
   test_script.cpp
   test_graph.cpp)
 target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render doctest::doctest)
+target_compile_definitions(forge_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME forge_tests COMMAND forge_tests)
