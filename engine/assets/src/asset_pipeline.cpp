@@ -1,5 +1,6 @@
 #include "forge/assets/asset_pipeline.h"
 
+#include "forge/core/file.h"
 #include "forge/core/jobs.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
@@ -22,36 +23,6 @@ namespace forge::assets {
 namespace {
 
 constexpr const char* kMetaExtension = ".meta";
-
-bool read_file(const fs::path& path, std::vector<u8>& out) {
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in) return false;
-    const std::streamoff size = in.tellg();
-    if (size < 0) return false;
-    out.resize(static_cast<usize>(size));
-    in.seekg(0);
-    return size == 0 || static_cast<bool>(in.read(reinterpret_cast<char*>(out.data()), size));
-}
-
-// Write to a temporary file, then rename: a crash or a reader never sees half a file.
-bool write_file_atomic(const fs::path& path, std::span<const u8> bytes) {
-    std::error_code ec;
-    fs::create_directories(path.parent_path(), ec);
-    fs::path tmp = path;
-    tmp += ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return false;
-        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        if (!out) return false;
-    }
-    fs::rename(tmp, path, ec);
-    if (ec) {
-        fs::remove(tmp, ec);
-        return false;
-    }
-    return true;
-}
 
 std::string lower_extension(const fs::path& p) {
     std::string ext = path_to_utf8(p.extension());

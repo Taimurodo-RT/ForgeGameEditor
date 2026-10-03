@@ -5,6 +5,8 @@
 //   holes: visible chunks not ready yet when the frame is drawn
 //   chunks generated per second and memory in use
 //
+//   then: every chunk the camera passed was changed; how long saving them all takes
+//
 //   forge_bench_world [--topdown] [--speed tiles_per_second] [--zoom px_per_tile] [--frames N]
 
 #include "forge/core/jobs.h"
@@ -19,6 +21,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -47,6 +50,9 @@ int main(int argc, char** argv) {
     else gen = std::make_shared<SideViewGenerator>(2026, 2000); // surface 2000 tiles below the top
     {
         World w(desc, gen);
+        const std::filesystem::path save_dir =
+            std::filesystem::temp_directory_path() / ("forge_bench_world_" + std::to_string(time_now_ns()));
+        w.open_save(save_dir);
 
         const f64 view_w = 1600.0 / zoom, view_h = 900.0 / zoom;
         // Diagonal flight from near the top-left corner, through the surface
@@ -89,6 +95,13 @@ int main(int argc, char** argv) {
             w.update(view);
             update_ms.push_back(ns_to_ms(time_now_ns() - t0));
 
+            // The world is being changed everywhere the camera goes: one tile
+            // in every visible chunk, so they all have to be saved.
+            const Rect seen = chunks_of(view).clipped(desc.bounds);
+            for (i32 y = seen.y0; y < seen.y1; ++y)
+                for (i32 x = seen.x0; x < seen.x1; ++x)
+                    w.set_tile(1, x * kChunkSize + static_cast<i32>(f % kChunkSize), y * kChunkSize + 7, TileGold);
+
             // What the renderer would see this frame.
             const Rect vis = chunks_of(view).clipped(desc.bounds);
             u32 holes = 0;
@@ -125,6 +138,16 @@ int main(int argc, char** argv) {
         FORGE_INFO("generated %llu chunks (%.0f per second), peak resident %u chunks = %.1f MiB",
                    static_cast<unsigned long long>(generated), static_cast<f64>(generated) / seconds, peak_resident,
                    static_cast<f64>(peak_resident) * static_cast<f64>(chunk_bytes) / static_cast<f64>(MiB));
+
+        const WorldStats before_save = w.stats();
+        const SaveReport save = w.save();
+        FORGE_INFO("save: %u changed chunks (%u kept in memory after unloading) into %u region files, %.1f MiB, %.1f ms",
+                   save.chunks, before_save.stored_edits, save.regions, static_cast<f64>(save.bytes) / static_cast<f64>(MiB),
+                   save.ms);
+        const SaveReport again = w.save();
+        FORGE_INFO("save again with nothing changed: %u chunks, %.2f ms", again.chunks, again.ms);
+        std::error_code ec;
+        std::filesystem::remove_all(save_dir, ec);
 
         // Raw generation speed: all threads, no pacing.
         const u32 n = 4096;

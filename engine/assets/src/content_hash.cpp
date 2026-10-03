@@ -33,13 +33,13 @@ ContentHash hash_combine(ContentHash a, std::span<const u8> more) {
 }
 
 std::optional<ContentHash> hash_file(const std::filesystem::path& path) {
-    std::unique_ptr<std::FILE, int (*)(std::FILE*)> file(
 #if defined(_WIN32)
-        _wfopen(path.c_str(), L"rb"),
+    std::FILE* raw = nullptr;
+    if (_wfopen_s(&raw, path.c_str(), L"rb") != 0) raw = nullptr;
 #else
-        std::fopen(path.c_str(), "rb"),
+    std::FILE* raw = std::fopen(path.c_str(), "rb");
 #endif
-        &std::fclose);
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> file(raw, &std::fclose);
     if (!file) return std::nullopt;
 
     XXH3_state_t* state = XXH3_createState();

@@ -5,6 +5,9 @@
 //   left mouse      dig        right mouse   build
 //   F               automatic flight across the world
 //   1 / 2           side view (like Terraria) / top down (like Factorio)
+//   F5              save (also saved on exit and when switching view)
+//
+// Changes are kept in saves/side and saves/top next to where the demo runs.
 //
 //   forge_world_demo [--topdown] [--fly] [--no-vsync]
 //   forge_world_demo --headless 600     no window: streaming only, prints a summary
@@ -32,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -147,6 +151,7 @@ public:
             zoom_toward(camera_.zoom * factor, mouse_x_, mouse_y_);
         } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
             if (e.key.key == SDLK_F) auto_fly = !auto_fly;
+            if (e.key.key == SDLK_F5) save_world();
             if (e.key.key == SDLK_1 && top_down) switch_genre(false);
             if (e.key.key == SDLK_2 && !top_down) switch_genre(true);
         }
@@ -183,9 +188,9 @@ public:
             const WorldStats ws = world_->stats();
             const render::TilemapStats& rs = renderer_.stats();
             char text[256];
-            std::snprintf(text, sizeof(text), "%s  zoom %.2g  chunks %u/%u on screen, %u in memory  %s",
+            std::snprintf(text, sizeof(text), "%s  zoom %.2g  chunks %u/%u on screen, %u in memory  %s%s",
                           top_down ? "top down" : "side view", static_cast<f64>(camera_.zoom), rs.drawn_chunks,
-                          expected_visible(), ws.resident, auto_fly ? "[auto flight]" : "");
+                          expected_visible(), ws.resident, auto_fly ? "[auto flight] " : "", save_note_);
             set_status(text);
         }
     }
@@ -215,6 +220,7 @@ public:
     }
 
     void on_shutdown() override {
+        if (!headless) save_world();
         const WorldStats ws = world_->stats();
         FORGE_INFO("frames %llu: World::update avg %.3f ms, worst %.3f ms", static_cast<unsigned long long>(frames_),
                    frames_ ? update_ms_sum_ / static_cast<f64>(frames_) : 0.0, update_ms_worst_);
@@ -231,12 +237,30 @@ private:
         WorldDesc desc;
         desc.bounds = {0, 0, kWorldChunks, kWorldChunks};
         world_ = std::make_unique<World>(desc, make_generator(top_down));
+        if (!headless) {
+            std::string error;
+            if (!world_->open_save(top_down ? "saves/top" : "saves/side", &error))
+                FORGE_WARN("changes will not be saved: %s", error.c_str());
+        }
         camera_.x = kWorldTiles / 2;
         camera_.y = top_down ? kWorldTiles / 2 : kSurfaceY;
         camera_.zoom = 8.0f;
     }
 
+    void save_world() {
+        if (!world_ || !world_->has_save()) return;
+        const SaveReport r = world_->save();
+        if (r.ok) {
+            FORGE_INFO("saved %u chunks into %u region files (%.1f KiB) in %.1f ms", r.chunks, r.regions,
+                       static_cast<f64>(r.bytes) / 1024.0, r.ms);
+            std::snprintf(save_note_, sizeof(save_note_), "saved %u chunks in %.1f ms", r.chunks, r.ms);
+        } else {
+            std::snprintf(save_note_, sizeof(save_note_), "SAVE FAILED");
+        }
+    }
+
     void switch_genre(bool to_top_down) {
+        save_world();
         renderer_.shutdown();
         renderer_ready_ = false;
         world_.reset();
@@ -299,6 +323,7 @@ private:
     f64 fly_dx_ = 0.8, fly_dy_ = 0.6;
     u64 frames_ = 0;
     u64 next_tick_ns_ = 0;
+    char save_note_[96] = "";
     f64 update_ms_sum_ = 0, update_ms_worst_ = 0;
 };
 

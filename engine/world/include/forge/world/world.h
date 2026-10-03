@@ -17,9 +17,12 @@
 #include "forge/core/memory.h"
 #include "forge/core/types.h"
 #include "forge/world/coords.h"
+#include "forge/world/region_store.h"
 
 #include <atomic>
+#include <filesystem>
 #include <memory>
+#include <string>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -55,6 +58,8 @@ struct Chunk {
     u32 revision = 0;
     // Differs from what the generator makes, so it must be kept on unload.
     bool edited = false;
+    // revision when the chunk last matched the save on disk (~0u: never saved).
+    u32 saved_revision = ~0u;
     TileId* tiles = nullptr;
 
     TileId* layer(u32 index) const { return tiles + static_cast<usize>(index) * kChunkTiles; }
@@ -84,11 +89,19 @@ struct WorldDesc {
 struct WorldStats {
     u32 resident = 0;      // chunks in memory (ready or loading)
     u32 loading = 0;       // being generated or restored right now
-    u32 stored_edits = 0;  // unloaded chunks kept compressed because they were changed
+    u32 stored_edits = 0;  // unloaded changed chunks not saved yet, kept compressed in memory
     usize stored_bytes = 0;
     u64 generated = 0;     // totals since creation
     u64 restored = 0;
     u64 unloaded = 0;
+};
+
+struct SaveReport {
+    bool ok = false;
+    u32 chunks = 0;  // chunks written
+    u32 regions = 0; // region files written
+    usize bytes = 0;
+    f64 ms = 0;
 };
 
 class World {
@@ -108,6 +121,15 @@ public:
     // Blocks until every chunk wanted by the last update() is ready (loading
     // screens, tests, teleports).
     void finish_loading();
+
+    // Keeps this world's changes in a folder of region files: chunks saved
+    // there come back from disk instead of the generator. Call before the
+    // first update().
+    bool open_save(const std::filesystem::path& folder, std::string* error = nullptr);
+    // Writes every chunk changed since the last save (in memory or unloaded)
+    // to the save folder. Only the regions holding them are rewritten.
+    SaveReport save();
+    bool has_save() const { return store_ != nullptr; }
 
     // nullptr when the chunk is not in memory or not ready yet.
     Chunk* find_chunk(ChunkCoord coord);
@@ -154,7 +176,9 @@ private:
     JobCounter loads_;
     std::vector<WorldListener*> listeners_;
 
-    // Changed chunks that were unloaded: compressed tiles, by coordinate.
+    std::unique_ptr<RegionStore> store_;
+
+    // Changed chunks that were unloaded before being saved: compressed tiles.
     std::unordered_map<ChunkCoord, std::vector<u8>, ChunkCoordHash> stored_edits_;
     usize stored_bytes_ = 0;
 
