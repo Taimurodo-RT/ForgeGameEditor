@@ -150,14 +150,28 @@ void World::update(std::span<const Rect> focus_tiles) {
         keep.push_back(chunks.expanded(desc_.load_margin + desc_.keep_extra));
     }
 
-    // Drop chunks far from every focus.
+    // Drop chunks far from every focus, a few per update: after a big jump
+    // (a teleport, a smaller view) thousands may go, and listeners pack the
+    // objects of each one, so doing them all at once would stall a frame.
     if (keep != last_keep_) {
-        FORGE_ZONE_N("Unload far chunks");
         last_keep_ = keep;
+        unload_pending_ = true;
+    }
+    if (unload_pending_) {
+        FORGE_ZONE_N("Unload far chunks");
+        const u32 budget = desc_.max_unloads_per_update == 0 ? ~0u : desc_.max_unloads_per_update;
+        u32 done = 0;
+        unload_pending_ = false;
         for (Chunk* c : resident_list_) {
             if (c->tiles == nullptr) continue;
             if (c->state.load(std::memory_order_acquire) != ChunkState::Ready) continue; // still loading
-            if (!inside_any(keep, c->coord)) unload(c);
+            if (inside_any(keep, c->coord)) continue;
+            if (done == budget) {
+                unload_pending_ = true;
+                break;
+            }
+            unload(c);
+            ++done;
         }
     }
     release_unloaded();

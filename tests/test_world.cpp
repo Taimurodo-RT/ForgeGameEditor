@@ -152,6 +152,37 @@ TEST_CASE("edits survive unloading") {
     CHECK(w.stats().stored_edits == 0);
 }
 
+TEST_CASE("far chunks are dropped a few per update") {
+    PoolScope pool;
+    WorldDesc desc;
+    desc.load_margin = 0;
+    desc.keep_extra = 0;
+    desc.max_unloads_per_update = 5;
+    World w(desc, std::make_shared<SideViewGenerator>(1, 0));
+
+    const Rect wide = view_at(0, 0, 64 * 8, 64 * 4);
+    for (u32 last = ~0u; w.stats().resident != last;) {
+        last = w.stats().resident;
+        w.update(wide);
+        w.finish_loading();
+    }
+    const u32 before = w.stats().resident;
+    REQUIRE(before > 12);
+
+    const Rect small = view_at(0, 0, 64, 64);
+    w.update(small);
+    CHECK(w.stats().unloaded == 5);
+    u32 updates = 1;
+    for (u64 last = 0; w.stats().unloaded != last; ++updates) {
+        last = w.stats().unloaded;
+        w.update(small);
+    }
+    w.finish_loading();
+    CHECK(w.stats().resident < before);
+    CHECK(updates > 2);
+    CHECK(w.find_chunk(chunk_of(64 * 7, 0)) == nullptr);
+}
+
 TEST_CASE("bounded worlds stop at their edges") {
     PoolScope pool;
     WorldDesc desc;

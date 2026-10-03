@@ -942,7 +942,7 @@ struct Factory::Impl {
                 if (m.s.in[slot] < p.count) return false;
             }
         if (r.fluid_in != 0 && m.s.fluid_in < r.fluid_in_amount) return false;
-        if (r.out.count != 0 && m.s.out + r.out.count > std::max<u32>(r.out.count * 2u, 4u)) return false;
+        if (r.out.count != 0 && u32(m.s.out) + r.out.count > std::max<u32>(r.out.count * 2u, 4u)) return false;
         if (r.fluid_out != 0 && m.s.fluid_out + r.fluid_out_amount > m.fluid_out_cap) return false;
         return true;
     }
