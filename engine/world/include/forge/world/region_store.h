@@ -6,8 +6,9 @@
 // player comes back. Untouched chunks are never written; the generator makes
 // them again.
 //
-// Region file "r.<x>.<y>.fwr", little endian:
-//   header   "FWR1", u32 version, i32 region x, i32 region y, u32 layers, u32 count
+// Region file "<prefix>.<x>.<y>.fwr" (prefix "r" for tiles, "e" for
+// entities), little endian:
+//   header   "FWR1", u32 version, i32 region x, i32 region y, u32 tag, u32 count
 //   entries  count × { u32 chunk index in region (y * 32 + x), u32 offset, u32 size }
 //   data     encoded chunks (see encode_chunk)
 
@@ -17,6 +18,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace forge::world {
@@ -37,9 +39,14 @@ bool read_chunk_bytes(const ChunkLocation& location, std::vector<u8>& out);
 
 class RegionStore {
 public:
+    // Region files are named "<prefix>.<x>.<y>.fwr", so several stores can
+    // share one save folder.
+    explicit RegionStore(std::string prefix = "r") : prefix_(std::move(prefix)) {}
+
     // Reads the headers of every region in the folder (creating the folder if
-    // needed). Damaged region files are skipped with a warning.
-    bool open(const std::filesystem::path& folder, u32 layer_count, std::string* error = nullptr);
+    // needed). tag guards against reading data of another layout (tiles: the
+    // layer count). Damaged region files are skipped with a warning.
+    bool open(const std::filesystem::path& folder, u32 tag, std::string* error = nullptr);
 
     bool locate(ChunkCoord chunk, ChunkLocation& out) const;
     usize chunk_count() const;
@@ -67,8 +74,9 @@ private:
     bool load_header(const std::filesystem::path& file);
     std::filesystem::path region_path(ChunkCoord region) const;
 
+    std::string prefix_;
     std::filesystem::path folder_;
-    u32 layer_count_ = 0;
+    u32 tag_ = 0;
     std::unordered_map<ChunkCoord, Region, ChunkCoordHash> regions_;
 };
 

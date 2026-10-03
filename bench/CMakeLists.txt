@@ -13,3 +13,7 @@ forge_target_defaults(forge_bench_assets)
 add_executable(forge_bench_world bench_world.cpp)
 target_link_libraries(forge_bench_world PRIVATE forge::world)
 forge_target_defaults(forge_bench_world)
+
+add_executable(forge_bench_scene bench_scene.cpp)
+target_link_libraries(forge_bench_scene PRIVATE forge::scene)
+forge_target_defaults(forge_bench_scene)

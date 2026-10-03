@@ -72,7 +72,16 @@ FetchContent_Declare(spirv_cross
   GIT_TAG vulkan-sdk-1.4.363.0
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross)
+# flecs: entity component system for everything that moves and acts.
+set(FLECS_STATIC ON CACHE BOOL "" FORCE)
+set(FLECS_SHARED OFF CACHE BOOL "" FORCE)
+set(FLECS_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(flecs
+  GIT_REPOSITORY https://github.com/SanderMertens/flecs.git
+  GIT_TAG v4.1.6
+  GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross flecs)
 
 add_library(xxhash_headers INTERFACE)
 target_include_directories(xxhash_headers SYSTEM INTERFACE ${xxhash_SOURCE_DIR})

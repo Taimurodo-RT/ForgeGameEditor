@@ -39,11 +39,14 @@ u32 index_in_region(ChunkCoord c) {
     return static_cast<u32>((c.y & (kRegionSize - 1)) * kRegionSize + (c.x & (kRegionSize - 1)));
 }
 
-bool parse_region_name(const std::string& name, ChunkCoord& out) {
+bool parse_region_name(const std::string& name, const std::string& prefix, ChunkCoord& out) {
+    // "<prefix>.<x>.<y>.fwr"
+    if (name.size() <= prefix.size() + 1 || name.compare(0, prefix.size(), prefix) != 0 || name[prefix.size()] != '.')
+        return false;
     int x = 0, y = 0;
     char tail[8] = {};
-    // "r.<x>.<y>.fwr"
-    if (std::sscanf(name.c_str(), "r.%d.%d.%4s", &x, &y, tail) != 3 || std::strcmp(tail, "fwr") != 0) return false;
+    if (std::sscanf(name.c_str() + prefix.size() + 1, "%d.%d.%4s", &x, &y, tail) != 3 || std::strcmp(tail, "fwr") != 0)
+        return false;
     out = {x, y};
     return true;
 }
@@ -60,14 +63,14 @@ bool read_chunk_bytes(const ChunkLocation& location, std::vector<u8>& out) {
 
 fs::path RegionStore::region_path(ChunkCoord r) const {
     char name[48];
-    std::snprintf(name, sizeof(name), "r.%d.%d.fwr", r.x, r.y);
-    return folder_ / name;
+    std::snprintf(name, sizeof(name), ".%d.%d.fwr", r.x, r.y);
+    return folder_ / (prefix_ + name);
 }
 
-bool RegionStore::open(const fs::path& folder, u32 layer_count, std::string* error) {
+bool RegionStore::open(const fs::path& folder, u32 tag, std::string* error) {
     FORGE_ZONE();
     folder_ = folder;
-    layer_count_ = layer_count;
+    tag_ = tag;
     regions_.clear();
     std::error_code ec;
     fs::create_directories(folder_, ec);
@@ -79,7 +82,7 @@ bool RegionStore::open(const fs::path& folder, u32 layer_count, std::string* err
         if (ec) break;
         if (!it->is_regular_file()) continue;
         ChunkCoord region;
-        if (!parse_region_name(path_to_utf8(it->path().filename()), region)) continue;
+        if (!parse_region_name(path_to_utf8(it->path().filename()), prefix_, region)) continue;
         if (!load_header(it->path())) FORGE_WARN("world save: skipping damaged region %s", path_to_utf8(it->path()).c_str());
     }
     return true;
@@ -95,7 +98,7 @@ bool RegionStore::load_header(const fs::path& file) {
     if (!in.read(reinterpret_cast<char*>(header), kHeaderBytes)) return false;
     if (std::memcmp(header, kMagic, 4) != 0 || get<u32>(header + 4) != kVersion) return false;
     const ChunkCoord region{get<i32>(header + 8), get<i32>(header + 12)};
-    if (get<u32>(header + 16) != layer_count_) return false;
+    if (get<u32>(header + 16) != tag_) return false;
     const u32 count = get<u32>(header + 20);
     if (count > static_cast<u32>(kRegionSize * kRegionSize)) return false;
     std::vector<u8> table(count * kEntryBytes);
@@ -169,7 +172,7 @@ bool RegionStore::write(const std::vector<Write>& chunks, u32* regions_written, 
         put<u32>(out, kVersion);
         put<i32>(out, region_coord.x);
         put<i32>(out, region_coord.y);
-        put<u32>(out, layer_count_);
+        put<u32>(out, tag_);
         put<u32>(out, static_cast<u32>(items.size()));
         Region r;
         r.file = region_path(region_coord);
