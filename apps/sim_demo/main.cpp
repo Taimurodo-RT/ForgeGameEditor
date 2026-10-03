@@ -5,11 +5,14 @@
 // meets lava it turns to stone.
 //
 //   WASD / arrows   move the camera (Shift: faster)    mouse wheel   zoom
-//   1 2 3 4 5       left mouse pours water / lava / sand, places a gravity
-//                   well (click one again to remove it), or drops crates
-//                   and balls (rigid bodies: they tumble, stack and float)
+//   1 2 3 4 5 6     left mouse pours water / lava / sand, places a gravity
+//                   well (click one again to remove it), drops crates and
+//                   balls (rigid bodies: they tumble, stack and float), or
+//                   places a time bubble (time inside nearly stops)
 //   right mouse     dig
 //   G               turn the world's gravity by 90°    Space   pause
+//   T               world time: normal, slow, stopped, fast
+//   R (hold)        rewind time (the last 10 seconds)
 //
 // Creatures far from the camera are simulated less often, then not at all,
 // then packed away with their chunk; they are back when the camera returns.
@@ -67,6 +70,7 @@ namespace {
 constexpr i32 kHomeWidth = 2048; // tiles along which the creatures start
 constexpr f32 kGravity = 40;
 constexpr f32 kWellRadius = 9;
+constexpr f32 kBubbleRadius = 7;
 
 u32 hash32(u32 a, u32 b) {
     u32 h = a * 374761393u + b * 668265263u;
@@ -85,6 +89,7 @@ public:
         SimDesc sd;
         sd.gravity_y = kGravity;
         sd.liquid_layer = 2;
+        sd.rewind.record = true;
         sim_ = std::make_unique<Simulation>(*world_, *scene_, sd);
         for (TileId t : {TileGrass, TileDirt, TileStone, TileSand, TileCopper, TileIron, TileGold})
             sim_->collision().set(t, TileShape::Solid);
@@ -191,6 +196,35 @@ public:
         w.set<Trigger>({kWellRadius});
         w.set<KeepAwake>({kWellRadius});
     }
+
+    void toggle_bubble(f64 x, f64 y) {
+        scene_->ecs().each([&](flecs::entity e, const Position& p, const TimeBubble&) {
+            if (std::hypot(p.tile_x() - x, p.tile_y() - y) < 2.0) remove_ = e;
+        });
+        if (remove_.is_valid()) {
+            remove_.destruct();
+            remove_ = flecs::entity();
+            return;
+        }
+        flecs::entity b = scene_->spawn(Position::at_tile(x, y));
+        if (b.is_valid()) b.set<TimeBubble>({kBubbleRadius, 0.1f, false});
+    }
+
+    // World time: normal, slow, stopped, fast.
+    void cycle_speed() {
+        speed_turn_ = (speed_turn_ + 1) % 4;
+        const f32 speeds[4] = {1.0f, 0.25f, 0.0f, 2.0f};
+        sim_->set_time_scale(speeds[speed_turn_]);
+    }
+    const char* speed_name() const {
+        const char* names[4] = {"normal", "slow", "stopped", "fast"};
+        return names[speed_turn_];
+    }
+    void rewind(bool on) {
+        if (on) sim_->rewind().start(2);
+        else sim_->rewind().stop();
+    }
+    bool rewinding() const { return sim_->rewind().playing(); }
 
     // Tool 0 water, 1 lava, 2 sand: a 3 × 3 splash at a point.
     void pour(u32 tool, f64 x, f64 y) {
@@ -301,6 +335,16 @@ public:
             s.order = 0;
             batch_.push(s);
         });
+        ecs.each([&](const Position& p, const TimeBubble& b) {
+            Sprite s;
+            s.x = static_cast<f32>(p.tile_x() - camera.x);
+            s.y = static_cast<f32>(p.tile_y() - camera.y);
+            s.w = s.h = b.radius * 2.0f;
+            s.frame = demo::kFrameGlow;
+            s.color = render::pack_color(90, 230, 255, 110);
+            s.order = 0;
+            batch_.push(s);
+        });
     }
 
     void render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) {
@@ -334,8 +378,8 @@ public:
 
     const SimStats& stats() const { return sim_->stats(); }
     const char* tool_name(u32 tool) const {
-        const char* names[5] = {"water", "lava", "sand", "gravity well", "crates"};
-        return names[tool < 5 ? tool : 0];
+        const char* names[6] = {"water", "lava", "sand", "gravity well", "crates", "time bubble"};
+        return names[tool < 6 ? tool : 0];
     }
     u32 alive() const { return scene_->stats().entities; }
 
@@ -357,6 +401,7 @@ private:
     std::vector<std::pair<f64, f64>> wells_;
     u32 capacity_ = 0;
     u32 gravity_turn_ = 0;
+    u32 speed_turn_ = 0;
     u8 water_ = 0, lava_ = 0;
     u32 drops_ = 0;
 };
@@ -380,9 +425,10 @@ public:
             const SimStats& s = demo_.stats();
             char text[256];
             std::snprintf(text, sizeof(text),
-                          "tool: %s  creatures %u  rigid %u  chunks active %u near %u asleep %u  liquid chunks %u  sim %.2f ms  gravity %s%s",
+                          "tool: %s  creatures %u  rigid %u  chunks active %u near %u asleep %u  liquid chunks %u  sim %.2f ms  gravity %s  time %s%s%s",
                           demo_.tool_name(tool_), demo_.alive(), s.rigid.live, s.zones.active, s.zones.near, s.zones.asleep,
-                          s.cells.active_chunks, demo_.sim_ms, demo_.gravity_name(), paused_ ? "  [paused]" : "");
+                          s.cells.active_chunks, demo_.sim_ms, demo_.gravity_name(), demo_.speed_name(),
+                          demo_.rewinding() ? "  [rewinding]" : "", paused_ ? "  [paused]" : "");
             set_status(text);
         }
     }
@@ -419,13 +465,17 @@ public:
             f64 tx, ty;
             mouse_tile(e.button.x, e.button.y, tx, ty);
             if (tool_ == 3) demo_.toggle_well(tx, ty);
-            else demo_.drop_crate(tx, ty);
+            else if (tool_ == 4) demo_.drop_crate(tx, ty);
+            else demo_.toggle_bubble(tx, ty);
         }
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
             if (e.key.key == SDLK_SPACE) paused_ = !paused_;
             if (e.key.key == SDLK_G && ready_) demo_.turn_gravity();
-            if (e.key.key >= SDLK_1 && e.key.key <= SDLK_5) tool_ = static_cast<u32>(e.key.key - SDLK_1);
+            if (e.key.key == SDLK_T && ready_) demo_.cycle_speed();
+            if (e.key.key == SDLK_R && ready_) demo_.rewind(true);
+            if (e.key.key >= SDLK_1 && e.key.key <= SDLK_6) tool_ = static_cast<u32>(e.key.key - SDLK_1);
         }
+        if (e.type == SDL_EVENT_KEY_UP && e.key.key == SDLK_R && ready_) demo_.rewind(false);
     }
 
     void on_shutdown() override {
@@ -466,6 +516,7 @@ int run_screenshot(u32 creatures, const char* path) {
             const f64 cx = demo.camera.x, cy = demo.camera.y;
             demo.toggle_well(cx + 4, cy - 6);
             demo.toggle_well(cx + 22, cy - 1);
+            demo.toggle_bubble(cx + 36, cy - 4);
             for (u32 f = 0; f < 360; ++f) {
                 if (f < 40) demo.pour(0, cx - 30 + (f % 9) * 2, cy - 8);
                 if (f >= 40 && f < 60) demo.pour(2, cx - 14, cy - 10);

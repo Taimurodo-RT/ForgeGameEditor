@@ -7,6 +7,8 @@ add_library(forge_sim STATIC
   src/rigid.cpp
   src/factory.cpp
   src/factory_sample.cpp
+  src/time.cpp
+  src/rewind.cpp
   src/simulation.cpp)
 add_library(forge::sim ALIAS forge_sim)
 target_include_directories(forge_sim PUBLIC include)

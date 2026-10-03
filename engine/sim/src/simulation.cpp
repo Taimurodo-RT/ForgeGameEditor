@@ -21,6 +21,8 @@ Simulation::Simulation(world::World& world, scene::Scene& scene, const SimDesc& 
     scene_.register_component<KeepAwake>();
     scene_.register_component<Trigger>();
     scene_.register_component<GravitySource>();
+    scene_.register_component<TimeBubble>();
+    scene_.register_component<OutsideTime>();
     gravity_.set_world(desc.gravity_x, desc.gravity_y);
     if (desc.liquid_layer < world_.layer_count()) cells_ = std::make_unique<CellSim>(desc.collision_layer, desc.liquid_layer);
     rigid_ = std::make_unique<RigidWorld>(scene_, collision_);
@@ -28,13 +30,25 @@ Simulation::Simulation(world::World& world, scene::Scene& scene, const SimDesc& 
     triggers_ = scene_.ecs().query<scene::Position, Trigger>();
     keep_awake_ = scene_.ecs().query<scene::Position, KeepAwake>();
     gravity_sources_ = scene_.ecs().query<scene::Position, GravitySource>();
+    time_bubbles_ = scene_.ecs().query<scene::Position, TimeBubble>();
+    rewind_ = std::make_unique<Rewind>(world_, scene_, desc.rewind, clock_.step());
     world_.add_listener(this);
 }
 
-Simulation::~Simulation() { world_.remove_listener(this); }
+Simulation::~Simulation() {
+    world_.remove_listener(this);
+    time_bubbles_ = {};
+    rewind_.reset();
+}
 
-void Simulation::on_chunk_loaded(world::Chunk&) { tiles_dirty_ = true; }
-void Simulation::on_chunk_unloading(world::Chunk&) { tiles_dirty_ = true; }
+void Simulation::on_chunk_loaded(world::Chunk& chunk) {
+    tiles_dirty_ = true;
+    rewind_->on_chunk_loaded(chunk.coord);
+}
+void Simulation::on_chunk_unloading(world::Chunk& chunk) {
+    tiles_dirty_ = true;
+    rewind_->on_chunk_unloading(chunk.coord);
+}
 
 u32 Simulation::update(f64 frame_seconds, std::span<const world::Rect> focus) {
     FORGE_ZONE_N("Simulation update");
@@ -83,34 +97,76 @@ void Simulation::tick() {
     std::swap(prev_events_, tick_events_);
     tick_events_.clear();
     gather_gravity();
-    const TickContext ctx{current_tick_++, clock_.step(), zones_, tiles_, gravity_, prev_events_, scene_};
+    gather_time();
+    const bool rewinding = rewind_->playing();
+    const f32 scale = rewinding ? 0.0f : time_scale_;
+    const TickContext ctx{current_tick_++, clock_.step(), zones_,   tiles_,    gravity_,
+                          prev_events_,    scene_,        scale,    time_,     rewinding,
+                          scene_.ecs().component<OutsideTime>().id()};
 
     u64 t0 = time_now_ns();
     for (const SystemFn& system : systems_) system(ctx);
     const u64 tc = time_now_ns();
+    // Liquids and sand move a whole step at a time: in slow motion they step
+    // less often, faster than real time more often.
     const f32 wx = gravity_.world_x(), wy = gravity_.world_y();
-    if (cells_ && (wx != 0 || wy != 0)) {
+    if (cells_ && (wx != 0 || wy != 0) && scale > 0) {
         const u32 down = std::fabs(wy) >= std::fabs(wx) ? (wy > 0 ? 0u : 2u) : (wx < 0 ? 1u : 3u);
-        cells_->step(zones_, ctx.tick, down);
+        cells_due_ = std::min(cells_due_ + scale, 4.0f);
+        while (cells_due_ >= 1.0f) {
+            cells_->step(zones_, ctx.tick, down);
+            cells_due_ -= 1.0f;
+        }
         stats_.cells = cells_->stats();
     }
     const u64 t1 = time_now_ns();
     stats_.cells_ms += ns_to_ms(t1 - tc);
     step_bodies(ctx);
     const u64 tr = time_now_ns();
-    rigid_->step(world_, zones_, tiles_, gravity_, cells_.get(), ctx.tick, ctx.dt, tick_events_.rigid);
-    stats_.rigid = rigid_->stats();
+    if (scale > 0) {
+        // Box2D takes steps no longer than a tick.
+        const u32 steps = static_cast<u32>(std::ceil(scale));
+        for (u32 i = 0; i < steps; ++i)
+            rigid_->step(world_, zones_, tiles_, gravity_, cells_.get(), ctx.tick, ctx.dt * scale / static_cast<f32>(steps),
+                         tick_events_.rigid);
+        stats_.rigid = rigid_->stats();
+    }
     const u64 t2 = time_now_ns();
     stats_.rigid_ms += ns_to_ms(t2 - tr);
-    factory_.tick(ctx.dt);
-    stats_.factory = factory_.stats();
+    if (scale > 0) {
+        factory_.tick(ctx.dt * scale);
+        stats_.factory = factory_.stats();
+    }
     stats_.factory_ms += ns_to_ms(time_now_ns() - t2);
     stats_.systems_ms += ns_to_ms(tc - t0);
     stats_.bodies_ms += ns_to_ms(tr - t1);
 
+    // Time recording, or going back through it.
+    const u64 tw = time_now_ns();
+    if (rewinding) {
+        if (rewind_->play_tick()) {
+            rigid_->reset();
+            if (cells_)
+                for (world::ChunkCoord c : rewind_->restored_chunks())
+                    cells_->wake({c.x * world::kChunkSize, c.y * world::kChunkSize, (c.x + 1) * world::kChunkSize,
+                                  (c.y + 1) * world::kChunkSize});
+        }
+    } else {
+        rewind_->after_tick(scale, zones_);
+    }
+    stats_.rewind_ms += ns_to_ms(time_now_ns() - tw);
+
     frame_events_.contacts.insert(frame_events_.contacts.end(), tick_events_.contacts.begin(), tick_events_.contacts.end());
     frame_events_.triggers.insert(frame_events_.triggers.end(), tick_events_.triggers.begin(), tick_events_.triggers.end());
     frame_events_.rigid.insert(frame_events_.rigid.end(), tick_events_.rigid.begin(), tick_events_.rigid.end());
+}
+
+void Simulation::gather_time() {
+    placed_bubbles_.clear();
+    time_bubbles_.each([&](const scene::Position& p, const TimeBubble& b) {
+        if (zones_.zone_of(p.chunk()) != Zone::Asleep) placed_bubbles_.push_back({p.tile_x(), p.tile_y(), b});
+    });
+    time_.build(placed_bubbles_);
 }
 
 void Simulation::gather_gravity() {

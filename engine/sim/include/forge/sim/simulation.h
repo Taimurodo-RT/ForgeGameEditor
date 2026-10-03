@@ -25,7 +25,9 @@
 #include "forge/sim/clock.h"
 #include "forge/sim/gravity.h"
 #include "forge/sim/factory.h"
+#include "forge/sim/rewind.h"
 #include "forge/sim/rigid.h"
+#include "forge/sim/time.h"
 #include "forge/sim/tiles.h"
 #include "forge/sim/zones.h"
 
@@ -84,16 +86,21 @@ struct SimDesc {
     u32 collision_layer = 1;
     // A tile layer for liquids (the world needs that many layers); ~0u: none.
     u32 liquid_layer = ~0u;
+    RewindDesc rewind;
 };
 
 struct TickContext {
     u64 tick = 0;
-    f32 dt = 0; // seconds per tick (each_due passes a longer one to Near chunks)
+    f32 dt = 0; // real seconds per tick (each_due passes each entity its own world time)
     const Zones& zones;
     const TileView& tiles;
     const GravityField& gravity;
     const Events& events; // what happened in the previous tick (triggers: in the previous frame)
     scene::Scene& scene;
+    f32 time_scale = 1;   // the world's time speed this tick (0: stopped or rewinding)
+    const TimeField& time; // time bubbles
+    bool rewinding = false;
+    flecs::entity_t outside_time = 0; // the OutsideTime component
 };
 
 using SystemFn = std::function<void(const TickContext&)>;
@@ -106,6 +113,7 @@ struct SimStats {
     f64 cells_ms = 0;       // liquids and falling tiles
     f64 rigid_ms = 0;       // Box2D bodies
     f64 factory_ms = 0;     // belts, pipes, power networks
+    f64 rewind_ms = 0;      // recording (or playing back) time
     f64 world_ms = 0;       // World::update + zones + tile view
     f64 scene_ms = 0;       // Scene::update
     u32 bodies_moved = 0;   // in the last tick
@@ -117,8 +125,10 @@ struct SimStats {
 };
 
 // Runs fn(entity, dt, Position&, C&...) for every entity matching the query
-// whose chunk is due on this tick, in parallel blocks. dt is longer for
-// entities in Near chunks, which are visited less often.
+// whose chunk is due on this tick, in parallel blocks. dt is each entity's
+// own world time: longer in Near chunks (visited less often), scaled by the
+// world's time speed and time bubbles, or by its OutsideTime. Entities whose
+// time stands still are skipped.
 template <typename... C, typename Fn>
 void each_due(const TickContext& ctx, flecs::query<scene::Position, C...>& query, Fn&& fn);
 
@@ -147,6 +157,13 @@ public:
     // Always-on factories: they run every tick whatever the zones are.
     Factory& factory() { return factory_; }
 
+    // How fast the world's time runs: 0 stops it, 0.25 is slow motion, 2 is
+    // twice as fast. Entities with OutsideTime are not affected.
+    void set_time_scale(f32 scale) { time_scale_ = scale < 0 ? 0 : scale; }
+    f32 time_scale() const { return time_scale_; }
+    // Recording of the last seconds, and going back through them.
+    Rewind& rewind() { return *rewind_; }
+
     // Game rules, run every tick in the order added, before bodies move.
     void add_system(SystemFn fn) { systems_.push_back(std::move(fn)); }
 
@@ -171,6 +188,7 @@ private:
     void tick();
     void step_bodies(const TickContext& ctx);
     void gather_gravity();
+    void gather_time();
     void step_triggers();
 
     world::World& world_;
@@ -186,6 +204,13 @@ private:
     flecs::query<scene::Position, Trigger> triggers_;
     flecs::query<scene::Position, KeepAwake> keep_awake_;
     flecs::query<scene::Position, GravitySource> gravity_sources_;
+    flecs::query<scene::Position, TimeBubble> time_bubbles_;
+    TimeField time_;
+    std::vector<TimeField::Placed> placed_bubbles_;
+    f32 time_scale_ = 1;
+    f32 cells_due_ = 0; // liquid steps owed (they go a whole step at a time)
+    u64 cells_tick_ = 0;
+    std::unique_ptr<Rewind> rewind_;
     GravityField gravity_;
     std::unique_ptr<CellSim> cells_;
     std::unique_ptr<RigidWorld> rigid_;
@@ -207,6 +232,7 @@ template <typename... C>
 struct DueSpan {
     const flecs::entity_t* entities;
     scene::Position* positions;
+    const OutsideTime* own; // the entities' own clocks, if they have them
     std::tuple<C*...> components;
     u32 count;
 };
@@ -228,10 +254,14 @@ void each_due(const TickContext& ctx, flecs::query<scene::Position, C...>& query
             const u32 n = static_cast<u32>(it.count());
             const flecs::entity_t* ents = it.c_ptr()->entities;
             scene::Position* pos = &it.template field<scene::Position>(0)[0];
+            const auto* own = static_cast<const OutsideTime*>(
+                ctx.outside_time ? ecs_table_get_id(it.world().c_ptr(), it.c_ptr()->table, ctx.outside_time, it.c_ptr()->offset)
+                                 : nullptr);
+            if (!own && ctx.time_scale <= 0) continue; // the world's time stands still
             std::tuple<C*...> comps = detail::fields<C...>(it, std::index_sequence_for<C...>{});
             for (u32 b = 0; b < n; b += kBlock) {
                 std::tuple<C*...> shifted = std::apply([b](C*... p) { return std::tuple<C*...>(p + b...); }, comps);
-                spans.push_back({ents + b, pos + b, shifted, std::min(kBlock, n - b)});
+                spans.push_back({ents + b, pos + b, own ? own + b : nullptr, shifted, std::min(kBlock, n - b)});
             }
         }
     });
@@ -242,7 +272,11 @@ void each_due(const TickContext& ctx, flecs::query<scene::Position, C...>& query
                 scene::Position& p = span.positions[i];
                 const u32 due = ctx.zones.ticks_due(p.chunk(), ctx.tick);
                 if (due == 0) continue;
-                std::apply([&](C*... c) { fn(span.entities[i], ctx.dt * static_cast<f32>(due), p, c[i]...); },
+                f32 scale;
+                if (span.own) scale = span.own[i].scale;
+                else scale = ctx.time.empty() ? ctx.time_scale : ctx.time_scale * ctx.time.at(p.tile_x(), p.tile_y());
+                if (scale <= 0) continue;
+                std::apply([&](C*... c) { fn(span.entities[i], ctx.dt * static_cast<f32>(due) * scale, p, c[i]...); },
                            span.components);
             }
         }

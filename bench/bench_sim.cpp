@@ -7,6 +7,7 @@
 //   scene     re-filing everyone into chunks + spatial index
 //   cells     liquids and falling sand (rain: 500 drops a frame all over)
 //   rigid     Box2D crates and balls (4 000 dropped into the camera view)
+//   rewind    recording the last 10 seconds around the camera (when on)
 //
 // Then the same world with the camera over one part of it: the rest is Near
 // (simulated every 4th tick) or asleep, which is what a real game sees.
@@ -66,7 +67,7 @@ constexpr i32 kWidth = 16384; // tiles of world the creatures live in
 const Rect kArea{0, -400, kWidth, 400};
 
 void run_frames(Simulation& sim, const Rect& focus, u32 frames, bool all_awake, bool rain = false) {
-    Series logic, bodies, triggers, scene, world, cells, rigid, total;
+    Series logic, bodies, triggers, scene, world, cells, rigid, rewind, total;
     u32 drop = 0;
     for (u32 f = 0; f < frames; ++f) {
         if (rain)
@@ -84,6 +85,7 @@ void run_frames(Simulation& sim, const Rect& focus, u32 frames, bool all_awake, 
         world.v.push_back(s.world_ms);
         cells.v.push_back(s.cells_ms);
         rigid.v.push_back(s.rigid_ms);
+        rewind.v.push_back(s.rewind_ms);
     }
     const SimStats& s = sim.stats();
     FORGE_INFO("%s: chunks active %u, near %u, asleep %u; bodies moved in the last tick %u; liquid chunks %u; "
@@ -98,6 +100,7 @@ void run_frames(Simulation& sim, const Rect& focus, u32 frames, bool all_awake, 
     world.print("world");
     cells.print("cells");
     rigid.print("rigid");
+    rewind.print("rewind");
     total.print("total");
 }
 
@@ -211,6 +214,12 @@ int main(int argc, char** argv) {
             scene.spawn(Position::at_tile(x + 0.5, surface[static_cast<usize>(x)] - 4.0 - (i / 112) * 1.2))
                 .set<RigidBody>(rb);
         }
+        // The same view while recording for rewinding.
+        sim.rewind().set_recording(true);
+        run_frames(sim, view, frames, false);
+        FORGE_INFO("rewind: %u recordings, %.1f MB, %.1f s back", sim.rewind().stats().frames,
+                   static_cast<f64>(sim.rewind().stats().bytes) / 1e6, sim.rewind().stats().seconds);
+        sim.rewind().set_recording(false);
         run_frames(sim, view, 120, false); // settle
         FORGE_INFO("4000 rigid bodies in the view");
         run_frames(sim, view, frames, false);
