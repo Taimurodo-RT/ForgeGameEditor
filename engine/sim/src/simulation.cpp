@@ -22,6 +22,7 @@ Simulation::Simulation(world::World& world, scene::Scene& scene, const SimDesc& 
     scene_.register_component<Trigger>();
     scene_.register_component<GravitySource>();
     gravity_.set_world(desc.gravity_x, desc.gravity_y);
+    if (desc.liquid_layer < world_.layer_count()) cells_ = std::make_unique<CellSim>(desc.collision_layer, desc.liquid_layer);
     bodies_ = scene_.ecs().query<scene::Position, Body>();
     triggers_ = scene_.ecs().query<scene::Position, Trigger>();
     keep_awake_ = scene_.ecs().query<scene::Position, KeepAwake>();
@@ -50,7 +51,8 @@ u32 Simulation::update(f64 frame_seconds, std::span<const world::Rect> focus) {
     });
     world_.update(focus_);
     if (tiles_dirty_) {
-        tiles_.rebuild(world_, collision_);
+        tiles_.rebuild(world_, collision_, cells_ ? desc_.liquid_layer : ~0u);
+        if (cells_) cells_->rebuild(world_, collision_);
         tiles_dirty_ = false;
     }
     const u32 ticks = clock_.advance(frame_seconds);
@@ -84,10 +86,18 @@ void Simulation::tick() {
 
     u64 t0 = time_now_ns();
     for (const SystemFn& system : systems_) system(ctx);
+    const u64 tc = time_now_ns();
+    const f32 wx = gravity_.world_x(), wy = gravity_.world_y();
+    if (cells_ && (wx != 0 || wy != 0)) {
+        const u32 down = std::fabs(wy) >= std::fabs(wx) ? (wy > 0 ? 0u : 2u) : (wx < 0 ? 1u : 3u);
+        cells_->step(zones_, ctx.tick, down);
+        stats_.cells = cells_->stats();
+    }
     const u64 t1 = time_now_ns();
+    stats_.cells_ms += ns_to_ms(t1 - tc);
     step_bodies(ctx);
     const u64 t2 = time_now_ns();
-    stats_.systems_ms += ns_to_ms(t1 - t0);
+    stats_.systems_ms += ns_to_ms(tc - t0);
     stats_.bodies_ms += ns_to_ms(t2 - t1);
 
     frame_events_.contacts.insert(frame_events_.contacts.end(), tick_events_.contacts.begin(), tick_events_.contacts.end());
@@ -113,11 +123,28 @@ void Simulation::step_bodies(const TickContext& ctx) {
     std::vector<PerThread> per(threads);
     const f32 max_fall = desc_.max_fall;
     const bool uniform = gravity_.source_count() == 0;
+    const CellSim* cells = cells_.get();
     each_due(ctx, bodies_, [&](flecs::entity_t e, f32 dt, scene::Position& p, Body& b) {
         f32 gx = gravity_.world_x(), gy = gravity_.world_y();
         if (!uniform) gravity_.at(p.tile_x(), p.tile_y(), gx, gy);
+        f32 scale = b.gravity;
+        b.liquid = 0;
+        if (cells) {
+            // In a liquid (at least half a tile of it at the centre): held up and slowed.
+            const i32 tx = p.cx * world::kChunkSize + static_cast<i32>(std::floor(p.x));
+            const i32 ty = p.cy * world::kChunkSize + static_cast<i32>(std::floor(p.y));
+            const u16 cell = tiles_.liquid(tx, ty);
+            if (cell != 0 && liquid_amount(cell) >= kFull / 2 && liquid_kind(cell) <= cells->liquid_count()) {
+                const LiquidKind& lk = cells->liquid(liquid_kind(cell));
+                b.liquid = liquid_kind(cell);
+                scale *= 1.0f - lk.buoyancy;
+                const f32 keep = std::max(0.0f, 1.0f - lk.drag * dt);
+                b.vx *= keep;
+                b.vy *= keep;
+            }
+        }
         const u8 before = b.contacts;
-        const u8 after = move_body(p, b, dt, gx * b.gravity, gy * b.gravity, max_fall, tiles_);
+        const u8 after = move_body(p, b, dt, gx * scale, gy * scale, max_fall, tiles_);
         PerThread& mine = per[std::min(jobs::this_thread_index(), threads - 1)];
         ++mine.moved;
         if (after != before) mine.found.push_back({e, static_cast<u8>(after & ~before), static_cast<u8>(before & ~after)});

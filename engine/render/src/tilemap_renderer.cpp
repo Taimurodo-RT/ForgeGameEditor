@@ -40,6 +40,11 @@ struct LayerUniforms {
     u32 layer_words;
     u32 atlas_cells;
     f32 atlas_lod;
+    u32 liquid;
+    u32 full;
+    u32 down;
+    u32 pad;
+    f32 liquid_colors[16][4];
 };
 
 } // namespace
@@ -54,6 +59,7 @@ bool TilemapRenderer::init(SDL_GPUDevice* device, SDL_GPUTextureFormat target_fo
     slot_bytes_ = layer_count_ * kChunkTiles * static_cast<u32>(sizeof(TileId));
     max_slots_ = static_cast<u32>(std::min<usize>(max_slots, kMaxTileBufferBytes / slot_bytes_));
     tints_.assign(layer_count_, Color{});
+    liquid_layers_.assign(layer_count_, 0);
     // Back layer (walls, ground under objects) a little darker by default.
     if (layer_count_ > 1) tints_[0] = Color{0.55f, 0.55f, 0.6f, 1.0f};
 
@@ -223,6 +229,13 @@ void TilemapRenderer::set_layer_tint(u32 layer, Color tint) {
     if (layer < tints_.size()) tints_[layer] = tint;
 }
 
+void TilemapRenderer::set_layer_liquid(u32 layer, const Color* colors, u32 count, u32 full) {
+    if (layer >= liquid_layers_.size()) return;
+    liquid_layers_[layer] = 1;
+    liquid_full_ = full;
+    for (u32 i = 0; i < 16; ++i) liquid_colors_[i] = i < count ? colors[i] : Color{};
+}
+
 void TilemapRenderer::on_chunk_unloading(Chunk& chunk) {
     auto it = slots_.find(chunk.coord);
     if (it == slots_.end()) return;
@@ -323,8 +336,8 @@ void TilemapRenderer::prepare(SDL_GPUCommandBuffer* cmd, const Camera2D& camera,
     SDL_EndGPUCopyPass(copy);
 }
 
-void TilemapRenderer::draw(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass) {
-    if (draw_count_ == 0) return;
+void TilemapRenderer::draw_layers(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, u32 first, u32 count) {
+    if (draw_count_ == 0 || first >= layer_count_) return;
     FORGE_ZONE_N("Tilemap draw");
     SDL_BindGPUGraphicsPipeline(pass, pipeline_);
     SDL_GPUBufferBinding vb{instances_, 0};
@@ -335,9 +348,24 @@ void TilemapRenderer::draw(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass) {
 
     const ViewUniforms view{{scale_x_, scale_y_}, {0, 0}};
     SDL_PushGPUVertexUniformData(cmd, 0, &view, sizeof(view));
-    for (u32 layer = 0; layer < layer_count_; ++layer) {
+    const u32 end = std::min(layer_count_, first + count);
+    for (u32 layer = first; layer < end; ++layer) {
         const Color& t = tints_[layer];
-        const LayerUniforms u{{t.r, t.g, t.b, t.a}, slot_bytes_ / 4, layer * (kChunkTiles / 2), atlas_cells_, atlas_lod_};
+        LayerUniforms u{};
+        const f32 tint[4] = {t.r, t.g, t.b, t.a};
+        std::memcpy(u.tint, tint, sizeof(tint));
+        u.slot_words = slot_bytes_ / 4;
+        u.layer_words = layer * (kChunkTiles / 2);
+        u.atlas_cells = atlas_cells_;
+        u.atlas_lod = atlas_lod_;
+        u.liquid = liquid_layers_[layer];
+        u.full = liquid_full_;
+        u.down = liquid_down_;
+        for (u32 i = 0; i < 16; ++i) {
+            const Color& c = liquid_colors_[i];
+            const f32 rgba[4] = {c.r, c.g, c.b, c.a};
+            std::memcpy(u.liquid_colors[i], rgba, sizeof(rgba));
+        }
         SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
         SDL_DrawGPUPrimitives(pass, 6, draw_count_, 0, 0);
     }

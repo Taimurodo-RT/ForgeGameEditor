@@ -50,10 +50,17 @@ public:
     // Each frame, outside any render pass: uploads changed chunks and the list
     // of chunks to draw.
     void prepare(SDL_GPUCommandBuffer* cmd, const Camera2D& camera, u32 width, u32 height);
-    // Inside a render pass on the target: draws every layer, back to front.
-    void draw(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass);
+    // Inside a render pass on the target: draws every layer, back to front,
+    // or only layers [first, first + count) (liquids after the sprites, say).
+    void draw(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass) { draw_layers(cmd, pass, 0, layer_count_); }
+    void draw_layers(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, u32 first, u32 count);
 
     void set_layer_tint(u32 layer, Color tint);
+    // Draws a layer as liquids (see forge/sim/cells.h): colors[kind] for kinds
+    // 1..15, cells filled from the side gravity points to (down: 0 +y, 1 -x,
+    // 2 -y, 3 +x).
+    void set_layer_liquid(u32 layer, const Color* colors, u32 count, u32 full);
+    void set_liquid_down(u32 down) { liquid_down_ = down & 3u; }
     const TilemapStats& stats() const { return stats_; }
 
     void on_chunk_unloading(world::Chunk& chunk) override;
@@ -93,6 +100,10 @@ private:
     std::unordered_map<world::ChunkCoord, Slot, world::ChunkCoordHash> slots_;
     std::vector<u32> free_slots_;
     std::vector<Color> tints_;
+    std::vector<u8> liquid_layers_;
+    Color liquid_colors_[16] = {};
+    u32 liquid_full_ = 1024;
+    u32 liquid_down_ = 0;
     std::vector<Instance> frame_instances_;
     std::vector<world::Chunk*> frame_uploads_;
     u32 draw_count_ = 0;
