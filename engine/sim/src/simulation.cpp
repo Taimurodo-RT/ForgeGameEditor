@@ -102,6 +102,9 @@ void Simulation::tick() {
     stats_.rigid = rigid_->stats();
     const u64 t2 = time_now_ns();
     stats_.rigid_ms += ns_to_ms(t2 - tr);
+    factory_.tick(ctx.dt);
+    stats_.factory = factory_.stats();
+    stats_.factory_ms += ns_to_ms(time_now_ns() - t2);
     stats_.systems_ms += ns_to_ms(tc - t0);
     stats_.bodies_ms += ns_to_ms(tr - t1);
 

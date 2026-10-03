@@ -5,6 +5,8 @@ add_library(forge_sim STATIC
   src/gravity.cpp
   src/cells.cpp
   src/rigid.cpp
+  src/factory.cpp
+  src/factory_sample.cpp
   src/simulation.cpp)
 add_library(forge::sim ALIAS forge_sim)
 target_include_directories(forge_sim PUBLIC include)
