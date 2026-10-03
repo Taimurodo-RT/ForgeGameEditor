@@ -14,6 +14,7 @@ include(cmake/Dependencies.cmake)
 include(cmake/Warnings.cmake)
 
 add_subdirectory(engine/core)
+add_subdirectory(engine/data)
 add_subdirectory(engine/platform)
 add_subdirectory(apps/sandbox)
 
