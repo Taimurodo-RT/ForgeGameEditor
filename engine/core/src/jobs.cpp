@@ -248,8 +248,12 @@ void wake_workers(Pool& pool, u32 queued) {
 void init(u32 worker_count) {
     FORGE_VERIFY(g_pool == nullptr);
     if (worker_count == 0) {
+        // One thread per core, the calling thread included, minus one core
+        // left to the OS and other programs on bigger CPUs: when every core is
+        // ours, the OS preempts a worker in the middle of a batch and the
+        // whole parallel_for waits a scheduler quantum (~20 ms on Windows).
         const u32 hw = std::thread::hardware_concurrency();
-        worker_count = hw > 1 ? hw - 1 : 1;
+        worker_count = hw >= 8 ? hw - 2 : (hw > 1 ? hw - 1 : 1);
     }
     g_pool = new Pool();
     const u32 total = worker_count + 1;

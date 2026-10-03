@@ -112,7 +112,7 @@ build/bench/forge_bench_scene [--entities N] [--frames N]
 build/bench/forge_bench_sprites [--sprites N] [--frames N]
 build/bench/forge_bench_sim [--entities N] [--frames N] [--wells N] [--threads N]
 build/bench/forge_bench_factory [--blocks N] [--ticks N] [--threads N]
-build/bench/forge_bench_script [--entities N] [--frames N] [--interpret]
+build/bench/forge_bench_script [--entities N] [--frames N] [--interpret] [--empty]
 ```
 
 Управление в `forge_world_demo`: WASD или стрелки — движение (Shift быстрее), колесо — зум к курсору,

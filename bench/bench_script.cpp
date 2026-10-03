@@ -3,9 +3,10 @@
 // shape of logic a node graph compiles to. Then the same with half of them
 // paused in forge.wait and with messages flying between them.
 //
-//   forge_bench_script [--entities N] [--frames N] [--interpret]
+//   forge_bench_script [--entities N] [--frames N] [--interpret] [--empty]
 //
-// --interpret turns off native code generation, to compare.
+// --interpret turns off native code generation, to compare; --empty also
+// times bare handlers (the host's own cost per call).
 
 #include "forge/core/jobs.h"
 #include "forge/core/log.h"
@@ -103,11 +104,12 @@ void run(Simulation& sim, ScriptHost& scripts, const Rect& view, u32 frames, con
 
 int main(int argc, char** argv) {
     u32 entities = 10'000, frames = 300;
-    bool native = true;
+    bool native = true, empty = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--entities") == 0 && i + 1 < argc) entities = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--interpret") == 0) native = false;
+        else if (std::strcmp(argv[i], "--empty") == 0) empty = true;
     }
     jobs::init();
     {
@@ -133,7 +135,7 @@ int main(int argc, char** argv) {
             all.push_back(e);
         }
         run(sim, scripts, view, frames, "patrol (on_tick)");
-        if (std::getenv("FORGE_BENCH_EMPTY")) {
+        if (empty) {
             scripts.load("empty", "return { on_tick = function(self, dt) end }");
             scripts.load("vars", "return { on_tick = function(self, dt) forge.set_var(self, 'a', forge.var(self, 'a', 0) + 1) end }");
             scripts.load("pos", "return { on_tick = function(self, dt) local x, y = forge.entity.position(self) forge.entity.set_position(self, x, y) end }");
