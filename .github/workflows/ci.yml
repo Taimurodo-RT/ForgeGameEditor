@@ -12,7 +12,8 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            configure: -G "Visual Studio 17 2022"
+            # No -G: CMake picks the newest Visual Studio on the runner image.
+            configure: ""
             bin: build/{0}/Release
           - os: ubuntu-latest
             # CI machines have no display; SDL builds without X11/Wayland here.
@@ -20,7 +21,7 @@ jobs:
             bin: build/{0}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Configure
