@@ -1,6 +1,7 @@
 #include "forge/assets/asset_database.h"
 
 #include "forge/core/log.h"
+#include "forge/core/path.h"
 #include "forge/core/profile.h"
 
 #include <sqlite3.h>
@@ -161,7 +162,7 @@ sqlite3_stmt* AssetDatabase::prepare(const char* sql) {
 
 bool AssetDatabase::open(const std::filesystem::path& file, std::string* error) {
     close();
-    const std::string utf8 = file.u8string().empty() ? std::string() : reinterpret_cast<const char*>(file.u8string().c_str());
+    const std::string utf8 = path_to_utf8(file);
     if (sqlite3_open_v2(utf8.c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr) != SQLITE_OK) {
         fail("open");
         if (error) *error = error_;

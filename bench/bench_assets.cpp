@@ -8,6 +8,7 @@
 
 #include "forge/assets/asset_pipeline.h"
 #include "forge/core/jobs.h"
+#include "forge/core/path.h"
 #include "forge/core/time.h"
 
 #include <algorithm>
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
     for (u32 i = 0; i < count; ++i) {
         const char* folder = kFolders[i % 10];
         const std::string name = std::string(kWords[rng() % 20]) + "_" + kWords[rng() % 20] + "_" + std::to_string(i) + ".txt";
-        const fs::path p = assets / folder / std::to_string(i % 50) / name;
+        const fs::path p = assets / utf8_path(folder) / std::to_string(i % 50) / utf8_path(name);
         if (i < 500) fs::create_directories(p.parent_path());
         std::ofstream(p, std::ios::binary) << "asset " << i << " payload " << std::string(64 + i % 200, 'x');
     }

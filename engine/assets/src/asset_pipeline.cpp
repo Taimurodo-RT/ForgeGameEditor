@@ -2,6 +2,7 @@
 
 #include "forge/core/jobs.h"
 #include "forge/core/log.h"
+#include "forge/core/path.h"
 #include "forge/core/profile.h"
 #include "forge/core/time.h"
 #include "forge/data/json.h"
@@ -52,13 +53,8 @@ bool write_file_atomic(const fs::path& path, std::span<const u8> bytes) {
     return true;
 }
 
-std::string to_generic_utf8(const fs::path& p) {
-    const std::u8string s = p.generic_u8string();
-    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
-}
-
 std::string lower_extension(const fs::path& p) {
-    std::string ext = to_generic_utf8(p.extension());
+    std::string ext = path_to_utf8(p.extension());
     for (char& c : ext) {
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
     }
@@ -99,7 +95,11 @@ struct Entry {
 } // namespace
 
 AssetPipeline::AssetPipeline(fs::path assets_dir, fs::path library_dir)
-    : assets_dir_(std::move(assets_dir)), library_dir_(std::move(library_dir)) {}
+    : assets_dir_(std::move(assets_dir)), library_dir_(std::move(library_dir)) {
+    // Relative paths are cut from scanned paths by length, so the root must
+    // not end with a separator (Windows temp_directory_path() returns one).
+    if (!assets_dir_.has_filename() && assets_dir_.has_parent_path()) assets_dir_ = assets_dir_.parent_path();
+}
 
 AssetPipeline::~AssetPipeline() = default;
 
@@ -107,7 +107,7 @@ bool AssetPipeline::open(std::string* error) {
     std::error_code ec;
     fs::create_directories(library_dir_ / "cooked", ec);
     if (ec) {
-        if (error) *error = "cannot create " + to_generic_utf8(library_dir_) + ": " + ec.message();
+        if (error) *error = "cannot create " + path_to_utf8(library_dir_) + ": " + ec.message();
         return false;
     }
     return db_.open(library_dir_ / "assets.db", error);
@@ -153,12 +153,12 @@ RefreshReport AssetPipeline::refresh() {
         // Relative paths by cutting the root prefix: fs::relative resolves
         // every path against the disk and costs several system calls each.
         const usize root_len = assets_dir_.native().size() + 1;
-        auto relative = [&](const fs::path& p) { return to_generic_utf8(fs::path(p.native().substr(root_len))); };
+        auto relative = [&](const fs::path& p) { return path_to_utf8(fs::path(p.native().substr(root_len))); };
         fs::recursive_directory_iterator it(assets_dir_, fs::directory_options::skip_permission_denied, ec), end;
         for (; it != end; it.increment(ec)) {
             if (ec) break;
             const fs::path& p = it->path();
-            const std::string filename = to_generic_utf8(p.filename());
+            const std::string filename = path_to_utf8(p.filename());
             if (!filename.empty() && filename[0] == '.') { // hidden files and folders (.git, .DS_Store)
                 if (it->is_directory()) it.disable_recursion_pending();
                 continue;
@@ -319,7 +319,7 @@ RefreshReport AssetPipeline::refresh() {
                 fs::path meta_path = e.abs;
                 meta_path += kMetaExtension;
                 if (!write_file_atomic(meta_path, {reinterpret_cast<const u8*>(json.data()), json.size()})) {
-                    e.out.error = "cannot write " + to_generic_utf8(meta_path.filename());
+                    e.out.error = "cannot write " + path_to_utf8(meta_path.filename());
                     continue;
                 }
                 std::error_code ec;
@@ -356,7 +356,7 @@ RefreshReport AssetPipeline::refresh() {
             r.id = e.id;
             r.path = e.rel;
             r.type = e.importer->name();
-            r.name = to_generic_utf8(e.abs.stem());
+            r.name = path_to_utf8(e.abs.stem());
             r.tags = join_tags(e.meta->tags);
             r.size = e.size;
             r.mtime = e.mtime;

@@ -1,5 +1,6 @@
 #include "forge/assets/asset_pipeline.h"
 #include "forge/core/jobs.h"
+#include "forge/core/path.h"
 #include "forge/data/binary.h"
 #include "forge/data/json.h"
 
@@ -100,13 +101,13 @@ TEST_CASE("Asset database search: prefixes, Cyrillic, type filter") {
 TEST_CASE("Pipeline cooks only what changed and keeps ids across moves") {
     PoolScope pool;
     TempDir dir;
-    const fs::path assets = dir.path / "Assets";
-    write(assets / "Тайлы/трава.tga", tiny_tga());
-    write(assets / "Тексты/диалог.txt", "Опять ты?");
-    write(assets / "битый.png", "not a png");
-    write(assets / ".git/config", "hidden, skipped");
+    const fs::path assets = dir.path / utf8_path("Assets");
+    write(assets / utf8_path("Тайлы/трава.tga"), tiny_tga());
+    write(assets / utf8_path("Тексты/диалог.txt"), "Опять ты?");
+    write(assets / utf8_path("битый.png"), "not a png");
+    write(assets / utf8_path(".git/config"), "hidden, skipped");
 
-    AssetPipeline pipeline(assets, dir.path / "Library");
+    AssetPipeline pipeline(assets, dir.path / utf8_path("Library"));
     REQUIRE(pipeline.open());
     pipeline.add_default_importers();
 
@@ -115,7 +116,7 @@ TEST_CASE("Pipeline cooks only what changed and keeps ids across moves") {
     CHECK(r.added == 3);
     CHECK(r.cooked == 2);
     CHECK(r.failed == 1);
-    CHECK(fs::exists(fs::path(assets / "Тайлы/трава.tga") += ".meta"));
+    CHECK(fs::exists(fs::path(assets / utf8_path("Тайлы/трава.tga")) += ".meta"));
 
     // The cooked texture loads.
     auto grass = pipeline.database().find_by_path("Тайлы/трава.tga");
@@ -135,18 +136,18 @@ TEST_CASE("Pipeline cooks only what changed and keeps ids across moves") {
     CHECK(r.cooked == 0);
 
     // Content changed: cooked again, same id.
-    const Guid text_id = meta_id(assets / "Тексты/диалог.txt");
+    const Guid text_id = meta_id(assets / utf8_path("Тексты/диалог.txt"));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    write(assets / "Тексты/диалог.txt", "Опять ты? Меч ещё не готов.");
+    write(assets / utf8_path("Тексты/диалог.txt"), "Опять ты? Меч ещё не готов.");
     r = pipeline.refresh();
     CHECK(r.cooked == 1);
     CHECK(pipeline.database().find_by_path("Тексты/диалог.txt")->id == text_id);
 
     // Moved outside the editor without its .meta: recognised by content.
     const Guid grass_id = grass->id;
-    fs::create_directories(assets / "Новое");
-    fs::rename(assets / "Тайлы/трава.tga", assets / "Новое/трава2.tga");
-    fs::remove(fs::path(assets / "Тайлы/трава.tga") += ".meta");
+    fs::create_directories(assets / utf8_path("Новое"));
+    fs::rename(assets / utf8_path("Тайлы/трава.tga"), assets / utf8_path("Новое/трава2.tga"));
+    fs::remove(fs::path(assets / utf8_path("Тайлы/трава.tga")) += ".meta");
     r = pipeline.refresh();
     CHECK(r.moved == 1);
     CHECK(r.cooked == 0);
@@ -155,7 +156,7 @@ TEST_CASE("Pipeline cooks only what changed and keeps ids across moves") {
     CHECK(pipeline.database().search("трава2").size() == 1);
 
     // Deleted.
-    fs::remove(assets / "Тексты/диалог.txt");
+    fs::remove(assets / utf8_path("Тексты/диалог.txt"));
     r = pipeline.refresh();
     CHECK(r.removed == 1);
     CHECK_FALSE(pipeline.database().find(text_id).has_value());
@@ -164,17 +165,17 @@ TEST_CASE("Pipeline cooks only what changed and keeps ids across moves") {
 TEST_CASE("A copied file with its .meta gets its own id") {
     PoolScope pool;
     TempDir dir;
-    const fs::path assets = dir.path / "Assets";
-    write(assets / "a.txt", "один");
-    AssetPipeline pipeline(assets, dir.path / "Library");
+    const fs::path assets = dir.path / utf8_path("Assets");
+    write(assets / utf8_path("a.txt"), "один");
+    AssetPipeline pipeline(assets, dir.path / utf8_path("Library"));
     REQUIRE(pipeline.open());
     pipeline.add_default_importers();
     pipeline.refresh();
 
-    fs::copy_file(assets / "a.txt", assets / "b.txt");
-    fs::copy_file(fs::path(assets / "a.txt") += ".meta", fs::path(assets / "b.txt") += ".meta");
+    fs::copy_file(assets / utf8_path("a.txt"), assets / utf8_path("b.txt"));
+    fs::copy_file(fs::path(assets / utf8_path("a.txt")) += ".meta", fs::path(assets / utf8_path("b.txt")) += ".meta");
     RefreshReport r = pipeline.refresh();
     CHECK(r.messages.size() == 1);
     CHECK(pipeline.database().count() == 2);
-    CHECK(meta_id(assets / "a.txt") != meta_id(assets / "b.txt"));
+    CHECK(meta_id(assets / utf8_path("a.txt")) != meta_id(assets / utf8_path("b.txt")));
 }
