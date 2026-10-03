@@ -3,7 +3,7 @@
 Ядро конструктора 2D-игр. Цель: большие 2D-игры на ПК, стабильные 60 FPS на среднем ПК.
 Архитектура: `docs/core-architecture.md`, выбор стека: `docs/stack-choice.md`. Дорожная карта: https://claude.ai/artifact/GCrpZ4AH37XUrDU6kioobh
 
-## Что уже есть (шаги 1–3)
+## Что уже есть (шаги 1–3, начало 4)
 
 - `engine/core` — память по категориям, `LinearArena` (покадровая память), `BlockPool`,
   `HandlePool` (ссылки с поколениями), система задач с work stealing, логи, Tracy.
@@ -18,10 +18,13 @@
   возвращается вместе с ним, сохраняется рядом с тайлами. Пространственный индекс для запросов «кто рядом»
   перестраивается каждый кадр параллельно. Заполнение чанка объектами (деревья, руда, звери) — один раз при первом посещении.
 - `engine/render` — отрисовка тайлов: один вызов отрисовки на слой, на GPU загружаются только новые и изменённые чанки.
+  Спрайты: игра добавляет их с любых потоков, движок сортирует видимые по слою и «ногам» (кто ниже, тот впереди)
+  на всех ядрах и рисует все одним вызовом отрисовки.
   Шейдеры пишутся на GLSL и при сборке компилируются для Vulkan (SPIR-V) и Direct3D 12 (DXBC) инструментом `tools/shaderc`.
 - `engine/platform` — окно и GPU через SDL3 (Vulkan / D3D12 / Metal), цикл кадров, статистика кадра.
 - `apps/sandbox` — окно, 200 000 частиц и 10 000 задач в каждом кадре; FPS в заголовке.
 - `apps/world_demo` — мир 64k × 64k тайлов: полёт, зум, копать и строить мышью.
+- `apps/render_demo` — мир, заполненный 1 000 000 спрайтов (жуки и падающие листья); замер без окна и без ограничения монитора.
 - `tests` — модульные тесты (doctest), `bench` — замер системы задач.
 
 ## Сборка
@@ -46,12 +49,16 @@ build/apps/sandbox/forge_sandbox --headless 600
 build/apps/world_demo/forge_world_demo        # мир, вид сбоку
 build/apps/world_demo/forge_world_demo --topdown --no-vsync
 build/apps/world_demo/forge_world_demo --screenshot world.png   # отрисовать без окна в файл
+build/apps/render_demo/forge_render_demo                    # 1 000 000 спрайтов в окне
+build/apps/render_demo/forge_render_demo --bench 600        # замер без окна, 1920×1080
+build/apps/render_demo/forge_render_demo --sprites 20000 --zoom 32 --screenshot sprites.png
 build/tests/forge_tests
 build/bench/forge_bench_jobs
 build/bench/forge_bench_data
 build/bench/forge_bench_assets [число файлов]
 build/bench/forge_bench_world [--topdown] [--speed тайлов_в_секунду]
 build/bench/forge_bench_scene [--entities N] [--frames N]
+build/bench/forge_bench_sprites [--sprites N] [--frames N]
 ```
 
 Управление в `forge_world_demo`: WASD или стрелки — движение (Shift быстрее), колесо — зум к курсору,

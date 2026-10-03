@@ -1,10 +1,16 @@
 add_library(forge_render STATIC
+  src/camera.cpp
   src/gpu.cpp
+  src/offscreen.cpp
+  src/sprite_batch.cpp
+  src/sprite_renderer.cpp
   src/tilemap_renderer.cpp)
 add_library(forge::render ALIAS forge_render)
 target_include_directories(forge_render PUBLIC include)
-target_link_libraries(forge_render PUBLIC forge::core forge::world SDL3::SDL3-static)
+target_link_libraries(forge_render PUBLIC forge::core forge::world SDL3::SDL3-static PRIVATE stb_headers)
 forge_add_shaders(forge_render
   shaders/tilemap.vert
-  shaders/tilemap.frag)
+  shaders/tilemap.frag
+  shaders/sprite.vert
+  shaders/sprite.frag)
 forge_target_defaults(forge_render)

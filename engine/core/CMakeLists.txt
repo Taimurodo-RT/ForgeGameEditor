@@ -3,7 +3,8 @@ add_library(forge_core STATIC
   src/memory.cpp
   src/jobs.cpp
   src/time.cpp
-  src/file.cpp)
+  src/file.cpp
+  src/sort.cpp)
 add_library(forge::core ALIAS forge_core)
 target_include_directories(forge_core PUBLIC include)
 target_link_libraries(forge_core PUBLIC Tracy::TracyClient)

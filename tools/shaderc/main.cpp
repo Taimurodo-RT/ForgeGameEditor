@@ -111,6 +111,9 @@ int main(int argc, char** argv) {
     // HLSL for Direct3D 12 (shader model 5.1: register spaces = SPIR-V sets).
     spirv_cross::CompilerHLSL::Options hlsl_options;
     hlsl_options.shader_model = 51;
+    // Draws always start at instance 0; without this SPIRV-Cross adds a hidden
+    // constant buffer that SDL does not bind.
+    hlsl_options.support_nonzero_base_vertex_base_instance = false;
     hlsl.set_hlsl_options(hlsl_options);
     const std::string hlsl_source = hlsl.compile();
     {
