@@ -17,10 +17,12 @@ constexpr u32 kTileCells = 16;
 std::vector<u8> make_tile_atlas();
 
 // Sprite sheet: 8 critters with 2 walking frames each (frame = kind * 2 +
-// step), then a leaf and a soft glow.
+// step), then a leaf, a soft glow, a wooden crate and a ball.
 constexpr u32 kCritterKinds = 8;
 constexpr u32 kFrameLeaf = 16;
 constexpr u32 kFrameGlow = 17;
+constexpr u32 kFrameCrate = 18;
+constexpr u32 kFrameBall = 19;
 
 struct SheetImage {
     std::vector<u8> rgba;

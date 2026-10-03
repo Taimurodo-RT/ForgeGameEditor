@@ -51,6 +51,9 @@ struct LiquidKind {
     // them up (0 = sinks like a stone, 1 = floats without weight).
     f32 drag = 2.5f;
     f32 buoyancy = 0.8f;
+    // For rigid bodies: lighter ones float (a crate of density 0.5 floats
+    // half under water), heavier ones sink.
+    f32 density = 1;
 };
 
 struct CellStats {

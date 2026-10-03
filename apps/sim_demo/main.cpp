@@ -5,8 +5,9 @@
 // meets lava it turns to stone.
 //
 //   WASD / arrows   move the camera (Shift: faster)    mouse wheel   zoom
-//   1 2 3 4         left mouse pours water / lava / sand, or places a
-//                   gravity well (click one again to remove it)
+//   1 2 3 4 5       left mouse pours water / lava / sand, places a gravity
+//                   well (click one again to remove it), or drops crates
+//                   and balls (rigid bodies: they tumble, stack and float)
 //   right mouse     dig
 //   G               turn the world's gravity by 90°    Space   pause
 //
@@ -204,6 +205,22 @@ public:
             }
     }
 
+    // A crate, or every third one a ball.
+    void drop_crate(f64 x, f64 y) {
+        flecs::entity e = scene_->spawn(Position::at_tile(x, y));
+        if (!e.is_valid()) return;
+        RigidBody rb;
+        if (++drops_ % 3 == 0) {
+            rb.shape = static_cast<u8>(RigidShape::Circle);
+            rb.half_w = 0.45f;
+            rb.bounce = 0.4f;
+            rb.density = 0.3f;
+        } else {
+            rb.density = 0.6f;
+        }
+        e.set<RigidBody>(rb);
+    }
+
     void dig(f64 x, f64 y) {
         const i32 cx = static_cast<i32>(std::floor(x)), cy = static_cast<i32>(std::floor(y));
         for (i32 dy = -1; dy <= 1; ++dy)
@@ -259,6 +276,19 @@ public:
             s->color = w.wells > 0 ? render::pack_color(255, 170, 255) : 0xffffffffu;
             s->order = 1;
         });
+        ecs.each([&](const Position& p, const RigidBody& rb) {
+            Sprite* sp = batch_.push(1);
+            if (!sp) return;
+            sp->x = static_cast<f32>(p.tile_x() - camera.x);
+            sp->y = static_cast<f32>(p.tile_y() - camera.y);
+            const bool ball = rb.shape == static_cast<u8>(RigidShape::Circle);
+            sp->w = rb.half_w * 2.0f;
+            sp->h = (ball ? rb.half_w : rb.half_h) * 2.0f;
+            sp->angle = rb.angle;
+            sp->frame = ball ? demo::kFrameBall : demo::kFrameCrate;
+            sp->color = 0xffffffffu;
+            sp->order = 1;
+        });
         wells_.clear();
         ecs.each([&](const Position& p, const GravitySource& g) {
             wells_.push_back({p.tile_x(), p.tile_y()});
@@ -304,8 +334,8 @@ public:
 
     const SimStats& stats() const { return sim_->stats(); }
     const char* tool_name(u32 tool) const {
-        const char* names[4] = {"water", "lava", "sand", "gravity well"};
-        return names[tool & 3u];
+        const char* names[5] = {"water", "lava", "sand", "gravity well", "crates"};
+        return names[tool < 5 ? tool : 0];
     }
     u32 alive() const { return scene_->stats().entities; }
 
@@ -328,6 +358,7 @@ private:
     u32 capacity_ = 0;
     u32 gravity_turn_ = 0;
     u8 water_ = 0, lava_ = 0;
+    u32 drops_ = 0;
 };
 
 class SimDemo final : public App {
@@ -349,8 +380,8 @@ public:
             const SimStats& s = demo_.stats();
             char text[256];
             std::snprintf(text, sizeof(text),
-                          "tool: %s  creatures %u  chunks active %u near %u asleep %u  liquid chunks %u  sim %.2f ms  gravity %s%s",
-                          demo_.tool_name(tool_), demo_.alive(), s.zones.active, s.zones.near, s.zones.asleep,
+                          "tool: %s  creatures %u  rigid %u  chunks active %u near %u asleep %u  liquid chunks %u  sim %.2f ms  gravity %s%s",
+                          demo_.tool_name(tool_), demo_.alive(), s.rigid.live, s.zones.active, s.zones.near, s.zones.asleep,
                           s.cells.active_chunks, demo_.sim_ms, demo_.gravity_name(), paused_ ? "  [paused]" : "");
             set_status(text);
         }
@@ -384,15 +415,16 @@ public:
     void on_event(const SDL_Event& e) override {
         if (e.type == SDL_EVENT_MOUSE_WHEEL)
             demo_.camera.zoom = std::clamp(demo_.camera.zoom * (e.wheel.y > 0 ? 1.25f : 0.8f), 2.0f, 64.0f);
-        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT && ready_ && tool_ == 3) {
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT && ready_ && tool_ >= 3) {
             f64 tx, ty;
             mouse_tile(e.button.x, e.button.y, tx, ty);
-            demo_.toggle_well(tx, ty);
+            if (tool_ == 3) demo_.toggle_well(tx, ty);
+            else demo_.drop_crate(tx, ty);
         }
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
             if (e.key.key == SDLK_SPACE) paused_ = !paused_;
             if (e.key.key == SDLK_G && ready_) demo_.turn_gravity();
-            if (e.key.key >= SDLK_1 && e.key.key <= SDLK_4) tool_ = static_cast<u32>(e.key.key - SDLK_1);
+            if (e.key.key >= SDLK_1 && e.key.key <= SDLK_5) tool_ = static_cast<u32>(e.key.key - SDLK_1);
         }
     }
 
@@ -416,8 +448,8 @@ private:
 };
 
 // Offscreen: plays 6 seconds with two gravity wells near the camera, water
-// and sand poured left of it and lava falling onto the water, then saves a
-// picture.
+// and sand poured left of it, lava falling onto the water and crates
+// dropped in the middle, then saves a picture.
 int run_screenshot(u32 creatures, const char* path) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
@@ -438,6 +470,7 @@ int run_screenshot(u32 creatures, const char* path) {
                 if (f < 40) demo.pour(0, cx - 30 + (f % 9) * 2, cy - 8);
                 if (f >= 40 && f < 60) demo.pour(2, cx - 14, cy - 10);
                 if (f >= 150 && f < 160) demo.pour(1, cx - 27, cy - 10);
+                if (f >= 60 && f < 180 && f % 8 == 0) demo.drop_crate(cx - 4 + (f / 8 % 5) * 1.5, cy - 14);
                 demo.update(1.0 / 60.0, w, h, false);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 demo.render(cmd, target, w, h);

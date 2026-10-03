@@ -7,7 +7,7 @@
 //   sim.update(frame_seconds, camera_rect)
 //     World::update      chunks around every focus load, far ones leave
 //     zones              which loaded chunks are Active, Near or asleep
-//     ticks (0..4)       game systems -> bodies move
+//     ticks (0..4)       game systems -> liquids, sand -> bodies -> rigid bodies
 //     Scene::update      entities re-filed into their chunks
 //     triggers           who entered and left each trigger
 //   draw, using clock().alpha() for smooth motion
@@ -23,6 +23,7 @@
 #include "forge/sim/cells.h"
 #include "forge/sim/clock.h"
 #include "forge/sim/gravity.h"
+#include "forge/sim/rigid.h"
 #include "forge/sim/tiles.h"
 #include "forge/sim/zones.h"
 
@@ -64,9 +65,11 @@ struct TriggerEvent {
 struct Events {
     std::vector<ContactEvent> contacts;
     std::vector<TriggerEvent> triggers;
+    std::vector<RigidContact> rigid; // rigid bodies that started touching
     void clear() {
         contacts.clear();
         triggers.clear();
+        rigid.clear();
     }
 };
 
@@ -99,12 +102,14 @@ struct SimStats {
     f64 bodies_ms = 0;
     f64 triggers_ms = 0;
     f64 cells_ms = 0;       // liquids and falling tiles
+    f64 rigid_ms = 0;       // Box2D bodies
     f64 world_ms = 0;       // World::update + zones + tile view
     f64 scene_ms = 0;       // Scene::update
     u32 bodies_moved = 0;   // in the last tick
     u32 triggers = 0;
     ZoneStats zones;
     CellStats cells;
+    RigidStats rigid;
 };
 
 // Runs fn(entity, dt, Position&, C&...) for every entity matching the query
@@ -132,6 +137,9 @@ public:
     // points most (local sources move bodies only); with no world gravity
     // (top-down games) they stay where they are.
     CellSim* cells() { return cells_.get(); }
+
+    // Rigid bodies (entities with RigidBody), simulated in Active chunks.
+    RigidWorld& rigid() { return *rigid_; }
 
     // Game rules, run every tick in the order added, before bodies move.
     void add_system(SystemFn fn) { systems_.push_back(std::move(fn)); }
@@ -174,6 +182,7 @@ private:
     flecs::query<scene::Position, GravitySource> gravity_sources_;
     GravityField gravity_;
     std::unique_ptr<CellSim> cells_;
+    std::unique_ptr<RigidWorld> rigid_;
     std::vector<GravityField::Placed> placed_;
     std::vector<world::Rect> focus_;
     Events tick_events_, prev_events_, frame_events_;

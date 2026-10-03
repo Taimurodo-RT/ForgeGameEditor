@@ -46,8 +46,8 @@ struct Room {
     Simulation sim;
     Rect view{-64, -64, 128, 64};
 
-    explicit Room(const SimDesc& desc = sim_desc())
-        : world(world_desc(), std::make_shared<RoomGenerator>()), scene(world), sim(world, scene, desc) {
+    explicit Room(const SimDesc& desc = sim_desc(), i32 load_margin = 0)
+        : world(world_desc(load_margin), std::make_shared<RoomGenerator>()), scene(world), sim(world, scene, desc) {
         sim.collision().set(kRock, TileShape::Solid);
         sim.collision().set(kLedge, TileShape::Platform);
         sim.update(0, view);
@@ -55,9 +55,9 @@ struct Room {
         sim.update(0, view);
     }
 
-    static WorldDesc world_desc() {
+    static WorldDesc world_desc(i32 load_margin) {
         WorldDesc d;
-        d.load_margin = 0;
+        d.load_margin = load_margin;
         d.keep_extra = 0;
         return d;
     }
@@ -310,4 +310,58 @@ TEST_CASE("a local source pulls bodies into it") {
     const Position* p = e.try_get<Position>();
     CHECK(std::fabs(p->tile_x() - 45.5) < 0.5);
     CHECK(std::fabs(p->tile_y() - 3.5) < 0.5);
+}
+
+TEST_CASE("rigid bodies fall, stack and report contacts") {
+    PoolScope pool;
+    Room room;
+    // A tower of three crates dropped onto the floor (y = 10).
+    std::vector<flecs::entity> crates;
+    for (int i = 0; i < 3; ++i) {
+        flecs::entity e = room.scene.spawn(Position::at_tile(6.5, 2.0 + i * 2.5));
+        e.set<RigidBody>({});
+        crates.push_back(e);
+    }
+    flecs::entity ball = room.scene.spawn(Position::at_tile(12.5, 1));
+    RigidBody rb;
+    rb.shape = static_cast<u8>(RigidShape::Circle);
+    rb.half_w = 0.4f;
+    ball.set<RigidBody>(rb);
+
+    bool hit_floor = false;
+    for (int i = 0; i < 240; ++i) {
+        room.run(1);
+        for (const RigidContact& c : room.sim.frame_events().rigid)
+            if (c.b == 0 && (c.a == crates[2].id() || c.a == ball.id())) hit_floor = true;
+    }
+    CHECK(hit_floor);
+    CHECK(room.sim.stats().rigid.live == 4);
+    // Bottom crate on the floor, the others on top of it.
+    for (int i = 0; i < 3; ++i) {
+        const f64 y = crates[static_cast<usize>(2 - i)].try_get<Position>()->tile_y();
+        CHECK(std::fabs(y - (9.5 - i)) < 0.1);
+        CHECK(std::fabs(crates[static_cast<usize>(i)].try_get<Position>()->tile_x() - 6.5) < 0.2);
+    }
+    CHECK(std::fabs(ball.try_get<Position>()->tile_y() - 9.6) < 0.05);
+}
+
+TEST_CASE("rigid bodies wait while their chunk is not active") {
+    PoolScope pool;
+    SimDesc desc = Room::sim_desc();
+    desc.zones.active_margin = 0;
+    desc.zones.near_margin = 1;
+    Room room(desc, 1); // chunks next to the view stay loaded
+    room.view = {0, 0, 64, 64}; // chunk (0, 0) only is Active
+    flecs::entity away = room.scene.spawn(Position::at_tile(70.5, 2)); // chunk (1, 0): Near
+    RigidBody rb;
+    rb.vx = 1;
+    away.set<RigidBody>(rb);
+    room.run(30);
+    CHECK(away.try_get<Position>()->tile_y() == doctest::Approx(2.0));
+    CHECK(room.sim.stats().rigid.live == 0);
+    // The camera comes: it falls, keeping its saved sideways speed.
+    room.view = {64, 0, 128, 64};
+    room.run(60);
+    CHECK(away.try_get<Position>()->tile_y() > 9.0);
+    CHECK(away.try_get<Position>()->tile_x() > 70.6);
 }
