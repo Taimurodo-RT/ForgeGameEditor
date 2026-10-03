@@ -21,3 +21,7 @@ forge_target_defaults(forge_bench_scene)
 add_executable(forge_bench_sprites bench_sprites.cpp)
 target_link_libraries(forge_bench_sprites PRIVATE forge::render)
 forge_target_defaults(forge_bench_sprites)
+
+add_executable(forge_bench_sim bench_sim.cpp)
+target_link_libraries(forge_bench_sim PRIVATE forge::sim)
+forge_target_defaults(forge_bench_sim)
