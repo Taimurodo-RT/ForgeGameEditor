@@ -3,6 +3,7 @@
 #include "forge/core/assert.h"
 #include "forge/core/jobs.h"
 #include "forge/core/profile.h"
+#include "forge/core/time.h"
 
 #include <algorithm>
 #include <cstring>
@@ -15,6 +16,8 @@ struct World::LoadJob {
     const Generator* generator = nullptr;
     u32 layer_count = 0;
     std::vector<u8> stored; // compressed edits to restore instead of generating
+    ChunkLocation disk;     // or: where the saved chunk is on disk
+    bool from_disk = false;
     bool restored = false;
 
     static void run(void* data, u32) {
@@ -22,10 +25,13 @@ struct World::LoadJob {
         auto* job = static_cast<LoadJob*>(data);
         Chunk& chunk = *job->chunk;
         const ChunkTiles out{chunk.tiles, job->layer_count};
+        if (job->from_disk && !read_chunk_bytes(job->disk, job->stored)) job->stored.clear();
         job->restored = !job->stored.empty() &&
                         decode_chunk(job->stored.data(), job->stored.size(), chunk.tiles, job->layer_count);
         if (!job->restored) job->generator->generate(chunk.coord, out);
         chunk.edited = job->restored;
+        // Straight from the save: unchanged until edited again.
+        if (job->restored && job->from_disk) chunk.saved_revision = chunk.revision;
         chunk.state.store(ChunkState::Ready, std::memory_order_release);
     }
 };
@@ -86,6 +92,8 @@ void World::start_load(ChunkCoord coord) {
         stored_bytes_ -= it->second.size();
         job->stored = std::move(it->second);
         stored_edits_.erase(it);
+    } else if (store_ && store_->locate(coord, job->disk)) {
+        job->from_disk = true;
     }
     loading_.push_back(job);
     jobs::submit_background({&LoadJob::run, job, 0}, &loads_);
@@ -119,7 +127,8 @@ void World::integrate_finished() {
 
 void World::unload(Chunk* chunk) {
     for (WorldListener* l : listeners_) l->on_chunk_unloading(*chunk);
-    if (chunk->edited) {
+    // Changed and not yet on disk: keep it until the next save.
+    if (chunk->edited && chunk->revision != chunk->saved_revision) {
         std::vector<u8> bytes = encode_chunk(chunk->tiles, desc_.layer_count);
         stored_bytes_ += bytes.size();
         stored_edits_[chunk->coord] = std::move(bytes);
@@ -191,6 +200,46 @@ void World::finish_loading() {
     jobs::wait(loads_);
     integrate_finished();
     release_unloaded();
+}
+
+bool World::open_save(const std::filesystem::path& folder, std::string* error) {
+    FORGE_VERIFY(resident_.empty()); // before the first update()
+    auto store = std::make_unique<RegionStore>();
+    if (!store->open(folder, desc_.layer_count, error)) return false;
+    store_ = std::move(store);
+    return true;
+}
+
+SaveReport World::save() {
+    FORGE_ZONE_N("World save");
+    SaveReport report;
+    if (!store_) return report;
+    const u64 start = time_now_ns();
+    // No chunk may be read from the region files while they are rewritten.
+    finish_loading();
+
+    std::vector<Chunk*> changed;
+    for (Chunk* c : resident_list_)
+        if (c->tiles && c->edited && c->revision != c->saved_revision) changed.push_back(c);
+    std::vector<std::vector<u8>> encoded(changed.size());
+    jobs::parallel_for(static_cast<u32>(changed.size()), 16, [&](u32 b, u32 e) {
+        for (u32 i = b; i < e; ++i) encoded[i] = encode_chunk(changed[i]->tiles, desc_.layer_count);
+    });
+
+    std::vector<RegionStore::Write> writes;
+    writes.reserve(changed.size() + stored_edits_.size());
+    for (usize i = 0; i < changed.size(); ++i) writes.push_back({changed[i]->coord, &encoded[i]});
+    for (const auto& [coord, bytes] : stored_edits_) writes.push_back({coord, &bytes});
+
+    report.ok = store_->write(writes, &report.regions, &report.bytes);
+    report.chunks = static_cast<u32>(writes.size());
+    if (report.ok) {
+        for (Chunk* c : changed) c->saved_revision = c->revision;
+        stored_edits_.clear();
+        stored_bytes_ = 0;
+    }
+    report.ms = ns_to_ms(time_now_ns() - start);
+    return report;
 }
 
 void World::release_unloaded() {
