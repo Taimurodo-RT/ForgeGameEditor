@@ -27,7 +27,27 @@ FetchContent_Declare(yyjson
   GIT_TAG 0.13.0
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 tracy yyjson)
+# xxHash: content hashing for the asset pipeline (header-only use).
+FetchContent_Declare(xxhash
+  GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
+  GIT_TAG v0.8.3
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-build)
+
+# stb: image decoding for importers (header-only, pinned commit).
+FetchContent_Declare(stb
+  GIT_REPOSITORY https://github.com/nothings/stb.git
+  GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
+  SOURCE_SUBDIR do-not-build)
+
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb)
+
+add_library(xxhash_headers INTERFACE)
+target_include_directories(xxhash_headers SYSTEM INTERFACE ${xxhash_SOURCE_DIR})
+add_library(stb_headers INTERFACE)
+target_include_directories(stb_headers SYSTEM INTERFACE ${stb_SOURCE_DIR})
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/sqlite ${CMAKE_BINARY_DIR}/third_party/sqlite)
 
 if(FORGE_BUILD_TESTS)
   FetchContent_Declare(doctest
