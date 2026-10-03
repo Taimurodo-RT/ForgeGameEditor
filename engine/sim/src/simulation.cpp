@@ -23,6 +23,7 @@ Simulation::Simulation(world::World& world, scene::Scene& scene, const SimDesc& 
     scene_.register_component<GravitySource>();
     gravity_.set_world(desc.gravity_x, desc.gravity_y);
     if (desc.liquid_layer < world_.layer_count()) cells_ = std::make_unique<CellSim>(desc.collision_layer, desc.liquid_layer);
+    rigid_ = std::make_unique<RigidWorld>(scene_, collision_);
     bodies_ = scene_.ecs().query<scene::Position, Body>();
     triggers_ = scene_.ecs().query<scene::Position, Trigger>();
     keep_awake_ = scene_.ecs().query<scene::Position, KeepAwake>();
@@ -96,12 +97,17 @@ void Simulation::tick() {
     const u64 t1 = time_now_ns();
     stats_.cells_ms += ns_to_ms(t1 - tc);
     step_bodies(ctx);
+    const u64 tr = time_now_ns();
+    rigid_->step(world_, zones_, tiles_, gravity_, cells_.get(), ctx.tick, ctx.dt, tick_events_.rigid);
+    stats_.rigid = rigid_->stats();
     const u64 t2 = time_now_ns();
+    stats_.rigid_ms += ns_to_ms(t2 - tr);
     stats_.systems_ms += ns_to_ms(tc - t0);
-    stats_.bodies_ms += ns_to_ms(t2 - t1);
+    stats_.bodies_ms += ns_to_ms(tr - t1);
 
     frame_events_.contacts.insert(frame_events_.contacts.end(), tick_events_.contacts.begin(), tick_events_.contacts.end());
     frame_events_.triggers.insert(frame_events_.triggers.end(), tick_events_.triggers.begin(), tick_events_.triggers.end());
+    frame_events_.rigid.insert(frame_events_.rigid.end(), tick_events_.rigid.begin(), tick_events_.rigid.end());
 }
 
 void Simulation::gather_gravity() {

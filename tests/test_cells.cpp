@@ -190,3 +190,27 @@ TEST_CASE("bodies float in water") {
     CHECK(e.try_get<Body>()->liquid == tank.water);
     CHECK(e.try_get<Position>()->tile_y() < 47.0);
 }
+
+TEST_CASE("crates float on water") {
+    PoolScope pool;
+    Tank tank([](i32 x, i32 y) { return (y >= 50 || ((x < 40 || x >= 60) && y >= 30)) ? kRock : TileId{0}; });
+    for (i32 x = 40; x < 60; ++x)
+        for (i32 y = 36; y < 50; ++y) tank.sim.cells()->pour(x, y, tank.water, kFull);
+    tank.settle();
+    flecs::entity crate = tank.scene.spawn(Position::at_tile(50, 30));
+    RigidBody rb;
+    rb.density = 0.5f;
+    crate.set<RigidBody>(rb);
+    for (u32 i = 0; i < 300; ++i) tank.sim.update(1.0 / 60.0, tank.view);
+    // Density 0.5: it floats half under, its centre at the water's surface
+    // (lower than poured: the deep water is slightly squeezed).
+    f64 surface = 50;
+    for (i32 y = 30; y < 50; ++y)
+        if (liquid_amount(tank.world.tile(2, 45, y)) > 0) {
+            surface = y + 1.0 - std::min(1.0, liquid_amount(tank.world.tile(2, 45, y)) / f64{kFull});
+            break;
+        }
+    const f64 y = crate.try_get<Position>()->tile_y();
+    MESSAGE("water surface at y = ", surface, ", crate centre at y = ", y);
+    CHECK(std::fabs(y - surface) < 0.6);
+}

@@ -155,6 +155,25 @@ SheetImage make_sprite_sheet() {
             const f32 a = std::clamp(1.0f - std::sqrt(dx * dx + dy * dy) / 8.0f, 0.0f, 1.0f);
             put(kFrameGlow, x, y, {255, 255, 255}, static_cast<u8>(a * a * 255.0f));
         }
+    // Crate: planks with a dark frame and a cross brace.
+    for (i32 y = 0; y < static_cast<i32>(kPx); ++y)
+        for (i32 x = 0; x < static_cast<i32>(kPx); ++x) {
+            const bool frame = x < 2 || y < 2 || x > 13 || y > 13;
+            const bool brace = std::abs(x - y) < 2 || std::abs(x + y - 15) < 2;
+            Rgb c = shade(Rgb{176, 124, 70}, (y % 4 == 0) ? -22 : static_cast<i32>((x * 7 + y * 3) % 9) - 4);
+            if (brace) c = Rgb{150, 100, 56};
+            if (frame) c = Rgb{104, 68, 40};
+            put(kFrameCrate, x, y, c);
+        }
+    // Ball: lit from the top left, with a stripe so its spin shows.
+    for (i32 y = 0; y < static_cast<i32>(kPx); ++y)
+        for (i32 x = 0; x < static_cast<i32>(kPx); ++x) {
+            const f32 dx = (static_cast<f32>(x) - 7.5f) / 7.5f, dy = (static_cast<f32>(y) - 7.5f) / 7.5f;
+            const f32 d = dx * dx + dy * dy;
+            if (d > 1.0f) continue;
+            const Rgb base = std::fabs(dy) < 0.22f ? Rgb{245, 245, 240} : Rgb{220, 60, 60};
+            put(kFrameBall, x, y, d > 0.8f ? shade(base, -80) : shade(base, static_cast<i32>((-dx - dy) * 30)));
+        }
     for (u32 f = 0; f < kRows * kCols; ++f) {
         u32 ox, oy;
         frame_origin(f, ox, oy);

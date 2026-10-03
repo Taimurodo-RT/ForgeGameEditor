@@ -52,6 +52,8 @@ public:
     }
 
     bool solid(i32 x, i32 y) const { return shape(x, y) == TileShape::Solid; }
+    // The loaded chunks it covers.
+    world::Rect chunk_rect() const { return rect_; }
 
     // The liquid cell at a tile (see cells.h), 0 when none or not loaded.
     u16 liquid(i32 x, i32 y) const {
