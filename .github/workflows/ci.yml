@@ -23,7 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        # mesa-vulkan-drivers: software Vulkan (lavapipe) so rendering can be checked without a GPU.
+        run: sudo apt-get update && sudo apt-get install -y ninja-build mesa-vulkan-drivers
       - name: Configure
         run: cmake -S . -B build ${{ matrix.configure }}
       - name: Build
@@ -36,3 +37,19 @@ jobs:
       - name: Sandbox, 600 headless frames
         shell: bash
         run: ./${{ format(matrix.bin, 'apps/sandbox') }}/forge_sandbox --headless 600
+      - name: World streaming benchmark (64k x 64k, 10 s flight)
+        shell: bash
+        run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_world --frames 600
+      - name: World demo, 600 headless frames
+        shell: bash
+        run: ./${{ format(matrix.bin, 'apps/world_demo') }}/forge_world_demo --headless 600
+      - name: Render the world offscreen (software Vulkan)
+        if: runner.os == 'Linux'
+        run: |
+          ./build/apps/world_demo/forge_world_demo --screenshot world-side.png
+          ./build/apps/world_demo/forge_world_demo --topdown --screenshot world-top.png
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-screenshots
+          path: world-*.png
