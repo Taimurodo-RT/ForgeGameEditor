@@ -3,6 +3,7 @@ add_library(forge_sim STATIC
   src/tiles.cpp
   src/bodies.cpp
   src/gravity.cpp
+  src/cells.cpp
   src/simulation.cpp)
 add_library(forge::sim ALIAS forge_sim)
 target_include_directories(forge_sim PUBLIC include)

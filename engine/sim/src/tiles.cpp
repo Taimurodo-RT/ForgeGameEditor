@@ -13,7 +13,7 @@ namespace {
 constexpr i64 kMaxGridCells = 1 << 22;
 } // namespace
 
-void TileView::rebuild(world::World& world, const CollisionRules& rules) {
+void TileView::rebuild(world::World& world, const CollisionRules& rules, u32 liquid_layer) {
     FORGE_ZONE_N("Tile view rebuild");
     table_ = rules.table();
     world::Rect box{INT32_MAX, INT32_MAX, INT32_MIN, INT32_MIN};
@@ -24,6 +24,7 @@ void TileView::rebuild(world::World& world, const CollisionRules& rules) {
         box.y1 = std::max(box.y1, c.coord.y + 1);
     });
     chunks_.clear();
+    liquids_.clear();
     if (box.empty()) {
         rect_ = {};
         width_ = height_ = 0;
@@ -39,11 +40,14 @@ void TileView::rebuild(world::World& world, const CollisionRules& rules) {
     width_ = box.x1 - box.x0;
     height_ = box.y1 - box.y0;
     chunks_.assign(static_cast<usize>(width_) * static_cast<usize>(height_), nullptr);
+    const bool liquids = liquid_layer < world.layer_count();
+    if (liquids) liquids_.assign(chunks_.size(), nullptr);
     const u32 layer = std::min(rules.layer(), world.layer_count() - 1);
     world.for_each_ready([&](world::Chunk& c) {
         if (!box.contains(c.coord.x, c.coord.y)) return;
-        chunks_[static_cast<usize>(c.coord.y - box.y0) * static_cast<usize>(width_) + static_cast<usize>(c.coord.x - box.x0)] =
-            c.layer(layer);
+        const usize i = static_cast<usize>(c.coord.y - box.y0) * static_cast<usize>(width_) + static_cast<usize>(c.coord.x - box.x0);
+        chunks_[i] = c.layer(layer);
+        if (liquids) liquids_[i] = c.layer(liquid_layer);
     });
 }
 

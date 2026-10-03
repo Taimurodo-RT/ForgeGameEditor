@@ -1,9 +1,12 @@
 // Simulation demo: creatures living in a side-view world at a steady 60
-// ticks per second. They walk, jump over steps and fall; gravity wells pull
-// them in and make them glow while they are inside (trigger events).
+// ticks per second. They walk, jump over steps, fall and swim; gravity wells
+// pull them in and make them glow while they are inside (trigger events).
+// Water and lava flow and level out, sand falls and piles up, and where water
+// meets lava it turns to stone.
 //
 //   WASD / arrows   move the camera (Shift: faster)    mouse wheel   zoom
-//   left mouse      place a gravity well (click one again to remove it)
+//   1 2 3 4         left mouse pours water / lava / sand, or places a
+//                   gravity well (click one again to remove it)
 //   right mouse     dig
 //   G               turn the world's gravity by 90°    Space   pause
 //
@@ -74,18 +77,33 @@ class Demo {
 public:
     bool init(SDL_GPUDevice* device, SDL_GPUTextureFormat format, u32 creatures) {
         WorldDesc wd;
+        wd.layer_count = 3; // walls, blocks, liquids
         world_ = std::make_unique<World>(wd, std::make_shared<SideViewGenerator>(7));
         scene_ = std::make_unique<scene::Scene>(*world_);
         scene_->register_component<DemoWalker>();
         SimDesc sd;
         sd.gravity_y = kGravity;
+        sd.liquid_layer = 2;
         sim_ = std::make_unique<Simulation>(*world_, *scene_, sd);
         for (TileId t : {TileGrass, TileDirt, TileStone, TileSand, TileCopper, TileIron, TileGold})
             sim_->collision().set(t, TileShape::Solid);
+        CellSim& cells = *sim_->cells();
+        LiquidKind water;
+        water_ = cells.add_liquid(water);
+        LiquidKind lava;
+        lava.thickness = 4;
+        lava.drag = 6;
+        lava.buoyancy = 0.4f;
+        lava_ = cells.add_liquid(lava);
+        cells.add_reaction(water_, lava_, TileStone);
+        cells.add_reaction(lava_, water_, TileStone);
+        cells.set_falling(TileSand, true);
 
         atlas_ = demo::make_tile_atlas();
         sheet_ = demo::make_sprite_sheet();
         if (!tiles_.init(device, format, *world_, {atlas_.data(), demo::kTileCellPx, demo::kTileCells})) return false;
+        const Color liquid_colors[3] = {{}, {0.20f, 0.45f, 0.95f, 0.72f}, {1.0f, 0.42f, 0.08f, 0.95f}};
+        tiles_.set_layer_liquid(2, liquid_colors, 3, kFull);
         if (!sprites_.init(device, format, sheet_.sheet(), std::max(creatures + 1024, 4096u))) return false;
         if (!lights_.init(device, format)) return false;
         lights_.set_rules(demo::side_view_light_rules());
@@ -173,6 +191,19 @@ public:
         w.set<KeepAwake>({kWellRadius});
     }
 
+    // Tool 0 water, 1 lava, 2 sand: a 3 × 3 splash at a point.
+    void pour(u32 tool, f64 x, f64 y) {
+        const i32 cx = static_cast<i32>(std::floor(x)), cy = static_cast<i32>(std::floor(y));
+        for (i32 dy = -1; dy <= 1; ++dy)
+            for (i32 dx = -1; dx <= 1; ++dx) {
+                if (tool == 2) {
+                    if (world_->tile(1, cx + dx, cy + dy) == TileAir) world_->set_tile(1, cx + dx, cy + dy, TileSand);
+                } else {
+                    sim_->cells()->pour(cx + dx, cy + dy, tool == 0 ? water_ : lava_, kFull);
+                }
+            }
+    }
+
     void dig(f64 x, f64 y) {
         const i32 cx = static_cast<i32>(std::floor(x)), cy = static_cast<i32>(std::floor(y));
         for (i32 dy = -1; dy <= 1; ++dy)
@@ -184,6 +215,7 @@ public:
         gravity_turn_ = (gravity_turn_ + 1) % 4;
         const f32 dirs[4][2] = {{0, 1}, {-1, 0}, {0, -1}, {1, 0}};
         sim_->set_gravity(dirs[gravity_turn_][0] * kGravity, dirs[gravity_turn_][1] * kGravity);
+        tiles_.set_liquid_down(gravity_turn_); // liquids settle the same way
     }
     const char* gravity_name() const {
         const char* names[4] = {"down", "left", "up", "right"};
@@ -253,8 +285,9 @@ public:
         info.load_op = SDL_GPU_LOADOP_CLEAR;
         info.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
-        tiles_.draw(cmd, pass);
+        tiles_.draw_layers(cmd, pass, 0, 2);
         sprites_.draw(cmd, pass);
+        tiles_.draw_layers(cmd, pass, 2, 1); // liquids over the creatures swimming in them
         lights_.draw(cmd, pass);
         SDL_EndGPURenderPass(pass);
     }
@@ -270,6 +303,10 @@ public:
     }
 
     const SimStats& stats() const { return sim_->stats(); }
+    const char* tool_name(u32 tool) const {
+        const char* names[4] = {"water", "lava", "sand", "gravity well"};
+        return names[tool & 3u];
+    }
     u32 alive() const { return scene_->stats().entities; }
 
     Camera2D camera;
@@ -290,6 +327,7 @@ private:
     std::vector<std::pair<f64, f64>> wells_;
     u32 capacity_ = 0;
     u32 gravity_turn_ = 0;
+    u8 water_ = 0, lava_ = 0;
 };
 
 class SimDemo final : public App {
@@ -311,9 +349,9 @@ public:
             const SimStats& s = demo_.stats();
             char text[256];
             std::snprintf(text, sizeof(text),
-                          "creatures in memory %u  chunks active %u near %u asleep %u  sim %.2f ms  gravity %s%s",
-                          demo_.alive(), s.zones.active, s.zones.near, s.zones.asleep, demo_.sim_ms, demo_.gravity_name(),
-                          paused_ ? "  [paused]" : "");
+                          "tool: %s  creatures %u  chunks active %u near %u asleep %u  liquid chunks %u  sim %.2f ms  gravity %s%s",
+                          demo_.tool_name(tool_), demo_.alive(), s.zones.active, s.zones.near, s.zones.asleep,
+                          s.cells.active_chunks, demo_.sim_ms, demo_.gravity_name(), paused_ ? "  [paused]" : "");
             set_status(text);
         }
     }
@@ -330,17 +368,23 @@ public:
         demo_.camera.x += dx * speed * dt_;
         demo_.camera.y += dy * speed * dt_;
         f32 mx = 0, my = 0;
-        if (ready_ && (SDL_GetMouseState(&mx, &my) & SDL_BUTTON_RMASK)) {
+        const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mx, &my);
+        if (ready_ && (buttons & SDL_BUTTON_RMASK)) {
             f64 tx, ty;
             mouse_tile(mx, my, tx, ty);
             demo_.dig(tx, ty);
+        }
+        if (ready_ && tool_ < 3 && (buttons & SDL_BUTTON_LMASK)) {
+            f64 tx, ty;
+            mouse_tile(mx, my, tx, ty);
+            demo_.pour(tool_, tx, ty);
         }
     }
 
     void on_event(const SDL_Event& e) override {
         if (e.type == SDL_EVENT_MOUSE_WHEEL)
             demo_.camera.zoom = std::clamp(demo_.camera.zoom * (e.wheel.y > 0 ? 1.25f : 0.8f), 2.0f, 64.0f);
-        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT && ready_) {
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT && ready_ && tool_ == 3) {
             f64 tx, ty;
             mouse_tile(e.button.x, e.button.y, tx, ty);
             demo_.toggle_well(tx, ty);
@@ -348,6 +392,7 @@ public:
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
             if (e.key.key == SDLK_SPACE) paused_ = !paused_;
             if (e.key.key == SDLK_G && ready_) demo_.turn_gravity();
+            if (e.key.key >= SDLK_1 && e.key.key <= SDLK_4) tool_ = static_cast<u32>(e.key.key - SDLK_1);
         }
     }
 
@@ -365,12 +410,14 @@ private:
 
     Demo demo_;
     bool ready_ = false, failed_ = false, paused_ = false;
+    u32 tool_ = 0;
     f64 dt_ = 0;
     u32 width_ = 0, height_ = 0;
 };
 
-// Offscreen: plays 3 seconds with two gravity wells near the camera, then
-// saves a picture.
+// Offscreen: plays 6 seconds with two gravity wells near the camera, water
+// and sand poured left of it and lava falling onto the water, then saves a
+// picture.
 int run_screenshot(u32 creatures, const char* path) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
@@ -384,9 +431,13 @@ int run_screenshot(u32 creatures, const char* path) {
     {
         Demo demo;
         if (target && demo.init(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, creatures)) {
-            demo.toggle_well(demo.camera.x - 14, demo.camera.y - 2);
-            demo.toggle_well(demo.camera.x + 16, demo.camera.y + 2);
-            for (u32 f = 0; f < 180; ++f) {
+            const f64 cx = demo.camera.x, cy = demo.camera.y;
+            demo.toggle_well(cx + 4, cy - 6);
+            demo.toggle_well(cx + 22, cy - 1);
+            for (u32 f = 0; f < 360; ++f) {
+                if (f < 40) demo.pour(0, cx - 30 + (f % 9) * 2, cy - 8);
+                if (f >= 40 && f < 60) demo.pour(2, cx - 14, cy - 10);
+                if (f >= 150 && f < 160) demo.pour(1, cx - 27, cy - 10);
                 demo.update(1.0 / 60.0, w, h, false);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 demo.render(cmd, target, w, h);

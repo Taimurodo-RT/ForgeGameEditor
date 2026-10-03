@@ -5,6 +5,7 @@
 //   bodies    gravity + sliding along tiles for every one of them
 //   triggers  2 000 zones reporting who enters and leaves
 //   scene     re-filing everyone into chunks + spatial index
+//   cells     liquids and falling sand (rain: 500 drops a frame all over)
 //
 // Then the same world with the camera over one part of it: the rest is Near
 // (simulated every 4th tick) or asleep, which is what a real game sees.
@@ -63,9 +64,14 @@ u32 hash32(u32 a, u32 b) {
 constexpr i32 kWidth = 16384; // tiles of world the creatures live in
 const Rect kArea{0, -400, kWidth, 400};
 
-void run_frames(Simulation& sim, const Rect& focus, u32 frames, bool all_awake) {
-    Series logic, bodies, triggers, scene, world, total;
+void run_frames(Simulation& sim, const Rect& focus, u32 frames, bool all_awake, bool rain = false) {
+    Series logic, bodies, triggers, scene, world, cells, total;
+    u32 drop = 0;
     for (u32 f = 0; f < frames; ++f) {
+        if (rain)
+            for (u32 k = 0; k < 500; ++k, ++drop)
+                sim.cells()->pour(focus.x0 + static_cast<i32>(hash32(drop, 21) % static_cast<u32>(focus.x1 - focus.x0)),
+                                  focus.y0 + 1 + static_cast<i32>(hash32(drop, 22) % 64), 1, kFull / 2);
         const u64 t0 = time_now_ns();
         sim.update(1.0 / 60.0, focus);
         total.v.push_back(ns_to_ms(time_now_ns() - t0));
@@ -75,16 +81,18 @@ void run_frames(Simulation& sim, const Rect& focus, u32 frames, bool all_awake) 
         triggers.v.push_back(s.triggers_ms);
         scene.v.push_back(s.scene_ms);
         world.v.push_back(s.world_ms);
+        cells.v.push_back(s.cells_ms);
     }
     const SimStats& s = sim.stats();
-    FORGE_INFO("%s: chunks active %u, near %u, asleep %u; bodies moved in the last tick %u",
-               all_awake ? "everything awake" : "camera over one part", s.zones.active, s.zones.near, s.zones.asleep,
-               s.bodies_moved);
+    FORGE_INFO("%s: chunks active %u, near %u, asleep %u; bodies moved in the last tick %u; liquid chunks %u",
+               rain ? "rain over everything" : (all_awake ? "everything awake" : "camera over one part"), s.zones.active,
+               s.zones.near, s.zones.asleep, s.bodies_moved, s.cells.active_chunks);
     logic.print("logic");
     bodies.print("bodies");
     triggers.print("triggers");
     scene.print("scene");
     world.print("world");
+    cells.print("cells");
     total.print("total");
 }
 
@@ -101,14 +109,18 @@ int main(int argc, char** argv) {
     jobs::init(threads);
     {
         WorldDesc wd;
+        wd.layer_count = 3; // walls, blocks, liquids
         World world(wd, std::make_shared<SideViewGenerator>(7));
         scene::Scene scene(world);
         scene.register_component<BenchWalker>();
         SimDesc desc;
         desc.gravity_y = 40;
+        desc.liquid_layer = 2;
         Simulation sim(world, scene, desc);
         for (TileId t : {TileGrass, TileDirt, TileStone, TileSand, TileCopper, TileIron, TileGold})
             sim.collision().set(t, TileShape::Solid);
+        sim.cells()->add_liquid({});
+        sim.cells()->set_falling(TileSand, true);
 
         // Loads start a batch at a time: repeat until the whole area is in.
         for (u32 last = ~0u; world.stats().resident != last;) {
@@ -182,6 +194,14 @@ int main(int argc, char** argv) {
         run_frames(sim, kArea, frames, true);
         // A 1920×1080 view at 16 px per tile is 120 × 68 tiles.
         run_frames(sim, Rect{8000, -100, 8120, -32}, frames, false);
+        // Back over the whole stretch, with rain on all of it.
+        const Rect sky{0, -400, kWidth, 400};
+        for (u32 last = ~0u; world.stats().resident != last;) {
+            last = world.stats().resident;
+            sim.update(0, sky);
+            world.finish_loading();
+        }
+        run_frames(sim, sky, frames, true, true);
     }
     jobs::shutdown();
     return 0;

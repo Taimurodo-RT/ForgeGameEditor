@@ -20,6 +20,7 @@
 #include "forge/data/reflect.h"
 #include "forge/scene/scene.h"
 #include "forge/sim/bodies.h"
+#include "forge/sim/cells.h"
 #include "forge/sim/clock.h"
 #include "forge/sim/gravity.h"
 #include "forge/sim/tiles.h"
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -75,6 +77,8 @@ struct SimDesc {
     f32 gravity_x = 0, gravity_y = 0; // the world's pull, tiles / s² (side view: 0, 40; top-down: 0, 0)
     f32 max_fall = 50;                // tiles / s along the pull
     u32 collision_layer = 1;
+    // A tile layer for liquids (the world needs that many layers); ~0u: none.
+    u32 liquid_layer = ~0u;
 };
 
 struct TickContext {
@@ -94,11 +98,13 @@ struct SimStats {
     f64 systems_ms = 0;     // last frame, all ticks together
     f64 bodies_ms = 0;
     f64 triggers_ms = 0;
+    f64 cells_ms = 0;       // liquids and falling tiles
     f64 world_ms = 0;       // World::update + zones + tile view
     f64 scene_ms = 0;       // Scene::update
     u32 bodies_moved = 0;   // in the last tick
     u32 triggers = 0;
     ZoneStats zones;
+    CellStats cells;
 };
 
 // Runs fn(entity, dt, Position&, C&...) for every entity matching the query
@@ -120,6 +126,12 @@ public:
     // The world's pull; can change during play (turning the world over).
     void set_gravity(f32 x, f32 y) { gravity_.set_world(x, y); }
     const GravityField& gravity() const { return gravity_; }
+
+    // Liquids and falling tiles; nullptr without a liquid layer. Set up the
+    // kinds before the first update. They fall the way the world's gravity
+    // points most (local sources move bodies only); with no world gravity
+    // (top-down games) they stay where they are.
+    CellSim* cells() { return cells_.get(); }
 
     // Game rules, run every tick in the order added, before bodies move.
     void add_system(SystemFn fn) { systems_.push_back(std::move(fn)); }
@@ -161,6 +173,7 @@ private:
     flecs::query<scene::Position, KeepAwake> keep_awake_;
     flecs::query<scene::Position, GravitySource> gravity_sources_;
     GravityField gravity_;
+    std::unique_ptr<CellSim> cells_;
     std::vector<GravityField::Placed> placed_;
     std::vector<world::Rect> focus_;
     Events tick_events_, prev_events_, frame_events_;

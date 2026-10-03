@@ -32,6 +32,7 @@ struct Body {
     // Not saved: what it touched, the gravity it felt (to jump the other way)
     // and how far it moved in its last tick.
     u8 contacts = 0;
+    u8 liquid = 0; // kind of liquid it is in (0: none), for swimming
     f32 gx = 0, gy = 0;
     f32 last_dx = 0, last_dy = 0;
 };
