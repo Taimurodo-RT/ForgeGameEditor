@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            configure: -G "Visual Studio 17 2022"
+            bin: build/{0}/Release
+          - os: ubuntu-latest
+            # CI machines have no display; SDL builds without X11/Wayland here.
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_UNIX_CONSOLE_BUILD=ON
+            bin: build/{0}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure
+        run: cmake -S . -B build ${{ matrix.configure }}
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Job system benchmark
+        shell: bash
+        run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_jobs
+      - name: Sandbox, 600 headless frames
+        shell: bash
+        run: ./${{ format(matrix.bin, 'apps/sandbox') }}/forge_sandbox --headless 600

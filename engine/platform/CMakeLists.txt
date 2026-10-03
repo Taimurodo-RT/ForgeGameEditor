@@ -1,0 +1,5 @@
+add_library(forge_platform STATIC src/app.cpp)
+add_library(forge::platform ALIAS forge_platform)
+target_include_directories(forge_platform PUBLIC include)
+target_link_libraries(forge_platform PUBLIC forge::core SDL3::SDL3-static)
+forge_target_defaults(forge_platform)
