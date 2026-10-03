@@ -84,6 +84,9 @@ struct WorldDesc {
     i32 keep_extra = 2;
     // Background jobs in flight at once; 0 = 32 per thread (at least 64).
     u32 max_loads_in_flight = 0;
+    // Far chunks dropped per update() at most (the rest follow in later
+    // updates); 0 = all at once.
+    u32 max_unloads_per_update = 64;
 };
 
 struct WorldStats {
@@ -183,6 +186,7 @@ private:
     usize stored_bytes_ = 0;
 
     std::vector<Rect> last_keep_;
+    bool unload_pending_ = false;
     u64 generated_ = 0;
     u64 restored_ = 0;
     u64 unloaded_ = 0;

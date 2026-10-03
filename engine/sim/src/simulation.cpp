@@ -54,8 +54,13 @@ u32 Simulation::update(f64 frame_seconds, std::span<const world::Rect> focus) {
     FORGE_ZONE_N("Simulation update");
     const SimStats prev = stats_;
     stats_ = {};
+    // Counts describe the last tick: keep them through frames that run none
+    // (a 144 Hz screen sees two of those for every tick).
     stats_.bodies_moved = prev.bodies_moved;
     stats_.triggers = prev.triggers;
+    stats_.cells = prev.cells;
+    stats_.rigid = prev.rigid;
+    stats_.factory = prev.factory;
 
     u64 t0 = time_now_ns();
     focus_.assign(focus.begin(), focus.end());
