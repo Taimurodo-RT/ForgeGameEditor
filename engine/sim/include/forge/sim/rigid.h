@@ -73,6 +73,10 @@ public:
     // A push, in tile-mass units × tiles/s; false if the body is not
     // simulated right now (then change RigidBody::vx / vy instead).
     bool apply_impulse(flecs::entity_t e, f32 ix, f32 iy);
+    // Forgets the bodies in Box2D; they are made again from their components
+    // at the next step (after the components were changed from outside, as
+    // rewinding does).
+    void reset();
 
     const RigidStats& stats() const { return stats_; }
 

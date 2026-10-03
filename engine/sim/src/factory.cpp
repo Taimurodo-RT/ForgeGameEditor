@@ -81,6 +81,7 @@ struct Factory::Impl {
         std::vector<u64> path; // tiles, start to end
         u32 length = 0;        // steps
         u32 speed = 8;
+        f32 carry = 0; // part of a step left over (time not at full speed)
         std::vector<Slot> ring;
         u32 head = 0, count = 0;
         u32 first_moving = 0; // items before it are packed against the end
@@ -115,10 +116,13 @@ struct Factory::Impl {
             ++count;
             back_free = 0;
         }
-        // Everything moves by the belt speed except what is packed in front.
-        void move() {
-            if (count == 0) return;
-            const u32 v = speed;
+        // Everything moves by the belt speed (times k, the share of a 1/60 s
+        // tick that passed) except what is packed in front.
+        void move(f32 k) {
+            const f32 want = static_cast<f32>(speed) * k + carry;
+            const u32 v = static_cast<u32>(want);
+            carry = want - static_cast<f32>(v);
+            if (count == 0 || v == 0) return;
             u32 prev = 0; // how far the item in front moved
             bool all = false;
             for (u32 i = first_moving; i < count; ++i) {
@@ -902,13 +906,13 @@ struct Factory::Impl {
         });
     }
 
-    void step_belts() {
+    void step_belts(f32 share) {
         std::atomic<u32> items{0};
         jobs::parallel_for(static_cast<u32>(live_lines.size()), 256, [&](u32 b, u32 e) {
             u32 n = 0;
             for (u32 i = b; i < e; ++i) {
                 Line& l = lines[live_lines[i]];
-                l.move();
+                l.move(share);
                 n += l.count;
             }
             items.fetch_add(n, std::memory_order_relaxed);
@@ -1056,7 +1060,7 @@ struct Factory::Impl {
         }
         step_power(dt);
         const u64 t2 = time_now_ns();
-        step_belts();
+        step_belts(dt * 60.0f);
         const u64 t3 = time_now_ns();
         step_machines(dt);
         const u64 t4 = time_now_ns();

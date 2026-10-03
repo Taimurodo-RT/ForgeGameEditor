@@ -285,6 +285,8 @@ RigidWorld::RigidWorld(scene::Scene& scene, const CollisionRules& rules) : impl_
 
 RigidWorld::~RigidWorld() { delete impl_; }
 
+void RigidWorld::reset() { impl_->destroy_world(); }
+
 bool RigidWorld::apply_impulse(flecs::entity_t e, f32 ix, f32 iy) {
     auto it = impl_->live.find(e);
     if (it == impl_->live.end()) return false;

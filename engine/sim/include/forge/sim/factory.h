@@ -41,7 +41,7 @@ constexpr MachineId kNoMachine = ~0u;
 enum class Dir : u8 { East, South, West, North };
 
 // A belt tile is 256 steps long; items keep at least 64 steps apart (four
-// per tile). Belt speed is in steps per tick: 8 is 1.875 tiles a second.
+// per tile). Belt speed is in steps per 1/60 s: 8 is 1.875 tiles a second.
 constexpr u32 kBeltTileLength = 256;
 constexpr u32 kItemSpacing = 64;
 constexpr f32 kPipeTileCapacity = 100;
