@@ -90,7 +90,7 @@ std::vector<u8> make_tile_atlas() {
 }
 
 SheetImage make_sprite_sheet() {
-    constexpr u32 kPx = 16, kCell = kPx + 2, kCols = 8, kRows = 3;
+    constexpr u32 kPx = 16, kCell = kPx + 2, kCols = 8, kRows = 5;
     SheetImage img;
     img.width = kCell * kCols;
     img.height = kCell * kRows;
@@ -174,6 +174,89 @@ SheetImage make_sprite_sheet() {
             const Rgb base = std::fabs(dy) < 0.22f ? Rgb{245, 245, 240} : Rgb{220, 60, 60};
             put(kFrameBall, x, y, d > 0.8f ? shade(base, -80) : shade(base, static_cast<i32>((-dx - dy) * 30)));
         }
+
+    // --- factory ---------------------------------------------------------------
+    auto each_px = [&](auto&& fn) {
+        for (i32 y = 0; y < static_cast<i32>(kPx); ++y)
+            for (i32 x = 0; x < static_cast<i32>(kPx); ++x) fn(x, y);
+    };
+    // Belt: dark rails, a grey band with chevrons pointing east.
+    each_px([&](i32 x, i32 y) {
+        Rgb c{78, 78, 84};
+        if (y < 2 || y > 13) c = Rgb{40, 40, 44};
+        else if (std::abs(y - 7) + (x % 8) == 5 || std::abs(y - 8) + (x % 8) == 5) c = Rgb{226, 180, 52};
+        put(kFrameBelt, x, y, c);
+    });
+    // Pipe: a lit tube across with a flange, joined to all sides.
+    each_px([&](i32 x, i32 y) {
+        const bool tube = (y >= 4 && y <= 11) || (x >= 4 && x <= 11);
+        if (!tube) return;
+        const i32 d = (y >= 4 && y <= 11) ? y - 4 : x - 4;
+        Rgb c = shade(Rgb{120, 140, 156}, 30 - d * 8);
+        if (x == 7 || x == 8 || y == 7 || y == 8) c = shade(c, -10);
+        put(kFramePipe, x, y, c);
+    });
+    // Pole: a wooden post with a cross bar and two insulators.
+    each_px([&](i32 x, i32 y) {
+        if (x >= 7 && x <= 8 && y >= 2) put(kFramePole, x, y, shade(Rgb{120, 84, 50}, x == 7 ? 15 : -10));
+        if (y >= 3 && y <= 4 && x >= 3 && x <= 12) put(kFramePole, x, y, Rgb{100, 70, 42});
+        if (y == 2 && (x == 3 || x == 12)) put(kFramePole, x, y, Rgb{200, 220, 230});
+    });
+    // Machines: a body with a dark frame, each with its own mark.
+    auto machine = [&](u32 f, Rgb body, auto&& mark) {
+        each_px([&](i32 x, i32 y) {
+            Rgb c = shade(body, static_cast<i32>((15 - x - y) * 2));
+            if (x < 1 || y < 1 || x > 14 || y > 14) c = shade(body, -90);
+            else if (x < 2 || y < 2 || x > 13 || y > 13) c = shade(body, -40);
+            mark(x, y, c);
+            put(f, x, y, c);
+        });
+    };
+    machine(kFrameDrill, Rgb{170, 140, 60}, [&](i32 x, i32 y, Rgb& c) {
+        const f32 dx = static_cast<f32>(x) - 7.5f, dy = static_cast<f32>(y) - 7.5f;
+        if (dx * dx + dy * dy < 16 && (std::abs(x - y) < 2 || std::abs(x + y - 15) < 2)) c = Rgb{60, 60, 66};
+    });
+    machine(kFrameFurnace, Rgb{150, 110, 96}, [&](i32 x, i32 y, Rgb& c) {
+        if (x >= 5 && x <= 10 && y >= 7 && y <= 12) c = y > 9 ? Rgb{255, 150, 40} : Rgb{255, 210, 90};
+    });
+    machine(kFrameAssembler, Rgb{90, 120, 160}, [&](i32 x, i32 y, Rgb& c) {
+        const f32 dx = static_cast<f32>(x) - 7.5f, dy = static_cast<f32>(y) - 7.5f;
+        const f32 r = std::sqrt(dx * dx + dy * dy);
+        if (r < 5.5f && r > 2.0f && (static_cast<i32>(std::atan2(dy, dx) * 2.5f + 8) % 2 == 0 || r < 4.2f)) c = Rgb{200, 200, 210};
+    });
+    machine(kFrameBoiler, Rgb{176, 72, 60}, [&](i32 x, i32 y, Rgb& c) {
+        if (y >= 9 && y <= 11 && x >= 4 && x <= 11) c = Rgb{255, 160, 50};
+        if (y == 4 && x >= 4 && x <= 11) c = Rgb{220, 220, 220};
+    });
+    machine(kFrameEngine, Rgb{110, 116, 100}, [&](i32 x, i32 y, Rgb& c) {
+        if (y >= 6 && y <= 9 && x >= 3 && x <= 12) c = Rgb{180, 180, 170};
+        if (x >= 10 && x <= 12 && y >= 4 && y <= 11) c = Rgb{60, 64, 60};
+    });
+    machine(kFramePump, Rgb{70, 110, 170}, [&](i32 x, i32 y, Rgb& c) {
+        const f32 dx = static_cast<f32>(x) - 7.5f, dy = static_cast<f32>(y) - 7.5f;
+        if (dx * dx + dy * dy < 12) c = Rgb{120, 190, 250};
+    });
+    machine(kFrameChest, Rgb{150, 106, 60}, [&](i32 x, i32 y, Rgb& c) {
+        if (y == 6 || y == 7) c = Rgb{90, 60, 34};
+        if (y >= 6 && y <= 9 && x >= 7 && x <= 8) c = Rgb{230, 200, 80};
+    });
+    // Items: small, on a transparent background.
+    each_px([&](i32 x, i32 y) {
+        const f32 dx = static_cast<f32>(x) - 7.5f, dy = static_cast<f32>(y) - 7.5f;
+        const f32 d = std::sqrt(dx * dx + dy * dy);
+        // Ore: a rusty lump with bright specks.
+        if (d < 6.0f + static_cast<f32>(pixel_hash(x, y, 9) % 3) - 1.0f)
+            put(kFrameOre, x, y, (pixel_hash(x, y, 7) % 5 == 0) ? Rgb{240, 170, 110} : shade(Rgb{186, 100, 56}, static_cast<i32>(-dx - dy) * 5));
+        // Plate: a lit square.
+        if (std::fabs(dx) < 5.5f && std::fabs(dy) < 4.5f)
+            put(kFramePlate, x, y, std::fabs(dx) > 4.6f || std::fabs(dy) > 3.6f ? Rgb{120, 130, 140} : shade(Rgb{190, 200, 212}, static_cast<i32>(-dx - dy) * 3));
+        // Gear: teeth around a ring with a hole.
+        const f32 a = std::atan2(dy, dx);
+        const f32 outer = 5.0f + (std::sin(a * 8.0f) > 0 ? 2.0f : 0.0f);
+        if (d < outer && d > 2.0f) put(kFrameGear, x, y, shade(Rgb{170, 176, 186}, static_cast<i32>(-dx - dy) * 4));
+        // Coal: a black lump with glints.
+        if (d < 5.5f) put(kFrameCoal, x, y, (pixel_hash(x, y, 5) % 7 == 0) ? Rgb{120, 120, 130} : Rgb{34, 32, 36});
+    });
     for (u32 f = 0; f < kRows * kCols; ++f) {
         u32 ox, oy;
         frame_origin(f, ox, oy);

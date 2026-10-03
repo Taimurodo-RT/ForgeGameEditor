@@ -34,6 +34,7 @@ add_subdirectory(apps/sandbox)
 add_subdirectory(apps/world_demo)
 add_subdirectory(apps/render_demo)
 add_subdirectory(apps/sim_demo)
+add_subdirectory(apps/factory_demo)
 
 if(FORGE_BUILD_TESTS)
   enable_testing()

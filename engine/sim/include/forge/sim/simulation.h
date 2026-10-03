@@ -8,6 +8,7 @@
 //     World::update      chunks around every focus load, far ones leave
 //     zones              which loaded chunks are Active, Near or asleep
 //     ticks (0..4)       game systems -> liquids, sand -> bodies -> rigid bodies
+//                        -> factories (belts, pipes, power: the whole world)
 //     Scene::update      entities re-filed into their chunks
 //     triggers           who entered and left each trigger
 //   draw, using clock().alpha() for smooth motion
@@ -23,6 +24,7 @@
 #include "forge/sim/cells.h"
 #include "forge/sim/clock.h"
 #include "forge/sim/gravity.h"
+#include "forge/sim/factory.h"
 #include "forge/sim/rigid.h"
 #include "forge/sim/tiles.h"
 #include "forge/sim/zones.h"
@@ -103,6 +105,7 @@ struct SimStats {
     f64 triggers_ms = 0;
     f64 cells_ms = 0;       // liquids and falling tiles
     f64 rigid_ms = 0;       // Box2D bodies
+    f64 factory_ms = 0;     // belts, pipes, power networks
     f64 world_ms = 0;       // World::update + zones + tile view
     f64 scene_ms = 0;       // Scene::update
     u32 bodies_moved = 0;   // in the last tick
@@ -110,6 +113,7 @@ struct SimStats {
     ZoneStats zones;
     CellStats cells;
     RigidStats rigid;
+    FactoryStats factory;
 };
 
 // Runs fn(entity, dt, Position&, C&...) for every entity matching the query
@@ -140,6 +144,8 @@ public:
 
     // Rigid bodies (entities with RigidBody), simulated in Active chunks.
     RigidWorld& rigid() { return *rigid_; }
+    // Always-on factories: they run every tick whatever the zones are.
+    Factory& factory() { return factory_; }
 
     // Game rules, run every tick in the order added, before bodies move.
     void add_system(SystemFn fn) { systems_.push_back(std::move(fn)); }
@@ -183,6 +189,7 @@ private:
     GravityField gravity_;
     std::unique_ptr<CellSim> cells_;
     std::unique_ptr<RigidWorld> rigid_;
+    Factory factory_;
     std::vector<GravityField::Placed> placed_;
     std::vector<world::Rect> focus_;
     Events tick_events_, prev_events_, frame_events_;
