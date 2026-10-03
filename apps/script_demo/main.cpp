@@ -111,9 +111,13 @@ public:
 
     const NodeLibrary& library() const { return lib_; }
     u32 loaded() const { return loaded_; }
+    // Graphs that did not compile or load last time (their old version keeps running).
+    const std::string& broken() const { return broken_; }
 
 private:
     void load_all() {
+        broken_.clear();
+        auto mark_broken = [&](const std::string& name) { broken_ += (broken_.empty() ? "" : ", ") + name; };
         lib_ = NodeLibrary();
         std::vector<std::string> errors;
         lib_.add_standard(&errors);
@@ -127,9 +131,12 @@ private:
             if (!read_file(path, bytes) ||
                 !g.from_json(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &err)) {
                 FORGE_WARN("%s: %s", path_to_utf8(path).c_str(), err.empty() ? "cannot read" : err.c_str());
+                mark_broken(path_to_utf8(path.filename()));
                 continue;
             }
-            if (g.as_node.enabled) lib_.add_graph_node(g, &errors);
+            if (g.as_node.enabled) {
+                if (!lib_.add_graph_node(g, &errors)) mark_broken(g.name);
+            }
             else scripts.push_back(std::move(g));
         }
         for (const std::string& e : errors) FORGE_WARN("nodes: %s", e.c_str());
@@ -147,9 +154,13 @@ private:
                 FORGE_WARN("%s %s, node %u (%s): %s", g.name.c_str(), d.error ? "error" : "warning", d.node,
                            n ? n->def.c_str() : "-", d.message.c_str());
             }
-            if (!r.ok) continue; // the old version keeps running
+            if (!r.ok) { // the old version keeps running
+                mark_broken(g.name);
+                continue;
+            }
             std::vector<ScriptError> errs;
             if (host_.load(g.name, r.source, &r.map, &errs)) ++loaded_;
+            else mark_broken(g.name);
             for (const ScriptError& e : errs) FORGE_WARN("%s:%d: %s", g.name.c_str(), e.line, e.message.c_str());
         }
         FORGE_INFO("graphs: %u scripts loaded from %s", loaded_, path_to_utf8(dir_).c_str());
@@ -160,6 +171,7 @@ private:
     NodeLibrary lib_;
     std::map<std::filesystem::path, std::filesystem::file_time_type> seen_;
     u32 loaded_ = 0;
+    std::string broken_;
 };
 
 class Demo {
@@ -297,6 +309,7 @@ public:
 
     const ScriptStats& script_stats() const { return scripts_->stats(); }
     u32 alive() const { return scene_->stats().entities; }
+    const std::string& broken_graphs() const { return graphs_->broken(); }
     bool just_reloaded() const { return reloaded_at_ && time_now_ns() - reloaded_at_ < 2'000'000'000ull; }
 
     Camera2D camera;
@@ -336,10 +349,13 @@ public:
             const ScriptStats& s = demo_.script_stats();
             char text[512];
             std::snprintf(text, sizeof(text),
-                          "objects %u  sim %.2f ms  scripts %.2f ms (%u calls, %u waiting, %.1f MB)  errors %u  slowest: %s%s%s",
+                          "objects %u  sim %.2f ms  scripts %.2f ms (%u calls, %u waiting, %.1f MB)  run-time errors %u  slowest: %s%s%s",
                           demo_.alive(), demo_.sim_ms, s.ms, s.calls, s.waiting, static_cast<f64>(s.memory) / (1 << 20), s.errors,
                           demo_.slowest(2).c_str(), demo_.just_reloaded() ? "  [graphs reloaded]" : "", paused_ ? "  [paused]" : "");
-            set_status(text);
+            // A graph that does not compile goes first: the old version keeps
+            // running, so nothing else on screen would show it.
+            const std::string& broken = demo_.broken_graphs();
+            set_status(broken.empty() ? std::string(text) : "GRAPH ERRORS in " + broken + " (see the log)  " + text);
             demo_.reset_profile(); // the title shows the last second
         }
     }

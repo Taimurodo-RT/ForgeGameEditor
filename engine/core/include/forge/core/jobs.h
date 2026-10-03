@@ -27,7 +27,8 @@ struct Job {
 // The thread that calls init() becomes worker 0 and runs jobs while waiting.
 namespace jobs {
 
-// worker_count = 0 picks hardware threads - 1 (plus the calling thread).
+// worker_count = 0 picks one thread per hardware thread, the calling one included,
+// leaving one free for the OS on CPUs with 8 or more.
 void init(u32 worker_count = 0);
 void shutdown();
 
