@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Sources and string literals are UTF-8 (Russian text in tests, data, UI).
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
+
 option(FORGE_PROFILE "Build with the Tracy profiler client" ON)
 option(FORGE_BUILD_TESTS "Build unit tests" ON)
 option(FORGE_BUILD_BENCH "Build benchmarks" ON)
@@ -15,6 +20,7 @@ include(cmake/Warnings.cmake)
 
 add_subdirectory(engine/core)
 add_subdirectory(engine/data)
+add_subdirectory(engine/assets)
 add_subdirectory(engine/platform)
 add_subdirectory(apps/sandbox)
 

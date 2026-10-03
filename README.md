@@ -9,6 +9,8 @@
   `HandlePool` (ссылки с поколениями), система задач с work stealing, логи, Tracy.
 - `engine/data` — рефлексия типов (одно описание на всё: инспектор, сохранение, скрипты), GUID,
   текстовый формат JSON для проекта с миграциями версий, бинарный формат для игры.
+- `engine/assets` — база ассетов (SQLite, поиск по-русски), сборка ассетов: `.meta` с GUID рядом с файлом,
+  пересборка только изменённого на всех ядрах, импорт картинок.
 - `engine/platform` — окно и GPU через SDL3 (Vulkan / D3D12 / Metal), цикл кадров, статистика кадра.
 - `apps/sandbox` — окно, 200 000 частиц и 10 000 задач в каждом кадре; FPS в заголовке.
 - `tests` — модульные тесты (doctest), `bench` — замер системы задач.
@@ -35,6 +37,7 @@ build/apps/sandbox/forge_sandbox --headless 600
 build/tests/forge_tests
 build/bench/forge_bench_jobs
 build/bench/forge_bench_data
+build/bench/forge_bench_assets [число файлов]
 ```
 
 Профилирование: запустите Tracy Profiler 0.14.1 и подключитесь к запущенной песочнице.
