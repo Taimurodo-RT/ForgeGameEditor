@@ -140,11 +140,11 @@ public:
     // False when the chunk is not ready (nothing is changed).
     bool set_tile(u32 layer, i32 x, i32 y, TileId id);
 
-    // Ready chunks, in no particular order.
+    // Ready chunks, in no particular order (not the ones being unloaded).
     template <typename Fn>
     void for_each_ready(Fn&& fn) {
         for (Chunk* c : resident_list_)
-            if (c->state.load(std::memory_order_acquire) == ChunkState::Ready) fn(*c);
+            if (c->tiles && c->state.load(std::memory_order_acquire) == ChunkState::Ready) fn(*c);
     }
 
     void add_listener(WorldListener* listener);

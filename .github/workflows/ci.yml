@@ -40,6 +40,9 @@ jobs:
       - name: World streaming benchmark (64k x 64k, 10 s flight)
         shell: bash
         run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_world --frames 600
+      - name: Scene benchmark (200k entities in chunks)
+        shell: bash
+        run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_scene
       - name: World demo, 600 headless frames
         shell: bash
         run: ./${{ format(matrix.bin, 'apps/world_demo') }}/forge_world_demo --headless 600

@@ -1,0 +1,5 @@
+add_library(forge_scene STATIC src/scene.cpp)
+add_library(forge::scene ALIAS forge_scene)
+target_include_directories(forge_scene PUBLIC include)
+target_link_libraries(forge_scene PUBLIC forge::core forge::data forge::world flecs::flecs_static)
+forge_target_defaults(forge_scene)
