@@ -15,6 +15,8 @@ FetchContent_Declare(SDL3
 # Tracy: CPU/GPU/memory profiler. Compiled out entirely when FORGE_PROFILE is OFF.
 set(TRACY_ENABLE ${FORGE_PROFILE} CACHE BOOL "" FORCE)
 set(TRACY_ON_DEMAND ON CACHE BOOL "" FORCE)
+# Accept profiler connections from this machine only: no firewall prompt on Windows.
+set(TRACY_ONLY_LOCALHOST ON CACHE BOOL "" FORCE)
 FetchContent_Declare(tracy
   GIT_REPOSITORY https://github.com/wolfpld/tracy.git
   GIT_TAG v0.14.1
