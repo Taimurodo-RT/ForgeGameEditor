@@ -6,7 +6,7 @@
 //   Space           pause the critters        left mouse    sparks
 //   N               night: some critters carry lamps
 //
-//   forge_render_demo [--sprites N] [--particles N] [--day] [--no-vsync]
+//   forge_render_demo [--sprites N] [--particles N (default: as many as sprites)] [--day] [--no-vsync]
 //   forge_render_demo --bench FRAMES [--sprites N] [--particles N] [--day]   offscreen 1920×1080, timings
 //   forge_render_demo --screenshot out.png [--sprites N] [--zoom pixels_per_tile]
 
@@ -466,17 +466,24 @@ int main(int argc, char** argv) {
     RenderDemo app;
     u32 bench_frames = 0;
     const char* screenshot = nullptr;
+    bool particles_given = false;
     f32 zoom = 0;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
         if (std::strcmp(argv[i], "--no-vsync") == 0) config.vsync = false;
         else if (std::strcmp(argv[i], "--sprites") == 0 && has_value) app.sprite_count = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--day") == 0) app.night = false;
-        else if (std::strcmp(argv[i], "--particles") == 0 && has_value) app.particle_count = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
+        else if (std::strcmp(argv[i], "--particles") == 0 && has_value) {
+            app.particle_count = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
+            particles_given = true;
+        }
         else if (std::strcmp(argv[i], "--bench") == 0 && has_value) bench_frames = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--screenshot") == 0 && has_value) screenshot = argv[++i];
         else if (std::strcmp(argv[i], "--zoom") == 0 && has_value) zoom = std::strtof(argv[++i], nullptr);
     }
+    // The crowd's area grows with the sprite count; as many fireflies as
+    // critters keeps them about as dense whatever the count.
+    if (!particles_given) app.particle_count = app.sprite_count;
     if (screenshot) return run_offscreen(app.sprite_count, app.particle_count, app.night, 3, screenshot, zoom);
     if (bench_frames > 0) return run_offscreen(app.sprite_count, app.particle_count, app.night, bench_frames, nullptr, zoom);
     return app.run(config);

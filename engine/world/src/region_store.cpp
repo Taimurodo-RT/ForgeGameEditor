@@ -6,6 +6,8 @@
 #include "forge/core/profile.h"
 
 #include <algorithm>
+#include <charconv>
+#include <string_view>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -43,10 +45,13 @@ bool parse_region_name(const std::string& name, const std::string& prefix, Chunk
     // "<prefix>.<x>.<y>.fwr"
     if (name.size() <= prefix.size() + 1 || name.compare(0, prefix.size(), prefix) != 0 || name[prefix.size()] != '.')
         return false;
+    const char* p = name.data() + prefix.size() + 1;
+    const char* end = name.data() + name.size();
     int x = 0, y = 0;
-    char tail[8] = {};
-    if (std::sscanf(name.c_str() + prefix.size() + 1, "%d.%d.%4s", &x, &y, tail) != 3 || std::strcmp(tail, "fwr") != 0)
-        return false;
+    auto r = std::from_chars(p, end, x);
+    if (r.ec != std::errc() || r.ptr == end || *r.ptr != '.') return false;
+    r = std::from_chars(r.ptr + 1, end, y);
+    if (r.ec != std::errc() || std::string_view(r.ptr, static_cast<usize>(end - r.ptr)) != ".fwr") return false;
     out = {x, y};
     return true;
 }
