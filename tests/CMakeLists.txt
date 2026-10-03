@@ -14,6 +14,8 @@ add_executable(forge_tests
   test_sim.cpp
   test_cells.cpp
   test_factory.cpp
-  test_time.cpp)
-target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::render doctest::doctest)
+  test_time.cpp
+  test_script.cpp
+  test_graph.cpp)
+target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render doctest::doctest)
 add_test(NAME forge_tests COMMAND forge_tests)

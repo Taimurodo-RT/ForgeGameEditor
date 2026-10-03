@@ -91,7 +91,18 @@ FetchContent_Declare(box2d
   GIT_TAG v3.1.1
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross flecs box2d)
+# Luau: the scripting language (sandboxed Lua from Roblox). Node graphs
+# compile to it; only the compiler and the VM are built.
+set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
+set(LUAU_STATIC_CRT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(luau
+  GIT_REPOSITORY https://github.com/luau-lang/luau.git
+  GIT_TAG 0.741
+  GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross flecs box2d luau)
 
 add_library(xxhash_headers INTERFACE)
 target_include_directories(xxhash_headers SYSTEM INTERFACE ${xxhash_SOURCE_DIR})

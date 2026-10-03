@@ -79,6 +79,7 @@ public:
     Scene& operator=(const Scene&) = delete;
 
     flecs::world& ecs() { return ecs_; }
+    world::World& world() { return world_; }
 
     // Components saved with their chunk. T must be described with
     // FORGE_REFLECT. Position is always registered.
