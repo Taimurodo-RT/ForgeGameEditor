@@ -8,6 +8,7 @@
 
 #include "forge/core/math.h"
 #include "forge/core/types.h"
+#include "forge/render/camera.h"
 #include "forge/world/world.h"
 
 #include <SDL3/SDL_gpu.h>
@@ -16,17 +17,6 @@
 #include <vector>
 
 namespace forge::render {
-
-// What the player sees: centre of the screen in tiles and pixels per tile.
-struct Camera2D {
-    f64 x = 0;
-    f64 y = 0;
-    f32 zoom = 16.0f;
-
-    // Tiles covering a screen of width × height pixels.
-    world::Rect visible_tiles(u32 width, u32 height) const;
-    void screen_to_tile(f32 sx, f32 sy, u32 width, u32 height, f64& tx, f64& ty) const;
-};
 
 // Square texture of cells_per_row × cells_per_row tiles, each cell_px pixels,
 // RGBA8. Tile id N is cell N, row by row.

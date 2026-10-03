@@ -1,5 +1,5 @@
 # forge_add_shaders(<target> <shader>...)
-# Compiles GLSL shaders (stage from the extension: .vert / .frag) into
+# Compiles GLSL shaders (stage from the extension: .vert / .frag / .comp) into
 # generated headers <name>.<stage>.h, included as "shaders/<name>_<stage>.h",
 # and makes <target> depend on them.
 function(forge_add_shaders target)

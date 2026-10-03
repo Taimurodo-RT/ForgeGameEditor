@@ -43,6 +43,9 @@ jobs:
       - name: Scene benchmark (200k entities in chunks)
         shell: bash
         run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_scene
+      - name: Sprite batch benchmark (1M sprites, CPU side)
+        shell: bash
+        run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_sprites --frames 100
       - name: World demo, 600 headless frames
         shell: bash
         run: ./${{ format(matrix.bin, 'apps/world_demo') }}/forge_world_demo --headless 600
@@ -51,6 +54,11 @@ jobs:
         run: |
           ./build/apps/world_demo/forge_world_demo --screenshot world-side.png
           ./build/apps/world_demo/forge_world_demo --topdown --screenshot world-top.png
+          ./build/apps/render_demo/forge_render_demo --day --sprites 20000 --particles 4000 --zoom 32 --screenshot world-sprites.png
+          ./build/apps/render_demo/forge_render_demo --sprites 20000 --particles 4000 --zoom 16 --screenshot world-night.png
+      - name: Render sprites, particles and light offscreen (software Vulkan, checks it works, not speed)
+        if: runner.os == 'Linux'
+        run: ./build/apps/render_demo/forge_render_demo --bench 3 --sprites 200000 --particles 200000
       - if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:

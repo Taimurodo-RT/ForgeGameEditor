@@ -44,18 +44,6 @@ struct LayerUniforms {
 
 } // namespace
 
-world::Rect Camera2D::visible_tiles(u32 width, u32 height) const {
-    const f64 half_w = static_cast<f64>(width) / (2.0 * zoom);
-    const f64 half_h = static_cast<f64>(height) / (2.0 * zoom);
-    return {static_cast<i32>(std::floor(x - half_w)), static_cast<i32>(std::floor(y - half_h)),
-            static_cast<i32>(std::ceil(x + half_w)) + 1, static_cast<i32>(std::ceil(y + half_h)) + 1};
-}
-
-void Camera2D::screen_to_tile(f32 sx, f32 sy, u32 width, u32 height, f64& tx, f64& ty) const {
-    tx = x + (static_cast<f64>(sx) - static_cast<f64>(width) * 0.5) / zoom;
-    ty = y + (static_cast<f64>(sy) - static_cast<f64>(height) * 0.5) / zoom;
-}
-
 TilemapRenderer::~TilemapRenderer() { shutdown(); }
 
 bool TilemapRenderer::init(SDL_GPUDevice* device, SDL_GPUTextureFormat target_format, world::World& world,
@@ -278,8 +266,8 @@ void TilemapRenderer::prepare(SDL_GPUCommandBuffer* cmd, const Camera2D& camera,
 
     // Snap the camera to whole pixels so tiles do not shimmer while scrolling.
     const f64 zoom = camera.zoom;
-    const f64 cx = std::round(camera.x * zoom) / zoom;
-    const f64 cy = std::round(camera.y * zoom) / zoom;
+    const f64 cx = camera.snapped_x();
+    const f64 cy = camera.snapped_y();
 
     Rect chunks = world::chunks_of(camera.visible_tiles(width, height));
     if (!world_->bounds().empty()) chunks = chunks.clipped(world_->bounds());

@@ -1,0 +1,42 @@
+#version 450
+
+// Moves every particle one step: gravity, drag, ageing, spin.
+
+layout(local_size_x = 256) in;
+
+struct Particle {
+    vec2 pos;
+    vec2 vel;
+    float age;
+    float life;
+    float size_start;
+    float size_end;
+    uint color;
+    uint frame;
+    float angle;
+    float spin;
+};
+
+layout(std430, set = 1, binding = 0) buffer Particles {
+    Particle particles[];
+};
+
+layout(set = 2, binding = 0) uniform Params {
+    vec2 gravity; // tiles per second²
+    float drag;   // share of speed lost per second
+    float dt;
+    uint count;   // slots in use
+} params;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= params.count) return;
+    Particle p = particles[i];
+    if (p.age >= p.life) return;
+    p.vel += params.gravity * params.dt;
+    p.vel *= exp(-params.drag * params.dt);
+    p.pos += p.vel * params.dt;
+    p.age += params.dt;
+    p.angle += p.spin * params.dt;
+    particles[i] = p;
+}
