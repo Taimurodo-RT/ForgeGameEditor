@@ -20,7 +20,14 @@ FetchContent_Declare(tracy
   GIT_TAG v0.14.1
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 tracy)
+# yyjson: fast JSON reader/writer for project source files.
+set(YYJSON_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(yyjson
+  GIT_REPOSITORY https://github.com/ibireme/yyjson.git
+  GIT_TAG 0.13.0
+  GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(SDL3 tracy yyjson)
 
 if(FORGE_BUILD_TESTS)
   FetchContent_Declare(doctest
