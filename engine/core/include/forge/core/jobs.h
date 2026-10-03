@@ -38,6 +38,16 @@ u32 this_thread_index(); // 0 for the main thread, ~0u for threads outside the p
 // and decreased as each finishes.
 void submit(const Job* jobs, u32 count, JobCounter* counter);
 
+// Queue long-running work that no frame waits on: chunk generation, loading,
+// saving, cooking. Background jobs run on worker threads only when no regular
+// job is queued, so they fill idle time and never hold up the frame. wait()
+// never picks them up, so a frame waiting on its own jobs is not stalled
+// behind them. Keep each job short (well under a millisecond): a worker in the
+// middle of one cannot help the frame until it finishes. Without a pool the
+// job runs inline.
+void submit_background(const Job& job, JobCounter* counter);
+u32 background_pending(); // queued and not yet started
+
 // Run other jobs until the counter reaches zero. Safe to call from inside a job.
 void wait(JobCounter& counter);
 

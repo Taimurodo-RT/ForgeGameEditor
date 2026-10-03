@@ -6,6 +6,7 @@
 
 #include <condition_variable>
 #include <cstdio>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -126,11 +127,17 @@ struct Pool {
     std::vector<std::thread> threads;
     std::atomic<bool> quit{false};
 
-    // Jobs queued but not yet taken; idle workers sleep while it is zero.
+    // Jobs queued but not yet taken; idle workers sleep while both are zero.
     alignas(kCacheLine) std::atomic<u32> pending{0};
+    alignas(kCacheLine) std::atomic<u32> background_pending{0};
     alignas(kCacheLine) std::atomic<u32> sleepers{0};
     std::mutex sleep_mutex;
     std::condition_variable wake;
+
+    // Background work is rare next to frame jobs (hundreds per second, not
+    // tens of thousands per frame), so one shared FIFO is enough.
+    SpinLock background_lock;
+    std::deque<QueuedJob> background;
 };
 
 Pool* g_pool = nullptr;
@@ -181,6 +188,20 @@ bool try_take(Pool& pool, u32 self, QueuedJob& out) {
     return false;
 }
 
+bool try_take_background(Pool& pool, QueuedJob& out) {
+    if (pool.background_pending.load(std::memory_order_relaxed) == 0) return false;
+    std::lock_guard lock(pool.background_lock);
+    if (pool.background.empty()) return false;
+    out = pool.background.front();
+    pool.background.pop_front();
+    pool.background_pending.fetch_sub(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool has_work(const Pool& pool) {
+    return pool.pending.load(std::memory_order_acquire) > 0 || pool.background_pending.load(std::memory_order_acquire) > 0;
+}
+
 void worker_main(Pool& pool, u32 index) {
     t_index = index;
     t_steal_seed = index * 7919u;
@@ -194,19 +215,22 @@ void worker_main(Pool& pool, u32 index) {
             execute(job);
             continue;
         }
+        if (try_take_background(pool, job)) {
+            FORGE_ZONE_N("Background job");
+            execute(job);
+            continue;
+        }
         // Spin briefly: in a frame, more jobs usually arrive within microseconds.
         bool found = false;
         for (int spin = 0; spin < 256 && !found; ++spin) {
             FORGE_CPU_PAUSE();
-            if (pool.pending.load(std::memory_order_relaxed) > 0) found = true;
+            if (has_work(pool)) found = true;
         }
         if (found) continue;
 
         std::unique_lock lock(pool.sleep_mutex);
         pool.sleepers.fetch_add(1, std::memory_order_relaxed);
-        pool.wake.wait(lock, [&] {
-            return pool.pending.load(std::memory_order_acquire) > 0 || pool.quit.load(std::memory_order_acquire);
-        });
+        pool.wake.wait(lock, [&] { return has_work(pool) || pool.quit.load(std::memory_order_acquire); });
         pool.sleepers.fetch_sub(1, std::memory_order_relaxed);
     }
 }
@@ -239,6 +263,9 @@ void init(u32 worker_count) {
 
 void shutdown() {
     if (!g_pool) return;
+    // Finish queued background work so nothing that owns memory is dropped.
+    QueuedJob job;
+    while (try_take_background(*g_pool, job)) execute(job);
     {
         std::lock_guard lock(g_pool->sleep_mutex);
         g_pool->quit.store(true, std::memory_order_release);
@@ -282,6 +309,24 @@ void submit(const Job* list, u32 count, JobCounter* counter) {
         }
     }
 }
+
+void submit_background(const Job& job, JobCounter* counter) {
+    if (counter) counter->value.fetch_add(1, std::memory_order_relaxed);
+    // Without workers nobody would ever pick it up: run it now.
+    if (!g_pool || g_pool->threads.empty()) {
+        execute({job, counter});
+        return;
+    }
+    Pool& pool = *g_pool;
+    {
+        std::lock_guard lock(pool.background_lock);
+        pool.background.push_back({job, counter});
+        pool.background_pending.fetch_add(1, std::memory_order_release);
+    }
+    wake_workers(pool, 1);
+}
+
+u32 background_pending() { return g_pool ? g_pool->background_pending.load(std::memory_order_relaxed) : 0; }
 
 void wait(JobCounter& counter) {
     FORGE_ZONE();

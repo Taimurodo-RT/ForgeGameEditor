@@ -33,6 +33,7 @@ int App::run(const AppConfig& config) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_EVENT_QUIT) quit_ = true;
+                on_event(event);
             }
         }
 
@@ -41,15 +42,16 @@ int App::run(const AppConfig& config) {
         previous = now;
 
         on_frame(static_cast<f64>(frame_ns) / 1e9);
-        if (!config.headless) present_clear();
+        if (!config.headless) render_frame();
 
         update_stats(frame_ns);
         FORGE_FRAME_MARK();
 
         if (!config.headless && stats_.frame % 30 == 0) {
-            char title[160];
-            std::snprintf(title, sizeof(title), "%s  |  %.1f FPS  avg %.2f ms  worst %.2f ms", config.title,
-                          stats_.avg_ms > 0 ? 1000.0 / stats_.avg_ms : 0.0, stats_.avg_ms, stats_.worst_ms);
+            char title[512];
+            std::snprintf(title, sizeof(title), "%s  |  %.1f FPS  avg %.2f ms  worst %.2f ms%s%s", config.title,
+                          stats_.avg_ms > 0 ? 1000.0 / stats_.avg_ms : 0.0, stats_.avg_ms, stats_.worst_ms,
+                          status_.empty() ? "" : "  |  ", status_.c_str());
             SDL_SetWindowTitle(window_, title);
         }
         if (config.max_frames && stats_.frame >= config.max_frames) quit_ = true;
@@ -74,8 +76,8 @@ bool App::create_window_and_gpu(const AppConfig& config) {
         return false;
     }
 
-    // SPIR-V for Vulkan, DXIL for Direct3D 12, MSL for Metal.
-    const SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL;
+    // SPIR-V for Vulkan, DXBC/DXIL for Direct3D 12, MSL for Metal.
+    const SDL_GPUShaderFormat formats = config.shader_formats;
 #if defined(NDEBUG)
     const bool debug = false;
 #else
@@ -111,22 +113,30 @@ void App::destroy_window_and_gpu() {
     sdl_initialized_ = false;
 }
 
-void App::present_clear() {
+void App::render_frame() {
     FORGE_ZONE();
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(gpu_);
     if (!cmd) return;
 
     SDL_GPUTexture* swapchain = nullptr;
-    if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, nullptr, nullptr) && swapchain) {
-        SDL_GPUColorTargetInfo target{};
-        target.texture = swapchain;
-        target.clear_color = SDL_FColor{0.071f, 0.086f, 0.102f, 1.0f}; // Forge UI "surface"
-        target.load_op = SDL_GPU_LOADOP_CLEAR;
-        target.store_op = SDL_GPU_STOREOP_STORE;
-        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
-        SDL_EndGPURenderPass(pass);
-    }
+    u32 width = 0, height = 0;
+    if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height) && swapchain)
+        on_render(cmd, swapchain, width, height);
     SDL_SubmitGPUCommandBuffer(cmd);
+}
+
+void App::on_render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32, u32) {
+    SDL_GPUColorTargetInfo info{};
+    info.texture = target;
+    info.clear_color = SDL_FColor{0.071f, 0.086f, 0.102f, 1.0f}; // Forge UI "surface"
+    info.load_op = SDL_GPU_LOADOP_CLEAR;
+    info.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
+    SDL_EndGPURenderPass(pass);
+}
+
+SDL_GPUTextureFormat App::swapchain_format() const {
+    return gpu_ && window_ ? SDL_GetGPUSwapchainTextureFormat(gpu_, window_) : SDL_GPU_TEXTUREFORMAT_INVALID;
 }
 
 void App::update_stats(u64 frame_ns) {

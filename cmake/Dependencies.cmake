@@ -40,7 +40,37 @@ FetchContent_Declare(stb
   GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
   SOURCE_SUBDIR do-not-build)
 
-FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb)
+# Shader toolchain, used only at build time by tools/shaderc: GLSL -> SPIR-V
+# (glslang), SPIR-V -> HLSL / MSL (SPIRV-Cross). Shaders are written once in
+# GLSL and compiled for every GPU backend while the engine builds.
+set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+set(ENABLE_PCH OFF CACHE BOOL "" FORCE)
+set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
+set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(glslang
+  GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
+  GIT_TAG 16.6.0
+  GIT_SHALLOW TRUE)
+
+set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_UTIL OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SHARED OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_STATIC ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS ON CACHE BOOL "" FORCE)
+FetchContent_Declare(spirv_cross
+  GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
+  GIT_TAG vulkan-sdk-1.4.363.0
+  GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross)
 
 add_library(xxhash_headers INTERFACE)
 target_include_directories(xxhash_headers SYSTEM INTERFACE ${xxhash_SOURCE_DIR})

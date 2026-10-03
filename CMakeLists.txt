@@ -17,12 +17,18 @@ option(FORGE_BUILD_BENCH "Build benchmarks" ON)
 
 include(cmake/Dependencies.cmake)
 include(cmake/Warnings.cmake)
+include(cmake/Shaders.cmake)
+
+add_subdirectory(tools/shaderc)
 
 add_subdirectory(engine/core)
 add_subdirectory(engine/data)
 add_subdirectory(engine/assets)
+add_subdirectory(engine/world)
 add_subdirectory(engine/platform)
+add_subdirectory(engine/render)
 add_subdirectory(apps/sandbox)
+add_subdirectory(apps/world_demo)
 
 if(FORGE_BUILD_TESTS)
   enable_testing()
