@@ -40,6 +40,36 @@ SDL_GPUShader* create_shader(SDL_GPUDevice* device, const ShaderBlob& blob) {
     return shader;
 }
 
+SDL_GPUComputePipeline* create_compute_pipeline(SDL_GPUDevice* device, const ShaderBlob& blob) {
+    SDL_GPUComputePipelineCreateInfo info{};
+    const SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(device);
+    if ((formats & SDL_GPU_SHADERFORMAT_DXBC) && blob.dxbc) {
+        info.format = SDL_GPU_SHADERFORMAT_DXBC;
+        info.code = blob.dxbc;
+        info.code_size = blob.dxbc_size;
+    } else if (formats & SDL_GPU_SHADERFORMAT_SPIRV) {
+        info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        info.code = blob.spirv;
+        info.code_size = blob.spirv_size;
+    } else {
+        FORGE_ERROR("shader %s: no bytecode for this GPU backend", blob.name);
+        return nullptr;
+    }
+    info.entrypoint = "main";
+    info.num_samplers = blob.samplers;
+    info.num_readonly_storage_textures = blob.storage_textures;
+    info.num_readonly_storage_buffers = blob.storage_buffers;
+    info.num_readwrite_storage_textures = blob.readwrite_storage_textures;
+    info.num_readwrite_storage_buffers = blob.readwrite_storage_buffers;
+    info.num_uniform_buffers = blob.uniform_buffers;
+    info.threadcount_x = blob.threads_x;
+    info.threadcount_y = blob.threads_y;
+    info.threadcount_z = blob.threads_z;
+    SDL_GPUComputePipeline* pipeline = SDL_CreateGPUComputePipeline(device, &info);
+    if (!pipeline) FORGE_ERROR("compute shader %s: %s", blob.name, SDL_GetError());
+    return pipeline;
+}
+
 namespace {
 
 bool stage(SDL_GPUDevice* device, const void* data, u32 size, SDL_GPUTransferBuffer*& out) {

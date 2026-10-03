@@ -1,0 +1,60 @@
+#version 450
+
+// One step of light spreading over the tile grid: every cell takes the
+// brightest of its own source and its eight neighbours' light, dimmed by how
+// much this cell lets through (air a little, solid rock a lot). Repeated N
+// times, light reaches N cells and flows around corners into caves, the way
+// Terraria lights its world.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// Per cell: source light R, G, B (10 bits each, 0..4 in steps of 1/256) and
+// the cell's kind (2 bits) that picks how much light it lets through.
+layout(std430, set = 0, binding = 0) readonly buffer Cells {
+    uint cells[];
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer Prev {
+    vec4 prev[];
+};
+
+layout(std430, set = 1, binding = 0) buffer Next {
+    vec4 next[];
+};
+
+layout(set = 2, binding = 0) uniform Params {
+    vec4 transmit; // per kind: light kept when passing one cell
+    uint width;
+    uint height;
+    uint first;    // 1: only sources, no neighbours yet
+    uint pad;
+} params;
+
+vec3 source(uint cell) {
+    return vec3(float(cell & 1023u), float((cell >> 10) & 1023u), float((cell >> 20) & 1023u)) / 256.0;
+}
+
+void main() {
+    uvec2 c = gl_GlobalInvocationID.xy;
+    if (c.x >= params.width || c.y >= params.height) return;
+    uint i = c.y * params.width + c.x;
+    uint cell = cells[i];
+    vec3 best = source(cell);
+    if (params.first == 0u) {
+        float t = params.transmit[cell >> 30];
+        float td = pow(t, 1.41421356);
+        int w = int(params.width), h = int(params.height);
+        int x = int(c.x), y = int(c.y);
+        for (int dy = -1; dy <= 1; ++dy) {
+            int ny = y + dy;
+            if (ny < 0 || ny >= h) continue;
+            for (int dx = -1; dx <= 1; ++dx) {
+                int nx = x + dx;
+                if ((dx == 0 && dy == 0) || nx < 0 || nx >= w) continue;
+                vec3 l = prev[ny * w + nx].rgb * ((dx != 0 && dy != 0) ? td : t);
+                best = max(best, l);
+            }
+        }
+    }
+    next[i] = vec4(best, 1.0);
+}

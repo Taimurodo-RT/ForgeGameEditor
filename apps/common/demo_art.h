@@ -4,6 +4,7 @@
 // through the asset library.
 
 #include "forge/core/types.h"
+#include "forge/render/lighting.h"
 #include "forge/render/sprite_renderer.h"
 
 #include <vector>
@@ -30,5 +31,13 @@ struct SheetImage {
     }
 };
 SheetImage make_sprite_sheet();
+
+// How the sample tiles take part in lighting. Side view: sunlight from the
+// open sky, rock blocks it. Top down: daylight everywhere, or night.
+render::LightRules side_view_light_rules();
+render::LightRules top_down_light_rules(bool night);
+
+// A warm torch.
+inline render::PointLight torch(f64 x, f64 y) { return {x, y, 2.2f, 1.6f, 0.9f}; }
 
 } // namespace forge::demo

@@ -5,6 +5,8 @@
 //   left mouse      dig        right mouse   build
 //   F               automatic flight across the world
 //   1 / 2           side view (like Terraria) / top down (like Factorio)
+//   T               put a torch at the cursor      L   lighting on / off
+//   N               night (top down)
 //   F5              save (also saved on exit and when switching view)
 //
 // Changes are kept in saves/side and saves/top next to where the demo runs.
@@ -20,6 +22,7 @@
 #include "forge/core/time.h"
 #include "forge/platform/app.h"
 #include "forge/render/gpu.h"
+#include "forge/render/lighting.h"
 #include "forge/render/offscreen.h"
 #include "forge/render/tilemap_renderer.h"
 #include "forge/world/generators.h"
@@ -76,6 +79,16 @@ public:
         } else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
             if (e.key.key == SDLK_F) auto_fly = !auto_fly;
             if (e.key.key == SDLK_F5) save_world();
+            if (e.key.key == SDLK_L) lighting_ = !lighting_;
+            if (e.key.key == SDLK_N) {
+                night_ = !night_;
+                if (lights_ready_ && top_down) lights_.set_rules(demo::top_down_light_rules(night_));
+            }
+            if (e.key.key == SDLK_T) {
+                f64 tx, ty;
+                camera_.screen_to_tile(mouse_x_, mouse_y_, width_, height_, tx, ty);
+                torches_.push_back(demo::torch(std::floor(tx) + 0.5, std::floor(ty) + 0.5));
+            }
             if (e.key.key == SDLK_1 && top_down) switch_genre(false);
             if (e.key.key == SDLK_2 && !top_down) switch_genre(true);
         }
@@ -132,6 +145,17 @@ public:
             }
         }
         if (renderer_ready_) renderer_.prepare(cmd, camera_, width, height);
+        if (!lights_ready_ && renderer_ready_) {
+            lights_ready_ = lights_.init(gpu(), swapchain_format());
+            lights_.set_rules(top_down ? demo::top_down_light_rules(night_) : demo::side_view_light_rules());
+        }
+        const bool lit = lighting_ && lights_ready_ && (!top_down || night_);
+        if (lit) {
+            for (const render::PointLight& t : torches_) lights_.add(t);
+            // The camera carries a lantern, so dug tunnels are never pitch black.
+            lights_.add({camera_.x, camera_.y, 1.4f, 1.3f, 1.1f});
+            lights_.prepare(cmd, *world_, camera_, width, height);
+        }
 
         SDL_GPUColorTargetInfo info{};
         info.texture = target;
@@ -140,6 +164,7 @@ public:
         info.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
         if (renderer_ready_) renderer_.draw(cmd, pass);
+        if (lit) lights_.draw(cmd, pass);
         SDL_EndGPURenderPass(pass);
     }
 
@@ -152,6 +177,7 @@ public:
                    ws.resident, ws.stored_edits);
         const FrameStats& s = frame_stats();
         FORGE_INFO("frame avg %.3f ms, worst %.3f ms (last %u frames)", s.avg_ms, s.worst_ms, FrameStats::kWindow);
+        lights_.shutdown();
         renderer_.shutdown();
         world_.reset();
     }
@@ -185,6 +211,9 @@ private:
 
     void switch_genre(bool to_top_down) {
         save_world();
+        lights_.shutdown();
+        lights_ready_ = false;
+        torches_.clear();
         renderer_.shutdown();
         renderer_ready_ = false;
         world_.reset();
@@ -240,6 +269,9 @@ private:
     std::unique_ptr<World> world_;
     render::TilemapRenderer renderer_;
     bool renderer_ready_ = false;
+    render::LightRenderer lights_;
+    bool lights_ready_ = false, lighting_ = true, night_ = false;
+    std::vector<render::PointLight> torches_;
     std::vector<u8> atlas_;
     Camera2D camera_;
     u32 width_ = 1600, height_ = 900;
@@ -270,6 +302,7 @@ int screenshot(const char* path, bool top_down) {
     {
         World world(desc, make_generator(top_down));
         render::TilemapRenderer renderer;
+        render::LightRenderer lights;
         const std::vector<u8> atlas = demo::make_tile_atlas();
         Camera2D camera;
         camera.x = kWorldTiles / 2 + 0.5;
@@ -277,6 +310,10 @@ int screenshot(const char* path, bool top_down) {
         camera.zoom = top_down ? 8.0f : 4.0f;
         if (target && renderer.init(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, world, {atlas.data(), kCellPx, kCells})) {
             if (top_down) renderer.set_layer_tint(0, Color{});
+            // Daylight in top down changes nothing, so only the side view is lit.
+            const bool lit = !top_down && lights.init(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
+            const bool light_failed = !top_down && !lit;
+            lights.set_rules(demo::side_view_light_rules());
             for (int frame = 0; frame < 8; ++frame) {
                 world.update(camera.visible_tiles(kW, kH));
                 world.finish_loading();
@@ -288,6 +325,11 @@ int screenshot(const char* path, bool top_down) {
                 }
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 renderer.prepare(cmd, camera, kW, kH);
+                if (lit) {
+                    // Torches along the tunnel.
+                    for (i32 x = -140; x <= 140; x += 35) lights.add(demo::torch(camera.x + x, std::floor(camera.y) + 0.5));
+                    lights.prepare(cmd, world, camera, kW, kH);
+                }
                 SDL_GPUColorTargetInfo info{};
                 info.texture = target;
                 info.clear_color = top_down ? SDL_FColor{0.07f, 0.09f, 0.10f, 1.0f} : SDL_FColor{0.53f, 0.74f, 0.92f, 1.0f};
@@ -295,15 +337,17 @@ int screenshot(const char* path, bool top_down) {
                 info.store_op = SDL_GPU_STOREOP_STORE;
                 SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
                 renderer.draw(cmd, pass);
+                if (lit) lights.draw(cmd, pass);
                 SDL_EndGPURenderPass(pass);
                 SDL_SubmitGPUCommandBuffer(cmd);
             }
             const render::TilemapStats& rs = renderer.stats();
             FORGE_INFO("drawn %u of %u visible chunks, %u slots used", rs.drawn_chunks, rs.visible_chunks, rs.slots_used);
 
-            if (render::save_png(device, target, kW, kH, path))
+            if (render::save_png(device, target, kW, kH, path) && !light_failed)
                 result = rs.drawn_chunks == rs.visible_chunks && rs.drawn_chunks > 0 ? 0 : 1;
         }
+        lights.shutdown();
         renderer.shutdown();
     }
     if (target) SDL_ReleaseGPUTexture(device, target);

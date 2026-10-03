@@ -1,11 +1,13 @@
 // Render demo: a top-down world crowded with critters and falling leaves, all
-// drawn as sprites (one draw call for all of them).
+// drawn as sprites (one draw call for all of them), with fireflies as GPU
+// particles drifting over them.
 //
 //   WASD / arrows   move (Shift: faster)      mouse wheel   zoom
-//   Space           pause the critters
+//   Space           pause the critters        left mouse    sparks
+//   N               night: some critters carry lamps
 //
-//   forge_render_demo [--sprites N] [--no-vsync]
-//   forge_render_demo --bench FRAMES [--sprites N]   offscreen 1920×1080, prints timings
+//   forge_render_demo [--sprites N] [--particles N] [--day] [--no-vsync]
+//   forge_render_demo --bench FRAMES [--sprites N] [--particles N] [--day]   offscreen 1920×1080, timings
 //   forge_render_demo --screenshot out.png [--sprites N] [--zoom pixels_per_tile]
 
 #include "demo_art.h"
@@ -15,7 +17,9 @@
 #include "forge/core/time.h"
 #include "forge/platform/app.h"
 #include "forge/render/gpu.h"
+#include "forge/render/lighting.h"
 #include "forge/render/offscreen.h"
+#include "forge/render/particles.h"
 #include "forge/render/sprite_renderer.h"
 #include "forge/render/tilemap_renderer.h"
 #include "forge/world/generators.h"
@@ -114,6 +118,10 @@ public:
         });
     }
 
+    u32 count() const { return count_; }
+    f32 x(u32 i) const { return x_[i]; }
+    f32 y(u32 i) const { return y_[i]; }
+
 private:
     u32 count_ = 0;
     f32 w_ = 0, h_ = 0;
@@ -121,13 +129,18 @@ private:
 };
 
 struct FrameTimes {
-    f64 crowd_ms = 0, sprites_ms = 0, tiles_ms = 0;
+    f64 crowd_ms = 0, sprites_ms = 0, tiles_ms = 0, particles_ms = 0, light_ms = 0;
 };
+
+constexpr f32 kTilesPerLamp = 150; // at night, about one lamp per this many tiles of the crowd's area
+
+// Fireflies: a steady stream that keeps about `alive` particles in the air.
+constexpr f32 kFireflyLifeMin = 2.0f, kFireflyLifeMax = 4.0f;
 
 // Everything the demo draws; used by the window, the benchmark and the screenshot.
 class Scene {
 public:
-    bool init(SDL_GPUDevice* device, SDL_GPUTextureFormat format, u32 sprites) {
+    bool init(SDL_GPUDevice* device, SDL_GPUTextureFormat format, u32 sprites, u32 particles) {
         WorldDesc desc;
         desc.bounds = {0, 0, kWorldChunks, kWorldChunks};
         world_ = std::make_unique<World>(desc, std::make_shared<TopDownGenerator>(2026));
@@ -136,11 +149,26 @@ public:
         if (!tiles_.init(device, format, *world_, {atlas_.data(), demo::kTileCellPx, demo::kTileCells})) return false;
         tiles_.set_layer_tint(0, Color{});
         if (!sprites_.init(device, format, sheet_.sheet(), std::max(sprites, 1024u))) return false;
+        render::ParticleLook fireflies;
+        fireflies.gravity_y = -0.3f; // drift up the screen
+        fireflies.drag = 0.6f;
+        fireflies.additive = true;
+        particle_target_ = particles;
+        if (particles > 0 && !fireflies_.init(device, format, sheet_.sheet(), particles, kAreaX, kAreaY, fireflies))
+            return false;
+        render::ParticleLook sparks;
+        sparks.gravity_y = 6.0f;
+        sparks.drag = 1.5f;
+        sparks.additive = true;
+        if (!sparks_.init(device, format, sheet_.sheet(), 65536, kAreaX, kAreaY, sparks)) return false;
+        if (!lights_.init(device, format)) return false;
+        set_night(night_);
         // Area for the crowd: about 7 critters per tile on a 1080p screen at zoom 4.
         const f32 side = std::sqrt(static_cast<f32>(sprites) / 7.0f);
         area_w_ = std::max(64.0f, side * 16.0f / 9.0f);
         area_h_ = std::max(36.0f, side * 9.0f / 16.0f);
         crowd_.init(sprites, area_w_, area_h_);
+        lamp_every_ = std::max(1u, static_cast<u32>(static_cast<f32>(sprites) / (area_w_ * area_h_ / kTilesPerLamp)));
         capacity_ = sprites;
         camera.x = kAreaX + area_w_ * 0.5;
         camera.y = kAreaY + area_h_ * 0.5;
@@ -156,6 +184,31 @@ public:
         const f32 view_top = static_cast<f32>(camera.y - kAreaY) - view_h * 0.5f;
         crowd_.update(paused ? 0.0f : dt, batch_, view_top, view_h);
         times.crowd_ms = ns_to_ms(time_now_ns() - t0);
+        if (particle_target_ > 0 && !paused) emit_fireflies(dt);
+        dt_ = paused ? 0.0f : dt;
+    }
+
+    void set_night(bool night) {
+        night_ = night;
+        lights_.set_rules(demo::top_down_light_rules(night));
+    }
+    bool night() const { return night_; }
+
+    // A burst of sparks at a world position.
+    void burst(f64 x, f64 y) {
+        render::ParticleEmit e;
+        e.x = x;
+        e.y = y;
+        e.count = 3000;
+        e.speed_min = 2;
+        e.speed_max = 14;
+        e.life_min = 0.4f;
+        e.life_max = 1.4f;
+        e.size_start = 0.5f;
+        e.size_end = 0.1f;
+        e.color = render::pack_color(255, 180, 80);
+        e.frame = demo::kFrameGlow;
+        sparks_.emit(e);
     }
 
     void render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) {
@@ -164,8 +217,23 @@ public:
         const u64 t1 = time_now_ns();
         sprites_.prepare(cmd, batch_, camera, width, height);
         const u64 t2 = time_now_ns();
+        if (particle_target_ > 0) fireflies_.simulate(cmd, dt_);
+        sparks_.simulate(cmd, dt_);
+        const u64 t3 = time_now_ns();
+        if (night_) {
+            const u32 lamp_colors[3][3] = {{220, 170, 100}, {120, 200, 255}, {255, 120, 200}};
+            for (u32 i = 0; i < crowd_.count(); i += lamp_every_) {
+                const u32* c = lamp_colors[(i / lamp_every_) % 3];
+                lights_.add({kAreaX + crowd_.x(i), kAreaY + crowd_.y(i), static_cast<f32>(c[0]) / 240.0f,
+                             static_cast<f32>(c[1]) / 240.0f, static_cast<f32>(c[2]) / 240.0f});
+            }
+            lights_.prepare(cmd, *world_, camera, width, height);
+        }
+        const u64 t4 = time_now_ns();
         times.tiles_ms = ns_to_ms(t1 - t0);
         times.sprites_ms = ns_to_ms(t2 - t1);
+        times.particles_ms = ns_to_ms(t3 - t2);
+        times.light_ms = ns_to_ms(t4 - t3);
 
         SDL_GPUColorTargetInfo info{};
         info.texture = target;
@@ -175,27 +243,70 @@ public:
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
         tiles_.draw(cmd, pass);
         sprites_.draw(cmd, pass);
+        if (night_) lights_.draw(cmd, pass); // glowing particles stay bright: drawn after
+        if (particle_target_ > 0) fireflies_.draw(cmd, pass, camera, width, height);
+        sparks_.draw(cmd, pass, camera, width, height);
         SDL_EndGPURenderPass(pass);
     }
 
     void finish_loading() { world_->finish_loading(); }
     void shutdown() {
+        lights_.shutdown();
+        sparks_.shutdown();
+        fireflies_.shutdown();
         sprites_.shutdown();
         tiles_.shutdown();
         world_.reset();
     }
     const render::SpriteStats& sprite_stats() const { return sprites_.stats(); }
+    const render::ParticleStats& particle_stats() const { return fireflies_.stats(); }
+    const render::LightStats& light_stats() const { return lights_.stats(); }
 
     Camera2D camera;
     FrameTimes times;
 
 private:
+    // Spawns this frame's share so that about particle_target_ are alive.
+    void emit_fireflies(f32 dt) {
+        constexpr u32 kSpots = 64;
+        const f32 per_second = static_cast<f32>(particle_target_) / ((kFireflyLifeMin + kFireflyLifeMax) * 0.5f);
+        spawn_debt_ += per_second * dt;
+        const u32 total = static_cast<u32>(spawn_debt_);
+        spawn_debt_ -= static_cast<f32>(total);
+        const u32 colors[4] = {render::pack_color(255, 230, 120, 150), render::pack_color(180, 255, 140, 150),
+                               render::pack_color(255, 190, 90, 150), render::pack_color(150, 220, 255, 150)};
+        for (u32 k = 0; k < kSpots; ++k) {
+            const u32 h = hash32(++emit_seq_, 77);
+            render::ParticleEmit e;
+            e.x = kAreaX + unit(h) * area_w_;
+            e.y = kAreaY + unit(hash32(h, 1)) * area_h_;
+            e.count = total / kSpots + (k < total % kSpots ? 1 : 0);
+            e.radius = std::max(area_w_, area_h_) / 8.0f;
+            e.speed_min = 0.2f;
+            e.speed_max = 1.5f;
+            e.life_min = kFireflyLifeMin;
+            e.life_max = kFireflyLifeMax;
+            e.size_start = 0.6f;
+            e.size_end = 0.15f;
+            e.color = colors[h & 3];
+            e.frame = demo::kFrameGlow;
+            fireflies_.emit(e);
+        }
+    }
+
     std::unique_ptr<World> world_;
     std::vector<u8> atlas_;
     demo::SheetImage sheet_;
     render::TilemapRenderer tiles_;
     render::SpriteRenderer sprites_;
     render::SpriteBatch batch_;
+    render::ParticleSystem fireflies_, sparks_;
+    render::LightRenderer lights_;
+    bool night_ = true;
+    u32 lamp_every_ = 1;
+    u32 particle_target_ = 0;
+    f32 spawn_debt_ = 0, dt_ = 0;
+    u32 emit_seq_ = 0;
     Crowd crowd_;
     u32 capacity_ = 0;
     f32 area_w_ = 0, area_h_ = 0;
@@ -204,12 +315,15 @@ private:
 class RenderDemo final : public App {
 public:
     u32 sprite_count = 1'000'000;
+    u32 particle_count = 1'000'000;
+    bool night = true;
 
     void on_render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) override {
         width_ = width;
         height_ = height;
         if (!ready_ && !failed_) {
-            ready_ = scene_.init(gpu(), swapchain_format(), sprite_count);
+            ready_ = scene_.init(gpu(), swapchain_format(), sprite_count, particle_count);
+            if (ready_) scene_.set_night(night);
             failed_ = !ready_;
             if (failed_) request_quit();
         }
@@ -219,9 +333,9 @@ public:
         if (frame_stats().frame % 30 == 0) {
             const render::SpriteStats& s = scene_.sprite_stats();
             char text[256];
-            std::snprintf(text, sizeof(text), "sprites %u of %u on screen  crowd %.2f ms  sort+upload %.2f ms  zoom %.2g%s",
-                          s.drawn, s.submitted, scene_.times.crowd_ms, scene_.times.sprites_ms,
-                          static_cast<f64>(scene_.camera.zoom), paused_ ? "  [paused]" : "");
+            std::snprintf(text, sizeof(text), "sprites %u of %u on screen  particles %u  crowd %.2f ms  sort+upload %.2f ms  zoom %.2g%s",
+                          s.drawn, s.submitted, scene_.particle_stats().slots_used, scene_.times.crowd_ms,
+                          scene_.times.sprites_ms, static_cast<f64>(scene_.camera.zoom), paused_ ? "  [paused]" : "");
             set_status(text);
         }
     }
@@ -237,12 +351,21 @@ public:
         const f64 speed = (keys[SDL_SCANCODE_LSHIFT] ? 4000.0 : 1000.0) / scene_.camera.zoom;
         scene_.camera.x += dx * speed * dt_;
         scene_.camera.y += dy * speed * dt_;
+
+        f32 mx = 0, my = 0;
+        if (ready_ && (SDL_GetMouseState(&mx, &my) & SDL_BUTTON_LMASK)) {
+            const f32 density = SDL_GetWindowPixelDensity(window());
+            f64 tx, ty;
+            scene_.camera.screen_to_tile(mx * density, my * density, width_, height_, tx, ty);
+            scene_.burst(tx, ty);
+        }
     }
 
     void on_event(const SDL_Event& e) override {
         if (e.type == SDL_EVENT_MOUSE_WHEEL)
             scene_.camera.zoom = std::clamp(scene_.camera.zoom * (e.wheel.y > 0 ? 1.25f : 0.8f), 0.25f, 64.0f);
         if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_SPACE) paused_ = !paused_;
+        if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_N && ready_) scene_.set_night(!scene_.night());
     }
 
     void on_shutdown() override {
@@ -272,7 +395,7 @@ struct Series {
 
 // Offscreen: renders frames at 1920×1080 and waits for the GPU after each,
 // so "frame" is the full CPU + GPU time without a monitor's limit.
-int run_offscreen(u32 sprites, u32 frames, const char* screenshot, f32 zoom) {
+int run_offscreen(u32 sprites, u32 particles, bool night, u32 frames, const char* screenshot, f32 zoom) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
     if (!device) {
@@ -284,31 +407,44 @@ int run_offscreen(u32 sprites, u32 frames, const char* screenshot, f32 zoom) {
     int result = 1;
     {
         Scene scene;
-        if (target && scene.init(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, sprites)) {
+        if (target && scene.init(device, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, sprites, particles)) {
+            scene.set_night(night);
             if (zoom > 0) scene.camera.zoom = zoom;
-            constexpr u32 kWarmup = 20;
-            Series crowd, sort, tiles, frame;
-            for (u32 f = 0; f < kWarmup + frames; ++f) {
+            // Long enough for the particle stream to fill up (life is 2-4 s).
+            const u32 warmup = particles > 0 ? 250 : 20;
+            Series crowd, sort, tiles, parts, light, frame;
+            for (u32 f = 0; f < warmup + frames; ++f) {
                 const u64 t0 = time_now_ns();
                 scene.update(1.0f / 60.0f, w, h, false);
-                if (f < kWarmup) scene.finish_loading();
+                if (f < 20) scene.finish_loading();
+                if (f == warmup - 30) scene.burst(scene.camera.x, scene.camera.y);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 scene.render(cmd, target, w, h);
                 SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
                 SDL_WaitForGPUFences(device, true, &fence, 1);
                 SDL_ReleaseGPUFence(device, fence);
-                if (f < kWarmup) continue;
+                if (f < warmup) continue;
                 crowd.v.push_back(scene.times.crowd_ms);
                 sort.v.push_back(scene.times.sprites_ms);
                 tiles.v.push_back(scene.times.tiles_ms);
+                parts.v.push_back(scene.times.particles_ms);
+                light.v.push_back(scene.times.light_ms);
                 frame.v.push_back(ns_to_ms(time_now_ns() - t0));
             }
             const render::SpriteStats& s = scene.sprite_stats();
-            FORGE_INFO("%u sprites submitted, %u on screen, %u dropped, %u threads, %ux%u", s.submitted, s.drawn,
-                       s.dropped, jobs::thread_count(), w, h);
+            FORGE_INFO("%u sprites submitted, %u on screen, %u dropped; %u particle slots in use, %u spawned per frame; "
+                       "%u threads, %ux%u",
+                       s.submitted, s.drawn, s.dropped, scene.particle_stats().slots_used,
+                       scene.particle_stats().spawned_last, jobs::thread_count(), w, h);
             crowd.print("move + write sprites");
             sort.print("cull + sort + upload");
             tiles.print("tiles");
+            parts.print("particles (CPU part)");
+            if (night) {
+                const render::LightStats& ls = scene.light_stats();
+                FORGE_INFO("night: %u lamps, light grid %ux%u cells of %u tile(s)", ls.lights, ls.cells_w, ls.cells_h, ls.step);
+                light.print("light grid (CPU part)");
+            }
             frame.print("frame (CPU + GPU)");
             result = s.drawn > 0 && s.dropped == 0 ? 0 : 1;
             if (screenshot && !render::save_png(device, target, w, h, screenshot)) result = 1;
@@ -335,11 +471,13 @@ int main(int argc, char** argv) {
         const bool has_value = i + 1 < argc;
         if (std::strcmp(argv[i], "--no-vsync") == 0) config.vsync = false;
         else if (std::strcmp(argv[i], "--sprites") == 0 && has_value) app.sprite_count = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
+        else if (std::strcmp(argv[i], "--day") == 0) app.night = false;
+        else if (std::strcmp(argv[i], "--particles") == 0 && has_value) app.particle_count = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--bench") == 0 && has_value) bench_frames = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--screenshot") == 0 && has_value) screenshot = argv[++i];
         else if (std::strcmp(argv[i], "--zoom") == 0 && has_value) zoom = std::strtof(argv[++i], nullptr);
     }
-    if (screenshot) return run_offscreen(app.sprite_count, 3, screenshot, zoom);
-    if (bench_frames > 0) return run_offscreen(app.sprite_count, bench_frames, nullptr, zoom);
+    if (screenshot) return run_offscreen(app.sprite_count, app.particle_count, app.night, 3, screenshot, zoom);
+    if (bench_frames > 0) return run_offscreen(app.sprite_count, app.particle_count, app.night, bench_frames, nullptr, zoom);
     return app.run(config);
 }

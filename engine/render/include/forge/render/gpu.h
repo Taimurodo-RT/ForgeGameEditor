@@ -12,6 +12,7 @@ SDL_GPUShaderFormat supported_shader_formats();
 // Creates the shader in whichever format the device takes; nullptr (and a
 // logged error) when the build has no matching bytecode.
 SDL_GPUShader* create_shader(SDL_GPUDevice* device, const ShaderBlob& blob);
+SDL_GPUComputePipeline* create_compute_pipeline(SDL_GPUDevice* device, const ShaderBlob& blob);
 
 // One-off uploads recorded into cmd (the staging memory is freed once the GPU
 // has used it). nullptr on failure, with the reason logged.

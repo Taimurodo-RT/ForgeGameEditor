@@ -163,4 +163,30 @@ SheetImage make_sprite_sheet() {
     return img;
 }
 
+render::LightRules side_view_light_rules() {
+    render::LightRules rules;
+    rules.blocking_layer = 1;
+    rules.kinds.assign(TileSampleCount, render::LightKind::Solid);
+    rules.kinds[TileAir] = render::LightKind::Open;
+    rules.kinds[TileWater] = render::LightKind::Dense;
+    rules.kinds[TileDeepWater] = render::LightKind::Dense;
+    rules.sky = true;
+    rules.sky_color = {1.0f, 0.98f, 0.92f, 1.0f};
+    rules.ambient = {0.04f, 0.04f, 0.06f, 1.0f};
+    // Gold glints faintly in the dark.
+    rules.glow.assign(TileSampleCount, Color{0, 0, 0, 1});
+    rules.glow[TileGold] = {0.35f, 0.28f, 0.05f, 1.0f};
+    return rules;
+}
+
+render::LightRules top_down_light_rules(bool night) {
+    render::LightRules rules;
+    rules.blocking_layer = 1;
+    rules.kinds.assign(TileSampleCount, render::LightKind::Open);
+    rules.kinds[TileTree] = render::LightKind::Dense;
+    rules.kinds[TileRock] = render::LightKind::Solid;
+    rules.ambient = night ? Color{0.10f, 0.12f, 0.22f, 1.0f} : Color{1.0f, 1.0f, 1.0f, 1.0f};
+    return rules;
+}
+
 } // namespace forge::demo

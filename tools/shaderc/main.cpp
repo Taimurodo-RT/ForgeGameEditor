@@ -1,7 +1,7 @@
 // forge_shaderc: compiles one GLSL shader for every GPU backend at build time
 // and writes a C++ header with the results (see forge/render/shader_blob.h).
 //
-//   forge_shaderc <vert|frag> <input.glsl> <output.h> <name>
+//   forge_shaderc <vert|frag|comp> <input.glsl> <output.h> <name>
 //
 // GLSL -> SPIR-V (glslang) for Vulkan. On Windows also SPIR-V -> HLSL
 // (SPIRV-Cross) -> DXBC (the system D3DCompiler) for Direct3D 12. The HLSL is
@@ -9,7 +9,8 @@
 //
 // Resource layout follows SDL_GPU's rules: vertex shaders use set 0 for
 // textures and storage buffers and set 1 for uniform buffers; fragment
-// shaders use sets 2 and 3.
+// shaders use sets 2 and 3. Compute shaders: set 0 for sampled textures and
+// read-only storage, set 1 for read-write storage, set 2 for uniform buffers.
 
 #include <SPIRV/GlslangToSpv.h>
 #include <glslang/Public/ResourceLimits.h>
@@ -76,14 +77,18 @@ void write_bytes(std::ostream& out, const char* name, const unsigned char* data,
 
 int main(int argc, char** argv) {
     if (argc != 5) {
-        std::fprintf(stderr, "usage: forge_shaderc <vert|frag> <input.glsl> <output.h> <name>\n");
+        std::fprintf(stderr, "usage: forge_shaderc <vert|frag|comp> <input.glsl> <output.h> <name>\n");
         return 2;
     }
     const bool vertex = std::strcmp(argv[1], "vert") == 0;
-    if (!vertex && std::strcmp(argv[1], "frag") != 0) {
+    const bool compute = std::strcmp(argv[1], "comp") == 0;
+    if (!vertex && !compute && std::strcmp(argv[1], "frag") != 0) {
         std::fprintf(stderr, "forge_shaderc: unknown stage %s\n", argv[1]);
         return 2;
     }
+    const EShLanguage stage = vertex ? EShLangVertex : (compute ? EShLangCompute : EShLangFragment);
+    const char* stage_name = vertex ? "Vertex" : (compute ? "Compute" : "Fragment");
+    const char* profile = vertex ? "vs_5_1" : (compute ? "cs_5_1" : "ps_5_1");
     const char* input = argv[2];
     const std::string output = argv[3];
     const std::string name = argv[4];
@@ -96,7 +101,7 @@ int main(int argc, char** argv) {
 
     glslang::InitializeProcess();
     std::vector<unsigned> spirv;
-    const bool ok = compile_spirv(source, vertex ? EShLangVertex : EShLangFragment, input, spirv);
+    const bool ok = compile_spirv(source, stage, input, spirv);
     glslang::FinalizeProcess();
     if (!ok) return 1;
 
@@ -104,9 +109,24 @@ int main(int argc, char** argv) {
     spirv_cross::CompilerHLSL hlsl(spirv);
     const spirv_cross::ShaderResources res = hlsl.get_shader_resources();
     const size_t samplers = res.sampled_images.size();
-    const size_t storage_textures = res.storage_images.size();
-    const size_t storage_buffers = res.storage_buffers.size();
+    size_t storage_textures = res.storage_images.size();
+    size_t storage_buffers = res.storage_buffers.size();
     const size_t uniform_buffers = res.uniform_buffers.size();
+    // Compute shaders tell SDL read-only and read-write storage apart.
+    size_t rw_textures = 0, rw_buffers = 0;
+    unsigned threads[3] = {0, 0, 0};
+    if (compute) {
+        storage_textures = storage_buffers = 0;
+        for (const auto& r : res.storage_images) {
+            if (hlsl.get_decoration(r.id, spv::DecorationNonWritable)) ++storage_textures;
+            else ++rw_textures;
+        }
+        for (const auto& r : res.storage_buffers) {
+            if (hlsl.get_buffer_block_flags(r.id).get(spv::DecorationNonWritable)) ++storage_buffers;
+            else ++rw_buffers;
+        }
+        for (unsigned i = 0; i < 3; ++i) threads[i] = hlsl.get_execution_mode_argument(spv::ExecutionModeLocalSize, i);
+    }
 
     // HLSL for Direct3D 12 (shader model 5.1: register spaces = SPIR-V sets).
     spirv_cross::CompilerHLSL::Options hlsl_options;
@@ -126,7 +146,7 @@ int main(int argc, char** argv) {
     ID3DBlob* code = nullptr;
     ID3DBlob* errors = nullptr;
     const HRESULT hr = D3DCompile(hlsl_source.data(), hlsl_source.size(), input, nullptr, nullptr, "main",
-                                  vertex ? "vs_5_1" : "ps_5_1", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+                                  profile, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
     if (FAILED(hr)) {
         std::fprintf(stderr, "forge_shaderc: HLSL compile failed for %s\n%s\n", input,
                      errors ? static_cast<const char*>(errors->GetBufferPointer()) : "");
@@ -147,11 +167,12 @@ int main(int argc, char** argv) {
     if (!dxbc.empty()) write_bytes(out, (name + "_dxbc").c_str(), dxbc.data(), dxbc.size());
     out << "\ninline constexpr render::ShaderBlob " << name << " = {\n"
         << "    \"" << name << "\",\n"
-        << "    render::ShaderStage::" << (vertex ? "Vertex" : "Fragment") << ",\n"
+        << "    render::ShaderStage::" << stage_name << ",\n"
         << "    " << name << "_spirv, sizeof(" << name << "_spirv),\n";
     if (dxbc.empty()) out << "    nullptr, 0,\n";
     else out << "    " << name << "_dxbc, sizeof(" << name << "_dxbc),\n";
-    out << "    " << samplers << ", " << storage_textures << ", " << storage_buffers << ", " << uniform_buffers
+    out << "    " << samplers << ", " << storage_textures << ", " << storage_buffers << ", " << uniform_buffers << ",\n"
+        << "    " << rw_textures << ", " << rw_buffers << ", " << threads[0] << ", " << threads[1] << ", " << threads[2]
         << ",\n};\n\n} // namespace forge::shaders\n";
 
     std::ofstream f(output, std::ios::binary);
