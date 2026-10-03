@@ -1,0 +1,68 @@
+{
+  "kind": "script",
+  "name": "critter",
+  "variables": [
+    { "name": "dir", "type": "number", "value": "1", "title": { "ru": "Направление", "en": "Direction" } },
+    { "name": "speed", "type": "number", "value": "3", "title": { "ru": "Скорость", "en": "Speed" } }
+  ],
+  "nodes": [
+    { "uid": 1, "def": "std.event.start", "x": 0, "y": 0 },
+    { "uid": 2, "def": "std.var.set", "x": 220, "y": 0, "values": [ { "pin": "name", "value": "dir" } ] },
+    { "uid": 3, "def": "std.select", "x": 220, "y": 120, "values": [ { "pin": "yes", "value": "1" }, { "pin": "no", "value": "-1" } ] },
+    { "uid": 4, "def": "std.compare", "x": 40, "y": 120, "values": [ { "pin": "op", "value": "<" }, { "pin": "b", "value": "0.5" } ] },
+    { "uid": 5, "def": "api.random", "x": -160, "y": 120 },
+    { "uid": 6, "def": "std.var.set", "x": 440, "y": 0, "values": [ { "pin": "name", "value": "speed" } ] },
+    { "uid": 7, "def": "api.random", "x": 440, "y": 120, "values": [ { "pin": "min", "value": "1.5" }, { "pin": "max", "value": "4.5" } ] },
+
+    { "uid": 10, "def": "std.event.tick", "x": 0, "y": 300, "comment": "Упёрся в стену и стоит на земле: прыжок" },
+    { "uid": 11, "def": "std.flow.if", "x": 220, "y": 300, "slots": [ { "slot": "then", "nodes": [ 12 ] } ] },
+    { "uid": 12, "def": "comp.Body.vy.set", "x": 240, "y": 380, "values": [ { "pin": "value", "value": "-13" } ] },
+    { "uid": 13, "def": "comp.Body.vx.get", "x": -400, "y": 420 },
+    { "uid": 14, "def": "std.math.abs", "x": -220, "y": 420 },
+    { "uid": 15, "def": "std.compare", "x": -60, "y": 420, "values": [ { "pin": "op", "value": "<" }, { "pin": "b", "value": "0.2" } ] },
+    { "uid": 16, "def": "comp.Body.vy.get", "x": -400, "y": 520 },
+    { "uid": 17, "def": "std.math.abs", "x": -220, "y": 520 },
+    { "uid": 18, "def": "std.compare", "x": -60, "y": 520, "values": [ { "pin": "op", "value": "<" }, { "pin": "b", "value": "0.2" } ] },
+    { "uid": 19, "def": "std.logic.and", "x": 100, "y": 460 },
+
+    { "uid": 20, "def": "std.flow.if", "x": 520, "y": 300, "comment": "Иногда разворачивается", "slots": [ { "slot": "then", "nodes": [ 21 ] } ] },
+    { "uid": 21, "def": "std.var.set", "x": 540, "y": 380, "values": [ { "pin": "name", "value": "dir" } ] },
+    { "uid": 22, "def": "std.math.mul", "x": 360, "y": 600, "values": [ { "pin": "b", "value": "-1" } ] },
+    { "uid": 23, "def": "std.var.get", "x": 200, "y": 600, "values": [ { "pin": "name", "value": "dir" } ] },
+    { "uid": 24, "def": "api.random", "x": 200, "y": 700 },
+    { "uid": 25, "def": "std.compare", "x": 360, "y": 700, "values": [ { "pin": "op", "value": "<" }, { "pin": "b", "value": "0.004" } ] },
+
+    { "uid": 30, "def": "comp.Body.vx.set", "x": 820, "y": 300, "comment": "Идёт: скорость × направление" },
+    { "uid": 31, "def": "std.math.mul", "x": 660, "y": 600 },
+    { "uid": 32, "def": "std.var.get", "x": 500, "y": 800, "values": [ { "pin": "name", "value": "dir" } ] },
+    { "uid": 33, "def": "std.var.get", "x": 500, "y": 900, "values": [ { "pin": "name", "value": "speed" } ] }
+  ],
+  "links": [
+    { "from_node": 1, "from_pin": "next", "to_node": 2, "to_pin": "in" },
+    { "from_node": 5, "from_pin": "value", "to_node": 4, "to_pin": "a" },
+    { "from_node": 4, "from_pin": "result", "to_node": 3, "to_pin": "cond" },
+    { "from_node": 3, "from_pin": "value", "to_node": 2, "to_pin": "value" },
+    { "from_node": 2, "from_pin": "next", "to_node": 6, "to_pin": "in" },
+    { "from_node": 7, "from_pin": "value", "to_node": 6, "to_pin": "value" },
+
+    { "from_node": 10, "from_pin": "next", "to_node": 11, "to_pin": "in" },
+    { "from_node": 13, "from_pin": "value", "to_node": 14, "to_pin": "a" },
+    { "from_node": 14, "from_pin": "result", "to_node": 15, "to_pin": "a" },
+    { "from_node": 16, "from_pin": "value", "to_node": 17, "to_pin": "a" },
+    { "from_node": 17, "from_pin": "result", "to_node": 18, "to_pin": "a" },
+    { "from_node": 15, "from_pin": "result", "to_node": 19, "to_pin": "a" },
+    { "from_node": 18, "from_pin": "result", "to_node": 19, "to_pin": "b" },
+    { "from_node": 19, "from_pin": "result", "to_node": 11, "to_pin": "cond" },
+
+    { "from_node": 11, "from_pin": "next", "to_node": 20, "to_pin": "in" },
+    { "from_node": 24, "from_pin": "value", "to_node": 25, "to_pin": "a" },
+    { "from_node": 25, "from_pin": "result", "to_node": 20, "to_pin": "cond" },
+    { "from_node": 23, "from_pin": "value", "to_node": 22, "to_pin": "a" },
+    { "from_node": 22, "from_pin": "result", "to_node": 21, "to_pin": "value" },
+
+    { "from_node": 20, "from_pin": "next", "to_node": 30, "to_pin": "in" },
+    { "from_node": 32, "from_pin": "value", "to_node": 31, "to_pin": "a" },
+    { "from_node": 33, "from_pin": "value", "to_node": 31, "to_pin": "b" },
+    { "from_node": 31, "from_pin": "result", "to_node": 30, "to_pin": "value" }
+  ]
+}

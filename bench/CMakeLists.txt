@@ -29,3 +29,7 @@ forge_target_defaults(forge_bench_sim)
 add_executable(forge_bench_factory bench_factory.cpp)
 target_link_libraries(forge_bench_factory PRIVATE forge::sim)
 forge_target_defaults(forge_bench_factory)
+
+add_executable(forge_bench_script bench_script.cpp)
+target_link_libraries(forge_bench_script PRIVATE forge::script)
+forge_target_defaults(forge_bench_script)
