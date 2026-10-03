@@ -32,7 +32,7 @@
 
 ## Сборка
 
-Нужны CMake 3.24+, Ninja или Visual Studio 2022, компилятор с C++20 и git.
+Нужны CMake 3.24+, Ninja или Visual Studio 2022 и новее, компилятор с C++20 и git.
 Зависимости (SDL3, Tracy, doctest, glslang, SPIRV-Cross и др.) скачиваются при первой настройке.
 
 ```
@@ -40,8 +40,8 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
-Windows (Visual Studio 2022): `cmake -S . -B build -G "Visual Studio 17 2022"`, затем открыть `build/Forge.sln`
-или `cmake --build build --config Release`.
+Windows: `cmake -S . -B build` (CMake сам выберет установленную Visual Studio 2022/2026), затем
+`cmake --build build --config Release` или открыть решение из папки `build`.
 
 ## Запуск
 
