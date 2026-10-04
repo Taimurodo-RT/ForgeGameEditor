@@ -100,6 +100,37 @@ private:
     std::vector<VerbDef> verbs_;
 };
 
+// --- ideas -----------------------------------------------------------------
+
+// A ready piece of a game with a few fields: «Дверь с ключом» (the door, the
+// key), «Ловушка» (what hurts). An idea is a way to see and make a link: its
+// verb, which sides the author picks, and the refinements it starts with.
+// Ideas are data (the game's ideas.json).
+struct IdeaField {
+    Side side = Side::B;
+    std::string label; // «Дверь», «Что ранит»
+};
+
+struct Idea {
+    std::string id, name, icon, group, about;
+    std::string verb;
+    std::vector<IdeaField> fields;
+    bool night = false, once = false, sound = false, hint = false; // what a new one starts with
+};
+
+class Ideas {
+public:
+    bool load(const std::filesystem::path& file, std::string* error = nullptr);
+    bool parse(std::string_view json, std::string* error = nullptr);
+    const Idea* find(std::string_view id) const;
+    // The idea a link is seen as: the first one with its verb.
+    const Idea* of_verb(std::string_view verb) const;
+    const std::vector<Idea>& all() const { return ideas_; }
+
+private:
+    std::vector<Idea> ideas_;
+};
+
 // --- the links of a game -------------------------------------------------
 
 struct Link {

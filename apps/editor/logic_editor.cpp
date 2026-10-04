@@ -26,7 +26,9 @@ const char* part_label(std::string_view part) {
     return "Иначе";
 }
 
-bool known_mode(std::string_view m) { return m == "links" || m == "steps" || m == "code"; }
+bool known_mode(std::string_view m) { return m == "links" || m == "ideas" || m == "steps" || m == "code"; }
+
+constexpr u64 kLitMs = 1500; // how long a link that happened stays lit
 
 } // namespace
 
@@ -86,6 +88,10 @@ bool LogicEditor::set_mode(const std::string& mode) {
     close_picker();
     mode_ = m_mode_ = mode;
     adding_ = 0;
+    m_gallery_ = m_choosing_ = false;
+    choose_link_ = 0;
+    if (model_)
+        for (const char* name : {"lg_gallery", "lg_choosing"}) model_.DirtyVariable(name);
     remember_mode();
     if (model_) model_.DirtyVariable("lg_mode");
     rebuild();
@@ -96,6 +102,7 @@ void LogicEditor::load() {
     std::string error;
     if (!verbs_.load(game_dir_ / "verbs.json", &error)) FORGE_ERROR("Связи: %s", error.c_str());
     if (!logic_.load(file_, &error)) FORGE_ERROR("Связи: %s", error.c_str());
+    if (!ideas_.load(game_dir_ / "ideas.json", &error)) FORGE_ERROR("Идеи: %s", error.c_str());
     // A game without links starts with the hero on the board.
     if (logic_.board.empty() && logic_.links.empty()) logic_.set_spot(logic::kHero, 60, 60);
     dirty_ = true;
@@ -129,6 +136,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("refined", &LinkView::refined);
         s.RegisterMember("selected", &LinkView::selected);
         s.RegisterMember("broken", &LinkView::broken);
+        s.RegisterMember("lit", &LinkView::lit);
     }
     model.RegisterArray<std::vector<LinkView>>();
     if (auto s = model.RegisterStruct<NavRow>()) {
@@ -161,6 +169,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("meaning", &WordRow::meaning);
         s.RegisterMember("problem", &WordRow::problem);
         s.RegisterMember("selected", &WordRow::selected);
+        s.RegisterMember("lit", &WordRow::lit);
     }
     model.RegisterArray<std::vector<WordRow>>();
     if (auto s = model.RegisterStruct<StepView>()) {
@@ -184,6 +193,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("problem", &CardView::problem);
         s.RegisterMember("selected", &CardView::selected);
         s.RegisterMember("adding", &CardView::adding);
+        s.RegisterMember("lit", &CardView::lit);
         s.RegisterMember("steps", &CardView::steps);
         s.RegisterMember("adds", &CardView::adds);
     }
@@ -194,8 +204,45 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("text", &CodeLine::text);
         s.RegisterMember("selected", &CodeLine::selected);
         s.RegisterMember("comment", &CodeLine::comment);
+        s.RegisterMember("lit", &CodeLine::lit);
     }
     model.RegisterArray<std::vector<CodeLine>>();
+    if (auto s = model.RegisterStruct<FieldView>()) {
+        s.RegisterMember("side", &FieldView::side);
+        s.RegisterMember("label", &FieldView::label);
+        s.RegisterMember("thing", &FieldView::thing);
+        s.RegisterMember("name", &FieldView::name);
+        s.RegisterMember("icon", &FieldView::icon);
+    }
+    model.RegisterArray<std::vector<FieldView>>();
+    if (auto s = model.RegisterStruct<IdeaCard>()) {
+        s.RegisterMember("id", &IdeaCard::id);
+        s.RegisterMember("name", &IdeaCard::name);
+        s.RegisterMember("icon", &IdeaCard::icon);
+        s.RegisterMember("phrase", &IdeaCard::phrase);
+        s.RegisterMember("problem", &IdeaCard::problem);
+        s.RegisterMember("selected", &IdeaCard::selected);
+        s.RegisterMember("lit", &IdeaCard::lit);
+        s.RegisterMember("fields", &IdeaCard::fields);
+        s.RegisterMember("refine", &IdeaCard::refine);
+    }
+    model.RegisterArray<std::vector<IdeaCard>>();
+    if (auto s = model.RegisterStruct<IdeaView>()) {
+        s.RegisterMember("id", &IdeaView::id);
+        s.RegisterMember("name", &IdeaView::name);
+        s.RegisterMember("icon", &IdeaView::icon);
+        s.RegisterMember("about", &IdeaView::about);
+        s.RegisterMember("group", &IdeaView::group);
+        s.RegisterMember("can", &IdeaView::can);
+    }
+    model.RegisterArray<std::vector<IdeaView>>();
+    if (auto s = model.RegisterStruct<ChoiceView>()) {
+        s.RegisterMember("id", &ChoiceView::id);
+        s.RegisterMember("name", &ChoiceView::name);
+        s.RegisterMember("icon", &ChoiceView::icon);
+        s.RegisterMember("current", &ChoiceView::current);
+    }
+    model.RegisterArray<std::vector<ChoiceView>>();
 
     model.Bind("lg_things", &m_things_);
     model.Bind("lg_links", &m_links_);
@@ -222,6 +269,12 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_mode", &m_mode_);
     model.Bind("lg_cards", &m_cards_);
     model.Bind("lg_code", &m_code_);
+    model.Bind("lg_idea_cards", &m_idea_cards_);
+    model.Bind("lg_ideas", &m_ideas_);
+    model.Bind("lg_choices", &m_choices_);
+    model.Bind("lg_choose_title", &m_choose_title_);
+    model.Bind("lg_gallery", &m_gallery_);
+    model.Bind("lg_choosing", &m_choosing_);
 
     auto on = [&model](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) { fn(ev, a); });
@@ -276,7 +329,42 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     });
     on("lg_mode", [this](Rml::Event&, const Rml::VariantList& a) {
         const std::string m = arg_str(a, 0);
-        if (!set_mode(m)) FORGE_INFO("Этот режим появится позже: пока есть «Связи», «Шаги» и «Код»");
+        if (!set_mode(m)) FORGE_INFO("Этот режим появится позже: пока есть «Связи», «Идеи», «Шаги» и «Код»");
+    });
+    on("lg_gallery", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        open_gallery(!m_gallery_);
+    });
+    on("lg_idea_add", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        add_idea(arg_str(a, 0));
+    });
+    on("lg_field", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        open_choices(static_cast<u32>(arg_int(a, 0, 0)), arg_str(a, 1));
+    });
+    on("lg_choose", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        choose(arg_str(a, 0));
+    });
+    on("lg_choose_cancel", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        open_choices(0, {});
+    });
+    on("lg_idea_refine", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        const u32 id = static_cast<u32>(arg_int(a, 0, 0));
+        const std::string what = arg_str(a, 1);
+        const logic::Link* l = logic_.find(id);
+        if (!l) return;
+        const bool now = what == "night" ? l->night : what == "once" ? l->once : what == "sound" ? l->sound : l->hint;
+        refine(id, what, !now);
+    });
+    on("lg_idea_steps", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        const u32 id = static_cast<u32>(arg_int(a, 0, 0));
+        set_mode("steps");
+        select_link(id);
     });
     on("lg_card", [this](Rml::Event&, const Rml::VariantList& a) {
         const u32 id = static_cast<u32>(arg_int(a, 0, 0));
@@ -397,6 +485,7 @@ void LogicEditor::rebuild() {
         v.refined = l.night + l.once + l.sound + l.hint;
         v.selected = l.id == sel_link_;
         v.broken = problems_.contains(l.id);
+        v.lit = lit(l.id);
         (void)tb;
         f32 ax = sa->x + pan_x_ + kCardW / 2, ay = sa->y + pan_y_ + kCardH / 2;
         f32 bx = sb->x + pan_x_ + kCardW / 2, by = sb->y + pan_y_ + kCardH / 2;
@@ -444,6 +533,7 @@ void LogicEditor::rebuild() {
     m_count_ = "Связей: " + std::to_string(logic_.links.size()) + ", вещей на доске: " + std::to_string(logic_.board.size());
     m_hint_ = logic_.links.empty() && !hint_closed_ && mode_ == "links";
     rebuild_side();
+    if (mode_ == "ideas") rebuild_ideas();
     if (mode_ == "steps") rebuild_steps();
     if (mode_ == "code") rebuild_code();
     if (model_)
@@ -483,7 +573,7 @@ void LogicEditor::rebuild_side() {
     // Everything in words.
     m_words_.clear();
     for (const logic::Link& k : logic_.links)
-        m_words_.push_back({static_cast<int>(k.id), phrase_of(k.id), meaning_of(k.id), problem_of(k.id), k.id == sel_link_});
+        m_words_.push_back({static_cast<int>(k.id), phrase_of(k.id), meaning_of(k.id), problem_of(k.id), k.id == sel_link_, lit(k.id)});
     if (model_)
         for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem",
                                  "lg_thing_links", "lg_sel_name", "lg_sel_icon", "lg_sel_links", "lg_words"})
@@ -534,9 +624,66 @@ void LogicEditor::update(Rml::Context* context) {
             }
             break;
         }
+    watch_fired();
     const objects::Library* lib = module_.library();
     if (lib && lib->version() != built_lib_) dirty_ = true;
     if (dirty_) rebuild();
+}
+
+// --- links that happen in the running game -------------------------------------
+
+void LogicEditor::light(u32 link) {
+    if (!logic_.find(link)) return;
+    const bool was = lit_.contains(link);
+    lit_[link] = SDL_GetTicks() + kLitMs;
+    if (!was) dirty_ = true;
+}
+
+void LogicEditor::watch_fired() {
+    const u64 now = SDL_GetTicks();
+    for (auto it = lit_.begin(); it != lit_.end();)
+        if (it->second <= now) {
+            it = lit_.erase(it);
+            dirty_ = true;
+        } else {
+            ++it;
+        }
+    if (fired_file_.empty() || now - fired_checked_ < 100) return;
+    fired_checked_ = now;
+    std::error_code ec;
+    const u64 size = std::filesystem::file_size(fired_file_, ec);
+    if (ec) return;
+    const auto time = std::filesystem::last_write_time(fired_file_, ec);
+    if (ec || (size == fired_size_ && time == fired_time_)) return;
+    fired_size_ = size;
+    fired_time_ = time;
+    std::vector<u8> bytes;
+    if (!read_file(fired_file_, bytes)) return;
+    // The first line names the run: another run starts from its beginning.
+    const auto nl = std::find(bytes.begin(), bytes.end(), u8('\n'));
+    if (nl == bytes.end()) return;
+    std::string run(bytes.begin(), nl);
+    if (run != fired_run_) {
+        fired_run_ = std::move(run);
+        fired_at_ = static_cast<u64>(nl - bytes.begin()) + 1;
+    }
+    // Whole lines only: the game may be writing the last one.
+    usize end = bytes.size();
+    while (end > fired_at_ && bytes[end - 1] != '\n') --end;
+    u64 id = 0;
+    bool digits = false;
+    for (usize i = static_cast<usize>(fired_at_); i < end; ++i) {
+        const u8 c = bytes[i];
+        if (c >= '0' && c <= '9') {
+            id = id * 10 + (c - '0');
+            digits = true;
+        } else {
+            if (digits) light(static_cast<u32>(id));
+            id = 0;
+            digits = false;
+        }
+    }
+    if (end > fired_at_) fired_at_ = end;
 }
 
 // --- changes -----------------------------------------------------------------
@@ -759,6 +906,7 @@ void LogicEditor::rebuild_steps() {
         c.problem = problem_of(l.id);
         c.selected = l.id == sel_link_;
         c.adding = l.id == adding_;
+        c.lit = lit(l.id);
         std::string last;
         for (const logic::Step& st : steps_of(l.id)) {
             c.steps.push_back({st.part, st.part == last ? "" : part_label(st.part), st.icon, st.text, st.refine});
@@ -792,6 +940,7 @@ void LogicEditor::rebuild_code() {
         const u32 index = map.node_at(n);
         if (index < logic_.links.size()) line.link = static_cast<int>(logic_.links[index].id);
         line.selected = line.link != 0 && static_cast<u32>(line.link) == sel_link_;
+        line.lit = line.link != 0 && lit(static_cast<u32>(line.link));
         const usize lead = line.text.find_first_not_of(' ');
         line.comment = lead != std::string::npos && line.text.compare(lead, 2, "--") == 0;
         m_code_.push_back(std::move(line));
@@ -799,6 +948,160 @@ void LogicEditor::rebuild_code() {
         start = end + 1;
     }
     if (model_) model_.DirtyVariable("lg_code");
+}
+
+// --- «Идеи» --------------------------------------------------------------------
+
+const logic::Idea* LogicEditor::idea_of(u32 link) const {
+    const logic::Link* l = logic_.find(link);
+    return l ? ideas_.of_verb(l->verb) : nullptr;
+}
+
+bool LogicEditor::pair_for(const logic::VerbDef& verb, std::string& a, std::string& b) const {
+    // The board's things first, then the rest of the game's.
+    std::vector<const logic::Thing*> order;
+    for (int pass = 0; pass < 2; ++pass)
+        for (const logic::Thing& t : things_)
+            if ((logic_.spot(t.id) != nullptr) == (pass == 0)) order.push_back(&t);
+    auto taken = [&](const std::string& x, const std::string& y) {
+        for (const logic::Link& l : logic_.links)
+            if (l.verb == verb.id && l.a == x && l.b == y) return true;
+        return false;
+    };
+    // A pair that is not linked so already; else any pair.
+    for (int pass = 0; pass < 2; ++pass)
+        for (const logic::Thing* x : order)
+            for (const logic::Thing* y : order)
+                if (logic::suits(verb, *x, *y) && (pass == 1 || !taken(x->id, y->id))) {
+                    a = x->id;
+                    b = y->id;
+                    return true;
+                }
+    return false;
+}
+
+void LogicEditor::open_gallery(bool open) {
+    m_gallery_ = open;
+    if (open) {
+        m_choosing_ = false;
+        choose_link_ = 0;
+    }
+    dirty_ = true;
+    if (model_)
+        for (const char* name : {"lg_gallery", "lg_choosing"}) model_.DirtyVariable(name);
+}
+
+bool LogicEditor::add_idea(const std::string& id) {
+    const logic::Idea* idea = ideas_.find(id);
+    const logic::VerbDef* verb = idea ? verbs_.find(idea->verb) : nullptr;
+    if (!idea || !verb) return false;
+    // The first fitting pair, things on the board first.
+    logic::Link l;
+    l.verb = verb->id;
+    if (!pair_for(*verb, l.a, l.b)) {
+        FORGE_WARN("Для идеи «%s» в игре нет подходящей вещи: сделайте её во вкладке «Объекты»", idea->name.c_str());
+        return false;
+    }
+    l.night = idea->night;
+    l.once = idea->once;
+    l.sound = idea->sound && !verb->sound.empty();
+    l.hint = idea->hint && !verb->fail.empty();
+    logic::Logic after = logic_;
+    const u32 link = after.add(l);
+    m_gallery_ = false;
+    if (model_) model_.DirtyVariable("lg_gallery");
+    change(after, "Идея: «" + idea->name + "»");
+    select_link(link);
+    return true;
+}
+
+void LogicEditor::open_choices(u32 link, const std::string& side) {
+    const logic::Link* l = logic_.find(link);
+    const logic::VerbDef* v = l ? verbs_.find(l->verb) : nullptr;
+    m_choices_.clear();
+    choose_link_ = 0;
+    choose_side_.clear();
+    if (l && v && (side == "a" || side == "b")) {
+        choose_link_ = link;
+        choose_side_ = side;
+        const logic::Thing* other = thing(side == "a" ? l->b : l->a);
+        for (const logic::Thing& t : things_) {
+            const bool ok = !other || (side == "a" ? logic::suits(*v, t, *other) : logic::suits(*v, *other, t));
+            if (ok) m_choices_.push_back({t.id, t.name, icon_of(t.id), t.id == (side == "a" ? l->a : l->b)});
+        }
+        const logic::Idea* idea = ideas_.of_verb(l->verb);
+        std::string label = side == "a" ? "Первая вещь" : "Вторая вещь";
+        if (idea)
+            for (const logic::IdeaField& f : idea->fields)
+                if ((f.side == logic::Side::A) == (side == "a")) label = f.label;
+        m_choose_title_ = label + ": что выбрать?";
+        sel_link_ = link;
+        sel_thing_.clear();
+        m_gallery_ = false;
+    }
+    m_choosing_ = choose_link_ != 0;
+    dirty_ = true;
+    if (model_)
+        for (const char* name : {"lg_choices", "lg_choose_title", "lg_choosing", "lg_gallery"}) model_.DirtyVariable(name);
+}
+
+bool LogicEditor::choose(const std::string& id) {
+    const logic::Link* l = logic_.find(choose_link_);
+    const logic::Thing* t = thing(id);
+    if (!l || !t) return false;
+    const bool a = choose_side_ == "a";
+    const u32 link = choose_link_;
+    open_choices(0, {});
+    if ((a ? l->a : l->b) == id) return true;
+    logic::Logic after = logic_;
+    logic::Link& m = *after.find(link);
+    (a ? m.a : m.b) = id;
+    change(after, "Выбрать «" + t->name + "»");
+    select_link(link);
+    return true;
+}
+
+void LogicEditor::rebuild_ideas() {
+    m_idea_cards_.clear();
+    for (const logic::Link& l : logic_.links) {
+        IdeaCard c;
+        c.id = static_cast<int>(l.id);
+        const logic::Idea* idea = ideas_.of_verb(l.verb);
+        const logic::VerbDef* v = verbs_.find(l.verb);
+        c.name = idea ? idea->name : "Связь";
+        c.icon = idea ? idea->icon : (v && !v->icon.empty() ? v->icon : "link");
+        c.phrase = phrase_of(l.id);
+        c.problem = problem_of(l.id);
+        c.selected = l.id == sel_link_;
+        c.lit = lit(l.id);
+        auto field = [&](logic::Side side, const std::string& label) {
+            const std::string& id = side == logic::Side::A ? l.a : l.b;
+            const logic::Thing* t = thing(id);
+            c.fields.push_back({side == logic::Side::A ? "a" : "b", label, id, t ? t->name : id, icon_of(id)});
+        };
+        if (idea) {
+            for (const logic::IdeaField& f : idea->fields) field(f.side, f.label);
+        } else {
+            field(logic::Side::A, "Первая вещь");
+            field(logic::Side::B, "Вторая вещь");
+        }
+        const logic::Thing* a = thing(l.a);
+        const logic::Thing* b = thing(l.b);
+        if (v && a && b)
+            for (const logic::Refine& r : logic::refinements(l, *v, *a, *b)) c.refine.push_back({r.id, r.label, r.about, r.on});
+        m_idea_cards_.push_back(std::move(c));
+    }
+    m_ideas_.clear();
+    for (const logic::Idea& d : ideas_.all()) {
+        IdeaView v{d.id, d.name, d.icon, d.about, d.group, false};
+        if (const logic::VerbDef* verb = verbs_.find(d.verb)) {
+            std::string a, b;
+            v.can = pair_for(*verb, a, b);
+        }
+        m_ideas_.push_back(std::move(v));
+    }
+    if (model_)
+        for (const char* name : {"lg_idea_cards", "lg_ideas"}) model_.DirtyVariable(name);
 }
 
 // --- input -------------------------------------------------------------------
@@ -840,7 +1143,9 @@ bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
 
 bool LogicEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_ESCAPE) {
-        if (picking()) close_picker();
+        if (m_choosing_) open_choices(0, {});
+        else if (m_gallery_) open_gallery(false);
+        else if (picking()) close_picker();
         else if (sel_link_ || !sel_thing_.empty()) click_board();
         else return false;
         rebuild();

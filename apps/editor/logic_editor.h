@@ -21,12 +21,18 @@
 // The same logic has other views, switched on the mode strip above the
 // board; switching changes nothing in the logic, and the editor remembers the
 // author's mode:
+//   «Идеи» — each link as a ready idea («Дверь с ключом») with a few
+//   fields: which things it is about (a click picks another fitting thing)
+//   and its refinements. «Новая идея» adds one from the game's ideas.json.
 //   «Шаги» — each link as steps: when it happens, the checks, what is done,
 //   what happens otherwise. Steps made by refinements are taken away with ×
 //   and added with «Добавить шаг».
 //   «Код» — the Luau the links become, line by line; a line belongs to its
 //   link (a click selects it). Read only for now.
-// «Идеи» and «Схема» come later; their buttons are already there.
+// «Схема» comes later; its button is already there.
+//
+// While the game runs from the editor, links that happen light up in every
+// view: the game writes their ids to a file the tab watches.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
@@ -52,6 +58,9 @@ public:
 
     // game_dir holds verbs.json; file is the links (logic.json).
     bool init(ui::Ui& ui, const std::filesystem::path& game_dir, const std::filesystem::path& file);
+    // The file a game started from the editor writes the links that happen
+    // to (one id a line); the tab lights them up.
+    void set_fired_file(std::filesystem::path file) { fired_file_ = std::move(file); }
     // Where the author's mode is remembered (set before init; remember false:
     // neither read nor written, as in offscreen runs).
     void set_settings(std::filesystem::path folder, bool remember) {
@@ -98,12 +107,27 @@ public:
     // "sound", "hint".
     bool refine(const std::string& what, bool on);
     bool refine(u32 link, const std::string& what, bool on);
-    // The view: "links" (the board), "steps", "code".
+    // The view: "links" (the board), "ideas", "steps", "code".
     bool set_mode(const std::string& mode);
     const std::string& mode() const { return mode_; }
     // «Шаги»: the steps of a link as shown, and «Добавить шаг» on its card.
     std::vector<logic::Step> steps_of(u32 link) const;
     void open_adds(u32 link);
+    // «Идеи»: the gallery of ideas, a new link from one (with the first
+    // fitting things), and another thing for a field of a link.
+    void open_gallery(bool open);
+    bool gallery_open() const { return m_gallery_; }
+    bool add_idea(const std::string& idea);
+    // The chooser of a field: side "a" or "b" of link.
+    void open_choices(u32 link, const std::string& side);
+    usize choices() const { return m_choices_.size(); }
+    const std::string& choice(usize i) const { return m_choices_[i].id; }
+    bool choose(const std::string& thing);
+    const logic::Idea* idea_of(u32 link) const;
+    // A link happened in the running game: lit for a moment (the game's
+    // file does this; tests call it).
+    void light(u32 link);
+    bool lit(u32 link) const { return lit_.contains(link); }
     // «Код»: the lines shown and the link of each (0 none).
     usize code_lines() const { return m_code_.size(); }
     u32 code_link(usize line) const { return static_cast<u32>(m_code_[line].link); }
@@ -131,7 +155,7 @@ private:
         float hx = 0, hy = 0;                     // the arrowhead
         float cx = 0, cy = 0;                     // the verb chip
         int refined = 0;
-        bool selected = false, broken = false;
+        bool selected = false, broken = false, lit = false;
     };
     struct NavRow {
         Rml::String id, name, icon, about;
@@ -149,7 +173,7 @@ private:
     struct WordRow {
         int id = 0;
         Rml::String phrase, meaning, problem;
-        bool selected = false;
+        bool selected = false, lit = false;
     };
     struct StepView {
         Rml::String part, label, icon, text, refine;
@@ -160,14 +184,32 @@ private:
     struct CardView {
         int id = 0;
         Rml::String phrase, meaning, problem;
-        bool selected = false, adding = false;
+        bool selected = false, adding = false, lit = false;
         std::vector<StepView> steps;
         std::vector<AddView> adds;
     };
     struct CodeLine {
         int n = 0, link = 0;
         Rml::String text;
-        bool selected = false, comment = false;
+        bool selected = false, comment = false, lit = false;
+    };
+    struct FieldView {
+        Rml::String side, label, thing, name, icon;
+    };
+    struct IdeaCard {
+        int id = 0;
+        Rml::String name, icon, phrase, problem;
+        bool selected = false, lit = false;
+        std::vector<FieldView> fields;
+        std::vector<Refinement> refine;
+    };
+    struct IdeaView {
+        Rml::String id, name, icon, about, group;
+        bool can = true; // the game has things for it
+    };
+    struct ChoiceView {
+        Rml::String id, name, icon;
+        bool current = false;
     };
 
     void load();
@@ -175,6 +217,10 @@ private:
     void rebuild_side();
     void rebuild_steps();
     void rebuild_code();
+    void rebuild_ideas();
+    void watch_fired();
+    // Two things the verb suits, the board's first and not linked so yet.
+    bool pair_for(const logic::VerbDef& verb, std::string& a, std::string& b) const;
     void remember_mode() const;
     // Records a change: after is the whole new logic.
     void change(const logic::Logic& after, std::string label, std::string merge = {});
@@ -204,8 +250,16 @@ private:
     bool remember_ = false;
     std::string mode_ = "links";
     u32 adding_ = 0; // the card whose «Добавить шаг» is open
+    u32 choose_link_ = 0;
+    std::string choose_side_;
+    std::filesystem::path fired_file_;
+    u64 fired_at_ = 0, fired_checked_ = 0, fired_size_ = 0; // bytes read; when last looked (ms); size seen
+    std::filesystem::file_time_type fired_time_{};
+    std::string fired_run_;
+    std::map<u32, u64> lit_;               // link -> until (ms)
 
     logic::Verbs verbs_;
+    logic::Ideas ideas_;
     logic::Logic logic_;
     std::vector<logic::Thing> things_; // the hero and the templates
     std::map<u32, std::string> problems_;
@@ -233,6 +287,11 @@ private:
     std::vector<WordRow> m_words_, m_thing_links_;
     std::vector<CardView> m_cards_;
     std::vector<CodeLine> m_code_;
+    std::vector<IdeaCard> m_idea_cards_;
+    std::vector<IdeaView> m_ideas_;
+    std::vector<ChoiceView> m_choices_;
+    Rml::String m_choose_title_;
+    bool m_gallery_ = false, m_choosing_ = false;
     Rml::String m_mode_ = "links";
     Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_;
     float m_pick_x_ = 0, m_pick_y_ = 0;

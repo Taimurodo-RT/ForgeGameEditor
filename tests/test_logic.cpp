@@ -142,6 +142,31 @@ TEST_CASE("a link reads as steps") {
     CHECK(steps(l, *verbs.find("hurt"), *w.find("spikes"), *w.find("hero"))[0].text == "Когда герой касается Шипов");
 }
 
+TEST_CASE("ideas name a verb and the fields an author picks") {
+    Ideas ideas;
+    REQUIRE(ideas.parse(R"({"ideas": [
+      {"id": "door_key", "name": "Дверь с ключом", "verb": "open", "icon": "key",
+       "fields": [{"side": "b", "label": "Дверь"}, {"side": "a", "label": "Открывает"}],
+       "refine": {"hint": true, "sound": true}},
+      {"id": "broken", "name": "Без действия"},
+      {"id": "trap", "name": "Ловушка", "verb": "hurt", "fields": [{"side": "a", "label": "Что ранит"}]}
+    ]})"));
+    REQUIRE(ideas.all().size() == 2); // one without a verb is left out
+    const Idea* d = ideas.of_verb("open");
+    REQUIRE(d);
+    CHECK(d->name == "Дверь с ключом");
+    REQUIRE(d->fields.size() == 2);
+    CHECK(d->fields[0].side == Side::B);
+    CHECK(d->fields[1].label == "Открывает");
+    CHECK(d->hint);
+    CHECK_FALSE(d->once);
+    CHECK(ideas.find("trap")->verb == "hurt");
+    CHECK(ideas.of_verb("collect") == nullptr);
+    Ideas none;
+    CHECK(none.load(temp_folder("forge_logic_ideas") / "ideas.json")); // no file: no ideas
+    CHECK(none.all().empty());
+}
+
 TEST_CASE("links and verbs read and write json") {
     Verbs verbs;
     REQUIRE(verbs.parse(kVerbs));

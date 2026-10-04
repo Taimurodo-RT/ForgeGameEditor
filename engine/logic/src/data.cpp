@@ -114,6 +114,72 @@ const VerbDef* Verbs::find(std::string_view id) const {
     return nullptr;
 }
 
+// --- ideas ---------------------------------------------------------------
+
+bool Ideas::load(const std::filesystem::path& file, std::string* error) {
+    std::error_code ec;
+    if (!std::filesystem::exists(file, ec)) {
+        ideas_.clear();
+        return true;
+    }
+    std::string text;
+    if (!read_text(file, text)) {
+        if (error) *error = "не читается " + file.filename().string();
+        return false;
+    }
+    return parse(text, error);
+}
+
+bool Ideas::parse(std::string_view json, std::string* error) {
+    yyjson_doc* doc = read_doc(json, error);
+    if (!doc) return false;
+    yyjson_val* list = yyjson_obj_get(yyjson_doc_get_root(doc), "ideas");
+    if (!yyjson_is_arr(list)) {
+        yyjson_doc_free(doc);
+        if (error) *error = "нет списка \"ideas\"";
+        return false;
+    }
+    std::vector<Idea> ideas;
+    usize i, n;
+    yyjson_val* v;
+    yyjson_arr_foreach(list, i, n, v) {
+        Idea d;
+        d.id = str(v, "id");
+        d.name = str(v, "name");
+        d.icon = str(v, "icon", "lightbulb");
+        d.group = str(v, "group");
+        d.about = str(v, "about");
+        d.verb = str(v, "verb");
+        usize j, m;
+        yyjson_val* f;
+        yyjson_val* fields = yyjson_obj_get(v, "fields");
+        if (yyjson_is_arr(fields))
+            yyjson_arr_foreach(fields, j, m, f) d.fields.push_back({side(str(f, "side", "b")), str(f, "label")});
+        yyjson_val* r = yyjson_obj_get(v, "refine");
+        d.night = flag(r, "night");
+        d.once = flag(r, "once");
+        d.sound = flag(r, "sound");
+        d.hint = flag(r, "hint");
+        if (d.id.empty() || d.name.empty() || d.verb.empty()) continue;
+        ideas.push_back(std::move(d));
+    }
+    yyjson_doc_free(doc);
+    ideas_ = std::move(ideas);
+    return true;
+}
+
+const Idea* Ideas::find(std::string_view id) const {
+    for (const Idea& d : ideas_)
+        if (d.id == id) return &d;
+    return nullptr;
+}
+
+const Idea* Ideas::of_verb(std::string_view verb) const {
+    for (const Idea& d : ideas_)
+        if (d.verb == verb) return &d;
+    return nullptr;
+}
+
 // --- links ---------------------------------------------------------------
 
 bool Logic::load(const std::filesystem::path& file, std::string* error) {

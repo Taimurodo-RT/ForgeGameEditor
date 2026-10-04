@@ -129,7 +129,9 @@ struct SliceGame::Hud {
 };
 
 SliceGame::SliceGame(const Options& options) : options_(options), gen_(std::make_shared<SliceGenerator>(kSeed)) {}
-SliceGame::~SliceGame() = default;
+SliceGame::~SliceGame() {
+    if (fired_) std::fclose(fired_);
+}
 
 std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_folder, std::string* error) {
     auto L = std::make_unique<Level>();
@@ -274,10 +276,34 @@ public:
     void hint(flecs::entity_t, std::string_view text) override { g_.hints_.emplace_back(text); }
     void sound(flecs::entity_t at, std::string_view cue) override { g_.cues_.emplace_back(at, std::string(cue)); }
     bool night() override { return false; } // no nights in the slice yet
+    void fired(u32 link) override { g_.note_fired(link); }
 
 private:
     SliceGame& g_;
 };
+
+void SliceGame::note_fired(u32 link) {
+    if (options_.fired_file.empty()) return;
+    const u64 now = SDL_GetTicks();
+    u64& last = fired_last_[link];
+    if (last && now - last < 500) return;
+    last = now;
+    if (!fired_) {
+        // A new file for each run.
+        std::error_code ec;
+        std::filesystem::create_directories(options_.fired_file.parent_path(), ec);
+#ifdef _WIN32
+        fired_ = _wfopen(options_.fired_file.c_str(), L"wb");
+#else
+        fired_ = std::fopen(options_.fired_file.c_str(), "wb");
+#endif
+        if (!fired_) return;
+        // Which run this is: the editor starts over when it changes.
+        std::fprintf(fired_, "run %llu\n", static_cast<unsigned long long>(SDL_GetPerformanceCounter()));
+    }
+    std::fprintf(fired_, "%u\n", link);
+    std::fflush(fired_);
+}
 
 void SliceGame::do_deeds() {
     if (!level_) return;

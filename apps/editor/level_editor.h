@@ -77,6 +77,8 @@ public:
     bool play_here();
     // The command line play_here() runs (for the self-test).
     std::vector<std::string> play_command(f64 x, f64 y) const;
+    // Where the game started from here writes the links that happen.
+    static std::filesystem::path fired_file();
 
     std::string title() const { return module_.title(); }
     std::string status() const;
