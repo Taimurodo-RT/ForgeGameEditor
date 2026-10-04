@@ -259,3 +259,35 @@ icon.xl { font-size: 72px; line-height: 72px; color: var(--on-surface-variant); 
     cursor: pointer;
 }
 .link:hover { background-color: var(--state-hover-layer); }
+
+/* «Значки»: a grid of big thumbnails (the list's cells, cell-width="128") */
+#as-view.icons .vl-row { box-sizing: border-box; padding: 4px; }
+#as-view.icons .asset-row {
+    flex-direction: column;
+    justify-content: flex-start;
+    height: 128px;
+    gap: var(--space-1);
+    padding: 6px 4px;
+}
+#as-view.icons .asset-row .thumb {
+    width: 96px;
+    height: 96px;
+    flex: 0 0 96px;
+    border-radius: 6px;
+    background-color: var(--surface-container-highest);
+}
+#as-view.icons .asset-row .thumb img { width: 96px; height: 96px; }
+#as-view.icons .asset-row .glyph icon { font-size: 56px; line-height: 56px; }
+#as-view.icons .asset-row .name {
+    flex: 0 0 auto;
+    width: 100%;
+    text-align: center;
+    font-size: 13px;
+}
+#as-view.icons .asset-row .where, #as-view.icons .asset-row .date,
+#as-view.icons .asset-row .kind, #as-view.icons .asset-row .size { display: none; }
+
+/* The right-click menu */
+.as-menu.ctx { width: 310px; }
+.as-menu .menu-item .label { white-space: nowrap; }
+.as-menu .menu-item.strong { font-weight: 600; }

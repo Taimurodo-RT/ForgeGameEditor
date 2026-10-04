@@ -25,6 +25,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr u32 kThumbPx = 48;
+constexpr u32 kIconPx = 96; // the «Значки» view
 constexpr u32 kPreviewPx = 256;
 constexpr usize kThumbsKept = 2000;
 constexpr usize kThumbQueue = 256;
@@ -304,7 +305,9 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("as_sel_text", &m_sel_text_);
     model.Bind("as_sort", &m_sort_);
     model.Bind("as_sort_desc", &m_sort_desc_);
-    model.Bind("as_large", &m_large_);
+    model.Bind("as_view", &m_view_);
+    model.Bind("as_ctx_x", &m_ctx_x_);
+    model.Bind("as_ctx_y", &m_ctx_y_);
     model.Bind("as_menu", &m_menu_);
     model.Bind("as_can_back", &m_can_back_);
     model.Bind("as_can_forward", &m_can_forward_);
@@ -332,12 +335,17 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     on("as_forward", [this](Rml::Event&, const Rml::VariantList&) { forward(); });
     on("as_up", [this](Rml::Event&, const Rml::VariantList&) { up(); });
     on("as_copy", [this](Rml::Event&, const Rml::VariantList&) { copy(); });
+    on("as_open_selected", [this](Rml::Event&, const Rml::VariantList&) {
+        if (selection_.size() != 1) return;
+        if (is_dir(selection_[0])) open_folder(selection_[0]);
+        else play_sound();
+    });
     on("as_layout_reset", [this](Rml::Event&, const Rml::VariantList&) { dock_.reset(); });
     on("as_sort", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { sort_by(arg_str(a, 0)); });
     on("as_sort_order", [this, arg_bool](Rml::Event&, const Rml::VariantList& a) {
         if (sort_desc_ != arg_bool(a, 0)) sort_by(sort_);
     });
-    on("as_view", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_large(arg_str(a, 0) == "large"); });
+    on("as_view", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_view(arg_str(a, 0)); });
     on("as_rename_start", [this](Rml::Event& ev, const Rml::VariantList&) {
         if (Rml::Element* e = ev.GetTargetElement()) start_rename(e->GetContext());
     });
@@ -759,7 +767,30 @@ void AssetLibrary::sort_by(const std::string& key) {
     ++rows_version_;
 }
 
-void AssetLibrary::set_large(bool large) { large_ = large; }
+void AssetLibrary::set_view(const std::string& view) {
+    if (view != "table" && view != "large" && view != "icons") return;
+    if (view == view_) return;
+    view_ = view;
+    ++list_version_; // thumbnails of another size
+}
+
+void AssetLibrary::on_context(u32 row, float x, float y, int) {
+    // As in the explorer: a right click on a file not chosen yet chooses it;
+    // outside the files it is about the folder.
+    if (row == ui::ListSource::kNoRow) {
+        select({});
+    } else if (row < rows_.size() &&
+               std::find(selection_.begin(), selection_.end(), rows_[row].rel) == selection_.end()) {
+        select({rows_[row].rel});
+    }
+    ctx_x_ = x;
+    ctx_y_ = y;
+    menu_ = "ctx";
+}
+
+void AssetLibrary::on_empty_click(int modifiers) {
+    if (!(modifiers & (Rml::Input::KM_CTRL | Rml::Input::KM_SHIFT))) select({});
+}
 
 void AssetLibrary::rebuild_tree() {
     m_tree_.clear();
@@ -789,13 +820,14 @@ std::string AssetLibrary::field(u32 row, std::string_view name) const {
     const assets::AssetRecord* rec = r.record >= 0 ? &records_[static_cast<usize>(r.record)] : nullptr;
     auto thumb = [&]() -> std::string {
         if (!rec || rec->type != "image") return {};
-        const std::string key = "th_" + rec->cook_key.to_hex();
+        const bool big = view_ == "icons";
+        const std::string key = (big ? "tb_" : "th_") + rec->cook_key.to_hex();
         auto it = thumbs_.find(key);
         if (it != thumbs_.end()) {
             it->second.used = frame_;
             return "/memory/" + key;
         }
-        want_thumb(key, rec->cook_key, kThumbPx);
+        want_thumb(key, rec->cook_key, big ? kIconPx : kThumbPx);
         return {};
     };
     if (name == "name") return r.name;
@@ -1258,11 +1290,35 @@ void AssetLibrary::update(f64 dt, Rml::Context* context) {
     }
     if (!context) {
         open_ = false;
+        menu_.clear(); // e.g. a menu item that opened another tab
         return;
     }
     dock_.update(context);
+    place_context_menu(context);
     sync_model();
     if (rename_wanted_ && !ui_updating_) start_rename(context);
+}
+
+// The right-click menu opens at the mouse, kept inside the tab.
+void AssetLibrary::place_context_menu(Rml::Context* context) {
+    if (menu_ != "ctx") return;
+    auto find = [&](const char* id) -> Rml::Element* {
+        for (int i = 0; i < context->GetNumDocuments(); ++i)
+            if (Rml::Element* e = context->GetDocument(i)->GetElementById(id)) return e;
+        return nullptr;
+    };
+    Rml::Element* area = find("assets");
+    if (!area) return;
+    const Rml::Vector2f at = area->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const float w = area->GetOffsetWidth(), h = area->GetOffsetHeight();
+    float x = ctx_x_ - at.x, y = ctx_y_ - at.y;
+    if (Rml::Element* menu = find("as-ctx"); menu && menu->IsVisible(true)) {
+        const float mw = menu->GetOffsetWidth(), mh = menu->GetOffsetHeight();
+        if (x + mw > w) x = std::max(0.0f, x - mw);
+        if (y + mh > h) y = std::max(0.0f, h - mh);
+    }
+    set(m_ctx_x_, x, "as_ctx_x");
+    set(m_ctx_y_, y, "as_ctx_y");
 }
 
 void AssetLibrary::sync_model() {
@@ -1273,7 +1329,7 @@ void AssetLibrary::sync_model() {
     set(m_empty_, have_index_ && rows_.empty(), "as_empty");
     set(m_sort_, Rml::String(sort_), "as_sort");
     set(m_sort_desc_, sort_desc_, "as_sort_desc");
-    set(m_large_, large_, "as_large");
+    set(m_view_, Rml::String(view_), "as_view");
     set(m_menu_, Rml::String(menu_), "as_menu");
     set(m_can_back_, !back_.empty(), "as_can_back");
     set(m_can_forward_, !forward_.empty(), "as_can_forward");

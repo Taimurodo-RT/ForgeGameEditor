@@ -65,6 +65,10 @@ private:
     std::string source_name_;
     std::string template_rml_;
     float row_height_ = 28.0f;
+    float cell_width_ = 0; // > 0: a grid
+    u32 columns_ = 1;
+    float cell_w_ = 0;
+    void clear_rows();
     bool built_ = false;
     Rml::Element* content_ = nullptr;
     std::vector<Row> rows_;

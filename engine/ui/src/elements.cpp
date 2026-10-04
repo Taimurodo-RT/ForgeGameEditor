@@ -123,9 +123,10 @@ ElementVirtualList::ElementVirtualList(const Rml::String& tag_name) : Rml::Eleme
 
 ElementVirtualList::~ElementVirtualList() {
     g_lists.erase(this);
-    if (content_) {
-        content_->RemoveEventListener("click", this);
-        content_->RemoveEventListener("dblclick", this);
+    if (built_) {
+        RemoveEventListener("click", this);
+        RemoveEventListener("dblclick", this);
+        RemoveEventListener("mousedown", this);
     }
 }
 
@@ -137,6 +138,22 @@ void ElementVirtualList::OnAttributeChange(const Rml::ElementAttributes& changed
     }
     if (auto it = changed.find("row-height"); it != changed.end())
         row_height_ = std::max(1.0f, it->second.Get<float>());
+    if (auto it = changed.find("cell-width"); it != changed.end()) {
+        const float w = std::max(0.0f, it->second.Get<float>());
+        if (w != cell_width_) {
+            cell_width_ = w;
+            clear_rows(); // list rows and grid cells are placed differently
+        }
+    }
+}
+
+void ElementVirtualList::clear_rows() {
+    if (content_)
+        for (Row& row : rows_) content_->RemoveChild(row.element);
+    rows_.clear();
+    first_ = ~0u;
+    count_ = ~0u;
+    columns_ = 1;
 }
 
 void ElementVirtualList::scroll_to_row(u32 row) { pending_scroll_row_ = row; }
@@ -151,8 +168,10 @@ void ElementVirtualList::build() {
     content_->SetClass("vl-content", true);
     content_->SetProperty("display", "block");
     content_->SetProperty("position", "relative");
-    content_->AddEventListener("click", this);
-    content_->AddEventListener("dblclick", this);
+    // On the list itself: clicks outside the rows count too.
+    AddEventListener("click", this);
+    AddEventListener("dblclick", this);
+    AddEventListener("mousedown", this);
 }
 
 void ElementVirtualList::bind_row(Row& row, u32 index, ListSource& source, bool force) {
@@ -191,14 +210,26 @@ void ElementVirtualList::OnUpdate() {
         if (h > 0.5f && std::fabs(h - row_height_) > 0.01f) {
             row_height_ = h;
             first_ = ~0u; // re-layout
+            columns_ = 0;
             count_ = ~0u;
             for (Row& r : rows_) r.index = ~0u, r.element->SetProperty("display", "none");
         }
         break;
     }
 
+    // A grid: as many columns as fit; cells share the width evenly.
+    const float width = GetClientWidth();
+    const u32 columns = cell_width_ > 0 ? std::max(1u, static_cast<u32>(width / cell_width_)) : 1u;
+    const float cell_w = cell_width_ > 0 ? std::floor(width / static_cast<float>(columns)) : 0.0f;
+    if (columns != columns_ || (cell_width_ > 0 && std::fabs(cell_w - cell_w_) > 0.5f)) {
+        columns_ = columns;
+        cell_w_ = cell_w;
+        first_ = ~0u;
+        count_ = ~0u;
+        for (Row& r : rows_) r.index = ~0u, r.element->SetProperty("display", "none");
+    }
     const float client = std::max(GetClientHeight(), row_height_);
-    const u32 needed = static_cast<u32>(std::ceil(client / row_height_)) + 1;
+    const u32 needed = (static_cast<u32>(std::ceil(client / row_height_)) + 1) * columns;
     while (rows_.size() < needed) {
         Row row;
         Rml::ElementPtr element = GetOwnerDocument()->CreateElement("div");
@@ -206,7 +237,7 @@ void ElementVirtualList::OnUpdate() {
         row.element->SetClass("vl-row", true);
         row.element->SetProperty("position", "absolute");
         row.element->SetProperty("left", "0px");
-        row.element->SetProperty("right", "0px");
+        if (cell_width_ <= 0) row.element->SetProperty("right", "0px");
         row.element->SetProperty("display", "none");
         row.element->SetInnerRML(template_rml_);
         // Collect the bindings of the template.
@@ -231,22 +262,23 @@ void ElementVirtualList::OnUpdate() {
     }
 
     if (pending_scroll_row_ >= 0 && count > 0) {
-        const float top = static_cast<float>(std::min<i64>(pending_scroll_row_, count - 1)) * row_height_;
+        const float top = static_cast<float>(std::min<i64>(pending_scroll_row_, count - 1) / columns) * row_height_;
         if (top < GetScrollTop()) SetScrollTop(top);
         else if (top + row_height_ > GetScrollTop() + GetClientHeight())
             SetScrollTop(top + row_height_ - GetClientHeight());
         pending_scroll_row_ = -1;
     }
 
-    u32 first = static_cast<u32>(std::max(0.0f, GetScrollTop()) / row_height_);
+    u32 first = static_cast<u32>(std::max(0.0f, GetScrollTop()) / row_height_) * columns;
     if (count == 0) first = 0;
-    else if (first >= count) first = count - 1;
+    else if (first >= count) first = (count - 1) / columns * columns;
 
     const bool layout_changed = first != first_ || count != count_;
     const bool data_changed = version != version_;
     if (!layout_changed && !data_changed) return;
 
-    if (count != count_) content_->SetProperty("height", std::to_string(static_cast<double>(count) * row_height_) + "px");
+    const u32 lines = (count + columns - 1) / columns;
+    if (count != count_) content_->SetProperty("height", std::to_string(static_cast<double>(lines) * row_height_) + "px");
 
     // Rows are positioned absolutely at index * row height. A row whose
     // index is still on screen keeps it; only rows that scrolled out are
@@ -267,7 +299,11 @@ void ElementVirtualList::OnUpdate() {
         if (taken[index - first]) continue;
         Row& row = *free_rows[next_free++];
         if (row.index == ~0u) row.element->RemoveProperty("display");
-        row.element->SetProperty("top", std::to_string(static_cast<double>(index) * row_height_) + "px");
+        row.element->SetProperty("top", std::to_string(static_cast<double>(index / columns) * row_height_) + "px");
+        if (cell_width_ > 0) {
+            row.element->SetProperty("left", std::to_string(static_cast<double>(index % columns) * cell_w) + "px");
+            row.element->SetProperty("width", std::to_string(static_cast<double>(cell_w)) + "px");
+        }
         bind_row(row, index, *source, data_changed);
     }
     for (; next_free < free_rows.size(); ++next_free) {
@@ -286,17 +322,24 @@ void ElementVirtualList::ProcessEvent(Rml::Event& event) {
     ListSource* source = find_list_source(source_name_);
     if (!source) return;
     Rml::Element* e = event.GetTargetElement();
-    while (e && e->GetParentNode() != content_) e = e->GetParentNode();
-    if (!e) return;
-    for (const Row& row : rows_) {
-        if (row.element != e || row.index == ~0u) continue;
-        int modifiers = 0;
-        if (event.GetParameter<int>("ctrl_key", 0)) modifiers |= Rml::Input::KM_CTRL;
-        if (event.GetParameter<int>("shift_key", 0)) modifiers |= Rml::Input::KM_SHIFT;
-        if (event.GetParameter<int>("alt_key", 0)) modifiers |= Rml::Input::KM_ALT;
-        source->on_row_event(row.index, event.GetType(), modifiers);
-        break;
+    while (e && e != this && e->GetParentNode() != content_) e = e->GetParentNode();
+    u32 index = ListSource::kNoRow;
+    if (e && e != this)
+        for (const Row& row : rows_)
+            if (row.element == e) index = row.index;
+    int modifiers = 0;
+    if (event.GetParameter<int>("ctrl_key", 0)) modifiers |= Rml::Input::KM_CTRL;
+    if (event.GetParameter<int>("shift_key", 0)) modifiers |= Rml::Input::KM_SHIFT;
+    if (event.GetParameter<int>("alt_key", 0)) modifiers |= Rml::Input::KM_ALT;
+    if (event.GetType() == "mousedown") {
+        const Rml::Element* t = event.GetTargetElement();
+        if (event.GetParameter<int>("button", 0) == 1 && (index != ListSource::kNoRow || t == this || t == content_))
+            source->on_context(index, event.GetParameter<float>("mouse_x", 0), event.GetParameter<float>("mouse_y", 0), modifiers);
+        return;
     }
+    if (index != ListSource::kNoRow) source->on_row_event(index, event.GetType(), modifiers);
+    else if (event.GetType() == "click" && (event.GetTargetElement() == this || event.GetTargetElement() == content_))
+        source->on_empty_click(modifiers); // not the scroll bar
 }
 
 } // namespace forge::ui

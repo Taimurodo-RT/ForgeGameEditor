@@ -1764,6 +1764,28 @@ private:
         if (r >= 0) as().on_row_event(static_cast<u32>(r), event, 0);
     }
     bool exists(const std::string& rel) { return std::filesystem::exists(as().abs(rel)); }
+    // The cells of the Resources list now on screen.
+    std::vector<Rml::Element*> list_cells() {
+        std::vector<Rml::Element*> out;
+        Rml::Element* list = ed_.find_element("as-list");
+        Rml::Element* content = list && list->GetNumChildren() > 0 ? list->GetChild(0) : nullptr;
+        for (int i = 0; content && i < content->GetNumChildren(); ++i)
+            if (Rml::Element* c = content->GetChild(i); c->IsVisible(true)) out.push_back(c);
+        return out;
+    }
+    void right_click(f32 x, f32 y) {
+        mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+        e.button.x = x;
+        e.button.y = y;
+        e.button.button = SDL_BUTTON_RIGHT;
+        e.button.down = true;
+        ed_.handle_event(e);
+        e.type = SDL_EVENT_MOUSE_BUTTON_UP;
+        e.button.down = false;
+        ed_.handle_event(e);
+    }
     void drop(const std::filesystem::path& file) {
         SDL_Event e{};
         e.type = SDL_EVENT_DROP_BEGIN;
@@ -1941,7 +1963,65 @@ private:
         case 16:
             check(!shown("sort-date"), "the menu closes after a choice");
             as().sort_by("name");
+            as().open_folder("");
+            as().set_filter("image");
+            if (Rml::Element* e = ed_.find_element("as-view-icons")) e->Click();
+            break;
+        case 17: {
+            if (hold(idle && as().view() == "icons" && as().row_has_thumb(0) && as().row_has_thumb(1), "big thumbnails are made"))
+                return true;
+            std::vector<Rml::Element*> cells = list_cells();
+            bool side_by_side = false;
+            for (Rml::Element* a : cells)
+                for (Rml::Element* b : cells)
+                    if (a != b && a->GetAbsoluteOffset().y == b->GetAbsoluteOffset().y && a->GetAbsoluteOffset().x < b->GetAbsoluteOffset().x)
+                        side_by_side = true;
+            check(as().row_field(0, "thumb").rfind("/memory/tb_", 0) == 0, "«Значки» uses big thumbnails");
+            check(side_by_side, "«Значки» puts pictures side by side in a grid");
+            // A right click on a picture, as from the mouse.
+            Rml::Element* cell = cells.empty() ? nullptr : cells.front();
+            if (cell) {
+                const Rml::Vector2f at = cell->GetAbsoluteOffset(Rml::BoxArea::Border);
+                right_click(at.x + cell->GetOffsetWidth() / 2, at.y + 40);
+            }
+            break;
+        }
+        case 18:
+            check(as().selection().size() == 1 && shown("ctx-delete") && shown("ctx-copy") && shown("ctx-rotate"),
+                  "a right click on a picture chooses it and opens its menu");
+            if (Rml::Element* e = ed_.find_element("ctx-copy")) e->Click();
+            check(as().status().find("скопировано 1") != std::string::npos, "«Копировать» from the menu");
+            break;
+        case 19: {
+            check(!shown("ctx-copy"), "the menu closes after a choice");
+            // A right click on the empty space under the pictures.
+            if (Rml::Element* list = ed_.find_element("as-list")) {
+                const Rml::Vector2f at = list->GetAbsoluteOffset(Rml::BoxArea::Border);
+                right_click(at.x + list->GetOffsetWidth() - 30, at.y + list->GetOffsetHeight() - 30);
+            }
+            break;
+        }
+        case 20:
+            check(as().selection().empty() && shown("ctx-paste") && shown("ctx-new-folder"),
+                  "a right click on empty space opens the folder's menu");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            break;
+        case 21:
+            check(!shown("ctx-paste"), "Esc closes the menu");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE); // forget the copied file
+            as().open_folder("тайлы"); // for a screenshot: the grid with a menu
+            click_row("тайлы/камень.png");
+            break;
+        case 22: {
+            if (hold(idle && as().row_has_thumb(0), "the stones are shown")) return true;
+            std::vector<Rml::Element*> cells = list_cells();
+            for (Rml::Element* c : cells)
+                if (c->GetAbsoluteOffset().x < 99999 && c->IsClassSet("vl-row") && c->GetChild(0) && c->GetChild(0)->IsClassSet("selected")) {
+                    const Rml::Vector2f at = c->GetAbsoluteOffset(Rml::BoxArea::Border);
+                    right_click(at.x + c->GetOffsetWidth() / 2, at.y + 40);
+                }
             return false;
+        }
         default: break;
         }
         ++as_step_;
