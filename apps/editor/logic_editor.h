@@ -18,8 +18,15 @@
 // each change; every change is one step of the tab's history (Ctrl+Z). The
 // game reads them when it starts.
 //
-// The other views of the same logic («Идеи», «Шаги», «Схема», «Код») come
-// later; their buttons are already on the mode strip.
+// The same logic has other views, switched on the mode strip above the
+// board; switching changes nothing in the logic, and the editor remembers the
+// author's mode:
+//   «Шаги» — each link as steps: when it happens, the checks, what is done,
+//   what happens otherwise. Steps made by refinements are taken away with ×
+//   and added with «Добавить шаг».
+//   «Код» — the Luau the links become, line by line; a line belongs to its
+//   link (a click selects it). Read only for now.
+// «Идеи» and «Схема» come later; their buttons are already there.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
@@ -45,6 +52,12 @@ public:
 
     // game_dir holds verbs.json; file is the links (logic.json).
     bool init(ui::Ui& ui, const std::filesystem::path& game_dir, const std::filesystem::path& file);
+    // Where the author's mode is remembered (set before init; remember false:
+    // neither read nor written, as in offscreen runs).
+    void set_settings(std::filesystem::path folder, bool remember) {
+        settings_ = std::move(folder);
+        remember_ = remember;
+    }
     void bind(Rml::DataModelConstructor& model);
     void set_model(Rml::DataModelHandle handle) { model_ = handle; }
     // A template's picture as the UI shows it (the object library's).
@@ -81,8 +94,19 @@ public:
     void select_thing(const std::string& id);
     u32 selected_link() const { return sel_link_; }
     const std::string& selected_thing() const { return sel_thing_; }
-    // Refinements of the selected link: "night", "once", "sound", "hint".
+    // Refinements of the selected link (or of link): "night", "once",
+    // "sound", "hint".
     bool refine(const std::string& what, bool on);
+    bool refine(u32 link, const std::string& what, bool on);
+    // The view: "links" (the board), "steps", "code".
+    bool set_mode(const std::string& mode);
+    const std::string& mode() const { return mode_; }
+    // «Шаги»: the steps of a link as shown, and «Добавить шаг» on its card.
+    std::vector<logic::Step> steps_of(u32 link) const;
+    void open_adds(u32 link);
+    // «Код»: the lines shown and the link of each (0 none).
+    usize code_lines() const { return m_code_.size(); }
+    u32 code_link(usize line) const { return static_cast<u32>(m_code_[line].link); }
     bool remove_link();
     // Plain words: the phrase and the meaning of a link ("" when unknown).
     std::string phrase_of(u32 link) const;
@@ -127,10 +151,31 @@ private:
         Rml::String phrase, meaning, problem;
         bool selected = false;
     };
+    struct StepView {
+        Rml::String part, label, icon, text, refine;
+    };
+    struct AddView {
+        Rml::String id, label, about;
+    };
+    struct CardView {
+        int id = 0;
+        Rml::String phrase, meaning, problem;
+        bool selected = false, adding = false;
+        std::vector<StepView> steps;
+        std::vector<AddView> adds;
+    };
+    struct CodeLine {
+        int n = 0, link = 0;
+        Rml::String text;
+        bool selected = false, comment = false;
+    };
 
     void load();
     void rebuild();
     void rebuild_side();
+    void rebuild_steps();
+    void rebuild_code();
+    void remember_mode() const;
     // Records a change: after is the whole new logic.
     void change(const logic::Logic& after, std::string label, std::string merge = {});
     void apply_json(const std::string& json);
@@ -155,7 +200,10 @@ private:
     Rml::DataModelHandle model_;
     editor::Document doc_; // the history needs one; the links live in their file
     editor::UndoStack history_{doc_};
-    std::filesystem::path game_dir_, file_;
+    std::filesystem::path game_dir_, file_, settings_;
+    bool remember_ = false;
+    std::string mode_ = "links";
+    u32 adding_ = 0; // the card whose «Добавить шаг» is open
 
     logic::Verbs verbs_;
     logic::Logic logic_;
@@ -183,6 +231,9 @@ private:
     std::vector<VerbOption> m_verbs_;
     std::vector<Refinement> m_refine_;
     std::vector<WordRow> m_words_, m_thing_links_;
+    std::vector<CardView> m_cards_;
+    std::vector<CodeLine> m_code_;
+    Rml::String m_mode_ = "links";
     Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_;
     float m_pick_x_ = 0, m_pick_y_ = 0;
     bool m_picking_ = false, m_has_link_ = false, m_has_thing_ = false, m_hint_ = false;

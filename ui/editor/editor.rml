@@ -592,11 +592,11 @@
     <div id="logic" class="column" data-if="tab == 'logic'">
         <div class="lg-bar row">
             <div class="lg-modes row">
-                <div id="lg-mode-links" class="lg-mode selected" title="Вещи и связи между ними"><icon name="share"/><span>Связи</span></div>
-                <div class="lg-mode soon" title="Готовые идеи с парой полей: скоро"><icon name="lightbulb"/><span>Идеи</span></div>
-                <div class="lg-mode soon" title="Та же логика фразами по шагам: скоро"><icon name="format_list_numbered"/><span>Шаги</span></div>
-                <div class="lg-mode soon" title="Схема из узлов для опытных: скоро"><icon name="hub"/><span>Схема</span></div>
-                <div class="lg-mode soon" title="Та же логика кодом: скоро"><icon name="code"/><span>Код</span></div>
+                <div id="lg-mode-links" class="lg-mode" data-class-selected="lg_mode == 'links'" title="Вещи и связи между ними" data-event-click="lg_mode('links')"><icon name="share"/><span>Связи</span></div>
+                <div id="lg-mode-ideas" class="lg-mode soon" title="Готовые идеи с парой полей: скоро" data-event-click="lg_mode('ideas')"><icon name="lightbulb"/><span>Идеи</span></div>
+                <div id="lg-mode-steps" class="lg-mode" data-class-selected="lg_mode == 'steps'" title="Та же логика по шагам: когда, если, тогда, иначе" data-event-click="lg_mode('steps')"><icon name="format_list_numbered"/><span>Шаги</span></div>
+                <div id="lg-mode-scheme" class="lg-mode soon" title="Схема из узлов для опытных: скоро" data-event-click="lg_mode('scheme')"><icon name="hub"/><span>Схема</span></div>
+                <div id="lg-mode-code" class="lg-mode" data-class-selected="lg_mode == 'code'" title="Та же логика кодом на Luau" data-event-click="lg_mode('code')"><icon name="code"/><span>Код</span></div>
             </div>
             <div class="grow"/>
             <span class="muted body-small">{{ lg_count }}</span>
@@ -616,7 +616,7 @@
             </div>
 
             <!-- The board -->
-            <div id="lg-board" class="lg-board grow" data-event-mousedown="lg_board_down">
+            <div id="lg-board" class="lg-board grow" data-if="lg_mode == 'links'" data-event-mousedown="lg_board_down">
                 <div data-for="l : lg_links">
                     <div class="lg-line" data-class-selected="l.selected" data-class-broken="l.broken"
                          data-style-left="l.lx + 'px'" data-style-top="l.ly + 'px'" data-style-width="l.len + 'px'" data-style-transform="'rotate(' + l.angle + 'deg)'"/>
@@ -644,6 +644,38 @@
                         <span class="about">{{ v.about }}</span>
                     </div>
                     <div class="muted body-small" data-if="lg_verbs.size == 0">Этим двум вещам игра пока ничего не умеет делать друг с другом.</div>
+                </div>
+            </div>
+
+            <!-- «Шаги»: each link as steps -->
+            <div id="lg-steps" class="lg-steps column grow" data-if="lg_mode == 'steps'">
+                <div class="lg-empty muted" data-if="lg_cards.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи».</div>
+                <div data-for="c : lg_cards" class="lg-card column" data-attr-id="'lg-card-' + c.id" data-class-selected="c.selected" data-event-click="lg_card(c.id)">
+                    <div class="lg-card-head row"><span class="grow">{{ c.phrase }}</span></div>
+                    <div class="lg-problem row" data-if="c.problem != ''"><icon class="s" name="error"/><span>{{ c.problem }}</span></div>
+                    <div data-for="st : c.steps" data-attr-class="'lg-step row ' + st.part">
+                        <span class="lg-part">{{ st.label }}</span>
+                        <div class="lg-step-body row grow">
+                            <icon class="s" data-attr-name="st.icon"/><span class="grow">{{ st.text }}</span>
+                            <div class="icon-button small" data-if="st.refine != ''" data-attr-id="'lg-step-x-' + c.id + '-' + st.refine" title="Убрать шаг" data-event-click="lg_step_remove(c.id, st.refine)"><icon class="s" name="close"/></div>
+                        </div>
+                    </div>
+                    <div class="lg-adds row" data-if="c.adds.size > 0">
+                        <div class="command" data-attr-id="'lg-step-add-' + c.id" data-event-click="lg_step_adds(c.id)"><icon name="add"/><span>Добавить шаг</span></div>
+                        <div data-if="c.adding" class="row lg-add-list">
+                            <div data-for="ad : c.adds" class="lg-add-chip" data-attr-id="'lg-add-step-' + c.id + '-' + ad.id" data-attr-title="ad.about" data-event-click="lg_step_add(c.id, ad.id)">{{ ad.label }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- «Код»: the Luau the links become -->
+            <div id="lg-code" class="lg-code-pane column grow" data-if="lg_mode == 'code'">
+                <div class="lg-code-note row"><icon class="s" name="info"/><span>Этот код игра собирает из связей сама. Щелчок по строке показывает её связь. Править код можно будет позже.</span></div>
+                <div class="lg-code column">
+                    <div data-for="ln : lg_code" class="lg-line-row row" data-attr-id="'lg-code-' + ln.n" data-class-selected="ln.selected" data-class-comment="ln.comment" data-event-click="lg_code_line(ln.link)">
+                        <span class="n">{{ ln.n }}</span><span class="t">{{ ln.text }}</span>
+                    </div>
                 </div>
             </div>
 
@@ -984,7 +1016,9 @@
         <div class="grow"/>
         <span class="muted" data-if="tab == 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
         <span class="muted" data-if="tab == 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · Alt+← / Alt+→ назад и вперёд · F2 имя · Ctrl+C / X / V · Del удалить · перетащите файлы в окно для импорта</span>
-        <span class="muted" data-if="tab == 'logic'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи, потом по другой: связать · Del удалить · Esc отмена · перетаскивание: двигать вещи и доску</span>
+        <span class="muted" data-if="tab == 'logic' && lg_mode == 'links'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи, потом по другой: связать · Del удалить · Esc отмена · перетаскивание: двигать вещи и доску</span>
+        <span class="muted" data-if="tab == 'logic' && lg_mode == 'steps'">Ctrl+Z / Ctrl+Y отмена и повтор · × убирает шаг · «Добавить шаг» уточняет связь · Del удаляет выбранную связь</span>
+        <span class="muted" data-if="tab == 'logic' && lg_mode == 'code'">Код собран из связей · щелчок по строке: её связь · Ctrl+Z / Ctrl+Y отмена и повтор</span>
         <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>

@@ -333,6 +333,7 @@ public:
             level.arm_template(key);
         };
         logic_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
+        logic_tab.set_settings(level_config.settings, !level_config.offscreen);
         logic_tab.init(ui_, game_dir, logic_file);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
@@ -2404,6 +2405,38 @@ private:
             break;
         case 9:
             check(lg().selected_link() == 0 && shown("lg-word-1"), "Esc goes back to the words");
+            check(click("lg-mode-steps") && lg().mode() == "steps", "«Шаги» shows the same logic as steps");
+            break;
+        case 10:
+            check(shown("lg-card-1") && shown("lg-card-2") && !shown("lg-board"), "each link is a card of steps");
+            check(lg().steps_of(1).size() == 5 && lg().steps_of(1)[2].text == "Открыть Дверь", "«Ключ открывает Дверь» reads as steps");
+            check(click("lg-step-x-1-sound") && !lg().links().find(1)->sound, "× takes the sound step away");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().find(1)->sound, "and Ctrl+Z brings it back");
+            check(click("lg-step-add-1"), "«Добавить шаг» opens");
+            break;
+        case 11:
+            check(shown("lg-add-step-1-night") && click("lg-add-step-1-night") && lg().links().find(1)->night,
+                  "«Только ночью» adds the step «Если сейчас ночь»");
+            break;
+        case 12:
+            check(lg().steps_of(1)[1].text == "Если сейчас ночь" && shown("lg-step-x-1-night"), "the new step is on the card");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lg().links().find(1)->night, "Ctrl+Z takes it back");
+            check(click("lg-mode-code") && lg().mode() == "code", "«Код» shows the same logic as code");
+            break;
+        case 13: {
+            check(shown("lg-code-1") && lg().code_lines() > 10, "the code is shown line by line");
+            usize line = 0;
+            while (line < lg().code_lines() && lg().code_link(line) != 2) ++line;
+            check(line < lg().code_lines() && click("lg-code-" + std::to_string(line + 1)) && lg().selected_link() == 2,
+                  "a click on a line selects its link");
+            check(click("lg-mode-ideas") && lg().mode() == "code", "«Идеи» is not there yet");
+            check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
+            break;
+        }
+        case 14:
+            check(shown("lg-board") && lg().selected_link() == 2, "the board is back, the link still selected");
             break;
         default:
             lg_step_ = -1;

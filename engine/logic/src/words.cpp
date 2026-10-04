@@ -4,6 +4,7 @@
 
 #include "forge/objects/library.h"
 
+#include <algorithm>
 #include <array>
 
 namespace forge::logic {
@@ -238,6 +239,7 @@ Thing thing_of(const objects::Library& library, const objects::Template& t) {
     th.animate = library.has_block(t, "villager") || library.has_block(t, "control");
     th.plural = looks_plural(t.name);
     th.forms = decline(t.name, th.animate);
+    for (const objects::BlockDef* b : library.blocks_of(t)) th.blocks.push_back(b->id);
     return th;
 }
 
@@ -285,6 +287,64 @@ std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const
         s += ".";
     }
     return s;
+}
+
+namespace {
+
+bool side_fits(std::string_view rule, const std::vector<std::string>& has, const Thing& t) {
+    if (rule == "hero" && t.id != kHero) return false;
+    if (rule == "thing" && t.id == kHero) return false;
+    if (has.empty()) return true;
+    for (const std::string& b : has)
+        if (std::find(t.blocks.begin(), t.blocks.end(), b) != t.blocks.end()) return true;
+    return false;
+}
+
+std::string quoted(const Thing& t) { return "«" + t.name + "»"; }
+
+} // namespace
+
+bool suits(const VerbDef& verb, const Thing& a, const Thing& b) {
+    if (a.id == b.id) return false;
+    if (verb.always && a.id == kHero) return false;
+    return side_fits(verb.a_is, verb.a_has, a) && side_fits(verb.b_is, verb.b_has, b);
+}
+
+std::vector<Refine> refinements(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b) {
+    std::vector<Refine> out;
+    out.push_back({"night", "Только ночью", "связь срабатывает, только когда в игре ночь", link.night});
+    out.push_back({"once", "Только один раз", "у каждой копии вещи — один раз за игру", link.once});
+    if (!verb.sound.empty()) out.push_back({"sound", "Со звуком", "обычный звук игры для этого действия", link.sound});
+    if (!verb.fail.empty() && (!verb.needs.empty() || link.night))
+        out.push_back({"hint", "Подсказка, если не вышло", "«" + fill(verb.fail, a, b) + "»", link.hint});
+    return out;
+}
+
+std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b) {
+    std::vector<Step> out;
+    if (verb.always) {
+        out.push_back({"when", "all_inclusive", "Всё время, пока " + quoted(a) + " есть на уровне", ""});
+    } else {
+        const Thing& touched = verb.touch == Side::A ? (a.id == kHero ? b : a) : (b.id == kHero ? a : b);
+        out.push_back({"when", "bolt", "Когда герой касается " + touched.forms.get("gen"), ""});
+    }
+    bool checks = false;
+    if (link.night) {
+        out.push_back({"if", "dark_mode", "Если сейчас ночь", "night"});
+        checks = true;
+    }
+    if (!verb.needs.empty()) {
+        const Thing& need = verb.needs == "a" ? a : b;
+        out.push_back({"if", "inventory_2", "Если у героя есть " + quoted(need), ""});
+        checks = true;
+    }
+    if (link.once) out.push_back({"if", "looks_one", "Если здесь это ещё не случалось", "once"});
+    const std::string action = verb.step.empty() ? fill(verb.about, a, b) : fill(verb.step, a, b);
+    out.push_back({"then", verb.icon.empty() ? "arrow_forward" : verb.icon, action, ""});
+    if (link.sound && !verb.sound.empty()) out.push_back({"then", "volume_up", "Обычный звук действия", "sound"});
+    if (checks && link.hint && !verb.fail.empty())
+        out.push_back({"else", "info", "Подсказка над героем: «" + fill(verb.fail, a, b) + "»", "hint"});
+    return out;
 }
 
 } // namespace forge::logic

@@ -1,5 +1,6 @@
 #include "logic_editor.h"
 
+#include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 
@@ -18,11 +19,14 @@ constexpr u32 kHeroIconPx = 96;
 int arg_int(const Rml::VariantList& a, usize i, int fallback) { return i < a.size() ? a[i].Get<int>() : fallback; }
 Rml::String arg_str(const Rml::VariantList& a, usize i) { return i < a.size() ? a[i].Get<Rml::String>() : Rml::String(); }
 
-bool fits(std::string_view rule, std::string_view id) {
-    if (rule == "hero") return id == logic::kHero;
-    if (rule == "thing") return id != logic::kHero;
-    return true;
+const char* part_label(std::string_view part) {
+    if (part == "when") return "Когда";
+    if (part == "if") return "Если";
+    if (part == "then") return "Тогда";
+    return "Иначе";
 }
+
+bool known_mode(std::string_view m) { return m == "links" || m == "steps" || m == "code"; }
 
 } // namespace
 
@@ -58,7 +62,33 @@ bool LogicEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir, const 
     module_.hero_icon(kHeroIconPx, rgba);
     ui.set_image("logic_hero", rgba.data(), kHeroIconPx, kHeroIconPx);
     hero_icon_ = "/memory/logic_hero";
+    if (remember_) {
+        std::vector<u8> bytes;
+        if (read_file(settings_ / "logic_mode.txt", bytes)) {
+            const std::string m(bytes.begin(), bytes.end());
+            if (known_mode(m)) mode_ = m_mode_ = m;
+        }
+    }
     load();
+    return true;
+}
+
+void LogicEditor::remember_mode() const {
+    if (!remember_ || settings_.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(settings_, ec);
+    write_file_atomic(settings_ / "logic_mode.txt", {reinterpret_cast<const u8*>(mode_.data()), mode_.size()});
+}
+
+bool LogicEditor::set_mode(const std::string& mode) {
+    if (!known_mode(mode)) return false;
+    if (mode == mode_) return true;
+    close_picker();
+    mode_ = m_mode_ = mode;
+    adding_ = 0;
+    remember_mode();
+    if (model_) model_.DirtyVariable("lg_mode");
+    rebuild();
     return true;
 }
 
@@ -133,6 +163,39 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("selected", &WordRow::selected);
     }
     model.RegisterArray<std::vector<WordRow>>();
+    if (auto s = model.RegisterStruct<StepView>()) {
+        s.RegisterMember("part", &StepView::part);
+        s.RegisterMember("label", &StepView::label);
+        s.RegisterMember("icon", &StepView::icon);
+        s.RegisterMember("text", &StepView::text);
+        s.RegisterMember("refine", &StepView::refine);
+    }
+    model.RegisterArray<std::vector<StepView>>();
+    if (auto s = model.RegisterStruct<AddView>()) {
+        s.RegisterMember("id", &AddView::id);
+        s.RegisterMember("label", &AddView::label);
+        s.RegisterMember("about", &AddView::about);
+    }
+    model.RegisterArray<std::vector<AddView>>();
+    if (auto s = model.RegisterStruct<CardView>()) {
+        s.RegisterMember("id", &CardView::id);
+        s.RegisterMember("phrase", &CardView::phrase);
+        s.RegisterMember("meaning", &CardView::meaning);
+        s.RegisterMember("problem", &CardView::problem);
+        s.RegisterMember("selected", &CardView::selected);
+        s.RegisterMember("adding", &CardView::adding);
+        s.RegisterMember("steps", &CardView::steps);
+        s.RegisterMember("adds", &CardView::adds);
+    }
+    model.RegisterArray<std::vector<CardView>>();
+    if (auto s = model.RegisterStruct<CodeLine>()) {
+        s.RegisterMember("n", &CodeLine::n);
+        s.RegisterMember("link", &CodeLine::link);
+        s.RegisterMember("text", &CodeLine::text);
+        s.RegisterMember("selected", &CodeLine::selected);
+        s.RegisterMember("comment", &CodeLine::comment);
+    }
+    model.RegisterArray<std::vector<CodeLine>>();
 
     model.Bind("lg_things", &m_things_);
     model.Bind("lg_links", &m_links_);
@@ -156,6 +219,9 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_sel_icon", &m_sel_icon_);
     model.Bind("lg_sel_links", &m_sel_links_);
     model.Bind("lg_count", &m_count_);
+    model.Bind("lg_mode", &m_mode_);
+    model.Bind("lg_cards", &m_cards_);
+    model.Bind("lg_code", &m_code_);
 
     auto on = [&model](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) { fn(ev, a); });
@@ -207,6 +273,32 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         if (!l) return;
         const bool now = what == "night" ? l->night : what == "once" ? l->once : what == "sound" ? l->sound : l->hint;
         refine(what, !now);
+    });
+    on("lg_mode", [this](Rml::Event&, const Rml::VariantList& a) {
+        const std::string m = arg_str(a, 0);
+        if (!set_mode(m)) FORGE_INFO("Этот режим появится позже: пока есть «Связи», «Шаги» и «Код»");
+    });
+    on("lg_card", [this](Rml::Event&, const Rml::VariantList& a) {
+        const u32 id = static_cast<u32>(arg_int(a, 0, 0));
+        if (id != sel_link_) select_link(id);
+    });
+    on("lg_step_remove", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        refine(static_cast<u32>(arg_int(a, 0, 0)), arg_str(a, 1), false);
+    });
+    on("lg_step_adds", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        open_adds(static_cast<u32>(arg_int(a, 0, 0)));
+    });
+    on("lg_step_add", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        const u32 id = static_cast<u32>(arg_int(a, 0, 0));
+        adding_ = 0;
+        refine(id, arg_str(a, 1), true);
+    });
+    on("lg_code_line", [this](Rml::Event&, const Rml::VariantList& a) {
+        const u32 id = static_cast<u32>(arg_int(a, 0, 0));
+        if (id) select_link(id);
     });
     on("lg_hint_ok", [this](Rml::Event&, const Rml::VariantList&) {
         hint_closed_ = true;
@@ -350,8 +442,10 @@ void LogicEditor::rebuild() {
         (logic_.spot(t.id) ? m_board_rows_ : m_add_rows_).push_back(r);
     }
     m_count_ = "Связей: " + std::to_string(logic_.links.size()) + ", вещей на доске: " + std::to_string(logic_.board.size());
-    m_hint_ = logic_.links.empty() && !hint_closed_;
+    m_hint_ = logic_.links.empty() && !hint_closed_ && mode_ == "links";
     rebuild_side();
+    if (mode_ == "steps") rebuild_steps();
+    if (mode_ == "code") rebuild_code();
     if (model_)
         for (const char* name : {"lg_things", "lg_links", "lg_board_rows", "lg_add_rows", "lg_count", "lg_hint"})
             model_.DirtyVariable(name);
@@ -370,11 +464,8 @@ void LogicEditor::rebuild_side() {
         const logic::VerbDef* v = verbs_.find(l->verb);
         const logic::Thing* ta = thing(l->a);
         const logic::Thing* tb = thing(l->b);
-        m_refine_.push_back({"night", "Только ночью", "связь срабатывает, только когда в игре ночь", l->night});
-        m_refine_.push_back({"once", "Только один раз", "у каждой копии вещи — один раз за игру", l->once});
-        if (v && !v->sound.empty()) m_refine_.push_back({"sound", "Со звуком", "обычный звук игры для этого действия", l->sound});
-        if (v && !v->fail.empty() && ta && tb && (!v->needs.empty() || l->night))
-            m_refine_.push_back({"hint", "Подсказка, если не вышло", "«" + logic::fill(v->fail, *ta, *tb) + "»", l->hint});
+        if (v && ta && tb)
+            for (const logic::Refine& r : logic::refinements(*l, *v, *ta, *tb)) m_refine_.push_back({r.id, r.label, r.about, r.on});
     }
     // The thing: its picture and links.
     m_thing_links_.clear();
@@ -544,8 +635,7 @@ void LogicEditor::open_picker(const std::string& a, const std::string& b) {
             const logic::Thing& x = reversed ? *tb : *ta;
             const logic::Thing& y = reversed ? *ta : *tb;
             for (const logic::VerbDef& v : verbs_.all()) {
-                if (!fits(v.a_is, x.id) || !fits(v.b_is, y.id)) continue;
-                if (v.always && x.id == logic::kHero) continue;
+                if (!logic::suits(v, x, y)) continue;
                 logic::Link l{0, x.id, v.id, y.id};
                 m_verbs_.push_back({v.id, logic::phrase(l, v, x, y), logic::fill(v.about, x, y), v.icon.empty() ? "link" : v.icon,
                                     reversed != 0});
@@ -615,11 +705,13 @@ bool LogicEditor::pick(usize i) {
     return true;
 }
 
-bool LogicEditor::refine(const std::string& what, bool on) {
-    const logic::Link* l = logic_.find(sel_link_);
+bool LogicEditor::refine(const std::string& what, bool on) { return refine(sel_link_, what, on); }
+
+bool LogicEditor::refine(u32 link, const std::string& what, bool on) {
+    const logic::Link* l = logic_.find(link);
     if (!l) return false;
     logic::Logic after = logic_;
-    logic::Link& m = *after.find(sel_link_);
+    logic::Link& m = *after.find(link);
     if (what == "night") m.night = on;
     else if (what == "once") m.once = on;
     else if (what == "sound") m.sound = on;
@@ -638,6 +730,75 @@ bool LogicEditor::remove_link() {
     sel_link_ = 0;
     change(after, "Удалить связь «" + phrase + "»");
     return true;
+}
+
+// --- «Шаги» and «Код» -----------------------------------------------------------
+
+std::vector<logic::Step> LogicEditor::steps_of(u32 link) const {
+    const logic::Link* l = logic_.find(link);
+    const logic::VerbDef* v = l ? verbs_.find(l->verb) : nullptr;
+    const logic::Thing* a = l ? thing(l->a) : nullptr;
+    const logic::Thing* b = l ? thing(l->b) : nullptr;
+    return v && a && b ? logic::steps(*l, *v, *a, *b) : std::vector<logic::Step>{};
+}
+
+void LogicEditor::open_adds(u32 link) {
+    adding_ = adding_ == link ? 0 : link;
+    if (adding_ && adding_ != sel_link_) sel_link_ = adding_, sel_thing_.clear();
+    rebuild();
+}
+
+void LogicEditor::rebuild_steps() {
+    m_cards_.clear();
+    if (!logic_.find(adding_)) adding_ = 0;
+    for (const logic::Link& l : logic_.links) {
+        CardView c;
+        c.id = static_cast<int>(l.id);
+        c.phrase = phrase_of(l.id);
+        c.meaning = meaning_of(l.id);
+        c.problem = problem_of(l.id);
+        c.selected = l.id == sel_link_;
+        c.adding = l.id == adding_;
+        std::string last;
+        for (const logic::Step& st : steps_of(l.id)) {
+            c.steps.push_back({st.part, st.part == last ? "" : part_label(st.part), st.icon, st.text, st.refine});
+            last = st.part;
+        }
+        const logic::VerbDef* v = verbs_.find(l.verb);
+        const logic::Thing* a = thing(l.a);
+        const logic::Thing* b = thing(l.b);
+        if (v && a && b)
+            for (const logic::Refine& r : logic::refinements(l, *v, *a, *b))
+                if (!r.on) c.adds.push_back({r.id, r.label, r.about});
+        m_cards_.push_back(std::move(c));
+    }
+    if (model_) model_.DirtyVariable("lg_cards");
+}
+
+void LogicEditor::rebuild_code() {
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    script::SourceMap map;
+    const std::string text = logic::listing(logic_, verbs_, find, &map);
+    m_code_.clear();
+    usize start = 0;
+    int n = 1;
+    while (start <= text.size()) {
+        usize end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        if (end == text.size() && start == end) break;
+        CodeLine line;
+        line.n = n;
+        line.text = text.substr(start, end - start);
+        const u32 index = map.node_at(n);
+        if (index < logic_.links.size()) line.link = static_cast<int>(logic_.links[index].id);
+        line.selected = line.link != 0 && static_cast<u32>(line.link) == sel_link_;
+        const usize lead = line.text.find_first_not_of(' ');
+        line.comment = lead != std::string::npos && line.text.compare(lead, 2, "--") == 0;
+        m_code_.push_back(std::move(line));
+        ++n;
+        start = end + 1;
+    }
+    if (model_) model_.DirtyVariable("lg_code");
 }
 
 // --- input -------------------------------------------------------------------

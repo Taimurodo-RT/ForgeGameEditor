@@ -81,6 +81,12 @@ struct VerbDef {
     std::string about;
     // Which things fit each side: "hero", "thing" (not the hero) or "" any.
     std::string a_is, b_is;
+    // A thing on that side must have one of these blocks («Подбирается»:
+    // "pickup», «Дверь»: "door"); empty: any. Only for offering verbs: a
+    // link made anyway still runs.
+    std::vector<std::string> a_has, b_has;
+    // What the game does, as a step: «Открыть {b:acc}».
+    std::string step;
 };
 
 class Verbs {
@@ -149,6 +155,7 @@ struct Thing {
     bool animate = false; // a person or an animal: «вижу героя», not «вижу герой»
     bool plural = false;  // «Шипы», «Монеты»
     Forms forms;
+    std::vector<std::string> blocks; // the template's blocks (none for the hero)
 };
 
 // The forms of a name, guessed from its endings: the first word (and the
@@ -169,6 +176,27 @@ std::string phrase(const Link& link, const VerbDef& verb, const Thing& a, const 
 std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b);
 // A verb's text with {a} {b} {a:gen}… filled in.
 std::string fill(std::string_view text, const Thing& a, const Thing& b);
+// The verb makes sense for these two (sides and blocks): what the editor
+// offers.
+bool suits(const VerbDef& verb, const Thing& a, const Thing& b);
+
+// A link as steps («Шаги»): when it happens, the checks, what is done, and
+// what happens otherwise. Steps made by a refinement name it, so the editor
+// can take them away or add them.
+struct Step {
+    std::string part;   // "when", "if", "then", "else"
+    std::string icon;   // Material Symbols
+    std::string text;
+    std::string refine; // "night", "once", "sound", "hint"; "" the verb's own
+};
+std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b);
+// The refinements a link can have, as steps not yet there (what «Добавить
+// шаг» offers), and whether it has them.
+struct Refine {
+    std::string id, label, about;
+    bool on = false;
+};
+std::vector<Refine> refinements(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b);
 
 // --- compiling -----------------------------------------------------------
 

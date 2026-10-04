@@ -10,36 +10,48 @@
 //   do / target — что делает игра и с какой вещью;
 //   sound — обычный звук; fail — подсказка, когда не получилось;
 //   about — что происходит, простыми словами ({a}, {b:gen}… — имена);
-//   a / b — кем может быть вещь: "hero" — только герой, "thing" — не герой.
+//   a / b — кем может быть вещь: "hero" — только герой, "thing" — не герой;
+//   a_has / b_has — какой блок нужен вещи, чтобы редактор предлагал это
+//          действие («pickup» — подбирается, «door» — дверь);
+//   step — что делает игра, как шаг в режиме «Шаги».
 {
   "verbs": [
     { "id": "collect", "name": "собирает", "plural": "собирают", "icon": "back_hand", "case": "acc",
       "when": "touch", "touch": "b", "do": "collect", "target": "b", "sound": "pickup", "a": "hero", "b": "thing",
+      "b_has": ["pickup"], "step": "Положить {b:acc} в сумку героя",
       "about": "Когда {a} касается {b:gen}, {b} попадает в сумку." },
     { "id": "open", "name": "открывает", "plural": "открывают", "icon": "key", "case": "acc",
       "when": "touch", "touch": "b", "needs": "a", "do": "open", "target": "b", "sound": "open", "a": "thing", "b": "thing",
       "fail": "Нужен предмет «{a}»",
+      "a_has": ["pickup"], "b_has": ["door"], "step": "Открыть {b:acc}",
       "about": "Когда герой с {a:ins} подходит к {b:dat}, {b} открывается." },
     { "id": "toggle", "name": "включает", "plural": "включают", "icon": "toggle_on", "case": "acc",
       "when": "touch", "touch": "a", "do": "toggle", "target": "b", "a": "thing", "b": "thing",
+      "b_has": ["door"], "step": "Переключить {b:acc}: открыть или закрыть",
       "about": "Когда герой касается {a:gen}, {b} переключается: открывается или закрывается." },
     { "id": "hurt", "name": "ранит", "plural": "ранят", "icon": "heart_broken", "case": "acc",
       "when": "touch", "touch": "a", "do": "hurt", "target": "b", "a": "thing", "b": "hero",
+      "step": "Отнять у героя сердце",
       "about": "Когда герой касается {a:gen}, он теряет сердце." },
     { "id": "heal", "name": "лечит", "plural": "лечат", "icon": "favorite", "case": "acc",
       "when": "touch", "touch": "a", "do": "heal", "target": "b", "a": "thing", "b": "hero",
+      "step": "Добавить герою сердце",
       "about": "Когда герой касается {a:gen}, у него прибавляется сердце." },
     { "id": "coin", "name": "даёт монету", "plural": "дают монету", "icon": "paid", "case": "dat",
       "when": "touch", "touch": "a", "do": "coin", "target": "b", "a": "thing", "b": "hero",
+      "step": "Дать герою монету",
       "about": "Когда герой касается {a:gen}, он получает монету." },
     { "id": "talk", "name": "говорит с", "plural": "говорят с", "icon": "forum", "case": "ins",
       "when": "touch", "touch": "a", "do": "talk", "target": "a", "a": "thing", "b": "hero",
+      "a_has": ["villager"], "step": "Начать разговор с {a:ins}",
       "about": "Когда герой подходит к {a:dat}, начинается разговор." },
     { "id": "follow", "name": "идёт за", "plural": "идут за", "icon": "directions_walk", "case": "ins",
       "when": "always", "do": "follow", "target": "a", "a": "thing", "b": "hero",
+      "a_has": ["control", "villager"], "step": "{a} идёт за героем",
       "about": "{a} всё время идёт за героем." },
     { "id": "flee", "name": "убегает от", "plural": "убегают от", "icon": "directions_run", "case": "gen",
       "when": "always", "do": "flee", "target": "a", "a": "thing", "b": "hero",
+      "a_has": ["control", "villager"], "step": "{a} убегает от героя",
       "about": "{a} убегает, когда герой подходит близко." }
   ]
 }
