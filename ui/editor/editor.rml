@@ -476,6 +476,7 @@
                             <div class="button outlined small" data-if="as_sel_ext != '.jpg' &amp;&amp; as_sel_ext != '.jpeg'" data-event-click="as_convert('.jpg')">JPG</div>
                             <div class="button outlined small" data-if="as_sel_ext != '.bmp'" data-event-click="as_convert('.bmp')">BMP</div>
                             <div class="button outlined small" data-if="as_sel_ext != '.tga'" data-event-click="as_convert('.tga')">TGA</div>
+                            <div class="button outlined small" data-if="as_sel_ext != '.webp'" data-event-click="as_convert('.webp')">WEBP</div>
                         </div>
                     </div>
                     <div data-if="as_sel_count == 1 &amp;&amp; as_sel_wav">

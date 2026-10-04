@@ -42,6 +42,16 @@ FetchContent_Declare(stb
   GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
   SOURCE_SUBDIR do-not-build)
 
+# libwebp: WebP pictures (stb does not read them). Library only, no tools.
+foreach(opt ANIM_UTILS CWEBP DWEBP GIF2WEBP IMG2WEBP VWEBP WEBPINFO WEBPMUX EXTRAS)
+  set(WEBP_BUILD_${opt} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(WEBP_BUILD_LIBWEBPMUX OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(libwebp
+  GIT_REPOSITORY https://github.com/webmproject/libwebp.git
+  GIT_TAG v1.6.0
+  GIT_SHALLOW TRUE)
+
 # Shader toolchain, used only at build time by tools/shaderc: GLSL -> SPIR-V
 # (glslang), SPIR-V -> HLSL / MSL (SPIRV-Cross). Shaders are written once in
 # GLSL and compiled for every GPU backend while the engine builds.
@@ -128,7 +138,7 @@ FetchContent_Declare(rmlui
   GIT_TAG 6.3
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross flecs box2d luau freetype)
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb libwebp glslang spirv_cross flecs box2d luau freetype)
 if(NOT TARGET Freetype::Freetype)
   add_library(Freetype::Freetype ALIAS freetype)
 endif()
@@ -150,6 +160,10 @@ add_library(xxhash_headers INTERFACE)
 target_include_directories(xxhash_headers SYSTEM INTERFACE ${xxhash_SOURCE_DIR})
 add_library(stb_headers INTERFACE)
 target_include_directories(stb_headers SYSTEM INTERFACE ${stb_SOURCE_DIR})
+# libwebp's headers as <webp/decode.h>.
+add_library(webp_codec INTERFACE)
+target_link_libraries(webp_codec INTERFACE webpdemux webp)
+target_include_directories(webp_codec SYSTEM INTERFACE ${libwebp_SOURCE_DIR}/src)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/sqlite ${CMAKE_BINARY_DIR}/third_party/sqlite)
 
