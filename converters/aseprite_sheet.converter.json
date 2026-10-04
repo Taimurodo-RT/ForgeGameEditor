@@ -1,0 +1,27 @@
+{
+  "name": "Aseprite → лист кадров",
+  "about": "Все кадры анимации в одной картинке (или отдельными файлами) и список кадров с длительностью и метками анимаций.",
+  "icon": "animation",
+  "from": [".aseprite", ".ase"],
+  "settings": [
+    { "id": "layout", "name": "Как разложить кадры", "type": "choice", "default": "row",
+      "choices": [
+        { "id": "row", "name": "В одну строку" },
+        { "id": "grid", "name": "Сеткой" },
+        { "id": "files", "name": "Каждый кадр отдельным файлом" }
+      ] },
+    { "id": "scale", "name": "Увеличить", "type": "choice", "default": "1",
+      "choices": [
+        { "id": "1", "name": "Как есть" },
+        { "id": "2", "name": "В 2 раза" },
+        { "id": "3", "name": "В 3 раза" },
+        { "id": "4", "name": "В 4 раза" }
+      ] },
+    { "id": "layers", "name": "Слои", "type": "choice", "default": "merged",
+      "choices": [
+        { "id": "merged", "name": "Все вместе" },
+        { "id": "each", "name": "Каждый слой своим листом" }
+      ] },
+    { "id": "hidden", "name": "Скрытые слои тоже", "type": "bool", "default": false }
+  ]
+}

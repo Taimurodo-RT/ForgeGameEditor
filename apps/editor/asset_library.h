@@ -22,6 +22,7 @@
 #include "forge/ui/ui.h"
 #include "forge/ui/virtual_list.h"
 
+#include "converters.h"
 #include "dock_view.h"
 #include "file_types.h"
 
@@ -138,6 +139,19 @@ public:
     bool convert_image(const std::string& extension);
     bool set_tags(const std::string& tags);
     void play_sound();
+    // «Конвертировать…»: a window with the converters that take the chosen
+    // files and their settings; the results land next to each file.
+    Converters& converters() { return converters_; }
+    void open_convert();
+    void close_convert();
+    bool convert_open() const { return m_conv_open_; }
+    usize convert_choices() const { return m_conv_list_.size(); }
+    const std::string& convert_picked() const { return conv_id_; }
+    bool pick_converter(const std::string& id);
+    // A setting of the picked converter (JSON: "\"mono\"", "true", "0.5").
+    bool set_convert_setting(const std::string& id, const std::string& json);
+    bool run_convert();
+    bool converting() const { return converters_.running() > 0 || !conv_jobs_.empty(); }
 
     // --- state (for the self-test and benchmarks) ---
     bool busy() const;
@@ -231,6 +245,23 @@ private:
         model_.DirtyVariable(name);
     }
 
+    struct ConvRow {
+        Rml::String id, name, about, icon;
+        bool selected = false;
+    };
+    struct ConvChoiceView {
+        Rml::String id, name;
+        bool selected = false;
+    };
+    struct ConvSettingView {
+        Rml::String id, name, hint, type, value;
+        float min = 0, max = 1, step = 0.1f;
+        std::vector<ConvChoiceView> choices;
+    };
+    void rebuild_convert();
+    void take_conversions();
+    std::vector<std::string> convertible(const Converter& c) const; // chosen files it takes
+
     void refresher_main();
     void thumbnailer_main();
     void take_results();
@@ -322,6 +353,18 @@ private:
 
     // Sound
     SDL_AudioStream* sound_ = nullptr;
+
+    // Converters
+    Converters converters_;
+    std::string conv_id_; // picked in the window
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> conv_values_; // converter -> setting -> JSON
+    std::unordered_map<u64, std::string> conv_jobs_; // job -> the folder its results go to
+    u32 conv_ok_ = 0, conv_failed_ = 0;
+    u64 conv_synced_ = 0;
+    bool m_conv_open_ = false, m_can_convert_ = false, m_conv_busy_ = false;
+    std::vector<ConvRow> m_conv_list_;
+    std::vector<ConvSettingView> m_conv_settings_;
+    Rml::String m_conv_title_, m_conv_note_, m_conv_status_;
 
     // Model mirrors
     std::vector<TreeRow> m_tree_;

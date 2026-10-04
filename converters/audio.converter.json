@@ -1,0 +1,32 @@
+{
+  "name": "Звук → OGG, WAV или FLAC",
+  "about": "Переводит звук в нужный формат и по пути может сделать его моно, сменить частоту, выровнять громкость и обрезать тишину по краям.",
+  "icon": "graphic_eq",
+  "from": [".wav", ".ogg", ".mp3", ".flac", ".aiff", ".aif", ".opus"],
+  "settings": [
+    { "id": "format", "name": "Формат", "type": "choice", "default": "ogg",
+      "choices": [
+        { "id": "ogg", "name": "OGG — маленький, для музыки и звуков" },
+        { "id": "wav", "name": "WAV — без сжатия" },
+        { "id": "flac", "name": "FLAC — сжатие без потерь" }
+      ] },
+    { "id": "quality", "name": "Качество OGG", "type": "number", "default": 0.6, "min": 0.1, "max": 1.0, "step": 0.1,
+      "hint": "выше — лучше звук и больше файл" },
+    { "id": "channels", "name": "Каналы", "type": "choice", "default": "keep",
+      "choices": [
+        { "id": "keep", "name": "Как есть" },
+        { "id": "mono", "name": "Моно" },
+        { "id": "stereo", "name": "Стерео" }
+      ] },
+    { "id": "rate", "name": "Частота", "type": "choice", "default": "keep",
+      "choices": [
+        { "id": "keep", "name": "Как есть" },
+        { "id": "22050", "name": "22 050 Гц — для простых звуков" },
+        { "id": "44100", "name": "44 100 Гц" },
+        { "id": "48000", "name": "48 000 Гц" }
+      ] },
+    { "id": "normalize", "name": "Выровнять громкость", "type": "bool", "default": false,
+      "hint": "самое громкое место станет почти максимальным" },
+    { "id": "trim", "name": "Обрезать тишину по краям", "type": "bool", "default": false }
+  ]
+}

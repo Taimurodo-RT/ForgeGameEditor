@@ -291,3 +291,50 @@ icon.xl { font-size: 72px; line-height: 72px; color: var(--on-surface-variant); 
 .as-menu.ctx { width: 310px; }
 .as-menu .menu-item .label { white-space: nowrap; }
 .as-menu .menu-item.strong { font-weight: 600; }
+
+/* «Конвертировать…» */
+.as-conv {
+    position: absolute;
+    left: 12%;
+    right: 12%;
+    top: 70px;
+    bottom: 70px;
+    z-index: 70;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: 10px;
+    background-color: var(--surface-container-high);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+    box-shadow: var(--elevation-2);
+}
+.as-conv-head { align-items: center; gap: var(--space-2); }
+.as-conv-title { font-size: 16px; font-weight: bold; }
+.as-conv-body { gap: var(--space-3); min-height: 0px; }
+.as-conv-list { width: 300px; gap: 4px; overflow-y: auto; justify-content: flex-start; align-self: flex-start; }
+.as-conv-item {
+    gap: var(--space-2);
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    align-items: flex-start;
+}
+.as-conv-item:hover { background-color: var(--state-hover-layer); }
+.as-conv-item.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.as-conv-item .name { font-weight: bold; }
+.as-conv-settings { gap: var(--space-3); overflow-y: auto; min-height: 0px; padding-right: 4px; }
+.as-conv-setting { gap: 4px; }
+.as-conv-setting-head { align-items: center; }
+.as-conv-choice {
+    gap: 6px;
+    align-items: center;
+    padding: 3px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.as-conv-choice:hover { background-color: var(--state-hover-layer); }
+.as-conv-choice.selected { color: var(--primary); }
+.as-conv-number { gap: var(--space-2); align-items: center; }
+.as-conv-value { width: 40px; text-align: right; }
+.as-conv-foot { gap: var(--space-2); align-items: center; }
+.as-conv-status { gap: 8px; }

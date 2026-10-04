@@ -2469,11 +2469,47 @@ private:
             const i64 r = row_of("персонажи/враги/слизень.webp");
             if (hold(idle && r >= 0 && as().row_has_thumb(static_cast<usize>(r)), "the WebP picture gets a thumbnail")) return true;
             check(as().row_field(static_cast<usize>(r), "kind") == "Картинка WEBP", "a WebP file is a picture");
+            // «Конвертировать…» on a sound (needs Python with the converters' libraries).
+            if (as().converters().python().empty()) {
+                FORGE_INFO("self-test: Python не найден, конвертеры не проверяются");
+                as_step_ = 25;
+                as().open_folder("тайлы");
+                click_row("тайлы/камень.png");
+                return true;
+            }
+            as().set_filter("");
+            as().open_folder("звуки");
+            click_row("звуки/кирка.wav");
+            check(as().converters().find("audio") && as().converters().find("psd_layers") && as().converters().find("aseprite_sheet"),
+                  "the converters are found");
+            as().open_convert();
+            check(as().convert_open() && as().convert_picked() == "audio" && as().convert_choices() == 1,
+                  "«Конвертировать…» offers the sound converter for a WAV");
+            check(as().set_convert_setting("format", "\"ogg\"") && as().set_convert_setting("channels", "\"mono\""),
+                  "settings are chosen");
+            check(!as().set_convert_setting("format", "\"mp4\""), "a wrong choice is refused");
+            break;
+        }
+        case 23:
+            check(shown("as-conv-run"), "the window is shown");
+            check(as().run_convert() && !as().convert_open() && as().converting(), "the conversion starts and the window closes");
+            break;
+        case 24: {
+            // Python starts slowly on a cold machine: a longer wait than hold().
+            if (as().converting() && ++conv_wait_ < 20000) {
+                SDL_Delay(2);
+                return true;
+            }
+            if (hold(idle && row_of("звуки/кирка.ogg") >= 0, "the OGG copy is listed")) return true;
+            check(exists("звуки/кирка.ogg") && exists("звуки/кирка.wav"), "the OGG copy is next to the WAV");
+            check(as().history().undo_label() == "Звук → OGG, WAV или FLAC: кирка.ogg", "the conversion is one history entry");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!exists("звуки/кирка.ogg"), "Ctrl+Z takes the OGG away");
             as().open_folder("тайлы"); // for a screenshot: the grid with a menu
             click_row("тайлы/камень.png");
             break;
         }
-        case 23: {
+        case 25: {
             if (hold(idle && as().row_has_thumb(0), "the stones are shown")) return true;
             std::vector<Rml::Element*> cells = list_cells();
             for (Rml::Element* c : cells)
@@ -2560,7 +2596,7 @@ private:
     usize entries_ = 0, count_ = 0, stacks_ = 0;
     i32 cx_ = 0, cy_ = 0;
     u64 object_ = 0;
-    u32 as_step_ = 0, ol_step_ = 0, waited_ = 0;
+    u32 as_step_ = 0, ol_step_ = 0, waited_ = 0, conv_wait_ = 0;
     std::filesystem::path picture_file_;
     u64 new_template_ = 0;
     std::string drop_text_;
