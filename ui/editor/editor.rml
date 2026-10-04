@@ -10,6 +10,7 @@
     <link type="text/rcss" href="level.rcss"/>
     <link type="text/rcss" href="assets.rcss"/>
     <link type="text/rcss" href="objects.rcss"/>
+    <link type="text/rcss" href="logic.rcss"/>
 </head>
 <!-- The editor window. C++ fills the "editor" data model and draws the world
      under the #viewport element; everything you see here can be changed in
@@ -45,14 +46,14 @@
         <div class="editor-tab" data-class-selected="tab == 'animation'" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon name="movie"/><span>Анимация</span></div>
         <div class="editor-tab" data-class-selected="tab == 'images'" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'шаг 9: библиотека ассетов', 'image')"><icon name="image"/><span>Изображения</span></div>
         <div class="editor-tab" data-class-selected="tab == 'audio'" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'шаг 9: библиотека ассетов', 'volume_up')"><icon name="volume_up"/><span>Аудио</span></div>
-        <div class="editor-tab" data-class-selected="tab == 'logic'" data-event-click="open_tab('logic', 'Логика', 'Скрипты на нодах', 'шаг 11: редактор скриптов', 'account_tree')"><icon name="account_tree"/><span>Логика</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'logic'" data-event-click="open_tab('logic', 'Логика', '', '', 'account_tree')"><icon name="account_tree"/><span>Логика</span></div>
         <div class="editor-tab" data-class-selected="tab == 'story'" data-event-click="open_tab('story', 'Сюжет', 'Диалоги и квесты, проверка без запуска игры', 'шаг 12: редактор сюжета', 'forum')"><icon name="forum"/><span>Сюжет</span></div>
         <div class="editor-tab" data-class-selected="tab == 'ui'" data-event-click="open_tab('ui', 'Интерфейс', 'Меню и экраны игры, как в Figma', 'шаг 13: редактор интерфейсов', 'dashboard')"><icon name="dashboard"/><span>Интерфейс</span></div>
         <div class="editor-tab" data-class-selected="tab == 'input'" data-event-click="open_tab('input', 'Ввод', 'Клавиши, мышь и геймпад для действий игры', 'шаг 13: редактор интерфейсов', 'sports_esports')"><icon name="sports_esports"/><span>Ввод</span></div>
         <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', '', '', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
     </div>
 
-    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects')">
+    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects' || tab == 'logic')">
         <icon class="big" data-attr-name="tab_icon"/>
         <div class="headline-small">{{ tab_title }}</div>
         <div class="muted">{{ tab_description }}</div>
@@ -586,6 +587,103 @@
         </div>
     </div>
 
+    <!-- «Логика»: things of the game on a board, links between them as arrows
+         with a verb. The same logic will have other views (the mode strip). -->
+    <div id="logic" class="column" data-if="tab == 'logic'">
+        <div class="lg-bar row">
+            <div class="lg-modes row">
+                <div id="lg-mode-links" class="lg-mode selected" title="Вещи и связи между ними"><icon name="share"/><span>Связи</span></div>
+                <div class="lg-mode soon" title="Готовые идеи с парой полей: скоро"><icon name="lightbulb"/><span>Идеи</span></div>
+                <div class="lg-mode soon" title="Та же логика фразами по шагам: скоро"><icon name="format_list_numbered"/><span>Шаги</span></div>
+                <div class="lg-mode soon" title="Схема из узлов для опытных: скоро"><icon name="hub"/><span>Схема</span></div>
+                <div class="lg-mode soon" title="Та же логика кодом: скоро"><icon name="code"/><span>Код</span></div>
+            </div>
+            <div class="grow"/>
+            <span class="muted body-small">{{ lg_count }}</span>
+        </div>
+        <div class="lg-body row grow">
+            <!-- The game's things: on the board, and the rest of the library -->
+            <div class="lg-nav column">
+                <div class="lg-nav-title">На доске</div>
+                <div data-for="r : lg_board_rows" class="lg-nav-row row" data-attr-id="'lg-row-' + r.id" data-class-selected="r.selected" data-attr-title="r.about" data-event-click="lg_select_thing(r.id)">
+                    <img data-attr-src="r.icon"/><span class="grow name">{{ r.name }}</span><span class="count" data-if="r.links > 0">{{ r.links }} св.</span>
+                </div>
+                <div class="lg-nav-title">Добавить на доску</div>
+                <div data-for="r : lg_add_rows" class="lg-nav-row row add" data-attr-id="'lg-add-' + r.id" data-attr-title="r.about" data-event-click="lg_add(r.id)">
+                    <img data-attr-src="r.icon"/><span class="grow name">{{ r.name }}</span><icon class="s" name="add"/>
+                </div>
+                <div class="lg-nav-empty muted body-small" data-if="lg_add_rows.size == 0">Все вещи игры уже на доске. Новые вещи делаются во вкладке «Объекты».</div>
+            </div>
+
+            <!-- The board -->
+            <div id="lg-board" class="lg-board grow" data-event-mousedown="lg_board_down">
+                <div data-for="l : lg_links">
+                    <div class="lg-line" data-class-selected="l.selected" data-class-broken="l.broken"
+                         data-style-left="l.lx + 'px'" data-style-top="l.ly + 'px'" data-style-width="l.len + 'px'" data-style-transform="'rotate(' + l.angle + 'deg)'"/>
+                    <icon class="lg-head" name="play_arrow" data-class-selected="l.selected" data-class-broken="l.broken"
+                          data-style-left="(l.hx - 12) + 'px'" data-style-top="(l.hy - 12) + 'px'" data-style-transform="'rotate(' + l.angle + 'deg)'"/>
+                </div>
+                <div data-for="t : lg_things" class="lg-thing column" data-attr-id="'lg-thing-' + t.id" data-class-selected="t.selected" data-class-broken="t.broken"
+                     data-style-left="t.x + 'px'" data-style-top="t.y + 'px'" data-event-mousedown="lg_thing_down(it_index)">
+                    <div class="lg-pic"><img data-attr-src="t.icon"/></div>
+                    <span class="name">{{ t.name }}</span>
+                </div>
+                <div data-for="l : lg_links" class="lg-chip row" data-attr-id="'lg-link-' + l.id" data-class-selected="l.selected" data-class-broken="l.broken" data-attr-title="l.phrase"
+                     data-style-left="l.cx + 'px'" data-style-top="l.cy + 'px'" data-event-mousedown="lg_link(l.id)">
+                    <icon class="s" data-attr-name="l.broken ? 'error' : l.icon"/><span>{{ l.verb }}</span><span class="lg-refined" data-if="l.refined > 0">+{{ l.refined }}</span>
+                </div>
+                <div id="lg-first" class="lg-first column" data-if="lg_hint" data-event-mousedown="lg_stop">
+                    <span class="title">Как сделать, чтобы что-то происходило?</span>
+                    <span>Нажмите на вещь, а потом на другую, и выберите, что первая делает со второй. Вещи можно двигать мышкой, новые — добавить слева.</span>
+                    <div id="lg-first-ok" class="button filled small" data-event-click="lg_hint_ok">Понятно</div>
+                </div>
+                <div id="lg-picker" class="lg-picker column" data-if="lg_picking" data-style-left="lg_pick_x + 'px'" data-style-top="lg_pick_y + 'px'" data-event-mousedown="lg_stop">
+                    <div class="lg-picker-head row"><span class="grow">{{ lg_pick_title }}</span><div id="lg-pick-cancel" class="icon-button small" data-event-click="lg_pick_cancel"><icon name="close"/></div></div>
+                    <div data-for="v : lg_verbs" class="lg-option column" data-attr-id="'lg-pick-' + it_index" data-class-reversed="v.reversed" data-event-click="lg_pick(it_index)">
+                        <div class="row gap-2"><icon class="s" data-attr-name="v.icon"/><span class="phrase">{{ v.phrase }}</span></div>
+                        <span class="about">{{ v.about }}</span>
+                    </div>
+                    <div class="muted body-small" data-if="lg_verbs.size == 0">Этим двум вещам игра пока ничего не умеет делать друг с другом.</div>
+                </div>
+            </div>
+
+            <!-- In plain words -->
+            <div class="lg-side column">
+                <div data-if="lg_has_link" class="column">
+                    <div class="lg-title">{{ lg_sel_phrase }}</div>
+                    <div class="lg-problem row" data-if="lg_sel_problem != ''"><icon class="s" name="error"/><span>{{ lg_sel_problem }}</span></div>
+                    <div class="lg-meaning">{{ lg_sel_meaning }}</div>
+                    <div class="section-title">Уточнить</div>
+                    <div data-for="r : lg_refine" class="lg-refine row" data-attr-id="'lg-refine-' + r.id" data-attr-title="r.hint" data-event-click="lg_refine(r.id)">
+                        <icon data-attr-name="r.on ? 'check_box' : 'check_box_outline_blank'"/>
+                        <div class="column grow"><span>{{ r.label }}</span><span class="muted body-small">{{ r.hint }}</span></div>
+                    </div>
+                    <div id="lg-remove-link" class="command" data-event-click="lg_remove_link"><icon name="delete"/><span>Удалить связь</span></div>
+                </div>
+                <div data-if="lg_has_thing" class="column">
+                    <div class="lg-preview"><img data-attr-src="lg_sel_icon"/></div>
+                    <div class="lg-title">{{ lg_sel_name }}</div>
+                    <div class="muted body-small">Нажмите на другую вещь на доске, чтобы связать их.</div>
+                    <div class="section-title" data-if="lg_sel_links > 0">Связи</div>
+                    <div data-for="w : lg_thing_links" class="lg-word column" data-event-click="lg_link(w.id)">
+                        <span class="phrase">{{ w.phrase }}</span>
+                        <span class="problem" data-if="w.problem != ''">{{ w.problem }}</span>
+                    </div>
+                    <div id="lg-remove-thing" class="command" data-event-click="lg_remove_thing"><icon name="remove_circle_outline"/><span>{{ lg_sel_links > 0 ? 'Убрать с доски вместе со связями' : 'Убрать с доски' }}</span></div>
+                </div>
+                <div data-if="!lg_has_link && !lg_has_thing" class="column">
+                    <div class="section-title">Вся логика словами</div>
+                    <div class="muted body-small" data-if="lg_words.size == 0">Связей пока нет.</div>
+                    <div data-for="w : lg_words" class="lg-word column" data-attr-id="'lg-word-' + w.id" data-event-click="lg_link(w.id)">
+                        <span class="phrase">{{ w.phrase }}.</span>
+                        <span class="meaning">{{ w.meaning }}</span>
+                        <span class="problem" data-if="w.problem != ''">{{ w.problem }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="assets" class="column" data-if="tab == 'assets'">
         <!-- Like the explorer: back, forward, up, the address, the search. -->
         <div class="as-nav row">
@@ -886,7 +984,8 @@
         <div class="grow"/>
         <span class="muted" data-if="tab == 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
         <span class="muted" data-if="tab == 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · Alt+← / Alt+→ назад и вперёд · F2 имя · Ctrl+C / X / V · Del удалить · перетащите файлы в окно для импорта</span>
-        <span class="muted" data-if="tab != 'level' && tab != 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab == 'logic'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи, потом по другой: связать · Del удалить · Esc отмена · перетаскивание: двигать вещи и доску</span>
+        <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>
 </rml>

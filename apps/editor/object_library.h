@@ -138,6 +138,9 @@ public:
     void context_menu(int card, f32 x, f32 y);
     bool menu_open() const { return m_menu_ != ""; }
     usize cards() const { return m_cards_.size(); }
+    // A game template's picture as the UI shows it ("/memory/…"), drawn
+    // again when its look changes: for other tabs (the links board).
+    std::string template_icon(const objects::Template& t) { return icon_path(t, false); }
     const std::string& card_name(usize i) const { return m_cards_[i].name; }
 
 private:

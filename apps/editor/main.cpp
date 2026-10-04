@@ -17,6 +17,7 @@
 #include "components.h"
 #include "demo_art.h"
 #include "level_editor.h"
+#include "logic_editor.h"
 #include "object_library.h"
 #include "slice_level.h"
 
@@ -276,11 +277,13 @@ public:
     std::filesystem::path objects_folder = game_dir / "objects";
     std::filesystem::path pictures_folder = game_dir / "pictures"; // the templates' own pictures
     std::filesystem::path sounds_folder = game_dir / "sounds";     // and sounds
+    std::filesystem::path logic_file = game_dir / "logic.json";     // the links («Логика»)
     // The objects shared by every game: this computer's, outside any game.
     std::filesystem::path shared_folder = default_shared_folder();
     slice::SliceLevel level_module;
     LevelEditor level{level_module};
     ObjectLibrary objects_tab{level_module};
+    LogicEditor logic_tab{level_module};
     AssetLibrary assets;
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
@@ -329,6 +332,8 @@ public:
             open_tab("level");
             level.arm_template(key);
         };
+        logic_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
+        logic_tab.init(ui_, game_dir, logic_file);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
         if (!context_ || !bind_model()) return false;
@@ -368,12 +373,14 @@ public:
     void undo() {
         if (m_tab_ == "assets") assets.undo();
         else if (m_tab_ == "objects") objects_tab.undo();
+        else if (m_tab_ == "logic") logic_tab.undo();
         else if (m_tab_ == "level") level.undo();
         else if (history.undo()) FORGE_INFO("Отменено");
     }
     void redo() {
         if (m_tab_ == "assets") assets.redo();
         else if (m_tab_ == "objects") objects_tab.redo();
+        else if (m_tab_ == "logic") logic_tab.redo();
         else if (m_tab_ == "level") level.redo();
         else if (history.redo()) FORGE_INFO("Повторено");
     }
@@ -381,6 +388,7 @@ public:
     UndoStack& active_history() {
         if (m_tab_ == "assets") return assets.history();
         if (m_tab_ == "objects") return objects_tab.history();
+        if (m_tab_ == "logic") return logic_tab.history();
         return m_tab_ == "level" ? level.history() : history;
     }
     void open_tab(const std::string& key) {
@@ -390,7 +398,7 @@ public:
     }
     const std::string& tab() const { return m_tab_; }
     void save() {
-        if (m_tab_ == "assets" || m_tab_ == "objects") return; // files are saved as they change
+        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic") return; // files are saved as they change
         if (m_tab_ == "level") {
             level.save();
             return;
@@ -499,6 +507,7 @@ public:
         if (m_tab_ == "level") level.update(dt, context_);
         assets.update(dt, m_tab_ == "assets" ? context_ : nullptr);
         if (m_tab_ == "objects") objects_tab.update(context_);
+        if (m_tab_ == "logic") logic_tab.update(context_);
         refresh_drawables();
         if (play.playing() && !paused_) simulate(static_cast<f32>(std::min(dt, 0.1)));
         hierarchy.refresh();
@@ -548,6 +557,7 @@ public:
         if (m_tab_ == "assets") return assets.handle_event(e, density, ui_used, context_) || ui_used;
         if (m_tab_ == "level") return level.handle_event(e, density, ui_used, context_) || ui_used;
         if (m_tab_ == "objects") return ui_used;
+        if (m_tab_ == "logic") return logic_tab.handle_event(e, density, ui_used) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
             const f32 x = e.button.x * density, y = e.button.y * density;
@@ -779,10 +789,12 @@ private:
         level.bind(model);
         assets.bind(model);
         objects_tab.bind(model);
+        logic_tab.bind(model);
         model_ = model.GetModelHandle();
         level.set_model(model_);
         assets.set_model(model_);
         objects_tab.set_model(model_);
+        logic_tab.set_model(model_);
         return true;
     }
 
@@ -894,11 +906,12 @@ private:
         set(m_can_undo_, h.can_undo(), "can_undo");
         set(m_can_redo_, h.can_redo(), "can_redo");
         set(m_undo_label_, h.undo_label(), "undo_label");
-        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && h.dirty(), "dirty"); // files are written at once
+        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && h.dirty(), "dirty"); // files are written at once
         set(m_scene_name_,
             m_tab_ == "level"    ? level.title()
             : m_tab_ == "assets" ? std::string("Ресурсы проекта")
             : m_tab_ == "objects" ? std::string("Объекты: ") + level.title()
+            : m_tab_ == "logic"   ? std::string("Логика: ") + level.title()
                                  : path_to_utf8(scene_path.filename()),
             "scene_name");
         set(m_has_selection_, !doc.selection().empty() && doc.find(doc.selection()[0]) != nullptr, "has_selection");
@@ -944,7 +957,9 @@ private:
                       s.update_ms, s.render_ms, group_digits(sprites_drawn_).c_str(), doc.selection().size());
         // Timings change every frame, so they are shown four times a second;
         // a new selection is shown at once.
-        if (m_tab_ == "objects") {
+        if (m_tab_ == "logic") {
+            set(m_status_, logic_tab.status(), "status");
+        } else if (m_tab_ == "objects") {
             set(m_status_, objects_tab.status(), "status");
         } else if (m_tab_ == "assets") {
             set(m_status_, assets.status(), "status");
@@ -1162,6 +1177,7 @@ private:
         if (ctrl && k.key == SDLK_S) { save(); return true; }
         if (m_tab_ == "assets") return assets.handle_key(k);
         if (m_tab_ == "objects") return objects_tab.handle_key(k);
+        if (m_tab_ == "logic") return logic_tab.handle_key(k);
         if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
         if (m_tab_ != "world") return false; // the keys below act on the world view
@@ -1522,7 +1538,7 @@ public:
             check(tab_lit(6) && !tab_lit(1), "the Logic tab is highlighted on the next frame");
             break;
         case 45: {
-            check(shown("placeholder") && !shown("viewport"), "the tab replaces the world view");
+            check(shown("logic") && !shown("viewport"), "the tab replaces the world view");
             count_ = ed_.doc.object_count();
             key(SDLK_DELETE, SDL_KMOD_NONE);
             check(ed_.doc.object_count() == count_, "Delete does nothing outside the world tab");
@@ -1896,7 +1912,7 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 37) return asset_step();
+        if (ol_step_ >= 37) return lg_step_ >= 0 ? logic_step() : asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -2305,6 +2321,98 @@ private:
         return true;
     }
 
+    // --- the logic tab ---
+    LogicEditor& lg() { return ed_.logic_tab; }
+    bool thing_click(const std::string& id) {
+        f32 x = 0, y = 0;
+        if (!element_center("lg-thing-" + id, x, y)) return false;
+        left_click(x, y);
+        return true;
+    }
+    i64 option_of(const char* phrase) {
+        for (usize i = 0; i < lg().pick_options(); ++i)
+            if (lg().pick_phrase(i) == phrase) return static_cast<i64>(i);
+        return -1;
+    }
+    std::string logic_text() {
+        std::vector<u8> bytes;
+        read_file(ed_.logic_file, bytes);
+        return {bytes.begin(), bytes.end()};
+    }
+    bool logic_step() {
+        switch (lg_step_) {
+        case 0:
+            check(click_tab(6) && ed_.tab() == "logic", "a click on the Logic tab");
+            break;
+        case 1: {
+            check(shown("lg-thing-hero") && shown("lg-thing-key") && shown("lg-thing-door"), "the board shows the hero, the key and the door");
+            check(shown("lg-link-1") && lg().phrase_of(1) == "Ключ открывает Дверь" && lg().problem_of(1).empty(),
+                  "the game's link is on the board and works");
+            check(shown("lg-word-1"), "the right column says it in words");
+            check(shown("lg-add-coins") && click("lg-add-coins"), "«Монеты» are offered in the left column");
+            break;
+        }
+        case 2:
+            check(shown("lg-thing-coins") && lg().history().can_undo() && lg().selected_thing() == "coins",
+                  "«Монеты» go onto the board from the left column, selected");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(lg().selected_thing().empty(), "Esc lets go of them");
+            check(thing_click("hero") && lg().selected_thing() == "hero", "a click on the hero selects it");
+            break;
+        case 3:
+            check(thing_click("coins") && lg().picking(), "a click on the coins asks what the hero does with them");
+            break;
+        case 4:
+            check(shown("lg-picker") && option_of("Герой собирает Монеты") >= 0, "the picker offers «Герой собирает Монеты»");
+            check(lg().pick(static_cast<usize>(std::max<i64>(0, option_of("Герой собирает Монеты")))) && !lg().picking(),
+                  "picking it makes the link");
+            check(lg().links().links.size() == 2 && logic_text().find("\"collect\"") != std::string::npos,
+                  "the new link is written to logic.json");
+            break;
+        case 5: {
+            const u32 link = lg().selected_link();
+            if (!check(link != 0 && shown("lg-refine-once"), "the new link is selected, its refinements shown")) break;
+            check(click("lg-refine-once") && lg().links().find(link) && lg().links().find(link)->once, "«Только один раз» refines it");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().find(link) && !lg().links().find(link)->once, "Ctrl+Z takes the refinement back");
+            break;
+        }
+        case 6: {
+            f32 x = 0, y = 0;
+            if (!check(lg().links().spot("key") != nullptr, "the key has a place on the board")) break;
+            const logic::Spot before = *lg().links().spot("key");
+            check(element_center("lg-thing-key", x, y), "the key is on screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+            mouse(SDL_EVENT_MOUSE_MOTION, x + 60, y + 20);
+            mouse(SDL_EVENT_MOUSE_MOTION, x + 100, y + 40);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x + 100, y + 40);
+            const logic::Spot* after = lg().links().spot("key");
+            check(after && std::fabs(after->x - before.x - 100) < 1 && std::fabs(after->y - before.y - 40) < 1, "the key is dragged on the board");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(std::fabs(lg().links().spot("key")->x - before.x) < 1, "Ctrl+Z puts it back");
+            break;
+        }
+        case 7:
+            lg().select_link(1);
+            break;
+        case 8:
+            check(shown("lg-remove-link") && click("lg-remove-link") && !lg().links().find(1), "a link is removed");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().find(1) != nullptr && logic_text().find("\"open\"") != std::string::npos, "and Ctrl+Z brings it back");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            break;
+        case 9:
+            check(lg().selected_link() == 0 && shown("lg-word-1"), "Esc goes back to the words");
+            break;
+        default:
+            lg_step_ = -1;
+            return true;
+        }
+        ++lg_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -2624,13 +2732,14 @@ private:
         bar->GetChild(index)->Click();
         return true;
     }
-    void check(bool ok, const char* what) {
+    bool check(bool ok, const char* what) {
         if (ok) {
             FORGE_INFO("self-test: %s", what);
         } else {
             FORGE_ERROR("self-test FAILED: %s", what);
             ++failures_;
         }
+        return ok;
     }
     void mouse(SDL_EventType type, f32 x, f32 y) {
         SDL_Event e{};
@@ -2666,6 +2775,7 @@ private:
     i32 cx_ = 0, cy_ = 0;
     u64 object_ = 0;
     u32 as_step_ = 0, ol_step_ = 0, waited_ = 0, conv_wait_ = 0;
+    int lg_step_ = 0;
     std::filesystem::path picture_file_;
     u64 new_template_ = 0;
     std::string drop_text_;
@@ -2704,6 +2814,10 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             // Nor this computer's shared objects: an empty library of its own.
             editor.shared_folder = std::filesystem::temp_directory_path() / "forge_editor_shared";
             std::filesystem::remove_all(editor.shared_folder, ec);
+            // Nor the game's links: a copy of them.
+            editor.logic_file = std::filesystem::temp_directory_path() / "forge_editor_logic.json";
+            std::filesystem::remove(editor.logic_file, ec);
+            std::filesystem::copy_file(editor.game_dir / "logic.json", editor.logic_file, ec);
         }
         // Nor the game's level, unless one is given.
         LevelConfig lc;

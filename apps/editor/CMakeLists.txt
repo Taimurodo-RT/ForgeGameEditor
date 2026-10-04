@@ -1,7 +1,7 @@
 add_executable(forge_editor_app main.cpp asset_library.cpp components.cpp dock_view.cpp file_types.cpp level_editor.cpp
-                                object_library.cpp converters.cpp)
+                                object_library.cpp logic_editor.cpp converters.cpp)
 set_target_properties(forge_editor_app PROPERTIES OUTPUT_NAME forge_editor)
-target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render forge::ui forge::editor forge::assets forge::audio forge::level
+target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render forge::ui forge::editor forge::assets forge::audio forge::level forge::logic
                       forge_slice_lib forge_demo_common yyjson)
 # UI files are read from the source tree, so editing them updates the running editor.
 # The level of «Старая шахта» lives next to the game's data; «Играть отсюда»
