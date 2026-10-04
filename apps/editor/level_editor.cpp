@@ -645,7 +645,8 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
         const objects::ObjectRef* ref = e.try_get<objects::ObjectRef>();
         m_sel_kind_ = kd ? kd->name : "";
         if (kd)
-            for (const objects::PropDef& prop : kd->props) {
+            for (const objects::PropDef* pp : lib->props_of(*tmpl)) {
+                const objects::PropDef& prop = *pp;
                 using reflect::Kind;
                 const Kind k = prop.info->type->kind;
                 const bool boolean = k == Kind::Bool;

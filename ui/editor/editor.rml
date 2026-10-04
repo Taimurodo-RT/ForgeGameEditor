@@ -436,7 +436,7 @@
                     <div class="ol-editor-look column">
                         <div class="ol-preview big"><img data-attr-src="ol_sel_icon"/></div>
                         <div class="ol-picture column">
-                            <div class="section-title">Картинка</div>
+                            <div class="section-title">Графика</div>
                             <span id="ol-picture-name" class="muted body-small">{{ ol_sel_picture == '' ? 'обычная для этого вида' : ol_sel_picture }}</span>
                             <div class="row gap-1">
                                 <div id="ol-picture-pick" class="command" title="Выбрать картинку из «Ресурсов»" data-event-click="ol_picture_pick"><icon name="image"/><span>Выбрать…</span></div>
@@ -446,22 +446,47 @@
                         <div class="muted body-small ol-kind-about">{{ ol_sel_kind_about }}</div>
                     </div>
                     <div class="ol-editor-props column grow">
-                        <div class="section-title">Свойства</div>
-                        <div class="props">
-                            <div data-for="f : ol_props"><div data-if="!f.advanced" class="prop row gap-2" data-attr-title="f.hint">
-                                <span class="prop-label">{{ f.label }}</span>
-                                <div class="prop-value row gap-2">
-                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'ol-field-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
-                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(it_index, ev.value)"/>
-                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
-                                    <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(it_index)"><div class="thumb"/></div>
-                                    <div data-if="f.kind == 'enum'" class="cycler grow">
-                                        <div class="icon-button small" data-attr-id="'ol-prev-' + it_index" data-event-click="ol_prop_cycle(it_index, -1)"><icon name="chevron_left"/></div>
-                                        <span class="value">{{ f.value }}</span>
-                                        <div class="icon-button small" data-attr-id="'ol-next-' + it_index" data-event-click="ol_prop_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                        <div class="section-title">Из чего сделан</div>
+                        <!-- Blocks: each adds something to the object, with its own properties. -->
+                        <div data-for="b : ol_blocks" class="ol-block column" data-attr-id="'ol-block-' + b.id">
+                            <div class="ol-block-head row gap-2" data-attr-title="b.about">
+                                <icon data-attr-name="b.icon"/>
+                                <span class="ol-block-name">{{ b.name }}</span>
+                                <span class="muted body-small grow ol-block-about">{{ b.about }}</span>
+                                <div data-if="b.removable" class="icon-button small" data-attr-id="'ol-block-remove-' + b.id" data-attr-title="'Убрать блок' + (b.note == '' ? '' : ': ' + b.note)" data-event-click="ol_block_remove(b.id)"><icon name="close"/></div>
+                            </div>
+                            <div data-for="f : b.props"><div data-if="!f.advanced || ol_details">
+                                <div class="prop row gap-2" data-attr-title="f.hint">
+                                    <span class="prop-label">{{ f.label }}</span>
+                                    <div class="prop-value row gap-2">
+                                        <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'ol-field-' + f.index" data-attr-value="f.value" data-event-change="ol_prop_text(f.index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(f.index)"/>
+                                        <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(f.index, ev.value)"/>
+                                        <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + f.index" data-attr-value="f.value" data-event-change="ol_prop_text(f.index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(f.index)"/>
+                                        <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(f.index)"><div class="thumb"/></div>
+                                        <div data-if="f.kind == 'enum'" class="cycler grow">
+                                            <div class="icon-button small" data-attr-id="'ol-prev-' + f.index" data-event-click="ol_prop_cycle(f.index, -1)"><icon name="chevron_left"/></div>
+                                            <span class="value">{{ f.value }}</span>
+                                            <div class="icon-button small" data-attr-id="'ol-next-' + f.index" data-event-click="ol_prop_cycle(f.index, 1)"><icon name="chevron_right"/></div>
+                                        </div>
                                     </div>
                                 </div>
                             </div></div>
+                        </div>
+                        <div class="ol-add-block">
+                            <div id="ol-block-add" class="command" title="Добавить объекту блок" data-event-click="ol_blocks_menu"><icon name="add_box"/><span>Добавить блок</span><icon class="s" name="expand_more"/></div>
+                            <div id="ol-blocks-menu" class="as-menu menu-list ol-blocks-menu" data-if="ol_menu == 'blocks'">
+                                <div data-if="ol_add_blocks.size == 0" class="muted body-small ol-blocks-none">Все блоки уже есть.</div>
+                                <div data-for="b : ol_add_blocks" class="menu-item ol-block-item" data-attr-id="'ol-add-' + b.id" data-event-click="ol_block_add(b.id)">
+                                    <icon data-attr-name="b.icon"/>
+                                    <div class="column grow">
+                                        <span class="ol-block-item-name">{{ b.name }}</span>
+                                        <span class="muted body-small">{{ b.about }}</span>
+                                        <span data-if="b.note != ''" class="ol-block-note body-small">{{ b.note }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="props">
                             <div class="prop row gap-2">
                                 <span class="prop-label">Заметка</span>
                                 <input id="ol-about" type="text" class="small grow" placeholder="для чего этот объект" data-attr-value="ol_sel_about" data-event-change="ol_about(ev.linebreak)" data-event-blur="ol_about(true)"/>
@@ -470,20 +495,6 @@
                                 <icon name="chevron_right" data-class-open="ol_details"/>
                                 <span>Подробно</span>
                             </div>
-                            <div data-for="f : ol_props"><div data-if="f.advanced && ol_details" class="prop row gap-2" data-attr-title="f.hint">
-                                <span class="prop-label">{{ f.label }}</span>
-                                <div class="prop-value row gap-2">
-                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'ol-field-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
-                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(it_index, ev.value)"/>
-                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
-                                    <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(it_index)"><div class="thumb"/></div>
-                                    <div data-if="f.kind == 'enum'" class="cycler grow">
-                                        <div class="icon-button small" data-attr-id="'ol-prev-' + it_index" data-event-click="ol_prop_cycle(it_index, -1)"><icon name="chevron_left"/></div>
-                                        <span class="value">{{ f.value }}</span>
-                                        <div class="icon-button small" data-attr-id="'ol-next-' + it_index" data-event-click="ol_prop_cycle(it_index, 1)"><icon name="chevron_right"/></div>
-                                    </div>
-                                </div>
-                            </div></div>
                             <div data-if="ol_details" class="prop row gap-2"><span class="prop-label">Файл</span><span class="muted body-small">{{ ol_sel_file }}</span></div>
                         </div>
                         <div class="muted body-small ol-editor-note">Правка меняет этот объект и все его копии на уровнях. Ctrl+Z отменит.</div>

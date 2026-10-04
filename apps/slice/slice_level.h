@@ -80,6 +80,7 @@ struct Objects {
     flecs::query<forge::scene::Position, forge::sim::Body, Critter> critters;
     flecs::query<forge::scene::Position, forge::sim::Body, Item> items;
     flecs::query<forge::scene::Position, forge::sim::RigidBody> crates;
+    flecs::query<forge::scene::Position, forge::sim::Body> bodies; // a body and nothing else of the above
     void init(flecs::world& ecs);
 };
 

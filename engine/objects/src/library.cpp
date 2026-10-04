@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <random>
 
 FORGE_REFLECT(forge::objects::ObjectRef, 1) {
@@ -172,9 +173,79 @@ std::string file_stem(std::string_view name) {
     return s.empty() ? std::string("объект") : s;
 }
 
+std::vector<std::string> read_list(yyjson_val* arr) {
+    std::vector<std::string> out;
+    usize i, n;
+    yyjson_val* v;
+    yyjson_arr_foreach(arr, i, n, v) out.push_back(text_of(v));
+    return out;
+}
+
+// One set of starting values made of several (later ones win).
+std::string merged_json(const reflect::TypeInfo* type, std::initializer_list<std::string> jsons) {
+    Scratch s(type);
+    for (const std::string& j : jsons) merge_into(type, s.data(), j);
+    return to_json_of(type, s.data());
+}
+
+std::vector<Part> read_parts(yyjson_val* obj, const std::string& owner) {
+    std::vector<Part> parts;
+    for (auto& [part_name, json] : read_values(obj)) {
+        Part part{part_name, json, find_component(part_name)};
+        if (!part.type) FORGE_WARN("«%s»: нет компонента %s", owner.c_str(), part_name.c_str());
+        parts.push_back(std::move(part));
+    }
+    return parts;
+}
+
+std::vector<PropDef> read_props(yyjson_val* arr, const std::string& owner) {
+    std::vector<PropDef> props;
+    usize pi, pn;
+    yyjson_val* p;
+    yyjson_arr_foreach(arr, pi, pn, p) {
+        PropDef prop;
+        prop.id = text_of(yyjson_obj_get(p, "id"));
+        prop.name = text_of(yyjson_obj_get(p, "name"));
+        prop.hint = text_of(yyjson_obj_get(p, "hint"));
+        const std::string bind = text_of(yyjson_obj_get(p, "bind")); // "Item.count"
+        const usize dot = bind.rfind('.');
+        prop.component = bind.substr(0, dot == std::string::npos ? 0 : dot);
+        prop.field = dot == std::string::npos ? bind : bind.substr(dot + 1);
+        prop.advanced = yyjson_get_bool(yyjson_obj_get(p, "advanced"));
+        if (yyjson_val* mn = yyjson_obj_get(p, "min")) prop.min = yyjson_get_num(mn), prop.has_range = true;
+        if (yyjson_val* mx = yyjson_obj_get(p, "max")) prop.max = yyjson_get_num(mx), prop.has_range = true;
+        usize ci, cn;
+        yyjson_val* c;
+        yyjson_arr_foreach(yyjson_obj_get(p, "choices"), ci, cn, c) {
+            prop.choices.push_back({text_of(yyjson_obj_get(c, "id")), text_of(yyjson_obj_get(c, "name")),
+                                    yyjson_get_num(yyjson_obj_get(c, "value"))});
+        }
+        prop.type = find_component(prop.component);
+        prop.info = prop.type ? prop.type->find_field(prop.field) : nullptr;
+        if (!prop.info) {
+            FORGE_WARN("«%s»: свойство «%s» привязано к %s, а такого поля нет", owner.c_str(), prop.name.c_str(),
+                       bind.c_str());
+            continue;
+        }
+        if (!prop.has_range && prop.info->has_range) {
+            prop.has_range = true;
+            prop.min = prop.info->min;
+            prop.max = prop.info->max;
+        }
+        props.push_back(std::move(prop));
+    }
+    return props;
+}
+
 } // namespace
 
 // --- small types ------------------------------------------------------------
+
+const PropDef* BlockDef::prop(std::string_view prop_id) const {
+    for (const PropDef& p : props)
+        if (p.id == prop_id) return &p;
+    return nullptr;
+}
 
 const PropDef* KindDef::prop(std::string_view prop_id) const {
     for (const PropDef& p : props)
@@ -238,6 +309,7 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     t.about = text_of(yyjson_obj_get(root, "about"));
     t.genre = text_of(yyjson_obj_get(root, "genre"));
     t.picture = text_of(yyjson_obj_get(root, "picture"));
+    t.blocks = read_list(yyjson_obj_get(root, "blocks"));
     t.values = read_values(yyjson_obj_get(root, "values"));
     yyjson_doc_free(doc);
     if (t.id.empty() || t.kind.empty()) {
@@ -246,7 +318,7 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     }
     if (t.name.empty()) t.name = t.id;
     t.key = fnv1a(t.id);
-    t.rev = values_rev(t.values);
+    t.rev = template_rev(t);
     t.file = file;
     return t;
 }
@@ -259,12 +331,24 @@ std::string template_json(const Template& t) {
     if (!t.genre.empty()) s += "  \"genre\": " + json_text(t.genre) + ",\n";
     if (!t.about.empty()) s += "  \"about\": " + json_text(t.about) + ",\n";
     if (!t.picture.empty()) s += "  \"picture\": " + json_text(t.picture) + ",\n";
+    if (!t.blocks.empty()) {
+        s += "  \"blocks\": [";
+        for (usize i = 0; i < t.blocks.size(); ++i) s += (i ? ", " : "") + json_text(t.blocks[i]);
+        s += "],\n";
+    }
     s += "  \"values\": {";
     for (usize i = 0; i < t.values.size(); ++i)
         s += (i ? ",\n    " : "\n    ") + json_text(t.values[i].first) + ": " + t.values[i].second;
     s += t.values.empty() ? "}\n" : "\n  }\n";
     s += "}\n";
     return s;
+}
+
+u32 template_rev(const Template& t) {
+    if (t.blocks.empty()) return values_rev(t.values);
+    u64 h = fnv1a("blocks");
+    for (const std::string& b : t.blocks) h = fnv1a(b, fnv1a(",", h));
+    return (values_rev(t.values) ^ static_cast<u32>(h ^ (h >> 32))) | 1u;
 }
 
 u32 Template::look() const {
@@ -283,6 +367,7 @@ Library::~Library() = default;
 
 bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::string* error) {
     kinds_.clear();
+    blocks_.clear();
     templates_.clear();
     folder_ = folder;
     if (pictures_.empty()) pictures_ = kinds_file.parent_path() / "pictures";
@@ -303,6 +388,19 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
     usize i, n;
     yyjson_val* g;
     yyjson_arr_foreach(yyjson_obj_get(yyjson_doc_get_root(doc), "genres"), i, n, g) genres_.push_back(text_of(g));
+    yyjson_val* b;
+    yyjson_arr_foreach(yyjson_obj_get(yyjson_doc_get_root(doc), "blocks"), i, n, b) {
+        BlockDef block;
+        block.id = text_of(yyjson_obj_get(b, "id"));
+        block.name = text_of(yyjson_obj_get(b, "name"));
+        block.icon = text_of(yyjson_obj_get(b, "icon"));
+        block.about = text_of(yyjson_obj_get(b, "about"));
+        block.components = read_parts(yyjson_obj_get(b, "components"), block.name);
+        block.props = read_props(yyjson_obj_get(b, "props"), block.name);
+        block.needs = read_list(yyjson_obj_get(b, "needs"));
+        block.excludes = read_list(yyjson_obj_get(b, "excludes"));
+        if (!block.id.empty()) blocks_.push_back(std::move(block));
+    }
     yyjson_val* list = yyjson_obj_get(yyjson_doc_get_root(doc), "kinds");
     yyjson_val* k;
     yyjson_arr_foreach(list, i, n, k) {
@@ -313,45 +411,28 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
         kind.icon = text_of(yyjson_obj_get(k, "icon"));
         kind.about = text_of(yyjson_obj_get(k, "about"));
         if (yyjson_val* f = yyjson_obj_get(k, "foot")) kind.foot = yyjson_get_num(f);
-        for (auto& [part_name, json] : read_values(yyjson_obj_get(k, "components"))) {
-            KindDef::Part part{part_name, json, find_component(part_name)};
-            if (!part.type) FORGE_WARN("Вид «%s»: нет компонента %s", kind.name.c_str(), part_name.c_str());
-            kind.components.push_back(std::move(part));
-        }
-        usize pi, pn;
-        yyjson_val* p;
-        yyjson_arr_foreach(yyjson_obj_get(k, "props"), pi, pn, p) {
-            PropDef prop;
-            prop.id = text_of(yyjson_obj_get(p, "id"));
-            prop.name = text_of(yyjson_obj_get(p, "name"));
-            prop.hint = text_of(yyjson_obj_get(p, "hint"));
-            const std::string bind = text_of(yyjson_obj_get(p, "bind")); // "Item.count"
-            const usize dot = bind.rfind('.');
-            prop.component = bind.substr(0, dot == std::string::npos ? 0 : dot);
-            prop.field = dot == std::string::npos ? bind : bind.substr(dot + 1);
-            prop.advanced = yyjson_get_bool(yyjson_obj_get(p, "advanced"));
-            if (yyjson_val* mn = yyjson_obj_get(p, "min")) prop.min = yyjson_get_num(mn), prop.has_range = true;
-            if (yyjson_val* mx = yyjson_obj_get(p, "max")) prop.max = yyjson_get_num(mx), prop.has_range = true;
-            usize ci, cn;
-            yyjson_val* c;
-            yyjson_arr_foreach(yyjson_obj_get(p, "choices"), ci, cn, c) {
-                prop.choices.push_back({text_of(yyjson_obj_get(c, "id")), text_of(yyjson_obj_get(c, "name")),
-                                        yyjson_get_num(yyjson_obj_get(c, "value"))});
-            }
-            prop.type = find_component(prop.component);
-            prop.info = prop.type ? prop.type->find_field(prop.field) : nullptr;
-            if (!prop.info) {
-                FORGE_WARN("Вид «%s»: свойство «%s» привязано к %s, а такого поля нет", kind.name.c_str(),
-                           prop.name.c_str(), bind.c_str());
+        kind.blocks = read_list(yyjson_obj_get(k, "blocks"));
+        std::vector<Part> own = read_parts(yyjson_obj_get(k, "components"), kind.name);
+        kind.props = read_props(yyjson_obj_get(k, "props"), kind.name);
+        // Put together from blocks: their parts and props, the kind's own
+        // starting values on top.
+        for (const std::string& id : kind.blocks) {
+            const BlockDef* bd = block(id);
+            if (!bd) {
+                FORGE_WARN("Вид «%s»: нет блока «%s»", kind.name.c_str(), id.c_str());
                 continue;
             }
-            if (!prop.has_range && prop.info->has_range) {
-                prop.has_range = true;
-                prop.min = prop.info->min;
-                prop.max = prop.info->max;
-            }
-            kind.props.push_back(std::move(prop));
+            for (const Part& part : bd->components) kind.components.push_back(part);
+            for (const PropDef& prop : bd->props)
+                if (!kind.prop(prop.id)) kind.props.push_back(prop);
         }
+        for (Part& part : own) {
+            auto same = std::find_if(kind.components.begin(), kind.components.end(),
+                                     [&](const Part& p) { return p.type && p.type == part.type; });
+            if (same == kind.components.end()) kind.components.push_back(std::move(part));
+            else if (part.type) same->json = merged_json(part.type, {same->json, part.json});
+        }
+        usize pi, pn;
         yyjson_val* pr;
         yyjson_arr_foreach(yyjson_obj_get(k, "presets"), pi, pn, pr) {
             kind.presets.push_back({text_of(yyjson_obj_get(pr, "name")), text_of(yyjson_obj_get(pr, "genre")),
@@ -439,7 +520,7 @@ std::optional<Template> Library::make(const KindDef& k, const Preset* preset, st
         t.genre = preset->genre;
         t.values = preset->values;
     }
-    t.rev = values_rev(t.values);
+    t.rev = template_rev(t);
     // A file of its own: the name, or the name and a number when taken.
     std::string stem = file_stem(t.name);
     fs::path file = folder_ / utf8_path(stem + std::string(kExtension));
@@ -458,7 +539,7 @@ bool Library::write(const Template& t, std::string* error) const {
 
 bool Library::put(Template t, std::string* error) {
     t.key = fnv1a(t.id);
-    t.rev = values_rev(t.values);
+    t.rev = template_rev(t);
     if (t.file.empty()) t.file = folder_ / utf8_path(file_stem(t.name) + std::string(kExtension));
     if (!write(t, error)) return false;
     auto it = std::find_if(templates_.begin(), templates_.end(), [&](const Template& o) { return o.key == t.key; });
@@ -488,13 +569,11 @@ bool Library::remove(u64 key) {
 
 std::string Library::value(const Template& t, const PropDef& prop) const {
     if (const std::string* v = t.value(prop.id)) return *v;
-    // The kind's starting value, else the field's default.
-    const KindDef* k = kind_of(t);
+    // The starting value of its blocks or kind, else the field's default.
     if (!prop.type) return {};
     Scratch s(prop.type);
-    if (k)
-        for (const KindDef::Part& part : k->components)
-            if (part.type == prop.type) merge_into(prop.type, s.data(), part.json);
+    for (const Part& part : parts_of(t))
+        if (part.type == prop.type) merge_into(prop.type, s.data(), part.json);
     return choice_json(prop, field_of(to_json_of(prop.type, s.data()), prop.field));
 }
 
@@ -503,7 +582,113 @@ Template Library::with_value(const Template& t, std::string_view prop, std::stri
     auto it = std::find_if(out.values.begin(), out.values.end(), [&](const auto& v) { return v.first == prop; });
     if (it != out.values.end()) it->second = std::move(json);
     else out.values.emplace_back(std::string(prop), std::move(json));
-    out.rev = values_rev(out.values);
+    out.rev = template_rev(out);
+    return out;
+}
+
+// --- blocks -----------------------------------------------------------------
+
+const BlockDef* Library::block(std::string_view id) const {
+    for (const BlockDef& b : blocks_)
+        if (b.id == id) return &b;
+    return nullptr;
+}
+
+std::vector<const BlockDef*> Library::blocks_of(const Template& t) const {
+    std::vector<const BlockDef*> out;
+    const KindDef* k = kind_of(t);
+    for (const std::string& id : t.blocks.empty() && k ? k->blocks : t.blocks)
+        if (const BlockDef* b = block(id)) out.push_back(b);
+    return out;
+}
+
+bool Library::has_block(const Template& t, std::string_view id) const {
+    for (const BlockDef* b : blocks_of(t))
+        if (b->id == id) return true;
+    return false;
+}
+
+std::vector<Part> Library::parts_of(const Template& t) const {
+    const KindDef* k = kind_of(t);
+    if (k && (k->blocks.empty() || t.blocks.empty())) return k->components;
+    // Its blocks' parts; the kind's starting values where it has that part.
+    std::vector<Part> out;
+    for (const BlockDef* b : blocks_of(t))
+        for (const Part& part : b->components) {
+            if (std::any_of(out.begin(), out.end(), [&](const Part& p) { return p.type == part.type; })) continue;
+            const Part* kp = nullptr;
+            if (k)
+                for (const Part& p : k->components)
+                    if (p.type == part.type) kp = &p;
+            out.push_back(kp ? *kp : part);
+        }
+    return out;
+}
+
+std::vector<const PropDef*> Library::props_of(const Template& t) const {
+    std::vector<const PropDef*> out;
+    const KindDef* k = kind_of(t);
+    if (k && (k->blocks.empty() || t.blocks.empty())) {
+        for (const PropDef& p : k->props) out.push_back(&p);
+        return out;
+    }
+    for (const BlockDef* b : blocks_of(t))
+        for (const PropDef& p : b->props)
+            if (std::none_of(out.begin(), out.end(), [&](const PropDef* o) { return o->id == p.id; })) out.push_back(&p);
+    return out;
+}
+
+const PropDef* Library::prop_of(const Template& t, std::string_view prop_id) const {
+    for (const PropDef* p : props_of(t))
+        if (p->id == prop_id) return p;
+    return nullptr;
+}
+
+Template Library::with_block(const Template& t, std::string_view id, bool on) const {
+    std::vector<std::string> list;
+    for (const BlockDef* b : blocks_of(t)) list.push_back(b->id);
+    auto has = [&](std::string_view b) { return std::find(list.begin(), list.end(), b) != list.end(); };
+    auto drop = [&](std::string_view b) { list.erase(std::remove(list.begin(), list.end(), b), list.end()); };
+    if (on) {
+        // With what it needs, without what cannot be with it (or with what it needs).
+        std::vector<std::string> adding{std::string(id)};
+        for (usize i = 0; i < adding.size(); ++i)
+            if (const BlockDef* b = block(adding[i]))
+                for (const std::string& need : b->needs)
+                    if (std::find(adding.begin(), adding.end(), need) == adding.end()) adding.push_back(need);
+        for (const std::string& a : adding)
+            if (const BlockDef* b = block(a)) {
+                for (const std::string& x : b->excludes) drop(x);
+                // And blocks that exclude it from their side.
+                for (const BlockDef& other : blocks_)
+                    if (std::find(other.excludes.begin(), other.excludes.end(), a) != other.excludes.end()) drop(other.id);
+            }
+        for (const std::string& a : adding)
+            if (!has(a) && block(a)) list.push_back(a);
+    } else {
+        drop(id);
+    }
+    // Blocks whose needs are gone go too (so taking a block away takes the
+    // ones that need it).
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const std::string& b : list)
+            if (const BlockDef* bd = block(b);
+                bd && std::any_of(bd->needs.begin(), bd->needs.end(), [&](const std::string& n) { return !has(n); })) {
+                drop(b);
+                changed = true;
+                break;
+            }
+    }
+    Template out = t;
+    out.blocks = std::move(list);
+    // Values of properties the blocks no longer have go away.
+    std::erase_if(out.values, [&](const auto& v) {
+        for (const std::string& b : out.blocks)
+            if (const BlockDef* bd = block(b); bd && bd->prop(v.first)) return false;
+        return true;
+    });
+    out.rev = template_rev(out);
     return out;
 }
 
@@ -522,9 +707,8 @@ void Library::on_unpacked(scene::Scene& scene, flecs::entity e) const {
         if (!t) return;
         // Made before templates: what differs from the template is its own.
         ObjectRef r{t->key, t->rev, {}};
-        if (const KindDef* k = kind_of(*t))
-            for (const PropDef& p : k->props)
-                if (value(scene, e, p) != value(*t, p)) r.set_override(p.id, true);
+        for (const PropDef* p : props_of(*t))
+            if (value(scene, e, *p) != value(*t, *p)) r.set_override(p->id, true);
         e.set<ObjectRef>(r);
         return;
     }
@@ -538,7 +722,7 @@ flecs::entity Library::spawn(scene::Scene& scene, const Template& t, f64 x, f64 
     flecs::entity e = scene.spawn(scene::Position::at_tile(x, feet_y - k->foot - 0.02));
     if (!e.is_valid()) return e;
     ecs_world_t* world = scene.ecs().c_ptr();
-    for (const KindDef::Part& part : k->components) {
+    for (const Part& part : parts_of(t)) {
         const flecs::entity_t id = part.type ? component_id(scene, part.type) : 0;
         if (!id) continue;
         Scratch s(part.type);
@@ -551,22 +735,30 @@ flecs::entity Library::spawn(scene::Scene& scene, const Template& t, f64 x, f64 
 }
 
 void Library::apply(scene::Scene& scene, flecs::entity e, const Template& t) const {
-    const KindDef* k = kind_of(t);
     ObjectRef* ref = e.try_get_mut<ObjectRef>();
-    if (!k || !ref) return;
+    if (!kind_of(t) || !ref) return;
     ecs_world_t* world = scene.ecs().c_ptr();
-    for (const KindDef::Part& part : k->components) {
+    const std::vector<Part> parts = parts_of(t);
+    const std::vector<const PropDef*> props = props_of(t);
+    // A block taken away from the template takes its components off the copies.
+    for (const BlockDef& block : blocks_)
+        for (const Part& part : block.components) {
+            const bool kept = std::any_of(parts.begin(), parts.end(), [&](const Part& p) { return p.type == part.type; });
+            const flecs::entity_t id = !kept && part.type ? component_id(scene, part.type) : 0;
+            if (id && ecs_has_id(world, e, id)) ecs_remove_id(world, e, id);
+        }
+    for (const Part& part : parts) {
         const flecs::entity_t id = part.type ? component_id(scene, part.type) : 0;
         if (!id) continue;
         std::string fields;
-        for (const PropDef& p : k->props) {
-            if (p.type != part.type || ref->overrides_prop(p.id)) continue;
-            const std::string v = field_json(p, value(t, p));
+        for (const PropDef* p : props) {
+            if (p->type != part.type || ref->overrides_prop(p->id)) continue;
+            const std::string v = field_json(*p, value(t, *p));
             if (v.empty()) continue;
-            fields += (fields.empty() ? "{" : ",") + json_text(p.field) + ":" + v;
+            fields += (fields.empty() ? "{" : ",") + json_text(p->field) + ":" + v;
         }
         if (!ecs_has_id(world, e, id)) {
-            // The kind gained a part since this copy was made.
+            // A block (or the kind) gained a part since this copy was made.
             Scratch s(part.type);
             merge_into(part.type, s.data(), part.json);
             ecs_set_id(world, e, id, part.type->size, s.data());

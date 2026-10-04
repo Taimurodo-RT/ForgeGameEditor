@@ -249,3 +249,67 @@ TEST_CASE("objects made before templates are adopted with their own values") {
     CHECK(back.get<ObjectRef>().overrides == "count");
     CHECK(back.get<ObjTestPickup>().count == 12);
 }
+
+TEST_CASE("objects are put together from blocks") {
+    PoolScope pool;
+    const auto dir = temp_folder("forge_objects_blocks_test");
+    write_text(dir / "kinds.json", R"({
+      "blocks": [
+        {"id": "body", "name": "Тело", "components": {"ObjTestBody": {"half": 0.4}}, "excludes": ["solid"]},
+        {"id": "solid", "name": "Физика", "components": {"ObjTestBody": {"half": 0.5}}, "excludes": ["body"]},
+        {"id": "pickup", "name": "Подбирается", "components": {"ObjTestPickup": {"count": 1}}, "needs": ["body"],
+         "props": [{"id": "count", "name": "Сколько", "bind": "ObjTestPickup.count"}]}
+      ],
+      "kinds": [
+        {"id": "pickup", "name": "Подбираемое", "foot": 0.3, "blocks": ["body", "pickup"],
+         "components": {"ObjTestBody": {"half": 0.3}}},
+        {"id": "thing", "name": "Вещь", "blocks": ["body"]}
+      ]
+    })");
+    write_text(dir / "objects" / "coins.object.json",
+               R"({"id": "coins", "name": "Монеты", "kind": "pickup", "values": {"count": 10}})");
+    Library lib;
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    REQUIRE(lib.blocks().size() == 3);
+    const Template& coins = *lib.find("coins");
+    CHECK(lib.blocks_of(coins).size() == 2);
+    CHECK(lib.prop_of(coins, "count") != nullptr);
+    CHECK(lib.value(coins, *lib.prop_of(coins, "count")) == "10");
+
+    // A thing without «Подбирается» gains it, and loses it again.
+    std::optional<Template> thing = lib.make(*lib.kind("thing"), nullptr, "Вещь");
+    REQUIRE(thing);
+    CHECK(lib.props_of(*thing).empty());
+    Template with = lib.with_block(*thing, "pickup", true);
+    CHECK(lib.has_block(with, "pickup"));
+    CHECK(with.rev != thing->rev); // copies notice
+    CHECK(lib.value(with, *lib.prop_of(with, "count")) == "1"); // the block's starting value
+    // «Физика» replaces «Тело», and «Подбирается» needs a body: it goes too.
+    Template solid = lib.with_block(with, "solid", true);
+    CHECK(solid.blocks == std::vector<std::string>{"solid"});
+    // Taking «Тело» away takes «Подбирается».
+    CHECK(lib.with_block(with, "body", false).blocks.empty());
+
+    // Copies get and lose the blocks' components.
+    World w(tight_desc(), std::make_shared<TopDownGenerator>(1));
+    Scene s(w);
+    s.register_component<ObjTestPickup>();
+    s.register_component<ObjTestBody>();
+    lib.attach(s);
+    settle(w, s, kHome);
+    flecs::entity a = lib.spawn(s, coins, 10.5, 20.0);
+    REQUIRE(a.is_valid());
+    CHECK(a.get<ObjTestBody>().half == doctest::Approx(0.3f)); // the kind's own starting value
+    CHECK(a.get<ObjTestPickup>().count == 10);
+    Template no_pickup = lib.with_block(coins, "pickup", false);
+    CHECK(no_pickup.values.empty()); // «Сколько» went with its block
+    REQUIRE(lib.put(no_pickup));
+    CHECK(lib.refresh(s) == 1);
+    CHECK(!a.has<ObjTestPickup>());
+    CHECK(a.has<ObjTestBody>());
+    REQUIRE(lib.put(lib.with_block(*lib.find("coins"), "pickup", true)));
+    CHECK(lib.refresh(s) == 1);
+    CHECK(a.get<ObjTestPickup>().count == 1);
+    // The blocks are in the file.
+    CHECK(read_template(lib.find("coins")->file)->blocks == std::vector<std::string>{"body", "pickup"});
+}

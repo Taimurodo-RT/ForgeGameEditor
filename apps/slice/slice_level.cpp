@@ -128,8 +128,8 @@ void populate(const SliceGenerator& gen, const objects::Library& library, ChunkC
     put("pickaxe", gen.pickaxe_x(), gen.pickaxe_y() + 0.1, 1);
     // A bigger pile than the template's by the pickaxe: this copy's own count.
     if (flecs::entity coins = put("coins", gen.pickaxe_x() + 3.0, gen.pickaxe_y() + 0.1, 1); coins.is_valid())
-        if (const objects::KindDef* k = library.kind("pickup"))
-            if (const objects::PropDef* count = k->prop("count")) library.set_value(scene, coins, *count, "12");
+        if (const objects::Template* t = library.find("coins"))
+            if (const objects::PropDef* count = library.prop_of(*t, "count")) library.set_value(scene, coins, *count, "12");
     put("torches", gen.gallery_x0() - 3.5, gen.gallery_y() - 0.1, 1);
     const f64 sx = gen.smith_house().x1 + 4.0;
     put("crate", sx, v, 1);
@@ -149,10 +149,13 @@ void populate(const SliceGenerator& gen, const objects::Library& library, ChunkC
 }
 
 void Objects::init(flecs::world& ecs) {
+    // An object made of several blocks is drawn once: as a villager, else as
+    // a critter, else as an item.
     npcs = ecs.query<Position, Body, Npc>();
-    critters = ecs.query<Position, Body, Critter>();
-    items = ecs.query<Position, Body, Item>();
+    critters = ecs.query_builder<Position, Body, Critter>().without<Npc>().build();
+    items = ecs.query_builder<Position, Body, Item>().without<Npc>().without<Critter>().build();
     crates = ecs.query<Position, RigidBody>();
+    bodies = ecs.query_builder<Position, Body>().without<Npc>().without<Critter>().without<Item>().without<Hero>().build();
 }
 
 void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGenerator& gen, f64 cam_x, f64 cam_y,
@@ -223,6 +226,15 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         const Pictures::Picture* pic = picture(e);
         at(p.tile_x(), p.tile_y(), rb.half_w * 2.0f, rb.half_h * 2.0f, pic ? pic->frame : demo::kFrameCrate, 1,
            0xffffffffu, rb.angle);
+    });
+    // Objects that only have a body: their picture, else a crate.
+    objects.bodies.each([&](flecs::entity e, const Position& p, const Body& b) {
+        if (!e.has<objects::ObjectRef>()) return;
+        f64 x, y;
+        sim::draw_position(p, b, alpha, x, y);
+        const Pictures::Picture* pic = picture(e);
+        const f32 h = b.half_h * 2.0f;
+        at(x, y, pic ? h * pic->aspect : b.half_w * 2.0f, h, pic ? pic->frame : demo::kFrameCrate, 1);
     });
     // The smith's anvil by his door.
     const House h = gen.smith_house();
@@ -332,15 +344,15 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
     const objects::Template* t = library_.find(def.key);
     const objects::KindDef* k = t ? library_.kind_of(*t) : nullptr;
     if (!k) return;
-    // The picture the game draws for such an object.
+    // The picture the game draws for such an object: by its blocks.
     auto choice = [&](std::string_view prop) {
-        const objects::PropDef* p = k->prop(prop);
+        const objects::PropDef* p = library_.prop_of(*t, prop);
         return p ? library_.value(*t, *p) : std::string();
     };
     u32 frame = demo::kFrameCrate;
-    if (k->id == "person") frame = choice("who") == "\"smith\"" ? FrameSmith : FrameMiner;
-    else if (k->id == "critter") frame = 2;
-    else if (k->id == "pickup") {
+    if (library_.has_block(*t, "villager")) frame = choice("who") == "\"smith\"" ? FrameSmith : FrameMiner;
+    else if (library_.has_block(*t, "critter")) frame = 2;
+    else if (library_.has_block(*t, "pickup")) {
         static const char* ids[] = {"\"pickaxe\"", "\"coins\"", "\"copper\"", "\"wood\"", "\"torch\""};
         const std::string what = choice("what");
         for (u8 i = 0; i < 5; ++i)
