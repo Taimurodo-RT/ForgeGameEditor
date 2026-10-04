@@ -1,10 +1,13 @@
 #include "forge/assets/asset_pipeline.h"
+#include "forge/assets/image.h"
 #include "forge/core/jobs.h"
 #include "forge/core/path.h"
 #include "forge/data/binary.h"
 #include "forge/data/json.h"
 
 #include <doctest/doctest.h>
+
+#include <array>
 
 #include <chrono>
 #include <filesystem>
@@ -178,4 +181,56 @@ TEST_CASE("A copied file with its .meta gets its own id") {
     CHECK(r.messages.size() == 1);
     CHECK(pipeline.database().count() == 2);
     CHECK(meta_id(assets / utf8_path("a.txt")) != meta_id(assets / utf8_path("b.txt")));
+}
+
+TEST_CASE("Pictures: turn, mirror, halve, double, fit, and back through PNG") {
+    using namespace forge::assets;
+    // 3 × 2: red green blue / white black clear
+    CookedTexture img;
+    img.width = 3;
+    img.height = 2;
+    img.rgba8 = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 0};
+    auto at = [](const CookedTexture& t, u32 x, u32 y) {
+        const u8* p = t.rgba8.data() + (static_cast<usize>(y) * t.width + x) * 4;
+        return std::array<u8, 4>{p[0], p[1], p[2], p[3]};
+    };
+    const CookedTexture cw = transform_image(img, ImageOp::RotateCw);
+    CHECK(cw.width == 2);
+    CHECK(cw.height == 3);
+    CHECK(at(cw, 1, 0) == at(img, 0, 0)); // the top-left corner goes to the top-right
+    CHECK(at(cw, 0, 0) == at(img, 0, 1));
+    const CookedTexture back = transform_image(cw, ImageOp::RotateCcw);
+    CHECK(back.rgba8 == img.rgba8);
+    const CookedTexture fh = transform_image(img, ImageOp::FlipH);
+    CHECK(at(fh, 0, 0) == at(img, 2, 0));
+    CHECK(transform_image(fh, ImageOp::FlipH).rgba8 == img.rgba8);
+    CHECK(transform_image(transform_image(img, ImageOp::FlipV), ImageOp::FlipV).rgba8 == img.rgba8);
+    const CookedTexture big = transform_image(img, ImageOp::Double);
+    CHECK(big.width == 6);
+    CHECK(at(big, 5, 3) == at(img, 2, 1));
+    CHECK(transform_image(big, ImageOp::Half).rgba8 == img.rgba8);
+
+    const CookedTexture box = fit_image(img, 16); // grows 5×: 15 × 10, centred
+    CHECK(box.width == 16);
+    CHECK(at(box, 0, 0)[3] == 0);
+    CHECK(at(box, 0, 3) == at(img, 0, 0));
+    CHECK(at(box, 14, 12) == at(img, 2, 1));
+    CookedTexture wide;
+    wide.width = 400;
+    wide.height = 100;
+    wide.rgba8.assign(400 * 100 * 4, 200);
+    const CookedTexture small = fit_image(wide, 40);
+    CHECK(at(small, 20, 20) == std::array<u8, 4>{200, 200, 200, 200});
+    CHECK(at(small, 20, 2)[3] == 0);
+
+    std::vector<u8> png;
+    REQUIRE(encode_image(img, ".png", png));
+    CookedTexture again;
+    REQUIRE(decode_image(png, again));
+    CHECK(again.width == 3);
+    CHECK(again.rgba8 == img.rgba8);
+    std::vector<u8> jpg;
+    CHECK(encode_image(img, ".jpg", jpg));
+    CHECK(!can_encode_image(".gif"));
+    CHECK(!encode_image(img, ".gif", jpg));
 }
