@@ -1,0 +1,8 @@
+{
+  "id": "key",
+  "name": "Ключ",
+  "kind": "pickup",
+  "genre": "RPG",
+  "about": "открывает дверь в конце штольни",
+  "values": {"what": "key", "count": 1}
+}

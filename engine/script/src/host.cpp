@@ -52,6 +52,27 @@ ScriptVar& ScriptVars::get_or_add(std::string_view name) {
 
 ScriptHost::Impl* impl_of(lua_State* L) { return static_cast<ScriptHost::Impl*>(lua_callbacks(L)->userdata); }
 
+ScriptHost& ScriptHost::of(lua_State* L) { return impl_of(L)->host; }
+
+void ScriptHost::set_user(std::string_view key, void* value) {
+    for (auto& [k, v] : users_)
+        if (k == key) {
+            v = value;
+            return;
+        }
+    users_.emplace_back(std::string(key), value);
+}
+
+void* ScriptHost::user(std::string_view key) const {
+    for (const auto& [k, v] : users_)
+        if (k == key) return v;
+    return nullptr;
+}
+
+flecs::entity_t ScriptHost::running() const { return impl_->current_entity; }
+
+bool ScriptHost::api_built() const { return impl_->api_ready; }
+
 lua_State* ScriptHost::Impl::acquire(lua_State* L) {
     if (!pool.empty()) {
         lua_State* t = pool.back();

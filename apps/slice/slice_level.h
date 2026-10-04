@@ -39,7 +39,7 @@ struct Npc {
     f32 timer = 0;
     u32 seed = 0;
 };
-enum class ItemKind : u8 { Pickaxe, Coins, Copper, Wood, Torch };
+enum class ItemKind : u8 { Pickaxe, Coins, Copper, Wood, Torch, Key };
 struct Item {
     u8 kind = 0;
     u16 count = 1;
@@ -52,6 +52,19 @@ struct Critter {
     f32 dir = 1;
     u32 seed = 0;
     u8 scheme = static_cast<u8>(Scheme::Wander);
+};
+
+// «Дверь»: a door, height tiles tall, standing on the cell under its
+// Position. Closed, its column is TileDoor (solid, drawn by the door): the
+// game keeps the tiles in step (sync_doors), so the editor's level has none.
+struct Door {
+    bool open = false;
+    u8 height = 3;
+};
+// The cells a door holds now (not saved: sync_doors puts them again).
+struct DoorCells {
+    i32 x = 0, top = 0, bottom = 0; // rows top..bottom, inclusive
+    bool held = false;
 };
 
 // «Звук»: what an object sounds like. Each is a sound's name in the game's
@@ -88,6 +101,11 @@ flecs::entity spawn_object(const forge::objects::Library& library, forge::scene:
 void populate(const SliceGenerator& gen, const forge::objects::Library& library, forge::world::ChunkCoord coord,
               forge::scene::Scene& scene);
 u32 item_frame(ItemKind kind);
+// The column a door stands in: x and rows top..bottom.
+void door_cells(const forge::scene::Position& p, const Door& d, i32& x, i32& top, i32& bottom);
+// Closed doors hold their cells with TileDoor (only over air), open ones let
+// go of them. Call each frame of the game; what changes goes to the world.
+void sync_doors(forge::scene::Scene& scene);
 u32 hash32(u32 a, u32 b);
 
 // Queries of the drawn objects, made once per ECS world.
@@ -96,6 +114,7 @@ struct Objects {
     flecs::query<forge::scene::Position, forge::sim::Body, Critter> critters;
     flecs::query<forge::scene::Position, forge::sim::Body, Item> items;
     flecs::query<forge::scene::Position, forge::sim::RigidBody> crates;
+    flecs::query<forge::scene::Position, Door> doors;
     flecs::query<forge::scene::Position, forge::sim::Body> bodies; // a body and nothing else of the above
     void init(flecs::world& ecs);
 };
@@ -192,3 +211,4 @@ FORGE_REFLECT_DECLARE(slice::Npc)
 FORGE_REFLECT_DECLARE(slice::Item)
 FORGE_REFLECT_DECLARE(slice::Critter)
 FORGE_REFLECT_DECLARE(slice::Sounds)
+FORGE_REFLECT_DECLARE(slice::Door)

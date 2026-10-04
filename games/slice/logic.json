@@ -1,0 +1,10 @@
+{
+  "links": [
+    { "id": 1, "a": "key", "verb": "open", "b": "door", "sound": true, "hint": true }
+  ],
+  "board": {
+    "hero": [120, 160],
+    "key": [320, 120],
+    "door": [560, 160]
+  }
+}
