@@ -212,17 +212,17 @@ TEST_CASE("a template is copied between a game and the shared library") {
     CHECK(std::filesystem::exists(other_dir / "pictures" / "coin.png"));
 
     // Its own sound goes along too, to the shared library and from it.
-    write_text(f.lib.sounds_folder() / "звон.ogg", "not really a sound");
+    write_text(f.lib.sounds_folder() / utf8_path("звон.ogg"), "not really a sound");
     Template ringing = f.lib.with_value(more, "ding", "\"звон.ogg\"");
     REQUIRE(f.lib.put(ringing));
     CHECK_FALSE(shared.same_as(f.lib, ringing));
     REQUIRE(shared.put(*shared.copy_from(f.lib, ringing)));
-    CHECK(std::filesystem::exists(shared.sounds_folder() / "звон.ogg"));
+    CHECK(std::filesystem::exists(shared.sounds_folder() / utf8_path("звон.ogg")));
     CHECK(shared.same_as(f.lib, ringing));
     REQUIRE(other.put(*other.copy_from(shared, shared.templates()[0])));
-    CHECK(std::filesystem::exists(other_dir / "sounds" / "звон.ogg"));
+    CHECK(std::filesystem::exists(other_dir / "sounds" / utf8_path("звон.ogg")));
     // A different file of the same name there: same_as notices.
-    write_text(other_dir / "sounds" / "звон.ogg", "another sound");
+    write_text(other_dir / "sounds" / utf8_path("звон.ogg"), "another sound");
     CHECK_FALSE(other.same_as(shared, shared.templates()[0]));
 
     // A kind the game does not have cannot come in.

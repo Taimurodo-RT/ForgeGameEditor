@@ -410,7 +410,7 @@ private:
                 check(snd.played(Cue::Splash) > 0, "всплеск в пруду");
                 check(snd.played(Cue::Talk) > 0, "разговор начинается со звука");
                 // A sound file of its own: a short tone.
-                const std::filesystem::path file = std::filesystem::temp_directory_path() / "forge_slice_мурлык.wav";
+                const std::filesystem::path file = std::filesystem::temp_directory_path() / forge::utf8_path("forge_slice_мурлык.wav");
                 const audio::Tone tone[] = {{audio::Wave::Sine, 200, 220, 0.3f}};
                 const audio::ClipPtr clip = audio::synth(tone);
                 std::vector<u8> wav;
