@@ -8,6 +8,7 @@
 
 #include "demo_art.h"
 #include "slice_level.h"
+#include "slice_links.h"
 #include "slice_sounds.h"
 #include "slice_world.h"
 
@@ -47,6 +48,11 @@ struct Options {
     // Where to write the links that happen, one id a line (the editor's
     // «Логика» lights them up); empty: nowhere.
     std::filesystem::path fired_file;
+    // «Связи» over the game (F2) may change the links: only when the editor
+    // started it (--play) or in the self-test, never for players.
+    bool edit_links = false;
+    // The links' file; empty: the game's own logic.json.
+    std::filesystem::path links_file;
 };
 
 // What the player does this frame: from the keyboard and mouse, or from a
@@ -118,6 +124,9 @@ public:
     // Reads verbs.json and logic.json again and applies them (the editor
     // changed the links).
     bool reload_links(std::string* error = nullptr);
+    const forge::logic::Logic& links() const { return links_; }
+    // «Связи» over the game (F2).
+    LinkOverlay& overlay() { return overlay_; }
 
 private:
     friend class SliceLogic;
@@ -153,6 +162,12 @@ private:
     // A link happened: into Options::fired_file (each link at most twice a
     // second, so «always» links do not flood it).
     void note_fired(u32 link);
+    std::filesystem::path links_path() const;
+    // Writes the links and plays by them at once (from «Связи» over the game).
+    void change_links(const forge::logic::Logic& after, const std::string& said);
+    // Takes in what the editor changed in the links' file meanwhile.
+    void watch_links();
+    std::vector<Seen> seen_things() const;
     void hurt_hero(f64 n);
 
     Options options_;
@@ -218,6 +233,13 @@ private:
     std::vector<std::string> hints_;
     std::vector<std::pair<flecs::entity_t, std::string>> cues_;
     std::string last_hint_;
+    // The things links name (the hero and the templates), «Связи» over the
+    // game, and the links that have just happened (link -> until, ms).
+    std::vector<forge::logic::Thing> things_;
+    LinkOverlay overlay_;
+    std::unordered_map<u32, u64> lit_;
+    std::filesystem::file_time_type links_time_{};
+    u64 links_checked_ = 0;
 };
 
 } // namespace slice

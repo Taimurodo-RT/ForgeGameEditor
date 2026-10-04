@@ -219,6 +219,7 @@ private:
     void rebuild_code();
     void rebuild_ideas();
     void watch_fired();
+    void watch_file();
     // Two things the verb suits, the board's first and not linked so yet.
     bool pair_for(const logic::VerbDef& verb, std::string& a, std::string& b) const;
     void remember_mode() const;
@@ -257,6 +258,10 @@ private:
     std::filesystem::file_time_type fired_time_{};
     std::string fired_run_;
     std::map<u32, u64> lit_;               // link -> until (ms)
+    // The links' file as last read or written, and when last looked (ms): the
+    // running game may change it.
+    std::filesystem::file_time_type file_time_{};
+    u64 file_checked_ = 0;
 
     logic::Verbs verbs_;
     logic::Ideas ideas_;
