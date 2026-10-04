@@ -252,10 +252,7 @@ void AssetLibrary::shutdown() {
     thumb_cv_.notify_all();
     if (refresher_.joinable()) refresher_.join();
     if (thumbnailer_.joinable()) thumbnailer_.join();
-    if (sound_) {
-        SDL_DestroyAudioStream(sound_);
-        sound_ = nullptr;
-    }
+    listen_.close();
     if (ui_) ui::register_list_source("assets", nullptr);
     search_db_.close();
     ui_ = nullptr;
@@ -1469,26 +1466,19 @@ bool AssetLibrary::set_tags(const std::string& text) {
 }
 
 void AssetLibrary::play_sound() {
-    if (selection_.size() != 1 || extension_of(selection_[0]) != ".wav" || config_.offscreen) return;
-    if (!(SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+    if (selection_.size() != 1 || !audio::readable(utf8_path(selection_[0])) || config_.offscreen) return;
+    std::string error;
+    audio::ClipPtr clip = audio::load(abs(selection_[0]), &error);
+    if (!clip) {
+        FORGE_WARN("Звук не читается: %s", error.c_str());
+        return;
+    }
+    if (!listen_.has_device() && !listen_.open()) {
         FORGE_WARN("Звук недоступен: %s", SDL_GetError());
         return;
     }
-    SDL_AudioSpec spec{};
-    Uint8* buffer = nullptr;
-    Uint32 length = 0;
-    if (!SDL_LoadWAV(path_to_utf8(abs(selection_[0])).c_str(), &spec, &buffer, &length)) {
-        FORGE_WARN("Звук не читается: %s", SDL_GetError());
-        return;
-    }
-    if (sound_) SDL_DestroyAudioStream(sound_);
-    sound_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-    if (sound_) {
-        SDL_PutAudioStreamData(sound_, buffer, static_cast<int>(length));
-        SDL_FlushAudioStream(sound_);
-        SDL_ResumeAudioStreamDevice(sound_);
-    }
-    SDL_free(buffer);
+    listen_.stop_all();
+    listen_.play(clip);
 }
 
 void AssetLibrary::undo() {
@@ -1670,7 +1660,7 @@ void AssetLibrary::sync_preview() {
                 }
             } else if (rec->type == "audio") {
                 audio = true;
-                wav = ext == ".wav";
+                wav = audio::readable(utf8_path(ext)); // WAV and OGG play here
                 if (wav) {
                     const f64 seconds = wav_seconds(abs(rel));
                     char text[48];
@@ -1810,15 +1800,18 @@ bool AssetLibrary::handle_key(const SDL_KeyboardEvent& k) {
     return false;
 }
 
-std::vector<std::filesystem::path> AssetLibrary::images() const {
+std::vector<std::filesystem::path> AssetLibrary::of_type(const char* type) const {
     std::vector<const assets::AssetRecord*> found;
     for (const assets::AssetRecord& r : records_)
-        if (r.type == "image") found.push_back(&r);
+        if (r.type == type) found.push_back(&r);
     std::sort(found.begin(), found.end(), [](const auto* a, const auto* b) { return a->mtime > b->mtime; });
     std::vector<std::filesystem::path> out;
     out.reserve(found.size());
     for (const assets::AssetRecord* r : found) out.push_back(abs(r->path));
     return out;
 }
+
+std::vector<std::filesystem::path> AssetLibrary::images() const { return of_type("image"); }
+std::vector<std::filesystem::path> AssetLibrary::sounds() const { return of_type("audio"); }
 
 } // namespace forge::editor_app

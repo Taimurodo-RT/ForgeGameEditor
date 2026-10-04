@@ -9,6 +9,8 @@
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <optional>
 
 namespace forge::editor_app {
@@ -82,7 +84,10 @@ View make_prop_view(const objects::Library& lib, const objects::Template& t, con
     v.hint = p.hint;
     v.advanced = p.advanced;
     v.value = kind == Kind::Bool ? json : objects::Library::display(p, json);
-    if (!p.choices.empty()) v.kind = "enum";
+    if (p.asset == "sound") {
+        v.kind = "sound";
+        v.filled = json != "\"\"" && !json.empty();
+    } else if (!p.choices.empty()) v.kind = "enum";
     else if (kind == Kind::Bool) v.kind = "bool";
     else if (kind >= Kind::I8 && kind <= Kind::F64 && p.has_range) {
         v.kind = "slider";
@@ -105,6 +110,7 @@ bool ObjectLibrary::init(ui::Ui& ui) {
     // The shared library knows the same kinds as the game.
     if (!shared_folder_.empty()) {
         shared_.set_pictures_folder(shared_folder_ / "pictures");
+        shared_.set_sounds_folder(shared_folder_ / "sounds");
         std::string error;
         shared_ready_ = shared_.load(library().kinds_file(), shared_folder_ / "objects", &error);
         if (!shared_ready_) FORGE_WARN("Общая библиотека объектов недоступна: %s", error.c_str());
@@ -177,6 +183,7 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("max", &PropView::max);
         s.RegisterMember("step", &PropView::step);
         s.RegisterMember("advanced", &PropView::advanced);
+        s.RegisterMember("filled", &PropView::filled);
         s.RegisterMember("index", &PropView::index);
     }
     model.RegisterArray<std::vector<PropView>>();
@@ -196,6 +203,13 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("icon", &PicView::icon);
     }
     model.RegisterArray<std::vector<PicView>>();
+    if (auto s = model.RegisterStruct<SndView>()) {
+        s.RegisterMember("name", &SndView::name);
+        s.RegisterMember("folder", &SndView::folder);
+        s.RegisterMember("format", &SndView::format);
+        s.RegisterMember("playable", &SndView::playable);
+    }
+    model.RegisterArray<std::vector<SndView>>();
 
     model.Bind("ol_all", &m_all_);
     model.Bind("ol_shared", &m_shared_);
@@ -232,6 +246,11 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("ol_pics_open", &m_pics_open_);
     model.Bind("ol_pics_search", &m_pics_search_);
     model.Bind("ol_pics_note", &m_pics_note_);
+    model.Bind("ol_snds", &m_snds_);
+    model.Bind("ol_snds_open", &m_snds_open_);
+    model.Bind("ol_snds_search", &m_snds_search_);
+    model.Bind("ol_snds_note", &m_snds_note_);
+    model.Bind("ol_snds_title", &m_snds_title_);
 
     // Any action closes an open menu.
     auto on = [&](const char* name, auto fn) {
@@ -306,6 +325,23 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
         if (i >= 0) choose_picture(static_cast<usize>(i));
     });
     on("ol_pics_close", [this](Rml::Event&, const Rml::VariantList&) { close_pictures(); });
+    on("ol_sound_pick", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { open_sounds(arg_int(a, 0)); });
+    on("ol_sound_clear", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { clear_sound(arg_int(a, 0)); });
+    on("ol_sound_play", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { play_prop_sound(arg_int(a, 0)); });
+    on("ol_snd_choose", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        const int i = arg_int(a, 0);
+        if (i >= 0) choose_sound(static_cast<usize>(i));
+    });
+    // The ▶ on a row: listen without choosing (the row's click must not choose).
+    model.BindEventCallback("ol_snd_preview", [this, arg_int](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        const int i = arg_int(a, 0);
+        if (i >= 0) preview_sound(static_cast<usize>(i));
+    });
+    on("ol_snds_close", [this](Rml::Event&, const Rml::VariantList&) { close_sounds(); });
+    model.BindEventCallback("ol_snds_search", [this](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList&) {
+        if (!ui_updating_) set_sound_search(input_value(ev));
+    });
     model.BindEventCallback("ol_pics_search", [this](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList&) {
         if (!ui_updating_) set_picture_search(input_value(ev));
     });
@@ -755,6 +791,7 @@ void ObjectLibrary::open_editor() {
 void ObjectLibrary::close_editor() {
     if (!editing_) return;
     close_pictures();
+    close_sounds();
     editing_ = 0;
     set(m_editing_, false, "ol_editing");
     rebuild_side();
@@ -827,6 +864,7 @@ bool ObjectLibrary::handle_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_ESCAPE) {
         if (menu_open()) set_menu("");
         else if (m_pics_open_) close_pictures();
+        else if (m_snds_open_) close_sounds();
         else if (renaming_) {
             renaming_ = false;
             rebuild();
@@ -875,19 +913,19 @@ std::string ObjectLibrary::status() const {
 
 namespace forge::editor_app {
 
-bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
+namespace {
+
+// A file into the game's folder (pictures, sounds), under its own name; the
+// same file already there is used as it is, another one of that name gets a
+// number. The name it has there; empty when it cannot be copied.
+std::string copy_into(const std::filesystem::path& source, const std::filesystem::path& folder, const char* what) {
     namespace fs = std::filesystem;
-    const objects::Template* t = selected();
-    if (!t || showing_shared()) return false;
-    // Into the pictures folder, under its own name; the same file already
-    // there is used as it is, another one of that name gets a number.
-    const fs::path folder = library().pictures_folder();
     std::error_code ec;
     fs::create_directories(folder, ec);
     std::vector<u8> bytes;
     if (!read_file(source, bytes)) {
-        FORGE_WARN("картинка %s не читается", path_to_utf8(source).c_str());
-        return false;
+        FORGE_WARN("%s %s не читается", what, path_to_utf8(source).c_str());
+        return {};
     }
     const std::string stem = path_to_utf8(source.stem()), ext = path_to_utf8(source.extension());
     fs::path target = folder / source.filename();
@@ -895,15 +933,24 @@ bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
         std::vector<u8> there;
         if (!fs::exists(target, ec)) {
             if (!write_file_atomic(target, bytes)) {
-                FORGE_WARN("картинка не копируется в %s", path_to_utf8(target).c_str());
-                return false;
+                FORGE_WARN("%s не копируется в %s", what, path_to_utf8(target).c_str());
+                return {};
             }
             break;
         }
         if (fs::equivalent(target, source, ec) || (read_file(target, there) && there == bytes)) break;
         target = folder / utf8_path(stem + " " + std::to_string(n) + ext);
     }
-    const std::string name = path_to_utf8(target.filename());
+    return path_to_utf8(target.filename());
+}
+
+} // namespace
+
+bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
+    const objects::Template* t = selected();
+    if (!t || showing_shared()) return false;
+    const std::string name = copy_into(source, library().pictures_folder(), "картинка");
+    if (name.empty()) return false;
     close_pictures();
     if (name == t->picture) return false;
     objects::Template after = *t;
@@ -979,6 +1026,136 @@ void ObjectLibrary::rebuild_pictures() {
                        : "Картинка скопируется в папку игры и будет у этого объекта и всех его копий.";
     if (model_)
         for (const char* name : {"ol_pics", "ol_pics_note", "ol_pics_search"}) model_.DirtyVariable(name);
+}
+
+} // namespace forge::editor_app
+
+// --- the object's sounds ---
+
+namespace forge::editor_app {
+
+namespace {
+
+std::string lower_ext(const std::filesystem::path& file) {
+    std::string ext = path_to_utf8(file.extension());
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext;
+}
+
+} // namespace
+
+bool ObjectLibrary::set_sound(int prop, const std::filesystem::path& source) {
+    const objects::Template* t = selected();
+    if (!t || showing_shared() || prop < 0 || prop >= static_cast<int>(prop_refs_.size())) return false;
+    const objects::PropDef& p = *prop_refs_[static_cast<usize>(prop)];
+    if (p.asset != "sound") return false;
+    if (!audio::readable(source)) {
+        set(m_snds_note_, Rml::String("Игра читает WAV и OGG. Этот файл переведите в «Ресурсах»: правая кнопка → «Конвертировать…» → OGG."),
+            "ol_snds_note");
+        FORGE_WARN("«%s»: игра читает только WAV и OGG — переведите его через «Конвертировать…»", path_to_utf8(source.filename()).c_str());
+        return false;
+    }
+    if (std::string error; !audio::load(source, &error)) {
+        FORGE_WARN("«%s» не звучит: %s", path_to_utf8(source.filename()).c_str(), error.c_str());
+        return false;
+    }
+    const std::string name = copy_into(source, library().sounds_folder(), "звук");
+    if (name.empty()) return false;
+    close_sounds();
+    const std::string json = objects::Library::parse(p, name).value_or("\"\"");
+    if (json == library().value(*t, p)) return false;
+    change(library().with_value(*t, p.id, json), "«" + t->name + "»: " + p.name);
+    history_.seal();
+    return true;
+}
+
+bool ObjectLibrary::clear_sound(int prop) {
+    const objects::Template* t = selected();
+    if (!t || showing_shared() || prop < 0 || prop >= static_cast<int>(prop_refs_.size())) return false;
+    const objects::PropDef& p = *prop_refs_[static_cast<usize>(prop)];
+    if (p.asset != "sound" || library().value(*t, p) == "\"\"") return false;
+    change(library().with_value(*t, p.id, "\"\""), "«" + t->name + "»: " + p.name + " — " + (p.empty.empty() ? "нет" : p.empty));
+    history_.seal();
+    return true;
+}
+
+void ObjectLibrary::open_sounds(int prop) {
+    if (!selected() || prop < 0 || prop >= static_cast<int>(prop_refs_.size())) return;
+    set_menu("");
+    snd_prop_ = prop;
+    snd_search_.clear();
+    set(m_snds_search_, Rml::String(), "ol_snds_search");
+    set(m_snds_title_, Rml::String("Звук: " + prop_refs_[static_cast<usize>(prop)]->name), "ol_snds_title");
+    set(m_snds_open_, true, "ol_snds_open");
+    rebuild_sounds();
+}
+
+void ObjectLibrary::close_sounds() { set(m_snds_open_, false, "ol_snds_open"); }
+
+void ObjectLibrary::set_sound_search(const std::string& text) {
+    if (text == snd_search_) return;
+    snd_search_ = text;
+    m_snds_search_ = text;
+    rebuild_sounds();
+}
+
+bool ObjectLibrary::choose_sound(usize i) { return i < snd_files_.size() && set_sound(snd_prop_, snd_files_[i]); }
+
+bool ObjectLibrary::play_file(const std::filesystem::path& file) {
+    std::string error;
+    audio::ClipPtr clip = audio::load(file, &error);
+    if (!clip) {
+        FORGE_WARN("«%s» не звучит: %s", path_to_utf8(file.filename()).c_str(), error.c_str());
+        return false;
+    }
+    // The device opens on the first listen; without one, nothing is heard
+    // but the sound still counts as played.
+    if (!preview_open_) {
+        preview_open_ = true;
+        if (!silent && !preview_.open()) FORGE_WARN("Звука нет: не открылось устройство вывода");
+    }
+    preview_.stop_all();
+    preview_.play(clip);
+    return true;
+}
+
+bool ObjectLibrary::play_prop_sound(int prop) {
+    const objects::Template* t = selected();
+    if (!t || prop < 0 || prop >= static_cast<int>(prop_refs_.size())) return false;
+    const objects::PropDef& p = *prop_refs_[static_cast<usize>(prop)];
+    const objects::Library& lib = shown();
+    std::string json = lib.value(*t, p);
+    if (json.size() < 3) return false;
+    return play_file(lib.sound_file(json.substr(1, json.size() - 2)));
+}
+
+bool ObjectLibrary::preview_sound(usize i) { return i < snd_files_.size() && play_file(snd_files_[i]); }
+
+void ObjectLibrary::rebuild_sounds() {
+    constexpr usize kShown = 80;
+    snd_files_.clear();
+    m_snds_.clear();
+    const std::vector<std::filesystem::path> all = list_sounds ? list_sounds() : std::vector<std::filesystem::path>();
+    const std::string needle = game::to_lower_utf8(snd_search_);
+    usize matching = 0;
+    for (const std::filesystem::path& file : all) {
+        if (!needle.empty() && game::to_lower_utf8(path_to_utf8(file.parent_path().filename() / file.filename())).find(needle) == std::string::npos)
+            continue;
+        ++matching;
+        if (snd_files_.size() >= kShown) continue;
+        std::string format = lower_ext(file);
+        if (!format.empty()) format = format.substr(1);
+        for (char& c : format) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        snd_files_.push_back(file);
+        m_snds_.push_back({path_to_utf8(file.stem()), path_to_utf8(file.parent_path().filename()), format, audio::readable(file)});
+    }
+    m_snds_note_ = all.empty() ? "В «Ресурсах» пока нет звуков: перетащите их в окно редактора на вкладке «Ресурсы»."
+                   : matching == 0 ? "Ничего не нашлось."
+                   : matching > snd_files_.size()
+                       ? "Показаны первые " + std::to_string(snd_files_.size()) + " из " + std::to_string(matching) + ": уточните поиск."
+                       : "Кнопка слева от названия — послушать. Серые игра пока не читает: их переводят в OGG через «Конвертировать…». Выбранный звук скопируется в папку игры и будет у этого объекта и всех его копий.";
+    if (model_)
+        for (const char* name : {"ol_snds", "ol_snds_note", "ol_snds_search", "ol_snds_title"}) model_.DirtyVariable(name);
 }
 
 } // namespace forge::editor_app

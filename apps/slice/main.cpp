@@ -15,6 +15,7 @@
 
 #include "slice_game.h"
 
+#include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/game/runner.h"
@@ -395,6 +396,42 @@ private:
             check(g.critter_x(player) > player0 + 1.5, "«игрок» идёт вправо по стрелке");
             return true;
         }});
+        // Everything above made its sounds; an object's own ones play too.
+        steps_.push_back({"звуки", 200, [&g, v, stand, this](u32 f) {
+            static flecs::entity_t pet = 0;
+            const SliceSounds& snd = g.sounds();
+            if (f == 0) {
+                check(snd.played(Cue::Step) > 5, "шаги героя звучат");
+                check(snd.played(Cue::Jump) > 0, "прыжок звучит");
+                check(snd.played(Cue::Dig) > 0 && snd.played(Cue::Break) > 0, "копание звучит");
+                check(snd.played(Cue::Place) > 0, "постройка звучит");
+                check(snd.played(Cue::Pickup) > 0, "подбор кирки звучит");
+                check(snd.played(Cue::Crate) > 0, "ящик разбивается со звуком");
+                check(snd.played(Cue::Splash) > 0, "всплеск в пруду");
+                check(snd.played(Cue::Talk) > 0, "разговор начинается со звука");
+                // A sound file of its own: a short tone.
+                const std::filesystem::path file = std::filesystem::temp_directory_path() / "forge_slice_мурлык.wav";
+                const audio::Tone tone[] = {{audio::Wave::Sine, 200, 220, 0.3f}};
+                const audio::ClipPtr clip = audio::synth(tone);
+                std::vector<u8> wav;
+                check(clip && audio::encode_wav(*clip, wav) && write_file_atomic(file, wav), "звуковой файл записан");
+                g.script(Controls{});
+                g.teleport(0.5, v - stand);
+                pet = g.spawn_critter(g.hero_x() + 6, v, Scheme::Follow);
+                Sounds own;
+                own.near = path_to_utf8(file);
+                own.step = path_to_utf8(file);
+                check(g.set_sounds(pet, own), "у зверька свой звук");
+                return false;
+            }
+            if (f < 90) return false;
+            if (f == 90) {
+                check(snd.loops() == 1, "звук «рядом» играет около зверька");
+                check(snd.played_named() > 0, "шаги зверька своим звуком");
+                g.teleport(0.5 + 200, v - stand);
+            }
+            return f >= 100 && snd.loops() == 0;
+        }});
         // Where the picture is taken.
         steps_.push_back({"кадр", 200, [&s, &g, &talk, this](u32 f) {
             const SliceGenerator& gen = g.generator();
@@ -467,6 +504,7 @@ int main(int argc, char** argv) {
     std::string scene = "village";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--stress") == 0) options.stress = true;
+        else if (std::strcmp(argv[i], "--test") == 0) options.silent = true;
         else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) scene = argv[++i];
         else if (std::strcmp(argv[i], "--level") == 0 && i + 1 < argc) options.level_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--at") == 0 && i + 1 < argc) {

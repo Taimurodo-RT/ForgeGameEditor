@@ -474,6 +474,12 @@
                                         <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(f.index, ev.value)"/>
                                         <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + f.index" data-attr-value="f.value" data-event-change="ol_prop_text(f.index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(f.index)"/>
                                         <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(f.index)"><div class="thumb"/></div>
+                                        <div data-if="f.kind == 'sound'" class="row gap-1 grow ol-sound">
+                                            <span class="ol-sound-name grow" data-class-muted="!f.filled" data-attr-id="'ol-sound-' + f.index">{{ f.value }}</span>
+                                            <div data-if="f.filled" class="icon-button small" data-attr-id="'ol-sound-play-' + f.index" title="Послушать" data-event-click="ol_sound_play(f.index)"><icon name="play_arrow"/></div>
+                                            <div class="command" data-attr-id="'ol-sound-pick-' + f.index" title="Выбрать звук из «Ресурсов»" data-event-click="ol_sound_pick(f.index)"><icon name="library_music"/><span>Выбрать…</span></div>
+                                            <div data-if="f.filled" class="icon-button small" data-attr-id="'ol-sound-clear-' + f.index" title="Убрать свой звук" data-event-click="ol_sound_clear(f.index)"><icon name="close"/></div>
+                                        </div>
                                         <div data-if="f.kind == 'enum'" class="cycler grow">
                                             <div class="icon-button small" data-attr-id="'ol-prev-' + f.index" data-event-click="ol_prop_cycle(f.index, -1)"><icon name="chevron_left"/></div>
                                             <span class="value">{{ f.value }}</span>
@@ -529,6 +535,26 @@
                 </div>
             </div>
             <div class="muted body-small">{{ ol_pics_note }}</div>
+        </div>
+
+        <!-- The sound chooser: the project's sounds, from «Ресурсы» -->
+        <div class="as-backdrop" data-if="ol_snds_open" data-event-mousedown="ol_snds_close"/>
+        <div id="ol-snds" class="ol-pics ol-snds column" data-if="ol_snds_open">
+            <div class="ol-pics-head row gap-2">
+                <span class="ol-editor-title grow">{{ ol_snds_title }} для «{{ ol_sel_name }}»</span>
+                <input id="ol-snds-search" type="text" class="small" placeholder="Поиск звуков" data-attr-value="ol_snds_search" data-event-change="ol_snds_search"/>
+                <div id="ol-snds-close" class="icon-button" title="Закрыть (Esc)" data-event-click="ol_snds_close"><icon name="close"/></div>
+            </div>
+            <div class="ol-snds-list column grow">
+                <div data-for="a : ol_snds" class="ol-snd row gap-2" data-class-unplayable="!a.playable" data-attr-id="'ol-snd-' + it_index" data-attr-title="a.playable ? a.folder : 'Игра читает WAV и OGG: переведите его через «Конвертировать…»'" data-event-click="ol_snd_choose(it_index)">
+                    <div class="icon-button small" data-attr-id="'ol-snd-play-' + it_index" title="Послушать" data-event-click="ol_snd_preview(it_index)"><icon name="play_arrow"/></div>
+                    <icon class="s ft-audio" name="music_note"/>
+                    <span class="ol-snd-name grow">{{ a.name }}</span>
+                    <span class="muted body-small">{{ a.folder }}</span>
+                    <span class="ol-snd-format body-small">{{ a.format }}</span>
+                </div>
+            </div>
+            <div id="ol-snds-note" class="muted body-small">{{ ol_snds_note }}</div>
         </div>
 
         <!-- The right-click menu: of a card, or of empty space -->

@@ -23,6 +23,8 @@
 #include "forge/ui/virtual_list.h"
 
 #include "converters.h"
+
+#include "forge/audio/audio.h"
 #include "dock_view.h"
 #include "file_types.h"
 
@@ -163,6 +165,8 @@ public:
     usize record_count() const { return records_.size(); }
     // Every image in the project, newest first (absolute paths).
     std::vector<std::filesystem::path> images() const;
+    // The project's sounds, the newest first (absolute paths).
+    std::vector<std::filesystem::path> sounds() const;
     usize row_count() const { return rows_.size(); }
     std::string row_rel(usize i) const { return i < rows_.size() ? rows_[i].rel : std::string(); }
     std::string row_field(usize i, std::string_view name) const { return field(static_cast<u32>(i), name); }
@@ -259,6 +263,7 @@ private:
         std::vector<ConvChoiceView> choices;
     };
     void rebuild_convert();
+    std::vector<std::filesystem::path> of_type(const char* type) const;
     void take_conversions();
     std::vector<std::string> convertible(const Converter& c) const; // chosen files it takes
 
@@ -352,7 +357,7 @@ private:
     std::vector<std::filesystem::path> dropped_;
 
     // Sound
-    SDL_AudioStream* sound_ = nullptr;
+    audio::Mixer listen_; // «Слушать»
 
     // Converters
     Converters converters_;

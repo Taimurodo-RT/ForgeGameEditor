@@ -28,6 +28,14 @@ FORGE_REFLECT(slice::Critter, 1) {
     t.field("seed", &slice::Critter::seed).label("Вид и характер");
     t.field("scheme", &slice::Critter::scheme).label("Управление");
 }
+FORGE_REFLECT(slice::Sounds, 1) {
+    t.field("pickup", &slice::Sounds::pickup).label("Подбирают");
+    t.field("hit", &slice::Sounds::hit).label("Удар");
+    t.field("step", &slice::Sounds::step).label("Шаги");
+    t.field("near", &slice::Sounds::near).label("Рядом");
+    t.field("volume", &slice::Sounds::volume).label("Громкость").range(0, 2);
+    t.field("range", &slice::Sounds::range).label("Слышно на").range(2, 64);
+}
 
 namespace slice {
 
@@ -71,6 +79,7 @@ void register_components(scene::Scene& scene) {
     scene.register_component<Npc>();
     scene.register_component<Item>();
     scene.register_component<Critter>();
+    scene.register_component<Sounds>();
 }
 
 bool load_objects(objects::Library& library, const std::filesystem::path& game_dir, std::string* error) {

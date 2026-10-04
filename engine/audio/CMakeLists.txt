@@ -1,0 +1,11 @@
+add_library(forge_audio STATIC src/audio.cpp src/vorbis.c)
+add_library(forge::audio ALIAS forge_audio)
+target_include_directories(forge_audio PUBLIC include)
+target_link_libraries(forge_audio PUBLIC forge::core PRIVATE SDL3::SDL3-static stb_headers)
+forge_target_defaults(forge_audio)
+# stb_vorbis is someone else's C: no warnings from it.
+if(MSVC)
+  set_source_files_properties(src/vorbis.c PROPERTIES COMPILE_OPTIONS "/W0")
+else()
+  set_source_files_properties(src/vorbis.c PROPERTIES COMPILE_OPTIONS "-w")
+endif()

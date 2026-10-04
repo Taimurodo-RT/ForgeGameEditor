@@ -63,6 +63,10 @@ struct PropDef {
     bool has_range = false;
     f64 min = 0, max = 0;
     bool advanced = false; // shown under «Подробно»
+    // "sound": the value is a sound's name in the library's sounds folder
+    // (a file today; the sound editor's sounds later).
+    std::string asset;
+    std::string empty; // shown for an empty value: "обычный", "нет"
 
     const reflect::TypeInfo* type = nullptr;  // the component's, found when the kinds load
     const reflect::FieldInfo* info = nullptr; // the field's
@@ -177,6 +181,11 @@ public:
     void set_pictures_folder(std::filesystem::path folder) { pictures_ = std::move(folder); }
     // The template's picture file (empty without one).
     std::filesystem::path picture_file(const Template& t) const;
+    // Where the sounds of templates are: "sounds" next to the kinds file,
+    // unless set; a sound's file there (empty name: none).
+    const std::filesystem::path& sounds_folder() const { return sounds_; }
+    void set_sounds_folder(std::filesystem::path folder) { sounds_ = std::move(folder); }
+    std::filesystem::path sound_file(std::string_view name) const;
 
     const std::vector<KindDef>& kinds() const { return kinds_; }
     const std::vector<BlockDef>& blocks() const { return blocks_; }
@@ -221,12 +230,12 @@ public:
     // --- between libraries (a game's and the shared one) ---
     // A template of another library as it would be here: the same id (so
     // the same object), its file here (the one it already has, else a new
-    // one), its picture copied into this library's pictures folder. Not
+    // one), its picture and sounds copied into this library's folders. Not
     // stored: give it to put(). Empty when this library has no such kind
     // or the picture cannot be copied.
     std::optional<Template> copy_from(const Library& from, const Template& t, std::string* error = nullptr) const;
     // This library's template with t's id, when it is the same as t (name,
-    // note, genre, kind, blocks, values and picture).
+    // note, genre, kind, blocks, values, picture and sounds).
     bool same_as(const Library& from, const Template& t) const;
 
     // A name nobody uses yet, starting from wanted.
@@ -270,6 +279,7 @@ private:
     std::filesystem::path folder_;
     std::filesystem::path kinds_file_;
     std::filesystem::path pictures_;
+    std::filesystem::path sounds_;
     u64 version_ = 1;
     AdoptFn adopt_;
 };

@@ -21,6 +21,7 @@
 #include "slice_level.h"
 
 #include "forge/assets/image.h"
+#include "forge/audio/audio.h"
 #include "forge/core/file.h"
 #include "forge/core/jobs.h"
 #include "forge/core/log.h"
@@ -274,6 +275,7 @@ public:
     std::filesystem::path game_dir = utf8_path(SLICE_DATA_DIR);
     std::filesystem::path objects_folder = game_dir / "objects";
     std::filesystem::path pictures_folder = game_dir / "pictures"; // the templates' own pictures
+    std::filesystem::path sounds_folder = game_dir / "sounds";     // and sounds
     // The objects shared by every game: this computer's, outside any game.
     std::filesystem::path shared_folder = default_shared_folder();
     slice::SliceLevel level_module;
@@ -315,12 +317,14 @@ public:
         config.hot_reload = window != nullptr;
         if (!ui_.init(device, window, config)) return false;
         level_module.library()->set_pictures_folder(pictures_folder);
+        level_module.library()->set_sounds_folder(sounds_folder);
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         if (!level.init(ui_, device, format, level_config)) return false;
         objects_tab.set_shared_folder(shared_folder);
         objects_tab.init(ui_);
         objects_tab.list_images = [this] { return assets.images(); };
+        objects_tab.list_sounds = [this] { return assets.sounds(); };
         objects_tab.on_place = [this](u64 key) {
             open_tab("level");
             level.arm_template(key);
@@ -1892,7 +1896,7 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 33) return asset_step();
+        if (ol_step_ >= 37) return asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -2229,7 +2233,70 @@ private:
             ol().show("");
             break;
         }
-        case 32:
+        // «Звук»: the coins get a sound of their own from the project's sounds.
+        case 32: {
+            const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_editor_test_sounds";
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            const audio::Tone tone[] = {{audio::Wave::Sine, 990, 1320, 0.2f}};
+            std::vector<u8> wav;
+            check(audio::encode_wav(*audio::synth(tone), wav) && write_file_atomic(dir / utf8_path("Звон.wav"), wav) &&
+                      write_file_atomic(dir / utf8_path("Песня.mp3"), std::vector<u8>{'I', 'D', '3', 4, 0}),
+                  "test sounds are made");
+            sound_dir_ = dir;
+            ol().list_sounds = [dir] { return std::vector<std::filesystem::path>{dir / utf8_path("Звон.wav"), dir / utf8_path("Песня.mp3")}; };
+            ol().select(lib.find("coins")->key);
+            ol().open_editor();
+            check(ol().add_block("sound") && lib.has_block(*lib.find("coins"), "sound"), "«Добавить блок» → «Звук»");
+            break;
+        }
+        case 33: {
+            auto row_of_label = [this](const char* label) {
+                for (usize i = 0; i < ol().prop_count(); ++i)
+                    if (ol().prop_label(i) == label) return static_cast<int>(i);
+                return -1;
+            };
+            sound_row_ = row_of_label("Подбирают");
+            const std::string pick = "ol-sound-pick-" + std::to_string(sound_row_);
+            if (hold(sound_row_ >= 0 && shown(pick), "the «Звук» rows are laid out")) return true;
+            check(ol().prop_value(static_cast<usize>(sound_row_)) == "обычный", "«Подбирают»: обычный звук");
+            const int near = row_of_label("Рядом");
+            check(near >= 0 && ol().prop_value(static_cast<usize>(near)) == "нет", "«Рядом»: нет");
+            check(!shown("ol-sound-clear-" + std::to_string(sound_row_)), "no «Убрать» while the sound is the usual one");
+            check(click(pick) && ol().sounds_open(), "«Выбрать…» opens the sound chooser");
+            break;
+        }
+        case 34: {
+            if (hold(shown("ol-snd-0"), "the sound chooser is laid out")) return true;
+            check(ol().sound_choices() == 2 && ol().sound_choice(0) == "Звон", "it lists the project's sounds");
+            const u64 heard = ol().sounds_played();
+            check(click("ol-snd-play-0") && ol().sounds_played() == heard + 1 && ol().sounds_open(), "▶ plays it without choosing");
+            check(!ol().choose_sound(1) && ol().sounds_open(), "an MP3 is not taken: the game reads WAV and OGG");
+            check(click("ol-snd-0") && !ol().sounds_open(), "a click on a sound chooses it");
+            const objects::PropDef* p = lib.prop_of(*lib.find("coins"), "sound_pickup");
+            check(p && lib.value(*lib.find("coins"), *p) == "\"Звон.wav\"" &&
+                      std::filesystem::exists(ed_.sounds_folder / utf8_path("Звон.wav")),
+                  "the coins sound «Звон», copied into the game's sounds folder");
+            check(ol().history().undo_label() == "«Монеты»: Подбирают", "the change is in the tab's history");
+            break;
+        }
+        case 35: {
+            const std::string row = std::to_string(sound_row_);
+            if (hold(shown("ol-sound-clear-" + row), "«Убрать» shows")) return true;
+            check(ol().prop_value(static_cast<usize>(sound_row_)) == "Звон.wav", "the row names the sound");
+            const u64 heard = ol().sounds_played();
+            check(click("ol-sound-play-" + row) && ol().sounds_played() == heard + 1, "▶ in the row plays the object's sound");
+            const objects::PropDef* p = lib.prop_of(*lib.find("coins"), "sound_pickup");
+            check(click("ol-sound-clear-" + row) && lib.value(*lib.find("coins"), *p) == "\"\"", "«Убрать» gives the usual sound back");
+            ol().undo();
+            check(lib.value(*lib.find("coins"), *p) == "\"Звон.wav\"", "Ctrl+Z gives «Звон» back");
+            check(ol().share_selected() && std::filesystem::exists(ed_.shared_folder / "sounds" / utf8_path("Звон.wav")),
+                  "a shared object takes its sounds along");
+            ol().close_editor();
+            ol().show("");
+            break;
+        }
+        case 36:
             click_tab(0);
             break;
         default: break;
@@ -2239,6 +2306,8 @@ private:
     }
 
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
+    std::filesystem::path sound_dir_;
+    int sound_row_ = -1; // the coins' «Подбирают» row
 
     bool asset_step() {
         const bool idle = !as().busy();
@@ -2629,6 +2698,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             std::filesystem::remove_all(editor.pictures_folder, ec);
             if (std::filesystem::exists(editor.game_dir / "pictures", ec))
                 std::filesystem::copy(editor.game_dir / "pictures", editor.pictures_folder, std::filesystem::copy_options::recursive, ec);
+            editor.sounds_folder = std::filesystem::temp_directory_path() / "forge_editor_sounds";
+            editor.objects_tab.silent = true;
+            std::filesystem::remove_all(editor.sounds_folder, ec);
             // Nor this computer's shared objects: an empty library of its own.
             editor.shared_folder = std::filesystem::temp_directory_path() / "forge_editor_shared";
             std::filesystem::remove_all(editor.shared_folder, ec);
