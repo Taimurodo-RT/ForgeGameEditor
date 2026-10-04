@@ -1,8 +1,11 @@
 #pragma once
 
-// The «Ресурсы» tab: the project's files as a simple explorer. Folders on
-// the left, the open folder (or search results) in the middle, a preview
-// with the file's details, simple picture edits and links to its editor on
+// The «Ресурсы» tab: the project's files, laid out like the Windows
+// explorer. Back, forward, up, the address and the search on top, then the
+// commands (create, cut, copy, paste, rename, delete, sort, view); the
+// navigation (whole-project collections and the folder tree) on the left,
+// the open folder in columns (name, date, type, size) in the middle, the
+// details pane with a preview, simple picture edits and links to editors on
 // the right. Files dropped on the window are imported into the open folder.
 //
 // Every change on disk (import, new folder, rename, cut and paste, delete,
@@ -20,6 +23,7 @@
 #include "forge/ui/virtual_list.h"
 
 #include "dock_view.h"
+#include "file_types.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
@@ -108,13 +112,22 @@ public:
     void refresh();
     void open_folder(const std::string& rel);
     void set_search(const std::string& text);
-    void set_filter(const std::string& type); // "", "image", "audio", "file"
+    // A collection over the whole project instead of a folder: "image",
+    // "audio", "recent" (the newest files); "" goes back to the folder.
+    void set_filter(const std::string& type);
+    void back();
+    void forward();
+    void up();
+    // "name", "date", "type", "size"; the same key again turns the order.
+    void sort_by(const std::string& key);
+    void set_large(bool large);
     void select(std::vector<std::string> rels);
     void import(const std::vector<std::filesystem::path>& sources);
     void new_folder();
     bool rename_selected(const std::string& name);
     void delete_selection();
     void cut();
+    void copy();
     void paste();
     bool edit_image(const std::string& op); // cw, ccw, fliph, flipv, half, double
     bool convert_image(const std::string& extension);
@@ -124,10 +137,14 @@ public:
     // --- state (for the self-test and benchmarks) ---
     bool busy() const;
     const std::string& folder() const { return folder_; }
+    const std::string& filter() const { return filter_; }
+    const std::string& sort_key() const { return sort_; }
+    const FileTypes& types() const { return types_; }
     const std::vector<std::string>& selection() const { return selection_; }
     usize record_count() const { return records_.size(); }
     usize row_count() const { return rows_.size(); }
     std::string row_rel(usize i) const { return i < rows_.size() ? rows_[i].rel : std::string(); }
+    std::string row_field(usize i, std::string_view name) const { return field(static_cast<u32>(i), name); }
     bool row_has_thumb(usize i) const;
     u32 preview_width() const { return preview_w_; }
     u32 preview_height() const { return preview_h_; }
@@ -162,6 +179,10 @@ private:
     struct Crumb {
         Rml::String name, path;
     };
+    struct Place {
+        std::string folder, filter;
+        bool operator==(const Place&) const = default;
+    };
     struct ThumbJob {
         std::string name; // memory image name
         assets::ContentHash key;
@@ -176,16 +197,19 @@ private:
     struct Snapshot {
         std::vector<assets::AssetRecord> records;
         std::vector<std::string> dirs;
+        std::unordered_map<std::string, i64> dir_times;
         assets::RefreshReport report;
     };
     struct ImportJob {
         std::vector<std::filesystem::path> sources;
         std::filesystem::path staging;
         std::string folder;
+        std::string label; // "Импорт", "Копия"
     };
     struct Staged {
         std::vector<std::filesystem::path> items; // in staging
         std::string folder;
+        std::string label;
         std::vector<std::string> errors;
     };
     struct Thumb {
@@ -207,6 +231,12 @@ private:
     void rebuild_tree();
     void sync_model();
     void sync_preview();
+    void go(Place place, bool remember = true);
+    void sort_rows();
+    void start_rename(Rml::Context* context);
+    void copy_in(const std::vector<std::filesystem::path>& sources, const std::string& label);
+    bool is_dir(const std::string& rel) const;
+    i64 time_of(const std::string& rel) const;
     void want_thumb(const std::string& name, const assets::ContentHash& key, u32 box) const;
     const assets::AssetRecord* record(const std::string& rel) const;
     std::string unique_name(const std::filesystem::path& dir, const std::string& name) const;
@@ -242,6 +272,8 @@ private:
     std::vector<assets::AssetRecord> records_;
     std::unordered_map<std::string, usize> by_path_;
     std::vector<std::string> dirs_;
+    std::unordered_map<std::string, i64> dir_times_;
+    FileTypes types_;
     std::unordered_map<std::string, int> folder_counts_; // files directly inside
     assets::RefreshReport last_report_;
     bool have_index_ = false;
@@ -256,7 +288,14 @@ private:
     std::set<std::string> open_dirs_;
     std::vector<std::string> selection_;
     std::string anchor_;
-    std::vector<std::string> cut_;
+    std::vector<std::string> cut_; // or copied, when copying_
+    bool copying_ = false;
+    std::vector<Place> back_, forward_;
+    std::string sort_ = "name";
+    bool sort_desc_ = false;
+    bool large_ = false;
+    std::string menu_; // the open drop-down
+    bool rename_wanted_ = false;
     u64 list_version_ = 1, selection_version_ = 1, rows_version_ = 1;
 
     // Pictures in memory.
@@ -278,11 +317,12 @@ private:
     // Model mirrors
     std::vector<TreeRow> m_tree_;
     std::vector<Crumb> m_crumbs_;
-    Rml::String m_filter_, m_search_, m_status_, m_where_;
-    bool m_busy_ = false, m_searching_ = false, m_has_cut_ = false, m_empty_ = false;
+    Rml::String m_filter_, m_search_, m_status_, m_where_, m_place_icon_, m_count_text_, m_sel_text_, m_sort_, m_menu_;
+    bool m_busy_ = false, m_searching_ = false, m_has_cut_ = false, m_empty_ = false, m_sort_desc_ = false,
+         m_large_ = false, m_can_back_ = false, m_can_forward_ = false, m_can_up_ = false, m_listing_ = false;
     int m_sel_count_ = 0;
     Rml::String m_sel_name_, m_sel_ext_, m_sel_kind_, m_sel_size_, m_sel_dims_, m_sel_path_, m_sel_tags_, m_sel_preview_,
-        m_sel_icon_, m_sel_extra_;
+        m_sel_icon_, m_sel_extra_, m_sel_date_, m_sel_tint_;
     bool m_sel_image_ = false, m_sel_audio_ = false, m_sel_dir_ = false, m_sel_editable_ = false, m_sel_wav_ = false;
     std::vector<Rml::String> m_history_;
     int m_history_cursor_ = 0;

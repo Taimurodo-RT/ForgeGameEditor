@@ -1849,6 +1849,7 @@ private:
             check(std::filesystem::is_directory(as().abs("персонажи/Новая папка")), "a new folder");
             check(as().selection().size() == 1 && as().rename_selected("враги"), "the new folder renamed");
             check(std::filesystem::is_directory(as().abs("персонажи/враги")), "the folder is called «враги»");
+            if (Rml::Element* e = ed_.find_element("as-name")) e->Blur();
             break;
         case 8:
             if (hold(idle && row_of("персонажи/враги") >= 0, "the list shows the folder")) return true;
@@ -1894,17 +1895,52 @@ private:
             break;
         case 12:
             if (hold(idle && as().row_count() == 3, "the copy is listed")) return true;
-            as().set_filter("audio");
-            check(as().row_count() == 0, "the sounds filter hides pictures");
-            as().set_filter("audio");
-            check(as().row_count() == 3, "a second click shows everything");
+            check(as().row_field(0, "kind") == "Картинка PNG" || as().row_field(0, "kind") == "Картинка BMP",
+                  "the Type column names the kind and the format");
+            check(as().row_field(0, "tint") == "ft-image" && !as().row_field(0, "date").empty(), "an image colour and a date");
+            as().sort_by("size");
+            check(as().row_rel(0) == "тайлы/песок.png" && as().row_rel(2) == "тайлы/песок.bmp", "sorted by size, smallest first");
+            as().sort_by("size");
+            check(as().row_rel(0) == "тайлы/песок.bmp", "the same column again: largest first");
+            as().sort_by("name");
+            if (Rml::Element* e = ed_.find_element("nav-audio")) e->Click();
+            check(as().filter() == "audio" && as().row_count() == 1 && as().row_rel(0) == "звуки/кирка.wav",
+                  "«Все звуки» lists the project's sounds from every folder");
+            check(as().row_field(0, "kind") == "Звук WAV" && as().row_field(0, "where") == "звуки", "with the folder column");
+            key(SDLK_LEFT, SDL_KMOD_ALT);
+            check(as().filter().empty() && as().folder() == "тайлы" && as().row_count() == 3, "Alt+← goes back to the folder");
+            key(SDLK_RIGHT, SDL_KMOD_ALT);
+            check(as().filter() == "audio", "Alt+→ goes forward again");
+            key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+            check(as().filter().empty() && as().folder() == "тайлы", "Backspace leaves the collection");
             key(SDLK_BACKSPACE, SDL_KMOD_NONE);
             check(as().folder().empty(), "Backspace goes up a folder");
+            as().open_folder("тайлы");
+            click_row("тайлы/камень.png");
+            key(SDLK_C, SDL_KMOD_CTRL);
+            as().open_folder("данные");
+            key(SDLK_V, SDL_KMOD_CTRL);
+            break;
+        case 13:
+            if (hold(idle && exists("данные/камень.png"), "the copy is made")) return true;
+            check(exists("тайлы/камень.png") && as().history().undo_label() == "Копия: камень.png", "Ctrl+C, Ctrl+V copies the file");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!exists("данные/камень.png") && exists("тайлы/камень.png"), "Ctrl+Z takes the copy away");
             as().open_folder("тайлы"); // for a screenshot: a picture in the preview
             click_row("тайлы/камень.png");
             break;
-        case 13:
+        case 14:
             if (hold(as().preview_width() == 32 && idle, "the stone is shown again")) return true;
+            if (Rml::Element* e = ed_.find_element("as-sort-menu")) e->Click();
+            break;
+        case 15:
+            check(shown("sort-date"), "«Сортировка» opens its menu");
+            if (Rml::Element* e = ed_.find_element("sort-date")) e->Click();
+            check(as().sort_key() == "date", "a menu item sorts");
+            break;
+        case 16:
+            check(!shown("sort-date"), "the menu closes after a choice");
+            as().sort_by("name");
             return false;
         default: break;
         }

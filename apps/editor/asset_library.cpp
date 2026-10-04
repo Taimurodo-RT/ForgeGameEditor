@@ -9,11 +9,14 @@
 #include "forge/data/json.h"
 
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Input.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 
 namespace forge::editor_app {
 
@@ -21,20 +24,21 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr u32 kThumbPx = 40;
+constexpr u32 kThumbPx = 48;
 constexpr u32 kPreviewPx = 256;
 constexpr usize kThumbsKept = 2000;
 constexpr usize kThumbQueue = 256;
 constexpr u32 kSearchLimit = 5000;
+constexpr usize kRecent = 200;
 
 const DockConfig::Panel kPanels[] = {
-    {"folders", "Папки", "folder"},
-    {"preview", "Просмотр", "image"},
+    {"folders", "Навигация", "explore"},
+    {"preview", "Сведения", "info"},
     {"history", "История", "history"},
     {"log", "Журнал", "terminal"},
 };
 const char* kDefaultLayout =
-    R"({"row":0.18,"a":{"panels":["folders"]},"b":{"row":0.7,"a":{"column":0.78,"a":{"view":true},"b":{"panels":["log","history"]}},"b":{"panels":["preview"]}}})";
+    R"({"row":0.17,"a":{"panels":["folders"]},"b":{"row":0.74,"a":{"view":true},"b":{"column":0.72,"a":{"panels":["preview"]},"b":{"panels":["history","log"]}}}})";
 
 std::string lower(std::string s) {
     for (char& c : s)
@@ -79,24 +83,27 @@ bool path_less(const std::string& a, const std::string& b) {
     return a.size() < b.size();
 }
 
-const char* kind_name(const std::string& type, const std::string& ext) {
-    if (type == "image") return "Картинка";
-    if (type == "audio") return "Звук";
-    if (ext == ".json") return "Данные";
-    if (ext == ".txt" || ext == ".md") return "Текст";
-    if (ext == ".ttf" || ext == ".otf") return "Шрифт";
-    if (ext == ".rml" || ext == ".rcss") return "Интерфейс";
-    if (ext == ".lua" || ext == ".luau") return "Скрипт";
-    return "Файл";
+// "04.10.2026 12:12" from a file time (file_clock ticks, as the index keeps them).
+std::string date_text(i64 ticks) {
+    if (ticks == 0) return {};
+    using namespace std::chrono;
+    const fs::file_time_type ft{fs::file_time_type::duration(ticks)};
+    const std::time_t t = system_clock::to_time_t(time_point_cast<system_clock::duration>(file_clock::to_sys(ft)));
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char text[32];
+    std::strftime(text, sizeof(text), "%d.%m.%Y %H:%M", &tm);
+    return text;
 }
 
-const char* kind_icon(const std::string& type, const std::string& ext) {
-    if (type == "image") return "image";
-    if (type == "audio") return "audio_file";
-    if (ext == ".json") return "data_object";
-    if (ext == ".txt" || ext == ".md") return "description";
-    if (ext == ".ttf" || ext == ".otf") return "text_fields";
-    return "draft";
+std::string plural(int n, const char* one, const char* few, const char* many) {
+    const int mod10 = n % 10, mod100 = n % 100;
+    const char* word = (mod10 == 1 && mod100 != 11) ? one : (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) ? few : many;
+    return std::to_string(n) + " " + word;
 }
 
 std::string size_text(u64 bytes) {
@@ -109,13 +116,8 @@ std::string size_text(u64 bytes) {
     return s;
 }
 
-std::string files_text(int n) {
-    const int mod10 = n % 10, mod100 = n % 100;
-    const char* word = (mod10 == 1 && mod100 != 11)                                 ? "файл"
-                       : (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) ? "файла"
-                                                                                     : "файлов";
-    return std::to_string(n) + " " + word;
-}
+std::string files_text(int n) { return plural(n, "файл", "файла", "файлов"); }
+std::string items_text(int n) { return plural(n, "элемент", "элемента", "элементов"); }
 
 // Moves a file or a folder, its .meta along; across disks by copying.
 bool move_path(const fs::path& from, const fs::path& to) {
@@ -223,6 +225,7 @@ bool AssetLibrary::init(ui::Ui& ui, const AssetsConfig& config) {
     dc.file = "assets_layout.json";
     dock_.init(std::move(dc), config.settings, !config.offscreen);
 
+    types_.load(ui.root() / "editor" / "file_types.json");
     ui::register_list_source("assets", this);
     stop_ = false;
     refresh_wanted_ = true; // the first look
@@ -294,11 +297,28 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("as_sel_wav", &m_sel_wav_);
     model.Bind("as_sel_dir", &m_sel_dir_);
     model.Bind("as_sel_editable", &m_sel_editable_);
+    model.Bind("as_sel_date", &m_sel_date_);
+    model.Bind("as_sel_tint", &m_sel_tint_);
+    model.Bind("as_place_icon", &m_place_icon_);
+    model.Bind("as_count_text", &m_count_text_);
+    model.Bind("as_sel_text", &m_sel_text_);
+    model.Bind("as_sort", &m_sort_);
+    model.Bind("as_sort_desc", &m_sort_desc_);
+    model.Bind("as_large", &m_large_);
+    model.Bind("as_menu", &m_menu_);
+    model.Bind("as_can_back", &m_can_back_);
+    model.Bind("as_can_forward", &m_can_forward_);
+    model.Bind("as_can_up", &m_can_up_);
+    model.Bind("as_listing", &m_listing_);
     model.Bind("as_history", &m_history_);
     model.Bind("as_history_cursor", &m_history_cursor_);
 
+    // Any command closes an open drop-down, as in the explorer.
     auto on = [&](const char* name, auto fn) {
-        model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
+        model.BindEventCallback(name, [this, fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) {
+            menu_.clear();
+            fn(ev, args);
+        });
     };
     auto arg_str = [](const Rml::VariantList& a, usize i) { return i < a.size() ? a[i].Get<Rml::String>() : Rml::String(); };
     auto arg_bool = [](const Rml::VariantList& a, usize i) { return i < a.size() && a[i].Get<bool>(); };
@@ -308,6 +328,24 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     };
 
     on("as_go", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { open_folder(arg_str(a, 0)); });
+    on("as_back", [this](Rml::Event&, const Rml::VariantList&) { back(); });
+    on("as_forward", [this](Rml::Event&, const Rml::VariantList&) { forward(); });
+    on("as_up", [this](Rml::Event&, const Rml::VariantList&) { up(); });
+    on("as_copy", [this](Rml::Event&, const Rml::VariantList&) { copy(); });
+    on("as_layout_reset", [this](Rml::Event&, const Rml::VariantList&) { dock_.reset(); });
+    on("as_sort", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { sort_by(arg_str(a, 0)); });
+    on("as_sort_order", [this, arg_bool](Rml::Event&, const Rml::VariantList& a) {
+        if (sort_desc_ != arg_bool(a, 0)) sort_by(sort_);
+    });
+    on("as_view", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_large(arg_str(a, 0) == "large"); });
+    on("as_rename_start", [this](Rml::Event& ev, const Rml::VariantList&) {
+        if (Rml::Element* e = ev.GetTargetElement()) start_rename(e->GetContext());
+    });
+    model.BindEventCallback("as_menu", [this, arg_str](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) {
+        const std::string name = arg_str(a, 0);
+        menu_ = name == menu_ ? std::string() : name;
+        ev.StopPropagation();
+    });
     on("as_tree_toggle", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
         const std::string path = arg_str(a, 0);
         if (!open_dirs_.erase(path)) open_dirs_.insert(path);
@@ -328,7 +366,10 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
         search_pending_ = true;
     });
     on("as_search_clear", [this](Rml::Event&, const Rml::VariantList&) { set_search(""); });
-    on("as_new_folder", [this](Rml::Event&, const Rml::VariantList&) { new_folder(); });
+    on("as_new_folder", [this](Rml::Event&, const Rml::VariantList&) {
+        new_folder();
+        rename_wanted_ = !config_.offscreen; // type the name at once, as in the explorer
+    });
     on("as_import", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         if (config_.offscreen) return;
         auto done = [](void* self, const char* const* list, int) {
@@ -345,8 +386,10 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     on("as_paste", [this](Rml::Event&, const Rml::VariantList&) { paste(); });
     on("as_delete", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
     on("as_refresh", [this](Rml::Event&, const Rml::VariantList&) { refresh(); });
-    on("as_rename", [this, arg_str, arg_bool](Rml::Event&, const Rml::VariantList& a) {
-        if (!ui_updating_ && arg_bool(a, 1)) rename_selected(arg_str(a, 0));
+    on("as_rename", [this, arg_str, arg_bool](Rml::Event& ev, const Rml::VariantList& a) {
+        if (ui_updating_ || !arg_bool(a, 1)) return;
+        rename_selected(arg_str(a, 0));
+        if (Rml::Element* e = ev.GetTargetElement()) e->Blur(); // Enter ends the typing
     });
     on("as_rename_commit", [this, input_value](Rml::Event& ev, const Rml::VariantList&) {
         const std::string value = input_value(ev);
@@ -402,6 +445,7 @@ void AssetLibrary::refresher_main() {
             lock.unlock();
             Staged staged;
             staged.folder = job.folder;
+            staged.label = job.label;
             std::error_code ec;
             fs::create_directories(job.staging, ec);
             for (const fs::path& src : job.sources) {
@@ -437,7 +481,10 @@ void AssetLibrary::refresher_main() {
                 continue;
             }
             const auto& native = it->path().native();
-            if (native.size() > root_len) snap.dirs.push_back(slashes(path_to_utf8(fs::path(native.substr(root_len)))));
+            if (native.size() > root_len) {
+                snap.dirs.push_back(slashes(path_to_utf8(fs::path(native.substr(root_len)))));
+                snap.dir_times[snap.dirs.back()] = static_cast<i64>(it->last_write_time(ec).time_since_epoch().count());
+            }
         }
         lock.lock();
         snapshots_.push_back(std::move(snap));
@@ -539,6 +586,7 @@ void AssetLibrary::take_results() {
             ++folder_counts_[parent_of(records_[i].path)];
         }
         dirs_ = std::move(s.dirs);
+        dir_times_ = std::move(s.dir_times);
         std::sort(dirs_.begin(), dirs_.end(), path_less);
         last_report_ = std::move(s.report);
         for (const std::string& m : last_report_.messages) FORGE_WARN("%s", m.c_str());
@@ -575,8 +623,7 @@ void AssetLibrary::take_results() {
             moves.push_back({item, dest / utf8_path(name)});
             rels.push_back(s.folder.empty() ? name : s.folder + "/" + name);
         }
-        const std::string label =
-            moves.size() == 1 ? "Импорт: " + name_of(rels[0]) : "Импорт: " + files_text(static_cast<int>(moves.size()));
+        const std::string label = s.label + ": " + (moves.size() == 1 ? name_of(rels[0]) : files_text(static_cast<int>(moves.size())));
         history_.execute(std::make_unique<FileMoves>(*this, std::move(moves), label));
         history_.seal();
         FORGE_INFO("%s", label.c_str());
@@ -633,26 +680,86 @@ const assets::AssetRecord* AssetLibrary::record(const std::string& rel) const {
     return it == by_path_.end() ? nullptr : &records_[it->second];
 }
 
+bool AssetLibrary::is_dir(const std::string& rel) const { return std::binary_search(dirs_.begin(), dirs_.end(), rel, path_less); }
+
+i64 AssetLibrary::time_of(const std::string& rel) const {
+    if (const assets::AssetRecord* rec = record(rel)) return rec->mtime;
+    auto it = dir_times_.find(rel);
+    return it == dir_times_.end() ? 0 : it->second;
+}
+
 void AssetLibrary::rebuild_rows() {
     rows_.clear();
+    const std::string type = filter_ == "recent" ? std::string() : filter_;
     if (!search_.empty()) {
+        // Over the whole project (in the open collection's kind).
         if (search_db_.is_open())
-            for (const assets::SearchHit& hit : search_db_.search(search_, kSearchLimit, filter_)) {
+            for (const assets::SearchHit& hit : search_db_.search(search_, kSearchLimit, type)) {
                 auto it = by_path_.find(hit.path);
                 if (it != by_path_.end()) rows_.push_back({false, hit.path, name_of(hit.path), static_cast<i32>(it->second)});
             }
+    } else if (filter_ == "recent") {
+        std::vector<usize> order(records_.size());
+        for (usize i = 0; i < order.size(); ++i) order[i] = i;
+        const usize n = std::min(kRecent, order.size());
+        std::partial_sort(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(n), order.end(),
+                          [&](usize a, usize b) { return records_[a].mtime > records_[b].mtime; });
+        for (usize i = 0; i < n; ++i) rows_.push_back({false, records_[order[i]].path, name_of(records_[order[i]].path), static_cast<i32>(order[i])});
+    } else if (!filter_.empty()) {
+        for (usize i = 0; i < records_.size(); ++i)
+            if (records_[i].type == filter_) rows_.push_back({false, records_[i].path, name_of(records_[i].path), static_cast<i32>(i)});
     } else {
         for (const std::string& d : dirs_)
             if (parent_of(d) == folder_) rows_.push_back({true, d, name_of(d), -1});
-        for (usize i = 0; i < records_.size(); ++i) {
-            const assets::AssetRecord& r = records_[i];
-            if (!filter_.empty() && r.type != filter_) continue;
-            if (parent_of(r.path) == folder_) rows_.push_back({false, r.path, name_of(r.path), static_cast<i32>(i)});
-        }
+        for (usize i = 0; i < records_.size(); ++i)
+            if (parent_of(records_[i].path) == folder_) rows_.push_back({false, records_[i].path, name_of(records_[i].path), static_cast<i32>(i)});
     }
+    sort_rows();
     ++list_version_;
     ++rows_version_;
 }
+
+// Folders first, as in the explorer; then by the chosen column.
+void AssetLibrary::sort_rows() {
+    auto type_of = [&](const Row& r) -> std::string {
+        if (r.dir) return std::string();
+        const std::string ext = extension_of(r.rel);
+        return types_.type_name(types_.of(ext), ext);
+    };
+    auto size_of = [&](const Row& r) -> u64 { return r.record >= 0 ? records_[static_cast<usize>(r.record)].size : 0; };
+    const bool desc = sort_desc_;
+    const std::string key = sort_;
+    std::stable_sort(rows_.begin(), rows_.end(), [&](const Row& a, const Row& b) {
+        if (a.dir != b.dir) return a.dir;
+        int c = 0;
+        if (key == "date") {
+            const i64 x = time_of(a.rel), y = time_of(b.rel);
+            c = x < y ? -1 : x > y ? 1 : 0;
+        } else if (key == "size") {
+            const u64 x = size_of(a), y = size_of(b);
+            c = x < y ? -1 : x > y ? 1 : 0;
+        } else if (key == "type") {
+            const std::string x = type_of(a), y = type_of(b);
+            c = x < y ? -1 : x > y ? 1 : 0;
+        }
+        if (c == 0) c = path_less(a.name, b.name) ? -1 : path_less(b.name, a.name) ? 1 : 0;
+        return desc ? c > 0 : c < 0;
+    });
+}
+
+void AssetLibrary::sort_by(const std::string& key) {
+    if (key != "name" && key != "date" && key != "type" && key != "size") return;
+    if (key == sort_) sort_desc_ = !sort_desc_;
+    else {
+        sort_ = key;
+        sort_desc_ = key == "date"; // the newest first, as people usually want
+    }
+    sort_rows();
+    ++list_version_;
+    ++rows_version_;
+}
+
+void AssetLibrary::set_large(bool large) { large_ = large; }
 
 void AssetLibrary::rebuild_tree() {
     m_tree_.clear();
@@ -692,7 +799,12 @@ std::string AssetLibrary::field(u32 row, std::string_view name) const {
         return {};
     };
     if (name == "name") return r.name;
-    if (name == "kind") return r.dir ? "Папка" : rec ? kind_name(rec->type, extension_of(r.rel)) : "";
+    if (name == "kind") {
+        if (r.dir) return types_.folder().name;
+        const std::string ext = extension_of(r.rel);
+        return types_.type_name(types_.of(ext), ext);
+    }
+    if (name == "date") return date_text(time_of(r.rel));
     if (name == "size") {
         if (r.dir) {
             auto it = folder_counts_.find(r.rel);
@@ -700,13 +812,14 @@ std::string AssetLibrary::field(u32 row, std::string_view name) const {
         }
         return rec ? size_text(rec->size) : "";
     }
-    if (name == "where") return search_.empty() ? std::string() : (parent_of(r.rel).empty() ? "Ресурсы" : parent_of(r.rel));
-    if (name == "icon") return r.dir ? "folder" : rec ? kind_icon(rec->type, extension_of(r.rel)) : "draft";
+    if (name == "where") return search_.empty() && filter_.empty() ? std::string() : (parent_of(r.rel).empty() ? "Ресурсы" : parent_of(r.rel));
+    if (name == "icon") return r.dir ? types_.folder().icon : types_.of(extension_of(r.rel)).icon;
+    if (name == "tint") return "ft-" + (r.dir ? types_.folder().id : types_.of(extension_of(r.rel)).id);
     if (name == "thumb") return thumb();
     if (name == "img") return thumb().empty() ? "0" : "1";
     if (name == "noimg") return thumb().empty() ? "1" : "0";
     if (name == "selected") return std::find(selection_.begin(), selection_.end(), r.rel) != selection_.end() ? "1" : "0";
-    if (name == "cut") return std::find(cut_.begin(), cut_.end(), r.rel) != cut_.end() ? "1" : "0";
+    if (name == "cut") return !copying_ && std::find(cut_.begin(), cut_.end(), r.rel) != cut_.end() ? "1" : "0";
     return {};
 }
 
@@ -751,18 +864,60 @@ void AssetLibrary::on_row_event(u32 row, std::string_view event, int modifiers) 
 
 // --- actions -----------------------------------------------------------------
 
-void AssetLibrary::open_folder(const std::string& rel) {
-    std::string target = rel;
-    if (!target.empty() && !std::binary_search(dirs_.begin(), dirs_.end(), target, path_less)) return;
-    folder_ = target;
-    for (std::string p = parent_of(target); !p.empty(); p = parent_of(p)) open_dirs_.insert(p);
+void AssetLibrary::open_folder(const std::string& rel) { go({rel, ""}); }
+
+void AssetLibrary::go(Place place, bool remember) {
+    if (!place.folder.empty() && !is_dir(place.folder)) return;
+    if (place.filter != "" && place.filter != "image" && place.filter != "audio" && place.filter != "recent") return;
+    const Place here{folder_, filter_};
+    const bool same = place == here;
+    if (!same && remember) {
+        back_.push_back(here);
+        if (back_.size() > 100) back_.erase(back_.begin());
+        forward_.clear();
+    }
+    folder_ = place.folder;
+    if (place.filter == "recent" && filter_ != "recent") {
+        sort_ = "date";
+        sort_desc_ = true;
+    }
+    filter_ = place.filter;
+    for (std::string p = parent_of(folder_); !p.empty(); p = parent_of(p)) open_dirs_.insert(p);
     if (!search_.empty()) {
         search_.clear();
+        search_pending_ = false;
         set(m_search_, Rml::String(), "as_search");
     }
-    select({});
+    if (!same) select({});
     rebuild_rows();
     rebuild_tree();
+}
+
+void AssetLibrary::back() {
+    while (!back_.empty()) {
+        const Place p = back_.back();
+        back_.pop_back();
+        if (!p.folder.empty() && !is_dir(p.folder)) continue; // deleted since
+        forward_.push_back({folder_, filter_});
+        go(p, false);
+        return;
+    }
+}
+
+void AssetLibrary::forward() {
+    while (!forward_.empty()) {
+        const Place p = forward_.back();
+        forward_.pop_back();
+        if (!p.folder.empty() && !is_dir(p.folder)) continue;
+        back_.push_back({folder_, filter_});
+        go(p, false);
+        return;
+    }
+}
+
+void AssetLibrary::up() {
+    if (!filter_.empty()) go({folder_, ""});
+    else if (!folder_.empty()) go({parent_of(folder_), ""});
 }
 
 void AssetLibrary::set_search(const std::string& text) {
@@ -773,15 +928,28 @@ void AssetLibrary::set_search(const std::string& text) {
     rebuild_rows();
 }
 
-void AssetLibrary::set_filter(const std::string& type) {
-    filter_ = type == filter_ ? std::string() : type; // a second click shows everything
-    rebuild_rows();
+void AssetLibrary::set_filter(const std::string& type) { go({folder_, type}); }
+
+// Puts the typing into the name field of the details pane (F2). Waits for
+// the field when the selection has just changed.
+void AssetLibrary::start_rename(Rml::Context* context) {
+    rename_wanted_ = selection_.size() == 1;
+    if (!context || !rename_wanted_ || selection_version_ != synced_selection_) return;
+    for (int i = 0; i < context->GetNumDocuments(); ++i)
+        if (Rml::Element* e = context->GetDocument(i)->GetElementById("as-name")) {
+            if (!e->IsVisible(true)) return;
+            rename_wanted_ = false;
+            e->Focus();
+            static_cast<Rml::ElementFormControlInput*>(e)->Select();
+            return;
+        }
 }
 
 void AssetLibrary::select(std::vector<std::string> rels) {
     if (rels == selection_) return;
     selection_ = std::move(rels);
     anchor_ = selection_.empty() ? std::string() : selection_.back();
+    rename_wanted_ = false;
     ++selection_version_;
     ++list_version_;
 }
@@ -798,17 +966,22 @@ std::string AssetLibrary::unique_name(const fs::path& dir, const std::string& na
     }
 }
 
-void AssetLibrary::import(const std::vector<fs::path>& sources) {
+void AssetLibrary::import(const std::vector<fs::path>& sources) { copy_in(sources, "Импорт"); }
+
+// Copies on the background thread into staging, then one undoable move into the open folder.
+void AssetLibrary::copy_in(const std::vector<fs::path>& sources, const std::string& label) {
     if (sources.empty()) return;
+    if (!filter_.empty()) go({folder_, ""}); // a collection is not a place to put files
     {
         std::lock_guard lock(mutex_);
-        imports_.push_back({sources, staging_dir(), folder_});
+        imports_.push_back({sources, staging_dir(), folder_, label});
     }
     refresh_cv_.notify_one();
     FORGE_INFO("Копирую в «%s»: %s", folder_.empty() ? "Ресурсы" : folder_.c_str(), files_text(static_cast<int>(sources.size())).c_str());
 }
 
 void AssetLibrary::new_folder() {
+    if (!filter_.empty()) go({folder_, ""});
     const fs::path staged = staging_dir() / "Новая папка";
     std::error_code ec;
     fs::create_directories(staged, ec);
@@ -887,12 +1060,34 @@ void AssetLibrary::delete_selection() {
 
 void AssetLibrary::cut() {
     cut_ = selection_;
+    copying_ = false;
     ++list_version_;
     if (!cut_.empty()) FORGE_INFO("Вырезано: %zu. Откройте папку и нажмите «Вставить» (Ctrl+V)", cut_.size());
 }
 
+void AssetLibrary::copy() {
+    cut_ = selection_;
+    copying_ = !cut_.empty();
+    ++list_version_;
+    if (!cut_.empty()) FORGE_INFO("Скопировано: %zu. Откройте папку и нажмите «Вставить» (Ctrl+V)", cut_.size());
+}
+
 void AssetLibrary::paste() {
     if (cut_.empty()) return;
+    if (copying_) {
+        // The copied list stays, so it can be pasted again elsewhere.
+        std::vector<fs::path> sources;
+        for (const std::string& rel : cut_) {
+            if (folder_ == rel || folder_.rfind(rel + "/", 0) == 0) {
+                FORGE_WARN("Папку «%s» нельзя скопировать в саму себя", name_of(rel).c_str());
+                continue;
+            }
+            sources.push_back(abs(rel));
+        }
+        copy_in(sources, "Копия");
+        return;
+    }
+    if (!filter_.empty()) go({folder_, ""});
     const fs::path dest = abs(folder_);
     std::vector<FileMoves::Move> moves;
     std::vector<std::string> rels;
@@ -1047,7 +1242,7 @@ std::string AssetLibrary::status() const {
     std::string s = folder_.empty() ? "Ресурсы" : "Ресурсы/" + folder_;
     s += " · всего " + files_text(static_cast<int>(records_.size()));
     if (!selection_.empty()) s += " · выбрано " + std::to_string(selection_.size());
-    if (!cut_.empty()) s += " · вырезано " + std::to_string(cut_.size());
+    if (!cut_.empty()) s += (copying_ ? " · скопировано " : " · вырезано ") + std::to_string(cut_.size());
     return s;
 }
 
@@ -1067,6 +1262,7 @@ void AssetLibrary::update(f64 dt, Rml::Context* context) {
     }
     dock_.update(context);
     sync_model();
+    if (rename_wanted_ && !ui_updating_) start_rename(context);
 }
 
 void AssetLibrary::sync_model() {
@@ -1075,16 +1271,41 @@ void AssetLibrary::sync_model() {
     set(m_has_cut_, !cut_.empty(), "as_has_cut");
     set(m_busy_, busy(), "as_busy");
     set(m_empty_, have_index_ && rows_.empty(), "as_empty");
-    Rml::String where = search_.empty() ? (folder_.empty() ? "Ресурсы" : name_of(folder_)) : "Поиск «" + search_ + "»";
-    set(m_where_, where, "as_where");
-    char status[160];
-    std::snprintf(status, sizeof(status), "%s · %s", files_text(static_cast<int>(rows_.size())).c_str(),
-                  have_index_ ? ("в проекте " + files_text(static_cast<int>(records_.size()))).c_str() : "смотрю папку…");
-    set(m_status_, Rml::String(status), "as_status");
+    set(m_sort_, Rml::String(sort_), "as_sort");
+    set(m_sort_desc_, sort_desc_, "as_sort_desc");
+    set(m_large_, large_, "as_large");
+    set(m_menu_, Rml::String(menu_), "as_menu");
+    set(m_can_back_, !back_.empty(), "as_can_back");
+    set(m_can_forward_, !forward_.empty(), "as_can_forward");
+    set(m_can_up_, !folder_.empty() || !filter_.empty(), "as_can_up");
+    set(m_listing_, !search_.empty() || !filter_.empty(), "as_listing");
 
-    // Breadcrumbs
+    // The address: the folder's path, or the collection.
+    const char* collection = filter_ == "image" ? "Все картинки" : filter_ == "audio" ? "Все звуки" : filter_ == "recent" ? "Недавние" : nullptr;
+    const char* place_icon = filter_ == "image" ? "photo_library" : filter_ == "audio" ? "library_music" : filter_ == "recent" ? "schedule" : "folder_open";
+    set(m_place_icon_, Rml::String(place_icon), "as_place_icon");
+    Rml::String where = !search_.empty()  ? "Поиск «" + search_ + "»"
+                        : collection      ? Rml::String(collection)
+                        : folder_.empty() ? "Ресурсы"
+                                          : name_of(folder_);
+    set(m_where_, where, "as_where");
+    set(m_status_, Rml::String(have_index_ ? "в проекте " + files_text(static_cast<int>(records_.size())) : "смотрю папку…"), "as_status");
+    set(m_count_text_, Rml::String(items_text(static_cast<int>(rows_.size()))), "as_count_text");
+    Rml::String sel_text;
+    if (!selection_.empty()) {
+        u64 total = 0;
+        bool files = false;
+        for (const std::string& rel : selection_)
+            if (const auto* rec = record(rel)) total += rec->size, files = true;
+        sel_text = "выбрано: " + std::to_string(selection_.size()) + (files ? ", " + size_text(total) : std::string());
+    }
+    if (!cut_.empty()) sel_text += (sel_text.empty() ? "" : "  ·  ") + std::string(copying_ ? "скопировано: " : "вырезано: ") + std::to_string(cut_.size());
+    set(m_sel_text_, sel_text, "as_sel_text");
+
     std::vector<Crumb> crumbs{{"Ресурсы", ""}};
-    if (!folder_.empty()) {
+    if (collection) {
+        crumbs.push_back({collection, "?"});
+    } else if (!folder_.empty()) {
         usize at = 0;
         while (at != std::string::npos) {
             const usize slash = folder_.find('/', at);
@@ -1093,7 +1314,7 @@ void AssetLibrary::sync_model() {
             at = slash == std::string::npos ? slash : slash + 1;
         }
     }
-    if (crumbs.size() != m_crumbs_.size() || crumbs.back().path != m_crumbs_.back().path) {
+    if (crumbs.size() != m_crumbs_.size() || crumbs.back().path != m_crumbs_.back().path || crumbs.back().name != m_crumbs_.back().name) {
         m_crumbs_ = std::move(crumbs);
         model_.DirtyVariable("as_crumbs");
     }
@@ -1116,23 +1337,27 @@ void AssetLibrary::sync_preview() {
     synced_rows_ = rows_version_;
     preview_version_ = 0;
     set(m_sel_count_, static_cast<int>(selection_.size()), "as_sel_count");
-    Rml::String name, ext, kind, size, dims, path, tags, preview, icon, extra;
+    Rml::String name, ext, kind, size, dims, path, tags, preview, icon, extra, date, tint;
     bool image = false, audio = false, dir = false, editable = false, wav = false;
     if (selection_.size() == 1) {
         const std::string& rel = selection_[0];
         path = rel;
-        if (std::binary_search(dirs_.begin(), dirs_.end(), rel, path_less)) {
+        date = date_text(time_of(rel));
+        if (is_dir(rel)) {
             dir = true;
             name = name_of(rel);
-            kind = "Папка";
-            icon = "folder";
+            kind = types_.folder().name;
+            icon = types_.folder().icon;
+            tint = "ft-" + types_.folder().id;
             auto it = folder_counts_.find(rel);
             size = files_text(it == folder_counts_.end() ? 0 : it->second);
         } else if (const assets::AssetRecord* rec = record(rel)) {
             ext = extension_of(rel);
             name = name_of(rel).substr(0, name_of(rel).size() - ext.size());
-            kind = kind_name(rec->type, ext);
-            icon = kind_icon(rec->type, ext);
+            const FileType& type = types_.of(ext);
+            kind = types_.type_name(type, ext);
+            icon = type.icon;
+            tint = "ft-" + type.id;
             size = size_text(rec->size);
             tags = rec->tags;
             if (rec->type == "image") {
@@ -1171,6 +1396,17 @@ void AssetLibrary::sync_preview() {
         name = "Выбрано: " + std::to_string(selection_.size());
         size = size_text(total);
         icon = "select_all";
+    } else {
+        // Nothing selected: the open place itself, as the explorer does.
+        name = m_where_;
+        icon = filter_.empty() && search_.empty() ? types_.folder().icon : m_place_icon_;
+        tint = filter_ == "image" ? "ft-image" : filter_ == "audio" ? "ft-audio" : filter_ == "recent" ? "ft-recent" : "ft-" + types_.folder().id;
+        kind = filter_.empty() && search_.empty() ? types_.folder().name : "Подборка";
+        size = items_text(static_cast<int>(rows_.size()));
+        if (filter_.empty() && search_.empty()) {
+            path = folder_;
+            date = date_text(time_of(folder_));
+        }
     }
     if (!image && !preview_name_.empty()) {
         ui_->drop_image(preview_name_);
@@ -1190,6 +1426,8 @@ void AssetLibrary::sync_preview() {
     set(m_sel_preview_, preview, "as_sel_preview");
     set(m_sel_icon_, icon, "as_sel_icon");
     set(m_sel_extra_, extra, "as_sel_extra");
+    set(m_sel_date_, date, "as_sel_date");
+    set(m_sel_tint_, tint, "as_sel_tint");
     set(m_sel_image_, image, "as_sel_image");
     set(m_sel_audio_, audio, "as_sel_audio");
     set(m_sel_wav_, wav, "as_sel_wav");
@@ -1210,7 +1448,17 @@ bool AssetLibrary::handle_event(const SDL_Event& e, f32 density, bool ui_used, R
         dropped_.clear();
         return true;
     case SDL_EVENT_MOUSE_MOTION: return dock_.mouse_move(e.motion.x * density, e.motion.y * density);
-    case SDL_EVENT_MOUSE_BUTTON_DOWN: return dock_.busy();
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        // The mouse's side buttons go back and forward, as in the explorer.
+        if (e.button.button == SDL_BUTTON_X1) {
+            back();
+            return true;
+        }
+        if (e.button.button == SDL_BUTTON_X2) {
+            forward();
+            return true;
+        }
+        return dock_.busy();
     case SDL_EVENT_MOUSE_BUTTON_UP: return dock_.mouse_up();
     default: break;
     }
@@ -1220,7 +1468,19 @@ bool AssetLibrary::handle_event(const SDL_Event& e, f32 density, bool ui_used, R
 
 bool AssetLibrary::handle_key(const SDL_KeyboardEvent& k) {
     const bool ctrl = (k.mod & SDL_KMOD_CTRL) != 0;
+    const bool alt = (k.mod & SDL_KMOD_ALT) != 0;
+    const bool shift = (k.mod & SDL_KMOD_SHIFT) != 0;
+    if (alt && k.key == SDLK_LEFT) { back(); return true; }
+    if (alt && k.key == SDLK_RIGHT) { forward(); return true; }
+    if (alt && k.key == SDLK_UP) { up(); return true; }
+    if (alt) return false;
+    if (ctrl && shift && k.key == SDLK_N) {
+        new_folder();
+        rename_wanted_ = !config_.offscreen;
+        return true;
+    }
     if (ctrl && k.key == SDLK_X) { cut(); return true; }
+    if (ctrl && k.key == SDLK_C) { copy(); return true; }
     if (ctrl && k.key == SDLK_V) { paste(); return true; }
     if (ctrl && k.key == SDLK_A) {
         std::vector<std::string> all;
@@ -1231,7 +1491,11 @@ bool AssetLibrary::handle_key(const SDL_KeyboardEvent& k) {
     if (ctrl) return false;
     if (k.key == SDLK_DELETE) { delete_selection(); return true; }
     if (k.key == SDLK_BACKSPACE) {
-        if (!folder_.empty()) open_folder(parent_of(folder_));
+        up();
+        return true;
+    }
+    if (k.key == SDLK_F2) {
+        rename_wanted_ = true; // the field gets the typing on the next frame
         return true;
     }
     if (k.key == SDLK_RETURN && selection_.size() == 1 &&
@@ -1241,7 +1505,9 @@ bool AssetLibrary::handle_key(const SDL_KeyboardEvent& k) {
     }
     if (k.key == SDLK_F5) { refresh(); return true; }
     if (k.key == SDLK_ESCAPE) {
-        if (!cut_.empty()) {
+        if (!menu_.empty()) {
+            menu_.clear();
+        } else if (!cut_.empty()) {
             cut_.clear();
             ++list_version_;
         } else {
