@@ -21,6 +21,17 @@ std::string str(yyjson_val* obj, const char* key, std::string_view fallback = {}
     return s ? std::string(s, yyjson_get_len(v)) : std::string(fallback);
 }
 
+std::vector<std::string> strs(yyjson_val* obj, const char* key) {
+    std::vector<std::string> out;
+    yyjson_val* list = yyjson_obj_get(obj, key);
+    if (const char* s = yyjson_get_str(list)) out.emplace_back(s, yyjson_get_len(list));
+    usize i, n;
+    yyjson_val* v;
+    if (yyjson_is_arr(list))
+        yyjson_arr_foreach(list, i, n, v) if (const char* s = yyjson_get_str(v)) out.emplace_back(s, yyjson_get_len(v));
+    return out;
+}
+
 bool flag(yyjson_val* obj, const char* key) {
     yyjson_val* v = yyjson_obj_get(obj, key);
     return yyjson_is_bool(v) && yyjson_get_bool(v);
@@ -86,6 +97,9 @@ bool Verbs::parse(std::string_view json, std::string* error) {
         d.about = str(v, "about");
         d.a_is = str(v, "a");
         d.b_is = str(v, "b");
+        d.a_has = strs(v, "a_has");
+        d.b_has = strs(v, "b_has");
+        d.step = str(v, "step");
         if (d.id.empty() || d.name.empty() || d.action.empty()) continue;
         verbs.push_back(std::move(d));
     }
@@ -140,9 +154,9 @@ bool Logic::parse(std::string_view json, std::string* error) {
     for (const Link& l : out.links) out.next_id = std::max(out.next_id, l.id + 1);
     for (Link& l : out.links)
         if (l.id == 0) l.id = out.next_id++;
-    yyjson_val* board = yyjson_obj_get(root, "board");
-    if (yyjson_is_obj(board)) {
-        yyjson_obj_iter it = yyjson_obj_iter_with(board);
+    yyjson_val* spots = yyjson_obj_get(root, "board");
+    if (yyjson_is_obj(spots)) {
+        yyjson_obj_iter it = yyjson_obj_iter_with(spots);
         while (yyjson_val* key = yyjson_obj_iter_next(&it)) {
             yyjson_val* at = yyjson_obj_iter_get_val(key);
             if (!yyjson_is_arr(at) || yyjson_arr_size(at) < 2) continue;

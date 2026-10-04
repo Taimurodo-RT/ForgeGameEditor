@@ -26,7 +26,8 @@ const char* kVerbs = R"({
   "verbs": [
     { "id": "open", "name": "открывает", "plural": "открывают", "icon": "key", "case": "acc",
       "when": "touch", "touch": "b", "needs": "a", "do": "open", "target": "b", "sound": "open",
-      "a": "thing", "b": "thing", "fail": "Нужен предмет «{a}»",
+      "a": "thing", "b": "thing", "fail": "Нужен предмет «{a}»", "a_has": "pickup", "b_has": ["door"],
+      "step": "Открыть {b:acc}",
       "about": "Когда герой с {a:ins} подходит к {b:dat}, {b} открывается." },
     { "id": "hurt", "name": "ранит", "plural": "ранят", "case": "acc", "when": "touch", "touch": "a",
       "do": "hurt", "target": "b", "a": "thing", "b": "hero", "about": "Герой теряет сердце." },
@@ -91,6 +92,54 @@ TEST_CASE("names take their forms in phrases") {
     l.once = true;
     CHECK(meaning(l, *verbs.find("open"), *w.find("key"), *w.find("door")) ==
           "Когда герой с Ключом подходит к Двери, Дверь открывается. Уточнено: только один раз, иначе подсказка «Нужен предмет «Ключ»».");
+}
+
+TEST_CASE("verbs are offered for things that have their blocks") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kVerbs));
+    Words w;
+    Thing key = *w.find("key"), door = *w.find("door");
+    const VerbDef& open = *verbs.find("open");
+    CHECK(open.a_has == std::vector<std::string>{"pickup"});
+    CHECK_FALSE(suits(open, key, door)); // no blocks yet
+    key.blocks = {"body", "pickup"};
+    door.blocks = {"door"};
+    CHECK(suits(open, key, door));
+    CHECK_FALSE(suits(open, door, key));
+    CHECK_FALSE(suits(open, *w.find("hero"), door));
+    const VerbDef& follow = *verbs.find("follow");
+    CHECK(suits(follow, *w.find("fox"), *w.find("hero")));
+    CHECK_FALSE(suits(follow, *w.find("hero"), *w.find("fox")));
+}
+
+TEST_CASE("a link reads as steps") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kVerbs));
+    Words w;
+    Link l{1, "key", "open", "door"};
+    l.sound = true;
+    l.hint = true;
+    std::vector<Step> st = steps(l, *verbs.find("open"), *w.find("key"), *w.find("door"));
+    REQUIRE(st.size() == 5);
+    CHECK(st[0].part == "when");
+    CHECK(st[0].text == "Когда герой касается Двери");
+    CHECK(st[1].text == "Если у героя есть «Ключ»");
+    CHECK(st[1].refine.empty());
+    CHECK(st[2].text == "Открыть Дверь");
+    CHECK(st[3].refine == "sound");
+    CHECK(st[4].part == "else");
+    CHECK(st[4].refine == "hint");
+    l.night = true;
+    l.once = true;
+    st = steps(l, *verbs.find("open"), *w.find("key"), *w.find("door"));
+    CHECK(st.size() == 7);
+    CHECK(st[1].refine == "night");
+    // What «Добавить шаг» offers: the refinements not yet on.
+    l = Link{2, "spikes", "hurt", "hero"};
+    const std::vector<Refine> r = refinements(l, *verbs.find("hurt"), *w.find("spikes"), *w.find("hero"));
+    REQUIRE(r.size() == 2); // no sound, no hint: nothing is needed
+    CHECK(r[0].id == "night");
+    CHECK(steps(l, *verbs.find("hurt"), *w.find("spikes"), *w.find("hero"))[0].text == "Когда герой касается Шипов");
 }
 
 TEST_CASE("links and verbs read and write json") {
