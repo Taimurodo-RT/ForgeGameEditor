@@ -20,7 +20,8 @@ add_executable(forge_tests
   test_ui.cpp
   test_editor.cpp
   test_game.cpp
-  test_level.cpp)
-target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render forge::ui forge::editor forge::game forge::level doctest::doctest)
+  test_level.cpp
+  test_objects.cpp)
+target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render forge::ui forge::editor forge::game forge::level forge::objects doctest::doctest)
 target_compile_definitions(forge_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME forge_tests COMMAND forge_tests)

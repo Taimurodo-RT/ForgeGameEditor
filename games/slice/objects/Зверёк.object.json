@@ -1,0 +1,7 @@
+{
+  "id": "critter",
+  "name": "Зверёк",
+  "kind": "critter",
+  "about": "бегает по поверхности",
+  "values": {"speed": 2}
+}

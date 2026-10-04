@@ -1,0 +1,5 @@
+add_library(forge_objects STATIC src/library.cpp)
+add_library(forge::objects ALIAS forge_objects)
+target_include_directories(forge_objects PUBLIC include)
+target_link_libraries(forge_objects PUBLIC forge::core forge::data forge::scene PRIVATE yyjson)
+forge_target_defaults(forge_objects)

@@ -259,6 +259,9 @@ public:
     PlaySession play;
     HierarchySource hierarchy{*this};
     std::filesystem::path scene_path = "scene.forge.json";
+    // The game's object kinds and where its templates are kept.
+    std::filesystem::path game_dir = utf8_path(SLICE_DATA_DIR);
+    std::filesystem::path objects_folder = game_dir / "objects";
     slice::SliceLevel level_module;
     LevelEditor level{level_module};
     AssetLibrary assets;
@@ -296,6 +299,8 @@ public:
         config.theme = theme;
         config.hot_reload = window != nullptr;
         if (!ui_.init(device, window, config)) return false;
+        if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
+            FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         if (!level.init(ui_, device, format, level_config)) return false;
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
@@ -1664,9 +1669,10 @@ private:
             break;
         }
         case 14: {
-            check(shown("obj-" + std::to_string(kCoins)), "the palette shows the objects");
-            if (Rml::Element* e = ed_.find_element(("obj-" + std::to_string(kCoins)).c_str())) e->Click();
-            check(lv().armed_object() == kCoins, "a click on the palette takes coins");
+            const i32 coins = coins_index();
+            check(coins >= 0 && shown("obj-" + std::to_string(coins)), "the palette shows the templates");
+            if (Rml::Element* e = ed_.find_element(("obj-" + std::to_string(coins)).c_str())) e->Click();
+            check(lv().armed_object() == coins, "a click on the palette takes coins");
             entries_ = lv().history().size();
             click_cell(cx_ + 10, cy_);
             check(lv().history().size() == entries_ + 1 && lv().history().undo_label() == "Поставить: Монеты",
@@ -1674,18 +1680,21 @@ private:
             check(lv().selection().size() == 1, "the placed object is selected");
             object_ = lv().selection().empty() ? 0 : lv().selection()[0];
             const flecs::entity e = placed();
-            check(e.is_valid() && e.has<slice::Item>() && e.get<slice::Item>().kind == u8(slice::ItemKind::Coins),
-                  "the coins are in the world");
+            check(e.is_valid() && e.has<slice::Item>() && e.get<slice::Item>().kind == u8(slice::ItemKind::Coins) &&
+                      e.get<slice::Item>().count == 10 && e.has<objects::ObjectRef>(),
+                  "the coins are in the world, a copy of their template");
             break;
         }
         case 15:
-            check(shown("obj-delete") && shown("lv-num-2"), "the properties show the coins and their fields");
-            lv().set_field(2, "7", false);
+            check(shown("obj-delete") && shown("lv-num-3"), "the properties show the coins and their fields");
+            check(!shown("lv-reset-3"), "nothing of their own yet");
+            lv().set_field(3, "7", false);
             check(count() == 7 && lv().history().undo_label() == "«Монеты»: Сколько", "«Сколько» is set to 7");
+            check(own("count"), "seven is this copy's own value");
             key(SDLK_Z, SDL_KMOD_CTRL);
-            check(count() == 10, "Ctrl+Z gives the old count back");
+            check(count() == 10 && !own("count"), "Ctrl+Z gives the old count back, the template's again");
             key(SDLK_Y, SDL_KMOD_CTRL);
-            check(count() == 7, "Ctrl+Y sets it again");
+            check(count() == 7 && own("count"), "Ctrl+Y sets it again");
             break;
         case 16: {
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
@@ -1737,7 +1746,13 @@ private:
         }
         return true;
     }
-    static constexpr i32 kCoins = 4;
+    // The palette's coins (the game's "coins" template).
+    i32 coins_index() const {
+        const auto& defs = ed_.level_module.objects();
+        for (usize i = 0; i < defs.size(); ++i)
+            if (defs[i].id == "coins") return static_cast<i32>(i);
+        return -1;
+    }
 
     // --- the resources tab ---
     AssetLibrary& as() { return ed_.assets; }
@@ -2048,6 +2063,10 @@ private:
         return true;
     }
     flecs::entity placed() { return lv().level().find(object_); }
+    bool own(const char* prop) {
+        const flecs::entity e = placed();
+        return e.is_valid() && e.has<objects::ObjectRef>() && e.get<objects::ObjectRef>().overrides_prop(prop);
+    }
     u32 count() {
         const flecs::entity e = placed();
         return e.is_valid() ? e.get<slice::Item>().count : 0;
@@ -2136,6 +2155,13 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         Editor editor;
         // Never touch a scene file from an offscreen run.
         editor.scene_path = options.scene.empty() ? std::filesystem::path("__offscreen_no_scene__.json") : options.scene;
+        // Nor the game's templates: a copy of them.
+        editor.objects_folder = std::filesystem::temp_directory_path() / "forge_editor_objects";
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(editor.objects_folder, ec);
+            std::filesystem::copy(editor.game_dir / "objects", editor.objects_folder, std::filesystem::copy_options::recursive, ec);
+        }
         // Nor the game's level, unless one is given.
         LevelConfig lc;
         lc.offscreen = true;

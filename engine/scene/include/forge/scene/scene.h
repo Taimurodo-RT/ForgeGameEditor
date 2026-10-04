@@ -95,6 +95,9 @@ public:
     flecs::entity spawn(const Position& at);
 
     void set_populator(PopulateFn fn) { populate_ = std::move(fn); }
+    // Called for every entity recreated from bytes (a chunk coming back,
+    // unpack()), after all its components are set.
+    void set_unpacked(std::function<void(flecs::entity)> fn) { unpacked_fn_ = std::move(fn); }
 
     // One entity's saved components as bytes, and back: a new entity made
     // from them (empty when its chunk is not loaded or the bytes are not an
@@ -155,6 +158,7 @@ private:
     flecs::query<Position> positions_;
     std::vector<SavedComponent> saved_;
     PopulateFn populate_;
+    std::function<void(flecs::entity)> unpacked_fn_;
 
     // Spatial index, rebuilt by update().
     std::vector<Item> items_;

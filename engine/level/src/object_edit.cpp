@@ -138,4 +138,51 @@ bool SetObjectComponent::try_merge(const editor::Command& next) {
     return true;
 }
 
+SetObjectProp::SetObjectProp(Level& level, const objects::Library& library, u64 id, const objects::PropDef& prop,
+                             std::string value, std::string label)
+    : level_(level), library_(library), id_(id), prop_(prop), value_(std::move(value)), label_(std::move(label)) {}
+
+flecs::entity SetObjectProp::find() {
+    if (done_) need(level_, x_, y_);
+    flecs::entity e = level_.find(id_);
+    if (const scene::Position* p = e.is_valid() ? e.try_get<scene::Position>() : nullptr) {
+        x_ = p->tile_x();
+        y_ = p->tile_y();
+    }
+    return e;
+}
+
+void SetObjectProp::apply(editor::Document&) {
+    if (done_) {
+        set(after_part_, after_ref_);
+        return;
+    }
+    flecs::entity e = find();
+    if (!e.is_valid()) return;
+    const reflect::TypeInfo* ref_type = reflect::type_of<objects::ObjectRef>();
+    before_part_ = component_json(level_, e, prop_.type);
+    before_ref_ = component_json(level_, e, ref_type);
+    library_.set_value(level_.scene(), e, prop_, value_);
+    after_part_ = component_json(level_, e, prop_.type);
+    after_ref_ = component_json(level_, e, ref_type);
+    done_ = true;
+    level_.touch_objects();
+}
+
+void SetObjectProp::set(const std::string& part, const std::string& ref) {
+    flecs::entity e = find();
+    if (!e.is_valid()) return;
+    if (!part.empty()) set_component_json(level_, e, prop_.type, part);
+    if (!ref.empty()) set_component_json(level_, e, reflect::type_of<objects::ObjectRef>(), ref);
+    level_.touch_objects();
+}
+
+bool SetObjectProp::try_merge(const editor::Command& next) {
+    const auto* n = static_cast<const SetObjectProp*>(&next);
+    if (!n || n->id_ != id_ || &n->prop_ != &prop_) return false;
+    after_part_ = n->after_part_;
+    after_ref_ = n->after_ref_;
+    return true;
+}
+
 } // namespace forge::level

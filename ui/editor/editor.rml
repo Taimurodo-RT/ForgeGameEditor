@@ -264,12 +264,13 @@
                                 <img data-attr-src="lv_sel_icon"/>
                                 <div class="column grow">
                                     <span>{{ lv_sel_name }}</span>
-                                    <span class="muted body-small">{{ lv_sel_hint }}</span>
+                                    <span class="muted body-small" data-if="lv_sel_kind != ''">{{ lv_sel_kind }}<span data-if="lv_sel_hint != ''"> · {{ lv_sel_hint }}</span></span>
+                                    <span class="muted body-small" data-if="lv_sel_kind == ''">{{ lv_sel_hint }}</span>
                                     <span class="muted body-small" data-if="lv_sel_count > 1">Выбрано: {{ lv_sel_count }}; показан первый.</span>
                                 </div>
                                 <div id="obj-delete" class="icon-button small" data-event-click="lv_delete"><icon name="delete" class="s"/></div>
                             </div>
-                            <div data-for="f : lv_fields" class="prop row gap-2">
+                            <div data-for="f : lv_fields"><div data-if="!f.advanced" class="prop row gap-2" data-class-own="f.own" data-attr-title="f.hint">
                                 <span class="prop-label">{{ f.label }}</span>
                                 <div class="prop-value row gap-2">
                                     <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'lv-field-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
@@ -282,8 +283,29 @@
                                         <div class="icon-button small" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
                                     </div>
                                     <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                                    <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
                                 </div>
+                            </div></div>
+                            <div id="lv-details" class="details-toggle row gap-1" data-event-click="lv_details">
+                                <icon name="chevron_right" data-class-open="lv_details"/>
+                                <span>Подробно</span>
                             </div>
+                            <div data-for="f : lv_fields"><div data-if="f.advanced && lv_details" class="prop row gap-2" data-class-own="f.own" data-attr-title="f.hint">
+                                <span class="prop-label">{{ f.label }}</span>
+                                <div class="prop-value row gap-2">
+                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'lv-field-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="lv_field_slide(it_index, ev.value)"/>
+                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'lv-num-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="lv_field_toggle(it_index)"><div class="thumb"/></div>
+                                    <div data-if="f.kind == 'enum'" class="cycler grow">
+                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                        <span class="value">{{ f.value }}</span>
+                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                    </div>
+                                    <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                                    <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
+                                </div>
+                            </div></div>
                         </div>
                     </div>
                     <div class="section-title">Вид</div>

@@ -1,0 +1,7 @@
+{
+  "id": "torches",
+  "name": "Факелы",
+  "kind": "pickup",
+  "about": "можно поставить на стену",
+  "values": {"what": "torch", "count": 3}
+}

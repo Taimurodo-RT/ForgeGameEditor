@@ -1,0 +1,7 @@
+{
+  "id": "smith",
+  "name": "Кузнец",
+  "kind": "person",
+  "about": "ждёт десять меди",
+  "values": {"who": "smith", "facing": "right"}
+}

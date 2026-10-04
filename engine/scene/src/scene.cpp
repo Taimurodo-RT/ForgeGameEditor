@@ -232,6 +232,7 @@ flecs::entity Scene::unpack(std::span<const u8> bytes) {
     }
     entity.set<Position>(pos);
     index_dirty_ = true;
+    if (unpacked_fn_) unpacked_fn_(entity);
     return entity;
 }
 
@@ -248,7 +249,10 @@ void Scene::unpack_chunk(ChunkCoord coord, const std::vector<u8>& bytes, bool& v
     visited = visited_flag != 0;
     u32 skipped = 0;
     for (u32 n = 0; n < count && p < end; ++n)
-        if (unpack_one(p, end, skipped)) ++unpacked_;
+        if (const flecs::entity_t e = unpack_one(p, end, skipped)) {
+            ++unpacked_;
+            if (unpacked_fn_) unpacked_fn_(flecs::entity(ecs_, e));
+        }
     if (skipped) FORGE_WARN("scene: chunk %d,%d: %u components could not be read", coord.x, coord.y, skipped);
 }
 

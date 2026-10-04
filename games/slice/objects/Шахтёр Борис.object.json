@@ -1,0 +1,7 @@
+{
+  "id": "miner",
+  "name": "Шахтёр Борис",
+  "kind": "person",
+  "about": "просит найти кирку",
+  "values": {"who": "miner", "facing": "left"}
+}

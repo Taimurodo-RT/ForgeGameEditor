@@ -1,0 +1,7 @@
+{
+  "id": "copper",
+  "name": "Медь",
+  "kind": "pickup",
+  "about": "руда для кузнеца",
+  "values": {"what": "copper", "count": 1}
+}

@@ -1,0 +1,7 @@
+{
+  "id": "wood",
+  "name": "Дерево",
+  "kind": "pickup",
+  "about": "для построек",
+  "values": {"what": "wood", "count": 1}
+}

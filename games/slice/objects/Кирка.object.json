@@ -1,0 +1,7 @@
+{
+  "id": "pickaxe",
+  "name": "Кирка",
+  "kind": "pickup",
+  "about": "та самая, Бориса",
+  "values": {"what": "pickaxe", "count": 1}
+}
