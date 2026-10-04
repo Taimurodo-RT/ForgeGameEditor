@@ -10,6 +10,13 @@
 // menu). Its properties are set in the object's editor, which takes the
 // middle and right of the tab until «К библиотеке».
 //
+// «Общие» shows the shared library: objects kept outside any game (a folder
+// of this computer) for every game to take. Objects go between it and the
+// game as copies: «Сделать общим» puts the game's object there (or brings
+// the shared one up to date), «Взять в игру» copies a shared one into the
+// game (or brings the game's one up to date); the game always has its own
+// copy, so it runs without the shared library.
+//
 // Each change writes the template's file at once and is one step of the
 // tab's history (Ctrl+Z). Copies on the level follow the template the next
 // time the level tab shows (or their chunk loads), and in the game.
@@ -34,6 +41,8 @@ namespace forge::editor_app {
 class ObjectLibrary {
 public:
     explicit ObjectLibrary(level::LevelModule& module);
+    // Where the shared library is; set before init (empty: none).
+    void set_shared_folder(std::filesystem::path folder) { shared_folder_ = std::move(folder); }
 
     bool init(ui::Ui& ui);
     void bind(Rml::DataModelConstructor& model);
@@ -53,6 +62,9 @@ public:
 
     // --- actions (buttons, keys, the menu, the self-test) ---
     objects::Library& library() { return *module_.library(); }
+    objects::Library& shared() { return shared_; }
+    // «Общие» is shown: the cards are the shared library's.
+    bool showing_shared() const { return place_ == "s:"; }
     const objects::Template* selected() const;
     void select(u64 key);
     // Which templates the cards show: "" all, "g:Платформер" a genre ("g:"
@@ -69,6 +81,11 @@ public:
     bool renaming() const { return renaming_; }
     bool set_genre(const std::string& genre);
     bool place_selected();
+    // The selected game object into the shared library (replacing an older
+    // copy of it there).
+    bool share_selected();
+    // The selected shared object into the game (replacing an older copy).
+    bool take_selected();
     // The object's editor: its properties in plain words.
     void open_editor();
     void close_editor();
@@ -110,6 +127,7 @@ private:
     };
     struct Card {
         Rml::String name, kind, genre, icon, about;
+        Rml::String badge; // "общий", "в игре", "отличается"
         bool selected = false, renaming = false;
     };
     struct PresetRow {
@@ -143,8 +161,14 @@ private:
 
     void rebuild();
     void rebuild_side();
-    void icon_of(const objects::Template& t);
     void change(objects::Template after, std::string label, std::string merge = {});
+    void change(objects::Library& lib, objects::Template after, std::string label, std::string merge = {});
+    objects::Library& shown() { return showing_shared() ? shared_ : library(); }
+    const objects::Library& shown() const { return showing_shared() ? shared_ : *module_.library(); }
+    // How the template stands with the other library: "" not there,
+    // "same", "differs".
+    std::string twin(const objects::Template& t) const;
+    std::string icon_path(const objects::Template& t, bool from_shared);
     void set_menu(const std::string& menu);
     void rebuild_pictures();
     template <typename T>
@@ -161,7 +185,11 @@ private:
     editor::UndoStack history_{doc_};
     bool ui_updating_ = false;
 
+    objects::Library shared_;
+    std::filesystem::path shared_folder_;
+    bool shared_ready_ = false;
     u64 built_ = 0;    // the library version the lists show
+    u64 shared_built_ = 0;
     u64 selected_ = 0; // template key
     u64 editing_ = 0;  // the template open in the editor
     bool renaming_ = false, rename_focus_ = false;
@@ -169,13 +197,14 @@ private:
     std::vector<u64> card_keys_;
     std::vector<const objects::PropDef*> prop_refs_;
     std::unordered_map<u64, u32> icon_revs_; // key -> look the icon was drawn for
+    std::unordered_map<u64, u32> shared_icon_revs_;
     std::vector<std::filesystem::path> pic_files_; // what the chooser shows
     std::unordered_map<std::string, std::string> pic_icons_; // file -> ui image name
     std::string pic_search_;
 
     // Model mirrors
     std::vector<NavRow> m_genres_, m_kinds_;
-    NavRow m_all_;
+    NavRow m_all_, m_shared_;
     std::vector<Card> m_cards_;
     std::vector<CreateGroup> m_create_;
     std::vector<GenreItem> m_genre_items_;
@@ -186,7 +215,8 @@ private:
     std::vector<PicView> m_pics_;
     Rml::String m_pics_search_, m_pics_note_, m_sel_picture_;
     bool m_pics_open_ = false;
-    bool m_details_ = false, m_has_sel_ = false, m_editing_ = false;
+    bool m_details_ = false, m_has_sel_ = false, m_editing_ = false, m_in_shared_ = false;
+    Rml::String m_sel_twin_, m_shared_note_;
     Rml::String m_sel_name_, m_sel_kind_, m_sel_kind_about_, m_sel_about_, m_sel_icon_, m_sel_file_, m_sel_kind_icon_,
         m_sel_genre_;
     int m_total_ = 0;

@@ -342,7 +342,7 @@ void SliceLevel::refresh_pictures() const {
 void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<u8>& rgba) const {
     rgba.assign(static_cast<usize>(size) * size * 4, 0);
     refresh_pictures();
-    const objects::Template* t = library_.find(def.key);
+    const objects::Template* t = def.tmpl ? def.tmpl : library_.find(def.key);
     const objects::KindDef* k = t ? library_.kind_of(*t) : nullptr;
     if (!k) return;
     // The picture the game draws for such an object: by its blocks.
@@ -359,7 +359,7 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
         for (u8 i = 0; i < 5; ++i)
             if (what == ids[i]) frame = item_frame(static_cast<ItemKind>(i));
     }
-    if (const Pictures::Picture* pic = pictures_.of(t->key)) frame = pic->frame;
+    if (const Pictures::Picture* pic = def.tmpl ? nullptr : pictures_.of(t->key)) frame = pic->frame;
     if (frame >= sheet_.frames.size()) return;
     const render::SpriteRect r = sheet_.frames[frame];
     // Fit the frame, keeping its shape (people are twice as tall).

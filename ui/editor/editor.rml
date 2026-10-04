@@ -357,11 +357,13 @@
                 </div>
             </div>
             <div class="divider vertical"/>
-            <div id="ol-open" class="command strong" title="Открыть редактор объекта (Enter, двойной щелчок)" data-class-disabled="!ol_has_sel" data-event-click="ol_open"><icon name="edit_square"/><span>Открыть редактор</span></div>
+            <div id="ol-open" class="command strong" title="Открыть редактор объекта (Enter, двойной щелчок)" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel" data-event-click="ol_open"><icon name="edit_square"/><span>Открыть редактор</span></div>
+            <div id="ol-take" class="command strong" title="Скопировать общий объект в эту игру" data-if="ol_in_shared" data-class-disabled="!ol_has_sel || ol_sel_twin == 'same'" data-event-click="ol_take"><icon name="download"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить из общих' : 'Взять в игру' }}</span></div>
             <div id="ol-place" class="command strong" title="Поставить на уровень" data-class-disabled="!ol_has_sel" data-event-click="ol_place"><icon name="add_location_alt"/><span>Поставить на уровень</span></div>
-            <div id="ol-duplicate" class="command" title="Копия (Ctrl+D)" data-class-disabled="!ol_has_sel" data-event-click="ol_duplicate"><icon name="content_copy"/><span>Копия</span></div>
-            <div id="ol-rename" class="command" title="Переименовать (F2)" data-class-disabled="!ol_has_sel" data-event-click="ol_rename_start"><icon name="drive_file_rename_outline"/><span>Переименовать</span></div>
-            <div id="ol-delete" class="command" title="Удалить (Delete)" data-class-disabled="!ol_has_sel" data-event-click="ol_delete"><icon name="delete"/><span>Удалить</span></div>
+            <div id="ol-share" class="command" title="Положить копию объекта в общие, чтобы взять его в другую игру" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel || ol_sel_twin == 'same'" data-event-click="ol_share"><icon name="share"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить в общих' : 'Сделать общим' }}</span></div>
+            <div id="ol-duplicate" class="command" title="Копия (Ctrl+D)" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel" data-event-click="ol_duplicate"><icon name="content_copy"/><span>Копия</span></div>
+            <div id="ol-rename" class="command" title="Переименовать (F2)" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel" data-event-click="ol_rename_start"><icon name="drive_file_rename_outline"/><span>Переименовать</span></div>
+            <div id="ol-delete" class="command" data-attr-title="ol_in_shared ? 'Убрать из общих (в играх копии останутся)' : 'Удалить (Delete)'" data-class-disabled="!ol_has_sel" data-event-click="ol_delete"><icon name="delete"/><span>{{ ol_in_shared ? 'Убрать из общих' : 'Удалить' }}</span></div>
             <div class="grow"/>
             <div class="search-box row">
                 <input id="ol-search" type="text" class="grow" placeholder="Поиск объектов" data-attr-value="ol_search" data-event-change="ol_search"/>
@@ -382,15 +384,20 @@
                 <div data-for="r : ol_kinds" class="ol-nav-row row" data-attr-id="'ol-kind-' + r.place" data-class-selected="r.selected" data-attr-title="r.about" data-event-click="ol_show(r.place)">
                     <icon data-attr-name="r.icon"/><span class="grow name">{{ r.name }}</span><span class="count">{{ r.count }}</span>
                 </div>
+                <div class="ol-nav-title">Для всех игр</div>
+                <div id="ol-place-shared" class="ol-nav-row row" data-class-selected="ol_shared.selected" data-attr-title="ol_shared.about" data-event-click="ol_show('s:')">
+                    <icon data-attr-name="ol_shared.icon"/><span class="grow name">{{ ol_shared.name }}</span><span class="count">{{ ol_shared.count }}</span>
+                </div>
                 <div class="grow"/>
                 <div class="ol-help muted body-small">Жанры и виды только помогают искать: любой объект можно поставить в любую игру. Копии объекта на уровне меняются вместе с ним.</div>
             </div>
 
             <!-- The library: cards, and what the selected one is -->
             <div id="ol-grid-wrap" class="ol-grid-wrap grow" data-if="!ol_editing" data-event-mousedown="ol_space_down">
+                <div id="ol-shared-note" class="ol-shared-note row" data-if="ol_in_shared"><icon class="s" name="share"/><span class="body-small">{{ ol_shared_note }}</span></div>
                 <div id="ol-grid" class="ol-grid">
                     <div data-for="c : ol_cards" class="ol-card column" data-attr-id="'ol-card-' + it_index" data-class-selected="c.selected" data-attr-title="c.about" data-event-mousedown="ol_card_down(it_index)" data-event-dblclick="ol_card_open(it_index)">
-                        <div class="ol-thumb"><img data-attr-src="c.icon"/></div>
+                        <div class="ol-thumb"><img data-attr-src="c.icon"/><span class="ol-badge" data-if="c.badge != ''">{{ c.badge }}</span></div>
                         <span class="name" data-if="!c.renaming">{{ c.name }}</span>
                         <input id="ol-rename" type="text" class="small ol-rename" data-if="c.renaming" data-attr-value="c.name" data-event-change="ol_rename_done(ev.linebreak)" data-event-blur="ol_rename_done(true)"/>
                         <span class="kind">{{ c.kind }}</span>
@@ -398,7 +405,8 @@
                 </div>
                 <div class="ol-empty column" data-if="ol_cards.size == 0">
                     <icon class="xl" name="deployed_code"/>
-                    <span data-if="ol_total == 0">Пока ни одного объекта. Нажми «Создать» и выбери заготовку.</span>
+                    <span data-if="ol_total == 0 && ol_in_shared">Общих объектов пока нет. Выберите объект игры и нажмите «Сделать общим».</span>
+                    <span data-if="ol_total == 0 && !ol_in_shared">Пока ни одного объекта. Нажми «Создать» и выбери заготовку.</span>
                     <span data-if="ol_total > 0">Здесь пока пусто.</span>
                 </div>
             </div>
@@ -413,10 +421,13 @@
                         <div class="info row"><span class="key">Жанр</span><span class="value">{{ ol_sel_genre }}</span></div>
                         <div class="info row" data-if="ol_sel_about != ''"><span class="key">Заметка</span><span class="value">{{ ol_sel_about }}</span></div>
                         <div class="info row"><span class="key">Файл</span><span class="value path">{{ ol_sel_file }}</span></div>
+                        <div id="ol-twin" class="info row"><span class="key">{{ ol_in_shared ? 'В этой игре' : 'Общий' }}</span><span class="value">{{ ol_sel_twin == 'same' ? 'да, такой же' : ol_sel_twin == 'differs' ? 'да, но отличается' : 'нет' }}</span></div>
                     </div>
                     <div class="links column">
-                        <div id="ol-open-link" class="link row" data-event-click="ol_open"><icon class="s" name="edit_square"/><span>Открыть редактор</span></div>
+                        <div id="ol-open-link" class="link row" data-if="!ol_in_shared" data-event-click="ol_open"><icon class="s" name="edit_square"/><span>Открыть редактор</span></div>
+                        <div id="ol-take-link" class="link row" data-if="ol_in_shared && ol_sel_twin != 'same'" data-event-click="ol_take"><icon class="s" name="download"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить из общих' : 'Взять в игру' }}</span></div>
                         <div id="ol-place-link" class="link row" data-event-click="ol_place"><icon class="s" name="add_location_alt"/><span>Поставить на уровень</span></div>
+                        <div id="ol-share-link" class="link row" data-if="!ol_in_shared && ol_sel_twin != 'same'" data-event-click="ol_share"><icon class="s" name="share"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить в общих' : 'Сделать общим' }}</span></div>
                     </div>
                 </div>
             </div>
@@ -523,9 +534,16 @@
         <!-- The right-click menu: of a card, or of empty space -->
         <div class="as-backdrop" data-if="ol_menu != ''" data-event-mousedown="ol_menu_close"/>
         <div id="ol-ctx" class="as-menu menu-list ol-ctx" data-if="ol_menu == 'card' || ol_menu == 'empty'" data-style-left="ol_menu_x + 'px'" data-style-top="ol_menu_y + 'px'">
-            <div data-if="ol_menu == 'card'">
+            <div data-if="ol_menu == 'card' && ol_in_shared">
+                <div id="ctx-ol-take" class="menu-item strong" data-class-disabled="ol_sel_twin == 'same'" data-event-click="ol_take"><icon name="download"/><span class="label">{{ ol_sel_twin == 'differs' ? 'Обновить из общих' : ol_sel_twin == 'same' ? 'Уже в игре' : 'Взять в игру' }}</span></div>
+                <div id="ctx-ol-place-shared" class="menu-item" data-event-click="ol_place"><icon name="add_location_alt"/><span class="label">Поставить на уровень</span></div>
+                <div class="divider"/>
+                <div id="ctx-ol-unshare" class="menu-item" data-event-click="ol_delete"><icon name="delete"/><span class="label">Убрать из общих</span><span class="trailing">Del</span></div>
+            </div>
+            <div data-if="ol_menu == 'card' && !ol_in_shared">
                 <div id="ctx-ol-open" class="menu-item strong" data-event-click="ol_open"><icon name="edit_square"/><span class="label">Открыть редактор</span><span class="trailing">Enter</span></div>
                 <div id="ctx-ol-place" class="menu-item" data-event-click="ol_place"><icon name="add_location_alt"/><span class="label">Поставить на уровень</span></div>
+                <div id="ctx-ol-share" class="menu-item" data-class-disabled="ol_sel_twin == 'same'" data-event-click="ol_share"><icon name="share"/><span class="label">{{ ol_sel_twin == 'differs' ? 'Обновить в общих' : ol_sel_twin == 'same' ? 'Уже среди общих' : 'Сделать общим' }}</span></div>
                 <div class="divider"/>
                 <div id="ctx-ol-copy" class="menu-item" data-event-click="ol_duplicate"><icon name="content_copy"/><span class="label">Копия</span><span class="trailing">Ctrl+D</span></div>
                 <div id="ctx-ol-rename" class="menu-item" data-event-click="ol_rename_start"><icon name="drive_file_rename_outline"/><span class="label">Переименовать</span><span class="trailing">F2</span></div>
@@ -651,9 +669,9 @@
                     <div id="nav-images" class="tree-row nav-row" data-class-selected="as_filter == 'image'" data-event-click="as_filter('image')"><icon class="s ft-image" name="photo_library"/><span class="name">Все картинки</span></div>
                     <div id="nav-audio" class="tree-row nav-row" data-class-selected="as_filter == 'audio'" data-event-click="as_filter('audio')"><icon class="s ft-audio" name="library_music"/><span class="name">Все звуки</span></div>
                     <div class="divider"/>
-                    <div data-for="t : as_tree" class="tree-row folder-row" data-class-selected="t.selected &amp;&amp; as_filter == ''" data-attr-id="'folder-' + it_index"
+                    <div data-for="t : as_tree" class="tree-row folder-row" data-class-selected="t.selected && as_filter == ''" data-attr-id="'folder-' + it_index"
                          data-style-padding-left="(4 + t.depth * 14) + 'px'" data-event-click="as_go(t.path)">
-                        <div class="arrow" data-event-click="as_tree_toggle(t.path)"><icon class="s" name="chevron_right" data-if="t.kids &amp;&amp; t.depth > 0" data-class-open="t.open"/></div>
+                        <div class="arrow" data-event-click="as_tree_toggle(t.path)"><icon class="s" name="chevron_right" data-if="t.kids && t.depth > 0" data-class-open="t.open"/></div>
                         <icon class="s ft-folder" data-attr-name="t.depth == 0 ? 'inventory_2' : (t.selected ? 'folder_open' : 'folder')"/>
                         <span class="name">{{ t.name }}</span>
                     </div>
@@ -679,12 +697,12 @@
                     <div class="info row" data-if="as_sel_extra != ''"><span class="key">Звук</span><span class="value">{{ as_sel_extra }}</span></div>
                     <div class="info row" data-if="as_sel_date != ''"><span class="key">Изменён</span><span class="value">{{ as_sel_date }}</span></div>
                     <div class="info row" data-if="as_sel_path != ''"><span class="key">Где</span><span class="value path">{{ as_sel_path }}</span></div>
-                    <div class="prop row gap-2" data-if="as_sel_count == 1 &amp;&amp; !as_sel_dir">
+                    <div class="prop row gap-2" data-if="as_sel_count == 1 && !as_sel_dir">
                         <span class="key">Метки</span>
                         <input id="as-tags" type="text" class="small grow" placeholder="через пробел" data-attr-value="as_sel_tags" data-event-change="as_tags(ev.value, ev.linebreak)" data-event-blur="as_tags_commit"/>
                     </div>
 
-                    <div data-if="as_sel_count == 1 &amp;&amp; as_sel_image">
+                    <div data-if="as_sel_count == 1 && as_sel_image">
                         <div class="section-title">Правка</div>
                         <div class="row gap-1" data-if="as_sel_editable">
                             <div id="img-ccw" class="icon-button" title="Повернуть влево" data-event-click="as_image('ccw')"><icon name="rotate_left"/></div>
@@ -698,22 +716,22 @@
                         <div class="section-title">Копия в другом формате</div>
                         <div class="row gap-1">
                             <div class="button outlined small" data-if="as_sel_ext != '.png'" data-event-click="as_convert('.png')">PNG</div>
-                            <div class="button outlined small" data-if="as_sel_ext != '.jpg' &amp;&amp; as_sel_ext != '.jpeg'" data-event-click="as_convert('.jpg')">JPG</div>
+                            <div class="button outlined small" data-if="as_sel_ext != '.jpg' && as_sel_ext != '.jpeg'" data-event-click="as_convert('.jpg')">JPG</div>
                             <div class="button outlined small" data-if="as_sel_ext != '.bmp'" data-event-click="as_convert('.bmp')">BMP</div>
                             <div class="button outlined small" data-if="as_sel_ext != '.tga'" data-event-click="as_convert('.tga')">TGA</div>
                             <div class="button outlined small" data-if="as_sel_ext != '.webp'" data-event-click="as_convert('.webp')">WEBP</div>
                         </div>
                     </div>
-                    <div data-if="as_sel_count == 1 &amp;&amp; as_sel_wav">
+                    <div data-if="as_sel_count == 1 && as_sel_wav">
                         <div class="section-title">Звук</div>
                         <div class="button outlined small" data-event-click="as_play"><icon name="play_arrow"/>Слушать</div>
                     </div>
 
                     <div class="section-title" data-if="as_sel_count &lt;= 1">Открыть</div>
                     <div class="links column" data-if="as_sel_count &lt;= 1">
-                        <div class="link row" data-if="as_sel_count == 1 &amp;&amp; as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon class="s" name="open_in_new"/><span>В редакторе изображений</span></div>
-                        <div class="link row" data-if="as_sel_count == 1 &amp;&amp; as_sel_image" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon class="s" name="open_in_new"/><span>Сделать анимацию</span></div>
-                        <div class="link row" data-if="as_sel_count == 1 &amp;&amp; as_sel_audio" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'позже: обрезка и громкость', 'volume_up')"><icon class="s" name="open_in_new"/><span>В редакторе звука</span></div>
+                        <div class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon class="s" name="open_in_new"/><span>В редакторе изображений</span></div>
+                        <div class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon class="s" name="open_in_new"/><span>Сделать анимацию</span></div>
+                        <div class="link row" data-if="as_sel_count == 1 && as_sel_audio" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'позже: обрезка и громкость', 'volume_up')"><icon class="s" name="open_in_new"/><span>В редакторе звука</span></div>
                         <div class="link row" data-event-click="as_show"><icon class="s" name="folder_open"/><span>Показать в проводнике Windows</span></div>
                     </div>
                 </div>
@@ -752,15 +770,15 @@
         <!-- The right-click menu: for the chosen files, or (nothing chosen) for the open folder. -->
         <div id="as-ctx" class="as-menu ctx menu-list" data-if="as_menu == 'ctx'" data-style-left="as_ctx_x + 'px'" data-style-top="as_ctx_y + 'px'">
             <div data-if="as_sel_count > 0">
-                <div id="ctx-open" class="menu-item strong" data-if="as_sel_count == 1 &amp;&amp; as_sel_dir" data-event-click="as_open_selected"><icon name="folder_open"/><span class="label">Открыть</span><span class="trailing">Enter</span></div>
-                <div class="menu-item strong" data-if="as_sel_count == 1 &amp;&amp; as_sel_wav" data-event-click="as_open_selected"><icon name="play_arrow"/><span class="label">Слушать</span></div>
-                <div class="menu-item" data-if="as_sel_count == 1 &amp;&amp; as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon name="open_in_new"/><span class="label">Открыть в редакторе изображений</span></div>
-                <div class="divider" data-if="as_sel_count == 1 &amp;&amp; (as_sel_dir || as_sel_wav || as_sel_image)"/>
+                <div id="ctx-open" class="menu-item strong" data-if="as_sel_count == 1 && as_sel_dir" data-event-click="as_open_selected"><icon name="folder_open"/><span class="label">Открыть</span><span class="trailing">Enter</span></div>
+                <div class="menu-item strong" data-if="as_sel_count == 1 && as_sel_wav" data-event-click="as_open_selected"><icon name="play_arrow"/><span class="label">Слушать</span></div>
+                <div class="menu-item" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon name="open_in_new"/><span class="label">Открыть в редакторе изображений</span></div>
+                <div class="divider" data-if="as_sel_count == 1 && (as_sel_dir || as_sel_wav || as_sel_image)"/>
                 <div id="ctx-cut" class="menu-item" data-event-click="as_cut"><icon name="content_cut"/><span class="label">Вырезать</span><span class="trailing">Ctrl+X</span></div>
                 <div id="ctx-copy" class="menu-item" data-event-click="as_copy"><icon name="content_copy"/><span class="label">Копировать</span><span class="trailing">Ctrl+C</span></div>
                 <div id="ctx-rename" class="menu-item" data-if="as_sel_count == 1" data-event-click="as_rename_start"><icon name="drive_file_rename_outline"/><span class="label">Переименовать</span><span class="trailing">F2</span></div>
                 <div id="ctx-delete" class="menu-item" data-event-click="as_delete"><icon name="delete"/><span class="label">Удалить</span><span class="trailing">Del</span></div>
-                <div data-if="as_sel_count == 1 &amp;&amp; as_sel_image &amp;&amp; as_sel_editable">
+                <div data-if="as_sel_count == 1 && as_sel_image && as_sel_editable">
                     <div class="divider"/>
                     <div id="ctx-rotate" class="menu-item" data-event-click="as_image('cw')"><icon name="rotate_right"/><span class="label">Повернуть вправо</span></div>
                     <div class="menu-item" data-event-click="as_image('ccw')"><icon name="rotate_left"/><span class="label">Повернуть влево</span></div>
@@ -794,7 +812,7 @@
         <div class="grow"/>
         <span class="muted" data-if="tab == 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
         <span class="muted" data-if="tab == 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · Alt+← / Alt+→ назад и вперёд · F2 имя · Ctrl+C / X / V · Del удалить · перетащите файлы в окно для импорта</span>
-        <span class="muted" data-if="tab != 'level' &amp;&amp; tab != 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab != 'level' && tab != 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>
 </rml>

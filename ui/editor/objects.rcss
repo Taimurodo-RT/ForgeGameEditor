@@ -238,3 +238,26 @@
 .ol-block-item-name { font-weight: 600; }
 .ol-block-note { color: var(--tertiary); }
 .ol-blocks-none { padding: var(--space-2) var(--space-3); }
+
+/* «Общие»: where the shared objects are, and the mark on cards that are
+   both in the game and among the shared ones. */
+.ol-thumb { position: relative; }
+.ol-badge {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    padding: 0 5px;
+    border-radius: 6px;
+    font-size: 10px;
+    background-color: var(--tertiary-container);
+    color: var(--on-tertiary-container);
+}
+.ol-shared-note {
+    gap: 8px;
+    margin: 8px 12px 0 12px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    align-items: center;
+    background-color: var(--surface-container-high);
+    color: var(--on-surface-variant);
+}
