@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -232,7 +233,11 @@ bool AssetLibrary::init(ui::Ui& ui, const AssetsConfig& config) {
     refresh_wanted_ = true; // the first look
     refresher_ = std::thread([this] { refresher_main(); });
     thumbnailer_ = std::thread([this] { thumbnailer_main(); });
+    // The editor's converters, then the project's own (which win by name).
+    converters_.load({utf8_path(FORGE_CONVERTERS_DIR), config_.folder / "converters"});
     FORGE_INFO("Ресурсы проекта: %s", path_to_utf8(config_.folder).c_str());
+    FORGE_INFO("Конвертеров: %zu; Python: %s", converters_.all().size(),
+               converters_.python().empty() ? "не найден" : path_to_utf8(converters_.python()).c_str());
     return true;
 }
 
@@ -242,6 +247,7 @@ void AssetLibrary::shutdown() {
         if (!refresher_.joinable() && !thumbnailer_.joinable() && !ui_) return;
         stop_ = true;
     }
+    converters_.stop();
     refresh_cv_.notify_all();
     thumb_cv_.notify_all();
     if (refresher_.joinable()) refresher_.join();
@@ -412,6 +418,71 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     });
     on("as_image", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { edit_image(arg_str(a, 0)); });
     on("as_convert", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { convert_image(arg_str(a, 0)); });
+    // «Конвертировать…»
+    if (auto st = model.RegisterStruct<ConvRow>()) {
+        st.RegisterMember("id", &ConvRow::id);
+        st.RegisterMember("name", &ConvRow::name);
+        st.RegisterMember("about", &ConvRow::about);
+        st.RegisterMember("icon", &ConvRow::icon);
+        st.RegisterMember("selected", &ConvRow::selected);
+    }
+    model.RegisterArray<std::vector<ConvRow>>();
+    if (auto st = model.RegisterStruct<ConvChoiceView>()) {
+        st.RegisterMember("id", &ConvChoiceView::id);
+        st.RegisterMember("name", &ConvChoiceView::name);
+        st.RegisterMember("selected", &ConvChoiceView::selected);
+    }
+    model.RegisterArray<std::vector<ConvChoiceView>>();
+    if (auto st = model.RegisterStruct<ConvSettingView>()) {
+        st.RegisterMember("id", &ConvSettingView::id);
+        st.RegisterMember("name", &ConvSettingView::name);
+        st.RegisterMember("hint", &ConvSettingView::hint);
+        st.RegisterMember("type", &ConvSettingView::type);
+        st.RegisterMember("value", &ConvSettingView::value);
+        st.RegisterMember("min", &ConvSettingView::min);
+        st.RegisterMember("max", &ConvSettingView::max);
+        st.RegisterMember("step", &ConvSettingView::step);
+        st.RegisterMember("choices", &ConvSettingView::choices);
+    }
+    model.RegisterArray<std::vector<ConvSettingView>>();
+    model.Bind("as_conv_open", &m_conv_open_);
+    model.Bind("as_can_convert", &m_can_convert_);
+    model.Bind("as_conv_busy", &m_conv_busy_);
+    model.Bind("as_conv_list", &m_conv_list_);
+    model.Bind("as_conv_settings", &m_conv_settings_);
+    model.Bind("as_conv_title", &m_conv_title_);
+    model.Bind("as_conv_note", &m_conv_note_);
+    model.Bind("as_conv_status", &m_conv_status_);
+    on("as_conv_open", [this](Rml::Event&, const Rml::VariantList&) { open_convert(); });
+    on("as_conv_close", [this](Rml::Event&, const Rml::VariantList&) { close_convert(); });
+    on("as_conv_pick", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { pick_converter(arg_str(a, 0)); });
+    on("as_conv_run", [this](Rml::Event&, const Rml::VariantList&) { run_convert(); });
+    on("as_conv_stop", [this](Rml::Event&, const Rml::VariantList&) { converters_.stop(); });
+    // A choice, a switch, a slider, a text field.
+    on("as_conv_choice", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        set_convert_setting(arg_str(a, 0), "\"" + arg_str(a, 1) + "\"");
+    });
+    on("as_conv_toggle", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string id = arg_str(a, 0);
+        const std::string now = conv_values_[conv_id_][id];
+        set_convert_setting(id, now == "true" ? "false" : "true");
+    });
+    model.BindEventCallback("as_conv_number", [this, arg_str](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
+        if (ui_updating_) return;
+        const std::string text = arg_str(a, 1);
+        char* end = nullptr;
+        const double v = std::strtod(text.c_str(), &end);
+        if (end && end != text.c_str()) set_convert_setting(arg_str(a, 0), std::to_string(v));
+    });
+    model.BindEventCallback("as_conv_text", [this, arg_str, input_value](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) {
+        if (ui_updating_) return;
+        std::string t = input_value(ev), json = "\"";
+        for (char c : t) {
+            if (c == '"' || c == '\\') json += '\\';
+            json += c;
+        }
+        set_convert_setting(arg_str(a, 0), json + "\"");
+    });
     on("as_play", [this](Rml::Event&, const Rml::VariantList&) { play_sound(); });
     on("as_show", [this](Rml::Event&, const Rml::VariantList&) {
         if (config_.offscreen) return;
@@ -1207,6 +1278,164 @@ bool AssetLibrary::convert_image(const std::string& extension) {
     return true;
 }
 
+// --- «Конвертировать…» -------------------------------------------------------
+
+std::vector<std::string> AssetLibrary::convertible(const Converter& c) const {
+    std::vector<std::string> out;
+    for (const std::string& rel : selection_)
+        if (!is_dir(rel) && c.takes(extension_of(rel))) out.push_back(rel);
+    return out;
+}
+
+void AssetLibrary::open_convert() {
+    // The first converter that takes the chosen files, unless the last one does.
+    const Converter* last = converters_.find(conv_id_);
+    if (!last || convertible(*last).empty()) {
+        conv_id_.clear();
+        for (const Converter& c : converters_.all())
+            if (!convertible(c).empty()) {
+                conv_id_ = c.id;
+                break;
+            }
+    }
+    if (conv_id_.empty()) {
+        FORGE_WARN("Для выбранных файлов нет конвертеров");
+        return;
+    }
+    set(m_conv_open_, true, "as_conv_open");
+    rebuild_convert();
+}
+
+void AssetLibrary::close_convert() { set(m_conv_open_, false, "as_conv_open"); }
+
+bool AssetLibrary::pick_converter(const std::string& id) {
+    const Converter* c = converters_.find(id);
+    if (!c || convertible(*c).empty()) return false;
+    conv_id_ = id;
+    rebuild_convert();
+    return true;
+}
+
+bool AssetLibrary::set_convert_setting(const std::string& id, const std::string& json) {
+    const Converter* c = converters_.find(conv_id_);
+    if (!c) return false;
+    auto it = std::find_if(c->settings.begin(), c->settings.end(), [&](const ConverterSetting& s) { return s.id == id; });
+    if (it == c->settings.end() || !it->accepts(json)) return false;
+    conv_values_[conv_id_][id] = json;
+    rebuild_convert();
+    return true;
+}
+
+void AssetLibrary::rebuild_convert() {
+    const Converter* picked = converters_.find(conv_id_);
+    m_conv_list_.clear();
+    for (const Converter& c : converters_.all()) {
+        const usize n = convertible(c).size();
+        if (n == 0) continue;
+        m_conv_list_.push_back({c.id, c.name, c.about, c.icon, c.id == conv_id_});
+    }
+    m_conv_settings_.clear();
+    if (picked) {
+        auto& values = conv_values_[picked->id];
+        for (const ConverterSetting& s : picked->settings) {
+            std::string& v = values[s.id];
+            if (v.empty()) v = s.value;
+            ConvSettingView view;
+            view.id = s.id;
+            view.name = s.name;
+            view.hint = s.hint;
+            view.type = s.type;
+            view.min = static_cast<float>(s.min);
+            view.max = static_cast<float>(s.max);
+            view.step = static_cast<float>(s.step);
+            // Strings are shown without their quotes.
+            view.value = v.size() >= 2 && v.front() == '"' ? v.substr(1, v.size() - 2) : v;
+            if (s.type == "number") {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%g", std::strtod(v.c_str(), nullptr));
+                view.value = buf;
+            }
+            for (const ConverterChoice& ch : s.choices) view.choices.push_back({ch.id, ch.name, view.value == ch.id});
+            m_conv_settings_.push_back(std::move(view));
+        }
+        const std::vector<std::string> files = convertible(*picked);
+        m_conv_title_ = files.size() == 1 ? "Конвертировать «" + name_of(files[0]) + "»"
+                                          : "Конвертировать " + files_text(static_cast<int>(files.size()));
+        m_conv_note_ = converters_.python().empty()
+                           ? "Не найден Python: конвертеры работают через него. Он ставится вместе с редактором на Windows; "
+                             "на других системах нужен python3 и библиотеки из converters/requirements.txt."
+                           : "Результат появится рядом с исходным файлом; исходник не меняется. Ctrl+Z уберёт результат.";
+    }
+    for (const char* name : {"as_conv_list", "as_conv_settings", "as_conv_title", "as_conv_note"}) model_.DirtyVariable(name);
+}
+
+bool AssetLibrary::run_convert() {
+    const Converter* c = converters_.find(conv_id_);
+    if (!c || converters_.python().empty()) return false;
+    const std::vector<std::string> files = convertible(*c);
+    if (files.empty()) return false;
+    std::string settings = "{";
+    for (const ConverterSetting& s : c->settings) {
+        const std::string& v = conv_values_[c->id][s.id];
+        settings += (settings.size() > 1 ? "," : "") + std::string("\"") + s.id + "\":" + (v.empty() ? s.value : v);
+    }
+    settings += "}";
+    if (conv_jobs_.empty()) conv_ok_ = conv_failed_ = 0;
+    for (const std::string& rel : files) {
+        const u64 job = converters_.start(*c, abs(rel), staging_dir(), settings);
+        conv_jobs_[job] = parent_of(rel);
+    }
+    close_convert();
+    FORGE_INFO("%s: %s", c->name.c_str(), files.size() == 1 ? name_of(files[0]).c_str() : files_text(static_cast<int>(files.size())).c_str());
+    return true;
+}
+
+void AssetLibrary::take_conversions() {
+    for (Converters::Result& r : converters_.take_finished()) {
+        auto it = conv_jobs_.find(r.id);
+        if (it == conv_jobs_.end()) continue;
+        const std::string folder = it->second;
+        conv_jobs_.erase(it);
+        const Converter* c = converters_.find(r.converter);
+        const std::string what = path_to_utf8(r.input.filename());
+        if (!r.ok) {
+            ++conv_failed_;
+            FORGE_WARN("«%s» не сконвертирован: %s", what.c_str(), r.error.c_str());
+            continue;
+        }
+        ++conv_ok_;
+        // What it made at the top of its folder moves next to the source (undoable).
+        Staged staged;
+        staged.folder = folder;
+        staged.label = c ? c->name : "Конвертация";
+        std::error_code ec;
+        for (const fs::path& f : r.files)
+            if (f.parent_path() == r.out && fs::exists(f, ec)) staged.items.push_back(f);
+        if (staged.items.empty()) {
+            FORGE_WARN("«%s»: конвертер ничего не сделал", what.c_str());
+            continue;
+        }
+        std::lock_guard lock(mutex_);
+        staged_.push_back(std::move(staged));
+    }
+    const bool busy = converters_.running() > 0 || !conv_jobs_.empty();
+    if (busy) {
+        const u32 total = converters_.total();
+        char pct[16];
+        std::snprintf(pct, sizeof(pct), "%d%%", static_cast<int>(converters_.progress() * 100));
+        std::string s = "Конвертирую";
+        if (total > 1) s += " " + std::to_string(std::min(converters_.done() + 1, total)) + " из " + std::to_string(total);
+        s += " · " + std::string(pct);
+        if (const std::string m = converters_.message(); !m.empty()) s += " · " + m;
+        set(m_conv_status_, Rml::String(s), "as_conv_status");
+    } else if (m_conv_busy_) {
+        FORGE_INFO("Конвертация закончена: готово %u%s", conv_ok_,
+                   conv_failed_ ? (", не вышло " + std::to_string(conv_failed_)).c_str() : "");
+        set(m_conv_status_, Rml::String(), "as_conv_status");
+    }
+    set(m_conv_busy_, busy, "as_conv_busy");
+}
+
 bool AssetLibrary::set_tags(const std::string& text) {
     if (selection_.size() != 1 || !record(selection_[0])) return false;
     fs::path meta_file = abs(selection_[0]);
@@ -1283,6 +1512,7 @@ std::string AssetLibrary::status() const {
 void AssetLibrary::update(f64 dt, Rml::Context* context) {
     time_ += dt;
     ++frame_;
+    take_conversions();
     take_results();
     if (search_pending_ && time_ >= search_at_) {
         search_pending_ = false;
@@ -1322,6 +1552,12 @@ void AssetLibrary::place_context_menu(Rml::Context* context) {
 }
 
 void AssetLibrary::sync_model() {
+    if (conv_synced_ != selection_version_) {
+        conv_synced_ = selection_version_;
+        bool can = false;
+        for (const Converter& c : converters_.all()) can = can || !convertible(c).empty();
+        set(m_can_convert_, can, "as_can_convert");
+    }
     set(m_filter_, Rml::String(filter_), "as_filter");
     set(m_searching_, !search_.empty(), "as_searching");
     set(m_has_cut_, !cut_.empty(), "as_has_cut");

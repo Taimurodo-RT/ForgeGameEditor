@@ -760,12 +760,56 @@
             <span>{{ as_sel_text }}</span>
             <div class="grow"/>
             <span class="muted" data-if="as_busy">Обновляю…</span>
+            <span id="as-conv-status" class="muted row as-conv-status" data-if="as_conv_busy"><span>{{ as_conv_status }}</span><span id="as-conv-stop" class="link" title="Остановить конвертацию" data-event-click="as_conv_stop">остановить</span></span>
             <span class="muted">{{ as_status }}</span>
             <div id="as-view-table" class="icon-button small" title="Таблица" data-class-selected="as_view == 'table'" data-event-click="as_view('table')"><icon class="s" name="view_list"/></div>
             <div id="as-view-large" class="icon-button small" title="Список с превью" data-class-selected="as_view == 'large'" data-event-click="as_view('large')"><icon class="s" name="view_agenda"/></div>
             <div id="as-view-icons" class="icon-button small" title="Значки" data-class-selected="as_view == 'icons'" data-event-click="as_view('icons')"><icon class="s" name="grid_view"/></div>
         </div>
         <div class="as-backdrop" data-if="as_menu != ''" data-event-mousedown="as_menu('')"/>
+
+        <!-- «Конвертировать…»: which converter, its settings in plain words. -->
+        <div class="as-backdrop" data-if="as_conv_open" data-event-mousedown="as_conv_close"/>
+        <div id="as-conv" class="as-conv column" data-if="as_conv_open">
+            <div class="row as-conv-head">
+                <icon name="transform"/>
+                <span class="as-conv-title grow">{{ as_conv_title }}</span>
+                <div id="as-conv-close" class="icon-button" title="Закрыть (Esc)" data-event-click="as_conv_close"><icon name="close"/></div>
+            </div>
+            <div class="row as-conv-body grow">
+                <div class="as-conv-list column">
+                    <div data-for="c : as_conv_list" class="as-conv-item row" data-attr-id="'as-conv-' + c.id" data-class-selected="c.selected" data-event-click="as_conv_pick(c.id)">
+                        <icon data-attr-name="c.icon"/>
+                        <div class="column grow"><span class="name">{{ c.name }}</span><span class="muted body-small">{{ c.about }}</span></div>
+                    </div>
+                </div>
+                <div class="as-conv-settings column grow">
+                    <div data-if="as_conv_settings.size == 0" class="muted body-small">У этого конвертера нет настроек.</div>
+                    <div data-for="s : as_conv_settings" class="as-conv-setting column" data-attr-id="'as-conv-set-' + s.id">
+                        <div class="row as-conv-setting-head">
+                            <span class="grow">{{ s.name }}</span>
+                            <div data-if="s.type == 'bool'" class="switch" data-attr-id="'as-conv-bool-' + s.id" data-class-on="s.value == 'true'" data-event-click="as_conv_toggle(s.id)"><div class="thumb"/></div>
+                        </div>
+                        <div data-if="s.type == 'choice'" class="column">
+                            <div data-for="ch : s.choices" class="as-conv-choice row" data-attr-id="'as-conv-' + s.id + '-' + ch.id" data-class-selected="ch.selected" data-event-click="as_conv_choice(s.id, ch.id)">
+                                <icon class="s" data-attr-name="ch.selected ? 'radio_button_checked' : 'radio_button_unchecked'"/><span>{{ ch.name }}</span>
+                            </div>
+                        </div>
+                        <div data-if="s.type == 'number'" class="row as-conv-number">
+                            <input type="range" class="grow" data-attr-min="s.min" data-attr-max="s.max" data-attr-step="s.step" data-attr-value="s.value" data-event-change="as_conv_number(s.id, ev.value)"/>
+                            <span class="as-conv-value">{{ s.value }}</span>
+                        </div>
+                        <input data-if="s.type == 'text'" type="text" class="small" data-attr-value="s.value" data-event-change="as_conv_text(s.id)"/>
+                        <span class="muted body-small" data-if="s.hint != ''">{{ s.hint }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="row as-conv-foot">
+                <span class="muted body-small grow">{{ as_conv_note }}</span>
+                <div class="command" data-event-click="as_conv_close"><span>Отмена</span></div>
+                <div id="as-conv-run" class="button filled small" data-event-click="as_conv_run"><icon name="play_arrow"/>Конвертировать</div>
+            </div>
+        </div>
 
         <!-- The right-click menu: for the chosen files, or (nothing chosen) for the open folder. -->
         <div id="as-ctx" class="as-menu ctx menu-list" data-if="as_menu == 'ctx'" data-style-left="as_ctx_x + 'px'" data-style-top="as_ctx_y + 'px'">
@@ -783,6 +827,10 @@
                     <div id="ctx-rotate" class="menu-item" data-event-click="as_image('cw')"><icon name="rotate_right"/><span class="label">Повернуть вправо</span></div>
                     <div class="menu-item" data-event-click="as_image('ccw')"><icon name="rotate_left"/><span class="label">Повернуть влево</span></div>
                     <div class="menu-item" data-if="as_sel_ext != '.png'" data-event-click="as_convert('.png')"><icon name="image"/><span class="label">Копия в PNG</span></div>
+                </div>
+                <div data-if="as_can_convert">
+                    <div class="divider"/>
+                    <div id="ctx-convert" class="menu-item" data-event-click="as_conv_open"><icon name="transform"/><span class="label">Конвертировать…</span></div>
                 </div>
                 <div class="divider"/>
                 <div class="menu-item" data-event-click="as_show"><icon name="folder_open"/><span class="label">Показать в проводнике Windows</span></div>

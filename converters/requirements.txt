@@ -1,0 +1,5 @@
+# Libraries the converters use (all under permissive licences: MIT, BSD, HPND).
+psd-tools==1.23.0
+Pillow==12.3.0
+numpy
+soundfile==0.14.0

@@ -1,0 +1,17 @@
+{
+  "name": "Photoshop → PNG",
+  "about": "Каждый слой — отдельная картинка (со списком, где он лежал), или вся картинка целиком.",
+  "icon": "layers",
+  "from": [".psd", ".psb"],
+  "settings": [
+    { "id": "what", "name": "Что сохранить", "type": "choice", "default": "layers",
+      "choices": [
+        { "id": "layers", "name": "Каждый слой отдельно" },
+        { "id": "flat", "name": "Всю картинку целиком" },
+        { "id": "both", "name": "И слои, и картинку" }
+      ] },
+    { "id": "trim", "name": "Обрезать пустые края слоёв", "type": "bool", "default": true,
+      "hint": "иначе каждый слой размером со всю картинку" },
+    { "id": "hidden", "name": "Скрытые слои тоже", "type": "bool", "default": false }
+  ]
+}

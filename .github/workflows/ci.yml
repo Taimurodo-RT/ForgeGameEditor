@@ -31,6 +31,17 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Python for the converters (Linux; Windows builds its own next to the editor)
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pyenv"
+          "$RUNNER_TEMP/pyenv/bin/pip" install --disable-pip-version-check -r converters/requirements.txt
+          echo "FORGE_PYTHON=$RUNNER_TEMP/pyenv/bin/python" >> "$GITHUB_ENV"
+      - name: Converter tests (PSD, Aseprite, sound)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then py=build/python/python.exe; else py="$FORGE_PYTHON"; fi
+          "$py" -m unittest discover -s converters/tests -v
       - name: Job system benchmark
         shell: bash
         run: ./${{ format(matrix.bin, 'bench') }}/forge_bench_jobs
@@ -73,7 +84,7 @@ jobs:
       - name: UI list of 50 000 rows scrolling (software Vulkan, checks it works, not speed)
         if: runner.os == 'Linux'
         run: ./build/apps/ui_demo/forge_ui_demo --scroll --frames 300 --screenshot world-ui-scroll.png
-      - name: Editor self-test (drag, undo/redo, Play/Stop, delete, copy) and hierarchy of 50 500 objects
+      - name: Editor self-test (drag, undo/redo, Play/Stop, delete, copy, convert) and hierarchy of 50 500 objects
         if: runner.os == 'Linux'
         run: |
           ./build/apps/editor/forge_editor --self-test --screenshot world-editor.png
