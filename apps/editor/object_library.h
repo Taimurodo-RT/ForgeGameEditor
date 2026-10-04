@@ -21,6 +21,7 @@
 // tab's history (Ctrl+Z). Copies on the level follow the template the next
 // time the level tab shows (or their chunk loads), and in the game.
 
+#include "forge/audio/audio.h"
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
@@ -112,6 +113,26 @@ public:
     usize picture_choices() const { return pic_files_.size(); }
     const std::string& picture_choice(usize i) const { return m_pics_[i].name; }
     bool choose_picture(usize i);
+    // A sound of the object (row i of its editor, a «Звук» row): chosen from
+    // the project's sounds, copied into the library's sounds folder.
+    std::function<std::vector<std::filesystem::path>()> list_sounds; // absolute paths
+    bool set_sound(int prop, const std::filesystem::path& source);
+    bool clear_sound(int prop);
+    void open_sounds(int prop);
+    void close_sounds();
+    bool sounds_open() const { return m_snds_open_; }
+    void set_sound_search(const std::string& text);
+    usize sound_choices() const { return snd_files_.size(); }
+    const std::string& sound_choice(usize i) const { return m_snds_[i].name; }
+    bool choose_sound(usize i);
+    // Listening: the sound of row i, or of the chooser's row i.
+    bool play_prop_sound(int prop);
+    bool preview_sound(usize i);
+    u64 sounds_played() const { return preview_.started(); }
+    bool silent = false; // no sound device (offscreen runs)
+    usize prop_count() const { return m_props_.size(); }
+    const std::string& prop_label(usize i) const { return m_props_[i].label; }
+    const std::string& prop_value(usize i) const { return m_props_[i].value; }
     // The right-click menu: over card i, or over empty space (-1); x, y in
     // window pixels.
     void context_menu(int card, f32 x, f32 y);
@@ -148,6 +169,7 @@ private:
         Rml::String label, value, hint;
         float min = 0, max = 0, step = 0;
         bool advanced = false;
+        bool filled = false; // a sound row with a sound of its own
         int index = 0; // in m_props_: what the events name
     };
     struct BlockView {
@@ -157,6 +179,10 @@ private:
     };
     struct PicView {
         Rml::String name, folder, icon;
+    };
+    struct SndView {
+        Rml::String name, folder, format;
+        bool playable = true; // the game reads it (WAV, OGG)
     };
 
     void rebuild();
@@ -171,6 +197,8 @@ private:
     std::string icon_path(const objects::Template& t, bool from_shared);
     void set_menu(const std::string& menu);
     void rebuild_pictures();
+    void rebuild_sounds();
+    bool play_file(const std::filesystem::path& file);
     template <typename T>
     void set(T& member, const T& value, const char* name) {
         if (member == value) return;
@@ -201,6 +229,11 @@ private:
     std::vector<std::filesystem::path> pic_files_; // what the chooser shows
     std::unordered_map<std::string, std::string> pic_icons_; // file -> ui image name
     std::string pic_search_;
+    std::vector<std::filesystem::path> snd_files_; // what the sound chooser shows
+    std::string snd_search_;
+    int snd_prop_ = -1; // the row it chooses for
+    audio::Mixer preview_;
+    bool preview_open_ = false;
 
     // Model mirrors
     std::vector<NavRow> m_genres_, m_kinds_;
@@ -215,6 +248,9 @@ private:
     std::vector<PicView> m_pics_;
     Rml::String m_pics_search_, m_pics_note_, m_sel_picture_;
     bool m_pics_open_ = false;
+    std::vector<SndView> m_snds_;
+    Rml::String m_snds_search_, m_snds_note_, m_snds_title_;
+    bool m_snds_open_ = false;
     bool m_details_ = false, m_has_sel_ = false, m_editing_ = false, m_in_shared_ = false;
     Rml::String m_sel_twin_, m_shared_note_;
     Rml::String m_sel_name_, m_sel_kind_, m_sel_kind_about_, m_sel_about_, m_sel_icon_, m_sel_file_, m_sel_kind_icon_,

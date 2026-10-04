@@ -212,6 +212,8 @@ std::vector<PropDef> read_props(yyjson_val* arr, const std::string& owner) {
         prop.component = bind.substr(0, dot == std::string::npos ? 0 : dot);
         prop.field = dot == std::string::npos ? bind : bind.substr(dot + 1);
         prop.advanced = yyjson_get_bool(yyjson_obj_get(p, "advanced"));
+        prop.asset = text_of(yyjson_obj_get(p, "asset"));
+        prop.empty = text_of(yyjson_obj_get(p, "empty"));
         if (yyjson_val* mn = yyjson_obj_get(p, "min")) prop.min = yyjson_get_num(mn), prop.has_range = true;
         if (yyjson_val* mx = yyjson_obj_get(p, "max")) prop.max = yyjson_get_num(mx), prop.has_range = true;
         usize ci, cn;
@@ -365,6 +367,10 @@ fs::path Library::picture_file(const Template& t) const {
 }
 Library::~Library() = default;
 
+fs::path Library::sound_file(std::string_view name) const {
+    return name.empty() ? fs::path() : sounds_ / utf8_path(name);
+}
+
 bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::string* error) {
     kinds_.clear();
     blocks_.clear();
@@ -372,6 +378,7 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
     folder_ = folder;
     kinds_file_ = kinds_file;
     if (pictures_.empty()) pictures_ = kinds_file.parent_path() / "pictures";
+    if (sounds_.empty()) sounds_ = kinds_file.parent_path() / "sounds";
     ++version_;
     std::vector<u8> bytes;
     if (!read_file(kinds_file, bytes)) {
@@ -564,6 +571,14 @@ std::string copy_picture(const fs::path& source, const fs::path& folder) {
     return path_to_utf8(target.filename());
 }
 
+// The name in a sound property's value ("\"шаг.ogg\"").
+std::string sound_name(const std::string& json) {
+    yyjson_doc* doc = yyjson_read(json.data(), json.size(), 0);
+    std::string out = doc && yyjson_is_str(yyjson_doc_get_root(doc)) ? text_of(yyjson_doc_get_root(doc)) : std::string();
+    yyjson_doc_free(doc);
+    return out;
+}
+
 bool same_file(const fs::path& a, const fs::path& b) {
     std::vector<u8> x, y;
     return read_file(a, x) && read_file(b, y) && x == y;
@@ -595,6 +610,23 @@ std::optional<Template> Library::copy_from(const Library& from, const Template& 
             return std::nullopt;
         }
     }
+    // Its own sounds go with it.
+    for (const PropDef* prop : from.props_of(t)) {
+        if (prop->asset != "sound") continue;
+        for (auto& [id, json] : out.values) {
+            if (id != prop->id) continue;
+            const std::string name = sound_name(json);
+            if (name.empty()) continue;
+            std::error_code ec;
+            fs::create_directories(sounds_, ec);
+            const std::string copied = copy_picture(from.sound_file(name), sounds_);
+            if (copied.empty()) {
+                if (error) *error = "звук " + name + " не копируется";
+                return std::nullopt;
+            }
+            json = json_text(copied);
+        }
+    }
     out.rev = template_rev(out);
     return out;
 }
@@ -604,7 +636,13 @@ bool Library::same_as(const Library& from, const Template& t) const {
     if (!here || here->name != t.name || here->about != t.about || here->genre != t.genre || here->kind != t.kind ||
         here->rev != t.rev || here->picture.empty() != t.picture.empty())
         return false;
-    return t.picture.empty() || same_file(picture_file(*here), from.picture_file(t));
+    if (!t.picture.empty() && !same_file(picture_file(*here), from.picture_file(t))) return false;
+    for (const PropDef* prop : from.props_of(t)) {
+        if (prop->asset != "sound") continue;
+        const std::string name = sound_name(from.value(t, *prop));
+        if (!name.empty() && !same_file(sound_file(sound_name(value(*here, *prop))), from.sound_file(name))) return false;
+    }
+    return true;
 }
 
 bool Library::write(const Template& t, std::string* error) const {
@@ -899,6 +937,7 @@ std::string Library::display(const PropDef& prop, const std::string& json) {
         out = text_of(v);
         for (const Choice& c : prop.choices)
             if (c.id == out) out = c.name;
+        if (out.empty() && !prop.empty.empty()) out = prop.empty;
     } else if (yyjson_is_bool(v)) {
         out = yyjson_get_bool(v) ? "да" : "нет";
     } else if (yyjson_is_int(v)) {

@@ -16,6 +16,7 @@ struct ObjTestPickup {
     forge::u8 what = 0;
     forge::u16 count = 1;
     bool spins = false;
+    std::string ding; // a sound
 };
 struct ObjTestBody {
     forge::f32 half = 0.5f;
@@ -26,6 +27,7 @@ FORGE_REFLECT(ObjTestPickup, 1) {
     t.field("what", &ObjTestPickup::what);
     t.field("count", &ObjTestPickup::count).range(1, 999);
     t.field("spins", &ObjTestPickup::spins);
+    t.field("ding", &ObjTestPickup::ding);
 }
 FORGE_REFLECT(ObjTestBody, 1) { t.field("half", &ObjTestBody::half); }
 
@@ -52,6 +54,7 @@ const char* kKinds = R"({
          "choices": [{"id": "coins", "name": "Монеты", "value": 1}, {"id": "gem", "name": "Камень", "value": 2}]},
         {"id": "count", "name": "Сколько", "bind": "ObjTestPickup.count"},
         {"id": "spins", "name": "Крутится", "bind": "ObjTestPickup.spins", "advanced": true},
+        {"id": "ding", "name": "Звон", "bind": "ObjTestPickup.ding", "asset": "sound", "empty": "обычный"},
         {"id": "broken", "name": "Нет такого", "bind": "ObjTestPickup.nothing"}
       ],
       "presets": [ {"name": "Монетка", "genre": "Платформер", "values": {"what": "coins", "count": 1, "spins": true}} ]
@@ -107,7 +110,10 @@ TEST_CASE("kinds and templates load from files") {
     REQUIRE(f.lib.kinds().size() == 1);
     const KindDef& k = f.lib.kinds()[0];
     CHECK(k.name == "Подбираемое");
-    CHECK(k.props.size() == 3); // the one bound to a missing field is dropped
+    CHECK(k.props.size() == 4); // the one bound to a missing field is dropped
+    CHECK(k.prop("ding")->asset == "sound");
+    CHECK(Library::display(*k.prop("ding"), "\"\"") == "обычный");
+    CHECK(Library::display(*k.prop("ding"), "\"звон.ogg\"") == "звон.ogg");
     CHECK(k.prop("count")->has_range);
     CHECK(k.presets.size() == 1);
     const Template* coins = f.lib.find("coins");
@@ -167,6 +173,7 @@ TEST_CASE("a template is copied between a game and the shared library") {
     const auto shared_dir = temp_folder("forge_objects_shared_test");
     Library shared;
     shared.set_pictures_folder(shared_dir / "pictures");
+    shared.set_sounds_folder(shared_dir / "sounds");
     REQUIRE(shared.load(f.lib.kinds_file(), shared_dir / "objects"));
     CHECK(shared.templates().empty());
 
@@ -196,12 +203,27 @@ TEST_CASE("a template is copied between a game and the shared library") {
     const auto other_dir = temp_folder("forge_objects_other_game_test");
     Library other;
     other.set_pictures_folder(other_dir / "pictures");
+    other.set_sounds_folder(other_dir / "sounds");
     REQUIRE(other.load(f.lib.kinds_file(), other_dir / "objects"));
     const Template& s = shared.templates()[0];
     REQUIRE(other.put(*other.copy_from(shared, s)));
     CHECK(other.same_as(shared, s));
     CHECK(other.value(*other.find("coins"), *other.prop_of(*other.find("coins"), "count")) == "25");
     CHECK(std::filesystem::exists(other_dir / "pictures" / "coin.png"));
+
+    // Its own sound goes along too, to the shared library and from it.
+    write_text(f.lib.sounds_folder() / utf8_path("звон.ogg"), "not really a sound");
+    Template ringing = f.lib.with_value(more, "ding", "\"звон.ogg\"");
+    REQUIRE(f.lib.put(ringing));
+    CHECK_FALSE(shared.same_as(f.lib, ringing));
+    REQUIRE(shared.put(*shared.copy_from(f.lib, ringing)));
+    CHECK(std::filesystem::exists(shared.sounds_folder() / utf8_path("звон.ogg")));
+    CHECK(shared.same_as(f.lib, ringing));
+    REQUIRE(other.put(*other.copy_from(shared, shared.templates()[0])));
+    CHECK(std::filesystem::exists(other_dir / "sounds" / utf8_path("звон.ogg")));
+    // A different file of the same name there: same_as notices.
+    write_text(other_dir / "sounds" / utf8_path("звон.ogg"), "another sound");
+    CHECK_FALSE(other.same_as(shared, shared.templates()[0]));
 
     // A kind the game does not have cannot come in.
     Template odd = s;

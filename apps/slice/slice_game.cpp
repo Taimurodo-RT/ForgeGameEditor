@@ -243,6 +243,7 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     atlas_ = make_atlas();
     // The drawn frames and the templates' own pictures under them.
     pictures_.update(library_, make_sheet(), sheet_);
+    sounds_.init(library_.sounds_folder(), options_.silent);
     sprite_capacity_ = options_.stress ? options_.stress_critters + 65536 : 65536;
     if (!sprites_.init(device, format, sheet_.sheet(), sprite_capacity_)) return false;
     if (!lights_.init(device, format)) return false;
@@ -304,6 +305,7 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
 
 void SliceGame::shutdown() {
     end();
+    sounds_.shutdown();
     tiles_.shutdown();
     tiles_world_ = nullptr;
     level_.reset();
@@ -404,6 +406,7 @@ bool SliceGame::save(const fs::path& session, std::string& location, std::string
 void SliceGame::end() {
     if (!running_) return;
     running_ = false;
+    sounds_.stop_objects();
     tiles_.shutdown();
     tiles_world_ = nullptr;
     level_.reset();
@@ -528,6 +531,14 @@ f64 SliceGame::critter_x(flecs::entity_t id) const {
     return p ? p->tile_x() : std::nan("");
 }
 
+bool SliceGame::set_sounds(flecs::entity_t id, const Sounds& sounds) {
+    if (!level_) return false;
+    flecs::entity e = level_->scene->ecs().entity(id);
+    if (!e.is_alive()) return false;
+    e.set<Sounds>(sounds);
+    return true;
+}
+
 void SliceGame::teleport(f64 x, f64 y) {
     if (!hero_alive() || std::isnan(x) || std::isnan(y)) return;
     load_around(x, y);
@@ -586,6 +597,7 @@ bool SliceGame::talk_nearest() {
     if (who < 0) return false;
     if (!shell_->talk(npc_dialogue(static_cast<u8>(who)))) return false;
     talking_ = e.id();
+    sounds_.play(Cue::Talk, hero_x_, hero_y_);
     return true;
 }
 
@@ -637,6 +649,7 @@ void SliceGame::hero_tick(const TickContext& ctx) {
     if (c.jump) {
         if (ground) {
             b.vy = -kJump;
+            jumped_ = true;
         } else if (b.liquid != 0) {
             // Swim up; at the surface, a kick that clears the bank.
             const i32 hx = static_cast<i32>(std::floor(p.tile_x()));
@@ -692,6 +705,7 @@ void SliceGame::dig(f64 dt, i32 tx, i32 ty) {
         if (w.tile(kWalls, tx, ty) == TileTorch && !last_.use) {
             w.set_tile(kWalls, tx, ty, TilePlankWall);
             give("torch", 1, false);
+            sounds_.play(Cue::Torch, tx + 0.5, ty + 0.5);
         }
         dig_progress_ = 0;
         return;
@@ -714,6 +728,7 @@ void SliceGame::dig(f64 dt, i32 tx, i32 ty) {
     const u32 color = t == TileSand ? render::pack_color(220, 200, 140) : (t == TileDirt || t == TileGrass ? render::pack_color(140, 100, 60) : render::pack_color(150, 150, 160));
     if (dig_dust_ <= 0) {
         dig_dust_ = 0.08;
+        if (dig_ticks_++ % 3 == 0) sounds_.play(Cue::Dig, tx + 0.5, ty + 0.5, 1, t == TileSand || t == TileDirt || t == TileGrass ? 0.8f : 1.1f);
         render::ParticleEmit e;
         e.x = tx + 0.5;
         e.y = ty + 0.5;
@@ -731,8 +746,10 @@ void SliceGame::dig(f64 dt, i32 tx, i32 ty) {
     }
     if (dig_progress_ < need) return;
     dig_progress_ = 0;
+    dig_ticks_ = 0;
     w.set_tile(kBlocks, tx, ty, TileAir);
     give(drop_of(t), 1, false);
+    sounds_.play(Cue::Break, tx + 0.5, ty + 0.5, 1, t == TileSand || t == TileDirt || t == TileGrass ? 0.85f : 1.0f);
     render::ParticleEmit e;
     e.x = tx + 0.5;
     e.y = ty + 0.5;
@@ -763,6 +780,7 @@ void SliceGame::place(i32 tx, i32 ty) {
         if (w.tile(kWalls, tx, ty) == TileTorch) return;
         w.set_tile(kWalls, tx, ty, TileTorch);
         take(s.item, 1);
+        sounds_.play(Cue::Torch, tx + 0.5, ty + 0.5);
         return;
     }
     // Not inside the hero, and next to something to hold on to.
@@ -776,6 +794,7 @@ void SliceGame::place(i32 tx, i32 ty) {
     w.set_tile(kLiquids, tx, ty, 0);
     w.set_tile(kBlocks, tx, ty, s.tile);
     take(s.item, 1);
+    sounds_.play(Cue::Place, tx + 0.5, ty + 0.5);
 }
 
 bool SliceGame::break_crate(f64 x, f64 y) {
@@ -787,6 +806,9 @@ bool SliceGame::break_crate(f64 x, f64 y) {
         if (!e.is_alive() || !e.has<RigidBody>()) continue;
         const Position p = e.get<Position>();
         const u32 dice = hash32(static_cast<u32>(id), static_cast<u32>(time_now_ns()));
+        const Sounds* own = e.try_get<Sounds>();
+        sounds_.play(own ? own->hit : std::string(), Cue::Crate, p.tile_x(), p.tile_y(), own ? own->volume : 1.0f,
+                     own ? own->range : 16.0f);
         e.destruct();
         give("wood", 2, true);
         give("coins", 1 + dice % 4, true);
@@ -821,8 +843,11 @@ void SliceGame::pickups() {
         const Position& ip = e.get<Position>();
         if (std::fabs(ip.tile_x() - hero_x_) > kHeroHalfW + 0.7 || std::fabs(ip.tile_y() - hero_y_) > kHeroHalfH + 0.6) continue;
         const Item item = e.get<Item>();
-        e.destruct();
         const ItemKind kind = static_cast<ItemKind>(item.kind);
+        const Sounds* own = e.try_get<Sounds>();
+        sounds_.play(own ? own->pickup : std::string(), kind == ItemKind::Coins ? Cue::Coins : Cue::Pickup, ip.tile_x(),
+                     ip.tile_y(), own ? own->volume : 1.0f, own ? own->range : 16.0f);
+        e.destruct();
         if (kind == ItemKind::Pickaxe) {
             give("pickaxe", 1, false);
             shell_->toast("Найдена кирка Бориса");
@@ -857,6 +882,9 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
         drift_camera(0);
         load_around(camera_.x, camera_.y);
     }
+    const game::Settings& settings = shell_->settings();
+    sounds_.set_volumes(settings.master_volume, settings.sound_volume, settings.music_volume);
+    sounds_.tick(dt);
     if (!running_) {
         drift_camera(dt);
         level_->sim->update(dt, focus());
@@ -877,7 +905,11 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     hero_x_ = hero_x();
     hero_y_ = hero_y();
 
+    sounds_.pause(!playing);
+    sounds_.set_listener(hero_x_, hero_y_);
     if (playing) {
+        hero_sounds(dt);
+        sounds_.update_objects(*level_->scene, hero_x_, hero_y_, dt);
         act(dt);
         pickups();
         location_wait_ -= dt;
@@ -907,6 +939,30 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
                        s.systems_ms, s.bodies_ms, s.cells_ms);
         }
     }
+}
+
+// Steps, jumps, landings and splashes of the hero, from how it moved.
+void SliceGame::hero_sounds(f64 dt) {
+    if (!hero_alive()) return;
+    const Body& b = level_->hero.get<Body>();
+    const bool ground = b.contacts & OnGround, wet = b.liquid != 0;
+    const f64 feet = hero_y_ + kHeroHalfH;
+    if (jumped_) sounds_.play(Cue::Jump, hero_x_, feet, 0.8f);
+    jumped_ = false;
+    if (ground && !was_ground_ && fall_ > 8 && !wet) sounds_.play(Cue::Land, hero_x_, feet, std::min(1.0f, static_cast<f32>(fall_ / 25.0)));
+    if (wet && !was_wet_ && fall_ > 3) sounds_.play(Cue::Splash, hero_x_, feet, std::min(1.0f, static_cast<f32>(fall_ / 15.0) + 0.3f));
+    if (ground && !wet && std::fabs(b.vx) > 1) {
+        walked_ += std::fabs(b.vx) * dt;
+        if (walked_ >= 1.6) {
+            walked_ = 0;
+            sounds_.play(Cue::Step, hero_x_, feet, 0.7f);
+        }
+    } else if (!ground) {
+        walked_ = 1.2; // the first step comes soon after landing
+    }
+    fall_ = ground ? 0.0 : std::max(fall_ * (wet ? 0.0 : 1.0), static_cast<f64>(b.vy));
+    was_ground_ = ground;
+    was_wet_ = wet;
 }
 
 void SliceGame::emit_effects(f64 dt) {

@@ -11,3 +11,4 @@ games/slice/level/
 # The editor's «Ресурсы» when it runs in the repository folder, and their index.
 /assets/
 .forge/
+__pycache__/

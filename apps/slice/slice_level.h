@@ -54,6 +54,18 @@ struct Critter {
     u8 scheme = static_cast<u8>(Scheme::Wander);
 };
 
+// «Звук»: what an object sounds like. Each is a sound's name in the game's
+// sounds folder (a file today, a sound from the sound editor later); empty:
+// the game's usual one for pickup and hit, nothing for steps and near.
+struct Sounds {
+    std::string pickup; // when the hero picks it up
+    std::string hit;    // when the hero hits or breaks it
+    std::string step;   // its steps while it walks
+    std::string near;   // all the time, heard near it (a fire, a stream)
+    f32 volume = 1;
+    f32 range = 16;     // tiles at which it is no longer heard
+};
+
 // The hero's size, for spawning people.
 inline constexpr f32 kHeroHalfW = 0.38f, kHeroHalfH = 0.92f;
 // The light of a torch.
@@ -179,3 +191,4 @@ FORGE_REFLECT_DECLARE(slice::Hero)
 FORGE_REFLECT_DECLARE(slice::Npc)
 FORGE_REFLECT_DECLARE(slice::Item)
 FORGE_REFLECT_DECLARE(slice::Critter)
+FORGE_REFLECT_DECLARE(slice::Sounds)

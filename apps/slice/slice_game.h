@@ -8,6 +8,7 @@
 
 #include "demo_art.h"
 #include "slice_level.h"
+#include "slice_sounds.h"
 #include "slice_world.h"
 
 #include "forge/game/shell.h"
@@ -40,6 +41,8 @@ struct Options {
     // «Играть отсюда» in the editor.
     bool at = false;
     f64 at_x = 0, at_y = 0;
+    // No sound device (the self-test): sounds still "play" and are counted.
+    bool silent = false;
 };
 
 // What the player does this frame: from the keyboard and mouse, or from a
@@ -96,9 +99,12 @@ public:
     // A «Зверёк» copy moving by a scheme, and where it is now (NaN: gone).
     flecs::entity_t spawn_critter(f64 x, f64 feet_y, Scheme scheme);
     f64 critter_x(flecs::entity_t e) const;
+    // Gives an object a «Звук» block.
+    bool set_sounds(flecs::entity_t e, const Sounds& sounds);
     f64 inventory(const char* item) const;
     u32 particles() const { return particles_.stats().slots_used; }
     f64 sim_ms() const { return sim_ms_; }
+    const SliceSounds& sounds() const { return sounds_; }
     const forge::sim::SimStats* sim_stats() const;
 
 private:
@@ -122,6 +128,7 @@ private:
     void update_hud(bool playing);
     void build_sprites();
     void emit_effects(f64 dt);
+    void hero_sounds(f64 dt);
 
     f64 inv(const std::string& item) const;
     void give(const std::string& item, f64 n, bool announce);
@@ -143,6 +150,7 @@ private:
     std::vector<u8> atlas_;
     forge::demo::SheetImage sheet_;
     Pictures pictures_;
+    SliceSounds sounds_;
     forge::render::TilemapRenderer tiles_;
     const forge::world::World* tiles_world_ = nullptr;
     forge::render::SpriteRenderer sprites_;
@@ -160,6 +168,10 @@ private:
     i32 dig_x_ = 0, dig_y_ = 0;
     f64 dig_progress_ = 0, dig_dust_ = 0, place_wait_ = 0;
     bool dig_warned_ = false;
+    u32 dig_ticks_ = 0;
+    // The hero as last heard: for steps, landings and splashes.
+    bool jumped_ = false, was_ground_ = true, was_wet_ = false;
+    f64 fall_ = 0, walked_ = 0;
     flecs::entity_t talking_ = 0;
     std::string location_;
     f64 location_wait_ = 0;

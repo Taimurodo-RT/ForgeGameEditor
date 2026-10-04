@@ -85,6 +85,24 @@
       "needs": ["body"],
       "excludes": ["villager"],
       "was": ["critter"]
+    },
+    {
+      // Звук — файл из папки sounds игры (WAV или OGG); позже здесь будут и
+      // звуки из редактора звука. Пустое значение: обычный звук игры или
+      // никакого (что именно — "empty").
+      "id": "sound",
+      "name": "Звук",
+      "icon": "volume_up",
+      "about": "Как объект звучит: когда его подбирают или бьют, его шаги и что слышно рядом с ним.",
+      "components": { "Sounds": {} },
+      "props": [
+        { "id": "sound_pickup", "name": "Подбирают", "bind": "Sounds.pickup", "asset": "sound", "empty": "обычный", "hint": "когда герой его подбирает" },
+        { "id": "sound_hit", "name": "Удар", "bind": "Sounds.hit", "asset": "sound", "empty": "обычный", "hint": "когда герой его бьёт или разбивает" },
+        { "id": "sound_step", "name": "Шаги", "bind": "Sounds.step", "asset": "sound", "empty": "нет", "hint": "пока он ходит" },
+        { "id": "sound_near", "name": "Рядом", "bind": "Sounds.near", "asset": "sound", "empty": "нет", "hint": "звучит всё время, слышно рядом с ним: костёр, ручей, мурлыканье" },
+        { "id": "sound_volume", "name": "Громкость", "bind": "Sounds.volume", "min": 0, "max": 2 },
+        { "id": "sound_range", "name": "Слышно на", "bind": "Sounds.range", "hint": "клеток: дальше его не слышно", "min": 2, "max": 64, "advanced": true }
+      ]
     }
   ],
   "kinds": [

@@ -261,3 +261,25 @@
     background-color: var(--surface-container-high);
     color: var(--on-surface-variant);
 }
+
+/* «Звук» rows in the object's editor and the sound chooser */
+.ol-sound { align-items: center; }
+.ol-sound-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ol-sound-name.muted { color: var(--on-surface-variant); }
+.ol-snds { left: 22%; right: 22%; }
+.ol-snds-list { gap: 2px; overflow-y: auto; min-height: 0px; }
+.ol-snd {
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.ol-snd:hover { background-color: var(--state-hover-layer); }
+.ol-snd.unplayable { opacity: 0.55; }
+.ol-snd-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ol-snd-format {
+    font-family: var(--font-mono);
+    padding: 1px 6px;
+    border-radius: 4px;
+    background-color: var(--surface-container-highest);
+}
