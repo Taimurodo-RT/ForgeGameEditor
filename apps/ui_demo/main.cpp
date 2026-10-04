@@ -3,7 +3,7 @@
 // or ui/forge-ui/tokens.json while it runs: the window updates by itself.
 //
 //   forge_ui_demo [--ui DIR] [--theme dark|light|fantasy|parchment] [--scroll] [--no-vsync] [--msaa N]
-//   forge_ui_demo --screenshot out.png [--theme NAME] [--frames N] [--scroll]   offscreen
+//   forge_ui_demo --screenshot out.png [--theme NAME] [--frames N] [--scroll] [--reload-every N]   offscreen
 //
 // --scroll keeps scrolling the 50 000-row list, to measure it.
 // F8 opens the element inspector.
@@ -14,6 +14,7 @@
 #include "forge/render/gpu.h"
 #include "forge/render/offscreen.h"
 #include "forge/core/jobs.h"
+#include "forge/core/time.h"
 #include "forge/ui/ui.h"
 #include "forge/ui/virtual_list.h"
 
@@ -217,7 +218,7 @@ private:
 };
 
 int run_screenshot(const std::filesystem::path& ui_dir, const std::string& theme, const char* path, u32 frames,
-                   u32 msaa, bool scroll) {
+                   u32 msaa, bool scroll, u32 reload_every) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
     if (!device) {
@@ -232,13 +233,23 @@ int run_screenshot(const std::filesystem::path& ui_dir, const std::string& theme
         if (target && gallery.init(device, nullptr, w, h, ui_dir, theme, msaa)) {
             f64 update_ms = 0, render_ms = 0, worst_ms = 0;
             u32 measured = 0;
+            f64 reload_ms = 0;
+            u32 reloads = 0;
             for (u32 f = 0; f < frames; ++f) {
+                const bool reload = reload_every > 0 && f > 2 && f % reload_every == 0;
+                const u64 reload_start = time_now_ns();
+                if (reload) gallery.ui().reload_documents(); // what saving an .rml file does
                 gallery.update(f / 60.0, false, scroll);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 gallery.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h);
                 SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
                 SDL_WaitForGPUFences(device, true, &fence, 1);
                 SDL_ReleaseGPUFence(device, fence);
+                if (reload) {
+                    reload_ms += ns_to_ms(time_now_ns() - reload_start);
+                    ++reloads;
+                    continue;
+                }
                 if (f < 2) continue; // the first frames load fonts and build everything
                 const ui::UiStats& s = gallery.ui().stats();
                 update_ms += s.update_ms;
@@ -252,6 +263,9 @@ int run_screenshot(const std::filesystem::path& ui_dir, const std::string& theme
                        "%u passes, MSAA x%u",
                        measured, scroll ? ", list scrolling" : "", update_ms / measured, render_ms / measured,
                        worst_ms, s.draws, s.passes, gallery.ui().msaa_samples());
+            if (reloads > 0)
+                FORGE_INFO("ui reload of the document (as after saving an .rml file): %.1f ms per reload, frame included",
+                           reload_ms / reloads);
             result = render::save_png(device, target, w, h, path) ? 0 : 1;
         }
         gallery.shutdown();
@@ -271,6 +285,7 @@ int main(int argc, char** argv) {
     UiDemo app;
     const char* screenshot = nullptr;
     u32 frames = 10;
+    u32 reload_every = 0;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
         if (std::strcmp(argv[i], "--no-vsync") == 0) config.vsync = false;
@@ -280,7 +295,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--msaa") == 0 && has_value) app.msaa = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--screenshot") == 0 && has_value) screenshot = argv[++i];
         else if (std::strcmp(argv[i], "--frames") == 0 && has_value) frames = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
+        else if (std::strcmp(argv[i], "--reload-every") == 0 && has_value) reload_every = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
     }
-    if (screenshot) return run_screenshot(app.ui_dir, app.theme, screenshot, frames, app.msaa, app.scroll);
+    if (screenshot) return run_screenshot(app.ui_dir, app.theme, screenshot, frames, app.msaa, app.scroll, reload_every);
     return app.run(config);
 }

@@ -1,5 +1,5 @@
 {
-  "note": "What tokens.json says in web terms but RmlUi needs differently, plus component tokens. tokens: a value for every theme ({name} refers to another token). themes: per-theme replacements.",
+  "note": "What tokens.json says in web terms but RmlUi needs differently, plus component tokens. tokens: a value for every theme ({name} refers to another token). themes: per-theme replacements (parchment: secondary containers are warm tan instead of the pink of tokens.json, which looked foreign on paper).",
   "tokens": {
     "ease-standard": "cubic-out",
     "ease-emphasized-in": "quartic-out",
@@ -51,7 +51,9 @@
       "menu-item-radius": "{radius-xs}",
       "panel-radius": "{radius-none}",
       "dialog-radius": "{radius-xs}",
-      "chip-radius": "{radius-xs}"
+      "chip-radius": "{radius-xs}",
+      "secondary-container": "#e3cf9f",
+      "on-secondary-container": "#33240a"
     }
   }
 }

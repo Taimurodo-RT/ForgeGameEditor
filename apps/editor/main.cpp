@@ -3,7 +3,7 @@
 // ui/editor/editor.rml and editor.rcss and updates while the editor runs.
 //
 //   forge_editor [--scene FILE] [--ui DIR] [--theme NAME] [--objects N] [--no-vsync]
-//   forge_editor --screenshot out.png [--frames N] [--select] [--play] [--theme NAME]   offscreen
+//   forge_editor --screenshot out.png [--frames N] [--select] [--play] [--tab N] [--theme NAME]   offscreen
 //   forge_editor --bench [--frames N]   offscreen: every object listed, the hierarchy scrolling
 //   forge_editor --self-test [--screenshot out.png]   offscreen: drives the controls, fails on a wrong result
 //
@@ -576,6 +576,11 @@ private:
         model.Bind("object_count", &m_object_count_);
         model.Bind("status", &m_status_);
         model.Bind("zoom", &m_zoom_);
+        model.Bind("tab", &m_tab_);
+        model.Bind("tab_title", &m_tab_title_);
+        model.Bind("tab_description", &m_tab_description_);
+        model.Bind("tab_step", &m_tab_step_);
+        model.Bind("tab_icon", &m_tab_icon_);
 
         auto on = [&](const char* name, auto fn) {
             model.BindEventCallback(name, [this, fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) {
@@ -597,6 +602,16 @@ private:
             model_.DirtyVariable("paused");
         });
         on("set_theme", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { pending_theme_ = arg_str(a, 0); });
+        // Editor tabs: the list, titles and texts live in editor.rml.
+        on("open_tab", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+            m_tab_ = arg_str(a, 0);
+            m_tab_title_ = arg_str(a, 1);
+            m_tab_description_ = arg_str(a, 2);
+            m_tab_step_ = arg_str(a, 3);
+            m_tab_icon_ = arg_str(a, 4);
+            for (const char* name : {"tab", "tab_title", "tab_description", "tab_step", "tab_icon"})
+                model_.DirtyVariable(name);
+        });
         on("add_object", [this](Rml::Event&, const Rml::VariantList&) { add_object(); });
         on("delete_selection", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
         on("expand_all", [this](Rml::Event&, const Rml::VariantList& a) {
@@ -804,8 +819,11 @@ private:
         char status[200];
         std::snprintf(status, sizeof(status), "Интерфейс %.2f + %.2f мс · спрайтов %s · выделено %zu",
                       s.update_ms, s.render_ms, group_digits(sprites_drawn_).c_str(), doc.selection().size());
-        if (time_ - status_time_ > 0.25) {
+        // Timings change every frame, so they are shown four times a second;
+        // a new selection is shown at once.
+        if (time_ - status_time_ > 0.25 || doc.selection_version() != status_selection_version_) {
             status_time_ = time_;
+            status_selection_version_ = doc.selection_version();
             set(m_status_, std::string(status), "status");
         }
     }
@@ -876,7 +894,7 @@ private:
     void viewport_rect() {
         vx_ = vy_ = vw_ = vh_ = 0;
         Rml::Element* view = find_element("viewport");
-        if (!view) return;
+        if (!view || !view->IsVisible(true)) return; // another editor tab is open
         const Rml::Vector2f at = view->GetAbsoluteOffset(Rml::BoxArea::Padding);
         const Rml::Vector2f size = view->GetBox().GetSize(Rml::BoxArea::Padding);
         vx_ = std::max(0.0f, at.x);
@@ -1010,8 +1028,9 @@ private:
         if (ctrl && k.key == SDLK_Z) { shift ? redo() : undo(); return true; }
         if (ctrl && k.key == SDLK_Y) { redo(); return true; }
         if (ctrl && k.key == SDLK_S) { save(); return true; }
-        if (ctrl && k.key == SDLK_D) { duplicate_selection(); return true; }
         if (k.key == SDLK_F5) { toggle_play(); return true; }
+        if (m_tab_ != "world") return false; // the keys below act on the world view
+        if (ctrl && k.key == SDLK_D) { duplicate_selection(); return true; }
         if (k.key == SDLK_DELETE) { delete_selection(); return true; }
         if (k.key == SDLK_F && !ctrl) { focus_selection(); return true; }
         if (k.key == SDLK_ESCAPE) { select({}); return true; }
@@ -1045,6 +1064,7 @@ private:
     // Model mirrors.
     bool m_playing_ = false, m_can_undo_ = false, m_can_redo_ = false, m_dirty_ = false, m_has_selection_ = false;
     int m_selection_count_ = 0, m_history_cursor_ = 0, m_bottom_tab_ = 0;
+    Rml::String m_tab_ = "world", m_tab_title_, m_tab_description_, m_tab_step_, m_tab_icon_;
     Rml::String m_undo_label_, m_scene_name_, m_selected_name_, m_object_count_, m_status_, m_zoom_;
     std::vector<FieldView> m_fields_;
     std::vector<FieldRef> field_refs_;
@@ -1055,6 +1075,7 @@ private:
     u64 fields_doc_version_ = 0, fields_selection_version_ = 0, history_version_ = 0;
     bool fields_dirty_ = true;
     f64 fields_time_ = 0, status_time_ = -1;
+    u64 status_selection_version_ = 0;
     int scroll_log_ = 0;
 };
 
@@ -1190,7 +1211,8 @@ private:
 
 // Offscreen run for screenshots and the benchmark.
 // Plays the editor's own controls through synthetic input: drag an object in
-// the world, undo and redo it, run the game and stop it, delete and duplicate.
+// the world, undo and redo it, run the game and stop it, delete and duplicate,
+// switch editor tabs.
 // Fails when any action does not do what the user would expect.
 class SelfTest {
 public:
@@ -1259,7 +1281,21 @@ public:
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(ed_.doc.object_count() == count_, "Ctrl+Z removes the copy");
             break;
-        case 43: return false;
+        case 43:
+            check(click_tab(6), "a click on the Logic tab");
+            break;
+        case 45: {
+            check(shown("placeholder") && !shown("viewport"), "the tab replaces the world view");
+            count_ = ed_.doc.object_count();
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(ed_.doc.object_count() == count_, "Delete does nothing outside the world tab");
+            check(click_tab(0), "a click on the World tab");
+            break;
+        }
+        case 47:
+            check(shown("viewport") && !shown("placeholder"), "the world view is back");
+            break;
+        case 48: return false;
         default: break;
         }
         return true;
@@ -1267,6 +1303,16 @@ public:
     bool passed() const { return failures_ == 0; }
 
 private:
+    bool shown(const char* id) {
+        Rml::Element* e = ed_.find_element(id);
+        return e && e->IsVisible(true);
+    }
+    bool click_tab(int index) {
+        Rml::Element* bar = ed_.find_element("editor-tabs");
+        if (!bar || index >= bar->GetNumChildren()) return false;
+        bar->GetChild(index)->Click();
+        return true;
+    }
     void check(bool ok, const char* what) {
         if (ok) {
             FORGE_INFO("self-test: %s", what);
@@ -1310,7 +1356,7 @@ private:
 };
 
 int run_offscreen(const Options& options, const char* screenshot, u32 frames, bool select, bool play, bool bench,
-                  bool self_test) {
+                  bool self_test, int tab) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
     if (!device) {
@@ -1330,7 +1376,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             u32 measured = 0;
             if (bench) editor.hierarchy.expand_all(true);
             SelfTest test(editor);
-            if (self_test) frames = std::max(frames, 50u);
+            if (self_test) frames = std::max(frames, 55u);
             bool testing = self_test;
             for (u32 f = 0; f < frames; ++f) {
                 if (testing) testing = test.step(f);
@@ -1341,6 +1387,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                     editor.reveal(first);
                 }
                 if (f == 2 && play) editor.toggle_play();
+                if (f == 1 && tab > 0)
+                    if (Rml::Element* bar = editor.find_element("editor-tabs"); bar && tab < bar->GetNumChildren())
+                        bar->GetChild(tab)->Click();
                 if (bench) {
                     if (Rml::Element* list = editor.find_element("hierarchy")) {
                         float top = list->GetScrollTop() + 37.0f;
@@ -1393,6 +1442,7 @@ int main(int argc, char** argv) {
     const char* screenshot = nullptr;
     u32 frames = 10;
     bool select = false, play = false, bench = false, self_test = false;
+    int tab = 0;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
         if (std::strcmp(argv[i], "--no-vsync") == 0) config.vsync = false;
@@ -1406,8 +1456,9 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--play") == 0) play = true;
         else if (std::strcmp(argv[i], "--bench") == 0) bench = true;
         else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
+        else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
     if (screenshot || bench || self_test)
-        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test);
+        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab);
     return app.run(config);
 }
