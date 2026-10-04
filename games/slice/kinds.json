@@ -1,52 +1,39 @@
-// Виды объектов «Старой шахты»: из чего сделан объект каждого вида и какие
-// свойства автор задаёт словами. Свойство привязано к полю компонента
-// ("bind": "Компонент.поле"). Заготовки (presets) — готовые ответы для жанров.
+// Объекты «Старой шахты» собираются из блоков: блок добавляет объекту
+// компоненты и свойства, которые автор задаёт словами (свойство привязано к
+// полю компонента: "bind": "Компонент.поле"). Вид — готовый набор блоков со
+// своими начальными значениями; заготовки (presets) — готовые ответы для жанров.
 {
   // Жанры, по которым удобно искать объекты в библиотеке (объект из любого
   // жанра доступен в любой игре).
   "genres": ["Платформер", "RPG", "Песочница", "Головоломка", "Три в ряд", "Стратегия", "Новелла"],
-  "kinds": [
+  "blocks": [
     {
-      "id": "person",
-      "name": "Житель",
-      "group": "Персонажи",
-      "icon": "person",
-      "about": "Человек, который прогуливается у своего дома и разговаривает с героем.",
-      "foot": 0.92,
-      "components": { "Body": { "half_w": 0.38, "half_h": 0.92 }, "Npc": { "timer": 1 } },
-      "props": [
-        { "id": "who", "name": "Кто это", "bind": "Npc.who", "hint": "от этого зависят вид и разговор",
-          "choices": [ { "id": "miner", "name": "Шахтёр Борис", "value": 0 }, { "id": "smith", "name": "Кузнец", "value": 1 } ] },
-        { "id": "facing", "name": "Смотрит", "bind": "Npc.facing",
-          "choices": [ { "id": "left", "name": "Влево", "value": -1 }, { "id": "right", "name": "Вправо", "value": 1 } ] }
-      ],
-      "presets": [
-        { "name": "Житель деревни", "genre": "RPG", "about": "гуляет у дома, говорит с героем", "values": { "who": "miner" } }
-      ]
+      "id": "body",
+      "name": "Тело",
+      "icon": "accessibility_new",
+      "about": "Стоит на земле, падает, упирается в стены и плавает в воде.",
+      "components": { "Body": { "half_w": 0.35, "half_h": 0.4 } },
+      "excludes": ["rigid"]
     },
     {
-      "id": "critter",
-      "name": "Животное",
-      "group": "Животные",
-      "icon": "pets",
-      "about": "Бегает само по себе и прыгает через препятствия.",
-      "foot": 0.4,
-      "components": { "Body": { "half_w": 0.35, "half_h": 0.4 }, "Critter": { "speed": 2 } },
+      "id": "rigid",
+      "name": "Физика",
+      "icon": "deployed_code",
+      "about": "Настоящая физика: падает, катится, толкается, плавает и складывается в кучи.",
+      "components": { "RigidBody": { "half_w": 0.48, "half_h": 0.48, "density": 0.6 } },
       "props": [
-        { "id": "speed", "name": "Скорость", "bind": "Critter.speed", "hint": "клеток в секунду", "min": 0.2, "max": 6 }
+        { "id": "density", "name": "Тяжесть", "bind": "RigidBody.density", "hint": "меньше 1 — плавает в воде", "min": 0.1, "max": 5 },
+        { "id": "bounce", "name": "Прыгучесть", "bind": "RigidBody.bounce", "min": 0, "max": 1, "advanced": true },
+        { "id": "friction", "name": "Трение", "bind": "RigidBody.friction", "min": 0, "max": 2, "advanced": true }
       ],
-      "presets": [
-        { "name": "Зверёк", "about": "бегает по поверхности", "values": { "speed": 2 } }
-      ]
+      "excludes": ["body"]
     },
     {
       "id": "pickup",
-      "name": "Подбираемое",
-      "group": "Предметы",
+      "name": "Подбирается",
       "icon": "paid",
-      "about": "Лежит в мире. Герой подбирает его, просто касаясь, и оно попадает в инвентарь.",
-      "foot": 0.3,
-      "components": { "Body": { "half_w": 0.3, "half_h": 0.3 }, "Item": { "count": 1 } },
+      "about": "Герой подбирает его, просто касаясь, и оно попадает в инвентарь.",
+      "components": { "Item": { "count": 1 } },
       "props": [
         { "id": "what", "name": "Что это", "bind": "Item.kind",
           "choices": [
@@ -58,6 +45,71 @@
           ] },
         { "id": "count", "name": "Сколько", "bind": "Item.count", "hint": "столько попадёт в инвентарь", "min": 1, "max": 999 }
       ],
+      "needs": ["body"]
+    },
+    {
+      "id": "villager",
+      "name": "Житель",
+      "icon": "person",
+      "about": "Прогуливается у своего дома и разговаривает с героем.",
+      "components": { "Npc": { "timer": 1 } },
+      "props": [
+        { "id": "who", "name": "Кто это", "bind": "Npc.who", "hint": "от этого зависят вид и разговор",
+          "choices": [ { "id": "miner", "name": "Шахтёр Борис", "value": 0 }, { "id": "smith", "name": "Кузнец", "value": 1 } ] },
+        { "id": "facing", "name": "Смотрит", "bind": "Npc.facing",
+          "choices": [ { "id": "left", "name": "Влево", "value": -1 }, { "id": "right", "name": "Вправо", "value": 1 } ] }
+      ],
+      "needs": ["body"],
+      "excludes": ["critter"]
+    },
+    {
+      "id": "critter",
+      "name": "Бегает само",
+      "icon": "pets",
+      "about": "Бегает туда-сюда и перепрыгивает препятствия.",
+      "components": { "Critter": { "speed": 2 } },
+      "props": [
+        { "id": "speed", "name": "Скорость", "bind": "Critter.speed", "hint": "клеток в секунду", "min": 0.2, "max": 6 }
+      ],
+      "needs": ["body"],
+      "excludes": ["villager"]
+    }
+  ],
+  "kinds": [
+    {
+      "id": "person",
+      "name": "Житель",
+      "group": "Персонажи",
+      "icon": "person",
+      "about": "Человек, который прогуливается у своего дома и разговаривает с героем.",
+      "foot": 0.92,
+      "blocks": ["body", "villager"],
+      "components": { "Body": { "half_w": 0.38, "half_h": 0.92 } },
+      "presets": [
+        { "name": "Житель деревни", "genre": "RPG", "about": "гуляет у дома, говорит с героем", "values": { "who": "miner" } }
+      ]
+    },
+    {
+      "id": "critter",
+      "name": "Животное",
+      "group": "Животные",
+      "icon": "pets",
+      "about": "Бегает само по себе и прыгает через препятствия.",
+      "foot": 0.4,
+      "blocks": ["body", "critter"],
+      "presets": [
+        { "name": "Зверёк", "about": "бегает по поверхности", "values": { "speed": 2 } }
+      ]
+    },
+    {
+      "id": "pickup",
+      "name": "Подбираемое",
+      "group": "Предметы",
+      "icon": "paid",
+      "about": "Лежит в мире. Герой подбирает его, просто касаясь, и оно попадает в инвентарь.",
+      "foot": 0.3,
+      "blocks": ["body", "pickup"],
+      "components": { "Body": { "half_w": 0.3, "half_h": 0.3 } },
       "presets": [
         { "name": "Монетка", "genre": "Платформер", "about": "одна монетка, +1 к счёту", "values": { "what": "coins", "count": 1 } },
         { "name": "Кошелёк", "genre": "RPG", "about": "горсть монет", "values": { "what": "coins", "count": 25 } },
@@ -71,12 +123,7 @@
       "icon": "inventory_2",
       "about": "Падает, катится, плавает в воде и складывается в кучи.",
       "foot": 0.48,
-      "components": { "RigidBody": { "half_w": 0.48, "half_h": 0.48, "density": 0.6 } },
-      "props": [
-        { "id": "density", "name": "Тяжесть", "bind": "RigidBody.density", "hint": "меньше 1 — плавает в воде", "min": 0.1, "max": 5 },
-        { "id": "bounce", "name": "Прыгучесть", "bind": "RigidBody.bounce", "min": 0, "max": 1, "advanced": true },
-        { "id": "friction", "name": "Трение", "bind": "RigidBody.friction", "min": 0, "max": 2, "advanced": true }
-      ],
+      "blocks": ["rigid"],
       "presets": [
         { "name": "Ящик", "about": "деревянный, плавает", "values": { "density": 0.6 } },
         { "name": "Тяжёлый ящик", "genre": "Головоломка", "about": "тонет, его можно толкать", "values": { "density": 3 } }

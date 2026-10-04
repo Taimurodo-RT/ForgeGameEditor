@@ -71,6 +71,32 @@ void menu_point(Rml::Event& ev, f32& x, f32& y) {
     y = std::clamp(y - at.y, 0.0f, std::max(0.0f, tab->GetOffsetHeight() - kMenuH));
 }
 
+// A property as the editor shows it: its kind of field and value in words.
+template <typename View>
+View make_prop_view(const objects::Library& lib, const objects::Template& t, const objects::PropDef& p,
+                    const std::string& block) {
+    using reflect::Kind;
+    const Kind kind = p.info->type->kind;
+    const std::string json = lib.value(t, p);
+    View v;
+    v.block = block;
+    v.label = p.name;
+    v.hint = p.hint;
+    v.advanced = p.advanced;
+    v.value = kind == Kind::Bool ? json : objects::Library::display(p, json);
+    if (!p.choices.empty()) v.kind = "enum";
+    else if (kind == Kind::Bool) v.kind = "bool";
+    else if (kind >= Kind::I8 && kind <= Kind::F64 && p.has_range) {
+        v.kind = "slider";
+        v.min = static_cast<float>(p.min);
+        v.max = static_cast<float>(p.max);
+        v.step = kind <= Kind::U64 ? 1.0f : static_cast<float>((p.max - p.min) / 200.0);
+    } else {
+        v.kind = "text";
+    }
+    return v;
+}
+
 } // namespace
 
 ObjectLibrary::ObjectLibrary(level::LevelModule& module) : module_(module) {}
@@ -137,6 +163,7 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     model.RegisterArray<std::vector<GenreItem>>();
     if (auto s = model.RegisterStruct<PropView>()) {
         s.RegisterMember("kind", &PropView::kind);
+        s.RegisterMember("block", &PropView::block);
         s.RegisterMember("label", &PropView::label);
         s.RegisterMember("value", &PropView::value);
         s.RegisterMember("hint", &PropView::hint);
@@ -144,8 +171,19 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("max", &PropView::max);
         s.RegisterMember("step", &PropView::step);
         s.RegisterMember("advanced", &PropView::advanced);
+        s.RegisterMember("index", &PropView::index);
     }
     model.RegisterArray<std::vector<PropView>>();
+    if (auto s = model.RegisterStruct<BlockView>()) {
+        s.RegisterMember("id", &BlockView::id);
+        s.RegisterMember("name", &BlockView::name);
+        s.RegisterMember("icon", &BlockView::icon);
+        s.RegisterMember("about", &BlockView::about);
+        s.RegisterMember("note", &BlockView::note);
+        s.RegisterMember("removable", &BlockView::removable);
+        s.RegisterMember("props", &BlockView::props);
+    }
+    model.RegisterArray<std::vector<BlockView>>();
     if (auto s = model.RegisterStruct<PicView>()) {
         s.RegisterMember("name", &PicView::name);
         s.RegisterMember("folder", &PicView::folder);
@@ -179,6 +217,8 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("ol_sel_file", &m_sel_file_);
     model.Bind("ol_sel_picture", &m_sel_picture_);
     model.Bind("ol_pics", &m_pics_);
+    model.Bind("ol_blocks", &m_blocks_);
+    model.Bind("ol_add_blocks", &m_add_blocks_);
     model.Bind("ol_pics_open", &m_pics_open_);
     model.Bind("ol_pics_search", &m_pics_search_);
     model.Bind("ol_pics_note", &m_pics_note_);
@@ -242,6 +282,11 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     on("ol_open", [this](Rml::Event&, const Rml::VariantList&) { open_editor(); });
     on("ol_back", [this](Rml::Event&, const Rml::VariantList&) { close_editor(); });
     on("ol_genre", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_genre(arg_str(a, 0)); });
+    on("ol_block_add", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { add_block(arg_str(a, 0)); });
+    on("ol_block_remove", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { remove_block(arg_str(a, 0)); });
+    model.BindEventCallback("ol_blocks_menu", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+        set_menu(m_menu_ == "blocks" ? "" : "blocks");
+    });
     on("ol_picture_pick", [this](Rml::Event&, const Rml::VariantList&) { open_pictures(); });
     on("ol_picture_clear", [this](Rml::Event&, const Rml::VariantList&) { clear_picture(); });
     on("ol_picture_choose", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
@@ -356,6 +401,8 @@ void ObjectLibrary::rebuild_side() {
     set(m_has_sel_, t != nullptr, "ol_has_sel");
     m_props_.clear();
     prop_refs_.clear();
+    m_blocks_.clear();
+    m_add_blocks_.clear();
     m_genre_items_.clear();
     if (t) {
         icon_of(*t);
@@ -370,33 +417,63 @@ void ObjectLibrary::rebuild_side() {
         m_sel_picture_ = t->picture;
         for (const std::string& g : lib.genres()) m_genre_items_.push_back({g, g, t->genre == g});
         m_genre_items_.push_back({"", kAnyGame, t->genre.empty()});
-        // The editor's properties.
-        if (k && editing_ == t->key)
-            for (const objects::PropDef& p : k->props) {
-                using reflect::Kind;
-                const Kind kind = p.info->type->kind;
-                const std::string json = lib.value(*t, p);
-                PropView v;
-                v.label = p.name;
-                v.hint = p.hint;
-                v.advanced = p.advanced;
-                v.value = kind == Kind::Bool ? json : objects::Library::display(p, json);
-                if (!p.choices.empty()) v.kind = "enum";
-                else if (kind == Kind::Bool) v.kind = "bool";
-                else if (kind >= Kind::I8 && kind <= Kind::F64 && p.has_range) {
-                    v.kind = "slider";
-                    v.min = static_cast<float>(p.min);
-                    v.max = static_cast<float>(p.max);
-                    v.step = kind <= Kind::U64 ? 1.0f : static_cast<float>((p.max - p.min) / 200.0);
-                } else {
-                    v.kind = "text";
+        // The editor: the object's blocks and their properties.
+        if (k && editing_ == t->key) {
+            auto names = [&](const std::vector<std::string>& ids) {
+                std::string out;
+                for (const std::string& id : ids)
+                    if (const objects::BlockDef* b = lib.block(id)) out += (out.empty() ? "«" : ", «") + b->name + "»";
+                return out;
+            };
+            auto ids_of = [&](const objects::Template& x) {
+                std::vector<std::string> out;
+                for (const objects::BlockDef* b : lib.blocks_of(x)) out.push_back(b->id);
+                return out;
+            };
+            const std::vector<std::string> mine = ids_of(*t);
+            auto add_props = [&](const std::string& block, const std::vector<const objects::PropDef*>& props) {
+                for (const objects::PropDef* p : props) {
+                    if (std::find(prop_refs_.begin(), prop_refs_.end(), p) != prop_refs_.end()) continue;
+                    m_props_.push_back(make_prop_view<PropView>(lib, *t, *p, block));
+                    m_props_.back().index = static_cast<int>(m_props_.size() - 1);
+                    prop_refs_.push_back(p);
+                    m_blocks_.back().props.push_back(m_props_.back());
                 }
-                m_props_.push_back(std::move(v));
-                prop_refs_.push_back(&p);
+            };
+            for (const objects::BlockDef* b : lib.blocks_of(*t)) {
+                // What else goes when this one is taken away.
+                std::vector<std::string> gone, after = ids_of(lib.with_block(*t, b->id, false));
+                for (const std::string& id : mine)
+                    if (id != b->id && std::find(after.begin(), after.end(), id) == after.end()) gone.push_back(id);
+                // An object keeps at least one block.
+                m_blocks_.push_back({b->id, b->name, b->icon, b->about,
+                                     gone.empty() ? std::string() : "вместе с ним уйдёт " + names(gone), !after.empty()});
+                std::vector<const objects::PropDef*> props;
+                for (const objects::PropDef& p : b->props) props.push_back(&p);
+                add_props(b->id, props);
             }
+            if (m_blocks_.empty()) {
+                // A kind not made of blocks: its properties as one.
+                m_blocks_.push_back({"", "Свойства", "tune", "", "", false});
+                add_props("", lib.props_of(*t));
+            }
+            for (const objects::BlockDef& b : lib.blocks()) {
+                if (std::find(mine.begin(), mine.end(), b.id) != mine.end()) continue;
+                const std::vector<std::string> after = ids_of(lib.with_block(*t, b.id, true));
+                std::vector<std::string> added, gone;
+                for (const std::string& id : after)
+                    if (id != b.id && std::find(mine.begin(), mine.end(), id) == mine.end()) added.push_back(id);
+                for (const std::string& id : mine)
+                    if (std::find(after.begin(), after.end(), id) == after.end()) gone.push_back(id);
+                std::string note;
+                if (!added.empty()) note = "добавит и " + names(added);
+                if (!gone.empty()) note += (note.empty() ? "заменит " : "; заменит ") + names(gone);
+                m_add_blocks_.push_back({b.id, b.name, b.icon, b.about, note, true});
+            }
+        }
     }
     if (model_)
-        for (const char* name : {"ol_props", "ol_genre_items", "ol_sel_name", "ol_sel_about", "ol_sel_icon", "ol_sel_kind",
+        for (const char* name : {"ol_props", "ol_blocks", "ol_add_blocks", "ol_genre_items", "ol_sel_name", "ol_sel_about", "ol_sel_icon", "ol_sel_kind",
                                  "ol_sel_kind_icon", "ol_sel_kind_about", "ol_sel_genre", "ol_sel_file", "ol_sel_picture"})
             model_.DirtyVariable(name);
 }
@@ -499,6 +576,8 @@ bool ObjectLibrary::duplicate() {
     t->about = src->about;
     t->genre = src->genre;
     t->values = src->values;
+    t->blocks = src->blocks;
+    t->picture = src->picture;
     const u64 key = t->key;
     change(std::move(*t), "Копия: " + src->name);
     history_.seal();
@@ -580,6 +659,30 @@ void ObjectLibrary::close_editor() {
     editing_ = 0;
     set(m_editing_, false, "ol_editing");
     rebuild_side();
+}
+
+bool ObjectLibrary::add_block(const std::string& block) {
+    const objects::Template* t = selected();
+    const objects::BlockDef* b = library().block(block);
+    set_menu("");
+    if (!t || !b || library().has_block(*t, block)) return false;
+    change(library().with_block(*t, block, true), "«" + t->name + "»: блок «" + b->name + "»");
+    history_.seal();
+    FORGE_INFO("«%s»: добавлен блок «%s»", t->name.c_str(), b->name.c_str());
+    return true;
+}
+
+bool ObjectLibrary::remove_block(const std::string& block) {
+    const objects::Template* t = selected();
+    const objects::BlockDef* b = library().block(block);
+    if (!t || !b || !library().has_block(*t, block)) return false;
+    objects::Template after = library().with_block(*t, block, false);
+    if (after.blocks.empty()) return false; // nothing would be left of it
+    const std::string name = t->name;
+    change(std::move(after), "«" + name + "»: без блока «" + b->name + "»");
+    history_.seal();
+    FORGE_INFO("«%s»: убран блок «%s»", name.c_str(), b->name.c_str());
+    return true;
 }
 
 bool ObjectLibrary::set_about(const std::string& about) {

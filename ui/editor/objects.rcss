@@ -219,3 +219,22 @@
 }
 .ol-pic-img img { width: 96px; height: 96px; }
 .ol-pic-name { width: 100%; font-size: 12px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The object's blocks */
+.ol-block {
+    margin-bottom: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: 8px;
+    background-color: var(--surface-container-high);
+}
+.ol-block-head { align-items: center; min-height: 32px; }
+.ol-block-head icon { color: var(--primary); }
+.ol-block-name { font-weight: 600; font-size: 15px; }
+.ol-block-about { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ol-add-block { position: relative; margin-bottom: var(--space-3); }
+.as-menu.ol-blocks-menu { top: 36px; width: 380px; z-index: 60; }
+.ol-block-item { height: auto; min-height: 52px; padding: 6px 10px; align-items: flex-start; gap: var(--space-2); }
+.ol-block-item icon { margin-top: 2px; color: var(--primary); }
+.ol-block-item-name { font-weight: 600; }
+.ol-block-note { color: var(--tertiary); }
+.ol-blocks-none { padding: var(--space-2) var(--space-3); }

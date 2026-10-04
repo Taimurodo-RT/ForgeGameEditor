@@ -1866,8 +1866,7 @@ private:
     std::string tpl_value(const char* id, const char* prop) {
         objects::Library& lib = ol().library();
         const objects::Template* t = lib.find(id);
-        const objects::KindDef* k = t ? lib.kind_of(*t) : nullptr;
-        const objects::PropDef* p = k ? k->prop(prop) : nullptr;
+        const objects::PropDef* p = t ? lib.prop_of(*t, prop) : nullptr;
         return p ? lib.value(*t, *p) : std::string();
     }
     // Card i's centre in window pixels (false when it is not shown).
@@ -1880,7 +1879,7 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 27) return asset_step();
+        if (ol_step_ >= 31) return asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -1917,6 +1916,7 @@ private:
             check(click("ctx-ol-open") && ol().editing() && !ol().menu_open(), "«Открыть редактор» opens the object's editor");
             break;
         case 5:
+            if (hold(shown("ol-num-1"), "the editor's blocks are laid out")) return true;
             check(shown("ol-editor") && shown("ol-num-1") && shown("ol-next-0") && !shown("ol-grid"),
                   "the editor shows «Что это» and «Сколько» in place of the cards");
             click("ol-next-0"); // Монеты → Медь
@@ -2120,10 +2120,54 @@ private:
             break;
         }
         case 25:
+            // Blocks: the coins are «Тело» + «Подбирается».
+            ol().select(lib.find("coins")->key);
+            ol().open_editor();
+            break;
+        case 26:
+            if (hold(shown("ol-block-pickup"), "the coins' blocks are shown")) return true;
+            check(shown("ol-block-body") && shown("ol-block-remove-pickup") && ol().block_count() == 2,
+                  "the coins' editor shows their blocks: «Тело» and «Подбирается»");
+            check(click("ol-block-add") && ol().menu_open(), "«Добавить блок» opens the list of blocks");
+            break;
+        case 27: {
+            if (hold(shown("ol-add-critter"), "the blocks menu is laid out")) return true;
+            check(!shown("ol-add-pickup") && shown("ol-add-rigid"), "it offers the blocks the coins do not have yet");
+            check(click("ol-add-critter") && lib.has_block(*lib.find("coins"), "critter") && !ol().menu_open(),
+                  "«Бегает само» is added to the coins");
+            const objects::Template* t = lib.find("coins");
+            check(lib.prop_of(*t, "speed") != nullptr && objects::read_template(t->file).value().blocks.size() == 3,
+                  "with its «Скорость», and the template's file lists the blocks");
+            click_tab(0);
+            break;
+        }
+        case 28: {
+            const flecs::entity e = placed();
+            check(e.is_valid() && e.has<slice::Critter>() && e.get<slice::Item>().count == 7,
+                  "the coins on the level now run, and keep their own count");
+            click_tab(2);
+            ol().undo();
+            check(!lib.has_block(*lib.find("coins"), "critter"), "Ctrl+Z takes the block away again");
+            check(ol().add_block("rigid") && lib.has_block(*lib.find("coins"), "rigid") &&
+                      !lib.has_block(*lib.find("coins"), "body") && !lib.has_block(*lib.find("coins"), "pickup"),
+                  "«Физика» replaces «Тело», and «Подбирается», which needs a body, goes with it");
+            ol().undo();
+            check(lib.has_block(*lib.find("coins"), "pickup") && lib.has_block(*lib.find("coins"), "body"),
+                  "Ctrl+Z gives them back");
+            check(!ol().remove_block("body"), "the last blocks are not taken away: the object would be empty");
+            click_tab(0);
+            break;
+        }
+        case 29: {
+            const flecs::entity e = placed();
+            check(e.is_valid() && !e.has<slice::Critter>() && e.has<slice::Item>(), "and the coins on the level are coins again");
+            click_tab(2);
+            ol().close_editor();
             ol().select(lib.find("coins")->key); // for a screenshot
             ol().show("");
             break;
-        case 26:
+        }
+        case 30:
             click_tab(0);
             break;
         default: break;

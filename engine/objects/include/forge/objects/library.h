@@ -76,6 +76,30 @@ struct Preset {
     std::vector<std::pair<std::string, std::string>> values; // prop id, JSON value
 };
 
+// A component an object is made of, with its starting values (a JSON
+// object; fields not given keep their defaults).
+struct Part {
+    std::string name;
+    std::string json; // starting values
+    const reflect::TypeInfo* type = nullptr;
+};
+
+// A building block of objects: «Тело», «Подбирается», «Житель». It adds
+// components to the object and the properties the author sets on them.
+// Objects are put together from blocks; a kind is a ready set of them.
+struct BlockDef {
+    std::string id;    // "pickup"
+    std::string name;  // "Подбирается"
+    std::string icon;  // a Material Symbols name
+    std::string about; // what the block gives the object
+    std::vector<Part> components;
+    std::vector<PropDef> props;
+    std::vector<std::string> needs;    // blocks it does not work without (added with it)
+    std::vector<std::string> excludes; // blocks it cannot be together with (taken away)
+
+    const PropDef* prop(std::string_view prop_id) const;
+};
+
 struct KindDef {
     std::string id;    // "pickup"
     std::string name;  // "Подбираемое"
@@ -83,13 +107,12 @@ struct KindDef {
     std::string icon;  // a Material Symbols name, "paid"
     std::string about; // what objects of this kind do, in one or two sentences
     f64 foot = 0.5;    // from the object's centre down to its feet, in tiles
-    // What an object is made of: component name and its starting values (a
-    // JSON object; fields not given keep their defaults).
-    struct Part {
-        std::string name;
-        std::string json; // starting values
-        const reflect::TypeInfo* type = nullptr;
-    };
+    // Its blocks (ids), when the kind is put together from blocks; the
+    // components and props below are then theirs, with the kind's own
+    // starting values on top.
+    std::vector<std::string> blocks;
+    // What an object is made of: component name and its starting values.
+    using Part = objects::Part;
     std::vector<Part> components;
     std::vector<PropDef> props;
     std::vector<Preset> presets;
@@ -103,6 +126,8 @@ struct Template {
     std::string name; // "Монеты"
     std::string kind; // "pickup"
     std::string genre; // "Платформер"; empty: for any game (only for finding it)
+    // The blocks it is made of (ids), when they differ from its kind's.
+    std::vector<std::string> blocks;
     std::string about;
     // Property values that differ from the kind's own (prop id, JSON value:
     // 10, "coins", true). Missing ones take the kind's starting value.
@@ -111,7 +136,7 @@ struct Template {
     // ("coin.png"); empty: the game draws its usual one.
     std::string picture;
     std::filesystem::path file;
-    u32 rev = 0; // hash of the values: copies with another rev are behind
+    u32 rev = 0; // hash of the values and blocks: copies with another rev are behind
 
     // Changes whenever what the template looks like may change (its values
     // or its picture): names cached icons.
@@ -152,6 +177,8 @@ public:
     std::filesystem::path picture_file(const Template& t) const;
 
     const std::vector<KindDef>& kinds() const { return kinds_; }
+    const std::vector<BlockDef>& blocks() const { return blocks_; }
+    const BlockDef* block(std::string_view id) const;
     // Genres to sort templates by: the kinds file's list, then any other a
     // template or preset names.
     std::vector<std::string> genres() const;
@@ -171,6 +198,20 @@ public:
     // edit puts the whole old template back through this.
     bool put(Template t, std::string* error = nullptr);
     bool remove(u64 key);
+    // --- what a template is made of ---
+    // Its blocks: its own list, else its kind's.
+    std::vector<const BlockDef*> blocks_of(const Template& t) const;
+    bool has_block(const Template& t, std::string_view block) const;
+    // Its components (with starting values) and its properties, from its
+    // blocks (a kind without blocks: the kind's own).
+    std::vector<Part> parts_of(const Template& t) const;
+    std::vector<const PropDef*> props_of(const Template& t) const;
+    const PropDef* prop_of(const Template& t, std::string_view prop_id) const;
+    // A template with a block added (with the blocks it needs, without the
+    // ones it excludes) or taken away (with the ones that need it). Not
+    // stored: give it to put().
+    Template with_block(const Template& t, std::string_view block, bool on) const;
+
     // A property value of a template (JSON): its own, else the kind's.
     std::string value(const Template& t, const PropDef& prop) const;
     // A template with one value changed (not stored: give it to put()).
@@ -210,6 +251,7 @@ private:
     void on_unpacked(scene::Scene& scene, flecs::entity e) const;
 
     std::vector<KindDef> kinds_;
+    std::vector<BlockDef> blocks_;
     std::vector<std::string> genres_; // from the kinds file
     std::vector<Template> templates_;
     std::filesystem::path folder_;
@@ -222,6 +264,8 @@ private:
 std::optional<Template> read_template(const std::filesystem::path& file, std::string* error = nullptr);
 std::string template_json(const Template& t);
 u32 values_rev(const std::vector<std::pair<std::string, std::string>>& values);
+// What copies compare: the values and the blocks.
+u32 template_rev(const Template& t);
 
 } // namespace forge::objects
 

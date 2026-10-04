@@ -74,6 +74,12 @@ public:
     void close_editor();
     bool editing() const { return editing_ != 0; }
     bool set_about(const std::string& about);
+    // The object's blocks («Тело», «Подбирается»): added with the ones it
+    // needs, taken away with the ones that need it.
+    bool add_block(const std::string& block);
+    bool remove_block(const std::string& block);
+    usize block_count() const { return m_blocks_.size(); }
+    const std::string& block_id(usize i) const { return m_blocks_[i].id; }
     // Row i of the editor's properties, set from text as the user types it.
     void set_prop(int i, const std::string& text, bool dragging);
     // The object's own picture (in its editor), chosen from the project's
@@ -118,14 +124,21 @@ private:
         Rml::String name, label;
         bool checked = false;
     };
-    struct PicView {
-        Rml::String name, folder, icon;
-    };
     struct PropView {
         Rml::String kind; // text, slider, bool, enum
+        Rml::String block; // the block it belongs to
         Rml::String label, value, hint;
         float min = 0, max = 0, step = 0;
         bool advanced = false;
+        int index = 0; // in m_props_: what the events name
+    };
+    struct BlockView {
+        Rml::String id, name, icon, about, note;
+        bool removable = true;
+        std::vector<PropView> props;
+    };
+    struct PicView {
+        Rml::String name, folder, icon;
     };
 
     void rebuild();
@@ -167,8 +180,9 @@ private:
     std::vector<CreateGroup> m_create_;
     std::vector<GenreItem> m_genre_items_;
     std::vector<PropView> m_props_;
-    Rml::String m_search_, m_count_, m_menu_; // menu: "", "new", "card", "empty"
+    Rml::String m_search_, m_count_, m_menu_; // menu: "", "new", "card", "empty", "blocks"
     float m_menu_x_ = 0, m_menu_y_ = 0;
+    std::vector<BlockView> m_blocks_, m_add_blocks_;
     std::vector<PicView> m_pics_;
     Rml::String m_pics_search_, m_pics_note_, m_sel_picture_;
     bool m_pics_open_ = false;
