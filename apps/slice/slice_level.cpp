@@ -291,11 +291,11 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         const f32 h = static_cast<f32>(bottom - top + 1);
         const f64 cy = (top + bottom + 1) * 0.5;
         if (pic) {
-            at(x + (d.open ? 0.1 : 0.5), cy, d.open ? 0.2f : 1.0f, h, pic->frame, 1);
+            at(x + (d.open ? 0.15 : 0.5), cy, d.open ? 0.3f : 1.0f, h, pic->frame, 1);
             return;
         }
         for (i32 y = top; y <= bottom; ++y)
-            at(x + (d.open ? 0.1 : 0.5), y + 0.5, d.open ? 0.2f : 1.0f, 1.0f, FrameDoor, 1, d.open ? render::pack_color(150, 150, 150, 255) : 0xffffffffu);
+            at(x + (d.open ? 0.15 : 0.5), y + 0.5, d.open ? 0.3f : 1.0f, 1.0f, FrameDoor, 1);
     });
     // The smith's anvil by his door.
     const House h = gen.smith_house();

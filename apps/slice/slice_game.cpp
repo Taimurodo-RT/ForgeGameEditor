@@ -691,6 +691,9 @@ void SliceGame::teleport(f64 x, f64 y) {
     Body& b = level_->hero.get_mut<Body>();
     b.vx = b.vy = 0;
     b.last_dx = b.last_dy = 0;
+    // The hero moves to its new chunk while the old place is still loaded:
+    // otherwise the old place could unload with the hero still filed there.
+    load_around(x, y);
     camera_.x = x;
     camera_.y = y - 2;
     hero_x_ = x;

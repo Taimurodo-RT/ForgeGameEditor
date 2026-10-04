@@ -470,7 +470,7 @@ private:
                 if (f == 0) g.teleport(gen.pool_x1() + 6.5, gen.gallery_y() + 1 - 0.93);
                 return f >= 90;
             }
-            if (scene_ == "door") { // the door at the end of the gallery, still closed
+            if (scene_ == "door") { // the door at the end of the gallery (the key has opened it)
                 if (f == 0) g.teleport(gen.gallery_x1() + 5.5, gen.gallery_y() + 1 - 0.93);
                 return f >= 90;
             }

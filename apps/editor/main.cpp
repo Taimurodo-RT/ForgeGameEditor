@@ -1904,7 +1904,7 @@ private:
             check(click_tab(2) && ed_.tab() == "objects", "a click on the Objects tab");
             break;
         case 1:
-            check(shown("ol-card-0") && ol().cards() == 9, "the tab shows the game's 9 templates as cards");
+            check(shown("ol-card-0") && ol().cards() == 11, "the tab shows the game's 11 templates as cards");
             check(!ol().history().can_undo() && tpl_value("crate", "density") == "0.6",
                   "showing the templates changes none of them");
             check(shown("ol-place-all") && shown("ol-genre-0") && shown("ol-kind-k:pickup") && shown("ol-kind-k:person"),
@@ -1913,12 +1913,12 @@ private:
             check(click("ol-genre-1") && ol().place() == "g:RPG", "a click on «RPG»");
             break;
         case 2:
-            check(ol().cards() == 2 && card_named("Шахтёр Борис") >= 0 && card_named("Кузнец") >= 0,
+            check(ol().cards() == 3 && card_named("Шахтёр Борис") >= 0 && card_named("Кузнец") >= 0 && card_named("Ключ") >= 0,
                   "only the RPG objects are shown");
             check(click("ol-kind-k:pickup"), "a click on «Подбираемое»");
             break;
         case 3: {
-            check(ol().cards() == 5, "only the pickups are shown");
+            check(ol().cards() == 6, "only the pickups are shown");
             const i64 coins = card_named("Монеты");
             check(card_at(coins, x, y), "the «Монеты» card is on screen");
             right_click(x, y);
@@ -1967,7 +1967,7 @@ private:
             click_tab(2);
             break;
         case 8: {
-            check(click("ol-place-all") && ol().cards() == 9, "«Все объекты» shows all 9 again");
+            check(click("ol-place-all") && ol().cards() == 11, "«Все объекты» shows all 11 again");
             Rml::Element* wrap = ed_.find_element("ol-grid-wrap");
             check(wrap != nullptr, "the cards' area is there");
             if (!wrap) break;
@@ -2017,7 +2017,7 @@ private:
                   "a click on «RPG» moves it to RPG");
             check(objects::read_template(lib.find(new_template_)->file).value().genre == "RPG",
                   "the genre is written to the file");
-            check(click("ol-genre-1") && card_named("Золотая монетка") >= 0 && ol().cards() == 3,
+            check(click("ol-genre-1") && card_named("Золотая монетка") >= 0 && ol().cards() == 4,
                   "and it is listed under «RPG»");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(lib.find(new_template_)->genre == "Платформер", "Ctrl+Z gives the genre back");
