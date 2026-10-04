@@ -1,4 +1,5 @@
-add_executable(forge_editor_app main.cpp asset_library.cpp components.cpp dock_view.cpp file_types.cpp level_editor.cpp)
+add_executable(forge_editor_app main.cpp asset_library.cpp components.cpp dock_view.cpp file_types.cpp level_editor.cpp
+                                object_library.cpp)
 set_target_properties(forge_editor_app PROPERTIES OUTPUT_NAME forge_editor)
 target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render forge::ui forge::editor forge::assets forge::level
                       forge_slice_lib forge_demo_common)

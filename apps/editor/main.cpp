@@ -17,6 +17,7 @@
 #include "components.h"
 #include "demo_art.h"
 #include "level_editor.h"
+#include "object_library.h"
 #include "slice_level.h"
 
 #include "forge/assets/image.h"
@@ -264,6 +265,7 @@ public:
     std::filesystem::path objects_folder = game_dir / "objects";
     slice::SliceLevel level_module;
     LevelEditor level{level_module};
+    ObjectLibrary objects_tab{level_module};
     AssetLibrary assets;
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
@@ -302,11 +304,23 @@ public:
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         if (!level.init(ui_, device, format, level_config)) return false;
+        objects_tab.init(ui_);
+        objects_tab.on_place = [this](u64 key) {
+            open_tab("level");
+            level.arm_template(key);
+        };
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
         if (!context_ || !bind_model()) return false;
         ui::register_list_source("hierarchy", &hierarchy);
-        if (!ui_.load_document(context_, "editor/editor.rml")) return false;
+        // Loading fills the inputs from the model, which fires their change
+        // events: not edits.
+        level.set_ui_updating(true);
+        objects_tab.set_ui_updating(true);
+        const bool loaded = ui_.load_document(context_, "editor/editor.rml");
+        level.set_ui_updating(false);
+        objects_tab.set_ui_updating(false);
+        if (!loaded) return false;
 
         // Start looking at the first group.
         if (!doc.roots().empty())
@@ -333,17 +347,20 @@ public:
 
     void undo() {
         if (m_tab_ == "assets") assets.undo();
+        else if (m_tab_ == "objects") objects_tab.undo();
         else if (m_tab_ == "level") level.undo();
         else if (history.undo()) FORGE_INFO("Отменено");
     }
     void redo() {
         if (m_tab_ == "assets") assets.redo();
+        else if (m_tab_ == "objects") objects_tab.redo();
         else if (m_tab_ == "level") level.redo();
         else if (history.redo()) FORGE_INFO("Повторено");
     }
     // The open tab's history.
     UndoStack& active_history() {
         if (m_tab_ == "assets") return assets.history();
+        if (m_tab_ == "objects") return objects_tab.history();
         return m_tab_ == "level" ? level.history() : history;
     }
     void open_tab(const std::string& key) {
@@ -353,7 +370,7 @@ public:
     }
     const std::string& tab() const { return m_tab_; }
     void save() {
-        if (m_tab_ == "assets") return; // files are saved as they change
+        if (m_tab_ == "assets" || m_tab_ == "objects") return; // files are saved as they change
         if (m_tab_ == "level") {
             level.save();
             return;
@@ -461,6 +478,7 @@ public:
         }
         if (m_tab_ == "level") level.update(dt, context_);
         assets.update(dt, m_tab_ == "assets" ? context_ : nullptr);
+        if (m_tab_ == "objects") objects_tab.update(context_);
         refresh_drawables();
         if (play.playing() && !paused_) simulate(static_cast<f32>(std::min(dt, 0.1)));
         hierarchy.refresh();
@@ -471,9 +489,11 @@ public:
         in_ui_update_ = true;
         level.set_ui_updating(true);
         assets.set_ui_updating(true);
+        objects_tab.set_ui_updating(true);
         ui_.update();
         level.set_ui_updating(false);
         assets.set_ui_updating(false);
+        objects_tab.set_ui_updating(false);
         in_ui_update_ = false;
         follow_log();
     }
@@ -488,7 +508,13 @@ public:
 
         viewport_rect();
         render_world(cmd, target, bg);
+        // Layout during rendering may move values into inputs too (a slider
+        // takes its range only then): not the user's edits either.
+        level.set_ui_updating(true);
+        objects_tab.set_ui_updating(true);
         ui_.render(cmd, target, format, w, h);
+        level.set_ui_updating(false);
+        objects_tab.set_ui_updating(false);
     }
 
     bool handle_event(const SDL_Event& e) {
@@ -501,6 +527,7 @@ public:
         const bool ui_used = ui_.handle_event(context_, e);
         if (m_tab_ == "assets") return assets.handle_event(e, density, ui_used, context_) || ui_used;
         if (m_tab_ == "level") return level.handle_event(e, density, ui_used, context_) || ui_used;
+        if (m_tab_ == "objects") return ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
             const f32 x = e.button.x * density, y = e.button.y * density;
@@ -731,9 +758,11 @@ private:
         DockView::register_types(model);
         level.bind(model);
         assets.bind(model);
+        objects_tab.bind(model);
         model_ = model.GetModelHandle();
         level.set_model(model_);
         assets.set_model(model_);
+        objects_tab.set_model(model_);
         return true;
     }
 
@@ -845,10 +874,11 @@ private:
         set(m_can_undo_, h.can_undo(), "can_undo");
         set(m_can_redo_, h.can_redo(), "can_redo");
         set(m_undo_label_, h.undo_label(), "undo_label");
-        set(m_dirty_, m_tab_ != "assets" && h.dirty(), "dirty"); // files are written at once
+        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && h.dirty(), "dirty"); // files are written at once
         set(m_scene_name_,
             m_tab_ == "level"    ? level.title()
             : m_tab_ == "assets" ? std::string("Ресурсы проекта")
+            : m_tab_ == "objects" ? std::string("Объекты: ") + level.title()
                                  : path_to_utf8(scene_path.filename()),
             "scene_name");
         set(m_has_selection_, !doc.selection().empty() && doc.find(doc.selection()[0]) != nullptr, "has_selection");
@@ -894,7 +924,9 @@ private:
                       s.update_ms, s.render_ms, group_digits(sprites_drawn_).c_str(), doc.selection().size());
         // Timings change every frame, so they are shown four times a second;
         // a new selection is shown at once.
-        if (m_tab_ == "assets") {
+        if (m_tab_ == "objects") {
+            set(m_status_, objects_tab.status(), "status");
+        } else if (m_tab_ == "assets") {
             set(m_status_, assets.status(), "status");
         } else if (m_tab_ == "level") {
             set(m_status_, level.status(), "status");
@@ -1109,6 +1141,7 @@ private:
         if (ctrl && k.key == SDLK_Y) { redo(); return true; }
         if (ctrl && k.key == SDLK_S) { save(); return true; }
         if (m_tab_ == "assets") return assets.handle_key(k);
+        if (m_tab_ == "objects") return objects_tab.handle_key(k);
         if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
         if (m_tab_ != "world") return false; // the keys below act on the world view
@@ -1530,7 +1563,7 @@ private:
     }
 
     bool level_step(u32 f) {
-        if (f >= 19) return asset_step();
+        if (f >= 19) return objects_step();
         const usize stone = tile_named("stone"), sand = tile_named("sand");
         switch (f) {
         case 0: {
@@ -1812,6 +1845,144 @@ private:
         e.type = SDL_EVENT_DROP_COMPLETE;
         e.drop.data = nullptr;
         ed_.handle_event(e);
+    }
+
+    // --- the objects tab ---
+    ObjectLibrary& ol() { return ed_.objects_tab; }
+    i64 card_named(const char* name) {
+        for (usize i = 0; i < ol().cards(); ++i)
+            if (ol().card_name(i) == name) return static_cast<i64>(i);
+        return -1;
+    }
+    bool click(const std::string& id) {
+        Rml::Element* e = ed_.find_element(id.c_str());
+        if (e) e->Click();
+        return e != nullptr;
+    }
+    // The template's value of a property, as JSON ("" without one).
+    std::string tpl_value(const char* id, const char* prop) {
+        objects::Library& lib = ol().library();
+        const objects::Template* t = lib.find(id);
+        const objects::KindDef* k = t ? lib.kind_of(*t) : nullptr;
+        const objects::PropDef* p = k ? k->prop(prop) : nullptr;
+        return p ? lib.value(*t, *p) : std::string();
+    }
+    bool objects_step() {
+        if (ol_step_ >= 15) return asset_step();
+        objects::Library& lib = ol().library();
+        switch (ol_step_) {
+        case 0:
+            check(click_tab(2) && ed_.tab() == "objects", "a click on the Objects tab");
+            break;
+        case 1:
+            check(shown("ol-card-0") && ol().cards() == 9, "the tab shows the game's 9 templates as cards");
+            check(!ol().history().can_undo() && tpl_value("crate", "density") == "0.6",
+                  "showing the templates changes none of them");
+            check(shown("ol-kind-all") && shown("ol-kind-pickup") && shown("ol-kind-person"), "the kinds are listed");
+            check(click("ol-kind-pickup"), "a click on «Подбираемое»");
+            break;
+        case 2: {
+            check(ol().cards() == 5, "only the pickups are shown");
+            const i64 coins = card_named("Монеты");
+            check(coins >= 0 && click("ol-card-" + std::to_string(coins)), "a click on «Монеты»");
+            break;
+        }
+        case 3:
+            check(ol().selected() && ol().selected()->id == "coins" && shown("ol-num-1") && shown("ol-next-0"),
+                  "the coins are shown with «Что это» and «Сколько»");
+            click("ol-next-0"); // Монеты → Медь
+            ol().set_prop(1, "15", false);
+            check(tpl_value("coins", "what") == "\"copper\"" && tpl_value("coins", "count") == "15",
+                  "the template is now 15 copper");
+            check(objects::read_template(lib.find("coins")->file).value().value("count") &&
+                      *objects::read_template(lib.find("coins")->file).value().value("count") == "15",
+                  "the change is written to the template's file");
+            check(ol().history().undo_label() == "«Монеты»: Сколько", "the change is in the tab's history");
+            click_tab(0);
+            break;
+        case 4: {
+            const flecs::entity e = placed();
+            check(e.is_valid() && e.get<slice::Item>().kind == u8(slice::ItemKind::Copper) && count() == 7,
+                  "the copy on the level follows the template, but keeps its own count of 7");
+            check(lv().history().undo_label() != "«Монеты»: Сколько", "the level's history is not touched");
+            click_tab(2);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(tpl_value("coins", "what") == "\"coins\"" && tpl_value("coins", "count") == "10",
+                  "Ctrl+Z twice gives the template back");
+            click_tab(0);
+            break;
+        }
+        case 5:
+            check(placed().is_valid() && placed().get<slice::Item>().kind == u8(slice::ItemKind::Coins),
+                  "and the copy is coins again");
+            click_tab(2);
+            break;
+        case 6:
+            check(click("ol-new") && ol().menu_open(), "«Создать» opens");
+            break;
+        case 7:
+            check(shown("ol-new-pickup-0") && shown("ol-new-person-0") && shown("ol-new-crate--1"),
+                  "it lists every kind's presets and an empty one");
+            click("ol-new-pickup-0");
+            break;
+        case 8: {
+            const objects::Template* t = ol().selected();
+            check(!ol().menu_open() && t && t->name == "Монетка" && tpl_value(t->id.c_str(), "count") == "1",
+                  "the «Монетка» preset makes a template: one coin");
+            check(t && std::filesystem::exists(t->file) && t->file.parent_path() == ed_.objects_folder,
+                  "the template is a file in the objects folder");
+            new_template_ = t ? t->key : 0;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lib.find(new_template_), "Ctrl+Z takes it away");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lib.find(new_template_) != nullptr, "Ctrl+Y brings it back");
+            ol().select(new_template_);
+            check(ol().rename("Золотая монетка") && lib.find(new_template_)->name == "Золотая монетка" &&
+                      path_to_utf8(lib.find(new_template_)->file.filename()) == "Золотая монетка.object.json",
+                  "renaming renames the file too");
+            break;
+        }
+        case 9:
+            check(click("ol-place") && ed_.tab() == "level", "«Поставить на уровень» opens the level");
+            break;
+        case 10: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            const auto& defs = ed_.level_module.objects();
+            const i32 armed = lv().armed_object();
+            check(armed >= 0 && defs[static_cast<usize>(armed)].key == new_template_, "with the new template in hand");
+            click_cell(cx_ + 8, cy_);
+            const flecs::entity e = lv().selection().empty() ? flecs::entity() : lv().level().find(lv().selection()[0]);
+            check(e.is_valid() && e.get<slice::Item>().count == 1 && lib.template_of(e) == lib.find(new_template_),
+                  "a click places a copy of it");
+            click_tab(2);
+            break;
+        }
+        case 11:
+            ol().show_kind("");
+            ol().set_search("кир");
+            check(ol().cards() == 1 && ol().card_name(0) == "Кирка", "the search finds the pickaxe");
+            ol().set_search("");
+            break;
+        case 12: {
+            ol().select(new_template_);
+            const usize before = lib.templates().size();
+            check(click("ol-delete") && lib.templates().size() == before - 1, "«Удалить» deletes the template");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lib.templates().size() == before, "Ctrl+Z brings it back");
+            break;
+        }
+        case 13:
+            ol().select(lib.find("coins")->key); // for a screenshot
+            ed_.objects_tab.show_kind("");
+            break;
+        case 14:
+            click_tab(0);
+            break;
+        default: break;
+        }
+        ++ol_step_;
+        return true;
     }
 
     bool asset_step() {
@@ -2134,7 +2305,8 @@ private:
     usize entries_ = 0, count_ = 0, stacks_ = 0;
     i32 cx_ = 0, cy_ = 0;
     u64 object_ = 0;
-    u32 as_step_ = 0, waited_ = 0;
+    u32 as_step_ = 0, ol_step_ = 0, waited_ = 0;
+    u64 new_template_ = 0;
     std::string drop_text_;
     bool typed_ = false;
     int failures_ = 0;

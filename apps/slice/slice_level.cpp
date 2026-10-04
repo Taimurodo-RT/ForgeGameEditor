@@ -120,13 +120,16 @@ void populate(const SliceGenerator& gen, const objects::Library& library, ChunkC
     };
     // Each object stands with its feet at (x, y).
     auto put = [&](std::string_view id, f64 x, f64 y, u32 seed) {
-        if (here(x, y - 0.5)) spawn_object(library, scene, id, x, y, seed);
+        return here(x, y - 0.5) ? spawn_object(library, scene, id, x, y, seed) : flecs::entity();
     };
     const f64 v = gen.village_y();
     put("miner", (gen.miner_house().x0 + gen.miner_house().x1) * 0.5 + 0.5, v, 13u);
     put("smith", (gen.smith_house().x0 + gen.smith_house().x1) * 0.5 + 0.5, v, 7919u + 13u);
     put("pickaxe", gen.pickaxe_x(), gen.pickaxe_y() + 0.1, 1);
-    put("coins", gen.pickaxe_x() + 3.0, gen.pickaxe_y() + 0.1, 1);
+    // A bigger pile than the template's by the pickaxe: this copy's own count.
+    if (flecs::entity coins = put("coins", gen.pickaxe_x() + 3.0, gen.pickaxe_y() + 0.1, 1); coins.is_valid())
+        if (const objects::KindDef* k = library.kind("pickup"))
+            if (const objects::PropDef* count = k->prop("count")) library.set_value(scene, coins, *count, "12");
     put("torches", gen.gallery_x0() - 3.5, gen.gallery_y() - 0.1, 1);
     const f64 sx = gen.smith_house().x1 + 4.0;
     put("crate", sx, v, 1);

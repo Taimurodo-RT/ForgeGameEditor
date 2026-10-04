@@ -187,13 +187,16 @@ void LevelEditor::build_objects() {
     for (usize i = 0; i < objects.size(); ++i) {
         const level::ObjectDef& o = objects[i];
         module_.object_icon(o, kIconPx, icon);
-        ui_->set_image("obj_" + o.id, icon.data(), kIconPx, kIconPx);
+        // A changed template may look different: a new picture name.
+        const objects::Template* t = module_.library() ? module_.library()->find(o.key) : nullptr;
+        const std::string image = "obj_" + o.id + "_" + std::to_string(t ? t->rev : 0);
+        ui_->set_image(image, icon.data(), kIconPx, kIconPx);
         auto g = std::find_if(m_objects_.begin(), m_objects_.end(), [&](const PaletteGroup& pg) { return pg.name == o.group; });
         if (g == m_objects_.end()) {
             m_objects_.push_back({o.group, {}});
             g = m_objects_.end() - 1;
         }
-        g->tiles.push_back({static_cast<int>(i), o.name, "/memory/obj_" + o.id, "", 0});
+        g->tiles.push_back({static_cast<int>(i), o.name, "/memory/" + image, "", 0});
         if (armed && o.key == armed) object_ = static_cast<i32>(i);
     }
     if (object_ < 0) armed_key_ = 0;
@@ -502,6 +505,17 @@ void LevelEditor::arm_object(i32 index) {
     armed_key_ = index >= 0 ? module_.objects()[static_cast<usize>(index)].key : 0;
 }
 
+void LevelEditor::arm_template(u64 key) {
+    if (module_.objects_version() != objects_version_) build_objects();
+    const auto& defs = module_.objects();
+    for (usize i = 0; i < defs.size(); ++i)
+        if (defs[i].key == key) {
+            arm_object(static_cast<i32>(i));
+            FORGE_INFO("«%s»: щёлкни по уровню, чтобы поставить", defs[i].name.c_str());
+            return;
+        }
+}
+
 void LevelEditor::select_objects(std::vector<u64> ids) {
     if (ids == selection_) return;
     selection_ = std::move(ids);
@@ -613,7 +627,8 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
         const level::ObjectDef& def = module_.objects()[static_cast<usize>(kind)];
         m_sel_name_ = def.name;
         m_sel_hint_ = def.hint;
-        m_sel_icon_ = "/memory/obj_" + def.id;
+        const objects::Template* st = module_.library() ? module_.library()->find(def.key) : nullptr;
+        m_sel_icon_ = "/memory/obj_" + def.id + "_" + std::to_string(st ? st->rev : 0);
         const scene::Position& p = e.get<scene::Position>();
         char v[32];
         std::snprintf(v, sizeof(v), "%.2f", p.tile_x());

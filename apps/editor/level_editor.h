@@ -107,6 +107,7 @@ public:
     void reset_layout();
     // Objects
     void arm_object(i32 index); // -1: none (clicks select)
+    void arm_template(u64 key); // the palette object of this template
     i32 armed_object() const { return object_; }
     const std::vector<u64>& selection() const { return selection_; }
     void select_objects(std::vector<u64> ids);
