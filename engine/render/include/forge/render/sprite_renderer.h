@@ -45,6 +45,9 @@ public:
     bool init(SDL_GPUDevice* device, SDL_GPUTextureFormat target_format, const SpriteSheet& sheet,
               u32 max_sprites = 1u << 20);
     void shutdown();
+    // Swaps the sheet for another (more frames, other pictures); outside any
+    // render pass. Frame numbers already in use keep pointing at their rects.
+    bool set_sheet(const SpriteSheet& sheet);
 
     // Each frame, outside any render pass. sorted = false keeps push order
     // (cheaper; fine for effects where order does not matter).

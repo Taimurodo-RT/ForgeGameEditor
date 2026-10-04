@@ -189,7 +189,7 @@ void LevelEditor::build_objects() {
         module_.object_icon(o, kIconPx, icon);
         // A changed template may look different: a new picture name.
         const objects::Template* t = module_.library() ? module_.library()->find(o.key) : nullptr;
-        const std::string image = "obj_" + o.id + "_" + std::to_string(t ? t->rev : 0);
+        const std::string image = "obj_" + o.id + "_" + std::to_string(t ? t->look() : 0);
         ui_->set_image(image, icon.data(), kIconPx, kIconPx);
         auto g = std::find_if(m_objects_.begin(), m_objects_.end(), [&](const PaletteGroup& pg) { return pg.name == o.group; });
         if (g == m_objects_.end()) {
@@ -628,7 +628,7 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
         m_sel_name_ = def.name;
         m_sel_hint_ = def.hint;
         const objects::Template* st = module_.library() ? module_.library()->find(def.key) : nullptr;
-        m_sel_icon_ = "/memory/obj_" + def.id + "_" + std::to_string(st ? st->rev : 0);
+        m_sel_icon_ = "/memory/obj_" + def.id + "_" + std::to_string(st ? st->look() : 0);
         const scene::Position& p = e.get<scene::Position>();
         char v[32];
         std::snprintf(v, sizeof(v), "%.2f", p.tile_x());

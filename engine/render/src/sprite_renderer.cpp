@@ -8,6 +8,7 @@
 #include "shaders/sprite_frag.h"
 #include "shaders/sprite_vert.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace forge::render {
@@ -78,8 +79,19 @@ bool SpriteRenderer::init(SDL_GPUDevice* device, SDL_GPUTextureFormat target_for
     sinfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     sampler_ = SDL_CreateGPUSampler(device_, &sinfo);
 
+    if (!sampler_ || !set_sheet(sheet)) {
+        FORGE_ERROR("sprites: sheet setup failed: %s", SDL_GetError());
+        return false;
+    }
+    FORGE_INFO("sprites: up to %u per frame, %u frames in a %ux%u sheet", max_sprites_, sheet.frame_count, sheet.width,
+               sheet.height);
+    return true;
+}
+
+bool SpriteRenderer::set_sheet(const SpriteSheet& sheet) {
+    if (!device_ || !sheet.rgba || sheet.width == 0 || sheet.height == 0) return false;
     // Frame rectangles as texture coordinates.
-    std::vector<f32> uv(static_cast<usize>(sheet.frame_count) * 4);
+    std::vector<f32> uv(static_cast<usize>(std::max(sheet.frame_count, 1u)) * 4);
     for (u32 i = 0; i < sheet.frame_count; ++i) {
         const SpriteRect& r = sheet.frames[i];
         uv[i * 4 + 0] = static_cast<f32>(r.x) / static_cast<f32>(sheet.width);
@@ -88,18 +100,21 @@ bool SpriteRenderer::init(SDL_GPUDevice* device, SDL_GPUTextureFormat target_for
         uv[i * 4 + 3] = static_cast<f32>(r.y + r.h) / static_cast<f32>(sheet.height);
     }
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
-    if (cmd) {
-        frames_ = create_buffer_with_data(device_, cmd, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ, uv.data(),
-                                          static_cast<u32>(uv.size() * sizeof(f32)));
-        sheet_ = create_texture_rgba8(device_, cmd, sheet.rgba, sheet.width, sheet.height);
-        SDL_SubmitGPUCommandBuffer(cmd);
-    }
-    if (!sampler_ || !frames_ || !sheet_) {
-        FORGE_ERROR("sprites: sheet setup failed: %s", SDL_GetError());
+    if (!cmd) return false;
+    SDL_GPUBuffer* frames = create_buffer_with_data(device_, cmd, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ, uv.data(),
+                                                    static_cast<u32>(uv.size() * sizeof(f32)));
+    SDL_GPUTexture* texture = create_texture_rgba8(device_, cmd, sheet.rgba, sheet.width, sheet.height);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    if (!frames || !texture) {
+        if (frames) SDL_ReleaseGPUBuffer(device_, frames);
+        if (texture) SDL_ReleaseGPUTexture(device_, texture);
         return false;
     }
-    FORGE_INFO("sprites: up to %u per frame, %u frames in a %ux%u sheet", max_sprites_, sheet.frame_count, sheet.width,
-               sheet.height);
+    // The GPU lets go of the old ones once the frames using them are done.
+    if (frames_) SDL_ReleaseGPUBuffer(device_, frames_);
+    if (sheet_) SDL_ReleaseGPUTexture(device_, sheet_);
+    frames_ = frames;
+    sheet_ = texture;
     return true;
 }
 

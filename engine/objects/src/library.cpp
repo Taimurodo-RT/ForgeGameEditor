@@ -237,6 +237,7 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     t.kind = text_of(yyjson_obj_get(root, "kind"));
     t.about = text_of(yyjson_obj_get(root, "about"));
     t.genre = text_of(yyjson_obj_get(root, "genre"));
+    t.picture = text_of(yyjson_obj_get(root, "picture"));
     t.values = read_values(yyjson_obj_get(root, "values"));
     yyjson_doc_free(doc);
     if (t.id.empty() || t.kind.empty()) {
@@ -257,6 +258,7 @@ std::string template_json(const Template& t) {
     s += "  \"kind\": " + json_text(t.kind) + ",\n";
     if (!t.genre.empty()) s += "  \"genre\": " + json_text(t.genre) + ",\n";
     if (!t.about.empty()) s += "  \"about\": " + json_text(t.about) + ",\n";
+    if (!t.picture.empty()) s += "  \"picture\": " + json_text(t.picture) + ",\n";
     s += "  \"values\": {";
     for (usize i = 0; i < t.values.size(); ++i)
         s += (i ? ",\n    " : "\n    ") + json_text(t.values[i].first) + ": " + t.values[i].second;
@@ -265,15 +267,25 @@ std::string template_json(const Template& t) {
     return s;
 }
 
+u32 Template::look() const {
+    if (picture.empty()) return rev;
+    return (rev ^ static_cast<u32>(fnv1a(picture) >> 7)) | 1u;
+}
+
 // --- the library ------------------------------------------------------------
 
 Library::Library() = default;
+
+fs::path Library::picture_file(const Template& t) const {
+    return t.picture.empty() ? fs::path() : pictures_ / utf8_path(t.picture);
+}
 Library::~Library() = default;
 
 bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::string* error) {
     kinds_.clear();
     templates_.clear();
     folder_ = folder;
+    if (pictures_.empty()) pictures_ = kinds_file.parent_path() / "pictures";
     ++version_;
     std::vector<u8> bytes;
     if (!read_file(kinds_file, bytes)) {

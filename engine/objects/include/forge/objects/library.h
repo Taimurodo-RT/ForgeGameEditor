@@ -107,8 +107,15 @@ struct Template {
     // Property values that differ from the kind's own (prop id, JSON value:
     // 10, "coins", true). Missing ones take the kind's starting value.
     std::vector<std::pair<std::string, std::string>> values;
+    // Its own picture: a file name in the library's pictures folder
+    // ("coin.png"); empty: the game draws its usual one.
+    std::string picture;
     std::filesystem::path file;
     u32 rev = 0; // hash of the values: copies with another rev are behind
+
+    // Changes whenever what the template looks like may change (its values
+    // or its picture): names cached icons.
+    u32 look() const;
 
     const std::string* value(std::string_view prop) const;
 };
@@ -137,6 +144,12 @@ public:
     // Reads the folder again (files changed outside the editor).
     void reload_templates();
     const std::filesystem::path& folder() const { return folder_; }
+    // Where templates' pictures are: "pictures" next to the kinds file,
+    // unless set.
+    const std::filesystem::path& pictures_folder() const { return pictures_; }
+    void set_pictures_folder(std::filesystem::path folder) { pictures_ = std::move(folder); }
+    // The template's picture file (empty without one).
+    std::filesystem::path picture_file(const Template& t) const;
 
     const std::vector<KindDef>& kinds() const { return kinds_; }
     // Genres to sort templates by: the kinds file's list, then any other a
@@ -200,6 +213,7 @@ private:
     std::vector<std::string> genres_; // from the kinds file
     std::vector<Template> templates_;
     std::filesystem::path folder_;
+    std::filesystem::path pictures_;
     u64 version_ = 1;
     AdoptFn adopt_;
 };

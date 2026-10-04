@@ -5,6 +5,7 @@
 // drawn, and the level module the editor uses to paint «Старая шахта».
 
 #include "demo_art.h"
+#include "slice_pictures.h"
 #include "slice_world.h"
 
 #include "forge/level/level.h"
@@ -85,8 +86,9 @@ struct Objects {
 // Sprites of the villagers, critters, items, crates and the anvil, around
 // the camera (cam_x, cam_y). alpha: how far between ticks (1 when nothing
 // moves); tick: the animation clock.
+// Copies of a template with its own picture are drawn with it.
 void push_objects(forge::render::SpriteBatch& batch, Objects& objects, const SliceGenerator& gen, f64 cam_x,
-                  f64 cam_y, f32 alpha, u64 tick);
+                  f64 cam_y, f32 alpha, u64 tick, const Pictures* pictures = nullptr);
 // Flames over the torches in view; their places go to torches (for lights).
 void push_torches(forge::render::SpriteBatch& batch, const forge::world::World& world, const forge::world::Rect& view,
                   f64 cam_x, f64 cam_y, u64 tick, std::vector<std::pair<f64, f64>>& torches);
@@ -146,7 +148,14 @@ private:
 
     SDL_GPUDevice* device_ = nullptr;
     SDL_GPUTextureFormat format_{};
-    forge::demo::SheetImage sheet_;
+    // Brings the sheet up to the library's pictures.
+    void refresh_pictures() const;
+
+    forge::demo::SheetImage base_sheet_;      // the drawn frames
+    mutable forge::demo::SheetImage sheet_;   // and the templates' pictures
+    mutable Pictures pictures_;
+    mutable u64 pictures_version_ = ~0ull;    // the library version they are for
+    mutable bool sheet_changed_ = false;      // not yet on the GPU
     forge::render::TilemapRenderer tilemap_;
     const forge::world::World* tilemap_world_ = nullptr;
     forge::render::SpriteRenderer sprites_;

@@ -1574,4 +1574,15 @@ bool AssetLibrary::handle_key(const SDL_KeyboardEvent& k) {
     return false;
 }
 
+std::vector<std::filesystem::path> AssetLibrary::images() const {
+    std::vector<const assets::AssetRecord*> found;
+    for (const assets::AssetRecord& r : records_)
+        if (r.type == "image") found.push_back(&r);
+    std::sort(found.begin(), found.end(), [](const auto* a, const auto* b) { return a->mtime > b->mtime; });
+    std::vector<std::filesystem::path> out;
+    out.reserve(found.size());
+    for (const assets::AssetRecord* r : found) out.push_back(abs(r->path));
+    return out;
+}
+
 } // namespace forge::editor_app

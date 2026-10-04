@@ -1,5 +1,7 @@
 #include "object_library.h"
 
+#include "forge/assets/image.h"
+#include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/game/dialogue.h"
@@ -49,7 +51,7 @@ private:
     std::string label_, merge_;
 };
 
-std::string icon_name(const objects::Template& t) { return "tpl_" + t.id + "_" + std::to_string(t.rev); }
+std::string icon_name(const objects::Template& t) { return "tpl_" + t.id + "_" + std::to_string(t.look()); }
 
 Rml::String input_value(Rml::Event& ev) {
     Rml::Element* e = ev.GetTargetElement();
@@ -144,6 +146,12 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("advanced", &PropView::advanced);
     }
     model.RegisterArray<std::vector<PropView>>();
+    if (auto s = model.RegisterStruct<PicView>()) {
+        s.RegisterMember("name", &PicView::name);
+        s.RegisterMember("folder", &PicView::folder);
+        s.RegisterMember("icon", &PicView::icon);
+    }
+    model.RegisterArray<std::vector<PicView>>();
 
     model.Bind("ol_all", &m_all_);
     model.Bind("ol_genres", &m_genres_);
@@ -169,6 +177,11 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("ol_sel_about", &m_sel_about_);
     model.Bind("ol_sel_icon", &m_sel_icon_);
     model.Bind("ol_sel_file", &m_sel_file_);
+    model.Bind("ol_sel_picture", &m_sel_picture_);
+    model.Bind("ol_pics", &m_pics_);
+    model.Bind("ol_pics_open", &m_pics_open_);
+    model.Bind("ol_pics_search", &m_pics_search_);
+    model.Bind("ol_pics_note", &m_pics_note_);
 
     // Any action closes an open menu.
     auto on = [&](const char* name, auto fn) {
@@ -229,6 +242,16 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     on("ol_open", [this](Rml::Event&, const Rml::VariantList&) { open_editor(); });
     on("ol_back", [this](Rml::Event&, const Rml::VariantList&) { close_editor(); });
     on("ol_genre", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_genre(arg_str(a, 0)); });
+    on("ol_picture_pick", [this](Rml::Event&, const Rml::VariantList&) { open_pictures(); });
+    on("ol_picture_clear", [this](Rml::Event&, const Rml::VariantList&) { clear_picture(); });
+    on("ol_picture_choose", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        const int i = arg_int(a, 0);
+        if (i >= 0) choose_picture(static_cast<usize>(i));
+    });
+    on("ol_pics_close", [this](Rml::Event&, const Rml::VariantList&) { close_pictures(); });
+    model.BindEventCallback("ol_pics_search", [this](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList&) {
+        if (!ui_updating_) set_picture_search(input_value(ev));
+    });
     on("ol_details", [this](Rml::Event&, const Rml::VariantList&) { set(m_details_, !m_details_, "ol_details"); });
     model.BindEventCallback("ol_search", [this](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList&) {
         if (!ui_updating_) set_search(input_value(ev));
@@ -274,11 +297,11 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
 
 void ObjectLibrary::icon_of(const objects::Template& t) {
     auto it = icon_revs_.find(t.key);
-    if (it != icon_revs_.end() && it->second == t.rev) return;
+    if (it != icon_revs_.end() && it->second == t.look()) return;
     std::vector<u8> rgba;
     module_.object_icon({t.id, t.name, "", "", t.key}, kIconPx, rgba);
     ui_->set_image(icon_name(t), rgba.data(), kIconPx, kIconPx);
-    icon_revs_[t.key] = t.rev;
+    icon_revs_[t.key] = t.look();
 }
 
 void ObjectLibrary::rebuild() {
@@ -344,6 +367,7 @@ void ObjectLibrary::rebuild_side() {
         m_sel_kind_about_ = k ? k->about : "";
         m_sel_genre_ = t->genre.empty() ? kAnyGame : t->genre;
         m_sel_file_ = path_to_utf8(t->file.filename());
+        m_sel_picture_ = t->picture;
         for (const std::string& g : lib.genres()) m_genre_items_.push_back({g, g, t->genre == g});
         m_genre_items_.push_back({"", kAnyGame, t->genre.empty()});
         // The editor's properties.
@@ -373,7 +397,7 @@ void ObjectLibrary::rebuild_side() {
     }
     if (model_)
         for (const char* name : {"ol_props", "ol_genre_items", "ol_sel_name", "ol_sel_about", "ol_sel_icon", "ol_sel_kind",
-                                 "ol_sel_kind_icon", "ol_sel_kind_about", "ol_sel_genre", "ol_sel_file"})
+                                 "ol_sel_kind_icon", "ol_sel_kind_about", "ol_sel_genre", "ol_sel_file", "ol_sel_picture"})
             model_.DirtyVariable(name);
 }
 
@@ -552,6 +576,7 @@ void ObjectLibrary::open_editor() {
 
 void ObjectLibrary::close_editor() {
     if (!editing_) return;
+    close_pictures();
     editing_ = 0;
     set(m_editing_, false, "ol_editing");
     rebuild_side();
@@ -596,6 +621,7 @@ bool ObjectLibrary::handle_key(const SDL_KeyboardEvent& k) {
     const bool ctrl = (k.mod & SDL_KMOD_CTRL) != 0;
     if (k.key == SDLK_ESCAPE) {
         if (menu_open()) set_menu("");
+        else if (m_pics_open_) close_pictures();
         else if (renaming_) {
             renaming_ = false;
             rebuild();
@@ -636,6 +662,118 @@ std::string ObjectLibrary::status() const {
     if (editing_ && t) return "Редактор объекта «" + t->name + "» · " + path_to_utf8(t->file.filename()) + " · Esc — к библиотеке";
     if (t) s += " · «" + t->name + "»: " + path_to_utf8(t->file.filename());
     return s;
+}
+
+} // namespace forge::editor_app
+
+// --- the object's picture ---
+
+namespace forge::editor_app {
+
+bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
+    namespace fs = std::filesystem;
+    const objects::Template* t = selected();
+    if (!t) return false;
+    // Into the pictures folder, under its own name; the same file already
+    // there is used as it is, another one of that name gets a number.
+    const fs::path folder = library().pictures_folder();
+    std::error_code ec;
+    fs::create_directories(folder, ec);
+    std::vector<u8> bytes;
+    if (!read_file(source, bytes)) {
+        FORGE_WARN("картинка %s не читается", path_to_utf8(source).c_str());
+        return false;
+    }
+    const std::string stem = path_to_utf8(source.stem()), ext = path_to_utf8(source.extension());
+    fs::path target = folder / source.filename();
+    for (int n = 2;; ++n) {
+        std::vector<u8> there;
+        if (!fs::exists(target, ec)) {
+            if (!write_file_atomic(target, bytes)) {
+                FORGE_WARN("картинка не копируется в %s", path_to_utf8(target).c_str());
+                return false;
+            }
+            break;
+        }
+        if (fs::equivalent(target, source, ec) || (read_file(target, there) && there == bytes)) break;
+        target = folder / utf8_path(stem + " " + std::to_string(n) + ext);
+    }
+    const std::string name = path_to_utf8(target.filename());
+    close_pictures();
+    if (name == t->picture) return false;
+    objects::Template after = *t;
+    after.picture = name;
+    change(std::move(after), "«" + t->name + "»: картинка");
+    history_.seal();
+    return true;
+}
+
+bool ObjectLibrary::clear_picture() {
+    const objects::Template* t = selected();
+    if (!t || t->picture.empty()) return false;
+    objects::Template after = *t;
+    after.picture.clear();
+    change(std::move(after), "«" + t->name + "»: обычная картинка");
+    history_.seal();
+    return true;
+}
+
+void ObjectLibrary::open_pictures() {
+    if (!selected()) return;
+    set_menu("");
+    pic_search_.clear();
+    set(m_pics_search_, Rml::String(), "ol_pics_search");
+    set(m_pics_open_, true, "ol_pics_open");
+    rebuild_pictures();
+}
+
+void ObjectLibrary::close_pictures() { set(m_pics_open_, false, "ol_pics_open"); }
+
+void ObjectLibrary::set_picture_search(const std::string& text) {
+    if (text == pic_search_) return;
+    pic_search_ = text;
+    m_pics_search_ = text;
+    rebuild_pictures();
+}
+
+bool ObjectLibrary::choose_picture(usize i) { return i < pic_files_.size() && set_picture(pic_files_[i]); }
+
+void ObjectLibrary::rebuild_pictures() {
+    // The images whose name or folder has every word of the search; the
+    // first ones get thumbnails (decoded once).
+    constexpr usize kShown = 60;
+    constexpr u32 kThumb = 96;
+    pic_files_.clear();
+    m_pics_.clear();
+    std::vector<std::filesystem::path> all = list_images ? list_images() : std::vector<std::filesystem::path>();
+    const std::string needle = game::to_lower_utf8(pic_search_);
+    usize matching = 0;
+    for (const std::filesystem::path& file : all) {
+        const std::string text = path_to_utf8(file);
+        if (!needle.empty() && game::to_lower_utf8(path_to_utf8(file.parent_path().filename() / file.filename())).find(needle) == std::string::npos) continue;
+        ++matching;
+        if (pic_files_.size() >= kShown) continue;
+        std::string& icon = pic_icons_[text];
+        if (icon.empty()) {
+            icon = "pic_" + std::to_string(pic_icons_.size());
+            std::vector<u8> bytes;
+            assets::CookedTexture image;
+            if (read_file(file, bytes) && assets::decode_image(bytes, image)) {
+                const assets::CookedTexture thumb = assets::fit_image(image, kThumb);
+                ui_->set_image(icon, thumb.rgba8.data(), thumb.width, thumb.height);
+            }
+        }
+        pic_files_.push_back(file);
+        m_pics_.push_back({path_to_utf8(file.stem()), path_to_utf8(file.parent_path().filename()), "/memory/" + icon});
+    }
+    m_pics_note_ = all.empty() ? "В «Ресурсах» пока нет картинок: перетащите их в окно редактора на вкладке «Ресурсы»."
+                   : matching == 0 ? "Ничего не нашлось."
+                   : matching > pic_files_.size()
+                       ? "Показаны первые " + std::to_string(pic_files_.size()) + " из " + std::to_string(matching) +
+                             ": уточните поиск."
+                       : "Картинка скопируется в папку игры и будет у этого объекта и всех его копий.";
+    if (model_)
+        for (const char* name : {"ol_pics", "ol_pics_note", "ol_pics_search"}) model_.DirtyVariable(name);
 }
 
 } // namespace forge::editor_app

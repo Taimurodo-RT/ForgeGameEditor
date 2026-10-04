@@ -263,6 +263,7 @@ public:
     // The game's object kinds and where its templates are kept.
     std::filesystem::path game_dir = utf8_path(SLICE_DATA_DIR);
     std::filesystem::path objects_folder = game_dir / "objects";
+    std::filesystem::path pictures_folder = game_dir / "pictures"; // the templates' own pictures
     slice::SliceLevel level_module;
     LevelEditor level{level_module};
     ObjectLibrary objects_tab{level_module};
@@ -301,10 +302,12 @@ public:
         config.theme = theme;
         config.hot_reload = window != nullptr;
         if (!ui_.init(device, window, config)) return false;
+        level_module.library()->set_pictures_folder(pictures_folder);
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         if (!level.init(ui_, device, format, level_config)) return false;
         objects_tab.init(ui_);
+        objects_tab.list_images = [this] { return assets.images(); };
         objects_tab.on_place = [this](u64 key) {
             open_tab("level");
             level.arm_template(key);
@@ -1877,7 +1880,7 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 23) return asset_step();
+        if (ol_step_ >= 27) return asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -2056,11 +2059,71 @@ private:
             check(lib.templates().size() == before, "Ctrl+Z brings it back");
             break;
         }
-        case 21:
+        case 21: {
+            // A picture of the project for the coins: a gold square.
+            assets::CookedTexture gold{16, 16, std::vector<u8>(16 * 16 * 4)};
+            for (usize i = 0; i < gold.rgba8.size(); i += 4) {
+                gold.rgba8[i] = 250;
+                gold.rgba8[i + 1] = 200;
+                gold.rgba8[i + 2] = 20;
+                gold.rgba8[i + 3] = 255;
+            }
+            std::vector<u8> png;
+            const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_editor_test_pictures";
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            picture_file_ = dir / utf8_path("Звезда.png");
+            check(assets::encode_image(gold, ".png", png) && write_file_atomic(picture_file_, png), "a test picture is made");
+            ol().list_images = [this] { return std::vector<std::filesystem::path>{picture_file_}; };
+            ol().select(lib.find("coins")->key);
+            ol().open_editor();
+            break;
+        }
+        case 22: {
+            if (!ol().pictures_open()) {
+                if (hold(shown("ol-picture-pick"), "the coins' editor is laid out")) return true;
+                check(!shown("ol-picture-clear") && lib.find("coins")->picture.empty(),
+                      "the coins' editor offers «Картинка: Выбрать…», the usual picture for now");
+                check(click("ol-picture-pick") && ol().pictures_open(), "«Выбрать…» opens the picture chooser");
+                return true;
+            }
+            if (hold(shown("ol-pic-0"), "the chooser is laid out")) return true;
+            check(ol().picture_choices() == 1 && ol().picture_choice(0) == "Звезда", "it shows the project's picture");
+            const u32 look = lib.find("coins")->look();
+            check(click("ol-pic-0") && !ol().pictures_open() && lib.find("coins")->picture == "Звезда.png",
+                  "a click on it gives the coins that picture");
+            check(std::filesystem::exists(ed_.pictures_folder / utf8_path("Звезда.png")),
+                  "the picture is copied into the game's pictures folder");
+            check(objects::read_template(lib.find("coins")->file).value().picture == "Звезда.png",
+                  "and named in the template's file");
+            check(lib.find("coins")->look() != look, "the coins' icons are drawn again");
+            std::vector<u8> rgba;
+            ed_.level_module.object_icon({"coins", "", "", "", lib.find("coins")->key}, 32, rgba);
+            const u8* mid = &rgba[(16 * 32 + 16) * 4];
+            check(mid[0] == 250 && mid[1] == 200 && mid[2] == 20, "with the new picture");
+            check(ol().history().undo_label() == "«Монеты»: картинка", "the change is in the tab's history");
+            break;
+        }
+        case 23:
+            if (hold(shown("ol-picture-clear"), "«Убрать» shows")) return true;
+            check(click("ol-picture-clear") && lib.find("coins")->picture.empty(), "«Убрать» gives the usual picture back");
+            ol().undo();
+            check(lib.find("coins")->picture == "Звезда.png", "Ctrl+Z gives the new one back");
+            click("ol-back");
+            click_tab(0);
+            break;
+        case 24: {
+            // The coins on the level are drawn with it (their icon in the palette too).
+            const flecs::entity e = placed();
+            check(e.is_valid() && lib.template_of(e) == lib.find("coins"), "the coins on the level are a copy of the template");
+            click_tab(2);
+            break;
+        }
+        case 25:
             ol().select(lib.find("coins")->key); // for a screenshot
             ol().show("");
             break;
-        case 22:
+        case 26:
             click_tab(0);
             break;
         default: break;
@@ -2390,6 +2453,7 @@ private:
     i32 cx_ = 0, cy_ = 0;
     u64 object_ = 0;
     u32 as_step_ = 0, ol_step_ = 0, waited_ = 0;
+    std::filesystem::path picture_file_;
     u64 new_template_ = 0;
     std::string drop_text_;
     bool typed_ = false;
@@ -2417,6 +2481,10 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             std::error_code ec;
             std::filesystem::remove_all(editor.objects_folder, ec);
             std::filesystem::copy(editor.game_dir / "objects", editor.objects_folder, std::filesystem::copy_options::recursive, ec);
+            editor.pictures_folder = std::filesystem::temp_directory_path() / "forge_editor_pictures";
+            std::filesystem::remove_all(editor.pictures_folder, ec);
+            if (std::filesystem::exists(editor.game_dir / "pictures", ec))
+                std::filesystem::copy(editor.game_dir / "pictures", editor.pictures_folder, std::filesystem::copy_options::recursive, ec);
         }
         // Nor the game's level, unless one is given.
         LevelConfig lc;
