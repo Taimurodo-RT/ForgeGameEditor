@@ -7,6 +7,7 @@
     <link type="text/rcss" href="../forge-ui/containers.rcss"/>
     <link type="text/rcss" href="../forge-ui/menus.rcss"/>
     <link type="text/rcss" href="editor.rcss"/>
+    <link type="text/rcss" href="level.rcss"/>
 </head>
 <!-- The editor window. C++ fills the "editor" data model and draws the world
      under the #viewport element; everything you see here can be changed in
@@ -34,10 +35,10 @@
     </div>
 
     <!-- Editors. Each tab: open_tab(key, title, what it is for, roadmap step, icon).
-         Only "world" has a working editor yet; the others show what will be there. -->
+         "level" and "world" work; the others show what will be there. -->
     <div id="editor-tabs" class="row">
-        <div class="editor-tab" data-class-selected="tab == 'world'" data-event-click="open_tab('world', 'Мир', '', '', 'public')"><icon name="public"/><span>Мир</span></div>
-        <div class="editor-tab" data-class-selected="tab == 'tiles'" data-event-click="open_tab('tiles', 'Тайлы', 'Рисование тайлами и слои мира', 'шаг 9: редактор уровня', 'grid_on')"><icon name="grid_on"/><span>Тайлы</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'level'" data-event-click="open_tab('level', 'Уровень', '', '', 'landscape')"><icon name="landscape"/><span>Уровень</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'world'" data-event-click="open_tab('world', 'Сцена', '', '', 'public')"><icon name="public"/><span>Сцена</span></div>
         <div class="editor-tab" data-class-selected="tab == 'objects'" data-event-click="open_tab('objects', 'Объекты', 'Библиотека объектов: персонажи, предметы, декор из ассетов', 'шаг 10: библиотека объектов', 'deployed_code')"><icon name="deployed_code"/><span>Объекты</span></div>
         <div class="editor-tab" data-class-selected="tab == 'animation'" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon name="movie"/><span>Анимация</span></div>
         <div class="editor-tab" data-class-selected="tab == 'images'" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'шаг 9: библиотека ассетов', 'image')"><icon name="image"/><span>Изображения</span></div>
@@ -49,7 +50,7 @@
         <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', 'Все файлы проекта: поиск, импорт, преобразование', 'шаг 9: библиотека ассетов', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
     </div>
 
-    <div id="placeholder" class="column" data-if="tab != 'world'">
+    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level')">
         <icon class="big" data-attr-name="tab_icon"/>
         <div class="headline-small">{{ tab_title }}</div>
         <div class="muted">{{ tab_description }}</div>
@@ -140,10 +141,147 @@
         </div>
     </div>
 
+    <!-- The level editor: modes over the level, the tools of the mode, then
+         panels docked around the world view. C++ places the panes and the
+         view (ids pane-<panel> and level-view) where the layout says; the
+         frames behind them carry the headers you drag. -->
+    <div id="level" class="column" data-if="tab == 'level'">
+        <div id="level-bar" class="row">
+            <div class="modes row">
+                <div class="mode" data-class-selected="lv_mode == 'select'" data-event-click="lv_mode('select')"><icon name="near_me"/><span>Выбор</span></div>
+                <div class="mode" data-class-selected="lv_mode == 'tiles'" data-event-click="lv_mode('tiles')"><icon name="grid_on"/><span>Тайлы</span></div>
+                <div class="mode soon" data-class-selected="lv_mode == 'objects'" data-event-click="lv_mode('objects')"><icon name="deployed_code"/><span>Объекты</span></div>
+                <div class="mode soon" data-class-selected="lv_mode == 'physics'" data-event-click="lv_mode('physics')"><icon name="water_drop"/><span>Физика</span></div>
+                <div class="mode soon" data-class-selected="lv_mode == 'light'" data-event-click="lv_mode('light')"><icon name="lightbulb"/><span>Свет</span></div>
+                <div class="mode soon" data-class-selected="lv_mode == 'zones'" data-event-click="lv_mode('zones')"><icon name="flag"/><span>Зоны</span></div>
+            </div>
+            <div class="divider vertical"/>
+            <div class="tools row" data-if="lv_mode == 'tiles'">
+                <div id="tool-brush" class="icon-button" data-class-selected="lv_tool == 'brush'" data-event-click="lv_tool('brush')"><icon name="brush"/></div>
+                <div id="tool-line" class="icon-button" data-class-selected="lv_tool == 'line'" data-event-click="lv_tool('line')"><icon name="timeline"/></div>
+                <div id="tool-rect" class="icon-button" data-class-selected="lv_tool == 'rect'" data-event-click="lv_tool('rect')"><icon name="crop_square"/></div>
+                <div id="tool-fill" class="icon-button" data-class-selected="lv_tool == 'fill'" data-event-click="lv_tool('fill')"><icon name="format_color_fill"/></div>
+                <div id="tool-eraser" class="icon-button" data-class-selected="lv_tool == 'eraser'" data-event-click="lv_tool('eraser')"><icon name="ink_eraser"/></div>
+                <div id="tool-picker" class="icon-button" data-class-selected="lv_tool == 'picker'" data-event-click="lv_tool('picker')"><icon name="colorize"/></div>
+                <div class="divider vertical"/>
+                <icon name="layers" class="s muted label"/>
+                <div data-for="l : lv_layers" class="layer-chip" data-class-selected="it_index == lv_layer" data-event-click="lv_layer(it_index)">{{ l }}</div>
+                <div class="divider vertical"/>
+                <icon name="brush" class="s muted label"/>
+                <div class="icon-button small" data-event-click="lv_radius(-1)"><icon name="remove" class="s"/></div>
+                <span class="size">{{ lv_radius }}</span>
+                <div class="icon-button small" data-event-click="lv_radius(1)"><icon name="add" class="s"/></div>
+            </div>
+            <span class="muted mode-hint" data-if="lv_mode != 'tiles'">{{ lv_mode_help }}</span>
+            <div class="grow"/>
+            <div class="icon-button" data-class-selected="lv_light" data-event-click="lv_toggle('light')"><icon name="dark_mode"/></div>
+            <div class="icon-button" data-class-selected="lv_grid" data-event-click="lv_toggle('grid')"><icon name="grid_4x4"/></div>
+            <div class="icon-button" data-class-selected="lv_chunks" data-event-click="lv_toggle('chunks')"><icon name="border_outer"/></div>
+            <div class="icon-button" data-event-click="dock_reset"><icon name="dashboard"/></div>
+            <div class="divider vertical"/>
+            <div class="button outlined small" data-event-click="lv_save"><icon name="save"/>Сохранить<div class="dirty-dot" data-if="lv_dirty"/></div>
+            <div id="play-here" class="button filled small" data-event-click="lv_play"><icon name="play_arrow"/>Играть отсюда</div>
+        </div>
+
+        <div id="dock">
+            <div data-for="f : dock_frames" class="dock-frame" data-class-view="f.view" data-if="f.used"
+                 data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'">
+                <div class="dock-header row" data-if="!f.view">
+                    <div data-for="t : f.tabs" class="dock-tab" data-class-active="t.active" data-attr-id="'dock-tab-' + t.id"
+                         data-event-mousedown="dock_grab(t.id)"><icon class="s" data-attr-name="t.icon"/><span>{{ t.title }}</span></div>
+                </div>
+            </div>
+            <div data-for="g : dock_gaps" class="dock-gap" data-class-column="g.column" data-if="g.used"
+                 data-style-left="g.x + 'px'" data-style-top="g.y + 'px'" data-style-width="g.w + 'px'" data-style-height="g.h + 'px'"
+                 data-event-mousedown="dock_split(it_index)"><div class="grip"/></div>
+
+            <div id="level-view" class="dock-pane">
+                <div class="viewport-label row gap-2"><icon name="landscape" class="s"/><span>{{ lv_mode_name }} · {{ lv_place }}</span></div>
+            </div>
+
+            <div id="pane-palette" class="dock-pane column">
+                <div class="pane-scroll">
+                    <div data-for="g : lv_palette" class="pal-group">
+                        <div class="label-small muted pal-title">{{ g.name }}</div>
+                        <div data-for="t : g.tiles" class="pal-tile row" data-class-selected="t.index == lv_tile"
+                             data-attr-id="'pal-' + t.index" data-event-click="lv_tile(t.index)">
+                            <img data-attr-src="t.icon"/>
+                            <span class="name">{{ t.name }}</span>
+                            <span class="key" data-if="t.key != ''">{{ t.key }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="pane-minimap" class="dock-pane column">
+                <div class="minimap-box"><img id="minimap" data-attr-src="lv_minimap" data-event-mousedown="lv_minimap_click"/></div>
+                <div class="muted body-small minimap-place">{{ lv_place }}</div>
+            </div>
+
+            <div id="pane-props" class="dock-pane column">
+                <div class="pane-scroll props">
+                    <div class="section-title">{{ lv_mode_name }}</div>
+                    <div class="muted body-small">{{ lv_mode_help }}</div>
+                    <div class="chip soon-chip" data-if="lv_mode_when != ''">Появится: {{ lv_mode_when }}</div>
+                    <div data-if="lv_mode == 'tiles'">
+                        <div class="section-title">Плитка</div>
+                        <div class="tile-card row gap-3">
+                            <img data-attr-src="lv_tile_icon"/>
+                            <div class="column">
+                                <span>{{ lv_tile_name }}</span>
+                                <span class="muted body-small">Слой: {{ lv_tile_layer }}</span>
+                                <span class="muted body-small">{{ lv_tile_hint }}</span>
+                            </div>
+                        </div>
+                        <div class="section-title">{{ lv_tool_name }}</div>
+                        <div class="muted body-small">{{ lv_tool_help }}</div>
+                        <div class="prop row gap-2" data-if="lv_tool == 'brush' || lv_tool == 'eraser'">
+                            <span class="prop-label">Размер</span>
+                            <div class="icon-button small" data-event-click="lv_radius(-1)"><icon name="remove" class="s"/></div>
+                            <span class="size">{{ lv_radius }}</span>
+                            <div class="icon-button small" data-event-click="lv_radius(1)"><icon name="add" class="s"/></div>
+                        </div>
+                        <div class="prop row gap-2" data-if="lv_tool == 'rect'">
+                            <span class="prop-label">Только контур</span>
+                            <div class="switch" data-class-on="lv_outline" data-event-click="lv_toggle('outline')"><div class="thumb"/></div>
+                        </div>
+                    </div>
+                    <div class="section-title">Вид</div>
+                    <div class="prop row gap-2"><span class="prop-label grow">Свет как в игре</span>
+                        <div class="switch" data-class-on="lv_light" data-event-click="lv_toggle('light')"><div class="thumb"/></div></div>
+                    <div class="prop row gap-2"><span class="prop-label grow">Сетка</span>
+                        <div class="switch" data-class-on="lv_grid" data-event-click="lv_toggle('grid')"><div class="thumb"/></div></div>
+                    <div class="prop row gap-2"><span class="prop-label grow">Границы участков</span>
+                        <div class="switch" data-class-on="lv_chunks" data-event-click="lv_toggle('chunks')"><div class="thumb"/></div></div>
+                    <div class="section-title">Уровень</div>
+                    <div class="muted body-small">{{ lv_info }}</div>
+                    <div class="muted body-small" data-if="lv_dirty">Есть несохранённые изменения (Ctrl+S)</div>
+                </div>
+            </div>
+
+            <div id="pane-history" class="dock-pane column">
+                <div class="pane-scroll bottom-body">
+                    <div class="history-line" data-class-current="lv_history_cursor == 0" data-event-click="lv_history_jump(-1)">Начало</div>
+                    <div data-for="label : lv_history" class="history-line" data-class-current="it_index + 1 == lv_history_cursor" data-class-future="it_index >= lv_history_cursor" data-event-click="lv_history_jump(it_index)">{{ label }}</div>
+                </div>
+            </div>
+
+            <div id="pane-log" class="dock-pane column">
+                <div id="lv-log" class="pane-scroll bottom-body">
+                    <div data-for="line : log" class="log-line" data-class-warn="line.level == 1" data-class-error="line.level == 2">{{ line.text }}</div>
+                </div>
+            </div>
+
+            <div id="dock-drop" data-if="dock_drop"
+                 data-style-left="dock_drop_x + 'px'" data-style-top="dock_drop_y + 'px'" data-style-width="dock_drop_w + 'px'" data-style-height="dock_drop_h + 'px'"/>
+        </div>
+    </div>
+
     <div id="statusbar" class="row gap-4">
         <span>{{ status }}</span>
         <div class="grow"/>
-        <span class="muted">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab == 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab != 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>
 </rml>

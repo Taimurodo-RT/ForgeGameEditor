@@ -2,16 +2,20 @@
 // undo/redo of every action and Play/Stop. The window layout lives in
 // ui/editor/editor.rml and editor.rcss and updates while the editor runs.
 //
-//   forge_editor [--scene FILE] [--ui DIR] [--theme NAME] [--objects N] [--no-vsync]
+//   forge_editor [--scene FILE] [--level DIR] [--ui DIR] [--theme NAME] [--objects N] [--no-vsync]
 //   forge_editor --screenshot out.png [--frames N] [--select] [--play] [--tab N] [--theme NAME]   offscreen
 //   forge_editor --bench [--frames N]   offscreen: every object listed, the hierarchy scrolling
+//   forge_editor --bench-level [--frames N]   offscreen: flying over the level while painting
 //   forge_editor --self-test [--screenshot out.png]   offscreen: drives the controls, fails on a wrong result
 //
-// Without --scene the editor opens scene.forge.json in the current folder, or
-// makes a sample scene of 50 000 objects when there is none.
+// The «Уровень» tab opens «Старая шахта» from games/slice/level (or --level
+// DIR); the «Сцена» tab opens scene.forge.json in the current folder (or
+// --scene FILE), or makes a sample scene of 50 000 objects when there is none.
 
 #include "components.h"
 #include "demo_art.h"
+#include "level_editor.h"
+#include "slice_level.h"
 
 #include "forge/core/file.h"
 #include "forge/core/jobs.h"
@@ -53,6 +57,12 @@
 #ifndef FORGE_UI_DIR
 #define FORGE_UI_DIR "ui"
 #endif
+#ifndef SLICE_LEVEL_DIR
+#define SLICE_LEVEL_DIR "level"
+#endif
+#ifndef FORGE_SLICE_EXE
+#define FORGE_SLICE_EXE ""
+#endif
 
 using namespace forge;
 using namespace forge::editor;
@@ -61,6 +71,7 @@ using namespace forge::editor_app;
 namespace {
 
 constexpr f32 kPi = 3.14159265f;
+
 
 struct Stopwatch {
     u64 start = time_now_ns();
@@ -245,9 +256,11 @@ public:
     PlaySession play;
     HierarchySource hierarchy{*this};
     std::filesystem::path scene_path = "scene.forge.json";
+    slice::SliceLevel level_module;
+    LevelEditor level{level_module};
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
-              const std::filesystem::path& ui_dir, const std::string& theme, u32 objects) {
+              const std::filesystem::path& ui_dir, const std::string& theme, u32 objects, const LevelConfig& level_config) {
         device_ = device;
         window_ = window;
         log_set_sink(&log_sink, nullptr);
@@ -278,6 +291,7 @@ public:
         config.theme = theme;
         config.hot_reload = window != nullptr;
         if (!ui_.init(device, window, config)) return false;
+        if (!level.init(ui_, device, format, level_config)) return false;
         context_ = ui_.create_context("editor", width, height);
         if (!context_ || !bind_model()) return false;
         ui::register_list_source("hierarchy", &hierarchy);
@@ -294,6 +308,9 @@ public:
     }
 
     void shutdown() {
+        // Closing never loses painted tiles: the level is saved.
+        if (level.dirty()) level.save();
+        level.shutdown();
         log_set_sink(nullptr, nullptr);
         ui::register_list_source("hierarchy", nullptr);
         sprites_.shutdown();
@@ -303,12 +320,25 @@ public:
     // --- actions (buttons, keys) ---
 
     void undo() {
-        if (history.undo()) FORGE_INFO("Отменено");
+        if (m_tab_ == "level") level.undo();
+        else if (history.undo()) FORGE_INFO("Отменено");
     }
     void redo() {
-        if (history.redo()) FORGE_INFO("Повторено");
+        if (m_tab_ == "level") level.redo();
+        else if (history.redo()) FORGE_INFO("Повторено");
     }
+    // The open tab's history.
+    UndoStack& active_history() { return m_tab_ == "level" ? level.history() : history; }
+    void open_tab(const std::string& key) {
+        m_tab_ = key;
+        model_.DirtyVariable("tab");
+    }
+    const std::string& tab() const { return m_tab_; }
     void save() {
+        if (m_tab_ == "level") {
+            level.save();
+            return;
+        }
         const Stopwatch timer;
         const std::string text = doc.save_json();
         if (write_file_atomic(scene_path, std::span(reinterpret_cast<const u8*>(text.data()), text.size()))) {
@@ -410,6 +440,7 @@ public:
             model_.DirtyVariable("theme");
             pending_theme_.clear();
         }
+        if (m_tab_ == "level") level.update(dt, context_);
         refresh_drawables();
         if (play.playing() && !paused_) simulate(static_cast<f32>(std::min(dt, 0.1)));
         hierarchy.refresh();
@@ -442,6 +473,7 @@ public:
         if (e.type == SDL_EVENT_KEY_DOWN && !text_focus() && handle_key(e.key)) return true;
 
         const bool ui_used = ui_.handle_event(context_, e);
+        if (m_tab_ == "level") return level.handle_event(e, density, ui_used, context_) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
             const f32 x = e.button.x * density, y = e.button.y * density;
@@ -595,7 +627,10 @@ private:
         on("undo", [this](Rml::Event&, const Rml::VariantList&) { undo(); });
         on("redo", [this](Rml::Event&, const Rml::VariantList&) { redo(); });
         on("save", [this](Rml::Event&, const Rml::VariantList&) { save(); });
-        on("play", [this](Rml::Event&, const Rml::VariantList&) { if (!play.playing()) toggle_play(); });
+        on("play", [this](Rml::Event&, const Rml::VariantList&) {
+            if (m_tab_ == "level") level.play_here();
+            else if (!play.playing()) toggle_play();
+        });
         on("stop", [this](Rml::Event&, const Rml::VariantList&) { if (play.playing()) toggle_play(); });
         on("pause", [this](Rml::Event&, const Rml::VariantList&) {
             if (play.playing()) paused_ = !paused_;
@@ -665,7 +700,9 @@ private:
             if (i < 0 || i >= static_cast<int>(addable_types_.size()) || doc.selection().empty()) return;
             history.execute(std::make_unique<AddComponent>(doc.selection()[0], addable_types_[i]));
         });
+        level.bind(model);
         model_ = model.GetModelHandle();
+        level.set_model(model_);
         return true;
     }
 
@@ -773,11 +810,12 @@ private:
 
     void sync_model() {
         set(m_playing_, play.playing(), "playing");
-        set(m_can_undo_, history.can_undo(), "can_undo");
-        set(m_can_redo_, history.can_redo(), "can_redo");
-        set(m_undo_label_, history.undo_label(), "undo_label");
-        set(m_dirty_, history.dirty(), "dirty");
-        set(m_scene_name_, path_to_utf8(scene_path.filename()), "scene_name");
+        UndoStack& h = active_history();
+        set(m_can_undo_, h.can_undo(), "can_undo");
+        set(m_can_redo_, h.can_redo(), "can_redo");
+        set(m_undo_label_, h.undo_label(), "undo_label");
+        set(m_dirty_, h.dirty(), "dirty");
+        set(m_scene_name_, m_tab_ == "level" ? level.title() : path_to_utf8(scene_path.filename()), "scene_name");
         set(m_has_selection_, !doc.selection().empty() && doc.find(doc.selection()[0]) != nullptr, "has_selection");
         set(m_selection_count_, static_cast<int>(doc.selection().size()), "selection_count");
         set(m_object_count_, "Объектов: " + group_digits(doc.object_count()), "object_count");
@@ -821,7 +859,9 @@ private:
                       s.update_ms, s.render_ms, group_digits(sprites_drawn_).c_str(), doc.selection().size());
         // Timings change every frame, so they are shown four times a second;
         // a new selection is shown at once.
-        if (time_ - status_time_ > 0.25 || doc.selection_version() != status_selection_version_) {
+        if (m_tab_ == "level") {
+            set(m_status_, level.status(), "status");
+        } else if (time_ - status_time_ > 0.25 || doc.selection_version() != status_selection_version_) {
             status_time_ = time_;
             status_selection_version_ = doc.selection_version();
             set(m_status_, std::string(status), "status");
@@ -835,7 +875,7 @@ private:
             lines.swap(g_log.pending);
         }
         if (lines.empty()) return;
-        for (auto& [level, text] : lines) m_log_.push_back({std::move(text), level});
+        for (auto& [kind, text] : lines) m_log_.push_back({std::move(text), kind});
         if (m_log_.size() > 300) m_log_.erase(m_log_.begin(), m_log_.end() - 300);
         model_.DirtyVariable("log");
         scroll_log_ = 2; // after the next layout
@@ -844,7 +884,8 @@ private:
     void follow_log() {
         if (scroll_log_ == 0) return;
         if (--scroll_log_ > 0) return;
-        if (Rml::Element* log = find_element("log")) log->SetScrollTop(log->GetScrollHeight());
+        for (const char* id : {"log", "lv-log"})
+            if (Rml::Element* log = find_element(id)) log->SetScrollTop(log->GetScrollHeight());
     }
 
     // --- world ---
@@ -1004,6 +1045,7 @@ private:
             sprites_.prepare(cmd, batch_, camera_, vw, vh, true);
             sprites_drawn_ = sprites_.stats().drawn;
         }
+        if (m_tab_ == "level") level.prepare(cmd);
 
         SDL_GPUColorTargetInfo color{};
         color.texture = target;
@@ -1019,6 +1061,7 @@ private:
             SDL_SetGPUScissor(pass, &scissor);
             sprites_.draw(cmd, pass);
         }
+        if (m_tab_ == "level") level.draw(cmd, pass);
         SDL_EndGPURenderPass(pass);
     }
 
@@ -1028,6 +1071,7 @@ private:
         if (ctrl && k.key == SDLK_Z) { shift ? redo() : undo(); return true; }
         if (ctrl && k.key == SDLK_Y) { redo(); return true; }
         if (ctrl && k.key == SDLK_S) { save(); return true; }
+        if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
         if (m_tab_ != "world") return false; // the keys below act on the world view
         if (ctrl && k.key == SDLK_D) { duplicate_selection(); return true; }
@@ -1064,7 +1108,7 @@ private:
     // Model mirrors.
     bool m_playing_ = false, m_can_undo_ = false, m_can_redo_ = false, m_dirty_ = false, m_has_selection_ = false;
     int m_selection_count_ = 0, m_history_cursor_ = 0, m_bottom_tab_ = 0;
-    Rml::String m_tab_ = "world", m_tab_title_, m_tab_description_, m_tab_step_, m_tab_icon_;
+    Rml::String m_tab_ = "level", m_tab_title_, m_tab_description_, m_tab_step_, m_tab_icon_;
     Rml::String m_undo_label_, m_scene_name_, m_selected_name_, m_object_count_, m_status_, m_zoom_;
     std::vector<FieldView> m_fields_;
     std::vector<FieldRef> field_refs_;
@@ -1171,6 +1215,8 @@ void HierarchySource::on_row_event(u32 row, std::string_view event, int modifier
 struct Options {
     std::filesystem::path ui_dir = utf8_path(FORGE_UI_DIR);
     std::filesystem::path scene;
+    std::filesystem::path level = utf8_path(SLICE_LEVEL_DIR);
+    bool level_given = false;
     std::string theme = "dark";
     u32 objects = 50'000;
 };
@@ -1183,8 +1229,15 @@ public:
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window(), &w, &h);
         if (!options.scene.empty()) editor_.scene_path = options.scene;
+        LevelConfig lc;
+        lc.folder = options.level;
+        lc.game_exe = utf8_path(FORGE_SLICE_EXE);
+        if (char* pref = SDL_GetPrefPath("Forge", "Editor")) {
+            lc.settings = utf8_path(pref);
+            SDL_free(pref);
+        }
         if (!editor_.init(gpu(), window(), swapchain_format(), static_cast<u32>(w), static_cast<u32>(h),
-                          options.ui_dir, options.theme, options.objects)) {
+                          options.ui_dir, options.theme, options.objects, lc)) {
             FORGE_ERROR("editor: start failed (UI folder: %s)", path_to_utf8(options.ui_dir).c_str());
             return false;
         }
@@ -1285,30 +1338,210 @@ public:
             check(click_tab(6), "a click on the Logic tab");
             break;
         case 44:
-            check(tab_lit(6) && !tab_lit(0), "the Logic tab is highlighted on the next frame");
+            check(tab_lit(6) && !tab_lit(1), "the Logic tab is highlighted on the next frame");
             break;
         case 45: {
             check(shown("placeholder") && !shown("viewport"), "the tab replaces the world view");
             count_ = ed_.doc.object_count();
             key(SDLK_DELETE, SDL_KMOD_NONE);
             check(ed_.doc.object_count() == count_, "Delete does nothing outside the world tab");
-            check(click_tab(0), "a click on the World tab");
+            check(click_tab(1), "a click on the Scene tab");
             break;
         }
         case 46:
-            check(tab_lit(0) && !tab_lit(6), "the World tab is highlighted again");
+            check(tab_lit(1) && !tab_lit(6), "the Scene tab is highlighted again");
             break;
         case 47:
             check(shown("viewport") && !shown("placeholder"), "the world view is back");
             break;
-        case 48: return false;
-        default: break;
+        case 48:
+            check(click_tab(0), "a click on the Level tab");
+            break;
+        default:
+            if (frame >= 50) return level_step(frame - 50);
+            break;
         }
         return true;
     }
     bool passed() const { return failures_ == 0; }
 
 private:
+    // --- the level tab ---
+    LevelEditor& lv() { return ed_.level; }
+    world::TileId at(i32 x, i32 y, u32 layer = 1) { return lv().level().tile(layer, x, y); }
+    // Moves the mouse to the middle of a cell in the level view.
+    void to_cell(i32 x, i32 y) {
+        lv().screen_of(x + 0.5, y + 0.5, x_, y_);
+        mouse(SDL_EVENT_MOUSE_MOTION, x_, y_);
+    }
+    void click_cell(i32 x, i32 y) {
+        to_cell(x, y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+    }
+    usize tile_named(const char* id) {
+        const auto& tiles = ed_.level_module.tiles();
+        for (usize i = 0; i < tiles.size(); ++i)
+            if (tiles[i].id == id) return i;
+        return 0;
+    }
+    bool element_center(const char* id, f32& x, f32& y) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+        x = p.x;
+        y = p.y;
+        return true;
+    }
+    usize stack_of(const char* panel) {
+        const auto& stacks = lv().dock().stacks();
+        for (usize i = 0; i < stacks.size(); ++i)
+            for (const std::string& p : stacks[i].panels)
+                if (p == panel) return i;
+        return ~usize(0);
+    }
+
+    bool level_step(u32 f) {
+        const usize stone = tile_named("stone"), sand = tile_named("sand");
+        switch (f) {
+        case 0: {
+            check(shown("level-view") && shown("pane-palette") && !shown("viewport"), "the level tab shows the world and panels");
+            check(lv().view_w() > 200 && lv().view_h() > 200, "the level view has room");
+            // A spot in the sky over the village.
+            cx_ = static_cast<i32>(std::floor(lv().camera().x)) - 6;
+            cy_ = static_cast<i32>(std::floor(lv().camera().y)) - 4;
+            check(at(cx_, cy_) == 0 && lv().level().loaded(cx_, cy_), "the sky over the village is loaded and empty");
+            check(element_center("pal-" + std::to_string(stone), x_, y_), "the palette shows stone");
+            if (Rml::Element* e = ed_.find_element(("pal-" + std::to_string(stone)).c_str())) e->Click();
+            break;
+        }
+        case 1: {
+            check(lv().tile_index() == stone && lv().layer() == 1, "a click on the palette picks stone on the block layer");
+            lv().set_brush_radius(0);
+            entries_ = lv().history().size();
+            to_cell(cx_, cy_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            for (i32 i = 1; i <= 3; ++i) to_cell(cx_ + i, cy_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            bool row = true;
+            for (i32 i = 0; i <= 3; ++i) row = row && at(cx_ + i, cy_) == ed_.level_module.tiles()[stone].value;
+            check(row && at(cx_ + 4, cy_) == 0 && at(cx_, cy_ + 1) == 0, "the brush paints the cells it went over, no more");
+            check(lv().history().size() == entries_ + 1 && lv().history().undo_label() == "Кисть: Камень",
+                  "a brush stroke is one history entry");
+            check(lv().dirty(), "the level is marked unsaved");
+            break;
+        }
+        case 2:
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(at(cx_, cy_) == 0 && at(cx_ + 3, cy_) == 0, "Ctrl+Z takes the stroke back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(at(cx_ + 3, cy_) != 0, "Ctrl+Y paints it again");
+            break;
+        case 3: {
+            key(SDLK_R, SDL_KMOD_NONE);
+            check(lv().tool() == Tool::Rect, "R picks the rectangle");
+            to_cell(cx_, cy_ + 2);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(cx_ + 4, cy_ + 3);
+            to_cell(cx_ + 4, cy_ + 4);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            u32 n = 0;
+            for (i32 y = cy_ + 1; y <= cy_ + 5; ++y)
+                for (i32 x = cx_ - 1; x <= cx_ + 5; ++x) n += at(x, y) != 0;
+            check(n == 15, "the rectangle fills 5 x 3 cells");
+            break;
+        }
+        case 4: {
+            key(SDLK_4, SDL_KMOD_NONE);
+            check(lv().tile_index() == sand, "key 4 picks sand");
+            key(SDLK_G, SDL_KMOD_NONE);
+            click_cell(cx_ + 2, cy_ + 3);
+            u32 n = 0;
+            for (i32 y = cy_ + 2; y <= cy_ + 4; ++y)
+                for (i32 x = cx_; x <= cx_ + 4; ++x) n += at(x, y) == ed_.level_module.tiles()[sand].value;
+            check(n == 15 && at(cx_, cy_) == ed_.level_module.tiles()[stone].value,
+                  "the fill turns the whole rectangle to sand and nothing else");
+            break;
+        }
+        case 5:
+            key(SDLK_I, SDL_KMOD_NONE);
+            click_cell(cx_ + 1, cy_);
+            check(lv().tile_index() == stone && lv().tool() == Tool::Brush, "the picker takes stone and goes back to the brush");
+            key(SDLK_E, SDL_KMOD_NONE);
+            click_cell(cx_ + 1, cy_);
+            check(at(cx_ + 1, cy_) == 0 && at(cx_, cy_) != 0, "the eraser clears one cell");
+            break;
+        case 6:
+            // Panels: the minimap's header dragged onto the palette's.
+            stacks_ = lv().dock().stacks().size();
+            check(element_center("dock-tab-minimap", x_, y_), "the minimap has a header");
+            mouse(SDL_EVENT_MOUSE_MOTION, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            break;
+        case 7: {
+            f32 px = 0, py = 0;
+            check(element_center("dock-tab-palette", px, py), "the palette has a header");
+            mouse(SDL_EVENT_MOUSE_MOTION, (x_ + px) * 0.5f, (y_ + py) * 0.5f);
+            mouse(SDL_EVENT_MOUSE_MOTION, px + 30, py);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, px + 30, py);
+            break;
+        }
+        case 8:
+            check(stack_of("minimap") == stack_of("palette") && lv().dock().stacks().size() == stacks_ - 1,
+                  "the minimap is a tab next to the palette");
+            check(shown("pane-minimap") && !shown("pane-palette"), "the dropped panel is the open tab");
+            break;
+        case 9:
+            check(element_center("dock-tab-palette", x_, y_), "the palette tab is there");
+            mouse(SDL_EVENT_MOUSE_MOTION, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            break;
+        case 10:
+            check(shown("pane-palette") && !shown("pane-minimap"), "a click on a tab opens it");
+            lv().reset_layout();
+            break;
+        case 11:
+            check(lv().dock().stacks().size() == stacks_ && shown("pane-minimap") && shown("pane-palette"),
+                  "the layout resets");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S saves the level");
+            {
+                level::Level copy(ed_.level_module);
+                check(copy.open(lv().level().folder()), "the saved level opens again");
+                copy.ensure_loaded({cx_ - 2, cy_ - 2, cx_ + 8, cy_ + 8});
+                check(copy.tile(1, cx_, cy_) == ed_.level_module.tiles()[stone].value &&
+                          copy.tile(1, cx_ + 2, cy_ + 3) == ed_.level_module.tiles()[sand].value &&
+                          copy.tile(1, cx_ + 1, cy_) == 0,
+                      "the saved level has the painted tiles");
+                // The villagers come back with their bodies (the game moves only those).
+                const i32 vy = ed_.level_module.slice_generator().village_y();
+                copy.ensure_loaded({-40, vy - 8, 24, vy + 4});
+                int people = 0, with_bodies = 0;
+                copy.scene().ecs().each([&](flecs::entity e, const slice::Npc&) {
+                    ++people;
+                    with_bodies += e.has<sim::Body>();
+                });
+                check(people == 2 && with_bodies == 2, "the saved villagers keep their bodies");
+            }
+            break;
+        case 12: {
+            check(lv().play_here(), "«Играть отсюда» finds a place for the hero");
+            const auto cmd = lv().play_command(1.5, 2);
+            check(cmd.size() >= 6 && cmd[1] == "--play" && cmd[2] == "--level" && cmd[4] == "--at" && cmd[5] == "1.50,2.00",
+                  "the game is started with the level and the place");
+            check(lv().minimap_updates() > 0, "the minimap is drawn");
+            break;
+        }
+        case 13: return false;
+        default: break;
+        }
+        return true;
+    }
+
+    bool shown(const std::string& id) { return shown(id.c_str()); }
+    bool element_center(const std::string& id, f32& x, f32& y) { return element_center(id.c_str(), x, y); }
+
     bool shown(const char* id) {
         Rml::Element* e = ed_.find_element(id);
         return e && e->IsVisible(true);
@@ -1361,12 +1594,13 @@ private:
     ObjectId target_ = kNoObject;
     Vec2 start_{}, moved_{};
     f32 x_ = 0, y_ = 0;
-    usize entries_ = 0, count_ = 0;
+    usize entries_ = 0, count_ = 0, stacks_ = 0;
+    i32 cx_ = 0, cy_ = 0;
     int failures_ = 0;
 };
 
 int run_offscreen(const Options& options, const char* screenshot, u32 frames, bool select, bool play, bool bench,
-                  bool self_test, int tab) {
+                  bool self_test, int tab, bool bench_level) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
     if (!device) {
@@ -1380,16 +1614,43 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         Editor editor;
         // Never touch a scene file from an offscreen run.
         editor.scene_path = options.scene.empty() ? std::filesystem::path("__offscreen_no_scene__.json") : options.scene;
+        // Nor the game's level, unless one is given.
+        LevelConfig lc;
+        lc.offscreen = true;
+        lc.folder = options.level_given ? options.level : std::filesystem::temp_directory_path() / "forge_editor_level";
+        if (!options.level_given) {
+            std::error_code ec;
+            std::filesystem::remove_all(lc.folder, ec);
+        }
         if (target && editor.init(device, nullptr, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h, options.ui_dir,
-                                  options.theme, options.objects)) {
+                                  options.theme, options.objects, lc)) {
             f64 update_ms = 0, render_ms = 0, worst_ms = 0;
             u32 measured = 0;
-            if (bench) editor.hierarchy.expand_all(true);
+            if (bench) {
+                editor.open_tab("world");
+                editor.hierarchy.expand_all(true);
+            }
             SelfTest test(editor);
-            if (self_test) frames = std::max(frames, 55u);
+            if (self_test) {
+                frames = std::max(frames, 80u);
+                editor.open_tab("world"); // the scene part first, then the level
+            }
             bool testing = self_test;
+            if (bench_level) {
+                editor.open_tab("level");
+                frames = std::max(frames, 600u);
+            }
             for (u32 f = 0; f < frames; ++f) {
                 if (testing) testing = test.step(f);
+                // Flies over the world fast while painting: new chunks load and
+                // edited ones go out of view all the time.
+                if (bench_level && f > 10) {
+                    LevelEditor& lv = editor.level;
+                    lv.camera().x += 24;
+                    lv.camera().y = 40 * std::sin(f * 0.05);
+                    level::TileStroke stroke(lv.level(), "bench");
+                    stroke.paint_disc(1, static_cast<i32>(lv.camera().x), static_cast<i32>(lv.camera().y), 4, 3);
+                }
                 if (f == 1 && select && !editor.doc.roots().empty()) {
                     const ObjectId group = editor.doc.roots()[0];
                     const ObjectId first = editor.doc.children_of(group).empty() ? group : editor.doc.children_of(group)[0];
@@ -1427,6 +1688,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 ++measured;
             }
             measured = std::max(measured, 1u);
+            if (bench_level)
+                FORGE_INFO("level: flew %.0f tiles painting; edits %llu; chunks in memory %u", editor.level.camera().x,
+                           static_cast<unsigned long long>(editor.level.level().edits()), editor.level.level().world().stats().resident);
             FORGE_INFO("editor (CPU, %u frames, %s objects, %u rows listed%s): update avg %.3f ms, render avg %.3f ms, "
                        "worst frame %.3f ms",
                        measured, group_digits(editor.doc.object_count()).c_str(), editor.hierarchy.count(),
@@ -1454,13 +1718,17 @@ int main(int argc, char** argv) {
     EditorApp app;
     const char* screenshot = nullptr;
     u32 frames = 10;
-    bool select = false, play = false, bench = false, self_test = false;
+    bool select = false, play = false, bench = false, self_test = false, bench_level = false;
     int tab = 0;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
         if (std::strcmp(argv[i], "--no-vsync") == 0) config.vsync = false;
         else if (std::strcmp(argv[i], "--ui") == 0 && has_value) app.options.ui_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--scene") == 0 && has_value) app.options.scene = utf8_path(argv[++i]);
+        else if (std::strcmp(argv[i], "--level") == 0 && has_value) {
+            app.options.level = utf8_path(argv[++i]);
+            app.options.level_given = true;
+        }
         else if (std::strcmp(argv[i], "--theme") == 0 && has_value) app.options.theme = argv[++i];
         else if (std::strcmp(argv[i], "--objects") == 0 && has_value) app.options.objects = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--screenshot") == 0 && has_value) screenshot = argv[++i];
@@ -1468,10 +1736,11 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--select") == 0) select = true;
         else if (std::strcmp(argv[i], "--play") == 0) play = true;
         else if (std::strcmp(argv[i], "--bench") == 0) bench = true;
+        else if (std::strcmp(argv[i], "--bench-level") == 0) bench_level = true;
         else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    if (screenshot || bench || self_test)
-        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab);
+    if (screenshot || bench || self_test || bench_level)
+        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab, bench_level);
     return app.run(config);
 }

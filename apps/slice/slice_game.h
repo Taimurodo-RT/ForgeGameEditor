@@ -7,6 +7,7 @@
 // come from forge::game::Shell; this file is only the gameplay.
 
 #include "demo_art.h"
+#include "slice_level.h"
 #include "slice_world.h"
 
 #include "forge/game/shell.h"
@@ -22,30 +23,6 @@
 
 namespace slice {
 
-// Saved with their chunk.
-struct Hero {
-    f32 facing = 1;
-};
-// who: 0 the miner, 1 the smith.
-struct Npc {
-    u8 who = 0;
-    f32 home_x = 0;
-    f32 dir = 0;    // walking: -1, 1; standing: 0
-    f32 facing = 1;
-    f32 timer = 0;
-    u32 seed = 0;
-};
-enum class ItemKind : u8 { Pickaxe, Coins, Copper, Wood, Torch };
-struct Item {
-    u8 kind = 0;
-    u16 count = 1;
-};
-struct Critter {
-    f32 speed = 2;
-    f32 dir = 1;
-    u32 seed = 0;
-};
-
 // The hero's place and choices, next to the world in the save.
 struct HeroSave {
     f64 x = 0, y = 0;
@@ -57,6 +34,12 @@ struct Options {
     bool stress = false;          // the "all numbers at once" run
     u32 stress_critters = 200'000;
     u32 stress_particles = 1'000'000;
+    // The level a new game starts from; empty: the game's own (data/level).
+    std::filesystem::path level_dir;
+    // Where a new game puts the hero (the tile point under its feet), for
+    // «Играть отсюда» in the editor.
+    bool at = false;
+    f64 at_x = 0, at_y = 0;
 };
 
 // What the player does this frame: from the keyboard and mouse, or from a
@@ -118,7 +101,6 @@ public:
 private:
     struct Level;
     std::unique_ptr<Level> make_level(const std::filesystem::path& save_folder, std::string* error);
-    void populate(forge::world::ChunkCoord coord, forge::scene::Scene& scene);
     void spawn_hero(f64 x, f64 y);
     void find_hero();
     void load_around(f64 x, f64 y);
@@ -186,8 +168,4 @@ private:
 
 } // namespace slice
 
-FORGE_REFLECT_DECLARE(slice::Hero)
-FORGE_REFLECT_DECLARE(slice::Npc)
-FORGE_REFLECT_DECLARE(slice::Item)
-FORGE_REFLECT_DECLARE(slice::Critter)
 FORGE_REFLECT_DECLARE(slice::HeroSave)

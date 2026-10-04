@@ -15,24 +15,6 @@
 #include <cmath>
 #include <cstdio>
 
-FORGE_REFLECT(slice::Hero, 1) { t.field("facing", &slice::Hero::facing); }
-FORGE_REFLECT(slice::Npc, 1) {
-    t.field("who", &slice::Npc::who);
-    t.field("home_x", &slice::Npc::home_x);
-    t.field("dir", &slice::Npc::dir);
-    t.field("facing", &slice::Npc::facing);
-    t.field("timer", &slice::Npc::timer);
-    t.field("seed", &slice::Npc::seed);
-}
-FORGE_REFLECT(slice::Item, 1) {
-    t.field("kind", &slice::Item::kind);
-    t.field("count", &slice::Item::count);
-}
-FORGE_REFLECT(slice::Critter, 1) {
-    t.field("speed", &slice::Critter::speed);
-    t.field("dir", &slice::Critter::dir);
-    t.field("seed", &slice::Critter::seed);
-}
 FORGE_REFLECT(slice::HeroSave, 1) {
     t.field("x", &slice::HeroSave::x);
     t.field("y", &slice::HeroSave::y);
@@ -58,14 +40,7 @@ constexpr f32 kWalk = 8.5f;
 constexpr f32 kJump = 15.5f;
 constexpr f32 kReach = 5.5f;     // tiles from the hero's centre to dig or build
 constexpr f32 kTalkReach = 2.6f; // to a villager
-constexpr f32 kHeroHalfW = 0.38f, kHeroHalfH = 0.92f;
 constexpr f32 kZoom = 30;
-
-u32 hash32(u32 a, u32 b) {
-    u32 h = a * 374761393u + b * 668265263u;
-    h = (h ^ (h >> 13)) * 1274126177u;
-    return h ^ (h >> 16);
-}
 
 struct SlotDef {
     const char* item; // also the icon's colour class in hud.rcss: tone-<item>
@@ -107,17 +82,6 @@ const char* kind_item(ItemKind k) {
     return "";
 }
 
-u32 item_frame(ItemKind k) {
-    switch (k) {
-    case ItemKind::Pickaxe: return FramePickaxe;
-    case ItemKind::Coins: return FrameCoins;
-    case ItemKind::Copper: return demo::kFrameOre;
-    case ItemKind::Wood: return FrameWood;
-    case ItemKind::Torch: return FrameTorch;
-    }
-    return FrameDust;
-}
-
 const char* npc_dialogue(u8 who) { return who == 0 ? "miner" : "smith"; }
 const char* npc_name(u8 who) { return who == 0 ? "Борис" : "Кузнец Мирон"; }
 
@@ -140,10 +104,7 @@ struct SliceGame::Level {
     std::unique_ptr<Simulation> sim;
     flecs::entity hero;
     // Queries belong to the ECS world: declared last, released first.
-    flecs::query<Position, Body, Npc> npcs;
-    flecs::query<Position, Body, Critter> critters;
-    flecs::query<Position, Body, Item> items;
-    flecs::query<Position, RigidBody> crates;
+    Objects objects;
 };
 
 struct SlotView {
@@ -165,18 +126,12 @@ SliceGame::~SliceGame() = default;
 
 std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_folder, std::string* error) {
     auto L = std::make_unique<Level>();
-    WorldDesc wd;
-    wd.layer_count = 3; // walls, blocks, liquids
-    wd.bounds = {-512, -128, 512, 896}; // 1024 × 1024 chunks: 65 536 tiles each way
-    L->world = std::make_unique<World>(wd, gen_);
+    L->world = std::make_unique<World>(world_desc(), gen_);
     if (!save_folder.empty() && !L->world->open_save(save_folder, error)) return nullptr;
     L->scene = std::make_unique<scene::Scene>(*L->world);
-    L->scene->register_component<Hero>();
-    L->scene->register_component<Npc>();
-    L->scene->register_component<Item>();
-    L->scene->register_component<Critter>();
+    register_components(*L->scene);
     if (!save_folder.empty() && !L->scene->open_save(save_folder, error)) return nullptr;
-    L->scene->set_populator([this](ChunkCoord c, scene::Scene& s) { populate(c, s); });
+    L->scene->set_populator([gen = gen_](ChunkCoord c, scene::Scene& s) { populate(*gen, c, s); });
 
     SimDesc sd;
     sd.gravity_y = kGravity;
@@ -192,10 +147,7 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     cells.set_falling(TileSand, true);
 
     flecs::world& ecs = L->scene->ecs();
-    L->npcs = ecs.query<Position, Body, Npc>();
-    L->critters = ecs.query<Position, Body, Critter>();
-    L->items = ecs.query<Position, Body, Item>();
-    L->crates = ecs.query<Position, RigidBody>();
+    L->objects.init(ecs);
 
     Level* level = L.get();
     L->sim->add_system([this](const TickContext& ctx) { hero_tick(ctx); });
@@ -203,7 +155,7 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     L->sim->add_system([this, level](const TickContext& ctx) {
         const flecs::entity_t talking = talking_;
         const f64 hx = hero_x_;
-        each_due(ctx, level->npcs, [&](flecs::entity_t e, f32 dt, Position& p, Body& b, Npc& n) {
+        each_due(ctx, level->objects.npcs, [&](flecs::entity_t e, f32 dt, Position& p, Body& b, Npc& n) {
             if (e == talking) {
                 b.vx = 0;
                 n.dir = 0;
@@ -226,7 +178,7 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     });
     // Critters: walk, hop over steps, turn around now and then.
     L->sim->add_system([level](const TickContext& ctx) {
-        each_due(ctx, level->critters, [&](flecs::entity_t, f32, Position&, Body& b, Critter& c) {
+        each_due(ctx, level->objects.critters, [&](flecs::entity_t, f32, Position&, Body& b, Critter& c) {
             c.seed = hash32(c.seed, static_cast<u32>(ctx.tick));
             if ((c.seed & 511) == 0) c.dir = -c.dir;
             if (!(b.contacts & OnGround)) return;
@@ -243,80 +195,6 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
         });
     });
     return L;
-}
-
-// First visit of a chunk: the villagers, the lost pickaxe, crates, critters.
-void SliceGame::populate(ChunkCoord coord, scene::Scene& scene) {
-    const i32 x0 = coord.x * kChunkSize, y0 = coord.y * kChunkSize;
-    auto here = [&](f64 x, f64 y) {
-        const i32 tx = static_cast<i32>(std::floor(x)), ty = static_cast<i32>(std::floor(y));
-        return tx >= x0 && tx < x0 + kChunkSize && ty >= y0 && ty < y0 + kChunkSize;
-    };
-    const f64 v = gen_->village_y();
-    auto person = [&](u8 who, f64 x) {
-        if (!here(x, v - 1.0)) return;
-        flecs::entity e = scene.spawn(Position::at_tile(x, v - kHeroHalfH - 0.02));
-        if (!e.is_valid()) return;
-        Body b;
-        b.half_w = kHeroHalfW;
-        b.half_h = kHeroHalfH;
-        e.set<Body>(b);
-        Npc n;
-        n.who = who;
-        n.home_x = static_cast<f32>(x);
-        n.seed = who * 7919u + 13u;
-        n.timer = 1.0f;
-        n.facing = who == 0 ? -1.0f : 1.0f;
-        e.set<Npc>(n);
-    };
-    person(0, (gen_->miner_house().x0 + gen_->miner_house().x1) * 0.5 + 0.5);
-    person(1, (gen_->smith_house().x0 + gen_->smith_house().x1) * 0.5 + 0.5);
-
-    auto item = [&](ItemKind kind, u16 count, f64 x, f64 y) {
-        if (!here(x, y)) return;
-        flecs::entity e = scene.spawn(Position::at_tile(x, y));
-        if (!e.is_valid()) return;
-        Body b;
-        b.half_w = b.half_h = 0.3f;
-        e.set<Body>(b);
-        e.set<Item>({static_cast<u8>(kind), count});
-    };
-    item(ItemKind::Pickaxe, 1, gen_->pickaxe_x(), gen_->pickaxe_y() - 0.2);
-    item(ItemKind::Coins, 12, gen_->pickaxe_x() + 3.0, gen_->pickaxe_y() - 0.2);
-    item(ItemKind::Torch, 3, gen_->gallery_x0() - 3.5, gen_->gallery_y() - 0.4);
-
-    auto crate = [&](f64 x, f64 y) {
-        if (!here(x, y)) return;
-        flecs::entity e = scene.spawn(Position::at_tile(x, y));
-        if (!e.is_valid()) return;
-        RigidBody rb;
-        rb.half_w = rb.half_h = 0.48f;
-        rb.density = 0.6f;
-        e.set<RigidBody>(rb);
-    };
-    const f64 sx = gen_->smith_house().x1 + 4.0;
-    crate(sx, v - 0.5);
-    crate(sx + 1.0, v - 0.5);
-    crate(sx + 0.5, v - 1.5);
-    crate(gen_->gallery_x0() - 16.5, gen_->gallery_y() + 0.5);
-    crate(gen_->gallery_x0() - 17.5, gen_->gallery_y() + 0.5);
-
-    // A few critters on the surface outside the village.
-    const u32 seed = hash32(static_cast<u32>(coord.x) * 92821u, static_cast<u32>(coord.y));
-    for (u32 k = 0; k < seed % 4; ++k) {
-        const i32 x = x0 + static_cast<i32>(hash32(seed, k) % kChunkSize);
-        if (std::abs(x) < 40) continue;
-        const f64 y = gen_->surface(x) - 1.0;
-        if (!here(x + 0.5, y)) continue;
-        flecs::entity e = scene.spawn(Position::at_tile(x + 0.5, y));
-        if (!e.is_valid()) continue;
-        Body b;
-        b.half_w = 0.35f;
-        b.half_h = 0.4f;
-        e.set<Body>(b);
-        const u32 s = hash32(seed, k + 100);
-        e.set<Critter>({1.2f + static_cast<f32>(s % 200) / 100.0f, (s & 1) ? 1.0f : -1.0f, s});
-    }
 }
 
 // --- lifetime ----------------------------------------------------------------
@@ -401,6 +279,11 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     tiles_world_ = nullptr;
     level_.reset(); // the menu's backdrop
     session_ = session;
+    // A new game starts from the level as the author left it in the editor.
+    if (new_game) {
+        const fs::path level = options_.level_dir.empty() ? shell_->game_dir() / "level" : options_.level_dir;
+        if (!forge::level::copy_level(level, session / "world", error)) return false;
+    }
     level_ = make_level(session / "world", error);
     if (!level_) return false;
 
@@ -408,6 +291,10 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     hs.x = gen_->spawn_x();
     hs.y = gen_->spawn_y() - kHeroHalfH;
     hs.zoom = kZoom;
+    if (new_game && options_.at) {
+        hs.x = options_.at_x;
+        hs.y = options_.at_y - kHeroHalfH;
+    }
     if (new_game) {
         shell_->vars().set("inv.torch", 5);
         shell_->vars().set("hero.dig_speed", 1);
@@ -571,19 +458,19 @@ const SimStats* SliceGame::sim_stats() const { return level_ ? &level_->sim->sta
 
 u32 SliceGame::count_npcs() const {
     u32 n = 0;
-    if (level_) level_->npcs.each([&](const Position&, const Body&, const Npc&) { ++n; });
+    if (level_) level_->objects.npcs.each([&](const Position&, const Body&, const Npc&) { ++n; });
     return n;
 }
 
 f64 SliceGame::npc_x(u8 who) const {
     f64 x = std::nan("");
-    if (level_) level_->npcs.each([&](const Position& p, const Body&, const Npc& n) { if (n.who == who) x = p.tile_x(); });
+    if (level_) level_->objects.npcs.each([&](const Position& p, const Body&, const Npc& n) { if (n.who == who) x = p.tile_x(); });
     return x;
 }
 
 u32 SliceGame::count_items(ItemKind kind) const {
     u32 n = 0;
-    if (level_) level_->items.each([&](const Position&, const Body&, const Item& i) { n += i.kind == static_cast<u8>(kind); });
+    if (level_) level_->objects.items.each([&](const Position&, const Body&, const Item& i) { n += i.kind == static_cast<u8>(kind); });
     return n;
 }
 
@@ -628,7 +515,7 @@ i32 SliceGame::nearest_npc(f64 reach, flecs::entity* out) const {
     if (!level_ || !hero_alive()) return -1;
     f64 best = reach;
     i32 who = -1;
-    level_->npcs.each([&](flecs::entity e, const Position& p, const Body&, const Npc& n) {
+    level_->objects.npcs.each([&](flecs::entity e, const Position& p, const Body&, const Npc& n) {
         const f64 d = std::hypot(p.tile_x() - hero_x_, p.tile_y() - hero_y_);
         if (d < best) {
             best = d;
@@ -1016,7 +903,6 @@ void SliceGame::build_sprites() {
     batch_.begin(camera_.x, camera_.y, sprite_capacity_);
     const Simulation& sim = *level_->sim;
     const f32 alpha = sim.clock().alpha();
-    const u32 phase = static_cast<u32>(sim.clock().tick() / 8);
     auto at = [&](f64 x, f64 y, f32 w, f32 h, u32 frame, u32 order, u32 color = 0xffffffffu, f32 angle = 0) {
         Sprite s;
         s.x = static_cast<f32>(x - camera_.x);
@@ -1030,42 +916,7 @@ void SliceGame::build_sprites() {
         batch_.push(s);
     };
 
-    level_->critters.each([&](const Position& p, const Body& b, const Critter& c) {
-        Sprite* s = batch_.push(1);
-        if (!s) return;
-        f64 x, y;
-        draw_position(p, b, alpha, x, y);
-        s->x = static_cast<f32>(x - camera_.x);
-        s->y = static_cast<f32>(y - camera_.y);
-        s->w = c.dir < 0 ? -1.0f : 1.0f;
-        s->h = 1.0f;
-        s->angle = 0;
-        s->frame = (c.seed % demo::kCritterKinds) * 2 + (((b.contacts & OnGround) ? phase + c.seed : 0) & 1u);
-        s->color = 0xffffffffu;
-        s->order = 1;
-    });
-    level_->npcs.each([&](const Position& p, const Body& b, const Npc& n) {
-        f64 x, y;
-        draw_position(p, b, alpha, x, y);
-        const u32 base = n.who == 0 ? FrameMiner : FrameSmith;
-        const u32 frame = base + (n.dir != 0 ? (phase & 1u) : 0u);
-        at(x, y, n.facing < 0 ? -1.0f : 1.0f, 2.0f, frame, 2);
-    });
-    level_->items.each([&](const Position& p, const Body& b, const Item& i) {
-        f64 x, y;
-        draw_position(p, b, alpha, x, y);
-        const f64 bob = std::sin(static_cast<f64>(sim.clock().tick()) * 0.08 + p.tile_x()) * 0.08;
-        at(x, y + bob, 0.8f, 0.8f, item_frame(static_cast<ItemKind>(i.kind)), 3);
-        if (i.kind == static_cast<u8>(ItemKind::Pickaxe)) at(x, y, 2.4f, 2.4f, demo::kFrameGlow, 0, render::pack_color(255, 220, 120, 90));
-    });
-    level_->crates.each([&](const Position& p, const RigidBody& rb) {
-        at(p.tile_x(), p.tile_y(), rb.half_w * 2.0f, rb.half_h * 2.0f, demo::kFrameCrate, 1, 0xffffffffu, rb.angle);
-    });
-    // The smith's anvil by his door.
-    {
-        const House h = gen_->smith_house();
-        at(h.x1 - 3.5, gen_->village_y() - 0.5, 1.4f, 1.0f, FrameAnvil, 1);
-    }
+    push_objects(batch_, level_->objects, *gen_, camera_.x, camera_.y, alpha, sim.clock().tick());
     if (running_ && level_->hero.is_alive()) {
         const Position& p = level_->hero.get<Position>();
         const Body& b = level_->hero.get<Body>();
@@ -1085,16 +936,8 @@ void SliceGame::build_sprites() {
         if (dig_progress_ > 0) at(dig_x_ + 0.5, dig_y_ + 0.5, 1.0f, 1.0f, FrameSpark, 6, render::pack_color(0, 0, 0, static_cast<u8>(std::min(1.0, dig_progress_ * 2.0) * 150)));
     }
     // Torches: a flame sprite (not dimmed with the wall) and a light.
-    torches_.clear();
-    const Rect view = camera_.visible_tiles(width_, height_);
-    const World& w = *level_->world;
-    for (i32 y = view.y0 - 4; y < view.y1 + 4; ++y)
-        for (i32 x = view.x0 - 4; x < view.x1 + 4; ++x)
-            if (w.tile(kWalls, x, y) == TileTorch && w.tile(kBlocks, x, y) == TileAir) {
-                torches_.push_back({x + 0.5, y + 0.25});
-                const f32 flicker = 0.9f + 0.1f * std::sin(static_cast<f32>(sim.clock().tick()) * 0.3f + static_cast<f32>(x * 7 + y));
-                at(x + 0.5, y + 0.2, 0.5f * flicker, 0.6f * flicker, FrameFlame, 3);
-            }
+    push_torches(batch_, *level_->world, camera_.visible_tiles(width_, height_), camera_.x, camera_.y, sim.clock().tick(),
+                 torches_);
 }
 
 void SliceGame::update_hud(bool playing) {
@@ -1162,19 +1005,16 @@ void SliceGame::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 wi
     }
     if (tiles_world_ != level_->world.get()) {
         tiles_.shutdown();
-        if (!tiles_.init(device_, format_, *level_->world, {atlas_.data(), demo::kTileCellPx, demo::kTileCells})) {
+        if (!init_tiles(tiles_, device_, format_, *level_->world, atlas_)) {
             FORGE_ERROR("slice: the tile renderer did not start");
             SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &info, 1, nullptr));
             return;
         }
-        const Color liquid_colors[2] = {{}, {0.20f, 0.45f, 0.95f, 0.72f}};
-        tiles_.set_layer_liquid(kLiquids, liquid_colors, 2, kFull);
-        tiles_.set_layer_tint(kWalls, {0.58f, 0.58f, 0.64f, 1.0f});
         tiles_world_ = level_->world.get();
     }
     tiles_.prepare(cmd, camera_, width, height);
     sprites_.prepare(cmd, batch_, camera_, width, height);
-    for (const auto& [x, y] : torches_) lights_.add({x, y, 1.5f, 1.05f, 0.55f});
+    for (const auto& [x, y] : torches_) lights_.add({x, y, kTorchLight.r, kTorchLight.g, kTorchLight.b});
     if (running_ && hero_alive()) lights_.add({hero_x_, hero_y_ - 0.5, 0.55f, 0.5f, 0.45f}); // a little light to see by
     lights_.prepare(cmd, *level_->world, camera_, width, height);
     particles_.simulate(cmd, static_cast<f32>(frame_dt_));

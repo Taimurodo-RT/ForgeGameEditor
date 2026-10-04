@@ -37,7 +37,24 @@ std::filesystem::path FileInterface::resolve(const std::string& path) const {
     return root_ / p;
 }
 
+void FileInterface::set_memory_file(const std::string& name, std::string bytes) {
+    std::lock_guard lock(mutex_);
+    memory_["memory/" + name] = std::move(bytes);
+}
+
+void FileInterface::drop_memory_file(const std::string& name) {
+    std::lock_guard lock(mutex_);
+    memory_.erase("memory/" + name);
+}
+
 bool FileInterface::read(const std::string& path, std::string& out) {
+    if (path.rfind("memory/", 0) == 0) {
+        std::lock_guard lock(mutex_);
+        auto it = memory_.find(path);
+        if (it == memory_.end()) return false;
+        out = it->second;
+        return true;
+    }
     const std::filesystem::path full = resolve(path);
     std::vector<u8> bytes;
     if (!read_file(full, bytes)) return false;

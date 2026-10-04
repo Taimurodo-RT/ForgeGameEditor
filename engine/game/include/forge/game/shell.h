@@ -136,6 +136,8 @@ public:
     const Settings& settings() const { return settings_; }
     void apply_settings(const Settings& s);
     const std::string& title() const { return title_; }
+    // The game's data folder (game.json, level/...).
+    const std::filesystem::path& game_dir() const { return config_.game_dir; }
     const Dialogue* dialogue(std::string_view id) const;
     DialogueRunner& dialogue_runner() { return *runner_; }
     std::vector<std::string> data_errors() const { return data_errors_; }

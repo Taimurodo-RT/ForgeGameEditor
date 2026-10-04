@@ -39,6 +39,7 @@ constexpr u32 kFrameOre = 30;
 constexpr u32 kFramePlate = 31;
 constexpr u32 kFrameGear = 32;
 constexpr u32 kFrameCoal = 33;
+constexpr u32 kFrameSolid = 34; // plain white, for overlays
 
 struct SheetImage {
     std::vector<u8> rgba;

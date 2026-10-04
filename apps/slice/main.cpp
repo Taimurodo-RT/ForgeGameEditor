@@ -3,6 +3,9 @@
 //
 //   forge_slice                     play
 //   forge_slice --stress            play with 200 000 critters and a million particles
+//   forge_slice --play --level DIR --at X,Y
+//                                   a new game from a level folder, the hero at X,Y
+//                                   (the level editor's «Играть отсюда»)
 //   forge_slice --test --screenshot out.png [--scene village|mine|menu]
 //                                   offscreen: plays the game through and checks it
 //
@@ -13,6 +16,7 @@
 #include "slice_game.h"
 
 #include "forge/core/log.h"
+#include "forge/core/path.h"
 #include "forge/game/runner.h"
 
 #include <RmlUi/Core/Element.h>
@@ -20,6 +24,7 @@
 #include <SDL3/SDL_main.h> // the window-only entry point on Windows
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -424,6 +429,10 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--stress") == 0) options.stress = true;
         else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) scene = argv[++i];
+        else if (std::strcmp(argv[i], "--level") == 0 && i + 1 < argc) options.level_dir = utf8_path(argv[++i]);
+        else if (std::strcmp(argv[i], "--at") == 0 && i + 1 < argc) {
+            options.at = std::sscanf(argv[++i], "%lf,%lf", &options.at_x, &options.at_y) == 2;
+        }
     }
     SliceGame game(options);
     SelfTest test(game, scene);

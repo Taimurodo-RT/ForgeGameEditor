@@ -132,6 +132,12 @@ struct SimStats {
 template <typename... C, typename Fn>
 void each_due(const TickContext& ctx, flecs::query<scene::Position, C...>& query, Fn&& fn);
 
+// Registers the simulation's saved components (bodies, triggers, gravity
+// sources, rigid bodies...) with a scene. A Simulation does it itself; a tool
+// that saves a scene without simulating it (the level editor) calls this so
+// the objects keep their bodies.
+void register_components(scene::Scene& scene);
+
 class Simulation final : public world::WorldListener {
 public:
     Simulation(world::World& world, scene::Scene& scene, const SimDesc& desc = {});

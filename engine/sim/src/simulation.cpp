@@ -1,5 +1,7 @@
 #include "forge/sim/simulation.h"
 
+#include "forge/sim/rigid.h"
+
 #include "forge/core/profile.h"
 #include "forge/core/time.h"
 
@@ -10,6 +12,16 @@ FORGE_REFLECT(forge::sim::Trigger, 1) { t.field("radius", &forge::sim::Trigger::
 
 namespace forge::sim {
 
+void register_components(scene::Scene& scene) {
+    scene.register_component<Body>();
+    scene.register_component<KeepAwake>();
+    scene.register_component<Trigger>();
+    scene.register_component<GravitySource>();
+    scene.register_component<TimeBubble>();
+    scene.register_component<OutsideTime>();
+    scene.register_component<RigidBody>();
+}
+
 Simulation::Simulation(world::World& world, scene::Scene& scene, const SimDesc& desc)
     : world_(world),
       scene_(scene),
@@ -17,12 +29,7 @@ Simulation::Simulation(world::World& world, scene::Scene& scene, const SimDesc& 
       clock_(desc.ticks_per_second, desc.max_ticks_per_frame),
       zones_(desc.zones),
       collision_(desc.collision_layer) {
-    scene_.register_component<Body>();
-    scene_.register_component<KeepAwake>();
-    scene_.register_component<Trigger>();
-    scene_.register_component<GravitySource>();
-    scene_.register_component<TimeBubble>();
-    scene_.register_component<OutsideTime>();
+    register_components(scene_);
     gravity_.set_world(desc.gravity_x, desc.gravity_y);
     if (desc.liquid_layer < world_.layer_count()) cells_ = std::make_unique<CellSim>(desc.collision_layer, desc.liquid_layer);
     rigid_ = std::make_unique<RigidWorld>(scene_, collision_);

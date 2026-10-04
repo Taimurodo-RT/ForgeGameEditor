@@ -84,6 +84,13 @@ public:
     // Reloads every document from its files (what hot reload does).
     void reload_documents();
 
+    // A picture made by code (palette icons, previews), shown by documents as
+    // <img src="/memory/<name>"/>. Pixels are RGBA, rows top to bottom.
+    // Give a changed picture a new name: shown pictures are cached by name.
+    void set_image(const std::string& name, const u8* rgba, u32 width, u32 height);
+    // Forgets a picture made by set_image (after no element shows it).
+    void drop_image(const std::string& name);
+
     const Tokens& tokens() const;
     const std::filesystem::path& root() const;
     const UiStats& stats() const;
