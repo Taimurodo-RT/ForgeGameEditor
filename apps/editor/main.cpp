@@ -449,7 +449,9 @@ public:
         // document (a slider snapping to its step, a field losing focus as it
         // is rebuilt); those are not the user's edits.
         in_ui_update_ = true;
+        level.set_ui_updating(true);
         ui_.update();
+        level.set_ui_updating(false);
         in_ui_update_ = false;
         follow_log();
     }
@@ -1533,10 +1535,96 @@ private:
             check(lv().minimap_updates() > 0, "the minimap is drawn");
             break;
         }
-        case 13: return false;
+        // --- objects ---
+        case 13: {
+            key(SDLK_O, SDL_KMOD_NONE);
+            check(lv().mode() == Mode::Objects, "O opens the objects mode");
+            break;
+        }
+        case 14: {
+            check(shown("obj-" + std::to_string(kCoins)), "the palette shows the objects");
+            if (Rml::Element* e = ed_.find_element(("obj-" + std::to_string(kCoins)).c_str())) e->Click();
+            check(lv().armed_object() == kCoins, "a click on the palette takes coins");
+            entries_ = lv().history().size();
+            click_cell(cx_ + 10, cy_);
+            check(lv().history().size() == entries_ + 1 && lv().history().undo_label() == "Поставить: Монеты",
+                  "a click in the world places the coins, one history entry");
+            check(lv().selection().size() == 1, "the placed object is selected");
+            object_ = lv().selection().empty() ? 0 : lv().selection()[0];
+            const flecs::entity e = placed();
+            check(e.is_valid() && e.has<slice::Item>() && e.get<slice::Item>().kind == u8(slice::ItemKind::Coins),
+                  "the coins are in the world");
+            break;
+        }
+        case 15:
+            check(shown("obj-delete") && shown("lv-num-2"), "the properties show the coins and their fields");
+            lv().set_field(2, "7", false);
+            check(count() == 7 && lv().history().undo_label() == "«Монеты»: Сколько", "«Сколько» is set to 7");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(count() == 10, "Ctrl+Z gives the old count back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(count() == 7, "Ctrl+Y sets it again");
+            break;
+        case 16: {
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(lv().armed_object() < 0, "Esc puts the coins back on the shelf");
+            entries_ = lv().history().size();
+            // The coins lie on the cell's floor: grab them just above it.
+            to_point(cx_ + 10.5, cy_ + 0.85);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_point(cx_ + 11.6, cy_ + 0.85);
+            to_point(cx_ + 13.5, cy_ + 0.85);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            const flecs::entity e = placed();
+            check(e.is_valid() && std::abs(e.get<scene::Position>().tile_x() - (cx_ + 13.5)) < 1e-6,
+                  "a drag moves the coins three cells");
+            check(lv().history().size() == entries_ + 1 && lv().history().undo_label() == "Передвинуть: Монеты",
+                  "the move is one history entry");
+            break;
+        }
+        case 17: {
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(!placed().is_valid() && lv().selection().empty(), "Delete removes the coins");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            const flecs::entity e = placed();
+            check(e.is_valid() && count() == 7 && std::abs(e.get<scene::Position>().tile_x() - (cx_ + 13.5)) < 1e-6,
+                  "Ctrl+Z brings them back as they were");
+            break;
+        }
+        case 18: {
+            key(SDLK_Q, SDL_KMOD_NONE);
+            to_point(cx_ + 13.5, cy_ + 0.85);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(lv().mode() == Mode::Select && lv().selection().size() == 1 && lv().selection()[0] == object_,
+                  "in the select mode a click picks the object");
+            click_cell(cx_ + 6, cy_ - 3);
+            check(lv().selection().empty(), "a click on empty sky clears the selection");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::Level copy(ed_.level_module);
+            check(copy.open(lv().level().folder()), "the level opens again");
+            copy.ensure_loaded({cx_ + 8, cy_ - 4, cx_ + 18, cy_ + 4});
+            const flecs::entity e = copy.find(object_);
+            check(e.is_valid() && e.get<slice::Item>().count == 7 &&
+                      std::abs(e.get<scene::Position>().tile_x() - (cx_ + 13.5)) < 1e-6,
+                  "the saved level keeps the coins where they were put");
+            lv().select_objects({object_}); // for a screenshot of the panels
+            break;
+        }
+        case 19: return false;
         default: break;
         }
         return true;
+    }
+    static constexpr i32 kCoins = 4;
+    flecs::entity placed() { return lv().level().find(object_); }
+    u32 count() {
+        const flecs::entity e = placed();
+        return e.is_valid() ? e.get<slice::Item>().count : 0;
+    }
+    void to_point(f64 x, f64 y) {
+        lv().screen_of(x, y, x_, y_);
+        mouse(SDL_EVENT_MOUSE_MOTION, x_, y_);
     }
 
     bool shown(const std::string& id) { return shown(id.c_str()); }
@@ -1596,6 +1684,7 @@ private:
     f32 x_ = 0, y_ = 0;
     usize entries_ = 0, count_ = 0, stacks_ = 0;
     i32 cx_ = 0, cy_ = 0;
+    u64 object_ = 0;
     int failures_ = 0;
 };
 
@@ -1632,7 +1721,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             }
             SelfTest test(editor);
             if (self_test) {
-                frames = std::max(frames, 80u);
+                frames = std::max(frames, 90u);
                 editor.open_tab("world"); // the scene part first, then the level
             }
             bool testing = self_test;

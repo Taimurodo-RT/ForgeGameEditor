@@ -165,6 +165,76 @@ void Scene::pack_chunk(const ChunkIndex& chunk, std::vector<u8>& out, bool visit
     for (u32 i = chunk.begin; i < chunk.end; ++i) pack_entity(items_[i].entity, out);
 }
 
+flecs::entity_t Scene::unpack_one(const u8*& p, const u8* end, u32& skipped) {
+    u16 components = 0;
+    if (!take(p, end, components)) {
+        p = end;
+        return 0;
+    }
+    std::vector<std::max_align_t>& scratch = unpack_scratch_;
+    flecs::entity_t e = ecs_new(ecs_.c_ptr());
+    bool has_position = false;
+    for (u16 c = 0; c < components; ++c) {
+        u64 type_id = 0, schema = 0;
+        u32 size = 0;
+        if (!take(p, end, type_id) || !take(p, end, schema) || !take(p, end, size) ||
+            static_cast<usize>(end - p) < size) {
+            p = end;
+            break;
+        }
+        std::span<const u8> payload(p, size);
+        p += size;
+        const SavedComponent* saved = nullptr;
+        for (const SavedComponent& s : saved_)
+            if (s.type->id == type_id) saved = &s;
+        // Unknown or changed layout: dropped (saves of older game versions
+        // will go through JSON migrations once games ship).
+        if (!saved || saved->type->schema_hash() != schema) {
+            ++skipped;
+            continue;
+        }
+        const reflect::TypeInfo* t = saved->type;
+        scratch.resize((t->size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t) + 1);
+        void* object = scratch.data();
+        t->construct(object);
+        if (data::read_binary_payload(t, object, payload) == data::BinaryError::None) {
+            ecs_set_id(ecs_.c_ptr(), e, saved->id, t->size, object);
+            has_position |= t == reflect::type_of<Position>();
+        } else {
+            ++skipped;
+        }
+        t->destruct(object);
+    }
+    if (!has_position) {
+        ecs_delete(ecs_.c_ptr(), e);
+        return 0;
+    }
+    return e;
+}
+
+std::vector<u8> Scene::pack(flecs::entity_t e) {
+    std::vector<u8> out;
+    if (ecs_is_alive(ecs_.c_ptr(), e)) pack_entity(e, out);
+    return out;
+}
+
+flecs::entity Scene::unpack(std::span<const u8> bytes) {
+    const u8* p = bytes.data();
+    u32 skipped = 0;
+    const flecs::entity_t e = unpack_one(p, p + bytes.size(), skipped);
+    if (!e) return flecs::entity();
+    flecs::entity entity(ecs_, e);
+    Position pos = entity.get<Position>();
+    normalize(pos);
+    if (!world_.find_chunk(pos.chunk())) {
+        ecs_delete(ecs_.c_ptr(), e);
+        return flecs::entity();
+    }
+    entity.set<Position>(pos);
+    index_dirty_ = true;
+    return entity;
+}
+
 void Scene::unpack_chunk(ChunkCoord coord, const std::vector<u8>& bytes, bool& visited) {
     FORGE_ZONE();
     const u8* p = bytes.data();
@@ -177,49 +247,8 @@ void Scene::unpack_chunk(ChunkCoord coord, const std::vector<u8>& bytes, bool& v
     }
     visited = visited_flag != 0;
     u32 skipped = 0;
-    std::vector<std::max_align_t> scratch;
-    for (u32 n = 0; n < count; ++n) {
-        u16 components = 0;
-        if (!take(p, end, components)) break;
-        flecs::entity_t e = ecs_new(ecs_.c_ptr());
-        bool has_position = false;
-        for (u16 c = 0; c < components; ++c) {
-            u64 type_id = 0, schema = 0;
-            u32 size = 0;
-            if (!take(p, end, type_id) || !take(p, end, schema) || !take(p, end, size) ||
-                static_cast<usize>(end - p) < size) {
-                p = end;
-                break;
-            }
-            std::span<const u8> payload(p, size);
-            p += size;
-            const SavedComponent* saved = nullptr;
-            for (const SavedComponent& s : saved_)
-                if (s.type->id == type_id) saved = &s;
-            // Unknown or changed layout: dropped (saves of older game versions
-            // will go through JSON migrations once games ship).
-            if (!saved || saved->type->schema_hash() != schema) {
-                ++skipped;
-                continue;
-            }
-            const reflect::TypeInfo* t = saved->type;
-            scratch.resize((t->size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t) + 1);
-            void* object = scratch.data();
-            t->construct(object);
-            if (data::read_binary_payload(t, object, payload) == data::BinaryError::None) {
-                ecs_set_id(ecs_.c_ptr(), e, saved->id, t->size, object);
-                has_position |= t == reflect::type_of<Position>();
-            } else {
-                ++skipped;
-            }
-            t->destruct(object);
-        }
-        if (!has_position) {
-            ecs_delete(ecs_.c_ptr(), e);
-            continue;
-        }
-        ++unpacked_;
-    }
+    for (u32 n = 0; n < count && p < end; ++n)
+        if (unpack_one(p, end, skipped)) ++unpacked_;
     if (skipped) FORGE_WARN("scene: chunk %d,%d: %u components could not be read", coord.x, coord.y, skipped);
 }
 

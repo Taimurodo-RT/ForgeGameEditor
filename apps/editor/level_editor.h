@@ -11,6 +11,7 @@
 #include "forge/editor/dock.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
+#include "forge/level/object_edit.h"
 #include "forge/level/tile_edit.h"
 #include "forge/render/camera.h"
 #include "forge/render/sprite_batch.h"
@@ -50,6 +51,8 @@ public:
     bool init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat format, const LevelConfig& config);
     void bind(Rml::DataModelConstructor& model);
     void set_model(Rml::DataModelHandle handle) { model_ = handle; }
+    // True while the UI updates: input events then come from bindings, not the user.
+    void set_ui_updating(bool on) { ui_updating_ = on; }
     void shutdown();
 
     // Each frame while the tab is open; context: to find the elements.
@@ -99,6 +102,14 @@ public:
     f32 dock_x() const { return dock_x_; }
     f32 dock_y() const { return dock_y_; }
     void reset_layout();
+    // Objects
+    void arm_object(i32 index); // -1: none (clicks select)
+    i32 armed_object() const { return object_; }
+    const std::vector<u64>& selection() const { return selection_; }
+    void select_objects(std::vector<u64> ids);
+    void delete_selection();
+    // A field of the properties panel (row i) set from text, as the user types it.
+    void set_field(int i, const std::string& text, bool dragging);
     u64 minimap_updates() const { return minimap_updates_; }
 
     static const std::vector<std::string>& panel_ids();
@@ -128,6 +139,16 @@ private:
         Rml::String name;
         std::vector<PaletteTile> tiles;
     };
+    struct FieldView {
+        Rml::String kind; // text, slider, bool, enum, readonly
+        Rml::String label, value;
+        float min = 0, max = 0, step = 0;
+    };
+    struct FieldRef {
+        const reflect::TypeInfo* type = nullptr; // nullptr: the position ("x" or "y")
+        std::string path;
+        std::vector<std::string> options;
+    };
 
     template <typename T>
     void set(T& member, const T& value, const char* name) {
@@ -152,6 +173,10 @@ private:
     std::string stroke_label() const;
     void shape_cells(std::vector<level::Cell>& out) const;
     void push_overlay(f64 ox, f64 oy);
+    bool objects_mode() const { return mode_ == Mode::Select || mode_ == Mode::Objects; }
+    void press_objects(f32 x, f32 y, bool add);
+    void drag_objects(f32 x, f32 y);
+    void rebuild_fields(Rml::Context* context);
 
     level::LevelModule& module_;
     std::unique_ptr<level::Level> level_;
@@ -213,6 +238,17 @@ private:
 
     SDL_Process* game_ = nullptr;
 
+    // Objects
+    i32 object_ = -1;              // armed palette object
+    std::vector<u64> selection_;   // LevelIds
+    u64 selection_version_ = 1;
+    bool moving_ = false;
+    f64 move_x_ = 0, move_y_ = 0;  // where the drag started, in tiles
+    std::vector<level::MoveObjects::Move> move_start_;
+    u64 fields_built_ = 0;
+    bool ui_updating_ = false;
+    std::vector<FieldRef> field_refs_;
+
     // Model mirrors
     std::vector<DockFrame> m_frames_;
     std::vector<DockGap> m_gaps_;
@@ -228,6 +264,10 @@ private:
     bool m_dirty_ = false;
     Rml::String m_minimap_, m_place_, m_info_;
     std::vector<Rml::String> m_history_;
+    std::vector<PaletteGroup> m_objects_;
+    int m_object_ = -1, m_sel_count_ = 0;
+    Rml::String m_sel_name_, m_sel_hint_, m_sel_icon_;
+    std::vector<FieldView> m_fields_;
     int m_history_cursor_ = 0;
     u64 history_version_ = 0;
     f64 info_time_ = -1;

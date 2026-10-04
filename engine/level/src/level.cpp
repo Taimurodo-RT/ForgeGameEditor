@@ -4,6 +4,12 @@
 #include "forge/core/path.h"
 #include "forge/core/time.h"
 
+#include <algorithm>
+#include <cmath>
+#include <random>
+
+FORGE_REFLECT(forge::level::LevelId, 1) { t.field("id", &forge::level::LevelId::id); }
+
 namespace forge::level {
 
 namespace fs = std::filesystem;
@@ -12,6 +18,7 @@ Level::Level(LevelModule& module) : module_(module) {}
 
 Level::~Level() {
     if (world_ && scene_) module_.level_closing(*this);
+    ids_ = {};
     // Entities go before the world they listen to.
     scene_.reset();
     world_.reset();
@@ -19,6 +26,7 @@ Level::~Level() {
 
 bool Level::open(const fs::path& folder, std::string* error) {
     if (world_ && scene_) module_.level_closing(*this);
+    ids_ = {};
     scene_.reset();
     world_.reset();
     folder_ = folder;
@@ -26,8 +34,11 @@ bool Level::open(const fs::path& folder, std::string* error) {
     if (!folder.empty() && !world_->open_save(folder, error)) return false;
     scene_ = std::make_unique<scene::Scene>(*world_);
     module_.setup_scene(*scene_);
+    scene_->register_component<LevelId>();
+    ids_ = scene_->ecs().query<LevelId>();
     if (!folder.empty() && !scene_->open_save(folder, error)) return false;
     edits_ = 0;
+    object_edits_ = 0;
     return true;
 }
 
@@ -70,6 +81,66 @@ bool Level::set_tile(u32 layer, i32 x, i32 y, world::TileId value) {
 }
 
 bool Level::loaded(i32 x, i32 y) const { return world_->find_chunk(world::chunk_of(x, y)) != nullptr; }
+
+flecs::entity Level::find(u64 id) {
+    flecs::entity found;
+    if (id == 0) return found;
+    ids_.each([&](flecs::entity e, const LevelId& l) {
+        if (l.id == id) found = e;
+    });
+    return found;
+}
+
+u64 Level::new_id() {
+    // Random, so ids from two editing sessions never meet.
+    static std::mt19937_64 rng{std::random_device{}() ^ static_cast<u64>(time_now_ns())};
+    u64 id = 0;
+    while (id == 0) id = rng();
+    return id;
+}
+
+u64 Level::id_of(flecs::entity e, bool assign) {
+    if (!e.is_alive()) return 0;
+    if (const LevelId* l = e.try_get<LevelId>()) return l->id;
+    if (!assign) return 0;
+    const u64 id = new_id();
+    e.set<LevelId>({id});
+    return id;
+}
+
+flecs::entity Level::pick(f64 x, f64 y) {
+    std::vector<flecs::entity_t> near;
+    scene_->query_radius(x, y, 4.0f, near);
+    flecs::entity best;
+    f64 best_area = 0;
+    for (flecs::entity_t id : near) {
+        flecs::entity e(scene_->ecs(), id);
+        if (module_.object_kind(e) < 0) continue;
+        f64 x0, y0, x1, y1;
+        if (!module_.object_box(e, x0, y0, x1, y1) || x < x0 || x >= x1 || y < y0 || y >= y1) continue;
+        const f64 area = (x1 - x0) * (y1 - y0);
+        if (!best.is_valid() || area < best_area) {
+            best = e;
+            best_area = area;
+        }
+    }
+    return best;
+}
+
+void Level::objects_in(f64 x0, f64 y0, f64 x1, f64 y1, std::vector<flecs::entity>& out) {
+    if (x0 > x1) std::swap(x0, x1);
+    if (y0 > y1) std::swap(y0, y1);
+    const f64 cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
+    const f32 radius = static_cast<f32>(std::hypot(x1 - x0, y1 - y0) * 0.5 + 4.0);
+    std::vector<flecs::entity_t> near;
+    scene_->query_radius(cx, cy, radius, near);
+    for (flecs::entity_t id : near) {
+        flecs::entity e(scene_->ecs(), id);
+        if (module_.object_kind(e) < 0) continue;
+        f64 a0, b0, a1, b1;
+        if (module_.object_box(e, a0, b0, a1, b1) && a1 > x0 && a0 < x1 && b1 > y0 && b0 < y1) out.push_back(e);
+    }
+}
 
 bool copy_level(const fs::path& level, const fs::path& to, std::string* error) {
     std::error_code ec;

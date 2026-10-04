@@ -106,12 +106,21 @@ public:
     void draw_view(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass) override;
     void level_closing(forge::level::Level& level) override;
 
+    const std::vector<forge::level::ObjectDef>& objects() const override { return object_defs_; }
+    void object_icon(const forge::level::ObjectDef& def, u32 size, std::vector<u8>& rgba) const override;
+    flecs::entity place_object(forge::level::Level& level, forge::usize index, f64 x, f64 y) override;
+    i32 object_kind(flecs::entity e) const override;
+    bool object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const override;
+    void object_moved(flecs::entity e) override;
+    bool object_component_shown(const forge::reflect::TypeInfo* type) const override;
+
     const SliceGenerator& slice_generator() const { return *gen_; }
 
 private:
     std::shared_ptr<SliceGenerator> gen_;
     std::vector<std::string> layers_;
     std::vector<forge::level::TileDef> tiles_;
+    std::vector<forge::level::ObjectDef> object_defs_;
     std::vector<u8> atlas_;
     std::vector<u32> map_colors_; // per tile id: the atlas cell's average
 
