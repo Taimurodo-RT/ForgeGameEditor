@@ -1,12 +1,14 @@
 #pragma once
 
-// The «Объекты» tab: the game's object templates, by kind.
+// The «Объекты» tab: the game's object templates.
 //
-// Every card is one template ("Монеты", "Шахтёр Борис"); the left column
-// lists the kinds ("Подбираемое", "Житель") and filters by them. The right
-// column shows the selected template in plain words: what kind it is, its
-// properties ("Что это", "Сколько"), and «Поставить на уровень». «Создать»
-// makes a new template from a kind's preset ("Монетка" for a platformer).
+// The library is for finding and using objects: the left column sorts them
+// by genre ("Платформер", "RPG") and by kind ("Подбираемое", "Житель"), the
+// middle shows them as cards, the right column tells what the selected one
+// is. Here an object is only placed on the level, copied, renamed, deleted,
+// given a genre, or opened in its editor (buttons, keys, the right-click
+// menu). Its properties are set in the object's editor, which takes the
+// middle and right of the tab until «К библиотеке».
 //
 // Each change writes the template's file at once and is one step of the
 // tab's history (Ctrl+Z). Copies on the level follow the template the next
@@ -48,33 +50,47 @@ public:
     // «Поставить на уровень»: the editor opens the level with this template armed.
     std::function<void(u64 key)> on_place;
 
-    // --- actions (buttons, keys, the self-test) ---
+    // --- actions (buttons, keys, the menu, the self-test) ---
     objects::Library& library() { return *module_.library(); }
     const objects::Template* selected() const;
     void select(u64 key);
-    void show_kind(const std::string& kind); // "": every kind
+    // Which templates the cards show: "" all, "g:Платформер" a genre ("g:"
+    // for any game), "k:pickup" a kind.
+    void show(const std::string& place);
+    const std::string& place() const { return place_; }
     void set_search(const std::string& text);
     // A new template of a kind: from its preset (index), or empty (-1).
     bool create(const std::string& kind, int preset);
     bool duplicate();
     bool remove_selected();
     bool rename(const std::string& name);
+    void start_rename();
+    bool renaming() const { return renaming_; }
+    bool set_genre(const std::string& genre);
+    bool place_selected();
+    // The object's editor: its properties in plain words.
+    void open_editor();
+    void close_editor();
+    bool editing() const { return editing_ != 0; }
     bool set_about(const std::string& about);
-    // Row i of the properties, set from text as the user types it.
+    // Row i of the editor's properties, set from text as the user types it.
     void set_prop(int i, const std::string& text, bool dragging);
+    // The right-click menu: over card i, or over empty space (-1); x, y in
+    // window pixels.
+    void context_menu(int card, f32 x, f32 y);
+    bool menu_open() const { return m_menu_ != ""; }
     usize cards() const { return m_cards_.size(); }
     const std::string& card_name(usize i) const { return m_cards_[i].name; }
-    bool menu_open() const { return m_menu_; }
 
 private:
-    struct KindRow {
-        Rml::String id, name, icon, about;
+    struct NavRow {
+        Rml::String place, name, icon, about;
         int count = 0;
         bool selected = false;
     };
     struct Card {
-        Rml::String name, kind, icon, about;
-        bool selected = false;
+        Rml::String name, kind, genre, icon, about;
+        bool selected = false, renaming = false;
     };
     struct PresetRow {
         Rml::String kind, name, genre, about;
@@ -84,6 +100,10 @@ private:
         Rml::String kind, name, icon, about;
         std::vector<PresetRow> presets;
     };
+    struct GenreItem {
+        Rml::String name, label;
+        bool checked = false;
+    };
     struct PropView {
         Rml::String kind; // text, slider, bool, enum
         Rml::String label, value, hint;
@@ -92,9 +112,10 @@ private:
     };
 
     void rebuild();
-    void rebuild_props();
+    void rebuild_side();
     void icon_of(const objects::Template& t);
     void change(objects::Template after, std::string label, std::string merge = {});
+    void set_menu(const std::string& menu);
     template <typename T>
     void set(T& member, const T& value, const char* name) {
         if (member == value) return;
@@ -111,20 +132,25 @@ private:
 
     u64 built_ = 0;    // the library version the lists show
     u64 selected_ = 0; // template key
-    std::string kind_, search_;
+    u64 editing_ = 0;  // the template open in the editor
+    bool renaming_ = false, rename_focus_ = false;
+    std::string place_, search_;
     std::vector<u64> card_keys_;
     std::vector<const objects::PropDef*> prop_refs_;
     std::unordered_map<u64, u32> icon_revs_; // key -> rev the icon was drawn for
-    u64 props_built_ = 0;
 
     // Model mirrors
-    std::vector<KindRow> m_kinds_;
+    std::vector<NavRow> m_genres_, m_kinds_;
+    NavRow m_all_;
     std::vector<Card> m_cards_;
     std::vector<CreateGroup> m_create_;
+    std::vector<GenreItem> m_genre_items_;
     std::vector<PropView> m_props_;
-    Rml::String m_kind_, m_search_, m_count_;
-    bool m_menu_ = false, m_details_ = false, m_has_sel_ = false;
-    Rml::String m_sel_name_, m_sel_kind_, m_sel_kind_about_, m_sel_about_, m_sel_icon_, m_sel_file_, m_sel_kind_icon_;
+    Rml::String m_search_, m_count_, m_menu_; // menu: "", "new", "card", "empty"
+    float m_menu_x_ = 0, m_menu_y_ = 0;
+    bool m_details_ = false, m_has_sel_ = false, m_editing_ = false;
+    Rml::String m_sel_name_, m_sel_kind_, m_sel_kind_about_, m_sel_about_, m_sel_icon_, m_sel_file_, m_sel_kind_icon_,
+        m_sel_genre_;
     int m_total_ = 0;
 };
 

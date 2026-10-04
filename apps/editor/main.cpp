@@ -1867,9 +1867,19 @@ private:
         const objects::PropDef* p = k ? k->prop(prop) : nullptr;
         return p ? lib.value(*t, *p) : std::string();
     }
+    // Card i's centre in window pixels (false when it is not shown).
+    bool card_at(i64 i, f32& x, f32& y) {
+        return i >= 0 && element_center(("ol-card-" + std::to_string(i)).c_str(), x, y);
+    }
+    void left_click(f32 x, f32 y) {
+        mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+    }
     bool objects_step() {
-        if (ol_step_ >= 15) return asset_step();
+        if (ol_step_ >= 23) return asset_step();
         objects::Library& lib = ol().library();
+        f32 x = 0, y = 0;
         switch (ol_step_) {
         case 0:
             check(click_tab(2) && ed_.tab() == "objects", "a click on the Objects tab");
@@ -1878,18 +1888,34 @@ private:
             check(shown("ol-card-0") && ol().cards() == 9, "the tab shows the game's 9 templates as cards");
             check(!ol().history().can_undo() && tpl_value("crate", "density") == "0.6",
                   "showing the templates changes none of them");
-            check(shown("ol-kind-all") && shown("ol-kind-pickup") && shown("ol-kind-person"), "the kinds are listed");
-            check(click("ol-kind-pickup"), "a click on «Подбираемое»");
+            check(shown("ol-place-all") && shown("ol-genre-0") && shown("ol-kind-k:pickup") && shown("ol-kind-k:person"),
+                  "the genres and the kinds are listed");
+            check(!shown("ol-num-1") && !shown("ol-next-0"), "the library itself has no properties to set");
+            check(click("ol-genre-1") && ol().place() == "g:RPG", "a click on «RPG»");
             break;
-        case 2: {
+        case 2:
+            check(ol().cards() == 2 && card_named("Шахтёр Борис") >= 0 && card_named("Кузнец") >= 0,
+                  "only the RPG objects are shown");
+            check(click("ol-kind-k:pickup"), "a click on «Подбираемое»");
+            break;
+        case 3: {
             check(ol().cards() == 5, "only the pickups are shown");
             const i64 coins = card_named("Монеты");
-            check(coins >= 0 && click("ol-card-" + std::to_string(coins)), "a click on «Монеты»");
+            check(card_at(coins, x, y), "the «Монеты» card is on screen");
+            right_click(x, y);
             break;
         }
-        case 3:
-            check(ol().selected() && ol().selected()->id == "coins" && shown("ol-num-1") && shown("ol-next-0"),
-                  "the coins are shown with «Что это» and «Сколько»");
+        case 4:
+            if (hold(shown("ctx-ol-open"), "the menu is laid out")) return true;
+            check(ol().selected() && ol().selected()->id == "coins", "the right button selects «Монеты»");
+            check(shown("ctx-ol-open") && shown("ctx-ol-place") && shown("ctx-ol-copy") && shown("ctx-ol-rename") &&
+                      shown("ctx-ol-delete") && shown("ctx-ol-genre-0"),
+                  "and opens its menu: editor, place, copy, rename, delete, genre");
+            check(click("ctx-ol-open") && ol().editing() && !ol().menu_open(), "«Открыть редактор» opens the object's editor");
+            break;
+        case 5:
+            check(shown("ol-editor") && shown("ol-num-1") && shown("ol-next-0") && !shown("ol-grid"),
+                  "the editor shows «Что это» and «Сколько» in place of the cards");
             click("ol-next-0"); // Монеты → Медь
             ol().set_prop(1, "15", false);
             check(tpl_value("coins", "what") == "\"copper\"" && tpl_value("coins", "count") == "15",
@@ -1898,9 +1924,11 @@ private:
                       *objects::read_template(lib.find("coins")->file).value().value("count") == "15",
                   "the change is written to the template's file");
             check(ol().history().undo_label() == "«Монеты»: Сколько", "the change is in the tab's history");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ol().editing(), "Esc goes back to the library");
             click_tab(0);
             break;
-        case 4: {
+        case 6: {
             const flecs::entity e = placed();
             check(e.is_valid() && e.get<slice::Item>().kind == u8(slice::ItemKind::Copper) && count() == 7,
                   "the copy on the level follows the template, but keeps its own count of 7");
@@ -1913,23 +1941,35 @@ private:
             click_tab(0);
             break;
         }
-        case 5:
+        case 7:
             check(placed().is_valid() && placed().get<slice::Item>().kind == u8(slice::ItemKind::Coins),
                   "and the copy is coins again");
             click_tab(2);
             break;
-        case 6:
-            check(click("ol-new") && ol().menu_open(), "«Создать» opens");
+        case 8: {
+            check(click("ol-place-all") && ol().cards() == 9, "«Все объекты» shows all 9 again");
+            Rml::Element* wrap = ed_.find_element("ol-grid-wrap");
+            check(wrap != nullptr, "the cards' area is there");
+            if (!wrap) break;
+            const Rml::Vector2f at = wrap->GetAbsoluteOffset(Rml::BoxArea::Border);
+            right_click(at.x + wrap->GetOffsetWidth() - 30, at.y + wrap->GetOffsetHeight() - 30);
             break;
-        case 7:
+        }
+        case 9:
+            if (hold(shown("ctx-ol-new"), "the menu is laid out")) return true;
+            check(shown("ctx-ol-new") && !shown("ctx-ol-open"), "the right button on empty space offers only «Создать»");
+            check(click("ctx-ol-new"), "a click on «Создать объект…»");
+            break;
+        case 10:
             check(shown("ol-new-pickup-0") && shown("ol-new-person-0") && shown("ol-new-crate--1"),
                   "it lists every kind's presets and an empty one");
             click("ol-new-pickup-0");
             break;
-        case 8: {
+        case 11: {
             const objects::Template* t = ol().selected();
-            check(!ol().menu_open() && t && t->name == "Монетка" && tpl_value(t->id.c_str(), "count") == "1",
-                  "the «Монетка» preset makes a template: one coin");
+            check(!ol().menu_open() && t && t->name == "Монетка" && tpl_value(t->id.c_str(), "count") == "1" &&
+                      t->genre == "Платформер",
+                  "the «Монетка» preset makes a template: one coin, for platformers");
             check(t && std::filesystem::exists(t->file) && t->file.parent_path() == ed_.objects_folder,
                   "the template is a file in the objects folder");
             new_template_ = t ? t->key : 0;
@@ -1938,15 +1978,59 @@ private:
             key(SDLK_Y, SDL_KMOD_CTRL);
             check(lib.find(new_template_) != nullptr, "Ctrl+Y brings it back");
             ol().select(new_template_);
-            check(ol().rename("Золотая монетка") && lib.find(new_template_)->name == "Золотая монетка" &&
-                      path_to_utf8(lib.find(new_template_)->file.filename()) == "Золотая монетка.object.json",
-                  "renaming renames the file too");
+            key(SDLK_F2, SDL_KMOD_NONE);
+            check(ol().renaming(), "F2 starts renaming on the card");
             break;
         }
-        case 9:
+        case 12:
+            check(shown("ol-rename"), "the card shows a name field");
+            check(ol().rename("Золотая монетка") && !ol().renaming() && lib.find(new_template_)->name == "Золотая монетка" &&
+                      path_to_utf8(lib.find(new_template_)->file.filename()) == "Золотая монетка.object.json",
+                  "renaming renames the file too");
+            check(card_at(card_named("Золотая монетка"), x, y), "the new card is on screen");
+            right_click(x, y);
+            break;
+        case 13:
+            if (hold(shown("ctx-ol-genre-1"), "the menu is laid out")) return true;
+            check(shown("ctx-ol-genre-1"), "its menu lists the genres");
+            check(click("ctx-ol-genre-1") && lib.find(new_template_)->genre == "RPG" && !ol().menu_open(),
+                  "a click on «RPG» moves it to RPG");
+            check(objects::read_template(lib.find(new_template_)->file).value().genre == "RPG",
+                  "the genre is written to the file");
+            check(click("ol-genre-1") && card_named("Золотая монетка") >= 0 && ol().cards() == 3,
+                  "and it is listed under «RPG»");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lib.find(new_template_)->genre == "Платформер", "Ctrl+Z gives the genre back");
+            click("ol-place-all");
+            break;
+        case 14: {
+            ol().select(new_template_);
+            const usize before = lib.templates().size();
+            key(SDLK_D, SDL_KMOD_CTRL);
+            const objects::Template* copy = ol().selected();
+            check(lib.templates().size() == before + 1 && copy && copy->key != new_template_ &&
+                      tpl_value(copy->id.c_str(), "count") == "1",
+                  "Ctrl+D makes a copy of the template");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lib.templates().size() == before, "Ctrl+Z takes the copy away");
+            ol().select(new_template_);
+            break;
+        }
+        case 15:
+            check(card_at(card_named("Золотая монетка"), x, y), "the card is on screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            left_click(x, y);
+            left_click(x, y);
+            break;
+        case 16:
+            check(ol().editing() && ol().selected() && ol().selected()->key == new_template_,
+                  "a double click opens the object's editor");
+            check(click("ol-back") && !ol().editing(), "«К библиотеке» goes back");
+            break;
+        case 17:
             check(click("ol-place") && ed_.tab() == "level", "«Поставить на уровень» opens the level");
             break;
-        case 10: {
+        case 18: {
             if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
             const auto& defs = ed_.level_module.objects();
             const i32 armed = lv().armed_object();
@@ -1958,13 +2042,13 @@ private:
             click_tab(2);
             break;
         }
-        case 11:
-            ol().show_kind("");
+        case 19:
+            ol().show("");
             ol().set_search("кир");
             check(ol().cards() == 1 && ol().card_name(0) == "Кирка", "the search finds the pickaxe");
             ol().set_search("");
             break;
-        case 12: {
+        case 20: {
             ol().select(new_template_);
             const usize before = lib.templates().size();
             check(click("ol-delete") && lib.templates().size() == before - 1, "«Удалить» deletes the template");
@@ -1972,11 +2056,11 @@ private:
             check(lib.templates().size() == before, "Ctrl+Z brings it back");
             break;
         }
-        case 13:
+        case 21:
             ol().select(lib.find("coins")->key); // for a screenshot
-            ed_.objects_tab.show_kind("");
+            ol().show("");
             break;
-        case 14:
+        case 22:
             click_tab(0);
             break;
         default: break;

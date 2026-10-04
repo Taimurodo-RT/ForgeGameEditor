@@ -2,6 +2,7 @@
   "id": "miner",
   "name": "Шахтёр Борис",
   "kind": "person",
+  "genre": "RPG",
   "about": "просит найти кирку",
   "values": {"who": "miner", "facing": "left"}
 }

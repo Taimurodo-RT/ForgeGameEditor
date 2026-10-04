@@ -102,6 +102,7 @@ struct Template {
     u64 key = 0;      // fnv1a(id): what copies keep
     std::string name; // "Монеты"
     std::string kind; // "pickup"
+    std::string genre; // "Платформер"; empty: for any game (only for finding it)
     std::string about;
     // Property values that differ from the kind's own (prop id, JSON value:
     // 10, "coins", true). Missing ones take the kind's starting value.
@@ -138,6 +139,9 @@ public:
     const std::filesystem::path& folder() const { return folder_; }
 
     const std::vector<KindDef>& kinds() const { return kinds_; }
+    // Genres to sort templates by: the kinds file's list, then any other a
+    // template or preset names.
+    std::vector<std::string> genres() const;
     const std::vector<Template>& templates() const { return templates_; }
     const KindDef* kind(std::string_view id) const;
     const KindDef* kind_of(const Template& t) const { return kind(t.kind); }
@@ -193,6 +197,7 @@ private:
     void on_unpacked(scene::Scene& scene, flecs::entity e) const;
 
     std::vector<KindDef> kinds_;
+    std::vector<std::string> genres_; // from the kinds file
     std::vector<Template> templates_;
     std::filesystem::path folder_;
     u64 version_ = 1;

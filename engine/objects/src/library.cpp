@@ -236,6 +236,7 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     t.name = text_of(yyjson_obj_get(root, "name"));
     t.kind = text_of(yyjson_obj_get(root, "kind"));
     t.about = text_of(yyjson_obj_get(root, "about"));
+    t.genre = text_of(yyjson_obj_get(root, "genre"));
     t.values = read_values(yyjson_obj_get(root, "values"));
     yyjson_doc_free(doc);
     if (t.id.empty() || t.kind.empty()) {
@@ -254,6 +255,7 @@ std::string template_json(const Template& t) {
     s += "  \"id\": " + json_text(t.id) + ",\n";
     s += "  \"name\": " + json_text(t.name) + ",\n";
     s += "  \"kind\": " + json_text(t.kind) + ",\n";
+    if (!t.genre.empty()) s += "  \"genre\": " + json_text(t.genre) + ",\n";
     if (!t.about.empty()) s += "  \"about\": " + json_text(t.about) + ",\n";
     s += "  \"values\": {";
     for (usize i = 0; i < t.values.size(); ++i)
@@ -285,8 +287,11 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
         if (error) *error = path_to_utf8(kinds_file) + ": ошибка JSON на " + std::to_string(err.pos) + ": " + err.msg;
         return false;
     }
-    yyjson_val* list = yyjson_obj_get(yyjson_doc_get_root(doc), "kinds");
+    genres_.clear();
     usize i, n;
+    yyjson_val* g;
+    yyjson_arr_foreach(yyjson_obj_get(yyjson_doc_get_root(doc), "genres"), i, n, g) genres_.push_back(text_of(g));
+    yyjson_val* list = yyjson_obj_get(yyjson_doc_get_root(doc), "kinds");
     yyjson_val* k;
     yyjson_arr_foreach(list, i, n, k) {
         KindDef kind;
@@ -376,6 +381,17 @@ void Library::sort_templates() {
     });
 }
 
+std::vector<std::string> Library::genres() const {
+    std::vector<std::string> out = genres_;
+    auto add = [&](const std::string& g) {
+        if (!g.empty() && std::find(out.begin(), out.end(), g) == out.end()) out.push_back(g);
+    };
+    for (const KindDef& k : kinds_)
+        for (const Preset& p : k.presets) add(p.genre);
+    for (const Template& t : templates_) add(t.genre);
+    return out;
+}
+
 const KindDef* Library::kind(std::string_view id) const {
     for (const KindDef& k : kinds_)
         if (k.id == id) return &k;
@@ -408,6 +424,7 @@ std::optional<Template> Library::make(const KindDef& k, const Preset* preset, st
     t.name = free_name(name.empty() ? (preset ? preset->name : k.name) : name);
     if (preset) {
         t.about = preset->about;
+        t.genre = preset->genre;
         t.values = preset->values;
     }
     t.rev = values_rev(t.values);
