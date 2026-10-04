@@ -164,6 +164,7 @@ public:
     u64 objects_version() const override { return library_.version(); }
     const std::vector<forge::level::ObjectDef>& objects() const override;
     void object_icon(const forge::level::ObjectDef& def, u32 size, std::vector<u8>& rgba) const override;
+    void hero_icon(u32 size, std::vector<u8>& rgba) const override;
     flecs::entity place_object(forge::level::Level& level, forge::usize index, f64 x, f64 y) override;
     i32 object_kind(flecs::entity e) const override;
     bool object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const override;
@@ -173,6 +174,9 @@ public:
     const SliceGenerator& slice_generator() const { return *gen_; }
 
 private:
+    // A frame of the sheet fitted into size × size (rgba already cleared).
+    void frame_icon(u32 frame, u32 size, std::vector<u8>& rgba) const;
+
     std::shared_ptr<SliceGenerator> gen_;
     std::vector<std::string> layers_;
     std::vector<forge::level::TileDef> tiles_;

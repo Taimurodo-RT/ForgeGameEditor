@@ -126,6 +126,8 @@ public:
         (void)def;
         rgba.assign(static_cast<usize>(size) * size * 4, 0);
     }
+    // The hero's picture (for the links board): size × size RGBA pixels.
+    virtual void hero_icon(u32 size, std::vector<u8>& rgba) const { rgba.assign(static_cast<usize>(size) * size * 4, 0); }
     // Makes objects()[index] standing on the point (x, y) (its feet there);
     // an empty entity when that place is not loaded.
     virtual flecs::entity place_object(Level& level, usize index, f64 x, f64 y) {

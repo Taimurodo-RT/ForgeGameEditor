@@ -421,6 +421,16 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
             if (what == ids[i]) frame = item_frame(static_cast<ItemKind>(i));
     }
     if (const Pictures::Picture* pic = def.tmpl ? nullptr : pictures_.of(t->key)) frame = pic->frame;
+    frame_icon(frame, size, rgba);
+}
+
+void SliceLevel::hero_icon(u32 size, std::vector<u8>& rgba) const {
+    rgba.assign(static_cast<usize>(size) * size * 4, 0);
+    refresh_pictures();
+    frame_icon(FrameHero, size, rgba);
+}
+
+void SliceLevel::frame_icon(u32 frame, u32 size, std::vector<u8>& rgba) const {
     if (frame >= sheet_.frames.size()) return;
     const render::SpriteRect r = sheet_.frames[frame];
     // Fit the frame, keeping its shape (people are twice as tall).
