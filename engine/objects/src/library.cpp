@@ -399,6 +399,7 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
         block.props = read_props(yyjson_obj_get(b, "props"), block.name);
         block.needs = read_list(yyjson_obj_get(b, "needs"));
         block.excludes = read_list(yyjson_obj_get(b, "excludes"));
+        block.was = read_list(yyjson_obj_get(b, "was"));
         if (!block.id.empty()) blocks_.push_back(std::move(block));
     }
     yyjson_val* list = yyjson_obj_get(yyjson_doc_get_root(doc), "kinds");
@@ -463,6 +464,13 @@ void Library::reload_templates() {
             continue;
         }
         if (!kind(t->kind)) FORGE_WARN("Шаблон %s: нет вида «%s»", name.c_str(), t->kind.c_str());
+        // Blocks renamed since the template was written.
+        for (std::string& id : t->blocks) {
+            if (block(id)) continue;
+            for (const BlockDef& b : blocks_)
+                if (std::find(b.was.begin(), b.was.end(), id) != b.was.end()) id = b.id;
+        }
+        t->rev = template_rev(*t);
         templates_.push_back(std::move(*t));
     }
     sort_templates();

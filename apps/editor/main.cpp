@@ -2131,23 +2131,29 @@ private:
             check(click("ol-block-add") && ol().menu_open(), "«Добавить блок» opens the list of blocks");
             break;
         case 27: {
-            if (hold(shown("ol-add-critter"), "the blocks menu is laid out")) return true;
+            if (hold(shown("ol-add-control"), "the blocks menu is laid out")) return true;
             check(!shown("ol-add-pickup") && shown("ol-add-rigid"), "it offers the blocks the coins do not have yet");
-            check(click("ol-add-critter") && lib.has_block(*lib.find("coins"), "critter") && !ol().menu_open(),
-                  "«Бегает само» is added to the coins");
+            check(click("ol-add-control") && lib.has_block(*lib.find("coins"), "control") && !ol().menu_open(),
+                  "«Управление» is added to the coins");
             const objects::Template* t = lib.find("coins");
-            check(lib.prop_of(*t, "speed") != nullptr && objects::read_template(t->file).value().blocks.size() == 3,
-                  "with its «Скорость», and the template's file lists the blocks");
+            const objects::PropDef* scheme = lib.prop_of(*t, "scheme");
+            check(scheme && scheme->choices.size() >= 5 && lib.prop_of(*t, "speed") != nullptr &&
+                      objects::read_template(t->file).value().blocks.size() == 3,
+                  "with its «Схема» to choose and «Скорость», and the template's file lists the blocks");
+            check(objects::Library::display(*scheme, lib.value(*t, *scheme)) == "Бродит туда-сюда",
+                  "a new «Управление» wanders by default");
             click_tab(0);
             break;
         }
         case 28: {
             const flecs::entity e = placed();
-            check(e.is_valid() && e.has<slice::Critter>() && e.get<slice::Item>().count == 7,
+            check(e.is_valid() && e.has<slice::Critter>() &&
+                      e.get<slice::Critter>().scheme == static_cast<u8>(slice::Scheme::Wander) &&
+                      e.get<slice::Item>().count == 7,
                   "the coins on the level now run, and keep their own count");
             click_tab(2);
             ol().undo();
-            check(!lib.has_block(*lib.find("coins"), "critter"), "Ctrl+Z takes the block away again");
+            check(!lib.has_block(*lib.find("coins"), "control"), "Ctrl+Z takes the block away again");
             check(ol().add_block("rigid") && lib.has_block(*lib.find("coins"), "rigid") &&
                       !lib.has_block(*lib.find("coins"), "body") && !lib.has_block(*lib.find("coins"), "pickup"),
                   "«Физика» replaces «Тело», and «Подбирается», which needs a body, goes with it");

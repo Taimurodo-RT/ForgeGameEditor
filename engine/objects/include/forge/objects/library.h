@@ -96,6 +96,7 @@ struct BlockDef {
     std::vector<PropDef> props;
     std::vector<std::string> needs;    // blocks it does not work without (added with it)
     std::vector<std::string> excludes; // blocks it cannot be together with (taken away)
+    std::vector<std::string> was;      // its former ids: templates naming them get this one
 
     const PropDef* prop(std::string_view prop_id) const;
 };

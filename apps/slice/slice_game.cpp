@@ -177,22 +177,57 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
             b.vx = n.dir * 2.2f;
         });
     });
-    // Critters: walk, hop over steps, turn around now and then.
-    L->sim->add_system([level](const TickContext& ctx) {
-        each_due(ctx, level->objects.critters, [&](flecs::entity_t, f32, Position&, Body& b, Critter& c) {
+    // Critters move by their «Управление» scheme and hop over steps.
+    L->sim->add_system([this, level](const TickContext& ctx) {
+        const Controls keys = controls_;
+        const f64 hx = hero_x_, hy = hero_y_;
+        each_due(ctx, level->objects.critters, [&](flecs::entity_t, f32, Position& p, Body& b, Critter& c) {
             c.seed = hash32(c.seed, static_cast<u32>(ctx.tick));
-            if ((c.seed & 511) == 0) c.dir = -c.dir;
-            if (!(b.contacts & OnGround)) return;
-            const bool blocked = (c.dir > 0 && (b.contacts & HitRight)) || (c.dir < 0 && (b.contacts & HitLeft));
+            const bool ground = b.contacts & OnGround;
+            // Which way it wants to go: -1, 0 or 1.
+            f32 want = 0;
+            switch (static_cast<Scheme>(c.scheme)) {
+            case Scheme::Player:
+                want = (keys.right ? 1.0f : 0.0f) - (keys.left ? 1.0f : 0.0f);
+                if (keys.jump && ground) b.vy = -13.0f;
+                break;
+            case Scheme::Stand: break;
+            case Scheme::Follow:
+            case Scheme::Flee: {
+                const f64 dx = hx - p.tile_x(), dy = hy - p.tile_y();
+                const f64 d = std::hypot(dx, dy);
+                const f32 to_hero = dx > 0 ? 1.0f : -1.0f;
+                if (c.scheme == static_cast<u8>(Scheme::Follow)) {
+                    if (d > 1.5 && d < 40) want = to_hero;
+                } else if (d < 8) {
+                    want = -to_hero;
+                }
+                break;
+            }
+            case Scheme::Wander:
+            default:
+                if ((c.seed & 511) == 0) c.dir = -c.dir;
+                want = c.dir;
+                break;
+            }
+            if (want != 0) c.dir = want;
+            if (!ground) return;
+            if (want == 0) {
+                b.vx = 0;
+                return;
+            }
+            const bool blocked = (want > 0 && (b.contacts & HitRight)) || (want < 0 && (b.contacts & HitLeft));
             if (blocked) {
-                if ((c.seed & 3) != 0) {
+                // Wanderers sometimes turn back instead; the others always try.
+                if (c.scheme != static_cast<u8>(Scheme::Wander) || (c.seed & 3) != 0) {
                     b.vy = -13.0f;
-                    b.vx = c.dir * c.speed;
+                    b.vx = want * c.speed;
                     return;
                 }
                 c.dir = -c.dir;
+                want = c.dir;
             }
-            b.vx = c.dir * c.speed;
+            b.vx = want * c.speed;
         });
     });
     return L;
@@ -475,6 +510,22 @@ u32 SliceGame::count_items(ItemKind kind) const {
     u32 n = 0;
     if (level_) level_->objects.items.each([&](const Position&, const Body&, const Item& i) { n += i.kind == static_cast<u8>(kind); });
     return n;
+}
+
+flecs::entity_t SliceGame::spawn_critter(f64 x, f64 feet_y, Scheme scheme) {
+    const objects::Template* t = library_.find("critter");
+    if (!level_ || !t) return 0;
+    flecs::entity e = library_.spawn(*level_->scene, *t, x, feet_y);
+    if (!e.is_valid()) return 0;
+    if (Critter* c = e.try_get_mut<Critter>()) c->scheme = static_cast<u8>(scheme);
+    return e.id();
+}
+
+f64 SliceGame::critter_x(flecs::entity_t id) const {
+    if (!level_ || !id) return std::nan("");
+    const flecs::entity e(level_->scene->ecs(), id);
+    const Position* p = e.is_alive() ? e.try_get<Position>() : nullptr;
+    return p ? p->tile_x() : std::nan("");
 }
 
 void SliceGame::teleport(f64 x, f64 y) {

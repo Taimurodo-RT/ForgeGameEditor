@@ -356,6 +356,45 @@ private:
             check(sand, "песок высыпался в штольню");
             return true;
         }});
+        // The «Управление» schemes move critters each their own way.
+        steps_.push_back({"схемы управления", 200, [&g, controls, v, stand, this](u32 f) {
+            static flecs::entity_t follow = 0, flee = 0, player = 0, still = 0;
+            static f64 hx = 0, follow0 = 0, flee0 = 0, player0 = 0, still0 = 0;
+            if (f == 0) {
+                g.script(Controls{});
+                g.teleport(0.5, v - stand);
+                return false;
+            }
+            if (f == 10) {
+                hx = g.hero_x();
+                follow = g.spawn_critter(hx + 6, v, Scheme::Follow);
+                flee = g.spawn_critter(hx - 2, v, Scheme::Flee);
+                player = g.spawn_critter(hx + 2, v, Scheme::Player);
+                still = g.spawn_critter(hx - 4, v, Scheme::Stand);
+                check(follow && flee && player && still, "зверьки с разными схемами появились");
+                return false;
+            }
+            if (f == 15) {
+                follow0 = g.critter_x(follow);
+                flee0 = g.critter_x(flee);
+                player0 = g.critter_x(player);
+                still0 = g.critter_x(still);
+            }
+            if (f < 100) return false;
+            if (f == 100) {
+                check(std::fabs(g.critter_x(follow) - hx) < std::fabs(follow0 - hx) - 2, "«идёт за героем» подошёл к герою");
+                check(g.critter_x(flee) < flee0 - 2, "«убегает» убежал от героя");
+                check(std::fabs(g.critter_x(player) - player0) < 0.5, "«игрок» стоит, пока клавиши не нажаты");
+                check(std::fabs(g.critter_x(still) - still0) < 0.5, "«стоит» стоит на месте");
+                player0 = g.critter_x(player);
+                g.script(controls(false, true, false));
+                return false;
+            }
+            if (f < 160) return false;
+            g.script(Controls{});
+            check(g.critter_x(player) > player0 + 1.5, "«игрок» идёт вправо по стрелке");
+            return true;
+        }});
         // Where the picture is taken.
         steps_.push_back({"кадр", 200, [&s, &g, &talk, this](u32 f) {
             const SliceGenerator& gen = g.generator();
