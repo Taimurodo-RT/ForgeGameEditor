@@ -11,21 +11,21 @@
 
 FORGE_REFLECT(slice::Hero, 1) { t.field("facing", &slice::Hero::facing); }
 FORGE_REFLECT(slice::Npc, 1) {
-    t.field("who", &slice::Npc::who);
-    t.field("home_x", &slice::Npc::home_x);
-    t.field("dir", &slice::Npc::dir);
-    t.field("facing", &slice::Npc::facing);
-    t.field("timer", &slice::Npc::timer);
-    t.field("seed", &slice::Npc::seed);
+    t.field("who", &slice::Npc::who).hidden();
+    t.field("home_x", &slice::Npc::home_x).label("Дом (x)");
+    t.field("dir", &slice::Npc::dir).hidden();
+    t.field("facing", &slice::Npc::facing).label("Смотрит (−1 влево, 1 вправо)").range(-1, 1);
+    t.field("timer", &slice::Npc::timer).hidden();
+    t.field("seed", &slice::Npc::seed).hidden();
 }
 FORGE_REFLECT(slice::Item, 1) {
-    t.field("kind", &slice::Item::kind);
-    t.field("count", &slice::Item::count);
+    t.field("kind", &slice::Item::kind).hidden();
+    t.field("count", &slice::Item::count).label("Сколько").range(1, 999);
 }
 FORGE_REFLECT(slice::Critter, 1) {
-    t.field("speed", &slice::Critter::speed);
-    t.field("dir", &slice::Critter::dir);
-    t.field("seed", &slice::Critter::seed);
+    t.field("speed", &slice::Critter::speed).label("Скорость").range(0.2, 6);
+    t.field("dir", &slice::Critter::dir).hidden();
+    t.field("seed", &slice::Critter::seed).label("Вид и характер");
 }
 
 namespace slice {
@@ -257,6 +257,18 @@ SliceLevel::SliceLevel() : gen_(std::make_shared<SliceGenerator>(kSeed)) {
         {"window", "Окно", build, "фон", kWalls, TileWindow, ""},
         {"water", "Вода", liquid, "растекается в игре", kLiquids, sim::make_liquid(kWater, sim::kFull), "7"},
     };
+    object_defs_ = {
+        {"miner", "Шахтёр Борис", "Жители", "просит найти кирку"},
+        {"smith", "Кузнец", "Жители", "ждёт десять меди"},
+        {"critter", "Зверёк", "Животные", "бегает по поверхности"},
+        {"pickaxe", "Кирка", "Предметы", "та самая, Бориса"},
+        {"coins", "Монеты", "Предметы", "лежат и ждут героя"},
+        {"copper", "Медь", "Предметы", "руда для кузнеца"},
+        {"wood", "Дерево", "Предметы", ""},
+        {"torches", "Факелы", "Предметы", "можно поставить на стену"},
+        {"crate", "Ящик", "Разное", "падает, плавает, разбивается"},
+    };
+    sheet_ = make_sheet();
     atlas_ = make_atlas();
     // Minimap colours: the average of each atlas cell.
     const u32 cell = demo::kTileCellPx, row = cell * demo::kTileCells;
@@ -272,6 +284,125 @@ SliceLevel::SliceLevel() : gen_(std::make_shared<SliceGenerator>(kSeed)) {
         map_colors_[t] = render::pack_color(static_cast<u8>(sum[0] / n), static_cast<u8>(sum[1] / n),
                                             static_cast<u8>(sum[2] / n), 255);
     }
+}
+
+// --- objects ---
+
+namespace {
+constexpr i32 kFirstItem = 3; // objects_[3..7] are items, in ItemKind order
+constexpr i32 kCrate = 8;
+}
+
+void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<u8>& rgba) const {
+    rgba.assign(static_cast<usize>(size) * size * 4, 0);
+    const auto it = std::find_if(object_defs_.begin(), object_defs_.end(), [&](const level::ObjectDef& d) { return d.id == def.id; });
+    const i32 kind = static_cast<i32>(it - object_defs_.begin());
+    u32 frame = demo::kFrameCrate;
+    if (kind == 0) frame = FrameMiner;
+    else if (kind == 1) frame = FrameSmith;
+    else if (kind == 2) frame = 2; // a critter
+    else if (kind >= kFirstItem && kind < kCrate) frame = item_frame(static_cast<ItemKind>(kind - kFirstItem));
+    if (frame >= sheet_.frames.size()) return;
+    const render::SpriteRect r = sheet_.frames[frame];
+    // Fit the frame, keeping its shape (people are twice as tall).
+    const f32 scale = static_cast<f32>(size) / static_cast<f32>(std::max(r.w, r.h));
+    const u32 w = static_cast<u32>(static_cast<f32>(r.w) * scale), h = static_cast<u32>(static_cast<f32>(r.h) * scale);
+    const u32 ox = (size - w) / 2, oy = (size - h) / 2;
+    for (u32 y = 0; y < h; ++y)
+        for (u32 x = 0; x < w; ++x) {
+            const u32 sx = r.x + std::min(r.w - 1, static_cast<u32>(static_cast<f32>(x) / scale));
+            const u32 sy = r.y + std::min(r.h - 1, static_cast<u32>(static_cast<f32>(y) / scale));
+            const u8* src = &sheet_.rgba[(static_cast<usize>(sy) * sheet_.width + sx) * 4];
+            u8* dst = &rgba[(static_cast<usize>(oy + y) * size + ox + x) * 4];
+            std::copy(src, src + 4, dst);
+        }
+}
+
+flecs::entity SliceLevel::place_object(level::Level& level, usize index, f64 x, f64 y) {
+    scene::Scene& scene = level.scene();
+    const i32 kind = static_cast<i32>(index);
+    auto spawn = [&](f64 half_h) { return scene.spawn(Position::at_tile(x, y - half_h - 0.02)); };
+    flecs::entity e;
+    if (kind == 0 || kind == 1) {
+        e = spawn(kHeroHalfH);
+        if (!e.is_valid()) return e;
+        Body b;
+        b.half_w = kHeroHalfW;
+        b.half_h = kHeroHalfH;
+        e.set<Body>(b);
+        Npc n;
+        n.who = static_cast<u8>(kind);
+        n.home_x = static_cast<f32>(x);
+        n.seed = hash32(static_cast<u32>(level.new_id()), 7);
+        n.timer = 1.0f;
+        n.facing = 1.0f;
+        e.set<Npc>(n);
+    } else if (kind == 2) {
+        e = spawn(0.4);
+        if (!e.is_valid()) return e;
+        Body b;
+        b.half_w = 0.35f;
+        b.half_h = 0.4f;
+        e.set<Body>(b);
+        const u32 s = hash32(static_cast<u32>(level.new_id()), 100);
+        e.set<Critter>({1.2f + static_cast<f32>(s % 200) / 100.0f, (s & 1) ? 1.0f : -1.0f, s});
+    } else if (kind >= kFirstItem && kind < kCrate) {
+        e = spawn(0.3);
+        if (!e.is_valid()) return e;
+        Body b;
+        b.half_w = b.half_h = 0.3f;
+        e.set<Body>(b);
+        const ItemKind ik = static_cast<ItemKind>(kind - kFirstItem);
+        const u16 count = ik == ItemKind::Coins ? 10 : ik == ItemKind::Torch ? 3 : 1;
+        e.set<Item>({static_cast<u8>(ik), count});
+    } else if (kind == kCrate) {
+        e = spawn(0.48);
+        if (!e.is_valid()) return e;
+        RigidBody rb;
+        rb.half_w = rb.half_h = 0.48f;
+        rb.density = 0.6f;
+        e.set<RigidBody>(rb);
+    }
+    return e;
+}
+
+i32 SliceLevel::object_kind(flecs::entity e) const {
+    if (!e.is_alive() || e.has<Hero>()) return -1;
+    if (const Npc* n = e.try_get<Npc>()) return n->who == 0 ? 0 : 1;
+    if (e.has<Critter>()) return 2;
+    if (const Item* i = e.try_get<Item>()) return std::min<i32>(kFirstItem + i->kind, kCrate - 1);
+    if (e.has<RigidBody>()) return kCrate;
+    return -1;
+}
+
+bool SliceLevel::object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const {
+    const Position* p = e.try_get<Position>();
+    if (!p) return false;
+    f64 hw = 0.4, hh = 0.4;
+    if (const Body* b = e.try_get<Body>()) {
+        hw = std::max(0.4, static_cast<f64>(b->half_w));
+        hh = std::max(0.4, static_cast<f64>(b->half_h));
+        if (e.has<Npc>()) hw = 0.5, hh = 1.0; // drawn 1 × 2
+    } else if (const RigidBody* rb = e.try_get<RigidBody>()) {
+        hw = rb->half_w;
+        hh = rb->half_h;
+    }
+    x0 = p->tile_x() - hw;
+    x1 = p->tile_x() + hw;
+    y0 = p->tile_y() - hh;
+    y1 = p->tile_y() + hh;
+    return true;
+}
+
+void SliceLevel::object_moved(flecs::entity e) {
+    if (Body* b = e.try_get_mut<Body>()) b->vx = b->vy = 0;
+    if (RigidBody* rb = e.try_get_mut<RigidBody>()) rb->vx = rb->vy = rb->spin = 0;
+    if (Npc* n = e.try_get_mut<Npc>())
+        if (const Position* p = e.try_get<Position>()) n->home_x = static_cast<f32>(p->tile_x());
+}
+
+bool SliceLevel::object_component_shown(const reflect::TypeInfo* type) const {
+    return type == reflect::type_of<Npc>() || type == reflect::type_of<Item>() || type == reflect::type_of<Critter>();
 }
 
 u32 SliceLevel::map_color(u32 layer, TileId value) const {
@@ -364,7 +495,6 @@ void SliceLevel::start(f64& x, f64& y) const {
 bool SliceLevel::init_view(SDL_GPUDevice* device, SDL_GPUTextureFormat format) {
     device_ = device;
     format_ = format;
-    sheet_ = make_sheet();
     if (!sprites_.init(device, format, sheet_.sheet(), 1u << 17)) return false;
     if (!lights_.init(device, format)) return false;
     lights_.set_rules(light_rules());

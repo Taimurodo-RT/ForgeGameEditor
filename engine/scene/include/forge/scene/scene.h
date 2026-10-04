@@ -24,8 +24,10 @@
 
 #include <flecs.h>
 
+#include <cstddef>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -94,6 +96,19 @@ public:
 
     void set_populator(PopulateFn fn) { populate_ = std::move(fn); }
 
+    // One entity's saved components as bytes, and back: a new entity made
+    // from them (empty when its chunk is not loaded or the bytes are not an
+    // entity). For editors: undo of a deleted object, copies.
+    std::vector<u8> pack(flecs::entity_t e);
+    flecs::entity unpack(std::span<const u8> bytes);
+
+    // The components saved with chunks (register_component), Position first.
+    struct SavedComponent {
+        const reflect::TypeInfo* type;
+        flecs::entity_t id;
+    };
+    const std::vector<SavedComponent>& saved_components() const { return saved_; }
+
     // After game systems ran: puts every entity in its chunk, packs those that
     // left the loaded area, rebuilds the spatial index.
     void update();
@@ -112,10 +127,6 @@ public:
     void on_chunk_unloading(world::Chunk& chunk) override;
 
 private:
-    struct SavedComponent {
-        const reflect::TypeInfo* type;
-        flecs::entity_t id;
-    };
     struct Item {
         flecs::entity_t entity;
         f32 x, y;
@@ -133,6 +144,9 @@ private:
     i32 dense_index(world::ChunkCoord c) const;
     void pack_entity(flecs::entity_t e, std::vector<u8>& out);
     void unpack_chunk(world::ChunkCoord coord, const std::vector<u8>& bytes, bool& visited);
+    // Reads one packed entity at p; 0 when it had no Position. skipped
+    // counts components that could not be read.
+    flecs::entity_t unpack_one(const u8*& p, const u8* end, u32& skipped);
     std::vector<u8>& stored_for(world::ChunkCoord coord);
     void pack_chunk(const ChunkIndex& chunk, std::vector<u8>& out, bool visited);
 
@@ -160,6 +174,7 @@ private:
     usize stored_bytes_ = 0;
     std::unique_ptr<world::RegionStore> store_;
 
+    std::vector<std::max_align_t> unpack_scratch_;
     u32 moved_out_ = 0;
     u64 packed_ = 0;
     u64 unpacked_ = 0;

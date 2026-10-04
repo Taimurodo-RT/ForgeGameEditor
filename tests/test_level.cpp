@@ -2,7 +2,10 @@
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
+#include "forge/level/object_edit.h"
 #include "forge/level/tile_edit.h"
+
+#include "test_types.h"
 
 #include <doctest/doctest.h>
 
@@ -47,7 +50,7 @@ struct TestModule final : LevelModule {
         return d;
     }
     std::shared_ptr<const Generator> generator() const override { return std::make_shared<FlatGenerator>(); }
-    void setup_scene(scene::Scene&) override {}
+    void setup_scene(scene::Scene& scene) override { scene.register_component<test::Stats>(); }
     const std::vector<std::string>& layer_names() const override { return layers; }
     const std::vector<TileDef>& tiles() const override { return palette; }
     void tile_icon(const TileDef&, u32 size, std::vector<u8>& rgba) const override { rgba.assign(size * size * 4, 255); }
@@ -56,6 +59,13 @@ struct TestModule final : LevelModule {
     void shutdown_view() override {}
     void prepare_view(SDL_GPUCommandBuffer*, Level&, const render::Camera2D&, u32, u32, const ViewOptions&, f64) override {}
     void draw_view(SDL_GPUCommandBuffer*, SDL_GPURenderPass*) override {}
+    // One kind of object: anything with Stats, a 1 x 1 box.
+    i32 object_kind(flecs::entity e) const override { return e.has<test::Stats>() ? 0 : -1; }
+    bool object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const override {
+        const scene::Position& p = e.get<scene::Position>();
+        x0 = p.tile_x() - 0.5, x1 = p.tile_x() + 0.5, y0 = p.tile_y() - 0.5, y1 = p.tile_y() + 0.5;
+        return true;
+    }
 };
 
 std::set<std::pair<i32, i32>> as_set(const std::vector<Cell>& cells) {
@@ -235,4 +245,90 @@ TEST_CASE("a level keeps its changes in its folder and a game copies them") {
     CHECK(copy_level({}, game)); // no level folder: nothing to copy
     std::filesystem::remove_all(folder);
     std::filesystem::remove_all(game);
+}
+
+TEST_CASE("objects are placed, moved, edited and deleted with undo, and saved") {
+    PoolScope pool;
+    const auto folder = temp_folder("forge_test_level_objects");
+    TestModule module;
+    u64 id = 0;
+    {
+        Level level(module);
+        REQUIRE(level.open(folder));
+        const Rect view{-40, -40, 40, 40};
+        level.update(std::span<const Rect>(&view, 1));
+        level.ensure_loaded(view);
+        editor::Document doc;
+        editor::UndoStack history(doc);
+
+        flecs::entity e = level.scene().spawn(scene::Position::at_tile(2.5, -1.5));
+        REQUIRE(e.is_valid());
+        e.set<test::Stats>({50, 100, 3});
+        ObjectSnapshot snap = snapshot(level, e);
+        id = snap.id;
+        CHECK(id != 0);
+        CHECK(level.find(id) == e);
+        level.update(std::span<const Rect>(&view, 1)); // the spatial index picks from
+        CHECK(level.pick(2.7, -1.2) == e);
+        CHECK(!level.pick(4, -1.5).is_valid());
+
+        // Packing and unpacking makes the same object again.
+        const std::vector<u8> bytes = level.scene().pack(e);
+        e.destruct();
+        CHECK(!level.find(id).is_valid());
+        flecs::entity back = level.scene().unpack(bytes);
+        REQUIRE(back.is_valid());
+        CHECK(level.find(id) == back);
+        CHECK(back.get<test::Stats>().health == 50);
+
+        history.execute(std::make_unique<ObjectsCommand>(level, std::vector<ObjectSnapshot>{snap}, false, "Удалить"));
+        history.seal();
+        CHECK(!level.find(id).is_valid());
+        REQUIRE(history.undo());
+        REQUIRE(level.find(id).is_valid());
+        CHECK(level.find(id).get<test::Stats>().level == 3);
+
+        // A drag: two steps merge into one entry.
+        history.execute(std::make_unique<MoveObjects>(level, std::vector<MoveObjects::Move>{{id, 2.5, -1.5, 3.5, -1.5}}, "Двигать"));
+        history.execute(std::make_unique<MoveObjects>(level, std::vector<MoveObjects::Move>{{id, 2.5, -1.5, 6.5, -2.5}}, "Двигать"));
+        history.seal();
+        CHECK(level.find(id).get<scene::Position>().tile_x() == doctest::Approx(6.5));
+        REQUIRE(history.undo());
+        CHECK(level.find(id).get<scene::Position>().tile_x() == doctest::Approx(2.5));
+        REQUIRE(history.redo());
+
+        const std::string before = component_json(level, level.find(id), reflect::type_of<test::Stats>());
+        const std::string after = R"({"health":75,"max_health":100,"level":3})";
+        history.execute(std::make_unique<SetObjectComponent>(level, id, 6.5, -2.5, reflect::type_of<test::Stats>(), before,
+                                                             after, "health", "Здоровье"));
+        history.seal();
+        CHECK(level.find(id).get<test::Stats>().health == 75);
+        REQUIRE(history.undo());
+        CHECK(level.find(id).get<test::Stats>().health == 50);
+        REQUIRE(history.redo());
+
+        // Undo reaches an object whose chunk has left memory.
+        history.execute(std::make_unique<MoveObjects>(level, std::vector<MoveObjects::Move>{{id, 6.5, -2.5, 9.5, -2.5}}, "Двигать"));
+        history.seal();
+        const Rect far{5000, -40, 5080, 40};
+        for (int i = 0; i < 3; ++i) {
+            level.update(std::span<const Rect>(&far, 1));
+            level.world().finish_loading();
+        }
+        REQUIRE(!level.loaded(9, -3));
+        REQUIRE(history.undo());
+        REQUIRE(level.find(id).is_valid());
+        CHECK(level.find(id).get<scene::Position>().tile_x() == doctest::Approx(6.5));
+        CHECK(level.save().ok);
+    }
+    Level level(module);
+    REQUIRE(level.open(folder));
+    const Rect view{-40, -40, 40, 40};
+    level.update(std::span<const Rect>(&view, 1));
+    level.ensure_loaded(view);
+    const flecs::entity e = level.find(id);
+    REQUIRE(e.is_valid());
+    CHECK(e.get<test::Stats>().health == 75);
+    CHECK(e.get<scene::Position>().tile_x() == doctest::Approx(6.5));
+    std::filesystem::remove_all(folder);
 }

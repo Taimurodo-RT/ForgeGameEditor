@@ -150,7 +150,7 @@
             <div class="modes row">
                 <div class="mode" data-class-selected="lv_mode == 'select'" data-event-click="lv_mode('select')"><icon name="near_me"/><span>Выбор</span></div>
                 <div class="mode" data-class-selected="lv_mode == 'tiles'" data-event-click="lv_mode('tiles')"><icon name="grid_on"/><span>Тайлы</span></div>
-                <div class="mode soon" data-class-selected="lv_mode == 'objects'" data-event-click="lv_mode('objects')"><icon name="deployed_code"/><span>Объекты</span></div>
+                <div class="mode" data-class-selected="lv_mode == 'objects'" data-event-click="lv_mode('objects')"><icon name="deployed_code"/><span>Объекты</span></div>
                 <div class="mode soon" data-class-selected="lv_mode == 'physics'" data-event-click="lv_mode('physics')"><icon name="water_drop"/><span>Физика</span></div>
                 <div class="mode soon" data-class-selected="lv_mode == 'light'" data-event-click="lv_mode('light')"><icon name="lightbulb"/><span>Свет</span></div>
                 <div class="mode soon" data-class-selected="lv_mode == 'zones'" data-event-click="lv_mode('zones')"><icon name="flag"/><span>Зоны</span></div>
@@ -200,7 +200,17 @@
             </div>
 
             <div id="pane-palette" class="dock-pane column">
-                <div class="pane-scroll">
+                <div class="pane-scroll" data-if="lv_mode == 'objects' || lv_mode == 'select'">
+                    <div data-for="g : lv_objects" class="pal-group">
+                        <div class="label-small muted pal-title">{{ g.name }}</div>
+                        <div data-for="t : g.tiles" class="pal-tile row" data-class-selected="t.index == lv_object"
+                             data-attr-id="'obj-' + t.index" data-event-click="lv_object(t.index)">
+                            <img data-attr-src="t.icon"/>
+                            <span class="name">{{ t.name }}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="pane-scroll" data-if="lv_mode != 'objects' && lv_mode != 'select'">
                     <div data-for="g : lv_palette" class="pal-group">
                         <div class="label-small muted pal-title">{{ g.name }}</div>
                         <div data-for="t : g.tiles" class="pal-tile row" data-class-selected="t.index == lv_tile"
@@ -244,6 +254,35 @@
                         <div class="prop row gap-2" data-if="lv_tool == 'rect'">
                             <span class="prop-label">Только контур</span>
                             <div class="switch" data-class-on="lv_outline" data-event-click="lv_toggle('outline')"><div class="thumb"/></div>
+                        </div>
+                    </div>
+                    <div data-if="lv_mode == 'objects' || lv_mode == 'select'">
+                        <div class="muted body-small" data-if="lv_sel_count == 0">Ничего не выбрано.</div>
+                        <div data-if="lv_sel_count > 0 && lv_sel_name != ''">
+                            <div class="tile-card row gap-3">
+                                <img data-attr-src="lv_sel_icon"/>
+                                <div class="column grow">
+                                    <span>{{ lv_sel_name }}</span>
+                                    <span class="muted body-small">{{ lv_sel_hint }}</span>
+                                    <span class="muted body-small" data-if="lv_sel_count > 1">Выбрано: {{ lv_sel_count }}; показан первый.</span>
+                                </div>
+                                <div id="obj-delete" class="icon-button small" data-event-click="lv_delete"><icon name="delete" class="s"/></div>
+                            </div>
+                            <div data-for="f : lv_fields" class="prop row gap-2">
+                                <span class="prop-label">{{ f.label }}</span>
+                                <div class="prop-value row gap-2">
+                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'lv-field-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="lv_field_slide(it_index, ev.value)"/>
+                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'lv-num-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="lv_field_toggle(it_index)"><div class="thumb"/></div>
+                                    <div data-if="f.kind == 'enum'" class="cycler grow">
+                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                        <span class="value">{{ f.value }}</span>
+                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                    </div>
+                                    <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="section-title">Вид</div>

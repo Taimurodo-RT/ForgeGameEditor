@@ -3,6 +3,10 @@
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
+#include "forge/data/json.h"
+#include "forge/editor/inspector.h"
+
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 
 #include <algorithm>
 #include <cmath>
@@ -95,10 +99,11 @@ struct ModeInfo {
     const char* when; // empty: works now
 };
 const ModeInfo kModes[] = {
-    {Mode::Select, "select", "Выбор", "Смотрите уровень: левая или правая кнопка двигает вид, колесо приближает.", ""},
+    {Mode::Select, "select", "Выбор",
+     "Щёлкните объект, чтобы выбрать и двигать его; Ctrl добавляет к выбору. Пустое место двигает вид, колесо приближает.", ""},
     {Mode::Tiles, "tiles", "Тайлы", "Рисуйте мир плитками по слоям: стены, блоки, жидкости.", ""},
-    {Mode::Objects, "objects", "Объекты", "Жители, предметы, ящики и двери из библиотеки: поставить, двигать, менять свойства.",
-     "следующим в шаге 9"},
+    {Mode::Objects, "objects", "Объекты", "Выберите объект слева и щёлкайте по миру, чтобы ставить. Правая кнопка или Esc: снова выбор, Delete удаляет.",
+     ""},
     {Mode::Physics, "physics", "Физика", "Гравитация мира и её точки, зоны воды и песка, проба течения воды прямо в редакторе.",
      "позже, после библиотеки объектов"},
     {Mode::Light, "light", "Свет", "Факелы и другие источники, время суток, вид «как в игре».", "позже, после библиотеки объектов"},
@@ -138,8 +143,9 @@ const char* tool_id(Tool t) {
 const char* mode_id(Mode m) { return mode_info(m).id; }
 
 void LevelEditor::set_mode(Mode m) {
-    if (stroke_) return;
+    if (stroke_ || moving_) return;
     mode_ = m;
+    if (m != Mode::Objects) object_ = -1;
 }
 
 const std::vector<std::string>& LevelEditor::panel_ids() {
@@ -191,6 +197,18 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
         g->tiles.push_back({static_cast<int>(i), t.name, "/memory/tile_" + t.id, t.key, static_cast<int>(t.layer)});
     }
     for (const std::string& name : module_.layer_names()) m_layers_.push_back(name);
+    const auto& objects = module_.objects();
+    for (usize i = 0; i < objects.size(); ++i) {
+        const level::ObjectDef& o = objects[i];
+        module_.object_icon(o, kIconPx, icon);
+        ui.set_image("obj_" + o.id, icon.data(), kIconPx, kIconPx);
+        auto g = std::find_if(m_objects_.begin(), m_objects_.end(), [&](const PaletteGroup& pg) { return pg.name == o.group; });
+        if (g == m_objects_.end()) {
+            m_objects_.push_back({o.group, {}});
+            g = m_objects_.end() - 1;
+        }
+        g->tiles.push_back({static_cast<int>(i), o.name, "/memory/obj_" + o.id, "", 0});
+    }
     if (!tiles.empty()) select_tile(0);
 
     // The panel layout: the user's, else the default.
@@ -261,6 +279,22 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     }
     model.RegisterArray<std::vector<PaletteGroup>>();
 
+    if (auto s = model.RegisterStruct<FieldView>()) {
+        s.RegisterMember("kind", &FieldView::kind);
+        s.RegisterMember("label", &FieldView::label);
+        s.RegisterMember("value", &FieldView::value);
+        s.RegisterMember("min", &FieldView::min);
+        s.RegisterMember("max", &FieldView::max);
+        s.RegisterMember("step", &FieldView::step);
+    }
+    model.RegisterArray<std::vector<FieldView>>();
+    model.Bind("lv_objects", &m_objects_);
+    model.Bind("lv_object", &m_object_);
+    model.Bind("lv_sel_count", &m_sel_count_);
+    model.Bind("lv_sel_name", &m_sel_name_);
+    model.Bind("lv_sel_hint", &m_sel_hint_);
+    model.Bind("lv_sel_icon", &m_sel_icon_);
+    model.Bind("lv_fields", &m_fields_);
     model.Bind("dock_frames", &m_frames_);
     model.Bind("dock_gaps", &m_gaps_);
     model.Bind("dock_drop", &m_drop_);
@@ -311,6 +345,33 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
         const std::string id = arg_str(a, 0);
         for (const ModeInfo& m : kModes)
             if (id == m.id) set_mode(m.mode);
+    });
+    on("lv_object", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { arm_object(arg_int(a, 0, -1)); });
+    on("lv_delete", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
+    on("lv_field_text", [this, arg_int, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        if (a.size() > 2 && a[2].Get<bool>()) set_field(arg_int(a, 0, -1), arg_str(a, 1), false);
+    });
+    on("lv_field_commit", [this, arg_int](Rml::Event& ev, const Rml::VariantList& a) {
+        Rml::Element* e = ev.GetTargetElement();
+        if (e && e->GetTagName() == "input")
+            set_field(arg_int(a, 0, -1), static_cast<Rml::ElementFormControl*>(e)->GetValue(), false);
+    });
+    on("lv_field_slide", [this, arg_int, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        set_field(arg_int(a, 0, -1), arg_str(a, 1), true);
+    });
+    on("lv_field_toggle", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        const int i = arg_int(a, 0, -1);
+        if (i >= 0 && i < static_cast<int>(m_fields_.size())) set_field(i, m_fields_[i].value == "true" ? "false" : "true", false);
+    });
+    on("lv_field_cycle", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        const int i = arg_int(a, 0, -1);
+        if (i < 0 || i >= static_cast<int>(field_refs_.size())) return;
+        const auto& options = field_refs_[i].options;
+        if (options.empty()) return;
+        auto it = std::find(options.begin(), options.end(), m_fields_[i].value);
+        const i64 at = it == options.end() ? 0 : it - options.begin();
+        const i64 n = static_cast<i64>(options.size());
+        set_field(i, options[static_cast<usize>(((at + arg_int(a, 1, 1)) % n + n) % n)], false);
     });
     on("lv_tile", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         select_tile(static_cast<usize>(arg_int(a, 0)));
@@ -482,15 +543,226 @@ void LevelEditor::pick(i32 x, i32 y) {
     }
 }
 
+// --- objects -----------------------------------------------------------------
+
+void LevelEditor::arm_object(i32 index) {
+    if (index >= static_cast<i32>(module_.objects().size())) return;
+    set_mode(Mode::Objects);
+    object_ = index;
+}
+
+void LevelEditor::select_objects(std::vector<u64> ids) {
+    if (ids == selection_) return;
+    selection_ = std::move(ids);
+    ++selection_version_;
+}
+
+void LevelEditor::delete_selection() {
+    if (selection_.empty() || moving_) return;
+    std::vector<level::ObjectSnapshot> gone;
+    for (u64 id : selection_) {
+        flecs::entity e = level_->find(id);
+        if (e.is_valid()) gone.push_back(level::snapshot(*level_, e));
+    }
+    if (gone.empty()) return;
+    std::string label = "Удалить: ";
+    const auto& defs = module_.objects();
+    const i32 kind = module_.object_kind(level_->find(gone[0].id));
+    label += gone.size() == 1 && kind >= 0 ? defs[static_cast<usize>(kind)].name : std::to_string(gone.size()) + " объектов";
+    history_.execute(std::make_unique<level::ObjectsCommand>(*level_, std::move(gone), false, label));
+    history_.seal();
+    select_objects({});
+}
+
+void LevelEditor::press_objects(f32 x, f32 y, bool add) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    history_.seal();
+    if (object_ >= 0) {
+        // Place the armed object standing on the cell line under the mouse.
+        const f64 px = std::floor(tx) + 0.5, py = std::floor(ty) + 1.0;
+        flecs::entity e = module_.place_object(*level_, static_cast<usize>(object_), px, py);
+        if (!e.is_valid()) return;
+        level::ObjectSnapshot snap = level::snapshot(*level_, e);
+        const u64 id = snap.id;
+        history_.execute(std::make_unique<level::ObjectsCommand>(
+            *level_, std::vector<level::ObjectSnapshot>{std::move(snap)}, true,
+            "Поставить: " + module_.objects()[static_cast<usize>(object_)].name));
+        history_.seal();
+        select_objects({id});
+        return;
+    }
+    flecs::entity hit = level_->pick(tx, ty);
+    if (!hit.is_valid()) {
+        if (!add) select_objects({});
+        // Nothing there: the drag moves the view.
+        panning_ = true;
+        pan_button_ = SDL_BUTTON_LEFT;
+        return;
+    }
+    const u64 id = level_->id_of(hit, true);
+    std::vector<u64> ids = selection_;
+    const auto it = std::find(ids.begin(), ids.end(), id);
+    if (add) {
+        if (it != ids.end()) ids.erase(it);
+        else ids.push_back(id);
+    } else if (it == ids.end()) {
+        ids = {id};
+    }
+    select_objects(ids);
+    if (std::find(selection_.begin(), selection_.end(), id) == selection_.end()) return;
+    moving_ = true;
+    move_x_ = tx;
+    move_y_ = ty;
+    move_start_.clear();
+    for (u64 s : selection_) {
+        flecs::entity e = level_->find(s);
+        if (!e.is_valid()) continue;
+        const scene::Position& p = e.get<scene::Position>();
+        move_start_.push_back({s, p.tile_x(), p.tile_y(), p.tile_x(), p.tile_y()});
+    }
+}
+
+void LevelEditor::drag_objects(f32 x, f32 y) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    // Whole-tile steps keep things on the grid the tiles make.
+    const f64 dx = std::round(tx - move_x_), dy = std::round(ty - move_y_);
+    std::vector<level::MoveObjects::Move> moves = move_start_;
+    bool any = false;
+    for (auto& m : moves) {
+        m.to_x = m.from_x + dx;
+        m.to_y = m.from_y + dy;
+        flecs::entity e = level_->find(m.id);
+        if (const scene::Position* p = e.is_valid() ? e.try_get<scene::Position>() : nullptr)
+            any |= p->tile_x() != m.to_x || p->tile_y() != m.to_y;
+    }
+    if (!any) return;
+    const auto& defs = module_.objects();
+    const i32 kind = moves.size() == 1 ? module_.object_kind(level_->find(moves[0].id)) : -1;
+    const std::string label = kind >= 0 ? "Передвинуть: " + defs[static_cast<usize>(kind)].name
+                                        : "Передвинуть объекты: " + std::to_string(moves.size());
+    history_.execute(std::make_unique<level::MoveObjects>(*level_, std::move(moves), label));
+}
+
+void LevelEditor::rebuild_fields(Rml::Context* context) {
+    const u64 version = level_->object_edits() * 1'000'003ull + selection_version_;
+    if (version == fields_built_) return;
+    // Do not rewrite a field while the user types in it.
+    const Rml::Element* focus = context ? context->GetFocusElement() : nullptr;
+    if (focus && focus->GetTagName() == "input" && focus->GetAttribute<Rml::String>("type", "text") == "text" &&
+        fields_built_ % 1'000'003ull == selection_version_)
+        return;
+    fields_built_ = version;
+    m_fields_.clear();
+    field_refs_.clear();
+    flecs::entity e = selection_.empty() ? flecs::entity() : level_->find(selection_[0]);
+    const i32 kind = e.is_valid() ? module_.object_kind(e) : -1;
+    if (kind >= 0) {
+        const level::ObjectDef& def = module_.objects()[static_cast<usize>(kind)];
+        m_sel_name_ = def.name;
+        m_sel_hint_ = def.hint;
+        m_sel_icon_ = "/memory/obj_" + def.id;
+        const scene::Position& p = e.get<scene::Position>();
+        char v[32];
+        std::snprintf(v, sizeof(v), "%.2f", p.tile_x());
+        m_fields_.push_back({"text", "X", v, 0, 0, 0});
+        field_refs_.push_back({nullptr, "x", {}});
+        std::snprintf(v, sizeof(v), "%.2f", p.tile_y());
+        m_fields_.push_back({"text", "Y", v, 0, 0, 0});
+        field_refs_.push_back({nullptr, "y", {}});
+        std::vector<editor::FieldRow> rows;
+        for (const auto& c : level_->scene().saved_components()) {
+            if (!module_.object_component_shown(c.type)) continue;
+            const void* data = ecs_get_id(level_->scene().ecs().c_ptr(), e, c.id);
+            if (!data) continue;
+            rows.clear();
+            editor::describe_fields(c.type, data, rows);
+            for (editor::FieldRow& r : rows) {
+                using reflect::Kind;
+                FieldView f;
+                f.label = r.label;
+                f.value = r.value;
+                const bool integer = r.kind >= Kind::I8 && r.kind <= Kind::U64;
+                if (r.read_only || r.kind == Kind::Struct || r.kind == Kind::Array) f.kind = "readonly";
+                else if (r.kind == Kind::Bool) f.kind = "bool";
+                else if (r.kind == Kind::Enum) f.kind = "enum";
+                else if ((integer || r.kind == Kind::F32 || r.kind == Kind::F64) && r.has_range) f.kind = "slider";
+                else f.kind = "text";
+                f.min = static_cast<float>(r.min);
+                f.max = static_cast<float>(r.max);
+                f.step = integer ? 1.0f : static_cast<float>((r.max - r.min) / 200.0);
+                m_fields_.push_back(std::move(f));
+                field_refs_.push_back({c.type, r.path, std::move(r.options)});
+            }
+        }
+    } else {
+        m_sel_name_.clear();
+        m_sel_hint_.clear();
+        m_sel_icon_.clear();
+    }
+    model_.DirtyVariable("lv_fields");
+    model_.DirtyVariable("lv_sel_name");
+    model_.DirtyVariable("lv_sel_hint");
+    model_.DirtyVariable("lv_sel_icon");
+}
+
+void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
+    // Bindings fill the inputs during the UI's update and fire change events then.
+    if (ui_updating_ || i < 0 || i >= static_cast<int>(field_refs_.size()) || selection_.empty()) return;
+    if (text == m_fields_[static_cast<usize>(i)].value) return; // shown rounded: not an edit
+    flecs::entity e = level_->find(selection_[0]);
+    if (!e.is_valid()) return;
+    const FieldRef& ref = field_refs_[static_cast<usize>(i)];
+    const scene::Position& p = e.get<scene::Position>();
+    const i32 kind = module_.object_kind(e);
+    const std::string name = kind >= 0 ? module_.objects()[static_cast<usize>(kind)].name : std::string();
+    if (!ref.type) {
+        char* end = nullptr;
+        const f64 v = std::strtod(text.c_str(), &end);
+        if (end == text.c_str()) {
+            fields_built_ = 0; // show the old value again
+            return;
+        }
+        level::MoveObjects::Move m{selection_[0], p.tile_x(), p.tile_y(), p.tile_x(), p.tile_y()};
+        (ref.path == "x" ? m.to_x : m.to_y) = v;
+        history_.execute(std::make_unique<level::MoveObjects>(*level_, std::vector<level::MoveObjects::Move>{m},
+                                                              "Передвинуть: " + name));
+        history_.seal();
+        return;
+    }
+    const std::string before = level::component_json(*level_, e, ref.type);
+    if (before.empty()) return;
+    std::vector<std::max_align_t> scratch((ref.type->size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t) + 1);
+    void* object = scratch.data();
+    ref.type->construct(object);
+    data::LoadReport report;
+    data::from_json(ref.type, object, before, report);
+    std::string error;
+    const bool ok = editor::set_field_text(ref.type, object, ref.path, text, &error);
+    const std::string after = ok ? data::to_json(ref.type, object, false) : std::string();
+    ref.type->destruct(object);
+    if (!ok) {
+        FORGE_WARN("%s: %s", m_fields_[static_cast<usize>(i)].label.c_str(), error.c_str());
+        fields_built_ = 0;
+        return;
+    }
+    if (after == before) return;
+    history_.execute(std::make_unique<level::SetObjectComponent>(*level_, selection_[0], p.tile_x(), p.tile_y(), ref.type,
+                                                                 before, after, ref.path,
+                                                                 "«" + name + "»: " + m_fields_[static_cast<usize>(i)].label));
+    if (!dragging) history_.seal();
+}
+
 // --- actions -----------------------------------------------------------------
 
 void LevelEditor::undo() {
-    if (stroke_) return;
+    if (stroke_ || moving_) return;
     if (history_.undo()) FORGE_INFO("Отменено");
 }
 
 void LevelEditor::redo() {
-    if (stroke_) return;
+    if (stroke_ || moving_) return;
     if (history_.redo()) FORGE_INFO("Повторено");
 }
 
@@ -625,6 +897,7 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
         level_->update({&focus, 1});
         update_minimap();
     }
+    rebuild_fields(context);
     sync_model();
 }
 
@@ -701,6 +974,8 @@ void LevelEditor::sync_model() {
         const auto& layers = module_.layer_names();
         set(m_tile_layer_, Rml::String(t.layer < layers.size() ? layers[t.layer] : std::string()), "lv_tile_layer");
     }
+    set(m_object_, static_cast<int>(object_), "lv_object");
+    set(m_sel_count_, static_cast<int>(selection_.size()), "lv_sel_count");
     set(m_light_, view_.game_light, "lv_light");
     set(m_grid_, view_.grid, "lv_grid");
     set(m_chunks_, view_.chunks, "lv_chunks");
@@ -767,6 +1042,28 @@ void LevelEditor::push_overlay(f64 ox, f64 oy) {
     }
     const u32 fill = tool_ == Tool::Eraser ? render::pack_color(255, 90, 80, 90) : render::pack_color(255, 255, 255, 70);
     for (const level::Cell& c : cells) quad(c.x, c.y, 1, 1, fill, 3);
+    // Objects: the selected ones framed, the one under the mouse lightly.
+    if (objects_mode()) {
+        auto frame = [&](flecs::entity e, u32 c, f64 t) {
+            f64 x0, y0, x1, y1;
+            if (!e.is_valid() || !module_.object_box(e, x0, y0, x1, y1)) return;
+            quad(x0, y0, x1 - x0, t, c, 5);
+            quad(x0, y1 - t, x1 - x0, t, c, 5);
+            quad(x0, y0, t, y1 - y0, c, 5);
+            quad(x1 - t, y0, t, y1 - y0, c, 5);
+        };
+        for (u64 id : selection_) frame(level_->find(id), render::pack_color(255, 210, 90, 255), px * 2);
+        if (hover_ && !panning_ && !moving_ && object_ < 0) {
+            f64 tx, ty;
+            to_tile(mouse_x_, mouse_y_, tx, ty);
+            frame(level_->pick(tx, ty), render::pack_color(255, 255, 255, 160), px);
+        }
+        if (hover_ && object_ >= 0) {
+            // Where the armed object would stand.
+            quad(hover_x_, hover_y_ + 1 - px * 2, 1, px * 2, render::pack_color(255, 210, 90, 255), 5);
+            quad(hover_x_ + 0.5 - px, hover_y_, px * 2, 1, render::pack_color(255, 210, 90, 160), 5);
+        }
+    }
     if (hover_ && !panning_ && mode_ == Mode::Tiles) {
         // An outline around the cell under the mouse.
         const u32 c = render::pack_color(255, 255, 255, 220);
@@ -866,9 +1163,10 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
             }
             return true;
         }
-        hover_ = over_view(x, y, context) || (stroke_ != nullptr);
+        hover_ = over_view(x, y, context) || stroke_ != nullptr || moving_;
         if (hover_) cell_at(x, y, hover_x_, hover_y_);
         if (stroke_) drag(x, y);
+        if (moving_) drag_objects(x, y);
         return hover_;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -880,6 +1178,10 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Tiles) {
             history_.seal();
             press(x, y);
+        } else if (e.button.button == SDL_BUTTON_LEFT && !panning_ && objects_mode()) {
+            press_objects(x, y, (SDL_GetModState() & SDL_KMOD_CTRL) != 0);
+        } else if (e.button.button == SDL_BUTTON_RIGHT && object_ >= 0) {
+            object_ = -1; // right click puts the armed object away
         } else if (!panning_) {
             panning_ = true;
             pan_button_ = e.button.button;
@@ -908,6 +1210,11 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         }
         if (e.button.button == SDL_BUTTON_LEFT && stroke_) {
             release();
+            used = true;
+        }
+        if (e.button.button == SDL_BUTTON_LEFT && moving_) {
+            moving_ = false;
+            history_.seal();
             used = true;
         }
         if (panning_ && e.button.button == pan_button_) {
@@ -941,6 +1248,19 @@ bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
     }
     if (k.key == SDLK_Q) { set_mode(Mode::Select); return true; }
     if (k.key == SDLK_T) { set_mode(Mode::Tiles); return true; }
+    if (k.key == SDLK_O) { set_mode(Mode::Objects); return true; }
+    if (objects_mode()) {
+        if (k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE) {
+            delete_selection();
+            return true;
+        }
+        if (k.key == SDLK_ESCAPE) {
+            if (object_ >= 0) object_ = -1;
+            else select_objects({});
+            return true;
+        }
+        return false;
+    }
     if (mode_ != Mode::Tiles) return false;
     switch (k.key) {
     case SDLK_B: set_tool(Tool::Brush); return true;

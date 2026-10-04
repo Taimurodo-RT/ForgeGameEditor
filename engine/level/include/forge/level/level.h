@@ -39,6 +39,20 @@ struct TileDef {
     std::string key; // shortcut shown on the palette ("1"), may be empty
 };
 
+// An object the palette offers: a villager, an item, a crate.
+struct ObjectDef {
+    std::string id;    // "miner"
+    std::string name;  // "Шахтёр Борис"
+    std::string group; // "Жители"
+    std::string hint;  // "даёт задание про кирку"
+};
+
+// The level's own id of an object, kept in the saves: entities are made
+// anew whenever their chunk loads, so editors find objects by this.
+struct LevelId {
+    u64 id = 0;
+};
+
 // What the world view shows besides the tiles.
 struct ViewOptions {
     bool game_light = false; // the game's own light (dark caves, torches) instead of daylight
@@ -90,6 +104,34 @@ public:
     // The level's world and entities are about to go: drop anything bound
     // to them (renderers, queries).
     virtual void level_closing(Level& level) { (void)level; }
+
+    // --- objects ---
+    virtual const std::vector<ObjectDef>& objects() const {
+        static const std::vector<ObjectDef> none;
+        return none;
+    }
+    // A palette picture of an object: size × size RGBA pixels.
+    virtual void object_icon(const ObjectDef& def, u32 size, std::vector<u8>& rgba) const {
+        (void)def;
+        rgba.assign(static_cast<usize>(size) * size * 4, 0);
+    }
+    // Makes objects()[index] standing on the point (x, y) (its feet there);
+    // an empty entity when that place is not loaded.
+    virtual flecs::entity place_object(Level& level, usize index, f64 x, f64 y) {
+        (void)level, (void)index, (void)x, (void)y;
+        return {};
+    }
+    // Which of objects() an entity is; -1: not something the editor shows.
+    virtual i32 object_kind(flecs::entity e) const { (void)e; return -1; }
+    // The rectangle an object covers, in tiles.
+    virtual bool object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const {
+        (void)e, (void)x0, (void)y0, (void)x1, (void)y1;
+        return false;
+    }
+    // After the editor moved an object (a villager's home goes with him).
+    virtual void object_moved(flecs::entity e) { (void)e; }
+    // Whether the properties panel shows this saved component's fields.
+    virtual bool object_component_shown(const reflect::TypeInfo* type) const { (void)type; return true; }
 };
 
 class Level {
@@ -130,13 +172,29 @@ public:
     world::TileId tile(u32 layer, i32 x, i32 y) const { return world_->tile(layer, x, y); }
     bool loaded(i32 x, i32 y) const;
 
+    // --- objects ---
+    // The object with this LevelId (empty when its chunk is not loaded).
+    flecs::entity find(u64 id);
+    // An object's LevelId; assign: give it one when it has none (0 otherwise).
+    u64 id_of(flecs::entity e, bool assign);
+    static u64 new_id();
+    // The editable object under a point (the smallest one there), or empty.
+    flecs::entity pick(f64 x, f64 y);
+    // Editable objects whose boxes touch the rectangle.
+    void objects_in(f64 x0, f64 y0, f64 x1, f64 y1, std::vector<flecs::entity>& out);
+    // Bumped by every object edit (place, move, change, delete).
+    void touch_objects() { ++object_edits_; ++edits_; }
+    u64 object_edits() const { return object_edits_; }
+
 private:
     LevelModule& module_;
     std::filesystem::path folder_;
     std::unique_ptr<world::World> world_;
     std::unique_ptr<scene::Scene> scene_;
     std::vector<world::Rect> focus_;
+    flecs::query<LevelId> ids_;
     u64 edits_ = 0;
+    u64 object_edits_ = 0;
 };
 
 // Copies a level folder into a game's world folder (a new game starts from
@@ -144,3 +202,5 @@ private:
 bool copy_level(const std::filesystem::path& level, const std::filesystem::path& to, std::string* error = nullptr);
 
 } // namespace forge::level
+
+FORGE_REFLECT_DECLARE(forge::level::LevelId)
