@@ -12,11 +12,11 @@
 
 namespace forge::assets {
 
-// PNG, JPEG, BMP, TGA, GIF (first frame), PSD (merged) → RGBA8.
+// PNG, JPEG, BMP, TGA, GIF (first frame), PSD (merged), WebP (first frame) → RGBA8.
 bool decode_image(std::span<const u8> bytes, CookedTexture& out, std::string* error = nullptr);
 // Whether encode_image can write this extension (lowercase, with dot).
 bool can_encode_image(std::string_view extension);
-// .png, .jpg/.jpeg (quality 92), .bmp, .tga.
+// .png, .jpg/.jpeg (quality 92), .bmp, .tga, .webp (lossless).
 bool encode_image(const CookedTexture& image, std::string_view extension, std::vector<u8>& out);
 
 enum class ImageOp : u8 { RotateCw, RotateCcw, FlipH, FlipV, Half, Double };

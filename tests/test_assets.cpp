@@ -233,4 +233,14 @@ TEST_CASE("Pictures: turn, mirror, halve, double, fit, and back through PNG") {
     CHECK(encode_image(img, ".jpg", jpg));
     CHECK(!can_encode_image(".gif"));
     CHECK(!encode_image(img, ".gif", jpg));
+
+    // WebP (stb cannot read it): written losslessly, read back exactly.
+    std::vector<u8> webp;
+    REQUIRE(encode_image(img, ".webp", webp));
+    CHECK(std::string(webp.begin() + 8, webp.begin() + 12) == "WEBP");
+    CookedTexture from_webp;
+    REQUIRE(decode_image(webp, from_webp));
+    CHECK(from_webp.width == 3);
+    CHECK(from_webp.height == 2);
+    CHECK(from_webp.rgba8 == img.rgba8);
 }

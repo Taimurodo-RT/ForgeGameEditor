@@ -3,6 +3,10 @@
 
 #include "forge/data/binary.h"
 
+#include <webp/decode.h>
+#include <webp/demux.h>
+#include <webp/encode.h>
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO // decode from memory only
 #define STBI_NO_HDR
@@ -57,7 +61,7 @@ public:
     u32 version() const override { return 1; }
     bool handles(std::string_view ext) const override {
         return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".gif" ||
-               ext == ".psd";
+               ext == ".psd" || ext == ".webp";
     }
     void cook(const CookInput& in, CookOutput& out) const override {
         CookedTexture tex;
@@ -97,11 +101,48 @@ void AssetPipeline::add_default_importers() {
 
 // --- pictures --------------------------------------------------------------------
 
+namespace {
+
+bool is_webp(std::span<const u8> b) {
+    return b.size() >= 12 && std::memcmp(b.data(), "RIFF", 4) == 0 && std::memcmp(b.data() + 8, "WEBP", 4) == 0;
+}
+
+// WebP, still or animated (the first frame), through libwebp.
+bool decode_webp(std::span<const u8> bytes, CookedTexture& out, std::string* error) {
+    WebPData data{bytes.data(), bytes.size()};
+    WebPAnimDecoderOptions options;
+    WebPAnimDecoderOptionsInit(&options);
+    options.color_mode = MODE_RGBA;
+    options.use_threads = 0;
+    WebPAnimDecoder* dec = WebPAnimDecoderNew(&data, &options);
+    if (!dec) {
+        if (error) *error = "cannot decode WebP image";
+        return false;
+    }
+    WebPAnimInfo info{};
+    uint8_t* frame = nullptr;
+    int timestamp = 0;
+    const bool ok = WebPAnimDecoderGetInfo(dec, &info) && info.canvas_width > 0 && info.canvas_height > 0 &&
+                    WebPAnimDecoderGetNext(dec, &frame, &timestamp) && frame;
+    if (ok) {
+        out.width = info.canvas_width;
+        out.height = info.canvas_height;
+        out.rgba8.assign(frame, frame + static_cast<usize>(out.width) * out.height * 4);
+    } else if (error) {
+        *error = "cannot decode WebP image";
+    }
+    WebPAnimDecoderDelete(dec);
+    return ok;
+}
+
+} // namespace
+
 bool decode_image(std::span<const u8> bytes, CookedTexture& out, std::string* error) {
     if (bytes.size() > static_cast<usize>(INT32_MAX)) {
         if (error) *error = "image file is too large";
         return false;
     }
+    if (is_webp(bytes)) return decode_webp(bytes, out, error);
     int w = 0, h = 0, channels = 0;
     stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &w, &h, &channels, 4);
     if (!pixels) {
@@ -117,7 +158,7 @@ bool decode_image(std::span<const u8> bytes, CookedTexture& out, std::string* er
 }
 
 bool can_encode_image(std::string_view ext) {
-    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga";
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".webp";
 }
 
 bool encode_image(const CookedTexture& image, std::string_view ext, std::vector<u8>& out) {
@@ -136,6 +177,14 @@ bool encode_image(const CookedTexture& image, std::string_view ext, std::vector<
     else if (ext == ".jpg" || ext == ".jpeg") ok = stbi_write_jpg_to_func(sink, &out, w, h, 4, px, 92);
     else if (ext == ".bmp") ok = stbi_write_bmp_to_func(sink, &out, w, h, 4, px);
     else if (ext == ".tga") ok = stbi_write_tga_to_func(sink, &out, w, h, 4, px);
+    else if (ext == ".webp") {
+        // Lossless: an edit must not blur the picture.
+        uint8_t* encoded = nullptr;
+        const size_t size = WebPEncodeLosslessRGBA(image.rgba8.data(), w, h, w * 4, &encoded);
+        if (size > 0 && encoded) out.assign(encoded, encoded + size);
+        WebPFree(encoded);
+        ok = size > 0;
+    }
     return ok != 0 && !out.empty();
 }
 
