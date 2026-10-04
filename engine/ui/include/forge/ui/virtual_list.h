@@ -10,6 +10,10 @@
 //       </div>
 //   </virtual-list>
 //
+// With cell-width="120" the list is a grid instead: as many cells of at
+// least that width as fit side by side, each row-height tall (the icons of
+// a file explorer). The children are then the cell template.
+//
 // The children are the row template. Attributes starting with vl- bind a
 // part of the row to a field of the row's data:
 //   vl-text="field"            the element's text
@@ -38,6 +42,12 @@ public:
     virtual void on_row_event(u32 row, std::string_view event, int modifiers) {
         (void)row, (void)event, (void)modifiers;
     }
+    // A left click on the list outside any row.
+    virtual void on_empty_click(int modifiers) { (void)modifiers; }
+    // A right click: on a row, or outside any row (row = kNoRow). x, y: the
+    // mouse in the context's pixels.
+    static constexpr u32 kNoRow = ~0u;
+    virtual void on_context(u32 row, float x, float y, int modifiers) { (void)row, (void)x, (void)y, (void)modifiers; }
 };
 
 // nullptr removes the source. The list does not own it.

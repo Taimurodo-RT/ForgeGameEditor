@@ -120,7 +120,12 @@ public:
     void up();
     // "name", "date", "type", "size"; the same key again turns the order.
     void sort_by(const std::string& key);
-    void set_large(bool large);
+    // "table", "large" (rows with big previews), "icons" (a grid of thumbnails).
+    void set_view(const std::string& view);
+    const std::string& view() const { return view_; }
+    // The right-click menu; row = ui::ListSource::kNoRow: the open folder.
+    void on_context(u32 row, float x, float y, int modifiers) override;
+    void on_empty_click(int modifiers) override;
     void select(std::vector<std::string> rels);
     void import(const std::vector<std::filesystem::path>& sources);
     void new_folder();
@@ -234,6 +239,7 @@ private:
     void go(Place place, bool remember = true);
     void sort_rows();
     void start_rename(Rml::Context* context);
+    void place_context_menu(Rml::Context* context);
     void copy_in(const std::vector<std::filesystem::path>& sources, const std::string& label);
     bool is_dir(const std::string& rel) const;
     i64 time_of(const std::string& rel) const;
@@ -293,7 +299,8 @@ private:
     std::vector<Place> back_, forward_;
     std::string sort_ = "name";
     bool sort_desc_ = false;
-    bool large_ = false;
+    std::string view_ = "table";
+    float ctx_x_ = 0, ctx_y_ = 0; // where the right click was, in the context's pixels
     std::string menu_; // the open drop-down
     bool rename_wanted_ = false;
     u64 list_version_ = 1, selection_version_ = 1, rows_version_ = 1;
@@ -317,9 +324,10 @@ private:
     // Model mirrors
     std::vector<TreeRow> m_tree_;
     std::vector<Crumb> m_crumbs_;
-    Rml::String m_filter_, m_search_, m_status_, m_where_, m_place_icon_, m_count_text_, m_sel_text_, m_sort_, m_menu_;
+    Rml::String m_filter_, m_search_, m_status_, m_where_, m_place_icon_, m_count_text_, m_sel_text_, m_sort_, m_menu_, m_view_;
+    float m_ctx_x_ = 0, m_ctx_y_ = 0;
     bool m_busy_ = false, m_searching_ = false, m_has_cut_ = false, m_empty_ = false, m_sort_desc_ = false,
-         m_large_ = false, m_can_back_ = false, m_can_forward_ = false, m_can_up_ = false, m_listing_ = false;
+         m_can_back_ = false, m_can_forward_ = false, m_can_up_ = false, m_listing_ = false;
     int m_sel_count_ = 0;
     Rml::String m_sel_name_, m_sel_ext_, m_sel_kind_, m_sel_size_, m_sel_dims_, m_sel_path_, m_sel_tags_, m_sel_preview_,
         m_sel_icon_, m_sel_extra_, m_sel_date_, m_sel_tint_;

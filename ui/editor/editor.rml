@@ -367,10 +367,11 @@
                 </div>
             </div>
             <div class="menu-anchor">
-                <div id="as-view-menu" class="command" data-event-click="as_menu('view')"><icon data-attr-name="as_large ? 'view_agenda' : 'view_list'"/><span>Вид</span><icon class="s" name="expand_more"/></div>
+                <div id="as-view-menu" class="command" data-event-click="as_menu('view')"><icon data-attr-name="as_view == 'icons' ? 'grid_view' : (as_view == 'large' ? 'view_agenda' : 'view_list')"/><span>Вид</span><icon class="s" name="expand_more"/></div>
                 <div class="as-menu menu-list" data-if="as_menu == 'view'">
-                    <div class="menu-item" data-class-selected="!as_large" data-event-click="as_view('table')"><icon name="view_list"/><span class="label">Таблица</span></div>
-                    <div class="menu-item" data-class-selected="as_large" data-event-click="as_view('large')"><icon name="view_agenda"/><span class="label">Крупные превью</span></div>
+                    <div class="menu-item" data-class-selected="as_view == 'icons'" data-event-click="as_view('icons')"><icon name="grid_view"/><span class="label">Значки</span></div>
+                    <div class="menu-item" data-class-selected="as_view == 'large'" data-event-click="as_view('large')"><icon name="view_agenda"/><span class="label">Список с превью</span></div>
+                    <div class="menu-item" data-class-selected="as_view == 'table'" data-event-click="as_view('table')"><icon name="view_list"/><span class="label">Таблица</span></div>
                     <div class="divider"/>
                     <div class="menu-item" data-event-click="as_layout_reset"><icon name="dashboard"/><span class="label">Вернуть панели на место</span></div>
                 </div>
@@ -391,15 +392,15 @@
                  data-style-left="g.x + 'px'" data-style-top="g.y + 'px'" data-style-width="g.w + 'px'" data-style-height="g.h + 'px'"
                  data-event-mousedown="as_dock_split(it_index)"><div class="grip"/></div>
 
-            <div id="as-view" class="dock-pane column" data-class-large="as_large">
-                <div class="as-head row">
+            <div id="as-view" class="dock-pane column" data-class-large="as_view == 'large'" data-class-icons="as_view == 'icons'">
+                <div class="as-head row" data-if="as_view != 'icons'">
                     <div class="col col-name" data-class-sorted="as_sort == 'name'" data-event-click="as_sort('name')"><span>Имя</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
                     <div class="col col-where" data-if="as_listing"><span>Папка</span></div>
                     <div class="col col-date" data-class-sorted="as_sort == 'date'" data-event-click="as_sort('date')"><span>Дата изменения</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
                     <div class="col col-kind" data-class-sorted="as_sort == 'type'" data-event-click="as_sort('type')"><span>Тип</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
                     <div class="col col-size" data-class-sorted="as_sort == 'size'" data-event-click="as_sort('size')"><span>Размер</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
                 </div>
-                <virtual-list id="as-list" source="assets" data-attr-row-height="as_large ? 60 : 30" class="grow">
+                <virtual-list id="as-list" source="assets" data-attr-row-height="as_view == 'icons' ? 136 : (as_view == 'large' ? 60 : 30)" data-attr-cell-width="as_view == 'icons' ? 128 : 0" class="grow">
                     <div class="asset-row" vl-class-selected="selected" vl-class-cut="cut">
                         <div class="thumb">
                             <img vl-attr-src="thumb" vl-class-hidden="noimg"/>
@@ -516,10 +517,50 @@
             <div class="grow"/>
             <span class="muted" data-if="as_busy">Обновляю…</span>
             <span class="muted">{{ as_status }}</span>
-            <div id="as-view-table" class="icon-button small" title="Таблица" data-class-selected="!as_large" data-event-click="as_view('table')"><icon class="s" name="view_list"/></div>
-            <div id="as-view-large" class="icon-button small" title="Крупные превью" data-class-selected="as_large" data-event-click="as_view('large')"><icon class="s" name="view_agenda"/></div>
+            <div id="as-view-table" class="icon-button small" title="Таблица" data-class-selected="as_view == 'table'" data-event-click="as_view('table')"><icon class="s" name="view_list"/></div>
+            <div id="as-view-large" class="icon-button small" title="Список с превью" data-class-selected="as_view == 'large'" data-event-click="as_view('large')"><icon class="s" name="view_agenda"/></div>
+            <div id="as-view-icons" class="icon-button small" title="Значки" data-class-selected="as_view == 'icons'" data-event-click="as_view('icons')"><icon class="s" name="grid_view"/></div>
         </div>
         <div class="as-backdrop" data-if="as_menu != ''" data-event-mousedown="as_menu('')"/>
+
+        <!-- The right-click menu: for the chosen files, or (nothing chosen) for the open folder. -->
+        <div id="as-ctx" class="as-menu ctx menu-list" data-if="as_menu == 'ctx'" data-style-left="as_ctx_x + 'px'" data-style-top="as_ctx_y + 'px'">
+            <div data-if="as_sel_count > 0">
+                <div id="ctx-open" class="menu-item strong" data-if="as_sel_count == 1 &amp;&amp; as_sel_dir" data-event-click="as_open_selected"><icon name="folder_open"/><span class="label">Открыть</span><span class="trailing">Enter</span></div>
+                <div class="menu-item strong" data-if="as_sel_count == 1 &amp;&amp; as_sel_wav" data-event-click="as_open_selected"><icon name="play_arrow"/><span class="label">Слушать</span></div>
+                <div class="menu-item" data-if="as_sel_count == 1 &amp;&amp; as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon name="open_in_new"/><span class="label">Открыть в редакторе изображений</span></div>
+                <div class="divider" data-if="as_sel_count == 1 &amp;&amp; (as_sel_dir || as_sel_wav || as_sel_image)"/>
+                <div id="ctx-cut" class="menu-item" data-event-click="as_cut"><icon name="content_cut"/><span class="label">Вырезать</span><span class="trailing">Ctrl+X</span></div>
+                <div id="ctx-copy" class="menu-item" data-event-click="as_copy"><icon name="content_copy"/><span class="label">Копировать</span><span class="trailing">Ctrl+C</span></div>
+                <div id="ctx-rename" class="menu-item" data-if="as_sel_count == 1" data-event-click="as_rename_start"><icon name="drive_file_rename_outline"/><span class="label">Переименовать</span><span class="trailing">F2</span></div>
+                <div id="ctx-delete" class="menu-item" data-event-click="as_delete"><icon name="delete"/><span class="label">Удалить</span><span class="trailing">Del</span></div>
+                <div data-if="as_sel_count == 1 &amp;&amp; as_sel_image &amp;&amp; as_sel_editable">
+                    <div class="divider"/>
+                    <div id="ctx-rotate" class="menu-item" data-event-click="as_image('cw')"><icon name="rotate_right"/><span class="label">Повернуть вправо</span></div>
+                    <div class="menu-item" data-event-click="as_image('ccw')"><icon name="rotate_left"/><span class="label">Повернуть влево</span></div>
+                    <div class="menu-item" data-if="as_sel_ext != '.png'" data-event-click="as_convert('.png')"><icon name="image"/><span class="label">Копия в PNG</span></div>
+                </div>
+                <div class="divider"/>
+                <div class="menu-item" data-event-click="as_show"><icon name="folder_open"/><span class="label">Показать в проводнике Windows</span></div>
+            </div>
+            <div data-if="as_sel_count == 0">
+                <div class="menu-item" data-class-selected="as_view == 'icons'" data-event-click="as_view('icons')"><icon name="grid_view"/><span class="label">Значки</span></div>
+                <div class="menu-item" data-class-selected="as_view == 'large'" data-event-click="as_view('large')"><icon name="view_agenda"/><span class="label">Список с превью</span></div>
+                <div class="menu-item" data-class-selected="as_view == 'table'" data-event-click="as_view('table')"><icon name="view_list"/><span class="label">Таблица</span></div>
+                <div class="divider"/>
+                <div class="menu-item" data-event-click="as_sort('name')"><icon data-attr-name="as_sort == 'name' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">Сортировать по имени</span></div>
+                <div class="menu-item" data-event-click="as_sort('date')"><icon data-attr-name="as_sort == 'date' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">По дате изменения</span></div>
+                <div class="menu-item" data-event-click="as_sort('type')"><icon data-attr-name="as_sort == 'type' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">По типу</span></div>
+                <div class="menu-item" data-event-click="as_sort('size')"><icon data-attr-name="as_sort == 'size' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">По размеру</span></div>
+                <div class="divider"/>
+                <div id="ctx-paste" class="menu-item" data-class-disabled="!as_has_cut" data-event-click="as_paste"><icon name="content_paste"/><span class="label">Вставить</span><span class="trailing">Ctrl+V</span></div>
+                <div id="ctx-new-folder" class="menu-item" data-event-click="as_new_folder"><icon class="ft-folder" name="create_new_folder"/><span class="label">Создать папку</span><span class="trailing">Ctrl+Shift+N</span></div>
+                <div class="menu-item" data-event-click="as_import('files')"><icon name="upload_file"/><span class="label">Импорт файлов…</span></div>
+                <div class="menu-item" data-event-click="as_refresh"><icon name="refresh"/><span class="label">Обновить</span><span class="trailing">F5</span></div>
+                <div class="divider"/>
+                <div class="menu-item" data-event-click="as_show"><icon name="folder_open"/><span class="label">Показать в проводнике Windows</span></div>
+            </div>
+        </div>
     </div>
 
     <div id="statusbar" class="row gap-4">
