@@ -47,6 +47,9 @@ struct ObjectDef {
     std::string group; // "Жители"
     std::string hint;  // "даёт задание про кирку"
     u64 key = 0;       // its template's (objects::Template), 0: none
+    // A template that is not (yet) the game's, such as one of the shared
+    // library: drawn as the game would draw it. Null: the game's, by key.
+    const objects::Template* tmpl = nullptr;
 };
 
 // The level's own id of an object, kept in the saves: entities are made

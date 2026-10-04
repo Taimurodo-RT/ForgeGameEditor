@@ -51,8 +51,6 @@ private:
     std::string label_, merge_;
 };
 
-std::string icon_name(const objects::Template& t) { return "tpl_" + t.id + "_" + std::to_string(t.look()); }
-
 Rml::String input_value(Rml::Event& ev) {
     Rml::Element* e = ev.GetTargetElement();
     return e && e->GetTagName() == "input" ? static_cast<Rml::ElementFormControl*>(e)->GetValue() : Rml::String();
@@ -104,6 +102,13 @@ ObjectLibrary::ObjectLibrary(level::LevelModule& module) : module_(module) {}
 bool ObjectLibrary::init(ui::Ui& ui) {
     ui_ = &ui;
     if (!module_.library()) return false;
+    // The shared library knows the same kinds as the game.
+    if (!shared_folder_.empty()) {
+        shared_.set_pictures_folder(shared_folder_ / "pictures");
+        std::string error;
+        shared_ready_ = shared_.load(library().kinds_file(), shared_folder_ / "objects", &error);
+        if (!shared_ready_) FORGE_WARN("Общая библиотека объектов недоступна: %s", error.c_str());
+    }
     // «Создать»: every kind with its presets.
     for (const objects::KindDef& k : library().kinds()) {
         CreateGroup g{k.id, k.name, k.icon, k.about, {}};
@@ -135,6 +140,7 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("genre", &Card::genre);
         s.RegisterMember("icon", &Card::icon);
         s.RegisterMember("about", &Card::about);
+        s.RegisterMember("badge", &Card::badge);
         s.RegisterMember("selected", &Card::selected);
         s.RegisterMember("renaming", &Card::renaming);
     }
@@ -192,6 +198,10 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     model.RegisterArray<std::vector<PicView>>();
 
     model.Bind("ol_all", &m_all_);
+    model.Bind("ol_shared", &m_shared_);
+    model.Bind("ol_in_shared", &m_in_shared_);
+    model.Bind("ol_sel_twin", &m_sel_twin_);
+    model.Bind("ol_shared_note", &m_shared_note_);
     model.Bind("ol_genres", &m_genres_);
     model.Bind("ol_kinds", &m_kinds_);
     model.Bind("ol_cards", &m_cards_);
@@ -279,6 +289,8 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     on("ol_delete", [this](Rml::Event&, const Rml::VariantList&) { remove_selected(); });
     on("ol_rename_start", [this](Rml::Event&, const Rml::VariantList&) { start_rename(); });
     on("ol_place", [this](Rml::Event&, const Rml::VariantList&) { place_selected(); });
+    on("ol_share", [this](Rml::Event&, const Rml::VariantList&) { share_selected(); });
+    on("ol_take", [this](Rml::Event&, const Rml::VariantList&) { take_selected(); });
     on("ol_open", [this](Rml::Event&, const Rml::VariantList&) { open_editor(); });
     on("ol_back", [this](Rml::Event&, const Rml::VariantList&) { close_editor(); });
     on("ol_genre", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_genre(arg_str(a, 0)); });
@@ -340,23 +352,56 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
 
 // --- lists ------------------------------------------------------------------
 
-void ObjectLibrary::icon_of(const objects::Template& t) {
-    auto it = icon_revs_.find(t.key);
-    if (it != icon_revs_.end() && it->second == t.look()) return;
+std::string ObjectLibrary::icon_path(const objects::Template& t, bool from_shared) {
+    const std::string name = (from_shared ? "shr_" : "tpl_") + t.id + "_" + std::to_string(t.look());
+    auto& revs = from_shared ? shared_icon_revs_ : icon_revs_;
+    auto it = revs.find(t.key);
+    if (it != revs.end() && it->second == t.look()) return "/memory/" + name;
     std::vector<u8> rgba;
-    module_.object_icon({t.id, t.name, "", "", t.key}, kIconPx, rgba);
-    ui_->set_image(icon_name(t), rgba.data(), kIconPx, kIconPx);
-    icon_revs_[t.key] = t.look();
+    std::vector<u8> bytes;
+    assets::CookedTexture image;
+    if (from_shared && !t.picture.empty() && read_file(shared_.picture_file(t), bytes) && assets::decode_image(bytes, image)) {
+        // Its own picture, from the shared library's folder, centred.
+        const assets::CookedTexture fit = assets::fit_image(image, kIconPx);
+        rgba.assign(static_cast<usize>(kIconPx) * kIconPx * 4, 0);
+        const u32 ox = (kIconPx - std::min(fit.width, kIconPx)) / 2, oy = (kIconPx - std::min(fit.height, kIconPx)) / 2;
+        for (u32 y = 0; y < std::min(fit.height, kIconPx); ++y)
+            std::copy_n(&fit.rgba8[static_cast<usize>(y) * fit.width * 4], static_cast<usize>(std::min(fit.width, kIconPx)) * 4,
+                        &rgba[(static_cast<usize>(oy + y) * kIconPx + ox) * 4]);
+    } else {
+        level::ObjectDef def{t.id, t.name, "", "", t.key};
+        if (from_shared) def.tmpl = &t;
+        module_.object_icon(def, kIconPx, rgba);
+    }
+    ui_->set_image(name, rgba.data(), kIconPx, kIconPx);
+    revs[t.key] = t.look();
+    return "/memory/" + name;
+}
+
+std::string ObjectLibrary::twin(const objects::Template& t) const {
+    if (!shared_ready_) return {};
+    const objects::Library& other = showing_shared() ? *module_.library() : shared_;
+    if (!other.find(t.key)) return {};
+    return other.same_as(shown(), t) ? "same" : "differs";
 }
 
 void ObjectLibrary::rebuild() {
     objects::Library& lib = library();
     built_ = lib.version();
-    const auto& all = lib.templates();
-    auto count_if = [&](auto pred) { return static_cast<int>(std::count_if(all.begin(), all.end(), pred)); };
+    shared_built_ = shared_.version();
+    const bool in_shared = showing_shared();
+    const auto& game_all = lib.templates();
+    const auto& all = shown().templates();
+    auto count_if = [&](auto pred) { return static_cast<int>(std::count_if(game_all.begin(), game_all.end(), pred)); };
 
-    // Navigation: everything, the genres, the kinds.
-    m_all_ = {"", "Все объекты", "category", "", static_cast<int>(all.size()), place_.empty()};
+    // Navigation: everything, the genres, the kinds; the shared library.
+    m_all_ = {"", "Все объекты", "category", "", static_cast<int>(game_all.size()), place_.empty()};
+    m_shared_ = {"s:", "Общие объекты", "share", "объекты для всех игр: берите их в игру копией",
+                 static_cast<int>(shared_.templates().size()), in_shared};
+    set(m_in_shared_, in_shared, "ol_in_shared");
+    m_shared_note_ = shared_ready_ ? "Общие объекты хранятся на этом компьютере (" + path_to_utf8(shared_folder_) +
+                                         ") и видны в любой игре. В игру объект попадает копией: игра работает и без них."
+                                   : "Общая библиотека недоступна.";
     m_genres_.clear();
     for (const std::string& g : lib.genres())
         m_genres_.push_back({"g:" + g, g, "sports_esports", "",
@@ -378,19 +423,22 @@ void ObjectLibrary::rebuild() {
         if (by_genre && t.genre != what) continue;
         if (by_kind && t.kind != what) continue;
         if (!needle.empty() && game::to_lower_utf8(t.name).find(needle) == std::string::npos) continue;
-        icon_of(t);
         const objects::KindDef* k = lib.kind_of(t);
-        m_cards_.push_back({t.name, k ? k->name : t.kind, t.genre, "/memory/" + icon_name(t), t.about, t.key == selected_,
-                            renaming_ && t.key == selected_});
+        const std::string tw = twin(t);
+        const std::string badge = tw.empty() ? std::string()
+                                  : in_shared ? (tw == "same" ? "в игре" : "в игре, другой")
+                                              : (tw == "same" ? "общий" : "общий, изменён");
+        m_cards_.push_back({t.name, k ? k->name : t.kind, t.genre, icon_path(t, in_shared), t.about, badge,
+                            t.key == selected_, renaming_ && t.key == selected_});
         card_keys_.push_back(t.key);
     }
     m_total_ = static_cast<int>(all.size());
     m_count_ = m_cards_.size() == all.size() ? "Объектов: " + std::to_string(all.size())
                                              : "Показано " + std::to_string(m_cards_.size()) + " из " + std::to_string(all.size());
-    if (selected_ && !lib.find(selected_)) selected_ = 0;
+    if (selected_ && !shown().find(selected_)) selected_ = 0;
     if (editing_ && !lib.find(editing_)) close_editor();
     if (model_)
-        for (const char* name : {"ol_all", "ol_genres", "ol_kinds", "ol_cards", "ol_count", "ol_total"}) model_.DirtyVariable(name);
+        for (const char* name : {"ol_all", "ol_shared", "ol_shared_note", "ol_genres", "ol_kinds", "ol_cards", "ol_count", "ol_total"}) model_.DirtyVariable(name);
     rebuild_side();
 }
 
@@ -404,11 +452,11 @@ void ObjectLibrary::rebuild_side() {
     m_blocks_.clear();
     m_add_blocks_.clear();
     m_genre_items_.clear();
+    m_sel_twin_ = t ? twin(*t) : std::string();
     if (t) {
-        icon_of(*t);
         m_sel_name_ = t->name;
         m_sel_about_ = t->about;
-        m_sel_icon_ = "/memory/" + icon_name(*t);
+        m_sel_icon_ = icon_path(*t, showing_shared());
         m_sel_kind_ = k ? k->name : "неизвестный вид «" + t->kind + "»";
         m_sel_kind_icon_ = k ? k->icon : "help";
         m_sel_kind_about_ = k ? k->about : "";
@@ -474,7 +522,7 @@ void ObjectLibrary::rebuild_side() {
     }
     if (model_)
         for (const char* name : {"ol_props", "ol_blocks", "ol_add_blocks", "ol_genre_items", "ol_sel_name", "ol_sel_about", "ol_sel_icon", "ol_sel_kind",
-                                 "ol_sel_kind_icon", "ol_sel_kind_about", "ol_sel_genre", "ol_sel_file", "ol_sel_picture"})
+                                 "ol_sel_kind_icon", "ol_sel_kind_about", "ol_sel_genre", "ol_sel_file", "ol_sel_picture", "ol_sel_twin"})
             model_.DirtyVariable(name);
 }
 
@@ -483,7 +531,7 @@ void ObjectLibrary::update(Rml::Context* context) {
     // Do not rewrite a field while the user types in it.
     const bool typing = focus && focus->GetTagName() == "input" && focus->GetAttribute<Rml::String>("type", "text") == "text" &&
                         focus->GetId() != "ol-search";
-    if (library().version() != built_ && !typing) rebuild();
+    if ((library().version() != built_ || shared_.version() != shared_built_) && !typing) rebuild();
     if (rename_focus_ && context) {
         // The name field on the card appears with this update: focus it.
         Rml::ElementDocument* doc = context->GetNumDocuments() > 0 ? context->GetDocument(0) : nullptr;
@@ -498,7 +546,7 @@ void ObjectLibrary::update(Rml::Context* context) {
 // --- actions ----------------------------------------------------------------
 
 const objects::Template* ObjectLibrary::selected() const {
-    return selected_ ? module_.library()->find(selected_) : nullptr;
+    return selected_ ? shown().find(selected_) : nullptr;
 }
 
 void ObjectLibrary::select(u64 key) {
@@ -514,6 +562,8 @@ void ObjectLibrary::select(u64 key) {
 }
 
 void ObjectLibrary::show(const std::string& place) {
+    // Another game may have shared something meanwhile.
+    if (place == "s:" && shared_ready_) shared_.reload_templates();
     place_ = place;
     close_editor();
     rebuild();
@@ -536,11 +586,14 @@ void ObjectLibrary::context_menu(int card, f32 x, f32 y) {
 }
 
 void ObjectLibrary::change(objects::Template after, std::string label, std::string merge) {
-    const objects::Template* before = library().find(after.key);
+    change(library(), std::move(after), std::move(label), std::move(merge));
+}
+
+void ObjectLibrary::change(objects::Library& lib, objects::Template after, std::string label, std::string merge) {
+    const objects::Template* before = lib.find(after.key);
     std::optional<objects::Template> b;
     if (before) b = *before;
-    history_.execute(std::make_unique<TemplateCommand>(library(), std::move(b), std::move(after), std::move(label),
-                                                       std::move(merge)));
+    history_.execute(std::make_unique<TemplateCommand>(lib, std::move(b), std::move(after), std::move(label), std::move(merge)));
 }
 
 bool ObjectLibrary::create(const std::string& kind, int preset) {
@@ -556,7 +609,7 @@ bool ObjectLibrary::create(const std::string& kind, int preset) {
     change(std::move(*t), "Создать: " + name);
     history_.seal();
     // Show it: in the place shown if it belongs there, else among all.
-    if ((place_.starts_with("k:") && place_ != "k:" + kind) || (place_.starts_with("g:") && place_ != "g:" + genre))
+    if (showing_shared() || (place_.starts_with("k:") && place_ != "k:" + kind) || (place_.starts_with("g:") && place_ != "g:" + genre))
         place_.clear();
     search_.clear();
     m_search_.clear();
@@ -568,6 +621,7 @@ bool ObjectLibrary::create(const std::string& kind, int preset) {
 }
 
 bool ObjectLibrary::duplicate() {
+    if (showing_shared()) return false; // shared objects are changed in a game, then shared again
     const objects::Template* src = selected();
     const objects::KindDef* k = src ? library().kind_of(*src) : nullptr;
     if (!k) return false;
@@ -597,17 +651,20 @@ bool ObjectLibrary::remove_selected() {
         if (it + 1 != card_keys_.end()) next = *(it + 1);
         else if (it != card_keys_.begin()) next = *(it - 1);
     }
-    history_.execute(std::make_unique<TemplateCommand>(library(), *t, std::nullopt, "Удалить: " + name, ""));
+    const bool in_shared = showing_shared();
+    history_.execute(std::make_unique<TemplateCommand>(shown(), *t, std::nullopt,
+                                                       (in_shared ? "Убрать из общих: " : "Удалить: ") + name, ""));
     history_.seal();
     selected_ = next;
     renaming_ = false;
     rebuild();
-    FORGE_INFO("Объект «%s» удалён из библиотеки (Ctrl+Z вернёт). Его копии на уровне остаются как были.", name.c_str());
+    if (in_shared) FORGE_INFO("Объект «%s» убран из общих (Ctrl+Z вернёт). В играх его копии остаются.", name.c_str());
+    else FORGE_INFO("Объект «%s» удалён из библиотеки (Ctrl+Z вернёт). Его копии на уровне остаются как были.", name.c_str());
     return true;
 }
 
 void ObjectLibrary::start_rename() {
-    if (!selected()) return;
+    if (!selected() || showing_shared()) return;
     close_editor();
     renaming_ = true;
     rename_focus_ = true;
@@ -616,6 +673,7 @@ void ObjectLibrary::start_rename() {
 
 bool ObjectLibrary::rename(const std::string& name) {
     renaming_ = false;
+    if (showing_shared()) return false; // shared objects are changed in a game, then shared again
     const objects::Template* t = selected();
     if (!t || name.empty() || name == t->name) return false;
     objects::Template after = *t;
@@ -630,6 +688,7 @@ bool ObjectLibrary::rename(const std::string& name) {
 }
 
 bool ObjectLibrary::set_genre(const std::string& genre) {
+    if (showing_shared()) return false; // shared objects are changed in a game, then shared again
     const objects::Template* t = selected();
     if (!t || t->genre == genre) return false;
     objects::Template after = *t;
@@ -641,12 +700,52 @@ bool ObjectLibrary::set_genre(const std::string& genre) {
 
 bool ObjectLibrary::place_selected() {
     if (!selected_ || !on_place) return false;
+    // A shared object is placed as the game's copy of it.
+    if (showing_shared() && twin(*selected()) != "same" && !take_selected()) return false;
+    if (!library().find(selected_)) return false;
     on_place(selected_);
     return true;
 }
 
+bool ObjectLibrary::share_selected() {
+    const objects::Template* t = selected();
+    if (!t || showing_shared() || !shared_ready_ || twin(*t) == "same") return false;
+    std::string error;
+    std::optional<objects::Template> copy = shared_.copy_from(library(), *t, &error);
+    if (!copy) {
+        FORGE_WARN("«%s» не делается общим: %s", t->name.c_str(), error.c_str());
+        return false;
+    }
+    const bool update = shared_.find(t->key) != nullptr;
+    const std::string name = t->name;
+    change(shared_, std::move(*copy), (update ? "Обновить в общих: " : "Сделать общим: ") + name);
+    history_.seal();
+    rebuild();
+    FORGE_INFO(update ? "Общий объект «%s» обновлён по этой игре" : "Объект «%s» теперь среди общих: его можно взять в любую игру",
+               name.c_str());
+    return true;
+}
+
+bool ObjectLibrary::take_selected() {
+    const objects::Template* t = selected();
+    if (!t || !showing_shared() || twin(*t) == "same") return false;
+    std::string error;
+    std::optional<objects::Template> copy = library().copy_from(shared_, *t, &error);
+    if (!copy) {
+        FORGE_WARN("«%s» не берётся в игру: %s", t->name.c_str(), error.c_str());
+        return false;
+    }
+    const bool update = library().find(t->key) != nullptr;
+    const std::string name = t->name;
+    change(std::move(*copy), (update ? "Обновить из общих: " : "Взять в игру: ") + name);
+    history_.seal();
+    rebuild();
+    FORGE_INFO(update ? "Объект «%s» в игре обновлён по общему" : "Объект «%s» взят в игру копией", name.c_str());
+    return true;
+}
+
 void ObjectLibrary::open_editor() {
-    if (!selected()) return;
+    if (!selected() || showing_shared()) return;
     renaming_ = false;
     editing_ = selected_;
     set(m_editing_, true, "ol_editing");
@@ -662,6 +761,7 @@ void ObjectLibrary::close_editor() {
 }
 
 bool ObjectLibrary::add_block(const std::string& block) {
+    if (showing_shared()) return false; // shared objects are changed in a game, then shared again
     const objects::Template* t = selected();
     const objects::BlockDef* b = library().block(block);
     set_menu("");
@@ -673,6 +773,7 @@ bool ObjectLibrary::add_block(const std::string& block) {
 }
 
 bool ObjectLibrary::remove_block(const std::string& block) {
+    if (showing_shared()) return false; // shared objects are changed in a game, then shared again
     const objects::Template* t = selected();
     const objects::BlockDef* b = library().block(block);
     if (!t || !b || !library().has_block(*t, block)) return false;
@@ -686,6 +787,7 @@ bool ObjectLibrary::remove_block(const std::string& block) {
 }
 
 bool ObjectLibrary::set_about(const std::string& about) {
+    if (showing_shared()) return false; // shared objects are changed in a game, then shared again
     const objects::Template* t = selected();
     if (!t || about == t->about) return false;
     objects::Template after = *t;
@@ -696,7 +798,7 @@ bool ObjectLibrary::set_about(const std::string& about) {
 }
 
 void ObjectLibrary::set_prop(int i, const std::string& text, bool dragging) {
-    if (ui_updating_ || i < 0 || i >= static_cast<int>(prop_refs_.size())) return;
+    if (ui_updating_ || showing_shared() || i < 0 || i >= static_cast<int>(prop_refs_.size())) return;
     const objects::Template* t = selected();
     if (!t) return;
     const objects::PropDef& p = *prop_refs_[static_cast<usize>(i)];
@@ -776,7 +878,7 @@ namespace forge::editor_app {
 bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
     namespace fs = std::filesystem;
     const objects::Template* t = selected();
-    if (!t) return false;
+    if (!t || showing_shared()) return false;
     // Into the pictures folder, under its own name; the same file already
     // there is used as it is, another one of that name gets a number.
     const fs::path folder = library().pictures_folder();

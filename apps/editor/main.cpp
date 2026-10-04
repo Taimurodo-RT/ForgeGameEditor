@@ -213,6 +213,16 @@ void make_sample_scene(Document& doc, u32 objects) {
 
 class Editor;
 
+// Where this computer keeps the objects shared by every game: the user's
+// application data folder (on Windows %APPDATA%\Forge\Forge).
+std::filesystem::path default_shared_folder() {
+    char* pref = SDL_GetPrefPath("Forge", "Forge");
+    if (!pref) return {};
+    std::filesystem::path out = utf8_path(pref) / utf8_path("Общие объекты");
+    SDL_free(pref);
+    return out;
+}
+
 // The hierarchy panel: the object tree flattened to the rows that are open.
 class HierarchySource final : public ui::ListSource {
 public:
@@ -264,6 +274,8 @@ public:
     std::filesystem::path game_dir = utf8_path(SLICE_DATA_DIR);
     std::filesystem::path objects_folder = game_dir / "objects";
     std::filesystem::path pictures_folder = game_dir / "pictures"; // the templates' own pictures
+    // The objects shared by every game: this computer's, outside any game.
+    std::filesystem::path shared_folder = default_shared_folder();
     slice::SliceLevel level_module;
     LevelEditor level{level_module};
     ObjectLibrary objects_tab{level_module};
@@ -306,6 +318,7 @@ public:
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         if (!level.init(ui_, device, format, level_config)) return false;
+        objects_tab.set_shared_folder(shared_folder);
         objects_tab.init(ui_);
         objects_tab.list_images = [this] { return assets.images(); };
         objects_tab.on_place = [this](u64 key) {
@@ -1879,7 +1892,7 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 31) return asset_step();
+        if (ol_step_ >= 33) return asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -2173,7 +2186,50 @@ private:
             ol().show("");
             break;
         }
-        case 30:
+        // «Общие»: objects go between the game and the shared library as copies.
+        case 30: {
+            check(ol().shared().templates().empty(), "the shared library starts empty");
+            check(shown("ol-place-shared") && shown("ol-share"), "«Общие объекты» and «Сделать общим» are there");
+            check(click("ol-share") && ol().shared().find("coins") &&
+                      std::filesystem::exists(ed_.shared_folder / "objects" / lib.find("coins")->file.filename()),
+                  "«Сделать общим» puts a copy of the coins into the shared library's folder");
+            check(!ol().share_selected(), "sharing them again does nothing while they are the same");
+            // Another game's object, with its own picture, shared earlier.
+            objects::Template star = *lib.find("coins");
+            star.id = "shared_star";
+            star.name = "Звёздочка";
+            star.picture = "Звезда.png";
+            star.file.clear();
+            std::optional<objects::Template> s = ol().shared().copy_from(lib, star);
+            check(s && ol().shared().put(*s), "a shared object from another game");
+            // The game's coins change after they were shared.
+            shared_count_ = lib.value(*lib.find("coins"), *lib.prop_of(*lib.find("coins"), "count"));
+            check(shared_count_ != "99" && lib.put(lib.with_value(*lib.find("coins"), "count", "99")), "the game's coins change");
+            ol().show("s:");
+            break;
+        }
+        case 31: {
+            if (hold(shown("ol-shared-note"), "«Общие» shows where the shared objects are")) return true;
+            check(ol().showing_shared() && ol().cards() == 2 && !shown("ol-open") && shown("ol-take"),
+                  "«Общие» shows the 2 shared objects, to take into the game (not to edit)");
+            ol().select(lib.find("coins")->key);
+            check(ol().selected() && ol().selected()->name == "Монеты", "the shared coins are selected");
+            check(click("ol-take") && lib.value(*lib.find("coins"), *lib.prop_of(*lib.find("coins"), "count")) == shared_count_,
+                  "«Обновить из общих» brings the game's coins back to the shared ones");
+            ol().undo();
+            check(lib.value(*lib.find("coins"), *lib.prop_of(*lib.find("coins"), "count")) == "99", "Ctrl+Z undoes it");
+            ol().select(fnv1a("shared_star"));
+            check(ol().take_selected() && lib.find("shared_star") && lib.find("shared_star")->picture == "Звезда.png" &&
+                      std::filesystem::exists(ed_.pictures_folder / utf8_path("Звезда.png")),
+                  "«Взять в игру» copies another game's object into this one, picture and all");
+            check(ol().remove_selected() && !ol().shared().find("shared_star") && lib.find("shared_star"),
+                  "«Убрать из общих» leaves the game's copy");
+            ol().undo();
+            check(ol().shared().find("shared_star"), "and Ctrl+Z brings it back to the shared ones");
+            ol().show("");
+            break;
+        }
+        case 32:
             click_tab(0);
             break;
         default: break;
@@ -2181,6 +2237,8 @@ private:
         ++ol_step_;
         return true;
     }
+
+    std::string shared_count_; // the shared coins' count, for the «Общие» checks
 
     bool asset_step() {
         const bool idle = !as().busy();
@@ -2535,6 +2593,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             std::filesystem::remove_all(editor.pictures_folder, ec);
             if (std::filesystem::exists(editor.game_dir / "pictures", ec))
                 std::filesystem::copy(editor.game_dir / "pictures", editor.pictures_folder, std::filesystem::copy_options::recursive, ec);
+            // Nor this computer's shared objects: an empty library of its own.
+            editor.shared_folder = std::filesystem::temp_directory_path() / "forge_editor_shared";
+            std::filesystem::remove_all(editor.shared_folder, ec);
         }
         // Nor the game's level, unless one is given.
         LevelConfig lc;

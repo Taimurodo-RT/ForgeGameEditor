@@ -370,6 +370,7 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
     blocks_.clear();
     templates_.clear();
     folder_ = folder;
+    kinds_file_ = kinds_file;
     if (pictures_.empty()) pictures_ = kinds_file.parent_path() / "pictures";
     ++version_;
     std::vector<u8> bytes;
@@ -536,6 +537,74 @@ std::optional<Template> Library::make(const KindDef& k, const Preset* preset, st
     for (int n = 2; fs::exists(file, ec); ++n) file = folder_ / utf8_path(stem + " " + std::to_string(n) + std::string(kExtension));
     t.file = file;
     return t;
+}
+
+// --- between libraries --------------------------------------------------------
+
+namespace {
+
+// Copies a picture into a pictures folder under its own name; the same file
+// already there is used as it is, another one of that name gets a number.
+// The name it has there; empty when it cannot be copied.
+std::string copy_picture(const fs::path& source, const fs::path& folder) {
+    std::vector<u8> bytes;
+    if (!read_file(source, bytes)) return {};
+    const std::string stem = path_to_utf8(source.stem()), ext = path_to_utf8(source.extension());
+    fs::path target = folder / source.filename();
+    std::error_code ec;
+    for (int n = 2;; ++n) {
+        if (!fs::exists(target, ec)) {
+            if (!write_file_atomic(target, bytes)) return {};
+            break;
+        }
+        std::vector<u8> there;
+        if (fs::equivalent(target, source, ec) || (read_file(target, there) && there == bytes)) break;
+        target = folder / utf8_path(stem + " " + std::to_string(n) + ext);
+    }
+    return path_to_utf8(target.filename());
+}
+
+bool same_file(const fs::path& a, const fs::path& b) {
+    std::vector<u8> x, y;
+    return read_file(a, x) && read_file(b, y) && x == y;
+}
+
+} // namespace
+
+std::optional<Template> Library::copy_from(const Library& from, const Template& t, std::string* error) const {
+    if (!kind(t.kind)) {
+        if (error) *error = "в этой игре нет вида «" + t.kind + "»";
+        return std::nullopt;
+    }
+    Template out = t;
+    out.key = fnv1a(out.id);
+    const Template* here = find(out.key);
+    if (here) {
+        out.file = here->file;
+        if (here->name != t.name) out.name = free_name(t.name);
+    } else {
+        out.name = free_name(t.name);
+        out.file.clear();
+        if (const KindDef* k = kind(t.kind))
+            if (std::optional<Template> probe = make(*k, nullptr, out.name)) out.file = probe->file;
+    }
+    if (!t.picture.empty()) {
+        out.picture = copy_picture(from.picture_file(t), pictures_);
+        if (out.picture.empty()) {
+            if (error) *error = "картинка " + t.picture + " не копируется";
+            return std::nullopt;
+        }
+    }
+    out.rev = template_rev(out);
+    return out;
+}
+
+bool Library::same_as(const Library& from, const Template& t) const {
+    const Template* here = find(fnv1a(t.id));
+    if (!here || here->name != t.name || here->about != t.about || here->genre != t.genre || here->kind != t.kind ||
+        here->rev != t.rev || here->picture.empty() != t.picture.empty())
+        return false;
+    return t.picture.empty() || same_file(picture_file(*here), from.picture_file(t));
 }
 
 bool Library::write(const Template& t, std::string* error) const {

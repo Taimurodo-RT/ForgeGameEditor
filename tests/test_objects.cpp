@@ -162,6 +162,55 @@ TEST_CASE("a template's own picture is kept in its file") {
     CHECK(read->rev == t->rev); // a picture does not touch the copies' values
 }
 
+TEST_CASE("a template is copied between a game and the shared library") {
+    Fixture f;
+    const auto shared_dir = temp_folder("forge_objects_shared_test");
+    Library shared;
+    shared.set_pictures_folder(shared_dir / "pictures");
+    REQUIRE(shared.load(f.lib.kinds_file(), shared_dir / "objects"));
+    CHECK(shared.templates().empty());
+
+    // The game's coins, with a picture of their own, become shared.
+    Template coins = *f.lib.find("coins");
+    write_text(f.lib.pictures_folder() / "coin.png", "not really a png");
+    coins.picture = "coin.png";
+    REQUIRE(f.lib.put(coins));
+    CHECK_FALSE(shared.same_as(f.lib, coins));
+    std::optional<Template> up = shared.copy_from(f.lib, coins);
+    REQUIRE(up);
+    CHECK(up->key == coins.key); // the same object
+    CHECK(up->file.parent_path() == shared_dir / "objects");
+    REQUIRE(shared.put(*up));
+    CHECK(std::filesystem::exists(shared_dir / "pictures" / "coin.png"));
+    CHECK(shared.same_as(f.lib, coins));
+
+    // Changed in the game: no longer the same, until it is shared again.
+    Template more = f.lib.with_value(coins, "count", "25");
+    REQUIRE(f.lib.put(more));
+    CHECK_FALSE(shared.same_as(f.lib, more));
+    REQUIRE(shared.put(*shared.copy_from(f.lib, more)));
+    CHECK(shared.templates().size() == 1); // replaced, not added
+    CHECK(shared.same_as(f.lib, more));
+
+    // Another game takes it: a copy of its own, picture and all.
+    const auto other_dir = temp_folder("forge_objects_other_game_test");
+    Library other;
+    other.set_pictures_folder(other_dir / "pictures");
+    REQUIRE(other.load(f.lib.kinds_file(), other_dir / "objects"));
+    const Template& s = shared.templates()[0];
+    REQUIRE(other.put(*other.copy_from(shared, s)));
+    CHECK(other.same_as(shared, s));
+    CHECK(other.value(*other.find("coins"), *other.prop_of(*other.find("coins"), "count")) == "25");
+    CHECK(std::filesystem::exists(other_dir / "pictures" / "coin.png"));
+
+    // A kind the game does not have cannot come in.
+    Template odd = s;
+    odd.kind = "dragon";
+    std::string error;
+    CHECK_FALSE(other.copy_from(shared, odd, &error));
+    CHECK(error.find("dragon") != std::string::npos);
+}
+
 TEST_CASE("copies follow their template, but keep their own values") {
     PoolScope pool;
     Fixture f;

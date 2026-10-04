@@ -170,6 +170,7 @@ public:
     // Reads the folder again (files changed outside the editor).
     void reload_templates();
     const std::filesystem::path& folder() const { return folder_; }
+    const std::filesystem::path& kinds_file() const { return kinds_file_; }
     // Where templates' pictures are: "pictures" next to the kinds file,
     // unless set.
     const std::filesystem::path& pictures_folder() const { return pictures_; }
@@ -217,6 +218,17 @@ public:
     std::string value(const Template& t, const PropDef& prop) const;
     // A template with one value changed (not stored: give it to put()).
     Template with_value(const Template& t, std::string_view prop, std::string json) const;
+    // --- between libraries (a game's and the shared one) ---
+    // A template of another library as it would be here: the same id (so
+    // the same object), its file here (the one it already has, else a new
+    // one), its picture copied into this library's pictures folder. Not
+    // stored: give it to put(). Empty when this library has no such kind
+    // or the picture cannot be copied.
+    std::optional<Template> copy_from(const Library& from, const Template& t, std::string* error = nullptr) const;
+    // This library's template with t's id, when it is the same as t (name,
+    // note, genre, kind, blocks, values and picture).
+    bool same_as(const Library& from, const Template& t) const;
+
     // A name nobody uses yet, starting from wanted.
     std::string free_name(std::string_view wanted) const;
 
@@ -256,6 +268,7 @@ private:
     std::vector<std::string> genres_; // from the kinds file
     std::vector<Template> templates_;
     std::filesystem::path folder_;
+    std::filesystem::path kinds_file_;
     std::filesystem::path pictures_;
     u64 version_ = 1;
     AdoptFn adopt_;
