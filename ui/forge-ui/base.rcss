@@ -1,0 +1,109 @@
+/* Forge UI base: element defaults, text, scrollbars.
+   Link it first in every document, then the component sheets you use. */
+
+body {
+    font-family: var(--font-sans);
+    font-size: var(--body-medium-size);
+    line-height: var(--body-medium-line-height);
+    font-weight: 400;
+    color: var(--on-surface);
+}
+
+div, p, h1, h2, h3, h4, section, header, footer, nav, main, aside, ul, li, form, tabs, panels {
+    display: block;
+}
+span, label, em, strong, code, kbd {
+    display: inline;
+}
+em { font-style: italic; }
+strong { font-weight: 700; }
+code, kbd, .mono {
+    font-family: var(--font-mono);
+}
+p { margin-bottom: var(--space-2); }
+
+h1 { font-family: var(--headline-large-family); font-size: var(--headline-large-size); line-height: var(--headline-large-line-height); font-weight: var(--headline-large-weight); }
+h2 { font-family: var(--headline-small-family); font-size: var(--headline-small-size); line-height: var(--headline-small-line-height); font-weight: var(--headline-small-weight); }
+h3 { font-family: var(--title-large-family); font-size: var(--title-large-size); line-height: var(--title-large-line-height); font-weight: var(--title-large-weight); }
+h4 { font-family: var(--title-medium-family); font-size: var(--title-medium-size); line-height: var(--title-medium-line-height); font-weight: var(--title-medium-weight); }
+
+/* Material Symbols by name: <icon name="save"/>. */
+icon {
+    display: inline-block;
+    font-family: var(--font-icons);
+    font-weight: 500;
+    font-size: var(--icon-m);
+    line-height: var(--icon-m);
+    width: 1em;
+    height: 1em;
+    text-align: center;
+    vertical-align: middle;
+}
+icon.s { font-size: var(--icon-s); line-height: var(--icon-s); }
+icon.l { font-size: var(--icon-l); line-height: var(--icon-l); }
+
+/* Colour roles as utility classes. */
+.surface { background-color: var(--surface); color: var(--on-surface); }
+.on-surface-variant, .muted { color: var(--on-surface-variant); }
+.primary-text { color: var(--primary); }
+.error-text { color: var(--error); }
+.success-text { color: var(--success); }
+.warning-text { color: var(--warning); }
+
+/* Layout helpers. */
+.row { display: flex; flex-direction: row; align-items: center; }
+.column { display: flex; flex-direction: column; }
+.grow { flex: 1 1 0px; }
+.gap-1 { gap: var(--space-1); }
+.gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
+.gap-4 { gap: var(--space-4); }
+.gap-6 { gap: var(--space-6); }
+.hidden { display: none; }
+
+/* Text selection in fields. */
+input selection, textarea selection {
+    background-color: var(--selected-layer);
+    color: var(--on-surface);
+}
+
+/* Scrollbars: thin, rounded, visible on hover. */
+scrollbarvertical {
+    width: 10px;
+    margin-right: 2px;
+}
+scrollbarhorizontal {
+    height: 10px;
+    margin-bottom: 2px;
+}
+scrollbarvertical slidertrack, scrollbarhorizontal slidertrack {
+    background-color: transparent;
+}
+scrollbarvertical sliderbar, scrollbarhorizontal sliderbar {
+    background-color: var(--scrollbar-thumb);
+    border-radius: var(--radius-full);
+    transition: background-color var(--duration-short) var(--ease-standard);
+}
+scrollbarvertical sliderbar { min-height: 24px; margin: 2px 2px; }
+scrollbarhorizontal sliderbar { min-width: 24px; margin: 2px 2px; }
+scrollbarvertical sliderbar:hover, scrollbarhorizontal sliderbar:hover,
+scrollbarvertical sliderbar:active, scrollbarhorizontal sliderbar:active {
+    background-color: var(--scrollbar-thumb-hover);
+}
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc,
+scrollbarhorizontal sliderarrowdec, scrollbarhorizontal sliderarrowinc {
+    width: 0px;
+    height: 0px;
+}
+scrollbarcorner { background-color: transparent; }
+
+/* Keyboard and gamepad focus: always visible, never the same as selection. */
+.focus-ring:focus-visible {
+    box-shadow: var(--glow-focus);
+}
+
+/* Long lists: <virtual-list> (rows are created only for what is on screen). */
+virtual-list {
+    display: block;
+    overflow-y: auto;
+}

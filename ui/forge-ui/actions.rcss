@@ -1,0 +1,120 @@
+/* Forge UI actions: Button, IconButton, KeyHint.
+
+   <button class="button filled"><icon name="play_arrow"/>Играть</button>
+   Variants: filled (main action), tonal, outlined, text, elevated.
+   Sizes: small, (default), large. States: :hover, :active, .disabled. */
+
+button, .button {
+    display: inline-block;
+    box-sizing: border-box;
+    height: var(--control-m);
+    line-height: var(--control-m);
+    padding: 0px var(--space-6);
+    text-align: center;
+    border-radius: var(--button-radius);
+    font-family: var(--label-large-family);
+    font-size: var(--label-large-size);
+    font-weight: var(--label-large-weight);
+    letter-spacing: var(--label-large-letter-spacing);
+    white-space: nowrap;
+    color: var(--primary);
+    background-color: transparent;
+    cursor: pointer;
+    tab-index: auto;
+    transition: background-color color var(--duration-short) var(--ease-standard);
+}
+button icon, .button icon {
+    font-size: var(--icon-s);
+    line-height: var(--icon-s);
+    margin: 0px var(--space-2) 0px -4px;
+}
+button.small, .button.small { height: var(--control-s); line-height: var(--control-s); padding: 0px var(--space-4); }
+button.large, .button.large {
+    height: var(--control-l);
+    line-height: var(--control-l);
+    padding: 0px var(--space-8);
+    font-size: var(--title-medium-size);
+}
+
+.button.filled { background-color: var(--primary); color: var(--on-primary); box-shadow: var(--bevel-inset); }
+.button.filled:hover { background-color: var(--primary-hover); }
+.button.filled:active { background-color: var(--primary-pressed); }
+.button.filled:focus-visible { box-shadow: var(--glow-focus); }
+
+.button.tonal { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.button.tonal:hover { background-color: var(--secondary-container-hover); }
+.button.tonal:active { background-color: var(--secondary-container-pressed); }
+
+.button.outlined {
+    border-width: var(--border-control);
+    border-color: var(--outline);
+    color: var(--primary);
+}
+.button.outlined:hover, .button.text:hover { background-color: var(--primary-hover-layer); }
+.button.outlined:active, .button.text:active { background-color: var(--primary-pressed-layer); }
+.button.text { padding: 0px var(--space-3); }
+
+.button.elevated {
+    background-color: var(--surface-container-low);
+    color: var(--primary);
+    box-shadow: var(--elevation-1);
+}
+.button.elevated:hover { background-color: var(--surface-container-hover); }
+
+.button.danger { background-color: var(--error); color: var(--on-error); }
+.button.danger:hover { background-color: var(--error-hover); }
+
+.button.disabled, .button:disabled {
+    background-color: var(--disabled-container);
+    color: var(--disabled-content);
+    border-color: var(--disabled-container);
+    box-shadow: none;
+    cursor: default;
+}
+.button.text.disabled, .button.outlined.disabled { background-color: transparent; }
+
+/* IconButton: a round button with one icon. Add .selected for toggles. */
+.icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-m);
+    height: var(--control-m);
+    border-radius: var(--button-radius);
+    color: var(--on-surface-variant);
+    background-color: transparent;
+    cursor: pointer;
+    tab-index: auto;
+    transition: background-color color var(--duration-short) var(--ease-standard);
+}
+.icon-button icon { font-size: var(--icon-m); line-height: var(--icon-m); }
+.icon-button.small { width: var(--control-s); height: var(--control-s); }
+.icon-button.small icon { font-size: var(--icon-s); line-height: var(--icon-s); }
+.icon-button:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.icon-button:active { background-color: var(--state-pressed-layer); }
+.icon-button.selected { color: var(--primary); background-color: var(--selected-layer); }
+.icon-button.filled { background-color: var(--primary); color: var(--on-primary); }
+.icon-button.filled:hover { background-color: var(--primary-hover); }
+.icon-button.tonal { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.icon-button.tonal:hover { background-color: var(--secondary-container-hover); }
+.icon-button.outlined { border-width: var(--border-control); border-color: var(--outline-variant); }
+.icon-button.disabled { color: var(--disabled-content); background-color: transparent; cursor: default; }
+
+/* KeyHint: a key or gamepad button, <span class="key-hint">E</span>. */
+.key-hint {
+    display: inline-block;
+    min-width: 24px;
+    height: 24px;
+    padding: 0px var(--space-1);
+    border-radius: var(--radius-xs);
+    border-width: var(--border-hairline);
+    border-color: var(--outline);
+    background-color: var(--surface-container-highest);
+    box-shadow: var(--bevel-inset);
+    font-family: var(--keycap-family);
+    font-size: var(--keycap-size);
+    line-height: 22px;
+    font-weight: var(--keycap-weight);
+    color: var(--on-surface);
+    text-align: center;
+}

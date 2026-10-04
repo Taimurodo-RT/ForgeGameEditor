@@ -1,0 +1,154 @@
+/* Forge UI menus and settings: MenuList, Cycler, Slider, Switch, Checkbox,
+   text fields and drop-downs. */
+
+.menu-list { display: flex; flex-direction: column; gap: var(--space-0-5); padding: var(--space-1); }
+.menu-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    height: var(--control-m);
+    padding: 0px var(--space-3);
+    border-radius: var(--menu-item-radius);
+    color: var(--on-surface);
+    cursor: pointer;
+    transition: background-color var(--duration-short) var(--ease-standard);
+}
+.menu-item icon { color: var(--on-surface-variant); font-size: var(--icon-s); line-height: var(--icon-s); }
+.menu-item .label { flex: 1 1 0px; }
+.menu-item .trailing { color: var(--on-surface-variant); font-family: var(--font-mono); font-size: var(--label-medium-size); }
+.menu-item:hover { background-color: var(--state-hover-layer); }
+.menu-item:active { background-color: var(--state-pressed-layer); }
+.menu-item.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.menu-item.selected icon { color: var(--on-secondary-container); }
+.menu-item.disabled { color: var(--disabled-content); cursor: default; background-color: transparent; }
+
+/* Cycler: ‹ value › */
+.cycler { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); }
+.cycler .value {
+    min-width: 120px;
+    text-align: center;
+    font-weight: 600;
+}
+
+/* Slider: <input type="range" min="0" max="100" value="40"/> */
+input.range {
+    display: inline-block;
+    width: 200px;
+    height: 20px;
+    vertical-align: middle;
+}
+input.range slidertrack {
+    margin-top: 8px;
+    height: 4px;
+    border-radius: var(--radius-full);
+    background-color: var(--surface-container-highest);
+}
+input.range sliderbar {
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-full);
+    background-color: var(--primary);
+    box-shadow: var(--elevation-1);
+    transition: background-color var(--duration-short) var(--ease-standard);
+}
+input.range sliderbar:hover, input.range sliderbar:active { background-color: var(--primary-hover); }
+input.range sliderarrowdec, input.range sliderarrowinc { width: 0px; height: 0px; }
+
+/* Switch: <div class="switch on"><div class="thumb"/></div> */
+.switch {
+    display: inline-block;
+    position: relative;
+    width: 52px;
+    height: 32px;
+    border-radius: var(--radius-full);
+    background-color: var(--surface-container-highest);
+    border-width: 2px;
+    border-color: var(--outline);
+    cursor: pointer;
+    vertical-align: middle;
+    transition: background-color border-color var(--duration-short) var(--ease-standard);
+}
+.switch .thumb {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-full);
+    background-color: var(--outline);
+    transition: left width height top background-color var(--duration-short) var(--ease-overshoot);
+}
+.switch.on { background-color: var(--primary); border-color: var(--primary); }
+.switch.on .thumb { left: 22px; top: 2px; width: 24px; height: 24px; background-color: var(--on-primary); }
+
+/* Checkbox drawn with the icon font: <div class="checkbox on"><icon/></div> */
+.checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    cursor: pointer;
+}
+.checkbox .box {
+    width: 18px;
+    height: 18px;
+    border-radius: 2px;
+    border-width: 2px;
+    border-color: var(--on-surface-variant);
+}
+.checkbox.on .box { background-color: var(--primary); border-color: var(--primary); }
+
+/* Text fields. */
+input.text, input.password, textarea, .field {
+    display: inline-block;
+    box-sizing: border-box;
+    height: var(--control-m);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--field-radius);
+    border-width: var(--border-control);
+    border-color: var(--outline-variant);
+    background-color: var(--surface-container-highest);
+    color: var(--on-surface);
+    caret-color: var(--primary);
+    font-family: var(--font-sans);
+    font-size: var(--body-medium-size);
+    line-height: var(--body-medium-line-height);
+    transition: border-color var(--duration-short) var(--ease-standard);
+}
+textarea { height: auto; min-height: 80px; }
+input.text:hover, textarea:hover { border-color: var(--outline); }
+input.text:focus, textarea:focus { border-color: var(--primary); }
+input.text.small, .field.small { height: var(--control-s); padding: var(--space-1) var(--space-2); }
+
+/* Drop-down. */
+select {
+    display: inline-block;
+    box-sizing: border-box;
+    height: var(--control-m);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--field-radius);
+    border-width: var(--border-control);
+    border-color: var(--outline-variant);
+    background-color: var(--surface-container-highest);
+    color: var(--on-surface);
+    cursor: pointer;
+}
+select selectvalue { padding-right: var(--space-6); }
+select selectarrow {
+    width: 24px;
+    height: 100%;
+    decorator: none;
+}
+select selectbox {
+    margin-top: var(--space-1);
+    padding: var(--space-1);
+    background-color: var(--surface-container-high);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--elevation-2);
+}
+select selectbox option {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-xs);
+}
+select selectbox option:hover { background-color: var(--state-hover-layer); }
+select selectbox option:checked { background-color: var(--secondary-container); color: var(--on-secondary-container); }

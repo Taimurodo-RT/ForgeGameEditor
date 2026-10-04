@@ -1,0 +1,94 @@
+/* Forge UI containers: Panel, Tabs, DialogueBox, Divider. */
+
+.panel {
+    background-color: var(--surface-container);
+    border-radius: var(--panel-radius);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+    color: var(--on-surface);
+}
+.panel.elevated { box-shadow: var(--elevation-2); }
+.panel.high { background-color: var(--surface-container-high); }
+.panel-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+    height: var(--control-m);
+    padding: 0px var(--space-2) 0px var(--space-4);
+    font-family: var(--title-small-family);
+    font-size: var(--title-small-size);
+    font-weight: var(--title-small-weight);
+    letter-spacing: var(--title-small-letter-spacing);
+    color: var(--on-surface);
+    border-bottom-width: var(--border-hairline);
+    border-bottom-color: var(--outline-variant);
+}
+.panel-header .title { flex: 1 1 0px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-body { padding: var(--space-4); }
+
+.divider {
+    height: 1px;
+    background-color: var(--outline-variant);
+    margin: var(--space-2) 0px;
+}
+.divider.vertical { width: 1px; height: auto; margin: 0px var(--space-2); align-self: stretch; }
+
+/* Tabs: <div class="tabs"><div class="tab selected">Сцена</div>...</div> */
+.tabs {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: var(--space-1);
+    border-bottom-width: var(--border-hairline);
+    border-bottom-color: var(--outline-variant);
+}
+.tab {
+    display: block;
+    box-sizing: border-box;
+    padding: 0px var(--space-4);
+    height: var(--control-m);
+    line-height: 38px;
+    white-space: nowrap;
+    font-family: var(--title-small-family);
+    font-size: var(--title-small-size);
+    font-weight: var(--title-small-weight);
+    color: var(--on-surface-variant);
+    border-bottom-width: var(--border-strong);
+    border-bottom-color: transparent;
+    cursor: pointer;
+    transition: color background-color border-bottom-color var(--duration-short) var(--ease-standard);
+}
+.tab icon { font-size: var(--icon-s); line-height: var(--icon-s); margin-right: var(--space-2); }
+.tab:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.tab.selected { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* DialogueBox: a character's line. */
+.dialogue-box {
+    background-color: var(--surface-container-high);
+    border-radius: var(--dialog-radius);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+    box-shadow: var(--elevation-3);
+    padding: var(--space-5) var(--space-6);
+}
+.dialogue-box .speaker {
+    font-family: var(--title-medium-family);
+    font-size: var(--title-medium-size);
+    font-weight: var(--title-medium-weight);
+    color: var(--tertiary);
+    margin-bottom: var(--space-2);
+}
+.dialogue-box .line {
+    font-family: var(--fantasy-body-family);
+    font-size: var(--body-large-size);
+    line-height: var(--body-large-line-height);
+}
+.dialogue-box .choices { margin-top: var(--space-4); }
+
+/* Scrim behind modal windows. */
+.scrim {
+    position: absolute;
+    left: 0px; top: 0px; right: 0px; bottom: 0px;
+    background-color: var(--scrim);
+}

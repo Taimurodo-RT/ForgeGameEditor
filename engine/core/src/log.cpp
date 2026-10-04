@@ -10,6 +10,8 @@ namespace forge {
 namespace {
 std::atomic<LogLevel> g_level{LogLevel::Info};
 std::mutex g_mutex;
+LogSink g_sink = nullptr;
+void* g_sink_user = nullptr;
 
 const char* level_name(LogLevel level) {
     switch (level) {
@@ -31,6 +33,12 @@ const char* file_name(const char* path) {
 
 void log_set_level(LogLevel level) { g_level.store(level, std::memory_order_relaxed); }
 
+void log_set_sink(LogSink sink, void* user) {
+    std::lock_guard lock(g_mutex);
+    g_sink = sink;
+    g_sink_user = user;
+}
+
 void log_write(LogLevel level, const char* file, int line, const char* fmt, ...) {
     if (level < g_level.load(std::memory_order_relaxed)) return;
 
@@ -43,6 +51,7 @@ void log_write(LogLevel level, const char* file, int line, const char* fmt, ...)
     FILE* out = level >= LogLevel::Warn ? stderr : stdout;
     std::lock_guard lock(g_mutex);
     std::fprintf(out, "[%s] %s (%s:%d)\n", level_name(level), message, file_name(file), line);
+    if (g_sink) g_sink(level, message, g_sink_user);
 }
 
 } // namespace forge

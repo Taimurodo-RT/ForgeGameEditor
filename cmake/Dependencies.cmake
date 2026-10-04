@@ -102,7 +102,42 @@ FetchContent_Declare(luau
   GIT_TAG 0.741
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross flecs box2d luau)
+# FreeType: font rasterizer for the UI. Only the core is built: fonts ship as
+# plain TTF files, so none of its optional codecs are needed.
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(freetype
+  GIT_REPOSITORY https://github.com/freetype/freetype.git
+  GIT_TAG VER-2-14-3
+  GIT_SHALLOW TRUE)
+
+# RmlUi: HTML/CSS-like documents for the editor and for game menus. Rendered
+# by engine/ui on SDL_GPU, so none of its backends or samples are built.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
+set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
+set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+# RmlUi looks for an installed FreeType; it gets the one fetched above instead.
+set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON)
+FetchContent_Declare(rmlui
+  GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
+  GIT_TAG 6.3
+  GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb glslang spirv_cross flecs box2d luau freetype)
+if(NOT TARGET Freetype::Freetype)
+  add_library(Freetype::Freetype ALIAS freetype)
+endif()
+FetchContent_MakeAvailable(rmlui)
+# Engine code builds with strict warnings; RmlUi's headers are not ours to fix.
+foreach(t rmlui_core rmlui_debugger)
+  get_target_property(dirs ${t} INTERFACE_INCLUDE_DIRECTORIES)
+  set_target_properties(${t} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dirs}")
+endforeach()
 
 # Luau also defines its type checker and tools; the engine needs none of them.
 foreach(t Luau.Analysis Luau.Config Luau.EqSat Luau.Require Luau.RequireNavigator Luau.CLI.lib Luau.Bytecode.Analysis)

@@ -1,0 +1,57 @@
+{
+  "note": "What tokens.json says in web terms but RmlUi needs differently, plus component tokens. tokens: a value for every theme ({name} refers to another token). themes: per-theme replacements.",
+  "tokens": {
+    "ease-standard": "cubic-out",
+    "ease-emphasized-in": "quartic-out",
+    "ease-emphasized-out": "quartic-in",
+    "ease-overshoot": "back-out",
+    "ease-linear": "linear-in-out",
+    "button-radius": "{radius-full}",
+    "field-radius": "{radius-sm}",
+    "menu-item-radius": "{radius-md}",
+    "panel-radius": "{radius-lg}",
+    "dialog-radius": "{radius-xl}",
+    "slot-radius": "{radius-sm}",
+    "chip-radius": "{radius-sm}",
+    "primary-hover": "mix(primary, on-primary, 0.08)",
+    "primary-pressed": "mix(primary, on-primary, 0.16)",
+    "secondary-container-hover": "mix(secondary-container, on-secondary-container, 0.08)",
+    "secondary-container-pressed": "mix(secondary-container, on-secondary-container, 0.16)",
+    "tertiary-hover": "mix(tertiary, on-tertiary, 0.08)",
+    "error-hover": "mix(error, on-error, 0.08)",
+    "surface-container-hover": "mix(surface-container, on-surface, 0.08)",
+    "surface-container-high-hover": "mix(surface-container-high, on-surface, 0.08)",
+    "surface-container-highest-hover": "mix(surface-container-highest, on-surface, 0.08)",
+    "state-hover-layer": "alpha(on-surface, 0.08)",
+    "state-focus-layer": "alpha(on-surface, 0.12)",
+    "state-pressed-layer": "alpha(on-surface, 0.16)",
+    "primary-hover-layer": "alpha(primary, 0.08)",
+    "primary-pressed-layer": "alpha(primary, 0.16)",
+    "selected-layer": "alpha(primary, 0.16)",
+    "disabled-container": "alpha(on-surface, 0.12)",
+    "disabled-content": "alpha(on-surface, 0.38)",
+    "scrollbar-thumb": "alpha(on-surface-variant, 0.38)",
+    "scrollbar-thumb-hover": "alpha(on-surface-variant, 0.62)",
+    "glow-primary-color": "alpha(primary, 0.4)"
+  },
+  "themes": {
+    "fantasy": {
+      "font-display": "Cormorant SC",
+      "button-radius": "{radius-xs}",
+      "field-radius": "{radius-xs}",
+      "menu-item-radius": "{radius-xs}",
+      "panel-radius": "{radius-none}",
+      "dialog-radius": "{radius-xs}",
+      "chip-radius": "{radius-xs}"
+    },
+    "parchment": {
+      "font-display": "Cormorant SC",
+      "button-radius": "{radius-xs}",
+      "field-radius": "{radius-xs}",
+      "menu-item-radius": "{radius-xs}",
+      "panel-radius": "{radius-none}",
+      "dialog-radius": "{radius-xs}",
+      "chip-radius": "{radius-xs}"
+    }
+  }
+}

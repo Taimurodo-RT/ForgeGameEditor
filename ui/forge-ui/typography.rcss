@@ -1,0 +1,185 @@
+/* Forge UI type styles: one class per style of tokens.json.
+   Sizes, weights and families come from the tokens, so editing tokens.json
+   restyles every text that uses a class. */
+
+/* Display */
+.display-large {
+    font-family: var(--display-large-family);
+    font-size: var(--display-large-size);
+    line-height: var(--display-large-line-height);
+    font-weight: var(--display-large-weight);
+    letter-spacing: var(--display-large-letter-spacing);
+}
+.display-medium {
+    font-family: var(--display-medium-family);
+    font-size: var(--display-medium-size);
+    line-height: var(--display-medium-line-height);
+    font-weight: var(--display-medium-weight);
+    letter-spacing: var(--display-medium-letter-spacing);
+}
+.display-small {
+    font-family: var(--display-small-family);
+    font-size: var(--display-small-size);
+    line-height: var(--display-small-line-height);
+    font-weight: var(--display-small-weight);
+    letter-spacing: var(--display-small-letter-spacing);
+}
+
+/* Headline */
+.headline-large {
+    font-family: var(--headline-large-family);
+    font-size: var(--headline-large-size);
+    line-height: var(--headline-large-line-height);
+    font-weight: var(--headline-large-weight);
+    letter-spacing: var(--headline-large-letter-spacing);
+}
+.headline-medium {
+    font-family: var(--headline-medium-family);
+    font-size: var(--headline-medium-size);
+    line-height: var(--headline-medium-line-height);
+    font-weight: var(--headline-medium-weight);
+    letter-spacing: var(--headline-medium-letter-spacing);
+}
+.headline-small {
+    font-family: var(--headline-small-family);
+    font-size: var(--headline-small-size);
+    line-height: var(--headline-small-line-height);
+    font-weight: var(--headline-small-weight);
+    letter-spacing: var(--headline-small-letter-spacing);
+}
+
+/* Title */
+.title-large {
+    font-family: var(--title-large-family);
+    font-size: var(--title-large-size);
+    line-height: var(--title-large-line-height);
+    font-weight: var(--title-large-weight);
+    letter-spacing: var(--title-large-letter-spacing);
+}
+.title-medium {
+    font-family: var(--title-medium-family);
+    font-size: var(--title-medium-size);
+    line-height: var(--title-medium-line-height);
+    font-weight: var(--title-medium-weight);
+    letter-spacing: var(--title-medium-letter-spacing);
+}
+.title-small {
+    font-family: var(--title-small-family);
+    font-size: var(--title-small-size);
+    line-height: var(--title-small-line-height);
+    font-weight: var(--title-small-weight);
+    letter-spacing: var(--title-small-letter-spacing);
+}
+
+/* Body */
+.body-large {
+    font-family: var(--body-large-family);
+    font-size: var(--body-large-size);
+    line-height: var(--body-large-line-height);
+    font-weight: var(--body-large-weight);
+    letter-spacing: var(--body-large-letter-spacing);
+}
+.body-medium {
+    font-family: var(--body-medium-family);
+    font-size: var(--body-medium-size);
+    line-height: var(--body-medium-line-height);
+    font-weight: var(--body-medium-weight);
+    letter-spacing: var(--body-medium-letter-spacing);
+}
+.body-small {
+    font-family: var(--body-small-family);
+    font-size: var(--body-small-size);
+    line-height: var(--body-small-line-height);
+    font-weight: var(--body-small-weight);
+    letter-spacing: var(--body-small-letter-spacing);
+}
+
+/* Label */
+.label-large {
+    font-family: var(--label-large-family);
+    font-size: var(--label-large-size);
+    line-height: var(--label-large-line-height);
+    font-weight: var(--label-large-weight);
+    letter-spacing: var(--label-large-letter-spacing);
+}
+.label-medium {
+    font-family: var(--label-medium-family);
+    font-size: var(--label-medium-size);
+    line-height: var(--label-medium-line-height);
+    font-weight: var(--label-medium-weight);
+    letter-spacing: var(--label-medium-letter-spacing);
+}
+.label-small {
+    font-family: var(--label-small-family);
+    font-size: var(--label-small-size);
+    line-height: var(--label-small-line-height);
+    font-weight: var(--label-small-weight);
+    letter-spacing: var(--label-small-letter-spacing);
+}
+
+/* Game */
+.hud-numeral {
+    font-family: var(--hud-numeral-family);
+    font-size: var(--hud-numeral-size);
+    line-height: var(--hud-numeral-line-height);
+    font-weight: var(--hud-numeral-weight);
+    letter-spacing: var(--hud-numeral-letter-spacing);
+}
+.stat-value {
+    font-family: var(--stat-value-family);
+    font-size: var(--stat-value-size);
+    line-height: var(--stat-value-line-height);
+    font-weight: var(--stat-value-weight);
+    letter-spacing: var(--stat-value-letter-spacing);
+}
+.keycap {
+    font-family: var(--keycap-family);
+    font-size: var(--keycap-size);
+    line-height: var(--keycap-line-height);
+    font-weight: var(--keycap-weight);
+    letter-spacing: var(--keycap-letter-spacing);
+}
+.damage-number {
+    font-family: var(--damage-number-family);
+    font-size: var(--damage-number-size);
+    line-height: var(--damage-number-line-height);
+    font-weight: var(--damage-number-weight);
+    letter-spacing: var(--damage-number-letter-spacing);
+}
+
+/* Fantasy */
+.fantasy-display {
+    font-family: var(--fantasy-display-family);
+    font-size: var(--fantasy-display-size);
+    line-height: var(--fantasy-display-line-height);
+    font-weight: var(--fantasy-display-weight);
+    letter-spacing: var(--fantasy-display-letter-spacing);
+}
+.fantasy-headline {
+    font-family: var(--fantasy-headline-family);
+    font-size: var(--fantasy-headline-size);
+    line-height: var(--fantasy-headline-line-height);
+    font-weight: var(--fantasy-headline-weight);
+    letter-spacing: var(--fantasy-headline-letter-spacing);
+}
+.fantasy-title {
+    font-family: var(--fantasy-title-family);
+    font-size: var(--fantasy-title-size);
+    line-height: var(--fantasy-title-line-height);
+    font-weight: var(--fantasy-title-weight);
+    letter-spacing: var(--fantasy-title-letter-spacing);
+}
+.fantasy-body {
+    font-family: var(--fantasy-body-family);
+    font-size: var(--fantasy-body-size);
+    line-height: var(--fantasy-body-line-height);
+    font-weight: var(--fantasy-body-weight);
+    letter-spacing: var(--fantasy-body-letter-spacing);
+}
+.fantasy-lore {
+    font-family: var(--fantasy-lore-family);
+    font-size: var(--fantasy-lore-size);
+    line-height: var(--fantasy-lore-line-height);
+    font-weight: var(--fantasy-lore-weight);
+    letter-spacing: var(--fantasy-lore-letter-spacing);
+}

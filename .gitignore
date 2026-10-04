@@ -3,3 +3,4 @@ out/
 .vs/
 .vscode/
 *.user
+scene.forge.json

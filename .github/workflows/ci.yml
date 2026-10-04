@@ -68,6 +68,16 @@ jobs:
           ./build/apps/sim_demo/forge_sim_demo --screenshot world-sim.png
           ./build/apps/factory_demo/forge_factory_demo --screenshot world-factory.png
           ./build/apps/script_demo/forge_script_demo --screenshot world-scripts.png
+          ./build/apps/ui_demo/forge_ui_demo --screenshot world-ui-gallery.png
+          ./build/apps/ui_demo/forge_ui_demo --theme fantasy --screenshot world-ui-fantasy.png
+      - name: UI list of 50 000 rows scrolling (software Vulkan, checks it works, not speed)
+        if: runner.os == 'Linux'
+        run: ./build/apps/ui_demo/forge_ui_demo --scroll --frames 300 --screenshot world-ui-scroll.png
+      - name: Editor self-test (drag, undo/redo, Play/Stop, delete, copy) and hierarchy of 50 500 objects
+        if: runner.os == 'Linux'
+        run: |
+          ./build/apps/editor/forge_editor --self-test --screenshot world-editor.png
+          ./build/apps/editor/forge_editor --bench --frames 300
       - name: Render sprites, particles and light offscreen (software Vulkan, checks it works, not speed)
         if: runner.os == 'Linux'
         run: ./build/apps/render_demo/forge_render_demo --bench 3 --sprites 200000 --particles 200000
