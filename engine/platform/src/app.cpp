@@ -64,6 +64,9 @@ int App::run(const AppConfig& config) {
 }
 
 bool App::create_window_and_gpu(const AppConfig& config) {
+    // The click that brings the window to the front also presses the button
+    // under the mouse, as in other programs.
+    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         FORGE_ERROR("SDL_Init failed: %s", SDL_GetError());
         return false;

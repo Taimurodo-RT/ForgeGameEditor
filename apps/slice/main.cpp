@@ -15,6 +15,8 @@
 #include "forge/core/log.h"
 #include "forge/game/runner.h"
 
+#include <RmlUi/Core/Element.h>
+
 #include <SDL3/SDL_main.h> // the window-only entry point on Windows
 
 #include <cmath>
@@ -72,6 +74,28 @@ private:
         FORGE_ERROR("self-test: %s (hero at %.1f, %.1f)", what.c_str(), g_.hero_x(), g_.hero_y());
     }
     f64 var(Shell& s, const char* name) { return s.vars().get(name).number(); }
+    // Clicks a button with the mouse, the way a player does: whatever lies
+    // over it (the HUD, another document) must let the click through.
+    bool click(Shell& s, const char* id) {
+        Rml::Element* e = s.find_element(id);
+        if (!e) return false;
+        const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+        SDL_Event ev{};
+        ev.type = SDL_EVENT_MOUSE_MOTION;
+        ev.motion.x = p.x;
+        ev.motion.y = p.y;
+        s.handle_event(ev);
+        for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+            ev = {};
+            ev.type = t;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            ev.button.x = p.x;
+            ev.button.y = p.y;
+            s.handle_event(ev);
+        }
+        return true;
+    }
     // Goes to the village, then next to a villager; true once there.
     bool near_npc(SliceGame& g, u8 who, u32 f) {
         const f64 v = g.generator().village_y();
@@ -112,10 +136,13 @@ private:
 
         steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
             if (f < 5) return false;
-            check(s.screen() == Screen::Main, "игра начинается с главного меню");
-            check(g.count_npcs() >= 2, "за меню видна деревня с жителями");
-            check(s.new_game(), "новая игра начинается");
-            return true;
+            if (f == 5) {
+                check(s.screen() == Screen::Main, "игра начинается с главного меню");
+                check(g.count_npcs() >= 2, "за меню видна деревня с жителями");
+                check(click(s, "menu-new"), "в меню есть «Новая игра»");
+            }
+            if (f == 25) check(false, "«Новая игра» не нажимается мышью");
+            return s.screen() == Screen::Playing || f >= 25;
         }});
         steps_.push_back({"старт", 180, [&s, &g, this](u32 f) {
             if (f == 0) {
