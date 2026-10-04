@@ -2009,10 +2009,30 @@ private:
         case 21:
             check(!shown("ctx-paste"), "Esc closes the menu");
             key(SDLK_ESCAPE, SDL_KMOD_NONE); // forget the copied file
+            as().set_filter("");
+            as().open_folder("персонажи/враги");
+            {
+                // A WebP picture (stb cannot read WebP; libwebp does).
+                const auto outside = std::filesystem::temp_directory_path() / "forge_editor_drop";
+                std::vector<u8> webp;
+                assets::CookedTexture t;
+                t.width = 6;
+                t.height = 4;
+                t.rgba8.assign(6 * 4 * 4, 120);
+                assets::encode_image(t, ".webp", webp);
+                write_file_atomic(outside / "слизень.webp", webp);
+                drop(outside / "слизень.webp");
+            }
+            break;
+        case 22: {
+            const i64 r = row_of("персонажи/враги/слизень.webp");
+            if (hold(idle && r >= 0 && as().row_has_thumb(static_cast<usize>(r)), "the WebP picture gets a thumbnail")) return true;
+            check(as().row_field(static_cast<usize>(r), "kind") == "Картинка WEBP", "a WebP file is a picture");
             as().open_folder("тайлы"); // for a screenshot: the grid with a menu
             click_row("тайлы/камень.png");
             break;
-        case 22: {
+        }
+        case 23: {
             if (hold(idle && as().row_has_thumb(0), "the stones are shown")) return true;
             std::vector<Rml::Element*> cells = list_cells();
             for (Rml::Element* c : cells)
