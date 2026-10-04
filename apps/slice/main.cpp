@@ -3,9 +3,10 @@
 //
 //   forge_slice                     play
 //   forge_slice --stress            play with 200 000 critters and a million particles
-//   forge_slice --play --level DIR --at X,Y
+//   forge_slice --play --level DIR --at X,Y [--fired FILE]
 //                                   a new game from a level folder, the hero at X,Y
-//                                   (the level editor's «Играть отсюда»)
+//                                   (the level editor's «Играть отсюда»; FILE gets the links
+//                                   that happen, for its «Логика» tab)
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|menu]
 //                                   offscreen: plays the game through and checks it
 //
@@ -269,6 +270,10 @@ private:
             check(var(s, "inv.key") == 1, "ключ подобран по пути");
             bool open = false;
             check(g.door_open(g.generator().gallery_x1() + 0.5, g.generator().gallery_y() + 0.5, open) && open, "ключ открыл дверь");
+            std::vector<u8> fired;
+            read_file(std::filesystem::temp_directory_path() / "forge_slice_test_fired.txt", fired);
+            const std::string said(fired.begin(), fired.end());
+            check(said.starts_with("run ") && said.find("\n1\n") != std::string::npos, "игра записала, что связь «Ключ открывает Дверь» сработала");
             check(g.tile(kBlocks, g.generator().gallery_x1(), static_cast<i32>(g.generator().gallery_y())) == world::TileAir,
                   "открытая дверь пропускает");
             return true;
@@ -535,9 +540,16 @@ int main(int argc, char** argv) {
     std::string scene = "village";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--stress") == 0) options.stress = true;
-        else if (std::strcmp(argv[i], "--test") == 0) options.silent = true;
+        else if (std::strcmp(argv[i], "--test") == 0) {
+            options.silent = true;
+            // The links that happen go where the test reads them.
+            options.fired_file = std::filesystem::temp_directory_path() / "forge_slice_test_fired.txt";
+            std::error_code ec;
+            std::filesystem::remove(options.fired_file, ec);
+        }
         else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) scene = argv[++i];
         else if (std::strcmp(argv[i], "--level") == 0 && i + 1 < argc) options.level_dir = utf8_path(argv[++i]);
+        else if (std::strcmp(argv[i], "--fired") == 0 && i + 1 < argc) options.fired_file = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--at") == 0 && i + 1 < argc) {
             options.at = std::sscanf(argv[++i], "%lf,%lf", &options.at_x, &options.at_y) == 2;
         }

@@ -44,6 +44,9 @@ struct Options {
     f64 at_x = 0, at_y = 0;
     // No sound device (the self-test): sounds still "play" and are counted.
     bool silent = false;
+    // Where to write the links that happen, one id a line (the editor's
+    // «Логика» lights them up); empty: nowhere.
+    std::filesystem::path fired_file;
 };
 
 // What the player does this frame: from the keyboard and mouse, or from a
@@ -147,6 +150,9 @@ private:
     // What links asked for during a tick, done after it (they may destroy,
     // move the hero, start a dialogue).
     void do_deeds();
+    // A link happened: into Options::fired_file (each link at most twice a
+    // second, so «always» links do not flood it).
+    void note_fired(u32 link);
     void hurt_hero(f64 n);
 
     Options options_;
@@ -202,6 +208,8 @@ private:
     forge::logic::Verbs verbs_;
     forge::logic::Logic links_;
     std::unique_ptr<forge::logic::Game> logic_;
+    std::FILE* fired_ = nullptr;
+    std::unordered_map<u32, u64> fired_last_; // link -> ms
     struct Deed {
         std::string action, thing;
         flecs::entity_t target = 0, other = 0;

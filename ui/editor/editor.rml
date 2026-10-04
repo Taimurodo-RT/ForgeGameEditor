@@ -593,7 +593,7 @@
         <div class="lg-bar row">
             <div class="lg-modes row">
                 <div id="lg-mode-links" class="lg-mode" data-class-selected="lg_mode == 'links'" title="Вещи и связи между ними" data-event-click="lg_mode('links')"><icon name="share"/><span>Связи</span></div>
-                <div id="lg-mode-ideas" class="lg-mode soon" title="Готовые идеи с парой полей: скоро" data-event-click="lg_mode('ideas')"><icon name="lightbulb"/><span>Идеи</span></div>
+                <div id="lg-mode-ideas" class="lg-mode" data-class-selected="lg_mode == 'ideas'" title="Готовые идеи с парой полей" data-event-click="lg_mode('ideas')"><icon name="lightbulb"/><span>Идеи</span></div>
                 <div id="lg-mode-steps" class="lg-mode" data-class-selected="lg_mode == 'steps'" title="Та же логика по шагам: когда, если, тогда, иначе" data-event-click="lg_mode('steps')"><icon name="format_list_numbered"/><span>Шаги</span></div>
                 <div id="lg-mode-scheme" class="lg-mode soon" title="Схема из узлов для опытных: скоро" data-event-click="lg_mode('scheme')"><icon name="hub"/><span>Схема</span></div>
                 <div id="lg-mode-code" class="lg-mode" data-class-selected="lg_mode == 'code'" title="Та же логика кодом на Luau" data-event-click="lg_mode('code')"><icon name="code"/><span>Код</span></div>
@@ -618,9 +618,9 @@
             <!-- The board -->
             <div id="lg-board" class="lg-board grow" data-if="lg_mode == 'links'" data-event-mousedown="lg_board_down">
                 <div data-for="l : lg_links">
-                    <div class="lg-line" data-class-selected="l.selected" data-class-broken="l.broken"
+                    <div class="lg-line" data-class-selected="l.selected" data-class-broken="l.broken" data-class-lit="l.lit"
                          data-style-left="l.lx + 'px'" data-style-top="l.ly + 'px'" data-style-width="l.len + 'px'" data-style-transform="'rotate(' + l.angle + 'deg)'"/>
-                    <icon class="lg-head" name="play_arrow" data-class-selected="l.selected" data-class-broken="l.broken"
+                    <icon class="lg-head" name="play_arrow" data-class-selected="l.selected" data-class-broken="l.broken" data-class-lit="l.lit"
                           data-style-left="(l.hx - 12) + 'px'" data-style-top="(l.hy - 12) + 'px'" data-style-transform="'rotate(' + l.angle + 'deg)'"/>
                 </div>
                 <div data-for="t : lg_things" class="lg-thing column" data-attr-id="'lg-thing-' + t.id" data-class-selected="t.selected" data-class-broken="t.broken"
@@ -628,7 +628,7 @@
                     <div class="lg-pic"><img data-attr-src="t.icon"/></div>
                     <span class="name">{{ t.name }}</span>
                 </div>
-                <div data-for="l : lg_links" class="lg-chip row" data-attr-id="'lg-link-' + l.id" data-class-selected="l.selected" data-class-broken="l.broken" data-attr-title="l.phrase"
+                <div data-for="l : lg_links" class="lg-chip row" data-attr-id="'lg-link-' + l.id" data-class-selected="l.selected" data-class-broken="l.broken" data-class-lit="l.lit" data-attr-title="l.phrase"
                      data-style-left="l.cx + 'px'" data-style-top="l.cy + 'px'" data-event-mousedown="lg_link(l.id)">
                     <icon class="s" data-attr-name="l.broken ? 'error' : l.icon"/><span>{{ l.verb }}</span><span class="lg-refined" data-if="l.refined > 0">+{{ l.refined }}</span>
                 </div>
@@ -647,10 +647,51 @@
                 </div>
             </div>
 
+            <!-- «Идеи»: each link as a ready idea with a few fields -->
+            <div id="lg-ideas" class="lg-ideas column grow" data-if="lg_mode == 'ideas'">
+                <div class="lg-ideas-bar row">
+                    <div id="lg-idea-new" class="button filled small" data-event-click="lg_gallery"><icon class="s" name="add"/><span>Новая идея</span></div>
+                    <span class="muted body-small">Идея — это связь, показанная попроще: выберите вещи и уточнения.</span>
+                </div>
+                <div class="lg-gallery" data-if="lg_gallery">
+                    <div data-for="d : lg_ideas" class="lg-idea column" data-attr-id="'lg-idea-' + d.id" data-class-off="!d.can" data-attr-title="d.can ? d.about : 'В игре нет подходящей вещи: её делают во вкладке «Объекты»'" data-event-click="lg_idea_add(d.id)">
+                        <div class="row gap-2"><icon data-attr-name="d.icon"/><span class="name grow">{{ d.name }}</span><span class="group">{{ d.group }}</span></div>
+                        <span class="about">{{ d.about }}</span>
+                    </div>
+                </div>
+                <div class="lg-empty muted" data-if="lg_idea_cards.size == 0 && !lg_gallery">Связей пока нет. Нажмите «Новая идея» и выберите, что должно быть в игре.</div>
+                <div class="lg-idea-cards">
+                    <div data-for="c : lg_idea_cards" class="lg-recipe column" data-attr-id="'lg-recipe-' + c.id" data-class-selected="c.selected" data-class-lit="c.lit" data-event-click="lg_card(c.id)">
+                        <div class="lg-recipe-head row">
+                            <icon data-attr-name="c.icon"/>
+                            <div class="column grow"><span class="name">{{ c.name }}</span><span class="phrase">{{ c.phrase }}</span></div>
+                        </div>
+                        <div class="lg-problem row" data-if="c.problem != ''"><icon class="s" name="error"/><span>{{ c.problem }}</span></div>
+                        <div data-for="f : c.fields" class="lg-field row">
+                            <span class="label">{{ f.label }}</span>
+                            <div class="lg-thing-chip row" data-attr-id="'lg-field-' + c.id + '-' + f.side" title="Выбрать другую вещь" data-event-click="lg_field(c.id, f.side)">
+                                <img data-attr-src="f.icon"/><span>{{ f.name }}</span><icon class="s" name="expand_more"/>
+                            </div>
+                        </div>
+                        <div data-for="r : c.refine" class="lg-refine row" data-attr-id="'lg-idea-refine-' + c.id + '-' + r.id" data-attr-title="r.hint" data-event-click="lg_idea_refine(c.id, r.id)">
+                            <icon data-attr-name="r.on ? 'check_box' : 'check_box_outline_blank'"/><span>{{ r.label }}</span>
+                        </div>
+                        <div class="command" data-attr-id="'lg-idea-steps-' + c.id" data-event-click="lg_idea_steps(c.id)"><icon name="unfold_more"/><span>Раскрыть в шаги</span></div>
+                    </div>
+                </div>
+                <div id="lg-chooser" class="lg-chooser column" data-if="lg_choosing" data-event-click="lg_stop">
+                    <div class="lg-picker-head row"><span class="grow">{{ lg_choose_title }}</span><div id="lg-choose-cancel" class="icon-button small" data-event-click="lg_choose_cancel"><icon name="close"/></div></div>
+                    <div data-for="ch : lg_choices" class="lg-choice row" data-attr-id="'lg-choice-' + ch.id" data-class-current="ch.current" data-event-click="lg_choose(ch.id)">
+                        <img data-attr-src="ch.icon"/><span class="grow">{{ ch.name }}</span><icon class="s" name="check" data-if="ch.current"/>
+                    </div>
+                    <div class="muted body-small" data-if="lg_choices.size == 0">Подходящих вещей нет.</div>
+                </div>
+            </div>
+
             <!-- «Шаги»: each link as steps -->
             <div id="lg-steps" class="lg-steps column grow" data-if="lg_mode == 'steps'">
                 <div class="lg-empty muted" data-if="lg_cards.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи».</div>
-                <div data-for="c : lg_cards" class="lg-card column" data-attr-id="'lg-card-' + c.id" data-class-selected="c.selected" data-event-click="lg_card(c.id)">
+                <div data-for="c : lg_cards" class="lg-card column" data-attr-id="'lg-card-' + c.id" data-class-selected="c.selected" data-class-lit="c.lit" data-event-click="lg_card(c.id)">
                     <div class="lg-card-head row"><span class="grow">{{ c.phrase }}</span></div>
                     <div class="lg-problem row" data-if="c.problem != ''"><icon class="s" name="error"/><span>{{ c.problem }}</span></div>
                     <div data-for="st : c.steps" data-attr-class="'lg-step row ' + st.part">
@@ -673,7 +714,7 @@
             <div id="lg-code" class="lg-code-pane column grow" data-if="lg_mode == 'code'">
                 <div class="lg-code-note row"><icon class="s" name="info"/><span>Этот код игра собирает из связей сама. Щелчок по строке показывает её связь. Править код можно будет позже.</span></div>
                 <div class="lg-code column">
-                    <div data-for="ln : lg_code" class="lg-line-row row" data-attr-id="'lg-code-' + ln.n" data-class-selected="ln.selected" data-class-comment="ln.comment" data-event-click="lg_code_line(ln.link)">
+                    <div data-for="ln : lg_code" class="lg-line-row row" data-attr-id="'lg-code-' + ln.n" data-class-selected="ln.selected" data-class-comment="ln.comment" data-class-lit="ln.lit" data-event-click="lg_code_line(ln.link)">
                         <span class="n">{{ ln.n }}</span><span class="t">{{ ln.text }}</span>
                     </div>
                 </div>
@@ -706,7 +747,7 @@
                 <div data-if="!lg_has_link && !lg_has_thing" class="column">
                     <div class="section-title">Вся логика словами</div>
                     <div class="muted body-small" data-if="lg_words.size == 0">Связей пока нет.</div>
-                    <div data-for="w : lg_words" class="lg-word column" data-attr-id="'lg-word-' + w.id" data-event-click="lg_link(w.id)">
+                    <div data-for="w : lg_words" class="lg-word column" data-attr-id="'lg-word-' + w.id" data-class-lit="w.lit" data-event-click="lg_link(w.id)">
                         <span class="phrase">{{ w.phrase }}.</span>
                         <span class="meaning">{{ w.meaning }}</span>
                         <span class="problem" data-if="w.problem != ''">{{ w.problem }}</span>
@@ -1017,6 +1058,7 @@
         <span class="muted" data-if="tab == 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
         <span class="muted" data-if="tab == 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · Alt+← / Alt+→ назад и вперёд · F2 имя · Ctrl+C / X / V · Del удалить · перетащите файлы в окно для импорта</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'links'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи, потом по другой: связать · Del удалить · Esc отмена · перетаскивание: двигать вещи и доску</span>
+        <span class="muted" data-if="tab == 'logic' && lg_mode == 'ideas'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи в идее: выбрать другую · «Раскрыть в шаги» показывает подробности · Esc отмена</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'steps'">Ctrl+Z / Ctrl+Y отмена и повтор · × убирает шаг · «Добавить шаг» уточняет связь · Del удаляет выбранную связь</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'code'">Код собран из связей · щелчок по строке: её связь · Ctrl+Z / Ctrl+Y отмена и повтор</span>
         <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>

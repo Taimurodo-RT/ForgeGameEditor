@@ -334,6 +334,7 @@ public:
         };
         logic_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
         logic_tab.set_settings(level_config.settings, !level_config.offscreen);
+        if (!level_config.offscreen) logic_tab.set_fired_file(LevelEditor::fired_file());
         logic_tab.init(ui_, game_dir, logic_file);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
@@ -2431,12 +2432,54 @@ private:
             while (line < lg().code_lines() && lg().code_link(line) != 2) ++line;
             check(line < lg().code_lines() && click("lg-code-" + std::to_string(line + 1)) && lg().selected_link() == 2,
                   "a click on a line selects its link");
-            check(click("lg-mode-ideas") && lg().mode() == "code", "«Идеи» is not there yet");
+            check(click("lg-mode-scheme") && lg().mode() == "code", "«Схема» is not there yet");
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
         }
         case 14:
             check(shown("lg-board") && lg().selected_link() == 2, "the board is back, the link still selected");
+            check(click("lg-mode-ideas") && lg().mode() == "ideas", "«Идеи» shows the same logic as ideas");
+            break;
+        case 15:
+            check(shown("lg-recipe-1") && lg().idea_of(1) && lg().idea_of(1)->name == "Дверь с ключом", "«Ключ открывает Дверь» is the idea «Дверь с ключом»");
+            check(shown("lg-field-1-a") && shown("lg-field-1-b"), "its things are its fields");
+            check(click("lg-idea-new") && lg().gallery_open(), "«Новая идея» opens the ideas");
+            break;
+        case 16:
+            check(shown("lg-idea-trap") && click("lg-idea-trap") && lg().links().links.size() == 3 && !lg().gallery_open(),
+                  "«Ловушка» becomes a link");
+            check(lg().links().links.back().verb == "hurt" && lg().links().links.back().b == "hero", "it hurts the hero");
+            break;
+        case 17: {
+            const u32 trap = lg().links().links.back().id;
+            check(shown("lg-recipe-" + std::to_string(trap)) && click("lg-field-" + std::to_string(trap) + "-a"), "a click on its thing");
+            break;
+        }
+        case 18: {
+            const u32 trap = lg().links().links.back().id;
+            const std::string before = lg().links().find(trap)->a;
+            usize other = 0;
+            while (other < lg().choices() && lg().choice(other) == before) ++other;
+            check(shown("lg-chooser") && other < lg().choices(), "offers the things that fit");
+            if (other < lg().choices()) {
+                const std::string id = lg().choice(other);
+                check(click("lg-choice-" + id) && lg().links().find(trap)->a == id, "and another one is chosen");
+            }
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().find(trap)->a == before, "Ctrl+Z gives the first one back");
+            // A game started from the editor says which links happen.
+            const std::filesystem::path fired = std::filesystem::temp_directory_path() / "forge_editor_test_fired.txt";
+            const std::string text = "run 7\n1\n";
+            write_file_atomic(fired, {reinterpret_cast<const u8*>(text.data()), text.size()});
+            lg().set_fired_file(fired);
+            break;
+        }
+        case 19:
+            check(lg().lit(1) && !lg().lit(2), "a link that happened in the game lights up");
+            lg().set_fired_file({});
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().links.size() == 2, "Ctrl+Z takes the idea back");
+            check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
         default:
             lg_step_ = -1;

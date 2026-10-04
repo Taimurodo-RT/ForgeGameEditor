@@ -314,3 +314,96 @@
 .lg-line-row .n { width: 44px; padding-right: 14px; text-align: right; color: var(--outline); }
 .lg-line-row .t { white-space: pre; }
 .lg-line-row.comment .t { color: var(--on-surface-variant); }
+
+/* «Идеи»: a card per link, its things as fields */
+.lg-ideas {
+    position: relative;
+    min-width: 0px;
+    overflow-y: auto;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border-radius: 6px;
+    background-color: var(--surface-container);
+}
+.lg-ideas-bar { align-items: center; gap: var(--space-3); }
+.lg-gallery { display: flex; flex-direction: row; flex-wrap: wrap; gap: var(--space-2); }
+.lg-idea {
+    width: 260px;
+    gap: 4px;
+    padding: var(--space-2) var(--space-3);
+    border-radius: 8px;
+    border: 1px var(--outline-variant);
+    background-color: var(--surface-container-high);
+    cursor: pointer;
+}
+.lg-idea:hover { border-color: var(--primary); }
+.lg-idea icon { color: var(--primary); }
+.lg-idea .name { font-weight: 600; font-size: 14px; }
+.lg-idea .group { font-size: 11px; color: var(--on-surface-variant); }
+.lg-idea .about { font-size: 12px; line-height: 1.35; color: var(--on-surface-variant); }
+.lg-idea.off { opacity: 0.45; }
+.lg-idea-cards { display: flex; flex-direction: row; flex-wrap: wrap; gap: var(--space-3); align-items: flex-start; }
+.lg-recipe {
+    width: 380px;
+    padding-bottom: var(--space-2);
+    border-radius: 12px;
+    border: 2px var(--outline-variant);
+    background-color: var(--surface-container-high);
+    cursor: pointer;
+}
+.lg-recipe.selected { border-color: var(--tertiary); }
+.lg-recipe-head {
+    gap: var(--space-3);
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    border-radius: 10px 10px 0px 0px;
+    background-color: var(--primary-container);
+    color: var(--on-primary-container);
+}
+.lg-recipe-head icon { color: var(--on-primary-container); font-size: 28px; width: 28px; height: 28px; }
+.lg-recipe-head .name { font-size: 16px; font-weight: 600; }
+.lg-recipe-head .phrase { font-size: 12px; }
+.lg-recipe .lg-problem { margin: var(--space-2) var(--space-3) 0px var(--space-3); }
+.lg-field { align-items: center; gap: var(--space-2); padding: 6px var(--space-3); }
+.lg-field .label { width: 150px; font-size: 14px; color: var(--on-surface-variant); }
+.lg-thing-chip {
+    align-items: center;
+    gap: var(--space-2);
+    height: 34px;
+    padding: 0px var(--space-2) 0px 4px;
+    border-radius: 6px;
+    border: 1px var(--outline-variant);
+    background-color: var(--surface-container-highest);
+    font-size: 14px;
+    font-weight: 600;
+}
+.lg-thing-chip:hover { border-color: var(--primary); }
+.lg-thing-chip img { width: 28px; height: 28px; }
+.lg-recipe .lg-refine { padding: 3px var(--space-3); }
+.lg-recipe .command { margin: var(--space-1) var(--space-2) 0px var(--space-2); }
+.lg-chooser {
+    position: absolute;
+    top: 64px;
+    right: 16px;
+    width: 300px;
+    max-height: 440px;
+    overflow-y: auto;
+    gap: 2px;
+    padding: var(--space-2);
+    border-radius: 8px;
+    border: 1px var(--outline-variant);
+    background-color: var(--surface-container-high);
+    cursor: default;
+}
+.lg-choice { align-items: center; gap: var(--space-2); height: 40px; padding: 0px var(--space-2); border-radius: 6px; cursor: pointer; font-size: 14px; }
+.lg-choice:hover { background-color: var(--state-hover-layer); }
+.lg-choice.current { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.lg-choice img { width: 30px; height: 30px; }
+
+/* What just happened in the running game */
+.lg-line.lit { background-color: var(--success); height: 6px; margin-top: -2px; }
+.lg-head.lit { color: var(--success); }
+.lg-chip.lit { background-color: var(--success); }
+.lg-card.lit, .lg-recipe.lit { border-color: var(--success); }
+.lg-word.lit { border-left: 4px var(--success); }
+.lg-line-row.lit { background-color: var(--primary-container); color: var(--on-primary-container); }

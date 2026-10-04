@@ -803,11 +803,13 @@ void LevelEditor::save() {
     FORGE_INFO("Уровень сохранён: участков с плитками %u, с объектами %u (%.0f мс)", r.tile_chunks, r.object_chunks, r.ms);
 }
 
+std::filesystem::path LevelEditor::fired_file() { return fs::temp_directory_path() / "forge_editor_play" / "logic_fired.txt"; }
+
 std::vector<std::string> LevelEditor::play_command(f64 x, f64 y) const {
     char at[64];
     std::snprintf(at, sizeof(at), "%.2f,%.2f", x, y);
     return {path_to_utf8(config_.game_exe), "--play", "--level", path_to_utf8(level_->folder()), "--at", at,
-            "--user", path_to_utf8(fs::temp_directory_path() / "forge_editor_play")};
+            "--user", path_to_utf8(fs::temp_directory_path() / "forge_editor_play"), "--fired", path_to_utf8(fired_file())};
 }
 
 bool LevelEditor::play_here() {
