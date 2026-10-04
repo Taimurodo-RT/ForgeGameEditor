@@ -37,6 +37,7 @@ struct UiConfig {
     std::string theme = "dark";
     u32 msaa = 2;              // edge smoothing, falls back to what the GPU supports
     bool hot_reload = true;    // watch the folder for changes
+    bool debugger = true;      // F8 opens RmlUi's inspector; a beacon shows UI warnings
     f32 dp_ratio = 1.0f;       // UI scale (1 = 100%)
 };
 

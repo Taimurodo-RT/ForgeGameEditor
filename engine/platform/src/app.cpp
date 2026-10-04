@@ -47,7 +47,7 @@ int App::run(const AppConfig& config) {
         update_stats(frame_ns);
         FORGE_FRAME_MARK();
 
-        if (!config.headless && stats_.frame % 30 == 0) {
+        if (!config.headless && config.stats_in_title && stats_.frame % 30 == 0) {
             char title[512];
             std::snprintf(title, sizeof(title), "%s  |  %.1f FPS  avg %.2f ms  worst %.2f ms%s%s", config.title,
                           stats_.avg_ms > 0 ? 1000.0 / stats_.avg_ms : 0.0, stats_.avg_ms, stats_.worst_ms,
@@ -70,7 +70,8 @@ bool App::create_window_and_gpu(const AppConfig& config) {
     }
     sdl_initialized_ = true;
     window_ = SDL_CreateWindow(config.title, config.width, config.height,
-                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                   (config.fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
     if (!window_) {
         FORGE_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());
         return false;

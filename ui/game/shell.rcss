@@ -1,0 +1,120 @@
+/* Screens around the gameplay (ui/game/shell.rml). The world is drawn under
+   the body, so the body has no background. */
+
+body {
+    width: 100%;
+    height: 100%;
+}
+
+.screen {
+    position: absolute;
+    left: 0px; top: 0px; right: 0px; bottom: 0px;
+}
+.center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Main menu: a column on the left over the backdrop. */
+.menu-screen {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    background-color: transparent;
+    decorator: horizontal-gradient(var(--scrim) transparent);
+}
+.menu-column {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    width: 380px;
+    margin-left: 96px;
+}
+.game-title {
+    font-family: var(--display-medium-family);
+    font-size: var(--display-medium-size);
+    line-height: var(--display-medium-line-height);
+    font-weight: var(--display-medium-weight);
+    color: var(--primary);
+    font-effect: shadow(0px 1px #000000cc);
+}
+.menu-screen .menu-list { background-color: var(--surface-container); border-radius: var(--radius-lg); box-shadow: var(--elevation-2); padding: var(--space-2); }
+.menu-screen .menu-item { height: 52px; font-size: var(--title-medium-size); }
+.continue-note { padding: 0px var(--space-4) var(--space-2) 48px; color: var(--on-surface-variant); }
+
+/* Windows over the dimmed world. */
+.window { width: 560px; max-height: 80%; display: flex; flex-direction: column; }
+.window.narrow { width: 360px; }
+.window .menu-list { padding: var(--space-2); }
+.window .panel-header .icon-button { margin-left: auto; }
+
+.slot-list { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); overflow-y: auto; }
+.slot-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-3);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+.slot-row:hover { background-color: var(--state-hover-layer); }
+.slot-row icon { color: var(--on-surface-variant); }
+.slot-row.new icon { color: var(--primary); }
+.slot-title { font-size: var(--title-small-size); font-weight: var(--title-small-weight); }
+.empty { padding: var(--space-6); text-align: center; }
+
+.setting { width: 240px; }
+.journal { overflow-y: auto; }
+.quest-title { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); font-weight: 600; color: var(--tertiary); margin-bottom: var(--space-1); }
+.quest.done .quest-title { color: var(--on-surface-variant); }
+
+.loading { color: var(--on-surface); font-effect: shadow(0px 1px #000000cc); }
+
+/* Quest tracker, top right. */
+.tracker {
+    position: absolute;
+    right: var(--space-6);
+    top: var(--space-6);
+    width: 320px;
+    padding: var(--space-3) var(--space-4);
+    background-color: var(--surface-container);
+    opacity: 0.92;
+    border-radius: var(--radius-md);
+    border-left-width: 3px;
+    border-left-color: var(--tertiary);
+}
+.tracker .overline { color: var(--tertiary); font-size: var(--label-small-size); text-transform: uppercase; letter-spacing: 1px; margin-bottom: var(--space-1); }
+
+/* Dialogue at the bottom. */
+.dialogue-layer {
+    position: absolute;
+    left: 0px; right: 0px; bottom: 120px;
+    display: flex;
+    justify-content: center;
+}
+.dialogue-layer .dialogue-box { width: 760px; }
+.choice {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.choice:hover { background-color: var(--state-hover-layer); color: var(--primary); }
+.ask { margin-top: var(--space-4); align-items: center; }
+.next { margin-top: var(--space-3); display: flex; flex-direction: row; align-items: center; gap: var(--space-2); justify-content: flex-end; cursor: pointer; }
+
+/* Messages, top centre. */
+.toasts {
+    position: absolute;
+    left: 0px; right: 0px; top: var(--space-6);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+}
+.fps { position: absolute; left: var(--space-3); top: var(--space-2); color: var(--on-surface); font-effect: shadow(0px 1px #000000cc); }

@@ -1,0 +1,193 @@
+#pragma once
+
+// The vertical slice: a small side-view game built the way a big one is.
+// A streamed 64k × 64k world with saves, a hero who walks, jumps, swims,
+// digs and builds, villagers with dialogues and two quests, critters,
+// crates, water and sand, torches in the dark. Menus, saving and dialogues
+// come from forge::game::Shell; this file is only the gameplay.
+
+#include "demo_art.h"
+#include "slice_world.h"
+
+#include "forge/game/shell.h"
+#include "forge/render/lighting.h"
+#include "forge/render/particles.h"
+#include "forge/render/sprite_renderer.h"
+#include "forge/render/tilemap_renderer.h"
+#include "forge/sim/simulation.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace slice {
+
+// Saved with their chunk.
+struct Hero {
+    f32 facing = 1;
+};
+// who: 0 the miner, 1 the smith.
+struct Npc {
+    u8 who = 0;
+    f32 home_x = 0;
+    f32 dir = 0;    // walking: -1, 1; standing: 0
+    f32 facing = 1;
+    f32 timer = 0;
+    u32 seed = 0;
+};
+enum class ItemKind : u8 { Pickaxe, Coins, Copper, Wood, Torch };
+struct Item {
+    u8 kind = 0;
+    u16 count = 1;
+};
+struct Critter {
+    f32 speed = 2;
+    f32 dir = 1;
+    u32 seed = 0;
+};
+
+// The hero's place and choices, next to the world in the save.
+struct HeroSave {
+    f64 x = 0, y = 0;
+    u32 slot = 0;
+    f32 zoom = 0;
+};
+
+struct Options {
+    bool stress = false;          // the "all numbers at once" run
+    u32 stress_critters = 200'000;
+    u32 stress_particles = 1'000'000;
+};
+
+// What the player does this frame: from the keyboard and mouse, or from a
+// test (scripted).
+struct Controls {
+    bool left = false, right = false, jump = false;
+    bool use = false;   // dig, break a crate
+    bool place = false; // put the selected block
+    f64 aim_x = 0, aim_y = 0; // the tile point under the cursor
+};
+
+// The hotbar: the tool, then blocks to place.
+inline constexpr u32 kSlots = 6;
+
+class SliceGame final : public forge::game::Game {
+public:
+    explicit SliceGame(const Options& options);
+    ~SliceGame() override;
+
+    bool init(forge::game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFormat format) override;
+    bool begin(const std::filesystem::path& session, bool new_game, std::string* error) override;
+    bool save(const std::filesystem::path& session, std::string& location, std::string* error) override;
+    void end() override;
+    bool running() const override { return running_; }
+    void update(f64 dt, bool playing, bool input) override;
+    void render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) override;
+    void handle_event(const SDL_Event& event) override;
+    void shutdown() override;
+
+    // --- for the self-test ---
+    // While scripted, the keyboard and mouse are ignored.
+    void script(const Controls& c) {
+        scripted_ = true;
+        script_ = c;
+    }
+    void stop_script() { scripted_ = false; }
+    bool hero_alive() const;
+    f64 hero_x() const;
+    f64 hero_y() const;
+    bool on_ground() const;
+    // Moves the hero (the place is loaded first).
+    void teleport(f64 x, f64 y);
+    // Talks to the villager within reach; false when nobody is near.
+    bool talk_nearest();
+    void select(u32 slot) { slot_ = slot < kSlots ? slot : 0; }
+    const SliceGenerator& generator() const { return *gen_; }
+    forge::world::TileId tile(u32 layer, i32 x, i32 y) const;
+    std::string location() const;
+    u32 entities() const;
+    u32 count_npcs() const;
+    // Where a villager stands (who: 0 the miner, 1 the smith); NaN when not loaded.
+    f64 npc_x(u8 who) const;
+    u32 count_items(ItemKind kind) const;
+    f64 inventory(const char* item) const;
+    u32 particles() const { return particles_.stats().slots_used; }
+    f64 sim_ms() const { return sim_ms_; }
+    const forge::sim::SimStats* sim_stats() const;
+
+private:
+    struct Level;
+    std::unique_ptr<Level> make_level(const std::filesystem::path& save_folder, std::string* error);
+    void populate(forge::world::ChunkCoord coord, forge::scene::Scene& scene);
+    void spawn_hero(f64 x, f64 y);
+    void find_hero();
+    void load_around(f64 x, f64 y);
+    void spawn_stress();
+    std::vector<forge::world::Rect> focus() const;
+
+    void read_input(bool input);
+    void hero_tick(const forge::sim::TickContext& ctx);
+    void act(f64 dt);
+    void dig(f64 dt, i32 tx, i32 ty);
+    void place(i32 tx, i32 ty);
+    bool break_crate(f64 x, f64 y);
+    void pickups();
+    void follow_camera(f64 dt);
+    void drift_camera(f64 dt);
+    void update_hud(bool playing);
+    void build_sprites();
+    void emit_effects(f64 dt);
+
+    f64 inv(const std::string& item) const;
+    void give(const std::string& item, f64 n, bool announce);
+    bool take(const std::string& item, f64 n);
+    i32 nearest_npc(f64 reach, flecs::entity* out) const;
+
+    Options options_;
+    forge::game::Shell* shell_ = nullptr;
+    SDL_GPUDevice* device_ = nullptr;
+    SDL_GPUTextureFormat format_{};
+    std::shared_ptr<SliceGenerator> gen_;
+
+    std::unique_ptr<Level> level_;
+    bool running_ = false;
+    std::filesystem::path session_;
+
+    std::vector<u8> atlas_;
+    forge::demo::SheetImage sheet_;
+    forge::render::TilemapRenderer tiles_;
+    const forge::world::World* tiles_world_ = nullptr;
+    forge::render::SpriteRenderer sprites_;
+    forge::render::SpriteBatch batch_;
+    forge::render::LightRenderer lights_;
+    forge::render::ParticleSystem particles_;
+    u32 sprite_capacity_ = 0;
+    forge::render::Camera2D camera_;
+    u32 width_ = 1600, height_ = 900;
+
+    Controls controls_, script_, last_;
+    bool scripted_ = false;
+    u32 slot_ = 0;
+    f64 hero_x_ = 0, hero_y_ = 0; // last known, for systems running in parallel
+    i32 dig_x_ = 0, dig_y_ = 0;
+    f64 dig_progress_ = 0, dig_dust_ = 0, place_wait_ = 0;
+    bool dig_warned_ = false;
+    flecs::entity_t talking_ = 0;
+    std::string location_;
+    f64 location_wait_ = 0;
+    f64 backdrop_t_ = 0;
+    std::vector<std::pair<f64, f64>> torches_;
+    f64 frame_dt_ = 0, frame_ms_avg_ = 0, sim_ms_ = 0, stress_log_ = 0;
+    std::vector<forge::world::Rect> stress_rects_;
+
+    struct Hud;
+    std::unique_ptr<Hud> hud_;
+};
+
+} // namespace slice
+
+FORGE_REFLECT_DECLARE(slice::Hero)
+FORGE_REFLECT_DECLARE(slice::Npc)
+FORGE_REFLECT_DECLARE(slice::Item)
+FORGE_REFLECT_DECLARE(slice::Critter)
+FORGE_REFLECT_DECLARE(slice::HeroSave)

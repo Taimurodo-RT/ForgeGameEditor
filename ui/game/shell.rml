@@ -1,0 +1,151 @@
+<rml>
+<head>
+    <title>Меню игры</title>
+    <link type="text/rcss" href="../forge-ui/base.rcss"/>
+    <link type="text/rcss" href="../forge-ui/typography.rcss"/>
+    <link type="text/rcss" href="../forge-ui/actions.rcss"/>
+    <link type="text/rcss" href="../forge-ui/containers.rcss"/>
+    <link type="text/rcss" href="../forge-ui/menus.rcss"/>
+    <link type="text/rcss" href="../forge-ui/hud.rcss"/>
+    <link type="text/rcss" href="shell.rcss"/>
+</head>
+<!-- Every screen around the gameplay: main menu, pause, save and load,
+     settings, journal, the dialogue box and messages. The game's data model is
+     "shell"; screen says which part is shown. -->
+<body data-model="shell">
+
+    <!-- Main menu over the game's backdrop -->
+    <div id="main-menu" class="screen menu-screen" data-if="screen == 'main'">
+        <div class="menu-column">
+            <div class="game-title">{{ title }}</div>
+            <div class="menu-list">
+                <div id="menu-continue" class="menu-item" data-if="has_continue" data-event-click="continue_game">
+                    <icon name="play_circle"/><span class="label">Продолжить</span></div>
+                <div class="continue-note body-small" data-if="has_continue"><span>{{ continue_text }}</span></div>
+                <div id="menu-new" class="menu-item" data-event-click="new_game"><icon name="add_circle"/><span class="label">Новая игра</span></div>
+                <div id="menu-load" class="menu-item" data-class-disabled="!has_slots" data-event-click="open_slots('load')">
+                    <icon name="folder_open"/><span class="label">Загрузить</span></div>
+                <div class="menu-item" data-event-click="open_settings"><icon name="settings"/><span class="label">Настройки</span></div>
+                <div class="menu-item" data-event-click="quit"><icon name="logout"/><span class="label">Выход</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pause -->
+    <div id="pause-menu" class="screen scrim center" data-if="screen == 'paused'">
+        <div class="panel high window narrow">
+            <div class="panel-header"><icon name="pause" class="s"/><span class="title">Пауза</span><span class="muted mono body-small">{{ playtime }}</span></div>
+            <div class="menu-list">
+                <div id="pause-resume" class="menu-item" data-event-click="resume"><icon name="play_arrow"/><span class="label">Продолжить</span><span class="trailing">Esc</span></div>
+                <div id="pause-save" class="menu-item" data-event-click="open_slots('save')"><icon name="save"/><span class="label">Сохранить</span><span class="trailing">F5</span></div>
+                <div class="menu-item" data-event-click="open_slots('load')"><icon name="folder_open"/><span class="label">Загрузить</span><span class="trailing">F9</span></div>
+                <div class="menu-item" data-event-click="open_journal"><icon name="menu_book"/><span class="label">Журнал</span><span class="trailing">J</span></div>
+                <div class="menu-item" data-event-click="open_settings"><icon name="settings"/><span class="label">Настройки</span></div>
+                <div class="menu-item" data-event-click="to_main_menu"><icon name="home"/><span class="label">В главное меню</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save / load slots -->
+    <div id="slots" class="screen scrim center" data-if="screen == 'slots'">
+        <div class="panel high window">
+            <div class="panel-header">
+                <icon name="save" class="s" data-if="slots_mode == 'save'"/><icon name="folder_open" class="s" data-if="slots_mode == 'load'"/>
+                <span class="title" data-if="slots_mode == 'save'">Сохранить игру</span>
+                <span class="title" data-if="slots_mode == 'load'">Загрузить игру</span>
+                <div class="icon-button small" data-event-click="back"><icon name="close"/></div>
+            </div>
+            <div class="slot-list">
+                <div id="slot-new" class="slot-row new" data-if="slots_mode == 'save'" data-event-click="save_new">
+                    <icon name="add"/><div class="grow"><div class="slot-title">Новое сохранение</div></div>
+                </div>
+                <div class="slot-row" data-for="s : slots" data-event-click="slot_click(s.id)">
+                    <icon name="autorenew" data-if="s.autosave"/><icon name="bookmark" data-if="!s.autosave"/>
+                    <div class="grow">
+                        <div class="slot-title">{{ s.title }}</div>
+                        <div class="muted body-small"><span>{{ s.location }}</span><span> · {{ s.playtime }} · {{ s.date }}</span></div>
+                    </div>
+                    <div class="icon-button small" data-event-click="slot_delete(s.id)"><icon name="delete"/></div>
+                </div>
+                <div class="empty muted" data-if="slots.size == 0 &amp;&amp; slots_mode == 'load'"><span>Сохранений пока нет</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="settings" class="screen scrim center" data-if="screen == 'settings'">
+        <div class="panel high window">
+            <div class="panel-header"><icon name="settings" class="s"/><span class="title">Настройки</span>
+                <div class="icon-button small" data-event-click="back"><icon name="close"/></div></div>
+            <div class="panel-body column gap-4">
+                <div class="row gap-3"><span class="label-large setting">Полный экран</span>
+                    <div id="set-fullscreen" class="switch" data-class-on="fullscreen" data-event-click="toggle('fullscreen')"><div class="thumb"/></div></div>
+                <div class="row gap-3"><span class="label-large setting">Вертикальная синхронизация</span>
+                    <div class="switch" data-class-on="vsync" data-event-click="toggle('vsync')"><div class="thumb"/></div></div>
+                <div class="row gap-3"><span class="label-large setting">Показывать FPS</span>
+                    <div class="switch" data-class-on="show_fps" data-event-click="toggle('show_fps')"><div class="thumb"/></div></div>
+                <div class="row gap-3"><span class="label-large setting">Размер интерфейса</span>
+                    <div class="cycler"><div class="icon-button small" data-event-click="scale(-1)"><icon name="chevron_left"/></div>
+                        <span class="value">{{ ui_scale }}%</span>
+                        <div class="icon-button small" data-event-click="scale(1)"><icon name="chevron_right"/></div></div></div>
+                <div class="row gap-3"><span class="label-large setting">Оформление</span>
+                    <div class="row gap-2">
+                        <div class="chip" data-for="t : themes" data-class-selected="t.key == theme" data-event-click="set_theme(t.key)"><span>{{ t.name }}</span></div>
+                    </div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quest journal -->
+    <div id="journal" class="screen scrim center" data-if="screen == 'journal'">
+        <div class="panel high window">
+            <div class="panel-header"><icon name="menu_book" class="s"/><span class="title">Журнал</span>
+                <div class="icon-button small" data-event-click="back"><icon name="close"/></div></div>
+            <div class="panel-body column gap-3 journal">
+                <div data-for="q : journal">
+                    <div class="quest" data-class-done="q.done">
+                        <div class="quest-title"><icon name="check_circle" class="s" data-if="q.done"/><icon name="flag" class="s" data-if="!q.done"/><span>{{ q.title }}</span></div>
+                        <div class="body-medium muted"><span>{{ q.text }}</span></div>
+                    </div>
+                </div>
+                <div class="muted" data-if="journal.size == 0"><span>Заданий пока нет. Поговорите с жителями.</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="screen scrim center" data-if="screen == 'loading'">
+        <div class="loading headline-small"><span>Загрузка…</span></div>
+    </div>
+
+    <!-- Quest tracker while playing -->
+    <div id="tracker" class="tracker" data-if="screen == 'playing' &amp;&amp; tracker_text != ''">
+        <div class="overline"><span>{{ tracker_title }}</span></div>
+        <div class="body-medium"><span>{{ tracker_text }}</span></div>
+    </div>
+
+    <!-- Dialogue -->
+    <div id="dialogue" class="dialogue-layer" data-if="in_dialogue &amp;&amp; screen == 'playing'">
+        <div class="dialogue-box">
+            <div class="speaker" data-attr-style="d_color == '' ? '' : 'color: ' + d_color"><span>{{ d_speaker }}</span></div>
+            <div class="line"><span>{{ d_text }}</span></div>
+            <div class="choices column gap-1" data-if="d_choices.size > 0">
+                <div class="choice" data-for="c, i : d_choices" data-event-click="choose(i)">
+                    <span class="key-hint">{{ i + 1 }}</span><span>{{ c }}</span></div>
+            </div>
+            <div class="ask row gap-2" data-if="d_asks">
+                <input id="dialogue-ask" type="text" class="grow" data-value="d_input" data-event-change="ask_change"/>
+                <div class="button tonal small" data-event-click="ask"><icon name="help"/>Спросить</div>
+            </div>
+            <div class="next body-small muted" data-if="d_choices.size == 0" data-event-click="advance">
+                <span class="key-hint">Пробел</span><span>дальше</span></div>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    <div class="toasts">
+        <div class="toast" data-for="t : toasts"><icon name="info"/><span>{{ t }}</span></div>
+    </div>
+    <div class="fps mono body-small" data-if="show_fps &amp;&amp; screen != 'main'"><span>{{ fps }}</span></div>
+</body>
+</rml>

@@ -1,0 +1,35 @@
+<rml>
+<head>
+    <title>HUD</title>
+    <link type="text/rcss" href="../forge-ui/base.rcss"/>
+    <link type="text/rcss" href="../forge-ui/typography.rcss"/>
+    <link type="text/rcss" href="../forge-ui/actions.rcss"/>
+    <link type="text/rcss" href="../forge-ui/inventory.rcss"/>
+    <link type="text/rcss" href="../forge-ui/hud.rcss"/>
+    <link type="text/rcss" href="hud.rcss"/>
+</head>
+<!-- The slice's HUD over the world while playing: the hotbar, money and
+     copper, where the hero is, and a hint when someone is near to talk to.
+     Data model "hud" (apps/slice/slice_game.cpp). -->
+<body data-model="hud">
+    <div class="hud" data-if="visible">
+        <div class="hint" data-if="has_hint"><span>{{ hint }}</span></div>
+        <div class="bottom">
+            <div class="place"><icon name="location_on"/><span>{{ location }}</span></div>
+            <div id="hotbar" class="hotbar">
+                <div class="item-slot" data-for="s : slots" data-class-selected="s.selected" data-class-empty="s.empty"
+                     data-event-click="select(it_index)">
+                    <icon data-attr-name="s.icon" data-attr-class="s.tone"/>
+                    <span class="count">{{ s.count }}</span>
+                    <span class="key">{{ s.key }}</span>
+                </div>
+            </div>
+            <div class="purse">
+                <div class="money"><icon name="paid"/><span id="hud-coins" class="hud-numeral">{{ coins }}</span></div>
+                <div class="money copper"><icon name="hexagon"/><span id="hud-copper" class="hud-numeral">{{ copper }}</span></div>
+            </div>
+        </div>
+        <div class="stress mono body-small" data-if="stress_on"><span>{{ stress }}</span></div>
+    </div>
+</body>
+</rml>
