@@ -9,6 +9,7 @@
     <link type="text/rcss" href="editor.rcss"/>
     <link type="text/rcss" href="level.rcss"/>
     <link type="text/rcss" href="assets.rcss"/>
+    <link type="text/rcss" href="objects.rcss"/>
 </head>
 <!-- The editor window. C++ fills the "editor" data model and draws the world
      under the #viewport element; everything you see here can be changed in
@@ -40,7 +41,7 @@
     <div id="editor-tabs" class="row">
         <div class="editor-tab" data-class-selected="tab == 'level'" data-event-click="open_tab('level', 'Уровень', '', '', 'landscape')"><icon name="landscape"/><span>Уровень</span></div>
         <div class="editor-tab" data-class-selected="tab == 'world'" data-event-click="open_tab('world', 'Сцена', '', '', 'public')"><icon name="public"/><span>Сцена</span></div>
-        <div class="editor-tab" data-class-selected="tab == 'objects'" data-event-click="open_tab('objects', 'Объекты', 'Библиотека объектов: персонажи, предметы, декор из ассетов', 'шаг 10: библиотека объектов', 'deployed_code')"><icon name="deployed_code"/><span>Объекты</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'objects'" data-event-click="open_tab('objects', 'Объекты', '', '', 'deployed_code')"><icon name="deployed_code"/><span>Объекты</span></div>
         <div class="editor-tab" data-class-selected="tab == 'animation'" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon name="movie"/><span>Анимация</span></div>
         <div class="editor-tab" data-class-selected="tab == 'images'" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'шаг 9: библиотека ассетов', 'image')"><icon name="image"/><span>Изображения</span></div>
         <div class="editor-tab" data-class-selected="tab == 'audio'" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'шаг 9: библиотека ассетов', 'volume_up')"><icon name="volume_up"/><span>Аудио</span></div>
@@ -51,7 +52,7 @@
         <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', '', '', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
     </div>
 
-    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets')">
+    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects')">
         <icon class="big" data-attr-name="tab_icon"/>
         <div class="headline-small">{{ tab_title }}</div>
         <div class="muted">{{ tab_description }}</div>
@@ -264,12 +265,13 @@
                                 <img data-attr-src="lv_sel_icon"/>
                                 <div class="column grow">
                                     <span>{{ lv_sel_name }}</span>
-                                    <span class="muted body-small">{{ lv_sel_hint }}</span>
+                                    <span class="muted body-small" data-if="lv_sel_kind != ''">{{ lv_sel_kind }}<span data-if="lv_sel_hint != ''"> · {{ lv_sel_hint }}</span></span>
+                                    <span class="muted body-small" data-if="lv_sel_kind == ''">{{ lv_sel_hint }}</span>
                                     <span class="muted body-small" data-if="lv_sel_count > 1">Выбрано: {{ lv_sel_count }}; показан первый.</span>
                                 </div>
                                 <div id="obj-delete" class="icon-button small" data-event-click="lv_delete"><icon name="delete" class="s"/></div>
                             </div>
-                            <div data-for="f : lv_fields" class="prop row gap-2">
+                            <div data-for="f : lv_fields"><div data-if="!f.advanced" class="prop row gap-2" data-class-own="f.own" data-attr-title="f.hint">
                                 <span class="prop-label">{{ f.label }}</span>
                                 <div class="prop-value row gap-2">
                                     <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'lv-field-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
@@ -282,8 +284,29 @@
                                         <div class="icon-button small" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
                                     </div>
                                     <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                                    <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
                                 </div>
+                            </div></div>
+                            <div id="lv-details" class="details-toggle row gap-1" data-event-click="lv_details">
+                                <icon name="chevron_right" data-class-open="lv_details"/>
+                                <span>Подробно</span>
                             </div>
+                            <div data-for="f : lv_fields"><div data-if="f.advanced && lv_details" class="prop row gap-2" data-class-own="f.own" data-attr-title="f.hint">
+                                <span class="prop-label">{{ f.label }}</span>
+                                <div class="prop-value row gap-2">
+                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'lv-field-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="lv_field_slide(it_index, ev.value)"/>
+                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'lv-num-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="lv_field_toggle(it_index)"><div class="thumb"/></div>
+                                    <div data-if="f.kind == 'enum'" class="cycler grow">
+                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                        <span class="value">{{ f.value }}</span>
+                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                    </div>
+                                    <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                                    <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
+                                </div>
+                            </div></div>
                         </div>
                     </div>
                     <div class="section-title">Вид</div>
@@ -314,6 +337,172 @@
 
             <div id="dock-drop" data-if="dock_drop"
                  data-style-left="dock_drop_x + 'px'" data-style-top="dock_drop_y + 'px'" data-style-width="dock_drop_w + 'px'" data-style-height="dock_drop_h + 'px'"/>
+        </div>
+    </div>
+
+    <!-- «Объекты»: the library of the game's objects (find, place, copy,
+         rename, open) and the object's editor (its properties). -->
+    <div id="objects" class="column" data-if="tab == 'objects'">
+        <div class="ol-bar row">
+            <div class="menu-anchor">
+                <div id="ol-new" class="command" title="Создать (Ctrl+N)" data-event-click="ol_menu"><icon name="add_circle"/><span>Создать</span><icon class="s" name="expand_more"/></div>
+                <div class="as-menu menu-list ol-create" data-if="ol_menu == 'new'">
+                    <div data-for="g : ol_create" class="ol-create-group">
+                        <div class="ol-create-kind row"><icon class="s" data-attr-name="g.icon"/><span>{{ g.name }}</span></div>
+                        <div data-for="p : g.presets" class="menu-item" data-attr-id="'ol-new-' + p.kind + '-' + p.index" data-attr-title="p.about" data-event-click="ol_create(p.kind, p.index)">
+                            <span class="label">{{ p.name }}</span>
+                            <span class="trailing" data-if="p.genre != ''">{{ p.genre }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="divider vertical"/>
+            <div id="ol-open" class="command strong" title="Открыть редактор объекта (Enter, двойной щелчок)" data-class-disabled="!ol_has_sel" data-event-click="ol_open"><icon name="edit_square"/><span>Открыть редактор</span></div>
+            <div id="ol-place" class="command strong" title="Поставить на уровень" data-class-disabled="!ol_has_sel" data-event-click="ol_place"><icon name="add_location_alt"/><span>Поставить на уровень</span></div>
+            <div id="ol-duplicate" class="command" title="Копия (Ctrl+D)" data-class-disabled="!ol_has_sel" data-event-click="ol_duplicate"><icon name="content_copy"/><span>Копия</span></div>
+            <div id="ol-rename" class="command" title="Переименовать (F2)" data-class-disabled="!ol_has_sel" data-event-click="ol_rename_start"><icon name="drive_file_rename_outline"/><span>Переименовать</span></div>
+            <div id="ol-delete" class="command" title="Удалить (Delete)" data-class-disabled="!ol_has_sel" data-event-click="ol_delete"><icon name="delete"/><span>Удалить</span></div>
+            <div class="grow"/>
+            <div class="search-box row">
+                <input id="ol-search" type="text" class="grow" placeholder="Поиск объектов" data-attr-value="ol_search" data-event-change="ol_search"/>
+                <icon class="s" name="search"/>
+            </div>
+        </div>
+        <div class="ol-body row grow">
+            <!-- Where to look: everything, a genre, a kind -->
+            <div class="ol-nav column">
+                <div id="ol-place-all" class="ol-nav-row row" data-class-selected="ol_all.selected" data-event-click="ol_show('')">
+                    <icon data-attr-name="ol_all.icon"/><span class="grow name">{{ ol_all.name }}</span><span class="count">{{ ol_all.count }}</span>
+                </div>
+                <div class="ol-nav-title">Жанры</div>
+                <div data-for="r : ol_genres" class="ol-nav-row row" data-attr-id="'ol-genre-' + it_index" data-class-selected="r.selected" data-attr-title="r.about" data-event-click="ol_show(r.place)">
+                    <icon data-attr-name="r.icon"/><span class="grow name">{{ r.name }}</span><span class="count">{{ r.count }}</span>
+                </div>
+                <div class="ol-nav-title">Виды</div>
+                <div data-for="r : ol_kinds" class="ol-nav-row row" data-attr-id="'ol-kind-' + r.place" data-class-selected="r.selected" data-attr-title="r.about" data-event-click="ol_show(r.place)">
+                    <icon data-attr-name="r.icon"/><span class="grow name">{{ r.name }}</span><span class="count">{{ r.count }}</span>
+                </div>
+                <div class="grow"/>
+                <div class="ol-help muted body-small">Жанры и виды только помогают искать: любой объект можно поставить в любую игру. Копии объекта на уровне меняются вместе с ним.</div>
+            </div>
+
+            <!-- The library: cards, and what the selected one is -->
+            <div id="ol-grid-wrap" class="ol-grid-wrap grow" data-if="!ol_editing" data-event-mousedown="ol_space_down">
+                <div id="ol-grid" class="ol-grid">
+                    <div data-for="c : ol_cards" class="ol-card column" data-attr-id="'ol-card-' + it_index" data-class-selected="c.selected" data-attr-title="c.about" data-event-mousedown="ol_card_down(it_index)" data-event-dblclick="ol_card_open(it_index)">
+                        <div class="ol-thumb"><img data-attr-src="c.icon"/></div>
+                        <span class="name" data-if="!c.renaming">{{ c.name }}</span>
+                        <input id="ol-rename" type="text" class="small ol-rename" data-if="c.renaming" data-attr-value="c.name" data-event-change="ol_rename_done(ev.linebreak)" data-event-blur="ol_rename_done(true)"/>
+                        <span class="kind">{{ c.kind }}</span>
+                    </div>
+                </div>
+                <div class="ol-empty column" data-if="ol_cards.size == 0">
+                    <icon class="xl" name="deployed_code"/>
+                    <span data-if="ol_total == 0">Пока ни одного объекта. Нажми «Создать» и выбери заготовку.</span>
+                    <span data-if="ol_total > 0">Здесь пока пусто.</span>
+                </div>
+            </div>
+            <div class="ol-side column" data-if="!ol_editing">
+                <div data-if="!ol_has_sel" class="muted body-small">Выбери объект.</div>
+                <div data-if="ol_has_sel" class="column">
+                    <div class="ol-preview"><img data-attr-src="ol_sel_icon"/></div>
+                    <div class="ol-title">{{ ol_sel_name }}</div>
+                    <div class="ol-kind-line row"><icon class="s" data-attr-name="ol_sel_kind_icon"/><span>{{ ol_sel_kind }}</span></div>
+                    <div class="muted body-small ol-kind-about">{{ ol_sel_kind_about }}</div>
+                    <div class="details">
+                        <div class="info row"><span class="key">Жанр</span><span class="value">{{ ol_sel_genre }}</span></div>
+                        <div class="info row" data-if="ol_sel_about != ''"><span class="key">Заметка</span><span class="value">{{ ol_sel_about }}</span></div>
+                        <div class="info row"><span class="key">Файл</span><span class="value path">{{ ol_sel_file }}</span></div>
+                    </div>
+                    <div class="links column">
+                        <div id="ol-open-link" class="link row" data-event-click="ol_open"><icon class="s" name="edit_square"/><span>Открыть редактор</span></div>
+                        <div id="ol-place-link" class="link row" data-event-click="ol_place"><icon class="s" name="add_location_alt"/><span>Поставить на уровень</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- The object's editor -->
+            <div id="ol-editor" class="ol-editor column grow" data-if="ol_editing">
+                <div class="ol-editor-head row">
+                    <div id="ol-back" class="command" title="К библиотеке (Esc)" data-event-click="ol_back"><icon name="arrow_back"/><span>К библиотеке</span></div>
+                    <div class="divider vertical"/>
+                    <icon data-attr-name="ol_sel_kind_icon"/>
+                    <span class="ol-editor-title">{{ ol_sel_name }}</span>
+                    <span class="muted">{{ ol_sel_kind }}</span>
+                    <div class="grow"/>
+                    <div class="command strong" data-event-click="ol_place"><icon name="add_location_alt"/><span>Поставить на уровень</span></div>
+                </div>
+                <div class="ol-editor-body row grow">
+                    <div class="ol-editor-look column">
+                        <div class="ol-preview big"><img data-attr-src="ol_sel_icon"/></div>
+                        <div class="muted body-small ol-kind-about">{{ ol_sel_kind_about }}</div>
+                    </div>
+                    <div class="ol-editor-props column grow">
+                        <div class="section-title">Свойства</div>
+                        <div class="props">
+                            <div data-for="f : ol_props"><div data-if="!f.advanced" class="prop row gap-2" data-attr-title="f.hint">
+                                <span class="prop-label">{{ f.label }}</span>
+                                <div class="prop-value row gap-2">
+                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'ol-field-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
+                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(it_index, ev.value)"/>
+                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
+                                    <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(it_index)"><div class="thumb"/></div>
+                                    <div data-if="f.kind == 'enum'" class="cycler grow">
+                                        <div class="icon-button small" data-attr-id="'ol-prev-' + it_index" data-event-click="ol_prop_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                        <span class="value">{{ f.value }}</span>
+                                        <div class="icon-button small" data-attr-id="'ol-next-' + it_index" data-event-click="ol_prop_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                    </div>
+                                </div>
+                            </div></div>
+                            <div class="prop row gap-2">
+                                <span class="prop-label">Заметка</span>
+                                <input id="ol-about" type="text" class="small grow" placeholder="для чего этот объект" data-attr-value="ol_sel_about" data-event-change="ol_about(ev.linebreak)" data-event-blur="ol_about(true)"/>
+                            </div>
+                            <div id="ol-details" class="details-toggle row gap-1" data-event-click="ol_details">
+                                <icon name="chevron_right" data-class-open="ol_details"/>
+                                <span>Подробно</span>
+                            </div>
+                            <div data-for="f : ol_props"><div data-if="f.advanced && ol_details" class="prop row gap-2" data-attr-title="f.hint">
+                                <span class="prop-label">{{ f.label }}</span>
+                                <div class="prop-value row gap-2">
+                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'ol-field-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
+                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(it_index, ev.value)"/>
+                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + it_index" data-attr-value="f.value" data-event-change="ol_prop_text(it_index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(it_index)"/>
+                                    <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(it_index)"><div class="thumb"/></div>
+                                    <div data-if="f.kind == 'enum'" class="cycler grow">
+                                        <div class="icon-button small" data-attr-id="'ol-prev-' + it_index" data-event-click="ol_prop_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                        <span class="value">{{ f.value }}</span>
+                                        <div class="icon-button small" data-attr-id="'ol-next-' + it_index" data-event-click="ol_prop_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                    </div>
+                                </div>
+                            </div></div>
+                            <div data-if="ol_details" class="prop row gap-2"><span class="prop-label">Файл</span><span class="muted body-small">{{ ol_sel_file }}</span></div>
+                        </div>
+                        <div class="muted body-small ol-editor-note">Правка меняет этот объект и все его копии на уровнях. Ctrl+Z отменит.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- The right-click menu: of a card, or of empty space -->
+        <div class="as-backdrop" data-if="ol_menu != ''" data-event-mousedown="ol_menu_close"/>
+        <div id="ol-ctx" class="as-menu menu-list ol-ctx" data-if="ol_menu == 'card' || ol_menu == 'empty'" data-style-left="ol_menu_x + 'px'" data-style-top="ol_menu_y + 'px'">
+            <div data-if="ol_menu == 'card'">
+                <div id="ctx-ol-open" class="menu-item strong" data-event-click="ol_open"><icon name="edit_square"/><span class="label">Открыть редактор</span><span class="trailing">Enter</span></div>
+                <div id="ctx-ol-place" class="menu-item" data-event-click="ol_place"><icon name="add_location_alt"/><span class="label">Поставить на уровень</span></div>
+                <div class="divider"/>
+                <div id="ctx-ol-copy" class="menu-item" data-event-click="ol_duplicate"><icon name="content_copy"/><span class="label">Копия</span><span class="trailing">Ctrl+D</span></div>
+                <div id="ctx-ol-rename" class="menu-item" data-event-click="ol_rename_start"><icon name="drive_file_rename_outline"/><span class="label">Переименовать</span><span class="trailing">F2</span></div>
+                <div id="ctx-ol-delete" class="menu-item" data-event-click="ol_delete"><icon name="delete"/><span class="label">Удалить</span><span class="trailing">Del</span></div>
+                <div class="divider"/>
+                <div class="ol-create-kind row"><icon class="s" name="sports_esports"/><span>Жанр</span></div>
+                <div data-for="g : ol_genre_items" class="menu-item genre" data-attr-id="'ctx-ol-genre-' + it_index" data-event-click="ol_genre(g.name)">
+                    <icon class="s" data-attr-name="g.checked ? 'check' : ''"/><span class="label">{{ g.label }}</span>
+                </div>
+            </div>
+            <div data-if="ol_menu == 'empty'">
+                <div id="ctx-ol-new" class="menu-item" data-event-click="ol_create_menu"><icon name="add_circle"/><span class="label">Создать объект…</span><span class="trailing">Ctrl+N</span></div>
+            </div>
         </div>
     </div>
 

@@ -1,0 +1,7 @@
+{
+  "id": "crate",
+  "name": "Ящик",
+  "kind": "crate",
+  "about": "падает, плавает, разбивается",
+  "values": {"density": 0.6}
+}

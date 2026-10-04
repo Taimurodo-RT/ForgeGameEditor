@@ -72,76 +72,79 @@ void register_components(scene::Scene& scene) {
     scene.register_component<Critter>();
 }
 
-void populate(const SliceGenerator& gen, ChunkCoord coord, scene::Scene& scene) {
+bool load_objects(objects::Library& library, const std::filesystem::path& game_dir, std::string* error) {
+    const bool ok = library.load(game_dir / "kinds.json", game_dir / "objects", error);
+    if (ok) FORGE_INFO("Объекты: видов %zu, шаблонов %zu", library.kinds().size(), library.templates().size());
+    return ok;
+}
+
+void attach_objects(objects::Library& library, scene::Scene& scene) {
+    library.attach(scene);
+    // Saves from before templates: which template each object is.
+    library.set_adopt([&library](flecs::entity e) -> const objects::Template* {
+        if (e.has<Hero>()) return nullptr;
+        if (const Npc* n = e.try_get<Npc>()) return library.find(n->who == 0 ? "miner" : "smith");
+        if (e.has<Critter>()) return library.find("critter");
+        if (const Item* i = e.try_get<Item>()) {
+            static const char* ids[] = {"pickaxe", "coins", "copper", "wood", "torches"};
+            return i->kind < 5 ? library.find(ids[i->kind]) : nullptr;
+        }
+        if (e.has<RigidBody>()) return library.find("crate");
+        return nullptr;
+    });
+}
+
+flecs::entity spawn_object(const objects::Library& library, scene::Scene& scene, std::string_view id, f64 x,
+                           f64 feet_y, u32 seed) {
+    const objects::Template* t = library.find(id);
+    if (!t) return {};
+    flecs::entity e = library.spawn(scene, *t, x, feet_y);
+    if (!e.is_valid()) return e;
+    if (Npc* n = e.try_get_mut<Npc>()) {
+        n->home_x = static_cast<f32>(x);
+        n->seed = seed;
+    }
+    if (Critter* c = e.try_get_mut<Critter>()) {
+        const u32 s = hash32(seed, 100);
+        c->dir = (s & 1) ? 1.0f : -1.0f;
+        c->seed = s;
+    }
+    return e;
+}
+
+void populate(const SliceGenerator& gen, const objects::Library& library, ChunkCoord coord, scene::Scene& scene) {
     const i32 x0 = coord.x * kChunkSize, y0 = coord.y * kChunkSize;
     auto here = [&](f64 x, f64 y) {
         const i32 tx = static_cast<i32>(std::floor(x)), ty = static_cast<i32>(std::floor(y));
         return tx >= x0 && tx < x0 + kChunkSize && ty >= y0 && ty < y0 + kChunkSize;
     };
+    // Each object stands with its feet at (x, y).
+    auto put = [&](std::string_view id, f64 x, f64 y, u32 seed) {
+        return here(x, y - 0.5) ? spawn_object(library, scene, id, x, y, seed) : flecs::entity();
+    };
     const f64 v = gen.village_y();
-    auto person = [&](u8 who, f64 x) {
-        if (!here(x, v - 1.0)) return;
-        flecs::entity e = scene.spawn(Position::at_tile(x, v - kHeroHalfH - 0.02));
-        if (!e.is_valid()) return;
-        Body b;
-        b.half_w = kHeroHalfW;
-        b.half_h = kHeroHalfH;
-        e.set<Body>(b);
-        Npc n;
-        n.who = who;
-        n.home_x = static_cast<f32>(x);
-        n.seed = who * 7919u + 13u;
-        n.timer = 1.0f;
-        n.facing = who == 0 ? -1.0f : 1.0f;
-        e.set<Npc>(n);
-    };
-    person(0, (gen.miner_house().x0 + gen.miner_house().x1) * 0.5 + 0.5);
-    person(1, (gen.smith_house().x0 + gen.smith_house().x1) * 0.5 + 0.5);
-
-    auto item = [&](ItemKind kind, u16 count, f64 x, f64 y) {
-        if (!here(x, y)) return;
-        flecs::entity e = scene.spawn(Position::at_tile(x, y));
-        if (!e.is_valid()) return;
-        Body b;
-        b.half_w = b.half_h = 0.3f;
-        e.set<Body>(b);
-        e.set<Item>({static_cast<u8>(kind), count});
-    };
-    item(ItemKind::Pickaxe, 1, gen.pickaxe_x(), gen.pickaxe_y() - 0.2);
-    item(ItemKind::Coins, 12, gen.pickaxe_x() + 3.0, gen.pickaxe_y() - 0.2);
-    item(ItemKind::Torch, 3, gen.gallery_x0() - 3.5, gen.gallery_y() - 0.4);
-
-    auto crate = [&](f64 x, f64 y) {
-        if (!here(x, y)) return;
-        flecs::entity e = scene.spawn(Position::at_tile(x, y));
-        if (!e.is_valid()) return;
-        RigidBody rb;
-        rb.half_w = rb.half_h = 0.48f;
-        rb.density = 0.6f;
-        e.set<RigidBody>(rb);
-    };
+    put("miner", (gen.miner_house().x0 + gen.miner_house().x1) * 0.5 + 0.5, v, 13u);
+    put("smith", (gen.smith_house().x0 + gen.smith_house().x1) * 0.5 + 0.5, v, 7919u + 13u);
+    put("pickaxe", gen.pickaxe_x(), gen.pickaxe_y() + 0.1, 1);
+    // A bigger pile than the template's by the pickaxe: this copy's own count.
+    if (flecs::entity coins = put("coins", gen.pickaxe_x() + 3.0, gen.pickaxe_y() + 0.1, 1); coins.is_valid())
+        if (const objects::KindDef* k = library.kind("pickup"))
+            if (const objects::PropDef* count = k->prop("count")) library.set_value(scene, coins, *count, "12");
+    put("torches", gen.gallery_x0() - 3.5, gen.gallery_y() - 0.1, 1);
     const f64 sx = gen.smith_house().x1 + 4.0;
-    crate(sx, v - 0.5);
-    crate(sx + 1.0, v - 0.5);
-    crate(sx + 0.5, v - 1.5);
-    crate(gen.gallery_x0() - 16.5, gen.gallery_y() + 0.5);
-    crate(gen.gallery_x0() - 17.5, gen.gallery_y() + 0.5);
+    put("crate", sx, v, 1);
+    put("crate", sx + 1.0, v, 1);
+    put("crate", sx + 0.5, v - 1.0, 1);
+    put("crate", gen.gallery_x0() - 16.5, gen.gallery_y() + 1.0, 1);
+    put("crate", gen.gallery_x0() - 17.5, gen.gallery_y() + 1.0, 1);
 
     // A few critters on the surface outside the village.
     const u32 seed = hash32(static_cast<u32>(coord.x) * 92821u, static_cast<u32>(coord.y));
     for (u32 k = 0; k < seed % 4; ++k) {
         const i32 x = x0 + static_cast<i32>(hash32(seed, k) % kChunkSize);
         if (std::abs(x) < 40) continue;
-        const f64 y = gen.surface(x) - 1.0;
-        if (!here(x + 0.5, y)) continue;
-        flecs::entity e = scene.spawn(Position::at_tile(x + 0.5, y));
-        if (!e.is_valid()) continue;
-        Body b;
-        b.half_w = 0.35f;
-        b.half_h = 0.4f;
-        e.set<Body>(b);
-        const u32 s = hash32(seed, k + 100);
-        e.set<Critter>({1.2f + static_cast<f32>(s % 200) / 100.0f, (s & 1) ? 1.0f : -1.0f, s});
+        const f64 y = gen.surface(x) - 0.6;
+        put("critter", x + 0.5, y, hash32(seed, k + 100));
     }
 }
 
@@ -257,17 +260,6 @@ SliceLevel::SliceLevel() : gen_(std::make_shared<SliceGenerator>(kSeed)) {
         {"window", "Окно", build, "фон", kWalls, TileWindow, ""},
         {"water", "Вода", liquid, "растекается в игре", kLiquids, sim::make_liquid(kWater, sim::kFull), "7"},
     };
-    object_defs_ = {
-        {"miner", "Шахтёр Борис", "Жители", "просит найти кирку"},
-        {"smith", "Кузнец", "Жители", "ждёт десять меди"},
-        {"critter", "Зверёк", "Животные", "бегает по поверхности"},
-        {"pickaxe", "Кирка", "Предметы", "та самая, Бориса"},
-        {"coins", "Монеты", "Предметы", "лежат и ждут героя"},
-        {"copper", "Медь", "Предметы", "руда для кузнеца"},
-        {"wood", "Дерево", "Предметы", ""},
-        {"torches", "Факелы", "Предметы", "можно поставить на стену"},
-        {"crate", "Ящик", "Разное", "падает, плавает, разбивается"},
-    };
     sheet_ = make_sheet();
     atlas_ = make_atlas();
     // Minimap colours: the average of each atlas cell.
@@ -288,20 +280,42 @@ SliceLevel::SliceLevel() : gen_(std::make_shared<SliceGenerator>(kSeed)) {
 
 // --- objects ---
 
-namespace {
-constexpr i32 kFirstItem = 3; // objects_[3..7] are items, in ItemKind order
-constexpr i32 kCrate = 8;
+bool SliceLevel::load_objects(const std::filesystem::path& game_dir, std::string* error) {
+    return slice::load_objects(library_, game_dir, error);
+}
+
+const std::vector<level::ObjectDef>& SliceLevel::objects() const {
+    if (defs_version_ != library_.version()) {
+        defs_version_ = library_.version();
+        object_defs_.clear();
+        for (const objects::Template& t : library_.templates()) {
+            const objects::KindDef* k = library_.kind_of(t);
+            if (!k) continue;
+            object_defs_.push_back({t.id, t.name, k->group, t.about, t.key});
+        }
+    }
+    return object_defs_;
 }
 
 void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<u8>& rgba) const {
     rgba.assign(static_cast<usize>(size) * size * 4, 0);
-    const auto it = std::find_if(object_defs_.begin(), object_defs_.end(), [&](const level::ObjectDef& d) { return d.id == def.id; });
-    const i32 kind = static_cast<i32>(it - object_defs_.begin());
+    const objects::Template* t = library_.find(def.key);
+    const objects::KindDef* k = t ? library_.kind_of(*t) : nullptr;
+    if (!k) return;
+    // The picture the game draws for such an object.
+    auto choice = [&](std::string_view prop) {
+        const objects::PropDef* p = k->prop(prop);
+        return p ? library_.value(*t, *p) : std::string();
+    };
     u32 frame = demo::kFrameCrate;
-    if (kind == 0) frame = FrameMiner;
-    else if (kind == 1) frame = FrameSmith;
-    else if (kind == 2) frame = 2; // a critter
-    else if (kind >= kFirstItem && kind < kCrate) frame = item_frame(static_cast<ItemKind>(kind - kFirstItem));
+    if (k->id == "person") frame = choice("who") == "\"smith\"" ? FrameSmith : FrameMiner;
+    else if (k->id == "critter") frame = 2;
+    else if (k->id == "pickup") {
+        static const char* ids[] = {"\"pickaxe\"", "\"coins\"", "\"copper\"", "\"wood\"", "\"torch\""};
+        const std::string what = choice("what");
+        for (u8 i = 0; i < 5; ++i)
+            if (what == ids[i]) frame = item_frame(static_cast<ItemKind>(i));
+    }
     if (frame >= sheet_.frames.size()) return;
     const render::SpriteRect r = sheet_.frames[frame];
     // Fit the frame, keeping its shape (people are twice as tall).
@@ -319,59 +333,18 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
 }
 
 flecs::entity SliceLevel::place_object(level::Level& level, usize index, f64 x, f64 y) {
-    scene::Scene& scene = level.scene();
-    const i32 kind = static_cast<i32>(index);
-    auto spawn = [&](f64 half_h) { return scene.spawn(Position::at_tile(x, y - half_h - 0.02)); };
-    flecs::entity e;
-    if (kind == 0 || kind == 1) {
-        e = spawn(kHeroHalfH);
-        if (!e.is_valid()) return e;
-        Body b;
-        b.half_w = kHeroHalfW;
-        b.half_h = kHeroHalfH;
-        e.set<Body>(b);
-        Npc n;
-        n.who = static_cast<u8>(kind);
-        n.home_x = static_cast<f32>(x);
-        n.seed = hash32(static_cast<u32>(level.new_id()), 7);
-        n.timer = 1.0f;
-        n.facing = 1.0f;
-        e.set<Npc>(n);
-    } else if (kind == 2) {
-        e = spawn(0.4);
-        if (!e.is_valid()) return e;
-        Body b;
-        b.half_w = 0.35f;
-        b.half_h = 0.4f;
-        e.set<Body>(b);
-        const u32 s = hash32(static_cast<u32>(level.new_id()), 100);
-        e.set<Critter>({1.2f + static_cast<f32>(s % 200) / 100.0f, (s & 1) ? 1.0f : -1.0f, s});
-    } else if (kind >= kFirstItem && kind < kCrate) {
-        e = spawn(0.3);
-        if (!e.is_valid()) return e;
-        Body b;
-        b.half_w = b.half_h = 0.3f;
-        e.set<Body>(b);
-        const ItemKind ik = static_cast<ItemKind>(kind - kFirstItem);
-        const u16 count = ik == ItemKind::Coins ? 10 : ik == ItemKind::Torch ? 3 : 1;
-        e.set<Item>({static_cast<u8>(ik), count});
-    } else if (kind == kCrate) {
-        e = spawn(0.48);
-        if (!e.is_valid()) return e;
-        RigidBody rb;
-        rb.half_w = rb.half_h = 0.48f;
-        rb.density = 0.6f;
-        e.set<RigidBody>(rb);
-    }
-    return e;
+    const auto& defs = objects();
+    if (index >= defs.size()) return {};
+    return spawn_object(library_, level.scene(), defs[index].id, x, y, hash32(static_cast<u32>(level.new_id()), 7));
 }
 
 i32 SliceLevel::object_kind(flecs::entity e) const {
     if (!e.is_alive() || e.has<Hero>()) return -1;
-    if (const Npc* n = e.try_get<Npc>()) return n->who == 0 ? 0 : 1;
-    if (e.has<Critter>()) return 2;
-    if (const Item* i = e.try_get<Item>()) return std::min<i32>(kFirstItem + i->kind, kCrate - 1);
-    if (e.has<RigidBody>()) return kCrate;
+    const objects::ObjectRef* ref = e.try_get<objects::ObjectRef>();
+    if (!ref) return -1;
+    const auto& defs = objects();
+    for (usize i = 0; i < defs.size(); ++i)
+        if (defs[i].key == ref->key) return static_cast<i32>(i);
     return -1;
 }
 
@@ -446,7 +419,8 @@ void SliceLevel::setup_scene(scene::Scene& scene) {
     // The game's bodies too: villagers and crates keep them in the saved level.
     sim::register_components(scene);
     register_components(scene);
-    scene.set_populator([gen = gen_](ChunkCoord c, scene::Scene& s) { populate(*gen, c, s); });
+    attach_objects(library_, scene);
+    scene.set_populator([this](ChunkCoord c, scene::Scene& s) { populate(*gen_, library_, c, s); });
 }
 
 void SliceLevel::tile_icon(const level::TileDef& tile, u32 size, std::vector<u8>& rgba) const {

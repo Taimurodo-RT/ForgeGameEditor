@@ -151,3 +151,17 @@
 .tile-card img { width: 48px; height: 48px; border-radius: 3px; }
 .props .prop { min-height: 36px; align-items: center; }
 .props .prop-label { width: auto; min-width: 96px; color: var(--on-surface-variant); font-size: 13px; }
+
+/* A property a copy sets its own way (not as in its template) */
+.props .prop.own .prop-label { color: var(--tertiary); }
+.props .prop .own-reset icon { color: var(--tertiary); }
+.details-toggle {
+    height: 30px;
+    align-items: center;
+    margin-top: var(--space-2);
+    font-size: 13px;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+}
+.details-toggle:hover { color: var(--on-surface); }
+.details-toggle icon.open { transform: rotate(90deg); }

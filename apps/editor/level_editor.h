@@ -107,6 +107,7 @@ public:
     void reset_layout();
     // Objects
     void arm_object(i32 index); // -1: none (clicks select)
+    void arm_template(u64 key); // the palette object of this template
     i32 armed_object() const { return object_; }
     const std::vector<u64>& selection() const { return selection_; }
     void select_objects(std::vector<u64> ids);
@@ -129,14 +130,19 @@ private:
     };
     struct FieldView {
         Rml::String kind; // text, slider, bool, enum, readonly
-        Rml::String label, value;
+        Rml::String label, value, hint;
         float min = 0, max = 0, step = 0;
+        bool own = false;      // a property this copy sets its own way (not the template's)
+        bool advanced = false; // under «Подробно»
     };
     struct FieldRef {
-        const reflect::TypeInfo* type = nullptr; // nullptr: the position ("x" or "y")
+        const reflect::TypeInfo* type = nullptr; // nullptr: the position ("x" or "y") or a property
         std::string path;
         std::vector<std::string> options;
+        const objects::PropDef* prop = nullptr; // a property of the template's copy
+        std::string template_value;             // the template's value of it, as shown
     };
+    void build_objects();
 
     template <typename T>
     void set(T& member, const T& value, const char* name) {
@@ -217,6 +223,8 @@ private:
 
     // Objects
     i32 object_ = -1;              // armed palette object
+    u64 armed_key_ = 0;            // its template's key
+    u64 objects_version_ = 0;      // of the module's objects() the palette shows
     std::vector<u64> selection_;   // LevelIds
     u64 selection_version_ = 1;
     bool moving_ = false;
@@ -239,7 +247,8 @@ private:
     std::vector<Rml::String> m_history_;
     std::vector<PaletteGroup> m_objects_;
     int m_object_ = -1, m_sel_count_ = 0;
-    Rml::String m_sel_name_, m_sel_hint_, m_sel_icon_;
+    Rml::String m_sel_name_, m_sel_hint_, m_sel_icon_, m_sel_kind_;
+    bool m_details_ = false; // «Подробно» open
     std::vector<FieldView> m_fields_;
     int m_history_cursor_ = 0;
     u64 history_version_ = 0;

@@ -130,8 +130,9 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     if (!save_folder.empty() && !L->world->open_save(save_folder, error)) return nullptr;
     L->scene = std::make_unique<scene::Scene>(*L->world);
     register_components(*L->scene);
+    attach_objects(library_, *L->scene);
     if (!save_folder.empty() && !L->scene->open_save(save_folder, error)) return nullptr;
-    L->scene->set_populator([gen = gen_](ChunkCoord c, scene::Scene& s) { populate(*gen, c, s); });
+    L->scene->set_populator([this](ChunkCoord c, scene::Scene& s) { populate(*gen_, library_, c, s); });
 
     SimDesc sd;
     sd.gravity_y = kGravity;
@@ -201,6 +202,7 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
 
 bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFormat format) {
     shell_ = &shell;
+    if (std::string error; !load_objects(library_, shell.game_dir(), &error)) FORGE_ERROR("%s", error.c_str());
     device_ = device;
     format_ = format;
     atlas_ = make_atlas();

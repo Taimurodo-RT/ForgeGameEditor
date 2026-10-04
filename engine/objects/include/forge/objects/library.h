@@ -1,0 +1,214 @@
+#pragma once
+
+// Objects as the author sees them: a coin to pick up, a villager, a crate.
+//
+// A kind ("Подбираемое", "Житель") says what an object is in plain words: the
+// components an object of that kind is made of, and the properties the author
+// sets ("Что это", "Сколько"), each bound to one field of a component. Kinds
+// are common to every genre; their presets are ready answers for one genre
+// ("Монетка" for a platformer). A game lists its kinds in one JSON file.
+//
+// A template is one object the author made from a kind: "Монеты" is a
+// Подбираемое with Что это = монеты, Сколько = 10. Each lives in its own
+// file in the game's objects folder (*.object.json), so it is easy to keep in
+// git, copy into another game or edit by hand.
+//
+// Objects on a level are copies of a template: they keep an ObjectRef with
+// the template's key. Changing the template changes every copy, the loaded
+// ones at once (refresh) and the others when their chunk loads, in the editor
+// and in the game alike. A copy may set a property its own way (twelve coins
+// in this one pile): that property is then the copy's override and the
+// template no longer changes it.
+//
+//   Library lib;
+//   lib.load(game / "kinds.json", game / "objects");
+//   lib.attach(scene);                              // copies follow their templates
+//   lib.spawn(scene, *lib.find("coins"), x, feet_y); // a new copy
+
+#include "forge/core/types.h"
+#include "forge/data/reflect.h"
+
+#include <flecs.h>
+
+#include <filesystem>
+#include <functional>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace forge::scene {
+class Scene;
+}
+
+namespace forge::objects {
+
+// One answer of a choice property: shown as name, written as id, stored in
+// the field as value.
+struct Choice {
+    std::string id;   // "coins"
+    std::string name; // "Монеты"
+    f64 value = 0;
+};
+
+// A property in plain words, bound to one field of a component.
+struct PropDef {
+    std::string id;        // "count"
+    std::string name;      // "Сколько"
+    std::string hint;      // "сколько монет в кучке"
+    std::string component; // "Item": a saved component, by its short or full name
+    std::string field;     // "count"
+    std::vector<Choice> choices; // not empty: pick one of these
+    bool has_range = false;
+    f64 min = 0, max = 0;
+    bool advanced = false; // shown under «Подробно»
+
+    const reflect::TypeInfo* type = nullptr;  // the component's, found when the kinds load
+    const reflect::FieldInfo* info = nullptr; // the field's
+};
+
+// A ready template of a kind for one use ("Монетка" for a platformer).
+struct Preset {
+    std::string name;   // "Монетка"
+    std::string genre;  // "Платформер"; empty: any game
+    std::string about;
+    std::vector<std::pair<std::string, std::string>> values; // prop id, JSON value
+};
+
+struct KindDef {
+    std::string id;    // "pickup"
+    std::string name;  // "Подбираемое"
+    std::string group; // "Предметы"
+    std::string icon;  // a Material Symbols name, "paid"
+    std::string about; // what objects of this kind do, in one or two sentences
+    f64 foot = 0.5;    // from the object's centre down to its feet, in tiles
+    // What an object is made of: component name and its starting values (a
+    // JSON object; fields not given keep their defaults).
+    struct Part {
+        std::string name;
+        std::string json; // starting values
+        const reflect::TypeInfo* type = nullptr;
+    };
+    std::vector<Part> components;
+    std::vector<PropDef> props;
+    std::vector<Preset> presets;
+
+    const PropDef* prop(std::string_view prop_id) const;
+};
+
+struct Template {
+    std::string id;   // "coins": stable, written in the file; the key comes from it
+    u64 key = 0;      // fnv1a(id): what copies keep
+    std::string name; // "Монеты"
+    std::string kind; // "pickup"
+    std::string genre; // "Платформер"; empty: for any game (only for finding it)
+    std::string about;
+    // Property values that differ from the kind's own (prop id, JSON value:
+    // 10, "coins", true). Missing ones take the kind's starting value.
+    std::vector<std::pair<std::string, std::string>> values;
+    std::filesystem::path file;
+    u32 rev = 0; // hash of the values: copies with another rev are behind
+
+    const std::string* value(std::string_view prop) const;
+};
+
+// Kept by every copy of a template, saved with it.
+struct ObjectRef {
+    u64 key = 0;           // the template's
+    u32 rev = 0;           // which values of the template the copy has
+    std::string overrides; // the copy's own properties: "count,facing"
+
+    bool overrides_prop(std::string_view prop) const;
+    void set_override(std::string_view prop, bool on);
+};
+
+class Library {
+public:
+    Library();
+    ~Library();
+    Library(const Library&) = delete;
+    Library& operator=(const Library&) = delete;
+
+    // Reads the kinds and every template in the folder (which may be
+    // missing: no templates yet). False when the kinds cannot be read.
+    bool load(const std::filesystem::path& kinds_file, const std::filesystem::path& folder,
+              std::string* error = nullptr);
+    // Reads the folder again (files changed outside the editor).
+    void reload_templates();
+    const std::filesystem::path& folder() const { return folder_; }
+
+    const std::vector<KindDef>& kinds() const { return kinds_; }
+    // Genres to sort templates by: the kinds file's list, then any other a
+    // template or preset names.
+    std::vector<std::string> genres() const;
+    const std::vector<Template>& templates() const { return templates_; }
+    const KindDef* kind(std::string_view id) const;
+    const KindDef* kind_of(const Template& t) const { return kind(t.kind); }
+    const Template* find(u64 key) const;
+    const Template* find(std::string_view id) const;
+    // Bumped by every change of a template (palettes and lists rebuild).
+    u64 version() const { return version_; }
+
+    // --- changing templates; each writes the template's file ---
+    // A new template of a kind, from a preset or the kind's own values,
+    // under a name not taken yet ("Монетка 2" when "Монетка" is).
+    std::optional<Template> make(const KindDef& kind, const Preset* preset, std::string_view name) const;
+    // Adds a template or replaces the one with its key. Undo of any template
+    // edit puts the whole old template back through this.
+    bool put(Template t, std::string* error = nullptr);
+    bool remove(u64 key);
+    // A property value of a template (JSON): its own, else the kind's.
+    std::string value(const Template& t, const PropDef& prop) const;
+    // A template with one value changed (not stored: give it to put()).
+    Template with_value(const Template& t, std::string_view prop, std::string json) const;
+    // A name nobody uses yet, starting from wanted.
+    std::string free_name(std::string_view wanted) const;
+
+    // --- copies in a scene ---
+    // Registers ObjectRef with the scene and keeps its copies up to date as
+    // their chunks load.
+    void attach(scene::Scene& scene);
+    // A new copy with its feet at (x, feet_y); empty when that chunk is not
+    // loaded.
+    flecs::entity spawn(scene::Scene& scene, const Template& t, f64 x, f64 feet_y) const;
+    // Writes the template's values into a copy (not its overrides).
+    void apply(scene::Scene& scene, flecs::entity e, const Template& t) const;
+    // Brings every loaded copy that is behind its template up to date.
+    u32 refresh(scene::Scene& scene) const;
+    // The template of a copy (null: not a copy, or its template is gone).
+    const Template* template_of(flecs::entity e) const;
+    // A property of a copy as it is now (JSON), and a new value for it (which
+    // becomes the copy's override unless it equals the template's).
+    std::string value(scene::Scene& scene, flecs::entity e, const PropDef& prop) const;
+    bool set_value(scene::Scene& scene, flecs::entity e, const PropDef& prop, const std::string& json) const;
+    // Objects made before templates: the game says which template one is,
+    // and it becomes a copy whose differing values are its overrides.
+    using AdoptFn = std::function<const Template*(flecs::entity)>;
+    void set_adopt(AdoptFn fn) { adopt_ = std::move(fn); }
+
+    // JSON value <-> what a person reads and types ("Монеты", "10", "да").
+    static std::string display(const PropDef& prop, const std::string& json);
+    static std::optional<std::string> parse(const PropDef& prop, std::string_view text);
+
+private:
+    void sort_templates();
+    bool write(const Template& t, std::string* error) const;
+    void on_unpacked(scene::Scene& scene, flecs::entity e) const;
+
+    std::vector<KindDef> kinds_;
+    std::vector<std::string> genres_; // from the kinds file
+    std::vector<Template> templates_;
+    std::filesystem::path folder_;
+    u64 version_ = 1;
+    AdoptFn adopt_;
+};
+
+// Parses and writes template files (exposed for tests and tools).
+std::optional<Template> read_template(const std::filesystem::path& file, std::string* error = nullptr);
+std::string template_json(const Template& t);
+u32 values_rev(const std::vector<std::pair<std::string, std::string>>& values);
+
+} // namespace forge::objects
+
+FORGE_REFLECT_DECLARE(forge::objects::ObjectRef)

@@ -159,18 +159,7 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
         g->tiles.push_back({static_cast<int>(i), t.name, "/memory/tile_" + t.id, t.key, static_cast<int>(t.layer)});
     }
     for (const std::string& name : module_.layer_names()) m_layers_.push_back(name);
-    const auto& objects = module_.objects();
-    for (usize i = 0; i < objects.size(); ++i) {
-        const level::ObjectDef& o = objects[i];
-        module_.object_icon(o, kIconPx, icon);
-        ui.set_image("obj_" + o.id, icon.data(), kIconPx, kIconPx);
-        auto g = std::find_if(m_objects_.begin(), m_objects_.end(), [&](const PaletteGroup& pg) { return pg.name == o.group; });
-        if (g == m_objects_.end()) {
-            m_objects_.push_back({o.group, {}});
-            g = m_objects_.end() - 1;
-        }
-        g->tiles.push_back({static_cast<int>(i), o.name, "/memory/obj_" + o.id, "", 0});
-    }
+    build_objects();
     if (!tiles.empty()) select_tile(0);
 
     // The panel layout: the user's, else the default.
@@ -185,6 +174,33 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
     map_rgba_.assign(static_cast<usize>(kMapPx) * kMapPx * 4, 0);
     FORGE_INFO("Уровень «%s» открыт: %s", module_.title().c_str(), path_to_utf8(config.folder).c_str());
     return true;
+}
+
+void LevelEditor::build_objects() {
+    objects_version_ = module_.objects_version();
+    // The armed object stays armed if its template is still there.
+    const auto& objects = module_.objects();
+    const u64 armed = armed_key_;
+    object_ = -1;
+    m_objects_.clear();
+    std::vector<u8> icon;
+    for (usize i = 0; i < objects.size(); ++i) {
+        const level::ObjectDef& o = objects[i];
+        module_.object_icon(o, kIconPx, icon);
+        // A changed template may look different: a new picture name.
+        const objects::Template* t = module_.library() ? module_.library()->find(o.key) : nullptr;
+        const std::string image = "obj_" + o.id + "_" + std::to_string(t ? t->rev : 0);
+        ui_->set_image(image, icon.data(), kIconPx, kIconPx);
+        auto g = std::find_if(m_objects_.begin(), m_objects_.end(), [&](const PaletteGroup& pg) { return pg.name == o.group; });
+        if (g == m_objects_.end()) {
+            m_objects_.push_back({o.group, {}});
+            g = m_objects_.end() - 1;
+        }
+        g->tiles.push_back({static_cast<int>(i), o.name, "/memory/" + image, "", 0});
+        if (armed && o.key == armed) object_ = static_cast<i32>(i);
+    }
+    if (object_ < 0) armed_key_ = 0;
+    if (model_) model_.DirtyVariable("lv_objects");
 }
 
 void LevelEditor::shutdown() {
@@ -224,6 +240,9 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("min", &FieldView::min);
         s.RegisterMember("max", &FieldView::max);
         s.RegisterMember("step", &FieldView::step);
+        s.RegisterMember("hint", &FieldView::hint);
+        s.RegisterMember("own", &FieldView::own);
+        s.RegisterMember("advanced", &FieldView::advanced);
     }
     model.RegisterArray<std::vector<FieldView>>();
     model.Bind("lv_objects", &m_objects_);
@@ -232,6 +251,8 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lv_sel_name", &m_sel_name_);
     model.Bind("lv_sel_hint", &m_sel_hint_);
     model.Bind("lv_sel_icon", &m_sel_icon_);
+    model.Bind("lv_sel_kind", &m_sel_kind_);
+    model.Bind("lv_details", &m_details_);
     model.Bind("lv_fields", &m_fields_);
     model.Bind("lv_palette", &m_palette_);
     model.Bind("lv_layers", &m_layers_);
@@ -293,6 +314,15 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     on("lv_field_toggle", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0, -1);
         if (i >= 0 && i < static_cast<int>(m_fields_.size())) set_field(i, m_fields_[i].value == "true" ? "false" : "true", false);
+    });
+    on("lv_field_reset", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        const int i = arg_int(a, 0, -1);
+        if (i >= 0 && i < static_cast<int>(field_refs_.size()) && field_refs_[i].prop)
+            set_field(i, field_refs_[i].template_value, false);
+    });
+    on("lv_details", [this](Rml::Event&, const Rml::VariantList&) {
+        m_details_ = !m_details_;
+        model_.DirtyVariable("lv_details");
     });
     on("lv_field_cycle", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0, -1);
@@ -472,6 +502,18 @@ void LevelEditor::arm_object(i32 index) {
     if (index >= static_cast<i32>(module_.objects().size())) return;
     set_mode(Mode::Objects);
     object_ = index;
+    armed_key_ = index >= 0 ? module_.objects()[static_cast<usize>(index)].key : 0;
+}
+
+void LevelEditor::arm_template(u64 key) {
+    if (module_.objects_version() != objects_version_) build_objects();
+    const auto& defs = module_.objects();
+    for (usize i = 0; i < defs.size(); ++i)
+        if (defs[i].key == key) {
+            arm_object(static_cast<i32>(i));
+            FORGE_INFO("«%s»: щёлкни по уровню, чтобы поставить", defs[i].name.c_str());
+            return;
+        }
 }
 
 void LevelEditor::select_objects(std::vector<u64> ids) {
@@ -585,15 +627,55 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
         const level::ObjectDef& def = module_.objects()[static_cast<usize>(kind)];
         m_sel_name_ = def.name;
         m_sel_hint_ = def.hint;
-        m_sel_icon_ = "/memory/obj_" + def.id;
+        const objects::Template* st = module_.library() ? module_.library()->find(def.key) : nullptr;
+        m_sel_icon_ = "/memory/obj_" + def.id + "_" + std::to_string(st ? st->rev : 0);
         const scene::Position& p = e.get<scene::Position>();
         char v[32];
         std::snprintf(v, sizeof(v), "%.2f", p.tile_x());
-        m_fields_.push_back({"text", "X", v, 0, 0, 0});
+        m_fields_.push_back({"text", "X", v, "", 0, 0, 0});
         field_refs_.push_back({nullptr, "x", {}});
         std::snprintf(v, sizeof(v), "%.2f", p.tile_y());
-        m_fields_.push_back({"text", "Y", v, 0, 0, 0});
+        m_fields_.push_back({"text", "Y", v, "", 0, 0, 0});
         field_refs_.push_back({nullptr, "y", {}});
+        // The template's properties in plain words; what the copy sets its
+        // own way is marked and can go back to the template's.
+        objects::Library* lib = module_.library();
+        const objects::Template* tmpl = lib ? lib->template_of(e) : nullptr;
+        const objects::KindDef* kd = tmpl ? lib->kind_of(*tmpl) : nullptr;
+        const objects::ObjectRef* ref = e.try_get<objects::ObjectRef>();
+        m_sel_kind_ = kd ? kd->name : "";
+        if (kd)
+            for (const objects::PropDef& prop : kd->props) {
+                using reflect::Kind;
+                const Kind k = prop.info->type->kind;
+                const bool boolean = k == Kind::Bool;
+                auto shown = [&](const std::string& json) { return boolean ? json : objects::Library::display(prop, json); };
+                FieldView f;
+                f.label = prop.name;
+                f.hint = prop.hint;
+                f.value = shown(lib->value(level_->scene(), e, prop));
+                FieldRef r;
+                r.prop = &prop;
+                r.template_value = shown(lib->value(*tmpl, prop));
+                if (!prop.choices.empty()) {
+                    f.kind = "enum";
+                    for (const objects::Choice& c : prop.choices) r.options.push_back(c.name);
+                } else if (boolean) {
+                    f.kind = "bool";
+                } else if (k >= Kind::I8 && k <= Kind::F64 && prop.has_range) {
+                    const bool integer = k <= Kind::U64;
+                    f.kind = "slider";
+                    f.min = static_cast<float>(prop.min);
+                    f.max = static_cast<float>(prop.max);
+                    f.step = integer ? 1.0f : static_cast<float>((prop.max - prop.min) / 200.0);
+                } else {
+                    f.kind = "text";
+                }
+                f.own = ref && ref->overrides_prop(prop.id);
+                f.advanced = prop.advanced;
+                m_fields_.push_back(std::move(f));
+                field_refs_.push_back(std::move(r));
+            }
         std::vector<editor::FieldRow> rows;
         for (const auto& c : level_->scene().saved_components()) {
             if (!module_.object_component_shown(c.type)) continue;
@@ -615,6 +697,7 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
                 f.min = static_cast<float>(r.min);
                 f.max = static_cast<float>(r.max);
                 f.step = integer ? 1.0f : static_cast<float>((r.max - r.min) / 200.0);
+                f.advanced = kd != nullptr; // the components themselves: «Подробно»
                 m_fields_.push_back(std::move(f));
                 field_refs_.push_back({c.type, r.path, std::move(r.options)});
             }
@@ -623,7 +706,9 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
         m_sel_name_.clear();
         m_sel_hint_.clear();
         m_sel_icon_.clear();
+        m_sel_kind_.clear();
     }
+    model_.DirtyVariable("lv_sel_kind");
     model_.DirtyVariable("lv_fields");
     model_.DirtyVariable("lv_sel_name");
     model_.DirtyVariable("lv_sel_hint");
@@ -640,6 +725,23 @@ void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
     const scene::Position& p = e.get<scene::Position>();
     const i32 kind = module_.object_kind(e);
     const std::string name = kind >= 0 ? module_.objects()[static_cast<usize>(kind)].name : std::string();
+    if (ref.prop) {
+        objects::Library* lib = module_.library();
+        const std::optional<std::string> json = lib ? objects::Library::parse(*ref.prop, text) : std::nullopt;
+        if (!json) {
+            fields_built_ = 0; // show the old value again
+            return;
+        }
+        if (*json == lib->value(level_->scene(), e, *ref.prop)) {
+            // The same value; only a reset ends the copy's own way.
+            const objects::ObjectRef* r = e.try_get<objects::ObjectRef>();
+            if (!r || !r->overrides_prop(ref.prop->id) || text != ref.template_value) return;
+        }
+        history_.execute(std::make_unique<level::SetObjectProp>(*level_, *lib, selection_[0], *ref.prop, *json,
+                                                                "«" + name + "»: " + ref.prop->name));
+        if (!dragging) history_.seal();
+        return;
+    }
     if (!ref.type) {
         char* end = nullptr;
         const f64 v = std::strtod(text.c_str(), &end);
@@ -762,6 +864,14 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
         const world::Rect focus = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
         level_->update({&focus, 1});
         update_minimap();
+    }
+    if (module_.objects_version() != objects_version_) {
+        // Templates changed in the library: the palette, and the copies here.
+        build_objects();
+        if (objects::Library* lib = module_.library()) {
+            if (const u32 n = lib->refresh(level_->scene())) FORGE_INFO("Шаблоны изменились: обновлено копий на уровне: %u", n);
+        }
+        fields_built_ = 0;
     }
     rebuild_fields(context);
     sync_model();

@@ -82,6 +82,32 @@ private:
     std::string before_, after_, field_, label_;
 };
 
+// Sets a property of a template's copy (objects::Library::set_value): the
+// value becomes the copy's own, unless it is the template's again. Edits of
+// the same property merge while the history is not sealed.
+class SetObjectProp final : public editor::Command {
+public:
+    SetObjectProp(Level& level, const objects::Library& library, u64 id, const objects::PropDef& prop, std::string value,
+                  std::string label);
+    void apply(editor::Document&) override;
+    void revert(editor::Document&) override { set(before_part_, before_ref_); }
+    std::string label() const override { return label_; }
+    std::string merge_key() const override { return "prop:" + std::to_string(id_) + ":" + prop_.id; }
+    bool try_merge(const editor::Command& next) override;
+
+private:
+    flecs::entity find();
+    void set(const std::string& part, const std::string& ref);
+    Level& level_;
+    const objects::Library& library_;
+    u64 id_;
+    f64 x_ = 0, y_ = 0;
+    const objects::PropDef& prop_;
+    std::string value_, label_;
+    bool done_ = false;
+    std::string before_part_, before_ref_, after_part_, after_ref_;
+};
+
 // A component of an entity as JSON ("" when it has none), and back.
 std::string component_json(Level& level, flecs::entity e, const reflect::TypeInfo* type);
 bool set_component_json(Level& level, flecs::entity e, const reflect::TypeInfo* type, const std::string& json);

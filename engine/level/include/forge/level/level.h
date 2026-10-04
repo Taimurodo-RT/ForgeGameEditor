@@ -14,6 +14,7 @@
 
 #include "forge/core/math.h"
 #include "forge/core/types.h"
+#include "forge/objects/library.h"
 #include "forge/render/camera.h"
 #include "forge/scene/scene.h"
 #include "forge/world/world.h"
@@ -45,6 +46,7 @@ struct ObjectDef {
     std::string name;  // "Шахтёр Борис"
     std::string group; // "Жители"
     std::string hint;  // "даёт задание про кирку"
+    u64 key = 0;       // its template's (objects::Template), 0: none
 };
 
 // The level's own id of an object, kept in the saves: entities are made
@@ -106,6 +108,12 @@ public:
     virtual void level_closing(Level& level) { (void)level; }
 
     // --- objects ---
+    // The game's object library (kinds and templates), if it has one; the
+    // palette then offers its templates.
+    virtual objects::Library* library() { return nullptr; }
+    // Changes whenever objects() may have changed (a template was added,
+    // renamed or deleted): palettes rebuild.
+    virtual u64 objects_version() const { return 0; }
     virtual const std::vector<ObjectDef>& objects() const {
         static const std::vector<ObjectDef> none;
         return none;

@@ -1,0 +1,170 @@
+/* The «Объекты» tab (the #objects part of editor.rml): kinds on the left,
+   the templates as cards in the middle, the selected one on the right. */
+
+#objects {
+    flex: 1 1 0px;
+    min-height: 0px;
+    position: relative;
+    padding: 0px var(--space-2) var(--space-2) var(--space-2);
+}
+#objects .command.strong { color: var(--primary); }
+#objects .command.strong icon { color: var(--primary); }
+#objects .command.disabled { opacity: 0.4; cursor: default; }
+
+.ol-bar {
+    height: 52px;
+    gap: var(--space-1);
+    align-items: center;
+}
+.ol-create { width: 320px; max-height: 560px; overflow-y: auto; padding: var(--space-1) 0px; }
+.ol-create-kind {
+    height: 30px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0px var(--space-3);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--on-surface-variant);
+}
+.ol-create .menu-item { padding-left: 36px; }
+.ol-create .trailing { font-size: 12px; color: var(--on-surface-variant); }
+
+.ol-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
+
+/* Where to look */
+.ol-nav {
+    width: 230px;
+    padding: var(--space-1);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.ol-nav-title {
+    margin: var(--space-3) var(--space-2) var(--space-1) var(--space-2);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--on-surface-variant);
+}
+.ol-nav-row {
+    height: 32px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0px var(--space-2);
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+}
+.ol-nav-row icon { color: var(--on-surface-variant); }
+.ol-nav-row:hover { background-color: var(--state-hover-layer); }
+.ol-nav-row.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.ol-nav-row.selected icon { color: var(--on-secondary-container); }
+.ol-nav-row .count { font-family: var(--font-mono); font-size: 12px; color: var(--on-surface-variant); }
+.ol-help { padding: var(--space-2); line-height: 1.4; }
+
+/* Templates */
+.ol-grid-wrap {
+    flex: 1 1 0px;
+    min-width: 0px;
+    position: relative;
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container);
+}
+.ol-grid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2);
+}
+.ol-card {
+    box-sizing: border-box;
+    width: 132px;
+    height: 160px;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.ol-card:hover { background-color: var(--state-hover-layer); }
+.ol-card.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.ol-thumb {
+    width: 96px;
+    height: 96px;
+    margin-bottom: 4px;
+    border-radius: 8px;
+    background-color: var(--surface-container-highest);
+}
+.ol-thumb img { width: 96px; height: 96px; }
+.ol-card .name {
+    width: 100%;
+    text-align: center;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ol-card .kind { font-size: 11px; color: var(--on-surface-variant); }
+.ol-card.selected .kind { color: var(--on-secondary-container); }
+.ol-empty {
+    position: absolute;
+    top: 140px;
+    left: 0px;
+    right: 0px;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--on-surface-variant);
+}
+
+/* The selected template */
+.ol-side {
+    width: 340px;
+    padding: var(--space-3);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.ol-preview {
+    height: 200px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: var(--space-3);
+    border-radius: 6px;
+    background-color: var(--surface-container-highest);
+}
+.ol-preview img { width: 160px; height: 160px; }
+.ol-title { font-size: 18px; font-weight: 600; margin-bottom: var(--space-1); }
+.ol-rename { width: 120px; height: 26px; }
+.ol-side .details { margin-top: var(--space-2); }
+.ol-kind-line { align-items: center; gap: var(--space-1); font-size: 13px; color: var(--primary); }
+.ol-kind-line icon { color: var(--primary); }
+.ol-kind-about { margin: var(--space-1) 0px var(--space-2) 0px; line-height: 1.4; }
+.ol-side .links { margin-top: var(--space-3); gap: 2px; }
+
+/* The object's editor */
+.ol-editor { flex: 1 1 0px; min-width: 0px; border-radius: 6px; background-color: var(--surface-container); }
+.ol-editor-head {
+    height: 48px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0px var(--space-2);
+    border-bottom-width: var(--border-hairline);
+    border-bottom-color: var(--outline-variant);
+}
+.ol-editor-title { font-size: 18px; font-weight: 600; }
+.ol-editor-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-4); padding: var(--space-4); align-items: flex-start; }
+.ol-editor-look { width: 300px; }
+.ol-preview.big { height: 300px; }
+.ol-preview.big img { width: 256px; height: 256px; }
+.ol-editor-props { max-width: 560px; overflow-y: auto; }
+.ol-editor-props .prop { min-height: 40px; align-items: center; }
+.ol-editor-props .prop-label { width: auto; min-width: 140px; color: var(--on-surface-variant); font-size: 14px; }
+.ol-editor-note { margin-top: var(--space-3); }
+
+/* The right-click menu */
+.as-menu.ol-ctx { width: 290px; top: 0px; z-index: 60; }
+.ol-ctx .menu-item .label { white-space: nowrap; }
+.ol-ctx .menu-item.strong { font-weight: 600; }
+.ol-ctx .menu-item.genre { height: 30px; }

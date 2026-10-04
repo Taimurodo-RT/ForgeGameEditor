@@ -1,0 +1,7 @@
+{
+  "id": "coins",
+  "name": "Монеты",
+  "kind": "pickup",
+  "about": "лежат и ждут героя",
+  "values": {"what": "coins", "count": 10}
+}

@@ -130,6 +130,8 @@ private:
     SDL_GPUDevice* device_ = nullptr;
     SDL_GPUTextureFormat format_{};
     std::shared_ptr<SliceGenerator> gen_;
+    // Object kinds and templates: before the levels, whose scenes use it.
+    forge::objects::Library library_;
 
     std::unique_ptr<Level> level_;
     bool running_ = false;
