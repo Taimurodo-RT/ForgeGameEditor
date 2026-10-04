@@ -1,0 +1,153 @@
+/* The level editor tab (the #level part of editor.rml). Panels stand apart
+   on the window's background with slightly rounded corners; the world is
+   drawn under #level-view. */
+
+#level {
+    flex: 1 1 0px;
+    min-height: 0px;
+    padding: var(--space-2);
+    gap: var(--space-2);
+}
+
+#level-bar {
+    height: 44px;
+    padding: 0px var(--space-2);
+    gap: var(--space-1);
+    border-radius: 6px;
+    background-color: var(--surface-container);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+}
+#level-bar .label { font-size: 12px; margin: 0px var(--space-1); }
+#level-bar .size, .props .size { min-width: 20px; text-align: center; font-family: var(--font-mono); }
+#level-bar .mode-hint { font-size: 12px; margin-left: var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#level-bar .button { white-space: nowrap; }
+#level-bar .button .dirty-dot { margin-left: var(--space-1); }
+.tool-name { min-width: 96px; font-size: 13px; margin: 0px var(--space-2); white-space: nowrap; }
+
+/* Mode icons: what the tab edits. */
+.modes { gap: 2px; padding: 3px; border-radius: 6px; background-color: var(--surface-container-high); }
+.mode {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-1);
+    height: 32px;
+    padding: 0px var(--space-2);
+    border-radius: 4px;
+    color: var(--on-surface-variant);
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.mode icon { font-size: var(--icon-s); line-height: var(--icon-s); }
+.mode:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.mode.soon { opacity: 0.6; }
+.mode.selected { background-color: var(--primary); color: var(--on-primary); opacity: 1; }
+
+.layer-chip {
+    height: 28px;
+    line-height: 28px;
+    padding: 0px var(--space-2);
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.layer-chip:hover { background-color: var(--state-hover-layer); }
+.layer-chip.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+
+/* The dock: frames (with headers) and panes are placed by C++. */
+#dock { flex: 1 1 0px; position: relative; min-height: 0px; }
+.dock-frame {
+    position: absolute;
+    border-radius: 6px;
+    background-color: var(--surface-container);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+}
+.dock-frame.view { background-color: transparent; border-color: var(--outline); }
+.dock-header {
+    height: 32px;
+    padding: 0px var(--space-1);
+    gap: 2px;
+    border-bottom-width: var(--border-hairline);
+    border-bottom-color: var(--outline-variant);
+    overflow: hidden;
+}
+.dock-tab {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-1);
+    height: 26px;
+    padding: 0px var(--space-2);
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--on-surface-variant);
+    cursor: move;
+    white-space: nowrap;
+}
+.dock-tab:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.dock-tab.active { color: var(--on-surface); background-color: var(--surface-container-high); }
+.dock-tab.active icon { color: var(--primary); }
+.dock-gap { position: absolute; cursor: resize; }
+.dock-gap:hover { background-color: var(--primary); opacity: 0.5; }
+.dock-pane { position: absolute; display: flex; flex-direction: column; min-height: 0px; }
+#level-view { border-radius: 6px; }
+#dock-drop {
+    position: absolute;
+    border-radius: 6px;
+    border-width: 2px;
+    border-color: var(--primary);
+    background-color: var(--selected-layer);
+}
+
+.pane-scroll { flex: 1 1 0px; overflow-y: auto; padding: var(--space-2); min-height: 0px; }
+
+/* Palette */
+.pal-group { margin-bottom: var(--space-2); }
+.pal-title { padding: var(--space-1) var(--space-2); }
+.pal-tile {
+    align-items: center;
+    gap: var(--space-2);
+    height: 40px;
+    padding: 0px var(--space-2);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.pal-tile img { width: 32px; height: 32px; border-radius: 3px; }
+.pal-tile .name { flex: 1 1 0px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.pal-tile .key {
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--on-surface-variant);
+    background-color: var(--surface-container-highest);
+}
+.pal-tile:hover { background-color: var(--state-hover-layer); }
+.pal-tile.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+
+/* Minimap */
+.minimap-box { flex: 1 1 0px; padding: var(--space-2); min-height: 0px; display: flex; justify-content: center; align-items: center; }
+#minimap { max-width: 100%; max-height: 100%; width: 192px; height: 192px; border-radius: 4px; cursor: crosshair; }
+.minimap-place { padding: 0px var(--space-3) var(--space-2) var(--space-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Properties */
+.props .section-title {
+    margin: var(--space-3) 0px var(--space-1) 0px;
+    font-family: var(--title-small-family);
+    font-size: var(--title-small-size);
+    font-weight: var(--title-small-weight);
+}
+.props .section-title:first-child { margin-top: 0px; }
+.props .soon-chip { margin-top: var(--space-2); }
+.tile-card { align-items: center; padding: var(--space-2); border-radius: 4px; background-color: var(--surface-container-high); }
+.tile-card img { width: 48px; height: 48px; border-radius: 3px; }
+.props .prop { min-height: 36px; align-items: center; }
+.props .prop-label { width: auto; min-width: 96px; color: var(--on-surface-variant); font-size: 13px; }

@@ -241,3 +241,104 @@ TEST_CASE("editor inspector: rows and text edits") {
     CHECK_FALSE(set_field_text(type, &s, "loot.5", "1"));
     CHECK_FALSE(set_field_text(type, &s, "nope", "1"));
 }
+
+// --- docking ---------------------------------------------------------------
+
+#include "forge/editor/dock.h"
+
+namespace {
+
+using forge::editor::DockLayout;
+using forge::editor::DockRect;
+
+const char* kDockDefault =
+    R"({"row":0.2,"a":{"panels":["palette"]},"b":{"row":0.75,"a":{"column":0.7,"a":{"view":true},"b":{"panels":["log","history"]}},"b":{"column":0.4,"a":{"panels":["minimap"]},"b":{"panels":["props"]}}}})";
+const std::vector<std::string> kDockPanels{"palette", "log", "history", "minimap", "props"};
+
+} // namespace
+
+TEST_CASE("dock: a layout is read, laid out and written back") {
+    DockLayout d;
+    REQUIRE(d.load(kDockDefault, kDockPanels));
+    d.layout({0, 0, 1000, 600}, 8, 30);
+    REQUIRE(d.stacks().size() == 5);
+    CHECK(d.splitters().size() == 4);
+    DockRect r;
+    REQUIRE(d.panel_rect("palette", r));
+    CHECK(r.x == 0);
+    CHECK(r.y == 30); // below its header
+    CHECK(r.w == 198); // (1000 - 8) * 0.2
+    CHECK(!d.panel_rect("history", r)); // a hidden tab
+    const DockRect view = d.view_rect();
+    CHECK(view.x == 206);
+    CHECK(view.y == 0);
+    // Written and read back: the same places.
+    DockLayout e;
+    REQUIRE(e.load(d.save(), kDockPanels));
+    e.layout({0, 0, 1000, 600}, 8, 30);
+    CHECK(e.view_rect() == view);
+
+    // Not a layout of these panels: refused, nothing changes.
+    CHECK(!e.load(R"({"row":0.5,"a":{"view":true},"b":{"panels":["palette"]}})", kDockPanels));
+    CHECK(!e.load(R"({"row":0.5,"a":{"panels":["palette","log","history","minimap","props"]},"b":{"panels":["props"]}})",
+                  kDockPanels));
+    CHECK(!e.load("not json", kDockPanels));
+    e.layout({0, 0, 1000, 600}, 8, 30);
+    CHECK(e.view_rect() == view);
+}
+
+TEST_CASE("dock: tabs, moves and splitters") {
+    DockLayout d;
+    REQUIRE(d.load(kDockDefault, kDockPanels));
+    d.layout({0, 0, 1000, 600}, 8, 30);
+    DockRect r;
+
+    d.activate("history");
+    d.layout({0, 0, 1000, 600}, 8, 30);
+    CHECK(d.panel_rect("history", r));
+    CHECK(!d.panel_rect("log", r));
+
+    // Minimap dropped on the palette's header: a tab there; its old stack
+    // closes and the properties take the whole right column.
+    DockRect palette_frame;
+    for (const auto& s : d.stacks())
+        if (!s.panels.empty() && s.panels[0] == "palette") palette_frame = s.frame;
+    auto drop = d.drop_at(palette_frame.x + 20, palette_frame.y + 10, "minimap");
+    CHECK(drop.zone == DockLayout::Zone::Center);
+    REQUIRE(d.move("minimap", drop));
+    d.layout({0, 0, 1000, 600}, 8, 30);
+    CHECK(d.stacks().size() == 4);
+    REQUIRE(d.panel_rect("minimap", r));
+    CHECK(r.x == 0);
+    REQUIRE(d.panel_rect("props", r));
+    CHECK(r.y == 30); // the whole column now
+
+    // The log dropped on the left edge of the view: a new stack beside it.
+    const DockRect view = d.view_rect();
+    drop = d.drop_at(view.x + 5, view.y + view.h * 0.5f, "log");
+    CHECK(drop.zone == DockLayout::Zone::Left);
+    REQUIRE(d.move("log", drop));
+    d.layout({0, 0, 1000, 600}, 8, 30);
+    REQUIRE(d.panel_rect("log", r));
+    CHECK(r.x == view.x);
+    CHECK(d.view_rect().x > view.x);
+    CHECK(d.panel_rect("history", r)); // alone in its stack now, so shown
+
+    // Into the middle of the view: not a place.
+    drop = d.drop_at(d.view_rect().x + d.view_rect().w * 0.5f, d.view_rect().y + d.view_rect().h * 0.5f, "palette");
+    CHECK(drop.zone == DockLayout::Zone::None);
+    CHECK(!d.move("palette", drop));
+
+    // Every panel is still there exactly once.
+    DockLayout check;
+    CHECK(check.load(d.save(), kDockPanels));
+
+    // Splitters keep a stack at least kMinSize wide.
+    const forge::u64 v = d.version();
+    d.drag_splitter(0, -500, 0);
+    d.layout({0, 0, 1000, 600}, 8, 30);
+    CHECK(d.version() > v);
+    REQUIRE(d.panel_rect("minimap", r));
+    CHECK(r.w >= DockLayout::kMinSize - 1);
+    CHECK(r.w <= DockLayout::kMinSize + 1);
+}

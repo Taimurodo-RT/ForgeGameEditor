@@ -6,6 +6,7 @@
 //   my_game                          play
 //   my_game --screenshot out.png [--frames N] [--test]   offscreen
 //   my_game --ui DIR --data DIR --user DIR --theme NAME --no-vsync
+//   my_game --play                   a new game at once, past the main menu
 
 #include "forge/game/shell.h"
 

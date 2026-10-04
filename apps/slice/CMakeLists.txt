@@ -1,9 +1,16 @@
-set(SLICE_SOURCES main.cpp slice_game.cpp slice_world.cpp slice_art.cpp)
+# The game's code as a library: the game itself links it, and so does the
+# level editor, which paints «Старая шахта» through slice::SliceLevel.
+add_library(forge_slice_lib STATIC slice_game.cpp slice_world.cpp slice_art.cpp slice_level.cpp)
+target_include_directories(forge_slice_lib PUBLIC .)
+target_link_libraries(forge_slice_lib PUBLIC forge::game forge::sim forge::render forge::ui forge::level forge_demo_common)
+forge_target_defaults(forge_slice_lib)
+
+set(SLICE_SOURCES main.cpp)
 if(WIN32)
   list(APPEND SLICE_SOURCES slice.rc) # the icon
 endif()
 add_executable(forge_slice ${SLICE_SOURCES})
-target_link_libraries(forge_slice PRIVATE forge::game forge::sim forge::render forge::platform forge::ui forge_demo_common)
+target_link_libraries(forge_slice PRIVATE forge_slice_lib forge::platform)
 # Running from the build folder reads the UI and the game's data from the
 # source tree, so edits show up at once. A packaged game has them in "data".
 target_compile_definitions(forge_slice PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"

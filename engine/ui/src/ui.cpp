@@ -281,6 +281,32 @@ void Ui::reload_documents() { impl_->reload(); }
 const Tokens& Ui::tokens() const { return impl_->tokens; }
 const std::filesystem::path& Ui::root() const { return impl_->config.root; }
 const UiStats& Ui::stats() const { return impl_->stats; }
+
+void Ui::set_image(const std::string& name, const u8* rgba, u32 width, u32 height) {
+    // An uncompressed 32-bit TGA, which the image loader reads as is.
+    std::string tga(18 + static_cast<usize>(width) * height * 4, '\0');
+    tga[2] = 2; // true colour
+    tga[12] = static_cast<char>(width & 0xff);
+    tga[13] = static_cast<char>(width >> 8);
+    tga[14] = static_cast<char>(height & 0xff);
+    tga[15] = static_cast<char>(height >> 8);
+    tga[16] = 32;
+    tga[17] = 0x28; // 8 alpha bits, rows from the top
+    char* p = tga.data() + 18;
+    for (usize i = 0, n = static_cast<usize>(width) * height; i < n; ++i, p += 4) {
+        p[0] = static_cast<char>(rgba[i * 4 + 2]); // BGRA
+        p[1] = static_cast<char>(rgba[i * 4 + 1]);
+        p[2] = static_cast<char>(rgba[i * 4 + 0]);
+        p[3] = static_cast<char>(rgba[i * 4 + 3]);
+    }
+    impl_->files.set_memory_file(name, std::move(tga));
+}
+void Ui::drop_image(const std::string& name) {
+    impl_->files.drop_memory_file(name);
+    // The texture is cached under the path the document resolved.
+    Rml::ReleaseTexture("memory/" + name);
+    Rml::ReleaseTexture("/memory/" + name);
+}
 u32 Ui::msaa_samples() const { return impl_->renderer.msaa_samples(); }
 void Ui::on_reload(std::function<void()> callback) { impl_->on_reload = std::move(callback); }
 

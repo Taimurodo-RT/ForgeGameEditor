@@ -257,6 +257,17 @@ SheetImage make_sprite_sheet() {
         // Coal: a black lump with glints.
         if (d < 5.5f) put(kFrameCoal, x, y, (pixel_hash(x, y, 5) % 7 == 0) ? Rgb{120, 120, 130} : Rgb{34, 32, 36});
     });
+    // Solid white, padding included, so a stretched quad has hard edges
+    // (editor overlays: brush, grid, selection).
+    {
+        u32 ox, oy;
+        frame_origin(kFrameSolid, ox, oy);
+        for (u32 y = oy - 1; y < oy + kPx + 1; ++y)
+            for (u32 x = ox - 1; x < ox + kPx + 1; ++x) {
+                u8* p = &img.rgba[(static_cast<usize>(y) * img.width + x) * 4];
+                p[0] = p[1] = p[2] = p[3] = 255;
+            }
+    }
     for (u32 f = 0; f < kRows * kCols; ++f) {
         u32 ox, oy;
         frame_origin(f, ox, oy);

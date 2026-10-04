@@ -28,6 +28,7 @@ struct Options {
     u32 frames = 120;
     bool test = false;
     bool vsync = true;
+    bool play = false; // a new game right away, past the main menu
 };
 
 // A packaged game has no console: everything logged also goes to log.txt
@@ -80,6 +81,7 @@ public:
             return false;
         }
         SDL_SetWindowTitle(window(), shell_.title().c_str());
+        if (options_.play) shell_.new_game();
         return true;
     }
     void on_event(const SDL_Event& e) override {
@@ -120,6 +122,7 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
     {
         Shell shell;
         if (target && shell.init(game, device, nullptr, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h, o.shell)) {
+            if (o.play) shell.new_game();
             int failures = 0;
             bool testing = o.test && main.test;
             u32 frames = o.frames;
@@ -185,6 +188,7 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
         else if (std::strcmp(argv[i], "--user") == 0 && has_value) o.shell.user_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--theme") == 0 && has_value) o.shell.theme = argv[++i];
         else if (std::strcmp(argv[i], "--no-vsync") == 0) o.vsync = false;
+        else if (std::strcmp(argv[i], "--play") == 0) o.play = true;
     }
 
     if (o.screenshot || o.test) {

@@ -42,6 +42,10 @@ public:
     bool LoadFile(const Rml::String& path, Rml::String& out_data) override;
 
     std::filesystem::path resolve(const std::string& path) const;
+    // Files that live in memory (pictures made by code): a document refers
+    // to "/memory/<name>", which reaches here as "memory/<name>".
+    void set_memory_file(const std::string& name, std::string bytes);
+    void drop_memory_file(const std::string& name);
     // Files read so far and their modification times when read.
     std::unordered_map<std::string, std::filesystem::file_time_type> watched() const;
 
@@ -52,6 +56,7 @@ private:
     const Tokens* tokens_ = nullptr;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::filesystem::file_time_type> watched_;
+    std::unordered_map<std::string, std::string> memory_;
 };
 
 class SystemInterface final : public Rml::SystemInterface {

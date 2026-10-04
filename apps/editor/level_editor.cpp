@@ -1,0 +1,970 @@
+#include "level_editor.h"
+
+#include "forge/core/file.h"
+#include "forge/core/log.h"
+#include "forge/core/path.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+
+namespace forge::editor_app {
+
+namespace fs = std::filesystem;
+
+namespace {
+
+// The panels, their titles and icons. The default places them as in Unreal:
+// the palette on the left, the minimap and properties on the right, the log
+// and history under the view.
+struct PanelInfo {
+    const char* id;
+    const char* title;
+    const char* icon;
+};
+const PanelInfo kPanels[] = {
+    {"palette", "Палитра", "palette"},
+    {"minimap", "Мини-карта", "map"},
+    {"props", "Свойства", "tune"},
+    {"history", "История", "history"},
+    {"log", "Журнал", "terminal"},
+};
+const char* kDefaultLayout =
+    R"({"row":0.17,"a":{"panels":["palette"]},"b":{"row":0.77,"a":{"column":0.76,"a":{"view":true},"b":{"panels":["log","history"]}},"b":{"column":0.42,"a":{"panels":["minimap"]},"b":{"panels":["props"]}}}})";
+constexpr f32 kDockGap = 6;
+constexpr f32 kDockHeader = 32;
+constexpr usize kFillLimit = 100'000;
+constexpr u32 kIconPx = 32;
+
+const PanelInfo* panel_info(std::string_view id) {
+    for (const PanelInfo& p : kPanels)
+        if (id == p.id) return &p;
+    return nullptr;
+}
+
+Rml::Element* find(Rml::Context* context, const char* id) {
+    if (!context) return nullptr;
+    for (int i = 0; i < context->GetNumDocuments(); ++i)
+        if (Rml::Element* e = context->GetDocument(i)->GetElementById(id)) return e;
+    return nullptr;
+}
+
+void place_element(Rml::Element* e, const editor::DockRect* r) {
+    if (!e) return;
+    if (!r) {
+        e->SetProperty("display", "none");
+        return;
+    }
+    auto px = [](f32 v) { return std::to_string(static_cast<int>(std::lround(v))) + "px"; };
+    e->SetProperty("display", "flex");
+    e->SetProperty("left", px(r->x));
+    e->SetProperty("top", px(r->y));
+    e->SetProperty("width", px(r->w));
+    e->SetProperty("height", px(r->h));
+}
+
+const char* tool_name(Tool t) {
+    switch (t) {
+    case Tool::Brush: return "Кисть";
+    case Tool::Line: return "Линия";
+    case Tool::Rect: return "Прямоугольник";
+    case Tool::Fill: return "Заливка";
+    case Tool::Eraser: return "Ластик";
+    case Tool::Picker: return "Пипетка";
+    }
+    return "";
+}
+
+const char* tool_help(Tool t) {
+    switch (t) {
+    case Tool::Brush: return "Левая кнопка рисует выбранной плиткой. [ и ] меняют размер.";
+    case Tool::Line: return "Потяните от начала к концу линии и отпустите.";
+    case Tool::Rect: return "Потяните от угла к углу и отпустите.";
+    case Tool::Fill: return "Заполняет соседние клетки того же вида на слое плитки.";
+    case Tool::Eraser: return "Стирает клетки на выбранном слое. [ и ] меняют размер.";
+    case Tool::Picker: return "Щёлкните по клетке, чтобы взять её плитку.";
+    }
+    return "";
+}
+
+struct ModeInfo {
+    Mode mode;
+    const char* id;
+    const char* name;
+    const char* help;
+    const char* when; // empty: works now
+};
+const ModeInfo kModes[] = {
+    {Mode::Select, "select", "Выбор", "Смотрите уровень: левая или правая кнопка двигает вид, колесо приближает.", ""},
+    {Mode::Tiles, "tiles", "Тайлы", "Рисуйте мир плитками по слоям: стены, блоки, жидкости.", ""},
+    {Mode::Objects, "objects", "Объекты", "Жители, предметы, ящики и двери из библиотеки: поставить, двигать, менять свойства.",
+     "следующим в шаге 9"},
+    {Mode::Physics, "physics", "Физика", "Гравитация мира и её точки, зоны воды и песка, проба течения воды прямо в редакторе.",
+     "позже, после библиотеки объектов"},
+    {Mode::Light, "light", "Свет", "Факелы и другие источники, время суток, вид «как в игре».", "позже, после библиотеки объектов"},
+    {Mode::Zones, "zones", "Зоны", "Области («Деревня», «Шахта»), точка появления героя, триггеры квестов, звук и музыка мест.",
+     "позже, вместе с редактором сюжета"},
+};
+
+const ModeInfo& mode_info(Mode m) {
+    for (const ModeInfo& i : kModes)
+        if (i.mode == m) return i;
+    return kModes[0];
+}
+
+std::string group_digits(u64 n) {
+    std::string digits = std::to_string(n), out;
+    for (usize i = 0; i < digits.size(); ++i) {
+        if (i > 0 && (digits.size() - i) % 3 == 0) out += " ";
+        out += digits[i];
+    }
+    return out;
+}
+
+} // namespace
+
+const char* tool_id(Tool t) {
+    switch (t) {
+    case Tool::Brush: return "brush";
+    case Tool::Line: return "line";
+    case Tool::Rect: return "rect";
+    case Tool::Fill: return "fill";
+    case Tool::Eraser: return "eraser";
+    case Tool::Picker: return "picker";
+    }
+    return "";
+}
+
+const char* mode_id(Mode m) { return mode_info(m).id; }
+
+void LevelEditor::set_mode(Mode m) {
+    if (stroke_) return;
+    mode_ = m;
+}
+
+const std::vector<std::string>& LevelEditor::panel_ids() {
+    static const std::vector<std::string> ids = [] {
+        std::vector<std::string> v;
+        for (const PanelInfo& p : kPanels) v.emplace_back(p.id);
+        return v;
+    }();
+    return ids;
+}
+
+LevelEditor::LevelEditor(level::LevelModule& module) : module_(module) {}
+
+LevelEditor::~LevelEditor() { shutdown(); }
+
+bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat format, const LevelConfig& config) {
+    ui_ = &ui;
+    config_ = config;
+    level_ = std::make_unique<level::Level>(module_);
+    std::error_code ec;
+    fs::create_directories(config.folder, ec);
+    std::string error;
+    if (!level_->open(config.folder, &error)) {
+        FORGE_ERROR("Уровень %s не открылся: %s", path_to_utf8(config.folder).c_str(), error.c_str());
+        return false;
+    }
+    module_.start(camera_.x, camera_.y);
+    camera_.zoom = 16;
+    history_.clear();
+
+    if (!module_.init_view(device, format)) return false;
+    art_ = demo::make_sprite_sheet();
+    if (!back_.init(device, format, art_.sheet(), 16)) return false;
+    if (!front_.init(device, format, art_.sheet(), 1u << 15)) return false;
+    view_ready_ = true;
+
+    // Palette: icons as pictures the documents can show, grouped.
+    const auto& tiles = module_.tiles();
+    std::vector<u8> icon;
+    for (usize i = 0; i < tiles.size(); ++i) {
+        const level::TileDef& t = tiles[i];
+        module_.tile_icon(t, kIconPx, icon);
+        ui.set_image("tile_" + t.id, icon.data(), kIconPx, kIconPx);
+        auto g = std::find_if(m_palette_.begin(), m_palette_.end(), [&](const PaletteGroup& pg) { return pg.name == t.group; });
+        if (g == m_palette_.end()) {
+            m_palette_.push_back({t.group, {}});
+            g = m_palette_.end() - 1;
+        }
+        g->tiles.push_back({static_cast<int>(i), t.name, "/memory/tile_" + t.id, t.key, static_cast<int>(t.layer)});
+    }
+    for (const std::string& name : module_.layer_names()) m_layers_.push_back(name);
+    if (!tiles.empty()) select_tile(0);
+
+    // The panel layout: the user's, else the default.
+    default_layout_ = kDefaultLayout;
+    dock_.load(default_layout_, panel_ids());
+    std::vector<u8> bytes;
+    if (!config.settings.empty() && read_file(config.settings / "level_layout.json", bytes)) {
+        if (!dock_.load(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), panel_ids()))
+            FORGE_WARN("Раскладка панелей не прочиталась, взята обычная");
+    }
+    map_rgba_.assign(static_cast<usize>(kMapPx) * kMapPx * 4, 0);
+    FORGE_INFO("Уровень «%s» открыт: %s", module_.title().c_str(), path_to_utf8(config.folder).c_str());
+    return true;
+}
+
+void LevelEditor::shutdown() {
+    if (game_) {
+        SDL_DestroyProcess(game_); // the game keeps running on its own
+        game_ = nullptr;
+    }
+    if (view_ready_) {
+        front_.shutdown();
+        back_.shutdown();
+        module_.shutdown_view();
+        view_ready_ = false;
+    }
+    level_.reset();
+}
+
+void LevelEditor::bind(Rml::DataModelConstructor& model) {
+    if (auto s = model.RegisterStruct<DockTab>()) {
+        s.RegisterMember("id", &DockTab::id);
+        s.RegisterMember("title", &DockTab::title);
+        s.RegisterMember("icon", &DockTab::icon);
+        s.RegisterMember("active", &DockTab::active);
+    }
+    model.RegisterArray<std::vector<DockTab>>();
+    if (auto s = model.RegisterStruct<DockFrame>()) {
+        s.RegisterMember("x", &DockFrame::x);
+        s.RegisterMember("y", &DockFrame::y);
+        s.RegisterMember("w", &DockFrame::w);
+        s.RegisterMember("h", &DockFrame::h);
+        s.RegisterMember("view", &DockFrame::view);
+        s.RegisterMember("used", &DockFrame::used);
+        s.RegisterMember("tabs", &DockFrame::tabs);
+    }
+    model.RegisterArray<std::vector<DockFrame>>();
+    if (auto s = model.RegisterStruct<DockGap>()) {
+        s.RegisterMember("x", &DockGap::x);
+        s.RegisterMember("y", &DockGap::y);
+        s.RegisterMember("w", &DockGap::w);
+        s.RegisterMember("h", &DockGap::h);
+        s.RegisterMember("column", &DockGap::column);
+        s.RegisterMember("used", &DockGap::used);
+    }
+    model.RegisterArray<std::vector<DockGap>>();
+    if (auto s = model.RegisterStruct<PaletteTile>()) {
+        s.RegisterMember("index", &PaletteTile::index);
+        s.RegisterMember("name", &PaletteTile::name);
+        s.RegisterMember("icon", &PaletteTile::icon);
+        s.RegisterMember("key", &PaletteTile::key);
+        s.RegisterMember("layer", &PaletteTile::layer);
+    }
+    model.RegisterArray<std::vector<PaletteTile>>();
+    if (auto s = model.RegisterStruct<PaletteGroup>()) {
+        s.RegisterMember("name", &PaletteGroup::name);
+        s.RegisterMember("tiles", &PaletteGroup::tiles);
+    }
+    model.RegisterArray<std::vector<PaletteGroup>>();
+
+    model.Bind("dock_frames", &m_frames_);
+    model.Bind("dock_gaps", &m_gaps_);
+    model.Bind("dock_drop", &m_drop_);
+    model.Bind("dock_drop_x", &m_drop_x_);
+    model.Bind("dock_drop_y", &m_drop_y_);
+    model.Bind("dock_drop_w", &m_drop_w_);
+    model.Bind("dock_drop_h", &m_drop_h_);
+    model.Bind("lv_palette", &m_palette_);
+    model.Bind("lv_layers", &m_layers_);
+    model.Bind("lv_mode", &m_mode_);
+    model.Bind("lv_mode_name", &m_mode_name_);
+    model.Bind("lv_mode_help", &m_mode_help_);
+    model.Bind("lv_mode_when", &m_mode_when_);
+    model.Bind("lv_tool", &m_tool_);
+    model.Bind("lv_tool_name", &m_tool_name_);
+    model.Bind("lv_tool_help", &m_tool_help_);
+    model.Bind("lv_tile", &m_tile_);
+    model.Bind("lv_layer", &m_layer_);
+    model.Bind("lv_radius", &m_radius_);
+    model.Bind("lv_tile_name", &m_tile_name_);
+    model.Bind("lv_tile_hint", &m_tile_hint_);
+    model.Bind("lv_tile_icon", &m_tile_icon_);
+    model.Bind("lv_tile_layer", &m_tile_layer_);
+    model.Bind("lv_light", &m_light_);
+    model.Bind("lv_grid", &m_grid_);
+    model.Bind("lv_chunks", &m_chunks_);
+    model.Bind("lv_outline", &m_outline_);
+    model.Bind("lv_dirty", &m_dirty_);
+    model.Bind("lv_minimap", &m_minimap_);
+    model.Bind("lv_place", &m_place_);
+    model.Bind("lv_info", &m_info_);
+    model.Bind("lv_history", &m_history_);
+    model.Bind("lv_history_cursor", &m_history_cursor_);
+
+    auto on = [&](const char* name, auto fn) {
+        model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
+    };
+    auto arg_int = [](const Rml::VariantList& a, usize i, int fallback = 0) { return i < a.size() ? a[i].Get<int>() : fallback; };
+    auto arg_str = [](const Rml::VariantList& a, usize i) { return i < a.size() ? a[i].Get<Rml::String>() : Rml::String(); };
+
+    on("lv_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string id = arg_str(a, 0);
+        set_mode(Mode::Tiles);
+        for (Tool t : {Tool::Brush, Tool::Line, Tool::Rect, Tool::Fill, Tool::Eraser, Tool::Picker})
+            if (id == tool_id(t)) set_tool(t);
+    });
+    on("lv_mode", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string id = arg_str(a, 0);
+        for (const ModeInfo& m : kModes)
+            if (id == m.id) set_mode(m.mode);
+    });
+    on("lv_tile", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        select_tile(static_cast<usize>(arg_int(a, 0)));
+        set_mode(Mode::Tiles);
+        if (tool_ == Tool::Eraser || tool_ == Tool::Picker) set_tool(Tool::Brush);
+    });
+    on("lv_layer", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        const int l = arg_int(a, 0);
+        if (l >= 0 && l < static_cast<int>(m_layers_.size())) layer_ = static_cast<u32>(l);
+    });
+    on("lv_radius", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { set_brush_radius(radius_ + arg_int(a, 0)); });
+    on("lv_toggle", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string what = arg_str(a, 0);
+        if (what == "light") view_.game_light = !view_.game_light;
+        else if (what == "grid") view_.grid = !view_.grid;
+        else if (what == "chunks") view_.chunks = !view_.chunks;
+        else if (what == "outline") rect_outline_ = !rect_outline_;
+    });
+    on("lv_save", [this](Rml::Event&, const Rml::VariantList&) { save(); });
+    on("lv_play", [this](Rml::Event&, const Rml::VariantList&) { play_here(); });
+    on("lv_history_jump", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        if (stroke_) return;
+        const usize target = static_cast<usize>(arg_int(a, 0, -1) + 1);
+        while (history_.cursor() > target && history_.undo()) {}
+        while (history_.cursor() < target && history_.redo()) {}
+    });
+    on("lv_minimap_click", [this](Rml::Event& ev, const Rml::VariantList&) {
+        Rml::Element* e = ev.GetCurrentElement();
+        if (!e) return;
+        const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Content);
+        const Rml::Vector2f size = e->GetBox().GetSize(Rml::BoxArea::Content);
+        if (size.x <= 0 || size.y <= 0) return;
+        const f32 fx = (ev.GetParameter<float>("mouse_x", 0) - at.x) / size.x;
+        const f32 fy = (ev.GetParameter<float>("mouse_y", 0) - at.y) / size.y;
+        const f64 span = static_cast<f64>(kMapPx) * kMapTilesPerPx;
+        camera_.x = map_cx_ + (std::clamp(fx, 0.0f, 1.0f) - 0.5) * span;
+        camera_.y = map_cy_ + (std::clamp(fy, 0.0f, 1.0f) - 0.5) * span;
+    });
+    on("dock_grab", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        grab_panel_ = arg_str(a, 0);
+        dragging_panel_ = false;
+        grab_x_ = ev.GetParameter<float>("mouse_x", mouse_x_);
+        grab_y_ = ev.GetParameter<float>("mouse_y", mouse_y_);
+    });
+    on("dock_split", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { grab_splitter_ = arg_int(a, 0, -1); });
+    on("dock_reset", [this](Rml::Event&, const Rml::VariantList&) { reset_layout(); });
+}
+
+// --- tools -------------------------------------------------------------------
+
+void LevelEditor::set_tool(Tool t) {
+    if (stroke_) return; // not in the middle of a stroke
+    tool_ = t;
+}
+
+void LevelEditor::select_tile(usize index) {
+    const auto& tiles = module_.tiles();
+    if (index >= tiles.size()) return;
+    tile_ = index;
+    layer_ = tiles[index].layer;
+}
+
+void LevelEditor::set_brush_radius(i32 r) { radius_ = std::clamp(r, 0, 16); }
+
+world::TileId LevelEditor::paint_value() const {
+    if (tool_ == Tool::Eraser) return 0;
+    const auto& tiles = module_.tiles();
+    return tile_ < tiles.size() ? tiles[tile_].value : 0;
+}
+
+std::string LevelEditor::stroke_label() const {
+    const auto& tiles = module_.tiles();
+    const std::string tile = tile_ < tiles.size() ? tiles[tile_].name : std::string();
+    if (tool_ == Tool::Eraser) {
+        const auto& layers = module_.layer_names();
+        return std::string("Ластик: ") + (layer_ < layers.size() ? layers[layer_] : std::string());
+    }
+    return std::string(tool_name(tool_)) + ": " + tile;
+}
+
+void LevelEditor::shape_cells(std::vector<level::Cell>& out) const {
+    out.clear();
+    if (tool_ == Tool::Line) level::line_cells(start_x_, start_y_, last_x_, last_y_, out);
+    else if (tool_ == Tool::Rect) level::rect_cells(start_x_, start_y_, last_x_, last_y_, !rect_outline_, out);
+}
+
+void LevelEditor::press(f32 x, f32 y) {
+    i32 cx, cy;
+    cell_at(x, y, cx, cy);
+    start_x_ = last_x_ = cx;
+    start_y_ = last_y_ = cy;
+    switch (tool_) {
+    case Tool::Picker: pick(cx, cy); return;
+    case Tool::Fill: {
+        std::vector<level::Cell> cells;
+        bool capped = false;
+        const u32 layer = tile_ < module_.tiles().size() ? module_.tiles()[tile_].layer : layer_;
+        level::fill_cells(*level_, layer, cx, cy, kFillLimit, cells, &capped);
+        auto stroke = std::make_unique<level::TileStroke>(*level_, stroke_label() + " (" + group_digits(cells.size()) + ")");
+        if (stroke->paint(layer, cells, paint_value()) == 0) return;
+        if (capped) FORGE_WARN("Заливка остановлена на %s клетках: область слишком большая", group_digits(kFillLimit).c_str());
+        history_.execute(std::move(stroke));
+        history_.seal();
+        return;
+    }
+    case Tool::Line:
+    case Tool::Rect:
+        shaping_ = true;
+        stroke_ = std::make_unique<level::TileStroke>(*level_, stroke_label());
+        return;
+    case Tool::Brush:
+    case Tool::Eraser:
+        stroke_ = std::make_unique<level::TileStroke>(*level_, stroke_label());
+        stroke_->paint_disc(layer_, cx, cy, radius_, paint_value());
+        return;
+    }
+}
+
+void LevelEditor::drag(f32 x, f32 y) {
+    if (!stroke_) return;
+    i32 cx, cy;
+    cell_at(x, y, cx, cy);
+    if (cx == last_x_ && cy == last_y_) return;
+    if (!shaping_) {
+        // The brush leaves no gaps when the mouse jumps.
+        std::vector<level::Cell> path;
+        level::line_cells(last_x_, last_y_, cx, cy, path);
+        for (usize i = 1; i < path.size(); ++i) stroke_->paint_disc(layer_, path[i].x, path[i].y, radius_, paint_value());
+    }
+    last_x_ = cx;
+    last_y_ = cy;
+}
+
+void LevelEditor::release() {
+    if (!stroke_) return;
+    if (shaping_) {
+        std::vector<level::Cell> cells;
+        shape_cells(cells);
+        stroke_->paint(layer_, cells, paint_value());
+        shaping_ = false;
+    }
+    std::unique_ptr<level::TileStroke> stroke = std::move(stroke_);
+    if (stroke->empty()) return;
+    // Already painted: execute() sets the same values again and records it.
+    history_.execute(std::move(stroke));
+    history_.seal();
+}
+
+void LevelEditor::pick(i32 x, i32 y) {
+    const auto& tiles = module_.tiles();
+    // The topmost layer with something there.
+    for (i32 layer = static_cast<i32>(module_.layer_names().size()) - 1; layer >= 0; --layer) {
+        const world::TileId v = level_->tile(static_cast<u32>(layer), x, y);
+        if (v == 0) continue;
+        for (usize i = 0; i < tiles.size(); ++i)
+            if (tiles[i].layer == static_cast<u32>(layer) && tiles[i].value == v) {
+                select_tile(i);
+                tool_ = Tool::Brush;
+                return;
+            }
+        // A value the palette does not have (a half-full water cell): the
+        // palette's first tile of that layer.
+        for (usize i = 0; i < tiles.size(); ++i)
+            if (tiles[i].layer == static_cast<u32>(layer)) {
+                select_tile(i);
+                tool_ = Tool::Brush;
+                return;
+            }
+    }
+}
+
+// --- actions -----------------------------------------------------------------
+
+void LevelEditor::undo() {
+    if (stroke_) return;
+    if (history_.undo()) FORGE_INFO("Отменено");
+}
+
+void LevelEditor::redo() {
+    if (stroke_) return;
+    if (history_.redo()) FORGE_INFO("Повторено");
+}
+
+void LevelEditor::save() {
+    if (stroke_) release();
+    const level::Level::SaveReport r = level_->save();
+    if (!r.ok) {
+        FORGE_ERROR("Уровень не сохранился в %s", path_to_utf8(level_->folder()).c_str());
+        return;
+    }
+    history_.mark_saved();
+    FORGE_INFO("Уровень сохранён: участков с плитками %u, с объектами %u (%.0f мс)", r.tile_chunks, r.object_chunks, r.ms);
+}
+
+std::vector<std::string> LevelEditor::play_command(f64 x, f64 y) const {
+    char at[64];
+    std::snprintf(at, sizeof(at), "%.2f,%.2f", x, y);
+    return {path_to_utf8(config_.game_exe), "--play", "--level", path_to_utf8(level_->folder()), "--at", at,
+            "--user", path_to_utf8(fs::temp_directory_path() / "forge_editor_play")};
+}
+
+bool LevelEditor::play_here() {
+    if (stroke_) release();
+    save();
+    f64 x = 0, y = 0;
+    if (!module_.play_spot(*level_, camera_.x, camera_.y, x, y)) {
+        FORGE_WARN("Рядом с центром вида нет места для героя: сдвиньте вид");
+        return false;
+    }
+    if (config_.game_exe.empty() || config_.offscreen) return true;
+    std::error_code ec;
+    if (!fs::exists(config_.game_exe, ec)) {
+        FORGE_ERROR("Игра не найдена: %s (соберите forge_slice)", path_to_utf8(config_.game_exe).c_str());
+        return false;
+    }
+    const std::vector<std::string> args = play_command(x, y);
+    std::vector<const char*> argv;
+    for (const std::string& a : args) argv.push_back(a.c_str());
+    argv.push_back(nullptr);
+    if (game_) SDL_DestroyProcess(game_);
+    game_ = SDL_CreateProcess(argv.data(), false);
+    if (!game_) {
+        FORGE_ERROR("Игра не запустилась: %s", SDL_GetError());
+        return false;
+    }
+    FORGE_INFO("Игра запущена с точки %.0f, %.0f", x, y);
+    return true;
+}
+
+void LevelEditor::reset_layout() {
+    dock_.load(default_layout_, panel_ids());
+    save_layout();
+}
+
+void LevelEditor::save_layout() {
+    if (config_.settings.empty() || config_.offscreen) return;
+    std::error_code ec;
+    fs::create_directories(config_.settings, ec);
+    const std::string text = dock_.save();
+    write_file_atomic(config_.settings / "level_layout.json", {reinterpret_cast<const u8*>(text.data()), text.size()});
+}
+
+std::string LevelEditor::status() const {
+    char text[200];
+    const std::string place = module_.place(camera_.x, camera_.y);
+    if (hover_)
+        std::snprintf(text, sizeof(text), "Клетка %d, %d%s%s · %s", hover_x_, hover_y_, place.empty() ? "" : " · ",
+                      place.c_str(), tool_name(tool_));
+    else
+        std::snprintf(text, sizeof(text), "Центр %.0f, %.0f%s%s · %s", camera_.x, camera_.y, place.empty() ? "" : " · ",
+                      place.c_str(), tool_name(tool_));
+    return text;
+}
+
+// --- frame -------------------------------------------------------------------
+
+void LevelEditor::apply_layout(Rml::Context* context) {
+    Rml::Element* area = find(context, "dock");
+    view_shown_ = area && area->IsVisible(true);
+    if (!view_shown_) {
+        vw_ = vh_ = 0;
+        return;
+    }
+    const Rml::Vector2f at = area->GetAbsoluteOffset(Rml::BoxArea::Content);
+    const Rml::Vector2f size = area->GetBox().GetSize(Rml::BoxArea::Content);
+    const bool moved = at.x != dock_x_ || at.y != dock_y_ || size.x != dock_w_ || size.y != dock_h_;
+    dock_x_ = at.x;
+    dock_y_ = at.y;
+    dock_w_ = size.x;
+    dock_h_ = size.y;
+    if (moved || applied_dock_version_ != dock_.version()) {
+        dock_.layout({0, 0, dock_w_, dock_h_}, kDockGap, kDockHeader);
+        applied_dock_version_ = dock_.version();
+        for (const PanelInfo& p : kPanels) {
+            editor::DockRect r;
+            const bool shown = dock_.panel_rect(p.id, r);
+            place_element(find(context, (std::string("pane-") + p.id).c_str()), shown ? &r : nullptr);
+        }
+        const editor::DockRect view = dock_.view_rect();
+        place_element(find(context, "level-view"), &view);
+        m_frames_.clear();
+        for (const auto& s : dock_.stacks()) {
+            DockFrame f{s.frame.x, s.frame.y, s.frame.w, s.frame.h, s.view, true, {}};
+            for (usize i = 0; i < s.panels.size(); ++i) {
+                const PanelInfo* info = panel_info(s.panels[i]);
+                f.tabs.push_back({s.panels[i], info ? info->title : s.panels[i], info ? info->icon : "tab", i == s.active});
+            }
+            m_frames_.push_back(std::move(f));
+        }
+        m_gaps_.clear();
+        for (const auto& g : dock_.splitters()) m_gaps_.push_back({g.rect.x, g.rect.y, g.rect.w, g.rect.h, g.column, true});
+        // The lists keep one length (unused entries hidden): RmlUi complains
+        // when a list with lists inside it gets shorter.
+        const usize most = std::size(kPanels) + 1;
+        m_frames_.resize(most);
+        m_gaps_.resize(most);
+        model_.DirtyVariable("dock_frames");
+        model_.DirtyVariable("dock_gaps");
+    }
+    const editor::DockRect view = dock_.view_rect();
+    vx_ = dock_x_ + view.x;
+    vy_ = dock_y_ + view.y;
+    vw_ = std::max(0.0f, view.w);
+    vh_ = std::max(0.0f, view.h);
+}
+
+void LevelEditor::update(f64 dt, Rml::Context* context) {
+    time_ += dt;
+    apply_layout(context);
+    if (view_shown_ && vw_ > 0 && vh_ > 0) {
+        const world::Rect focus = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+        level_->update({&focus, 1});
+        update_minimap();
+    }
+    sync_model();
+}
+
+void LevelEditor::update_minimap() {
+    // A few times a second, and only when something changed.
+    const world::WorldStats ws = level_->world().stats();
+    const u32 resident = ws.resident - ws.loading; // ready chunks
+    const bool changed = level_->edits() != map_edits_ || resident != map_resident_ || std::fabs(camera_.x - map_cx_) >= kMapTilesPerPx ||
+                         std::fabs(camera_.y - map_cy_) >= kMapTilesPerPx;
+    if (!changed || time_ - map_time_ < 0.25) return;
+    map_time_ = time_;
+    map_edits_ = level_->edits();
+    map_resident_ = resident;
+    map_cx_ = std::floor(camera_.x);
+    map_cy_ = std::floor(camera_.y);
+    const world::World& w = level_->world();
+    const u32 layers = static_cast<u32>(module_.layer_names().size());
+    const Color bg = module_.background();
+    const u8 sky[3] = {static_cast<u8>(bg.r * 255), static_cast<u8>(bg.g * 255), static_cast<u8>(bg.b * 255)};
+    const i32 half = static_cast<i32>(kMapPx / 2) * kMapTilesPerPx;
+    const i32 x0 = static_cast<i32>(map_cx_) - half, y0 = static_cast<i32>(map_cy_) - half;
+    const world::Rect view = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+    for (u32 py = 0; py < kMapPx; ++py) {
+        const i32 ty = y0 + static_cast<i32>(py) * kMapTilesPerPx;
+        for (u32 px = 0; px < kMapPx; ++px) {
+            const i32 tx = x0 + static_cast<i32>(px) * kMapTilesPerPx;
+            u8* p = &map_rgba_[(static_cast<usize>(py) * kMapPx + px) * 4];
+            u32 c = 0;
+            const bool loaded = level_->loaded(tx, ty);
+            if (loaded)
+                for (u32 l = layers; l-- > 0 && c == 0;) c = module_.map_color(l, w.tile(l, tx, ty));
+            if (c) {
+                p[0] = static_cast<u8>(c), p[1] = static_cast<u8>(c >> 8), p[2] = static_cast<u8>(c >> 16);
+            } else if (loaded) {
+                p[0] = sky[0], p[1] = sky[1], p[2] = sky[2];
+            } else {
+                p[0] = p[1] = p[2] = 40; // not loaded yet
+            }
+            p[3] = 255;
+            // The view's frame.
+            const bool edge_x = tx >= view.x0 - 1 && tx <= view.x1 && (std::abs(ty - view.y0) < kMapTilesPerPx || std::abs(ty - view.y1) < kMapTilesPerPx);
+            const bool edge_y = ty >= view.y0 - 1 && ty <= view.y1 && (std::abs(tx - view.x0) < kMapTilesPerPx || std::abs(tx - view.x1) < kMapTilesPerPx);
+            if (edge_x || edge_y) p[0] = p[1] = p[2] = 255;
+        }
+    }
+    const std::string old = map_name_;
+    map_name_ = "minimap_" + std::to_string(++map_serial_);
+    ui_->set_image(map_name_, map_rgba_.data(), kMapPx, kMapPx);
+    m_minimap_ = "/memory/" + map_name_;
+    model_.DirtyVariable("lv_minimap");
+    // The old picture goes after the element shows the new one.
+    if (!old.empty()) ui_->drop_image(old);
+    ++minimap_updates_;
+}
+
+void LevelEditor::sync_model() {
+    const ModeInfo& mode = mode_info(mode_);
+    set(m_mode_, Rml::String(mode.id), "lv_mode");
+    set(m_mode_name_, Rml::String(mode.name), "lv_mode_name");
+    set(m_mode_help_, Rml::String(mode.help), "lv_mode_help");
+    set(m_mode_when_, Rml::String(mode.when), "lv_mode_when");
+    set(m_tool_, Rml::String(tool_id(tool_)), "lv_tool");
+    set(m_tool_name_, Rml::String(tool_name(tool_)), "lv_tool_name");
+    set(m_tool_help_, Rml::String(tool_help(tool_)), "lv_tool_help");
+    set(m_tile_, static_cast<int>(tile_), "lv_tile");
+    set(m_layer_, static_cast<int>(layer_), "lv_layer");
+    set(m_radius_, radius_ + 1, "lv_radius");
+    const auto& tiles = module_.tiles();
+    if (tile_ < tiles.size()) {
+        const level::TileDef& t = tiles[tile_];
+        set(m_tile_name_, Rml::String(t.name), "lv_tile_name");
+        set(m_tile_hint_, Rml::String(t.hint), "lv_tile_hint");
+        set(m_tile_icon_, Rml::String("/memory/tile_" + t.id), "lv_tile_icon");
+        const auto& layers = module_.layer_names();
+        set(m_tile_layer_, Rml::String(t.layer < layers.size() ? layers[t.layer] : std::string()), "lv_tile_layer");
+    }
+    set(m_light_, view_.game_light, "lv_light");
+    set(m_grid_, view_.grid, "lv_grid");
+    set(m_chunks_, view_.chunks, "lv_chunks");
+    set(m_outline_, rect_outline_, "lv_outline");
+    set(m_dirty_, history_.dirty(), "lv_dirty");
+    if (time_ - info_time_ > 0.25) {
+        info_time_ = time_;
+        char coords[96];
+        std::snprintf(coords, sizeof(coords), "%.0f, %.0f", camera_.x, camera_.y);
+        const std::string place = module_.place(camera_.x, camera_.y);
+        set(m_place_, Rml::String(place.empty() ? coords : place + " · " + coords), "lv_place");
+        char info[160];
+        std::snprintf(info, sizeof(info), "Изменений: %s · участков загружено: %u",
+                      group_digits(level_->edits()).c_str(), level_->world().stats().resident);
+        set(m_info_, Rml::String(info), "lv_info");
+    }
+    if (history_.version() != history_version_) {
+        history_version_ = history_.version();
+        m_history_.clear();
+        for (usize i = 0; i < history_.size(); ++i) m_history_.push_back(history_.label_at(i));
+        m_history_cursor_ = static_cast<int>(history_.cursor());
+        model_.DirtyVariable("lv_history");
+        model_.DirtyVariable("lv_history_cursor");
+    }
+}
+
+// --- drawing -----------------------------------------------------------------
+
+void LevelEditor::push_overlay(f64 ox, f64 oy) {
+    const u32 white = render::pack_color(255, 255, 255, 255);
+    auto quad = [&](f64 x, f64 y, f64 w, f64 h, u32 color, u32 order) {
+        render::Sprite s;
+        s.x = static_cast<f32>(x + w * 0.5 - ox);
+        s.y = static_cast<f32>(y + h * 0.5 - oy);
+        s.w = static_cast<f32>(w);
+        s.h = static_cast<f32>(h);
+        s.frame = demo::kFrameSolid;
+        s.color = color;
+        s.order = order;
+        front_batch_.push(s);
+    };
+    (void)white;
+    const world::Rect view = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+    const f64 px = 1.0 / camera_.zoom;
+    if (view_.grid && camera_.zoom >= 6) {
+        const u32 c = render::pack_color(255, 255, 255, 40);
+        for (i32 x = view.x0; x <= view.x1; ++x) quad(x - px * 0.5, view.y0, px, view.y1 - view.y0, c, 1);
+        for (i32 y = view.y0; y <= view.y1; ++y) quad(view.x0, y - px * 0.5, view.x1 - view.x0, px, c, 1);
+    }
+    if (view_.chunks) {
+        const u32 c = render::pack_color(255, 200, 80, 170);
+        const i32 n = static_cast<i32>(world::kChunkSize);
+        auto first = [n](i32 v) { return static_cast<i32>(std::floor(static_cast<f64>(v) / n)) * n; };
+        for (i32 x = first(view.x0); x <= view.x1; x += n) quad(x - px, view.y0, px * 2, view.y1 - view.y0, c, 2);
+        for (i32 y = first(view.y0); y <= view.y1; y += n) quad(view.x0, y - px, view.x1 - view.x0, px * 2, c, 2);
+    }
+    // What the tool would paint.
+    std::vector<level::Cell> cells;
+    if (shaping_) {
+        shape_cells(cells);
+    } else if (hover_ && !panning_ && mode_ == Mode::Tiles) {
+        if (tool_ == Tool::Brush || tool_ == Tool::Eraser) level::disc_cells(hover_x_, hover_y_, radius_, cells);
+        else cells.push_back({hover_x_, hover_y_});
+    }
+    const u32 fill = tool_ == Tool::Eraser ? render::pack_color(255, 90, 80, 90) : render::pack_color(255, 255, 255, 70);
+    for (const level::Cell& c : cells) quad(c.x, c.y, 1, 1, fill, 3);
+    if (hover_ && !panning_ && mode_ == Mode::Tiles) {
+        // An outline around the cell under the mouse.
+        const u32 c = render::pack_color(255, 255, 255, 220);
+        const f64 t = px * 2;
+        quad(hover_x_, hover_y_, 1, t, c, 4);
+        quad(hover_x_, hover_y_ + 1 - t, 1, t, c, 4);
+        quad(hover_x_, hover_y_, t, 1, c, 4);
+        quad(hover_x_ + 1 - t, hover_y_, t, 1, c, 4);
+    }
+}
+
+void LevelEditor::prepare(SDL_GPUCommandBuffer* cmd) {
+    if (!view_ready_ || !view_shown_ || vw_ < 1 || vh_ < 1) return;
+    const u32 w = static_cast<u32>(vw_), h = static_cast<u32>(vh_);
+    module_.prepare_view(cmd, *level_, camera_, w, h, view_, time_);
+
+    back_batch_.begin(camera_.snapped_x(), camera_.snapped_y(), 4);
+    const Color bg = module_.background();
+    auto byte = [](f32 v) { return static_cast<u8>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+    render::Sprite sky;
+    sky.w = vw_ / camera_.zoom + 4;
+    sky.h = vh_ / camera_.zoom + 4;
+    sky.x = static_cast<f32>(camera_.x - back_batch_.origin_x());
+    sky.y = static_cast<f32>(camera_.y - back_batch_.origin_y());
+    sky.frame = demo::kFrameSolid;
+    sky.color = render::pack_color(byte(bg.r), byte(bg.g), byte(bg.b), 255);
+    back_batch_.push(sky);
+    back_.prepare(cmd, back_batch_, camera_, w, h, false);
+
+    front_batch_.begin(camera_.snapped_x(), camera_.snapped_y(), front_.max_sprites());
+    push_overlay(front_batch_.origin_x(), front_batch_.origin_y());
+    front_.prepare(cmd, front_batch_, camera_, w, h, true);
+}
+
+void LevelEditor::draw(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass) {
+    if (!view_ready_ || !view_shown_ || vw_ < 1 || vh_ < 1) return;
+    const SDL_GPUViewport viewport{vx_, vy_, std::floor(vw_), std::floor(vh_), 0, 1};
+    SDL_SetGPUViewport(pass, &viewport);
+    const SDL_Rect scissor{static_cast<int>(vx_), static_cast<int>(vy_), static_cast<int>(vw_), static_cast<int>(vh_)};
+    SDL_SetGPUScissor(pass, &scissor);
+    back_.draw(cmd, pass);
+    module_.draw_view(cmd, pass);
+    front_.draw(cmd, pass);
+}
+
+// --- input -------------------------------------------------------------------
+
+bool LevelEditor::over_view(f32 x, f32 y, Rml::Context* context) const {
+    if (!view_shown_ || x < vx_ || y < vy_ || x >= vx_ + vw_ || y >= vy_ + vh_) return false;
+    // Labels drawn over the world still belong to the world.
+    for (const Rml::Element* e = context ? context->GetHoverElement() : nullptr; e; e = e->GetParentNode())
+        if (e->GetId() == "level-view") return true;
+    return false;
+}
+
+void LevelEditor::to_tile(f32 x, f32 y, f64& tx, f64& ty) const {
+    camera_.screen_to_tile(x - vx_, y - vy_, static_cast<u32>(vw_), static_cast<u32>(vh_), tx, ty);
+}
+
+void LevelEditor::cell_at(f32 x, f32 y, i32& cx, i32& cy) const {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    cx = static_cast<i32>(std::floor(tx));
+    cy = static_cast<i32>(std::floor(ty));
+}
+
+bool LevelEditor::screen_of(f64 tx, f64 ty, f32& x, f32& y) const {
+    x = vx_ + static_cast<f32>((tx - camera_.snapped_x()) * camera_.zoom) + std::floor(vw_) * 0.5f;
+    y = vy_ + static_cast<f32>((ty - camera_.snapped_y()) * camera_.zoom) + std::floor(vh_) * 0.5f;
+    return x >= vx_ && y >= vy_ && x < vx_ + vw_ && y < vy_ + vh_;
+}
+
+bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rml::Context* context) {
+    switch (e.type) {
+    case SDL_EVENT_MOUSE_MOTION: {
+        const f32 x = e.motion.x * density, y = e.motion.y * density;
+        if (panning_) {
+            camera_.x -= (x - mouse_x_) / camera_.zoom;
+            camera_.y -= (y - mouse_y_) / camera_.zoom;
+        }
+        mouse_x_ = x;
+        mouse_y_ = y;
+        if (grab_splitter_ >= 0) {
+            dock_.drag_splitter(static_cast<usize>(grab_splitter_), x - dock_x_, y - dock_y_);
+            return true;
+        }
+        if (!grab_panel_.empty()) {
+            if (!dragging_panel_ && std::hypot(x - grab_x_, y - grab_y_) > 6) dragging_panel_ = true;
+            if (dragging_panel_) {
+                drop_ = dock_.drop_at(x - dock_x_, y - dock_y_, grab_panel_);
+                const bool show = drop_.zone != editor::DockLayout::Zone::None;
+                set(m_drop_, show, "dock_drop");
+                set(m_drop_x_, drop_.preview.x, "dock_drop_x");
+                set(m_drop_y_, drop_.preview.y, "dock_drop_y");
+                set(m_drop_w_, drop_.preview.w, "dock_drop_w");
+                set(m_drop_h_, drop_.preview.h, "dock_drop_h");
+            }
+            return true;
+        }
+        hover_ = over_view(x, y, context) || (stroke_ != nullptr);
+        if (hover_) cell_at(x, y, hover_x_, hover_y_);
+        if (stroke_) drag(x, y);
+        return hover_;
+    }
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        const f32 x = e.button.x * density, y = e.button.y * density;
+        mouse_x_ = x;
+        mouse_y_ = y;
+        if (!grab_panel_.empty() || grab_splitter_ >= 0) return true;
+        if (!over_view(x, y, context)) return false;
+        if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Tiles) {
+            history_.seal();
+            press(x, y);
+        } else if (!panning_) {
+            panning_ = true;
+            pan_button_ = e.button.button;
+        }
+        return true;
+    }
+    case SDL_EVENT_MOUSE_BUTTON_UP: {
+        bool used = false;
+        if (grab_splitter_ >= 0) {
+            grab_splitter_ = -1;
+            save_layout();
+            used = true;
+        }
+        if (!grab_panel_.empty()) {
+            if (dragging_panel_) {
+                if (dock_.move(grab_panel_, drop_)) save_layout();
+            } else {
+                dock_.activate(grab_panel_);
+                save_layout();
+            }
+            grab_panel_.clear();
+            dragging_panel_ = false;
+            drop_ = {};
+            set(m_drop_, false, "dock_drop");
+            used = true;
+        }
+        if (e.button.button == SDL_BUTTON_LEFT && stroke_) {
+            release();
+            used = true;
+        }
+        if (panning_ && e.button.button == pan_button_) {
+            panning_ = false;
+            used = true;
+        }
+        return used;
+    }
+    case SDL_EVENT_MOUSE_WHEEL: {
+        if (!over_view(mouse_x_, mouse_y_, context)) return false;
+        f64 bx, by, ax, ay;
+        to_tile(mouse_x_, mouse_y_, bx, by);
+        camera_.zoom = std::clamp(camera_.zoom * std::pow(1.15f, e.wheel.y), 1.0f, 96.0f);
+        to_tile(mouse_x_, mouse_y_, ax, ay);
+        camera_.x += bx - ax;
+        camera_.y += by - ay;
+        return true;
+    }
+    default: break;
+    }
+    (void)ui_used;
+    return false;
+}
+
+bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
+    const bool ctrl = (k.mod & SDL_KMOD_CTRL) != 0;
+    if (ctrl) return false;
+    if (k.key == SDLK_F5) {
+        play_here();
+        return true;
+    }
+    if (k.key == SDLK_Q) { set_mode(Mode::Select); return true; }
+    if (k.key == SDLK_T) { set_mode(Mode::Tiles); return true; }
+    if (mode_ != Mode::Tiles) return false;
+    switch (k.key) {
+    case SDLK_B: set_tool(Tool::Brush); return true;
+    case SDLK_L: set_tool(Tool::Line); return true;
+    case SDLK_R: set_tool(Tool::Rect); return true;
+    case SDLK_G: set_tool(Tool::Fill); return true;
+    case SDLK_E: set_tool(Tool::Eraser); return true;
+    case SDLK_I: set_tool(Tool::Picker); return true;
+    case SDLK_LEFTBRACKET: set_brush_radius(radius_ - 1); return true;
+    case SDLK_RIGHTBRACKET: set_brush_radius(radius_ + 1); return true;
+    default: break;
+    }
+    // Palette shortcuts: "1".."9".
+    if (k.key >= SDLK_1 && k.key <= SDLK_9) {
+        const std::string key(1, static_cast<char>('1' + (k.key - SDLK_1)));
+        const auto& tiles = module_.tiles();
+        for (usize i = 0; i < tiles.size(); ++i)
+            if (tiles[i].key == key) {
+                select_tile(i);
+                if (tool_ == Tool::Eraser || tool_ == Tool::Picker) set_tool(Tool::Brush);
+                return true;
+            }
+    }
+    return false;
+}
+
+} // namespace forge::editor_app

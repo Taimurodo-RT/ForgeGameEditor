@@ -4,3 +4,6 @@ out/
 .vscode/
 *.user
 scene.forge.json
+
+# The level painted in the editor (forge_editor «Уровень»): kept on your machine.
+games/slice/level/
