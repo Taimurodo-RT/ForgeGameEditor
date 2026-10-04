@@ -88,7 +88,7 @@ std::string date_text(i64 ticks) {
     if (ticks == 0) return {};
     using namespace std::chrono;
     const fs::file_time_type ft{fs::file_time_type::duration(ticks)};
-    const std::time_t t = system_clock::to_time_t(time_point_cast<system_clock::duration>(file_clock::to_sys(ft)));
+    const std::time_t t = system_clock::to_time_t(time_point_cast<system_clock::duration>(clock_cast<system_clock>(ft)));
     std::tm tm{};
 #if defined(_WIN32)
     localtime_s(&tm, &t);
