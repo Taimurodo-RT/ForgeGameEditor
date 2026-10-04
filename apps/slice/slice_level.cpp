@@ -156,7 +156,7 @@ void Objects::init(flecs::world& ecs) {
 }
 
 void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGenerator& gen, f64 cam_x, f64 cam_y,
-                  f32 alpha, u64 tick) {
+                  f32 alpha, u64 tick, const Pictures* pictures) {
     const u32 phase = static_cast<u32>(tick / 8);
     auto at = [&](f64 x, f64 y, f32 w, f32 h, u32 frame, u32 order, u32 color = 0xffffffffu, f32 angle = 0) {
         Sprite s;
@@ -170,37 +170,59 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         s.angle = angle;
         batch.push(s);
     };
-    objects.critters.each([&](const Position& p, const Body& b, const Critter& c) {
-        Sprite* s = batch.push(1);
-        if (!s) return;
+    // The template's own picture, if the object is a copy of one that has it.
+    const bool any_picture = pictures && !pictures->empty();
+    auto picture = [&](flecs::entity e) -> const Pictures::Picture* {
+        if (!any_picture) return nullptr;
+        const objects::ObjectRef* ref = e.try_get<objects::ObjectRef>();
+        return ref ? pictures->of(ref->key) : nullptr;
+    };
+    objects.critters.each([&](flecs::entity e, const Position& p, const Body& b, const Critter& c) {
         f64 x, y;
         sim::draw_position(p, b, alpha, x, y);
+        const f32 side = c.dir < 0 ? -1.0f : 1.0f;
+        if (const Pictures::Picture* pic = picture(e)) {
+            at(x, y, side * pic->aspect, 1.0f, pic->frame, 1);
+            return;
+        }
+        Sprite* s = batch.push(1);
+        if (!s) return;
         s->x = static_cast<f32>(x - cam_x);
         s->y = static_cast<f32>(y - cam_y);
-        s->w = c.dir < 0 ? -1.0f : 1.0f;
+        s->w = side;
         s->h = 1.0f;
         s->angle = 0;
         s->frame = (c.seed % demo::kCritterKinds) * 2 + (((b.contacts & sim::OnGround) ? phase + c.seed : 0) & 1u);
         s->color = 0xffffffffu;
         s->order = 1;
     });
-    objects.npcs.each([&](const Position& p, const Body& b, const Npc& n) {
+    objects.npcs.each([&](flecs::entity e, const Position& p, const Body& b, const Npc& n) {
         f64 x, y;
         sim::draw_position(p, b, alpha, x, y);
+        const f32 side = n.facing < 0 ? -1.0f : 1.0f;
+        if (const Pictures::Picture* pic = picture(e)) {
+            at(x, y, side * 2.0f * pic->aspect, 2.0f, pic->frame, 2);
+            return;
+        }
         const u32 base = n.who == 0 ? FrameMiner : FrameSmith;
         const u32 frame = base + (n.dir != 0 ? (phase & 1u) : 0u);
-        at(x, y, n.facing < 0 ? -1.0f : 1.0f, 2.0f, frame, 2);
+        at(x, y, side, 2.0f, frame, 2);
     });
-    objects.items.each([&](const Position& p, const Body& b, const Item& i) {
+    objects.items.each([&](flecs::entity e, const Position& p, const Body& b, const Item& i) {
         f64 x, y;
         sim::draw_position(p, b, alpha, x, y);
         const f64 bob = std::sin(static_cast<f64>(tick) * 0.08 + p.tile_x()) * 0.08;
-        at(x, y + bob, 0.8f, 0.8f, item_frame(static_cast<ItemKind>(i.kind)), 3);
+        if (const Pictures::Picture* pic = picture(e))
+            at(x, y + bob, 0.8f * pic->aspect, 0.8f, pic->frame, 3);
+        else
+            at(x, y + bob, 0.8f, 0.8f, item_frame(static_cast<ItemKind>(i.kind)), 3);
         if (i.kind == static_cast<u8>(ItemKind::Pickaxe))
             at(x, y, 2.4f, 2.4f, demo::kFrameGlow, 0, render::pack_color(255, 220, 120, 90));
     });
-    objects.crates.each([&](const Position& p, const RigidBody& rb) {
-        at(p.tile_x(), p.tile_y(), rb.half_w * 2.0f, rb.half_h * 2.0f, demo::kFrameCrate, 1, 0xffffffffu, rb.angle);
+    objects.crates.each([&](flecs::entity e, const Position& p, const RigidBody& rb) {
+        const Pictures::Picture* pic = picture(e);
+        at(p.tile_x(), p.tile_y(), rb.half_w * 2.0f, rb.half_h * 2.0f, pic ? pic->frame : demo::kFrameCrate, 1,
+           0xffffffffu, rb.angle);
     });
     // The smith's anvil by his door.
     const House h = gen.smith_house();
@@ -260,7 +282,8 @@ SliceLevel::SliceLevel() : gen_(std::make_shared<SliceGenerator>(kSeed)) {
         {"window", "Окно", build, "фон", kWalls, TileWindow, ""},
         {"water", "Вода", liquid, "растекается в игре", kLiquids, sim::make_liquid(kWater, sim::kFull), "7"},
     };
-    sheet_ = make_sheet();
+    base_sheet_ = make_sheet();
+    sheet_ = base_sheet_;
     atlas_ = make_atlas();
     // Minimap colours: the average of each atlas cell.
     const u32 cell = demo::kTileCellPx, row = cell * demo::kTileCells;
@@ -297,8 +320,15 @@ const std::vector<level::ObjectDef>& SliceLevel::objects() const {
     return object_defs_;
 }
 
+void SliceLevel::refresh_pictures() const {
+    if (pictures_version_ == library_.version()) return;
+    pictures_version_ = library_.version();
+    if (pictures_.update(library_, base_sheet_, sheet_)) sheet_changed_ = true;
+}
+
 void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<u8>& rgba) const {
     rgba.assign(static_cast<usize>(size) * size * 4, 0);
+    refresh_pictures();
     const objects::Template* t = library_.find(def.key);
     const objects::KindDef* k = t ? library_.kind_of(*t) : nullptr;
     if (!k) return;
@@ -316,6 +346,7 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
         for (u8 i = 0; i < 5; ++i)
             if (what == ids[i]) frame = item_frame(static_cast<ItemKind>(i));
     }
+    if (const Pictures::Picture* pic = pictures_.of(t->key)) frame = pic->frame;
     if (frame >= sheet_.frames.size()) return;
     const render::SpriteRect r = sheet_.frames[frame];
     // Fit the frame, keeping its shape (people are twice as tall).
@@ -469,7 +500,9 @@ void SliceLevel::start(f64& x, f64& y) const {
 bool SliceLevel::init_view(SDL_GPUDevice* device, SDL_GPUTextureFormat format) {
     device_ = device;
     format_ = format;
+    refresh_pictures();
     if (!sprites_.init(device, format, sheet_.sheet(), 1u << 17)) return false;
+    sheet_changed_ = false;
     if (!lights_.init(device, format)) return false;
     lights_.set_rules(light_rules());
     view_ready_ = true;
@@ -515,9 +548,11 @@ void SliceLevel::prepare_view(SDL_GPUCommandBuffer* cmd, level::Level& level, co
         objects_.init(level.scene().ecs());
         objects_ecs_ = &level.scene().ecs();
     }
+    refresh_pictures();
+    if (sheet_changed_ && sprites_.set_sheet(sheet_.sheet())) sheet_changed_ = false;
     const u64 tick = static_cast<u64>(time * 60.0);
     batch_.begin(camera.snapped_x(), camera.snapped_y(), sprites_.max_sprites());
-    push_objects(batch_, objects_, *gen_, batch_.origin_x(), batch_.origin_y(), 1.0f, tick);
+    push_objects(batch_, objects_, *gen_, batch_.origin_x(), batch_.origin_y(), 1.0f, tick, &pictures_);
     push_torches(batch_, level.world(), camera.visible_tiles(width, height), batch_.origin_x(), batch_.origin_y(), tick,
                  torches_);
     tilemap_.prepare(cmd, camera, width, height);

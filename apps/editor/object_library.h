@@ -23,6 +23,7 @@
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -75,6 +76,19 @@ public:
     bool set_about(const std::string& about);
     // Row i of the editor's properties, set from text as the user types it.
     void set_prop(int i, const std::string& text, bool dragging);
+    // The object's own picture (in its editor), chosen from the project's
+    // images: the file is copied into the library's pictures folder, so it
+    // goes with the game.
+    std::function<std::vector<std::filesystem::path>()> list_images; // absolute paths
+    bool set_picture(const std::filesystem::path& source);
+    bool clear_picture();
+    void open_pictures();
+    void close_pictures();
+    bool pictures_open() const { return m_pics_open_; }
+    void set_picture_search(const std::string& text);
+    usize picture_choices() const { return pic_files_.size(); }
+    const std::string& picture_choice(usize i) const { return m_pics_[i].name; }
+    bool choose_picture(usize i);
     // The right-click menu: over card i, or over empty space (-1); x, y in
     // window pixels.
     void context_menu(int card, f32 x, f32 y);
@@ -104,6 +118,9 @@ private:
         Rml::String name, label;
         bool checked = false;
     };
+    struct PicView {
+        Rml::String name, folder, icon;
+    };
     struct PropView {
         Rml::String kind; // text, slider, bool, enum
         Rml::String label, value, hint;
@@ -116,6 +133,7 @@ private:
     void icon_of(const objects::Template& t);
     void change(objects::Template after, std::string label, std::string merge = {});
     void set_menu(const std::string& menu);
+    void rebuild_pictures();
     template <typename T>
     void set(T& member, const T& value, const char* name) {
         if (member == value) return;
@@ -137,7 +155,10 @@ private:
     std::string place_, search_;
     std::vector<u64> card_keys_;
     std::vector<const objects::PropDef*> prop_refs_;
-    std::unordered_map<u64, u32> icon_revs_; // key -> rev the icon was drawn for
+    std::unordered_map<u64, u32> icon_revs_; // key -> look the icon was drawn for
+    std::vector<std::filesystem::path> pic_files_; // what the chooser shows
+    std::unordered_map<std::string, std::string> pic_icons_; // file -> ui image name
+    std::string pic_search_;
 
     // Model mirrors
     std::vector<NavRow> m_genres_, m_kinds_;
@@ -148,6 +169,9 @@ private:
     std::vector<PropView> m_props_;
     Rml::String m_search_, m_count_, m_menu_; // menu: "", "new", "card", "empty"
     float m_menu_x_ = 0, m_menu_y_ = 0;
+    std::vector<PicView> m_pics_;
+    Rml::String m_pics_search_, m_pics_note_, m_sel_picture_;
+    bool m_pics_open_ = false;
     bool m_details_ = false, m_has_sel_ = false, m_editing_ = false;
     Rml::String m_sel_name_, m_sel_kind_, m_sel_kind_about_, m_sel_about_, m_sel_icon_, m_sel_file_, m_sel_kind_icon_,
         m_sel_genre_;

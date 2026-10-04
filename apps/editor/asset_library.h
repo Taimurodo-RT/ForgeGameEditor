@@ -147,6 +147,8 @@ public:
     const FileTypes& types() const { return types_; }
     const std::vector<std::string>& selection() const { return selection_; }
     usize record_count() const { return records_.size(); }
+    // Every image in the project, newest first (absolute paths).
+    std::vector<std::filesystem::path> images() const;
     usize row_count() const { return rows_.size(); }
     std::string row_rel(usize i) const { return i < rows_.size() ? rows_[i].rel : std::string(); }
     std::string row_field(usize i, std::string_view name) const { return field(static_cast<u32>(i), name); }

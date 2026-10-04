@@ -435,6 +435,14 @@
                 <div class="ol-editor-body row grow">
                     <div class="ol-editor-look column">
                         <div class="ol-preview big"><img data-attr-src="ol_sel_icon"/></div>
+                        <div class="ol-picture column">
+                            <div class="section-title">Картинка</div>
+                            <span id="ol-picture-name" class="muted body-small">{{ ol_sel_picture == '' ? 'обычная для этого вида' : ol_sel_picture }}</span>
+                            <div class="row gap-1">
+                                <div id="ol-picture-pick" class="command" title="Выбрать картинку из «Ресурсов»" data-event-click="ol_picture_pick"><icon name="image"/><span>Выбрать…</span></div>
+                                <div id="ol-picture-clear" class="command" title="Вернуть обычную картинку" data-if="ol_sel_picture != ''" data-event-click="ol_picture_clear"><icon name="hide_image"/><span>Убрать</span></div>
+                            </div>
+                        </div>
                         <div class="muted body-small ol-kind-about">{{ ol_sel_kind_about }}</div>
                     </div>
                     <div class="ol-editor-props column grow">
@@ -482,6 +490,23 @@
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- The picture chooser: the project's images, from «Ресурсы» -->
+        <div class="as-backdrop" data-if="ol_pics_open" data-event-mousedown="ol_pics_close"/>
+        <div id="ol-pics" class="ol-pics column" data-if="ol_pics_open">
+            <div class="ol-pics-head row gap-2">
+                <span class="ol-editor-title grow">Картинка для «{{ ol_sel_name }}»</span>
+                <input id="ol-pics-search" type="text" class="small" placeholder="Поиск картинок" data-attr-value="ol_pics_search" data-event-change="ol_pics_search"/>
+                <div id="ol-pics-close" class="icon-button" title="Закрыть (Esc)" data-event-click="ol_pics_close"><icon name="close"/></div>
+            </div>
+            <div class="ol-pics-grid grow">
+                <div data-for="p : ol_pics" class="ol-pic column" data-attr-id="'ol-pic-' + it_index" data-attr-title="p.folder" data-event-click="ol_picture_choose(it_index)">
+                    <div class="ol-pic-img"><img data-attr-src="p.icon"/></div>
+                    <span class="ol-pic-name">{{ p.name }}</span>
+                </div>
+            </div>
+            <div class="muted body-small">{{ ol_pics_note }}</div>
         </div>
 
         <!-- The right-click menu: of a card, or of empty space -->

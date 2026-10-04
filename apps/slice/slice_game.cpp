@@ -206,7 +206,8 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     device_ = device;
     format_ = format;
     atlas_ = make_atlas();
-    sheet_ = make_sheet();
+    // The drawn frames and the templates' own pictures under them.
+    pictures_.update(library_, make_sheet(), sheet_);
     sprite_capacity_ = options_.stress ? options_.stress_critters + 65536 : 65536;
     if (!sprites_.init(device, format, sheet_.sheet(), sprite_capacity_)) return false;
     if (!lights_.init(device, format)) return false;
@@ -918,7 +919,7 @@ void SliceGame::build_sprites() {
         batch_.push(s);
     };
 
-    push_objects(batch_, level_->objects, *gen_, camera_.x, camera_.y, alpha, sim.clock().tick());
+    push_objects(batch_, level_->objects, *gen_, camera_.x, camera_.y, alpha, sim.clock().tick(), &pictures_);
     if (running_ && level_->hero.is_alive()) {
         const Position& p = level_->hero.get<Position>();
         const Body& b = level_->hero.get<Body>();

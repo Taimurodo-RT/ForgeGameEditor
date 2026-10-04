@@ -139,6 +139,7 @@ private:
 
     std::vector<u8> atlas_;
     forge::demo::SheetImage sheet_;
+    Pictures pictures_;
     forge::render::TilemapRenderer tiles_;
     const forge::world::World* tiles_world_ = nullptr;
     forge::render::SpriteRenderer sprites_;

@@ -1,5 +1,6 @@
 #include "forge/core/file.h"
 #include "forge/core/jobs.h"
+#include "forge/core/path.h"
 #include "forge/objects/library.h"
 #include "forge/scene/scene.h"
 #include "forge/world/generators.h"
@@ -142,6 +143,23 @@ TEST_CASE("new templates are written to files and read back") {
     CHECK(!std::filesystem::exists(t->file));
     f.lib.reload_templates();
     CHECK(f.lib.templates().size() == 1);
+}
+
+TEST_CASE("a template's own picture is kept in its file") {
+    Fixture f;
+    const KindDef& k = f.lib.kinds()[0];
+    std::optional<Template> t = f.lib.make(k, &k.presets[0], "");
+    REQUIRE(t);
+    const u32 plain = t->look();
+    CHECK(f.lib.picture_file(*t).empty());
+    t->picture = "Звезда.png";
+    CHECK(t->look() != plain); // icons are drawn again
+    CHECK(f.lib.picture_file(*t) == f.lib.pictures_folder() / utf8_path("Звезда.png"));
+    REQUIRE(f.lib.put(*t));
+    std::optional<Template> read = read_template(t->file);
+    REQUIRE(read);
+    CHECK(read->picture == "Звезда.png");
+    CHECK(read->rev == t->rev); // a picture does not touch the copies' values
 }
 
 TEST_CASE("copies follow their template, but keep their own values") {
