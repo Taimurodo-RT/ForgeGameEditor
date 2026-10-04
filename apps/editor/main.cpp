@@ -1284,6 +1284,9 @@ public:
         case 43:
             check(click_tab(6), "a click on the Logic tab");
             break;
+        case 44:
+            check(tab_lit(6) && !tab_lit(0), "the Logic tab is highlighted on the next frame");
+            break;
         case 45: {
             check(shown("placeholder") && !shown("viewport"), "the tab replaces the world view");
             count_ = ed_.doc.object_count();
@@ -1292,6 +1295,9 @@ public:
             check(click_tab(0), "a click on the World tab");
             break;
         }
+        case 46:
+            check(tab_lit(0) && !tab_lit(6), "the World tab is highlighted again");
+            break;
         case 47:
             check(shown("viewport") && !shown("placeholder"), "the world view is back");
             break;
@@ -1306,6 +1312,10 @@ private:
     bool shown(const char* id) {
         Rml::Element* e = ed_.find_element(id);
         return e && e->IsVisible(true);
+    }
+    bool tab_lit(int index) {
+        Rml::Element* bar = ed_.find_element("editor-tabs");
+        return bar && index < bar->GetNumChildren() && bar->GetChild(index)->IsClassSet("selected");
     }
     bool click_tab(int index) {
         Rml::Element* bar = ed_.find_element("editor-tabs");
@@ -1390,6 +1400,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 if (f == 1 && tab > 0)
                     if (Rml::Element* bar = editor.find_element("editor-tabs"); bar && tab < bar->GetNumChildren())
                         bar->GetChild(tab)->Click();
+                // Offscreen frames take microseconds: give the tab highlight's colour
+                // transition (started by the frame after the click) time to finish.
+                if (f == 2 && tab > 0) SDL_Delay(300);
                 if (bench) {
                     if (Rml::Element* list = editor.find_element("hierarchy")) {
                         float top = list->GetScrollTop() + 37.0f;
