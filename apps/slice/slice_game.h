@@ -12,6 +12,7 @@
 #include "slice_world.h"
 
 #include "forge/game/shell.h"
+#include "forge/logic/logic.h"
 #include "forge/render/lighting.h"
 #include "forge/render/particles.h"
 #include "forge/render/sprite_renderer.h"
@@ -106,8 +107,17 @@ public:
     f64 sim_ms() const { return sim_ms_; }
     const SliceSounds& sounds() const { return sounds_; }
     const forge::sim::SimStats* sim_stats() const;
+    // Links («Ключ открывает Дверь»): the last hint said to the hero, the
+    // hero's hearts, the door nearest to a point (NaN-free: false when none).
+    const std::string& last_hint() const { return last_hint_; }
+    f64 hearts() const;
+    bool door_open(f64 x, f64 y, bool& open) const;
+    // Reads verbs.json and logic.json again and applies them (the editor
+    // changed the links).
+    bool reload_links(std::string* error = nullptr);
 
 private:
+    friend class SliceLogic;
     struct Level;
     std::unique_ptr<Level> make_level(const std::filesystem::path& save_folder, std::string* error);
     void spawn_hero(f64 x, f64 y);
@@ -134,6 +144,10 @@ private:
     void give(const std::string& item, f64 n, bool announce);
     bool take(const std::string& item, f64 n);
     i32 nearest_npc(f64 reach, flecs::entity* out) const;
+    // What links asked for during a tick, done after it (they may destroy,
+    // move the hero, start a dialogue).
+    void do_deeds();
+    void hurt_hero(f64 n);
 
     Options options_;
     forge::game::Shell* shell_ = nullptr;
@@ -182,6 +196,20 @@ private:
 
     struct Hud;
     std::unique_ptr<Hud> hud_;
+
+    // Links: the game's verbs and links, what they do here, and what they
+    // asked for in the last tick.
+    forge::logic::Verbs verbs_;
+    forge::logic::Logic links_;
+    std::unique_ptr<forge::logic::Game> logic_;
+    struct Deed {
+        std::string action, thing;
+        flecs::entity_t target = 0, other = 0;
+    };
+    std::vector<Deed> deeds_;
+    std::vector<std::string> hints_;
+    std::vector<std::pair<flecs::entity_t, std::string>> cues_;
+    std::string last_hint_;
 };
 
 } // namespace slice

@@ -41,7 +41,8 @@
             { "id": "coins", "name": "Монеты", "value": 1 },
             { "id": "copper", "name": "Медь", "value": 2 },
             { "id": "wood", "name": "Дерево", "value": 3 },
-            { "id": "torch", "name": "Факел", "value": 4 }
+            { "id": "torch", "name": "Факел", "value": 4 },
+            { "id": "key", "name": "Ключ", "value": 5 }
           ] },
         { "id": "count", "name": "Сколько", "bind": "Item.count", "hint": "столько попадёт в инвентарь", "min": 1, "max": 999 }
       ],
@@ -85,6 +86,20 @@
       "needs": ["body"],
       "excludes": ["villager"],
       "was": ["critter"]
+    },
+    {
+      // Дверь не пускает героя, пока закрыта. Открывают её связи: «Ключ
+      // открывает Дверь», «Рычаг включает Дверь».
+      "id": "door",
+      "name": "Дверь",
+      "icon": "door_front",
+      "about": "Закрытая не пускает героя дальше. Открыть её можно связью: «Ключ открывает дверь».",
+      "components": { "Door": { "height": 3 } },
+      "props": [
+        { "id": "height", "name": "Высота", "bind": "Door.height", "hint": "клеток, снизу вверх", "min": 2, "max": 6 },
+        { "id": "open", "name": "Открыта", "bind": "Door.open", "hint": "открыта с самого начала" }
+      ],
+      "excludes": ["body", "rigid"]
     },
     {
       // Звук — файл из папки sounds игры (WAV или OGG); позже здесь будут и
@@ -146,6 +161,19 @@
         { "name": "Монетка", "genre": "Платформер", "about": "одна монетка, +1 к счёту", "values": { "what": "coins", "count": 1 } },
         { "name": "Кошелёк", "genre": "RPG", "about": "горсть монет", "values": { "what": "coins", "count": 25 } },
         { "name": "Ресурс", "genre": "Песочница", "about": "руда или дерево для крафта", "values": { "what": "copper", "count": 1 } }
+      ]
+    },
+    {
+      "id": "door",
+      "name": "Дверь",
+      "group": "Разное",
+      "icon": "door_front",
+      "about": "Стоит на месте и не пускает героя, пока закрыта.",
+      "foot": 0.5,
+      "blocks": ["door"],
+      "presets": [
+        { "name": "Дверь", "about": "в проходе высотой 3 клетки", "values": { "height": 3 } },
+        { "name": "Ворота", "genre": "RPG", "about": "высокие, в 5 клеток", "values": { "height": 5 } }
       ]
     },
     {

@@ -129,6 +129,9 @@ public:
     // Engine functions. The core set is there from the start; add more
     // before loading modules that use them.
     ScriptApi& api() { return api_; }
+    // The `forge` table is made at the first load, run or tick: functions
+    // added after that are not seen by scripts.
+    bool api_built() const;
 
     // Lets scripts read and write a component by name through its
     // reflection: forge.get(e, "Health", "current"). Simulation components
@@ -167,6 +170,15 @@ public:
     // World time that passed for scripts (seconds, scaled by time speed).
     f64 world_time() const { return world_time_; }
 
+    // For engine functions registered from outside the script module: the
+    // host a Luau state belongs to, and pointers they keep with it by name.
+    static ScriptHost& of(lua_State* L);
+    void set_user(std::string_view key, void* value);
+    void* user(std::string_view key) const;
+    // The entity whose handler is running (0 outside handlers).
+    flecs::entity_t running() const;
+    scene::Scene& scene() { return scene_; }
+
     struct Impl; // shared with the engine functions in api_core.cpp
 
 private:
@@ -179,6 +191,7 @@ private:
     lua_State* L_ = nullptr;
     std::unique_ptr<Impl> impl_;
     std::vector<ScriptError> errors_;
+    std::vector<std::pair<std::string, void*>> users_;
     ScriptStats stats_;
     f64 world_time_ = 0;
 };

@@ -94,7 +94,7 @@ void person(const Canvas& c, const Look& l, u32 step) {
 bool is_solid(TileId t) {
     switch (t) {
     case TileGrass: case TileDirt: case TileStone: case TileSand: case TileCopper: case TileIron: case TileGold:
-    case TilePlanks: case TileRoof: case TileBrick: return true;
+    case TilePlanks: case TileRoof: case TileBrick: case TileDoor: return true;
     default: return false;
     }
 }
@@ -210,6 +210,7 @@ std::vector<u8> make_atlas() {
                 c.put(x, y, mortar ? Rgb{176, 168, 150} : shade(Rgb{160, 72, 52}, static_cast<i32>(h3(static_cast<u32>(x / 8 + row * 3), static_cast<u32>(row), 23) % 21) - 10));
             }
     }
+    // TileDoor stays empty: the door object draws itself over its column.
     return px;
 }
 
@@ -330,6 +331,34 @@ demo::SheetImage make_sheet() {
                 const f32 dx = static_cast<f32>(x) - 7.5f, dy = static_cast<f32>(y) - 9.0f;
                 const f32 d = std::sqrt(dx * dx + dy * dy);
                 if (d < 4.5f || (dy < 0 && std::fabs(dx) < (dy + 9.0f) * 0.5f)) c.put(x, y, {255, 255, 255});
+            }
+    }
+    {
+        // Key: a ring, a shaft and two teeth.
+        const Canvas c = small(FrameKey);
+        const Rgb gold{232, 186, 64}, dark{160, 116, 30};
+        for (i32 y = 0; y < 16; ++y)
+            for (i32 x = 0; x < 16; ++x) {
+                const f32 dx = static_cast<f32>(x) - 4.5f, dy = static_cast<f32>(y) - 7.5f;
+                const f32 d = std::sqrt(dx * dx + dy * dy);
+                if (d < 3.6f && d > 1.6f) c.put(x, y, d > 2.8f ? dark : gold);
+            }
+        c.rect(8, 7, 14, 8, gold);
+        c.rect(8, 8, 14, 8, dark);
+        c.rect(11, 9, 11, 11, gold);
+        c.rect(13, 9, 14, 10, gold);
+    }
+    // Door: vertical boards in a frame with iron bands; a closed door is a
+    // column of these.
+    {
+        const Canvas c = small(FrameDoor);
+        for (i32 y = 0; y < 16; ++y)
+            for (i32 x = 0; x < 16; ++x) {
+                Rgb col = shade(Rgb{132, 86, 46}, static_cast<i32>(h3(static_cast<u32>(x / 4), static_cast<u32>(y / 5), 31) % 11) - 5);
+                if (x % 4 == 3) col = Rgb{86, 54, 28};
+                if (x < 2 || x > 13) col = Rgb{74, 46, 24};
+                if (y == 3 || y == 12) col = Rgb{70, 72, 80};
+                c.put(x, y, col);
             }
     }
     for (u32 f = FramePickaxe; f < FrameCount; ++f) {

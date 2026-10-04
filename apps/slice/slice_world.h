@@ -29,6 +29,7 @@ enum SliceTile : TileId {
     TileRoof,                                   // solid
     TileWindow,                                 // background
     TileBrick,                                  // solid
+    TileDoor,                                   // solid, not drawn: where a closed door stands («Дверь» objects put and take them)
     TileSliceCount,
 };
 

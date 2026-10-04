@@ -6,7 +6,7 @@
 //   forge_slice --play --level DIR --at X,Y
 //                                   a new game from a level folder, the hero at X,Y
 //                                   (the level editor's «Играть отсюда»)
-//   forge_slice --test --screenshot out.png [--scene village|mine|menu]
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|menu]
 //                                   offscreen: plays the game through and checks it
 //
 // Controls: A/D walk, Space/W jump (and swim), left mouse digs or breaks a
@@ -237,6 +237,28 @@ private:
             check(g.tile(kBlocks, fx, static_cast<i32>(gy) + 1) != world::TileAir, "камень без кирки не копается");
             return true;
         }});
+        // «Ключ открывает Дверь» (games/slice/logic.json): without the key
+        // the door holds and says what it needs.
+        steps_.push_back({"дверь без ключа", 100, [&g, controls, gy, stand, this](u32 f) {
+            const SliceGenerator& gen = g.generator();
+            const i32 dx = gen.gallery_x1();
+            if (f == 0) g.teleport(dx + 3.5, gy + 1 - stand);
+            if (f < 5) return false;
+            if (f < 80) {
+                g.script(controls(true, false, false));
+                return false;
+            }
+            g.script(Controls{});
+            bool open = true;
+            check(g.door_open(dx + 0.5, gy + 0.5, open), "дверь в конце штольни");
+            check(!open, "без ключа дверь закрыта");
+            check(g.tile(kBlocks, dx, static_cast<i32>(gy)) == TileDoor && g.tile(kBlocks, dx, static_cast<i32>(gy) - 4) == TileDoor,
+                  "закрытая дверь занимает проход");
+            check(g.hero_x() > dx + 1.0, "герой не прошёл сквозь дверь");
+            check(g.last_hint() == "Нужен предмет «Ключ»", "подсказка: нужен ключ, а не «" + g.last_hint() + "»");
+            g.teleport(gen.gallery_x0() - 1.5, gy + 1 - stand);
+            return true;
+        }});
         steps_.push_back({"до кирки через пруд", 1200, [&s, &g, controls, this](u32) {
             const f64 x = g.hero_x();
             g.script(controls(true, false, x > g.generator().pool_x0() - 3 && x < g.generator().pool_x1() + 3));
@@ -244,6 +266,11 @@ private:
             check(var(s, "quest.pickaxe") == 2, "задание: вернуть кирку");
             check(var(s, "inv.coins") >= 12, "монеты у кирки подобраны");
             check(var(s, "inv.torch") == 8, "факелы в штольне подобраны");
+            check(var(s, "inv.key") == 1, "ключ подобран по пути");
+            bool open = false;
+            check(g.door_open(g.generator().gallery_x1() + 0.5, g.generator().gallery_y() + 0.5, open) && open, "ключ открыл дверь");
+            check(g.tile(kBlocks, g.generator().gallery_x1(), static_cast<i32>(g.generator().gallery_y())) == world::TileAir,
+                  "открытая дверь пропускает");
             return true;
         }});
         steps_.push_back({"копать камень киркой", 120, [&s, &g, aim, gy, this](u32 f) {
@@ -441,6 +468,10 @@ private:
             }
             if (scene_ == "mine") {
                 if (f == 0) g.teleport(gen.pool_x1() + 6.5, gen.gallery_y() + 1 - 0.93);
+                return f >= 90;
+            }
+            if (scene_ == "door") { // the door at the end of the gallery, still closed
+                if (f == 0) g.teleport(gen.gallery_x1() + 5.5, gen.gallery_y() + 1 - 0.93);
                 return f >= 90;
             }
             // The village, talking to Boris.

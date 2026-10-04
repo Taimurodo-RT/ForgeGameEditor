@@ -6,6 +6,7 @@
 #include "forge/core/log.h"
 #include "forge/core/time.h"
 #include "forge/data/json.h"
+#include "forge/script/host.h"
 #include "forge/ui/ui.h"
 
 #include <RmlUi/Core.h>
@@ -41,6 +42,7 @@ constexpr f32 kJump = 15.5f;
 constexpr f32 kReach = 5.5f;     // tiles from the hero's centre to dig or build
 constexpr f32 kTalkReach = 2.6f; // to a villager
 constexpr f32 kZoom = 30;
+constexpr f64 kHearts = 3;
 
 struct SlotDef {
     const char* item; // also the icon's colour class in hud.rcss: tone-<item>
@@ -68,6 +70,7 @@ const char* item_title(const std::string& item) {
     if (item == "copper") return "Медь";
     if (item == "iron") return "Железо";
     if (item == "gold") return "Золото";
+    if (item == "key") return "Ключ";
     return "Предмет";
 }
 
@@ -78,6 +81,7 @@ const char* kind_item(ItemKind k) {
     case ItemKind::Copper: return "copper";
     case ItemKind::Wood: return "wood";
     case ItemKind::Torch: return "torch";
+    case ItemKind::Key: return "key";
     }
     return "";
 }
@@ -102,6 +106,9 @@ struct SliceGame::Level {
     std::unique_ptr<World> world;
     std::unique_ptr<scene::Scene> scene;
     std::unique_ptr<Simulation> sim;
+    // Scripts run after the game's systems; links are scripts too.
+    std::unique_ptr<script::ScriptHost> scripts;
+    std::unique_ptr<logic::Runtime> links;
     flecs::entity hero;
     // Queries belong to the ECS world: declared last, released first.
     Objects objects;
@@ -230,7 +237,141 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
             b.vx = want * c.speed;
         });
     });
+    L->scripts = std::make_unique<script::ScriptHost>(*L->sim, *L->scene);
+    L->links = std::make_unique<logic::Runtime>(*L->scripts, library_, *logic_);
+    L->links->load(links_, verbs_);
+    L->links->attach(*L->scene);
     return L;
+}
+
+// --- links -------------------------------------------------------------------
+
+// What links do in «Старой шахте». Everything that changes the game waits
+// for the end of the tick (SliceGame::do_deeds).
+class SliceLogic final : public logic::Game {
+public:
+    explicit SliceLogic(SliceGame& game) : g_(game) {}
+
+    bool is_hero(flecs::entity_t e) override { return e && g_.level_ && g_.level_->hero.id() == e; }
+    flecs::entity_t hero() override { return g_.level_ && g_.level_->hero.is_alive() ? g_.level_->hero.id() : 0; }
+    // A pickup is carried as its item ("key"), anything else by its own id.
+    bool has(flecs::entity_t, std::string_view thing) override {
+        if (const objects::Template* t = g_.library_.find(thing))
+            if (const objects::PropDef* what = g_.library_.prop_of(*t, "what"); what && g_.library_.has_block(*t, "pickup")) {
+                std::string item = g_.library_.value(*t, *what);
+                if (item.size() >= 2 && item.front() == '"') item = item.substr(1, item.size() - 2);
+                return g_.inv(item) > 0;
+            }
+        return g_.inv(std::string(thing)) > 0;
+    }
+    bool act(std::string_view action, flecs::entity_t target, std::string_view thing, flecs::entity_t other,
+             flecs::entity_t) override {
+        static constexpr std::string_view known[] = {"collect", "open", "close", "toggle", "hurt", "heal", "coin", "talk", "follow", "flee"};
+        if (std::find(std::begin(known), std::end(known), action) == std::end(known)) return false;
+        g_.deeds_.push_back({std::string(action), std::string(thing), target, other});
+        return true;
+    }
+    void hint(flecs::entity_t, std::string_view text) override { g_.hints_.emplace_back(text); }
+    void sound(flecs::entity_t at, std::string_view cue) override { g_.cues_.emplace_back(at, std::string(cue)); }
+    bool night() override { return false; } // no nights in the slice yet
+
+private:
+    SliceGame& g_;
+};
+
+void SliceGame::do_deeds() {
+    if (!level_) return;
+    flecs::world& ecs = level_->scene->ecs();
+    auto alive = [&](flecs::entity_t e) { return e && ecs.is_alive(e); };
+    std::vector<Deed> deeds;
+    deeds.swap(deeds_);
+    for (const Deed& d : deeds) {
+        if (d.action == "hurt" || d.action == "heal") {
+            if (d.target == level_->hero.id()) hurt_hero(d.action == "hurt" ? 1 : -1);
+            continue;
+        }
+        if (d.action == "coin") {
+            give("coins", 1, true);
+            continue;
+        }
+        if (!alive(d.target)) continue;
+        flecs::entity e = ecs.entity(d.target);
+        if (d.action == "open" || d.action == "close" || d.action == "toggle") {
+            if (Door* door = e.try_get_mut<Door>()) {
+                const bool was = door->open;
+                door->open = d.action == "open" ? true : d.action == "close" ? false : !door->open;
+                if (door->open != was) e.modified<Door>();
+            }
+        } else if (d.action == "collect") {
+            if (const Item* item = e.try_get<Item>()) give(kind_item(static_cast<ItemKind>(item->kind)), item->count, true);
+            else give(d.thing, 1, true);
+            e.destruct();
+        } else if (d.action == "talk") {
+            if (const Npc* n = e.try_get<Npc>(); n && !shell_->in_dialogue() && shell_->talk(npc_dialogue(n->who))) {
+                talking_ = e.id();
+                sounds_.play(Cue::Talk, hero_x_, hero_y_);
+            }
+        } else if (d.action == "follow" || d.action == "flee") {
+            if (Critter* c = e.try_get_mut<Critter>())
+                c->scheme = static_cast<u8>(d.action == "follow" ? Scheme::Follow : Scheme::Flee);
+        }
+    }
+    for (const std::string& h : hints_) {
+        shell_->toast(h);
+        last_hint_ = h;
+    }
+    hints_.clear();
+    for (const auto& [at, cue] : cues_) {
+        f64 x = hero_x_, y = hero_y_;
+        if (alive(at))
+            if (const Position* p = ecs.entity(at).try_get<Position>()) x = p->tile_x(), y = p->tile_y();
+        const Cue c = cue == "pickup" ? Cue::Pickup : cue == "coins" ? Cue::Coins : cue == "open" ? Cue::Crate : Cue::Place;
+        sounds_.play(c, x, y);
+    }
+    cues_.clear();
+}
+
+f64 SliceGame::hearts() const {
+    return shell_->vars().has("hero.hearts") ? shell_->vars().get("hero.hearts").number() : kHearts;
+}
+
+// n > 0 hurts, n < 0 heals. With no hearts left the hero wakes up in the
+// village.
+void SliceGame::hurt_hero(f64 n) {
+    const f64 now = std::clamp(hearts() - n, 0.0, kHearts);
+    shell_->vars().set("hero.hearts", now);
+    if (n < 0) {
+        shell_->toast("Сердца: " + std::to_string(static_cast<i32>(now)));
+        return;
+    }
+    if (now > 0) {
+        shell_->toast("Ранен! Сердец осталось: " + std::to_string(static_cast<i32>(now)));
+        sounds_.play(Cue::Land, hero_x_, hero_y_);
+        return;
+    }
+    shell_->vars().set("hero.hearts", kHearts);
+    shell_->toast("Герой очнулся в деревне");
+    teleport(gen_->spawn_x(), gen_->spawn_y() - kHeroHalfH);
+}
+
+bool SliceGame::door_open(f64 x, f64 y, bool& open) const {
+    if (!level_) return false;
+    f64 best = 1e300;
+    bool found = false;
+    level_->scene->ecs().each([&](const Position& p, const Door& d) {
+        const f64 dist = std::hypot(p.tile_x() - x, p.tile_y() - y);
+        if (dist < best) best = dist, open = d.open, found = true;
+    });
+    return found;
+}
+
+bool SliceGame::reload_links(std::string* error) {
+    const fs::path dir = shell_->game_dir();
+    bool ok = verbs_.load(dir / "verbs.json", error);
+    if (ok) ok = links_.load(dir / "logic.json", error);
+    if (!ok) return false;
+    if (level_) level_->links->load(links_, verbs_);
+    return true;
 }
 
 // --- lifetime ----------------------------------------------------------------
@@ -244,6 +385,9 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     // The drawn frames and the templates' own pictures under them.
     pictures_.update(library_, make_sheet(), sheet_);
     sounds_.init(library_.sounds_folder(), options_.silent);
+    logic_ = std::make_unique<SliceLogic>(*this);
+    if (std::string error; !reload_links(&error)) FORGE_ERROR("Связи: %s", error.c_str());
+    else FORGE_INFO("Связи: действий %zu, связей %zu", verbs_.all().size(), links_.links.size());
     sprite_capacity_ = options_.stress ? options_.stress_critters + 65536 : 65536;
     if (!sprites_.init(device, format, sheet_.sheet(), sprite_capacity_)) return false;
     if (!lights_.init(device, format)) return false;
@@ -336,6 +480,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
         hs.y = options_.at_y - kHeroHalfH;
     }
     if (new_game) {
+        shell_->vars().set("hero.hearts", kHearts);
         shell_->vars().set("inv.torch", 5);
         shell_->vars().set("hero.dig_speed", 1);
     } else {
@@ -899,8 +1044,11 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     hero_y_ = hero_y();
 
     const u64 t0 = time_now_ns();
+    sync_doors(*level_->scene);
     level_->sim->update(playing ? dt : 0.0, focus());
     sim_ms_ = ns_to_ms(time_now_ns() - t0);
+    do_deeds();
+    sync_doors(*level_->scene);
     if (!level_->hero.is_alive()) find_hero();
     hero_x_ = hero_x();
     hero_y_ = hero_y();

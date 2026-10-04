@@ -36,6 +36,10 @@ FORGE_REFLECT(slice::Sounds, 1) {
     t.field("volume", &slice::Sounds::volume).label("Громкость").range(0, 2);
     t.field("range", &slice::Sounds::range).label("Слышно на").range(2, 64);
 }
+FORGE_REFLECT(slice::Door, 1) {
+    t.field("open", &slice::Door::open).label("Открыта");
+    t.field("height", &slice::Door::height).label("Высота").range(2, 6);
+}
 
 namespace slice {
 
@@ -63,8 +67,35 @@ u32 item_frame(ItemKind k) {
     case ItemKind::Copper: return demo::kFrameOre;
     case ItemKind::Wood: return FrameWood;
     case ItemKind::Torch: return FrameTorch;
+    case ItemKind::Key: return FrameKey;
     }
     return FrameDust;
+}
+
+void door_cells(const Position& p, const Door& d, i32& x, i32& top, i32& bottom) {
+    x = static_cast<i32>(std::floor(p.tile_x()));
+    bottom = static_cast<i32>(std::floor(p.tile_y()));
+    top = bottom - std::max<i32>(1, d.height) + 1;
+}
+
+void sync_doors(scene::Scene& scene) {
+    World& world = scene.world();
+    scene.ecs().each([&](flecs::entity e, const Position& p, const Door& d) {
+        DoorCells& held = e.ensure<DoorCells>();
+        i32 x, top, bottom;
+        door_cells(p, d, x, top, bottom);
+        const bool want = !d.open;
+        if (held.held == want && (!want || (held.x == x && held.top == top && held.bottom == bottom))) return;
+        if (held.held)
+            for (i32 y = held.top; y <= held.bottom; ++y)
+                if (world.tile(kBlocks, held.x, y) == TileDoor) world.set_tile(kBlocks, held.x, y, TileAir);
+        held.held = false;
+        if (!want) return;
+        // Only over air (and its own old cells): a door does not eat walls.
+        for (i32 y = top; y <= bottom; ++y)
+            if (const TileId t = world.tile(kBlocks, x, y); t == TileAir || t == TileDoor) world.set_tile(kBlocks, x, y, TileDoor);
+        held = {x, top, bottom, true};
+    });
 }
 
 WorldDesc world_desc() {
@@ -80,6 +111,7 @@ void register_components(scene::Scene& scene) {
     scene.register_component<Item>();
     scene.register_component<Critter>();
     scene.register_component<Sounds>();
+    scene.register_component<Door>();
 }
 
 bool load_objects(objects::Library& library, const std::filesystem::path& game_dir, std::string* error) {
@@ -96,10 +128,11 @@ void attach_objects(objects::Library& library, scene::Scene& scene) {
         if (const Npc* n = e.try_get<Npc>()) return library.find(n->who == 0 ? "miner" : "smith");
         if (e.has<Critter>()) return library.find("critter");
         if (const Item* i = e.try_get<Item>()) {
-            static const char* ids[] = {"pickaxe", "coins", "copper", "wood", "torches"};
-            return i->kind < 5 ? library.find(ids[i->kind]) : nullptr;
+            static const char* ids[] = {"pickaxe", "coins", "copper", "wood", "torches", "key"};
+            return i->kind < 6 ? library.find(ids[i->kind]) : nullptr;
         }
         if (e.has<RigidBody>()) return library.find("crate");
+        if (e.has<Door>()) return library.find("door");
         return nullptr;
     });
 }
@@ -141,6 +174,9 @@ void populate(const SliceGenerator& gen, const objects::Library& library, ChunkC
         if (const objects::Template* t = library.find("coins"))
             if (const objects::PropDef* count = library.prop_of(*t, "count")) library.set_value(scene, coins, *count, "12");
     put("torches", gen.gallery_x0() - 3.5, gen.gallery_y() - 0.1, 1);
+    // The door to the pickaxe's chamber, and its key further up the gallery.
+    put("door", gen.gallery_x1() + 0.5, gen.gallery_y() + 1.0, 1);
+    put("key", gen.gallery_x0() - 32.5, gen.gallery_y() + 0.9, 1);
     const f64 sx = gen.smith_house().x1 + 4.0;
     put("crate", sx, v, 1);
     put("crate", sx + 1.0, v, 1);
@@ -165,6 +201,7 @@ void Objects::init(flecs::world& ecs) {
     critters = ecs.query_builder<Position, Body, Critter>().without<Npc>().build();
     items = ecs.query_builder<Position, Body, Item>().without<Npc>().without<Critter>().build();
     crates = ecs.query<Position, RigidBody>();
+    doors = ecs.query<Position, Door>();
     bodies = ecs.query_builder<Position, Body>().without<Npc>().without<Critter>().without<Item>().without<Hero>().build();
 }
 
@@ -245,6 +282,20 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         const Pictures::Picture* pic = picture(e);
         const f32 h = b.half_h * 2.0f;
         at(x, y, pic ? h * pic->aspect : b.half_w * 2.0f, h, pic ? pic->frame : demo::kFrameCrate, 1);
+    });
+    // Doors: a closed one fills its column, an open one stands at its side.
+    objects.doors.each([&](flecs::entity e, const Position& p, const Door& d) {
+        i32 x, top, bottom;
+        door_cells(p, d, x, top, bottom);
+        const Pictures::Picture* pic = picture(e);
+        const f32 h = static_cast<f32>(bottom - top + 1);
+        const f64 cy = (top + bottom + 1) * 0.5;
+        if (pic) {
+            at(x + (d.open ? 0.1 : 0.5), cy, d.open ? 0.2f : 1.0f, h, pic->frame, 1);
+            return;
+        }
+        for (i32 y = top; y <= bottom; ++y)
+            at(x + (d.open ? 0.1 : 0.5), y + 0.5, d.open ? 0.2f : 1.0f, 1.0f, FrameDoor, 1, d.open ? render::pack_color(150, 150, 150, 255) : 0xffffffffu);
     });
     // The smith's anvil by his door.
     const House h = gen.smith_house();
@@ -362,10 +413,11 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
     u32 frame = demo::kFrameCrate;
     if (library_.has_block(*t, "villager")) frame = choice("who") == "\"smith\"" ? FrameSmith : FrameMiner;
     else if (library_.has_block(*t, "control")) frame = 2;
+    else if (library_.has_block(*t, "door")) frame = FrameDoor;
     else if (library_.has_block(*t, "pickup")) {
-        static const char* ids[] = {"\"pickaxe\"", "\"coins\"", "\"copper\"", "\"wood\"", "\"torch\""};
+        static const char* ids[] = {"\"pickaxe\"", "\"coins\"", "\"copper\"", "\"wood\"", "\"torch\"", "\"key\""};
         const std::string what = choice("what");
-        for (u8 i = 0; i < 5; ++i)
+        for (u8 i = 0; i < 6; ++i)
             if (what == ids[i]) frame = item_frame(static_cast<ItemKind>(i));
     }
     if (const Pictures::Picture* pic = def.tmpl ? nullptr : pictures_.of(t->key)) frame = pic->frame;
@@ -404,6 +456,15 @@ i32 SliceLevel::object_kind(flecs::entity e) const {
 bool SliceLevel::object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const {
     const Position* p = e.try_get<Position>();
     if (!p) return false;
+    if (const Door* d = e.try_get<Door>()) {
+        i32 x, top, bottom;
+        door_cells(*p, *d, x, top, bottom);
+        x0 = x;
+        x1 = x + 1;
+        y0 = top;
+        y1 = bottom + 1;
+        return true;
+    }
     f64 hw = 0.4, hh = 0.4;
     if (const Body* b = e.try_get<Body>()) {
         hw = std::max(0.4, static_cast<f64>(b->half_w));
@@ -428,7 +489,8 @@ void SliceLevel::object_moved(flecs::entity e) {
 }
 
 bool SliceLevel::object_component_shown(const reflect::TypeInfo* type) const {
-    return type == reflect::type_of<Npc>() || type == reflect::type_of<Item>() || type == reflect::type_of<Critter>();
+    return type == reflect::type_of<Npc>() || type == reflect::type_of<Item>() || type == reflect::type_of<Critter>() ||
+           type == reflect::type_of<Door>();
 }
 
 u32 SliceLevel::map_color(u32 layer, TileId value) const {

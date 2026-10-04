@@ -30,6 +30,8 @@ enum Frame : u32 {
     FrameAnvil,
     FrameFlame,
     FrameDrop,
+    FrameKey, // 60
+    FrameDoor, // a piece of a closed door (one tile)
     FrameCount = 64,
 };
 
