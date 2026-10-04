@@ -48,7 +48,7 @@ void log_to_file(LogLevel level, const char* message, void*) {
 
 void open_log(const fs::path& user_dir) {
 #ifdef _WIN32
-    g_log.file = _wfopen((user_dir / "log.txt").c_str(), L"w");
+    if (_wfopen_s(&g_log.file, (user_dir / "log.txt").c_str(), L"w") != 0) g_log.file = nullptr;
 #else
     g_log.file = std::fopen((user_dir / "log.txt").c_str(), "w");
 #endif
@@ -139,7 +139,7 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
                 total += ms;
                 frames = std::max(frames, f + 1);
             }
-            FORGE_INFO("game (offscreen): %u frames, avg %.2f ms, worst %.2f ms (with the software GPU)", frames,
+            FORGE_INFO("game (offscreen): %u frames, avg %.2f ms, worst %.2f ms", frames,
                        total / frames, worst);
             for (const std::string& e : shell.data_errors()) {
                 FORGE_ERROR("game data: %s", e.c_str());
