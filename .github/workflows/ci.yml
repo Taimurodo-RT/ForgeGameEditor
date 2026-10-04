@@ -78,6 +78,22 @@ jobs:
         run: |
           ./build/apps/editor/forge_editor --self-test --screenshot world-editor.png
           ./build/apps/editor/forge_editor --bench --frames 300
+      - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
+        if: runner.os == 'Linux'
+        run: |
+          ./build/apps/slice/forge_slice --test --screenshot world-slice-village.png
+          ./build/apps/slice/forge_slice --test --scene mine --screenshot world-slice-mine.png
+          ./build/apps/slice/forge_slice --test --scene menu --screenshot world-slice-menu.png
+          ./build/apps/slice/forge_slice --stress --test --scene stress --screenshot world-slice-stress.png
+      - name: Package the vertical slice
+        run: cmake --build build --config Release --target forge_slice_package
+      - name: Packaged game finds its data
+        if: runner.os == 'Linux'
+        run: ./build/dist/OldMine/OldMine --test --scene menu --screenshot world-slice-packaged.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OldMine-${{ runner.os }}
+          path: build/dist/OldMine
       - name: Render sprites, particles and light offscreen (software Vulkan, checks it works, not speed)
         if: runner.os == 'Linux'
         run: ./build/apps/render_demo/forge_render_demo --bench 3 --sprites 200000 --particles 200000

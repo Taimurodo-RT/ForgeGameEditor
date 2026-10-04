@@ -1,0 +1,408 @@
+// The vertical slice: «Старая шахта», a small side-view game made the way a
+// big one is (see docs/vertical-slice.md).
+//
+//   forge_slice                     play
+//   forge_slice --stress            play with 200 000 critters and a million particles
+//   forge_slice --test --screenshot out.png [--scene village|mine|menu]
+//                                   offscreen: plays the game through and checks it
+//
+// Controls: A/D walk, Space/W jump (and swim), left mouse digs or breaks a
+// crate, right mouse builds with the selected slot (1-6), E talks, the
+// wheel zooms. Esc pauses, J opens the journal, F5 saves, F9 loads.
+
+#include "slice_game.h"
+
+#include "forge/core/log.h"
+#include "forge/game/runner.h"
+
+#include <SDL3/SDL_main.h> // the window-only entry point on Windows
+
+#include <cmath>
+#include <cstring>
+#include <functional>
+#include <string>
+#include <vector>
+
+using namespace forge;
+using namespace forge::game;
+using namespace slice;
+
+namespace {
+
+// The self-test: steps run one after another, each over as many frames as
+// it needs (a step returns true when it is done).
+struct Step {
+    const char* name;
+    u32 max_frames;
+    std::function<bool(u32 frame)> run;
+};
+
+class SelfTest {
+public:
+    SelfTest(SliceGame& game, std::string scene) : g_(game), scene_(std::move(scene)) {}
+
+    bool frame(Shell& shell, int& failures) {
+        if (steps_.empty()) build(shell);
+        failures_ = &failures;
+        if (index_ >= steps_.size()) return false;
+        Step& s = steps_[index_];
+        bool done = false;
+        if (frames_ > s.max_frames) {
+            fail(std::string("шаг «") + s.name + "» не закончился вовремя");
+            done = true;
+        } else {
+            done = s.run(frames_);
+        }
+        ++frames_;
+        if (done) {
+            FORGE_INFO("self-test: «%s» (%u frames)", s.name, frames_);
+            g_.stop_script();
+            ++index_;
+            frames_ = 0;
+        }
+        return true;
+    }
+
+private:
+    void check(bool ok, const std::string& what) {
+        if (!ok) fail(what);
+    }
+    void fail(const std::string& what) {
+        ++*failures_;
+        FORGE_ERROR("self-test: %s (hero at %.1f, %.1f)", what.c_str(), g_.hero_x(), g_.hero_y());
+    }
+    f64 var(Shell& s, const char* name) { return s.vars().get(name).number(); }
+    // Goes to the village, then next to a villager; true once there.
+    bool near_npc(SliceGame& g, u8 who, u32 f) {
+        const f64 v = g.generator().village_y();
+        if (f == 0) g.teleport(who == 0 ? 10.5 : -24.5, v - 0.93);
+        if (f == 5) {
+            const f64 x = g.npc_x(who);
+            check(!std::isnan(x), who == 0 ? "Борис дома" : "кузнец дома");
+            if (!std::isnan(x)) g.teleport(x + (who == 0 ? -1.0 : 1.0), v - 0.93);
+        }
+        return f >= 10;
+    }
+
+    void build(Shell& s) {
+        if (scene_ == "stress") {
+            build_stress(s);
+            return;
+        }
+        SliceGame& g = g_;
+        const f64 v = g.generator().village_y();
+        const f64 stand = 0.93; // centre above the floor
+        const f64 gy = g.generator().gallery_y();
+        auto controls = [](bool left, bool right, bool jump) {
+            Controls c;
+            c.left = left;
+            c.right = right;
+            c.jump = jump;
+            return c;
+        };
+        auto aim = [](f64 x, f64 y, bool use, bool place) {
+            Controls c;
+            c.aim_x = x;
+            c.aim_y = y;
+            c.use = use;
+            c.place = place;
+            return c;
+        };
+        DialogueRunner& talk = s.dialogue_runner();
+
+        steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
+            if (f < 5) return false;
+            check(s.screen() == Screen::Main, "игра начинается с главного меню");
+            check(g.count_npcs() >= 2, "за меню видна деревня с жителями");
+            check(s.new_game(), "новая игра начинается");
+            return true;
+        }});
+        steps_.push_back({"старт", 180, [&s, &g, this](u32 f) {
+            if (f == 0) {
+                check(g.running() && g.hero_alive(), "герой появился");
+                check(s.screen() == Screen::Playing, "идёт игра");
+                check(g.location() == "Деревня", "герой в деревне, а не в «" + g.location() + "»");
+                check(var(s, "inv.torch") == 5, "в начале 5 факелов");
+            }
+            return g.on_ground();
+        }});
+        static f64 x0 = 0, y0 = 0;
+        steps_.push_back({"ходьба", 60, [&g, controls, this](u32 f) {
+            if (f == 0) {
+                x0 = g.hero_x();
+                g.script(controls(false, true, false));
+            }
+            if (f < 40) return false;
+            check(g.hero_x() > x0 + 3, "герой идёт вправо");
+            return true;
+        }});
+        steps_.push_back({"разговор с Борисом", 30, [&s, &g, &talk, this](u32 f) {
+            if (!near_npc(g, 0, f)) return false;
+            check(g.talk_nearest(), "с Борисом можно заговорить");
+            check(talk.node_id() == "hello", "Борис здоровается");
+            talk.advance();
+            check(talk.line().choices.size() == 3, "у Бориса три ответа");
+            check(talk.choose(0), "можно согласиться помочь");
+            check(var(s, "quest.pickaxe") == 1, "задание взято");
+            talk.advance();
+            check(!s.in_dialogue(), "разговор закончился");
+            check(g.talk_nearest(), "заговорить снова");
+            check(talk.node_id() == "not_yet", "Борис спрашивает про кирку");
+            check(talk.choose(0), "задать вопрос");
+            check(talk.line().asks_keyword, "можно написать вопрос");
+            check(talk.ask("А где тут медь?"), "вопрос про медь понят");
+            check(talk.node_id() == "k_copper", "ответ про медь");
+            talk.stop();
+            return true;
+        }});
+        steps_.push_back({"копать руками и строить", 120, [&s, &g, aim, v, stand, this](u32 f) {
+            if (f == 0) {
+                g.teleport(40.5, v - stand);
+                g.select(1);
+            }
+            if (f < 5) return false;
+            if (f == 5) {
+                x0 = s.vars().get("inv.dirt").number();
+                check(g.tile(kBlocks, 42, static_cast<i32>(v)) == world::TileGrass, "у ног трава");
+            }
+            if (f < 70) {
+                g.script(aim(42.5, v + 0.5, true, false));
+                return false;
+            }
+            if (f == 70) {
+                check(g.tile(kBlocks, 42, static_cast<i32>(v)) == world::TileAir, "дёрн выкопан руками");
+                check(var(s, "inv.dirt") == x0 + 1, "земля попала в сумку");
+                g.script(aim(42.5, v + 0.5, false, true));
+                return false;
+            }
+            check(g.tile(kBlocks, 42, static_cast<i32>(v)) == world::TileDirt, "земля поставлена обратно");
+            check(var(s, "inv.dirt") == x0, "земля ушла из сумки");
+            return true;
+        }});
+        steps_.push_back({"подъём по лестнице", 150, [&g, controls, this](u32 f) {
+            const SliceGenerator& gen = g.generator();
+            if (f == 0) g.teleport(gen.mine_x() - 40 + 0.5, gen.mine_y() + 41 - 0.93);
+            if (f < 5) return false;
+            if (f == 5) {
+                y0 = g.hero_y();
+                g.script(controls(false, true, false));
+            }
+            if (f < 100) return false;
+            check(g.hero_y() < y0 - 5, "герой поднимается по ступеням");
+            return true;
+        }});
+        steps_.push_back({"штольня без кирки", 60, [&g, aim, gy, stand, this](u32 f) {
+            const SliceGenerator& gen = g.generator();
+            const i32 fx = gen.gallery_x0() - 3;
+            if (f == 0) g.teleport(gen.gallery_x0() - 1.5, gy + 1 - stand);
+            if (f < 5) return false;
+            if (f == 5) check(g.location() == "Старая шахта", "место: старая шахта, а не «" + g.location() + "»");
+            if (f < 50) {
+                g.script(aim(fx + 0.5, gy + 1.5, true, false));
+                return false;
+            }
+            check(g.tile(kBlocks, fx, static_cast<i32>(gy) + 1) != world::TileAir, "камень без кирки не копается");
+            return true;
+        }});
+        steps_.push_back({"до кирки через пруд", 1200, [&s, &g, controls, this](u32) {
+            const f64 x = g.hero_x();
+            g.script(controls(true, false, x > g.generator().pool_x0() - 3 && x < g.generator().pool_x1() + 3));
+            if (g.inventory("pickaxe") < 1) return false;
+            check(var(s, "quest.pickaxe") == 2, "задание: вернуть кирку");
+            check(var(s, "inv.coins") >= 12, "монеты у кирки подобраны");
+            check(var(s, "inv.torch") == 8, "факелы в штольне подобраны");
+            return true;
+        }});
+        steps_.push_back({"копать камень киркой", 120, [&s, &g, aim, gy, this](u32 f) {
+            static i32 tx = 0;
+            if (f == 0) g.script(Controls{});
+            if (f == 9) { // standing still by now
+                tx = static_cast<i32>(std::floor(g.hero_x())) + 2;
+                x0 = var(s, "inv.stone");
+                g.select(2);
+            }
+            if (f < 10) return false;
+            if (f < 60) {
+                g.script(aim(tx + 0.5, gy + 1.5, true, false));
+                return false;
+            }
+            if (f == 60) {
+                check(g.tile(kBlocks, tx, static_cast<i32>(gy) + 1) == world::TileAir, "камень выкопан киркой");
+                check(var(s, "inv.stone") >= x0 + 1, "камень в сумке");
+                g.script(aim(tx + 0.5, gy + 1.5, false, true));
+                return false;
+            }
+            if (f == 61) check(g.tile(kBlocks, tx, static_cast<i32>(gy) + 1) == world::TileStone, "камень поставлен");
+            g.script(aim(tx + 0.5, gy + 1.5, true, false)); // and dug again, to check the save
+            return f >= 100;
+        }});
+        static f64 saved_x = 0, saved_y = 0, saved_coins = 0;
+        static i32 hole_x = 0;
+        steps_.push_back({"сохранение и загрузка", 40, [&s, &g, gy, this](u32 f) {
+            if (f == 0) {
+                g.script(Controls{});
+                hole_x = static_cast<i32>(std::floor(g.hero_x())) + 2;
+                check(g.tile(kBlocks, hole_x, static_cast<i32>(gy) + 1) == world::TileAir, "яма перед сохранением");
+                check(s.save("slot-1", "Проверка"), "игра сохраняется");
+                saved_x = g.hero_x();
+                saved_y = g.hero_y();
+                saved_coins = var(s, "inv.coins");
+                s.vars().set("inv.coins", 999);
+                g.teleport(g.generator().spawn_x(), g.generator().spawn_y());
+                return false;
+            }
+            if (f == 5) {
+                check(s.load("slot-1"), "сохранение загружается");
+                return false;
+            }
+            if (f < 10) return false;
+            check(std::fabs(g.hero_x() - saved_x) < 0.5 && std::fabs(g.hero_y() - saved_y) < 0.5, "герой там же, где сохранился");
+            check(var(s, "inv.coins") == saved_coins, "сумка как при сохранении");
+            check(var(s, "quest.pickaxe") == 2, "задание как при сохранении");
+            check(g.tile(kBlocks, hole_x, static_cast<i32>(gy) + 1) == world::TileAir, "выкопанное осталось выкопанным");
+            check(g.count_items(ItemKind::Pickaxe) == 0, "кирка не появилась снова");
+            check(s.slots().exists("slot-1"), "слот в списке");
+            return true;
+        }});
+        steps_.push_back({"вернуть кирку", 30, [&s, &g, &talk, this](u32 f) {
+            if (!near_npc(g, 0, f)) return false;
+            const f64 coins = var(s, "inv.coins");
+            check(g.talk_nearest(), "заговорить с Борисом");
+            check(talk.node_id() == "give_back", "Борис узнаёт кирку");
+            check(var(s, "quest.pickaxe") == 3, "задание выполнено");
+            check(var(s, "inv.coins") == coins + 30, "награда 30 монет");
+            check(var(s, "inv.pickaxe") == 1, "кирка осталась у героя");
+            talk.advance();
+            return true;
+        }});
+        steps_.push_back({"медь для кузнеца", 30, [&s, &g, &talk, this](u32 f) {
+            if (!near_npc(g, 1, f)) return false;
+            check(g.talk_nearest(), "заговорить с кузнецом");
+            check(talk.node_id() == "hello", "кузнец здоровается");
+            check(talk.choose(0), "взять заказ");
+            check(var(s, "quest.copper") == 1, "заказ взят");
+            talk.advance();
+            s.vars().set("inv.copper", 10);
+            check(g.talk_nearest(), "прийти с медью");
+            check(talk.node_id() == "reward", "кузнец берёт медь");
+            check(var(s, "hero.dig_speed") == 2, "кирка копает вдвое быстрее");
+            check(var(s, "inv.copper") == 0, "медь отдана");
+            talk.advance();
+            return true;
+        }});
+        steps_.push_back({"ящик", 40, [&s, &g, aim, v, this](u32 f) {
+            const f64 cx = g.generator().smith_house().x1 + 4.5;
+            if (f == 0) {
+                g.teleport(cx - 3.0, v - 0.93);
+                x0 = var(s, "inv.wood");
+            }
+            if (f < 20) return false;
+            if (f == 20) {
+                g.script(aim(cx, v - 0.5, true, false));
+                return false;
+            }
+            g.script(Controls{});
+            check(var(s, "inv.wood") >= x0 + 2, "из ящика выпали доски");
+            return true;
+        }});
+        steps_.push_back({"песок за досками", 150, [&g, aim, gy, stand, this](u32 f) {
+            const SliceGenerator& gen = g.generator();
+            const i32 x = gen.gallery_x0() - 40;
+            if (f == 0) g.teleport(x - 2.5, gy + 1 - stand);
+            if (f < 10) return false;
+            if (f == 10) check(g.tile(kBlocks, x, static_cast<i32>(gy) - 5) == TilePlanks, "над штольней доски");
+            if (f < 60) {
+                g.script(aim(x + 0.5, gy - 4.5, true, false));
+                return false;
+            }
+            g.script(Controls{});
+            if (f < 140) return false;
+            bool sand = false;
+            for (i32 y = static_cast<i32>(gy) - 4; y <= static_cast<i32>(gy); ++y)
+                sand = sand || g.tile(kBlocks, x, y) == world::TileSand || g.tile(kBlocks, x - 1, y) == world::TileSand ||
+                       g.tile(kBlocks, x + 1, y) == world::TileSand;
+            check(sand, "песок высыпался в штольню");
+            return true;
+        }});
+        // Where the picture is taken.
+        steps_.push_back({"кадр", 200, [&s, &g, &talk, this](u32 f) {
+            const SliceGenerator& gen = g.generator();
+            if (scene_ == "menu") {
+                if (f == 0) s.to_main_menu();
+                return f >= 120;
+            }
+            if (scene_ == "mine") {
+                if (f == 0) g.teleport(gen.pool_x1() + 6.5, gen.gallery_y() + 1 - 0.93);
+                return f >= 90;
+            }
+            // The village, talking to Boris.
+            if (f == 0) {
+                s.vars().set("quest.pickaxe", 0);
+                s.vars().set("inv.pickaxe", 0);
+            }
+            if (!near_npc(g, 0, f)) return false;
+            if (f == 60) {
+                g.talk_nearest();
+                talk.advance();
+            }
+            return f >= 90;
+        }});
+    }
+
+    // All the numbers at once: 200 000 critters living along the surface, a
+    // million particles, liquids and the hero playing, in one world.
+    void build_stress(Shell& s) {
+        SliceGame& g = g_;
+        steps_.push_back({"меню", 30, [&s, this](u32 f) {
+            if (f < 5) return false;
+            check(s.new_game(), "новая игра начинается");
+            return true;
+        }});
+        steps_.push_back({"200 000 существ и миллион частиц", 400, [&g, this](u32 f) {
+            static f64 sim_total = 0, sim_worst = 0;
+            if (f == 0) {
+                check(g.entities() >= 200'000, "в мире 200 000 существ, а не " + std::to_string(g.entities()));
+                Controls c;
+                c.right = true;
+                c.jump = true;
+                g.script(c);
+            }
+            if (f >= 60) {
+                sim_total += g.sim_ms();
+                sim_worst = std::max(sim_worst, g.sim_ms());
+            }
+            if (f < 300) return false;
+            const forge::sim::SimStats* st = g.sim_stats();
+            FORGE_INFO("stress: %u entities, %u particles, sim avg %.2f ms, worst %.2f ms; chunks active %u near %u",
+                       g.entities(), g.particles(), sim_total / 240.0, sim_worst, st ? st->zones.active : 0, st ? st->zones.near : 0);
+            check(g.entities() >= 200'000, "существа на месте");
+            check(g.particles() >= 900'000, "частиц около миллиона, а не " + std::to_string(g.particles()));
+            return true;
+        }});
+    }
+
+    SliceGame& g_;
+    std::string scene_;
+    std::vector<Step> steps_;
+    usize index_ = 0;
+    u32 frames_ = 0;
+    int* failures_ = nullptr;
+};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    Options options;
+    std::string scene = "village";
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--stress") == 0) options.stress = true;
+        else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) scene = argv[++i];
+    }
+    SliceGame game(options);
+    SelfTest test(game, scene);
+    GameMain m;
+    m.dev_ui_dir = FORGE_UI_DIR;
+    m.dev_game_dir = SLICE_DATA_DIR;
+    m.test = [&](Shell& shell, u32, int& failures) { return test.frame(shell, failures); };
+    return run_game(game, m, argc, argv);
+}

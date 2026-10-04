@@ -151,7 +151,7 @@ Rml::Context* Ui::create_context(const std::string& name, u32 width, u32 height)
     if (!context) return nullptr;
     context->SetDensityIndependentPixelRatio(impl_->config.dp_ratio);
     impl_->contexts.push_back(context);
-    if (!impl_->debugger) impl_->debugger = Rml::Debugger::Initialise(context);
+    if (!impl_->debugger && impl_->config.debugger) impl_->debugger = Rml::Debugger::Initialise(context);
     return context;
 }
 

@@ -21,6 +21,9 @@ struct AppConfig {
     bool headless = false;
     // Stop after this many frames (0 = run until the window is closed).
     u64 max_frames = 0;
+    // Frame times in the window title (tools and demos; a game turns it off).
+    bool stats_in_title = true;
+    bool fullscreen = false;
     // Shader bytecode the app can provide; picks the GPU backends allowed.
     SDL_GPUShaderFormat shader_formats =
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXBC | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL;
