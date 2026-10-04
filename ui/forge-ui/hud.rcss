@@ -1,0 +1,82 @@
+/* Forge UI HUD: ResourceBar, AbilitySlot, Toast. HUD text reads on any
+   background: numbers use the mono family so they do not jitter. */
+
+.resource-bar {
+    position: relative;
+    height: var(--bar-m);
+    border-radius: var(--radius-full);
+    background-color: var(--resource-track);
+    box-shadow: var(--well-inset);
+    overflow: hidden;
+}
+.resource-bar.small { height: var(--bar-s); }
+.resource-bar.large { height: var(--bar-l); }
+.resource-bar .fill {
+    height: 100%;
+    border-radius: var(--radius-full);
+    background-color: var(--resource-health);
+    transition: width var(--duration-medium) var(--ease-standard);
+}
+.resource-bar .trail {
+    position: absolute;
+    left: 0px; top: 0px;
+    height: 100%;
+    background-color: var(--resource-health-trail);
+    transition: width var(--duration-trail) var(--ease-standard);
+}
+.resource-bar.mana .fill { background-color: var(--resource-mana); }
+.resource-bar.stamina .fill { background-color: var(--resource-stamina); }
+.resource-bar.xp .fill { background-color: var(--resource-xp); }
+.resource-bar.shield .fill { background-color: var(--resource-shield); }
+.hud-numeral {
+    font-family: var(--hud-numeral-family);
+    font-size: var(--hud-numeral-size);
+    line-height: var(--hud-numeral-line-height);
+    font-weight: var(--hud-numeral-weight);
+    font-effect: shadow(0px 1px #000000cc);
+}
+
+.ability-slot {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--slot-m);
+    height: var(--slot-m);
+    border-radius: var(--slot-radius);
+    background-color: var(--surface-container-high);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+    box-shadow: var(--bevel-inset);
+    color: var(--on-surface);
+}
+.ability-slot icon { font-size: var(--icon-l); line-height: var(--icon-l); }
+.ability-slot.ready { border-color: var(--primary); box-shadow: var(--glow-primary); }
+.ability-slot .cooldown {
+    position: absolute;
+    left: 0px; right: 0px; bottom: 0px;
+    background-color: var(--scrim);
+    border-radius: var(--slot-radius);
+}
+.ability-slot .key-hint { position: absolute; right: -6px; bottom: -6px; }
+
+.toast {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    background-color: var(--inverse-surface);
+    color: var(--inverse-on-surface);
+    box-shadow: var(--elevation-3);
+}
+.toast .overline {
+    font-family: var(--label-small-family);
+    font-size: var(--label-small-size);
+    font-weight: var(--label-small-weight);
+    letter-spacing: var(--label-small-letter-spacing);
+    text-transform: uppercase;
+    color: var(--inverse-primary);
+}
+.toast icon { color: var(--inverse-primary); }

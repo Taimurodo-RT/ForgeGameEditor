@@ -1,0 +1,86 @@
+{
+  "note": "Font files of Forge UI. family is the name styles use in font-family; weight is what the file is registered as (a request for another weight takes the nearest). fallback: used for characters other fonts lack. Licenses: licenses/.",
+  "fonts": [
+    {
+      "file": "Onest-Regular.ttf",
+      "family": "Onest",
+      "weight": 400,
+      "fallback": true
+    },
+    {
+      "file": "Onest-Medium.ttf",
+      "family": "Onest",
+      "weight": 500
+    },
+    {
+      "file": "Onest-SemiBold.ttf",
+      "family": "Onest",
+      "weight": 600
+    },
+    {
+      "file": "Onest-Bold.ttf",
+      "family": "Onest",
+      "weight": 700
+    },
+    {
+      "file": "Exo2-SemiBold.ttf",
+      "family": "Exo 2",
+      "weight": 600
+    },
+    {
+      "file": "Exo2-Bold.ttf",
+      "family": "Exo 2",
+      "weight": 700
+    },
+    {
+      "file": "Exo2-ExtraBold.ttf",
+      "family": "Exo 2",
+      "weight": 800
+    },
+    {
+      "file": "JetBrainsMono-Regular.ttf",
+      "family": "JetBrains Mono",
+      "weight": 400
+    },
+    {
+      "file": "JetBrainsMono-Medium.ttf",
+      "family": "JetBrains Mono",
+      "weight": 500
+    },
+    {
+      "file": "JetBrainsMono-Bold.ttf",
+      "family": "JetBrains Mono",
+      "weight": 700
+    },
+    {
+      "file": "CormorantSC-SemiBold.ttf",
+      "family": "Cormorant SC",
+      "weight": 600
+    },
+    {
+      "file": "CormorantSC-Bold.ttf",
+      "family": "Cormorant SC",
+      "weight": 700
+    },
+    {
+      "file": "AlegreyaSans-Regular.ttf",
+      "family": "Alegreya Sans",
+      "weight": 400
+    },
+    {
+      "file": "AlegreyaSans-Medium.ttf",
+      "family": "Alegreya Sans",
+      "weight": 500
+    },
+    {
+      "file": "AlegreyaSans-Bold.ttf",
+      "family": "Alegreya Sans",
+      "weight": 700
+    },
+    {
+      "file": "MaterialSymbolsRounded-Filled.ttf",
+      "family": "Material Symbols Rounded",
+      "weight": 500
+    }
+  ]
+}

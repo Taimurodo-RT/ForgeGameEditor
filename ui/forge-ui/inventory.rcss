@@ -1,0 +1,101 @@
+/* Forge UI inventory: ItemSlot, SlotGrid, ItemTooltip, Badge, rarity. */
+
+.slot-grid { display: flex; flex-direction: row; flex-wrap: wrap; gap: var(--space-2); }
+
+.item-slot {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--slot-m);
+    height: var(--slot-m);
+    border-radius: var(--slot-radius);
+    background-color: var(--surface-container-lowest);
+    border-width: var(--border-strong);
+    border-color: var(--outline-variant);
+    box-shadow: var(--well-inset);
+    color: var(--on-surface);
+    cursor: pointer;
+    transition: border-color var(--duration-short) var(--ease-standard);
+}
+.item-slot icon { font-size: var(--icon-l); line-height: var(--icon-l); }
+.item-slot:hover { border-color: var(--outline); }
+.item-slot.selected { border-color: var(--primary); }
+.item-slot .count {
+    position: absolute;
+    right: 4px;
+    bottom: 2px;
+    font-family: var(--stat-value-family);
+    font-size: var(--label-small-size);
+    font-weight: 700;
+    font-effect: shadow(0px 1px #000000cc);
+}
+.item-slot.small { width: var(--slot-s); height: var(--slot-s); }
+.item-slot.large { width: var(--slot-l); height: var(--slot-l); }
+
+.rarity-common { color: var(--rarity-common); border-color: var(--rarity-common); }
+.rarity-uncommon { color: var(--rarity-uncommon); border-color: var(--rarity-uncommon); }
+.rarity-rare { color: var(--rarity-rare); border-color: var(--rarity-rare); }
+.rarity-epic { color: var(--rarity-epic); border-color: var(--rarity-epic); }
+.rarity-legendary { color: var(--rarity-legendary); border-color: var(--rarity-legendary); box-shadow: var(--glow-legendary); }
+.rarity-mythic { color: var(--rarity-mythic); border-color: var(--rarity-mythic); }
+
+.item-tooltip {
+    max-width: 280px;
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-container-high);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+    box-shadow: var(--elevation-2);
+}
+.item-tooltip .name {
+    font-family: var(--title-medium-family);
+    font-size: var(--title-medium-size);
+    font-weight: var(--title-medium-weight);
+}
+.item-tooltip .stats {
+    margin-top: var(--space-2);
+    font-family: var(--stat-value-family);
+    font-size: var(--stat-value-size);
+    line-height: var(--stat-value-line-height);
+    color: var(--on-surface-variant);
+}
+.item-tooltip .better { color: var(--success); }
+.item-tooltip .worse { color: var(--error); }
+
+.badge {
+    display: inline-block;
+    padding: 0px var(--space-2);
+    border-radius: var(--radius-xs);
+    background-color: var(--tertiary-container);
+    color: var(--on-tertiary-container);
+    font-family: var(--label-small-family);
+    font-size: var(--label-small-size);
+    line-height: 18px;
+    font-weight: var(--label-small-weight);
+    letter-spacing: var(--label-small-letter-spacing);
+    text-transform: uppercase;
+}
+.badge.primary { background-color: var(--primary-container); color: var(--on-primary-container); }
+.badge.error { background-color: var(--error-container); color: var(--on-error-container); }
+
+.chip {
+    display: inline-block;
+    box-sizing: border-box;
+    height: var(--control-s);
+    line-height: 30px;
+    white-space: nowrap;
+    padding: 0px var(--space-3);
+    border-radius: var(--chip-radius);
+    border-width: var(--border-control);
+    border-color: var(--outline-variant);
+    color: var(--on-surface-variant);
+    font-family: var(--label-large-family);
+    font-size: var(--label-large-size);
+    font-weight: var(--label-large-weight);
+    cursor: pointer;
+}
+.chip icon { font-size: var(--icon-s); line-height: var(--icon-s); margin: 0px var(--space-1) 0px -2px; }
+.chip:hover { background-color: var(--state-hover-layer); }
+.chip.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); border-color: var(--secondary-container); }

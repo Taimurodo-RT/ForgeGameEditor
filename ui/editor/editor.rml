@@ -1,0 +1,126 @@
+<rml>
+<head>
+    <title>Forge — редактор</title>
+    <link type="text/rcss" href="../forge-ui/base.rcss"/>
+    <link type="text/rcss" href="../forge-ui/typography.rcss"/>
+    <link type="text/rcss" href="../forge-ui/actions.rcss"/>
+    <link type="text/rcss" href="../forge-ui/containers.rcss"/>
+    <link type="text/rcss" href="../forge-ui/menus.rcss"/>
+    <link type="text/rcss" href="editor.rcss"/>
+</head>
+<!-- The editor window. C++ fills the "editor" data model and draws the world
+     under the #viewport element; everything you see here can be changed in
+     this file and editor.rcss while the editor runs. -->
+<body data-model="editor">
+    <div id="topbar" class="row gap-1">
+        <div class="brand row gap-2"><icon name="hardware"/><span>Forge</span></div>
+        <div class="divider vertical"/>
+        <div class="icon-button" data-class-disabled="!can_undo" data-event-click="undo"><icon name="undo"/></div>
+        <div class="icon-button" data-class-disabled="!can_redo" data-event-click="redo"><icon name="redo"/></div>
+        <div class="icon-button" data-event-click="save"><icon name="save"/></div>
+        <span class="scene-name">{{ scene_name }}</span><div class="dirty-dot" data-if="dirty"/>
+        <span class="hint muted" data-if="can_undo">Ctrl+Z: {{ undo_label }}</span>
+        <div class="grow"/>
+        <div class="play row gap-2">
+            <div class="button filled small" data-if="!playing" data-event-click="play"><icon name="play_arrow"/>Играть</div>
+            <div class="button danger small" data-if="playing" data-event-click="stop"><icon name="stop"/>Стоп</div>
+            <div class="icon-button" data-class-selected="paused" data-class-disabled="!playing" data-event-click="pause"><icon name="pause"/></div>
+        </div>
+        <div class="grow"/>
+        <div class="icon-button" data-class-selected="theme == 'dark'" data-event-click="set_theme('dark')"><icon name="dark_mode"/></div>
+        <div class="icon-button" data-class-selected="theme == 'light'" data-event-click="set_theme('light')"><icon name="light_mode"/></div>
+        <div class="icon-button" data-class-selected="theme == 'fantasy'" data-event-click="set_theme('fantasy')"><icon name="castle"/></div>
+        <div class="icon-button" data-class-selected="theme == 'parchment'" data-event-click="set_theme('parchment')"><icon name="history_edu"/></div>
+    </div>
+
+    <div id="main" class="row">
+        <div id="hierarchy-panel" class="panel column">
+            <div class="panel-header">
+                <icon name="account_tree" class="s"/><span class="title">Иерархия</span>
+                <div class="icon-button small" data-event-click="add_object"><icon name="add" class="s"/></div>
+                <div class="icon-button small" data-event-click="expand_all(true)"><icon name="unfold_more" class="s"/></div>
+                <div class="icon-button small" data-event-click="expand_all(false)"><icon name="unfold_less" class="s"/></div>
+                <div class="icon-button small" data-class-disabled="!has_selection" data-event-click="delete_selection"><icon name="delete" class="s"/></div>
+            </div>
+            <virtual-list id="hierarchy" source="hierarchy" class="grow">
+                <div class="tree-row" vl-class-selected="selected" vl-style-padding-left="indent">
+                    <icon class="s arrow" vl-attr-name="arrow"/>
+                    <icon class="s" vl-attr-name="icon"/>
+                    <span class="name" vl-text="name"/>
+                    <span class="kind" vl-text="kind"/>
+                </div>
+            </virtual-list>
+            <div class="panel-footer muted">{{ object_count }}</div>
+        </div>
+
+        <div id="center" class="column grow">
+            <div id="viewport" data-class-playing="playing">
+                <div class="viewport-label row gap-2" data-if="!playing"><icon name="map" class="s"/><span>Мир · {{ zoom }}</span></div>
+                <div class="viewport-label playing row gap-2" data-if="playing"><icon name="sports_esports" class="s"/><span>Игра идёт</span><span data-if="paused">· пауза</span></div>
+            </div>
+            <div id="bottom-panel" class="panel column">
+                <div class="tabs">
+                    <div class="tab" data-class-selected="bottom_tab == 0" data-event-click="bottom_tab = 0"><icon name="terminal"/>Журнал</div>
+                    <div class="tab" data-class-selected="bottom_tab == 1" data-event-click="bottom_tab = 1"><icon name="history"/>История</div>
+                </div>
+                <div id="log" class="bottom-body grow" data-if="bottom_tab == 0">
+                    <div data-for="line : log" class="log-line" data-class-warn="line.level == 1" data-class-error="line.level == 2">{{ line.text }}</div>
+                </div>
+                <div id="history" class="bottom-body grow" data-if="bottom_tab == 1">
+                    <div class="history-line" data-class-current="history_cursor == 0" data-event-click="history_jump(-1)">Начало</div>
+                    <div data-for="label : history" class="history-line" data-class-current="it_index + 1 == history_cursor" data-class-future="it_index >= history_cursor" data-event-click="history_jump(it_index)">{{ label }}</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="inspector-panel" class="panel column">
+            <div class="panel-header"><icon name="tune" class="s"/><span class="title">Инспектор</span></div>
+            <div id="inspector" class="grow">
+                <div class="empty muted" data-if="!has_selection">Выберите объект в иерархии или в окне мира.</div>
+                <div data-if="has_selection">
+                    <div class="name-row row gap-2">
+                        <icon name="deployed_code"/>
+                        <input type="text" class="small grow" data-attr-value="selected_name" data-event-change="rename(ev.value, ev.linebreak)" data-event-blur="rename_commit"/>
+                    </div>
+                    <div class="muted body-small selection-note" data-if="selection_count > 1">Выбрано объектов: {{ selection_count }}; показан первый.</div>
+                    <div data-for="f : fields">
+                        <div class="component-header row gap-2" data-if="f.kind == 'header'">
+                            <icon name="widgets" class="s"/><span class="grow">{{ f.label }}</span>
+                            <div class="icon-button small" data-event-click="remove_component(it_index)"><icon name="close" class="s"/></div>
+                        </div>
+                        <div class="prop row gap-2" data-if="f.kind != 'header'" data-style-padding-left="(12 + f.depth * 14) + 'px'">
+                            <span class="prop-label">{{ f.label }}</span>
+                            <div class="prop-value row gap-2">
+                                <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-value="f.value" data-event-change="field_text(it_index, ev.value, ev.linebreak)" data-event-blur="field_commit(it_index)"/>
+                                <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="field_slide(it_index, ev.value)"/>
+                                <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-value="f.value" data-event-change="field_text(it_index, ev.value, ev.linebreak)" data-event-blur="field_commit(it_index)"/>
+                                <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="field_toggle(it_index)"><div class="thumb"/></div>
+                                <div data-if="f.kind == 'enum'" class="cycler grow">
+                                    <div class="icon-button small" data-event-click="field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                    <span class="value">{{ f.value }}</span>
+                                    <div class="icon-button small" data-event-click="field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                </div>
+                                <div data-if="f.kind == 'color'" class="swatch" data-style-background-color="f.color"/>
+                                <input data-if="f.kind == 'color'" type="text" class="small grow" data-attr-value="f.value" data-event-change="field_text(it_index, ev.value, ev.linebreak)" data-event-blur="field_commit(it_index)"/>
+                                <span data-if="f.kind == 'group' || f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="add-component" data-if="addable.size > 0">
+                        <div class="label-small muted">Добавить компонент</div>
+                        <div class="row gap-2">
+                            <div data-for="c : addable" class="chip" data-event-click="add_component(it_index)"><icon name="add"/>{{ c }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="statusbar" class="row gap-4">
+        <span>{{ status }}</span>
+        <div class="grow"/>
+        <span class="muted">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+    </div>
+</body>
+</rml>

@@ -16,7 +16,9 @@ add_executable(forge_tests
   test_factory.cpp
   test_time.cpp
   test_script.cpp
-  test_graph.cpp)
-target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render doctest::doctest)
+  test_graph.cpp
+  test_ui.cpp
+  test_editor.cpp)
+target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render forge::ui forge::editor doctest::doctest)
 target_compile_definitions(forge_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME forge_tests COMMAND forge_tests)
