@@ -1,0 +1,19 @@
+{
+    "types": [
+        { "id": "folder",  "name": "Папка",      "icon": "folder",          "show_extension": false, "extensions": [] },
+        { "id": "image",   "name": "Картинка",   "icon": "image",           "extensions": [".png", ".jpg", ".jpeg", ".bmp", ".tga", ".gif", ".psd", ".webp"] },
+        { "id": "sprite",  "name": "Рисунок Aseprite", "icon": "brush",     "show_extension": false, "extensions": [".aseprite", ".ase"] },
+        { "id": "audio",   "name": "Звук",       "icon": "music_note",      "extensions": [".wav", ".ogg", ".mp3", ".flac"] },
+        { "id": "video",   "name": "Видео",      "icon": "movie",           "extensions": [".mp4", ".webm", ".ogv"] },
+        { "id": "font",    "name": "Шрифт",      "icon": "text_fields",     "extensions": [".ttf", ".otf"] },
+        { "id": "data",    "name": "Данные",     "icon": "data_object",     "extensions": [".json", ".csv", ".xml", ".yaml", ".yml", ".toml"] },
+        { "id": "text",    "name": "Текст",      "icon": "description",     "extensions": [".txt", ".md", ".rtf"] },
+        { "id": "script",  "name": "Скрипт",     "icon": "code",            "extensions": [".luau", ".lua"] },
+        { "id": "ui",      "name": "Интерфейс",  "icon": "web",             "extensions": [".rml", ".rcss"] },
+        { "id": "story",   "name": "Сюжет",      "icon": "forum",           "extensions": [".rpy", ".dlg"] },
+        { "id": "map",     "name": "Карта",      "icon": "map",             "extensions": [".tmx", ".tsx", ".ldtk"] },
+        { "id": "shader",  "name": "Шейдер",     "icon": "gradient",        "extensions": [".hlsl", ".glsl", ".wgsl", ".spv"] },
+        { "id": "archive", "name": "Архив",      "icon": "folder_zip",      "extensions": [".zip", ".7z", ".rar"] },
+        { "id": "other",   "name": "Файл",       "icon": "draft",           "extensions": [] }
+    ]
+}

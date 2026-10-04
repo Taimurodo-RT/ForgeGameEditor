@@ -35,37 +35,8 @@ const PanelInfo kPanels[] = {
 };
 const char* kDefaultLayout =
     R"({"row":0.17,"a":{"panels":["palette"]},"b":{"row":0.77,"a":{"column":0.76,"a":{"view":true},"b":{"panels":["log","history"]}},"b":{"column":0.42,"a":{"panels":["minimap"]},"b":{"panels":["props"]}}}})";
-constexpr f32 kDockGap = 6;
-constexpr f32 kDockHeader = 32;
 constexpr usize kFillLimit = 100'000;
 constexpr u32 kIconPx = 32;
-
-const PanelInfo* panel_info(std::string_view id) {
-    for (const PanelInfo& p : kPanels)
-        if (id == p.id) return &p;
-    return nullptr;
-}
-
-Rml::Element* find(Rml::Context* context, const char* id) {
-    if (!context) return nullptr;
-    for (int i = 0; i < context->GetNumDocuments(); ++i)
-        if (Rml::Element* e = context->GetDocument(i)->GetElementById(id)) return e;
-    return nullptr;
-}
-
-void place_element(Rml::Element* e, const editor::DockRect* r) {
-    if (!e) return;
-    if (!r) {
-        e->SetProperty("display", "none");
-        return;
-    }
-    auto px = [](f32 v) { return std::to_string(static_cast<int>(std::lround(v))) + "px"; };
-    e->SetProperty("display", "flex");
-    e->SetProperty("left", px(r->x));
-    e->SetProperty("top", px(r->y));
-    e->SetProperty("width", px(r->w));
-    e->SetProperty("height", px(r->h));
-}
 
 const char* tool_name(Tool t) {
     switch (t) {
@@ -148,15 +119,6 @@ void LevelEditor::set_mode(Mode m) {
     if (m != Mode::Objects) object_ = -1;
 }
 
-const std::vector<std::string>& LevelEditor::panel_ids() {
-    static const std::vector<std::string> ids = [] {
-        std::vector<std::string> v;
-        for (const PanelInfo& p : kPanels) v.emplace_back(p.id);
-        return v;
-    }();
-    return ids;
-}
-
 LevelEditor::LevelEditor(level::LevelModule& module) : module_(module) {}
 
 LevelEditor::~LevelEditor() { shutdown(); }
@@ -212,13 +174,14 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
     if (!tiles.empty()) select_tile(0);
 
     // The panel layout: the user's, else the default.
-    default_layout_ = kDefaultLayout;
-    dock_.load(default_layout_, panel_ids());
-    std::vector<u8> bytes;
-    if (!config.settings.empty() && read_file(config.settings / "level_layout.json", bytes)) {
-        if (!dock_.load(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), panel_ids()))
-            FORGE_WARN("Раскладка панелей не прочиталась, взята обычная");
-    }
+    DockConfig dc;
+    dc.area = "dock";
+    dc.view = "level-view";
+    dc.pane_prefix = "pane-";
+    for (const PanelInfo& p : kPanels) dc.panels.push_back({p.id, p.title, p.icon});
+    dc.default_layout = kDefaultLayout;
+    dc.file = "level_layout.json";
+    dock_.init(std::move(dc), config.settings, !config.offscreen);
     map_rgba_.assign(static_cast<usize>(kMapPx) * kMapPx * 4, 0);
     FORGE_INFO("Уровень «%s» открыт: %s", module_.title().c_str(), path_to_utf8(config.folder).c_str());
     return true;
@@ -239,32 +202,7 @@ void LevelEditor::shutdown() {
 }
 
 void LevelEditor::bind(Rml::DataModelConstructor& model) {
-    if (auto s = model.RegisterStruct<DockTab>()) {
-        s.RegisterMember("id", &DockTab::id);
-        s.RegisterMember("title", &DockTab::title);
-        s.RegisterMember("icon", &DockTab::icon);
-        s.RegisterMember("active", &DockTab::active);
-    }
-    model.RegisterArray<std::vector<DockTab>>();
-    if (auto s = model.RegisterStruct<DockFrame>()) {
-        s.RegisterMember("x", &DockFrame::x);
-        s.RegisterMember("y", &DockFrame::y);
-        s.RegisterMember("w", &DockFrame::w);
-        s.RegisterMember("h", &DockFrame::h);
-        s.RegisterMember("view", &DockFrame::view);
-        s.RegisterMember("used", &DockFrame::used);
-        s.RegisterMember("tabs", &DockFrame::tabs);
-    }
-    model.RegisterArray<std::vector<DockFrame>>();
-    if (auto s = model.RegisterStruct<DockGap>()) {
-        s.RegisterMember("x", &DockGap::x);
-        s.RegisterMember("y", &DockGap::y);
-        s.RegisterMember("w", &DockGap::w);
-        s.RegisterMember("h", &DockGap::h);
-        s.RegisterMember("column", &DockGap::column);
-        s.RegisterMember("used", &DockGap::used);
-    }
-    model.RegisterArray<std::vector<DockGap>>();
+    dock_.bind(model);
     if (auto s = model.RegisterStruct<PaletteTile>()) {
         s.RegisterMember("index", &PaletteTile::index);
         s.RegisterMember("name", &PaletteTile::name);
@@ -295,13 +233,6 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lv_sel_hint", &m_sel_hint_);
     model.Bind("lv_sel_icon", &m_sel_icon_);
     model.Bind("lv_fields", &m_fields_);
-    model.Bind("dock_frames", &m_frames_);
-    model.Bind("dock_gaps", &m_gaps_);
-    model.Bind("dock_drop", &m_drop_);
-    model.Bind("dock_drop_x", &m_drop_x_);
-    model.Bind("dock_drop_y", &m_drop_y_);
-    model.Bind("dock_drop_w", &m_drop_w_);
-    model.Bind("dock_drop_h", &m_drop_h_);
     model.Bind("lv_palette", &m_palette_);
     model.Bind("lv_layers", &m_layers_);
     model.Bind("lv_mode", &m_mode_);
@@ -410,14 +341,6 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
         camera_.x = map_cx_ + (std::clamp(fx, 0.0f, 1.0f) - 0.5) * span;
         camera_.y = map_cy_ + (std::clamp(fy, 0.0f, 1.0f) - 0.5) * span;
     });
-    on("dock_grab", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
-        grab_panel_ = arg_str(a, 0);
-        dragging_panel_ = false;
-        grab_x_ = ev.GetParameter<float>("mouse_x", mouse_x_);
-        grab_y_ = ev.GetParameter<float>("mouse_y", mouse_y_);
-    });
-    on("dock_split", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { grab_splitter_ = arg_int(a, 0, -1); });
-    on("dock_reset", [this](Rml::Event&, const Rml::VariantList&) { reset_layout(); });
 }
 
 // --- tools -------------------------------------------------------------------
@@ -812,18 +735,7 @@ bool LevelEditor::play_here() {
     return true;
 }
 
-void LevelEditor::reset_layout() {
-    dock_.load(default_layout_, panel_ids());
-    save_layout();
-}
-
-void LevelEditor::save_layout() {
-    if (config_.settings.empty() || config_.offscreen) return;
-    std::error_code ec;
-    fs::create_directories(config_.settings, ec);
-    const std::string text = dock_.save();
-    write_file_atomic(config_.settings / "level_layout.json", {reinterpret_cast<const u8*>(text.data()), text.size()});
-}
+void LevelEditor::reset_layout() { dock_.reset(); }
 
 std::string LevelEditor::status() const {
     char text[200];
@@ -839,59 +751,13 @@ std::string LevelEditor::status() const {
 
 // --- frame -------------------------------------------------------------------
 
-void LevelEditor::apply_layout(Rml::Context* context) {
-    Rml::Element* area = find(context, "dock");
-    view_shown_ = area && area->IsVisible(true);
-    if (!view_shown_) {
-        vw_ = vh_ = 0;
-        return;
-    }
-    const Rml::Vector2f at = area->GetAbsoluteOffset(Rml::BoxArea::Content);
-    const Rml::Vector2f size = area->GetBox().GetSize(Rml::BoxArea::Content);
-    const bool moved = at.x != dock_x_ || at.y != dock_y_ || size.x != dock_w_ || size.y != dock_h_;
-    dock_x_ = at.x;
-    dock_y_ = at.y;
-    dock_w_ = size.x;
-    dock_h_ = size.y;
-    if (moved || applied_dock_version_ != dock_.version()) {
-        dock_.layout({0, 0, dock_w_, dock_h_}, kDockGap, kDockHeader);
-        applied_dock_version_ = dock_.version();
-        for (const PanelInfo& p : kPanels) {
-            editor::DockRect r;
-            const bool shown = dock_.panel_rect(p.id, r);
-            place_element(find(context, (std::string("pane-") + p.id).c_str()), shown ? &r : nullptr);
-        }
-        const editor::DockRect view = dock_.view_rect();
-        place_element(find(context, "level-view"), &view);
-        m_frames_.clear();
-        for (const auto& s : dock_.stacks()) {
-            DockFrame f{s.frame.x, s.frame.y, s.frame.w, s.frame.h, s.view, true, {}};
-            for (usize i = 0; i < s.panels.size(); ++i) {
-                const PanelInfo* info = panel_info(s.panels[i]);
-                f.tabs.push_back({s.panels[i], info ? info->title : s.panels[i], info ? info->icon : "tab", i == s.active});
-            }
-            m_frames_.push_back(std::move(f));
-        }
-        m_gaps_.clear();
-        for (const auto& g : dock_.splitters()) m_gaps_.push_back({g.rect.x, g.rect.y, g.rect.w, g.rect.h, g.column, true});
-        // The lists keep one length (unused entries hidden): RmlUi complains
-        // when a list with lists inside it gets shorter.
-        const usize most = std::size(kPanels) + 1;
-        m_frames_.resize(most);
-        m_gaps_.resize(most);
-        model_.DirtyVariable("dock_frames");
-        model_.DirtyVariable("dock_gaps");
-    }
-    const editor::DockRect view = dock_.view_rect();
-    vx_ = dock_x_ + view.x;
-    vy_ = dock_y_ + view.y;
-    vw_ = std::max(0.0f, view.w);
-    vh_ = std::max(0.0f, view.h);
-}
-
 void LevelEditor::update(f64 dt, Rml::Context* context) {
     time_ += dt;
-    apply_layout(context);
+    view_shown_ = dock_.update(context);
+    vx_ = dock_.view_x();
+    vy_ = dock_.view_y();
+    vw_ = view_shown_ ? dock_.view_w() : 0;
+    vh_ = view_shown_ ? dock_.view_h() : 0;
     if (view_shown_ && vw_ > 0 && vh_ > 0) {
         const world::Rect focus = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
         level_->update({&focus, 1});
@@ -1146,23 +1012,7 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         }
         mouse_x_ = x;
         mouse_y_ = y;
-        if (grab_splitter_ >= 0) {
-            dock_.drag_splitter(static_cast<usize>(grab_splitter_), x - dock_x_, y - dock_y_);
-            return true;
-        }
-        if (!grab_panel_.empty()) {
-            if (!dragging_panel_ && std::hypot(x - grab_x_, y - grab_y_) > 6) dragging_panel_ = true;
-            if (dragging_panel_) {
-                drop_ = dock_.drop_at(x - dock_x_, y - dock_y_, grab_panel_);
-                const bool show = drop_.zone != editor::DockLayout::Zone::None;
-                set(m_drop_, show, "dock_drop");
-                set(m_drop_x_, drop_.preview.x, "dock_drop_x");
-                set(m_drop_y_, drop_.preview.y, "dock_drop_y");
-                set(m_drop_w_, drop_.preview.w, "dock_drop_w");
-                set(m_drop_h_, drop_.preview.h, "dock_drop_h");
-            }
-            return true;
-        }
+        if (dock_.mouse_move(x, y)) return true;
         hover_ = over_view(x, y, context) || stroke_ != nullptr || moving_;
         if (hover_) cell_at(x, y, hover_x_, hover_y_);
         if (stroke_) drag(x, y);
@@ -1173,7 +1023,7 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         const f32 x = e.button.x * density, y = e.button.y * density;
         mouse_x_ = x;
         mouse_y_ = y;
-        if (!grab_panel_.empty() || grab_splitter_ >= 0) return true;
+        if (dock_.busy()) return true;
         if (!over_view(x, y, context)) return false;
         if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Tiles) {
             history_.seal();
@@ -1189,25 +1039,7 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         return true;
     }
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        bool used = false;
-        if (grab_splitter_ >= 0) {
-            grab_splitter_ = -1;
-            save_layout();
-            used = true;
-        }
-        if (!grab_panel_.empty()) {
-            if (dragging_panel_) {
-                if (dock_.move(grab_panel_, drop_)) save_layout();
-            } else {
-                dock_.activate(grab_panel_);
-                save_layout();
-            }
-            grab_panel_.clear();
-            dragging_panel_ = false;
-            drop_ = {};
-            set(m_drop_, false, "dock_drop");
-            used = true;
-        }
+        bool used = dock_.mouse_up();
         if (e.button.button == SDL_BUTTON_LEFT && stroke_) {
             release();
             used = true;

@@ -8,7 +8,6 @@
 // same tab serves any game; this app opens «Старая шахта».
 
 #include "forge/editor/document.h"
-#include "forge/editor/dock.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
 #include "forge/level/object_edit.h"
@@ -19,6 +18,7 @@
 #include "forge/ui/ui.h"
 
 #include "demo_art.h"
+#include "dock_view.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
@@ -50,7 +50,10 @@ public:
     // Before the document loads: opens the level, makes palette icons.
     bool init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat format, const LevelConfig& config);
     void bind(Rml::DataModelConstructor& model);
-    void set_model(Rml::DataModelHandle handle) { model_ = handle; }
+    void set_model(Rml::DataModelHandle handle) {
+        model_ = handle;
+        dock_.set_model(handle);
+    }
     // True while the UI updates: input events then come from bindings, not the user.
     void set_ui_updating(bool on) { ui_updating_ = on; }
     void shutdown();
@@ -82,7 +85,7 @@ public:
     // --- for the self-test and benchmarks ---
     level::Level& level() { return *level_; }
     render::Camera2D& camera() { return camera_; }
-    editor::DockLayout& dock() { return dock_; }
+    editor::DockLayout& dock() { return dock_.layout(); }
     Tool tool() const { return tool_; }
     Mode mode() const { return mode_; }
     void set_mode(Mode m);
@@ -99,8 +102,8 @@ public:
     f32 view_w() const { return vw_; }
     f32 view_h() const { return vh_; }
     // Where the dock area is on screen (panel rectangles are relative to it).
-    f32 dock_x() const { return dock_x_; }
-    f32 dock_y() const { return dock_y_; }
+    f32 dock_x() const { return dock_.x(); }
+    f32 dock_y() const { return dock_.y(); }
     void reset_layout();
     // Objects
     void arm_object(i32 index); // -1: none (clicks select)
@@ -112,24 +115,9 @@ public:
     void set_field(int i, const std::string& text, bool dragging);
     u64 minimap_updates() const { return minimap_updates_; }
 
-    static const std::vector<std::string>& panel_ids();
+    const std::vector<std::string>& panel_ids() const { return dock_.panel_ids(); }
 
 private:
-    struct DockTab {
-        Rml::String id, title, icon;
-        bool active = false;
-    };
-    struct DockFrame {
-        float x = 0, y = 0, w = 0, h = 0;
-        bool view = false;
-        bool used = false;
-        std::vector<DockTab> tabs;
-    };
-    struct DockGap {
-        float x = 0, y = 0, w = 0, h = 0;
-        bool column = false;
-        bool used = false;
-    };
     struct PaletteTile {
         int index = 0;
         Rml::String name, icon, key;
@@ -157,8 +145,6 @@ private:
         model_.DirtyVariable(name);
     }
 
-    void apply_layout(Rml::Context* context);
-    void save_layout();
     void sync_model();
     void update_minimap();
     bool over_view(f32 x, f32 y, Rml::Context* context) const;
@@ -185,8 +171,7 @@ private:
     LevelConfig config_;
     ui::Ui* ui_ = nullptr;
     Rml::DataModelHandle model_;
-    editor::DockLayout dock_;
-    std::string default_layout_;
+    DockView dock_;
 
     demo::SheetImage art_;
     render::SpriteRenderer back_, front_;
@@ -194,10 +179,8 @@ private:
     render::Camera2D camera_;
     bool view_ready_ = false;
 
-    // The view and the dock area on screen, in pixels.
+    // The view on screen, in pixels.
     f32 vx_ = 0, vy_ = 0, vw_ = 0, vh_ = 0;
-    f32 dock_x_ = 0, dock_y_ = 0, dock_w_ = 0, dock_h_ = 0;
-    u64 applied_dock_version_ = 0;
     bool view_shown_ = false;
 
     Mode mode_ = Mode::Tiles;
@@ -218,12 +201,6 @@ private:
     std::unique_ptr<level::TileStroke> stroke_;
     bool shaping_ = false; // a line or rectangle being dragged out
     i32 start_x_ = 0, start_y_ = 0, last_x_ = 0, last_y_ = 0;
-    // Panel drags
-    std::string grab_panel_;
-    bool dragging_panel_ = false;
-    f32 grab_x_ = 0, grab_y_ = 0;
-    editor::DockLayout::Drop drop_;
-    i32 grab_splitter_ = -1;
 
     // Minimap
     static constexpr u32 kMapPx = 192;
@@ -250,10 +227,6 @@ private:
     std::vector<FieldRef> field_refs_;
 
     // Model mirrors
-    std::vector<DockFrame> m_frames_;
-    std::vector<DockGap> m_gaps_;
-    bool m_drop_ = false;
-    float m_drop_x_ = 0, m_drop_y_ = 0, m_drop_w_ = 0, m_drop_h_ = 0;
     std::vector<PaletteGroup> m_palette_;
     std::vector<Rml::String> m_layers_;
     Rml::String m_tool_ = "brush", m_tool_name_, m_tool_help_;

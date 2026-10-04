@@ -59,7 +59,7 @@
 .layer-chip.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
 
 /* The dock: frames (with headers) and panes are placed by C++. */
-#dock { flex: 1 1 0px; position: relative; min-height: 0px; }
+#dock, #as-dock { flex: 1 1 0px; position: relative; min-height: 0px; }
 .dock-frame {
     position: absolute;
     border-radius: 6px;
@@ -96,7 +96,7 @@
 .dock-gap:hover { background-color: var(--primary); opacity: 0.5; }
 .dock-pane { position: absolute; display: flex; flex-direction: column; min-height: 0px; }
 #level-view { border-radius: 6px; }
-#dock-drop {
+#dock-drop, #as-dock-drop {
     position: absolute;
     border-radius: 6px;
     border-width: 2px;

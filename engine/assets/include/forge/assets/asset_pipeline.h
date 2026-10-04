@@ -78,7 +78,10 @@ public:
     RefreshReport refresh();
 
     AssetDatabase& database() { return db_; }
-    std::filesystem::path cooked_path(const ContentHash& cook_key) const;
+    std::filesystem::path cooked_path(const ContentHash& cook_key) const { return cooked_file(library_dir_, cook_key); }
+    // Where the cooked result of cook_key lies in a library folder.
+    static std::filesystem::path cooked_file(const std::filesystem::path& library_dir, const ContentHash& cook_key);
+    static std::filesystem::path database_file(const std::filesystem::path& library_dir) { return library_dir / "assets.db"; }
 
 private:
     const Importer* importer_for(const std::filesystem::path& file) const;

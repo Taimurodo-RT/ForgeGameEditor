@@ -2,21 +2,24 @@
 // undo/redo of every action and Play/Stop. The window layout lives in
 // ui/editor/editor.rml and editor.rcss and updates while the editor runs.
 //
-//   forge_editor [--scene FILE] [--level DIR] [--ui DIR] [--theme NAME] [--objects N] [--no-vsync]
+//   forge_editor [--scene FILE] [--level DIR] [--assets DIR] [--ui DIR] [--theme NAME] [--objects N] [--no-vsync]
 //   forge_editor --screenshot out.png [--frames N] [--select] [--play] [--tab N] [--theme NAME]   offscreen
 //   forge_editor --bench [--frames N]   offscreen: every object listed, the hierarchy scrolling
 //   forge_editor --bench-level [--frames N]   offscreen: flying over the level while painting
+//   forge_editor --bench-assets [N]   offscreen: a project of N files (50 000), indexed, listed, searched
 //   forge_editor --self-test [--screenshot out.png]   offscreen: drives the controls, fails on a wrong result
 //
 // The «Уровень» tab opens «Старая шахта» from games/slice/level (or --level
 // DIR); the «Сцена» tab opens scene.forge.json in the current folder (or
 // --scene FILE), or makes a sample scene of 50 000 objects when there is none.
 
+#include "asset_library.h"
 #include "components.h"
 #include "demo_art.h"
 #include "level_editor.h"
 #include "slice_level.h"
 
+#include "forge/assets/image.h"
 #include "forge/core/file.h"
 #include "forge/core/jobs.h"
 #include "forge/core/log.h"
@@ -258,9 +261,11 @@ public:
     std::filesystem::path scene_path = "scene.forge.json";
     slice::SliceLevel level_module;
     LevelEditor level{level_module};
+    AssetLibrary assets;
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
-              const std::filesystem::path& ui_dir, const std::string& theme, u32 objects, const LevelConfig& level_config) {
+              const std::filesystem::path& ui_dir, const std::string& theme, u32 objects, const LevelConfig& level_config,
+              const AssetsConfig& assets_config) {
         device_ = device;
         window_ = window;
         log_set_sink(&log_sink, nullptr);
@@ -292,6 +297,7 @@ public:
         config.hot_reload = window != nullptr;
         if (!ui_.init(device, window, config)) return false;
         if (!level.init(ui_, device, format, level_config)) return false;
+        if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
         if (!context_ || !bind_model()) return false;
         ui::register_list_source("hierarchy", &hierarchy);
@@ -311,6 +317,7 @@ public:
         // Closing never loses painted tiles: the level is saved.
         if (level.dirty()) level.save();
         level.shutdown();
+        assets.shutdown();
         log_set_sink(nullptr, nullptr);
         ui::register_list_source("hierarchy", nullptr);
         sprites_.shutdown();
@@ -320,21 +327,28 @@ public:
     // --- actions (buttons, keys) ---
 
     void undo() {
-        if (m_tab_ == "level") level.undo();
+        if (m_tab_ == "assets") assets.undo();
+        else if (m_tab_ == "level") level.undo();
         else if (history.undo()) FORGE_INFO("Отменено");
     }
     void redo() {
-        if (m_tab_ == "level") level.redo();
+        if (m_tab_ == "assets") assets.redo();
+        else if (m_tab_ == "level") level.redo();
         else if (history.redo()) FORGE_INFO("Повторено");
     }
     // The open tab's history.
-    UndoStack& active_history() { return m_tab_ == "level" ? level.history() : history; }
+    UndoStack& active_history() {
+        if (m_tab_ == "assets") return assets.history();
+        return m_tab_ == "level" ? level.history() : history;
+    }
     void open_tab(const std::string& key) {
+        if (key == "assets" && m_tab_ != "assets") assets.opened();
         m_tab_ = key;
         model_.DirtyVariable("tab");
     }
     const std::string& tab() const { return m_tab_; }
     void save() {
+        if (m_tab_ == "assets") return; // files are saved as they change
         if (m_tab_ == "level") {
             level.save();
             return;
@@ -441,6 +455,7 @@ public:
             pending_theme_.clear();
         }
         if (m_tab_ == "level") level.update(dt, context_);
+        assets.update(dt, m_tab_ == "assets" ? context_ : nullptr);
         refresh_drawables();
         if (play.playing() && !paused_) simulate(static_cast<f32>(std::min(dt, 0.1)));
         hierarchy.refresh();
@@ -450,8 +465,10 @@ public:
         // is rebuilt); those are not the user's edits.
         in_ui_update_ = true;
         level.set_ui_updating(true);
+        assets.set_ui_updating(true);
         ui_.update();
         level.set_ui_updating(false);
+        assets.set_ui_updating(false);
         in_ui_update_ = false;
         follow_log();
     }
@@ -474,7 +491,10 @@ public:
         // Keys first, unless a text field has the keyboard.
         if (e.type == SDL_EVENT_KEY_DOWN && !text_focus() && handle_key(e.key)) return true;
 
+        // Files dropped on the window go to the project's resources.
+        if (e.type == SDL_EVENT_DROP_BEGIN && m_tab_ != "assets") open_tab("assets");
         const bool ui_used = ui_.handle_event(context_, e);
+        if (m_tab_ == "assets") return assets.handle_event(e, density, ui_used, context_) || ui_used;
         if (m_tab_ == "level") return level.handle_event(e, density, ui_used, context_) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -641,6 +661,7 @@ private:
         on("set_theme", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { pending_theme_ = arg_str(a, 0); });
         // Editor tabs: the list, titles and texts live in editor.rml.
         on("open_tab", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+            if (arg_str(a, 0) == "assets" && m_tab_ != "assets") assets.opened();
             m_tab_ = arg_str(a, 0);
             m_tab_title_ = arg_str(a, 1);
             m_tab_description_ = arg_str(a, 2);
@@ -702,9 +723,12 @@ private:
             if (i < 0 || i >= static_cast<int>(addable_types_.size()) || doc.selection().empty()) return;
             history.execute(std::make_unique<AddComponent>(doc.selection()[0], addable_types_[i]));
         });
+        DockView::register_types(model);
         level.bind(model);
+        assets.bind(model);
         model_ = model.GetModelHandle();
         level.set_model(model_);
+        assets.set_model(model_);
         return true;
     }
 
@@ -816,8 +840,12 @@ private:
         set(m_can_undo_, h.can_undo(), "can_undo");
         set(m_can_redo_, h.can_redo(), "can_redo");
         set(m_undo_label_, h.undo_label(), "undo_label");
-        set(m_dirty_, h.dirty(), "dirty");
-        set(m_scene_name_, m_tab_ == "level" ? level.title() : path_to_utf8(scene_path.filename()), "scene_name");
+        set(m_dirty_, m_tab_ != "assets" && h.dirty(), "dirty"); // files are written at once
+        set(m_scene_name_,
+            m_tab_ == "level"    ? level.title()
+            : m_tab_ == "assets" ? std::string("Ресурсы проекта")
+                                 : path_to_utf8(scene_path.filename()),
+            "scene_name");
         set(m_has_selection_, !doc.selection().empty() && doc.find(doc.selection()[0]) != nullptr, "has_selection");
         set(m_selection_count_, static_cast<int>(doc.selection().size()), "selection_count");
         set(m_object_count_, "Объектов: " + group_digits(doc.object_count()), "object_count");
@@ -861,7 +889,9 @@ private:
                       s.update_ms, s.render_ms, group_digits(sprites_drawn_).c_str(), doc.selection().size());
         // Timings change every frame, so they are shown four times a second;
         // a new selection is shown at once.
-        if (m_tab_ == "level") {
+        if (m_tab_ == "assets") {
+            set(m_status_, assets.status(), "status");
+        } else if (m_tab_ == "level") {
             set(m_status_, level.status(), "status");
         } else if (time_ - status_time_ > 0.25 || doc.selection_version() != status_selection_version_) {
             status_time_ = time_;
@@ -886,7 +916,7 @@ private:
     void follow_log() {
         if (scroll_log_ == 0) return;
         if (--scroll_log_ > 0) return;
-        for (const char* id : {"log", "lv-log"})
+        for (const char* id : {"log", "lv-log", "as-log"})
             if (Rml::Element* log = find_element(id)) log->SetScrollTop(log->GetScrollHeight());
     }
 
@@ -1073,6 +1103,7 @@ private:
         if (ctrl && k.key == SDLK_Z) { shift ? redo() : undo(); return true; }
         if (ctrl && k.key == SDLK_Y) { redo(); return true; }
         if (ctrl && k.key == SDLK_S) { save(); return true; }
+        if (m_tab_ == "assets") return assets.handle_key(k);
         if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
         if (m_tab_ != "world") return false; // the keys below act on the world view
@@ -1219,6 +1250,7 @@ struct Options {
     std::filesystem::path scene;
     std::filesystem::path level = utf8_path(SLICE_LEVEL_DIR);
     bool level_given = false;
+    std::filesystem::path assets; // empty: assets/ in the working folder
     std::string theme = "dark";
     u32 objects = 50'000;
 };
@@ -1238,8 +1270,13 @@ public:
             lc.settings = utf8_path(pref);
             SDL_free(pref);
         }
+        AssetsConfig ac;
+        ac.folder = options.assets.empty() ? std::filesystem::current_path() / "assets" : options.assets;
+        ac.library = ac.folder.parent_path() / ".forge" / "library";
+        ac.settings = lc.settings;
+        ac.window = window();
         if (!editor_.init(gpu(), window(), swapchain_format(), static_cast<u32>(w), static_cast<u32>(h),
-                          options.ui_dir, options.theme, options.objects, lc)) {
+                          options.ui_dir, options.theme, options.objects, lc, ac)) {
             FORGE_ERROR("editor: start failed (UI folder: %s)", path_to_utf8(options.ui_dir).c_str());
             return false;
         }
@@ -1269,6 +1306,90 @@ private:
 // the world, undo and redo it, run the game and stop it, delete and duplicate,
 // switch editor tabs.
 // Fails when any action does not do what the user would expect.
+// A small project for offscreen runs: pictures, a sound, data, folders. With
+// bench > 0 also that many files in 50 folders (every tenth a picture);
+// kept between runs while the count is the same.
+void make_sample_assets(const std::filesystem::path& root, u32 bench) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path marker = root / "bench.txt";
+    std::vector<u8> was;
+    const std::string want = std::to_string(bench);
+    if (bench > 0 && read_file(marker, was) && std::string(was.begin(), was.end()) == want) {
+        fs::remove_all(root / "assets" / "персонажи", ec); // the self-test part is always fresh
+    } else {
+        fs::remove_all(root, ec);
+    }
+    const fs::path a = root / "assets";
+    auto picture = [&](const fs::path& file, u32 w, u32 h, u8 r, u8 g, u8 b) {
+        assets::CookedTexture t;
+        t.width = w;
+        t.height = h;
+        t.rgba8.resize(static_cast<usize>(w) * h * 4);
+        for (u32 y = 0; y < h; ++y)
+            for (u32 x = 0; x < w; ++x) {
+                u8* p = t.rgba8.data() + (static_cast<usize>(y) * w + x) * 4;
+                const bool edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                p[0] = edge ? 20 : r;
+                p[1] = edge ? 20 : static_cast<u8>(g + (y * 40) / h);
+                p[2] = edge ? 20 : b;
+                p[3] = 255;
+            }
+        std::vector<u8> bytes;
+        const std::string ext = path_to_utf8(file.extension());
+        assets::encode_image(t, ext, bytes);
+        fs::create_directories(file.parent_path(), ec);
+        write_file_atomic(file, bytes);
+    };
+    auto text = [&](const fs::path& file, const std::string& body) {
+        fs::create_directories(file.parent_path(), ec);
+        write_file_atomic(file, {reinterpret_cast<const u8*>(body.data()), body.size()});
+    };
+    picture(a / "персонажи" / "кузнец.png", 16, 16, 180, 90, 40);
+    picture(a / "персонажи" / "шахтёр.png", 16, 24, 200, 160, 60);
+    if (fs::exists(a / "тайлы", ec)) return; // the rest is kept with the bench files
+    picture(a / "тайлы" / "камень.png", 32, 32, 120, 120, 130);
+    picture(a / "тайлы" / "песок.bmp", 16, 16, 220, 200, 120);
+    text(a / "данные" / "предметы.json", R"({"кирка": {"цена": 10}, "факел": {"цена": 2}})");
+    text(a / "readme.txt", "Ресурсы пробного проекта.");
+    {
+        // A quarter second of a 440 Hz tone, 16-bit mono.
+        const u32 rate = 22050, n = rate / 4;
+        std::vector<u8> wav(44 + n * 2);
+        auto put32 = [&](usize at, u32 v) { for (int i = 0; i < 4; ++i) wav[at + i] = static_cast<u8>(v >> (8 * i)); };
+        auto put16 = [&](usize at, u32 v) { for (int i = 0; i < 2; ++i) wav[at + i] = static_cast<u8>(v >> (8 * i)); };
+        std::memcpy(wav.data(), "RIFF", 4);
+        put32(4, 36 + n * 2);
+        std::memcpy(wav.data() + 8, "WAVEfmt ", 8);
+        put32(16, 16);
+        put16(20, 1);
+        put16(22, 1);
+        put32(24, rate);
+        put32(28, rate * 2);
+        put16(32, 2);
+        put16(34, 16);
+        std::memcpy(wav.data() + 36, "data", 4);
+        put32(40, n * 2);
+        for (u32 i = 0; i < n; ++i)
+            put16(44 + i * 2, static_cast<u16>(static_cast<i16>(8000 * std::sin(i * 2 * 3.14159265 * 440 / rate))));
+        fs::create_directories(a / "звуки", ec);
+        write_file_atomic(a / "звуки" / "кирка.wav", wav);
+    }
+    for (u32 i = 0; i < bench; ++i) {
+        char folder[16], name[48];
+        std::snprintf(folder, sizeof(folder), "%02u", i % 50);
+        const fs::path dir = a / "bench" / folder;
+        if (i % 10 == 0) {
+            std::snprintf(name, sizeof(name), "предмет_%u.png", i);
+            picture(dir / utf8_path(name), 8, 8, static_cast<u8>(i * 7), static_cast<u8>(i * 13), static_cast<u8>(i * 29));
+        } else {
+            std::snprintf(name, sizeof(name), "предмет_%u.json", i);
+            text(dir / utf8_path(name), "{\"id\": " + std::to_string(i) + "}");
+        }
+    }
+    if (bench > 0) text(marker, want);
+}
+
 class SelfTest {
 public:
     explicit SelfTest(Editor& editor) : ed_(editor) {}
@@ -1404,6 +1525,7 @@ private:
     }
 
     bool level_step(u32 f) {
+        if (f >= 19) return asset_step();
         const usize stone = tile_named("stone"), sand = tile_named("sand");
         switch (f) {
         case 0: {
@@ -1611,12 +1733,220 @@ private:
             lv().select_objects({object_}); // for a screenshot of the panels
             break;
         }
-        case 19: return false;
         default: break;
         }
         return true;
     }
     static constexpr i32 kCoins = 4;
+
+    // --- the resources tab ---
+    AssetLibrary& as() { return ed_.assets; }
+    // True while the step must wait for ready (the background threads); a
+    // step that waits too long fails and the test goes on.
+    bool hold(bool ready, const char* what) {
+        if (ready) {
+            waited_ = 0;
+            return false;
+        }
+        SDL_Delay(2);
+        if (++waited_ < 1500) return true;
+        waited_ = 0;
+        check(false, what);
+        return false;
+    }
+    i64 row_of(const std::string& rel) {
+        for (usize i = 0; i < as().row_count(); ++i)
+            if (as().row_rel(i) == rel) return static_cast<i64>(i);
+        return -1;
+    }
+    void click_row(const std::string& rel, const char* event = "click") {
+        const i64 r = row_of(rel);
+        if (r >= 0) as().on_row_event(static_cast<u32>(r), event, 0);
+    }
+    bool exists(const std::string& rel) { return std::filesystem::exists(as().abs(rel)); }
+    void drop(const std::filesystem::path& file) {
+        SDL_Event e{};
+        e.type = SDL_EVENT_DROP_BEGIN;
+        ed_.handle_event(e);
+        drop_text_ = path_to_utf8(file);
+        e.type = SDL_EVENT_DROP_FILE;
+        e.drop.data = drop_text_.c_str();
+        ed_.handle_event(e);
+        e.type = SDL_EVENT_DROP_COMPLETE;
+        e.drop.data = nullptr;
+        ed_.handle_event(e);
+    }
+
+    bool asset_step() {
+        const bool idle = !as().busy();
+        switch (as_step_) {
+        case 0:
+            check(click_tab(10), "a click on the Resources tab");
+            break;
+        case 1:
+            if (hold(idle && as().record_count() >= 7, "the resources are indexed")) return true;
+            check(shown("as-list") && shown("as-pane-folders") && shown("as-pane-preview"), "the tab shows the list and panels");
+            check(as().record_count() == 7, "7 files found");
+            check(as().row_count() == 5 && as().row_rel(0) == "данные" && as().row_rel(4) == "readme.txt",
+                  "the top folder lists 4 folders, then the file");
+            check(shown("folder-4"), "the folder tree has the folders");
+            click_row("тайлы", "dblclick");
+            check(as().folder() == "тайлы" && as().row_count() == 2, "a double click opens a folder");
+            click_row("тайлы/камень.png");
+            break;
+        case 2:
+            if (hold(as().preview_width() == 32 && as().row_has_thumb(static_cast<usize>(std::max<i64>(0, row_of("тайлы/камень.png")))),
+                     "the picture's preview and thumbnail are made"))
+                return true;
+            check(as().preview_height() == 32 && shown("as-preview"), "the preview shows the 32 × 32 picture");
+            break;
+        case 3:
+            if (!typed_) {
+                // Typed, as from the keyboard.
+                if (Rml::Element* e = ed_.find_element("as-search")) e->Focus();
+                SDL_Event t{};
+                t.type = SDL_EVENT_TEXT_INPUT;
+                t.text.text = "шах";
+                ed_.handle_event(t);
+                typed_ = true;
+                return true;
+            }
+            if (hold(as().row_count() == 1, "the search answers")) return true;
+            check(as().row_count() == 1 && as().row_rel(0) == "персонажи/шахтёр.png", "typing «шах» finds the miner everywhere");
+            if (Rml::Element* e = ed_.find_element("as-search")) e->Blur();
+            click_row("персонажи/шахтёр.png");
+            check(as().edit_image("cw") && as().history().undo_label() == "Повернуть вправо: шахтёр.png", "the picture turns");
+            break;
+        case 4:
+            if (hold(idle && as().preview_width() == 24, "the turned picture is shown")) return true;
+            check(as().preview_height() == 16, "turned: 24 × 16");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            break;
+        case 5:
+            if (hold(idle && as().preview_width() == 16, "the turn is taken back")) return true;
+            check(as().preview_height() == 24, "Ctrl+Z gives the picture back: 16 × 24");
+            as().set_search("");
+            as().open_folder("персонажи");
+            click_row("персонажи/шахтёр.png");
+            check(as().rename_selected("Борис"), "rename");
+            check(exists("персонажи/Борис.png") && !exists("персонажи/шахтёр.png"), "the file is renamed, the extension kept");
+            break;
+        case 6:
+            if (hold(idle, "the rename is indexed")) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(exists("персонажи/шахтёр.png") && !exists("персонажи/Борис.png"), "Ctrl+Z gives the old name back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(exists("персонажи/Борис.png"), "Ctrl+Y renames again");
+            break;
+        case 7:
+            if (hold(idle && row_of("персонажи/Борис.png") >= 0, "the list shows the new name")) return true;
+            click_row("персонажи/Борис.png");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(!exists("персонажи/Борис.png") && std::filesystem::exists(as().trash()), "Delete moves the file to the trash");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(exists("персонажи/Борис.png"), "Ctrl+Z brings it back");
+            if (Rml::Element* e = ed_.find_element("as-new-folder")) e->Click();
+            check(std::filesystem::is_directory(as().abs("персонажи/Новая папка")), "a new folder");
+            check(as().selection().size() == 1 && as().rename_selected("враги"), "the new folder renamed");
+            check(std::filesystem::is_directory(as().abs("персонажи/враги")), "the folder is called «враги»");
+            if (Rml::Element* e = ed_.find_element("as-name")) e->Blur();
+            break;
+        case 8:
+            if (hold(idle && row_of("персонажи/враги") >= 0, "the list shows the folder")) return true;
+            click_row("персонажи/кузнец.png");
+            key(SDLK_X, SDL_KMOD_CTRL);
+            click_row("персонажи/враги", "dblclick");
+            check(as().folder() == "персонажи/враги", "into the new folder");
+            key(SDLK_V, SDL_KMOD_CTRL);
+            check(exists("персонажи/враги/кузнец.png") && !exists("персонажи/кузнец.png"), "cut and paste move the file");
+            {
+                // A file from outside the project, dropped on the window.
+                const auto outside = std::filesystem::temp_directory_path() / "forge_editor_drop";
+                std::error_code ec;
+                std::filesystem::remove_all(outside, ec);
+                std::filesystem::create_directories(outside, ec);
+                std::vector<u8> png;
+                assets::CookedTexture t;
+                t.width = t.height = 4;
+                t.rgba8.assign(64, 200);
+                assets::encode_image(t, ".png", png);
+                write_file_atomic(outside / "жук.png", png);
+                drop(outside / "жук.png");
+            }
+            break;
+        case 9:
+            if (hold(idle && exists("персонажи/враги/жук.png") && !as().selection().empty(), "the dropped file is imported"))
+                return true;
+            check(as().history().undo_label() == "Импорт: жук.png" && as().selection()[0] == "персонажи/враги/жук.png",
+                  "the drop is one history entry and the new file is selected");
+            break;
+        case 10:
+            if (hold(idle && row_of("персонажи/враги/жук.png") >= 0, "the imported file is listed")) return true;
+            check(as().set_tags("враг летает"), "tags are set");
+            break;
+        case 11:
+            if (hold(idle, "the tags are indexed")) return true;
+            as().set_search("летает");
+            check(as().row_count() == 1 && as().row_rel(0) == "персонажи/враги/жук.png", "search finds the file by its tag");
+            as().set_search("");
+            as().open_folder("тайлы");
+            click_row("тайлы/песок.bmp");
+            check(as().convert_image(".png") && exists("тайлы/песок.png"), "a PNG copy of the BMP");
+            break;
+        case 12:
+            if (hold(idle && as().row_count() == 3, "the copy is listed")) return true;
+            check(as().row_field(0, "kind") == "Картинка PNG" || as().row_field(0, "kind") == "Картинка BMP",
+                  "the Type column names the kind and the format");
+            check(as().row_field(0, "tint") == "ft-image" && !as().row_field(0, "date").empty(), "an image colour and a date");
+            as().sort_by("size");
+            check(as().row_rel(0) == "тайлы/песок.png" && as().row_rel(2) == "тайлы/песок.bmp", "sorted by size, smallest first");
+            as().sort_by("size");
+            check(as().row_rel(0) == "тайлы/песок.bmp", "the same column again: largest first");
+            as().sort_by("name");
+            if (Rml::Element* e = ed_.find_element("nav-audio")) e->Click();
+            check(as().filter() == "audio" && as().row_count() == 1 && as().row_rel(0) == "звуки/кирка.wav",
+                  "«Все звуки» lists the project's sounds from every folder");
+            check(as().row_field(0, "kind") == "Звук WAV" && as().row_field(0, "where") == "звуки", "with the folder column");
+            key(SDLK_LEFT, SDL_KMOD_ALT);
+            check(as().filter().empty() && as().folder() == "тайлы" && as().row_count() == 3, "Alt+← goes back to the folder");
+            key(SDLK_RIGHT, SDL_KMOD_ALT);
+            check(as().filter() == "audio", "Alt+→ goes forward again");
+            key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+            check(as().filter().empty() && as().folder() == "тайлы", "Backspace leaves the collection");
+            key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+            check(as().folder().empty(), "Backspace goes up a folder");
+            as().open_folder("тайлы");
+            click_row("тайлы/камень.png");
+            key(SDLK_C, SDL_KMOD_CTRL);
+            as().open_folder("данные");
+            key(SDLK_V, SDL_KMOD_CTRL);
+            break;
+        case 13:
+            if (hold(idle && exists("данные/камень.png"), "the copy is made")) return true;
+            check(exists("тайлы/камень.png") && as().history().undo_label() == "Копия: камень.png", "Ctrl+C, Ctrl+V copies the file");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!exists("данные/камень.png") && exists("тайлы/камень.png"), "Ctrl+Z takes the copy away");
+            as().open_folder("тайлы"); // for a screenshot: a picture in the preview
+            click_row("тайлы/камень.png");
+            break;
+        case 14:
+            if (hold(as().preview_width() == 32 && idle, "the stone is shown again")) return true;
+            if (Rml::Element* e = ed_.find_element("as-sort-menu")) e->Click();
+            break;
+        case 15:
+            check(shown("sort-date"), "«Сортировка» opens its menu");
+            if (Rml::Element* e = ed_.find_element("sort-date")) e->Click();
+            check(as().sort_key() == "date", "a menu item sorts");
+            break;
+        case 16:
+            check(!shown("sort-date"), "the menu closes after a choice");
+            as().sort_by("name");
+            return false;
+        default: break;
+        }
+        ++as_step_;
+        return true;
+    }
     flecs::entity placed() { return lv().level().find(object_); }
     u32 count() {
         const flecs::entity e = placed();
@@ -1685,11 +2015,14 @@ private:
     usize entries_ = 0, count_ = 0, stacks_ = 0;
     i32 cx_ = 0, cy_ = 0;
     u64 object_ = 0;
+    u32 as_step_ = 0, waited_ = 0;
+    std::string drop_text_;
+    bool typed_ = false;
     int failures_ = 0;
 };
 
 int run_offscreen(const Options& options, const char* screenshot, u32 frames, bool select, bool play, bool bench,
-                  bool self_test, int tab, bool bench_level) {
+                  bool self_test, int tab, bool bench_level, u32 bench_assets) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
     if (!device) {
@@ -1711,8 +2044,15 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             std::error_code ec;
             std::filesystem::remove_all(lc.folder, ec);
         }
+        // Resources: a fresh sample folder, unless one is given.
+        AssetsConfig ac;
+        ac.offscreen = true;
+        const std::filesystem::path sample = std::filesystem::temp_directory_path() / "forge_editor_assets";
+        ac.folder = options.assets.empty() ? sample / "assets" : options.assets;
+        ac.library = options.assets.empty() ? sample / "library" : ac.folder.parent_path() / ".forge" / "library";
+        if (options.assets.empty()) make_sample_assets(sample, bench_assets);
         if (target && editor.init(device, nullptr, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h, options.ui_dir,
-                                  options.theme, options.objects, lc)) {
+                                  options.theme, options.objects, lc, ac)) {
             f64 update_ms = 0, render_ms = 0, worst_ms = 0;
             u32 measured = 0;
             if (bench) {
@@ -1721,16 +2061,46 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             }
             SelfTest test(editor);
             if (self_test) {
-                frames = std::max(frames, 90u);
-                editor.open_tab("world"); // the scene part first, then the level
+                frames = 100'000; // until the steps end (some wait for background work)
+                editor.open_tab("world"); // the scene part first, then the level, then the resources
             }
             bool testing = self_test;
             if (bench_level) {
                 editor.open_tab("level");
                 frames = std::max(frames, 600u);
             }
+            if (bench_assets) {
+                // The first look at a big project, then a look that finds nothing new.
+                editor.open_tab("assets");
+                for (int pass = 0; pass < 2; ++pass) {
+                    const Stopwatch scan;
+                    if (pass == 1) editor.assets.refresh();
+                    do {
+                        editor.update(1.0 / 60.0);
+                        SDL_Delay(2);
+                    } while (editor.assets.busy() && scan.elapsed_ms() < 30 * 60 * 1000.0);
+                    FORGE_INFO("assets: %s look at %s files took %.0f ms", pass == 0 ? "first" : "second",
+                               group_digits(editor.assets.record_count()).c_str(), scan.elapsed_ms());
+                }
+                editor.assets.open_folder("bench/10"); // 1 000 pictures: a thumbnail on every row
+                frames = std::max(frames, 600u);
+            }
             for (u32 f = 0; f < frames; ++f) {
                 if (testing) testing = test.step(f);
+                else if (self_test) break;
+                if (bench_assets && f == frames / 2) {
+                    // Search across everything, then scroll the results.
+                    const Stopwatch search;
+                    editor.assets.set_search("предмет");
+                    FORGE_INFO("assets: search «предмет» %.2f ms, %s rows", search.elapsed_ms(),
+                               group_digits(editor.assets.row_count()).c_str());
+                }
+                if (bench_assets)
+                    if (Rml::Element* list = editor.find_element("as-list")) {
+                        float top = list->GetScrollTop() + 53.0f;
+                        if (top >= list->GetScrollHeight() - list->GetClientHeight()) top = 0;
+                        list->SetScrollTop(top);
+                    }
                 // Flies over the world fast while painting: new chunks load and
                 // edited ones go out of view all the time.
                 if (bench_level && f > 10) {
@@ -1777,6 +2147,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 ++measured;
             }
             measured = std::max(measured, 1u);
+            if (bench_assets)
+                FORGE_INFO("assets: %s rows listed, %s previews made", group_digits(editor.assets.row_count()).c_str(),
+                           group_digits(editor.assets.thumbs_made()).c_str());
             if (bench_level)
                 FORGE_INFO("level: flew %.0f tiles painting; edits %llu; chunks in memory %u", editor.level.camera().x,
                            static_cast<unsigned long long>(editor.level.level().edits()), editor.level.level().world().stats().resident);
@@ -1808,12 +2181,14 @@ int main(int argc, char** argv) {
     const char* screenshot = nullptr;
     u32 frames = 10;
     bool select = false, play = false, bench = false, self_test = false, bench_level = false;
+    u32 bench_assets = 0;
     int tab = 0;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
         if (std::strcmp(argv[i], "--no-vsync") == 0) config.vsync = false;
         else if (std::strcmp(argv[i], "--ui") == 0 && has_value) app.options.ui_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--scene") == 0 && has_value) app.options.scene = utf8_path(argv[++i]);
+        else if (std::strcmp(argv[i], "--assets") == 0 && has_value) app.options.assets = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--level") == 0 && has_value) {
             app.options.level = utf8_path(argv[++i]);
             app.options.level_given = true;
@@ -1826,10 +2201,14 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--play") == 0) play = true;
         else if (std::strcmp(argv[i], "--bench") == 0) bench = true;
         else if (std::strcmp(argv[i], "--bench-level") == 0) bench_level = true;
+        else if (std::strcmp(argv[i], "--bench-assets") == 0) {
+            bench_assets = 50'000;
+            if (has_value && argv[i + 1][0] != '-') bench_assets = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
+        }
         else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    if (screenshot || bench || self_test || bench_level)
-        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab, bench_level);
+    if (screenshot || bench || self_test || bench_level || bench_assets)
+        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab, bench_level, bench_assets);
     return app.run(config);
 }

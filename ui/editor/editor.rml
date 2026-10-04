@@ -8,6 +8,7 @@
     <link type="text/rcss" href="../forge-ui/menus.rcss"/>
     <link type="text/rcss" href="editor.rcss"/>
     <link type="text/rcss" href="level.rcss"/>
+    <link type="text/rcss" href="assets.rcss"/>
 </head>
 <!-- The editor window. C++ fills the "editor" data model and draws the world
      under the #viewport element; everything you see here can be changed in
@@ -47,10 +48,10 @@
         <div class="editor-tab" data-class-selected="tab == 'story'" data-event-click="open_tab('story', 'Сюжет', 'Диалоги и квесты, проверка без запуска игры', 'шаг 12: редактор сюжета', 'forum')"><icon name="forum"/><span>Сюжет</span></div>
         <div class="editor-tab" data-class-selected="tab == 'ui'" data-event-click="open_tab('ui', 'Интерфейс', 'Меню и экраны игры, как в Figma', 'шаг 13: редактор интерфейсов', 'dashboard')"><icon name="dashboard"/><span>Интерфейс</span></div>
         <div class="editor-tab" data-class-selected="tab == 'input'" data-event-click="open_tab('input', 'Ввод', 'Клавиши, мышь и геймпад для действий игры', 'шаг 13: редактор интерфейсов', 'sports_esports')"><icon name="sports_esports"/><span>Ввод</span></div>
-        <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', 'Все файлы проекта: поиск, импорт, преобразование', 'шаг 9: библиотека ассетов', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', '', '', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
     </div>
 
-    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level')">
+    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets')">
         <icon class="big" data-attr-name="tab_icon"/>
         <div class="headline-small">{{ tab_title }}</div>
         <div class="muted">{{ tab_description }}</div>
@@ -187,7 +188,7 @@
             <div data-for="f : dock_frames" class="dock-frame" data-class-view="f.view" data-if="f.used"
                  data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'">
                 <div class="dock-header row" data-if="!f.view">
-                    <div data-for="t : f.tabs" class="dock-tab" data-class-active="t.active" data-attr-id="'dock-tab-' + t.id"
+                    <div data-for="t : f.tabs" class="dock-tab" data-if="t.used" data-class-active="t.active" data-attr-id="'dock-tab-' + t.id"
                          data-event-mousedown="dock_grab(t.id)"><icon class="s" data-attr-name="t.icon"/><span>{{ t.title }}</span></div>
                 </div>
             </div>
@@ -316,11 +317,217 @@
         </div>
     </div>
 
+    <div id="assets" class="column" data-if="tab == 'assets'">
+        <!-- Like the explorer: back, forward, up, the address, the search. -->
+        <div class="as-nav row">
+            <div id="as-back" class="icon-button small" title="Назад (Alt+←)" data-class-disabled="!as_can_back" data-event-click="as_back"><icon name="arrow_back"/></div>
+            <div id="as-forward" class="icon-button small" title="Вперёд (Alt+→)" data-class-disabled="!as_can_forward" data-event-click="as_forward"><icon name="arrow_forward"/></div>
+            <div id="as-up" class="icon-button small" title="Наверх (Alt+↑, Backspace)" data-class-disabled="!as_can_up" data-event-click="as_up"><icon name="arrow_upward"/></div>
+            <div class="icon-button small" title="Обновить (F5)" data-class-busy="as_busy" data-event-click="as_refresh"><icon name="refresh"/></div>
+            <div class="address row">
+                <icon data-attr-class="'s ft-' + (as_filter == '' ? 'folder' : (as_filter == 'image' ? 'image' : (as_filter == 'audio' ? 'audio' : 'recent')))" data-attr-name="as_place_icon"/>
+                <div data-for="c : as_crumbs" class="crumb row" data-attr-id="'crumb-' + it_index" data-event-click="as_go(c.path)">
+                    <icon class="s chevron" name="chevron_right"/><span>{{ c.name }}</span>
+                </div>
+            </div>
+            <div class="search-box row">
+                <input id="as-search" type="text" class="grow" placeholder="Поиск в проекте" data-attr-value="as_search" data-event-change="as_search(ev.value)"/>
+                <div class="icon-button small" data-if="as_searching" title="Очистить" data-event-click="as_search_clear"><icon class="s" name="close"/></div>
+                <icon class="s" name="search" data-if="!as_searching"/>
+            </div>
+        </div>
+
+        <!-- Commands -->
+        <div class="as-commands row">
+            <div class="menu-anchor">
+                <div id="as-new" class="command" data-event-click="as_menu('new')"><icon name="add_circle"/><span>Создать</span><icon class="s" name="expand_more"/></div>
+                <div class="as-menu menu-list" data-if="as_menu == 'new'">
+                    <div id="as-new-folder" class="menu-item" data-event-click="as_new_folder"><icon class="ft-folder" name="create_new_folder"/><span class="label">Папку</span><span class="trailing">Ctrl+Shift+N</span></div>
+                    <div class="menu-item" data-event-click="as_import('files')"><icon name="upload_file"/><span class="label">Импорт файлов…</span></div>
+                    <div class="menu-item" data-event-click="as_import('folder')"><icon name="drive_folder_upload"/><span class="label">Импорт папки…</span></div>
+                </div>
+            </div>
+            <div class="divider vertical"/>
+            <div class="icon-button" title="Вырезать (Ctrl+X)" data-class-disabled="as_sel_count == 0" data-event-click="as_cut"><icon name="content_cut"/></div>
+            <div id="as-copy" class="icon-button" title="Копировать (Ctrl+C)" data-class-disabled="as_sel_count == 0" data-event-click="as_copy"><icon name="content_copy"/></div>
+            <div class="icon-button" title="Вставить (Ctrl+V)" data-class-disabled="!as_has_cut" data-event-click="as_paste"><icon name="content_paste"/></div>
+            <div class="icon-button" title="Переименовать (F2)" data-class-disabled="as_sel_count != 1" data-event-click="as_rename_start"><icon name="drive_file_rename_outline"/></div>
+            <div class="icon-button" title="Удалить (Del)" data-class-disabled="as_sel_count == 0" data-event-click="as_delete"><icon name="delete"/></div>
+            <div class="divider vertical"/>
+            <div class="menu-anchor">
+                <div id="as-sort-menu" class="command" data-event-click="as_menu('sort')"><icon name="swap_vert"/><span>Сортировка</span><icon class="s" name="expand_more"/></div>
+                <div class="as-menu menu-list" data-if="as_menu == 'sort'">
+                    <div id="sort-name" class="menu-item" data-event-click="as_sort('name')"><icon data-attr-name="as_sort == 'name' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">Имя</span></div>
+                    <div id="sort-date" class="menu-item" data-event-click="as_sort('date')"><icon data-attr-name="as_sort == 'date' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">Дата изменения</span></div>
+                    <div id="sort-type" class="menu-item" data-event-click="as_sort('type')"><icon data-attr-name="as_sort == 'type' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">Тип</span></div>
+                    <div id="sort-size" class="menu-item" data-event-click="as_sort('size')"><icon data-attr-name="as_sort == 'size' ? 'radio_button_checked' : 'radio_button_unchecked'"/><span class="label">Размер</span></div>
+                    <div class="divider"/>
+                    <div class="menu-item" data-event-click="as_sort_order(false)"><icon data-attr-name="!as_sort_desc ? 'check' : ''"/><span class="label">По возрастанию</span></div>
+                    <div class="menu-item" data-event-click="as_sort_order(true)"><icon data-attr-name="as_sort_desc ? 'check' : ''"/><span class="label">По убыванию</span></div>
+                </div>
+            </div>
+            <div class="menu-anchor">
+                <div id="as-view-menu" class="command" data-event-click="as_menu('view')"><icon data-attr-name="as_large ? 'view_agenda' : 'view_list'"/><span>Вид</span><icon class="s" name="expand_more"/></div>
+                <div class="as-menu menu-list" data-if="as_menu == 'view'">
+                    <div class="menu-item" data-class-selected="!as_large" data-event-click="as_view('table')"><icon name="view_list"/><span class="label">Таблица</span></div>
+                    <div class="menu-item" data-class-selected="as_large" data-event-click="as_view('large')"><icon name="view_agenda"/><span class="label">Крупные превью</span></div>
+                    <div class="divider"/>
+                    <div class="menu-item" data-event-click="as_layout_reset"><icon name="dashboard"/><span class="label">Вернуть панели на место</span></div>
+                </div>
+            </div>
+            <div class="grow"/>
+            <div id="as-import" class="button filled small" data-event-click="as_import('files')"><icon name="upload_file"/>Импорт</div>
+        </div>
+
+        <div id="as-dock">
+            <div data-for="f : as_dock_frames" class="dock-frame" data-class-view="f.view" data-if="f.used"
+                 data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'">
+                <div class="dock-header row" data-if="!f.view">
+                    <div data-for="t : f.tabs" class="dock-tab" data-if="t.used" data-class-active="t.active" data-attr-id="'as-dock-tab-' + t.id"
+                         data-event-mousedown="as_dock_grab(t.id)"><icon class="s" data-attr-name="t.icon"/><span>{{ t.title }}</span></div>
+                </div>
+            </div>
+            <div data-for="g : as_dock_gaps" class="dock-gap" data-class-column="g.column" data-if="g.used"
+                 data-style-left="g.x + 'px'" data-style-top="g.y + 'px'" data-style-width="g.w + 'px'" data-style-height="g.h + 'px'"
+                 data-event-mousedown="as_dock_split(it_index)"><div class="grip"/></div>
+
+            <div id="as-view" class="dock-pane column" data-class-large="as_large">
+                <div class="as-head row">
+                    <div class="col col-name" data-class-sorted="as_sort == 'name'" data-event-click="as_sort('name')"><span>Имя</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
+                    <div class="col col-where" data-if="as_listing"><span>Папка</span></div>
+                    <div class="col col-date" data-class-sorted="as_sort == 'date'" data-event-click="as_sort('date')"><span>Дата изменения</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
+                    <div class="col col-kind" data-class-sorted="as_sort == 'type'" data-event-click="as_sort('type')"><span>Тип</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
+                    <div class="col col-size" data-class-sorted="as_sort == 'size'" data-event-click="as_sort('size')"><span>Размер</span><icon class="s" data-attr-name="as_sort_desc ? 'arrow_downward' : 'arrow_upward'"/></div>
+                </div>
+                <virtual-list id="as-list" source="assets" data-attr-row-height="as_large ? 60 : 30" class="grow">
+                    <div class="asset-row" vl-class-selected="selected" vl-class-cut="cut">
+                        <div class="thumb">
+                            <img vl-attr-src="thumb" vl-class-hidden="noimg"/>
+                            <div class="glyph" vl-class-hidden="img"><icon vl-attr-name="icon" vl-attr-class="tint"/></div>
+                        </div>
+                        <span class="name" vl-text="name"/>
+                        <span class="where" vl-text="where"/>
+                        <span class="date" vl-text="date"/>
+                        <span class="kind" vl-text="kind"/>
+                        <span class="size" vl-text="size"/>
+                    </div>
+                </virtual-list>
+                <div class="as-empty column" data-if="as_empty">
+                    <icon name="upload_file" class="l"/>
+                    <span data-if="!as_searching">Папка пуста. Перетащите сюда файлы или папки из проводника, или нажмите «Импорт».</span>
+                    <span data-if="as_searching">Ничего не найдено.</span>
+                </div>
+            </div>
+
+            <div id="as-pane-folders" class="dock-pane column">
+                <div class="pane-scroll nav">
+                    <div id="nav-recent" class="tree-row nav-row" data-class-selected="as_filter == 'recent'" data-event-click="as_filter('recent')"><icon class="s ft-recent" name="schedule"/><span class="name">Недавние</span></div>
+                    <div id="nav-images" class="tree-row nav-row" data-class-selected="as_filter == 'image'" data-event-click="as_filter('image')"><icon class="s ft-image" name="photo_library"/><span class="name">Все картинки</span></div>
+                    <div id="nav-audio" class="tree-row nav-row" data-class-selected="as_filter == 'audio'" data-event-click="as_filter('audio')"><icon class="s ft-audio" name="library_music"/><span class="name">Все звуки</span></div>
+                    <div class="divider"/>
+                    <div data-for="t : as_tree" class="tree-row folder-row" data-class-selected="t.selected &amp;&amp; as_filter == ''" data-attr-id="'folder-' + it_index"
+                         data-style-padding-left="(4 + t.depth * 14) + 'px'" data-event-click="as_go(t.path)">
+                        <div class="arrow" data-event-click="as_tree_toggle(t.path)"><icon class="s" name="chevron_right" data-if="t.kids &amp;&amp; t.depth > 0" data-class-open="t.open"/></div>
+                        <icon class="s ft-folder" data-attr-name="t.depth == 0 ? 'inventory_2' : (t.selected ? 'folder_open' : 'folder')"/>
+                        <span class="name">{{ t.name }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="as-pane-preview" class="dock-pane column">
+                <div class="pane-scroll props details">
+                    <div class="preview-box">
+                        <img id="as-preview" data-if="as_sel_preview != ''" data-attr-src="as_sel_preview"/>
+                        <icon class="xl" data-if="as_sel_preview == ''" data-attr-name="as_sel_icon" data-attr-class="'xl ' + as_sel_tint"/>
+                    </div>
+                    <div class="name-row row" data-if="as_sel_count == 1">
+                        <input id="as-name" type="text" class="small grow" title="Имя (F2)" data-attr-value="as_sel_name" data-event-change="as_rename(ev.value, ev.linebreak)" data-event-blur="as_rename_commit"/>
+                        <span class="muted ext">{{ as_sel_ext }}</span>
+                    </div>
+                    <div class="title-row" data-if="as_sel_count != 1"><span>{{ as_sel_name }}</span></div>
+
+                    <div class="section-title">Сведения</div>
+                    <div class="info row"><span class="key">Тип</span><span class="value">{{ as_sel_kind }}</span></div>
+                    <div class="info row"><span class="key">Размер</span><span class="value">{{ as_sel_size }}</span></div>
+                    <div class="info row" data-if="as_sel_dims != ''"><span class="key">Картинка</span><span class="value">{{ as_sel_dims }}</span></div>
+                    <div class="info row" data-if="as_sel_extra != ''"><span class="key">Звук</span><span class="value">{{ as_sel_extra }}</span></div>
+                    <div class="info row" data-if="as_sel_date != ''"><span class="key">Изменён</span><span class="value">{{ as_sel_date }}</span></div>
+                    <div class="info row" data-if="as_sel_path != ''"><span class="key">Где</span><span class="value path">{{ as_sel_path }}</span></div>
+                    <div class="prop row gap-2" data-if="as_sel_count == 1 &amp;&amp; !as_sel_dir">
+                        <span class="key">Метки</span>
+                        <input id="as-tags" type="text" class="small grow" placeholder="через пробел" data-attr-value="as_sel_tags" data-event-change="as_tags(ev.value, ev.linebreak)" data-event-blur="as_tags_commit"/>
+                    </div>
+
+                    <div data-if="as_sel_count == 1 &amp;&amp; as_sel_image">
+                        <div class="section-title">Правка</div>
+                        <div class="row gap-1" data-if="as_sel_editable">
+                            <div id="img-ccw" class="icon-button" title="Повернуть влево" data-event-click="as_image('ccw')"><icon name="rotate_left"/></div>
+                            <div id="img-cw" class="icon-button" title="Повернуть вправо" data-event-click="as_image('cw')"><icon name="rotate_right"/></div>
+                            <div id="img-fliph" class="icon-button" title="Отразить по горизонтали" data-event-click="as_image('fliph')"><icon name="swap_horiz"/></div>
+                            <div id="img-flipv" class="icon-button" title="Отразить по вертикали" data-event-click="as_image('flipv')"><icon name="swap_vert"/></div>
+                            <div id="img-half" class="icon-button" title="Уменьшить вдвое" data-event-click="as_image('half')"><icon name="zoom_out"/></div>
+                            <div id="img-double" class="icon-button" title="Увеличить вдвое" data-event-click="as_image('double')"><icon name="zoom_in"/></div>
+                        </div>
+                        <div class="muted body-small" data-if="!as_sel_editable">Этот формат только читается; сделайте копию в PNG, чтобы править.</div>
+                        <div class="section-title">Копия в другом формате</div>
+                        <div class="row gap-1">
+                            <div class="button outlined small" data-if="as_sel_ext != '.png'" data-event-click="as_convert('.png')">PNG</div>
+                            <div class="button outlined small" data-if="as_sel_ext != '.jpg' &amp;&amp; as_sel_ext != '.jpeg'" data-event-click="as_convert('.jpg')">JPG</div>
+                            <div class="button outlined small" data-if="as_sel_ext != '.bmp'" data-event-click="as_convert('.bmp')">BMP</div>
+                            <div class="button outlined small" data-if="as_sel_ext != '.tga'" data-event-click="as_convert('.tga')">TGA</div>
+                        </div>
+                    </div>
+                    <div data-if="as_sel_count == 1 &amp;&amp; as_sel_wav">
+                        <div class="section-title">Звук</div>
+                        <div class="button outlined small" data-event-click="as_play"><icon name="play_arrow"/>Слушать</div>
+                    </div>
+
+                    <div class="section-title" data-if="as_sel_count &lt;= 1">Открыть</div>
+                    <div class="links column" data-if="as_sel_count &lt;= 1">
+                        <div class="link row" data-if="as_sel_count == 1 &amp;&amp; as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon class="s" name="open_in_new"/><span>В редакторе изображений</span></div>
+                        <div class="link row" data-if="as_sel_count == 1 &amp;&amp; as_sel_image" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon class="s" name="open_in_new"/><span>Сделать анимацию</span></div>
+                        <div class="link row" data-if="as_sel_count == 1 &amp;&amp; as_sel_audio" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'позже: обрезка и громкость', 'volume_up')"><icon class="s" name="open_in_new"/><span>В редакторе звука</span></div>
+                        <div class="link row" data-event-click="as_show"><icon class="s" name="folder_open"/><span>Показать в проводнике Windows</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="as-pane-history" class="dock-pane column">
+                <div class="pane-scroll bottom-body">
+                    <div class="history-line" data-class-current="as_history_cursor == 0" data-event-click="as_history_jump(-1)">Начало</div>
+                    <div data-for="label : as_history" class="history-line" data-class-current="it_index + 1 == as_history_cursor" data-class-future="it_index >= as_history_cursor" data-event-click="as_history_jump(it_index)">{{ label }}</div>
+                </div>
+            </div>
+
+            <div id="as-pane-log" class="dock-pane column">
+                <div id="as-log" class="pane-scroll bottom-body">
+                    <div data-for="line : log" class="log-line" data-class-warn="line.level == 1" data-class-error="line.level == 2">{{ line.text }}</div>
+                </div>
+            </div>
+
+            <div id="as-dock-drop" data-if="as_dock_drop"
+                 data-style-left="as_dock_drop_x + 'px'" data-style-top="as_dock_drop_y + 'px'" data-style-width="as_dock_drop_w + 'px'" data-style-height="as_dock_drop_h + 'px'"/>
+        </div>
+
+        <div class="as-foot row">
+            <span>{{ as_count_text }}</span>
+            <span class="sep" data-if="as_sel_text != ''"/>
+            <span>{{ as_sel_text }}</span>
+            <div class="grow"/>
+            <span class="muted" data-if="as_busy">Обновляю…</span>
+            <span class="muted">{{ as_status }}</span>
+            <div id="as-view-table" class="icon-button small" title="Таблица" data-class-selected="!as_large" data-event-click="as_view('table')"><icon class="s" name="view_list"/></div>
+            <div id="as-view-large" class="icon-button small" title="Крупные превью" data-class-selected="as_large" data-event-click="as_view('large')"><icon class="s" name="view_agenda"/></div>
+        </div>
+        <div class="as-backdrop" data-if="as_menu != ''" data-event-mousedown="as_menu('')"/>
+    </div>
+
     <div id="statusbar" class="row gap-4">
         <span>{{ status }}</span>
         <div class="grow"/>
         <span class="muted" data-if="tab == 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
-        <span class="muted" data-if="tab != 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab == 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · Alt+← / Alt+→ назад и вперёд · F2 имя · Ctrl+C / X / V · Del удалить · перетащите файлы в окно для импорта</span>
+        <span class="muted" data-if="tab != 'level' &amp;&amp; tab != 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>
 </rml>

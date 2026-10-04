@@ -7,3 +7,7 @@ scene.forge.json
 
 # The level painted in the editor (forge_editor «Уровень»): kept on your machine.
 games/slice/level/
+
+# The editor's «Ресурсы» when it runs in the repository folder, and their index.
+/assets/
+.forge/

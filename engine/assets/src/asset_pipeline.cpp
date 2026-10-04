@@ -81,7 +81,7 @@ bool AssetPipeline::open(std::string* error) {
         if (error) *error = "cannot create " + path_to_utf8(library_dir_) + ": " + ec.message();
         return false;
     }
-    return db_.open(library_dir_ / "assets.db", error);
+    return db_.open(database_file(library_dir_), error);
 }
 
 void AssetPipeline::add_importer(std::unique_ptr<Importer> importer) { importers_.push_back(std::move(importer)); }
@@ -94,9 +94,9 @@ const Importer* AssetPipeline::importer_for(const fs::path& file) const {
     return nullptr;
 }
 
-fs::path AssetPipeline::cooked_path(const ContentHash& key) const {
+fs::path AssetPipeline::cooked_file(const fs::path& library_dir, const ContentHash& key) {
     const std::string hex = key.to_hex();
-    return library_dir_ / "cooked" / hex.substr(0, 2) / (hex + ".bin");
+    return library_dir / "cooked" / hex.substr(0, 2) / (hex + ".bin");
 }
 
 RefreshReport AssetPipeline::refresh() {
