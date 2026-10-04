@@ -26,6 +26,43 @@ body {
 .dirty-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background-color: var(--warning); margin-left: var(--space-1); }
 #topbar .hint { margin-left: var(--space-3); font-size: 12px; white-space: nowrap; }
 
+#editor-tabs {
+    height: 40px;
+    padding: 0px var(--space-2);
+    gap: var(--space-1);
+    background-color: var(--surface-container-low);
+    border-bottom-width: var(--border-hairline);
+    border-bottom-color: var(--outline-variant);
+}
+.editor-tab {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+    height: 40px;
+    padding: 0px var(--space-3);
+    color: var(--on-surface-variant);
+    font-size: 13px;
+    border-bottom-width: var(--border-strong);
+    border-bottom-color: transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color background-color border-bottom-color var(--duration-short) var(--ease-standard);
+}
+.editor-tab icon { font-size: var(--icon-s); line-height: var(--icon-s); }
+.editor-tab:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.editor-tab.selected { color: var(--primary); border-bottom-color: var(--primary); }
+
+#placeholder {
+    flex: 1 1 0px;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    background-color: var(--surface);
+}
+#placeholder icon.big { font-size: 64px; line-height: 64px; color: var(--primary); }
+#placeholder .muted { max-width: 480px; text-align: center; }
+
 #main {
     flex: 1 1 0px;
     align-items: stretch;

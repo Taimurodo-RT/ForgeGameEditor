@@ -113,12 +113,14 @@ private:
 
     struct Upload {
         SDL_GPUBuffer* buffer = nullptr;
+        u32 buffer_offset = 0;
         Texture* texture = nullptr;
         u32 offset = 0; // in the staging bytes
         u32 size = 0;
     };
 
     bool create_pipelines();
+    bool allocate_geometry(u32 size, Geometry& geometry);
     SDL_GPUGraphicsPipeline* make_pipeline(SDL_GPUShader* vs, SDL_GPUShader* fs, SDL_GPUTextureFormat format,
                                            SDL_GPUSampleCount samples, bool depth_stencil, Blend blend,
                                            Stencil stencil, bool vertex_input);
@@ -217,6 +219,18 @@ private:
     SDL_GPUTransferBuffer* transfer_ = nullptr;
     u32 transfer_size_ = 0;
     std::vector<Geometry*> release_geometry_;
+
+    // Geometry buffers: 4 MB pages cut into slots of 256 B .. 64 KB.
+    static constexpr u32 kGeometryPage = 4u << 20;
+    static constexpr u32 kGeometrySlotMin = 256;
+    static constexpr i32 kGeometryBins = 9;
+    struct Slot {
+        SDL_GPUBuffer* buffer;
+        u32 offset;
+    };
+    std::vector<SDL_GPUBuffer*> pages_;
+    u32 page_used_ = 0;
+    std::vector<Slot> free_slots_[kGeometryBins];
     std::vector<Texture*> release_textures_;
     std::vector<Filter*> release_filters_;
     std::vector<Shader*> release_shaders_;

@@ -43,8 +43,10 @@ namespace forge::ui {
 
 struct GpuRenderer::Geometry {
     SDL_GPUBuffer* buffer = nullptr; // vertices, then 32-bit indices
-    u32 index_offset = 0;
+    u32 offset = 0;       // of the vertices in buffer
+    u32 index_offset = 0; // of the indices in buffer
     u32 index_count = 0;
+    i32 bin = -1;         // pool size class, or -1 for a buffer of its own
 };
 
 struct GpuRenderer::Texture {
@@ -248,6 +250,9 @@ void GpuRenderer::shutdown() {
     if (linear_clamp_) SDL_ReleaseGPUSampler(device_, linear_clamp_);
     if (linear_repeat_) SDL_ReleaseGPUSampler(device_, linear_repeat_);
     if (transfer_) SDL_ReleaseGPUTransferBuffer(device_, transfer_);
+    for (SDL_GPUBuffer* page : pages_) SDL_ReleaseGPUBuffer(device_, page);
+    pages_.clear();
+    for (auto& bin : free_slots_) bin.clear();
     device_ = nullptr;
 }
 
@@ -454,33 +459,71 @@ GpuRenderer::Texture* GpuRenderer::make_texture(u32 width, u32 height, bool samp
 // ---------------------------------------------------------------------------
 // Resources
 
+// Geometry lives in a few large buffers, cut into slots of power-of-two sizes:
+// creating a GPU buffer per piece of text or box is slow on some drivers
+// (reloading a document compiles hundreds of geometries at once).
+bool GpuRenderer::allocate_geometry(u32 size, Geometry& g) {
+    i32 bin = 0;
+    while (bin < kGeometryBins && (kGeometrySlotMin << bin) < size) ++bin;
+    if (bin == kGeometryBins) {
+        SDL_GPUBufferCreateInfo info{};
+        info.usage = SDL_GPU_BUFFERUSAGE_VERTEX | SDL_GPU_BUFFERUSAGE_INDEX;
+        info.size = size;
+        g.buffer = SDL_CreateGPUBuffer(device_, &info);
+        g.offset = 0;
+        g.bin = -1;
+        if (!g.buffer) FORGE_ERROR("ui: geometry buffer failed: %s", SDL_GetError());
+        return g.buffer != nullptr;
+    }
+    g.bin = bin;
+    auto& free = free_slots_[bin];
+    if (!free.empty()) {
+        g.buffer = free.back().buffer;
+        g.offset = free.back().offset;
+        free.pop_back();
+        return true;
+    }
+    const u32 slot = kGeometrySlotMin << bin;
+    if (pages_.empty() || page_used_ + slot > kGeometryPage) {
+        SDL_GPUBufferCreateInfo info{};
+        info.usage = SDL_GPU_BUFFERUSAGE_VERTEX | SDL_GPU_BUFFERUSAGE_INDEX;
+        info.size = kGeometryPage;
+        SDL_GPUBuffer* page = SDL_CreateGPUBuffer(device_, &info);
+        if (!page) {
+            FORGE_ERROR("ui: geometry buffer failed: %s", SDL_GetError());
+            return false;
+        }
+        pages_.push_back(page);
+        page_used_ = 0;
+    }
+    g.buffer = pages_.back();
+    g.offset = page_used_;
+    page_used_ += slot;
+    return true;
+}
+
 Rml::CompiledGeometryHandle GpuRenderer::CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                                                          Rml::Span<const int> indices) {
     const u32 vertex_bytes = static_cast<u32>(vertices.size() * sizeof(Rml::Vertex));
     const u32 index_bytes = static_cast<u32>(indices.size() * sizeof(int));
     if (vertex_bytes == 0 || index_bytes == 0) return {};
 
-    SDL_GPUBufferCreateInfo info{};
-    info.usage = SDL_GPU_BUFFERUSAGE_VERTEX | SDL_GPU_BUFFERUSAGE_INDEX;
-    info.size = vertex_bytes + index_bytes;
-    SDL_GPUBuffer* buffer = SDL_CreateGPUBuffer(device_, &info);
-    if (!buffer) {
-        FORGE_ERROR("ui: geometry buffer failed: %s", SDL_GetError());
+    auto* geometry = new Geometry;
+    const u32 size = vertex_bytes + index_bytes;
+    if (!allocate_geometry(size, *geometry)) {
+        delete geometry;
         return {};
     }
+    geometry->index_offset = geometry->offset + vertex_bytes;
+    geometry->index_count = static_cast<u32>(indices.size());
 
     // RmlUi may release the geometry before the frame is drawn, so its data
     // is copied out now and uploaded with everything else in end_frame().
     const u32 offset = static_cast<u32>(staging_.size());
-    staging_.resize(offset + info.size);
+    staging_.resize(offset + size);
     std::memcpy(staging_.data() + offset, vertices.data(), vertex_bytes);
     std::memcpy(staging_.data() + offset + vertex_bytes, indices.data(), index_bytes);
-    uploads_.push_back({buffer, nullptr, offset, info.size});
-
-    auto* geometry = new Geometry;
-    geometry->buffer = buffer;
-    geometry->index_offset = vertex_bytes;
-    geometry->index_count = static_cast<u32>(indices.size());
+    uploads_.push_back({geometry->buffer, geometry->offset, nullptr, offset, size});
     return reinterpret_cast<Rml::CompiledGeometryHandle>(geometry);
 }
 
@@ -539,7 +582,7 @@ Rml::TextureHandle GpuRenderer::GenerateTexture(Rml::Span<const Rml::byte> sourc
     const u32 offset = static_cast<u32>((staging_.size() + 511) & ~size_t(511));
     staging_.resize(offset + source.size());
     std::memcpy(staging_.data() + offset, source.data(), source.size());
-    uploads_.push_back({nullptr, texture, offset, static_cast<u32>(source.size())});
+    uploads_.push_back({nullptr, 0, texture, offset, static_cast<u32>(source.size())});
     return reinterpret_cast<Rml::TextureHandle>(texture);
 }
 
@@ -810,7 +853,7 @@ void GpuRenderer::upload_pending(SDL_GPUCommandBuffer* cmd) {
     for (const Upload& u : uploads_) {
         if (u.buffer) {
             SDL_GPUTransferBufferLocation src{transfer_, u.offset};
-            SDL_GPUBufferRegion dst{u.buffer, 0, u.size};
+            SDL_GPUBufferRegion dst{u.buffer, u.buffer_offset, u.size};
             SDL_UploadToGPUBuffer(copy, &src, &dst, false);
         } else if (u.texture) {
             SDL_GPUTextureTransferInfo src{};
@@ -835,8 +878,9 @@ void GpuRenderer::flush_releases() {
     for (Geometry* g : release_geometry_) {
         // A geometry compiled and released before any upload never reaches the GPU.
         for (Upload& u : uploads_)
-            if (u.buffer == g->buffer) u.buffer = nullptr;
-        SDL_ReleaseGPUBuffer(device_, g->buffer);
+            if (u.buffer == g->buffer && u.buffer_offset == g->offset) u.buffer = nullptr;
+        if (g->bin < 0) SDL_ReleaseGPUBuffer(device_, g->buffer);
+        else free_slots_[g->bin].push_back({g->buffer, g->offset});
         delete g;
     }
     release_geometry_.clear();
@@ -940,7 +984,7 @@ void GpuRenderer::bind_pipeline(SDL_GPUGraphicsPipeline* pipeline) {
 void GpuRenderer::draw_geometry(const Geometry& geometry, Rml::Vector2f translation, SDL_GPUTexture* texture,
                                 SDL_GPUGraphicsPipeline* pipeline) {
     bind_pipeline(pipeline);
-    SDL_GPUBufferBinding vb{geometry.buffer, 0};
+    SDL_GPUBufferBinding vb{geometry.buffer, geometry.offset};
     SDL_BindGPUVertexBuffers(pass_, 0, &vb, 1);
     SDL_GPUBufferBinding ib{geometry.buffer, geometry.index_offset};
     SDL_BindGPUIndexBuffer(pass_, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);

@@ -33,7 +33,30 @@
         <div class="icon-button" data-class-selected="theme == 'parchment'" data-event-click="set_theme('parchment')"><icon name="history_edu"/></div>
     </div>
 
-    <div id="main" class="row">
+    <!-- Editors. Each tab: open_tab(key, title, what it is for, roadmap step, icon).
+         Only "world" has a working editor yet; the others show what will be there. -->
+    <div id="editor-tabs" class="row">
+        <div class="editor-tab" data-class-selected="tab == 'world'" data-event-click="open_tab('world', 'Мир', '', '', 'public')"><icon name="public"/><span>Мир</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'tiles'" data-event-click="open_tab('tiles', 'Тайлы', 'Рисование тайлами и слои мира', 'шаг 9: редактор уровня', 'grid_on')"><icon name="grid_on"/><span>Тайлы</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'objects'" data-event-click="open_tab('objects', 'Объекты', 'Библиотека объектов: персонажи, предметы, декор из ассетов', 'шаг 10: библиотека объектов', 'deployed_code')"><icon name="deployed_code"/><span>Объекты</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'animation'" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon name="movie"/><span>Анимация</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'images'" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'шаг 9: библиотека ассетов', 'image')"><icon name="image"/><span>Изображения</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'audio'" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'шаг 9: библиотека ассетов', 'volume_up')"><icon name="volume_up"/><span>Аудио</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'logic'" data-event-click="open_tab('logic', 'Логика', 'Скрипты на нодах', 'шаг 11: редактор скриптов', 'account_tree')"><icon name="account_tree"/><span>Логика</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'story'" data-event-click="open_tab('story', 'Сюжет', 'Диалоги и квесты, проверка без запуска игры', 'шаг 12: редактор сюжета', 'forum')"><icon name="forum"/><span>Сюжет</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'ui'" data-event-click="open_tab('ui', 'Интерфейс', 'Меню и экраны игры, как в Figma', 'шаг 13: редактор интерфейсов', 'dashboard')"><icon name="dashboard"/><span>Интерфейс</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'input'" data-event-click="open_tab('input', 'Ввод', 'Клавиши, мышь и геймпад для действий игры', 'шаг 13: редактор интерфейсов', 'sports_esports')"><icon name="sports_esports"/><span>Ввод</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', 'Все файлы проекта: поиск, импорт, преобразование', 'шаг 9: библиотека ассетов', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
+    </div>
+
+    <div id="placeholder" class="column" data-if="tab != 'world'">
+        <icon class="big" data-attr-name="tab_icon"/>
+        <div class="headline-small">{{ tab_title }}</div>
+        <div class="muted">{{ tab_description }}</div>
+        <div class="chip">Появится: {{ tab_step }}</div>
+    </div>
+
+    <div id="main" class="row" data-if="tab == 'world'">
         <div id="hierarchy-panel" class="panel column">
             <div class="panel-header">
                 <icon name="account_tree" class="s"/><span class="title">Иерархия</span>

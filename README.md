@@ -82,7 +82,8 @@
 - `apps/script_demo` — всё, что движется, управляется графами из `apps/script_demo/graphs`: 2 000 существ,
   дверь, которая открывается перед ними, сундук с монетами. Графы можно править во время работы демо.
 - `apps/ui_demo` — все компоненты Forge UI в 4 темах и список на 50 000 строк.
-- `apps/editor` — окно редактора: иерархия на 50 500 объектов, инспектор, окно мира, журнал, история
+- `apps/editor` — окно редактора: вкладки редакторов (Мир, Тайлы, Объекты, Анимация, Изображения, Аудио, Логика,
+  Сюжет, Интерфейс, Ввод, Ресурсы; пока работает «Мир», на остальных — что там появится и на каком шаге), иерархия на 50 500 объектов, инспектор, окно мира, журнал, история
   действий, «Играть / Пауза / Стоп». Раскладка — файлы `ui/editor/editor.rml` и `editor.rcss`.
 - `tests` — модульные тесты (doctest), `bench` — замер системы задач.
 
@@ -120,6 +121,7 @@ build/apps/script_demo/forge_script_demo --screenshot scripts.png
 build/apps/ui_demo/forge_ui_demo                            # галерея компонентов Forge UI
 build/apps/ui_demo/forge_ui_demo --theme fantasy --screenshot ui.png
 build/apps/ui_demo/forge_ui_demo --scroll --no-vsync        # список на 50 000 строк всё время прокручивается
+build/apps/ui_demo/forge_ui_demo --screenshot ui.png --frames 60 --reload-every 10   # цена перезагрузки документа
 build/apps/editor/forge_editor                              # редактор; сцена в scene.forge.json рядом с местом запуска
 build/apps/editor/forge_editor --self-test                  # сам проверяет мышь, отмену, «Играть», удаление
 build/apps/editor/forge_editor --bench --frames 600         # все 50 500 строк иерархии, прокрутка, замер
