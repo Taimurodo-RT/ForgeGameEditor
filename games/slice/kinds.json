@@ -60,19 +60,31 @@
           "choices": [ { "id": "left", "name": "Влево", "value": -1 }, { "id": "right", "name": "Вправо", "value": 1 } ] }
       ],
       "needs": ["body"],
-      "excludes": ["critter"]
+      "excludes": ["control"]
     },
     {
-      "id": "critter",
-      "name": "Бегает само",
-      "icon": "pets",
-      "about": "Бегает туда-сюда и перепрыгивает препятствия.",
-      "components": { "Critter": { "speed": 2 } },
+      // Схемы управления: со временем их станет больше (стратегия, непрямое
+      // управление…). Новая схема — ещё один вариант в "choices" и её
+      // поведение в игре.
+      "id": "control",
+      "name": "Управление",
+      "icon": "sports_esports",
+      "about": "Как объект двигается: им управляет игрок или он ходит сам по выбранной схеме.",
+      "components": { "Critter": { "speed": 2, "scheme": 2 } },
       "props": [
+        { "id": "scheme", "name": "Схема", "bind": "Critter.scheme", "hint": "кто и как его двигает",
+          "choices": [
+            { "id": "player", "name": "Игрок (стрелки и прыжок)", "value": 0 },
+            { "id": "stand", "name": "Стоит на месте", "value": 1 },
+            { "id": "wander", "name": "Бродит туда-сюда", "value": 2 },
+            { "id": "follow", "name": "Идёт за героем", "value": 3 },
+            { "id": "flee", "name": "Убегает от героя", "value": 4 }
+          ] },
         { "id": "speed", "name": "Скорость", "bind": "Critter.speed", "hint": "клеток в секунду", "min": 0.2, "max": 6 }
       ],
       "needs": ["body"],
-      "excludes": ["villager"]
+      "excludes": ["villager"],
+      "was": ["critter"]
     }
   ],
   "kinds": [
@@ -96,9 +108,11 @@
       "icon": "pets",
       "about": "Бегает само по себе и прыгает через препятствия.",
       "foot": 0.4,
-      "blocks": ["body", "critter"],
+      "blocks": ["body", "control"],
       "presets": [
-        { "name": "Зверёк", "about": "бегает по поверхности", "values": { "speed": 2 } }
+        { "name": "Зверёк", "about": "бегает по поверхности", "values": { "speed": 2 } },
+        { "name": "Питомец", "genre": "RPG", "about": "ходит за героем", "values": { "scheme": "follow", "speed": 3 } },
+        { "name": "Пугливый зверёк", "about": "убегает, если подойти", "values": { "scheme": "flee", "speed": 3 } }
       ]
     },
     {

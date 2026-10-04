@@ -26,6 +26,7 @@ FORGE_REFLECT(slice::Critter, 1) {
     t.field("speed", &slice::Critter::speed).label("Скорость").range(0.2, 6);
     t.field("dir", &slice::Critter::dir).hidden();
     t.field("seed", &slice::Critter::seed).label("Вид и характер");
+    t.field("scheme", &slice::Critter::scheme).label("Управление");
 }
 
 namespace slice {
@@ -351,7 +352,7 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
     };
     u32 frame = demo::kFrameCrate;
     if (library_.has_block(*t, "villager")) frame = choice("who") == "\"smith\"" ? FrameSmith : FrameMiner;
-    else if (library_.has_block(*t, "critter")) frame = 2;
+    else if (library_.has_block(*t, "control")) frame = 2;
     else if (library_.has_block(*t, "pickup")) {
         static const char* ids[] = {"\"pickaxe\"", "\"coins\"", "\"copper\"", "\"wood\"", "\"torch\""};
         const std::string what = choice("what");

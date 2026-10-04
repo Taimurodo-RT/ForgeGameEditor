@@ -44,10 +44,14 @@ struct Item {
     u8 kind = 0;
     u16 count = 1;
 };
+// How a critter moves: its «Управление» scheme. New schemes are added here,
+// in the game's critter system and as a choice in kinds.json.
+enum class Scheme : u8 { Player, Stand, Wander, Follow, Flee };
 struct Critter {
     f32 speed = 2;
     f32 dir = 1;
     u32 seed = 0;
+    u8 scheme = static_cast<u8>(Scheme::Wander);
 };
 
 // The hero's size, for spawning people.

@@ -93,6 +93,9 @@ public:
     // Where a villager stands (who: 0 the miner, 1 the smith); NaN when not loaded.
     f64 npc_x(u8 who) const;
     u32 count_items(ItemKind kind) const;
+    // A «Зверёк» copy moving by a scheme, and where it is now (NaN: gone).
+    flecs::entity_t spawn_critter(f64 x, f64 feet_y, Scheme scheme);
+    f64 critter_x(flecs::entity_t e) const;
     f64 inventory(const char* item) const;
     u32 particles() const { return particles_.stats().slots_used; }
     f64 sim_ms() const { return sim_ms_; }

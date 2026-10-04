@@ -258,7 +258,7 @@ TEST_CASE("objects are put together from blocks") {
         {"id": "body", "name": "Тело", "components": {"ObjTestBody": {"half": 0.4}}, "excludes": ["solid"]},
         {"id": "solid", "name": "Физика", "components": {"ObjTestBody": {"half": 0.5}}, "excludes": ["body"]},
         {"id": "pickup", "name": "Подбирается", "components": {"ObjTestPickup": {"count": 1}}, "needs": ["body"],
-         "props": [{"id": "count", "name": "Сколько", "bind": "ObjTestPickup.count"}]}
+         "props": [{"id": "count", "name": "Сколько", "bind": "ObjTestPickup.count"}], "was": ["loot"]}
       ],
       "kinds": [
         {"id": "pickup", "name": "Подбираемое", "foot": 0.3, "blocks": ["body", "pickup"],
@@ -268,9 +268,13 @@ TEST_CASE("objects are put together from blocks") {
     })");
     write_text(dir / "objects" / "coins.object.json",
                R"({"id": "coins", "name": "Монеты", "kind": "pickup", "values": {"count": 10}})");
+    // Written when «Подбирается» was called "loot".
+    write_text(dir / "objects" / "old.object.json",
+               R"({"id": "old", "name": "Старое", "kind": "thing", "blocks": ["body", "loot"]})");
     Library lib;
     REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
     REQUIRE(lib.blocks().size() == 3);
+    CHECK(lib.has_block(*lib.find("old"), "pickup")); // a renamed block is found by its former id
     const Template& coins = *lib.find("coins");
     CHECK(lib.blocks_of(coins).size() == 2);
     CHECK(lib.prop_of(coins, "count") != nullptr);
