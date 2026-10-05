@@ -39,6 +39,8 @@ struct Ui::Impl {
     std::vector<Document> documents;
     std::unique_ptr<Rml::ElementInstancer> icon_instancer;
     std::unique_ptr<Rml::ElementInstancer> list_instancer;
+    std::unique_ptr<Rml::ElementInstancer> lines_instancer;
+    std::unique_ptr<Rml::ElementInstancer> shape_instancer;
     bool debugger = false;
 
     // Hot reload.
@@ -125,6 +127,10 @@ bool Ui::init(SDL_GPUDevice* device, SDL_Window* window, const UiConfig& config)
     m.list_instancer = std::make_unique<Rml::ElementInstancerGeneric<ElementVirtualList>>();
     Rml::Factory::RegisterElementInstancer("icon", m.icon_instancer.get());
     Rml::Factory::RegisterElementInstancer("virtual-list", m.list_instancer.get());
+    m.lines_instancer = std::make_unique<Rml::ElementInstancerGeneric<ElementLines>>();
+    m.shape_instancer = std::make_unique<Rml::ElementInstancerGeneric<ElementShape>>();
+    Rml::Factory::RegisterElementInstancer("lines", m.lines_instancer.get());
+    Rml::Factory::RegisterElementInstancer("shape", m.shape_instancer.get());
 
     if (!load_icon_codepoints(config.root / "fonts" / "icons.codepoints")) FORGE_WARN("ui: no icon names loaded");
     if (!m.load_fonts()) return false;
@@ -142,6 +148,8 @@ void Ui::shutdown() {
     m.system.destroy_cursors();
     m.icon_instancer.reset();
     m.list_instancer.reset();
+    m.lines_instancer.reset();
+    m.shape_instancer.reset();
     m.initialized = false;
 }
 

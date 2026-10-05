@@ -19,8 +19,13 @@ namespace forge::editor_app {
 namespace {
 
 // Sizes on screen (px): they match logic.rcss.
-constexpr f32 kNodeW = 250, kHead = 30, kRowH = 26, kFoot = 8;
-constexpr f32 kFramePad = 24, kFrameHead = 34, kFrameGap = 40;
+constexpr f32 kGrid = 16; // nodes snap to it
+constexpr f32 kNodeMinW = 160, kNodeMaxW = 384, kHead = 30, kRowH = 24, kFoot = 8;
+constexpr f32 kPickW = 150, kNumW = 52, kTextW = 110; // fields in a row
+constexpr f32 kFramePad = 32, kFrameHead = 36, kFrameGap = 48;
+// Auto layout: between steps (room for wires), between a value and what it
+// goes into, a value's width in its column, between lanes.
+constexpr f32 kGapX = 80, kGapY = 32, kGapValue = 48, kValueW = 176, kGapLane = 48;
 constexpr f32 kNoteH = 70; // a frame without a scheme: its note
 constexpr f32 kTop = 60;   // the first frame: under «+ Своя схема вещи»
 
@@ -112,6 +117,13 @@ SchemeView::SchemeView(LogicEditor& editor) : ed_(editor) {
     script::ScriptApi api;
     script::register_core_api(api);
     nodes_ = logic::node_library(api);
+    ui::register_line_source("sc-wires", &wires_);
+    ui::register_line_source("sc-grid", &grid_);
+}
+
+SchemeView::~SchemeView() {
+    ui::register_line_source("sc-wires", nullptr);
+    ui::register_line_source("sc-grid", nullptr);
 }
 
 void SchemeView::bind(Rml::DataModelConstructor& model) {
@@ -152,29 +164,6 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("rows", &NodeView::rows);
     }
     model.RegisterArray<std::vector<NodeView>>();
-    if (auto s = model.RegisterStruct<SegView>()) {
-        s.RegisterMember("x", &SegView::x);
-        s.RegisterMember("y", &SegView::y);
-        s.RegisterMember("len", &SegView::len);
-        s.RegisterMember("across", &SegView::across);
-    }
-    model.RegisterArray<std::vector<SegView>>();
-    if (auto s = model.RegisterStruct<WireView>()) {
-        s.RegisterMember("id", &WireView::id);
-        s.RegisterMember("kind", &WireView::kind);
-        s.RegisterMember("link", &WireView::link);
-        s.RegisterMember("index", &WireView::index);
-        s.RegisterMember("x", &WireView::x);
-        s.RegisterMember("y", &WireView::y);
-        s.RegisterMember("w", &WireView::w);
-        s.RegisterMember("h", &WireView::h);
-        s.RegisterMember("segs", &WireView::segs);
-        s.RegisterMember("selected", &WireView::selected);
-        s.RegisterMember("lit", &WireView::lit);
-        s.RegisterMember("flow", &WireView::flow);
-        s.RegisterMember("pending", &WireView::pending);
-    }
-    model.RegisterArray<std::vector<WireView>>();
     if (auto s = model.RegisterStruct<FrameView>()) {
         s.RegisterMember("id", &FrameView::id);
         s.RegisterMember("phrase", &FrameView::phrase);
@@ -207,7 +196,6 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
     model.RegisterArray<std::vector<PaletteItem>>();
 
     model.Bind("sc_nodes", &m_nodes_);
-    model.Bind("sc_wires", &m_wires_);
     model.Bind("sc_frames", &m_frames_);
     model.Bind("sc_things", &m_things_);
     model.Bind("sc_actions", &m_actions_);
@@ -238,6 +226,11 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         }
         if (button != 0) return;
         close_palette();
+        u32 wl = 0;
+        if (const int wi = wire_at(mx - pane_x_, my - pane_y_, wl); wi >= 0) {
+            select_wire(wl, static_cast<usize>(wi));
+            return;
+        }
         drag_ = Drag::Pan;
         dragged_ = false;
         grab_mx_ = mx;
@@ -258,6 +251,11 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         }
         if (button != 0) return;
         close_palette();
+        u32 wl = 0;
+        if (const int wi = wire_at(mx - pane_x_, my - pane_y_, wl); wi >= 0) {
+            select_wire(wl, static_cast<usize>(wi));
+            return;
+        }
         sel_node_ = 0;
         select_frame(link);
         wire_selected_ = false;
@@ -324,10 +322,6 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         if (drag_ != Drag::None) return;
         select_node(static_cast<u32>(arg_int(a, 0, 0)), static_cast<u32>(arg_int(a, 1, 0)));
     });
-    on("sc_wire", [this](Rml::Event& ev, const Rml::VariantList& a) {
-        ev.StopPropagation();
-        select_wire(static_cast<u32>(arg_int(a, 0, 0)), static_cast<usize>(arg_int(a, 1, 0)));
-    });
     on("sc_stop", [](Rml::Event& ev, const Rml::VariantList&) { ev.StopPropagation(); });
     on("sc_remove", [this](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
@@ -339,8 +333,12 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         // Right of everything in the frame.
         f32 x = 0;
         if (const script::Graph* g = graph(link))
-            for (const script::GraphNode& n : g->nodes) x = std::max(x, n.x + kNodeW + 40);
+            for (const script::GraphNode& n : g->nodes) x = std::max(x, n.x + box_of(link, *g, n).w + kGapX);
         open_palette(link, x, 0);
+    });
+    on("sc_arrange", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        arrange(static_cast<u32>(arg_int(a, 0, 0)));
     });
     on("sc_reset", [this](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
@@ -467,7 +465,7 @@ u32 SchemeView::add_node(u32 link, const std::string& def, f32 x, f32 y) {
     // Links start at «Когда»; a thing's scheme at the events.
     if (d->kind == script::NodeKind::Event && !(own(link) && logic::thing_event(def))) return 0;
     script::Graph g = editable(link);
-    script::GraphNode& n = g.add(def, std::round(x), std::round(y));
+    script::GraphNode& n = g.add(def, std::round(x / kGrid) * kGrid, std::round(y / kGrid) * kGrid);
     n.version = d->version;
     prefill(link, n);
     const u32 uid = n.uid;
@@ -512,8 +510,8 @@ bool SchemeView::move_node(u32 link, u32 node, f32 x, f32 y) {
     script::Graph g = editable(link);
     script::GraphNode* n = g.find(node);
     if (!n) return false;
-    n->x = std::round(x);
-    n->y = std::round(y);
+    n->x = std::round(x / kGrid) * kGrid;
+    n->y = std::round(y / kGrid) * kGrid;
     commit(link, g, "Нода сдвинута");
     return true;
 }
@@ -696,7 +694,7 @@ void SchemeView::open_palette(u32 link, f32 x, f32 y) {
     const auto p = places_.find(link);
     if (p != places_.end()) {
         m_pal_x_ = p->second.x + kFramePad + (x - p->second.min_x);
-        m_pal_y_ = p->second.y + kFrameHead + (y - p->second.min_y);
+        m_pal_y_ = p->second.y + kFrameHead + kFramePad + (y - p->second.min_y);
     }
     if (pane_w_ > 0) {
         m_pal_x_ = std::clamp(m_pal_x_, 8.0f, std::max(8.0f, pane_w_ - 300));
@@ -809,6 +807,268 @@ std::string SchemeView::out_title(u32 link, const script::GraphNode& n, const sc
     return p.title.get().empty() ? p.id : p.title.get();
 }
 
+std::string SchemeView::option_name(const std::string& list, const std::string& id) const {
+    const std::vector<OptionView>& opts = list == "thing" ? m_things_ : list == "action" ? m_actions_ : m_cues_;
+    for (const OptionView& o : opts)
+        if (o.id == id) return o.name;
+    return id;
+}
+
+namespace {
+
+// How wide text is drawn (px), near enough: the editor's font at 12 px.
+f32 text_w(std::string_view s, f32 per = 6.9f) {
+    usize n = 0;
+    for (unsigned char c : s) n += (c & 0xC0) != 0x80;
+    return static_cast<f32>(n) * per;
+}
+
+} // namespace
+
+SchemeView::NodeBox SchemeView::box_of(u32 link, const script::Graph& g, const script::GraphNode& n) const {
+    NodeBox b;
+    const script::NodeDef* d = nodes_.find(n.def);
+    b.title = node_title(link, n, d);
+    if (d) {
+        std::set<std::pair<u32, std::string>> wired_in;
+        for (const script::GraphLink& w : g.links)
+            if (w.to_node == n.uid) wired_in.insert({w.to_node, w.to_pin});
+        if (d->has_flow_in()) {
+            PinView p;
+            p.id = script::kFlowIn;
+            p.kind = "flow";
+            p.on = true;
+            b.left.push_back(p);
+        }
+        for (const script::PinDef& pd : d->inputs) {
+            if (hidden_pin(pd)) continue;
+            PinView p;
+            p.id = pd.id;
+            p.title = pd.title.get().empty() ? pd.id : pd.title.get();
+            p.kind = kind_of(pd.type);
+            p.on = !pd.constant;
+            p.wired = wired_in.contains({n.uid, pd.id});
+            const std::string* val = n.value(pd.id);
+            p.value = val ? *val : pd.value;
+            if (!p.wired) {
+                if (pd.enum_type == "thing" || pd.enum_type == "action" || pd.enum_type == "cue") {
+                    p.field = "pick";
+                    p.list = pd.enum_type;
+                    p.title = (p.title.empty() ? "" : p.title + ": ") + option_name(pd.enum_type, p.value);
+                } else if (pd.type == script::ValueType::Bool) {
+                    p.field = "check";
+                    p.check = p.value == "true" || p.value == "1" || p.value == "да";
+                } else if (pd.type == script::ValueType::Number || pd.type == script::ValueType::Integer) {
+                    p.field = "number";
+                } else if (pd.type != script::ValueType::Entity && pd.type != script::ValueType::Table) {
+                    // Any: a number, yes/no or text, as typed.
+                    p.field = "text";
+                }
+            }
+            b.left.push_back(p);
+        }
+        auto exit = [&](const std::string& id, const std::string& title) {
+            PinView p;
+            p.id = id;
+            p.title = title;
+            p.kind = "flow";
+            p.on = true;
+            b.right.push_back(p);
+        };
+        if (d->has_next()) exit(script::kFlowNext, d->slots.empty() ? "" : "Далее");
+        for (const script::SlotDef& sl : d->slots) exit(sl.id, sl.title.get());
+        for (const script::PinDef& pd : d->outputs) {
+            PinView p;
+            p.id = pd.id;
+            p.title = out_title(link, n, pd);
+            p.kind = kind_of(pd.type);
+            p.on = true;
+            b.right.push_back(p);
+        }
+    }
+    // Width: the title, or the widest row (its two sides and the gap).
+    const usize rows = std::max<usize>(1, std::max(b.left.size(), b.right.size()));
+    f32 w = std::max(kNodeMinW, text_w(b.title, 7.6f) + 96); // the icon, a flag and «×»
+    for (usize i = 0; i < rows; ++i) {
+        f32 lw = 0, rw = 0;
+        if (i < b.left.size()) {
+            const PinView& p = b.left[i];
+            lw = 22;
+            if (p.field == "pick") lw += std::min(kPickW, text_w(p.title) + 34);
+            else if (!p.title.empty()) lw += text_w(p.title) + 6;
+            if (p.field == "number") lw += kNumW + 6;
+            else if (p.field == "text") lw += kTextW + 6;
+            else if (p.field == "check") lw += 22;
+        }
+        if (i < b.right.size()) rw = 22 + text_w(b.right[i].title);
+        w = std::max(w, lw + rw + 24);
+    }
+    b.w = std::min(kNodeMaxW, std::ceil(w / kGrid) * kGrid);
+    b.h = kHead + static_cast<f32>(rows) * kRowH + kFoot;
+    return b;
+}
+
+// The order Unreal's graphs are read in: what happens goes left to right
+// (each step a column, a branch a lane under it), the values a step needs
+// lie under and before it, next to the pin they go into.
+void SchemeView::lay_out(u32 link, script::Graph& g) const {
+    if (g.nodes.empty()) return;
+    std::map<u32, NodeBox> box;
+    for (const script::GraphNode& n : g.nodes) box[n.uid] = box_of(link, g, n);
+    auto def = [&](u32 uid) {
+        const script::GraphNode* n = g.find(uid);
+        return n ? nodes_.find(n->def) : nullptr;
+    };
+    auto pure = [&](u32 uid) {
+        const script::NodeDef* d = def(uid);
+        return d && d->kind == script::NodeKind::Pure;
+    };
+    // Flow: exits in order (next first, then the slots: «Тогда», «Иначе»).
+    std::map<u32, std::vector<u32>> exits;
+    for (const script::GraphNode& n : g.nodes) {
+        const script::NodeDef* d = def(n.uid);
+        if (!d) continue;
+        std::vector<std::string> order;
+        for (const script::SlotDef& sl : d->slots) order.push_back(sl.id);
+        order.push_back(script::kFlowNext);
+        for (const std::string& pin : order)
+            for (const script::GraphLink& w : g.links)
+                if (w.from_node == n.uid && w.from_pin == pin && w.to_pin == script::kFlowIn) exits[n.uid].push_back(w.to_node);
+    }
+    std::set<u32> has_in;
+    for (const auto& [_, to] : exits)
+        for (u32 t : to) has_in.insert(t);
+    std::vector<u32> roots;
+    for (const script::GraphNode& n : g.nodes) {
+        const script::NodeDef* d = def(n.uid);
+        if (d && d->kind == script::NodeKind::Event) roots.push_back(n.uid);
+    }
+    for (const script::GraphNode& n : g.nodes)
+        if (!pure(n.uid) && !has_in.contains(n.uid) && std::find(roots.begin(), roots.end(), n.uid) == roots.end())
+            roots.push_back(n.uid);
+    // Columns (the longest way to a step) and lanes (a new one per branch).
+    std::map<u32, int> col, lane;
+    int lanes = 0;
+    std::function<void(u32, int, int, int)> walk = [&](u32 uid, int c, int l, int depth) {
+        if (depth > 64) return;
+        const auto it = col.find(uid);
+        if (it != col.end() && it->second >= c) return;
+        col[uid] = c;
+        if (!lane.contains(uid)) lane[uid] = l;
+        bool first = true;
+        for (u32 to : exits[uid]) {
+            const int next_lane = first || lane.contains(to) ? lane[uid] : lanes++;
+            first = false;
+            walk(to, c + 1, lane.contains(to) ? lane[to] : next_lane, depth + 1);
+        }
+    };
+    for (u32 r : roots) {
+        if (lane.contains(r)) continue;
+        walk(r, 0, lanes++, 0);
+    }
+    // Values: under the step they go into (the first one, through other
+    // values too), one column of them further left for each step back.
+    std::map<u32, std::pair<u32, int>> feeds; // value -> (step, how far back)
+    std::function<void(u32, u32, int)> feed = [&](u32 step, u32 into, int back) {
+        for (const script::GraphLink& w : g.links) {
+            if (w.to_node != into || w.to_pin == script::kFlowIn || !pure(w.from_node)) continue;
+            if (feeds.contains(w.from_node) || back > 16) continue;
+            feeds[w.from_node] = {step, back};
+            feed(step, w.from_node, back + 1);
+        }
+    };
+    for (const auto& [uid, _] : col) feed(uid, uid, 1);
+    // Values nothing uses: a lane of their own.
+    const int spare = lanes;
+    for (const script::GraphNode& n : g.nodes)
+        if (!col.contains(n.uid) && !feeds.contains(n.uid)) {
+            col[n.uid] = 0;
+            lane[n.uid] = spare;
+        }
+    // Column x: the widest step in each; before a column, room for wires and
+    // for the values its steps take (a slot per step back, as wide as the
+    // widest of them).
+    int cols = 0;
+    for (const auto& [_, c] : col) cols = std::max(cols, c + 1);
+    std::vector<f32> col_w(static_cast<usize>(cols), 0), col_x(static_cast<usize>(cols), 0);
+    std::vector<f32> val_w(static_cast<usize>(cols), 0);
+    std::vector<int> depth(static_cast<usize>(cols), 0);
+    for (const auto& [uid, c] : col)
+        if (!feeds.contains(uid)) col_w[static_cast<usize>(c)] = std::max(col_w[static_cast<usize>(c)], box[uid].w);
+    for (const auto& [uid, f] : feeds) {
+        const usize c = static_cast<usize>(col[f.first]);
+        val_w[c] = std::max(val_w[c], box[uid].w);
+        depth[c] = std::max(depth[c], f.second);
+    }
+    auto room = [&](usize c) { return static_cast<f32>(depth[c]) * (val_w[c] + kGapValue); };
+    col_x[0] = room(0);
+    for (usize c = 1; c < static_cast<usize>(cols); ++c)
+        col_x[c] = col_x[c - 1] + col_w[c - 1] + std::max(kGapX, room(c) + kGapValue);
+    // Lanes top to bottom. Values lie in the room before their step, under
+    // the lane's steps (so no wire between steps runs behind them), each
+    // nearer step first.
+    int all_lanes = 0;
+    for (const auto& [_, l] : lane) all_lanes = std::max(all_lanes, l + 1);
+    f32 y = 0;
+    struct Rect {
+        f32 x, y, w, h;
+    };
+    for (int l = 0; l < all_lanes; ++l) {
+        f32 bottom = y;
+        for (const auto& [uid, c] : col)
+            if (lane[uid] == l && !feeds.contains(uid)) {
+                script::GraphNode* n = g.find(uid);
+                n->x = col_x[static_cast<usize>(c)];
+                n->y = y;
+                bottom = std::max(bottom, y + box[uid].h);
+            }
+        const f32 steps_bottom = bottom;
+        std::vector<std::pair<u32, std::pair<u32, int>>> mine;
+        for (const auto& f : feeds)
+            if (lane[f.second.first] == l) mine.push_back(f);
+        std::sort(mine.begin(), mine.end(), [&](const auto& a, const auto& b) {
+            if (col[a.second.first] != col[b.second.first]) return col[a.second.first] < col[b.second.first];
+            if (a.second.second != b.second.second) return a.second.second < b.second.second;
+            return a.first < b.first;
+        });
+        std::vector<Rect> placed;
+        for (const auto& [uid, f] : mine) {
+            const script::GraphNode* step = g.find(f.first);
+            const usize c = static_cast<usize>(col[f.first]);
+            const f32 w = box[uid].w, h = box[uid].h;
+            const f32 right = step->x - kGapValue - static_cast<f32>(f.second - 1) * (val_w[c] + kGapValue);
+            const f32 x = right - w;
+            f32 at = steps_bottom + kGapY;
+            for (bool moved = true; moved;) {
+                moved = false;
+                for (const Rect& r : placed)
+                    if (x < r.x + r.w + 16 && x + w + 16 > r.x && at < r.y + r.h + 16 && at + h + 16 > r.y) {
+                        at = r.y + r.h + 16;
+                        moved = true;
+                    }
+            }
+            placed.push_back({x, at, w, h});
+            script::GraphNode* n = g.find(uid);
+            n->x = x;
+            n->y = at;
+            bottom = std::max(bottom, at + h);
+        }
+        y = bottom + kGapLane;
+    }
+    for (script::GraphNode& n : g.nodes) {
+        n.x = std::round(n.x / kGrid) * kGrid;
+        n.y = std::round(n.y / kGrid) * kGrid;
+    }
+}
+
+bool SchemeView::arrange(u32 link) {
+    if (!known(link)) return false;
+    script::Graph g = editable(link);
+    lay_out(link, g);
+    commit(link, g, "Ноды упорядочены");
+    return true;
+}
+
 void SchemeView::rebuild() {
     // Lists for the pick fields.
     m_things_.clear();
@@ -823,12 +1083,6 @@ void SchemeView::rebuild() {
         }
         if (!v.sound.empty() && cues.insert(v.sound).second) m_cues_.push_back({v.sound, "как «" + v.name + "»"});
     }
-    auto option_name = [&](const std::string& list, const std::string& id) -> std::string {
-        const std::vector<OptionView>& opts = list == "thing" ? m_things_ : list == "action" ? m_actions_ : m_cues_;
-        for (const OptionView& o : opts)
-            if (o.id == id) return o.name;
-        return id;
-    };
 
     const logic::FindThing find = [this](std::string_view id) { return ed_.thing(id); };
     // Problems of the nodes: what the game would say.
@@ -836,7 +1090,8 @@ void SchemeView::rebuild() {
     for (const logic::Problem& p : logic::compile(ed_.logic_, ed_.verbs_, find, &nodes_).problems)
         if (p.node) node_problems_[{p.link, p.node}] = {p.text, p.warning};
 
-    // The schemes shown: each link's, kept while a node is dragged.
+    // The schemes shown: each link's, kept while a node is dragged. A link
+    // whose nodes were never placed by hand is laid out in order.
     std::map<u32, script::Graph> shown;
     for (const logic::Link& l : ed_.logic_.links) {
         if (drag_ == Drag::Node && dragged_ && l.id == drag_link_ && shown_.contains(l.id)) {
@@ -844,6 +1099,7 @@ void SchemeView::rebuild() {
             continue;
         }
         shown[l.id] = logic::scheme_of(l, ed_.verbs_, find);
+        if (l.graph.empty()) lay_out(l.id, shown[l.id]);
     }
     for (const logic::ThingScheme& t : ed_.logic_.schemes) {
         if (drag_ == Drag::Node && dragged_ && t.id == drag_link_ && shown_.contains(t.id)) {
@@ -865,6 +1121,7 @@ void SchemeView::rebuild() {
     m_wires_.clear();
     m_frames_.clear();
     places_.clear();
+    wires_.list.clear();
     f32 top = kTop + pan_y_;
     const f32 left = 20 + pan_x_;
     std::vector<u32> frames;
@@ -901,36 +1158,26 @@ void SchemeView::rebuild() {
         }
         const script::Graph& g = shown_[fid];
         // Sizes first: the frame holds every node.
-        std::map<u32, std::pair<usize, usize>> sizes; // rows of each node: left, right
+        std::map<u32, NodeBox> boxes;
         f32 min_x = 1e9f, min_y = 1e9f, max_x = -1e9f, max_y = -1e9f;
-        std::map<u32, f32> heights;
         for (const script::GraphNode& n : g.nodes) {
-            const script::NodeDef* d = nodes_.find(n.def);
-            usize ins = 0, outs = 0;
-            if (d) {
-                ins = d->has_flow_in() ? 1 : 0;
-                for (const script::PinDef& p : d->inputs) ins += !hidden_pin(p);
-                outs = (d->has_next() ? 1 : 0) + d->slots.size() + d->outputs.size();
-            }
-            const usize rows = std::max<usize>(1, std::max(ins, outs));
-            const f32 h = kHead + static_cast<f32>(rows) * kRowH + kFoot;
-            heights[n.uid] = h;
+            NodeBox b = box_of(fid, g, n);
             min_x = std::min(min_x, n.x);
             min_y = std::min(min_y, n.y);
-            max_x = std::max(max_x, n.x + kNodeW);
-            max_y = std::max(max_y, n.y + h);
+            max_x = std::max(max_x, n.x + b.w);
+            max_y = std::max(max_y, n.y + b.h);
+            boxes[n.uid] = std::move(b);
         }
         if (g.nodes.empty()) min_x = min_y = max_x = max_y = 0;
         places_[fid] = {left, top, min_x, min_y};
-        const f32 ox = left + kFramePad - min_x, oy = top + kFrameHead - min_y;
-        f.w = std::max(420.0f, max_x - min_x + kFramePad * 2);
-        f.h = max_y - min_y + kFrameHead + kFramePad;
+        const f32 ox = left + kFramePad - min_x, oy = top + kFrameHead + kFramePad - min_y;
+        f.w = std::max(460.0f, max_x - min_x + kFramePad * 2);
+        f.h = max_y - min_y + kFrameHead + kFramePad * 2;
         m_frames_.push_back(f);
 
         // Where each pin is on screen, for the wires.
         std::map<std::tuple<u32, bool, std::string>, std::pair<f32, f32>> pins;
         std::map<std::tuple<u32, bool, std::string>, Rml::String> pin_kind;
-        std::map<u32, std::pair<f32, f32>> spans; // each node's top and bottom on screen
         std::set<std::pair<u32, std::string>> wired_in, wired_out;
         for (const script::GraphLink& w : g.links) {
             wired_out.insert({w.from_node, w.from_pin});
@@ -938,19 +1185,19 @@ void SchemeView::rebuild() {
         }
         for (const script::GraphNode& n : g.nodes) {
             const script::NodeDef* d = nodes_.find(n.def);
+            NodeBox& b = boxes[n.uid];
             NodeView v;
             v.id = node_id(fid, n.uid);
             v.link = static_cast<int>(fid);
             v.uid = static_cast<int>(n.uid);
-            v.title = node_title(fid, n, d);
+            v.title = b.title;
             v.icon = d && !d->icon.empty() ? d->icon : "circle";
             v.tone = tone_of(d);
             v.help = d ? d->help.get() : std::string();
             v.x = ox + n.x;
             v.y = oy + n.y;
-            v.w = kNodeW;
-            v.h = heights[n.uid];
-            spans[n.uid] = {v.y, v.y + v.h};
+            v.w = b.w;
+            v.h = b.h;
             v.selected = sel_node_ == n.uid && sel_link_node_ == fid;
             v.lit = on;
             v.fixed = n.def == "logic.when";
@@ -958,83 +1205,29 @@ void SchemeView::rebuild() {
                 v.problem = it->second.first;
                 v.warning = it->second.second;
             }
-            std::vector<PinView> left_pins, right_pins;
             auto pend = [&](bool out, const std::string& pin) {
                 return pend_link_ == fid && pend_node_ == n.uid && pend_out_ == out && pend_pin_ == pin;
             };
-            if (d) {
-                if (d->has_flow_in()) {
-                    PinView p;
-                    p.id = script::kFlowIn;
-                    p.kind = "flow";
-                    p.on = true;
-                    p.wired = wired_in.contains({n.uid, script::kFlowIn});
-                    p.pending = pend(false, script::kFlowIn);
-                    left_pins.push_back(p);
-                }
-                for (const script::PinDef& pd : d->inputs) {
-                    if (hidden_pin(pd)) continue;
-                    PinView p;
-                    p.id = pd.id;
-                    p.title = pd.title.get().empty() ? pd.id : pd.title.get();
-                    p.kind = kind_of(pd.type);
-                    p.on = !pd.constant;
-                    p.wired = wired_in.contains({n.uid, pd.id});
-                    p.pending = pend(false, pd.id);
-                    const std::string* val = n.value(pd.id);
-                    p.value = val ? *val : pd.value;
-                    if (!p.wired) {
-                        if (pd.enum_type == "thing" || pd.enum_type == "action" || pd.enum_type == "cue") {
-                            p.field = "pick";
-                            p.list = pd.enum_type;
-                            p.title = (p.title.empty() ? "" : p.title + ": ") + option_name(pd.enum_type, p.value);
-                        } else if (pd.type == script::ValueType::Bool) {
-                            p.field = "check";
-                            p.check = p.value == "true" || p.value == "1" || p.value == "да";
-                        } else if (pd.type == script::ValueType::Number || pd.type == script::ValueType::Integer) {
-                            p.field = "number";
-                        } else if (pd.type != script::ValueType::Entity && pd.type != script::ValueType::Table) {
-                            // Any: a number, yes/no or text, as typed.
-                            p.field = "text";
-                        }
-                    }
-                    left_pins.push_back(p);
-                }
-                auto exit = [&](const std::string& id, const std::string& title) {
-                    PinView p;
-                    p.id = id;
-                    p.title = title;
-                    p.kind = "flow";
-                    p.on = true;
-                    p.wired = wired_out.contains({n.uid, id});
-                    p.pending = pend(true, id);
-                    right_pins.push_back(p);
-                };
-                if (d->has_next()) exit(script::kFlowNext, d->slots.empty() ? "" : "Далее");
-                for (const script::SlotDef& s : d->slots) exit(s.id, s.title.get());
-                for (const script::PinDef& pd : d->outputs) {
-                    PinView p;
-                    p.id = pd.id;
-                    p.title = out_title(fid, n, pd);
-                    p.kind = kind_of(pd.type);
-                    p.on = true;
-                    p.wired = wired_out.contains({n.uid, pd.id});
-                    p.pending = pend(true, pd.id);
-                    right_pins.push_back(p);
-                }
+            for (PinView& p : b.left) {
+                p.wired = wired_in.contains({n.uid, p.id});
+                p.pending = pend(false, p.id);
             }
-            const usize rows = std::max<usize>(1, std::max(left_pins.size(), right_pins.size()));
+            for (PinView& p : b.right) {
+                p.wired = wired_out.contains({n.uid, p.id});
+                p.pending = pend(true, p.id);
+            }
+            const usize rows = std::max<usize>(1, std::max(b.left.size(), b.right.size()));
             for (usize i = 0; i < rows; ++i) {
                 RowView r;
                 const f32 py = v.y + kHead + (static_cast<f32>(i) + 0.5f) * kRowH;
-                if (i < left_pins.size()) {
-                    r.in = left_pins[i];
+                if (i < b.left.size()) {
+                    r.in = b.left[i];
                     pins[{n.uid, false, r.in.id}] = {v.x, py};
                     pin_kind[{n.uid, false, r.in.id}] = r.in.kind;
                 }
-                if (i < right_pins.size()) {
-                    r.out = right_pins[i];
-                    pins[{n.uid, true, r.out.id}] = {v.x + kNodeW, py};
+                if (i < b.right.size()) {
+                    r.out = b.right[i];
+                    pins[{n.uid, true, r.out.id}] = {v.x + v.w, py};
                     pin_kind[{n.uid, true, r.out.id}] = r.out.kind;
                 }
                 v.rows.push_back(std::move(r));
@@ -1042,46 +1235,7 @@ void SchemeView::rebuild() {
             m_nodes_.push_back(std::move(v));
         }
 
-        // Wires: out of a pin, up or down halfway, into the other pin.
-        // Out of a pin to the right, into a pin from the left: halfway across
-        // when the second pin is further right; else round, between the rows.
-        // from, to: the nodes' tops and bottoms, so a wire going round passes
-        // between them, not through them.
-        using Span = std::pair<f32, f32>;
-        auto add_wire = [&](f32 x0, f32 y0, f32 x1, f32 y1, Span from, Span to, WireView w) {
-            std::vector<std::pair<f32, f32>> pts;
-            if (x1 >= x0 + 24) {
-                const f32 mid = std::round(x0 + (x1 - x0) * 0.5f);
-                pts = {{x0, y0}, {mid, y0}, {mid, y1}, {x1, y1}};
-            } else {
-                const f32 out = x0 + 16, in = x1 - 16;
-                f32 ym = std::max(from.second, to.second) + 18; // under both
-                if (to.first > from.second + 20) ym = std::round((from.second + to.first) * 0.5f);
-                else if (from.first > to.second + 20) ym = std::round((to.second + from.first) * 0.5f);
-                pts = {{x0, y0}, {out, y0}, {out, ym}, {in, ym}, {in, y1}, {x1, y1}};
-            }
-            f32 lo_x = 1e9f, lo_y = 1e9f, hi_x = -1e9f, hi_y = -1e9f;
-            for (const auto& [px, py] : pts) {
-                lo_x = std::min(lo_x, px), hi_x = std::max(hi_x, px);
-                lo_y = std::min(lo_y, py), hi_y = std::max(hi_y, py);
-            }
-            // The box, a little bigger than the wire so its edges can be hit.
-            w.x = lo_x - 6;
-            w.y = lo_y - 6;
-            w.w = hi_x - lo_x + 12;
-            w.h = hi_y - lo_y + 12;
-            for (usize k = 0; k + 1 < pts.size(); ++k) {
-                const auto [ax, ay] = pts[k];
-                const auto [bx, by] = pts[k + 1];
-                SegView seg;
-                seg.across = ay == by;
-                seg.x = std::min(ax, bx) - w.x;
-                seg.y = std::min(ay, by) - w.y;
-                seg.len = seg.across ? std::fabs(bx - ax) : std::fabs(by - ay);
-                if (seg.len > 0) w.segs.push_back(seg);
-            }
-            m_wires_.push_back(std::move(w));
-        };
+        // Wires: curves from pin to pin, under the nodes.
         for (usize i = 0; i < g.links.size(); ++i) {
             const script::GraphLink& gl = g.links[i];
             const auto a = pins.find({gl.from_node, true, gl.from_pin});
@@ -1095,8 +1249,8 @@ void SchemeView::rebuild() {
             w.flow = gl.to_pin == script::kFlowIn;
             w.lit = on;
             w.selected = wire_selected_ && sel_wire_link_ == fid && sel_wire_ == i;
-            add_wire(a->second.first, a->second.second, b->second.first, b->second.second, spans[gl.from_node],
-                     spans[gl.to_node], std::move(w));
+            ui::wire_curve(a->second.first, a->second.second, b->second.first, b->second.second, w.points);
+            m_wires_.push_back(std::move(w));
         }
         // A wire on its way: from its pin to the mouse.
         if (drag_ == Drag::Wire && dragged_ && pend_link_ == fid) {
@@ -1109,21 +1263,72 @@ void SchemeView::rebuild() {
                 w.kind = pin_kind[{pend_node_, pend_out_, pend_pin_}];
                 w.flow = w.kind == "flow";
                 w.pending = true;
-                const Span at = spans[pend_node_], mouse{mouse_y_, mouse_y_};
-                if (pend_out_) add_wire(a->second.first, a->second.second, mouse_x_, mouse_y_, at, mouse, std::move(w));
-                else add_wire(mouse_x_, mouse_y_, a->second.first, a->second.second, mouse, at, std::move(w));
+                if (pend_out_) ui::wire_curve(a->second.first, a->second.second, mouse_x_, mouse_y_, w.points);
+                else ui::wire_curve(mouse_x_, mouse_y_, a->second.first, a->second.second, w.points);
+                m_wires_.push_back(std::move(w));
             }
         }
         top += f.h + kFrameGap;
     }
-    for (const char* name : {"sc_nodes", "sc_wires", "sc_frames", "sc_things", "sc_actions", "sc_cues"}) dirty(name);
+    for (const WireView& w : m_wires_) {
+        ui::Line line;
+        line.points = w.points;
+        line.width = w.flow ? 3.0f : 2.0f;
+        line.color = w.selected ? 0xffb74dffu : w.lit ? 0x66d17affu : wire_color(w.kind);
+        if (w.pending) line.color = (line.color & 0xffffff00u) | 0xb0u;
+        wires_.list.push_back(std::move(line));
+    }
+    ++wires_.counter;
+    rebuild_grid();
+    for (const char* name : {"sc_nodes", "sc_frames", "sc_things", "sc_actions", "sc_cues"}) dirty(name);
+}
+
+// The paper under the schemes: a fine grid, every eighth line stronger,
+// moving with the view.
+void SchemeView::rebuild_grid() {
+    grid_.list.clear();
+    const f32 w = std::max(pane_w_, 400.0f), h = std::max(pane_h_, 300.0f);
+    const f32 big = kGrid * 8;
+    auto lines = [&](f32 step, u32 color) {
+        const f32 sx = std::fmod(pan_x_, step), sy = std::fmod(pan_y_, step);
+        for (f32 x = sx < 0 ? sx + step : sx; x < w; x += step) grid_.list.push_back({{x, 0, x, h}, color, 1.0f});
+        for (f32 y = sy < 0 ? sy + step : sy; y < h; y += step) grid_.list.push_back({{0, y, w, y}, color, 1.0f});
+    };
+    lines(kGrid, 0xffffff0au);
+    lines(big, 0xffffff1au);
+    ++grid_.counter;
+}
+
+u32 SchemeView::wire_color(const std::string& kind) {
+    if (kind == "flow") return 0xf2f2f2ffu;
+    if (kind == "bool") return 0xc2302fffu;
+    if (kind == "number") return 0x9ee24bffu;
+    if (kind == "string") return 0xf04fd2ffu;
+    if (kind == "entity") return 0x2f9df2ffu;
+    if (kind == "vec2") return 0xf2c22fffu;
+    return 0xa0a8b8ffu;
+}
+
+int SchemeView::wire_at(f32 x, f32 y, u32& link) const {
+    f32 best = 6; // px: near enough to a wire
+    int found = -1;
+    for (const WireView& w : m_wires_) {
+        if (w.pending) continue;
+        const f32 d = ui::distance_to(w.points, x, y);
+        if (d < best) {
+            best = d;
+            found = w.index;
+            link = static_cast<u32>(w.link);
+        }
+    }
+    return found;
 }
 
 bool SchemeView::to_scheme(u32 link, f32 sx, f32 sy, f32& x, f32& y) const {
     const auto it = places_.find(link);
     if (it == places_.end()) return false;
     x = std::round(sx - it->second.x - kFramePad + it->second.min_x);
-    y = std::round(sy - it->second.y - kFrameHead + it->second.min_y);
+    y = std::round(sy - it->second.y - kFrameHead - kFramePad + it->second.min_y);
     return true;
 }
 
@@ -1142,8 +1347,12 @@ void SchemeView::update(Rml::Context* context) {
             const Rml::Vector2f at = pane->GetAbsoluteOffset(Rml::BoxArea::Padding);
             pane_x_ = at.x;
             pane_y_ = at.y;
-            pane_w_ = pane->GetClientWidth();
-            pane_h_ = pane->GetClientHeight();
+            const f32 w = pane->GetClientWidth(), h = pane->GetClientHeight();
+            if (w != pane_w_ || h != pane_h_) {
+                pane_w_ = w;
+                pane_h_ = h;
+                rebuild_grid();
+            }
             break;
         }
 }

@@ -712,29 +712,26 @@
 
             <!-- «Схема»: each link a frame with its node graph (scheme_view.h) -->
             <div id="lg-scheme" class="lg-scheme grow" data-if="lg_mode == 'scheme'" data-event-mousedown="sc_down">
+                <lines id="sc-grid" source="sc-grid" class="sc-lines"/>
                 <div class="lg-empty muted" data-if="sc_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи». А вещь может что-то делать и сама по себе: «Своя схема вещи».</div>
-                <div id="sc-own-add" class="sc-tools button tonal small" title="Что вещь делает сама по себе, без связей: при старте, каждый шаг, при ударе…" data-event-mousedown="sc_stop" data-event-click="sc_own_add"><icon class="s" name="add"/><span>Своя схема вещи</span></div>
                 <div data-for="f : sc_frames" class="sc-frame" data-attr-id="'sc-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit" data-class-custom="f.custom" data-class-own="f.own"
                      data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'" data-event-mousedown="sc_frame_down(f.id)">
                     <div class="sc-frame-head row">
                         <icon class="s" data-attr-name="f.own ? 'category' : f.custom ? 'account_tree' : 'link'"/>
-                        <span class="grow">{{ f.phrase }}</span>
+                        <span class="sc-frame-title grow">{{ f.phrase }}</span>
                         <span class="sc-badge" data-if="f.custom">своя схема</span>
                         <span class="sc-badge own" data-if="f.own">без связи</span>
                         <icon class="s err" name="error" data-if="f.problem != ''" data-attr-title="f.problem"/>
-                        <div class="button text small" data-if="f.note == ''" data-attr-id="'sc-add-' + f.id" title="Добавить ноду (или правый щелчок по рамке)" data-event-mousedown="sc_stop" data-event-click="sc_add(f.id)"><icon class="s" name="add"/><span>Нода</span></div>
-                        <div class="button text small" data-if="f.custom" data-attr-id="'sc-reset-' + f.id" title="Убрать свою схему: связь снова делает то, что в «Связях»" data-event-mousedown="sc_stop" data-event-click="sc_reset(f.id)"><icon class="s" name="undo"/><span>Как в Связях</span></div>
-                        <div class="button text small" data-if="f.own" data-attr-id="'sc-drop-' + f.id" title="Убрать схему: вещь больше ничего не делает сама (Ctrl+Z вернёт)" data-event-mousedown="sc_stop" data-event-click="sc_reset(f.id)"><icon class="s" name="delete"/><span>Убрать</span></div>
+                        <div class="sc-head-button row" data-if="f.note == ''" data-attr-id="'sc-arrange-' + f.id" title="Разложить ноды по порядку: слева направо, значения под шагами (Ctrl+Z вернёт)" data-event-mousedown="sc_stop" data-event-click="sc_arrange(f.id)"><icon class="s" name="auto_awesome_mosaic"/><span>Упорядочить</span></div>
+                        <div class="sc-head-button row" data-if="f.note == ''" data-attr-id="'sc-add-' + f.id" title="Добавить ноду (или правый щелчок по рамке)" data-event-mousedown="sc_stop" data-event-click="sc_add(f.id)"><icon class="s" name="add"/><span>Нода</span></div>
+                        <div class="sc-head-button row" data-if="f.custom" data-attr-id="'sc-reset-' + f.id" title="Убрать свою схему: связь снова делает то, что в «Связях»" data-event-mousedown="sc_stop" data-event-click="sc_reset(f.id)"><icon class="s" name="undo"/><span>Как в Связях</span></div>
+                        <div class="sc-head-button row" data-if="f.own" data-attr-id="'sc-drop-' + f.id" title="Убрать схему: вещь больше ничего не делает сама (Ctrl+Z вернёт)" data-event-mousedown="sc_stop" data-event-click="sc_reset(f.id)"><icon class="s" name="delete"/><span>Убрать</span></div>
                     </div>
                     <div class="sc-note" data-if="f.note != ''">{{ f.note }}</div>
                 </div>
-                <div data-for="w : sc_wires" data-attr-class="'sc-wire ' + w.kind + (w.flow ? ' flow' : '') + (w.selected ? ' selected' : '') + (w.lit ? ' lit' : '') + (w.pending ? ' pending' : '')" data-attr-id="w.id"
-                     data-style-left="w.x + 'px'" data-style-top="w.y + 'px'" data-style-width="w.w + 'px'" data-style-height="w.h + 'px'">
-                    <div data-for="g : w.segs" data-attr-class="'sc-seg ' + (g.across ? 'h' : 'v')" data-style-left="g.x + 'px'" data-style-top="g.y + 'px'"
-                         data-style-width="(g.across ? g.len : 10) + 'px'" data-style-height="(g.across ? 10 : g.len) + 'px'" data-event-mousedown="sc_stop" data-event-click="sc_wire(w.link, w.index)"><div class="sc-line"></div></div>
-                </div>
+                <lines id="sc-wires" source="sc-wires" class="sc-lines"/>
                 <div data-for="n : sc_nodes" data-attr-class="'sc-node ' + n.tone + (n.selected ? ' selected' : '') + (n.lit ? ' lit' : '') + (n.problem != '' ? (n.warning ? ' warn' : ' bad') : '')"
-                     data-attr-id="'sc-node-' + n.id" data-style-left="n.x + 'px'" data-style-top="n.y + 'px'" data-style-height="n.h + 'px'"
+                     data-attr-id="'sc-node-' + n.id" data-style-left="n.x + 'px'" data-style-top="n.y + 'px'" data-style-width="n.w + 'px'" data-style-height="n.h + 'px'"
                      data-attr-title="n.problem != '' ? n.problem : n.help" data-event-mousedown="sc_node_down(n.link, n.uid)" data-event-click="sc_node(n.link, n.uid)">
                     <div class="sc-node-head row">
                         <icon class="s" data-attr-name="n.icon"/><span class="grow">{{ n.title }}</span>
@@ -744,7 +741,7 @@
                     <div data-for="r : n.rows" class="sc-row row">
                         <div class="sc-in row grow">
                             <div data-if="r.in.on" data-attr-class="'sc-pin ' + r.in.kind + (r.in.wired ? ' wired' : '') + (r.in.pending ? ' pending' : '')" data-attr-id="'sc-pin-' + n.link + '-' + n.uid + '-i-' + r.in.id"
-                                 data-event-mousedown="sc_pin_down(n.link, n.uid, false, r.in.id)" data-event-click="sc_pin(n.link, n.uid, false, r.in.id)"></div>
+                                 data-event-mousedown="sc_pin_down(n.link, n.uid, false, r.in.id)" data-event-click="sc_pin(n.link, n.uid, false, r.in.id)"><shape data-if="r.in.kind == 'flow'" kind="exec" data-attr-fill="r.in.wired || r.in.pending ? 'true' : 'false'"/><div data-if="r.in.kind != 'flow'" class="sc-dot"></div></div>
                             <div data-if="!r.in.on && r.in.id != ''" class="sc-pin-gap"></div>
                             <span class="sc-label" data-if="r.in.field != 'pick'">{{ r.in.title }}</span>
                             <input data-if="r.in.field == 'text' || r.in.field == 'number'" type="text" data-attr-class="'sc-field ' + (r.in.field == 'number' ? 'sc-num' : 'sc-txt')" data-attr-id="'sc-field-' + n.link + '-' + n.uid + '-' + r.in.id" data-attr-value="r.in.value"
@@ -755,10 +752,11 @@
                         <div class="sc-out row">
                             <span class="sc-label">{{ r.out.title }}</span>
                             <div data-if="r.out.on" data-attr-class="'sc-pin ' + r.out.kind + (r.out.wired ? ' wired' : '') + (r.out.pending ? ' pending' : '')" data-attr-id="'sc-pin-' + n.link + '-' + n.uid + '-o-' + r.out.id"
-                                 data-event-mousedown="sc_pin_down(n.link, n.uid, true, r.out.id)" data-event-click="sc_pin(n.link, n.uid, true, r.out.id)"></div>
+                                 data-event-mousedown="sc_pin_down(n.link, n.uid, true, r.out.id)" data-event-click="sc_pin(n.link, n.uid, true, r.out.id)"><shape data-if="r.out.kind == 'flow'" kind="exec" data-attr-fill="r.out.wired || r.out.pending ? 'true' : 'false'"/><div data-if="r.out.kind != 'flow'" class="sc-dot"></div></div>
                         </div>
                     </div>
                 </div>
+                <div id="sc-own-add" class="sc-tools button tonal small" title="Что вещь делает сама по себе, без связей: при старте, каждый шаг, при ударе…" data-event-mousedown="sc_stop" data-event-click="sc_own_add"><icon class="s" name="add"/><span>Своя схема вещи</span></div>
                 <div id="sc-choose" class="sc-choose column" data-if="sc_choosing" data-style-left="sc_choose_x + 'px'" data-style-top="sc_choose_y + 'px'" data-event-mousedown="sc_stop">
                     <div data-for="c : sc_choices" class="sc-choice" data-attr-id="'sc-choice-' + c.id" data-event-click="sc_pick(c.id)">{{ c.name }}</div>
                 </div>
