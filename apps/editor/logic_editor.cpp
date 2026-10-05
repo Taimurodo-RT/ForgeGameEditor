@@ -30,10 +30,6 @@ bool known_mode(std::string_view m) {
     return m == "links" || m == "ideas" || m == "steps" || m == "scheme" || m == "code";
 }
 
-// «Схема»: the size of a node and the room between them.
-constexpr f32 kNodeW = 190, kNodeH = 96, kNodeGap = 40, kFramePad = 18, kFrameHead = 34, kLaneGap = 36;
-constexpr f32 kPinY = 30; // the exec pins, from a node's top
-
 constexpr u64 kLitMs = 1500; // how long a link that happened stays lit
 
 } // namespace
@@ -118,6 +114,7 @@ void LogicEditor::load() {
 }
 
 void LogicEditor::bind(Rml::DataModelConstructor& model) {
+    scheme_.bind(model);
     if (auto s = model.RegisterStruct<ThingView>()) {
         s.RegisterMember("id", &ThingView::id);
         s.RegisterMember("name", &ThingView::name);
@@ -216,44 +213,6 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("lit", &CodeLine::lit);
     }
     model.RegisterArray<std::vector<CodeLine>>();
-    if (auto s = model.RegisterStruct<NodeView>()) {
-        s.RegisterMember("id", &NodeView::id);
-        s.RegisterMember("kind", &NodeView::kind);
-        s.RegisterMember("title", &NodeView::title);
-        s.RegisterMember("icon", &NodeView::icon);
-        s.RegisterMember("text", &NodeView::text);
-        s.RegisterMember("refine", &NodeView::refine);
-        s.RegisterMember("link", &NodeView::link);
-        s.RegisterMember("x", &NodeView::x);
-        s.RegisterMember("y", &NodeView::y);
-        s.RegisterMember("selected", &NodeView::selected);
-        s.RegisterMember("lit", &NodeView::lit);
-        s.RegisterMember("adding", &NodeView::adding);
-        s.RegisterMember("adds", &NodeView::adds);
-    }
-    model.RegisterArray<std::vector<NodeView>>();
-    if (auto s = model.RegisterStruct<WireView>()) {
-        s.RegisterMember("x", &WireView::x);
-        s.RegisterMember("y", &WireView::y);
-        s.RegisterMember("len", &WireView::len);
-        s.RegisterMember("angle", &WireView::angle);
-        s.RegisterMember("no", &WireView::no);
-        s.RegisterMember("lit", &WireView::lit);
-        s.RegisterMember("selected", &WireView::selected);
-    }
-    model.RegisterArray<std::vector<WireView>>();
-    if (auto s = model.RegisterStruct<FrameView>()) {
-        s.RegisterMember("id", &FrameView::id);
-        s.RegisterMember("phrase", &FrameView::phrase);
-        s.RegisterMember("problem", &FrameView::problem);
-        s.RegisterMember("x", &FrameView::x);
-        s.RegisterMember("y", &FrameView::y);
-        s.RegisterMember("w", &FrameView::w);
-        s.RegisterMember("h", &FrameView::h);
-        s.RegisterMember("selected", &FrameView::selected);
-        s.RegisterMember("lit", &FrameView::lit);
-    }
-    model.RegisterArray<std::vector<FrameView>>();
     if (auto s = model.RegisterStruct<FieldView>()) {
         s.RegisterMember("side", &FieldView::side);
         s.RegisterMember("label", &FieldView::label);
@@ -310,6 +269,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_sel_meaning", &m_sel_meaning_);
     model.Bind("lg_sel_problem", &m_sel_problem_);
     model.Bind("lg_sel_code", &m_sel_code_);
+    model.Bind("lg_sel_scheme", &m_sel_scheme_);
     model.Bind("lg_editing", &m_editing_);
     model.Bind("lg_edit_text", &m_edit_text_);
     model.Bind("lg_edit_title", &m_edit_title_);
@@ -320,9 +280,6 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_count", &m_count_);
     model.Bind("lg_mode", &m_mode_);
     model.Bind("lg_cards", &m_cards_);
-    model.Bind("lg_nodes", &m_nodes_);
-    model.Bind("lg_wires", &m_wires_);
-    model.Bind("lg_frames", &m_frames_);
     model.Bind("lg_code", &m_code_);
     model.Bind("lg_idea_cards", &m_idea_cards_);
     model.Bind("lg_ideas", &m_ideas_);
@@ -384,7 +341,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     });
     on("lg_mode", [this](Rml::Event&, const Rml::VariantList& a) {
         const std::string m = arg_str(a, 0);
-        if (!set_mode(m)) FORGE_INFO("Этот режим появится позже: пока есть «Связи», «Идеи», «Шаги» и «Код»");
+        set_mode(m);
     });
     on("lg_gallery", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
@@ -439,20 +396,13 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         adding_ = 0;
         refine(id, arg_str(a, 1), true);
     });
-    on("lg_node", [this](Rml::Event& ev, const Rml::VariantList& a) {
+    on("lg_scheme_open", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
-        const u32 id = static_cast<u32>(arg_int(a, 0, 0));
-        if (id != sel_link_) select_link(id);
+        set_mode("scheme");
     });
-    on("lg_scheme_down", [this](Rml::Event& ev, const Rml::VariantList&) {
-        if (ev.GetParameter<int>("button", 0) != 0) return;
-        grabbing_ = grab_scheme_ = true;
-        dragged_ = false;
-        grab_id_.clear();
-        grab_mx_ = ev.GetParameter<float>("mouse_x", 0);
-        grab_my_ = ev.GetParameter<float>("mouse_y", 0);
-        grab_x_ = sch_x_;
-        grab_y_ = sch_y_;
+    on("lg_scheme_reset", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        scheme_.reset(sel_link_);
     });
     on("lg_code_edit", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
@@ -524,7 +474,8 @@ void LogicEditor::rebuild() {
         for (const objects::Template& t : lib->templates()) things_.push_back(logic::thing_of(*lib, t));
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
     problems_.clear();
-    for (const logic::Problem& p : logic::compile(logic_, verbs_, find).problems) problems_[p.link] = p.text;
+    for (const logic::Problem& p : logic::compile(logic_, verbs_, find, &scheme_.nodes()).problems)
+        if (!p.warning && !problems_.contains(p.link)) problems_[p.link] = p.text;
     // Every linked thing is on the board.
     for (const logic::Link& l : logic_.links) {
         place_free(logic_, l.a);
@@ -566,7 +517,10 @@ void LogicEditor::rebuild() {
         const logic::Thing* ta = thing(l.a);
         const logic::Thing* tb = thing(l.b);
         v.verb = verb ? (ta && ta->plural ? verb->plural : verb->name) : l.verb;
-        v.icon = !l.code.empty() ? "code" : verb && !verb->icon.empty() ? verb->icon : "link";
+        v.icon = !l.code.empty()                       ? "code"
+                 : logic::own_scheme(l, verbs_, find)  ? "account_tree"
+                 : verb && !verb->icon.empty()         ? verb->icon
+                                                       : "link";
         v.phrase = phrase_of(l.id);
         v.refined = l.night + l.once + l.sound + l.hint;
         v.selected = l.id == sel_link_;
@@ -622,7 +576,7 @@ void LogicEditor::rebuild() {
     if (mode_ == "ideas") rebuild_ideas();
     if (mode_ == "steps") rebuild_steps();
     if (mode_ == "code") rebuild_code();
-    if (mode_ == "scheme") rebuild_scheme();
+    if (mode_ == "scheme") scheme_.rebuild();
     if (model_)
         for (const char* name : {"lg_things", "lg_links", "lg_board_rows", "lg_add_rows", "lg_count", "lg_hint"})
             model_.DirtyVariable(name);
@@ -635,6 +589,8 @@ void LogicEditor::rebuild_side() {
     m_refine_.clear();
     m_sel_phrase_ = m_sel_meaning_ = m_sel_problem_ = "";
     m_sel_code_ = l && !l->code.empty();
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    m_sel_scheme_ = l && l->code.empty() && logic::own_scheme(*l, verbs_, find);
     if (l) {
         m_sel_phrase_ = phrase_of(l->id);
         m_sel_meaning_ = meaning_of(l->id);
@@ -663,7 +619,7 @@ void LogicEditor::rebuild_side() {
     for (const logic::Link& k : logic_.links)
         m_words_.push_back({static_cast<int>(k.id), phrase_of(k.id), meaning_of(k.id), problem_of(k.id), k.id == sel_link_, lit(k.id)});
     if (model_)
-        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code",
+        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code", "lg_sel_scheme",
                                  "lg_thing_links", "lg_sel_name", "lg_sel_icon", "lg_sel_links", "lg_words"})
             model_.DirtyVariable(name);
 }
@@ -712,6 +668,7 @@ void LogicEditor::update(Rml::Context* context) {
             }
             break;
         }
+    scheme_.update(context);
     watch_fired();
     watch_file();
     const objects::Library* lib = module_.library();
@@ -819,6 +776,15 @@ void LogicEditor::apply_json(const std::string& json) {
 void LogicEditor::change(const logic::Logic& after, std::string label, std::string merge) {
     history_.execute(std::make_unique<LogicCommand>(*this, logic_.json(), after.json(), std::move(label), std::move(merge)));
     rebuild();
+}
+
+void LogicEditor::change_scheme(u32 link, const script::Graph& graph, std::string label, std::string merge) {
+    logic::Logic after = logic_;
+    logic::Link* l = after.find(link);
+    if (!l) return;
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    logic::set_scheme(*l, graph, verbs_, find);
+    change(after, std::move(label), std::move(merge));
 }
 
 bool LogicEditor::add_thing(const std::string& id) {
@@ -975,6 +941,7 @@ bool LogicEditor::refine(u32 link, const std::string& what, bool on) {
     else if (what == "sound") m.sound = on;
     else if (what == "hint") m.hint = on;
     else if (what == "code" && !on) return reset_code(link);
+    else if (what == "graph" && !on) return scheme_.reset(link);
     else return false;
     const char* name = what == "night" ? "только ночью" : what == "once" ? "один раз" : what == "sound" ? "со звуком" : "подсказка";
     change(after, std::string(on ? "Уточнить: " : "Убрать: ") + name);
@@ -1038,7 +1005,7 @@ void LogicEditor::rebuild_steps() {
 void LogicEditor::rebuild_code() {
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
     script::SourceMap map;
-    const std::string text = logic::listing(logic_, verbs_, find, &map);
+    const std::string text = logic::listing(logic_, verbs_, find, &map, &scheme_.nodes());
     m_code_.clear();
     usize start = 0;
     int n = 1;
@@ -1129,121 +1096,6 @@ bool LogicEditor::reset_code(u32 link) {
     after.find(link)->code.clear();
     change(after, "Обычное действие: «" + phrase_of(link) + "»");
     return true;
-}
-
-// --- «Схема» -------------------------------------------------------------------
-
-// Each link a row of nodes in a frame: «Когда» → each «Если» → each «Тогда»,
-// and under them «Иначе», which every «Если» leads to when it does not hold.
-// A «+» node at the end adds a step.
-void LogicEditor::rebuild_scheme() {
-    m_nodes_.clear();
-    m_wires_.clear();
-    m_frames_.clear();
-    if (!logic_.find(adding_)) adding_ = 0;
-    f32 top = 24 + sch_y_;
-    const f32 left = 24 + sch_x_;
-    for (const logic::Link& l : logic_.links) {
-        const bool selected = l.id == sel_link_, on = lit(l.id);
-        const std::vector<logic::Step> steps = steps_of(l.id);
-        const f32 y = top + kFrameHead;
-        f32 x = left + kFramePad;
-        std::vector<usize> ifs;
-        usize first_then = 0, last = 0, else_node = 0;
-        bool has_else = false;
-        int count = 0;
-        auto node = [&](const logic::Step& st, f32 nx, f32 ny) {
-            NodeView n;
-            n.id = std::to_string(l.id) + "-" + std::to_string(count++);
-            n.kind = st.part;
-            n.title = part_label(st.part);
-            n.icon = st.icon;
-            n.text = st.text;
-            n.refine = st.refine;
-            n.link = static_cast<int>(l.id);
-            n.x = nx;
-            n.y = ny;
-            n.selected = selected;
-            n.lit = on;
-            m_nodes_.push_back(std::move(n));
-            return m_nodes_.size() - 1;
-        };
-        auto wire = [&](f32 x0, f32 y0, f32 x1, f32 y1, bool no) {
-            WireView w;
-            w.x = x0;
-            w.y = y0;
-            w.len = std::hypot(x1 - x0, y1 - y0);
-            w.angle = std::atan2(y1 - y0, x1 - x0) * 57.29578f;
-            w.no = no;
-            w.lit = on;
-            w.selected = selected;
-            m_wires_.push_back(w);
-        };
-        bool first = true;
-        for (const logic::Step& st : steps) {
-            if (st.part == "else") continue;
-            const usize i = node(st, x, y);
-            if (!first) wire(m_nodes_[last].x + kNodeW, y + kPinY, x, y + kPinY, false);
-            if (st.part == "if") ifs.push_back(i);
-            if (st.part == "then" && !first_then) first_then = i;
-            first = false;
-            last = i;
-            x += kNodeW + kNodeGap;
-        }
-        for (const logic::Step& st : steps)
-            if (st.part == "else") {
-                const f32 ex = first_then ? m_nodes_[first_then].x : x;
-                else_node = node(st, ex, y + kNodeH + kLaneGap);
-                has_else = true;
-                break;
-            }
-        if (has_else) {
-            const f32 ey = m_nodes_[else_node].y + kPinY;
-            for (const usize i : ifs) {
-                const f32 px = m_nodes_[i].x + kNodeW * 0.5f;
-                wire(px, m_nodes_[i].y + kNodeH, px, ey, true);
-                wire(px, ey, m_nodes_[else_node].x, ey, true);
-            }
-        }
-        // «+»: the steps this link can still get.
-        const logic::VerbDef* v = verbs_.find(l.verb);
-        const logic::Thing* a = thing(l.a);
-        const logic::Thing* b = thing(l.b);
-        std::vector<AddView> adds;
-        if (v && a && b)
-            for (const logic::Refine& r : logic::refinements(l, *v, *a, *b))
-                if (!r.on) adds.push_back({r.id, r.label, r.about});
-        if (!adds.empty()) {
-            NodeView n;
-            n.id = std::to_string(l.id) + "-add";
-            n.kind = "add";
-            n.title = "Добавить шаг";
-            n.icon = "add";
-            n.link = static_cast<int>(l.id);
-            n.x = x;
-            n.y = y;
-            n.selected = selected;
-            n.adding = l.id == adding_;
-            n.adds = std::move(adds);
-            if (!m_nodes_.empty() && !first) wire(m_nodes_[last].x + kNodeW, y + kPinY, x, y + kPinY, false);
-            m_nodes_.push_back(std::move(n));
-            x += kNodeW + kNodeGap;
-        }
-        FrameView f;
-        f.id = static_cast<int>(l.id);
-        f.phrase = phrase_of(l.id);
-        f.problem = problem_of(l.id);
-        f.x = left;
-        f.y = top;
-        f.w = x - kNodeGap + kFramePad - left;
-        f.h = kFrameHead + kNodeH + (has_else ? kLaneGap + kNodeH : 0) + kFramePad;
-        f.selected = selected;
-        f.lit = on;
-        m_frames_.push_back(f);
-        top += f.h + kLaneGap;
-    }
-    if (model_)
-        for (const char* name : {"lg_nodes", "lg_wires", "lg_frames"}) model_.DirtyVariable(name);
 }
 
 // --- «Идеи» --------------------------------------------------------------------
@@ -1403,15 +1255,13 @@ void LogicEditor::rebuild_ideas() {
 // --- input -------------------------------------------------------------------
 
 bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
+    if (mode_ == "scheme" && scheme_.handle_event(e, density)) return true;
     if (!grabbing_) return false;
     if (e.type == SDL_EVENT_MOUSE_MOTION) {
         const f32 dx = e.motion.x * density - grab_mx_, dy = e.motion.y * density - grab_my_;
         if (!dragged_ && std::hypot(dx, dy) > 4) dragged_ = true;
         if (!dragged_) return true;
-        if (grab_scheme_) {
-            sch_x_ = grab_x_ + dx;
-            sch_y_ = grab_y_ + dy;
-        } else if (grab_id_.empty()) {
+        if (grab_id_.empty()) {
             pan_x_ = grab_x_ + dx;
             pan_y_ = grab_y_ + dy;
         } else {
@@ -1425,10 +1275,7 @@ bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
     if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
         grabbing_ = false;
         const std::string id = grab_id_;
-        if (grab_scheme_) {
-            grab_scheme_ = false;
-            if (!dragged_) click_board(); // a click on the empty scheme: nothing selected
-        } else if (dragged_ && !id.empty()) {
+        if (dragged_ && !id.empty()) {
             const logic::Spot* s = logic_.spot(id);
             const f32 x = s ? s->x : grab_x_, y = s ? s->y : grab_y_;
             logic_.set_spot(id, grab_x_, grab_y_);
@@ -1444,6 +1291,7 @@ bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
 }
 
 bool LogicEditor::handle_key(const SDL_KeyboardEvent& k) {
+    if (mode_ == "scheme" && scheme_.handle_key(k)) return true;
     if (k.key == SDLK_ESCAPE) {
         if (editing_) cancel_code();
         else if (m_choosing_) open_choices(0, {});

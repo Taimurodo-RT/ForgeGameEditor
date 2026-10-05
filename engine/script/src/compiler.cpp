@@ -191,6 +191,7 @@ public:
     void emit_macros();                 // graph nodes this graph uses, as local functions (before anything else)
     void emit_handlers();               // a script: every event
     void emit_macro_body(const std::string& fname); // a graph used as a node
+    void emit_event_body(u32 event, const std::vector<EventInput>& inputs, int ind); // one event, inside other code
 
 private:
     struct Out {
@@ -780,7 +781,57 @@ void GraphCompiler::emit_handlers() {
     }
 }
 
+void GraphCompiler::emit_event_body(u32 event, const std::vector<EventInput>& inputs, int ind) {
+    const NodeDef* d = def(event);
+    if (!d || d->kind != NodeKind::Event) {
+        error(event, {}, "нет события, с которого всё начинается");
+        return;
+    }
+    em_.node = event;
+    for (const PinDef& p : d->outputs) {
+        std::string name = "nil";
+        for (const EventInput& in : inputs)
+            if (in.pin == p.id) name = in.name;
+        em_.line(ind, "local " + out_var(event, p.id) + " = " + name);
+    }
+    const u32 first = flow_target(event, kFlowNext);
+    if (first) emit_function_body(first, ind);
+    if (!d->lua.empty()) emit_template(event, d->lua, ind, first);
+    else emit_chain(first, ind);
+
+    std::unordered_set<u32> seen;
+    std::vector<u32> order;
+    reach(first, order, seen);
+    // Blocks of other events are theirs; the rest never runs.
+    std::unordered_set<u32> others;
+    for (const GraphNode& n : g_.nodes)
+        if (const NodeDef* nd = def(n.uid); nd && nd->kind == NodeKind::Event && n.uid != event)
+            reach(flow_target(n.uid, kFlowNext), order, others);
+    for (const GraphNode& n : g_.nodes) {
+        const NodeDef* nd = def(n.uid);
+        if (nd && nd->has_flow_in() && !seen.count(n.uid) && !others.count(n.uid))
+            warning(n.uid, "нода «" + nd->title.get() + "» не подключена и никогда не выполнится");
+    }
+}
+
 } // namespace
+
+CompileResult compile_event_body(const Graph& graph, const NodeLibrary& library, u32 event,
+                                 const std::vector<EventInput>& inputs, int indent, const CompileOptions& options) {
+    CompileResult r;
+    Emitter em;
+    std::set<std::string> done;
+    std::vector<std::string> stack{graph.name};
+    GraphCompiler c(graph, library, options, em, r.diagnostics, done, stack, false);
+    if (c.index()) {
+        c.emit_macros();
+        c.emit_event_body(event, inputs, indent);
+    }
+    r.source = std::move(em.text);
+    r.map.line_node = std::move(em.line_node);
+    r.ok = std::none_of(r.diagnostics.begin(), r.diagnostics.end(), [](const Diagnostic& d) { return d.error; });
+    return r;
+}
 
 CompileResult compile(const Graph& graph, const NodeLibrary& library, const CompileOptions& options) {
     CompileResult r;

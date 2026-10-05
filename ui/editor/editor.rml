@@ -710,31 +710,70 @@
                 </div>
             </div>
 
-            <!-- «Схема»: each link a frame of nodes (Когда → Если → Тогда, Иначе under them) -->
-            <div id="lg-scheme" class="lg-scheme grow" data-if="lg_mode == 'scheme'" data-event-mousedown="lg_scheme_down">
-                <div class="lg-empty muted" data-if="lg_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи».</div>
-                <div data-for="f : lg_frames" class="lg-frame" data-attr-id="'lg-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit"
-                     data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'">
-                    <div class="lg-frame-head row" data-event-mousedown="lg_stop" data-event-click="lg_node(f.id)"><span class="grow">{{ f.phrase }}</span><icon class="s err" name="error" data-if="f.problem != ''" data-attr-title="f.problem"/></div>
+            <!-- «Схема»: each link a frame with its node graph (scheme_view.h) -->
+            <div id="lg-scheme" class="lg-scheme grow" data-if="lg_mode == 'scheme'" data-event-mousedown="sc_down">
+                <div class="lg-empty muted" data-if="sc_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи».</div>
+                <div data-for="f : sc_frames" class="sc-frame" data-attr-id="'sc-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit" data-class-custom="f.custom"
+                     data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'" data-event-mousedown="sc_frame_down(f.id)">
+                    <div class="sc-frame-head row">
+                        <icon class="s" data-attr-name="f.custom ? 'account_tree' : 'link'"/>
+                        <span class="grow">{{ f.phrase }}</span>
+                        <span class="sc-badge" data-if="f.custom">своя схема</span>
+                        <icon class="s err" name="error" data-if="f.problem != ''" data-attr-title="f.problem"/>
+                        <div class="button text small" data-if="f.note == ''" data-attr-id="'sc-add-' + f.id" title="Добавить ноду (или правый щелчок по рамке)" data-event-mousedown="sc_stop" data-event-click="sc_add(f.id)"><icon class="s" name="add"/><span>Нода</span></div>
+                        <div class="button text small" data-if="f.custom" data-attr-id="'sc-reset-' + f.id" title="Убрать свою схему: связь снова делает то, что в «Связях»" data-event-mousedown="sc_stop" data-event-click="sc_reset(f.id)"><icon class="s" name="undo"/><span>Как в Связях</span></div>
+                    </div>
+                    <div class="sc-note" data-if="f.note != ''">{{ f.note }}</div>
                 </div>
-                <div data-for="w : lg_wires" class="lg-wire" data-class-no="w.no" data-class-lit="w.lit" data-class-selected="w.selected"
-                     data-style-left="w.x + 'px'" data-style-top="w.y + 'px'" data-style-width="w.len + 'px'" data-style-transform="'rotate(' + w.angle + 'deg)'"></div>
-                <div data-for="n : lg_nodes" data-attr-class="'lg-node column ' + n.kind + (n.selected ? ' selected' : '') + (n.lit ? ' lit' : '')" data-attr-id="'lg-node-' + n.id"
-                     data-style-left="n.x + 'px'" data-style-top="n.y + 'px'" data-event-mousedown="lg_stop" data-event-click="lg_node(n.link)">
-                    <div class="lg-node-head row">
+                <div data-for="w : sc_wires" data-attr-class="'sc-wire ' + w.kind + (w.flow ? ' flow' : '') + (w.selected ? ' selected' : '') + (w.lit ? ' lit' : '') + (w.pending ? ' pending' : '')" data-attr-id="w.id"
+                     data-style-left="w.x + 'px'" data-style-top="w.y + 'px'" data-style-width="w.w + 'px'" data-style-height="w.h + 'px'">
+                    <div data-for="g : w.segs" data-attr-class="'sc-seg ' + (g.across ? 'h' : 'v')" data-style-left="g.x + 'px'" data-style-top="g.y + 'px'"
+                         data-style-width="(g.across ? g.len : 10) + 'px'" data-style-height="(g.across ? 10 : g.len) + 'px'" data-event-mousedown="sc_stop" data-event-click="sc_wire(w.link, w.index)"><div class="sc-line"></div></div>
+                </div>
+                <div data-for="n : sc_nodes" data-attr-class="'sc-node ' + n.tone + (n.selected ? ' selected' : '') + (n.lit ? ' lit' : '') + (n.problem != '' ? (n.warning ? ' warn' : ' bad') : '')"
+                     data-attr-id="'sc-node-' + n.id" data-style-left="n.x + 'px'" data-style-top="n.y + 'px'" data-style-height="n.h + 'px'"
+                     data-attr-title="n.problem != '' ? n.problem : n.help" data-event-mousedown="sc_node_down(n.link, n.uid)" data-event-click="sc_node(n.link, n.uid)">
+                    <div class="sc-node-head row">
                         <icon class="s" data-attr-name="n.icon"/><span class="grow">{{ n.title }}</span>
-                        <div class="icon-button small" data-if="n.refine != ''" data-attr-id="'lg-node-x-' + n.link + '-' + n.refine" title="Убрать шаг" data-event-click="lg_step_remove(n.link, n.refine)"><icon class="s" name="close"/></div>
+                        <icon class="s sc-flag" name="error" data-if="n.problem != ''"/>
+                        <div class="icon-button small" data-if="n.selected && !n.fixed" data-attr-id="'sc-remove-' + n.id" title="Убрать ноду (Delete)" data-event-mousedown="sc_stop" data-event-click="sc_remove(n.link, n.uid)"><icon class="s" name="close"/></div>
                     </div>
-                    <div class="lg-node-body" data-if="n.kind != 'add'">{{ n.text }}</div>
-                    <div class="lg-node-body row lg-add-list" data-if="n.kind == 'add'">
-                        <div class="command" data-if="!n.adding" data-attr-id="'lg-node-add-' + n.link" data-event-click="lg_step_adds(n.link)"><icon name="add"/><span>Уточнить</span></div>
-                        <div data-if="n.adding" data-for="ad : n.adds" class="lg-add-chip" data-attr-id="'lg-node-add-' + n.link + '-' + ad.id" data-attr-title="ad.about" data-event-click="lg_step_add(n.link, ad.id)">{{ ad.label }}</div>
+                    <div data-for="r : n.rows" class="sc-row row">
+                        <div class="sc-in row grow">
+                            <div data-if="r.in.on" data-attr-class="'sc-pin ' + r.in.kind + (r.in.wired ? ' wired' : '') + (r.in.pending ? ' pending' : '')" data-attr-id="'sc-pin-' + n.link + '-' + n.uid + '-i-' + r.in.id"
+                                 data-event-mousedown="sc_pin_down(n.link, n.uid, false, r.in.id)" data-event-click="sc_pin(n.link, n.uid, false, r.in.id)"></div>
+                            <div data-if="!r.in.on && r.in.id != ''" class="sc-pin-gap"></div>
+                            <span class="sc-label" data-if="r.in.field != 'pick'">{{ r.in.title }}</span>
+                            <input data-if="r.in.field == 'text' || r.in.field == 'number'" type="text" data-attr-class="'sc-field ' + (r.in.field == 'number' ? 'sc-num' : 'sc-txt')" data-attr-id="'sc-field-' + n.link + '-' + n.uid + '-' + r.in.id" data-attr-value="r.in.value"
+                                   data-event-mousedown="sc_stop" data-event-click="sc_stop" data-event-change="sc_text(n.link, n.uid, r.in.id, ev.value, ev.linebreak)" data-event-blur="sc_text_done(n.link, n.uid, r.in.id)"/>
+                            <div data-if="r.in.field == 'check'" class="sc-check" data-attr-id="'sc-check-' + n.link + '-' + n.uid + '-' + r.in.id" data-event-mousedown="sc_stop" data-event-click="sc_check(n.link, n.uid, r.in.id, r.in.check)"><icon class="s" data-attr-name="r.in.check ? 'check_box' : 'check_box_outline_blank'"/></div>
+                            <div data-if="r.in.field == 'pick'" class="sc-pick row" data-attr-id="'sc-pick-' + n.link + '-' + n.uid + '-' + r.in.id" data-event-mousedown="sc_stop" data-event-click="sc_pick_open(n.link, n.uid, r.in.id)"><span class="grow">{{ r.in.title }}</span><icon class="s" name="arrow_drop_down"/></div>
+                        </div>
+                        <div class="sc-out row">
+                            <span class="sc-label">{{ r.out.title }}</span>
+                            <div data-if="r.out.on" data-attr-class="'sc-pin ' + r.out.kind + (r.out.wired ? ' wired' : '') + (r.out.pending ? ' pending' : '')" data-attr-id="'sc-pin-' + n.link + '-' + n.uid + '-o-' + r.out.id"
+                                 data-event-mousedown="sc_pin_down(n.link, n.uid, true, r.out.id)" data-event-click="sc_pin(n.link, n.uid, true, r.out.id)"></div>
+                        </div>
                     </div>
-                    <div class="lg-pin in" data-if="n.kind != 'when' && n.kind != 'else'"></div>
-                    <div class="lg-pin in" data-if="n.kind == 'else'"></div>
-                    <div class="lg-pin out" data-if="n.kind == 'when' || n.kind == 'if' || n.kind == 'then'"></div>
-                    <div class="lg-pin no" data-if="n.kind == 'if'"></div>
                 </div>
+                <div id="sc-choose" class="sc-choose column" data-if="sc_choosing" data-style-left="sc_choose_x + 'px'" data-style-top="sc_choose_y + 'px'" data-event-mousedown="sc_stop">
+                    <div data-for="c : sc_choices" class="sc-choice" data-attr-id="'sc-choice-' + c.id" data-event-click="sc_pick(c.id)">{{ c.name }}</div>
+                </div>
+                <div id="sc-palette" class="sc-palette column" data-if="sc_palette" data-style-left="sc_pal_x + 'px'" data-style-top="sc_pal_y + 'px'" data-event-mousedown="sc_stop">
+                    <div class="sc-pal-head row">
+                        <icon class="s" name="search"/>
+                        <input id="sc-search" type="text" class="small grow" data-attr-value="sc_search" data-event-change="sc_search"/>
+                        <div class="icon-button small" title="Закрыть (Esc)" data-event-click="sc_pal_close"><icon class="s" name="close"/></div>
+                    </div>
+                    <div class="sc-pal-list column">
+                        <div data-for="it : sc_pal_items" class="column">
+                            <div class="sc-pal-group" data-if="it.first">{{ it.group }}</div>
+                            <div data-attr-class="'sc-pal-item row ' + it.tone" data-attr-id="'sc-pal-' + it.id" data-attr-title="it.help" data-event-click="sc_pal_pick(it.id)"><icon class="s" data-attr-name="it.icon"/><span>{{ it.title }}</span></div>
+                        </div>
+                        <div class="muted body-small sc-pal-none" data-if="sc_pal_items.size == 0">Такой ноды нет</div>
+                    </div>
+                </div>
+                <div class="sc-tip row" data-if="sc_tip != ''"><icon class="s" name="cable"/><span>{{ sc_tip }}</span></div>
             </div>
 
             <!-- «Код»: the Luau the links become -->
@@ -764,13 +803,15 @@
                     <div class="lg-title">{{ lg_sel_phrase }}</div>
                     <div class="lg-problem row" data-if="lg_sel_problem != ''"><icon class="s" name="error"/><span>{{ lg_sel_problem }}</span></div>
                     <div class="lg-meaning">{{ lg_sel_meaning }}</div>
-                    <div class="section-title" data-if="!lg_sel_code">Уточнить</div>
+                    <div class="section-title" data-if="!lg_sel_code && !lg_sel_scheme">Уточнить</div>
                     <div data-for="r : lg_refine" class="lg-refine row" data-attr-id="'lg-refine-' + r.id" data-attr-title="r.hint" data-event-click="lg_refine(r.id)">
                         <icon data-attr-name="r.on ? 'check_box' : 'check_box_outline_blank'"/>
                         <div class="column grow"><span>{{ r.label }}</span><span class="muted body-small">{{ r.hint }}</span></div>
                     </div>
                     <div id="lg-code-edit" class="command" data-attr-title="'Задать связи своё поведение кодом на Luau'" data-event-click="lg_code_edit"><icon name="code"/><span>{{ lg_sel_code ? 'Править свой код' : 'Свой код вместо действия…' }}</span></div>
                     <div id="lg-code-reset" class="command" data-if="lg_sel_code" data-event-click="lg_code_reset"><icon name="undo"/><span>Вернуть обычное действие</span></div>
+                    <div id="lg-scheme-open" class="command" data-if="lg_mode != 'scheme'" data-attr-title="'Связь нодами: её можно усложнить как угодно'" data-event-click="lg_scheme_open"><icon name="account_tree"/><span>{{ lg_sel_scheme ? 'Открыть свою схему' : 'Уточнить схемой…' }}</span></div>
+                    <div id="lg-scheme-reset" class="command" data-if="lg_sel_scheme" data-event-click="lg_scheme_reset"><icon name="undo"/><span>Убрать свою схему</span></div>
                     <div id="lg-remove-link" class="command" data-event-click="lg_remove_link"><icon name="delete"/><span>Удалить связь</span></div>
                 </div>
                 <div data-if="lg_has_thing" class="column">
@@ -1100,7 +1141,7 @@
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'links'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи, потом по другой: связать · Del удалить · Esc отмена · перетаскивание: двигать вещи и доску</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'ideas'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи в идее: выбрать другую · «Раскрыть в шаги» показывает подробности · Esc отмена</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'steps'">Ctrl+Z / Ctrl+Y отмена и повтор · × убирает шаг · «Добавить шаг» уточняет связь · Del удаляет выбранную связь</span>
-        <span class="muted" data-if="tab == 'logic' && lg_mode == 'scheme'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по узлу: его связь · × убирает шаг · «Уточнить» добавляет · перетаскивание двигает схему</span>
+        <span class="muted" data-if="tab == 'logic' && lg_mode == 'scheme'">Ctrl+Z / Ctrl+Y отмена и повтор · тяните от точки к точке, чтобы соединить · правый щелчок по рамке — новая нода · Alt+щелчок по точке убирает провода · Delete убирает выбранное</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'code'">Код собран из связей · щелчок по строке: её связь · Ctrl+Z / Ctrl+Y отмена и повтор</span>
         <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>

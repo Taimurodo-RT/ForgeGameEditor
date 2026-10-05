@@ -27,9 +27,9 @@
 //   «Шаги» — each link as steps: when it happens, the checks, what is done,
 //   what happens otherwise. Steps made by refinements are taken away with ×
 //   and added with «Добавить шаг».
+//   «Схема» — each link as a node graph to edit freely (scheme_view.h).
 //   «Код» — the Luau the links become, line by line; a line belongs to its
-//   link (a click selects it). Read only for now.
-// «Схема» comes later; its button is already there.
+//   link (a click selects it); «Править» gives a link its own code.
 //
 // While the game runs from the editor, links that happen light up in every
 // view: the game writes their ids to a file the tab watches.
@@ -40,6 +40,7 @@
 #include "forge/logic/logic.h"
 #include "forge/objects/library.h"
 #include "forge/ui/ui.h"
+#include "scheme_view.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
@@ -68,7 +69,10 @@ public:
         remember_ = remember;
     }
     void bind(Rml::DataModelConstructor& model);
-    void set_model(Rml::DataModelHandle handle) { model_ = handle; }
+    void set_model(Rml::DataModelHandle handle) {
+        model_ = handle;
+        scheme_.set_model(handle);
+    }
     // A template's picture as the UI shows it (the object library's).
     std::function<std::string(const objects::Template&)> template_icon;
 
@@ -199,26 +203,8 @@ private:
         std::vector<AddView> adds;
     };
 public:
-    // «Схема»: a node for each step, wires between them, a frame per link.
-    struct NodeView {
-        Rml::String id, kind, title, icon, text, refine; // kind: when, if, then, else, add
-        int link = 0;
-        float x = 0, y = 0;
-        bool selected = false, lit = false, adding = false;
-        std::vector<AddView> adds; // the «+» node's steps to add
-    };
-    struct WireView {
-        float x = 0, y = 0, len = 0, angle = 0;
-        bool no = false, lit = false, selected = false; // no: to «Иначе»
-    };
-    struct FrameView {
-        int id = 0;
-        Rml::String phrase, problem;
-        float x = 0, y = 0, w = 0, h = 0;
-        bool selected = false, lit = false;
-    };
-    const std::vector<NodeView>& scheme_nodes() const { return m_nodes_; }
-    const std::vector<WireView>& scheme_wires() const { return m_wires_; }
+    // «Схема»: the links as node graphs.
+    SchemeView& scheme() { return scheme_; }
 
 private:
     struct CodeLine {
@@ -250,7 +236,6 @@ private:
     void rebuild_side();
     void rebuild_steps();
     void rebuild_code();
-    void rebuild_scheme();
     void rebuild_ideas();
     void watch_fired();
     void watch_file();
@@ -259,6 +244,8 @@ private:
     void remember_mode() const;
     // Records a change: after is the whole new logic.
     void change(const logic::Logic& after, std::string label, std::string merge = {});
+    // A link gets this scheme (logic::set_scheme), as one step of the history.
+    void change_scheme(u32 link, const script::Graph& graph, std::string label, std::string merge = {});
     void apply_json(const std::string& json);
     void save();
     const logic::Thing* thing(std::string_view id) const;
@@ -275,6 +262,7 @@ private:
     }
 
     friend class LogicCommand;
+    friend class SchemeView;
 
     level::LevelModule& module_;
     ui::Ui* ui_ = nullptr;
@@ -298,6 +286,7 @@ private:
     std::filesystem::file_time_type file_time_{};
     u64 file_checked_ = 0;
 
+    SchemeView scheme_{*this};
     logic::Verbs verbs_;
     logic::Ideas ideas_;
     logic::Logic logic_;
@@ -311,8 +300,6 @@ private:
     u32 sel_link_ = 0;
     std::string pick_a_, pick_b_;
     f32 pan_x_ = 0, pan_y_ = 0;
-    f32 sch_x_ = 0, sch_y_ = 0; // «Схема» moved by dragging
-    bool grab_scheme_ = false;
     f32 board_w_ = 0, board_h_ = 0; // as last laid out
     // A drag: of a thing (id) or of the board (empty id).
     bool grabbing_ = false, dragged_ = false;
@@ -329,9 +316,6 @@ private:
     std::vector<WordRow> m_words_, m_thing_links_;
     std::vector<CardView> m_cards_;
     std::vector<CodeLine> m_code_;
-    std::vector<NodeView> m_nodes_;
-    std::vector<WireView> m_wires_;
-    std::vector<FrameView> m_frames_;
     std::vector<IdeaCard> m_idea_cards_;
     std::vector<IdeaView> m_ideas_;
     std::vector<ChoiceView> m_choices_;
@@ -340,7 +324,7 @@ private:
     Rml::String m_mode_ = "links";
     Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_;
     float m_pick_x_ = 0, m_pick_y_ = 0;
-    bool m_editing_ = false, m_sel_code_ = false;
+    bool m_editing_ = false, m_sel_code_ = false, m_sel_scheme_ = false;
     Rml::String m_edit_text_, m_edit_title_, m_edit_error_;
     bool m_picking_ = false, m_has_link_ = false, m_has_thing_ = false, m_hint_ = false;
     int m_sel_links_ = 0;
