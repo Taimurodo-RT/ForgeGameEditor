@@ -479,7 +479,9 @@ void LogicEditor::rebuild() {
         for (const objects::Template& t : lib->templates()) things_.push_back(logic::thing_of(*lib, t));
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
     problems_.clear();
-    for (const logic::Problem& p : logic::compile(logic_, verbs_, find, &scheme_.nodes()).problems)
+    if (!keep_compiled_) compiled_ = logic::compile(logic_, verbs_, find, &scheme_.nodes()).problems;
+    keep_compiled_ = false;
+    for (const logic::Problem& p : compiled_)
         if (!p.warning && !problems_.contains(p.link)) problems_[p.link] = p.text;
     // Every linked thing is on the board.
     for (const logic::Link& l : logic_.links) {
