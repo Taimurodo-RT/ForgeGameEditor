@@ -2529,6 +2529,33 @@ private:
             check(file.load(ed_.logic_file) && file.links.size() == 2, "and the file too (the game reads it again)");
             break;
         }
+        case 26:
+            // «Код» block: a link gets its own code instead of its verb.
+            lg().select_link(1);
+            check(click("lg-code-edit") && lg().editing_code() && lg().mode() == "code", "«Свой код» opens the link's code");
+            break;
+        case 27: {
+            check(shown("lg-code-text"), "the code is in a text box");
+            lg().set_code_text("if then");
+            check(click("lg-code-save") && lg().editing_code() && lg().links().find(1)->code.empty(), "code that does not compile is not kept");
+            lg().set_code_text("logic.act(\"open\", target, \"door\", self, hero)\nlogic.hint(hero, \"Скрип!\")\n");
+            check(click("lg-code-save") && !lg().editing_code(), "good code is kept");
+            const logic::Link* l = lg().links().find(1);
+            check(l && l->code.find("Скрип!") != std::string::npos, "the link has its own code");
+            break;
+        }
+        case 28: {
+            const std::vector<logic::Step> st = lg().steps_of(1);
+            check(st.size() == 2 && st[1].text == "Свой код: 2 строки", "in «Шаги» and «Схема» it is a «Код» block");
+            check(shown("lg-code-reset"), "«Вернуть обычное действие» is offered");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().find(1)->code.empty(), "Ctrl+Z takes the code back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(!lg().links().find(1)->code.empty(), "Ctrl+Y brings it again");
+            check(lg().reset_code(1) && lg().links().find(1)->code.empty(), "the link gets its verb back");
+            check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
+            break;
+        }
         default:
             lg_step_ = -1;
             return true;

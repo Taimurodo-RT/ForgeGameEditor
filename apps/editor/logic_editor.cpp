@@ -94,6 +94,7 @@ bool LogicEditor::set_mode(const std::string& mode) {
     close_picker();
     mode_ = m_mode_ = mode;
     adding_ = 0;
+    if (mode != "code") cancel_code();
     m_gallery_ = m_choosing_ = false;
     choose_link_ = 0;
     if (model_)
@@ -308,6 +309,11 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_sel_phrase", &m_sel_phrase_);
     model.Bind("lg_sel_meaning", &m_sel_meaning_);
     model.Bind("lg_sel_problem", &m_sel_problem_);
+    model.Bind("lg_sel_code", &m_sel_code_);
+    model.Bind("lg_editing", &m_editing_);
+    model.Bind("lg_edit_text", &m_edit_text_);
+    model.Bind("lg_edit_title", &m_edit_title_);
+    model.Bind("lg_edit_error", &m_edit_error_);
     model.Bind("lg_sel_name", &m_sel_name_);
     model.Bind("lg_sel_icon", &m_sel_icon_);
     model.Bind("lg_sel_links", &m_sel_links_);
@@ -448,6 +454,22 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         grab_x_ = sch_x_;
         grab_y_ = sch_y_;
     });
+    on("lg_code_edit", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        edit_code(sel_link_);
+    });
+    on("lg_code_save", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        save_code();
+    });
+    on("lg_code_cancel", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        cancel_code();
+    });
+    on("lg_code_reset", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        reset_code(sel_link_);
+    });
     on("lg_code_line", [this](Rml::Event&, const Rml::VariantList& a) {
         const u32 id = static_cast<u32>(arg_int(a, 0, 0));
         if (id) select_link(id);
@@ -544,7 +566,7 @@ void LogicEditor::rebuild() {
         const logic::Thing* ta = thing(l.a);
         const logic::Thing* tb = thing(l.b);
         v.verb = verb ? (ta && ta->plural ? verb->plural : verb->name) : l.verb;
-        v.icon = verb && !verb->icon.empty() ? verb->icon : "link";
+        v.icon = !l.code.empty() ? "code" : verb && !verb->icon.empty() ? verb->icon : "link";
         v.phrase = phrase_of(l.id);
         v.refined = l.night + l.once + l.sound + l.hint;
         v.selected = l.id == sel_link_;
@@ -612,6 +634,7 @@ void LogicEditor::rebuild_side() {
     m_has_thing_ = !l && !sel_thing_.empty();
     m_refine_.clear();
     m_sel_phrase_ = m_sel_meaning_ = m_sel_problem_ = "";
+    m_sel_code_ = l && !l->code.empty();
     if (l) {
         m_sel_phrase_ = phrase_of(l->id);
         m_sel_meaning_ = meaning_of(l->id);
@@ -640,7 +663,7 @@ void LogicEditor::rebuild_side() {
     for (const logic::Link& k : logic_.links)
         m_words_.push_back({static_cast<int>(k.id), phrase_of(k.id), meaning_of(k.id), problem_of(k.id), k.id == sel_link_, lit(k.id)});
     if (model_)
-        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem",
+        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code",
                                  "lg_thing_links", "lg_sel_name", "lg_sel_icon", "lg_sel_links", "lg_words"})
             model_.DirtyVariable(name);
 }
@@ -951,6 +974,7 @@ bool LogicEditor::refine(u32 link, const std::string& what, bool on) {
     else if (what == "once") m.once = on;
     else if (what == "sound") m.sound = on;
     else if (what == "hint") m.hint = on;
+    else if (what == "code" && !on) return reset_code(link);
     else return false;
     const char* name = what == "night" ? "только ночью" : what == "once" ? "один раз" : what == "sound" ? "со звуком" : "подсказка";
     change(after, std::string(on ? "Уточнить: " : "Убрать: ") + name);
@@ -1036,6 +1060,75 @@ void LogicEditor::rebuild_code() {
         start = end + 1;
     }
     if (model_) model_.DirtyVariable("lg_code");
+}
+
+// --- «Код» block ---------------------------------------------------------------
+
+bool LogicEditor::edit_code(u32 link) {
+    const logic::Link* l = logic_.find(link);
+    if (!l) return false;
+    if (mode_ != "code") set_mode("code");
+    sel_link_ = link;
+    editing_ = link;
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    m_edit_text_ = l->code.empty() ? logic::default_code(*l, verbs_, find) : l->code;
+    m_edit_title_ = "Свой код: «" + phrase_of(link) + "»";
+    m_edit_error_ = "";
+    m_editing_ = true;
+    if (model_)
+        for (const char* name : {"lg_editing", "lg_edit_text", "lg_edit_title", "lg_edit_error"}) model_.DirtyVariable(name);
+    rebuild();
+    return true;
+}
+
+void LogicEditor::set_code_text(std::string text) {
+    m_edit_text_ = std::move(text);
+    if (model_) model_.DirtyVariable("lg_edit_text");
+}
+
+void LogicEditor::cancel_code() {
+    if (!editing_ && !m_editing_) return;
+    editing_ = 0;
+    m_editing_ = false;
+    m_edit_error_ = "";
+    if (model_)
+        for (const char* name : {"lg_editing", "lg_edit_error"}) model_.DirtyVariable(name);
+}
+
+bool LogicEditor::save_code(std::string* error) {
+    const logic::Link* l = logic_.find(editing_);
+    if (!l) return false;
+    std::string text = m_edit_text_;
+    std::replace(text.begin(), text.end(), '\t', ' ');
+    if (!text.empty() && text.back() != '\n') text += '\n';
+    // As the game will run it: inside its link, with self, hero and target.
+    std::string message;
+    if (!script::check_syntax("local self, hero, target, logic\n" + text, &message)) {
+        m_edit_error_ = "Код не собирается: " + message;
+        if (model_) model_.DirtyVariable("lg_edit_error");
+        if (error) *error = m_edit_error_;
+        return false;
+    }
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    const bool plain = text == logic::default_code(*l, verbs_, find);
+    const u32 id = editing_;
+    const std::string phrase = phrase_of(id);
+    logic::Logic after = logic_;
+    after.find(id)->code = plain ? std::string() : text;
+    cancel_code();
+    if (after.find(id)->code != l->code) change(after, (plain ? "Обычное действие: «" : "Свой код: «") + phrase + "»");
+    select_link(id);
+    return true;
+}
+
+bool LogicEditor::reset_code(u32 link) {
+    const logic::Link* l = logic_.find(link);
+    if (!l || l->code.empty()) return false;
+    if (editing_ == link) cancel_code();
+    logic::Logic after = logic_;
+    after.find(link)->code.clear();
+    change(after, "Обычное действие: «" + phrase_of(link) + "»");
+    return true;
 }
 
 // --- «Схема» -------------------------------------------------------------------
@@ -1352,7 +1445,8 @@ bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
 
 bool LogicEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_ESCAPE) {
-        if (m_choosing_) open_choices(0, {});
+        if (editing_) cancel_code();
+        else if (m_choosing_) open_choices(0, {});
         else if (m_gallery_) open_gallery(false);
         else if (picking()) close_picker();
         else if (sel_link_ || !sel_thing_.empty()) click_board();

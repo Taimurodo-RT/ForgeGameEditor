@@ -143,6 +143,9 @@ struct Link {
     bool once = false;  // only once (for each copy)
     bool sound = false; // with the verb's sound
     bool hint = false;  // a hint when it cannot happen
+    // Its own code («Код» block): Luau run instead of the verb's action when
+    // the link happens (self, hero, target are there). Empty: the verb's.
+    std::string code;
 };
 
 // Where a thing lies on the editor's board.
@@ -256,6 +259,11 @@ Compiled compile(const Logic& logic, const Verbs& verbs, const FindThing& things
 // The whole game's code as one text, for the editor's «Код» mode; map gives
 // the link (index) of each line.
 std::string listing(const Logic& logic, const Verbs& verbs, const FindThing& things, script::SourceMap* map = nullptr);
+// What a link does as code, to start its own from: the verb's action with
+// the link's refinements («Код» block).
+std::string default_code(const Link& link, const Verbs& verbs, const FindThing& things);
+// The lines of a link's own code (none for "").
+usize code_lines(std::string_view code);
 
 // --- running -------------------------------------------------------------
 
