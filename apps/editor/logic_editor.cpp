@@ -105,6 +105,8 @@ void LogicEditor::load() {
     if (!ideas_.load(game_dir_ / "ideas.json", &error)) FORGE_ERROR("Идеи: %s", error.c_str());
     // A game without links starts with the hero on the board.
     if (logic_.board.empty() && logic_.links.empty()) logic_.set_spot(logic::kHero, 60, 60);
+    std::error_code ec;
+    file_time_ = std::filesystem::last_write_time(file_, ec);
     dirty_ = true;
 }
 
@@ -625,6 +627,7 @@ void LogicEditor::update(Rml::Context* context) {
             break;
         }
     watch_fired();
+    watch_file();
     const objects::Library* lib = module_.library();
     if (lib && lib->version() != built_lib_) dirty_ = true;
     if (dirty_) rebuild();
@@ -691,6 +694,28 @@ void LogicEditor::watch_fired() {
 void LogicEditor::save() {
     std::string error;
     if (!logic_.save(file_, &error)) FORGE_ERROR("Связи не сохранились: %s", error.c_str());
+    std::error_code ec;
+    file_time_ = std::filesystem::last_write_time(file_, ec);
+}
+
+// The running game changed the links (F2 over the game): taken in as a change
+// of its own, so Ctrl+Z takes it back. New things get places on the board.
+void LogicEditor::watch_file() {
+    const u64 now = SDL_GetTicks();
+    if (now - file_checked_ < 300) return;
+    file_checked_ = now;
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(file_, ec);
+    if (ec || time == file_time_) return;
+    logic::Logic after;
+    if (!after.load(file_)) return; // half written: next time
+    file_time_ = time;
+    for (const logic::Link& l : after.links)
+        for (const std::string& id : {l.a, l.b})
+            if (!after.spot(id)) place_free(after, id);
+    if (after.json() == logic_.json()) return;
+    FORGE_INFO("Связи изменены в игре");
+    change(after, "Связи изменены в игре");
 }
 
 void LogicEditor::apply_json(const std::string& json) {

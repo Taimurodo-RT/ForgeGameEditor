@@ -6,8 +6,9 @@
 //   forge_slice --play --level DIR --at X,Y [--fired FILE]
 //                                   a new game from a level folder, the hero at X,Y
 //                                   (the level editor's «Играть отсюда»; FILE gets the links
-//                                   that happen, for its «Логика» tab)
-//   forge_slice --test --screenshot out.png [--scene village|mine|door|menu]
+//                                   that happen, for its «Логика» tab; F2 shows the links
+//                                   over the game and draws new ones into logic.json)
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu]
 //                                   offscreen: plays the game through and checks it
 //
 // Controls: A/D walk, Space/W jump (and swim), left mouse digs or breaks a
@@ -464,9 +465,110 @@ private:
             }
             return f >= 100 && snd.loops() == 0;
         }});
+        // «Связи» over the game (F2): the things on screen get names; a click
+        // on the hero, then on a critter, offers what they can do, and the
+        // link chosen is written and played at once.
+        steps_.push_back({"связи поверх игры", 200, [&s, &g, v, stand, this](u32 f) {
+            static flecs::entity_t pet = 0;
+            static f64 x0 = 0;
+            static u32 made = 0;
+            static usize count0 = 0;
+            LinkOverlay& o = g.overlay();
+            if (f == 0) {
+                g.script(Controls{});
+                g.teleport(-30.5, v - stand);
+                check(!o.on(), "связи над игрой скрыты, пока не нажата F2");
+                return false;
+            }
+            if (f == 5) {
+                check(s.find_element("ln-tag") != nullptr, "в углу подсказка «F2 Связи»");
+                pet = g.spawn_critter(g.hero_x() + 3.5, v, Scheme::Stand);
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_KEY_DOWN;
+                ev.key.key = SDLK_F2;
+                ev.key.down = true;
+                g.handle_event(ev);
+                return false;
+            }
+            if (f == 10) {
+                check(o.on(), "F2 показывает связи");
+                bool hero = false, critter = false;
+                for (const LinkOverlay::MarkView& m : o.marks()) {
+                    hero = hero || m.id == "hero";
+                    critter = critter || m.id == "critter";
+                }
+                check(hero && critter, "над героем и зверьком их имена");
+                check(s.find_element("ln-panel") != nullptr, "список связей игры");
+                count0 = g.links().links.size();
+                x0 = g.critter_x(pet);
+                check(click(s, "ln-ring-hero"), "герой нажимается");
+                return false;
+            }
+            if (f == 12) {
+                check(o.picked() == "hero", "герой выбран первым");
+                check(click(s, "ln-ring-critter"), "зверёк нажимается");
+                return false;
+            }
+            if (f == 14) {
+                check(o.picking(), "после второй вещи — выбор, что будет");
+                i32 flee = -1;
+                for (usize i = 0; i < o.choices().size(); ++i)
+                    if (o.choices()[i].phrase.find("убегает") != std::string::npos) flee = static_cast<i32>(i);
+                check(flee >= 0, "среди вариантов «Зверёк убегает от героя»");
+                check(click(s, ("ln-choice-" + std::to_string(flee)).c_str()), "вариант нажимается");
+                return false;
+            }
+            if (f == 16) {
+                const auto& links = g.links().links;
+                check(links.size() == count0 + 1, "связь добавилась");
+                if (links.size() == count0 + 1) {
+                    const logic::Link& l = links.back();
+                    made = l.id;
+                    check(l.a == "critter" && l.verb == "flee" && l.b == "hero", "связь: зверёк убегает от героя");
+                }
+                std::vector<u8> bytes;
+                read_file(std::filesystem::temp_directory_path() / "forge_slice_test_logic.json", bytes);
+                check(std::string(bytes.begin(), bytes.end()).find("\"flee\"") != std::string::npos, "связь записана в файл связей");
+                check(!o.picking(), "выбор закрылся");
+                return false;
+            }
+            if (f == 20) { // «всё время» links happen as the copies start
+                bool lit = false;
+                for (const LinkOverlay::RowView& r : o.rows()) lit = lit || (static_cast<u32>(r.id) == made && r.lit);
+                check(lit, "сработавшая связь подсвечена");
+            }
+            if (f < 110) return false;
+            if (f == 110) {
+                check(g.critter_x(pet) > x0 + 2, "зверёк сразу убегает по новой связи");
+                if (scene_ != "links") check(click(s, ("ln-remove-" + std::to_string(made)).c_str()), "связь убирается");
+                return false;
+            }
+            if (f == 112) {
+                if (scene_ != "links") check(g.links().links.size() == count0, "связь убрана");
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_KEY_DOWN;
+                ev.key.key = SDLK_F2;
+                ev.key.down = true;
+                g.handle_event(ev);
+                return false;
+            }
+            if (f < 114) return false;
+            check(!o.on(), "F2 ещё раз — обратно к игре");
+            return true;
+        }});
         // Where the picture is taken.
-        steps_.push_back({"кадр", 200, [&s, &g, &talk, this](u32 f) {
+        steps_.push_back({"кадр", 200, [&s, &g, &talk, v, stand, this](u32 f) {
             const SliceGenerator& gen = g.generator();
+            if (scene_ == "links") { // «Связи» over the village: the hero picked, then Boris
+                if (f == 0) {
+                    g.teleport(6.5, v - stand);
+                    g.spawn_critter(2.5, v, Scheme::Stand);
+                    g.overlay().show(true);
+                }
+                if (f == 60) click(s, "ln-ring-hero");
+                if (f == 62) click(s, "ln-ring-miner");
+                return f >= 90;
+            }
             if (scene_ == "menu") {
                 if (f == 0) s.to_main_menu();
                 return f >= 120;
@@ -540,8 +642,15 @@ int main(int argc, char** argv) {
     std::string scene = "village";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--stress") == 0) options.stress = true;
+        else if (std::strcmp(argv[i], "--play") == 0) options.edit_links = true;
         else if (std::strcmp(argv[i], "--test") == 0) {
             options.silent = true;
+            // «Связи» over the game change a copy of the links, not the game's.
+            options.edit_links = true;
+            options.links_file = std::filesystem::temp_directory_path() / "forge_slice_test_logic.json";
+            std::error_code ec0;
+            std::filesystem::copy_file(utf8_path(SLICE_DATA_DIR) / "logic.json", options.links_file,
+                                       std::filesystem::copy_options::overwrite_existing, ec0);
             // The links that happen go where the test reads them.
             options.fired_file = std::filesystem::temp_directory_path() / "forge_slice_test_fired.txt";
             std::error_code ec;

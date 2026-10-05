@@ -283,8 +283,9 @@ private:
 };
 
 void SliceGame::note_fired(u32 link) {
-    if (options_.fired_file.empty()) return;
     const u64 now = SDL_GetTicks();
+    lit_[link] = now + 1500; // for «Связи» over the game
+    if (options_.fired_file.empty()) return;
     u64& last = fired_last_[link];
     if (last && now - last < 500) return;
     last = now;
@@ -391,13 +392,97 @@ bool SliceGame::door_open(f64 x, f64 y, bool& open) const {
     return found;
 }
 
+fs::path SliceGame::links_path() const {
+    return options_.links_file.empty() ? shell_->game_dir() / "logic.json" : options_.links_file;
+}
+
 bool SliceGame::reload_links(std::string* error) {
-    const fs::path dir = shell_->game_dir();
-    bool ok = verbs_.load(dir / "verbs.json", error);
-    if (ok) ok = links_.load(dir / "logic.json", error);
-    if (!ok) return false;
+    // Into new ones first: a file half written keeps the old links.
+    logic::Verbs verbs;
+    logic::Logic links;
+    const fs::path file = links_path();
+    std::error_code ec;
+    const auto time = fs::last_write_time(file, ec);
+    if (!verbs.load(shell_->game_dir() / "verbs.json", error) || !links.load(file, error)) return false;
+    verbs_ = std::move(verbs);
+    links_ = std::move(links);
+    links_time_ = time;
     if (level_) level_->links->load(links_, verbs_);
     return true;
+}
+
+void SliceGame::change_links(const logic::Logic& after, const std::string& said) {
+    std::string error;
+    if (!after.save(links_path(), &error) || !reload_links(&error)) {
+        FORGE_ERROR("Связи: %s", error.c_str());
+        shell_->toast("Связи не сохранились");
+        return;
+    }
+    shell_->toast(said);
+}
+
+void SliceGame::watch_links() {
+    const u64 now = SDL_GetTicks();
+    if (now - links_checked_ < 500) return;
+    links_checked_ = now;
+    std::error_code ec;
+    const auto time = fs::last_write_time(links_path(), ec);
+    if (ec || time == links_time_) return;
+    // Only the links matter here, not where the editor's board keeps them.
+    auto said = [this] {
+        std::string s;
+        for (const logic::Link& l : links_.links)
+            s += std::to_string(l.id) + l.a + "|" + l.verb + "|" + l.b + (l.night ? "n" : "") + (l.once ? "o" : "") +
+                 (l.sound ? "s" : "") + (l.hint ? "h" : "") + ";";
+        return s;
+    };
+    const std::string before = said();
+    if (std::string error; !reload_links(&error)) return; // half written: next time
+    if (said() != before) {
+        shell_->toast("Связи обновлены из редактора");
+    }
+}
+
+// The things on screen links can name: the hero, and of each template the
+// copy nearest to the hero.
+std::vector<Seen> SliceGame::seen_things() const {
+    std::vector<Seen> seen;
+    if (!level_) return seen;
+    const Rect view = camera_.visible_tiles(width_, height_);
+    if (hero_alive()) seen.push_back({std::string(logic::kHero), hero_x_, hero_y_, kHeroHalfW, kHeroHalfH});
+    std::unordered_map<u64, usize> at; // template key -> index in seen
+    std::unordered_map<u64, f64> best;
+    level_->scene->ecs().each([&](flecs::entity e, const objects::ObjectRef& r, const Position& p) {
+        Seen s;
+        s.x = p.tile_x();
+        s.y = p.tile_y();
+        if (const Door* d = e.try_get<Door>()) {
+            i32 x, top, bottom;
+            door_cells(p, *d, x, top, bottom);
+            s.x = x + 0.5;
+            s.y = (top + bottom + 1) * 0.5;
+            s.half_h = (bottom - top + 1) * 0.5;
+        } else if (const Body* b = e.try_get<Body>()) {
+            s.half_w = b->half_w;
+            s.half_h = b->half_h;
+        } else if (const RigidBody* rb = e.try_get<RigidBody>()) {
+            s.half_w = rb->half_w;
+            s.half_h = rb->half_h;
+        }
+        if (s.x < view.x0 || s.x > view.x1 || s.y < view.y0 || s.y > view.y1) return;
+        const f64 dist = std::hypot(s.x - hero_x_, s.y - hero_y_);
+        if (const auto it = best.find(r.key); it != best.end() && it->second <= dist) return;
+        const objects::Template* t = library_.find(r.key);
+        if (!t) return;
+        s.id = t->id;
+        best[r.key] = dist;
+        if (const auto it = at.find(r.key); it != at.end()) seen[it->second] = std::move(s);
+        else {
+            at[r.key] = seen.size();
+            seen.push_back(std::move(s));
+        }
+    });
+    return seen;
 }
 
 // --- lifetime ----------------------------------------------------------------
@@ -412,6 +497,25 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     pictures_.update(library_, make_sheet(), sheet_);
     sounds_.init(library_.sounds_folder(), options_.silent);
     logic_ = std::make_unique<SliceLogic>(*this);
+    things_.push_back(logic::hero_thing());
+    for (const objects::Template& t : library_.templates()) things_.push_back(logic::thing_of(library_, t));
+    overlay_.set_allowed(options_.edit_links);
+    overlay_.on_add = [this](const logic::Link& l) {
+        logic::Logic after = links_;
+        after.add(l);
+        const logic::VerbDef* v = verbs_.find(l.verb);
+        const logic::Thing* a = nullptr;
+        const logic::Thing* b = nullptr;
+        for (const logic::Thing& t : things_) {
+            if (t.id == l.a) a = &t;
+            if (t.id == l.b) b = &t;
+        }
+        change_links(after, v && a && b ? "Связь: «" + logic::phrase(l, *v, *a, *b) + "»" : "Связь добавлена");
+    };
+    overlay_.on_remove = [this](u32 id) {
+        logic::Logic after = links_;
+        if (after.remove(id)) change_links(after, "Связь убрана");
+    };
     if (std::string error; !reload_links(&error)) FORGE_ERROR("Связи: %s", error.c_str());
     else FORGE_INFO("Связи: действий %zu, связей %zu", verbs_.all().size(), links_.links.size());
     sprite_capacity_ = options_.stress ? options_.stress_critters + 65536 : 65536;
@@ -463,10 +567,12 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     c.Bind("copper", &h.copper);
     c.Bind("stress", &h.stress);
     c.Bind("stress_on", &h.stress_on);
+    overlay_.bind(c);
     c.BindEventCallback("select", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
         if (!a.empty()) select(static_cast<u32>(a[0].Get<int>()));
     });
     h.handle = c.GetModelHandle();
+    overlay_.set_handle(h.handle);
     if (!shell.ui().load_document(ctx, "slice/hud.rml")) return false;
 
     camera_.zoom = kZoom;
@@ -782,7 +888,10 @@ void SliceGame::handle_event(const SDL_Event& e) {
     if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
         if (e.key.key >= SDLK_1 && e.key.key < SDLK_1 + static_cast<SDL_Keycode>(kSlots)) select(static_cast<u32>(e.key.key - SDLK_1));
         if (e.key.key == SDLK_E) talk_nearest();
+        if (e.key.key == SDLK_F2 && overlay_.allowed()) overlay_.show(!overlay_.on());
     }
+    // A click on the world, not on a thing: nothing picked any more.
+    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && overlay_.on()) overlay_.cancel();
 }
 
 void SliceGame::read_input(bool input) {
@@ -801,7 +910,7 @@ void SliceGame::read_input(bool input) {
     const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mx, &my);
     const f32 density = SDL_GetWindowPixelDensity(window);
     camera_.screen_to_tile(mx * density, my * density, width_, height_, controls_.aim_x, controls_.aim_y);
-    if (shell_->over_world()) {
+    if (shell_->over_world() && !overlay_.on()) { // over «Связи» clicks pick things
         controls_.use = buttons & SDL_BUTTON_LMASK;
         controls_.place = buttons & SDL_BUTTON_RMASK;
     }
@@ -1102,6 +1211,7 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     follow_camera(dt);
     emit_effects(playing ? dt : 0.0);
     build_sprites();
+    watch_links();
     update_hud(playing);
 
     if (options_.stress) {
@@ -1276,6 +1386,21 @@ void SliceGame::update_hud(bool playing) {
     dirty(h.copper, copper, "copper");
     dirty(h.stress, Rml::String(stress), "stress");
     dirty(h.stress_on, !stress.empty(), "stress_on");
+
+    // The HUD over the menus' documents, so its hotbar and «Связи» take
+    // clicks (its bare body lets them through to the world).
+    if (Rml::Context* ctx = shell_->context(); ctx && visible) {
+        const int n = ctx->GetNumDocuments();
+        for (int i = 0; i + 1 < n; ++i)
+            if (Rml::ElementDocument* d = ctx->GetDocument(i); d->GetTitle() == "HUD") {
+                d->PullToFront();
+                break;
+            }
+    }
+    const u64 now = SDL_GetTicks();
+    std::erase_if(lit_, [now](const auto& l) { return l.second <= now; });
+    overlay_.update(overlay_.on() ? seen_things() : std::vector<Seen>{}, camera_, width_, height_, links_, verbs_, things_,
+                    [this](u32 link) { return lit_.contains(link); });
 }
 
 void SliceGame::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) {

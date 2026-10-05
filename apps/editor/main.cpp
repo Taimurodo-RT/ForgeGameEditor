@@ -48,6 +48,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -2481,6 +2482,29 @@ private:
             check(lg().links().links.size() == 2, "Ctrl+Z takes the idea back");
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
+        case 20: {
+            // The running game draws a link (F2 over the game): it writes the
+            // file, the editor takes it in.
+            logic::Logic game = lg().links();
+            game.add({0, "critter", "flee", "hero"});
+            check(game.save(ed_.logic_file), "the game writes the links");
+            std::error_code ec;
+            std::filesystem::last_write_time(ed_.logic_file, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2), ec);
+            break;
+        }
+        case 21:
+            if (hold(lg().links().links.size() == 3, "the editor takes in a link drawn in the game")) return true;
+            check(lg().links().links.back().verb == "flee" && lg().links().spot("critter"), "the link and its new thing are on the board");
+            check(lg().history().can_undo(), "as a change that can be taken back");
+            break;
+        case 22: {
+            check(shown("lg-thing-critter"), "«Зверёк» shows on the board");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().links.size() == 2, "Ctrl+Z takes the game's link back");
+            logic::Logic file;
+            check(file.load(ed_.logic_file) && file.links.size() == 2, "and the file too (the game reads it again)");
+            break;
+        }
         default:
             lg_step_ = -1;
             return true;

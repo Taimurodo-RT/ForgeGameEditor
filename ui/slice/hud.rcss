@@ -65,3 +65,129 @@ body { width: 100%; height: 100%; pointer-events: none; }
     font-effect: shadow(0px 1px #000000cc);
 }
 .stress { position: absolute; left: var(--space-3); top: 28px; color: var(--on-surface); font-effect: shadow(0px 1px #000000cc); }
+
+/* «Связи» over the world (F2): names on the things, arrows between them */
+.ln-tag {
+    position: absolute;
+    left: var(--space-3); top: var(--space-3);
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-container);
+    opacity: 0.85;
+    color: var(--on-surface);
+    font-size: var(--label-large-size);
+}
+.ln { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; }
+.ln-ring {
+    position: absolute;
+    box-sizing: border-box;
+    border-width: 2px;
+    border-color: #ffffff99;
+    border-radius: 10px;
+    pointer-events: auto;
+    cursor: pointer;
+}
+.ln-ring:hover { border-color: #ffffffff; background-color: #ffffff1f; }
+.ln-ring.linked { border-color: var(--primary); }
+.ln-ring.hero { border-color: var(--tertiary); }
+.ln-ring.picked { border-width: 3px; border-color: var(--tertiary); background-color: #ffffff26; }
+/* The name: a wide line above the ring (wider than the thing), the pill in it. */
+.ln-name {
+    position: absolute;
+    left: -150px; right: -150px; top: -6px;
+    transform: translate(0px, -100%);
+    text-align: center;
+    pointer-events: none;
+}
+.ln-name span {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 9px;
+    background-color: var(--surface-container-high);
+    color: var(--on-surface);
+    font-size: 13px;
+    white-space: nowrap;
+    pointer-events: auto;
+    cursor: pointer;
+}
+.ln-name.hero span { color: var(--tertiary); }
+.ln-name.picked span { background-color: var(--tertiary); color: var(--on-tertiary); }
+.ln-line {
+    position: absolute;
+    height: 3px;
+    margin-top: -1px;
+    transform-origin: 0px 1px;
+    background-color: var(--primary);
+}
+.ln-head { position: absolute; width: 24px; height: 24px; font-size: 24px; color: var(--primary); }
+.ln-line.lit { background-color: var(--success); height: 5px; margin-top: -2px; }
+.ln-head.lit { color: var(--success); }
+.ln-chip {
+    position: absolute;
+    height: 24px;
+    gap: 4px;
+    align-items: center;
+    padding: 0px 9px;
+    border-radius: 12px;
+    transform: translate(-50%, -50%);
+    background-color: var(--primary);
+    color: var(--on-primary);
+    font-size: 13px;
+    white-space: nowrap;
+}
+.ln-chip icon { color: var(--on-primary); }
+.ln-chip.lit { background-color: var(--success); }
+
+.ln-panel {
+    position: absolute;
+    left: var(--space-3); top: var(--space-3);
+    width: 330px;
+    max-height: 60%;
+    padding: var(--space-2);
+    gap: var(--space-1);
+    border-radius: var(--radius-lg);
+    background-color: var(--surface-container);
+    opacity: 0.96;
+    box-shadow: var(--elevation-2);
+    color: var(--on-surface);
+    pointer-events: auto;
+}
+.ln-panel-head { align-items: center; gap: var(--space-2); padding-left: var(--space-1); font-weight: 600; font-size: 14px; }
+.ln-panel-head icon { color: var(--primary); }
+.ln-rows { overflow-y: auto; gap: 2px; }
+.ln-row { align-items: center; gap: var(--space-2); padding: 2px 2px 2px var(--space-2); border-radius: 6px; font-size: 13px; }
+.ln-row icon.s { color: var(--primary); }
+.ln-row.away { color: var(--on-surface-variant); }
+.ln-row.lit { background-color: var(--success); color: #10200f; }
+.ln-row.lit icon.s { color: #10200f; }
+.ln-panel-foot { padding: var(--space-1); font-size: 12px; color: var(--on-surface-variant); }
+.ln-empty { padding: var(--space-2); font-size: 12px; color: var(--on-surface-variant); }
+.ln-tip {
+    position: absolute;
+    left: 0px; right: 0px; top: var(--space-4);
+    text-align: center;
+    color: var(--on-surface);
+    font-size: var(--title-small-size);
+    font-effect: shadow(0px 1px #000000cc);
+}
+.ln-tip.first { color: var(--tertiary); }
+.ln-picker {
+    position: absolute;
+    box-sizing: border-box;
+    width: 340px;
+    padding: var(--space-2);
+    gap: 2px;
+    border-radius: 8px;
+    border: 1px var(--outline-variant);
+    background-color: var(--surface-container-high);
+    color: var(--on-surface);
+    pointer-events: auto;
+}
+.ln-picker-head { align-items: center; padding: 0px 0px var(--space-1) var(--space-1); font-weight: 600; font-size: 14px; }
+.ln-option { padding: var(--space-2); border-radius: 6px; gap: 2px; cursor: pointer; }
+.ln-option:hover { background-color: var(--state-hover-layer); }
+.ln-option icon { color: var(--primary); }
+.ln-option .phrase { font-size: 14px; font-weight: 600; }
+.ln-option .about { font-size: 12px; color: var(--on-surface-variant); padding-left: 24px; }
