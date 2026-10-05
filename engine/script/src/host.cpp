@@ -587,4 +587,15 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
     stats_.ms = ns_to_ms(time_now_ns() - t0);
 }
 
+bool check_syntax(std::string_view source, std::string* error) {
+    lua_CompileOptions opts{};
+    size_t size = 0;
+    char* bytecode = luau_compile(source.data(), source.size(), &opts, &size);
+    // A failed compile gives a 0 byte, then the message.
+    const bool ok = bytecode && size > 0 && bytecode[0] != 0;
+    if (!ok && error) *error = bytecode && size > 1 ? std::string(bytecode + 1, size - 1) : std::string("не компилируется");
+    std::free(bytecode);
+    return ok;
+}
+
 } // namespace forge::script

@@ -739,8 +739,19 @@
 
             <!-- «Код»: the Luau the links become -->
             <div id="lg-code" class="lg-code-pane column grow" data-if="lg_mode == 'code'">
-                <div class="lg-code-note row"><icon class="s" name="info"/><span>Этот код игра собирает из связей сама. Щелчок по строке показывает её связь. Править код можно будет позже.</span></div>
-                <div class="lg-code column">
+                <div class="lg-code-note row" data-if="!lg_editing"><icon class="s" name="info"/><span class="grow">Этот код игра собирает из связей сама. Щелчок по строке показывает её связь; «Править» задаёт ей свой код.</span>
+                    <div id="lg-code-open" class="button tonal small" data-if="lg_has_link" data-event-click="lg_code_edit"><span>Править</span></div></div>
+                <div id="lg-code-editor" class="lg-code-editor column grow" data-if="lg_editing">
+                    <div class="lg-code-head row"><icon class="s" name="code"/><span class="grow">{{ lg_edit_title }}</span></div>
+                    <div class="lg-code-help">Код выполняется, когда связь срабатывает. Есть: <b>self</b> — эта вещь, <b>hero</b> — герой, <b>target</b> — с кем действие; <b>logic.act</b>, <b>logic.sound</b>, <b>logic.hint</b>, <b>logic.has</b>, <b>logic.night</b>. В других режимах связь станет блоком «Код».</div>
+                    <textarea id="lg-code-text" class="lg-code-text grow" data-value="lg_edit_text"></textarea>
+                    <div class="lg-problem row" data-if="lg_edit_error != ''"><icon class="s" name="error"/><span>{{ lg_edit_error }}</span></div>
+                    <div class="row gap-2">
+                        <div id="lg-code-save" class="button filled small" data-event-click="lg_code_save"><span>Сохранить</span></div>
+                        <div id="lg-code-cancel" class="button text small" data-event-click="lg_code_cancel"><span>Отмена</span></div>
+                    </div>
+                </div>
+                <div class="lg-code column" data-if="!lg_editing">
                     <div data-for="ln : lg_code" class="lg-line-row row" data-attr-id="'lg-code-' + ln.n" data-class-selected="ln.selected" data-class-comment="ln.comment" data-class-lit="ln.lit" data-event-click="lg_code_line(ln.link)">
                         <span class="n">{{ ln.n }}</span><span class="t">{{ ln.text }}</span>
                     </div>
@@ -753,11 +764,13 @@
                     <div class="lg-title">{{ lg_sel_phrase }}</div>
                     <div class="lg-problem row" data-if="lg_sel_problem != ''"><icon class="s" name="error"/><span>{{ lg_sel_problem }}</span></div>
                     <div class="lg-meaning">{{ lg_sel_meaning }}</div>
-                    <div class="section-title">Уточнить</div>
+                    <div class="section-title" data-if="!lg_sel_code">Уточнить</div>
                     <div data-for="r : lg_refine" class="lg-refine row" data-attr-id="'lg-refine-' + r.id" data-attr-title="r.hint" data-event-click="lg_refine(r.id)">
                         <icon data-attr-name="r.on ? 'check_box' : 'check_box_outline_blank'"/>
                         <div class="column grow"><span>{{ r.label }}</span><span class="muted body-small">{{ r.hint }}</span></div>
                     </div>
+                    <div id="lg-code-edit" class="command" data-attr-title="'Задать связи своё поведение кодом на Luau'" data-event-click="lg_code_edit"><icon name="code"/><span>{{ lg_sel_code ? 'Править свой код' : 'Свой код вместо действия…' }}</span></div>
+                    <div id="lg-code-reset" class="command" data-if="lg_sel_code" data-event-click="lg_code_reset"><icon name="undo"/><span>Вернуть обычное действие</span></div>
                     <div id="lg-remove-link" class="command" data-event-click="lg_remove_link"><icon name="delete"/><span>Удалить связь</span></div>
                 </div>
                 <div data-if="lg_has_thing" class="column">

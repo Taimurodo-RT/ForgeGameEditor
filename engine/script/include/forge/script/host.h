@@ -199,6 +199,9 @@ private:
 // The engine's own functions (log, wait, entities, variables, time…).
 void register_core_api(ScriptApi& api);
 
+// Whether Luau source compiles; the compiler's message otherwise.
+bool check_syntax(std::string_view source, std::string* error = nullptr);
+
 } // namespace forge::script
 
 FORGE_REFLECT_DECLARE(forge::script::Script)

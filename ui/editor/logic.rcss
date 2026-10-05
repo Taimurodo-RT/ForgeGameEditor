@@ -483,3 +483,22 @@
 .lg-pin.out { right: -6px; top: 25px; }
 .lg-pin.no { left: 89px; bottom: -6px; background-color: var(--outline); }
 .lg-node.lit .lg-pin { background-color: var(--success); }
+
+/* «Код» block: a link's own code */
+.lg-code-editor { gap: var(--space-2); padding: var(--space-3); min-height: 0px; }
+.lg-code-head { align-items: center; gap: var(--space-2); font-weight: 600; }
+.lg-code-head icon { color: var(--primary); }
+.lg-code-help { font-size: 12px; color: var(--on-surface-variant); }
+.lg-code-help b { color: var(--on-surface); font-weight: normal; font-family: var(--font-mono); }
+.lg-code-text {
+    min-height: 200px;
+    padding: var(--space-2);
+    border-radius: 6px;
+    border: 1px var(--outline-variant);
+    background-color: var(--surface-container-lowest);
+    color: var(--on-surface);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    white-space: pre;
+}
+.lg-code-text:focus { border-color: var(--primary); }

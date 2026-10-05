@@ -247,6 +247,45 @@ TEST_CASE("links compile to one module per listening thing") {
     CHECK(map.line_node.size() == static_cast<usize>(std::count(all.begin(), all.end(), '\n')));
 }
 
+TEST_CASE("a link with its own code runs the code instead of its verb") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kVerbs));
+    Words w;
+    Logic logic;
+    logic.add({0, "key", "open", "door", false, false, true, true});
+    // The code to start from: the verb's action with the link's refinements.
+    const std::string start = default_code(logic.links[0], verbs, w.find);
+    CHECK(start.find("logic.act(\"open\", target") != std::string::npos);
+    CHECK(start.find("logic.hint(hero") != std::string::npos);
+    CHECK(start.find("logic.fired") == std::string::npos);
+    CHECK(script::check_syntax(start));
+    std::string error;
+    CHECK_FALSE(script::check_syntax("if then", &error));
+    CHECK_FALSE(error.empty());
+
+    logic.links[0].code = "logic.act(\"open\", target, \"door\", self, hero)\nlogic.sound(self, \"bell\")\n";
+    CHECK(code_lines(logic.links[0].code) == 2);
+    Logic back;
+    REQUIRE(back.parse(logic.json()));
+    CHECK(back.links[0].code == logic.links[0].code);
+
+    const Compiled c = compile(logic, verbs, w.find);
+    const Module* door = c.find("door");
+    REQUIRE(door);
+    CHECK(door->source.find("(свой код)") != std::string::npos);
+    CHECK(door->source.find("    logic.sound(self, \"bell\")") != std::string::npos);
+    CHECK(door->source.find("logic.fired(1)") != std::string::npos);
+    CHECK(door->source.find("logic.hint") == std::string::npos);
+    CHECK(script::check_syntax(door->source));
+
+    const VerbDef& open = *verbs.find("open");
+    const std::vector<Step> st = steps(logic.links[0], open, w.things[1], w.things[2]);
+    REQUIRE(st.size() == 2);
+    CHECK(st[1].text == "Свой код: 2 строки");
+    CHECK(st[1].refine == "code");
+    CHECK(refinements(logic.links[0], open, w.things[1], w.things[2]).empty());
+}
+
 namespace {
 
 // A game that writes down what links ask of it.
