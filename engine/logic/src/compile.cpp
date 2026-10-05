@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 
 namespace forge::logic {
 
@@ -216,10 +217,99 @@ void emit(Writer& w, const Plan& p, const char* indent) {
     w.line(in + "end", at);
 }
 
+// A handler of a thing's own scheme: one of its events.
+struct OwnHandler {
+    std::string event, params;
+    std::vector<std::string> lines;
+};
+
+struct Own {
+    usize index = 0; // links.size() + its index in Logic::schemes
+    const ThingScheme* scheme = nullptr;
+    std::vector<OwnHandler> handlers;
+    bool touch = false; // it listens for the zone (enter, leave)
+};
+
 struct Built {
     std::map<std::string, std::vector<Plan>> touch, always; // by listening template
+    std::map<std::string, Own> own;                         // things' schemes, by template
     std::vector<Problem> problems;
 };
+
+std::vector<std::string> split_lines(const std::string& text) {
+    std::vector<std::string> out;
+    usize start = 0;
+    while (start < text.size()) {
+        usize end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        out.push_back(text.substr(start, end - start));
+        start = end + 1;
+    }
+    return out;
+}
+
+// A thing's scheme as handlers: each event what it leads to (problems are
+// the scheme's).
+bool own_code(const ThingScheme& t, Own& own, const FindThing& things, const script::NodeLibrary* nodes,
+              std::vector<Problem>& problems) {
+    const Thing* thing = things(t.thing);
+    if (!thing || thing->id == kHero) {
+        problems.push_back({t.id, "нет такой вещи: «" + t.thing + "»"});
+        return false;
+    }
+    script::Graph g;
+    if (!g.from_json(t.graph)) {
+        problems.push_back({t.id, "схема вещи не читается"});
+        return false;
+    }
+    if (!nodes) {
+        problems.push_back({t.id, "схема не собрана: нет библиотеки нод"});
+        return false;
+    }
+    for (script::GraphNode& n : g.nodes)
+        if (n.def == "logic.once") n.set_value("_link", std::to_string(t.id));
+    std::vector<u32> events;
+    bool ok = true;
+    for (const script::GraphNode& n : g.nodes) {
+        const script::NodeDef* d = nodes->find(n.def);
+        if (!d || d->kind != script::NodeKind::Event) continue;
+        if (thing_event(n.def)) {
+            events.push_back(n.uid);
+        } else {
+            problems.push_back({t.id, "схема: «" + d->title.get() + "» бывает только в схеме связи", n.uid});
+            ok = false;
+        }
+    }
+    std::sort(events.begin(), events.end());
+    if (events.empty()) problems.push_back({t.id, "в схеме нет ни одного события: она ничего не делает", 0, true});
+    std::set<std::pair<u32, std::string>> said;
+    for (u32 e : events) {
+        const script::NodeDef* d = nodes->find(g.find(e)->def);
+        // An event that leads nowhere does nothing: no handler for it.
+        if (std::none_of(g.links.begin(), g.links.end(), [&](const script::GraphLink& l) {
+                return l.from_node == e && l.to_pin == script::kFlowIn;
+            }))
+            continue;
+        OwnHandler h;
+        h.event = d->event;
+        h.params = "self";
+        std::vector<script::EventInput> inputs;
+        for (usize i = 0; i < d->outputs.size(); ++i) {
+            const std::string name = "e" + std::to_string(i + 1);
+            h.params += ", " + name;
+            inputs.push_back({d->outputs[i].id, name});
+        }
+        const script::CompileResult r = script::compile_event_body(g, *nodes, e, inputs);
+        for (const script::Diagnostic& diag : r.diagnostics)
+            if (said.insert({diag.node, diag.message}).second)
+                problems.push_back({t.id, "схема: " + diag.message, diag.node, !diag.error});
+        if (!r.ok) ok = false;
+        h.lines = split_lines(r.source);
+        own.touch = own.touch || h.event == "on_enter" || h.event == "on_leave";
+        own.handlers.push_back(std::move(h));
+    }
+    return ok;
+}
 
 Built build(const Logic& logic, const Verbs& verbs, const FindThing& things, const script::NodeLibrary* nodes) {
     Built b;
@@ -234,16 +324,24 @@ Built build(const Logic& logic, const Verbs& verbs, const FindThing& things, con
         if (l.code.empty() && own_scheme(l, *p.verb, *p.a, *p.b) && !scheme_code(p, nodes, b.problems)) continue;
         (p.verb->always ? b.always : b.touch)[thing_of(l, p.listener)].push_back(p);
     }
+    for (usize i = 0; i < logic.schemes.size(); ++i) {
+        const ThingScheme& t = logic.schemes[i];
+        Own own;
+        own.index = logic.links.size() + i;
+        own.scheme = &t;
+        if (own_code(t, own, things, nodes, b.problems) && !own.handlers.empty()) b.own[t.thing] = std::move(own);
+    }
     return b;
 }
 
 // One handler of the module: the links without schemes together, each
-// scheme in a handler of its own (then the module gives a list).
+// scheme in a handler of its own (then the module gives a list, and `list`
+// says it was started already).
 void write_handler(Writer& w, const std::vector<Plan>& plans, const std::string& event, const std::string& params,
-                   const std::vector<std::string>& prelude) {
+                   const std::vector<std::string>& prelude, bool list = false) {
     std::vector<const Plan*> plain, schemes;
     for (const Plan& p : plans) (p.scheme.empty() ? plain : schemes).push_back(&p);
-    if (schemes.empty()) {
+    if (schemes.empty() && !list) {
         w.line("function S." + event + "(" + params + ")");
         for (const std::string& s : prelude) w.line("  " + s);
         for (const Plan* p : plain) emit(w, *p, "  ");
@@ -251,7 +349,7 @@ void write_handler(Writer& w, const std::vector<Plan>& plans, const std::string&
         return;
     }
     const std::string add = "S." + event + "[#S." + event + " + 1] = function(" + params + ")";
-    w.line("S." + event + " = {}");
+    if (!list) w.line("S." + event + " = {}");
     if (!plain.empty()) {
         w.line(add);
         for (const std::string& s : prelude) w.line("  " + s);
@@ -267,16 +365,48 @@ void write_handler(Writer& w, const std::vector<Plan>& plans, const std::string&
     }
 }
 
+// The thing's own scheme: each event a handler in the module's lists.
+void write_own(Writer& w, const Own& own, const std::string& event, const FindThing& things) {
+    const u32 at = static_cast<u32>(own.index);
+    const Thing* t = things(own.scheme->thing);
+    for (const OwnHandler& h : own.handlers) {
+        if (h.event != event) continue;
+        w.line("S." + event + "[#S." + event + " + 1] = function(" + h.params + ")", at);
+        w.line("  -- своя схема «" + comment(t ? t->name : own.scheme->thing) + "»", at);
+        w.line("  local hero = logic.hero()", at);
+        for (const std::string& line : h.lines) w.line("  " + line, at);
+        w.line("end", at);
+    }
+}
+
 void write_module(Writer& w, const std::string& thing, const Built& b, const FindThing& things) {
     const Thing* t = things(thing);
     w.line("-- Связи «" + comment(t ? t->name : thing) + "». Сделано из режима «Связи»: правки здесь перезапишутся.");
     w.line("local logic = forge.logic");
     w.line("local S = {}");
-    if (const auto it = b.always.find(thing); it != b.always.end())
-        write_handler(w, it->second, "on_start", "self", {"local hero = logic.hero()"});
-    if (const auto it = b.touch.find(thing); it != b.touch.end())
-        write_handler(w, it->second, "on_enter", "self, other",
-                      {"if not logic.is_hero(other) then return end", "local hero = other"});
+    const auto own = b.own.find(thing);
+    auto owns = [&](const char* event) {
+        if (own == b.own.end()) return false;
+        for (const OwnHandler& h : own->second.handlers)
+            if (h.event == event) return true;
+        return false;
+    };
+    for (const char* event : {"on_start", "on_tick", "on_enter", "on_leave", "on_hit", "on_message"}) {
+        const std::string ev = event;
+        const std::map<std::string, std::vector<Plan>>* links = ev == "on_start" ? &b.always : ev == "on_enter" ? &b.touch : nullptr;
+        const auto it = links ? links->find(thing) : std::map<std::string, std::vector<Plan>>::const_iterator{};
+        const bool linked = links && it != links->end();
+        const bool mine = owns(event);
+        if (!linked && !mine) continue;
+        if (mine) w.line("S." + ev + " = {}");
+        if (linked) {
+            if (ev == "on_start") write_handler(w, it->second, ev, "self", {"local hero = logic.hero()"}, mine);
+            else
+                write_handler(w, it->second, ev, "self, other",
+                              {"if not logic.is_hero(other) then return end", "local hero = other"}, mine);
+        }
+        if (mine) write_own(w, own->second, ev, things);
+    }
     w.line("return S");
 }
 
@@ -285,6 +415,8 @@ std::vector<std::string> listeners(const Built& b) {
     for (const auto& [t, _] : b.touch) out.push_back(t);
     for (const auto& [t, _] : b.always)
         if (!b.touch.contains(t)) out.push_back(t);
+    for (const auto& [t, _] : b.own)
+        if (!b.touch.contains(t) && !b.always.contains(t)) out.push_back(t);
     std::sort(out.begin(), out.end());
     return out;
 }
@@ -311,7 +443,8 @@ Compiled compile(const Logic& logic, const Verbs& verbs, const FindThing& things
         m.name = module_name(thing);
         m.source = std::move(w.text);
         m.map.line_node = std::move(w.lines);
-        m.touch = b.touch.contains(thing);
+        const auto own = b.own.find(thing);
+        m.touch = b.touch.contains(thing) || (own != b.own.end() && own->second.touch);
         out.modules.push_back(std::move(m));
     }
     return out;

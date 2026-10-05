@@ -155,6 +155,11 @@ public:
     // Where thing i is drawn (board pixels, after panning).
     bool thing_at(const std::string& id, f32& x, f32& y) const;
 
+    // A thing's own scheme (no link): made when it has none, then shown in
+    // «Схема». Returns its id (0: not a thing that can have one).
+    u32 thing_scheme(const std::string& thing);
+    bool remove_thing_scheme(u32 id);
+
 private:
     struct ThingView {
         Rml::String id, name, icon;
@@ -246,6 +251,7 @@ private:
     void change(const logic::Logic& after, std::string label, std::string merge = {});
     // A link gets this scheme (logic::set_scheme), as one step of the history.
     void change_scheme(u32 link, const script::Graph& graph, std::string label, std::string merge = {});
+    void change_thing_scheme(u32 id, const script::Graph& graph, std::string label, std::string merge = {});
     void apply_json(const std::string& json);
     void save();
     const logic::Thing* thing(std::string_view id) const;
@@ -324,7 +330,7 @@ private:
     Rml::String m_mode_ = "links";
     Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_;
     float m_pick_x_ = 0, m_pick_y_ = 0;
-    bool m_editing_ = false, m_sel_code_ = false, m_sel_scheme_ = false;
+    bool m_editing_ = false, m_sel_code_ = false, m_sel_scheme_ = false, m_sel_own_ = false;
     Rml::String m_edit_text_, m_edit_title_, m_edit_error_;
     bool m_picking_ = false, m_has_link_ = false, m_has_thing_ = false, m_hint_ = false;
     int m_sel_links_ = 0;

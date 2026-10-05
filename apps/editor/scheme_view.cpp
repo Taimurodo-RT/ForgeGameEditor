@@ -22,6 +22,7 @@ namespace {
 constexpr f32 kNodeW = 250, kHead = 30, kRowH = 26, kFoot = 8;
 constexpr f32 kFramePad = 24, kFrameHead = 34, kFrameGap = 40;
 constexpr f32 kNoteH = 70; // a frame without a scheme: its note
+constexpr f32 kTop = 60;   // the first frame: under «+ Своя схема вещи»
 
 int arg_int(const Rml::VariantList& a, usize i, int fallback) { return i < a.size() ? a[i].Get<int>() : fallback; }
 Rml::String arg_str(const Rml::VariantList& a, usize i) { return i < a.size() ? a[i].Get<Rml::String>() : Rml::String(); }
@@ -186,6 +187,7 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("selected", &FrameView::selected);
         s.RegisterMember("lit", &FrameView::lit);
         s.RegisterMember("custom", &FrameView::custom);
+        s.RegisterMember("own", &FrameView::own);
     }
     model.RegisterArray<std::vector<FrameView>>();
     if (auto s = model.RegisterStruct<OptionView>()) {
@@ -256,8 +258,8 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         }
         if (button != 0) return;
         close_palette();
-        if (ed_.sel_link_ != link) ed_.select_link(link);
         sel_node_ = 0;
+        select_frame(link);
         wire_selected_ = false;
         drag_ = Drag::Pan;
         dragged_ = false;
@@ -344,6 +346,10 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
         ev.StopPropagation();
         reset(static_cast<u32>(arg_int(a, 0, 0)));
     });
+    on("sc_own_add", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        open_things();
+    });
     on("sc_search", [this](Rml::Event& ev, const Rml::VariantList&) { set_search(ev.GetParameter<Rml::String>("value", "")); });
     on("sc_pal_pick", [this](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
@@ -379,6 +385,7 @@ void SchemeView::bind(Rml::DataModelConstructor& model) {
     on("sc_pick_close", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
         m_choosing_ = false;
+        picking_thing_ = false;
         dirty("sc_choosing");
     });
 }
@@ -390,8 +397,28 @@ const script::Graph* SchemeView::graph(u32 link) const {
     return it == shown_.end() ? nullptr : &it->second;
 }
 
+bool SchemeView::own(u32 frame) const { return frame && ed_.logic_.find_scheme(frame) != nullptr; }
+
+bool SchemeView::known(u32 frame) const { return frame && (ed_.logic_.find(frame) || own(frame)); }
+
+void SchemeView::select_frame(u32 frame) {
+    if (own(frame)) {
+        sel_own_ = frame;
+        if (ed_.sel_link_) ed_.select_link(0);
+        else rebuild();
+        return;
+    }
+    sel_own_ = 0;
+    if (ed_.sel_link_ != frame) ed_.select_link(frame);
+}
+
 script::Graph SchemeView::editable(u32 link) const {
     if (const script::Graph* g = graph(link)) return *g;
+    if (const logic::ThingScheme* t = ed_.logic_.find_scheme(link)) {
+        script::Graph g;
+        g.from_json(t->graph);
+        return g;
+    }
     const logic::Link* l = ed_.logic_.find(link);
     if (!l) return {};
     const logic::FindThing find = [this](std::string_view id) { return ed_.thing(id); };
@@ -400,7 +427,8 @@ script::Graph SchemeView::editable(u32 link) const {
 
 void SchemeView::commit(u32 link, const script::Graph& g, const std::string& label, const std::string& merge) {
     shown_[link] = g;
-    ed_.change_scheme(link, g, label, merge);
+    if (own(link)) ed_.change_thing_scheme(link, g, label, merge);
+    else ed_.change_scheme(link, g, label, merge);
 }
 
 const script::PinDef* SchemeView::in_pin(const script::Graph& g, u32 node, const std::string& pin) const {
@@ -435,7 +463,9 @@ bool SchemeView::fits(const script::Graph& g, u32 from, const std::string& from_
 
 u32 SchemeView::add_node(u32 link, const std::string& def, f32 x, f32 y) {
     const script::NodeDef* d = nodes_.find(def);
-    if (!d || d->kind == script::NodeKind::Event || !ed_.logic_.find(link)) return 0;
+    if (!d || !known(link)) return 0;
+    // Links start at «Когда»; a thing's scheme at the events.
+    if (d->kind == script::NodeKind::Event && !(own(link) && logic::thing_event(def))) return 0;
     script::Graph g = editable(link);
     script::GraphNode& n = g.add(def, std::round(x), std::round(y));
     n.version = d->version;
@@ -448,6 +478,10 @@ u32 SchemeView::add_node(u32 link, const std::string& def, f32 x, f32 y) {
 
 // A new node about the link's things knows them already.
 void SchemeView::prefill(u32 link, script::GraphNode& n) const {
+    if (const logic::ThingScheme* t = ed_.logic_.find_scheme(link)) {
+        if (n.def == "logic.act") n.set_value("thing", t->thing);
+        return;
+    }
     const logic::Link* l = ed_.logic_.find(link);
     if (!l) return;
     const logic::VerbDef* v = ed_.verbs_.find(l->verb);
@@ -558,23 +592,24 @@ void SchemeView::click_pin(u32 link, u32 node, bool out, const std::string& pin)
 }
 
 void SchemeView::select_node(u32 link, u32 node) {
-    if (ed_.sel_link_ != link) ed_.select_link(link);
     sel_link_node_ = link;
     sel_node_ = node;
     wire_selected_ = false;
+    select_frame(link);
     rebuild();
 }
 
 void SchemeView::select_wire(u32 link, usize wire) {
-    if (ed_.sel_link_ != link) ed_.select_link(link);
     sel_wire_link_ = link;
     sel_wire_ = wire;
     wire_selected_ = true;
     sel_node_ = 0;
+    select_frame(link);
     rebuild();
 }
 
 bool SchemeView::reset(u32 link) {
+    if (own(link)) return ed_.remove_thing_scheme(link);
     logic::Logic after = ed_.logic_;
     logic::Link* l = after.find(link);
     if (!l || (l->graph.empty() && l->code.empty())) return false;
@@ -609,10 +644,36 @@ void SchemeView::open_pick(u32 link, u32 node, const std::string& pin) {
     for (const char* name : {"sc_choosing", "sc_choices", "sc_choose_x", "sc_choose_y"}) dirty(name);
 }
 
+void SchemeView::open_things() {
+    close_palette();
+    m_choices_.clear();
+    for (const logic::Thing& t : ed_.things_)
+        if (t.id != logic::kHero && !ed_.logic_.scheme_for(t.id)) m_choices_.push_back({t.id, t.name});
+    picking_thing_ = true;
+    // Under the button, at the pane's top right.
+    m_choose_x_ = std::max(8.0f, pane_w_ - 236);
+    m_choose_y_ = 44;
+    m_choosing_ = true;
+    for (const char* name : {"sc_choosing", "sc_choices", "sc_choose_x", "sc_choose_y"}) dirty(name);
+}
+
+void SchemeView::focus(u32 frame) {
+    for (const FrameView& f : m_frames_)
+        if (static_cast<u32>(f.id) == frame) {
+            pan_y_ -= f.y - kTop;
+            rebuild();
+            return;
+        }
+}
+
 bool SchemeView::pick(const std::string& value) {
     if (!m_choosing_) return false;
     m_choosing_ = false;
     dirty("sc_choosing");
+    if (picking_thing_) {
+        picking_thing_ = false;
+        return ed_.thing_scheme(value) != 0;
+    }
     return set_value(pick_link_, pick_node_, pick_pin_, value);
 }
 
@@ -624,7 +685,7 @@ std::string SchemeView::node_problem(u32 link, u32 node) const {
 // --- the list of nodes ---------------------------------------------------------
 
 void SchemeView::open_palette(u32 link, f32 x, f32 y) {
-    if (!ed_.logic_.find(link)) return;
+    if (!known(link)) return;
     pal_link_ = link;
     pal_x_ = x;
     pal_y_ = y;
@@ -642,6 +703,7 @@ void SchemeView::open_palette(u32 link, f32 x, f32 y) {
         m_pal_y_ = std::clamp(m_pal_y_, 8.0f, std::max(8.0f, pane_h_ - 400));
     }
     m_choosing_ = false;
+    picking_thing_ = false;
     dirty("sc_choosing");
     rebuild_palette();
     for (const char* name : {"sc_palette", "sc_search", "sc_pal_x", "sc_pal_y"}) dirty(name);
@@ -664,15 +726,18 @@ usize SchemeView::palette_items() const { return m_palette_items_.size(); }
 void SchemeView::rebuild_palette() {
     m_palette_items_.clear();
     const std::string want = lower(search_);
-    // The links' nodes first, then the library's groups as they come.
-    std::vector<std::string> groups{"Связи"};
+    // The links' nodes first (a thing's scheme: its events), then the
+    // library's groups as they come.
+    const bool events = own(pal_link_);
+    std::vector<std::string> groups{events ? "События" : "Связи"};
     for (const script::NodeDef& d : nodes_.all())
         if (std::find(groups.begin(), groups.end(), d.category) == groups.end()) groups.push_back(d.category);
     for (const std::string& group : groups) {
         bool first = true;
         for (const script::NodeDef& d : nodes_.all()) {
             if (d.category != group || d.hidden) continue;
-            if (d.kind == script::NodeKind::Event || d.kind == script::NodeKind::Comment) continue;
+            if (d.kind == script::NodeKind::Event && !(events && logic::thing_event(d.id))) continue;
+            if (d.kind == script::NodeKind::Comment) continue;
             if (d.id == "std.graph.entry" || d.id == "std.graph.return") continue;
             if (!want.empty() && lower(d.title.get()).find(want) == std::string::npos &&
                 lower(d.category).find(want) == std::string::npos)
@@ -780,7 +845,17 @@ void SchemeView::rebuild() {
         }
         shown[l.id] = logic::scheme_of(l, ed_.verbs_, find);
     }
+    for (const logic::ThingScheme& t : ed_.logic_.schemes) {
+        if (drag_ == Drag::Node && dragged_ && t.id == drag_link_ && shown_.contains(t.id)) {
+            shown[t.id] = shown_[t.id];
+            continue;
+        }
+        script::Graph g;
+        g.from_json(t.graph);
+        shown[t.id] = std::move(g);
+    }
     shown_ = std::move(shown);
+    if (sel_own_ && !own(sel_own_)) sel_own_ = 0;
     if (pend_link_ && !shown_.contains(pend_link_)) pend_link_ = 0;
     if (wire_selected_ && (!shown_.contains(sel_wire_link_) || sel_wire_ >= shown_[sel_wire_link_].links.size()))
         wire_selected_ = false;
@@ -790,22 +865,33 @@ void SchemeView::rebuild() {
     m_wires_.clear();
     m_frames_.clear();
     places_.clear();
-    f32 top = 20 + pan_y_;
+    f32 top = kTop + pan_y_;
     const f32 left = 20 + pan_x_;
-    for (const logic::Link& l : ed_.logic_.links) {
-        const bool selected = l.id == ed_.sel_link_, on = ed_.lit(l.id);
+    std::vector<u32> frames;
+    for (const logic::Link& l : ed_.logic_.links) frames.push_back(l.id);
+    for (const logic::ThingScheme& t : ed_.logic_.schemes) frames.push_back(t.id);
+    for (const u32 fid : frames) {
+        const logic::Link* lk = ed_.logic_.find(fid);
+        const logic::ThingScheme* ts = lk ? nullptr : ed_.logic_.find_scheme(fid);
+        const bool selected = lk ? fid == ed_.sel_link_ : fid == sel_own_, on = lk && ed_.lit(fid);
         FrameView f;
-        f.id = static_cast<int>(l.id);
-        f.phrase = ed_.phrase_of(l.id);
-        f.problem = ed_.problem_of(l.id);
+        f.id = static_cast<int>(fid);
+        f.problem = ed_.problem_of(fid);
         f.selected = selected;
         f.lit = on;
-        f.custom = logic::own_scheme(l, ed_.verbs_, find) || !l.code.empty();
         f.x = left;
         f.y = top;
-        if (!l.code.empty()) {
+        if (ts) {
+            const logic::Thing* t = ed_.thing(ts->thing);
+            f.phrase = "«" + (t ? t->name : ts->thing) + "» сама по себе";
+            f.own = true;
+        } else {
+            f.phrase = ed_.phrase_of(fid);
+            f.custom = logic::own_scheme(*lk, ed_.verbs_, find) || !lk->code.empty();
+        }
+        if (lk && !lk->code.empty()) {
             // Its own code decides: the scheme is not used.
-            f.note = "Связь задана своим кодом (" + std::to_string(logic::code_lines(l.code)) +
+            f.note = "Связь задана своим кодом (" + std::to_string(logic::code_lines(lk->code)) +
                      " стр.): он правится в режиме «Код». «Как в Связях» вернёт ей схему.";
             f.w = 520;
             f.h = kFrameHead + kNoteH;
@@ -813,7 +899,7 @@ void SchemeView::rebuild() {
             top += f.h + kFrameGap;
             continue;
         }
-        const script::Graph& g = shown_[l.id];
+        const script::Graph& g = shown_[fid];
         // Sizes first: the frame holds every node.
         std::map<u32, std::pair<usize, usize>> sizes; // rows of each node: left, right
         f32 min_x = 1e9f, min_y = 1e9f, max_x = -1e9f, max_y = -1e9f;
@@ -835,7 +921,7 @@ void SchemeView::rebuild() {
             max_y = std::max(max_y, n.y + h);
         }
         if (g.nodes.empty()) min_x = min_y = max_x = max_y = 0;
-        places_[l.id] = {left, top, min_x, min_y};
+        places_[fid] = {left, top, min_x, min_y};
         const f32 ox = left + kFramePad - min_x, oy = top + kFrameHead - min_y;
         f.w = std::max(420.0f, max_x - min_x + kFramePad * 2);
         f.h = max_y - min_y + kFrameHead + kFramePad;
@@ -853,10 +939,10 @@ void SchemeView::rebuild() {
         for (const script::GraphNode& n : g.nodes) {
             const script::NodeDef* d = nodes_.find(n.def);
             NodeView v;
-            v.id = node_id(l.id, n.uid);
-            v.link = static_cast<int>(l.id);
+            v.id = node_id(fid, n.uid);
+            v.link = static_cast<int>(fid);
             v.uid = static_cast<int>(n.uid);
-            v.title = node_title(l.id, n, d);
+            v.title = node_title(fid, n, d);
             v.icon = d && !d->icon.empty() ? d->icon : "circle";
             v.tone = tone_of(d);
             v.help = d ? d->help.get() : std::string();
@@ -865,16 +951,16 @@ void SchemeView::rebuild() {
             v.w = kNodeW;
             v.h = heights[n.uid];
             spans[n.uid] = {v.y, v.y + v.h};
-            v.selected = sel_node_ == n.uid && sel_link_node_ == l.id;
+            v.selected = sel_node_ == n.uid && sel_link_node_ == fid;
             v.lit = on;
             v.fixed = n.def == "logic.when";
-            if (const auto it = node_problems_.find({l.id, n.uid}); it != node_problems_.end()) {
+            if (const auto it = node_problems_.find({fid, n.uid}); it != node_problems_.end()) {
                 v.problem = it->second.first;
                 v.warning = it->second.second;
             }
             std::vector<PinView> left_pins, right_pins;
             auto pend = [&](bool out, const std::string& pin) {
-                return pend_link_ == l.id && pend_node_ == n.uid && pend_out_ == out && pend_pin_ == pin;
+                return pend_link_ == fid && pend_node_ == n.uid && pend_out_ == out && pend_pin_ == pin;
             };
             if (d) {
                 if (d->has_flow_in()) {
@@ -907,8 +993,8 @@ void SchemeView::rebuild() {
                             p.check = p.value == "true" || p.value == "1" || p.value == "да";
                         } else if (pd.type == script::ValueType::Number || pd.type == script::ValueType::Integer) {
                             p.field = "number";
-                        } else if (pd.type != script::ValueType::Entity && pd.type != script::ValueType::Table &&
-                                   pd.type != script::ValueType::Any) {
+                        } else if (pd.type != script::ValueType::Entity && pd.type != script::ValueType::Table) {
+                            // Any: a number, yes/no or text, as typed.
                             p.field = "text";
                         }
                     }
@@ -929,7 +1015,7 @@ void SchemeView::rebuild() {
                 for (const script::PinDef& pd : d->outputs) {
                     PinView p;
                     p.id = pd.id;
-                    p.title = out_title(l.id, n, pd);
+                    p.title = out_title(fid, n, pd);
                     p.kind = kind_of(pd.type);
                     p.on = true;
                     p.wired = wired_out.contains({n.uid, pd.id});
@@ -1002,23 +1088,23 @@ void SchemeView::rebuild() {
             const auto b = pins.find({gl.to_node, false, gl.to_pin});
             if (a == pins.end() || b == pins.end()) continue;
             WireView w;
-            w.id = "sc-wire-" + std::to_string(l.id) + "-" + std::to_string(i);
-            w.link = static_cast<int>(l.id);
+            w.id = "sc-wire-" + std::to_string(fid) + "-" + std::to_string(i);
+            w.link = static_cast<int>(fid);
             w.index = static_cast<int>(i);
             w.kind = pin_kind[{gl.from_node, true, gl.from_pin}];
             w.flow = gl.to_pin == script::kFlowIn;
             w.lit = on;
-            w.selected = wire_selected_ && sel_wire_link_ == l.id && sel_wire_ == i;
+            w.selected = wire_selected_ && sel_wire_link_ == fid && sel_wire_ == i;
             add_wire(a->second.first, a->second.second, b->second.first, b->second.second, spans[gl.from_node],
                      spans[gl.to_node], std::move(w));
         }
         // A wire on its way: from its pin to the mouse.
-        if (drag_ == Drag::Wire && dragged_ && pend_link_ == l.id) {
+        if (drag_ == Drag::Wire && dragged_ && pend_link_ == fid) {
             const auto a = pins.find({pend_node_, pend_out_, pend_pin_});
             if (a != pins.end()) {
                 WireView w;
                 w.id = "sc-wire-pending";
-                w.link = static_cast<int>(l.id);
+                w.link = static_cast<int>(fid);
                 w.index = -1;
                 w.kind = pin_kind[{pend_node_, pend_out_, pend_pin_}];
                 w.flow = w.kind == "flow";

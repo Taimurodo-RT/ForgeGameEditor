@@ -2640,6 +2640,79 @@ private:
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
         }
+        case 32:
+            // A thing's own scheme: what the door does by itself, no link.
+            lg().select_thing("door");
+            check(lg().selected_thing() == "door", "the door is selected on the board");
+            break;
+        case 33:
+            check(shown("lg-thing-scheme") && click("lg-thing-scheme") && lg().mode() == "scheme", "«Своя схема вещи…» opens «Схема»");
+            check(lg().links().scheme_for("door") != nullptr && lg().links().schemes.size() == 1, "the door has a scheme of its own");
+            break;
+        case 34: {
+            SchemeView& sc = lg().scheme();
+            const logic::ThingScheme* own = lg().links().scheme_for("door");
+            if (!check(own != nullptr, "the scheme is there")) break;
+            const u32 id = own->id;
+            const std::string f = std::to_string(id);
+            check(shown("sc-frame-" + f) && sc.own(id) && shown("sc-drop-" + f), "it is a frame of its own, one that can be taken away");
+            const script::Graph* g = sc.graph(id);
+            u32 start = 0, tick = 0;
+            for (const script::GraphNode& n : g ? g->nodes : std::vector<script::GraphNode>{}) {
+                if (n.def == "std.event.start") start = n.uid;
+                if (n.def == "std.event.tick") tick = n.uid;
+            }
+            check(start && tick && shown("sc-node-" + f + "-" + std::to_string(tick)), "it starts with «При старте» and «Каждый шаг»");
+            // Its list has the events; a link's has not.
+            sc.open_palette(id, 0, 400);
+            sc.set_search("удар");
+            const usize events = sc.palette_items();
+            check(events >= 1 && sc.palette_pick("std.event.hit"), "«При ударе» is in its list and is added");
+            sc.open_palette(1, 0, 400);
+            sc.set_search("удар");
+            check(sc.palette_items() < events, "a link's list has no events");
+            sc.close_palette();
+            check(sc.add_node(1, "std.event.tick", 0, 0) == 0, "and a link takes none");
+            // Каждый шаг → Сдвинуть (этот объект): it moves by itself.
+            const u32 move = sc.add_node(id, "api.entity.move", 280, 190);
+            check(move && sc.connect(id, tick, script::kFlowNext, move, script::kFlowIn), "«Сдвинуть» after «Каждый шаг»");
+            const u32 self = sc.add_node(id, "std.self", 0, 400);
+            check(self && sc.connect(id, self, "actor", move, "actor") && sc.connect(id, tick, "dt", move, "dx"), "«Этот объект» and the time are wired in");
+            check(sc.node_problem(id, move).empty() && lg().problem_of(id).empty(), "and the scheme works");
+            logic::Logic file;
+            check(file.load(ed_.logic_file) && file.scheme_for("door") && file.scheme_for("door")->graph.find("api.entity.move") != std::string::npos,
+                  "the file keeps it");
+            lg().set_mode("code");
+            break;
+        }
+        case 35: {
+            bool has = false;
+            const u32 id = lg().links().scheme_for("door") ? lg().links().scheme_for("door")->id : 0;
+            for (usize i = 0; i < lg().code_lines(); ++i) has |= id && lg().code_link(i) == id;
+            check(has, "«Код» shows the door's own scheme");
+            lg().set_mode("scheme");
+            break;
+        }
+        case 36: {
+            SchemeView& sc = lg().scheme();
+            check(click("sc-own-add") && sc.picking(), "«+ Своя схема вещи» lists the things");
+            break;
+        }
+        case 37:
+            check(!shown("sc-choice-door") && shown("sc-choice-crate") && !shown("sc-choice-hero"), "the ones without a scheme, not the hero");
+            check(click("sc-choice-crate") && lg().links().schemes.size() == 2 && lg().links().scheme_for("crate"), "a pick starts the crate's");
+            break;
+        case 38: {
+            check(lg().links().scheme_for("crate") && shown("sc-frame-" + std::to_string(lg().links().scheme_for("crate")->id)), "its frame is shown");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().schemes.size() == 1, "Ctrl+Z takes it back");
+            const u32 id = lg().links().scheme_for("door")->id;
+            check(click("sc-drop-" + std::to_string(id)) && lg().links().schemes.empty(), "«Убрать» takes the door's away");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lg().links().scheme_for("door") != nullptr, "Ctrl+Z brings it back");
+            check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
+            break;
+        }
         default:
             lg_step_ = -1;
             return true;
