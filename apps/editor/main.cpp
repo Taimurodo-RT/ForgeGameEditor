@@ -2502,7 +2502,9 @@ private:
             u32 act = 0;
             for (const script::GraphNode& n : sc.graph(1)->nodes)
                 if (n.def == "logic.act") act = n.uid;
-            check(shown("sc-wire-1-0") && shown("sc-choice-key"), "wires are drawn, the list has the game's things");
+            bool curves = !sc.wire_views().empty();
+            for (const SchemeView::WireView& w : sc.wire_views()) curves &= w.points.size() > 8;
+            check(curves && shown("sc-choice-key"), "wires are drawn as curves, the list has the game's things");
             check(click("sc-choice-key") && !sc.picking(), "a thing is picked");
             const script::GraphNode* n = sc.graph(1)->find(act);
             check(n && n->value("thing") && *n->value("thing") == "key", "and kept on the node");
@@ -2537,9 +2539,20 @@ private:
             check(shown("sc-reset-1") && click("sc-reset-1") && sc.graph(1) && !sc.graph(1)->find(added), "«Как в Связях» takes the own scheme away");
             // Moving a node keeps the link plain, the node stays where it was put.
             const u32 when = sc.graph(1) ? logic::when_node(*sc.graph(1)) : 0;
-            check(sc.move_node(1, when, -200, 40) && sc.graph(1)->find(when) && sc.graph(1)->find(when)->x == -200, "a node is moved");
+            // A plain link is shown in order: «Когда» first, the others right of it or under it.
+            bool ordered = sc.graph(1) && when;
+            if (ordered)
+                for (const script::GraphNode& n : sc.graph(1)->nodes)
+                    if (n.uid != when) ordered &= n.x != sc.graph(1)->find(when)->x || n.y != sc.graph(1)->find(when)->y;
+            check(ordered, "a plain link is laid out, no node on another");
+            check(sc.move_node(1, when, -203, 41) && sc.graph(1)->find(when) && sc.graph(1)->find(when)->x == -208 &&
+                      sc.graph(1)->find(when)->y == 48,
+                  "a node is moved, onto the grid");
             const std::vector<logic::Step> st2 = lg().steps_of(1);
             check(st2.size() < 2 || st2[1].text.rfind("Уточнено", 0) != 0, "moving changes nothing in the link");
+            check(shown("sc-arrange-1") && click("sc-arrange-1") && sc.graph(1)->find(when)->x != -208, "«Упорядочить» puts it back in order");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(sc.graph(1)->find(when)->x == -208, "Ctrl+Z undoes it");
             const script::Graph* g2 = sc.graph(2);
             check(g2 && click("sc-node-2-" + std::to_string(logic::when_node(*g2))) && lg().selected_link() == 2, "a node of the other link selects it");
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");

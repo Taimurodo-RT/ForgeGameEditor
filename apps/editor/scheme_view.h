@@ -19,6 +19,13 @@
 //   click a wire            selects it (Delete takes it away)
 //   right click, «+ Нода»   the list of nodes, with a search
 //   Delete                  the selected node or wire («Когда» stays)
+//   «Упорядочить»           lays the frame's nodes out in order
+//
+// It looks like a Blueprint: a grid under it, wires as curves (drawn by
+// <lines>), white flow wires between arrow pins, coloured value wires
+// between round ones, nodes as wide as their rows. What happens reads left
+// to right; the values a step needs lie under it, to its left. A link whose
+// nodes were never moved is shown laid out so; nodes snap to the grid.
 //
 // A thing may have a scheme of its own, with no link: what each copy does by
 // itself («При старте», «Каждый шаг», «При ударе»…). It is a frame too, under
@@ -31,10 +38,12 @@
 
 #include "forge/logic/logic.h"
 #include "forge/script/nodes.h"
+#include "forge/ui/drawing.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -47,6 +56,9 @@ class LogicEditor;
 class SchemeView {
 public:
     explicit SchemeView(LogicEditor& editor);
+    ~SchemeView();
+    SchemeView(const SchemeView&) = delete;
+    SchemeView& operator=(const SchemeView&) = delete;
 
     void bind(Rml::DataModelConstructor& model);
     void set_model(Rml::DataModelHandle handle) { model_ = handle; }
@@ -68,6 +80,8 @@ public:
     u32 add_node(u32 link, const std::string& def, f32 x, f32 y);
     bool remove_node(u32 link, u32 node);
     bool move_node(u32 link, u32 node, f32 x, f32 y);
+    // The nodes laid out in order (left to right, values under their step).
+    bool arrange(u32 link);
     // Joins an output (a flow exit or a value) to an input; false when they
     // do not fit. A flow exit or a value input keeps one wire: the new one.
     bool connect(u32 link, u32 from, const std::string& from_pin, u32 to, const std::string& to_pin);
@@ -129,19 +143,12 @@ public:
         std::vector<RowView> rows;
         bool operator==(const NodeView&) const = default;
     };
-    // A straight piece of a wire, from the corner of the wire's box.
-    struct SegView {
-        float x = 0, y = 0, len = 0;
-        bool across = true; // left to right; false: top to bottom
-        bool operator==(const SegView&) const = default;
-    };
+    // A wire: its curve's points in the pane (drawn by <lines source="sc-wires">).
     struct WireView {
         Rml::String id, kind;
         int link = 0, index = 0;
-        float x = 0, y = 0, w = 0, h = 0; // the box it lies in
-        std::vector<SegView> segs;
+        std::vector<f32> points;
         bool selected = false, lit = false, flow = false, pending = false;
-        bool operator==(const WireView&) const = default;
     };
     struct FrameView {
         int id = 0;
@@ -164,9 +171,23 @@ public:
     const std::vector<NodeView>& node_views() const { return m_nodes_; }
     const std::vector<WireView>& wire_views() const { return m_wires_; }
     const std::vector<FrameView>& frame_views() const { return m_frames_; }
+    // The wire under a point of the pane (-1: none) and its frame.
+    int wire_at(f32 x, f32 y, u32& link) const;
 
 private:
     enum class Drag { None, Pan, Node, Wire };
+    // A node's look: its title, pins in rows and size.
+    struct NodeBox {
+        Rml::String title;
+        std::vector<PinView> left, right;
+        f32 w = 0, h = 0;
+    };
+    struct Lines : ui::LineSource {
+        std::vector<ui::Line> list;
+        u64 counter = 0;
+        const std::vector<ui::Line>& lines() const override { return list; }
+        u64 version() const override { return counter; }
+    };
     struct Place {
         f32 x = 0, y = 0;    // the frame's corner on screen
         f32 min_x = 0, min_y = 0; // the scheme's corner
@@ -187,6 +208,11 @@ private:
     void prefill(u32 link, script::GraphNode& n) const;
     std::string node_title(u32 link, const script::GraphNode& n, const script::NodeDef* d) const;
     std::string out_title(u32 link, const script::GraphNode& n, const script::PinDef& p) const;
+    std::string option_name(const std::string& list, const std::string& id) const;
+    NodeBox box_of(u32 link, const script::Graph& g, const script::GraphNode& n) const;
+    void lay_out(u32 link, script::Graph& g) const;
+    void rebuild_grid();
+    static u32 wire_color(const std::string& kind);
     void dirty(const char* name) {
         if (model_) model_.DirtyVariable(name);
     }
@@ -224,6 +250,7 @@ private:
     bool picking_thing_ = false; // the list is of things for a scheme
     u32 sel_own_ = 0;            // a thing scheme's frame selected
     Rml::Context* context_ = nullptr;
+    Lines wires_, grid_;
 
     // Model mirrors
     std::vector<NodeView> m_nodes_;

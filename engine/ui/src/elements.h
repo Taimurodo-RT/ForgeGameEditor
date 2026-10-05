@@ -1,11 +1,12 @@
 #pragma once
 
-// Custom elements: <icon> and <virtual-list>.
+// Custom elements: <icon>, <virtual-list>, <lines> and <shape>.
 
 #include "forge/core/types.h"
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Geometry.h>
 
 #include <filesystem>
 #include <string>
@@ -76,6 +77,38 @@ private:
     u32 count_ = ~0u;
     u64 version_ = ~0ull;
     i64 pending_scroll_row_ = -1;
+};
+
+// <lines source="…">: see forge/ui/drawing.h.
+class ElementLines final : public Rml::Element {
+public:
+    explicit ElementLines(const Rml::String& tag_name);
+
+protected:
+    void OnRender() override;
+    void OnAttributeChange(const Rml::ElementAttributes& changed) override;
+
+private:
+    std::string source_name_;
+    u64 version_ = ~0ull;
+    Rml::Geometry geometry_;
+};
+
+// <shape kind="exec"/>: see forge/ui/drawing.h.
+class ElementShape final : public Rml::Element {
+public:
+    explicit ElementShape(const Rml::String& tag_name);
+
+protected:
+    void OnRender() override;
+    void OnResize() override;
+    void OnAttributeChange(const Rml::ElementAttributes& changed) override;
+    void OnPropertyChange(const Rml::PropertyIdSet& changed) override;
+
+private:
+    Rml::Geometry geometry_;
+    bool dirty_ = true;
+    bool filled_ = false;
 };
 
 } // namespace forge::ui

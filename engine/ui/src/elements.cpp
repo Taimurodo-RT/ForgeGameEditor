@@ -3,10 +3,15 @@
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/profile.h"
+#include "forge/ui/drawing.h"
 #include "forge/ui/virtual_list.h"
 
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/ComputedValues.h>
+#include <RmlUi/Core/Mesh.h>
+#include <RmlUi/Core/PropertyIdSet.h>
+#include <RmlUi/Core/RenderManager.h>
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +25,7 @@ namespace {
 std::unordered_map<std::string, u32> g_icons;
 std::unordered_map<std::string, ListSource*> g_sources;
 std::unordered_set<ElementVirtualList*> g_lists;
+std::unordered_map<std::string, LineSource*> g_line_sources;
 
 std::string utf8(u32 cp) {
     std::string out;
@@ -340,6 +346,173 @@ void ElementVirtualList::ProcessEvent(Rml::Event& event) {
     if (index != ListSource::kNoRow) source->on_row_event(index, event.GetType(), modifiers);
     else if (event.GetType() == "click" && (event.GetTargetElement() == this || event.GetTargetElement() == content_))
         source->on_empty_click(modifiers); // not the scroll bar
+}
+
+// --- <lines> and <shape> ---------------------------------------------------------
+
+void register_line_source(const std::string& name, LineSource* source) {
+    if (source) g_line_sources[name] = source;
+    else g_line_sources.erase(name);
+}
+
+void wire_curve(f32 x0, f32 y0, f32 x1, f32 y1, std::vector<f32>& out) {
+    // The handles stick out sideways; further when the wire goes back left.
+    const f32 dx = x1 - x0;
+    const f32 reach = std::clamp(std::fabs(dx) * 0.5f + (dx < 0 ? 60.0f : 0.0f), 30.0f, 260.0f);
+    const f32 c0x = x0 + reach, c1x = x1 - reach;
+    const f32 len = std::fabs(dx) + std::fabs(y1 - y0) + 2 * reach;
+    const int steps = std::clamp(static_cast<int>(len / 12.0f), 8, 64);
+    for (int i = 0; i <= steps; ++i) {
+        const f32 t = static_cast<f32>(i) / static_cast<f32>(steps), u = 1 - t;
+        const f32 a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+        out.push_back(a * x0 + b * c0x + c * c1x + d * x1);
+        out.push_back(a * y0 + b * y0 + c * y1 + d * y1);
+    }
+}
+
+f32 distance_to(const std::vector<f32>& p, f32 x, f32 y) {
+    f32 best = 1e30f;
+    for (usize i = 0; i + 3 < p.size(); i += 2) {
+        const f32 ax = p[i], ay = p[i + 1], bx = p[i + 2], by = p[i + 3];
+        const f32 vx = bx - ax, vy = by - ay;
+        const f32 l2 = vx * vx + vy * vy;
+        const f32 t = l2 > 0 ? std::clamp(((x - ax) * vx + (y - ay) * vy) / l2, 0.0f, 1.0f) : 0.0f;
+        best = std::min(best, std::hypot(ax + vx * t - x, ay + vy * t - y));
+    }
+    return best;
+}
+
+namespace {
+
+Rml::ColourbPremultiplied premultiplied(u32 rgba, f32 opacity) {
+    const f32 a = static_cast<f32>(rgba & 0xff) * opacity;
+    const auto ch = [&](u32 shift) { return static_cast<Rml::byte>(static_cast<f32>((rgba >> shift) & 0xff) * a / 255.0f + 0.5f); };
+    return Rml::ColourbPremultiplied(ch(24), ch(16), ch(8), static_cast<Rml::byte>(a + 0.5f));
+}
+
+// A thick line along points with a soft pixel at each edge.
+void add_polyline(Rml::Mesh& mesh, const f32* p, usize count, Rml::ColourbPremultiplied color, f32 width, bool closed) {
+    if (count < 2) return;
+    // Thin lines fade instead of thinning below a pixel.
+    if (width < 1) {
+        color = Rml::ColourbPremultiplied(static_cast<Rml::byte>(color.red * width), static_cast<Rml::byte>(color.green * width),
+                                          static_cast<Rml::byte>(color.blue * width), static_cast<Rml::byte>(color.alpha * width));
+        width = 1;
+    }
+    const f32 half = width * 0.5f - 0.5f, soft = half + 1.0f;
+    const Rml::ColourbPremultiplied clear(0, 0, 0, 0);
+    const int base = static_cast<int>(mesh.vertices.size());
+    const usize n = closed ? count + 1 : count;
+    for (usize k = 0; k < n; ++k) {
+        const usize i = k % count;
+        const usize prev = closed ? (i + count - 1) % count : (i == 0 ? 0 : i - 1);
+        const usize next = closed ? (i + 1) % count : std::min(i + 1, count - 1);
+        f32 tx = p[next * 2] - p[prev * 2], ty = p[next * 2 + 1] - p[prev * 2 + 1];
+        const f32 tl = std::hypot(tx, ty);
+        if (tl < 1e-4f) tx = 1, ty = 0;
+        else tx /= tl, ty /= tl;
+        // The normal, longer at corners so the width stays (up to a limit).
+        f32 nx = -ty, ny = tx, scale = 1;
+        if (prev != i && next != i) {
+            f32 ax = p[i * 2] - p[prev * 2], ay = p[i * 2 + 1] - p[prev * 2 + 1];
+            const f32 al = std::hypot(ax, ay);
+            if (al > 1e-4f) {
+                ax /= al, ay /= al;
+                const f32 dot = -ay * nx + ax * ny;
+                scale = 1.0f / std::max(0.4f, dot);
+            }
+        }
+        const f32 x = p[i * 2], y = p[i * 2 + 1];
+        const f32 offs[4] = {soft, half, -half, -soft};
+        for (int j = 0; j < 4; ++j) {
+            Rml::Vertex v;
+            v.position = {x + nx * offs[j] * scale, y + ny * offs[j] * scale};
+            v.colour = (j == 0 || j == 3) ? clear : color;
+            v.tex_coord = {0, 0};
+            mesh.vertices.push_back(v);
+        }
+    }
+    for (usize k = 0; k + 1 < n; ++k) {
+        const int a = base + static_cast<int>(k) * 4, b = a + 4;
+        for (int j = 0; j < 3; ++j) {
+            mesh.indices.insert(mesh.indices.end(), {a + j, b + j, b + j + 1, a + j, b + j + 1, a + j + 1});
+        }
+    }
+}
+
+} // namespace
+
+ElementLines::ElementLines(const Rml::String& tag_name) : Rml::Element(tag_name) {}
+
+void ElementLines::OnAttributeChange(const Rml::ElementAttributes& changed) {
+    Rml::Element::OnAttributeChange(changed);
+    if (changed.count("source")) {
+        source_name_ = GetAttribute<Rml::String>("source", "");
+        version_ = ~0ull;
+    }
+}
+
+void ElementLines::OnRender() {
+    const auto it = g_line_sources.find(source_name_);
+    if (it == g_line_sources.end()) return;
+    const LineSource& src = *it->second;
+    if (src.version() != version_ || !geometry_) {
+        version_ = src.version();
+        Rml::Mesh mesh;
+        const f32 opacity = GetComputedValues().opacity();
+        for (const Line& l : src.lines())
+            add_polyline(mesh, l.points.data(), l.points.size() / 2, premultiplied(l.color, opacity), l.width, false);
+        geometry_ = mesh ? GetRenderManager()->MakeGeometry(std::move(mesh)) : Rml::Geometry();
+    }
+    if (geometry_) geometry_.Render(GetAbsoluteOffset(Rml::BoxArea::Border));
+}
+
+ElementShape::ElementShape(const Rml::String& tag_name) : Rml::Element(tag_name) {}
+
+void ElementShape::OnAttributeChange(const Rml::ElementAttributes& changed) {
+    Rml::Element::OnAttributeChange(changed);
+    if (changed.count("fill") || changed.count("kind")) {
+        const Rml::String fill = GetAttribute<Rml::String>("fill", "");
+        filled_ = fill == "true" || fill == "1";
+        dirty_ = true;
+    }
+}
+
+void ElementShape::OnResize() { dirty_ = true; }
+
+void ElementShape::OnPropertyChange(const Rml::PropertyIdSet& changed) {
+    Rml::Element::OnPropertyChange(changed);
+    if (changed.Contains(Rml::PropertyId::Color) || changed.Contains(Rml::PropertyId::Opacity)) dirty_ = true;
+}
+
+void ElementShape::OnRender() {
+    if (dirty_) {
+        dirty_ = false;
+        const Rml::Vector2f size = GetBox().GetSize(Rml::BoxArea::Content);
+        const Rml::Colourb c = GetComputedValues().color();
+        const u32 rgba = (static_cast<u32>(c.red) << 24) | (static_cast<u32>(c.green) << 16) | (static_cast<u32>(c.blue) << 8) | c.alpha;
+        const Rml::ColourbPremultiplied color = premultiplied(rgba, GetComputedValues().opacity());
+        // An arrow head: a box with a point to the right (Unreal's flow pin).
+        const f32 w = size.x, h = size.y, in = 1.0f;
+        const f32 pts[10] = {in, in, w * 0.55f, in, w - in, h * 0.5f, w * 0.55f, h - in, in, h - in};
+        Rml::Mesh mesh;
+        if (filled_) {
+            add_polyline(mesh, pts, 5, color, 1.0f, true);
+            const int base = static_cast<int>(mesh.vertices.size());
+            for (int i = 0; i < 5; ++i) {
+                Rml::Vertex v;
+                v.position = {pts[i * 2], pts[i * 2 + 1]};
+                v.colour = color;
+                v.tex_coord = {0, 0};
+                mesh.vertices.push_back(v);
+            }
+            for (int i = 1; i < 4; ++i) mesh.indices.insert(mesh.indices.end(), {base, base + i, base + i + 1});
+        } else {
+            add_polyline(mesh, pts, 5, color, 1.6f, true);
+        }
+        geometry_ = mesh ? GetRenderManager()->MakeGeometry(std::move(mesh)) : Rml::Geometry();
+    }
+    if (geometry_) geometry_.Render(GetAbsoluteOffset(Rml::BoxArea::Content));
 }
 
 } // namespace forge::ui
