@@ -105,14 +105,11 @@ std::string entity(const Plan& p, Side s) {
     return "logic.nearest(" + quote(t) + ", self, 32)";
 }
 
-void emit(Writer& w, const Plan& p, const char* indent) {
+// What the link does, from its check to its end (in: the indent).
+void emit_body(Writer& w, const Plan& p, const std::string& in, bool fired) {
     const Link& l = *p.link;
     const VerbDef& v = *p.verb;
     const u32 at = static_cast<u32>(p.index);
-    const std::string in(indent);
-    w.line(in + "-- " + comment(phrase(l, v, *p.a, *p.b)), at);
-    w.line(in + "do", at);
-    w.line(in + "  local target = " + entity(p, v.target), at);
     std::string cond = "target";
     bool can_fail = false;
     if (!v.needs.empty()) {
@@ -126,23 +123,48 @@ void emit(Writer& w, const Plan& p, const char* indent) {
         cond += " and logic.night()";
         can_fail = true;
     }
-    w.line(in + "  if " + cond + " then", at);
-    std::string body = in + "    ";
+    w.line(in + "if " + cond + " then", at);
+    std::string body = in + "  ";
     if (l.once) {
         w.line(body + "if logic.first(self, " + std::to_string(l.id) + ") then", at);
         body += "  ";
     }
-    w.line(body + "logic.fired(" + std::to_string(l.id) + ")", at);
+    if (fired) w.line(body + "logic.fired(" + std::to_string(l.id) + ")", at);
     w.line(body + "logic.act(" + quote(v.action) + ", target, " + quote(thing_of(l, v.target)) + ", " +
                entity(p, other(v.target)) + ", hero)",
            at);
     if (l.sound && !v.sound.empty()) w.line(body + "logic.sound(self, " + quote(v.sound) + ")", at);
-    if (l.once) w.line(in + "    end", at);
+    if (l.once) w.line(in + "  end", at);
     if (l.hint && can_fail && !v.fail.empty()) {
-        w.line(in + "  else", at);
-        w.line(in + "    logic.hint(hero, " + quote(fill(v.fail, *p.a, *p.b)) + ")", at);
+        w.line(in + "else", at);
+        w.line(in + "  logic.hint(hero, " + quote(fill(v.fail, *p.a, *p.b)) + ")", at);
     }
-    w.line(in + "  end", at);
+    w.line(in + "end", at);
+}
+
+void emit(Writer& w, const Plan& p, const char* indent) {
+    const Link& l = *p.link;
+    const u32 at = static_cast<u32>(p.index);
+    const std::string in(indent);
+    w.line(in + "-- " + comment(phrase(l, *p.verb, *p.a, *p.b)) + (l.code.empty() ? "" : " (свой код)"), at);
+    w.line(in + "do", at);
+    w.line(in + "  local target = " + entity(p, p.verb->target), at);
+    if (l.code.empty()) {
+        emit_body(w, p, in + "  ", true);
+    } else {
+        // Its own code: it happened, then the author's lines.
+        w.line(in + "  logic.fired(" + std::to_string(l.id) + ")", at);
+        usize start = 0;
+        while (start <= l.code.size()) {
+            usize end = l.code.find('\n', start);
+            if (end == std::string::npos) end = l.code.size();
+            std::string_view line(l.code.data() + start, end - start);
+            if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+            if (end == l.code.size() && line.empty()) break;
+            w.line(in + "  " + std::string(line), at);
+            start = end + 1;
+        }
+    }
     w.line(in + "end", at);
 }
 
@@ -222,6 +244,23 @@ Compiled compile(const Logic& logic, const Verbs& verbs, const FindThing& things
         out.modules.push_back(std::move(m));
     }
     return out;
+}
+
+std::string default_code(const Link& link, const Verbs& verbs, const FindThing& things) {
+    Link plain = link;
+    plain.code.clear();
+    Plan p;
+    std::string problem;
+    if (!plan(plain, 0, verbs, things, p, problem)) return "-- " + comment(problem) + "\n";
+    Writer w;
+    emit_body(w, p, "", false);
+    return w.text;
+}
+
+usize code_lines(std::string_view code) {
+    usize n = 0;
+    for (char c : code) n += c == '\n';
+    return n + (!code.empty() && code.back() != '\n');
 }
 
 std::string listing(const Logic& logic, const Verbs& verbs, const FindThing& things, script::SourceMap* map) {

@@ -132,6 +132,16 @@ public:
     usize code_lines() const { return m_code_.size(); }
     u32 code_link(usize line) const { return static_cast<u32>(m_code_[line].link); }
     bool remove_link();
+    // «Код» block: a link's own code instead of its verb's action. edit_code
+    // opens it (the verb's action as code when it has none yet) in «Код»;
+    // save_code checks and keeps it (false and a message when it does not
+    // compile); reset_code gives the link its verb back.
+    bool edit_code(u32 link);
+    bool editing_code() const { return editing_ != 0; }
+    void set_code_text(std::string text);
+    bool save_code(std::string* error = nullptr);
+    void cancel_code();
+    bool reset_code(u32 link);
     // Plain words: the phrase and the meaning of a link ("" when unknown).
     std::string phrase_of(u32 link) const;
     std::string meaning_of(u32 link) const;
@@ -275,6 +285,7 @@ private:
     bool remember_ = false;
     std::string mode_ = "links";
     u32 adding_ = 0; // the card whose «Добавить шаг» is open
+    u32 editing_ = 0; // the link whose code is open in «Код»
     u32 choose_link_ = 0;
     std::string choose_side_;
     std::filesystem::path fired_file_;
@@ -329,6 +340,8 @@ private:
     Rml::String m_mode_ = "links";
     Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_;
     float m_pick_x_ = 0, m_pick_y_ = 0;
+    bool m_editing_ = false, m_sel_code_ = false;
+    Rml::String m_edit_text_, m_edit_title_, m_edit_error_;
     bool m_picking_ = false, m_has_link_ = false, m_has_thing_ = false, m_hint_ = false;
     int m_sel_links_ = 0;
 };

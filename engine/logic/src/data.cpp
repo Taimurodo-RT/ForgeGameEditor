@@ -213,6 +213,7 @@ bool Logic::parse(std::string_view json, std::string* error) {
         l.once = flag(v, "once");
         l.sound = flag(v, "sound");
         l.hint = flag(v, "hint");
+        l.code = str(v, "code");
         if (l.a.empty() || l.b.empty() || l.verb.empty()) continue;
         if (l.id == 0 || out.find(l.id)) l.id = 0; // given one below
         out.links.push_back(std::move(l));
@@ -251,6 +252,7 @@ std::string Logic::json() const {
         if (l.once) yyjson_mut_obj_add_bool(doc, o, "once", true);
         if (l.sound) yyjson_mut_obj_add_bool(doc, o, "sound", true);
         if (l.hint) yyjson_mut_obj_add_bool(doc, o, "hint", true);
+        if (!l.code.empty()) yyjson_mut_obj_add_strncpy(doc, o, "code", l.code.data(), l.code.size());
         yyjson_mut_arr_append(list, o);
     }
     yyjson_mut_obj_add_val(doc, root, "links", list);
