@@ -188,6 +188,29 @@ private:
         std::vector<StepView> steps;
         std::vector<AddView> adds;
     };
+public:
+    // «Схема»: a node for each step, wires between them, a frame per link.
+    struct NodeView {
+        Rml::String id, kind, title, icon, text, refine; // kind: when, if, then, else, add
+        int link = 0;
+        float x = 0, y = 0;
+        bool selected = false, lit = false, adding = false;
+        std::vector<AddView> adds; // the «+» node's steps to add
+    };
+    struct WireView {
+        float x = 0, y = 0, len = 0, angle = 0;
+        bool no = false, lit = false, selected = false; // no: to «Иначе»
+    };
+    struct FrameView {
+        int id = 0;
+        Rml::String phrase, problem;
+        float x = 0, y = 0, w = 0, h = 0;
+        bool selected = false, lit = false;
+    };
+    const std::vector<NodeView>& scheme_nodes() const { return m_nodes_; }
+    const std::vector<WireView>& scheme_wires() const { return m_wires_; }
+
+private:
     struct CodeLine {
         int n = 0, link = 0;
         Rml::String text;
@@ -217,6 +240,7 @@ private:
     void rebuild_side();
     void rebuild_steps();
     void rebuild_code();
+    void rebuild_scheme();
     void rebuild_ideas();
     void watch_fired();
     void watch_file();
@@ -276,6 +300,8 @@ private:
     u32 sel_link_ = 0;
     std::string pick_a_, pick_b_;
     f32 pan_x_ = 0, pan_y_ = 0;
+    f32 sch_x_ = 0, sch_y_ = 0; // «Схема» moved by dragging
+    bool grab_scheme_ = false;
     f32 board_w_ = 0, board_h_ = 0; // as last laid out
     // A drag: of a thing (id) or of the board (empty id).
     bool grabbing_ = false, dragged_ = false;
@@ -292,6 +318,9 @@ private:
     std::vector<WordRow> m_words_, m_thing_links_;
     std::vector<CardView> m_cards_;
     std::vector<CodeLine> m_code_;
+    std::vector<NodeView> m_nodes_;
+    std::vector<WireView> m_wires_;
+    std::vector<FrameView> m_frames_;
     std::vector<IdeaCard> m_idea_cards_;
     std::vector<IdeaView> m_ideas_;
     std::vector<ChoiceView> m_choices_;

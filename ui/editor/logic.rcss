@@ -407,3 +407,79 @@
 .lg-card.lit, .lg-recipe.lit { border-color: var(--success); }
 .lg-word.lit { border-left: 4px var(--success); }
 .lg-line-row.lit { background-color: var(--primary-container); color: var(--on-primary-container); }
+
+/* «Схема»: nodes in frames, a frame per link, wires between the nodes */
+.lg-scheme {
+    flex: 1 1 0px;
+    min-width: 0px;
+    position: relative;
+    overflow: hidden;
+    border-radius: 6px;
+    background-color: var(--surface-container-lowest);
+    cursor: move;
+}
+.lg-frame {
+    position: absolute;
+    box-sizing: border-box;
+    border-radius: 10px;
+    border: 1px var(--outline-variant);
+    background-color: var(--surface-container);
+    cursor: pointer;
+}
+.lg-frame.selected { border-color: var(--tertiary); }
+.lg-frame.lit { border-color: var(--success); }
+.lg-frame-head { height: 30px; align-items: center; gap: var(--space-2); padding: 0px var(--space-3); font-size: 13px; font-weight: 600; color: var(--on-surface-variant); }
+.lg-frame.selected .lg-frame-head { color: var(--on-surface); }
+.lg-frame-head icon.err { color: var(--error); }
+.lg-wire {
+    position: absolute;
+    height: 3px;
+    margin-top: -1px;
+    transform-origin: 0px 1px;
+    background-color: var(--on-surface-variant);
+}
+.lg-wire.no { background-color: var(--outline); }
+.lg-wire.selected { background-color: var(--on-surface); }
+.lg-wire.lit { background-color: var(--success); }
+.lg-node {
+    position: absolute;
+    box-sizing: border-box;
+    width: 190px;
+    height: 96px;
+    border-radius: 8px;
+    border: 1px var(--outline-variant);
+    background-color: var(--surface-container-high);
+    cursor: pointer;
+}
+.lg-node.selected { border-color: var(--tertiary); }
+.lg-node.lit { border-color: var(--success); }
+.lg-node-head {
+    height: 30px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0px var(--space-1) 0px var(--space-3);
+    border-radius: 8px 8px 0px 0px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.lg-node.when .lg-node-head { background-color: #7a2e2e; color: #ffe9e6; }
+.lg-node.if .lg-node-head { background-color: #4a4f5c; color: #eef0f6; }
+.lg-node.then .lg-node-head { background-color: #2e5a8a; color: #e8f1ff; }
+.lg-node.else .lg-node-head { background-color: #5c4a2e; color: #fff1dc; }
+.lg-node.add { border-style: dashed; background-color: var(--surface-container); }
+.lg-node.add .lg-node-head { color: var(--on-surface-variant); }
+.lg-node-head icon { color: inherit; }
+.lg-node-head .icon-button { color: inherit; }
+.lg-node-body { padding: var(--space-2) var(--space-3); font-size: 13px; color: var(--on-surface); }
+/* Exec pins on the sides; «Нет» under an «Если» */
+.lg-pin {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background-color: var(--on-surface-variant);
+}
+.lg-pin.in { left: -6px; top: 25px; }
+.lg-pin.out { right: -6px; top: 25px; }
+.lg-pin.no { left: 89px; bottom: -6px; background-color: var(--outline); }
+.lg-node.lit .lg-pin { background-color: var(--success); }
