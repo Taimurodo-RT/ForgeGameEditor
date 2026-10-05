@@ -595,7 +595,7 @@
                 <div id="lg-mode-links" class="lg-mode" data-class-selected="lg_mode == 'links'" title="Вещи и связи между ними" data-event-click="lg_mode('links')"><icon name="share"/><span>Связи</span></div>
                 <div id="lg-mode-ideas" class="lg-mode" data-class-selected="lg_mode == 'ideas'" title="Готовые идеи с парой полей" data-event-click="lg_mode('ideas')"><icon name="lightbulb"/><span>Идеи</span></div>
                 <div id="lg-mode-steps" class="lg-mode" data-class-selected="lg_mode == 'steps'" title="Та же логика по шагам: когда, если, тогда, иначе" data-event-click="lg_mode('steps')"><icon name="format_list_numbered"/><span>Шаги</span></div>
-                <div id="lg-mode-scheme" class="lg-mode soon" title="Схема из узлов для опытных: скоро" data-event-click="lg_mode('scheme')"><icon name="hub"/><span>Схема</span></div>
+                <div id="lg-mode-scheme" class="lg-mode" data-class-selected="lg_mode == 'scheme'" title="Та же логика схемой из узлов, как в Unreal" data-event-click="lg_mode('scheme')"><icon name="hub"/><span>Схема</span></div>
                 <div id="lg-mode-code" class="lg-mode" data-class-selected="lg_mode == 'code'" title="Та же логика кодом на Luau" data-event-click="lg_mode('code')"><icon name="code"/><span>Код</span></div>
             </div>
             <div class="grow"/>
@@ -707,6 +707,33 @@
                             <div data-for="ad : c.adds" class="lg-add-chip" data-attr-id="'lg-add-step-' + c.id + '-' + ad.id" data-attr-title="ad.about" data-event-click="lg_step_add(c.id, ad.id)">{{ ad.label }}</div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- «Схема»: each link a frame of nodes (Когда → Если → Тогда, Иначе under them) -->
+            <div id="lg-scheme" class="lg-scheme grow" data-if="lg_mode == 'scheme'" data-event-mousedown="lg_scheme_down">
+                <div class="lg-empty muted" data-if="lg_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи».</div>
+                <div data-for="f : lg_frames" class="lg-frame" data-attr-id="'lg-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit"
+                     data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'">
+                    <div class="lg-frame-head row" data-event-mousedown="lg_stop" data-event-click="lg_node(f.id)"><span class="grow">{{ f.phrase }}</span><icon class="s err" name="error" data-if="f.problem != ''" data-attr-title="f.problem"/></div>
+                </div>
+                <div data-for="w : lg_wires" class="lg-wire" data-class-no="w.no" data-class-lit="w.lit" data-class-selected="w.selected"
+                     data-style-left="w.x + 'px'" data-style-top="w.y + 'px'" data-style-width="w.len + 'px'" data-style-transform="'rotate(' + w.angle + 'deg)'"></div>
+                <div data-for="n : lg_nodes" data-attr-class="'lg-node column ' + n.kind + (n.selected ? ' selected' : '') + (n.lit ? ' lit' : '')" data-attr-id="'lg-node-' + n.id"
+                     data-style-left="n.x + 'px'" data-style-top="n.y + 'px'" data-event-mousedown="lg_stop" data-event-click="lg_node(n.link)">
+                    <div class="lg-node-head row">
+                        <icon class="s" data-attr-name="n.icon"/><span class="grow">{{ n.title }}</span>
+                        <div class="icon-button small" data-if="n.refine != ''" data-attr-id="'lg-node-x-' + n.link + '-' + n.refine" title="Убрать шаг" data-event-click="lg_step_remove(n.link, n.refine)"><icon class="s" name="close"/></div>
+                    </div>
+                    <div class="lg-node-body" data-if="n.kind != 'add'">{{ n.text }}</div>
+                    <div class="lg-node-body row lg-add-list" data-if="n.kind == 'add'">
+                        <div class="command" data-if="!n.adding" data-attr-id="'lg-node-add-' + n.link" data-event-click="lg_step_adds(n.link)"><icon name="add"/><span>Уточнить</span></div>
+                        <div data-if="n.adding" data-for="ad : n.adds" class="lg-add-chip" data-attr-id="'lg-node-add-' + n.link + '-' + ad.id" data-attr-title="ad.about" data-event-click="lg_step_add(n.link, ad.id)">{{ ad.label }}</div>
+                    </div>
+                    <div class="lg-pin in" data-if="n.kind != 'when' && n.kind != 'else'"></div>
+                    <div class="lg-pin in" data-if="n.kind == 'else'"></div>
+                    <div class="lg-pin out" data-if="n.kind == 'when' || n.kind == 'if' || n.kind == 'then'"></div>
+                    <div class="lg-pin no" data-if="n.kind == 'if'"></div>
                 </div>
             </div>
 
@@ -1060,6 +1087,7 @@
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'links'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи, потом по другой: связать · Del удалить · Esc отмена · перетаскивание: двигать вещи и доску</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'ideas'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи в идее: выбрать другую · «Раскрыть в шаги» показывает подробности · Esc отмена</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'steps'">Ctrl+Z / Ctrl+Y отмена и повтор · × убирает шаг · «Добавить шаг» уточняет связь · Del удаляет выбранную связь</span>
+        <span class="muted" data-if="tab == 'logic' && lg_mode == 'scheme'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по узлу: его связь · × убирает шаг · «Уточнить» добавляет · перетаскивание двигает схему</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'code'">Код собран из связей · щелчок по строке: её связь · Ctrl+Z / Ctrl+Y отмена и повтор</span>
         <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>

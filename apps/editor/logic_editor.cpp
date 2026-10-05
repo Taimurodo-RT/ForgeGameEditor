@@ -26,7 +26,13 @@ const char* part_label(std::string_view part) {
     return "Иначе";
 }
 
-bool known_mode(std::string_view m) { return m == "links" || m == "ideas" || m == "steps" || m == "code"; }
+bool known_mode(std::string_view m) {
+    return m == "links" || m == "ideas" || m == "steps" || m == "scheme" || m == "code";
+}
+
+// «Схема»: the size of a node and the room between them.
+constexpr f32 kNodeW = 190, kNodeH = 96, kNodeGap = 40, kFramePad = 18, kFrameHead = 34, kLaneGap = 36;
+constexpr f32 kPinY = 30; // the exec pins, from a node's top
 
 constexpr u64 kLitMs = 1500; // how long a link that happened stays lit
 
@@ -209,6 +215,44 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("lit", &CodeLine::lit);
     }
     model.RegisterArray<std::vector<CodeLine>>();
+    if (auto s = model.RegisterStruct<NodeView>()) {
+        s.RegisterMember("id", &NodeView::id);
+        s.RegisterMember("kind", &NodeView::kind);
+        s.RegisterMember("title", &NodeView::title);
+        s.RegisterMember("icon", &NodeView::icon);
+        s.RegisterMember("text", &NodeView::text);
+        s.RegisterMember("refine", &NodeView::refine);
+        s.RegisterMember("link", &NodeView::link);
+        s.RegisterMember("x", &NodeView::x);
+        s.RegisterMember("y", &NodeView::y);
+        s.RegisterMember("selected", &NodeView::selected);
+        s.RegisterMember("lit", &NodeView::lit);
+        s.RegisterMember("adding", &NodeView::adding);
+        s.RegisterMember("adds", &NodeView::adds);
+    }
+    model.RegisterArray<std::vector<NodeView>>();
+    if (auto s = model.RegisterStruct<WireView>()) {
+        s.RegisterMember("x", &WireView::x);
+        s.RegisterMember("y", &WireView::y);
+        s.RegisterMember("len", &WireView::len);
+        s.RegisterMember("angle", &WireView::angle);
+        s.RegisterMember("no", &WireView::no);
+        s.RegisterMember("lit", &WireView::lit);
+        s.RegisterMember("selected", &WireView::selected);
+    }
+    model.RegisterArray<std::vector<WireView>>();
+    if (auto s = model.RegisterStruct<FrameView>()) {
+        s.RegisterMember("id", &FrameView::id);
+        s.RegisterMember("phrase", &FrameView::phrase);
+        s.RegisterMember("problem", &FrameView::problem);
+        s.RegisterMember("x", &FrameView::x);
+        s.RegisterMember("y", &FrameView::y);
+        s.RegisterMember("w", &FrameView::w);
+        s.RegisterMember("h", &FrameView::h);
+        s.RegisterMember("selected", &FrameView::selected);
+        s.RegisterMember("lit", &FrameView::lit);
+    }
+    model.RegisterArray<std::vector<FrameView>>();
     if (auto s = model.RegisterStruct<FieldView>()) {
         s.RegisterMember("side", &FieldView::side);
         s.RegisterMember("label", &FieldView::label);
@@ -270,6 +314,9 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_count", &m_count_);
     model.Bind("lg_mode", &m_mode_);
     model.Bind("lg_cards", &m_cards_);
+    model.Bind("lg_nodes", &m_nodes_);
+    model.Bind("lg_wires", &m_wires_);
+    model.Bind("lg_frames", &m_frames_);
     model.Bind("lg_code", &m_code_);
     model.Bind("lg_idea_cards", &m_idea_cards_);
     model.Bind("lg_ideas", &m_ideas_);
@@ -385,6 +432,21 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         const u32 id = static_cast<u32>(arg_int(a, 0, 0));
         adding_ = 0;
         refine(id, arg_str(a, 1), true);
+    });
+    on("lg_node", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        const u32 id = static_cast<u32>(arg_int(a, 0, 0));
+        if (id != sel_link_) select_link(id);
+    });
+    on("lg_scheme_down", [this](Rml::Event& ev, const Rml::VariantList&) {
+        if (ev.GetParameter<int>("button", 0) != 0) return;
+        grabbing_ = grab_scheme_ = true;
+        dragged_ = false;
+        grab_id_.clear();
+        grab_mx_ = ev.GetParameter<float>("mouse_x", 0);
+        grab_my_ = ev.GetParameter<float>("mouse_y", 0);
+        grab_x_ = sch_x_;
+        grab_y_ = sch_y_;
     });
     on("lg_code_line", [this](Rml::Event&, const Rml::VariantList& a) {
         const u32 id = static_cast<u32>(arg_int(a, 0, 0));
@@ -538,6 +600,7 @@ void LogicEditor::rebuild() {
     if (mode_ == "ideas") rebuild_ideas();
     if (mode_ == "steps") rebuild_steps();
     if (mode_ == "code") rebuild_code();
+    if (mode_ == "scheme") rebuild_scheme();
     if (model_)
         for (const char* name : {"lg_things", "lg_links", "lg_board_rows", "lg_add_rows", "lg_count", "lg_hint"})
             model_.DirtyVariable(name);
@@ -975,6 +1038,121 @@ void LogicEditor::rebuild_code() {
     if (model_) model_.DirtyVariable("lg_code");
 }
 
+// --- «Схема» -------------------------------------------------------------------
+
+// Each link a row of nodes in a frame: «Когда» → each «Если» → each «Тогда»,
+// and under them «Иначе», which every «Если» leads to when it does not hold.
+// A «+» node at the end adds a step.
+void LogicEditor::rebuild_scheme() {
+    m_nodes_.clear();
+    m_wires_.clear();
+    m_frames_.clear();
+    if (!logic_.find(adding_)) adding_ = 0;
+    f32 top = 24 + sch_y_;
+    const f32 left = 24 + sch_x_;
+    for (const logic::Link& l : logic_.links) {
+        const bool selected = l.id == sel_link_, on = lit(l.id);
+        const std::vector<logic::Step> steps = steps_of(l.id);
+        const f32 y = top + kFrameHead;
+        f32 x = left + kFramePad;
+        std::vector<usize> ifs;
+        usize first_then = 0, last = 0, else_node = 0;
+        bool has_else = false;
+        int count = 0;
+        auto node = [&](const logic::Step& st, f32 nx, f32 ny) {
+            NodeView n;
+            n.id = std::to_string(l.id) + "-" + std::to_string(count++);
+            n.kind = st.part;
+            n.title = part_label(st.part);
+            n.icon = st.icon;
+            n.text = st.text;
+            n.refine = st.refine;
+            n.link = static_cast<int>(l.id);
+            n.x = nx;
+            n.y = ny;
+            n.selected = selected;
+            n.lit = on;
+            m_nodes_.push_back(std::move(n));
+            return m_nodes_.size() - 1;
+        };
+        auto wire = [&](f32 x0, f32 y0, f32 x1, f32 y1, bool no) {
+            WireView w;
+            w.x = x0;
+            w.y = y0;
+            w.len = std::hypot(x1 - x0, y1 - y0);
+            w.angle = std::atan2(y1 - y0, x1 - x0) * 57.29578f;
+            w.no = no;
+            w.lit = on;
+            w.selected = selected;
+            m_wires_.push_back(w);
+        };
+        bool first = true;
+        for (const logic::Step& st : steps) {
+            if (st.part == "else") continue;
+            const usize i = node(st, x, y);
+            if (!first) wire(m_nodes_[last].x + kNodeW, y + kPinY, x, y + kPinY, false);
+            if (st.part == "if") ifs.push_back(i);
+            if (st.part == "then" && !first_then) first_then = i;
+            first = false;
+            last = i;
+            x += kNodeW + kNodeGap;
+        }
+        for (const logic::Step& st : steps)
+            if (st.part == "else") {
+                const f32 ex = first_then ? m_nodes_[first_then].x : x;
+                else_node = node(st, ex, y + kNodeH + kLaneGap);
+                has_else = true;
+                break;
+            }
+        if (has_else) {
+            const f32 ey = m_nodes_[else_node].y + kPinY;
+            for (const usize i : ifs) {
+                const f32 px = m_nodes_[i].x + kNodeW * 0.5f;
+                wire(px, m_nodes_[i].y + kNodeH, px, ey, true);
+                wire(px, ey, m_nodes_[else_node].x, ey, true);
+            }
+        }
+        // «+»: the steps this link can still get.
+        const logic::VerbDef* v = verbs_.find(l.verb);
+        const logic::Thing* a = thing(l.a);
+        const logic::Thing* b = thing(l.b);
+        std::vector<AddView> adds;
+        if (v && a && b)
+            for (const logic::Refine& r : logic::refinements(l, *v, *a, *b))
+                if (!r.on) adds.push_back({r.id, r.label, r.about});
+        if (!adds.empty()) {
+            NodeView n;
+            n.id = std::to_string(l.id) + "-add";
+            n.kind = "add";
+            n.title = "Добавить шаг";
+            n.icon = "add";
+            n.link = static_cast<int>(l.id);
+            n.x = x;
+            n.y = y;
+            n.selected = selected;
+            n.adding = l.id == adding_;
+            n.adds = std::move(adds);
+            if (!m_nodes_.empty() && !first) wire(m_nodes_[last].x + kNodeW, y + kPinY, x, y + kPinY, false);
+            m_nodes_.push_back(std::move(n));
+            x += kNodeW + kNodeGap;
+        }
+        FrameView f;
+        f.id = static_cast<int>(l.id);
+        f.phrase = phrase_of(l.id);
+        f.problem = problem_of(l.id);
+        f.x = left;
+        f.y = top;
+        f.w = x - kNodeGap + kFramePad - left;
+        f.h = kFrameHead + kNodeH + (has_else ? kLaneGap + kNodeH : 0) + kFramePad;
+        f.selected = selected;
+        f.lit = on;
+        m_frames_.push_back(f);
+        top += f.h + kLaneGap;
+    }
+    if (model_)
+        for (const char* name : {"lg_nodes", "lg_wires", "lg_frames"}) model_.DirtyVariable(name);
+}
+
 // --- «Идеи» --------------------------------------------------------------------
 
 const logic::Idea* LogicEditor::idea_of(u32 link) const {
@@ -1137,7 +1315,10 @@ bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
         const f32 dx = e.motion.x * density - grab_mx_, dy = e.motion.y * density - grab_my_;
         if (!dragged_ && std::hypot(dx, dy) > 4) dragged_ = true;
         if (!dragged_) return true;
-        if (grab_id_.empty()) {
+        if (grab_scheme_) {
+            sch_x_ = grab_x_ + dx;
+            sch_y_ = grab_y_ + dy;
+        } else if (grab_id_.empty()) {
             pan_x_ = grab_x_ + dx;
             pan_y_ = grab_y_ + dy;
         } else {
@@ -1151,7 +1332,10 @@ bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
     if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
         grabbing_ = false;
         const std::string id = grab_id_;
-        if (dragged_ && !id.empty()) {
+        if (grab_scheme_) {
+            grab_scheme_ = false;
+            if (!dragged_) click_board(); // a click on the empty scheme: nothing selected
+        } else if (dragged_ && !id.empty()) {
             const logic::Spot* s = logic_.spot(id);
             const f32 x = s ? s->x : grab_x_, y = s ? s->y : grab_y_;
             logic_.set_spot(id, grab_x_, grab_y_);
