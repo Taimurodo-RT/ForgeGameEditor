@@ -23,6 +23,7 @@
 //   run.attach(scene); // copies of listening templates get their scripts
 
 #include "forge/core/types.h"
+#include "forge/script/graph.h"
 #include "forge/script/host.h"
 
 #include <flecs.h>
@@ -146,6 +147,11 @@ struct Link {
     // Its own code («Код» block): Luau run instead of the verb's action when
     // the link happens (self, hero, target are there). Empty: the verb's.
     std::string code;
+    // Its scheme («Схема»): a node graph (script::Graph as JSON) that starts
+    // at «Когда» (logic.when). When it is the author's own (own_scheme) it
+    // does what the link does; when it is just what the refinements make, it
+    // only keeps where its nodes are. Empty: the verb's, laid out anew.
+    std::string graph;
 };
 
 // Where a thing lies on the editor's board.
@@ -246,6 +252,8 @@ struct Module {
 struct Problem {
     u32 link = 0;
     std::string text; // in Russian, for the author
+    u32 node = 0;         // a node of the link's scheme it is about (0: the link)
+    bool warning = false; // the link still works
 };
 
 struct Compiled {
@@ -255,15 +263,43 @@ struct Compiled {
 };
 
 std::string module_name(std::string_view thing);
-Compiled compile(const Logic& logic, const Verbs& verbs, const FindThing& things);
+// nodes: what links' schemes are made of (node_library); without it a link
+// with a scheme is left out.
+Compiled compile(const Logic& logic, const Verbs& verbs, const FindThing& things,
+                 const script::NodeLibrary* nodes = nullptr);
 // The whole game's code as one text, for the editor's «Код» mode; map gives
 // the link (index) of each line.
-std::string listing(const Logic& logic, const Verbs& verbs, const FindThing& things, script::SourceMap* map = nullptr);
+std::string listing(const Logic& logic, const Verbs& verbs, const FindThing& things, script::SourceMap* map = nullptr,
+                    const script::NodeLibrary* nodes = nullptr);
 // What a link does as code, to start its own from: the verb's action with
 // the link's refinements («Код» block).
 std::string default_code(const Link& link, const Verbs& verbs, const FindThing& things);
 // The lines of a link's own code (none for "").
 usize code_lines(std::string_view code);
+
+// --- schemes («Схема») ---------------------------------------------------
+
+// The nodes a scheme can use: the standard ones, the engine's functions
+// (api: the host's, or one made with script::register_core_api) and the
+// links' own (category «Связи»).
+script::NodeLibrary node_library(const script::ScriptApi& api);
+// What a link does, as a scheme: «Когда» → «Если» (the checks) → «Сделать»…
+// laid out left to right. Its own scheme when it has one.
+script::Graph scheme_of(const Link& link, const Verbs& verbs, const FindThing& things);
+// The «Когда» node of a scheme (0: none).
+u32 when_node(const script::Graph& graph);
+// Gives the link this scheme. When the scheme is what some refinements make
+// (a check taken away, a sound added, nodes moved), the link gets those
+// refinements and keeps the scheme only for where its nodes are: simple
+// modes stay simple.
+void set_scheme(Link& link, const script::Graph& graph, const Verbs& verbs, const FindThing& things);
+// The link has a scheme of its own: one no refinements make. Only then does
+// the scheme decide what happens (and the simple modes show «Уточнено в
+// Схеме»).
+bool own_scheme(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b);
+bool own_scheme(const Link& link, const Verbs& verbs, const FindThing& things);
+// The nodes of a link's own scheme (0 for none).
+usize scheme_nodes(const Link& link);
 
 // --- running -------------------------------------------------------------
 
@@ -325,6 +361,7 @@ private:
     Game& game_;
     Compiled compiled_;
     std::vector<u32> ids_;
+    std::unique_ptr<script::NodeLibrary> nodes_; // what links' schemes are made of
     std::unordered_map<u64, std::string> listening_; // template key -> module
     std::unordered_map<u64, bool> touch_;            // template key -> needs a trigger
     scene::Scene* scene_ = nullptr;

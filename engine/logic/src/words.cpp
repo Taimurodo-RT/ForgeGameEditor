@@ -276,6 +276,7 @@ std::string phrase(const Link& link, const VerbDef& verb, const Thing& a, const 
 
 std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b) {
     if (!link.code.empty()) return "Вместо обычного действия работает свой код (режим «Код»).";
+    if (own_scheme(link, verb, a, b)) return "Связь уточнена в режиме «Схема»: что происходит, решают её ноды.";
     std::string s = fill(verb.about, a, b);
     std::vector<std::string> extra;
     if (link.night) extra.push_back("только ночью");
@@ -313,7 +314,7 @@ bool suits(const VerbDef& verb, const Thing& a, const Thing& b) {
 
 std::vector<Refine> refinements(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b) {
     std::vector<Refine> out;
-    if (!link.code.empty()) return out; // its own code decides everything
+    if (!link.code.empty() || own_scheme(link, verb, a, b)) return out; // its own code or scheme decides everything
     out.push_back({"night", "Только ночью", "связь срабатывает, только когда в игре ночь", link.night});
     out.push_back({"once", "Только один раз", "у каждой копии вещи — один раз за игру", link.once});
     if (!verb.sound.empty()) out.push_back({"sound", "Со звуком", "обычный звук игры для этого действия", link.sound});
@@ -333,6 +334,11 @@ std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, c
     if (!link.code.empty()) {
         const usize n = code_lines(link.code);
         out.push_back({"then", "code", "Свой код: " + std::to_string(n) + " " + (n % 10 == 1 && n % 100 != 11 ? "строка" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "строки" : "строк"), "code"});
+        return out;
+    }
+    if (own_scheme(link, verb, a, b)) {
+        const usize n = scheme_nodes(link);
+        out.push_back({"then", "account_tree", "Уточнено в Схеме: " + std::to_string(n) + " " + (n % 10 == 1 && n % 100 != 11 ? "нода" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "ноды" : "нод"), "graph"});
         return out;
     }
     bool checks = false;

@@ -40,6 +40,17 @@ struct CompileResult {
 
 CompileResult compile(const Graph& graph, const NodeLibrary& library, const CompileOptions& options = {});
 
+// What one event of the graph leads to, as statements to put inside other
+// code (the links' modules do): the event's outputs are Luau names already
+// there (pin id -> name), lines are indented by `indent` levels. Other
+// events of the graph are left out; nodes they lead to are not warned about.
+struct EventInput {
+    std::string pin, name;
+};
+CompileResult compile_event_body(const Graph& graph, const NodeLibrary& library, u32 event,
+                                 const std::vector<EventInput>& inputs, int indent = 0,
+                                 const CompileOptions& options = {});
+
 // Turns a typed value into Luau source for a pin of this type; false when the
 // text does not fit the type ("abc" for a number).
 bool value_to_lua(ValueType type, std::string_view text, std::string& out);

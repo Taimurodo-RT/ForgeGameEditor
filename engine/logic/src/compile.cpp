@@ -1,6 +1,7 @@
 // Links to Luau: one module per template that listens.
 
 #include "forge/logic/logic.h"
+#include "forge/script/compiler.h"
 
 #include <algorithm>
 #include <map>
@@ -50,6 +51,7 @@ struct Plan {
     const Thing* a = nullptr;
     const Thing* b = nullptr;
     Side listener = Side::B;
+    std::vector<std::string> scheme; // its scheme's code, when it has one
 };
 
 bool fits(std::string_view rule, const Thing& t) {
@@ -142,6 +144,52 @@ void emit_body(Writer& w, const Plan& p, const std::string& in, bool fired) {
     w.line(in + "end", at);
 }
 
+// The scheme's code: what «Когда» leads to (problems are the link's).
+bool scheme_code(Plan& p, const script::NodeLibrary* nodes, std::vector<Problem>& problems) {
+    const Link& l = *p.link;
+    script::Graph g;
+    if (!g.from_json(l.graph)) {
+        problems.push_back({l.id, "схема связи не читается"});
+        return false;
+    }
+    const u32 when = when_node(g);
+    if (!when) {
+        problems.push_back({l.id, "в схеме нет ноды «Когда»"});
+        return false;
+    }
+    if (!nodes) {
+        problems.push_back({l.id, "схема не собрана: нет библиотеки нод"});
+        return false;
+    }
+    for (script::GraphNode& n : g.nodes)
+        if (n.def == "logic.once") n.set_value("_link", std::to_string(l.id));
+    auto side = [&](Side s) { return s == p.verb->target ? std::string("target") : entity(p, s); };
+    const script::CompileResult r =
+        script::compile_event_body(g, *nodes, when, {{"a", side(Side::A)}, {"b", side(Side::B)}, {"hero", "hero"}});
+    for (const script::Diagnostic& d : r.diagnostics)
+        problems.push_back({l.id, "схема: " + d.message, d.node, !d.error});
+    if (!r.ok) return false;
+    usize start = 0;
+    while (start < r.source.size()) {
+        usize end = r.source.find('\n', start);
+        if (end == std::string::npos) end = r.source.size();
+        p.scheme.push_back(r.source.substr(start, end - start));
+        start = end + 1;
+    }
+    return true;
+}
+
+// A link with a scheme: a handler of its own (its blocks may wait).
+void emit_scheme(Writer& w, const Plan& p, const std::string& in) {
+    const Link& l = *p.link;
+    const u32 at = static_cast<u32>(p.index);
+    w.line(in + "-- " + comment(phrase(l, *p.verb, *p.a, *p.b)) + " (схема)", at);
+    w.line(in + "local target = " + entity(p, p.verb->target), at);
+    w.line(in + "if not target then return end", at);
+    w.line(in + "logic.fired(" + std::to_string(l.id) + ")", at);
+    for (const std::string& line : p.scheme) w.line(in + line, at);
+}
+
 void emit(Writer& w, const Plan& p, const char* indent) {
     const Link& l = *p.link;
     const u32 at = static_cast<u32>(p.index);
@@ -173,7 +221,7 @@ struct Built {
     std::vector<Problem> problems;
 };
 
-Built build(const Logic& logic, const Verbs& verbs, const FindThing& things) {
+Built build(const Logic& logic, const Verbs& verbs, const FindThing& things, const script::NodeLibrary* nodes) {
     Built b;
     for (usize i = 0; i < logic.links.size(); ++i) {
         const Link& l = logic.links[i];
@@ -183,9 +231,40 @@ Built build(const Logic& logic, const Verbs& verbs, const FindThing& things) {
             b.problems.push_back({l.id, problem});
             continue;
         }
+        if (l.code.empty() && own_scheme(l, *p.verb, *p.a, *p.b) && !scheme_code(p, nodes, b.problems)) continue;
         (p.verb->always ? b.always : b.touch)[thing_of(l, p.listener)].push_back(p);
     }
     return b;
+}
+
+// One handler of the module: the links without schemes together, each
+// scheme in a handler of its own (then the module gives a list).
+void write_handler(Writer& w, const std::vector<Plan>& plans, const std::string& event, const std::string& params,
+                   const std::vector<std::string>& prelude) {
+    std::vector<const Plan*> plain, schemes;
+    for (const Plan& p : plans) (p.scheme.empty() ? plain : schemes).push_back(&p);
+    if (schemes.empty()) {
+        w.line("function S." + event + "(" + params + ")");
+        for (const std::string& s : prelude) w.line("  " + s);
+        for (const Plan* p : plain) emit(w, *p, "  ");
+        w.line("end");
+        return;
+    }
+    const std::string add = "S." + event + "[#S." + event + " + 1] = function(" + params + ")";
+    w.line("S." + event + " = {}");
+    if (!plain.empty()) {
+        w.line(add);
+        for (const std::string& s : prelude) w.line("  " + s);
+        for (const Plan* p : plain) emit(w, *p, "  ");
+        w.line("end");
+    }
+    for (const Plan* p : schemes) {
+        const u32 at = static_cast<u32>(p->index);
+        w.line(add, at);
+        for (const std::string& s : prelude) w.line("  " + s, at);
+        emit_scheme(w, *p, "  ");
+        w.line("end", at);
+    }
 }
 
 void write_module(Writer& w, const std::string& thing, const Built& b, const FindThing& things) {
@@ -193,19 +272,11 @@ void write_module(Writer& w, const std::string& thing, const Built& b, const Fin
     w.line("-- Связи «" + comment(t ? t->name : thing) + "». Сделано из режима «Связи»: правки здесь перезапишутся.");
     w.line("local logic = forge.logic");
     w.line("local S = {}");
-    if (const auto it = b.always.find(thing); it != b.always.end()) {
-        w.line("function S.on_start(self)");
-        w.line("  local hero = logic.hero()");
-        for (const Plan& p : it->second) emit(w, p, "  ");
-        w.line("end");
-    }
-    if (const auto it = b.touch.find(thing); it != b.touch.end()) {
-        w.line("function S.on_enter(self, other)");
-        w.line("  if not logic.is_hero(other) then return end");
-        w.line("  local hero = other");
-        for (const Plan& p : it->second) emit(w, p, "  ");
-        w.line("end");
-    }
+    if (const auto it = b.always.find(thing); it != b.always.end())
+        write_handler(w, it->second, "on_start", "self", {"local hero = logic.hero()"});
+    if (const auto it = b.touch.find(thing); it != b.touch.end())
+        write_handler(w, it->second, "on_enter", "self, other",
+                      {"if not logic.is_hero(other) then return end", "local hero = other"});
     w.line("return S");
 }
 
@@ -228,8 +299,8 @@ const Module* Compiled::find(std::string_view thing) const {
     return nullptr;
 }
 
-Compiled compile(const Logic& logic, const Verbs& verbs, const FindThing& things) {
-    const Built b = build(logic, verbs, things);
+Compiled compile(const Logic& logic, const Verbs& verbs, const FindThing& things, const script::NodeLibrary* nodes) {
+    const Built b = build(logic, verbs, things, nodes);
     Compiled out;
     out.problems = b.problems;
     for (const std::string& thing : listeners(b)) {
@@ -263,8 +334,9 @@ usize code_lines(std::string_view code) {
     return n + (!code.empty() && code.back() != '\n');
 }
 
-std::string listing(const Logic& logic, const Verbs& verbs, const FindThing& things, script::SourceMap* map) {
-    const Built b = build(logic, verbs, things);
+std::string listing(const Logic& logic, const Verbs& verbs, const FindThing& things, script::SourceMap* map,
+                    const script::NodeLibrary* nodes) {
+    const Built b = build(logic, verbs, things, nodes);
     Writer w;
     bool first = true;
     for (const std::string& thing : listeners(b)) {
@@ -272,7 +344,8 @@ std::string listing(const Logic& logic, const Verbs& verbs, const FindThing& thi
         first = false;
         write_module(w, thing, b, things);
     }
-    for (const Problem& p : b.problems) w.line("-- не работает: " + comment(p.text));
+    for (const Problem& p : b.problems)
+        if (!p.warning) w.line("-- не работает: " + comment(p.text));
     if (map) map->line_node = w.lines;
     return w.text;
 }

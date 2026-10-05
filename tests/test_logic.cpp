@@ -2,11 +2,13 @@
 #include "forge/core/jobs.h"
 #include "forge/logic/logic.h"
 #include "forge/objects/library.h"
+#include "forge/script/compiler.h"
 #include "forge/scene/scene.h"
 #include "forge/world/generators.h"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -286,6 +288,102 @@ TEST_CASE("a link with its own code runs the code instead of its verb") {
     CHECK(refinements(logic.links[0], open, w.things[1], w.things[2]).empty());
 }
 
+TEST_CASE("a link reads as a scheme of nodes and back") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kVerbs));
+    Words w;
+    script::ScriptApi api;
+    script::register_core_api(api);
+    const script::NodeLibrary nodes = node_library(api);
+    REQUIRE(nodes.find("logic.act"));
+    REQUIRE(nodes.find("std.flow.if"));
+    REQUIRE(nodes.find("api.wait"));
+
+    Logic logic;
+    logic.add({0, "key", "open", "door", false, false, true, true});
+    Link& l = logic.links[0];
+    // «Когда» → «Если» (the key) → «Сделать» → «Звук», and «Подсказка» otherwise.
+    script::Graph g = scheme_of(l, verbs, w.find);
+    CHECK(g.nodes.size() == 6);
+    REQUIRE(when_node(g));
+    auto count = [&](const script::Graph& graph, std::string_view def) {
+        return std::count_if(graph.nodes.begin(), graph.nodes.end(), [&](const script::GraphNode& n) { return n.def == def; });
+    };
+    CHECK(count(g, "logic.has") == 1);
+    CHECK(count(g, "logic.hint") == 1);
+
+    // Moving nodes changes nothing: the link stays plain, its nodes stay put.
+    for (script::GraphNode& n : g.nodes) n.x += 40;
+    set_scheme(l, g, verbs, w.find);
+    CHECK_FALSE(own_scheme(l, verbs, w.find));
+    CHECK(l.sound);
+    CHECK(scheme_of(l, verbs, w.find).find(when_node(g))->x == 40);
+    // A refinement from another mode: the scheme follows it.
+    l.night = true;
+    CHECK(count(scheme_of(l, verbs, w.find), "logic.night") == 1);
+    l.night = false;
+
+    // Taking the sound away is the «Со звуком» refinement off.
+    for (const script::GraphNode& n : g.nodes)
+        if (n.def == "logic.sound") {
+            g.remove(n.uid);
+            break;
+        }
+    set_scheme(l, g, verbs, w.find);
+    CHECK_FALSE(own_scheme(l, verbs, w.find));
+    CHECK_FALSE(l.sound);
+    CHECK(l.hint);
+
+    // A node no refinement makes: the link keeps its scheme.
+    u32 act = 0;
+    for (const script::GraphNode& n : g.nodes)
+        if (n.def == "logic.act") act = n.uid;
+    REQUIRE(act);
+    script::GraphNode& coins = g.add("std.var.add", 900, 0);
+    coins.set_value("name", "opened");
+    g.link(act, script::kFlowNext, coins.uid);
+    set_scheme(l, g, verbs, w.find);
+    CHECK(own_scheme(l, verbs, w.find));
+    CHECK(scheme_nodes(l) == 6);
+    const VerbDef& open = *verbs.find("open");
+    const std::vector<Step> st = steps(l, open, w.things[1], w.things[2]);
+    REQUIRE(st.size() == 2);
+    CHECK(st[1].text == "Уточнено в Схеме: 6 нод");
+    CHECK(st[1].refine == "graph");
+    CHECK(refinements(l, open, w.things[1], w.things[2]).empty());
+    CHECK(scheme_of(l, verbs, w.find).nodes.size() == 6);
+
+    Logic back;
+    REQUIRE(back.parse(logic.json()));
+    CHECK(scheme_nodes(back.links[0]) == 6);
+
+    // Without the nodes the link cannot be built; with them it is code.
+    CHECK(compile(logic, verbs, w.find).modules.empty());
+    const Compiled c = compile(logic, verbs, w.find, &nodes);
+    CHECK(c.problems.empty());
+    const Module* door = c.find("door");
+    REQUIRE(door);
+    CHECK(door->source.find("(схема)") != std::string::npos);
+    CHECK(door->source.find("S.on_enter[#S.on_enter + 1] = function(self, other)") != std::string::npos);
+    CHECK(door->source.find("forge.set_var(self, \"opened\"") != std::string::npos);
+    CHECK(door->source.find("logic.has(") != std::string::npos);
+    CHECK(script::check_syntax(door->source));
+    CHECK(door->map.line_node.size() == static_cast<usize>(std::count(door->source.begin(), door->source.end(), '\n')));
+
+    // A broken scheme says which node.
+    script::Graph bad = scheme_of(l, verbs, w.find);
+    script::GraphNode& hint = bad.add("logic.hint", 900, 300);
+    hint.set_value("text", "");
+    bad.link(coins.uid, script::kFlowNext, hint.uid);
+    l.graph = bad.to_json();
+    const Compiled broken = compile(logic, verbs, w.find, &nodes);
+    CHECK(broken.modules.empty());
+    const auto about_hint = std::find_if(broken.problems.begin(), broken.problems.end(),
+                                         [&](const Problem& p) { return p.node == hint.uid; });
+    REQUIRE(about_hint != broken.problems.end());
+    CHECK_FALSE(about_hint->warning);
+}
+
 namespace {
 
 // A game that writes down what links ask of it.
@@ -396,4 +494,66 @@ TEST_CASE("the hero touching a door with the key opens it") {
     REQUIRE(runtime.load(none, verbs));
     CHECK_FALSE(door.has<script::Script>());
     CHECK_FALSE(door.has<sim::Trigger>());
+}
+
+TEST_CASE("a link's scheme runs in the game") {
+    PoolScope pool;
+    const auto dir = temp_folder("forge_logic_scheme");
+    write_text(dir / "kinds.json", R"({"kinds": [{"id": "thing", "name": "Вещь", "group": "Разное", "icon": "box", "foot": 0.5}]})");
+    write_text(dir / "objects" / "key.object.json", R"({"id": "key", "name": "Ключ", "kind": "thing"})");
+    write_text(dir / "objects" / "door.object.json", R"({"id": "door", "name": "Дверь", "kind": "thing"})");
+    objects::Library library;
+    REQUIRE(library.load(dir / "kinds.json", dir / "objects"));
+
+    world::World world(world::WorldDesc{}, std::make_shared<EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    library.attach(scene);
+    NoteGame game;
+    Runtime runtime(scripts, library, game);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    run(1);
+
+    Verbs verbs;
+    REQUIRE(verbs.parse(kVerbs));
+    Words w;
+    Logic logic;
+    logic.add({0, "key", "open", "door", false, false, false, false});
+    // No key needed any more: «Когда» → «Сделать» → «Подсказка».
+    script::Graph g;
+    const u32 when = g.add("logic.when", 0, 0).uid;
+    script::GraphNode& act = g.add("logic.act", 280, 0);
+    act.set_value("action", "open");
+    act.set_value("thing", "door");
+    g.link(when, "b", act.uid, "target");
+    g.link(when, script::kFlowNext, act.uid);
+    script::GraphNode& hint = g.add("logic.hint", 560, 0);
+    hint.set_value("text", "Открыто без ключа");
+    g.link(act.uid, script::kFlowNext, hint.uid);
+    set_scheme(logic.links[0], g, verbs, w.find);
+    REQUIRE(own_scheme(logic.links[0], verbs, w.find));
+
+    std::vector<Problem> problems;
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    runtime.attach(scene);
+    flecs::entity door = library.spawn(scene, *library.find("door"), 10.5, 6);
+    REQUIRE(door.is_valid());
+    flecs::entity hero = scene.spawn(scene::Position::at_tile(20, 5.5));
+    game.hero_e = hero.id();
+    run(3);
+    hero.set<scene::Position>(scene::Position::at_tile(11, 5.5));
+    run(3);
+    REQUIRE(game.acts.size() == 1);
+    CHECK(game.acts[0] == "open door");
+    CHECK(game.last_target == door.id());
+    CHECK(game.hints == std::vector<std::string>{"Открыто без ключа"});
+    CHECK(game.fired_links == std::vector<u32>{1});
+    CHECK(scripts.errors().empty());
 }

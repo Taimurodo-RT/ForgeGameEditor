@@ -2437,50 +2437,134 @@ private:
             break;
         }
         case 14: {
-            // «Ключ открывает Дверь»: «Когда» → «Если у героя есть» → «Тогда» → sound, «Иначе» below.
+            // «Ключ открывает Дверь» as nodes: «Когда» → «Если» (the key) → «Сделать»…
+            SchemeView& sc = lg().scheme();
+            const script::Graph* g = sc.graph(1);
+            if (!check(g && logic::when_node(*g), "the link is a scheme starting at «Когда»")) break;
             usize of1 = 0;
-            for (const auto& n : lg().scheme_nodes()) of1 += n.link == 1 && n.kind != "add";
-            check(of1 == lg().steps_of(1).size(), "a node for each of the link's steps");
-            check(shown("lg-frame-1") && shown("lg-node-1-0") && shown("lg-node-1-add"), "the link is a frame of nodes with «+» at the end");
-            usize no = 0;
-            for (const auto& w : lg().scheme_wires()) no += w.no;
-            check(no >= 2, "«Если» leads to «Иначе» when it does not hold");
-            check(click("lg-node-1-0") && lg().selected_link() == 1, "a click on a node selects its link");
-            check(click("lg-node-add-1"), "«Уточнить» on the «+» node");
+            for (const auto& n : sc.node_views()) of1 += n.link == 1;
+            check(of1 == g->nodes.size() && shown("sc-frame-1"), "a frame with a node for each node of the scheme");
+            const std::string when = "sc-node-1-" + std::to_string(logic::when_node(*g));
+            check(shown(when) && shown("sc-pin-1-" + std::to_string(logic::when_node(*g)) + "-o-next"), "«Когда» with its flow exit");
+            check(click(when) && sc.selected_node() == logic::when_node(*g) && lg().selected_link() == 1, "a click on a node selects it");
+            check(!shown("sc-remove-1-" + std::to_string(logic::when_node(*g))), "«Когда» cannot be taken away");
+            check(click("sc-add-1") && sc.palette_open(), "«+ Нода» opens the list of nodes");
+            const usize all = sc.palette_items();
+            sc.set_search("прибав");
+            check(all > 30 && sc.palette_items() >= 1 && sc.palette_items() < all, "the list is searched");
             break;
         }
-        case 15:
-            check(click("lg-node-add-1-night") && lg().links().find(1)->night, "«Только ночью» becomes a step");
+        case 15: {
+            SchemeView& sc = lg().scheme();
+            check(click("sc-pal-std.var.add") && !sc.palette_open(), "a node is picked from it");
+            const std::vector<logic::Step> st = lg().steps_of(1);
+            check(st.size() == 2 && st[1].text.rfind("Уточнено в Схеме", 0) == 0, "the link has a scheme of its own: «Уточнено в Схеме»");
+            check(shown("lg-scheme-reset") || lg().selected_link() == 1, "the side offers to take it away");
             break;
-        case 16:
-            check(shown("lg-node-x-1-night") && click("lg-node-x-1-night") && !lg().links().find(1)->night, "× on its node takes it away");
+        }
+        case 16: {
+            SchemeView& sc = lg().scheme();
+            const script::Graph* g = sc.graph(1);
+            if (!check(g != nullptr, "the scheme is there")) break;
+            u32 act = 0, added = 0, tail = 0;
+            for (const script::GraphNode& n : g->nodes) {
+                if (n.def == "logic.act") act = n.uid;
+                if (n.def == "std.var.add") added = n.uid;
+            }
+            // The end of the chain: «Сделать» or the sound after it.
+            tail = act;
+            for (bool more = true; more;) {
+                more = false;
+                for (const script::GraphLink& w : g->links)
+                    if (w.from_node == tail && w.from_pin == script::kFlowNext && w.to_node != added) {
+                        tail = w.to_node;
+                        more = true;
+                        break;
+                    }
+            }
+            if (!check(act && added, "«Сделать» and the new node")) break;
+            const std::string a = std::to_string(act), b = std::to_string(added), t = std::to_string(tail);
+            check(click("sc-pin-1-" + t + "-o-next") && sc.pin_pending(), "a click on the last node's exit waits for the other end");
+            check(click("sc-pin-1-" + b + "-i-in") && !sc.pin_pending(), "a click on the new node's entry joins them");
+            g = sc.graph(1);
+            bool wired = false;
+            for (const script::GraphLink& w : g->links) wired |= w.from_node == tail && w.to_node == added && w.to_pin == script::kFlowIn;
+            check(wired, "a white wire between them");
+            check(!sc.node_problem(1, added).empty() && !lg().problem_of(1).empty(), "a variable without a name is marked on the node");
+            check(shown("sc-field-1-" + b + "-name") && sc.set_value(1, added, "name", "opened"), "the name is typed into the node");
+            check(sc.node_problem(1, added).empty() && lg().problem_of(1).empty(), "and the scheme works");
+            // A pick field: «Сделать»'s thing from the game's things.
+            check(click("sc-pick-1-" + a + "-thing") && sc.picking(), "a pick field opens its list");
+            break;
+        }
+        case 17: {
+            SchemeView& sc = lg().scheme();
+            u32 act = 0;
+            for (const script::GraphNode& n : sc.graph(1)->nodes)
+                if (n.def == "logic.act") act = n.uid;
+            check(shown("sc-wire-1-0") && shown("sc-choice-key"), "wires are drawn, the list has the game's things");
+            check(click("sc-choice-key") && !sc.picking(), "a thing is picked");
+            const script::GraphNode* n = sc.graph(1)->find(act);
+            check(n && n->value("thing") && *n->value("thing") == "key", "and kept on the node");
             key(SDLK_Z, SDL_KMOD_CTRL);
-            check(lg().links().find(1)->night, "Ctrl+Z brings it back");
+            n = sc.graph(1)->find(act);
+            check(n && n->value("thing") && *n->value("thing") == "door", "Ctrl+Z takes it back");
+            lg().set_mode("code");
+            break;
+        }
+        case 18: {
+            check(lg().code_lines() > 0, "«Код» shows the scheme as code");
+            bool has = false;
+            for (usize i = 0; i < lg().code_lines(); ++i) has |= lg().code_link(i) == 1;
+            check(has, "with lines of the link");
+            lg().set_mode("scheme");
+            break;
+        }
+        case 19: {
+            SchemeView& sc = lg().scheme();
+            if (!check(sc.graph(1) != nullptr, "the scheme is still there")) break;
+            u32 added = 0;
+            for (const script::GraphNode& n : sc.graph(1)->nodes)
+                if (n.def == "std.var.add") added = n.uid;
+            const std::string b = std::to_string(added);
+            check(added && click("sc-node-1-" + b) && sc.selected_node() == added, "the new node is selected");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            const std::vector<logic::Step> st = lg().steps_of(1);
+            check(sc.graph(1) && !sc.graph(1)->find(added) && (st.size() < 2 || st[1].text.rfind("Уточнено", 0) != 0),
+                  "Delete takes it away: the link is plain again");
             key(SDLK_Z, SDL_KMOD_CTRL);
-            check(!lg().links().find(1)->night, "and once more takes it back");
-            check(click("lg-node-2-0") && lg().selected_link() == 2, "a node of the other link selects it");
+            check(sc.graph(1) && sc.graph(1)->find(added) != nullptr, "Ctrl+Z brings it back");
+            check(shown("sc-reset-1") && click("sc-reset-1") && sc.graph(1) && !sc.graph(1)->find(added), "«Как в Связях» takes the own scheme away");
+            // Moving a node keeps the link plain, the node stays where it was put.
+            const u32 when = sc.graph(1) ? logic::when_node(*sc.graph(1)) : 0;
+            check(sc.move_node(1, when, -200, 40) && sc.graph(1)->find(when) && sc.graph(1)->find(when)->x == -200, "a node is moved");
+            const std::vector<logic::Step> st2 = lg().steps_of(1);
+            check(st2.size() < 2 || st2[1].text.rfind("Уточнено", 0) != 0, "moving changes nothing in the link");
+            const script::Graph* g2 = sc.graph(2);
+            check(g2 && click("sc-node-2-" + std::to_string(logic::when_node(*g2))) && lg().selected_link() == 2, "a node of the other link selects it");
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
-        case 17:
+        }
+        case 20:
             check(shown("lg-board") && lg().selected_link() == 2, "the board is back, the link still selected");
             check(click("lg-mode-ideas") && lg().mode() == "ideas", "«Идеи» shows the same logic as ideas");
             break;
-        case 18:
+        case 21:
             check(shown("lg-recipe-1") && lg().idea_of(1) && lg().idea_of(1)->name == "Дверь с ключом", "«Ключ открывает Дверь» is the idea «Дверь с ключом»");
             check(shown("lg-field-1-a") && shown("lg-field-1-b"), "its things are its fields");
             check(click("lg-idea-new") && lg().gallery_open(), "«Новая идея» opens the ideas");
             break;
-        case 19:
+        case 22:
             check(shown("lg-idea-trap") && click("lg-idea-trap") && lg().links().links.size() == 3 && !lg().gallery_open(),
                   "«Ловушка» becomes a link");
             check(lg().links().links.back().verb == "hurt" && lg().links().links.back().b == "hero", "it hurts the hero");
             break;
-        case 20: {
+        case 23: {
             const u32 trap = lg().links().links.back().id;
             check(shown("lg-recipe-" + std::to_string(trap)) && click("lg-field-" + std::to_string(trap) + "-a"), "a click on its thing");
             break;
         }
-        case 21: {
+        case 24: {
             const u32 trap = lg().links().links.back().id;
             const std::string before = lg().links().find(trap)->a;
             usize other = 0;
@@ -2499,14 +2583,14 @@ private:
             lg().set_fired_file(fired);
             break;
         }
-        case 22:
+        case 25:
             check(lg().lit(1) && !lg().lit(2), "a link that happened in the game lights up");
             lg().set_fired_file({});
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(lg().links().links.size() == 2, "Ctrl+Z takes the idea back");
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
-        case 23: {
+        case 26: {
             // The running game draws a link (F2 over the game): it writes the
             // file, the editor takes it in.
             logic::Logic game = lg().links();
@@ -2516,12 +2600,12 @@ private:
             std::filesystem::last_write_time(ed_.logic_file, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2), ec);
             break;
         }
-        case 24:
+        case 27:
             if (hold(lg().links().links.size() == 3, "the editor takes in a link drawn in the game")) return true;
             check(lg().links().links.back().verb == "flee" && lg().links().spot("critter"), "the link and its new thing are on the board");
             check(lg().history().can_undo(), "as a change that can be taken back");
             break;
-        case 25: {
+        case 28: {
             check(shown("lg-thing-critter"), "«Зверёк» shows on the board");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(lg().links().links.size() == 2, "Ctrl+Z takes the game's link back");
@@ -2529,12 +2613,12 @@ private:
             check(file.load(ed_.logic_file) && file.links.size() == 2, "and the file too (the game reads it again)");
             break;
         }
-        case 26:
+        case 29:
             // «Код» block: a link gets its own code instead of its verb.
             lg().select_link(1);
             check(click("lg-code-edit") && lg().editing_code() && lg().mode() == "code", "«Свой код» opens the link's code");
             break;
-        case 27: {
+        case 30: {
             check(shown("lg-code-text"), "the code is in a text box");
             lg().set_code_text("if then");
             check(click("lg-code-save") && lg().editing_code() && lg().links().find(1)->code.empty(), "code that does not compile is not kept");
@@ -2544,7 +2628,7 @@ private:
             check(l && l->code.find("Скрип!") != std::string::npos, "the link has its own code");
             break;
         }
-        case 28: {
+        case 31: {
             const std::vector<logic::Step> st = lg().steps_of(1);
             check(st.size() == 2 && st[1].text == "Свой код: 2 строки", "in «Шаги» and «Схема» it is a «Код» block");
             check(shown("lg-code-reset"), "«Вернуть обычное действие» is offered");
