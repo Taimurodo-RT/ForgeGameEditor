@@ -20,6 +20,11 @@
 //   right click, «+ Нода»   the list of nodes, with a search
 //   Delete                  the selected node or wire («Когда» stays)
 //
+// A thing may have a scheme of its own, with no link: what each copy does by
+// itself («При старте», «Каждый шаг», «При ударе»…). It is a frame too, under
+// the links' ones; «+ Своя схема вещи» starts one. Frames are named by ids:
+// a link's or a thing scheme's (they share them).
+//
 // Values that are not wired are typed into the node: numbers, text, yes/no,
 // a thing or an action from a list. A node the scheme cannot be built with
 // is marked and says why; the rest of the game still runs.
@@ -90,8 +95,18 @@ public:
     bool pick(const std::string& value);
     // Why a node cannot work ("" when it can).
     std::string node_problem(u32 link, u32 node) const;
-    // Back to what the verb and refinements make.
+    // Back to what the verb and refinements make; a thing's scheme is taken
+    // away.
     bool reset(u32 link);
+    // The things that may get a scheme of their own listed («+ Своя схема
+    // вещи»); a pick starts one.
+    void open_things();
+    // Scrolls so the frame is at the top.
+    void focus(u32 frame);
+    // A thing scheme's frame (not a link's).
+    bool own(u32 frame) const;
+    // Selects a frame: a link's selects the link.
+    void select_frame(u32 frame);
 
     struct PinView {
         Rml::String id, title, kind; // kind: "flow" or the value type's name
@@ -133,6 +148,7 @@ public:
         Rml::String phrase, problem, note;
         float x = 0, y = 0, w = 0, h = 0;
         bool selected = false, lit = false, custom = false;
+        bool own = false; // a thing's scheme
         bool operator==(const FrameView&) const = default;
     };
     struct OptionView {
@@ -161,6 +177,7 @@ private:
     void commit(u32 link, const script::Graph& g, const std::string& label, const std::string& merge = {});
     const script::PinDef* in_pin(const script::Graph& g, u32 node, const std::string& pin) const;
     const script::PinDef* out_pin(const script::Graph& g, u32 node, const std::string& pin) const;
+    bool known(u32 frame) const;
     bool is_exit(const script::Graph& g, u32 node, const std::string& pin) const;
     bool fits(const script::Graph& g, u32 from, const std::string& from_pin, u32 to, const std::string& to_pin) const;
     // Screen point to scheme point of a link.
@@ -204,6 +221,8 @@ private:
     f32 pane_w_ = 0, pane_h_ = 0;
     u32 pick_link_ = 0, pick_node_ = 0;
     std::string pick_pin_;
+    bool picking_thing_ = false; // the list is of things for a scheme
+    u32 sel_own_ = 0;            // a thing scheme's frame selected
     Rml::Context* context_ = nullptr;
 
     // Model mirrors

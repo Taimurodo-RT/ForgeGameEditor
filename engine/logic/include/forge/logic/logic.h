@@ -154,6 +154,16 @@ struct Link {
     std::string graph;
 };
 
+// A thing's own scheme: what every copy of it does by itself, with no link
+// and no hero touching it: «При старте», «Каждый шаг», «При ударе»… (a
+// platform going back and forth, a lamp that blinks). Only things (object
+// templates) have one, the hero does not.
+struct ThingScheme {
+    u32 id = 0;        // from the same ids as links (errors and lines refer to it)
+    std::string thing; // a template id
+    std::string graph; // script::Graph as JSON; its events are std.event.*
+};
+
 // Where a thing lies on the editor's board.
 struct Spot {
     std::string thing;
@@ -164,6 +174,7 @@ class Logic {
 public:
     std::vector<Link> links;
     std::vector<Spot> board;
+    std::vector<ThingScheme> schemes; // at most one per thing
     u32 next_id = 1;
 
     // A missing file is an empty game (true).
@@ -177,6 +188,12 @@ public:
     // Gives the link a new id; returns it.
     u32 add(Link link);
     bool remove(u32 id);
+    ThingScheme* find_scheme(u32 id);
+    const ThingScheme* find_scheme(u32 id) const;
+    const ThingScheme* scheme_for(std::string_view thing) const;
+    // Gives the scheme a new id; returns it (0: the thing has one already).
+    u32 add_scheme(ThingScheme scheme);
+    bool remove_scheme(u32 id);
     const Spot* spot(std::string_view thing) const;
     void set_spot(std::string_view thing, f32 x, f32 y);
 };
@@ -245,12 +262,14 @@ struct Module {
     std::string thing;   // template id
     std::string name;    // module name: "logic:" + thing
     std::string source;  // Luau
-    script::SourceMap map; // line -> index of the link in Logic::links
+    // line -> index of the link in Logic::links; a thing's scheme is
+    // links.size() + its index in Logic::schemes
+    script::SourceMap map;
     bool touch = false;  // copies need a touch trigger
 };
 
 struct Problem {
-    u32 link = 0;
+    u32 link = 0; // the link's id, or a thing scheme's
     std::string text; // in Russian, for the author
     u32 node = 0;         // a node of the link's scheme it is about (0: the link)
     bool warning = false; // the link still works
@@ -300,6 +319,10 @@ bool own_scheme(const Link& link, const VerbDef& verb, const Thing& a, const Thi
 bool own_scheme(const Link& link, const Verbs& verbs, const FindThing& things);
 // The nodes of a link's own scheme (0 for none).
 usize scheme_nodes(const Link& link);
+// A thing's new scheme: «При старте» and «Каждый шаг», nothing after them.
+script::Graph new_thing_scheme(std::string_view thing);
+// What a thing's scheme can start from: the events of std (not «Когда»).
+bool thing_event(std::string_view def);
 
 // --- running -------------------------------------------------------------
 
@@ -347,7 +370,7 @@ public:
     // loaded, or -1.
     i32 link_at(std::string_view module, i32 line) const;
     const Compiled& compiled() const { return compiled_; }
-    // Each link's id by its index, as loaded.
+    // Each link's id by its index, as loaded (then the things' schemes).
     const std::vector<u32>& link_ids() const { return ids_; }
 
     struct Impl;

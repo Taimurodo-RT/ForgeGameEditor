@@ -557,3 +557,157 @@ TEST_CASE("a link's scheme runs in the game") {
     CHECK(game.fired_links == std::vector<u32>{1});
     CHECK(scripts.errors().empty());
 }
+
+TEST_CASE("a thing's own scheme reads, writes and compiles") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kVerbs));
+    Words w;
+    script::ScriptApi api;
+    script::register_core_api(api);
+    const script::NodeLibrary nodes = node_library(api);
+
+    Logic logic;
+    logic.add({0, "key", "open", "door"});
+    ThingScheme own;
+    own.thing = "door";
+    script::Graph g = new_thing_scheme("door");
+    REQUIRE(g.nodes.size() == 2);
+    const u32 tick = g.nodes[1].uid;
+    // Каждый шаг → Сдвинуть (этот объект, на dt по X).
+    const u32 self = g.add("std.self", 0, 300).uid;
+    const u32 move = g.add("api.entity.move", 280, 190).uid;
+    g.link(tick, script::kFlowNext, move);
+    g.link(self, "actor", move, "actor");
+    g.link(tick, "dt", move, "dx");
+    own.graph = g.to_json();
+    const u32 id = logic.add_scheme(own);
+    CHECK(id == 2);
+    CHECK(logic.add_scheme(own) == 0); // one per thing
+    ThingScheme for_hero;
+    for_hero.thing = std::string(kHero);
+    CHECK(logic.add_scheme(for_hero) == 0);
+
+    Logic again;
+    REQUIRE(again.parse(logic.json()));
+    REQUIRE(again.schemes.size() == 1);
+    CHECK(again.scheme_for("door")->id == id);
+    CHECK(again.next_id == 3);
+    script::Graph back;
+    REQUIRE(back.from_json(again.schemes[0].graph));
+    CHECK(back.nodes.size() == 4);
+
+    const Compiled c = compile(again, verbs, w.find, &nodes);
+    CHECK(c.problems.empty());
+    const Module* door = c.find("door");
+    REQUIRE(door);
+    // The link and the scheme share the module; «При старте» leads nowhere.
+    CHECK(door->source.find("S.on_enter = {}") == std::string::npos);
+    CHECK(door->source.find("function S.on_enter(self, other)") != std::string::npos);
+    CHECK(door->source.find("S.on_tick[#S.on_tick + 1] = function(self, e1)") != std::string::npos);
+    CHECK(door->source.find("forge.entity.move(v3_actor, p_dt, 0)") != std::string::npos);
+    CHECK(door->source.find("on_start") == std::string::npos);
+    CHECK(door->touch); // the link still needs the touch
+    std::string error;
+    CHECK_MESSAGE(script::check_syntax(door->source, &error), error);
+    // Its lines are the scheme's: after the links.
+    bool mapped = false;
+    for (usize i = 0; i < door->map.line_node.size(); ++i) mapped = mapped || door->map.line_node[i] == again.links.size();
+    CHECK(mapped);
+
+    // A listening thing only by its scheme, with «При входе в зону».
+    Logic alone;
+    ThingScheme fox;
+    fox.thing = "fox";
+    script::Graph fg;
+    const u32 enter = fg.add("std.event.enter", 0, 0).uid;
+    script::GraphNode& say = fg.add("logic.hint", 280, 0);
+    say.set_value("text", "Привет");
+    fg.link(enter, script::kFlowNext, say.uid);
+    fox.graph = fg.to_json();
+    alone.add_scheme(fox);
+    const Compiled c2 = compile(alone, verbs, w.find, &nodes);
+    const Module* m = c2.find("fox");
+    REQUIRE(m);
+    CHECK(m->touch);
+    CHECK(m->source.find("S.on_enter = {}") != std::string::npos);
+    CHECK(m->source.find("local hero = logic.hero()") != std::string::npos);
+    CHECK_MESSAGE(script::check_syntax(m->source, &error), error);
+
+    // «Когда» belongs to links; a broken node is the scheme's problem.
+    script::Graph bad;
+    bad.add("logic.when", 0, 0);
+    const u32 start = bad.add("std.event.start", 0, 190).uid;
+    const u32 hint = bad.add("logic.hint", 280, 190).uid; // no text
+    bad.link(start, script::kFlowNext, hint);
+    alone.schemes[0].graph = bad.to_json();
+    const Compiled c3 = compile(alone, verbs, w.find, &nodes);
+    CHECK_FALSE(c3.find("fox"));
+    REQUIRE(c3.problems.size() >= 2);
+    CHECK(c3.problems[0].link == alone.schemes[0].id);
+    bool node_said = false;
+    for (const Problem& p : c3.problems) node_said = node_said || p.node == hint;
+    CHECK(node_said);
+    // The whole game's code shows it as not working.
+    CHECK(listing(alone, verbs, w.find, nullptr, &nodes).find("-- не работает") != std::string::npos);
+}
+
+TEST_CASE("a thing's own scheme runs by itself") {
+    PoolScope pool;
+    const auto dir = temp_folder("forge_logic_own");
+    write_text(dir / "kinds.json", R"({"kinds": [{"id": "thing", "name": "Вещь", "group": "Разное", "icon": "box", "foot": 0.5}]})");
+    write_text(dir / "objects" / "cart.object.json", R"({"id": "cart", "name": "Вагонетка", "kind": "thing"})");
+    objects::Library library;
+    REQUIRE(library.load(dir / "kinds.json", dir / "objects"));
+
+    world::World world(world::WorldDesc{}, std::make_shared<EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    library.attach(scene);
+    NoteGame game;
+    Runtime runtime(scripts, library, game);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    run(1);
+
+    Verbs verbs;
+    REQUIRE(verbs.parse(kVerbs));
+    Logic logic;
+    // При старте → подсказка; каждый шаг → сдвинуться на 2 клетки в секунду.
+    script::Graph g = new_thing_scheme("cart");
+    const u32 start = g.nodes[0].uid, tick = g.nodes[1].uid;
+    script::GraphNode& hint = g.add("logic.hint", 280, 0);
+    hint.set_value("text", "Поехали");
+    g.link(start, script::kFlowNext, hint.uid);
+    const u32 self = g.add("std.self", 0, 300).uid;
+    const u32 speed = g.add("std.math.mul", 280, 300).uid;
+    g.find(speed)->set_value("b", "2");
+    g.link(tick, "dt", speed, "a");
+    const u32 move = g.add("api.entity.move", 560, 190).uid;
+    g.link(tick, script::kFlowNext, move);
+    g.link(self, "actor", move, "actor");
+    g.link(speed, "result", move, "dx");
+    ThingScheme own;
+    own.thing = "cart";
+    own.graph = g.to_json();
+    logic.add_scheme(own);
+
+    std::vector<Problem> problems;
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    for (const Problem& p : problems) INFO(p.text);
+    CHECK(problems.empty());
+    CHECK(runtime.link_ids() == std::vector<u32>{1});
+    runtime.attach(scene);
+    flecs::entity cart = library.spawn(scene, *library.find("cart"), 10.5, 6);
+    REQUIRE(cart.is_valid());
+    const f64 x0 = cart.get<scene::Position>().tile_x();
+    run(60);
+    CHECK(game.hints == std::vector<std::string>{"Поехали"});
+    CHECK(cart.get<scene::Position>().tile_x() == doctest::Approx(x0 + 2).epsilon(0.05));
+    CHECK_FALSE(cart.has<sim::Trigger>()); // nothing to touch
+    CHECK(scripts.errors().empty());
+}

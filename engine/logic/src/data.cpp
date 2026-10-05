@@ -225,9 +225,27 @@ bool Logic::parse(std::string_view json, std::string* error) {
         if (l.id == 0 || out.find(l.id)) l.id = 0; // given one below
         out.links.push_back(std::move(l));
     }
+    yyjson_arr_foreach(yyjson_obj_get(root, "schemes"), i, n, v) {
+        ThingScheme t;
+        t.id = static_cast<u32>(yyjson_get_uint(yyjson_obj_get(v, "id")));
+        t.thing = str(v, "thing");
+        if (yyjson_val* g = yyjson_obj_get(v, "graph"); yyjson_is_obj(g)) {
+            usize len = 0;
+            if (char* text = yyjson_val_write(g, 0, &len)) {
+                t.graph.assign(text, len);
+                std::free(text);
+            }
+        }
+        if (t.thing.empty() || t.thing == kHero || out.scheme_for(t.thing)) continue;
+        if (t.id == 0 || out.find(t.id) || out.find_scheme(t.id)) t.id = 0;
+        out.schemes.push_back(std::move(t));
+    }
     for (const Link& l : out.links) out.next_id = std::max(out.next_id, l.id + 1);
+    for (const ThingScheme& t : out.schemes) out.next_id = std::max(out.next_id, t.id + 1);
     for (Link& l : out.links)
         if (l.id == 0) l.id = out.next_id++;
+    for (ThingScheme& t : out.schemes)
+        if (t.id == 0) t.id = out.next_id++;
     yyjson_val* spots = yyjson_obj_get(root, "board");
     if (yyjson_is_obj(spots)) {
         yyjson_obj_iter it = yyjson_obj_iter_with(spots);
@@ -268,6 +286,20 @@ std::string Logic::json() const {
         yyjson_mut_arr_append(list, o);
     }
     yyjson_mut_obj_add_val(doc, root, "links", list);
+    if (!schemes.empty()) {
+        yyjson_mut_val* own = yyjson_mut_arr(doc);
+        for (const ThingScheme& t : schemes) {
+            yyjson_mut_val* o = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_uint(doc, o, "id", t.id);
+            yyjson_mut_obj_add_strncpy(doc, o, "thing", t.thing.data(), t.thing.size());
+            if (yyjson_doc* g = yyjson_read(t.graph.data(), t.graph.size(), 0)) {
+                yyjson_mut_obj_add_val(doc, o, "graph", yyjson_val_mut_copy(doc, yyjson_doc_get_root(g)));
+                yyjson_doc_free(g);
+            }
+            yyjson_mut_arr_append(own, o);
+        }
+        yyjson_mut_obj_add_val(doc, root, "schemes", own);
+    }
     yyjson_mut_val* board_obj = yyjson_mut_obj(doc);
     for (const Spot& s : board) {
         yyjson_mut_val* at = yyjson_mut_arr(doc);
@@ -311,6 +343,34 @@ bool Logic::remove(u32 id) {
     const auto it = std::find_if(links.begin(), links.end(), [&](const Link& l) { return l.id == id; });
     if (it == links.end()) return false;
     links.erase(it);
+    return true;
+}
+
+ThingScheme* Logic::find_scheme(u32 id) {
+    for (ThingScheme& t : schemes)
+        if (t.id == id) return &t;
+    return nullptr;
+}
+
+const ThingScheme* Logic::find_scheme(u32 id) const { return const_cast<Logic*>(this)->find_scheme(id); }
+
+const ThingScheme* Logic::scheme_for(std::string_view thing) const {
+    for (const ThingScheme& t : schemes)
+        if (t.thing == thing) return &t;
+    return nullptr;
+}
+
+u32 Logic::add_scheme(ThingScheme scheme) {
+    if (scheme.thing.empty() || scheme.thing == kHero || scheme_for(scheme.thing)) return 0;
+    scheme.id = next_id++;
+    schemes.push_back(std::move(scheme));
+    return schemes.back().id;
+}
+
+bool Logic::remove_scheme(u32 id) {
+    const auto it = std::find_if(schemes.begin(), schemes.end(), [&](const ThingScheme& t) { return t.id == id; });
+    if (it == schemes.end()) return false;
+    schemes.erase(it);
     return true;
 }
 

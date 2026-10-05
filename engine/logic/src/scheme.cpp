@@ -228,6 +228,16 @@ void set_scheme(Link& link, const script::Graph& graph, const Verbs& verbs, cons
     link.hint = (m & 8) != 0;
 }
 
+script::Graph new_thing_scheme(std::string_view thing) {
+    Graph g;
+    g.name = "thing " + std::string(thing);
+    g.add("std.event.start", 0, 0);
+    g.add("std.event.tick", 0, kRow);
+    return g;
+}
+
+bool thing_event(std::string_view def) { return def.rfind("std.event.", 0) == 0; }
+
 usize scheme_nodes(const Link& link) {
     if (link.graph.empty()) return 0;
     Graph g;

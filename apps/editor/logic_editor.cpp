@@ -270,6 +270,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_sel_problem", &m_sel_problem_);
     model.Bind("lg_sel_code", &m_sel_code_);
     model.Bind("lg_sel_scheme", &m_sel_scheme_);
+    model.Bind("lg_sel_own", &m_sel_own_);
     model.Bind("lg_editing", &m_editing_);
     model.Bind("lg_edit_text", &m_edit_text_);
     model.Bind("lg_edit_title", &m_edit_title_);
@@ -399,6 +400,10 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     on("lg_scheme_open", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
         set_mode("scheme");
+    });
+    on("lg_thing_scheme", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        thing_scheme(sel_thing_);
     });
     on("lg_scheme_reset", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
@@ -605,6 +610,7 @@ void LogicEditor::rebuild_side() {
     m_thing_links_.clear();
     m_sel_name_ = m_sel_icon_ = "";
     m_sel_links_ = 0;
+    m_sel_own_ = m_has_thing_ && logic_.scheme_for(sel_thing_) != nullptr;
     if (m_has_thing_) {
         const logic::Thing* t = thing(sel_thing_);
         m_sel_name_ = t ? t->name : sel_thing_;
@@ -619,7 +625,7 @@ void LogicEditor::rebuild_side() {
     for (const logic::Link& k : logic_.links)
         m_words_.push_back({static_cast<int>(k.id), phrase_of(k.id), meaning_of(k.id), problem_of(k.id), k.id == sel_link_, lit(k.id)});
     if (model_)
-        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code", "lg_sel_scheme",
+        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code", "lg_sel_scheme", "lg_sel_own",
                                  "lg_thing_links", "lg_sel_name", "lg_sel_icon", "lg_sel_links", "lg_words"})
             model_.DirtyVariable(name);
 }
@@ -785,6 +791,45 @@ void LogicEditor::change_scheme(u32 link, const script::Graph& graph, std::strin
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
     logic::set_scheme(*l, graph, verbs_, find);
     change(after, std::move(label), std::move(merge));
+}
+
+void LogicEditor::change_thing_scheme(u32 id, const script::Graph& graph, std::string label, std::string merge) {
+    logic::Logic after = logic_;
+    logic::ThingScheme* t = after.find_scheme(id);
+    if (!t) return;
+    t->graph = graph.to_json();
+    change(after, std::move(label), std::move(merge));
+}
+
+u32 LogicEditor::thing_scheme(const std::string& id) {
+    if (id.empty() || id == logic::kHero || !thing(id)) return 0;
+    u32 sid = 0;
+    if (const logic::ThingScheme* had = logic_.scheme_for(id)) {
+        sid = had->id;
+    } else {
+        logic::Logic after = logic_;
+        logic::ThingScheme t;
+        t.thing = id;
+        t.graph = logic::new_thing_scheme(id).to_json();
+        sid = after.add_scheme(std::move(t));
+        if (!sid) return 0;
+        change(after, "Своя схема: «" + thing(id)->name + "»");
+    }
+    set_mode("scheme");
+    scheme_.select_frame(sid);
+    scheme_.focus(sid);
+    return sid;
+}
+
+bool LogicEditor::remove_thing_scheme(u32 id) {
+    const logic::ThingScheme* t = logic_.find_scheme(id);
+    if (!t) return false;
+    const logic::Thing* th = thing(t->thing);
+    const std::string name = th ? th->name : t->thing;
+    logic::Logic after = logic_;
+    after.remove_scheme(id);
+    change(after, "Своя схема убрана: «" + name + "»");
+    return true;
 }
 
 bool LogicEditor::add_thing(const std::string& id) {
@@ -1018,6 +1063,8 @@ void LogicEditor::rebuild_code() {
         line.text = text.substr(start, end - start);
         const u32 index = map.node_at(n);
         if (index < logic_.links.size()) line.link = static_cast<int>(logic_.links[index].id);
+        else if (index != script::SourceMap::kNoNode && index - logic_.links.size() < logic_.schemes.size())
+            line.link = static_cast<int>(logic_.schemes[index - logic_.links.size()].id);
         line.selected = line.link != 0 && static_cast<u32>(line.link) == sel_link_;
         line.lit = line.link != 0 && lit(static_cast<u32>(line.link));
         const usize lead = line.text.find_first_not_of(' ');

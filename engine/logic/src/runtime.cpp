@@ -170,6 +170,7 @@ bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>*
     compiled_ = compile(logic, verbs, find, nodes_.get());
     ids_.clear();
     for (const Link& l : logic.links) ids_.push_back(l.id);
+    for (const ThingScheme& t : logic.schemes) ids_.push_back(t.id);
     if (problems) *problems = compiled_.problems;
     for (const Problem& p : compiled_.problems)
         if (p.warning) FORGE_WARN("Связь %u: %s", p.link, p.text.c_str());

@@ -712,16 +712,19 @@
 
             <!-- «Схема»: each link a frame with its node graph (scheme_view.h) -->
             <div id="lg-scheme" class="lg-scheme grow" data-if="lg_mode == 'scheme'" data-event-mousedown="sc_down">
-                <div class="lg-empty muted" data-if="sc_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи».</div>
-                <div data-for="f : sc_frames" class="sc-frame" data-attr-id="'sc-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit" data-class-custom="f.custom"
+                <div class="lg-empty muted" data-if="sc_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи». А вещь может что-то делать и сама по себе: «Своя схема вещи».</div>
+                <div id="sc-own-add" class="sc-tools button tonal small" title="Что вещь делает сама по себе, без связей: при старте, каждый шаг, при ударе…" data-event-mousedown="sc_stop" data-event-click="sc_own_add"><icon class="s" name="add"/><span>Своя схема вещи</span></div>
+                <div data-for="f : sc_frames" class="sc-frame" data-attr-id="'sc-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit" data-class-custom="f.custom" data-class-own="f.own"
                      data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'" data-event-mousedown="sc_frame_down(f.id)">
                     <div class="sc-frame-head row">
-                        <icon class="s" data-attr-name="f.custom ? 'account_tree' : 'link'"/>
+                        <icon class="s" data-attr-name="f.own ? 'category' : f.custom ? 'account_tree' : 'link'"/>
                         <span class="grow">{{ f.phrase }}</span>
                         <span class="sc-badge" data-if="f.custom">своя схема</span>
+                        <span class="sc-badge own" data-if="f.own">без связи</span>
                         <icon class="s err" name="error" data-if="f.problem != ''" data-attr-title="f.problem"/>
                         <div class="button text small" data-if="f.note == ''" data-attr-id="'sc-add-' + f.id" title="Добавить ноду (или правый щелчок по рамке)" data-event-mousedown="sc_stop" data-event-click="sc_add(f.id)"><icon class="s" name="add"/><span>Нода</span></div>
                         <div class="button text small" data-if="f.custom" data-attr-id="'sc-reset-' + f.id" title="Убрать свою схему: связь снова делает то, что в «Связях»" data-event-mousedown="sc_stop" data-event-click="sc_reset(f.id)"><icon class="s" name="undo"/><span>Как в Связях</span></div>
+                        <div class="button text small" data-if="f.own" data-attr-id="'sc-drop-' + f.id" title="Убрать схему: вещь больше ничего не делает сама (Ctrl+Z вернёт)" data-event-mousedown="sc_stop" data-event-click="sc_reset(f.id)"><icon class="s" name="delete"/><span>Убрать</span></div>
                     </div>
                     <div class="sc-note" data-if="f.note != ''">{{ f.note }}</div>
                 </div>
@@ -823,6 +826,7 @@
                         <span class="phrase">{{ w.phrase }}</span>
                         <span class="problem" data-if="w.problem != ''">{{ w.problem }}</span>
                     </div>
+                    <div id="lg-thing-scheme" class="command" data-attr-title="'Что вещь делает сама по себе, без связей: при старте, каждый шаг, при ударе…'" data-event-click="lg_thing_scheme"><icon name="category"/><span>{{ lg_sel_own ? 'Открыть её свою схему' : 'Своя схема вещи…' }}</span></div>
                     <div id="lg-remove-thing" class="command" data-event-click="lg_remove_thing"><icon name="remove_circle_outline"/><span>{{ lg_sel_links > 0 ? 'Убрать с доски вместе со связями' : 'Убрать с доски' }}</span></div>
                 </div>
                 <div data-if="!lg_has_link && !lg_has_thing" class="column">
