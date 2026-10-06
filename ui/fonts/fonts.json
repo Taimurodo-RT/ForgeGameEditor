@@ -81,6 +81,17 @@
       "file": "MaterialSymbolsRounded-Filled.ttf",
       "family": "Material Symbols Rounded",
       "weight": 500
+    },
+    {
+      "file": "Lora.ttf",
+      "family": "Lora",
+      "weight": 400
+    },
+    {
+      "file": "Lora-Italic.ttf",
+      "family": "Lora",
+      "weight": 400,
+      "style": "italic"
     }
   ]
 }

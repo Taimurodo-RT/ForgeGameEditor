@@ -9,6 +9,9 @@
 //     "stages": [{"at": 1, "text": "Найти кирку шахтёра в старой шахте."},
 //                {"at": 2, "text": "Вернуть кирку шахтёру."}],
 //     "done_at": 3, "done_text": "Шахтёр получил свою кирку."}]
+//
+// A stage may have a short "name" ("ищет кирку", and "done_name" for the
+// end): editors say «задание «Потерянная кирка»: ищет кирку» with it.
 
 #include "forge/game/vars.h"
 
@@ -21,6 +24,7 @@ namespace forge::game {
 struct QuestStage {
     f64 at = 0;
     std::string text;
+    std::string name; // short, for editors; may be empty
 };
 
 struct Quest {
@@ -30,6 +34,7 @@ struct Quest {
     std::vector<QuestStage> stages; // sorted by at
     f64 done_at = 0;                // 0 = the quest never closes
     std::string done_text;
+    std::string done_name; // short, for editors; may be empty
 };
 
 enum class QuestState : u8 { NotStarted, Active, Done };

@@ -7,7 +7,7 @@
     {"goto": "hello"}
   ],
   "nodes": [
-    {"id": "hello", "speaker": "miner",
+    {"id": "hello", "scene": "Первая встреча", "note": "Борис сидит на бревне у дома, держится за спину.", "speaker": "miner",
      "text": "Эх, путник... Беда у меня. Обронил кирку в старой шахте, а туда мне с больной спиной уже не спуститься.",
      "next": "ask"},
     {"id": "ask", "speaker": "miner",
@@ -20,24 +20,24 @@
     {"id": "thanks_ahead", "speaker": "miner",
      "text": "Спасибо! Спускайся по лестнице, потом по штольне на запад до самого конца. Кирка в дальнем зале."},
 
-    {"id": "waiting", "branches": [{"if": "has(\"pickaxe\")", "goto": "give_back"}], "next": "not_yet"},
+    {"id": "waiting", "scene": "Герой вернулся", "branches": [{"if": "has(\"pickaxe\")", "goto": "give_back"}], "next": "not_yet"},
     {"id": "not_yet", "speaker": "miner",
      "text": "Ну что, нашёл кирку? Она в дальнем зале шахты, на западе.",
      "choices": [
        {"text": "Есть вопрос.", "goto": "talk"},
        {"text": "Иду искать.", "goto": "end"}
      ]},
-    {"id": "give_back", "speaker": "miner",
+    {"id": "give_back", "note": "Борис вскакивает, забыв про спину.", "speaker": "miner",
      "text": "Моя кирка! Держи за труды. А знаешь что, оставь её себе: мне уже не копать. Медь неси кузнецу Мирону, он заплатит.",
      "do": "quest.pickaxe = 3; give(\"coins\", 30)"},
-    {"id": "thanks", "speaker": "miner",
+    {"id": "thanks", "scene": "После задания", "speaker": "miner",
      "text": "Как кирка, служит? В штольне есть медь, Мирон её ждёт.",
      "choices": [
        {"text": "Есть вопрос.", "goto": "talk"},
        {"text": "Пока.", "goto": "end"}
      ]},
 
-    {"id": "talk", "speaker": "miner",
+    {"id": "talk", "scene": "Вопросы словами", "speaker": "miner",
      "text": "Спрашивай, что знаю, расскажу. Напиши вопрос.",
      "keywords": [
        {"words": ["шахт*", "штольн*", "лестниц*"], "goto": "k_mine"},

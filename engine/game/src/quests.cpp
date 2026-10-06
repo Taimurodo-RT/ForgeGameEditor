@@ -28,9 +28,10 @@ bool QuestBook::load(std::string_view json, std::vector<std::string>& errors) {
         if (quest.var.empty()) quest.var = "quest." + quest.id;
         quest.done_at = yyjson_get_num(yyjson_obj_get(q, "done_at"));
         quest.done_text = str(yyjson_obj_get(q, "done_text"));
+        quest.done_name = str(yyjson_obj_get(q, "done_name"));
         yyjson_arr_iter sit = yyjson_arr_iter_with(yyjson_obj_get(q, "stages"));
         for (yyjson_val* s; (s = yyjson_arr_iter_next(&sit));)
-            quest.stages.push_back({yyjson_get_num(yyjson_obj_get(s, "at")), str(yyjson_obj_get(s, "text"))});
+            quest.stages.push_back({yyjson_get_num(yyjson_obj_get(s, "at")), str(yyjson_obj_get(s, "text")), str(yyjson_obj_get(s, "name"))});
         std::sort(quest.stages.begin(), quest.stages.end(), [](const QuestStage& a, const QuestStage& b) { return a.at < b.at; });
         if (quest.id.empty()) errors.push_back("задание без id");
         else if (find(quest.id)) errors.push_back("задание «" + quest.id + "» встречается дважды");

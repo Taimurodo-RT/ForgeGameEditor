@@ -342,6 +342,35 @@ bool word_char(u32 cp) {
     return (cp >= '0' && cp <= '9') || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z') || (cp >= 0x400 && cp <= 0x4FF);
 }
 
+std::u32string code_points(std::string_view s) {
+    std::u32string out;
+    for (usize i = 0; i < s.size();) out += static_cast<char32_t>(decode(s, i));
+    return out;
+}
+
+// Letters a Russian (or English) word ending is made of: «шахт|у»,
+// «кузнец|ами», «мед|ью».
+bool ending_char(char32_t c) {
+    static const std::u32string_view endings = U"аеиоуыэюяйьмхвгaeiouy";
+    return endings.find(c) != std::u32string_view::npos;
+}
+
+// A plain word matches its forms: «шахта» finds «шахту», «шахте», «шахтой»,
+// but not «шахтёр».
+bool same_word(const std::string& typed, const std::string& keyword) {
+    if (typed == keyword) return true;
+    const std::u32string w = code_points(typed), k = code_points(keyword);
+    if (k.size() < 4) return false;
+    usize stem = k.size();
+    while (stem > 3 && ending_char(k[stem - 1]) && k[stem - 1] != U'м' && k[stem - 1] != U'х' && k[stem - 1] != U'в' &&
+           k[stem - 1] != U'г')
+        --stem;
+    if (w.size() < stem || w.size() > stem + 3 || w.compare(0, stem, k, 0, stem) != 0) return false;
+    for (usize i = stem; i < w.size(); ++i)
+        if (!ending_char(w[i])) return false;
+    return true;
+}
+
 } // namespace
 
 std::string to_lower_utf8(std::string_view text) {
@@ -384,7 +413,7 @@ bool keyword_matches(const std::vector<std::string>& words, std::string_view key
         for (usize j = 0; j < parts.size() && all; ++j) {
             const std::string& w = words[start + j];
             const bool last = j + 1 == parts.size();
-            all = (prefix && last) ? w.compare(0, parts[j].size(), parts[j]) == 0 : w == parts[j];
+            all = (prefix && last) ? w.compare(0, parts[j].size(), parts[j]) == 0 : same_word(w, parts[j]);
         }
         if (all) return true;
     }
