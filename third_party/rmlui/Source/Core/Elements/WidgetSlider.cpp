@@ -1,4 +1,5 @@
 #include "WidgetSlider.h"
+#include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Context.h"
 #include "../../../Include/RmlUi/Core/ElementUtilities.h"
@@ -284,6 +285,8 @@ void WidgetSlider::FormatElements(const Vector2f containing_block, float slider_
 		offset.x += arrows[0]->GetBox().GetSize(BoxArea::Border).x + arrows[0]->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Right) +
 			track->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Left);
 		offset.y = track->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Top);
+		if (IsWebSlider()) // Forge: as in a browser, the track is centred across the input.
+			offset.y = 0.5f * (parent_box.GetSize().y - track->GetBox().GetSize(BoxArea::Border).y);
 		track->SetOffset(offset, parent);
 
 		offset.x += track->GetBox().GetSize(BoxArea::Border).x + track->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Right) +
@@ -536,6 +539,12 @@ float WidgetSlider::AbsolutePositionToBarPosition(float absolute_position) const
 	return new_bar_position;
 }
 
+bool WidgetSlider::IsWebSlider() const
+{
+	const ElementDocument* document = parent->GetOwnerDocument();
+	return document && document->GetTagName() == "html" && parent->GetTagName() == "input";
+}
+
 void WidgetSlider::PositionBar()
 {
 	const Vector2f track_dimensions = track->GetBox().GetSize();
@@ -561,7 +570,8 @@ void WidgetSlider::PositionBar()
 		const float traversable_track_length = track_dimensions.x - bar_dimensions.x - edge_left - edge_right;
 		const Vector2f offset = {
 			track->GetRelativeOffset().x + edge_left + traversable_track_length * bar_position,
-			bar->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Top),
+			// Forge: in a web page the thumb sits in the track, as ::-webkit-slider-thumb does.
+			(IsWebSlider() ? track->GetRelativeOffset().y : 0.f) + bar->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Top),
 		};
 		bar->SetOffset(offset.Round(), parent);
 	}

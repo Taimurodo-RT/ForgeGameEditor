@@ -300,18 +300,25 @@ static String RewritePseudoElementSelector(const String& in_selector)
 	static const struct {
 		const char* suffix;
 		const char* tag;
-	} pseudo[] = {{"::before", "forge-before"}, {"::after", "forge-after"}, {":before", "forge-before"}, {":after", "forge-after"}, {"::marker", "forge-marker"}};
+	} pseudo[] = {{"::before", "forge-before"}, {"::after", "forge-after"}, {":before", "forge-before"}, {":after", "forge-after"}, {"::marker", "forge-marker"},
+		// The parts of <input type="range">: RmlUi's slider elements.
+		{"::-webkit-slider-thumb", "sliderbar"}, {"::-webkit-slider-runnable-track", "slidertrack"}, {"::-moz-range-thumb", "sliderbar"},
+		{"::-moz-range-track", "slidertrack"}};
 	for (const auto& p : pseudo)
 	{
 		const size_t n = strlen(p.suffix);
-		if (lower.size() < n || lower.compare(lower.size() - n, n, p.suffix) != 0)
+		const size_t position = lower.rfind(p.suffix);
+		if (position == String::npos)
 			continue;
-		if (lower.size() > n && lower[lower.size() - n - 1] == ':')
+		if (position > 0 && lower[position - 1] == ':')
 			continue; // '::after' matched by ':after'
-		String base = StringUtilities::StripWhitespace(selector.substr(0, selector.size() - n));
+		const String tail = selector.substr(position + n); // Pseudo-classes of the part, as in ::-webkit-slider-thumb:active.
+		if (!tail.empty() && tail[0] != ':')
+			continue;
+		String base = StringUtilities::StripWhitespace(selector.substr(0, position));
 		if (base.empty() || base.back() == '>' || base.back() == '+' || base.back() == '~')
 			base += "*";
-		return base + " > " + p.tag;
+		return base + " > " + p.tag + tail;
 	}
 	return selector;
 }

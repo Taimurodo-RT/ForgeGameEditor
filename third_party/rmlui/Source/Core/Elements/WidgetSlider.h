@@ -89,6 +89,8 @@ private:
 	float AbsolutePositionToBarPosition(float absolute_position) const;
 
 	void PositionBar();
+	// Forge: an <input type="range"> in a web page, laid out as in a browser.
+	bool IsWebSlider() const;
 	void ResizeProgress();
 
 	// Clamps the new value, sets it on the slider and returns it as a normalized number from 0 to 1.

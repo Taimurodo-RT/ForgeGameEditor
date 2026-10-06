@@ -471,6 +471,16 @@ static void GenerateMetrics(FT_Face ft_face, FontMetrics& metrics, float bitmap_
 	metrics.ascent = ft_face->size->metrics.ascender * bitmap_scaling_factor / float(1 << 6);
 	metrics.descent = -ft_face->size->metrics.descender * bitmap_scaling_factor / float(1 << 6);
 	metrics.line_spacing = ft_face->size->metrics.height * bitmap_scaling_factor / float(1 << 6);
+	if (FT_IS_SCALABLE(ft_face))
+	{
+		// Forge: as browsers do (Chromium/Skia), the line spacing is the sum of the rounded ascent, descent and line gap of the font
+		// header, without FreeType's grid fitting. It is the height of a 'line-height: normal' line.
+		const FT_Fixed y_scale = ft_face->size->metrics.y_scale;
+		const float ascent = FT_MulFix(ft_face->ascender, y_scale) / float(1 << 6);
+		const float descent = -FT_MulFix(ft_face->descender, y_scale) / float(1 << 6);
+		const float gap = Math::Max(0.f, FT_MulFix(ft_face->height - (ft_face->ascender - ft_face->descender), y_scale) / float(1 << 6));
+		metrics.line_spacing = (Math::Round(ascent) + Math::Round(descent) + Math::Round(gap)) * bitmap_scaling_factor;
+	}
 
 	metrics.underline_position = FT_MulFix(-ft_face->underline_position, ft_face->size->metrics.y_scale) * bitmap_scaling_factor / float(1 << 6);
 	metrics.underline_thickness = FT_MulFix(ft_face->underline_thickness, ft_face->size->metrics.y_scale) * bitmap_scaling_factor / float(1 << 6);

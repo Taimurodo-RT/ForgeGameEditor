@@ -46,6 +46,11 @@ public:
 	static void GenerateBackgroundBorder(Mesh& mesh, const RenderBox& render_box, ColourbPremultiplied background_color,
 		const ColourbPremultiplied border_colors[4]);
 
+	/// Forge: as above, with the CSS border styles (Style::BorderStyle values) of each edge in top-right-bottom-left order: dashed, dotted,
+	/// double, groove, ridge, inset and outset are drawn as in a browser, the other styles solid.
+	static void GenerateBackgroundBorder(Mesh& mesh, const RenderBox& render_box, ColourbPremultiplied background_color,
+		const ColourbPremultiplied border_colors[4], const uint8_t border_styles[4]);
+
 	/// Generates the background geometry for an element's area, with support for border-radius.
 	/// @param[out] mesh A mesh to append the generated vertices and indices into.
 	/// @param[in] render_box The render box which determines the background geometry.

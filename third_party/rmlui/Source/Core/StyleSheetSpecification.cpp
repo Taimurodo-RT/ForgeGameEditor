@@ -374,6 +374,9 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::RowGap, "row-gap", "0px", false, true).AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockHeight);
 	RegisterProperty(PropertyId::ColumnGap, "column-gap", "0px", false, true).AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockHeight);
 	RegisterShorthand(ShorthandId::Gap, "gap", "row-gap, column-gap", ShorthandType::Replicate);
+	// Forge: table spacing. border-spacing is the gap between cells, border-collapse: collapse removes it.
+	RegisterShorthand(ShorthandId::Invalid, "border-spacing", "column-gap, row-gap", ShorthandType::Replicate);
+	RegisterProperty(PropertyId::Invalid, "border-collapse", "separate", true, true).AddParser("keyword", "separate, collapse");
 
 	RegisterProperty(PropertyId::Cursor, "cursor", "", true, false).AddParser("string");
 

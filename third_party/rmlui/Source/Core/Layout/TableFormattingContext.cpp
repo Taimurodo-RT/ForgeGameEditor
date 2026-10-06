@@ -1,6 +1,7 @@
 #include "TableFormattingContext.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Element.h"
+#include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/Types.h"
 #include "ContainerBox.h"
 #include "LayoutDetails.h"
@@ -54,8 +55,19 @@ UniquePtr<LayoutBox> TableFormattingContext::Format(ContainerBox* parent_contain
 
 	context.table_gap = Vector2f(ResolveValue(computed_table.column_gap(), context.table_initial_content_size.x),
 		ResolveValue(computed_table.row_gap(), context.table_initial_content_size.y));
-
 	context.grid.Build(element_table, *table_wrapper_box);
+
+	// Forge: with collapsed borders, neighbouring cells share their border: they overlap by the cell border width.
+	if (const Property* collapse = element_table->GetProperty("border-collapse"); collapse && collapse->unit == Unit::KEYWORD && collapse->Get<int>() == 1)
+	{
+		context.table_gap = Vector2f(0.f);
+		if (!context.grid.cells.empty())
+		{
+			const ComputedValues& cell = context.grid.cells[0].element_cell->GetComputedValues();
+			context.table_gap = -Vector2f(Math::Min(cell.border_left_width(), cell.border_right_width()),
+				Math::Min(cell.border_top_width(), cell.border_bottom_width()));
+		}
+	}
 
 	Vector2f table_content_size, table_overflow_size;
 	float table_baseline = 0.f;
@@ -150,6 +162,74 @@ void TableFormattingContext::DetermineColumnWidths(TrackBoxList& columns, float&
 		}
 	}
 
+	// Forge: in a web page, auto columns are as wide as their content (CSS automatic table layout). A table of auto width shrinks to its
+	// columns, a table with a set width shares the space in proportion to the content widths.
+	const ElementDocument* document = element_table->GetOwnerDocument();
+	const bool web_table = (document && document->GetTagName() == "html");
+	bool shrink_to_columns = false;
+	if (web_table)
+	{
+		const int num_columns = (int)column_metrics.size();
+		Vector<float> content_widths(num_columns, 0.f);
+		const Vector2f measure_block(Math::Max(table_initial_content_size.x, 0.f), -1.f);
+		for (const TableGrid::Cell& cell : grid.cells)
+		{
+			Box cell_box;
+			LayoutDetails::BuildBox(cell_box, measure_block, cell.element_cell, BuildBoxMode::UnalignedBlock);
+			const float padding_border = cell_box.GetSizeAcross(BoxDirection::Horizontal, BoxArea::Border, BoxArea::Padding);
+			const float width = (cell_box.GetSize().x >= 0.f ? cell_box.GetSize().x
+															 : LayoutDetails::GetShrinkToFitWidth(cell.element_cell, Vector2f(100000.f, -1.f))) +
+				padding_border;
+			const int span = cell.column_last - cell.column_begin + 1;
+			for (int c = cell.column_begin; c <= cell.column_last && c < num_columns; c++)
+				content_widths[c] = Math::Max(content_widths[c], width / float(span));
+		}
+
+		const bool auto_width = (element_table->GetComputedValues().width().type == Style::Width::Auto);
+		float sum_fixed = table_gap.x * float(Math::Max(0, num_columns - 1)), sum_auto = 0.f;
+		for (int i = 0; i < num_columns; i++)
+		{
+			const TrackMetric& metric = column_metrics[i];
+			sum_fixed += metric.column_padding_border_a + metric.column_padding_border_b + metric.group_padding_border_a +
+				metric.group_padding_border_b + metric.sum_margin_a + metric.sum_margin_b;
+			if (metric.sizing_mode == TrackSizingMode::Auto)
+				sum_auto += content_widths[i];
+			else if (metric.sizing_mode == TrackSizingMode::Fixed)
+				sum_fixed += metric.fixed_size;
+		}
+		if (auto_width)
+		{
+			const float room = table_initial_content_size.x - sum_fixed;
+			const float scale = (sum_auto > room && sum_auto > 0.f ? Math::Max(0.f, room) / sum_auto : 1.f);
+			bool has_flexible = false;
+			for (int i = 0; i < num_columns; i++)
+			{
+				TrackMetric& metric = column_metrics[i];
+				if (metric.sizing_mode == TrackSizingMode::Auto)
+				{
+					metric.sizing_mode = TrackSizingMode::Fixed;
+					metric.fixed_size = Math::Clamp(content_widths[i] * scale, metric.min_size, metric.max_size);
+					metric.flex_size = 0.f;
+				}
+				has_flexible |= (metric.sizing_mode == TrackSizingMode::Flexible);
+			}
+			shrink_to_columns = !has_flexible;
+		}
+		else
+		{
+			for (int i = 0; i < num_columns; i++)
+			{
+				TrackMetric& metric = column_metrics[i];
+				if (metric.sizing_mode == TrackSizingMode::Auto)
+				{
+					metric.sizing_mode = TrackSizingMode::Flexible;
+					metric.fixed_size = 0.f;
+					metric.flex_size = Math::Max(content_widths[i], 1.f);
+				}
+			}
+		}
+	}
+
 	// Convert any auto widths to flexible width.
 	for (TrackMetric& metric : column_metrics)
 	{
@@ -162,7 +242,8 @@ void TableFormattingContext::DetermineColumnWidths(TrackBoxList& columns, float&
 	}
 
 	// Now all widths should be either fixed or flexible, resolve all flexible widths to fixed.
-	sizing.ResolveFlexibleSize();
+	if (!shrink_to_columns)
+		sizing.ResolveFlexibleSize();
 
 	// Generate the column results based on the metrics.
 	const float columns_full_width = BuildColumnBoxes(columns, column_metrics, grid.columns, table_gap.x);

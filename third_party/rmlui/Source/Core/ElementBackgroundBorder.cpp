@@ -128,6 +128,9 @@ void ElementBackgroundBorder::GenerateGeometry(Element* element)
 		computed.border_left_color().ToPremultiplied(opacity),
 	};
 
+	const uint8_t border_styles[4] = {uint8_t(computed.border_top_style()), uint8_t(computed.border_right_style()),
+		uint8_t(computed.border_bottom_style()), uint8_t(computed.border_left_style())};
+
 	Geometry& geometry = GetOrCreateBackground(BackgroundType::BackgroundBorder).geometry;
 	Mesh mesh = geometry.Release(Geometry::ReleaseMode::ClearMesh);
 
@@ -153,7 +156,8 @@ void ElementBackgroundBorder::GenerateGeometry(Element* element)
 	}
 
 	for (int i = 0; i < element->GetNumBoxes(); i++)
-		MeshUtilities::GenerateBackgroundBorder(mesh, element->GetRenderBox(BoxArea::Padding, i), background_color, border_colors.data());
+		MeshUtilities::GenerateBackgroundBorder(mesh, element->GetRenderBox(BoxArea::Padding, i), background_color, border_colors.data(),
+			border_styles); // Forge: border styles
 
 	geometry = render_manager->MakeGeometry(std::move(mesh));
 }

@@ -1136,6 +1136,25 @@ PropertyIdSet ElementStyle::ComputeValues(Style::ComputedValues& values, const S
 			ComputeValue(values, dp_ratio, vp_dimensions, font_size, document_font_size, dirty_font_face_handle, deferred.first, &calc_storage);
 	}
 
+	// Forge: in a web page, a border color nobody sets is the text color (CSS 'currentcolor'); RmlUi's own default is white.
+	if (ElementDocument* document = element->GetOwnerDocument(); document && document->GetTagName() == "html")
+	{
+		const PropertyId colors[] = {PropertyId::BorderTopColor, PropertyId::BorderRightColor, PropertyId::BorderBottomColor,
+			PropertyId::BorderLeftColor};
+		for (int i = 0; i < 4; i++)
+		{
+			if (GetLocalProperty(colors[i], inline_properties, definition.get()))
+				continue;
+			switch (i)
+			{
+			case 0: values.border_top_color(values.color()); break;
+			case 1: values.border_right_color(values.color()); break;
+			case 2: values.border_bottom_color(values.color()); break;
+			default: values.border_left_color(values.color()); break;
+			}
+		}
+	}
+
 	// Forge: as in CSS, a border whose style is none or hidden has no width.
 	{
 		auto no_border = [](Style::BorderStyle style) { return style == Style::BorderStyle::None || style == Style::BorderStyle::Hidden; };
@@ -1167,7 +1186,8 @@ PropertyIdSet ElementStyle::ComputeValues(Style::ComputedValues& values, const S
 	// Forge: 'line-height: normal' is the font's own line spacing, as in a browser.
 	if (dirty_properties.Contains(PropertyId::LineHeight) || dirty_font_face_handle)
 	{
-		const Property* line_height = GetLocalProperty(PropertyId::LineHeight);
+		// The specified value, possibly inherited: 'normal' inherits as itself and follows each element's own font.
+		const Property* line_height = GetProperty(PropertyId::LineHeight);
 		if (line_height && line_height->unit == Unit::KEYWORD && values.font_face_handle() && values.font_size() > 0.f)
 		{
 			const float spacing = GetFontEngineInterface()->GetFontMetrics(values.font_face_handle()).line_spacing;
