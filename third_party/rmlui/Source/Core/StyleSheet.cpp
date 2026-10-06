@@ -69,7 +69,16 @@ void StyleSheet::BuildNodeIndex()
 	root->BuildIndex(styled_node_index);
 	pseudo_element_hosts[0].clear();
 	pseudo_element_hosts[1].clear();
-	root->CollectPseudoElementHosts(pseudo_element_hosts[0], pseudo_element_hosts[1]);
+	pseudo_element_hosts[2].clear();
+	root->CollectPseudoElementHosts(pseudo_element_hosts[0], pseudo_element_hosts[1], pseudo_element_hosts[2]);
+}
+
+bool StyleSheet::HasFirstLetter(const Element* element) const
+{
+	for (const StyleSheetNode* host : pseudo_element_hosts[2])
+		if (host->IsPseudoElementHost(element))
+			return true;
+	return false;
 }
 
 bool StyleSheet::HasPseudoElement(const Element* element, bool after) const

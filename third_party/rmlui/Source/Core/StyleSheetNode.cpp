@@ -13,7 +13,7 @@ namespace Rml {
 // Forge: the boxes made for ::before and ::after match only selectors that name them.
 static inline bool IsPseudoElementTag(const String& tag)
 {
-	return tag.size() >= 10 && tag.compare(0, 6, "forge-") == 0 && (tag == "forge-before" || tag == "forge-after" || tag == "forge-marker");
+	return tag.size() >= 10 && tag.compare(0, 6, "forge-") == 0 && (tag == "forge-before" || tag == "forge-after" || tag == "forge-marker" || tag == "forge-first-letter");
 }
 
 static inline bool IsTextElement(const Element* element)
@@ -103,7 +103,8 @@ UniquePtr<StyleSheetNode> StyleSheetNode::DeepCopy(StyleSheetNode* in_parent) co
 	return node;
 }
 
-void StyleSheetNode::CollectPseudoElementHosts(Vector<const StyleSheetNode*>& before, Vector<const StyleSheetNode*>& after) const
+void StyleSheetNode::CollectPseudoElementHosts(Vector<const StyleSheetNode*>& before, Vector<const StyleSheetNode*>& after,
+	Vector<const StyleSheetNode*>& first_letter) const
 {
 	// Only rules that give the box content create it; rules like '*::before { box-sizing: border-box }' only style existing boxes.
 	const PropertyId content_id = StyleSheetSpecification::GetPropertyId("content");
@@ -116,7 +117,11 @@ void StyleSheetNode::CollectPseudoElementHosts(Vector<const StyleSheetNode*>& be
 			else if (child->selector.tag == "forge-after" && std::find(after.begin(), after.end(), this) == after.end())
 				after.push_back(this);
 		}
-		child->CollectPseudoElementHosts(before, after);
+		// ::first-letter boxes are made for any rule, they style text that is already there.
+		if (child->selector.combinator == SelectorCombinator::Child && child->selector.tag == "forge-first-letter" &&
+			std::find(first_letter.begin(), first_letter.end(), this) == first_letter.end())
+			first_letter.push_back(this);
+		child->CollectPseudoElementHosts(before, after, first_letter);
 	}
 }
 

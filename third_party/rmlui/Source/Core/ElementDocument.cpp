@@ -1,6 +1,9 @@
 #include "../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../Include/RmlUi/Core/StringUtilities.h"
 #include "../../Include/RmlUi/Core/Context.h"
+#include "../../Include/RmlUi/Core/Core.h"
+#include "../../Include/RmlUi/Core/FontEngineInterface.h"
+#include "../../Include/RmlUi/Core/Math.h"
 #include "../../Include/RmlUi/Core/ElementText.h"
 #include "../../Include/RmlUi/Core/Factory.h"
 #include "../../Include/RmlUi/Core/Profiling.h"
@@ -17,6 +20,7 @@
 #include "Template.h"
 #include "TemplateCache.h"
 #include "XMLParseTools.h"
+#include <cctype>
 #include <limits.h>
 
 namespace Rml {
@@ -503,7 +507,8 @@ static bool WrapFlexText(Element* element)
 
 static bool IsGeneratedBox(const String& tag)
 {
-	return tag == "#text" || tag == "#anon" || tag == "forge-before" || tag == "forge-after" || tag == "forge-marker";
+	return tag == "#text" || tag == "#anon" || tag == "forge-before" || tag == "forge-after" || tag == "forge-marker" ||
+		tag == "forge-first-letter";
 }
 
 static String RomanNumeral(int value)
@@ -598,6 +603,49 @@ static String ListMarkerText(Element* item, bool& inside)
 	return text + ". ";
 }
 
+// Forge: makes a list marker box draw a disc, circle or square bullet (or nothing, for an empty shape). Returns true if it changed.
+static bool UpdateMarkerShape(Element* item, Element* marker, const String& shape)
+{
+	String key;
+	if (!shape.empty())
+	{
+		const FontFaceHandle font = item->GetFontFaceHandle();
+		if (!font)
+			return false;
+		const int ascent = (int)Math::Round(GetFontEngineInterface()->GetFontMetrics(font).ascent);
+		const int offset = ascent * 2 / 3;
+		const int size = (offset + 1) / 2;
+		const int lift = ascent - 3 * (ascent - offset) / 2 - size;
+		const Colourb colour = item->GetComputedValues().color();
+		key = CreateString("%s %d %d %d %d %d %d %d", shape.c_str(), offset, size, lift, colour.red, colour.green, colour.blue, colour.alpha);
+		if (marker->GetAttribute<String>("forge-shape", "") == key)
+			return false;
+		const String colour_text = CreateString("rgba(%d,%d,%d,%g)", colour.red, colour.green, colour.blue, colour.alpha / 255.0);
+		marker->SetProperty("width", CreateString("%dpx", size));
+		marker->SetProperty("height", CreateString("%dpx", size));
+		marker->SetProperty("margin-left", CreateString("%dpx", -(offset + 7)));
+		marker->SetProperty("margin-right", CreateString("%dpx", offset + 7 - size));
+		marker->SetProperty("vertical-align", CreateString("%dpx", lift));
+		marker->SetProperty("box-sizing", "border-box");
+		marker->SetProperty("font-size", "0px");
+		marker->SetProperty("overflow", "hidden"); // so its baseline is its bottom edge
+		marker->SetProperty("border-radius", shape == "square" ? "0px" : "50%");
+		marker->SetProperty("background-color", shape == "circle" ? "transparent" : colour_text);
+		marker->SetProperty("border", shape == "circle" ? "1px solid " + colour_text : "0px");
+		marker->SetAttribute("forge-shape", key);
+		return true;
+	}
+	if (!marker->HasAttribute("forge-shape"))
+		return false;
+	for (const char* name : {"width", "height", "margin-left", "margin-right", "vertical-align", "box-sizing", "font-size", "overflow-x", "overflow-y", "border-radius",
+			 "background-color", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "border-top-style",
+			 "border-right-style", "border-bottom-style", "border-left-style", "border-top-color", "border-right-color", "border-bottom-color",
+			 "border-left-color", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"})
+		marker->RemoveProperty(name);
+	marker->RemoveAttribute("forge-shape");
+	return true;
+}
+
 // Forge: gives list items (display: list-item) a first child box with the tag forge-marker holding their bullet or number. Returns true if the tree changed.
 static bool UpdateListMarkers(Element* element)
 {
@@ -605,8 +653,17 @@ static bool UpdateListMarkers(Element* element)
 	if (element->GetComputedValues().display() == Style::Display::ListItem)
 	{
 		bool inside = false;
-		const String text = ListMarkerText(element, inside);
+		String text = ListMarkerText(element, inside);
 		Element* marker = (element->GetNumChildren() > 0 && element->GetChild(0)->GetTagName() == "forge-marker" ? element->GetChild(0) : nullptr);
+		// Outside bullets are drawn as shapes, sized and placed from the font's ascent as Chromium does, so they do not depend on
+		// how big the font's bullet glyph is.
+		String shape;
+		if (!inside)
+			shape = (text == "\xe2\x80\xa2 " ? "disc" : text == "\xe2\x97\xa6 " ? "circle" : text == "\xe2\x96\xaa " ? "square" : "");
+		if (!text.empty() && marker)
+			changed |= UpdateMarkerShape(element, marker, shape);
+		if (!shape.empty())
+			text = " "; // keeps the marker box's text child; the shape box sets its own size
 		if (text.empty())
 		{
 			if (marker)
@@ -622,6 +679,7 @@ static bool UpdateListMarkers(Element* element)
 				ElementPtr box = Factory::InstanceElement(element, "*", "forge-marker", XMLAttributes());
 				marker = (element->GetNumChildren() == 0 ? element->AppendChild(std::move(box)) : element->InsertBefore(std::move(box), element->GetChild(0)));
 				changed = true;
+				UpdateMarkerShape(element, marker, shape);
 			}
 			if (inside != marker->HasAttribute("inside"))
 			{
@@ -652,6 +710,107 @@ static bool UpdateListMarkers(Element* element)
 		Element* child = element->GetChild(i);
 		if (!IsGeneratedBox(child->GetTagName()))
 			changed |= UpdateListMarkers(child);
+	}
+	return changed;
+}
+
+// Forge: the length in bytes of the first letter of a text as CSS ::first-letter takes it: leading white space and punctuation,
+// then one character. 0 if the text has no letter.
+static size_t FirstLetterLength(const String& text)
+{
+	auto is_punctuation = [](Character c) {
+		const char32_t code = (char32_t)c;
+		if (code < 128)
+			return code != '$' && code != '+' && code != '<' && code != '=' && code != '>' && code != '^' && code != '`' && code != '|' &&
+				code != '~' && code != '-' && std::ispunct((int)code) != 0;
+		return code == 0xAB || code == 0xBB || (code >= 0x2018 && code <= 0x201F) || code == 0x2039 || code == 0x203A;
+	};
+	size_t position = 0;
+	while (position < text.size())
+	{
+		const unsigned char c = (unsigned char)text[position];
+		if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+		{
+			position++;
+			continue;
+		}
+		const char* p = text.c_str() + position;
+		const Character character = StringUtilities::ToCharacter(p, text.c_str() + text.size());
+		const size_t next = (size_t)(StringUtilities::SeekForwardUTF8(p + 1, text.c_str() + text.size()) - text.c_str());
+		position = Math::Min(next, text.size());
+		if (!is_punctuation(character))
+			return position;
+	}
+	return 0;
+}
+
+// Forge: moves the first letter of an element's text into a forge-first-letter box when a ::first-letter rule applies to the
+// element, and back when none does. Only text directly inside the element is split. Returns true if the tree changed.
+static bool UpdateFirstLetterBoxes(Element* element, const StyleSheet* sheet)
+{
+	bool changed = false;
+	Element* existing = nullptr;
+	int first_content = -1;
+	for (int i = 0; i < element->GetNumChildren(); i++)
+	{
+		Element* child = element->GetChild(i);
+		const String& tag = child->GetTagName();
+		if (tag == "forge-first-letter")
+		{
+			existing = child;
+			break;
+		}
+		if (tag == "forge-before" || tag == "forge-marker")
+			continue;
+		if (tag == "#text" && StringUtilities::StripWhitespace(static_cast<ElementText*>(child)->GetText()).empty())
+			continue;
+		first_content = i;
+		break;
+	}
+
+	const bool needed = sheet->HasFirstLetter(element);
+	if (needed && !existing && first_content >= 0 && element->GetChild(first_content)->GetTagName() == "#text")
+	{
+		ElementText* text_element = static_cast<ElementText*>(element->GetChild(first_content));
+		const String text = text_element->GetText();
+		const size_t length = FirstLetterLength(text);
+		if (length > 0)
+		{
+			ElementPtr box = Factory::InstanceElement(element, "*", "forge-first-letter", XMLAttributes());
+			if (ElementPtr letter = Factory::InstanceElement(box.get(), "#text", "#text", XMLAttributes()))
+			{
+				static_cast<ElementText*>(letter.get())->SetText(text.substr(0, length));
+				box->AppendChild(std::move(letter));
+			}
+			text_element->SetText(text.substr(length));
+			element->InsertBefore(std::move(box), text_element);
+			changed = true;
+		}
+	}
+	else if (!needed && existing)
+	{
+		// Give the letter back to the text that follows it.
+		String letter;
+		if (existing->GetNumChildren() > 0)
+			if (ElementText* text = rmlui_dynamic_cast<ElementText*>(existing->GetChild(0)))
+				letter = text->GetText();
+		Element* next = existing->GetNextSibling();
+		if (ElementText* next_text = (next && next->GetTagName() == "#text" ? static_cast<ElementText*>(next) : nullptr))
+			next_text->SetText(letter + next_text->GetText());
+		else if (ElementPtr restored = Factory::InstanceElement(element, "#text", "#text", XMLAttributes()))
+		{
+			static_cast<ElementText*>(restored.get())->SetText(letter);
+			element->InsertBefore(std::move(restored), existing);
+		}
+		element->RemoveChild(existing);
+		changed = true;
+	}
+
+	for (int i = 0; i < element->GetNumChildren(); i++)
+	{
+		Element* child = element->GetChild(i);
+		if (!IsGeneratedBox(child->GetTagName()))
+			changed |= UpdateFirstLetterBoxes(child, sheet);
 	}
 	return changed;
 }
@@ -837,7 +996,7 @@ void ElementDocument::UpdateLayout()
 	{
 		const float dp_ratio = (context ? context->GetDensityIndependentPixelRatio() : 1.0f);
 		const Vector2f vp_dimensions = (context ? Vector2f(context->GetDimensions()) : Vector2f(1.0f));
-		if (const StyleSheet* sheet = GetStyleSheet(); sheet && UpdatePseudoElementBoxes(this, sheet))
+		if (const StyleSheet* sheet = GetStyleSheet(); sheet && (UpdatePseudoElementBoxes(this, sheet) | UpdateFirstLetterBoxes(this, sheet)))
 			Update(dp_ratio, vp_dimensions);
 		bool changed = UpdatePseudoElementContent(this);
 		changed |= UpdateListMarkers(this);

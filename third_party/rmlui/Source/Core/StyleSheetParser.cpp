@@ -301,6 +301,7 @@ static String RewritePseudoElementSelector(const String& in_selector)
 		const char* suffix;
 		const char* tag;
 	} pseudo[] = {{"::before", "forge-before"}, {"::after", "forge-after"}, {":before", "forge-before"}, {":after", "forge-after"}, {"::marker", "forge-marker"},
+		{"::first-letter", "forge-first-letter"}, {":first-letter", "forge-first-letter"},
 		// The parts of <input type="range">: RmlUi's slider elements.
 		{"::-webkit-slider-thumb", "sliderbar"}, {"::-webkit-slider-runnable-track", "slidertrack"}, {"::-moz-range-thumb", "sliderbar"},
 		{"::-moz-range-track", "slidertrack"}};

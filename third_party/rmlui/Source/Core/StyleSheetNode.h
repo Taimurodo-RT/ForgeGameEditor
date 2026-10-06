@@ -33,7 +33,8 @@ public:
 	void BuildIndex(StyleSheetIndex& styled_node_index) const;
 
 	/// Forge: finds the nodes whose elements get a ::before or ::after box (selectors rewritten to "host > forge-before").
-	void CollectPseudoElementHosts(Vector<const StyleSheetNode*>& before, Vector<const StyleSheetNode*>& after) const;
+	void CollectPseudoElementHosts(Vector<const StyleSheetNode*>& before, Vector<const StyleSheetNode*>& after,
+		Vector<const StyleSheetNode*>& first_letter) const;
 	/// Forge: true if the element matches this host node.
 	bool IsPseudoElementHost(const Element* element) const;
 
