@@ -19,8 +19,14 @@
 // being shown is lit in the script, and every step is logged.
 //
 // Conversations are the game's dialogues/*.json (dialogue.h), written at
-// once on each change; every change is one step of the tab's history.
+// once on each change; every change is one step of the tab's history. A
+// folder in dialogues/ is one story of several talks (an imported Ren'Py
+// game): its talks jump into each other ("ch1:ch1_main"), the test follows
+// them. «Импорт из Ren'Py…» brings such a story in (converters/renpy.py).
+// A big talk shows a page of lines at a time; its scenes are listed on the
+// left.
 
+#include "converters.h"
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/game/dialogue.h"
@@ -34,7 +40,10 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -50,6 +59,8 @@ public:
     void set_model(Rml::DataModelHandle handle) { model_ = handle; }
     // A template's picture as the UI shows it (the object library's).
     std::function<std::string(const objects::Template&)> template_icon;
+    // For the folder dialog of «Импорт из Ren'Py…».
+    SDL_Window* window = nullptr;
 
     void update(Rml::Context* context);
     bool handle_event(const SDL_Event& e);
@@ -61,7 +72,8 @@ public:
     std::string status() const;
 
     // --- actions (clicks, keys, the self-test) ---
-    // Conversations: their ids (file names without .json), and the open one.
+    // Conversations: their ids (file names without .json; "story/name" for
+    // the talks of a story folder), and the open one.
     std::vector<std::string> talks() const;
     bool open(const std::string& talk);
     const std::string& opened() const { return talk_; }
@@ -99,8 +111,18 @@ public:
     int menu_find(const std::string& text) const;
     bool menu_pick(usize i);
     void close_menu();
-    // Scrolls the script to a line and flashes it.
+    // Scrolls the script to a line and flashes it ("talk:node" opens that
+    // talk of the story first).
     void jump(const std::string& node);
+    // A big talk: the lines shown (a page), moved by the page buttons.
+    usize lines_shown() const { return m_lines_.size(); }
+    bool line_shown(const std::string& node) const;
+    void page(int dir);
+
+    // A Ren'Py game (its folder or one of its .rpy files) becomes a story
+    // folder in dialogues/; done in the background, then its first talk opens.
+    bool import_renpy(const std::filesystem::path& source);
+    bool importing() const { return import_job_ != 0; }
 
     // The test on the right.
     void play();
@@ -110,8 +132,11 @@ public:
     bool play_choose(usize visible);
     bool play_next();
     bool play_ask(const std::string& typed);
-    // What the game knows: a quest's stage (cycled), an item's count.
+    // What the game knows: a quest's stage (cycled), an item's count, a
+    // variable the talk's conditions read.
     void set_quest(const std::string& quest, f64 value);
+    void step_var(const std::string& var, int dir);
+    void set_var(const std::string& var, f64 value) { vars_.set(var, value); dirty_ = true; }
     void step_item(const std::string& item, int dir);
     void step_quest(const std::string& quest, int dir);
     f64 var(const std::string& name) const { return vars_.get(name).number(); }
@@ -120,8 +145,10 @@ public:
 
 private:
     struct Chip {
-        Rml::String kind, icon, text, part; // kind: cond, eff, go, else; part: if, do, goto
+        Rml::String kind, icon, text, part; // kind: cond, eff, go, else, stage, code; part: if, do, goto, next, call, stage
         int mark = -1;
+        bool seq = false; // "next" to the line just below: shown on hover
+        Rml::String look;  // its classes ("go seq")
     };
     struct RuleView {
         int index = 0;
@@ -141,17 +168,24 @@ private:
         std::vector<Chip> chips;
     };
     struct LineView {
-        Rml::String id, kind, scene, note, who, color, text, fallback;
+        Rml::String id, kind, scene, note, who, color, text, fallback, pose;
         bool lit = false, flash = false, editing = false, editing_note = false, editing_scene = false, editing_fallback = false;
         bool topics_on = false, choices_on = false, can_add = false, has_fallback = false;
+        int editing_stage = -1; // the staging step being typed
         std::vector<Chip> chips; // when / changes / where next
+        std::vector<Chip> stage; // what happens on screen first
         std::vector<ChoiceView> choices;
         std::vector<TopicView> topics;
     };
     struct TalkRow {
-        Rml::String id, name, letter, color;
+        Rml::String kind, id, name, letter, color; // kind: talk, story (a folder), scene (of the open talk)
         int lines = 0;
-        bool selected = false;
+        bool selected = false, open = false;
+    };
+    struct TalkInfo { // a talk file's summary, kept while the file does not change
+        std::filesystem::file_time_type time;
+        std::string name, color;
+        int lines = 0;
     };
     struct SpeakerRow {
         Rml::String key, name, letter, color;
@@ -176,6 +210,14 @@ private:
     void load_quests();
     void place_menu(Rml::Event& ev);
     void load_talk();
+    game::Dialogue& open_dialogue(); // the open talk, as the test plays it
+    const game::Dialogue* resolve(std::string_view talk);
+    // The test went into another talk of the story: show that one.
+    void follow();
+    std::string story_of(const std::string& talk) const; // "ddlc" of "ddlc/script-ch1", "" for a lone talk
+    std::string full_id(const std::string& ref) const;    // "script-ch1" in the open story → "ddlc/script-ch1"
+    std::vector<std::string> vars_used() const;
+    void poll_import();
     void rebuild();
     void rebuild_play();
     void rebuild_state();
@@ -187,6 +229,7 @@ private:
     std::filesystem::path talk_path(const std::string& talk) const;
     void reload_play(bool keep_place);
     void log(const char* icon, std::string text, const char* kind = "");
+    void log_line(); // the runner's current line, narrator lines without "speaker:"
     game::Value call(std::string_view name, const std::vector<game::Value>& args);
     // Phrases.
     std::string item_name(const std::string& id) const;
@@ -195,6 +238,8 @@ private:
     std::string anchor(const std::string& node) const;
     std::vector<Chip> cond_chips(const std::string& cond, bool otherwise) const;
     std::vector<Chip> act_chips(const std::string& act) const;
+    std::vector<Chip> stage_chips(const std::vector<std::string>& stage) const;
+    std::string stage_phrase(const std::string& stage) const;
     Chip go_chip(const std::string& go, bool next) const;
     // A node answering a topic, shown inline (only reached from there).
     bool inline_answer(const std::string& node, const std::string& asker) const;
@@ -234,9 +279,10 @@ private:
     int menu_index_ = -1, menu_mark_ = -1;
     std::vector<MenuAction> menu_;
 
-    // The test.
+    // The test. Every talk played is kept here (the open one and those the
+    // story went into), at stable addresses for the runner.
     game::Vars vars_;
-    game::Dialogue playing_;
+    std::map<std::string, std::unique_ptr<game::Dialogue>> loaded_;
     bool runner_started_ = false, replay_ = false; // the test began; begin it again
     game::DialogueRunner runner_{vars_, [this](std::string_view n, const std::vector<game::Value>& a) { return call(n, a); }};
     int lit_rule_ = -1, lit_choice_ = -1, lit_topic_ = -1;
@@ -244,6 +290,21 @@ private:
 
     // Model mirrors.
     std::vector<TalkRow> m_talks_;
+    mutable std::map<std::string, TalkInfo> talk_info_;
+    std::set<std::string> stories_open_; // story folders unfolded in the list
+    // A big talk's page: from this line (index among the lines shown).
+    usize page_from_ = 0;
+    std::string page_to_; // a line to bring onto the page at the next rebuild
+    Rml::String m_page_text_;
+    bool m_page_on_ = false, m_page_prev_ = false, m_page_next_ = false;
+    // Import.
+    Converters import_converters_;
+    bool import_loaded_ = false;
+    u64 import_job_ = 0;
+    std::filesystem::path import_source_, import_staging_;
+    std::mutex import_mutex_;
+    std::vector<std::filesystem::path> import_picked_; // from the folder dialog (another thread)
+    Rml::String m_import_text_;
     std::vector<SpeakerRow> m_speakers_;
     std::vector<RuleView> m_rules_;
     std::vector<LineView> m_lines_;

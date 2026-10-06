@@ -26,6 +26,8 @@ std::string actions_source(yyjson_val* v) {
 }
 
 bool is_end(std::string_view go_to) { return go_to.empty() || go_to == "end"; }
+// "talk:node", a node of another talk.
+bool is_other_talk(std::string_view go_to) { return go_to.find(':') != std::string_view::npos; }
 
 class Loader {
 public:
@@ -121,6 +123,7 @@ bool Dialogue::load(std::string_view json, DialogueReport& report, const std::ve
         node.actions = load.actions(yyjson_obj_get(n, "do"), where);
         node.next = str(yyjson_obj_get(n, "next"));
         node.fallback = str(yyjson_obj_get(n, "fallback"));
+        node.call = str(yyjson_obj_get(n, "call"));
         if (yyjson_val* b = yyjson_obj_get(n, "branches")) node.branches = load.entries(b, where);
         yyjson_arr_iter cit = yyjson_arr_iter_with(yyjson_obj_get(n, "choices"));
         for (yyjson_val* c; (c = yyjson_arr_iter_next(&cit));) {
@@ -155,7 +158,7 @@ bool Dialogue::load(std::string_view json, DialogueReport& report, const std::ve
     // Every jump must land on a node; nodes no jump reaches are reported.
     std::unordered_set<std::string> reached;
     auto target = [&](const std::string& go_to, const std::string& where) {
-        if (is_end(go_to)) return;
+        if (is_end(go_to) || go_to == "return" || is_other_talk(go_to)) return;
         if (!index_.count(go_to)) report.errors.push_back(where + ": переход на несуществующий узел «" + go_to + "»");
         reached.insert(go_to);
     };
@@ -164,6 +167,7 @@ bool Dialogue::load(std::string_view json, DialogueReport& report, const std::ve
         const std::string where = "узел «" + n.id + "»";
         target(n.next, where);
         target(n.fallback, where);
+        target(n.call, where);
         for (const DialogueChoice& c : n.choices) target(c.go_to, where);
         for (const DialogueKeyword& k : n.keywords) target(k.go_to, where);
         for (const DialogueEntry& b : n.branches) target(b.go_to, where);
@@ -196,6 +200,7 @@ bool DialogueRunner::start(const Dialogue& dialogue) {
 
 bool DialogueRunner::start_at(const Dialogue& dialogue, std::string_view node) {
     dialogue_ = &dialogue;
+    calls_.clear();
     history_.clear();
     steps_ = 0;
     show(node);
@@ -205,6 +210,7 @@ bool DialogueRunner::start_at(const Dialogue& dialogue, std::string_view node) {
 void DialogueRunner::stop() {
     dialogue_ = nullptr;
     node_ = nullptr;
+    calls_.clear();
     line_ = {};
     visible_.clear();
 }
@@ -214,17 +220,41 @@ std::string_view DialogueRunner::node_id() const { return node_ ? std::string_vi
 void DialogueRunner::show(std::string_view id) {
     // Junctions follow each other without the player; a loop of them would
     // never return, so it is cut off.
+    std::string go_to(id); // id may point into a node that changes below
     for (;;) {
-        if (!dialogue_ || is_end(id) || ++steps_ > 1000) {
+        while (go_to == "return" && !calls_.empty()) {
+            dialogue_ = calls_.back().dialogue;
+            go_to = std::move(calls_.back().go_to);
+            calls_.pop_back();
+        }
+        if (!dialogue_ || is_end(go_to) || go_to == "return" || ++steps_ > 1000) {
             stop();
             return;
         }
-        node_ = dialogue_->node(id);
+        if (const usize colon = go_to.find(':'); colon != std::string::npos) {
+            dialogue_ = resolve_ ? resolve_(std::string_view(go_to).substr(0, colon)) : nullptr;
+            go_to.erase(0, colon + 1);
+            if (!dialogue_) {
+                stop();
+                return;
+            }
+        }
+        node_ = dialogue_->node(go_to);
         if (!node_) {
             stop();
             return;
         }
         node_->actions.run(vars_, call_);
+        if (!node_->call.empty()) {
+            // A talk that goes on in this one comes back here, to next.
+            calls_.push_back({dialogue_, node_->next});
+            if (calls_.size() > 200) {
+                stop();
+                return;
+            }
+            go_to = node_->call;
+            continue;
+        }
         if (!node_->text.empty() || !node_->choices.empty()) break;
         std::string_view go = node_->next;
         for (const DialogueEntry& b : node_->branches)
@@ -232,7 +262,7 @@ void DialogueRunner::show(std::string_view id) {
                 go = b.go_to;
                 break;
             }
-        id = go;
+        go_to = std::string(go);
     }
     build_line();
     history_.push_back(line_);

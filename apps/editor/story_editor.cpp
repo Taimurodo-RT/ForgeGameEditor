@@ -18,6 +18,7 @@ int arg_int(const Rml::VariantList& a, usize i, int fallback) { return i < a.siz
 std::string arg_str(const Rml::VariantList& a, usize i) { return i < a.size() ? a[i].Get<Rml::String>() : std::string(); }
 
 constexpr u64 kFlashMs = 1200;
+constexpr usize kPage = 150; // lines of a big talk shown at once
 constexpr const char* kNarrator = "#8a96a0";
 constexpr const char* kNew = "\x01new";
 constexpr const char* kRaw = "\x01raw";
@@ -112,16 +113,59 @@ const std::regex& give_re() {
     return re;
 }
 
-// Parts of a condition joined with "and".
-std::vector<std::string> cond_parts(const std::string& cond) {
+// Splits at sep outside quotes and brackets: "a; renpy(\"x; y\")" is two
+// actions, "a and (b and c)" two parts.
+std::vector<std::string> split_outside(std::string_view s, std::string_view sep) {
     std::vector<std::string> out;
-    std::string rest = cond;
-    for (usize at; (at = rest.find(" and ")) != std::string::npos;) {
-        out.push_back(trim(rest.substr(0, at)));
-        rest = rest.substr(at + 5);
+    int depth = 0;
+    char quote = 0;
+    usize from = 0;
+    for (usize i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (quote) {
+            if (c == '\\') ++i;
+            else if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'') quote = c;
+        else if (c == '(') ++depth;
+        else if (c == ')') --depth;
+        else if (depth == 0 && s.compare(i, sep.size(), sep) == 0) {
+            if (std::string part = trim(s.substr(from, i - from)); !part.empty()) out.push_back(part);
+            from = i + sep.size();
+            i = from - 1;
+        }
     }
-    if (!trim(rest).empty()) out.push_back(trim(rest));
+    if (std::string part = trim(s.substr(std::min(from, s.size()))); !part.empty()) out.push_back(part);
     return out;
+}
+
+// Parts of a condition joined with "and".
+std::vector<std::string> cond_parts(const std::string& cond) { return split_outside(cond, " and "); }
+// The statements of an action.
+std::vector<std::string> actions_of(const std::string& act) { return split_outside(act, ";"); }
+
+// Ren'Py code kept as it was: renpy("..."), the code unescaped.
+bool renpy_code(const std::string& source, std::string& code) {
+    static const std::regex re(R"re(^\s*renpy\("((?:[^"\\]|\\.)*)"\)\s*$)re");
+    std::smatch m;
+    if (!std::regex_match(source, m, re)) return false;
+    code.clear();
+    const std::string body = m[1];
+    for (usize i = 0; i < body.size(); ++i) {
+        if (body[i] == '\\' && i + 1 < body.size()) ++i;
+        code += body[i];
+    }
+    return true;
+}
+
+// The first line of a piece of code, short enough for a mark.
+std::string code_line(const std::string& code) {
+    std::string line = code.substr(0, code.find('\n'));
+    usize chars = 0;
+    for (usize i = 0; i < line.size(); ++i)
+        if ((static_cast<u8>(line[i]) & 0xC0) != 0x80 && ++chars > 60) return line.substr(0, i) + "…";
+    return code.find('\n') != std::string::npos ? line + " …" : line;
 }
 
 } // namespace
@@ -145,6 +189,7 @@ private:
 bool StoryEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
     ui_ = &ui;
     game_dir_ = game_dir;
+    runner_.set_resolver([this](std::string_view talk) { return resolve(talk); });
     load_quests();
     const std::vector<std::string> all = talks();
     if (!all.empty()) {
@@ -166,14 +211,73 @@ void StoryEditor::load_quests() {
 std::filesystem::path StoryEditor::talk_path(const std::string& talk) const { return game_dir_ / "dialogues" / utf8_path(talk + ".json"); }
 
 std::vector<std::string> StoryEditor::talks() const {
-    std::vector<std::string> out;
+    // Lone talks first, then each story folder's talks.
+    std::vector<std::string> out, stories;
     std::error_code ec;
     for (const auto& e : std::filesystem::directory_iterator(game_dir_ / "dialogues", ec)) {
-        if (!e.is_regular_file() || e.path().extension() != ".json") continue;
-        out.push_back(path_to_utf8(e.path().stem()));
+        if (e.is_directory(ec)) {
+            std::error_code ec2;
+            for (const auto& f : std::filesystem::directory_iterator(e.path(), ec2))
+                if (f.is_regular_file(ec2) && f.path().extension() == ".json")
+                    stories.push_back(path_to_utf8(e.path().filename()) + "/" + path_to_utf8(f.path().stem()));
+        } else if (e.is_regular_file(ec) && e.path().extension() == ".json") {
+            out.push_back(path_to_utf8(e.path().stem()));
+        }
     }
     std::sort(out.begin(), out.end());
+    std::sort(stories.begin(), stories.end());
+    out.insert(out.end(), stories.begin(), stories.end());
     return out;
+}
+
+std::string StoryEditor::story_of(const std::string& talk) const {
+    const usize slash = talk.find('/');
+    return slash == std::string::npos ? std::string() : talk.substr(0, slash);
+}
+
+std::string StoryEditor::full_id(const std::string& ref) const {
+    const std::string story = story_of(talk_);
+    return story.empty() ? ref : story + "/" + ref;
+}
+
+game::Dialogue& StoryEditor::open_dialogue() {
+    std::unique_ptr<game::Dialogue>& d = loaded_[talk_];
+    if (!d) d = std::make_unique<game::Dialogue>();
+    return *d;
+}
+
+const game::Dialogue* StoryEditor::resolve(std::string_view talk) {
+    const std::string id = full_id(std::string(talk));
+    if (auto it = loaded_.find(id); it != loaded_.end() && it->second) return it->second.get();
+    std::vector<u8> bytes;
+    if (!read_file(talk_path(id), bytes)) return nullptr;
+    auto d = std::make_unique<game::Dialogue>();
+    game::DialogueReport report;
+    if (!d->load(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), report)) {
+        for (const std::string& e : report.errors) FORGE_ERROR("Разговор %s: %s", id.c_str(), e.c_str());
+        return nullptr;
+    }
+    return (loaded_[id] = std::move(d)).get();
+}
+
+void StoryEditor::follow() {
+    const game::Dialogue* d = runner_.dialogue();
+    if (!d) return;
+    if (d != &open_dialogue())
+        for (const auto& [id, p] : loaded_) {
+            if (p.get() != d) continue;
+            // Shown without starting over: the test goes on in it.
+            talk_ = id;
+            src_ = {};
+            std::vector<u8> bytes;
+            std::string error;
+            if (read_file(talk_path(talk_), bytes)) src_.parse(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &error);
+            lit_rule_ = -1;
+            page_from_ = 0;
+            dirty_ = true;
+            break;
+        }
+    page_to_ = std::string(runner_.node_id());
 }
 
 void StoryEditor::load_talk() {
@@ -197,6 +301,8 @@ bool StoryEditor::open(const std::string& talk) {
     if (talk != talk_) {
         talk_ = talk;
         m_log_.clear();
+        page_from_ = 0;
+        if (const std::string story = story_of(talk); !story.empty()) stories_open_.insert(story);
         load_talk();
     }
     play();
@@ -205,7 +311,7 @@ bool StoryEditor::open(const std::string& talk) {
 
 bool StoryEditor::write(const std::string& talk, const std::string& json) const {
     std::error_code ec;
-    std::filesystem::create_directories(game_dir_ / "dialogues", ec);
+    std::filesystem::create_directories(talk_path(talk).parent_path(), ec);
     if (write_file_atomic(talk_path(talk), {reinterpret_cast<const u8*>(json.data()), json.size()})) return true;
     FORGE_ERROR("Не удалось сохранить разговор %s", talk.c_str());
     return false;
@@ -269,8 +375,9 @@ std::string StoryEditor::status() const {
     usize lines = 0;
     for (const game::SourceNode& n : src_.nodes)
         if (!n.junction()) ++lines;
-    return "Разговор: " + (src_.speakers.empty() ? talk_ : src_.speakers.front().name) + ", реплик: " + std::to_string(lines) +
-           " · dialogues/" + talk_ + ".json";
+    const std::string story = story_of(talk_);
+    const std::string name = !story.empty() ? talk_.substr(story.size() + 1) : src_.speakers.empty() ? talk_ : src_.speakers.front().name;
+    return "Разговор: " + name + ", реплик: " + std::to_string(lines) + " · dialogues/" + talk_ + ".json";
 }
 
 // --- phrases ----------------------------------------------------------------
@@ -298,9 +405,13 @@ std::string StoryEditor::stage_name(const game::Quest& q, f64 at) const {
 std::vector<std::string> StoryEditor::phrases(const std::string& source, bool action) const {
     std::vector<std::string> out;
     std::smatch m;
+    std::string code;
     if (!action) {
-        for (const std::string& part : cond_parts(source)) {
-            if (std::regex_match(part, m, has_re())) {
+        for (std::string part : cond_parts(source)) {
+            const bool negated = part.rfind("not ", 0) == 0;
+            if (renpy_code(negated ? part.substr(4) : part, code)) {
+                out.push_back(std::string(negated ? "не " : "") + "Ren'Py: " + code_line(code));
+            } else if (std::regex_match(part, m, has_re())) {
                 const std::string name = item_name(m[2]);
                 const std::string count = m[3].matched && m[3].str() != "1" ? ": " + m[3].str() : std::string();
                 out.push_back(m[1].matched ? "у героя нет: " + name : "у героя есть " + name + count);
@@ -326,8 +437,10 @@ std::vector<std::string> StoryEditor::phrases(const std::string& source, bool ac
         }
         return out;
     }
-    for (const std::string& st : split(source, ';')) {
-        if (std::regex_match(st, m, give_re())) {
+    for (const std::string& st : actions_of(source)) {
+        if (renpy_code(st, code)) {
+            out.push_back("Ren'Py: " + code_line(code));
+        } else if (std::regex_match(st, m, give_re())) {
             const std::string n = m[3].matched ? m[3].str() : "1";
             out.push_back(m[1] == "give" ? "герою: " + item_name(m[2]) + " +" + n : "у героя: " + item_name(m[2]) + " −" + n);
         } else if (std::regex_match(st, m, set_re())) {
@@ -343,9 +456,12 @@ std::vector<std::string> StoryEditor::phrases(const std::string& source, bool ac
 
 std::string StoryEditor::anchor(const std::string& node) const {
     if (node.empty() || node == "end") return "конец разговора";
+    if (node == "return") return "назад, откуда позвали";
+    if (const usize colon = node.find(':'); colon != std::string::npos)
+        return "«" + node.substr(colon + 1) + "» в разговоре " + node.substr(0, colon);
     const game::SourceNode* n = src_.node(node);
     if (!n) return "«" + node + "» (нет такой реплики)";
-    if (n->text.empty()) return n->scene.empty() ? "выбор «" + node + "»" : "«" + n->scene + "»";
+    if (n->text.empty()) return !n->scene.empty() ? "«" + n->scene + "»" : n->junction() ? "выбор «" + node + "»" : "«" + node + "»";
     // The line's first phrase.
     std::string t = n->text;
     for (const char* stop : {".", "!", "?", "…"})
@@ -366,20 +482,112 @@ std::vector<StoryEditor::Chip> StoryEditor::cond_chips(const std::string& cond, 
         return out;
     }
     std::vector<std::string> p = phrases(cond, false);
-    out.push_back({"cond", "help", "если " + join(p, " и "), "if"});
+    const bool code = std::any_of(p.begin(), p.end(), [](const std::string& x) { return x.find("Ren'Py: ") != std::string::npos; });
+    out.push_back({code ? "cond code" : "cond", "help", "если " + join(p, " и "), "if"});
     return out;
 }
 
 std::vector<StoryEditor::Chip> StoryEditor::act_chips(const std::string& act) const {
     std::vector<Chip> out;
     const std::vector<std::string> p = phrases(act, true);
-    for (usize i = 0; i < p.size(); ++i) out.push_back({"eff", "bolt", p[i], "do", static_cast<int>(i)});
+    for (usize i = 0; i < p.size(); ++i) {
+        const bool code = p[i].rfind("Ren'Py: ", 0) == 0;
+        out.push_back({code ? "eff code" : "eff", code ? "code" : "bolt", p[i], "do", static_cast<int>(i)});
+    }
     return out;
 }
 
 StoryEditor::Chip StoryEditor::go_chip(const std::string& go, bool next) const {
     const bool end = go.empty() || go == "end";
-    return {"go", end ? "stop" : next ? "south" : "east", end ? "конец разговора" : (next ? "дальше: " : "") + anchor(go), next ? "next" : "goto"};
+    const char* icon = end ? "stop" : go == "return" ? "undo" : next ? "south" : "east";
+    return {"go", icon, end ? "конец разговора" : (next && go != "return" ? "дальше: " : "") + anchor(go), next ? "next" : "goto"};
+}
+
+// What happens on screen, said in words: «фон: club_day», «на сцене: monika 5».
+std::string StoryEditor::stage_phrase(const std::string& stage) const {
+    std::vector<std::string> w;
+    {
+        std::string cur;
+        char quote = 0;
+        for (const char c : stage) {
+            if (quote) {
+                if (c == quote) quote = 0;
+                else cur += c;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == ' ') {
+                if (!cur.empty()) w.push_back(cur);
+                cur.clear();
+            } else {
+                cur += c;
+            }
+        }
+        if (!cur.empty()) w.push_back(cur);
+    }
+    if (w.empty()) return stage;
+    // The words up to a clause (at, with, zorder, as, behind, onlayer, fadein...).
+    auto words_until_clause = [&](usize from) {
+        static const std::set<std::string> clauses{"at", "with", "zorder", "as", "behind", "onlayer", "fadein", "fadeout", "loop", "noloop", "if_changed", "{"};
+        std::vector<std::string> out;
+        for (usize i = from; i < w.size() && !clauses.contains(w[i]); ++i) out.push_back(w[i]);
+        return join(out, " ");
+    };
+    auto clause = [&](const char* name) {
+        for (usize i = 0; i + 1 < w.size(); ++i)
+            if (w[i] == name) return w[i + 1];
+        return std::string();
+    };
+    const std::string& head = w[0];
+    std::string out;
+    if (head == "scene") {
+        std::string bg = words_until_clause(1);
+        if (bg.rfind("bg ", 0) == 0) bg = bg.substr(3);
+        out = bg.empty() ? "сцена очищена" : "фон: " + bg;
+    } else if (head == "show") {
+        out = (w.size() > 1 && w[1] == "screen" ? "экран: " : "на сцене: ") + words_until_clause(w.size() > 1 && w[1] == "screen" ? 2 : 1);
+        if (const std::string at = clause("at"); !at.empty()) out += " (" + at + ")";
+    } else if (head == "hide") {
+        out = "уходит: " + words_until_clause(w.size() > 1 && w[1] == "screen" ? 2 : 1);
+    } else if (head == "with") {
+        return "переход: " + (w.size() > 1 ? w[1] : std::string());
+    } else if (head == "play" || head == "queue") {
+        const std::string channel = w.size() > 1 ? w[1] : "";
+        std::string what = w.size() > 2 ? w[2] : "";
+        if (const usize slash = what.find_last_of('/'); slash != std::string::npos) what = what.substr(slash + 1);
+        out = (channel == "music" ? "музыка: " : channel == "sound" ? "звук: " : channel + ": ") + what;
+    } else if (head == "stop") {
+        const std::string channel = w.size() > 1 ? w[1] : "";
+        out = channel == "music" ? "музыка стихает" : channel == "sound" ? "звук стихает" : channel + " стихает";
+    } else if (head == "voice") {
+        out = "голос: " + (w.size() > 1 ? w[1] : std::string());
+    } else if (head == "pause") {
+        out = w.size() > 1 ? "пауза " + w[1] + " с" : "пауза до щелчка";
+    } else if (head == "window") {
+        out = w.size() > 1 && w[1] == "hide" ? "окно текста скрыто" : w.size() > 1 && w[1] == "show" ? "окно текста видно" : "окно текста: " + (w.size() > 1 ? w[1] : "");
+    } else if (head == "$") {
+        return "Ren'Py: " + code_line(trim(stage.substr(1)));
+    } else {
+        return code_line(stage);
+    }
+    if (const std::string with = clause("with"); !with.empty() && head != "with") out += ", переход " + with;
+    return out;
+}
+
+std::vector<StoryEditor::Chip> StoryEditor::stage_chips(const std::vector<std::string>& stage) const {
+    std::vector<Chip> out;
+    for (usize i = 0; i < stage.size(); ++i) {
+        const std::string& head = stage[i].substr(0, stage[i].find(' '));
+        const char* icon = head == "scene"                     ? "landscape"
+                           : head == "show" || head == "hide"  ? "person"
+                           : head == "play" || head == "stop" || head == "queue" ? "music_note"
+                           : head == "voice"                   ? "record_voice_over"
+                           : head == "pause"                   ? "hourglass_empty"
+                           : head == "with"                    ? "blur_on"
+                           : head == "$"                       ? "code"
+                                                               : "movie";
+        out.push_back({head == "$" ? "stage code" : "stage", icon, stage_phrase(stage[i]), "stage", static_cast<int>(i)});
+    }
+    return out;
 }
 
 bool StoryEditor::inline_answer(const std::string& node, const std::string& asker) const {
@@ -461,23 +669,52 @@ void StoryEditor::rebuild() {
     auto editing = [this](const char* what, const std::string& node, int index = -1) {
         return edit_what_ == what && edit_node_ == node && edit_index_ == index;
     };
+    std::vector<const game::SourceNode*> shown;
+    shown.reserve(src_.nodes.size());
+    for (const game::SourceNode& n : src_.nodes)
+        if (!hidden.contains(n.id)) shown.push_back(&n);
+    // A big talk shows a page of lines; a line asked for comes onto it.
+    const bool paged = shown.size() > kPage;
+    if (!page_to_.empty()) {
+        std::string at = page_to_;
+        for (const game::SourceNode& n : src_.nodes)
+            for (const game::SourceKeyword& k : n.keywords)
+                if (k.go == page_to_ && hidden.contains(page_to_)) at = n.id;
+        for (usize i = 0; i < shown.size(); ++i)
+            if (shown[i]->id == at && (i < page_from_ || i >= page_from_ + kPage)) page_from_ = i > 10 ? i - 10 : 0;
+        page_to_.clear();
+    }
+    if (!paged || page_from_ >= shown.size()) page_from_ = 0;
+    const usize first = page_from_, last = paged ? std::min(shown.size(), first + kPage) : shown.size();
+    set(m_page_on_, paged, "st_page_on");
+    set(m_page_prev_, paged && first > 0, "st_page_prev");
+    set(m_page_next_, paged && last < shown.size(), "st_page_next");
+    set(m_page_text_, Rml::String(paged ? "Реплики " + std::to_string(first + 1) + "–" + std::to_string(last) + " из " + std::to_string(shown.size()) : ""),
+        "st_page_text");
+
     m_lines_.clear();
-    for (const game::SourceNode& n : src_.nodes) {
-        if (hidden.contains(n.id)) continue;
+    for (usize k = first; k < last; ++k) {
+        const game::SourceNode& n = *shown[k];
+        const std::string below = k + 1 < shown.size() ? shown[k + 1]->id : std::string();
         LineView v;
         v.id = n.id;
-        v.kind = n.junction() ? "junction" : "line";
+        const bool silent = n.silent() && n.branches.empty();
+        v.kind = n.junction() ? "junction" : silent ? "silent" : "line";
         v.scene = n.scene;
         v.note = n.note;
+        v.pose = n.pose;
         const game::SourceSpeaker* sp = src_.speaker(n.speaker);
-        v.who = n.junction() ? "Выбор" : sp ? sp->name : "Рассказчик";
+        v.who = n.junction() ? "Выбор" : silent ? "" : sp ? sp->name : "Рассказчик";
         v.color = sp && !sp->color.empty() ? sp->color : kNarrator;
         v.text = n.text;
+        v.stage = stage_chips(n.stage);
         v.lit = on && at == n.id;
         v.flash = flash_ == n.id;
         v.editing = editing("text", n.id);
         v.editing_note = editing("note", n.id);
         v.editing_scene = editing("scene", n.id);
+        for (usize i = 0; i < n.stage.size(); ++i)
+            if (editing("stage", n.id, static_cast<int>(i))) v.editing_stage = static_cast<int>(i);
         if (n.junction()) {
             for (usize b = 0; b < n.branches.size(); ++b) {
                 for (Chip c : cond_chips(n.branches[b].cond, false)) {
@@ -493,7 +730,20 @@ void StoryEditor::rebuild() {
             v.chips.back().part = "next";
         } else {
             v.chips = act_chips(n.act);
-            if (n.choices.empty() && n.keywords.empty()) v.chips.push_back(go_chip(n.next, true));
+            if (!n.call.empty()) {
+                Chip c = go_chip(n.call, false);
+                c.part = "call";
+                c.icon = "subdirectory_arrow_right";
+                c.text = "сначала: " + anchor(n.call);
+                v.chips.push_back(c);
+            }
+            if (n.choices.empty() && n.keywords.empty()) {
+                Chip c = go_chip(n.next, true);
+                if (!n.call.empty() && n.next != "return" && !n.next.empty()) c.text = "потом: " + anchor(n.next);
+                // Going on to the line just below needs no mark: it shows on hover.
+                c.seq = !below.empty() && n.next == below;
+                v.chips.push_back(c);
+            }
         }
         v.choices_on = !n.choices.empty();
         for (usize i = 0; i < n.choices.size(); ++i) {
@@ -537,10 +787,12 @@ void StoryEditor::rebuild() {
             v.editing_fallback = editing("fallback", n.id);
         }
         v.can_add = !n.junction() && n.choices.empty() && n.keywords.empty();
+        for (Chip& c : v.chips) c.look = c.kind + (c.seq ? " seq" : "");
         m_lines_.push_back(std::move(v));
     }
 
-    m_title_ = src_.speakers.empty() ? talk_ : "Разговор: " + src_.speakers.front().name;
+    const std::string story = story_of(talk_);
+    m_title_ = !story.empty() ? story + " · " + talk_.substr(story.size() + 1) : src_.speakers.empty() ? talk_ : "Разговор: " + src_.speakers.front().name;
     m_count_ = status();
     rebuild_state();
     rebuild_play();
@@ -551,25 +803,68 @@ void StoryEditor::rebuild() {
 
 void StoryEditor::rebuild_talks() {
     m_talks_.clear();
+    std::string story_shown;
+    usize header = 0; // the row of the story being listed
     for (const std::string& t : talks()) {
+        const std::string story = story_of(t);
+        if (!story.empty() && story != story_shown) {
+            story_shown = story;
+            TalkRow g;
+            g.kind = "story";
+            g.id = story;
+            g.name = story;
+            g.letter = first_letter(story);
+            g.color = kNarrator;
+            g.open = stories_open_.contains(story);
+            header = m_talks_.size();
+            m_talks_.push_back(std::move(g));
+        }
+        if (!story.empty()) {
+            ++m_talks_[header].lines;
+            if (!m_talks_[header].open) continue;
+        }
+        // A talk's name and size, read again only when its file changed.
+        TalkInfo& info = talk_info_[t];
+        std::error_code ec;
+        const auto time = std::filesystem::last_write_time(talk_path(t), ec);
+        if (info.name.empty() || info.time != time || t == talk_) {
+            game::DialogueSource s;
+            if (t == talk_) {
+                s = src_;
+            } else {
+                std::vector<u8> bytes;
+                std::string error;
+                if (read_file(talk_path(t), bytes)) s.parse(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &error);
+            }
+            info.time = time;
+            info.name = !story.empty() ? t.substr(story.size() + 1) : s.speakers.empty() ? t : s.speakers.front().name;
+            info.color = story.empty() && !s.speakers.empty() && !s.speakers.front().color.empty() ? s.speakers.front().color : kNarrator;
+            info.lines = 0;
+            for (const game::SourceNode& n : s.nodes)
+                if (!n.text.empty()) ++info.lines;
+        }
         TalkRow r;
+        r.kind = story.empty() ? "talk" : "subtalk";
         r.id = t;
         r.selected = t == talk_;
-        game::DialogueSource s;
-        if (t == talk_) {
-            s = src_;
-        } else {
-            std::vector<u8> bytes;
-            std::string error;
-            if (read_file(talk_path(t), bytes)) s.parse(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &error);
-        }
-        r.name = s.speakers.empty() ? t : s.speakers.front().name;
+        r.name = info.name;
         r.letter = first_letter(r.name);
-        r.color = s.speakers.empty() || s.speakers.front().color.empty() ? kNarrator : s.speakers.front().color;
-        for (const game::SourceNode& n : s.nodes)
-            if (!n.junction()) ++r.lines;
+        r.color = info.color;
+        r.lines = info.lines;
         m_talks_.push_back(std::move(r));
+        // A big open talk lists its scenes to go to.
+        if (t == talk_ && info.lines > static_cast<int>(kPage))
+            for (const game::SourceNode& n : src_.nodes) {
+                if (n.scene.empty()) continue;
+                TalkRow sc;
+                sc.kind = "scene";
+                sc.id = n.id;
+                sc.name = n.scene;
+                sc.color = kNarrator;
+                m_talks_.push_back(std::move(sc));
+            }
     }
+    if (model_) model_.DirtyVariable("st_talks");
 }
 
 // --- typing -----------------------------------------------------------------
@@ -587,6 +882,7 @@ std::string* StoryEditor::edit_target(game::DialogueSource& s) const {
     if (edit_what_ == "note") return &n->note;
     if (edit_what_ == "scene") return &n->scene;
     if (edit_what_ == "choice") return i < n->choices.size() ? &n->choices[i].text : nullptr;
+    if (edit_what_ == "stage") return i < n->stage.size() ? &n->stage[i] : nullptr;
     if (edit_what_ == "topic") {
         if (i >= n->keywords.size()) return nullptr;
         game::SourceNode* a = s.node(n->keywords[i].go);
@@ -665,12 +961,16 @@ bool StoryEditor::commit_edit() {
         dirty_ = true;
         return ok;
     } else if (std::string* t = edit_target(after)) {
-        *t = what == "scene" || what == "speaker" ? trim(text) : text;
+        *t = what == "scene" || what == "speaker" || what == "stage" ? trim(text) : text;
+        // A staging step typed away is gone.
+        if (what == "stage" && t->empty())
+            if (game::SourceNode* n = after.node(edit_node_)) n->stage.erase(n->stage.begin() + edit_index_);
         label = what == "note"      ? "Ремарка"
                 : what == "scene"   ? "Название сцены"
                 : what == "choice"  ? "Ответ героя"
                 : what == "topic"   ? "Ответ на вопрос"
                 : what == "speaker" ? "Имя говорящего"
+                : what == "stage"   ? "Постановка"
                                     : "Реплика";
     }
     edit_what_.clear();
@@ -858,8 +1158,10 @@ bool StoryEditor::open_menu(const std::string& where, const std::string& node, i
         const std::string act = where == "choice" ? (i < n->choices.size() ? n->choices[i].act : "")
                                 : where == "topic" ? (i < n->keywords.size() ? n->keywords[i].act : "")
                                                    : n->act;
-        const std::vector<std::string> st = split(act, ';');
+        const std::vector<std::string> st = actions_of(act);
         if (mark >= 0 && static_cast<usize>(mark) < st.size()) now = st[static_cast<usize>(mark)];
+    } else if (part == "call") {
+        now = n->call;
     } else if (part == "goto" || part == "next") {
         now = where == "start"    ? src_.start[i].go
               : where == "branch" ? (i < n->branches.size() ? n->branches[i].go : "")
@@ -923,14 +1225,22 @@ bool StoryEditor::open_menu(const std::string& where, const std::string& node, i
             add("как сейчас: " + join(phrases(now, true), ", "), "bolt", now);
         add("своё действие…", "edit", kRaw);
         if (mark >= 0) add("убрать", "delete", "");
-    } else if (part == "goto" || part == "next") {
-        m_menu_title_ = "Куда дальше";
-        for (const game::SourceNode& o : src_.nodes) {
+    } else if (part == "goto" || part == "next" || part == "call") {
+        m_menu_title_ = part == "call" ? "Что сыграть сначала" : "Куда дальше";
+        // A big talk offers its scenes and the lines around this one.
+        const bool big = src_.nodes.size() > kPage;
+        const i32 here = src_.index_of(node);
+        for (usize k = 0; k < src_.nodes.size(); ++k) {
+            const game::SourceNode& o = src_.nodes[k];
             if (o.id == node && part == "next") continue;
+            if (big && o.scene.empty() && std::abs(static_cast<i32>(k) - here) > 12) continue;
             add(anchor(o.id), o.junction() ? "call_split" : "chat", o.id, o.scene);
         }
-        add("конец разговора", "stop", "end");
-        add("новая реплика", "add", kNew);
+        if (part != "call") {
+            add("конец разговора", "stop", "end");
+            add("назад, откуда позвали", "undo", "return");
+            add("новая реплика", "add", kNew);
+        }
     } else {
         m_menu_title_ = "Кто говорит";
         for (const game::SourceSpeaker& s : src_.speakers) add(s.name, "person", s.key);
@@ -974,7 +1284,7 @@ bool StoryEditor::menu_pick(usize pick) {
                                       : "";
         } else {
             const std::string act = where == "choice" ? n->choices[i].act : where == "topic" ? n->keywords[i].act : n->act;
-            const std::vector<std::string> st = split(act, ';');
+            const std::vector<std::string> st = actions_of(act);
             if (mark >= 0 && static_cast<usize>(mark) < st.size()) now = st[static_cast<usize>(mark)];
         }
         commit_edit();
@@ -1013,7 +1323,7 @@ bool StoryEditor::menu_pick(usize pick) {
                            : n                                               ? &n->act
                                                                              : nullptr;
         if (!act) return false;
-        std::vector<std::string> st = split(*act, ';');
+        std::vector<std::string> st = actions_of(*act);
         if (mark >= 0 && static_cast<usize>(mark) < st.size()) {
             if (value.empty()) st.erase(st.begin() + mark);
             else st[static_cast<usize>(mark)] = value;
@@ -1022,7 +1332,7 @@ bool StoryEditor::menu_pick(usize pick) {
         }
         *act = join(st, "; ");
         label = "Что меняет";
-    } else if (part == "goto" || part == "next") {
+    } else if (part == "goto" || part == "next" || part == "call") {
         std::string go = value;
         if (value == kNew) {
             game::SourceNode line;
@@ -1035,6 +1345,7 @@ bool StoryEditor::menu_pick(usize pick) {
                           : where == "branch" && n && i < n->branches.size() ? &n->branches[i].go
                           : where == "choice" && n && i < n->choices.size()  ? &n->choices[i].go
                           : where == "topic" && n && i < n->keywords.size()  ? &n->keywords[i].go
+                          : n && part == "call"                               ? &n->call
                           : n                                                 ? &n->next
                                                                               : nullptr;
         if (!to) return false;
@@ -1062,8 +1373,28 @@ bool StoryEditor::menu_pick(usize pick) {
     return true;
 }
 
-void StoryEditor::jump(const std::string& node) {
-    if (node.empty() || node == "end") return;
+void StoryEditor::jump(const std::string& target) {
+    if (target.empty() || target == "end" || target == "return") return;
+    std::string node = target;
+    if (const usize colon = target.find(':'); colon != std::string::npos) {
+        // Another talk of the story: shown, the test goes on where it was.
+        const std::string talk = full_id(target.substr(0, colon));
+        node = target.substr(colon + 1);
+        if (talk != talk_) {
+            const std::vector<std::string> all = talks();
+            if (std::find(all.begin(), all.end(), talk) == all.end()) return;
+            commit_edit();
+            close_menu();
+            resolve(target.substr(0, colon));
+            talk_ = talk;
+            src_ = {};
+            std::vector<u8> bytes;
+            std::string error;
+            if (read_file(talk_path(talk_), bytes)) src_.parse(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), &error);
+            lit_rule_ = -1;
+            page_from_ = 0;
+        }
+    }
     // An inline answer is shown in its asker's topics.
     std::string at = node;
     for (const game::SourceNode& n : src_.nodes)
@@ -1072,6 +1403,18 @@ void StoryEditor::jump(const std::string& node) {
     flash_ = at;
     flash_until_ = SDL_GetTicks() + kFlashMs;
     scroll_to_ = at;
+    page_to_ = at;
+    dirty_ = true;
+}
+
+bool StoryEditor::line_shown(const std::string& node) const {
+    return std::any_of(m_lines_.begin(), m_lines_.end(), [&](const LineView& l) { return l.id == node; });
+}
+
+void StoryEditor::page(int dir) {
+    if (dir < 0) page_from_ = page_from_ > kPage ? page_from_ - kPage : 0;
+    else page_from_ += kPage;
+    scroll_to_.clear();
     dirty_ = true;
 }
 
@@ -1092,7 +1435,13 @@ game::Value StoryEditor::call(std::string_view name, const std::vector<game::Val
         vars_.set("inv." + item, have - n);
         return game::Value(true);
     }
+    if (name == "renpy" && !a.empty()) log("code", "Ren'Py не выполняется здесь: " + code_line(a[0].text()));
     return game::Value(0.0);
+}
+
+void StoryEditor::log_line() {
+    const auto& l = runner_.line();
+    log("chat", l.speaker.empty() ? l.text : l.speaker + ": " + l.text);
 }
 
 void StoryEditor::log(const char* icon, std::string text, const char* kind) {
@@ -1105,15 +1454,16 @@ void StoryEditor::reload_play(bool keep_place) {
     const std::string node = keep_place && runner_.active() ? std::string(runner_.node_id()) : std::string();
     runner_.stop();
     game::DialogueReport report;
-    playing_ = {};
-    if (!playing_.load(src_.json(), report, {"has", "count", "give", "take"}))
+    game::Dialogue& d = open_dialogue();
+    d = {};
+    if (!d.load(src_.json(), report, {"has", "count", "give", "take", "renpy"}))
         for (const std::string& e : report.errors) FORGE_ERROR("Разговор %s: %s", talk_.c_str(), e.c_str());
     // A talk that had nothing to say (a new one) plays as soon as it has.
     else if (keep_place && !runner_started_) replay_ = true;
-    if (!node.empty() && playing_.node(node)) {
+    if (!node.empty() && d.node(node)) {
         // Showing the line again does not count: what it changes is kept as it was.
         const std::string saved = vars_.to_json();
-        runner_.start_at(playing_, node);
+        runner_.start_at(d, node);
         vars_.from_json(saved);
     }
     rebuild_play();
@@ -1145,7 +1495,7 @@ void StoryEditor::play() {
     const std::string who = src_.speakers.empty() ? talk_ : src_.speakers.front().name;
     log("play_arrow", "Герой заговорил: " + who);
     const auto before = numbers(vars_);
-    runner_started_ = runner_.start(playing_) && runner_.active();
+    runner_started_ = runner_.start(open_dialogue()) && runner_.active();
     if (!runner_started_) log("block", "Сейчас сказать нечего: ни одно начало не подходит");
     // Changes made on the way are logged as the marks say them.
     const auto after = numbers(vars_);
@@ -1156,7 +1506,8 @@ void StoryEditor::play() {
         if (const game::Quest* q = quest_of_var(k)) log("bolt", "задание «" + q->title + "» → " + stage_name(*q, v), "eff");
         else if (k.rfind("inv.", 0) == 0) log("bolt", "у героя: " + item_name(k.substr(4)) + " " + num(v), "eff");
     }
-    if (runner_.active()) log("chat", runner_.line().speaker + ": " + runner_.line().text);
+    if (runner_.active()) log_line();
+    follow();
     dirty_ = true;
 }
 
@@ -1187,8 +1538,9 @@ bool StoryEditor::play_choose(usize visible) {
         if (const game::Quest* q = quest_of_var(k)) log("bolt", "задание «" + q->title + "» → " + stage_name(*q, v), "eff");
         else if (k.rfind("inv.", 0) == 0) log("bolt", item_name(k.substr(4)) + ": " + (v > old ? "+" : "−") + num(std::fabs(v - old)), "eff");
     }
-    if (runner_.active()) log("chat", runner_.line().speaker + ": " + runner_.line().text);
+    if (runner_.active()) log_line();
     else log("stop", "Разговор окончен");
+    follow();
     dirty_ = true;
     return true;
 }
@@ -1206,8 +1558,9 @@ bool StoryEditor::play_next() {
         else if (k.rfind("inv.", 0) == 0) log("bolt", item_name(k.substr(4)) + ": " + (v > old ? "+" : "−") + num(std::fabs(v - old)), "eff");
     }
     lit_choice_ = lit_topic_ = -1;
-    if (runner_.active()) log("chat", runner_.line().speaker + ": " + runner_.line().text);
+    if (runner_.active()) log_line();
     else log("stop", "Разговор окончен");
+    follow();
     dirty_ = true;
     return true;
 }
@@ -1231,7 +1584,8 @@ bool StoryEditor::play_ask(const std::string& typed) {
             }
     }
     const bool hit = runner_.ask(typed);
-    if (runner_.active()) log("chat", runner_.line().speaker + ": " + runner_.line().text);
+    if (runner_.active()) log_line();
+    follow();
     m_ask_text_.clear();
     if (model_) model_.DirtyVariable("st_ask_text");
     dirty_ = true;
@@ -1291,6 +1645,39 @@ void StoryEditor::step_item(const std::string& item, int dir) {
     dirty_ = true;
 }
 
+std::vector<std::string> StoryEditor::vars_used() const {
+    // Names in the talk's conditions that are not quests, items or functions.
+    std::vector<std::string> out;
+    static const std::regex name_re(R"re([A-Za-z_][\w.]*)re");
+    static const std::regex text_re(R"re("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')re");
+    auto scan = [&](const std::string& cond) {
+        const std::string plain = std::regex_replace(cond, text_re, "\"\"");
+        for (std::sregex_iterator it(plain.begin(), plain.end(), name_re), end; it != end && out.size() < 16; ++it) {
+            const std::string name = (*it)[0];
+            const usize after = static_cast<usize>(it->position() + it->length());
+            if (after < plain.size() && plain[after] == '(') continue;
+            if (name == "and" || name == "or" || name == "not" || name == "true" || name == "false" || name.rfind("inv.", 0) == 0 || quest_of_var(name))
+                continue;
+            if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+        }
+    };
+    for (const game::SourceEntry& e : src_.start) scan(e.cond);
+    for (const game::SourceNode& n : src_.nodes) {
+        for (const game::SourceEntry& b : n.branches) scan(b.cond);
+        for (const game::SourceChoice& c : n.choices) scan(c.cond);
+        for (const game::SourceKeyword& k : n.keywords) scan(k.cond);
+    }
+    return out;
+}
+
+void StoryEditor::step_var(const std::string& var, int dir) {
+    const game::Value v = vars_.get(var);
+    if (v.is_text()) return;
+    vars_.set(var, std::max(0.0, v.number() + dir));
+    log("tune", var + " = " + num(vars_.get(var).number()));
+    dirty_ = true;
+}
+
 void StoryEditor::rebuild_state() {
     m_state_.clear();
     for (const game::Quest& q : quests_.quests()) {
@@ -1310,6 +1697,15 @@ void StoryEditor::rebuild_state() {
         r.value = num(vars_.get("inv." + it).number());
         if (library_ && template_icon)
             if (const objects::Template* t = library_->find(std::string_view(it))) r.icon = template_icon(*t);
+        m_state_.push_back(std::move(r));
+    }
+    for (const std::string& v : vars_used()) {
+        StateRow r;
+        r.id = v;
+        r.kind = "var";
+        r.name = v;
+        const game::Value value = vars_.get(v);
+        r.value = value.is_text() ? "«" + value.text() + "»" : num(value.number());
         m_state_.push_back(std::move(r));
     }
     if (model_) model_.DirtyVariable("st_state");
@@ -1333,6 +1729,85 @@ void StoryEditor::rebuild_play() {
     }
 }
 
+// --- Ren'Py import -----------------------------------------------------------
+
+bool StoryEditor::import_renpy(const std::filesystem::path& source) {
+    if (importing()) return false;
+    if (!import_loaded_) {
+        import_converters_.load({utf8_path(FORGE_CONVERTERS_DIR), game_dir_ / "converters"});
+        import_loaded_ = true;
+    }
+    const Converter* c = import_converters_.find("renpy");
+    if (!c || import_converters_.python().empty()) {
+        set(m_import_text_, Rml::String("Для импорта нужен Python: он ставится вместе с редактором"), "st_import_text");
+        return false;
+    }
+    std::error_code ec;
+    import_source_ = source;
+    import_staging_ = std::filesystem::temp_directory_path(ec) / ("forge_renpy_" + std::to_string(SDL_GetTicksNS()));
+    import_job_ = import_converters_.start(*c, source, import_staging_, R"({"whole": true})");
+    set(m_import_text_, Rml::String("Переношу игру Ren'Py…"), "st_import_text");
+    if (model_) model_.DirtyVariable("st_importing");
+    return true;
+}
+
+void StoryEditor::poll_import() {
+    {
+        std::vector<std::filesystem::path> picked;
+        {
+            std::lock_guard lock(import_mutex_);
+            picked.swap(import_picked_);
+        }
+        if (!picked.empty()) import_renpy(picked.front());
+    }
+    if (!importing()) return;
+    for (Converters::Result& r : import_converters_.take_finished()) {
+        if (r.id != import_job_) continue;
+        import_job_ = 0;
+        if (model_) model_.DirtyVariable("st_importing");
+        if (!r.ok) {
+            set(m_import_text_, Rml::String("Не получилось: " + r.error), "st_import_text");
+            FORGE_ERROR("Импорт Ren'Py: %s", r.error.c_str());
+            continue;
+        }
+        // The story is named after the game's folder (the one holding game/).
+        std::error_code ec;
+        std::filesystem::path folder = std::filesystem::is_directory(import_source_, ec) ? import_source_ : import_source_.parent_path();
+        if (folder.filename() == "game" && folder.has_parent_path()) folder = folder.parent_path();
+        std::string name = path_to_utf8(folder.filename());
+        for (char& ch : name)
+            if (ch == ':' || ch == '/' || ch == '\\' || ch == '.') ch = '_';
+        if (name.empty()) name = "renpy";
+        std::string story = name;
+        for (u32 n = 2; std::filesystem::exists(game_dir_ / "dialogues" / utf8_path(story), ec); ++n) story = name + " " + std::to_string(n);
+        const std::filesystem::path dest = game_dir_ / "dialogues" / utf8_path(story);
+        std::filesystem::create_directories(dest, ec);
+        int talks_in = 0;
+        for (const std::filesystem::path& f : r.files) {
+            std::filesystem::rename(f, dest / f.filename(), ec);
+            if (ec) std::filesystem::copy_file(f, dest / f.filename(), std::filesystem::copy_options::overwrite_existing, ec);
+            talks_in += f.extension() == ".json";
+        }
+        std::filesystem::remove_all(r.out, ec);
+        stories_open_.insert(story);
+        // The talk the game starts with, else the first.
+        std::string first;
+        for (const std::string& t : talks())
+            if (story_of(t) == story) {
+                if (first.empty()) first = t;
+                std::vector<u8> bytes;
+                if (read_file(talk_path(t), bytes) &&
+                    std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()).find("{\"id\": \"start\"") != std::string_view::npos)
+                    first = t;
+            }
+        set(m_import_text_, Rml::String("Перенесено разговоров: " + std::to_string(talks_in) + ". Что не перенеслось, в «Импорт Ren'Py.txt» рядом."),
+            "st_import_text");
+        FORGE_INFO("Импорт Ren'Py: %d разговоров в dialogues/%s", talks_in, story.c_str());
+        if (!first.empty()) open(first);
+        dirty_ = true;
+    }
+}
+
 // --- the UI -----------------------------------------------------------------
 
 void StoryEditor::bind(Rml::DataModelConstructor& model) {
@@ -1342,6 +1817,8 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("text", &Chip::text);
         s.RegisterMember("part", &Chip::part);
         s.RegisterMember("mark", &Chip::mark);
+        s.RegisterMember("seq", &Chip::seq);
+        s.RegisterMember("look", &Chip::look);
     }
     model.RegisterArray<std::vector<Chip>>();
     if (auto s = model.RegisterStruct<RuleView>()) {
@@ -1378,6 +1855,9 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("color", &LineView::color);
         s.RegisterMember("text", &LineView::text);
         s.RegisterMember("fallback", &LineView::fallback);
+        s.RegisterMember("pose", &LineView::pose);
+        s.RegisterMember("stage", &LineView::stage);
+        s.RegisterMember("editing_stage", &LineView::editing_stage);
         s.RegisterMember("lit", &LineView::lit);
         s.RegisterMember("flash", &LineView::flash);
         s.RegisterMember("editing", &LineView::editing);
@@ -1394,6 +1874,8 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
     }
     model.RegisterArray<std::vector<LineView>>();
     if (auto s = model.RegisterStruct<TalkRow>()) {
+        s.RegisterMember("kind", &TalkRow::kind);
+        s.RegisterMember("open", &TalkRow::open);
         s.RegisterMember("id", &TalkRow::id);
         s.RegisterMember("name", &TalkRow::name);
         s.RegisterMember("letter", &TalkRow::letter);
@@ -1458,11 +1940,34 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("st_ask_text", &m_ask_text_);
     model.Bind("st_state", &m_state_);
     model.Bind("st_log", &m_log_);
+    model.Bind("st_page_on", &m_page_on_);
+    model.Bind("st_page_prev", &m_page_prev_);
+    model.Bind("st_page_next", &m_page_next_);
+    model.Bind("st_page_text", &m_page_text_);
+    model.Bind("st_import_text", &m_import_text_);
+    model.BindFunc("st_importing", [this](Rml::Variant& v) { v = importing(); });
 
     auto on = [&model](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) { fn(ev, a); });
     };
     on("st_open", [this](Rml::Event&, const Rml::VariantList& a) { open(arg_str(a, 0)); });
+    on("st_story", [this](Rml::Event&, const Rml::VariantList& a) {
+        const std::string story = arg_str(a, 0);
+        if (!stories_open_.erase(story)) stories_open_.insert(story);
+        dirty_ = true;
+    });
+    on("st_scene", [this](Rml::Event&, const Rml::VariantList& a) { jump(arg_str(a, 0)); });
+    on("st_page", [this](Rml::Event&, const Rml::VariantList& a) { page(arg_int(a, 0, 1)); });
+    on("st_import", [this](Rml::Event&, const Rml::VariantList&) {
+        if (!window || importing()) return;
+        auto done = [](void* self, const char* const* list, int) {
+            auto* ed = static_cast<StoryEditor*>(self);
+            if (!list || !*list) return;
+            std::lock_guard lock(ed->import_mutex_);
+            ed->import_picked_.push_back(utf8_path(*list));
+        };
+        SDL_ShowOpenFolderDialog(done, this, window, nullptr, false);
+    });
     on("st_new_talk", [this](Rml::Event&, const Rml::VariantList&) { new_talk(); });
     on("st_edit", [this](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
@@ -1478,10 +1983,15 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
         if (part == "else") return;
         const game::SourceNode* n = src_.node(node);
         const bool junction = n && n->junction();
-        if (how == "open" && (part == "goto" || part == "next")) {
+        if (part == "stage") {
+            begin_edit("stage", node, mark);
+            return;
+        }
+        if (how == "open" && (part == "goto" || part == "next" || part == "call")) {
             std::string go;
             const usize i = static_cast<usize>(std::max(index, 0)), m = static_cast<usize>(std::max(mark, 0));
-            if (where == "start" && i < src_.start.size()) go = src_.start[i].go;
+            if (part == "call" && n) go = n->call;
+            else if (where == "start" && i < src_.start.size()) go = src_.start[i].go;
             else if (junction && part == "goto" && m < n->branches.size()) go = n->branches[m].go;
             else if (n && where == "choice" && i < n->choices.size()) go = n->choices[i].go;
             else if (n && where == "topic" && i < n->keywords.size()) go = n->keywords[i].go;
@@ -1563,6 +2073,7 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
         const std::string id = arg_str(a, 0);
         const int dir = arg_int(a, 2, 1);
         if (arg_str(a, 1) == "item") return step_item(id, dir);
+        if (arg_str(a, 1) == "var") return step_var(id, dir);
         step_quest(id, dir);
     });
 }
@@ -1575,6 +2086,7 @@ void StoryEditor::update(Rml::Context* context) {
     }
     // Enter in a field keeps what was typed.
     if (editing() && m_edit_text_.find('\n') != Rml::String::npos) commit_edit();
+    poll_import();
     if (replay_ && !editing()) {
         replay_ = false;
         play();

@@ -96,6 +96,7 @@ TEST_CASE("game: variables survive JSON and fill in text") {
     CHECK(back.get("hero.name").text() == "Борин");
     CHECK(back.get("met").truthy());
     CHECK(substitute("Привет, {hero.name}! У тебя {gold} монет. {{скобка}", back) == "Привет, Борин! У тебя 12.5 монет. {скобка}");
+    CHECK(substitute("Привет, {player}!", back) == "Привет, {player}!"); // not set yet: shown as written
     CHECK(Value(3.0).text() == "3");
     CHECK(Value(3) == Value("3"));
 }
@@ -201,7 +202,7 @@ TEST_CASE("game: typed questions match keywords, junctions branch on the game") 
     CHECK(v.get("gold").number() == 50);
     run.advance();
     REQUIRE(run.start(d));
-    CHECK(run.line().text == "Спасибо тебе, 0."); // hero.name was never set
+    CHECK(run.line().text == "Спасибо тебе, {hero.name}."); // hero.name was never set: shown as written
 }
 
 TEST_CASE("game: broken dialogues are reported") {
@@ -300,6 +301,59 @@ TEST_CASE("game: a dialogue's source is written back as it was read") {
     CHECK(d.nodes().size() == 3);
     CHECK(a.fresh_id("hello") == "hello2");
     CHECK(a.index_of("waiting") == 2);
+}
+
+TEST_CASE("game: a story calls its parts and jumps between talks") {
+    const char* script = R"J({"id": "script", "speakers": {"s": {"name": "Сайори"}},
+      "nodes": [
+        {"id": "start", "call": "ch1:ch1_main", "next": "after"},
+        {"id": "after", "call": "poem", "next": "last"},
+        {"id": "last", "speaker": "s", "text": "Конец."},
+        {"id": "poem", "speaker": "s", "text": "Стихи.", "next": "deeper"},
+        {"id": "deeper", "call": "ch1:l1", "next": "return"}
+      ]})J";
+    const char* ch1 = R"J({"id": "ch1", "speakers": {},
+      "nodes": [
+        {"id": "ch1_main", "stage": ["scene bg club_day", "play music t2"], "next": "l1"},
+        {"id": "l1", "pose": "1a", "text": "Клуб.", "next": "return"}
+      ]})J";
+    Dialogue a, b;
+    DialogueReport ra, rb;
+    REQUIRE(a.load(script, ra));
+    REQUIRE(b.load(ch1, rb));
+    Vars v;
+    DialogueRunner run(v);
+    run.set_resolver([&](std::string_view talk) -> const Dialogue* { return talk == "ch1" ? &b : talk == "script" ? &a : nullptr; });
+    REQUIRE(run.start(a));
+    CHECK(run.node_id() == "l1"); // the call went into the other talk, through the staging
+    CHECK(run.dialogue() == &b);
+    run.advance(); // return: back to "after", which calls "poem"
+    CHECK(run.node_id() == "poem");
+    CHECK(run.dialogue() == &a);
+    run.advance(); // poem calls l1 as its last step: both returns come back at once
+    CHECK(run.node_id() == "l1");
+    run.advance();
+    CHECK(run.node_id() == "last");
+    run.advance();
+    CHECK_FALSE(run.active());
+    // A return with nothing to come back to ends the talk.
+    REQUIRE(run.start_at(b, "l1"));
+    run.advance();
+    CHECK_FALSE(run.active());
+    // A jump into a talk the runner cannot find ends it too.
+    DialogueRunner lost(v);
+    CHECK_FALSE(lost.start(a));
+
+    DialogueSource src;
+    std::string error;
+    REQUIRE(src.parse(ch1, &error));
+    CHECK(src.node("ch1_main")->stage.size() == 2);
+    CHECK(src.node("ch1_main")->silent());
+    CHECK(src.node("l1")->pose == "1a");
+    DialogueSource again;
+    REQUIRE(again.parse(src.json(), &error));
+    CHECK(again.json() == src.json());
+    CHECK(again.node("ch1_main")->stage[1] == "play music t2");
 }
 
 TEST_CASE("game: the quest journal follows quest variables") {

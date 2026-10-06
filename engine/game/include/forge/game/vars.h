@@ -97,7 +97,8 @@ private:
     std::unique_ptr<ExprNode> root_;
 };
 
-// "Привет, {hero.name}!" with variables put in. "{{" gives "{".
+// "Привет, {hero.name}!" with variables put in; one nothing set stays as
+// written ("{hero.name}"). "{{" gives "{".
 std::string substitute(std::string_view text, const Vars& vars);
 
 } // namespace forge::game

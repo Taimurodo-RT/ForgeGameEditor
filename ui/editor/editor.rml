@@ -857,10 +857,20 @@
             <!-- The game's conversations and who speaks in the open one -->
             <div class="st-nav column">
                 <div class="lg-nav-title">Разговоры</div>
-                <div data-for="t : st_talks" class="st-nav-row row" data-attr-id="'st-talk-' + t.id" data-class-selected="t.selected" data-event-click="st_open(t.id)">
-                    <span class="st-ava" data-style-background-color="t.color">{{ t.letter }}</span><span class="grow name">{{ t.name }}</span><span class="count">{{ t.lines }}</span>
+                <div data-for="t : st_talks" class="st-nav-item">
+                    <div class="st-nav-row row" data-if="t.kind == 'talk' || t.kind == 'subtalk'" data-class-sub="t.kind == 'subtalk'" data-attr-id="'st-talk-' + t.id" data-class-selected="t.selected" data-event-click="st_open(t.id)">
+                        <span class="st-ava" data-if="t.kind == 'talk'" data-style-background-color="t.color">{{ t.letter }}</span><icon class="s" data-if="t.kind == 'subtalk'" name="description"/><span class="grow name">{{ t.name }}</span><span class="count">{{ t.lines }}</span>
+                    </div>
+                    <div class="st-nav-row row story" data-if="t.kind == 'story'" data-attr-id="'st-story-' + t.id" title="История из нескольких разговоров" data-event-click="st_story(t.id)">
+                        <icon class="s" data-attr-name="t.open ? 'expand_more' : 'chevron_right'"/><icon class="s" name="auto_stories"/><span class="grow name">{{ t.name }}</span><span class="count">{{ t.lines }}</span>
+                    </div>
+                    <div class="st-nav-row row scene" data-if="t.kind == 'scene'" data-attr-id="'st-goto-' + t.id" title="Перейти к сцене" data-event-click="st_scene(t.id)">
+                        <icon class="s" name="movie"/><span class="grow name">{{ t.name }}</span>
+                    </div>
                 </div>
                 <div id="st-new-talk" class="st-nav-row row add" data-event-click="st_new_talk"><icon class="s" name="add"/><span>Новый разговор</span></div>
+                <div id="st-import" class="st-nav-row row add" data-class-busy="st_importing" title="Перенести игру Ren'Py: выберите её папку" data-event-click="st_import"><icon class="s" name="download"/><span>Импорт из Ren'Py…</span></div>
+                <div id="st-import-text" class="st-import-text" data-if="st_import_text != ''">{{ st_import_text }}</div>
                 <div class="lg-nav-title">Кто говорит</div>
                 <div data-for="s : st_speakers" class="st-nav-row row" data-attr-id="'st-speaker-' + s.key" title="Щёлкните, чтобы переименовать" data-event-click="st_edit('speaker', s.key, -1)">
                     <span class="st-ava" data-style-background-color="s.color">{{ s.letter }}</span>
@@ -874,6 +884,11 @@
             <div id="st-script" class="st-script grow">
                 <div class="st-hint row"><icon class="s" name="lightbulb"/><span>Пишите, как пьесу: щёлкните по реплике и правьте текст, Enter сохраняет, Esc отменяет. Цветные пометки показывают, когда реплика звучит и что она меняет; щелчок по пометке открывает список. Справа разговор сразу проигрывается.</span></div>
                 <div class="st-sheet column">
+                    <div class="st-pages row" data-if="st_page_on">
+                        <div id="st-page-prev" class="button text small" data-class-disabled="!st_page_prev" data-event-click="st_page(-1)"><icon class="s" name="chevron_left"/><span>Раньше</span></div>
+                        <span class="grow st-page-text">{{ st_page_text }}</span>
+                        <div id="st-page-next" class="button text small" data-class-disabled="!st_page_next" data-event-click="st_page(1)"><span>Дальше</span><icon class="s" name="chevron_right"/></div>
+                    </div>
                     <div class="st-start column">
                         <div class="st-label">Когда герой заговаривает</div>
                         <div data-for="r : st_rules" class="st-rule row" data-attr-id="'st-rule-' + r.index" data-class-lit="r.lit">
@@ -886,15 +901,23 @@
                         <div class="st-scene row" data-if="l.scene != '' && !l.editing_scene" data-attr-id="'st-scene-' + l.id" data-event-click="st_edit('scene', l.id, -1)"><span>{{ l.scene }}</span></div>
                         <input id="st-edit" type="text" class="st-field st-scene-field" data-if="l.editing_scene" data-value="st_edit_text" data-event-click="st_stop"/>
                         <div data-attr-id="'st-line-' + l.id" data-attr-class="'st-line column ' + l.kind" data-class-lit="l.lit" data-class-flash="l.flash">
+                            <div class="st-chips st-stage row" data-if="l.stage.size > 0">
+                                <div data-for="c : l.stage" class="st-stage-item">
+                                    <div data-if="l.editing_stage != c.mark" data-attr-class="'st-chip ' + c.kind" data-attr-id="'st-stage-' + l.id + '-' + c.mark" title="Что происходит на экране; щёлкните, чтобы поправить" data-event-click="st_chip(l.id, 'node', -1, 'stage', c.mark, 'open')">
+                                        <icon class="s" data-attr-name="c.icon"/><span>{{ c.text }}</span>
+                                    </div>
+                                    <input id="st-edit" type="text" class="st-field st-code" data-if="l.editing_stage == c.mark" data-value="st_edit_text" data-event-click="st_stop"/>
+                                </div>
+                            </div>
                             <div class="st-note" data-if="l.note != '' && !l.editing_note" data-attr-id="'st-note-' + l.id" data-event-click="st_edit('note', l.id, -1)">{{ l.note }}</div>
                             <textarea id="st-edit" class="st-field st-note-field" data-if="l.editing_note" data-attr-rows="st_edit_rows" data-value="st_edit_text" data-event-click="st_stop"></textarea>
                             <div class="row st-say-row">
-                                <span class="st-who" data-attr-id="'st-who-' + l.id" data-style-color="l.color" title="Кто говорит" data-event-click="st_chip(l.id, 'node', -1, 'speaker', -1, 'menu')">{{ l.who }}</span>
+                                <div class="st-who column" data-attr-id="'st-who-' + l.id" data-style-color="l.color" title="Кто говорит" data-event-click="st_chip(l.id, 'node', -1, 'speaker', -1, 'menu')"><span>{{ l.who }}</span><span class="st-pose" data-if="l.pose != ''" title="Как выглядит, когда говорит">{{ l.pose }}</span></div>
                                 <div class="column grow st-say-col">
                                     <span class="st-say" data-if="l.kind == 'line' && !l.editing" data-class-empty="l.text == ''" data-attr-id="'st-say-' + l.id" data-event-click="st_edit('text', l.id, -1)">{{ l.text == '' ? 'Новая реплика: щёлкните и пишите' : l.text }}</span>
                                     <textarea id="st-edit" class="st-field st-say-field" data-if="l.editing" data-attr-rows="st_edit_rows" data-value="st_edit_text" data-event-click="st_stop"></textarea>
                                     <div class="st-chips row" data-if="l.chips.size > 0">
-                                        <div data-for="c : l.chips" data-attr-class="'st-chip ' + c.kind" data-attr-id="'st-chip-' + l.id + '-' + c.part + '-' + c.mark" data-event-click="st_chip(l.id, 'node', -1, c.part, c.mark, 'open')">
+                                        <div data-for="c : l.chips" data-attr-class="'st-chip ' + c.look" data-attr-id="'st-chip-' + l.id + '-' + c.part + '-' + c.mark" data-event-click="st_chip(l.id, 'node', -1, c.part, c.mark, 'open')">
                                             <icon class="s" data-attr-name="c.icon"/><span>{{ c.text }}</span><icon class="s more" name="expand_more" data-if="c.kind == 'go'" data-event-click="st_chip(l.id, 'node', -1, c.part, c.mark, 'menu')"/>
                                         </div>
                                     </div>
@@ -957,6 +980,11 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+                    <div class="st-pages row" data-if="st_page_on">
+                        <div class="button text small" data-class-disabled="!st_page_prev" data-event-click="st_page(-1)"><icon class="s" name="chevron_left"/><span>Раньше</span></div>
+                        <span class="grow st-page-text">{{ st_page_text }}</span>
+                        <div class="button text small" data-class-disabled="!st_page_next" data-event-click="st_page(1)"><span>Дальше</span><icon class="s" name="chevron_right"/></div>
                     </div>
                     <div id="st-add-scene" class="st-add big" data-event-click="st_add_scene"><icon class="s" name="add"/><span>Новая сцена</span></div>
                 </div>
