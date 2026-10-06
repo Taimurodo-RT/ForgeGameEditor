@@ -90,6 +90,9 @@ public:
 
 	static String GetDebugElementName(Element* element);
 
+	// Forge: checkboxes, radio buttons and range inputs of web documents sit on the baseline with their border bottom, as in browsers.
+	static bool IsWebBorderBaselineControl(Element* element);
+
 	static bool IsScrollContainer(Style::Overflow overflow_x, Style::Overflow overflow_y)
 	{
 		return overflow_x != Style::Overflow::Visible || overflow_y != Style::Overflow::Visible;

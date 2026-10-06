@@ -693,4 +693,15 @@ void LayoutDetails::BuildBoxHeight(Box& box, const ComputedValues& computed, flo
 	box.SetContent(content_area);
 }
 
+bool LayoutDetails::IsWebBorderBaselineControl(Element* element)
+{
+	if (element->GetTagName() != "input")
+		return false;
+	ElementDocument* document = element->GetOwnerDocument();
+	if (!document || document->GetTagName() != "html")
+		return false;
+	const String type = element->GetAttribute<String>("type", "text");
+	return type == "checkbox" || type == "radio" || type == "range";
+}
+
 } // namespace Rml

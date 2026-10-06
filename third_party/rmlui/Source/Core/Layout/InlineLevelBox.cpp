@@ -110,7 +110,9 @@ InlineLevelBox_Atomic::InlineLevelBox_Atomic(const InlineLevelBox* parent, Eleme
 
 	const float outer_height = box.GetSizeAcross(BoxDirection::Vertical, BoxArea::Margin);
 
-	const float descent = GetElement()->GetBaseline();
+	float descent = GetElement()->GetBaseline();
+	if (descent == 0.f && LayoutDetails::IsWebBorderBaselineControl(element))
+		descent = box.GetEdge(BoxArea::Margin, BoxEdge::Bottom);
 	const float ascent = outer_height - descent;
 	SetHeightAndVerticalAlignment(ascent, descent, parent);
 }

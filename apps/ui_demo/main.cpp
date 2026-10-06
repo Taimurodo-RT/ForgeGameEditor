@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -323,6 +324,14 @@ int run_pages(const std::filesystem::path& ui_dir, const std::vector<std::string
                 SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
                 SDL_WaitForGPUFences(device, true, &fence, 1);
                 SDL_ReleaseGPUFence(device, fence);
+            }
+            // FORGE_UI_DUMP="selector": logs the border box of each matching element, to compare layouts with a browser.
+            if (const char* dump = std::getenv("FORGE_UI_DUMP")) {
+                Rml::ElementList found;
+                doc->QuerySelectorAll(found, dump);
+                for (Rml::Element* e : found)
+                    FORGE_INFO("box %s.%s @%.1f,%.1f %.1fx%.1f", e->GetTagName().c_str(), e->GetClassNames().c_str(),
+                               e->GetAbsoluteTop(), e->GetAbsoluteLeft(), e->GetOffsetWidth(), e->GetOffsetHeight());
             }
             const std::string out = path_to_utf8(utf8_path(out_dir) / (path_to_utf8(path.stem()))) + ".png";
             if (!render::save_png(device, target, w, h, out.c_str())) ++failed;

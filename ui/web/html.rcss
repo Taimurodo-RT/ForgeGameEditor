@@ -85,6 +85,7 @@ button {
 	background-color: #efefef;
 	color: #000000;
 	font-size: 13.333px;
+	line-height: 1.15; /* the 'normal' line height of the browsers' control font */
 	text-align: center;
 	cursor: pointer;
 }
@@ -99,12 +100,13 @@ input, textarea, select {
 	background-color: #ffffff;
 	color: #000000;
 	font-size: 13.333px;
+	line-height: 1.15;
 }
 input.text, input.password, input[type="text"], input[type="password"], input[type="email"],
 input[type="search"], input[type="number"] { width: 150px; }
 textarea { width: 180px; height: 34px; }
 input[type="checkbox"], input[type="radio"] {
-	width: 13px; height: 13px; padding: 0; margin: 3px 3px 3px 4px;
+	box-sizing: border-box; width: 13px; height: 13px; padding: 0; margin: 3px 3px 3px 4px;
 	border: 1px solid #767676; border-radius: 2px; background-color: #ffffff;
 }
 input[type="radio"] { border-radius: 7px; margin: 3px 3px 0 5px; }

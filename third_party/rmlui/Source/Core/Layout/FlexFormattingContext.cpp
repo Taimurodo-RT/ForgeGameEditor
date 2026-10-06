@@ -1,6 +1,7 @@
 #include "FlexFormattingContext.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Element.h"
+#include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ElementScroll.h"
 #include "../../../Include/RmlUi/Core/Profiling.h"
 #include "../../../Include/RmlUi/Core/Types.h"
@@ -307,7 +308,10 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 		const float sum_padding_border = item.main.sum_edges - (item.main.margin_a + item.main.margin_b);
 
 		// Find the flex base size (possibly negative when using border box sizing)
-		if (computed.flex_basis().type != Style::FlexBasis::Auto)
+		// Forge: in web documents a percentage basis against an indefinite main size behaves as 'content', as in browsers.
+		const bool basis_is_content = (computed.flex_basis().type == Style::FlexBasis::Percentage && main_available_size < 0.f &&
+			element->GetOwnerDocument() && element->GetOwnerDocument()->GetTagName() == "html");
+		if (computed.flex_basis().type != Style::FlexBasis::Auto && !basis_is_content)
 		{
 			item.inner_flex_base_size = ResolveValue(computed.flex_basis(), main_size_base_value);
 			if (computed.box_sizing() == Style::BoxSizing::BorderBox)

@@ -89,6 +89,8 @@ bool BlockContainer::Close(BlockContainer* parent_block_container)
 				position.y + box.GetSizeAcross(BoxDirection::Vertical, BoxArea::Border) + box.GetEdge(BoxArea::Margin, BoxEdge::Bottom);
 			element_baseline = bottom_position - baseline;
 		}
+		else if (LayoutDetails::IsWebBorderBaselineControl(element))
+			element_baseline = box.GetEdge(BoxArea::Margin, BoxEdge::Bottom);
 	}
 
 	SetElementBaseline(element_baseline);

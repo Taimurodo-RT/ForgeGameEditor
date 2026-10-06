@@ -557,7 +557,7 @@ bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictio
 		{
 			// Default values when omitted from the 'flex' shorthand is specified here. These defaults are special
 			// for this shorthand only, otherwise each underlying property has a different default value.
-			const char* default_omitted_values[] = {"1", "1", "0"}; // flex-grow, flex-shrink, flex-basis
+			const char* default_omitted_values[] = {"1", "1", "0%"}; // flex-grow, flex-shrink, flex-basis (Forge: 0% as in CSS)
 			Property new_property;
 			bool result = true;
 			for (int i = 0; i < 3; i++)
