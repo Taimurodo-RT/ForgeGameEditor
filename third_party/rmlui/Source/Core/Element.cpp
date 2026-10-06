@@ -1943,8 +1943,14 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 		meta->background_border.DirtyBorder();
 	}
 
+	// Forge: background-size, -position and -repeat place the background images.
+	static const PropertyId background_placement[3] = {StyleSheetSpecification::GetPropertyId("background-size"),
+		StyleSheetSpecification::GetPropertyId("background-position"), StyleSheetSpecification::GetPropertyId("background-repeat")};
+	const bool background_placement_changed = changed_properties.Contains(background_placement[0]) ||
+		changed_properties.Contains(background_placement[1]) || changed_properties.Contains(background_placement[2]);
+
 	// Dirty the effects if they've changed.
-	if (border_radius_changed || filter_or_mask_changed || changed_properties.Contains(PropertyId::Decorator))
+	if (border_radius_changed || filter_or_mask_changed || background_placement_changed || changed_properties.Contains(PropertyId::Decorator))
 	{
 		meta->effects.DirtyEffects();
 	}

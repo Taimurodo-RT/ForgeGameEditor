@@ -9,7 +9,7 @@ add_library(forge::ui ALIAS forge_ui)
 target_include_directories(forge_ui PUBLIC include)
 target_link_libraries(forge_ui
   PUBLIC forge::core forge::render RmlUi::Core SDL3::SDL3-static
-  PRIVATE RmlUi::Debugger yyjson stb_headers forge::assets)
+  PRIVATE RmlUi::Debugger yyjson stb_headers forge::assets lunasvg::lunasvg)
 forge_add_shaders(forge_ui
   shaders/ui.vert
   shaders/ui_texture.frag

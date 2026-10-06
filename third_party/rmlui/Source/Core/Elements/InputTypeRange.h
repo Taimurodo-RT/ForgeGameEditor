@@ -39,6 +39,7 @@ public:
 	bool GetIntrinsicDimensions(Vector2f& dimensions, float& ratio) override;
 
 private:
+	bool default_value_applied = false; // Forge
 	WidgetSlider* widget;
 };
 

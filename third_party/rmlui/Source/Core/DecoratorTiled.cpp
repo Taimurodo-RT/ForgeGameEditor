@@ -1,4 +1,6 @@
 #include "DecoratorTiled.h"
+#include "../../Include/RmlUi/Core/DataUri.h"
+#include "../../Include/RmlUi/Core/StringUtilities.h"
 #include "../../Include/RmlUi/Core/Element.h"
 #include "../../Include/RmlUi/Core/ElementUtilities.h"
 #include "../../Include/RmlUi/Core/Geometry.h"
@@ -310,6 +312,12 @@ bool DecoratorTiledInstancer::GetTileProperties(DecoratorTiled::Tile* tiles, Tex
 				previous_texture_name = texture_name;
 				previous_texture = texture;
 			}
+
+			// Forge: remember SVG pictures, see Tile::vector_image.
+			const String lower = StringUtilities::ToLower(texture_name);
+			String uri;
+			tile.vector_image = (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".svg") == 0) || StringUtilities::StartsWith(lower, "data:image/svg") ||
+				(DataUri::Lookup(texture_name, uri) && StringUtilities::StartsWith(StringUtilities::ToLower(uri), "data:image/svg"));
 		}
 
 		if (ids.fit != PropertyId::Invalid)

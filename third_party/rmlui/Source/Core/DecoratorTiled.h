@@ -85,6 +85,9 @@ public:
 
 		TileFitMode fit_mode;
 		Style::LengthPercentage align[2];
+
+		// Forge: the image is an SVG picture, which has no intrinsic size in CSS backgrounds.
+		bool vector_image = false;
 	};
 
 protected:

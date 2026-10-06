@@ -1,4 +1,5 @@
 #include "../../Include/RmlUi/Core/PropertySpecification.h"
+#include "../../Include/RmlUi/Core/DataUri.h"
 #include "../../Include/RmlUi/Core/Debug.h"
 #include "../../Include/RmlUi/Core/Log.h"
 #include "../../Include/RmlUi/Core/Math.h"
@@ -409,14 +410,50 @@ bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, cons
 	static const char* const boxes[] = {"border-box", "padding-box", "content-box", "text"};
 
 	String color, decorator;
+	String css_size, css_position, css_repeat; // Forge: of the last layer, for background-size, -position and -repeat
 	const StringList layers = SplitTopLevel(value, ',');
 	for (size_t layer_index = 0; layer_index < layers.size(); layer_index++)
 	{
-		const StringList tokens = SplitTopLevel(layers[layer_index], ' ');
+		// Put spaces around a top-level '/', which separates the position from the size.
+		String layer;
+		{
+			int depth = 0;
+			char quote = 0;
+			for (char c : layers[layer_index])
+			{
+				if (quote)
+					quote = (c == quote ? 0 : quote);
+				else if (c == '"' || c == '\'')
+					quote = c;
+				else if (c == '(')
+					depth++;
+				else if (c == ')')
+					depth--;
+				if (c == '/' && depth == 0 && !quote)
+					layer += " / ";
+				else
+					layer += c;
+			}
+		}
+		const StringList tokens = SplitTopLevel(layer, ' ');
 		String image, box, fit, align;
+		String layer_size, layer_position, layer_repeat;
+		bool after_slash = false;
 		for (const String& token : tokens)
 		{
 			const String lower = StringUtilities::ToLower(token);
+			{
+				const bool is_length = !lower.empty() && ((lower[0] >= '0' && lower[0] <= '9') || lower[0] == '.' || lower[0] == '-' || lower[0] == '+');
+				auto append = [](String& list, const String& word) { list += (list.empty() ? "" : " ") + word; };
+				if (lower == "/")
+					after_slash = true;
+				else if (lower == "repeat" || lower == "repeat-x" || lower == "repeat-y" || lower == "no-repeat" || lower == "space" || lower == "round")
+					append(layer_repeat, lower);
+				else if (after_slash && (is_length || lower == "auto" || lower == "cover" || lower == "contain"))
+					append(layer_size, lower);
+				else if (!after_slash && (is_length || lower == "left" || lower == "right" || lower == "top" || lower == "bottom" || lower == "center"))
+					append(layer_position, lower);
+			}
 			const size_t paren = lower.find('(');
 			const String function = (paren == String::npos ? String() : lower.substr(0, paren));
 			if (function.size() > 9 && function.compare(function.size() - 9, 9, "-gradient") == 0)
@@ -426,7 +463,9 @@ bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, cons
 				String path = StringUtilities::StripWhitespace(token.substr(4, token.size() - 5));
 				if (path.size() >= 2 && (path[0] == '"' || path[0] == '\''))
 					path = path.substr(1, path.size() - 2);
-				if (!StringUtilities::StartsWith(path, "data:"))
+				if (StringUtilities::StartsWith(StringUtilities::ToLower(path), "data:"))
+					image = "image(" + DataUri::Register(path) + ")"; // Forge: data URIs are stored behind a short key
+				else
 					image = "image(" + path + ")";
 			}
 			else if (std::find_if(std::begin(boxes), std::end(boxes), [&](const char* b) { return lower == b; }) != std::end(boxes))
@@ -443,6 +482,9 @@ bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, cons
 			else if (shorthand && layer_index + 1 == layers.size())
 				color = token;
 		}
+		css_size = layer_size;
+		css_position = layer_position;
+		css_repeat = layer_repeat;
 		if (image.empty())
 			continue;
 		if (StringUtilities::StartsWith(image, "image(") && (!fit.empty() || !align.empty()))
@@ -454,7 +496,12 @@ bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, cons
 
 	bool result = true;
 	if (shorthand)
+	{
 		result &= ParsePropertyDeclaration(dictionary, PropertyId::BackgroundColor, color.empty() ? String("transparent") : color);
+		ParsePropertyDeclaration(dictionary, "background-size", css_size.empty() ? String("auto") : css_size);
+		ParsePropertyDeclaration(dictionary, "background-position", css_position.empty() ? String("0% 0%") : css_position);
+		ParsePropertyDeclaration(dictionary, "background-repeat", css_repeat.empty() ? String("repeat") : css_repeat);
+	}
 	if (!decorator.empty())
 		result &= ParsePropertyDeclaration(dictionary, PropertyId::Decorator, decorator);
 	else

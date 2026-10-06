@@ -424,11 +424,12 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::Decorator, "decorator", "", false, false).AddParser("decorator");
 	RegisterProperty(PropertyId::MaskImage, "mask-image", "", false, false).AddParser("decorator");
 	// Forge: 'background' and 'background-image' also set the decorator from gradient and url() layers (see PropertySpecification).
-	RegisterShorthand(ShorthandId::Background, "background", "background-color, decorator", ShorthandType::FallThrough);
-	RegisterShorthand(ShorthandId::Invalid, "background-image", "decorator", ShorthandType::FallThrough);
 	for (const char* name : {"background-size", "background-position", "background-repeat", "background-clip", "background-origin",
 			 "background-attachment", "background-blend-mode", "background-position-x", "background-position-y"})
-		RegisterProperty(PropertyId::Invalid, name, "", false, false).AddParser("string"); // Forge: accepted, not drawn yet
+		RegisterProperty(PropertyId::Invalid, name, "", false, false).AddParser("string"); // Forge: size, position and repeat place url() images in web pages
+	RegisterShorthand(ShorthandId::Background, "background", "background-color, decorator, background-size, background-position, background-repeat",
+		ShorthandType::FallThrough);
+	RegisterShorthand(ShorthandId::Invalid, "background-image", "decorator", ShorthandType::FallThrough);
 	RegisterProperty(PropertyId::FontEffect, "font-effect", "", true, false).AddParser("font_effect");
 	RegisterShorthand(ShorthandId::Invalid, "text-shadow", "font-effect", ShorthandType::FallThrough); // Forge: mapped to font effects
 

@@ -369,7 +369,7 @@ float BlockContainer::GetShrinkToFitWidth() const
 	}
 
 	float min_width, max_width;
-	LayoutDetails::GetMinMaxWidth(min_width, max_width, computed, box, 0.f);
+	LayoutDetails::GetMinMaxWidth(min_width, max_width, computed, box, -1.f); // Forge: percentages act as none here, not as 0
 	content_width = Math::Clamp(content_width, min_width, max_width);
 
 	return content_width;

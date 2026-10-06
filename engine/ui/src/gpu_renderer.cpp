@@ -18,6 +18,8 @@
 #include <RmlUi/Core/DecorationTypes.h>
 #include <RmlUi/Core/FileInterface.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/DataUri.h>
+#include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Core/Math.h>
 
 #if defined(__GNUC__)
@@ -29,6 +31,7 @@
 #endif
 #define STBI_NO_STDIO
 #include <stb_image.h>
+#include <lunasvg.h>
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #elif defined(_MSC_VER)
@@ -541,17 +544,68 @@ void GpuRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
     if (geometry) release_geometry_.push_back(reinterpret_cast<Geometry*>(geometry));
 }
 
+// SVG pictures are drawn at this size (longest side) and scaled by the UI like any image.
+constexpr float kSvgRasterSize = 128.0f;
+
 Rml::TextureHandle GpuRenderer::LoadTexture(Rml::Vector2i& dimensions, const Rml::String& source) {
-    Rml::FileInterface* files = Rml::GetFileInterface();
-    Rml::FileHandle file = files->Open(source);
-    if (!file) {
-        FORGE_WARN("ui: image not found: %s", source.c_str());
-        return {};
+    std::vector<u8> bytes;
+    bool svg = false;
+    // Data URIs come either as a key from the style sheet (see Rml::DataUri) or directly, as in <img src="data:...">.
+    Rml::String uri;
+    if (!Rml::DataUri::Lookup(source, uri) && Rml::StringUtilities::StartsWith(source, "data:")) uri = source;
+    const bool data_uri = !uri.empty();
+    if (data_uri) {
+        Rml::String media_type, decoded;
+        if (!Rml::DataUri::Decode(uri, media_type, decoded)) {
+            FORGE_WARN("ui: cannot read data URI image");
+            return {};
+        }
+        bytes.assign(decoded.begin(), decoded.end());
+        svg = media_type.find("svg") != Rml::String::npos;
+    } else {
+        Rml::FileInterface* files = Rml::GetFileInterface();
+        Rml::FileHandle file = files->Open(source);
+        if (!file) {
+            FORGE_WARN("ui: image not found: %s", source.c_str());
+            return {};
+        }
+        const size_t size = files->Length(file);
+        bytes.resize(size);
+        files->Read(bytes.data(), size, file);
+        files->Close(file);
+        const Rml::String lower = Rml::StringUtilities::ToLower(source);
+        svg = lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".svg") == 0;
     }
-    const size_t size = files->Length(file);
-    std::vector<u8> bytes(size);
-    files->Read(bytes.data(), size, file);
-    files->Close(file);
+
+    if (svg) {
+        auto document = lunasvg::Document::loadFromData(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        if (!document) {
+            FORGE_WARN("ui: cannot read SVG picture %s", data_uri ? "(data URI)" : source.c_str());
+            return {};
+        }
+        float doc_w = document->width(), doc_h = document->height();
+        if (doc_w <= 0.0f || doc_h <= 0.0f) doc_w = doc_h = 1.0f;
+        const float scale = kSvgRasterSize / std::max(doc_w, doc_h);
+        const int w = std::max(1, static_cast<int>(std::lround(doc_w * scale)));
+        const int h = std::max(1, static_cast<int>(std::lround(doc_h * scale)));
+        lunasvg::Bitmap bitmap = document->renderToBitmap(w, h);
+        if (bitmap.isNull()) return {};
+        // lunasvg gives premultiplied BGRA rows (ARGB32); the renderer wants premultiplied RGBA.
+        std::vector<u8> pixels(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+        for (int y = 0; y < h; ++y) {
+            const u8* row = bitmap.data() + static_cast<size_t>(y) * static_cast<size_t>(bitmap.stride());
+            for (int x = 0; x < w; ++x) {
+                const u8* p = row + x * 4;
+                u8* out = pixels.data() + (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4;
+                out[0] = p[2];
+                out[1] = p[1];
+                out[2] = p[0];
+                out[3] = p[3];
+            }
+        }
+        dimensions = {w, h};
+        return GenerateTexture({pixels.data(), pixels.size()}, dimensions);
+    }
 
     int w = 0, h = 0, channels = 0;
     stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &w, &h, &channels, 4);

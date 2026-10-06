@@ -1,4 +1,5 @@
 #include "InputTypeRange.h"
+#include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ElementUtilities.h"
 #include "../../../Include/RmlUi/Core/Elements/ElementFormControlInput.h"
 #include "WidgetSlider.h"
@@ -28,6 +29,14 @@ void InputTypeRange::OnUpdate()
 
 void InputTypeRange::OnResize()
 {
+	// Forge: as in a browser, a web page's range input without a value starts halfway between its minimum and maximum.
+	if (!default_value_applied)
+	{
+		default_value_applied = true;
+		ElementDocument* document = element->GetOwnerDocument();
+		if (document && document->GetTagName() == "html" && !element->HasAttribute("value"))
+			widget->SetValue(0.5f * (element->GetAttribute("min", 0.f) + element->GetAttribute("max", 100.f)));
+	}
 	widget->FormatElements();
 }
 

@@ -172,6 +172,16 @@ bool PropertyDefinition::ParseValue(Property& property, const String& value) con
 			property.parser_index = -1;
 			return true;
 		}
+		// Properties kept as text (such as background-position) take the math functions as they are.
+		for (size_t i = 0; i < parsers.size(); i++)
+		{
+			if (parsers[i].parser->ParseValue(property, folded, parsers[i].parameters) && property.unit == Unit::STRING)
+			{
+				property.definition = this;
+				property.parser_index = (int)i;
+				return true;
+			}
+		}
 		property.unit = Unit::UNKNOWN;
 		return false;
 	}
