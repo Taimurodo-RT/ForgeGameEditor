@@ -175,11 +175,15 @@ void FreeType::GetFaceStyle(FontFaceHandleFreetype in_face, String* font_family,
 }
 
 // Forge: slants glyphs for a synthesized italic, as browsers do when a family has no italic face.
-static void SetOblique(FT_Face ft_face, bool oblique)
+// Forge: also shifts glyphs right by a subpixel bin (see SubpixelVariant).
+static void SetOblique(FT_Face ft_face, bool oblique, int subpixel_bin = 0)
 {
+	FT_Vector delta;
+	delta.x = (FT_Pos)(subpixel_bin * 64 / FreeType::SubpixelBins);
+	delta.y = 0;
 	if (!oblique)
 	{
-		FT_Set_Transform(ft_face, nullptr, nullptr);
+		FT_Set_Transform(ft_face, nullptr, subpixel_bin != 0 ? &delta : nullptr);
 		return;
 	}
 	FT_Matrix shear;
@@ -187,7 +191,7 @@ static void SetOblique(FT_Face ft_face, bool oblique)
 	shear.xy = 0x3333; // tan(~11 degrees)
 	shear.yx = 0;
 	shear.yy = 0x10000;
-	FT_Set_Transform(ft_face, &shear, nullptr);
+	FT_Set_Transform(ft_face, &shear, &delta);
 }
 
 bool FreeType::InitialiseFaceHandle(FontFaceHandleFreetype face, int font_size, FontGlyphMap& glyphs, FontMetrics& metrics, bool load_default_glyphs,
@@ -224,7 +228,7 @@ bool FreeType::AppendGlyph(FontFaceHandleFreetype face, int font_size, Character
 	if (!SetFontSize(ft_face, font_size, bitmap_scaling_factor))
 		return false;
 
-	SetOblique(ft_face, oblique);
+	SetOblique(ft_face, oblique, SubpixelBin(character));
 	const bool built = BuildGlyph(ft_face, character, glyphs, bitmap_scaling_factor);
 	SetOblique(ft_face, false);
 	return built;
@@ -286,6 +290,7 @@ static void BuildGlyphMap(FT_Face ft_face, int size, FontGlyphMap& glyphs, const
 		FontGlyph glyph;
 		glyph.bitmap_dimensions = {size / 3, (size * 2) / 3};
 		glyph.advance = glyph.bitmap_dimensions.x + 2;
+		glyph.advance_exact = float(glyph.advance);
 		glyph.bearing = {1, glyph.bitmap_dimensions.y};
 
 		glyph.bitmap_owned_data.reset(new byte[glyph.bitmap_dimensions.x * glyph.bitmap_dimensions.y]);
@@ -308,7 +313,7 @@ static void BuildGlyphMap(FT_Face ft_face, int size, FontGlyphMap& glyphs, const
 
 static bool BuildGlyph(FT_Face ft_face, const Character character, FontGlyphMap& glyphs, const float bitmap_scaling_factor)
 {
-	FT_UInt index = FT_Get_Char_Index(ft_face, (FT_ULong)character);
+	FT_UInt index = FT_Get_Char_Index(ft_face, (FT_ULong)FreeType::BaseCharacter(character));
 	if (index == 0)
 		return false;
 
@@ -353,6 +358,7 @@ static bool BuildGlyph(FT_Face ft_face, const Character character, FontGlyphMap&
 	glyph.bearing.x = ft_glyph->bitmap_left;
 	glyph.bearing.y = ft_glyph->bitmap_top;
 	glyph.advance = ft_glyph->metrics.horiAdvance >> 6;
+	glyph.advance_exact = (FT_IS_SCALABLE(ft_face) ? Math::Round(float(ft_glyph->linearHoriAdvance) / 65536.f) : float(glyph.advance));
 	glyph.bitmap_dimensions.x = ft_glyph->bitmap.width;
 	glyph.bitmap_dimensions.y = ft_glyph->bitmap.rows;
 
@@ -362,6 +368,7 @@ static bool BuildGlyph(FT_Face ft_face, const Character character, FontGlyphMap&
 	{
 		glyph.bearing = Vector2i(Vector2f(glyph.bearing) * bitmap_scaling_factor);
 		glyph.advance = int(float(glyph.advance) * bitmap_scaling_factor);
+		glyph.advance_exact *= bitmap_scaling_factor;
 		glyph.bitmap_dimensions = Vector2i(Vector2f(glyph.bitmap_dimensions) * bitmap_scaling_factor);
 	}
 

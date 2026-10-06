@@ -95,7 +95,7 @@ int FontFaceHandleDefault::GetStringWidth(StringView in_string, const TextShapin
 
 	bool has_set_size = false;
 	bool is_kerning_enabled = IsKerningEnabled(text_shaping_context);
-	int width = 0;
+	float width = 0.f; // Forge: fractional advances
 	float word_spacing = 0.f; // Forge
 	for (auto it_string = StringIteratorU8(string); it_string; ++it_string)
 	{
@@ -107,18 +107,18 @@ int FontFaceHandleDefault::GetStringWidth(StringView in_string, const TextShapin
 
 		// Adjust the cursor for the kerning between this character and the previous one.
 		if (is_kerning_enabled)
-			width += GetKerning(prior_character, character, has_set_size);
+			width += (float)GetKerning(prior_character, character, has_set_size);
 
 		// Adjust the cursor for this character's advance.
-		width += glyph->advance;
-		width += (int)text_shaping_context.letter_spacing;
+		width += glyph->advance_exact;
+		width += text_shaping_context.letter_spacing;
 		if (character == Character(' ') || character == Character(0xA0)) // Forge: word-spacing
 			word_spacing += text_shaping_context.word_spacing;
 
 		prior_character = character;
 	}
 
-	return Math::Max(width + (int)Math::Round(word_spacing), 0);
+	return Math::Max((int)Math::Round(width + word_spacing), 0);
 }
 
 int FontFaceHandleDefault::GenerateLayerConfiguration(const FontEffectList& font_effects)
@@ -213,11 +213,59 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 	RMLUI_ASSERT(layer_configuration_index >= 0);
 	RMLUI_ASSERT(layer_configuration_index < (int)layer_configurations.size());
 
+	// Forge: place the glyphs first. Each glyph sits at a whole pixel plus a subpixel bin, whose shifted glyph is added to the
+	// font's glyphs before the layers are (re)built, so fractional letter-spacing, word-spacing and positions keep even gaps.
+	struct PlacedGlyph {
+		Character character; // with its subpixel bin
+		float x;
+		bool rgba;
+	};
+	static thread_local Vector<PlacedGlyph> placed;
+	placed.clear();
+	float line_width = 0.f;
+	float word_spacing = 0.f;
+	{
+		bool has_set_size = false;
+		const bool is_kerning_enabled = IsKerningEnabled(text_shaping_context);
+		Character prior_character = Character::Null;
+		for (auto it_string = StringIteratorU8(string); it_string; ++it_string)
+		{
+			Character character = *it_string;
+			const FontGlyph* glyph = GetOrAppendGlyph(character);
+			if (!glyph)
+				continue;
+
+			// Adjust the cursor for the kerning between this character and the previous one.
+			if (is_kerning_enabled)
+				line_width += (float)GetKerning(prior_character, character, has_set_size);
+
+			const float x = position.x + line_width + word_spacing;
+			float x_whole = Math::RoundDown(x);
+			int bin = (int)Math::Round((x - x_whole) * float(FreeType::SubpixelBins));
+			if (bin >= FreeType::SubpixelBins)
+			{
+				x_whole += 1.f;
+				bin = 0;
+			}
+			const bool rgba = (glyph->color_format == ColorFormat::RGBA8);
+			Character key = character;
+			if (bin != 0 && !rgba)
+			{
+				Character variant = FreeType::SubpixelVariant(character, bin);
+				if (GetOrAppendGlyph(variant, false) && variant == FreeType::SubpixelVariant(character, bin))
+					key = variant;
+			}
+			placed.push_back({key, x_whole, rgba});
+
+			line_width += glyph->advance_exact;
+			line_width += text_shaping_context.letter_spacing;
+			if (character == Character(' ') || character == Character(0xA0)) // Forge: word-spacing
+				word_spacing += text_shaping_context.word_spacing;
+			prior_character = character;
+		}
+	}
+
 	int geometry_index = 0;
-	int line_width = 0;
-	float word_spacing = 0.f; // Forge
-	bool has_set_size = false;
-	bool is_kerning_enabled = IsKerningEnabled(text_shaping_context);
 
 	UpdateLayersOnDirty();
 
@@ -246,10 +294,6 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 
 		RMLUI_ASSERT(geometry_index + num_textures <= (int)mesh_list.size());
 
-		line_width = 0;
-		word_spacing = 0.f;
-		Character prior_character = Character::Null;
-
 		// Set the mesh and textures to the geometries.
 		for (int tex_index = 0; tex_index < num_textures; ++tex_index)
 			mesh_list[geometry_index + tex_index].texture = layer->GetTexture(render_manager, tex_index);
@@ -257,37 +301,20 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 		mesh_list[geometry_index].mesh.indices.reserve(string.size() * 6);
 		mesh_list[geometry_index].mesh.vertices.reserve(string.size() * 4);
 
-		for (auto it_string = StringIteratorU8(string); it_string; ++it_string)
+		for (const PlacedGlyph& glyph : placed)
 		{
-			Character character = *it_string;
-
-			const FontGlyph* glyph = GetOrAppendGlyph(character);
-			if (!glyph)
-				continue;
-
-			// Adjust the cursor for the kerning between this character and the previous one.
-			if (is_kerning_enabled)
-				line_width += GetKerning(prior_character, character, has_set_size);
-
 			ColourbPremultiplied glyph_color = layer_colour;
 			// Use white vertex colors on RGB glyphs.
-			if (layer == base_layer && glyph->color_format == ColorFormat::RGBA8)
+			if (layer == base_layer && glyph.rgba)
 				glyph_color = ColourbPremultiplied(layer_colour.alpha, layer_colour.alpha);
 
-			layer->GenerateGeometry(&mesh_list[geometry_index], character, Vector2f(position.x + line_width + Math::Round(word_spacing), position.y),
-				glyph_color);
-
-			line_width += glyph->advance;
-			line_width += (int)text_shaping_context.letter_spacing;
-			if (character == Character(' ') || character == Character(0xA0)) // Forge: word-spacing
-				word_spacing += text_shaping_context.word_spacing;
-			prior_character = character;
+			layer->GenerateGeometry(&mesh_list[geometry_index], glyph.character, Vector2f(glyph.x, position.y), glyph_color);
 		}
 
 		geometry_index += num_textures;
 	}
 
-	return Math::Max(line_width + (int)Math::Round(word_spacing), 0);
+	return Math::Max((int)Math::Round(line_width + word_spacing), 0);
 }
 
 bool FontFaceHandleDefault::UpdateLayersOnDirty()

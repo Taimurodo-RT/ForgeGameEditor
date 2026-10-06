@@ -330,8 +330,10 @@ int run_pages(const std::filesystem::path& ui_dir, const std::vector<std::string
                 Rml::ElementList found;
                 doc->QuerySelectorAll(found, dump);
                 for (Rml::Element* e : found)
-                    FORGE_INFO("box %s.%s @%.1f,%.1f %.1fx%.1f", e->GetTagName().c_str(), e->GetClassNames().c_str(),
-                               e->GetAbsoluteTop(), e->GetAbsoluteLeft(), e->GetOffsetWidth(), e->GetOffsetHeight());
+                    FORGE_INFO("box %s.%s @%.1f,%.1f %.1fx%.1f font %.2fpx/%d ls %.2f", e->GetTagName().c_str(), e->GetClassNames().c_str(),
+                               e->GetAbsoluteTop(), e->GetAbsoluteLeft(), e->GetOffsetWidth(), e->GetOffsetHeight(),
+                               e->GetComputedValues().font_size(), (int)e->GetComputedValues().font_weight(),
+                               e->GetComputedValues().letter_spacing());
             }
             const std::string out = path_to_utf8(utf8_path(out_dir) / (path_to_utf8(path.stem()))) + ".png";
             if (!render::save_png(device, target, w, h, out.c_str())) ++failed;

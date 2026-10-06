@@ -14,6 +14,8 @@ public:
 	Vector2i bearing;
 	/// The glyph's advance; this is how far the cursor will be moved along after rendering this character.
 	int advance = 0;
+	/// Forge: the unhinted, fractional advance; text is laid out with these, as browsers and design tools do.
+	float advance_exact = 0.f;
 
 	/// Bitmap data defining this glyph. The dimensions and format of the data is given below. This will be nullptr if the glyph has no bitmap data.
 	const byte* bitmap_data = nullptr;
@@ -30,6 +32,7 @@ public:
 		FontGlyph glyph;
 		glyph.bearing = bearing;
 		glyph.advance = advance;
+		glyph.advance_exact = advance_exact;
 		glyph.bitmap_data = bitmap_data;
 		glyph.bitmap_dimensions = bitmap_dimensions;
 		glyph.color_format = color_format;

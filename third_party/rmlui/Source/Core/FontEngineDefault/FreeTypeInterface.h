@@ -7,6 +7,23 @@ namespace Rml {
 
 namespace FreeType {
 
+	// Forge: a glyph key may carry a horizontal subpixel offset in the bits above the Unicode range: the glyph is then drawn
+	// shifted right by bin / SubpixelBins of a pixel, so text can be placed at fractional positions and still be crisp.
+	constexpr int SubpixelShift = 22;
+	constexpr int SubpixelBins = 4;
+	inline Character SubpixelVariant(Character character, int bin)
+	{
+		return Character((char32_t)character | ((char32_t)bin << SubpixelShift));
+	}
+	inline Character BaseCharacter(Character character)
+	{
+		return Character((char32_t)character & (((char32_t)1 << SubpixelShift) - 1));
+	}
+	inline int SubpixelBin(Character character)
+	{
+		return int((char32_t)character >> SubpixelShift);
+	}
+
 	// Initialize FreeType library.
 	bool Initialise();
 	// Shutdown FreeType library.

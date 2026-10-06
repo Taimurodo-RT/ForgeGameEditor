@@ -77,6 +77,8 @@ caption { display: block; text-align: center; }
 img { display: inline-block; }
 
 /* Form controls: Chromium draws them flat (appearance: auto), so the borders here are solid with the same sizes. */
+/* Like browsers, controls do not inherit the spacing and transform of the text around them. */
+button, input, textarea, select { letter-spacing: normal; word-spacing: normal; text-transform: none; text-indent: 0; }
 button {
 	display: inline-block;
 	padding: 2px 7px;
