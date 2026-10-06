@@ -24,7 +24,9 @@
 // game): its talks jump into each other ("ch1:ch1_main"), the test follows
 // them. «Импорт из Ren'Py…» brings such a story in (converters/renpy.py).
 // A big talk shows a page of lines at a time; its scenes are listed on the
-// left.
+// left. An imported story also has its cast («Персонажи»: names, colours,
+// poses, how much each says) and the game's settings («Настройки новеллы»,
+// kept for the visual novel module), each a page of its own.
 
 #include "converters.h"
 #include "forge/editor/document.h"
@@ -123,6 +125,14 @@ public:
     // folder in dialogues/; done in the background, then its first talk opens.
     bool import_renpy(const std::filesystem::path& source);
     bool importing() const { return import_job_ != 0; }
+    // A story's cast and settings pages (false when it has none); open()
+    // goes back to the script.
+    bool show_cast(const std::string& story);
+    bool show_novel(const std::string& story);
+    const std::string& view() const { return view_; } // "" the script, "cast", "novel"
+    usize cast_size() const { return m_cast_.size(); }
+    std::string cast_name(usize i) const { return m_cast_[i].name; }
+    usize setting_groups() const { return m_novel_groups_.size(); }
 
     // The test on the right.
     void play();
@@ -147,7 +157,7 @@ private:
     struct Chip {
         Rml::String kind, icon, text, part; // kind: cond, eff, go, else, stage, code; part: if, do, goto, next, call, stage
         int mark = -1;
-        bool seq = false; // "next" to the line just below: shown on hover
+        bool seq = false; // "next" to the line just below
         Rml::String look;  // its classes ("go seq")
     };
     struct RuleView {
@@ -171,6 +181,7 @@ private:
         Rml::String id, kind, scene, note, who, color, text, fallback, pose;
         bool lit = false, flash = false, editing = false, editing_note = false, editing_scene = false, editing_fallback = false;
         bool topics_on = false, choices_on = false, can_add = false, has_fallback = false;
+        bool seq = false; // goes on to the line just below
         int editing_stage = -1; // the staging step being typed
         std::vector<Chip> chips; // when / changes / where next
         std::vector<Chip> stage; // what happens on screen first
@@ -186,6 +197,17 @@ private:
         std::filesystem::file_time_type time;
         std::string name, color;
         int lines = 0;
+    };
+    struct CastView { // a character of a story's cast
+        Rml::String key, name, letter, color, sub, poses, talks, extra;
+        int lines = 0, pose_count = 0;
+    };
+    struct SettingRow {
+        Rml::String name, value;
+    };
+    struct SettingGroup {
+        Rml::String name;
+        std::vector<SettingRow> items;
     };
     struct SpeakerRow {
         Rml::String key, name, letter, color;
@@ -218,6 +240,7 @@ private:
     std::string full_id(const std::string& ref) const;    // "script-ch1" in the open story → "ddlc/script-ch1"
     std::vector<std::string> vars_used() const;
     void poll_import();
+    std::filesystem::path story_file(const std::string& story, const char* name) const;
     void rebuild();
     void rebuild_play();
     void rebuild_state();
@@ -305,6 +328,11 @@ private:
     std::mutex import_mutex_;
     std::vector<std::filesystem::path> import_picked_; // from the folder dialog (another thread)
     Rml::String m_import_text_;
+    // The cast and settings pages.
+    std::string view_;
+    Rml::String m_view_story_, m_novel_title_, m_novel_info_;
+    std::vector<CastView> m_cast_;
+    std::vector<SettingGroup> m_novel_groups_;
     std::vector<SpeakerRow> m_speakers_;
     std::vector<RuleView> m_rules_;
     std::vector<LineView> m_lines_;

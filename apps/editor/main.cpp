@@ -8,6 +8,8 @@
 //   forge_editor --bench-level [--frames N]   offscreen: flying over the level while painting
 //   forge_editor --bench-assets [N]   offscreen: a project of N files (50 000), indexed, listed, searched
 //   forge_editor --bench-scheme [N]   offscreen: a scheme of N nodes (5 000) panned and a node dragged
+//   forge_editor --bench-story   offscreen: a big talk scrolled with the mouse wheel
+//   forge_editor --screenshot X.png --talk NAME   the «Сюжет» tab with that talk open (cast:STORY, novel:STORY)
 //   forge_editor --self-test [--screenshot out.png]   offscreen: drives the controls, fails on a wrong result
 //
 // The «Уровень» tab opens «Старая шахта» from games/slice/level (or --level
@@ -1348,6 +1350,7 @@ struct Options {
     std::filesystem::path assets; // empty: assets/ in the working folder
     std::string theme = "dark";
     u32 objects = 50'000;
+    std::string talk; // offscreen: the «Сюжет» tab with this talk open ("story/name"; "cast:story", "novel:story")
 };
 
 class EditorApp final : public App {
@@ -2927,7 +2930,7 @@ private:
             // A Ren'Py game comes in as a story of several talks.
             if (!st().import_renpy(utf8_path(FORGE_CONVERTERS_DIR) / "tests" / "renpy_game" / "game")) {
                 FORGE_INFO("self-test: Python не найден, импорт Ren'Py не проверяется");
-                st_step_ = 19;
+                st_step_ = 21;
                 return true;
             }
             check(st().importing(), "«Импорт из Ren'Py…» starts in the background");
@@ -2937,18 +2940,18 @@ private:
                 SDL_Delay(2);
                 return true;
             }
-            check(!st().importing() && st().opened() == "renpy_game/script", "the game's script opens when it is in");
-            check(talk_text("renpy_game/chapter").find("\"call\"") == std::string::npos &&
-                      talk_text("renpy_game/script").find("\"call\": \"chapter:chapter_one\"") != std::string::npos,
+            check(!st().importing() && st().opened() == "dvor/script", "the game's script opens when it is in");
+            check(talk_text("dvor/chapter").find("\"call\"") == std::string::npos &&
+                      talk_text("dvor/script").find("\"call\": \"chapter:chapter_one\"") != std::string::npos,
                   "a talk per script file, calling into each other");
             check(st().playing() && st().play_node() == "start_1" && st().play_line().text == "Утро во дворе. Пахнет сиренью.",
                   "the story plays from its start");
             break;
         case 15:
-            check(shown("st-talk-renpy_game/script") && shown("st-talk-renpy_game/chapter"), "the story's talks are listed");
+            check(shown("st-talk-dvor/script") && shown("st-talk-dvor/chapter"), "the story's talks are listed");
             check(shown("st-stage-start_1-0") && lit("st-line-start_1"), "the staging is shown with the line");
             check(st().play_next() && st().play_line().choices.size() == 2, "an answer hidden by its condition is not offered");
-            check(st().play_choose(0) && st().opened() == "renpy_game/chapter" && st().play_node() == "chapter_one_1",
+            check(st().play_choose(0) && st().opened() == "dvor/chapter" && st().play_node() == "chapter_one_1",
                   "a call into another talk: the script follows the test there");
             break;
         case 16:
@@ -2956,7 +2959,7 @@ private:
             st().play_next();
             st().play_next();
             check(st().play_next() && st().play_node() == "chapter_one_6", "a while loop goes round, then on");
-            check(st().play_choose(0) && st().opened() == "renpy_game/script" && st().play_line().text == "Ты сегодня богат!",
+            check(st().play_choose(0) && st().opened() == "dvor/script" && st().play_line().text == "Ты сегодня богат!",
                   "return comes back after the call, the branch reads the variables");
             check(st().phrases("renpy(\"result = greet(player)\")", true) == std::vector<std::string>{"Ren'Py: result = greet(player)"},
                   "Ren'Py code kept as it was says so");
@@ -2971,13 +2974,29 @@ private:
             st().set_edit_text("scene bg street\n");
             break;
         case 18: {
-            check(st().source().node("start_1")->stage[0] == "scene bg street" && talk_text("renpy_game/script").find("scene bg street") != std::string::npos,
+            check(st().source().node("start_1")->stage[0] == "scene bg street" && talk_text("dvor/script").find("scene bg street") != std::string::npos,
                   "the staging step is changed and written");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(st().source().node("start_1")->stage[0] == "scene bg yard", "Ctrl+Z");
+            // The story is named after the game (build.name); options.rpy is
+            // settings, not a talk; the cast and the settings have pages.
+            check(!shown("st-talk-dvor/options") && shown("st-cast-dvor") && shown("st-novel-dvor"),
+                  "the story lists its cast and its settings, not options.rpy as a talk");
+            check(click("st-cast-dvor") && st().view() == "cast", "a click on «Персонажи» shows the cast");
             break;
         }
         case 19: {
+            bool boris = false;
+            for (usize i = 0; i < st().cast_size(); ++i) boris |= st().cast_name(i) == "Борис";
+            check(boris && shown("st-card-b") && !shown("st-line-start_1"), "the cast's cards instead of the script");
+            check(click("st-novel-dvor") && st().view() == "novel" && st().setting_groups() >= 3, "«Настройки новеллы» shows the game's settings");
+            break;
+        }
+        case 20:
+            check(shown("st-novel-page"), "the settings page is shown");
+            check(click("st-talk-dvor/script") && st().view().empty(), "a talk goes back to the script");
+            break;
+        case 21: {
             // A big talk shows a page at a time.
             game::DialogueSource big;
             big.id = "big";
@@ -2996,16 +3015,16 @@ private:
             check(st().open("big") && st().opened() == "big", "a big talk opens");
             break;
         }
-        case 20:
+        case 22:
             check(st().lines_shown() == 150 && st().line_shown("l0") && !st().line_shown("l200"), "a big talk shows a page of lines");
             check(shown("st-goto-l300"), "its scenes are listed to go to");
             click("st-goto-l300");
             break;
-        case 21:
+        case 23:
             check(st().line_shown("l300") && !st().line_shown("l0"), "a scene clicked comes onto the page");
             check(click("st-page-prev") && true, "the page buttons");
             break;
-        case 22:
+        case 24:
             check(st().line_shown("l200") && !st().line_shown("l300"), "«Раньше» shows the lines before");
             check(click("st-talk-miner") && st().opened() == "miner", "back to Boris");
             break;
@@ -3398,7 +3417,7 @@ private:
 };
 
 int run_offscreen(const Options& options, const char* screenshot, u32 frames, bool select, bool play, bool bench,
-                  bool self_test, int tab, bool bench_level, u32 bench_assets, u32 bench_scheme) {
+                  bool self_test, int tab, bool bench_level, u32 bench_assets, u32 bench_scheme, bool bench_story) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
     if (!device) {
@@ -3535,6 +3554,44 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 }
                 editor.handle_event(e);
             };
+            // A talk of 600 lines like an imported novel (speakers, staging,
+            // changes, a choice every 30 lines), scrolled by the wheel with the
+            // mouse over the lines, as a person reads.
+            f32 st_x = 0, st_y = 0;
+            f64 wheel_ms = 0, wheel_worst = 0;
+            u32 wheels = 0;
+            if (bench_story) {
+                game::DialogueSource big;
+                big.id = "bench";
+                big.speakers.push_back({"m", "Моника", "#7bd389", ""});
+                big.speakers.push_back({"s", "Сайори", "#f2a0b8", ""});
+                big.start.push_back({{}, "l0"});
+                const int n = 600;
+                for (int i = 0; i < n; ++i) {
+                    game::SourceNode node;
+                    node.id = "l" + std::to_string(i);
+                    node.speaker = i % 3 == 0 ? "" : i % 3 == 1 ? "m" : "s";
+                    node.text = "Реплика номер " + std::to_string(i) + ": сегодня в клубе снова читают стихи, и все ждут, кто начнёт первым.";
+                    if (i % 50 == 0) node.scene = "Сцена " + std::to_string(i / 50 + 1);
+                    if (i % 7 == 0) node.stage = {"scene bg club_day", "show monika 1a at t11", "play music t2"};
+                    if (i % 11 == 0) node.act = "affection += 1";
+                    if (i % 30 == 29 && i + 2 < n) {
+                        node.choices.push_back({"Остаться", "", "stay = true", "l" + std::to_string(i + 1)});
+                        node.choices.push_back({"Уйти домой", "affection > 2", "", "l" + std::to_string(i + 2)});
+                    } else if (i + 1 < n) {
+                        node.next = "l" + std::to_string(i + 1);
+                    }
+                    big.nodes.push_back(node);
+                }
+                const std::string json = big.json();
+                write_file_atomic(editor.story_dir / "dialogues" / "bench.json", {reinterpret_cast<const u8*>(json.data()), json.size()});
+                editor.open_tab("story");
+                editor.story_tab.open("bench");
+                const Stopwatch first;
+                editor.update(1.0 / 60.0);
+                FORGE_INFO("story: the talk opened, laid out %.1f ms", first.elapsed_ms());
+                frames = std::max(frames, 160u);
+            }
             f64 pan_ms = 0, drag_ms = 0, pan_worst = 0, drag_worst = 0;
             u32 pans = 0, drags = 0;
             for (u32 f = 0; f < frames; ++f) {
@@ -3608,6 +3665,27 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                     FORGE_INFO("scheme: letting the node go (one step of the history) %.1f ms; it went %.0f, %.0f px (the mouse %.0f, %.0f)",
                                ms, now ? now->x - sc_node_x : 0.0f, now ? now->y - sc_node_y : 0.0f, sc_x - sc_press_x, sc_y - sc_press_y);
                 }
+                if (bench_story && f == 5)
+                    if (Rml::Element* list = editor.find_element("st-script")) {
+                        const Rml::Vector2f at = list->GetAbsoluteOffset(Rml::BoxArea::Border);
+                        st_x = at.x + list->GetClientWidth() * 0.5f;
+                        st_y = at.y + list->GetClientHeight() * 0.5f;
+                        sc_mouse(SDL_EVENT_MOUSE_MOTION, st_x, st_y);
+                    }
+                if (bench_story && f > 5) {
+                    SDL_Event e{};
+                    e.type = SDL_EVENT_MOUSE_WHEEL;
+                    e.wheel.y = (f / 80) % 2 == 0 ? -1.0f : 1.0f; // down, then back up
+                    e.wheel.mouse_x = st_x;
+                    e.wheel.mouse_y = st_y;
+                    const Stopwatch t;
+                    editor.handle_event(e);
+                    editor.update(1.0 / 60.0);
+                    const f64 ms = t.elapsed_ms();
+                    wheel_ms += ms;
+                    wheel_worst = std::max(wheel_worst, ms);
+                    ++wheels;
+                }
                 if (bench_assets && f == frames / 2) {
                     // Search across everything, then scroll the results.
                     const Stopwatch search;
@@ -3637,6 +3715,14 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                     editor.reveal(first);
                 }
                 if (f == 2 && play) editor.toggle_play();
+                if (f == 1 && !options.talk.empty()) {
+                    editor.open_tab("story");
+                    const std::string& t = options.talk;
+                    const bool ok = t.rfind("cast:", 0) == 0    ? editor.story_tab.show_cast(t.substr(5))
+                                    : t.rfind("novel:", 0) == 0 ? editor.story_tab.show_novel(t.substr(6))
+                                                                : editor.story_tab.open(t);
+                    if (!ok) FORGE_WARN("no talk «%s»", t.c_str());
+                }
                 if (f == 1 && tab > 0)
                     if (Rml::Element* bar = editor.find_element("editor-tabs"); bar && tab < bar->GetNumChildren())
                         bar->GetChild(tab)->Click();
@@ -3671,6 +3757,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             if (bench_scheme)
                 FORGE_INFO("scheme: pan %.2f ms avg / %.2f worst per mouse move (%u), node drag %.2f ms avg / %.2f worst (%u)",
                            pan_ms / std::max(pans, 1u), pan_worst, pans, drag_ms / std::max(drags, 1u), drag_worst, drags);
+            if (bench_story)
+                FORGE_INFO("story: a wheel step and the frame after it %.2f ms avg / %.2f worst (%u); %zu lines shown",
+                           wheel_ms / std::max(wheels, 1u), wheel_worst, wheels, editor.story_tab.lines_shown());
             if (bench_assets)
                 FORGE_INFO("assets: %s rows listed, %s previews made", group_digits(editor.assets.row_count()).c_str(),
                            group_digits(editor.assets.thumbs_made()).c_str());
@@ -3706,6 +3795,7 @@ int main(int argc, char** argv) {
     u32 frames = 10;
     bool select = false, play = false, bench = false, self_test = false, bench_level = false;
     u32 bench_assets = 0, bench_scheme = 0;
+    bool bench_story = false;
     int tab = 0;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
@@ -3733,11 +3823,13 @@ int main(int argc, char** argv) {
             bench_scheme = 5'000;
             if (has_value && argv[i + 1][0] != '-') bench_scheme = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         }
+        else if (std::strcmp(argv[i], "--bench-story") == 0) bench_story = true;
+        else if (std::strcmp(argv[i], "--talk") == 0 && has_value) app.options.talk = argv[++i];
         else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    if (screenshot || bench || self_test || bench_level || bench_assets || bench_scheme)
+    if (screenshot || bench || self_test || bench_level || bench_assets || bench_scheme || bench_story)
         return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab, bench_level, bench_assets,
-                             bench_scheme);
+                             bench_scheme, bench_story);
     return app.run(config);
 }
