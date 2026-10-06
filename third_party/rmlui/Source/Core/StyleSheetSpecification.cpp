@@ -461,6 +461,11 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::RmlUi_Language, "-rmlui-language", "", true, true).AddParser("string");
 	RegisterProperty(PropertyId::RmlUi_Direction, "-rmlui-direction", "auto", true, true).AddParser("keyword", "auto, ltr, rtl");
 
+	// Forge: how an element blends with what is behind it (keyword index + 1 is the Rml::BlendMode).
+	RegisterProperty(PropertyId::Invalid, "mix-blend-mode", "normal", false, false)
+		.AddParser("keyword",
+			"normal, multiply, screen, overlay, darken, lighten, color-dodge, color-burn, hard-light, soft-light, difference, exclusion, hue, "
+			"saturation, color, luminosity, plus-lighter");
 	// Forge: the text of ::before and ::after boxes, kept as written (quotes and escapes) and read by ElementDocument.
 	RegisterProperty(PropertyId::Invalid, "content", "normal", false, true).AddParser("string");
 	// Forge: list markers, drawn by ElementDocument as a forge-marker box in list items. 'list-style' is kept whole and read there.

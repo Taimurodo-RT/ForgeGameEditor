@@ -1806,6 +1806,16 @@ void Element::OnAttributeChange(const ElementAttributes& changed_attributes)
 	DirtyDefinition(DirtyNodes::SelfAndSiblings);
 }
 
+// Forge: in web documents an element with opacity below 1 is faded as a group, which needs its own stacking context.
+static bool HasWebGroupOpacity(Element* element)
+{
+	ElementDocument* document = element->GetOwnerDocument();
+	if (!document || document->GetTagName() != "html")
+		return false;
+	const Property* opacity = element->GetLocalProperty(PropertyId::Opacity);
+	return opacity && opacity->Get<float>() < 1.f;
+}
+
 void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 {
 	RMLUI_ZoneScoped;
@@ -1876,8 +1886,12 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 		changed_properties.Contains(PropertyId::BorderBottomRightRadius) || //
 		changed_properties.Contains(PropertyId::BorderBottomLeftRadius)     //
 	);
+	static const PropertyId mix_blend_mode_id = StyleSheetSpecification::GetPropertyId("mix-blend-mode"); // Forge
+	// Forge: in web documents opacity is drawn as an effect.
+	const bool web_opacity_changed = changed_properties.Contains(PropertyId::Opacity) && GetOwnerDocument() &&
+		GetOwnerDocument()->GetTagName() == "html";
 	const bool filter_or_mask_changed = (changed_properties.Contains(PropertyId::Filter) || changed_properties.Contains(PropertyId::BackdropFilter) ||
-		changed_properties.Contains(PropertyId::MaskImage));
+		changed_properties.Contains(PropertyId::MaskImage) || changed_properties.Contains(mix_blend_mode_id) || web_opacity_changed);
 	const bool perspective_changed = changed_properties.Contains(PropertyId::Perspective) ||
 		changed_properties.Contains(PropertyId::PerspectiveOriginX) || changed_properties.Contains(PropertyId::PerspectiveOriginY);
 	const bool transform_changed = changed_properties.Contains(PropertyId::Transform) || changed_properties.Contains(PropertyId::TransformOriginX) ||
@@ -1891,7 +1905,8 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 		const float new_z_index = (z_index_property.type == Style::ZIndex::Auto ? 0.f : z_index_property.value);
 		const bool enable_local_stacking_context = (z_index_property.type != Style::ZIndex::Auto || local_stacking_context_forced ||
 			meta->computed_values.has_filter() || meta->computed_values.has_backdrop_filter() || meta->computed_values.has_mask_image() ||
-			meta->computed_values.has_local_transform() || meta->computed_values.has_local_perspective());
+			meta->computed_values.has_local_transform() || meta->computed_values.has_local_perspective() ||
+			ElementEffects::GetMixBlendMode(this) != BlendMode::Blend || HasWebGroupOpacity(this));
 
 		if (z_index != new_z_index || local_stacking_context != enable_local_stacking_context)
 		{

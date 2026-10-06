@@ -1,4 +1,5 @@
 #include "ElementEffects.h"
+#include "../../Include/RmlUi/Core/StyleSheetSpecification.h"
 #include "../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../Include/RmlUi/Core/Decorator.h"
 #include "../../Include/RmlUi/Core/Element.h"
@@ -37,6 +38,14 @@ void ElementEffects::InstanceEffects()
 	}
 
 	const ComputedValues& computed = element->GetComputedValues();
+	blend_mode = GetMixBlendMode(element);
+	if (ElementDocument* document = element->GetOwnerDocument(); document && document->GetTagName() == "html")
+	{
+		const Property* opacity = element->GetLocalProperty(PropertyId::Opacity);
+		const float value = (opacity ? opacity->Get<float>() : 1.f);
+		if (value < 1.f)
+			opacity_filter = render_manager->CompileFilter("opacity", Dictionary{{"value", Variant(Math::Max(value, 0.f))}});
+	}
 
 	if (computed.has_decorator() || computed.has_mask_image())
 	{
@@ -180,6 +189,7 @@ void ElementEffects::ReleaseEffects()
 
 	filters.clear();
 	backdrop_filters.clear();
+	opacity_filter = CompiledFilter{};
 }
 
 void ElementEffects::RenderEffects(RenderStage render_stage)
@@ -202,7 +212,8 @@ void ElementEffects::RenderEffects(RenderStage render_stage)
 		}
 	}
 
-	if (filters.empty() && backdrop_filters.empty() && mask_images.empty())
+	const bool own_layer = (!filters.empty() || !mask_images.empty() || blend_mode != BlendMode::Blend || opacity_filter);
+	if (!own_layer && backdrop_filters.empty())
 		return;
 
 	RenderManager* render_manager = element->GetRenderManager();
@@ -248,7 +259,7 @@ void ElementEffects::RenderEffects(RenderStage render_stage)
 	{
 		const LayerHandle backdrop_source_layer = render_manager->GetTopLayer();
 
-		if (!filters.empty() || !mask_images.empty())
+		if (own_layer)
 		{
 			render_manager->PushLayer();
 		}
@@ -282,7 +293,7 @@ void ElementEffects::RenderEffects(RenderStage render_stage)
 	}
 	else if (render_stage == RenderStage::Exit)
 	{
-		if (!filters.empty() || !mask_images.empty())
+		if (own_layer)
 		{
 			ApplyClippingRegion(PropertyId::Filter);
 
@@ -292,6 +303,7 @@ void ElementEffects::RenderEffects(RenderStage render_stage)
 
 			for (auto& filter : filters)
 				filter.compiled.AddHandleTo(filter_handles);
+			opacity_filter.AddHandleTo(filter_handles);
 
 			if (!mask_images.empty())
 			{
@@ -308,11 +320,19 @@ void ElementEffects::RenderEffects(RenderStage render_stage)
 				render_manager->PopLayer();
 			}
 
-			render_manager->CompositeLayers(render_manager->GetTopLayer(), render_manager->GetNextLayer(), BlendMode::Blend, filter_handles);
+			render_manager->CompositeLayers(render_manager->GetTopLayer(), render_manager->GetNextLayer(), blend_mode, filter_handles);
 			render_manager->PopLayer();
 			render_manager->SetScissorRegion(initial_scissor_region);
 		}
 	}
+}
+
+BlendMode ElementEffects::GetMixBlendMode(Element* element)
+{
+	static const PropertyId id = StyleSheetSpecification::GetPropertyId("mix-blend-mode");
+	const Property* property = (id != PropertyId::Invalid ? element->GetProperty(id) : nullptr);
+	const int keyword = (property && property->unit == Unit::KEYWORD ? property->Get<int>() : 0);
+	return (keyword >= 1 && keyword <= 16 ? BlendMode(keyword + 1) : BlendMode::Blend);
 }
 
 void ElementEffects::DirtyEffects()

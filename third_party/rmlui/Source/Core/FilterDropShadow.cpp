@@ -1,11 +1,20 @@
 #include "FilterDropShadow.h"
 #include "../../Include/RmlUi/Core/CompiledFilterShader.h"
 #include "../../Include/RmlUi/Core/Element.h"
+#include "../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../Include/RmlUi/Core/PropertyDefinition.h"
 #include "../../Include/RmlUi/Core/PropertyDictionary.h"
 #include "../../Include/RmlUi/Core/RenderManager.h"
 
 namespace Rml {
+
+// Forge: in web documents the third length is the CSS blur radius, whose Gaussian has half of it as standard deviation.
+static float ResolveSigma(Element* element, NumericValue value)
+{
+	const float length = element->ResolveLength(value);
+	ElementDocument* document = element->GetOwnerDocument();
+	return (document && document->GetTagName() == "html" ? 0.5f * length : length);
+}
 
 bool FilterDropShadow::Initialise(Colourb in_color, NumericValue in_offset_x, NumericValue in_offset_y, NumericValue in_sigma)
 {
@@ -18,7 +27,7 @@ bool FilterDropShadow::Initialise(Colourb in_color, NumericValue in_offset_x, Nu
 
 CompiledFilter FilterDropShadow::CompileFilter(Element* element) const
 {
-	const float sigma = element->ResolveLength(value_sigma);
+	const float sigma = ResolveSigma(element, value_sigma);
 	const Vector2f offset = {
 		element->ResolveLength(value_offset_x),
 		element->ResolveLength(value_offset_y),
@@ -33,7 +42,7 @@ CompiledFilter FilterDropShadow::CompileFilter(Element* element) const
 void FilterDropShadow::ExtendInkOverflow(Element* element, Rectanglef& scissor_region) const
 {
 	// Expand the ink overflow area to cover both the native element *and* its offset shadow w/blur.
-	const float sigma = element->ResolveLength(value_sigma);
+	const float sigma = ResolveSigma(element, value_sigma);
 	const Vector2f offset = {
 		element->ResolveLength(value_offset_x),
 		element->ResolveLength(value_offset_y),

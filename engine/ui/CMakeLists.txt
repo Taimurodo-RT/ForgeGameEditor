@@ -18,6 +18,7 @@ forge_add_shaders(forge_ui
   shaders/ui_passthrough.frag
   shaders/ui_color_matrix.frag
   shaders/ui_blend_mask.frag
+  shaders/ui_blend_modes.frag
   shaders/ui_drop_shadow.frag
   shaders/ui_blur.vert
   shaders/ui_blur.frag)

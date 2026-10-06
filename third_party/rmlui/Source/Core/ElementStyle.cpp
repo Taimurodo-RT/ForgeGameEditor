@@ -1139,6 +1139,9 @@ PropertyIdSet ElementStyle::ComputeValues(Style::ComputedValues& values, const S
 	// Forge: in a web page, a border color nobody sets is the text color (CSS 'currentcolor'); RmlUi's own default is white.
 	if (ElementDocument* document = element->GetOwnerDocument(); document && document->GetTagName() == "html")
 	{
+		// Opacity fades an element and its contents as one picture (see ElementEffects), not each part on its own.
+		values.opacity(1.f);
+
 		const PropertyId colors[] = {PropertyId::BorderTopColor, PropertyId::BorderRightColor, PropertyId::BorderBottomColor,
 			PropertyId::BorderLeftColor};
 		for (int i = 0; i < 4; i++)

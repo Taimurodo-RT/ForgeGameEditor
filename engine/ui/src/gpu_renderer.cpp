@@ -5,6 +5,7 @@
 #include "forge/render/gpu.h"
 
 #include "shaders/ui_blend_mask_frag.h"
+#include "shaders/ui_blend_modes_frag.h"
 #include "shaders/ui_blur_frag.h"
 #include "shaders/ui_blur_vert.h"
 #include "shaders/ui_color_matrix_frag.h"
@@ -199,8 +200,9 @@ bool GpuRenderer::init(SDL_GPUDevice* device, u32 msaa) {
     fs_blend_mask_ = render::create_shader(device, shaders::ui_blend_mask_frag);
     fs_drop_shadow_ = render::create_shader(device, shaders::ui_drop_shadow_frag);
     fs_blur_ = render::create_shader(device, shaders::ui_blur_frag);
+    fs_blend_modes_ = render::create_shader(device, shaders::ui_blend_modes_frag);
     if (!vs_main_ || !vs_fullscreen_ || !vs_blur_ || !fs_texture_ || !fs_gradient_ || !fs_passthrough_ ||
-        !fs_color_matrix_ || !fs_blend_mask_ || !fs_drop_shadow_ || !fs_blur_)
+        !fs_color_matrix_ || !fs_blend_mask_ || !fs_drop_shadow_ || !fs_blur_ || !fs_blend_modes_)
         return false;
     if (!create_pipelines()) return false;
 
@@ -241,13 +243,14 @@ void GpuRenderer::shutdown() {
     SDL_GPUGraphicsPipeline* pipelines[] = {
         geometry_[0], geometry_[1], geometry_[2], geometry_[3], gradient_[0], gradient_[1], composite_[0][0],
         composite_[0][1], composite_[1][0], composite_[1][1], stencil_fill_, copy_, copy_blend_, color_matrix_,
-        blend_mask_, blur_, drop_shadow_};
+        blend_mask_, blur_, drop_shadow_, blend_modes_[0], blend_modes_[1]};
     for (SDL_GPUGraphicsPipeline* p : pipelines)
         if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
     for (auto& [format, p] : output_) SDL_ReleaseGPUGraphicsPipeline(device_, p);
     output_.clear();
     SDL_GPUShader* shaders[] = {vs_main_,        vs_fullscreen_,  vs_blur_,       fs_texture_, fs_gradient_,
-                                fs_passthrough_, fs_color_matrix_, fs_blend_mask_, fs_drop_shadow_, fs_blur_};
+                                fs_passthrough_, fs_color_matrix_, fs_blend_mask_, fs_drop_shadow_, fs_blur_,
+                                fs_blend_modes_};
     for (SDL_GPUShader* s : shaders)
         if (s) SDL_ReleaseGPUShader(device_, s);
     if (linear_clamp_) SDL_ReleaseGPUSampler(device_, linear_clamp_);
@@ -339,6 +342,9 @@ bool GpuRenderer::create_pipelines() {
                                              t ? Stencil::Test : Stencil::None, false);
     stencil_fill_ = make_pipeline(vs_fullscreen_, fs_passthrough_, kColorFormat, ms, true, Blend::None,
                                   Stencil::WriteReplace, false);
+    for (int t = 0; t < 2; ++t)
+        blend_modes_[t] = make_pipeline(vs_fullscreen_, fs_blend_modes_, kColorFormat, ms, true, Blend::None,
+                                        t ? Stencil::Test : Stencil::None, false);
 
     const SDL_GPUSampleCount one = SDL_GPU_SAMPLECOUNT_1;
     copy_ = make_pipeline(vs_fullscreen_, fs_passthrough_, kColorFormat, one, false, Blend::None, Stencil::None, false);
@@ -356,7 +362,7 @@ bool GpuRenderer::create_pipelines() {
         if (!p) return false;
     return gradient_[0] && gradient_[1] && composite_[0][0] && composite_[0][1] && composite_[1][0] &&
            composite_[1][1] && stencil_fill_ && copy_ && copy_blend_ && color_matrix_ && blend_mask_ && blur_ &&
-           drop_shadow_;
+           drop_shadow_ && blend_modes_[0] && blend_modes_[1];
 }
 
 SDL_GPUGraphicsPipeline* GpuRenderer::output_pipeline(SDL_GPUTextureFormat format) {
@@ -1301,6 +1307,22 @@ void GpuRenderer::composite(const Op& op) {
     const u32 destination = static_cast<u32>(op.rect.p0.y);
     resolve_layer(source, postprocess_[0]);
     render_filters(op.index, op.count);
+
+    // mix-blend-mode: the shader reads a copy of the backdrop and writes the blended result over it.
+    const int blend_mode = static_cast<int>(op.mode) - static_cast<int>(Rml::BlendMode::Multiply);
+    if (blend_mode >= 0) {
+        resolve_layer(destination, postprocess_[1]);
+        begin_layer_pass(destination);
+        bind_pipeline(blend_modes_[clip_enabled_ ? 1 : 0]);
+        SDL_GPUTextureSamplerBinding bindings[2] = {{postprocess_[0], linear_clamp_}, {postprocess_[1], linear_clamp_}};
+        SDL_BindGPUFragmentSamplers(pass_, 0, bindings, 2);
+        const i32 mode[4] = {blend_mode, 0, 0, 0};
+        SDL_PushGPUVertexUniformData(cmd_, 0, &kQuadIdentity, sizeof(kQuadIdentity));
+        SDL_PushGPUFragmentUniformData(cmd_, 0, mode, sizeof(mode));
+        SDL_DrawGPUPrimitives(pass_, 3, 1, 0, 0);
+        ++stats_.draws;
+        return;
+    }
 
     begin_layer_pass(destination);
     const bool blend = static_cast<Rml::BlendMode>(op.mode) == Rml::BlendMode::Blend;

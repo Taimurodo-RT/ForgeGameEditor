@@ -179,12 +179,14 @@ private:
     SDL_GPUShader* fs_blend_mask_ = nullptr;
     SDL_GPUShader* fs_drop_shadow_ = nullptr;
     SDL_GPUShader* fs_blur_ = nullptr;
+    SDL_GPUShader* fs_blend_modes_ = nullptr;
 
     // Into layers (multisampled, with the shared stencil buffer).
     SDL_GPUGraphicsPipeline* geometry_[static_cast<int>(Stencil::Count)] = {};
     SDL_GPUGraphicsPipeline* gradient_[2] = {};        // Stencil None / Test
     SDL_GPUGraphicsPipeline* composite_[2][2] = {};    // [blend][stencil test]
     SDL_GPUGraphicsPipeline* stencil_fill_ = nullptr;
+    SDL_GPUGraphicsPipeline* blend_modes_[2] = {};     // mix-blend-mode, [stencil test]
     // Into single-sampled postprocess textures.
     SDL_GPUGraphicsPipeline* copy_ = nullptr;
     SDL_GPUGraphicsPipeline* copy_blend_ = nullptr;

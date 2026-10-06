@@ -60,7 +60,22 @@ bool PropertyParserFilter::ParseValue(Property& property, const String& filter_s
 				return false;
 			}
 
-			const String shorthand = filter_string.substr(shorthand_open + 1, shorthand_close - shorthand_open - 1);
+			String shorthand = filter_string.substr(shorthand_open + 1, shorthand_close - shorthand_open - 1);
+			// Forge: CSS allows the colour of drop-shadow() before or after the lengths; the shorthand here takes it first.
+			if (type == "drop-shadow")
+			{
+				StringList parts;
+				StringUtilities::ExpandString(parts, shorthand, ' ', '(', ')', true);
+				String colour, lengths;
+				for (const String& part : parts)
+				{
+					const char c = (part.empty() ? '0' : part[0]);
+					const bool is_length = ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || part.compare(0, 5, "calc(") == 0);
+					String& target = (is_length ? lengths : colour);
+					target += (target.empty() ? "" : " ") + part;
+				}
+				shorthand = (colour.empty() ? String("black") : colour) + " " + lengths;
+			}
 			const PropertySpecification& specification = instancer->GetPropertySpecification();
 
 			// Parse the shorthand properties given by the 'filter' shorthand property

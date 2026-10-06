@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Include/RmlUi/Core/CompiledFilterShader.h"
+#include "../../Include/RmlUi/Core/RenderInterface.h"
 #include "../../Include/RmlUi/Core/Types.h"
 
 namespace Rml {
@@ -26,6 +27,9 @@ public:
 
 	// Mark effects as dirty and force them to reset themselves.
 	void DirtyEffects();
+
+	/// Forge: the element's mix-blend-mode as a render blend mode.
+	static BlendMode GetMixBlendMode(Element* element);
 	// Mark the element data of effects as dirty.
 	void DirtyEffectsData();
 
@@ -55,6 +59,10 @@ private:
 	DecoratorEntryList mask_images;
 	FilterEntryList filters;
 	FilterEntryList backdrop_filters;
+	// Forge: mix-blend-mode; anything but Blend renders the element in its own layer.
+	BlendMode blend_mode = BlendMode::Blend;
+	// Forge: in web documents, opacity below 1 renders the element in its own layer, composited with this filter.
+	CompiledFilter opacity_filter;
 
 	// If set, a full reload is necessary.
 	bool effects_dirty = false;

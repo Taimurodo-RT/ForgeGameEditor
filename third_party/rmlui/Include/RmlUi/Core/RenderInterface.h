@@ -15,6 +15,23 @@ enum class ClipMaskOperation {
 enum class BlendMode {
 	Blend,   // Normal alpha blending.
 	Replace, // Replace the destination colors from the source.
+	// Forge: the blend modes of CSS mix-blend-mode, in its order, each followed by normal alpha blending.
+	Multiply,
+	Screen,
+	Overlay,
+	Darken,
+	Lighten,
+	ColorDodge,
+	ColorBurn,
+	HardLight,
+	SoftLight,
+	Difference,
+	Exclusion,
+	Hue,
+	Saturation,
+	Color,
+	Luminosity,
+	PlusLighter,
 };
 
 /**
