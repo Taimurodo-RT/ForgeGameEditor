@@ -63,6 +63,8 @@ struct SceneStats {
     u32 moved_out = 0;         // last update: walked into an unloaded chunk and were packed
     u64 packed = 0;            // totals: entities packed / recreated
     u64 unpacked = 0;
+    u64 upgraded = 0;          // components read through the older layout they were saved with
+    u64 dropped = 0;           // components that could not be read (a type the game no longer has)
 };
 
 struct SceneSaveReport {
@@ -145,11 +147,15 @@ private:
     void rebuild_index();
     void rebuild_chunk_list();
     i32 dense_index(world::ChunkCoord c) const;
-    void pack_entity(flecs::entity_t e, std::vector<u8>& out);
+    // used: per saved component, set when the entity has it.
+    void pack_entity(flecs::entity_t e, std::vector<u8>& out, std::vector<u8>* used = nullptr);
     void unpack_chunk(world::ChunkCoord coord, const std::vector<u8>& bytes, bool& visited);
+    struct Layouts; // the layouts a chunk was saved with (older types read through them)
     // Reads one packed entity at p; 0 when it had no Position. skipped
-    // counts components that could not be read.
-    flecs::entity_t unpack_one(const u8*& p, const u8* end, u32& skipped);
+    // counts components that could not be read, upgraded those read
+    // through an older layout.
+    flecs::entity_t unpack_one(const u8*& p, const u8* end, u32& skipped, Layouts* layouts = nullptr,
+                               u32* upgraded = nullptr);
     std::vector<u8>& stored_for(world::ChunkCoord coord);
     void pack_chunk(const ChunkIndex& chunk, std::vector<u8>& out, bool visited);
 
@@ -179,9 +185,14 @@ private:
     std::unique_ptr<world::RegionStore> store_;
 
     std::vector<std::max_align_t> unpack_scratch_;
+    std::vector<u8> pack_scratch_, pack_used_;
+    std::vector<std::vector<u8>> layouts_; // per saved component: data::append_schema, made on first use
     u32 moved_out_ = 0;
     u64 packed_ = 0;
     u64 unpacked_ = 0;
+    u64 upgraded_ = 0;
+    std::string skipped_note_; // which components a chunk could not read, for the warning
+    u64 dropped_ = 0;
 };
 
 } // namespace forge::scene

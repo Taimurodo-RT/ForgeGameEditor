@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 FORGE_REFLECT(forge::scene::Position, 1) {
@@ -25,10 +26,15 @@ using world::kChunkSize;
 
 namespace {
 
-// Packed chunk: [u32 magic][u8 visited][u32 entity count] then per entity
-// [u16 component count] and per component [u64 type id][u64 schema hash]
-// [u32 size][payload].
-constexpr u32 kMagic = 0x31455346; // "FSE1"
+// Packed chunk: [u32 magic][u8 visited][u32 entity count][u32 layouts size]
+// [layouts] then per entity [u16 component count] and per component
+// [u64 type id][u64 schema hash][u32 size][payload]. The entity count stays at
+// byte 5: entities that walk out are appended to a stored chunk.
+// Layouts: [u16 n] n × ([u64 type id][u64 schema hash][u32 size]
+// [data::append_schema]) for the components in the chunk, so a newer game
+// reads the chunk even after those types changed. "FSE1" chunks have none.
+constexpr u32 kMagic = 0x32455346;   // "FSE2"
+constexpr u32 kMagicV1 = 0x31455346; // "FSE1"
 constexpr u32 kSaveTag = 1;
 constexpr i32 kCellShift = 3; // 8-tile cells, 8 × 8 per chunk
 constexpr i32 kCells = kChunkSize >> kCellShift;
@@ -133,18 +139,21 @@ std::vector<u8>& Scene::stored_for(ChunkCoord coord) {
         put<u32>(bytes, kMagic);
         put<u8>(bytes, 0);
         put<u32>(bytes, 0);
+        put<u32>(bytes, 0);
         stored_bytes_ += bytes.size();
     }
     return bytes;
 }
 
-void Scene::pack_entity(flecs::entity_t e, std::vector<u8>& out) {
+void Scene::pack_entity(flecs::entity_t e, std::vector<u8>& out, std::vector<u8>* used) {
     const usize count_at = out.size();
     put<u16>(out, 0);
     u16 count = 0;
-    for (const SavedComponent& c : saved_) {
+    for (usize k = 0; k < saved_.size(); ++k) {
+        const SavedComponent& c = saved_[k];
         const void* data = ecs_get_id(ecs_.c_ptr(), e, c.id);
         if (!data) continue;
+        if (used) (*used)[k] = 1;
         put<u64>(out, c.type->id);
         put<u64>(out, c.type->schema_hash());
         const usize size_at = out.size();
@@ -162,10 +171,56 @@ void Scene::pack_chunk(const ChunkIndex& chunk, std::vector<u8>& out, bool visit
     put<u32>(out, kMagic);
     put<u8>(out, visited ? 1 : 0);
     put<u32>(out, chunk.end - chunk.begin);
-    for (u32 i = chunk.begin; i < chunk.end; ++i) pack_entity(items_[i].entity, out);
+    pack_scratch_.clear();
+    pack_used_.assign(saved_.size(), 0);
+    for (u32 i = chunk.begin; i < chunk.end; ++i) pack_entity(items_[i].entity, pack_scratch_, &pack_used_);
+    const usize size_at = out.size();
+    put<u32>(out, 0);
+    const usize start = out.size();
+    u16 n = 0;
+    for (u8 u : pack_used_) n = static_cast<u16>(n + u);
+    if (n > 0) {
+        put<u16>(out, n);
+        layouts_.resize(saved_.size());
+        for (usize k = 0; k < saved_.size(); ++k) {
+            if (!pack_used_[k]) continue;
+            if (layouts_[k].empty()) data::append_schema(saved_[k].type, layouts_[k]);
+            put<u64>(out, saved_[k].type->id);
+            put<u64>(out, saved_[k].type->schema_hash());
+            put<u32>(out, static_cast<u32>(layouts_[k].size()));
+            out.insert(out.end(), layouts_[k].begin(), layouts_[k].end());
+        }
+    }
+    const u32 size = static_cast<u32>(out.size() - start);
+    std::memcpy(out.data() + size_at, &size, sizeof(size));
+    out.insert(out.end(), pack_scratch_.begin(), pack_scratch_.end());
 }
 
-flecs::entity_t Scene::unpack_one(const u8*& p, const u8* end, u32& skipped) {
+// The layouts of one chunk, parsed when a component needs one.
+struct Scene::Layouts {
+    struct Entry {
+        u64 type_id = 0, schema = 0;
+        std::span<const u8> bytes;
+        bool parsed = false, ok = false;
+        data::SavedSchema schema_of;
+    };
+    std::vector<Entry> entries;
+
+    const data::SavedSchema* find(u64 type_id, u64 schema) {
+        for (Entry& e : entries) {
+            if (e.type_id != type_id || e.schema != schema) continue;
+            if (!e.parsed) {
+                e.parsed = true;
+                std::span<const u8> b = e.bytes;
+                e.ok = e.schema_of.parse(b);
+            }
+            return e.ok ? &e.schema_of : nullptr;
+        }
+        return nullptr;
+    }
+};
+
+flecs::entity_t Scene::unpack_one(const u8*& p, const u8* end, u32& skipped, Layouts* layouts, u32* upgraded) {
     u16 components = 0;
     if (!take(p, end, components)) {
         p = end;
@@ -187,17 +242,31 @@ flecs::entity_t Scene::unpack_one(const u8*& p, const u8* end, u32& skipped) {
         const SavedComponent* saved = nullptr;
         for (const SavedComponent& s : saved_)
             if (s.type->id == type_id) saved = &s;
-        // Unknown or changed layout: dropped (saves of older game versions
-        // will go through JSON migrations once games ship).
-        if (!saved || saved->type->schema_hash() != schema) {
+        // A type the game no longer has: dropped. A changed one: read through
+        // the layout the chunk was saved with, when it has one.
+        const data::SavedSchema* old = nullptr;
+        if (saved && saved->type->schema_hash() != schema && layouts) old = layouts->find(type_id, schema);
+        if (!saved || (saved->type->schema_hash() != schema && !old)) {
             ++skipped;
+            if (skipped_note_.size() < 200) {
+                const reflect::TypeInfo* known = saved ? saved->type : reflect::find_type_by_id(type_id);
+                char note[96];
+                if (known) std::snprintf(note, sizeof(note), "%s%s (%s)", skipped_note_.empty() ? "" : ", ",
+                                         known->name.c_str(), saved ? "changed" : "not used here");
+                else std::snprintf(note, sizeof(note), "%sunknown type %016llx", skipped_note_.empty() ? "" : ", ",
+                                   static_cast<unsigned long long>(type_id));
+                skipped_note_ += note;
+            }
             continue;
         }
         const reflect::TypeInfo* t = saved->type;
         scratch.resize((t->size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t) + 1);
         void* object = scratch.data();
         t->construct(object);
-        if (data::read_binary_payload(t, object, payload) == data::BinaryError::None) {
+        const data::BinaryError read =
+            old ? old->read(t, object, payload) : data::read_binary_payload(t, object, payload);
+        if (read == data::BinaryError::None && old && upgraded) ++*upgraded;
+        if (read == data::BinaryError::None) {
             ecs_set_id(ecs_.c_ptr(), e, saved->id, t->size, object);
             has_position |= t == reflect::type_of<Position>();
         } else {
@@ -222,6 +291,7 @@ flecs::entity Scene::unpack(std::span<const u8> bytes) {
     const u8* p = bytes.data();
     u32 skipped = 0;
     const flecs::entity_t e = unpack_one(p, p + bytes.size(), skipped);
+    skipped_note_.clear();
     if (!e) return flecs::entity();
     flecs::entity entity(ecs_, e);
     Position pos = entity.get<Position>();
@@ -242,18 +312,48 @@ void Scene::unpack_chunk(ChunkCoord coord, const std::vector<u8>& bytes, bool& v
     const u8* end = p + bytes.size();
     u32 magic = 0, count = 0;
     u8 visited_flag = 0;
-    if (!take(p, end, magic) || magic != kMagic || !take(p, end, visited_flag) || !take(p, end, count)) {
+    if (!take(p, end, magic) || (magic != kMagic && magic != kMagicV1) || !take(p, end, visited_flag) ||
+        !take(p, end, count)) {
         FORGE_WARN("scene: damaged entity data for chunk %d,%d", coord.x, coord.y);
         return;
     }
     visited = visited_flag != 0;
-    u32 skipped = 0;
+    Layouts layouts;
+    if (magic == kMagic) {
+        u32 size = 0;
+        if (!take(p, end, size) || static_cast<usize>(end - p) < size) {
+            FORGE_WARN("scene: damaged entity data for chunk %d,%d", coord.x, coord.y);
+            return;
+        }
+        const u8* q = p;
+        const u8* table_end = p + size;
+        p = table_end;
+        u16 n = 0;
+        if (size > 0 && take(q, table_end, n)) {
+            for (u16 k = 0; k < n; ++k) {
+                Layouts::Entry e;
+                u32 len = 0;
+                if (!take(q, table_end, e.type_id) || !take(q, table_end, e.schema) || !take(q, table_end, len) ||
+                    static_cast<usize>(table_end - q) < len)
+                    break;
+                e.bytes = std::span<const u8>(q, len);
+                q += len;
+                layouts.entries.push_back(std::move(e));
+            }
+        }
+    }
+    u32 skipped = 0, upgraded = 0;
     for (u32 n = 0; n < count && p < end; ++n)
-        if (const flecs::entity_t e = unpack_one(p, end, skipped)) {
+        if (const flecs::entity_t e = unpack_one(p, end, skipped, &layouts, &upgraded)) {
             ++unpacked_;
             if (unpacked_fn_) unpacked_fn_(flecs::entity(ecs_, e));
         }
-    if (skipped) FORGE_WARN("scene: chunk %d,%d: %u components could not be read", coord.x, coord.y, skipped);
+    if (skipped)
+        FORGE_WARN("scene: chunk %d,%d: %u components could not be read: %s", coord.x, coord.y, skipped,
+                   skipped_note_.c_str());
+    skipped_note_.clear();
+    upgraded_ += upgraded;
+    dropped_ += skipped;
 }
 
 void Scene::on_chunk_loaded(world::Chunk& chunk) {
@@ -531,6 +631,8 @@ SceneStats Scene::stats() const {
     s.moved_out = moved_out_;
     s.packed = packed_;
     s.unpacked = unpacked_;
+    s.upgraded = upgraded_;
+    s.dropped = dropped_;
     return s;
 }
 
