@@ -482,11 +482,12 @@ bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, cons
 			else if (shorthand && layer_index + 1 == layers.size())
 				color = token;
 		}
+		if (image.empty())
+			continue;
+		// Forge: placement of the last layer with an image (a trailing colour-only layer has none).
 		css_size = layer_size;
 		css_position = layer_position;
 		css_repeat = layer_repeat;
-		if (image.empty())
-			continue;
 		if (StringUtilities::StartsWith(image, "image(") && (!fit.empty() || !align.empty()))
 			image = image.substr(0, image.size() - 1) + " " + (fit.empty() ? "scale-none" : fit) + (align.empty() ? "" : " " + align) + ")";
 		if (!decorator.empty())

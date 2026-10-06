@@ -1,4 +1,6 @@
 #include "DecoratorGradient.h"
+#include "BackgroundPlacement.h"
+#include "../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../Include/RmlUi/Core/Element.h"
 #include "../../Include/RmlUi/Core/ElementUtilities.h"
@@ -233,6 +235,28 @@ bool DecoratorLinearGradient::Initialise(bool in_repeating, Corner in_corner, fl
 	return !color_stops.empty();
 }
 
+// Forge: in web pages, gradients follow background-size, -position and -repeat by drawing one quad per tile.
+static bool GetGradientTiling(Element* element, const RenderBox& render_box, BackgroundPlacement& placement)
+{
+	ElementDocument* document = element->GetOwnerDocument();
+	if (!document || document->GetTagName() != "html" || !HasBackgroundPlacement(element))
+		return false;
+	return ComputeBackgroundPlacement(element, render_box.GetFillSize(), Vector2f(0.f), true, placement);
+}
+
+static void GenerateGradientMesh(Mesh& mesh, const RenderBox& render_box, ColourbPremultiplied colour, const BackgroundPlacement* placement)
+{
+	if (placement)
+	{
+		GenerateBackgroundTiles(mesh, render_box.GetFillOffset(), render_box.GetFillSize(), *placement, colour, {}, {}, true);
+		return;
+	}
+	MeshUtilities::GenerateBackground(mesh, render_box, colour);
+	const Vector2f render_offset = render_box.GetFillOffset();
+	for (Vertex& vertex : mesh.vertices)
+		vertex.tex_coord = vertex.position - render_offset;
+}
+
 DecoratorDataHandle DecoratorLinearGradient::GenerateElementData(Element* element, BoxArea paint_area) const
 {
 	RenderManager* render_manager = element->GetRenderManager();
@@ -242,7 +266,9 @@ DecoratorDataHandle DecoratorLinearGradient::GenerateElementData(Element* elemen
 	RMLUI_ASSERT(!color_stops.empty());
 
 	const RenderBox render_box = element->GetRenderBox(paint_area);
-	LinearGradientShape gradient_shape = CalculateShape(render_box.GetFillSize());
+	BackgroundPlacement placement;
+	const bool tiled = GetGradientTiling(element, render_box, placement); // Forge: background-size and -position
+	LinearGradientShape gradient_shape = CalculateShape(tiled ? placement.image_size : render_box.GetFillSize());
 
 	// One-pixel minimum color stop spacing to avoid aliasing.
 	const float soft_spacing = 1.f / gradient_shape.length;
@@ -263,11 +289,7 @@ DecoratorDataHandle DecoratorLinearGradient::GenerateElementData(Element* elemen
 	Mesh mesh;
 	const ComputedValues& computed = element->GetComputedValues();
 	const byte alpha = byte(computed.opacity() * 255.f);
-	MeshUtilities::GenerateBackground(mesh, render_box, ColourbPremultiplied(alpha, alpha));
-
-	const Vector2f render_offset = render_box.GetFillOffset();
-	for (Vertex& vertex : mesh.vertices)
-		vertex.tex_coord = vertex.position - render_offset;
+	GenerateGradientMesh(mesh, render_box, ColourbPremultiplied(alpha, alpha), tiled ? &placement : nullptr);
 
 	ShaderElementData* element_data =
 		GetShaderElementDataPool().AllocateAndConstruct(render_manager->MakeGeometry(std::move(mesh)), std::move(shader));
@@ -410,7 +432,9 @@ DecoratorDataHandle DecoratorRadialGradient::GenerateElementData(Element* elemen
 	RMLUI_ASSERT(!color_stops.empty() && (shape == Shape::Circle || shape == Shape::Ellipse));
 
 	const RenderBox render_box = element->GetRenderBox(paint_area);
-	const Vector2f dimensions = render_box.GetFillSize();
+	BackgroundPlacement placement;
+	const bool tiled = GetGradientTiling(element, render_box, placement); // Forge: background-size and -position
+	const Vector2f dimensions = (tiled ? placement.image_size : render_box.GetFillSize());
 
 	RadialGradientShape gradient_shape = CalculateRadialGradientShape(element, dimensions);
 
@@ -432,11 +456,7 @@ DecoratorDataHandle DecoratorRadialGradient::GenerateElementData(Element* elemen
 	Mesh mesh;
 	const ComputedValues& computed = element->GetComputedValues();
 	const byte alpha = byte(computed.opacity() * 255.f);
-	MeshUtilities::GenerateBackground(mesh, render_box, ColourbPremultiplied(alpha, alpha));
-
-	const Vector2f render_offset = render_box.GetFillOffset();
-	for (Vertex& vertex : mesh.vertices)
-		vertex.tex_coord = vertex.position - render_offset;
+	GenerateGradientMesh(mesh, render_box, ColourbPremultiplied(alpha, alpha), tiled ? &placement : nullptr);
 
 	ShaderElementData* element_data =
 		GetShaderElementDataPool().AllocateAndConstruct(render_manager->MakeGeometry(std::move(mesh)), std::move(shader));
@@ -609,7 +629,9 @@ DecoratorDataHandle DecoratorConicGradient::GenerateElementData(Element* element
 	RMLUI_ASSERT(!color_stops.empty());
 
 	const RenderBox render_box = element->GetRenderBox(paint_area);
-	const Vector2f dimensions = render_box.GetFillSize();
+	BackgroundPlacement placement;
+	const bool tiled = GetGradientTiling(element, render_box, placement); // Forge: background-size and -position
+	const Vector2f dimensions = (tiled ? placement.image_size : render_box.GetFillSize());
 
 	const Vector2f center =
 		Vector2f{element->ResolveNumericValue(position.x, dimensions.x), element->ResolveNumericValue(position.y, dimensions.y)}.Round();
@@ -629,11 +651,7 @@ DecoratorDataHandle DecoratorConicGradient::GenerateElementData(Element* element
 	Mesh mesh;
 	const ComputedValues& computed = element->GetComputedValues();
 	const byte alpha = byte(computed.opacity() * 255.f);
-	MeshUtilities::GenerateBackground(mesh, render_box, ColourbPremultiplied(alpha, alpha));
-
-	const Vector2f render_offset = render_box.GetFillOffset();
-	for (Vertex& vertex : mesh.vertices)
-		vertex.tex_coord = vertex.position - render_offset;
+	GenerateGradientMesh(mesh, render_box, ColourbPremultiplied(alpha, alpha), tiled ? &placement : nullptr);
 
 	ShaderElementData* element_data =
 		GetShaderElementDataPool().AllocateAndConstruct(render_manager->MakeGeometry(std::move(mesh)), std::move(shader));

@@ -2,6 +2,7 @@
 # Not explicitly setting library type so that it can be chosen by consumer using BUILD_SHARED_LIBS. Header files are not
 # necessary, but are included to improve navigation and code completion on IDEs and language servers.
 add_library(rmlui_core
+	BackgroundPlacement.cpp
 	BaseXMLParser.cpp
 	Box.cpp
 	BoxShadowCache.h
