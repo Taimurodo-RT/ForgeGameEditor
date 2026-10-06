@@ -4,11 +4,16 @@
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 
+#include <yyjson.h>
+
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <map>
 #include <regex>
 #include <set>
+#include <tuple>
 
 namespace forge::editor_app {
 
@@ -60,8 +65,9 @@ std::string num(f64 v) {
     return buf;
 }
 
-// The first letter of a name (UTF-8).
+// The first letter of a name (UTF-8), past brackets and quotes ("{player}").
 std::string first_letter(std::string_view s) {
+    while (!s.empty() && s[0] != '\0' && std::strchr("{[(\"'<_ ", s[0])) s.remove_prefix(1);
     if (s.empty()) return "?";
     const u8 c = static_cast<u8>(s[0]);
     const usize n = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 4;
@@ -218,9 +224,9 @@ std::vector<std::string> StoryEditor::talks() const {
         if (e.is_directory(ec)) {
             std::error_code ec2;
             for (const auto& f : std::filesystem::directory_iterator(e.path(), ec2))
-                if (f.is_regular_file(ec2) && f.path().extension() == ".json")
+                if (f.is_regular_file(ec2) && f.path().extension() == ".json" && f.path().stem().extension().empty())
                     stories.push_back(path_to_utf8(e.path().filename()) + "/" + path_to_utf8(f.path().stem()));
-        } else if (e.is_regular_file(ec) && e.path().extension() == ".json") {
+        } else if (e.is_regular_file(ec) && e.path().extension() == ".json" && e.path().stem().extension().empty()) {
             out.push_back(path_to_utf8(e.path().stem()));
         }
     }
@@ -298,6 +304,11 @@ bool StoryEditor::open(const std::string& talk) {
     if (std::find(all.begin(), all.end(), talk) == all.end()) return false;
     commit_edit();
     close_menu();
+    if (!view_.empty()) {
+        view_.clear();
+        if (model_) model_.DirtyVariable("st_view");
+        dirty_ = true;
+    }
     if (talk != talk_) {
         talk_ = talk;
         m_log_.clear();
@@ -740,9 +751,11 @@ void StoryEditor::rebuild() {
             if (n.choices.empty() && n.keywords.empty()) {
                 Chip c = go_chip(n.next, true);
                 if (!n.call.empty() && n.next != "return" && !n.next.empty()) c.text = "потом: " + anchor(n.next);
-                // Going on to the line just below needs no mark: it shows on hover.
+                // Going on to the line just below needs no mark: «Дальше…» in
+                // the adding row changes it (the lit line shows it as a mark).
                 c.seq = !below.empty() && n.next == below;
-                v.chips.push_back(c);
+                v.seq = c.seq;
+                if (!c.seq || v.lit) v.chips.push_back(c);
             }
         }
         v.choices_on = !n.choices.empty();
@@ -792,7 +805,11 @@ void StoryEditor::rebuild() {
     }
 
     const std::string story = story_of(talk_);
-    m_title_ = !story.empty() ? story + " · " + talk_.substr(story.size() + 1) : src_.speakers.empty() ? talk_ : "Разговор: " + src_.speakers.front().name;
+    m_title_ = view_ == "cast"    ? m_view_story_ + " · Персонажи"
+               : view_ == "novel" ? m_view_story_ + " · Настройки новеллы"
+               : !story.empty()   ? story + " · " + talk_.substr(story.size() + 1)
+               : src_.speakers.empty() ? talk_
+                                       : "Разговор: " + src_.speakers.front().name;
     m_count_ = status();
     rebuild_state();
     rebuild_play();
@@ -818,6 +835,20 @@ void StoryEditor::rebuild_talks() {
             g.open = stories_open_.contains(story);
             header = m_talks_.size();
             m_talks_.push_back(std::move(g));
+            if (stories_open_.contains(story)) {
+                std::error_code ec;
+                for (const auto& [kind, file, name] : {std::tuple{"cast", "characters.cast.json", "Персонажи"},
+                                                       std::tuple{"novel", "novel.settings.json", "Настройки новеллы"}})
+                    if (std::filesystem::exists(story_file(story, file), ec)) {
+                        TalkRow r;
+                        r.kind = kind;
+                        r.id = story;
+                        r.name = name;
+                        r.color = kNarrator;
+                        r.selected = view_ == kind && m_view_story_ == story;
+                        m_talks_.push_back(std::move(r));
+                    }
+            }
         }
         if (!story.empty()) {
             ++m_talks_[header].lines;
@@ -846,7 +877,7 @@ void StoryEditor::rebuild_talks() {
         TalkRow r;
         r.kind = story.empty() ? "talk" : "subtalk";
         r.id = t;
-        r.selected = t == talk_;
+        r.selected = t == talk_ && view_.empty();
         r.name = info.name;
         r.letter = first_letter(r.name);
         r.color = info.color;
@@ -1751,6 +1782,140 @@ bool StoryEditor::import_renpy(const std::filesystem::path& source) {
     return true;
 }
 
+std::filesystem::path StoryEditor::story_file(const std::string& story, const char* name) const {
+    return game_dir_ / "dialogues" / utf8_path(story) / name;
+}
+
+namespace {
+
+std::string json_text(yyjson_val* v) {
+    if (yyjson_is_str(v)) return yyjson_get_str(v);
+    if (yyjson_is_int(v)) return std::to_string(yyjson_get_sint(v));
+    if (yyjson_is_bool(v)) return yyjson_get_bool(v) ? "True" : "False";
+    if (yyjson_is_num(v)) {
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "%g", yyjson_get_num(v));
+        return buf;
+    }
+    return "";
+}
+
+std::string join_strings(yyjson_val* arr, const char* sep, usize most) {
+    std::string out;
+    usize i = 0, n = yyjson_arr_size(arr);
+    yyjson_val* v;
+    yyjson_arr_iter it = yyjson_arr_iter_with(arr);
+    while ((v = yyjson_arr_iter_next(&it)) && i < most) {
+        if (i++) out += sep;
+        out += json_text(v);
+    }
+    if (n > most) out += sep + std::string("… ещё ") + std::to_string(n - most);
+    return out;
+}
+
+// A story file read as JSON (null when missing or broken).
+yyjson_doc* read_json(const std::filesystem::path& path) {
+    std::vector<u8> bytes;
+    if (!read_file(path, bytes)) return nullptr;
+    return yyjson_read(reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0);
+}
+
+} // namespace
+
+bool StoryEditor::show_cast(const std::string& story) {
+    yyjson_doc* doc = read_json(story_file(story, "characters.cast.json"));
+    if (!doc) return false;
+    commit_edit();
+    close_menu();
+    m_cast_.clear();
+    yyjson_val* chars = yyjson_obj_get(yyjson_doc_get_root(doc), "characters");
+    yyjson_val* c;
+    yyjson_arr_iter it = yyjson_arr_iter_with(chars);
+    while ((c = yyjson_arr_iter_next(&it))) {
+        CastView v;
+        v.key = json_text(yyjson_obj_get(c, "key"));
+        v.name = json_text(yyjson_obj_get(c, "name"));
+        if (v.name.empty()) v.name = v.key == "narrator" ? "Рассказчик" : v.key;
+        v.letter = first_letter(v.name);
+        v.color = json_text(yyjson_obj_get(c, "color"));
+        if (v.color.empty()) v.color = kNarrator;
+        const std::string image = json_text(yyjson_obj_get(c, "image")), name_var = json_text(yyjson_obj_get(c, "name_var"));
+        v.sub = "в Ren'Py: " + v.key;
+        if (!image.empty()) v.sub += " · картинки «" + image + "»";
+        if (!name_var.empty()) v.sub += " · имя из «" + name_var + "»";
+        yyjson_val* poses = yyjson_obj_get(c, "poses");
+        v.pose_count = static_cast<int>(yyjson_arr_size(poses));
+        v.poses = join_strings(poses, ", ", 40);
+        v.talks = join_strings(yyjson_obj_get(c, "talks"), ", ", 30);
+        v.lines = static_cast<int>(yyjson_get_sint(yyjson_obj_get(c, "lines")));
+        std::string extra;
+        yyjson_val *k, *val;
+        yyjson_obj_iter oit = yyjson_obj_iter_with(yyjson_obj_get(c, "options"));
+        while ((k = yyjson_obj_iter_next(&oit))) {
+            val = yyjson_obj_iter_get_val(k);
+            std::string text = json_text(val);
+            if (text.rfind("= ", 0) == 0) text = text.substr(2);
+            if (!extra.empty()) extra += " · ";
+            extra += std::string(yyjson_get_str(k)) + " " + text;
+        }
+        v.extra = extra;
+        m_cast_.push_back(std::move(v));
+    }
+    yyjson_doc_free(doc);
+    view_ = "cast";
+    m_view_story_ = story;
+    stories_open_.insert(story);
+    if (model_)
+        for (const char* name : {"st_view", "st_view_story", "st_cast"}) model_.DirtyVariable(name);
+    dirty_ = true;
+    return true;
+}
+
+bool StoryEditor::show_novel(const std::string& story) {
+    yyjson_doc* doc = read_json(story_file(story, "novel.settings.json"));
+    if (!doc) return false;
+    commit_edit();
+    close_menu();
+    yyjson_val* root = yyjson_doc_get_root(doc);
+    const std::string title = json_text(yyjson_obj_get(root, "title")), version = json_text(yyjson_obj_get(root, "version"));
+    m_novel_title_ = title.empty() ? story : title;
+    std::vector<std::string> info;
+    if (!version.empty()) info.push_back("версия " + version);
+    if (yyjson_val* size = yyjson_obj_get(root, "size"); yyjson_arr_size(size) == 2)
+        info.push_back("экран " + json_text(yyjson_arr_get(size, 0)) + "×" + json_text(yyjson_arr_get(size, 1)));
+    info.push_back("картинок " + json_text(yyjson_obj_get(root, "images")));
+    info.push_back("стилей " + json_text(yyjson_obj_get(root, "styles")));
+    std::string line;
+    for (const std::string& i : info) line += (line.empty() ? "" : " · ") + i;
+    m_novel_info_ = line;
+    m_novel_groups_.clear();
+    yyjson_val* g;
+    yyjson_arr_iter it = yyjson_arr_iter_with(yyjson_obj_get(root, "groups"));
+    while ((g = yyjson_arr_iter_next(&it))) {
+        SettingGroup group;
+        group.name = json_text(yyjson_obj_get(g, "name"));
+        yyjson_val* item;
+        yyjson_arr_iter iit = yyjson_arr_iter_with(yyjson_obj_get(g, "items"));
+        while ((item = yyjson_arr_iter_next(&iit)))
+            group.items.push_back({json_text(yyjson_obj_get(item, "name")), json_text(yyjson_obj_get(item, "value"))});
+        m_novel_groups_.push_back(std::move(group));
+    }
+    // Screens and transforms by name; the files they came from.
+    for (const auto& [key, name] : {std::pair{"screens", "Экраны"}, std::pair{"transforms", "Движения (transform)"}, std::pair{"files", "Файлы настроек"}}) {
+        yyjson_val* arr = yyjson_obj_get(root, key);
+        if (!yyjson_arr_size(arr)) continue;
+        m_novel_groups_.push_back({name, {{"", join_strings(arr, ", ", 400)}}});
+    }
+    yyjson_doc_free(doc);
+    view_ = "novel";
+    m_view_story_ = story;
+    stories_open_.insert(story);
+    if (model_)
+        for (const char* name : {"st_view", "st_view_story", "st_novel_title", "st_novel_info", "st_novel_groups"}) model_.DirtyVariable(name);
+    dirty_ = true;
+    return true;
+}
+
 void StoryEditor::poll_import() {
     {
         std::vector<std::filesystem::path> picked;
@@ -1770,11 +1935,21 @@ void StoryEditor::poll_import() {
             FORGE_ERROR("Импорт Ren'Py: %s", r.error.c_str());
             continue;
         }
-        // The story is named after the game's folder (the one holding game/).
+        // The story is named after the game (its build.name, else config.name),
+        // else after its folder (the one holding game/).
         std::error_code ec;
         std::filesystem::path folder = std::filesystem::is_directory(import_source_, ec) ? import_source_ : import_source_.parent_path();
         if (folder.filename() == "game" && folder.has_parent_path()) folder = folder.parent_path();
         std::string name = path_to_utf8(folder.filename());
+        for (const std::filesystem::path& f : r.files)
+            if (f.filename() == "novel.settings.json")
+                if (yyjson_doc* doc = read_json(f)) {
+                    yyjson_val* root = yyjson_doc_get_root(doc);
+                    std::string game = json_text(yyjson_obj_get(root, "short"));
+                    if (game.empty()) game = json_text(yyjson_obj_get(root, "title"));
+                    if (!game.empty() && game.size() <= 40) name = game;
+                    yyjson_doc_free(doc);
+                }
         for (char& ch : name)
             if (ch == ':' || ch == '/' || ch == '\\' || ch == '.') ch = '_';
         if (name.empty()) name = "renpy";
@@ -1786,7 +1961,7 @@ void StoryEditor::poll_import() {
         for (const std::filesystem::path& f : r.files) {
             std::filesystem::rename(f, dest / f.filename(), ec);
             if (ec) std::filesystem::copy_file(f, dest / f.filename(), std::filesystem::copy_options::overwrite_existing, ec);
-            talks_in += f.extension() == ".json";
+            talks_in += f.extension() == ".json" && f.stem().extension().empty();
         }
         std::filesystem::remove_all(r.out, ec);
         stories_open_.insert(story);
@@ -1867,6 +2042,7 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("topics_on", &LineView::topics_on);
         s.RegisterMember("choices_on", &LineView::choices_on);
         s.RegisterMember("can_add", &LineView::can_add);
+        s.RegisterMember("seq", &LineView::seq);
         s.RegisterMember("has_fallback", &LineView::has_fallback);
         s.RegisterMember("chips", &LineView::chips);
         s.RegisterMember("choices", &LineView::choices);
@@ -1884,6 +2060,29 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("selected", &TalkRow::selected);
     }
     model.RegisterArray<std::vector<TalkRow>>();
+    if (auto s = model.RegisterStruct<CastView>()) {
+        s.RegisterMember("key", &CastView::key);
+        s.RegisterMember("name", &CastView::name);
+        s.RegisterMember("letter", &CastView::letter);
+        s.RegisterMember("color", &CastView::color);
+        s.RegisterMember("sub", &CastView::sub);
+        s.RegisterMember("poses", &CastView::poses);
+        s.RegisterMember("talks", &CastView::talks);
+        s.RegisterMember("extra", &CastView::extra);
+        s.RegisterMember("lines", &CastView::lines);
+        s.RegisterMember("pose_count", &CastView::pose_count);
+    }
+    model.RegisterArray<std::vector<CastView>>();
+    if (auto s = model.RegisterStruct<SettingRow>()) {
+        s.RegisterMember("name", &SettingRow::name);
+        s.RegisterMember("value", &SettingRow::value);
+    }
+    model.RegisterArray<std::vector<SettingRow>>();
+    if (auto s = model.RegisterStruct<SettingGroup>()) {
+        s.RegisterMember("name", &SettingGroup::name);
+        s.RegisterMember("items", &SettingGroup::items);
+    }
+    model.RegisterArray<std::vector<SettingGroup>>();
     if (auto s = model.RegisterStruct<SpeakerRow>()) {
         s.RegisterMember("key", &SpeakerRow::key);
         s.RegisterMember("name", &SpeakerRow::name);
@@ -1917,6 +2116,12 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
     // std::vector<Rml::String> is registered by the editor (main.cpp).
 
     model.Bind("st_talks", &m_talks_);
+    model.BindFunc("st_view", [this](Rml::Variant& v) { v = Rml::String(view_); });
+    model.Bind("st_view_story", &m_view_story_);
+    model.Bind("st_cast", &m_cast_);
+    model.Bind("st_novel_title", &m_novel_title_);
+    model.Bind("st_novel_info", &m_novel_info_);
+    model.Bind("st_novel_groups", &m_novel_groups_);
     model.Bind("st_speakers", &m_speakers_);
     model.Bind("st_rules", &m_rules_);
     model.Bind("st_lines", &m_lines_);
@@ -1957,6 +2162,8 @@ void StoryEditor::bind(Rml::DataModelConstructor& model) {
         dirty_ = true;
     });
     on("st_scene", [this](Rml::Event&, const Rml::VariantList& a) { jump(arg_str(a, 0)); });
+    on("st_cast", [this](Rml::Event&, const Rml::VariantList& a) { show_cast(arg_str(a, 0)); });
+    on("st_novel", [this](Rml::Event&, const Rml::VariantList& a) { show_novel(arg_str(a, 0)); });
     on("st_page", [this](Rml::Event&, const Rml::VariantList& a) { page(arg_int(a, 0, 1)); });
     on("st_import", [this](Rml::Event&, const Rml::VariantList&) {
         if (!window || importing()) return;

@@ -15,6 +15,17 @@ engine/game/include/forge/game/dialogue.h):
 - scene, show, hide, with, play, stop, pause... are kept as the line's
   staging ("stage"), for the visual novel module.
 
+Two more files sit next to the talks (their names have a dot, so no talk
+can take them):
+- characters.cast.json, the cast: every Character(...) with its name,
+  colour, picture tag and poses (image monika 1a = ...), its other settings
+  as written (what_prefix, ...), how many lines it says and in which talks;
+- novel.settings.json, the game's settings, read and kept for the visual
+  novel module to take on: the system files (options.rpy, gui.rpy,
+  screens.rpy) are not talks, their define config./gui./build. values, the
+  screen size, music names (define audio.t1 = "bgm/1.ogg"), screens,
+  transforms and pictures are listed there.
+
 What could not be carried over is listed in «Импорт Ren'Py.txt».
 """
 
@@ -36,6 +47,10 @@ except ImportError:  # run on its own (tests)
 PALETTE = ["#e8b04a", "#7ec8a0", "#e07a6a", "#8fb3e8", "#c79be0", "#e6c86e", "#6fc3c9", "#e89bbb"]
 
 STAGING = {"scene", "show", "hide", "with", "play", "stop", "queue", "voice", "pause", "window", "nvl", "camera", "sound"}
+# Settings and screens, not story: never talks (their values go to the settings).
+SYSTEM_FILES = {"options.rpy", "gui.rpy", "screens.rpy"}
+SETTING_GROUPS = [("config.", "Игра"), ("build.", "Сборка"), ("gui.", "Внешний вид"), ("audio.", "Музыка и звуки"),
+                  ("style.", "Стили"), ("", "Другое")]
 SKIPPED_IN_LABELS = {"image", "define", "default", "transform", "style", "screen", "init", "translate", "layeredimage"}
 
 
@@ -136,6 +151,13 @@ def unquote(s: str) -> str:
         out.append(c)
         i += 1
     return "".join(out)
+
+
+def bare(text: str) -> str:
+    """A statement without its init priority: "init -501 screen say" → "screen say",
+    "define -2 gui.x = 1" → "define gui.x = 1" (decompiled games write them)."""
+    text = re.sub(r"^init\s+-?\d+\s+(?=[a-z])", "", text)
+    return re.sub(r"^(define|default)\s+-?\d+\s+", r"\1 ", text)
 
 
 def is_string(tok: str) -> bool:
@@ -311,6 +333,10 @@ class Character:
     name: str
     color: str
     image: str
+    name_var: str = ""  # DynamicCharacter: the variable holding the name
+    options: dict = field(default_factory=dict)  # its other settings, as written
+    lines: int = 0
+    talks: set = field(default_factory=set)
 
 
 def call_args(src: str):
@@ -324,6 +350,10 @@ def call_args(src: str):
     fn = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ""
     pos = [a.value if isinstance(a, ast.Constant) else None for a in node.args]
     kw = {k.arg: k.value.value for k in node.keywords if k.arg and isinstance(k.value, ast.Constant)}
+    # Settings that are not plain values (what_prefix=..., ctc=anim) as written.
+    for k in node.keywords:
+        if k.arg and k.arg not in kw:
+            kw[k.arg] = "= " + ast.unparse(k.value)
     return fn, pos, kw
 
 
@@ -335,6 +365,12 @@ class Project:
         self.text_values: dict[str, str] = {}
         self.defaults: list[str] = []
         self.label_file: dict[str, str] = {}
+        self.images: dict[str, list[str]] = {}  # picture tag → its attributes ("1a", "happy")
+        self.settings: list[tuple[str, str, str]] = []  # (name, value as written, file)
+        self.screens: list[str] = []
+        self.transforms: list[str] = []
+        self.styles = 0
+        self.size: list[int] = []
         self._collect()
 
     @staticmethod
@@ -347,7 +383,7 @@ class Project:
         dynamic = {}
         for file, lines in self.trees.items():
             for line in self._walk(lines):
-                t = line.text
+                t = bare(line.text)
                 m = re.match(r"(?:(?:define|default|\$)\s+)?([\w.]+)\s*=\s*(.+)$", t, re.S)
                 if m:
                     var, value = m.group(1), m.group(2)
@@ -359,7 +395,11 @@ class Project:
                             dynamic[var] = name
                             name = ""
                         color = kw.get("who_color") or kw.get("color") or ""
-                        self.characters[var] = Character(var, name, color if isinstance(color, str) else "", kw.get("image") or "")
+                        image = kw.get("image") or ""
+                        options = {k: v for k, v in kw.items() if k not in ("name", "who_color", "color", "image", "dynamic")}
+                        self.characters[var] = Character(var, name, color if isinstance(color, str) and not color.startswith("= ") else "",
+                                                         image if isinstance(image, str) and not image.startswith("= ") else "",
+                                                         dynamic.get(var, ""), options)
                         continue
                     try:
                         v = ast.literal_eval(value.strip())
@@ -373,6 +413,7 @@ class Project:
                         st = statements(f"{var} = {value}")
                         if st:
                             self.defaults += st
+            self._collect_settings(file, lines)
             parent = ""
             for line in self._story(lines):
                 lm = re.match(r"label\s+([\w.]+)", line.text)
@@ -386,6 +427,7 @@ class Project:
                 self.label_file.setdefault(name, file)
         for var, name_var in dynamic.items():
             c = self.characters[var]
+            c.name_var = name_var
             c.name = self.text_values.get(name_var) or ("{" + name_var + "}" if name_var else var)
         for i, c in enumerate(sorted(self.characters.values(), key=lambda c: c.key)):
             if not c.color or not re.match(r"#[0-9a-fA-F]{3,8}$", c.color):
@@ -393,6 +435,68 @@ class Project:
             if len(c.color) == 4:
                 c.color = "#" + "".join(ch * 2 for ch in c.color[1:])
             c.color = c.color[:7]
+
+    def _collect_settings(self, file: str, lines):
+        """Pictures, screens, transforms, styles and define config./gui./... values."""
+        for line in self._walk(lines):
+            t = bare(line.text)
+            m = re.match(r"image\s+([\w ]+?)\s*(?:=|:$)", t)
+            if m:
+                words = m.group(1).split()
+                self.images.setdefault(words[0], []).append(" ".join(words[1:]))
+                continue
+            m = re.match(r"screen\s+(\w+)", t)
+            if m:
+                self.screens.append(m.group(1))
+                continue
+            m = re.match(r"transform\s+(\w+)", t)
+            if m:
+                self.transforms.append(m.group(1))
+                continue
+            if re.match(r"style\s+\w+", t):
+                self.styles += 1
+                continue
+            m = re.search(r"gui\.init\(\s*(\d+)\s*,\s*(\d+)\s*\)", t)
+            if m and not self.size:
+                self.size = [int(m.group(1)), int(m.group(2))]
+            m = re.match(r"define\s+((?:config|gui|build|audio|style)\.[\w.]+)\s*=\s*(.+)$", t, re.S)
+            if m:
+                self.settings.append((m.group(1), " ".join(m.group(2).split()), file))
+
+    def setting(self, name: str):
+        """A setting's plain value (a string, a number, True/False), else None."""
+        for key, value, _ in self.settings:
+            if key == name:
+                try:
+                    v = ast.literal_eval(value)
+                except Exception:
+                    m = re.fullmatch(r"_\((.*)\)", value)  # _("text"): translatable
+                    try:
+                        v = ast.literal_eval(m.group(1)) if m else None
+                    except Exception:
+                        v = None
+                return v
+        return None
+
+    def cast_json(self) -> dict:
+        chars = []
+        for c in sorted(self.characters.values(), key=lambda c: (-c.lines, c.key)):
+            poses = self.images.get(c.image, []) if c.image else []
+            chars.append({"key": c.key, "name": c.name, "color": c.color, "image": c.image, "name_var": c.name_var,
+                          "poses": [p for p in poses if p], "lines": c.lines, "talks": sorted(c.talks), "options": c.options})
+        return {"characters": chars}
+
+    def settings_json(self, files: list[str]) -> dict:
+        groups = {title: [] for _, title in SETTING_GROUPS}
+        for key, value, file in self.settings:
+            title = next(t for prefix, t in SETTING_GROUPS if key.startswith(prefix))
+            groups[title].append({"name": key, "value": value, "file": file})
+        out = {"title": self.setting("config.name") or "", "short": self.setting("build.name") or "",
+               "version": str(self.setting("config.version") or ""), "size": self.size,
+               "groups": [{"name": t, "items": items} for t, items in groups.items() if items],
+               "screens": sorted(set(self.screens)), "transforms": sorted(set(self.transforms)), "styles": self.styles,
+               "images": sum(len(v) for v in self.images.values()), "files": sorted(files)}
+        return out
 
     def _walk(self, lines):
         for line in lines:
@@ -411,7 +515,7 @@ class Project:
     def talks(self):
         out = {}
         for file, lines in self.trees.items():
-            if not any(re.match(r"label\s", l.text) for l in lines):
+            if Path(file).name in SYSTEM_FILES or not any(re.match(r"label\s", l.text) for l in lines):
                 continue
             talk = Talk(self, file)
             talk.compile(lines)
@@ -654,6 +758,9 @@ class Talk:
         if speaker:
             fields["speaker"] = speaker
             self.speakers_used.add(speaker)
+            c = self.p.characters[speaker]
+            c.lines += 1
+            c.talks.add(Project.talk_id(self.file))
         if pose:
             fields["pose"] = pose
         fields["text"] = convert_text(text, self.p.notes) or "…"
@@ -916,6 +1023,13 @@ def convert(source: Path, out: Path, settings: dict, report):
         path.write_text(talk_json(data), encoding="utf-8")
         written.append(path)
         report(0.4 + 0.5 * (i + 1) / len(talks), talk)
+    cast = out / "characters.cast.json"
+    cast.write_text(json.dumps(project.cast_json(), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    written.append(cast)
+    system = [f for f in files if Path(f).name in SYSTEM_FILES or Project.talk_id(f) not in talks]
+    settings_file = out / "novel.settings.json"
+    settings_file.write_text(json.dumps(project.settings_json(system), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    written.append(settings_file)
     notes = out / "Импорт Ren'Py.txt"
     notes.write_text(report_text(project, talks), encoding="utf-8")
     written.append(notes)

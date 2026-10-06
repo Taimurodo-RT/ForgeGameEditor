@@ -18,7 +18,7 @@
 
 /* Conversations and speakers */
 .st-nav {
-    width: 220px;
+    width: 236px;
     padding: var(--space-1);
     overflow-y: auto;
     border-radius: 6px;
@@ -39,10 +39,10 @@
 .st-nav-row.add icon { color: var(--primary); }
 .st-nav-row.muted { cursor: default; color: var(--on-surface-variant); }
 .st-nav-row.muted:hover { background-color: transparent; }
-.st-nav-row .count { font-family: var(--font-mono); font-size: 11px; color: var(--on-surface-variant); }
+.st-nav-row .count { font-size: 11.5px; font-weight: 600; color: var(--on-surface-variant); }
 .st-nav-row.story { font-weight: 600; gap: var(--space-1); }
 .st-nav-row.sub { padding-left: var(--space-5); min-height: 32px; font-size: 13.5px; }
-.st-nav-row.scene { padding-left: 44px; min-height: 26px; font-size: 12.5px; color: var(--on-surface-variant); font-family: var(--font-mono); }
+.st-nav-row.scene { padding-left: 44px; min-height: 26px; font-size: 13px; color: var(--on-surface-variant); }
 .st-nav-row.scene:hover { color: var(--on-surface); }
 .st-nav-row.add.busy { opacity: 0.5; cursor: default; }
 .st-import-text { padding: var(--space-1) var(--space-2); font-size: 12.5px; color: var(--on-surface-variant); }
@@ -65,13 +65,13 @@
     flex: 1 1 0px;
     min-width: 0px;
     overflow-y: auto;
-    padding: var(--space-3);
+    padding: var(--space-4) var(--space-5);
     border-radius: 6px;
     background-color: var(--surface-container-low);
 }
 .st-hint {
     gap: var(--space-2);
-    max-width: 780px;
+    max-width: 1120px;
     margin: 0px auto var(--space-3) auto;
     padding: var(--space-2) var(--space-3);
     border-radius: 8px;
@@ -82,20 +82,19 @@
 }
 .st-hint icon { color: var(--primary); }
 .st-sheet {
-    max-width: 780px;
+    max-width: 1120px;
     margin: 0px auto;
-    gap: var(--space-3);
-    padding: var(--space-5) var(--space-6);
-    border-radius: 10px;
+    padding: var(--space-5) var(--space-6) var(--space-6) var(--space-6);
+    border-radius: 12px;
     background-color: var(--surface-container-lowest, var(--surface));
     border: 1px var(--outline-variant);
 }
 .st-label {
     gap: var(--space-1);
     align-items: center;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 600;
+    letter-spacing: 0.3px;
     color: var(--on-surface-variant);
 }
 .st-start {
@@ -109,17 +108,24 @@
 
 .st-part { gap: var(--space-1); }
 .st-scene {
-    margin-top: var(--space-3);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--on-surface-variant);
+    gap: var(--space-2);
+    margin: var(--space-5) -8px var(--space-1) -8px;
+    padding: var(--space-2) var(--space-3);
+    border-radius: 8px;
+    border-left: 4px var(--tertiary);
+    background-color: var(--surface-container);
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: var(--on-surface);
     cursor: text;
 }
-.st-scene:hover { color: var(--on-surface); }
+.st-scene icon { color: var(--tertiary); }
+.st-scene:hover { background-color: var(--surface-container-high); }
 .st-line {
     gap: var(--space-1);
-    padding: var(--space-1) var(--space-2);
+    padding: 6px var(--space-2) 0px var(--space-2);
     margin: 0px -8px;
     border-radius: 8px;
     border-left: 3px transparent;
@@ -130,31 +136,34 @@
 .st-note {
     font-family: Lora;
     font-style: italic;
-    font-size: 14.5px;
+    font-size: 15px;
+    padding-left: 136px;
     color: var(--on-surface-variant);
     cursor: text;
 }
-.st-say-row { gap: var(--space-3); align-items: flex-start; }
+.st-say-row { gap: var(--space-4); align-items: flex-start; }
 .st-say-col { gap: var(--space-1); min-width: 0px; }
 .st-who {
-    width: 92px;
+    width: 120px;
     gap: 2px;
-    padding-top: 4px;
-    font-size: 12.5px;
-    font-weight: 600;
-    text-transform: uppercase;
+    padding-top: 3px;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-align: right;
     cursor: pointer;
 }
 .st-line.junction .st-who { color: var(--on-surface-variant); cursor: default; }
-.st-pose { font-family: var(--font-mono); font-size: 11px; font-weight: 400; text-transform: none; color: var(--on-surface-variant); }
+.st-pose { font-family: var(--font-sans); font-size: 11.5px; font-weight: 400; letter-spacing: 0px; color: var(--on-surface-variant); }
 /* A line with nothing to say: a jump, a call, staging */
 .st-line.silent { padding-top: 0px; padding-bottom: 0px; }
-.st-line.silent .st-who { display: none; }
+.st-line.silent .st-who { visibility: hidden; }
 .st-line.silent .st-adds { display: none; }
 .st-say {
     font-family: Lora;
-    font-size: 16px;
-    line-height: 1.6em;
+    font-size: 17px;
+    line-height: 1.55em;
     color: var(--on-surface);
     cursor: text;
 }
@@ -171,7 +180,7 @@
     border: 2px var(--primary);
 }
 .st-nav .st-field { font-family: var(--font-sans); font-size: 14px; }
-.st-scene-field { font-family: var(--font-mono); font-size: 12px; margin-top: var(--space-3); }
+.st-scene-field { font-family: var(--font-display); font-size: 15px; margin-top: var(--space-5); }
 .st-note-field { font-style: italic; font-size: 14.5px; }
 .st-code { font-family: var(--font-mono); font-size: 13px; }
 
@@ -183,9 +192,10 @@
     align-items: center;
     gap: 3px;
     height: 24px;
-    padding: 0px 9px 0px 6px;
+    padding: 0px 10px 0px 7px;
     border-radius: 12px;
     font-size: 12.5px;
+    font-weight: 600;
     cursor: pointer;
     border: 1px var(--outline-variant);
     background-color: var(--surface-container);
@@ -197,13 +207,13 @@
 .st-chip.go { color: var(--on-surface-variant); }
 .st-chip.else { color: var(--info); cursor: default; }
 .st-chip.code { color: var(--warning, #e0a050); border-color: var(--warning, #e0a050); }
-.st-chip.stage { color: var(--on-surface-variant); border-color: transparent; background-color: var(--surface-container-high); }
+.st-chip.stage { font-weight: 400; color: var(--on-surface-variant); border-color: transparent; background-color: var(--surface-container); }
 .st-chip.stage.code { color: var(--warning, #e0a050); }
-.st-stage { margin-bottom: 2px; }
+.st-stage { margin-left: 136px; margin-bottom: 2px; }
 .st-stage-item { display: flex; }
-/* Going on to the line just below: shown on hover, as the play reads on */
-.st-chip.seq { display: none; }
-.st-line:hover .st-chip.seq, .st-line.lit .st-chip.seq { display: flex; }
+/* Going on to the line just below: a mark only on the lit line («Дальше…»
+   in the adding row otherwise). Hover never changes the layout: with a big
+   talk a layout pass is the cost of a frame. */
 .st-chip .more { margin-left: 2px; border-radius: 8px; }
 .st-chip .more:hover { background-color: var(--state-hover-layer); }
 .st-add-mark { width: 24px; height: 24px; line-height: 24px; text-align: center; border-radius: 12px; color: var(--on-surface-variant); cursor: pointer; }
@@ -229,35 +239,37 @@
 
 /* The hero's answers */
 .st-choices { gap: var(--space-1); margin-top: var(--space-1); }
-.st-choice { gap: var(--space-2); align-items: flex-start; padding: 2px 0px 2px var(--space-2); border-left: 2px var(--info); }
+.st-choice { gap: var(--space-2); align-items: flex-start; padding: 4px var(--space-2) 4px var(--space-2); border-left: 3px var(--info); border-radius: 0px 6px 6px 0px; background-color: var(--surface-container-low); }
 .st-choice.lit { background-color: var(--primary-container); }
 .st-hero { width: 22px; color: var(--info); }
-.st-answer { font-family: Lora; font-size: 15px; line-height: 1.5em; color: var(--info); cursor: text; }
+.st-answer { font-family: Lora; font-size: 16px; line-height: 1.5em; color: var(--info); cursor: text; }
 
 /* Adding */
-.st-adds { gap: var(--space-1); margin-top: 2px; opacity: 0.45; }
+/* Shown on the line under the mouse (opacity only: no layout) */
+.st-adds { gap: 2px; height: 20px; opacity: 0; }
 .st-line:hover .st-adds, .st-line.lit .st-adds { opacity: 1; }
 .st-add {
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 2px;
-    height: 26px;
-    padding: 0px var(--space-2);
+    height: 20px;
+    padding: 0px 6px;
     border-radius: 6px;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--primary);
     cursor: pointer;
 }
 .st-add:hover { background-color: var(--state-hover-layer); }
-.st-add.danger { color: var(--on-surface-variant); }
+.st-add.danger, .st-add.quiet { color: var(--on-surface-variant); }
+.st-add.quiet:hover { color: var(--on-surface); }
 .st-add.danger:hover { color: var(--error); }
 .st-add.big { align-self: flex-start; margin-top: var(--space-3); height: 32px; font-size: 13.5px; }
 
 /* A big talk's pages */
 .st-pages { align-items: center; gap: var(--space-2); }
-.st-page-text { text-align: center; font-family: var(--font-mono); font-size: 12px; color: var(--on-surface-variant); }
+.st-page-text { text-align: center; font-size: 13px; font-weight: 600; color: var(--on-surface-variant); }
 .st-pages .button.disabled { opacity: 0.35; cursor: default; }
 
 /* The test */
@@ -320,3 +332,63 @@
 .st-menu-item { gap: var(--space-2); align-items: center; min-height: 32px; padding: 0px var(--space-2); border-radius: 6px; font-size: 13.5px; cursor: pointer; }
 .st-menu-item:hover { background-color: var(--state-hover-layer); }
 .st-menu-item.current { color: var(--primary); font-weight: 600; }
+
+/* The script is blocks, not nested flex columns: a flex column measures its
+   children before placing them, so each level nested doubles the layout
+   work (ten levels deep a big talk took seconds to lay out). */
+.st-sheet, .st-part, .st-line, .st-say-col, .st-choices, .st-topics, .st-start,
+.st-choice > .column, .st-topic > .column { display: block; }
+.st-sheet > .st-pages, .st-sheet > .st-start, .st-sheet > .st-add { margin-top: var(--space-3); }
+.st-sheet > .st-part { margin-top: 2px; }
+.st-sheet > .st-pages:first-child { margin-top: 0px; }
+.st-part > .st-line, .st-start > .st-rule { margin-top: 2px; }
+.st-line > .st-note, .st-line > .st-say-row, .st-line > textarea { margin-top: var(--space-1); }
+.st-line > .st-stage + .st-say-row, .st-line > .st-note + .st-say-row { margin-top: var(--space-1); }
+.st-line > .st-stage:first-child, .st-line > .st-say-row:first-child, .st-line > .st-note:first-child { margin-top: 0px; }
+.st-say-col > .st-chips, .st-say-col > .st-choices, .st-say-col > .st-topics { margin-top: var(--space-1); }
+.st-say-col > .st-adds { margin-top: 2px; }
+.st-choices > .st-choice + .st-choice, .st-topics > .st-topic + .st-topic, .st-topics > .st-topic { margin-top: var(--space-1); }
+.st-choice > .column > .st-chips, .st-topic > .column > .st-chips { margin-top: 2px; }
+.st-say, .st-answer { display: block; }
+
+/* An imported story's cast and settings */
+.st-nav-row.extra { color: var(--on-surface-variant); }
+/* A talk without lines (code only: a poem game, the credits) */
+.st-nav-row.empty { color: var(--on-surface-variant); }
+.st-nav-row.extra icon { color: var(--tertiary); }
+.st-nav-row.extra.selected { color: var(--on-surface); }
+.st-page { display: block; max-width: 1120px; margin: 0px auto; }
+.st-page-head { gap: var(--space-2); margin-bottom: var(--space-4); font-family: var(--font-display); font-size: 22px; font-weight: 700; }
+.st-page-head icon { color: var(--tertiary); }
+.st-page-sub { font-size: 13px; font-weight: 600; color: var(--on-surface-variant); font-family: var(--font-sans); }
+.st-cards { flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); }
+.st-card {
+    display: block;
+    flex: 1 1 290px;
+    max-width: 520px;
+    padding: var(--space-3) var(--space-4);
+    border-radius: 12px;
+    background-color: var(--surface-container-lowest, var(--surface));
+    border: 1px var(--outline-variant);
+}
+.st-card-head { gap: var(--space-3); margin-bottom: var(--space-2); }
+.st-ava.big { width: 44px; height: 44px; line-height: 44px; border-radius: 22px; font-size: 20px; }
+.st-card-names { display: block; min-width: 0px; }
+.st-card-name { font-family: var(--font-display); font-size: 18px; font-weight: 700; }
+.st-card-sub { font-size: 12px; color: var(--on-surface-variant); }
+.st-card-count { display: block; text-align: right; }
+.st-card-count b { display: block; font-family: var(--font-display); font-size: 20px; }
+.st-card-count span { font-size: 11.5px; color: var(--on-surface-variant); }
+.st-card-row { display: block; margin-top: var(--space-2); }
+.st-card-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.3px; color: var(--on-surface-variant); }
+.st-card-text { font-size: 13px; line-height: 1.45em; }
+.st-card-text.code { font-family: var(--font-mono); font-size: 11.5px; color: var(--on-surface-variant); }
+.st-novel-title { font-family: Lora; font-size: 24px; margin-bottom: 2px; }
+.st-novel-info { font-size: 13px; font-weight: 600; color: var(--on-surface-variant); margin-bottom: var(--space-3); }
+.st-page .st-hint { margin: 0px 0px var(--space-4) 0px; }
+.st-set-group { display: block; margin-bottom: var(--space-4); padding: var(--space-2) var(--space-3); border-radius: 10px; background-color: var(--surface-container-lowest, var(--surface)); border: 1px var(--outline-variant); }
+.st-set-title { gap: var(--space-2); padding: var(--space-1) 0px var(--space-2) 0px; font-family: var(--font-display); font-size: 15px; font-weight: 700; }
+.st-set-title .count { font-size: 12px; color: var(--on-surface-variant); font-family: var(--font-sans); }
+.st-set-row { gap: var(--space-3); align-items: flex-start; padding: 3px 0px; border-top: 1px var(--outline-variant); font-size: 13px; }
+.st-set-name { flex: 0 0 300px; font-family: var(--font-mono); font-size: 12px; color: var(--on-surface-variant); }
+.st-set-value { font-family: var(--font-mono); font-size: 12px; }

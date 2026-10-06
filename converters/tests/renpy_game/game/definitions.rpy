@@ -12,3 +12,7 @@ image bg yard = "images/yard.png"
 init python:
     def greet(name):
         return "Привет, " + name
+
+image boris happy = "images/boris_happy.png"
+image boris sad:
+    "images/boris_sad.png"

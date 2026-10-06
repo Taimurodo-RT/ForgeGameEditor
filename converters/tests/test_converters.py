@@ -184,14 +184,15 @@ class RenPy(unittest.TestCase):
     def convert(self):
         result, out, _ = run("renpy", self.GAME / "script.rpy", {"whole": True})
         self.assertTrue(result["ok"], result)
-        return out, {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in out.glob("*.json")}
+        return out, {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in out.glob("*.json") if "." not in p.stem}
 
     def node(self, talk, nid):
         return next(n for n in talk["nodes"] if n["id"] == nid)
 
     def test_a_game_becomes_a_talk_per_script_file(self):
         out, talks = self.convert()
-        self.assertEqual(sorted(talks), ["chapter", "script"])  # definitions.rpy has no labels
+        # definitions.rpy has no labels; options.rpy is settings, not story.
+        self.assertEqual(sorted(talks), ["chapter", "script"])
         script = talks["script"]
         self.assertEqual(script["speakers"]["a"], {"name": "Алиса", "color": "#c8a2e0"})
         # A DynamicCharacter takes its name from the variable it reads.
@@ -231,6 +232,24 @@ class RenPy(unittest.TestCase):
         caption = self.node(chapter, "chapter_one_6")
         self.assertEqual(caption["text"], "Дальше?")
         self.assertEqual(caption["choices"][1]["goto"], "chapter_one.stay")
+
+    def test_the_cast_and_the_settings(self):
+        out, _ = self.convert()
+        cast = json.loads((out / "characters.cast.json").read_text(encoding="utf-8"))["characters"]
+        boris = next(c for c in cast if c["key"] == "b")
+        self.assertEqual((boris["name"], boris["image"], boris["name_var"]), ("Борис", "boris", "b_name"))
+        self.assertEqual(boris["poses"], ["happy", "sad"])
+        self.assertGreater(boris["lines"], 0)
+        self.assertEqual(boris["talks"], ["chapter"])
+        alice = next(c for c in cast if c["key"] == "a")
+        self.assertEqual(alice["talks"], ["script"])
+        settings = json.loads((out / "novel.settings.json").read_text(encoding="utf-8"))
+        self.assertEqual((settings["title"], settings["short"], settings["version"], settings["size"]), ("Двор у дома", "dvor", "0.3", [1920, 1080]))
+        groups = {g["name"]: g["items"] for g in settings["groups"]}
+        self.assertEqual(groups["Музыка и звуки"], [{"name": "audio.yard", "value": "\"music/yard.ogg\"", "file": "options.rpy"}])
+        self.assertIn({"name": "config.has_voice", "value": "False", "file": "options.rpy"}, groups["Игра"])
+        self.assertEqual((settings["screens"], settings["transforms"]), (["say"], ["left_side"]))
+        self.assertEqual(settings["files"], ["definitions.rpy", "options.rpy"])
 
     def test_python_it_cannot_carry_is_kept(self):
         out, talks = self.convert()
