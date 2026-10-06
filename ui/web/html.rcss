@@ -22,7 +22,7 @@ body { display: block; margin: 8px; }
 
 address, article, aside, blockquote, center, dialog, div, dl, dd, dt, fieldset,
 figcaption, figure, footer, form, h1, h2, h3, h4, h5, h6, header, hgroup, hr,
-legend, li, main, nav, ol, p, pre, search, section, summary, details, ul {
+legend, main, nav, ol, p, pre, search, section, summary, details, ul {
 	display: block;
 }
 span, a, b, strong, i, em, u, s, small, big, code, kbd, samp, var, sub, sup,
@@ -40,6 +40,14 @@ h6 { font-size: 0.67em; margin: 2.33em 0; font-weight: bold; }
 
 ul, ol { margin: 1em 0; padding-left: 40px; }
 li ul, li ol { margin: 0; }
+li { display: list-item; }
+ol { list-style-type: decimal; }
+ul ul, ol ul { list-style-type: circle; }
+ul ul ul, ul ol ul, ol ul ul, ol ol ul { list-style-type: square; }
+/* The bullet or number of a list item: outside, it hangs in the space left of the item. */
+forge-marker { display: inline-block; width: 100px; margin-left: -100px; text-align: right; white-space: pre;
+	font-weight: normal; font-style: normal; text-decoration: none; text-transform: none; }
+forge-marker[inside] { width: auto; margin-left: 0; text-align: left; }
 dl { margin: 1em 0; }
 dd { margin-left: 40px; }
 blockquote, figure { margin: 1em 40px; }

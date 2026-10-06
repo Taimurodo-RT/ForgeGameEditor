@@ -64,6 +64,7 @@ static OuterDisplayType GetOuterDisplayType(Style::Display display)
 	switch (display)
 	{
 	case Style::Display::Block:
+	case Style::Display::ListItem: // Forge
 	case Style::Display::FlowRoot:
 	case Style::Display::Flex:
 	case Style::Display::Table: return OuterDisplayType::BlockLevel;
@@ -250,7 +251,8 @@ bool BlockFormattingContext::FormatBlockContainerChild(BlockContainer* parent_co
 	// The element is an in-flow box participating in this same block formatting context.
 	switch (display)
 	{
-	case Style::Display::Block: return FormatBlockBox(parent_container, element);
+	case Style::Display::Block:
+	case Style::Display::ListItem: return FormatBlockBox(parent_container, element); // Forge
 	case Style::Display::Inline: return FormatInlineBox(parent_container, element);
 	default:
 		RMLUI_ERROR; // Should have been handled above.

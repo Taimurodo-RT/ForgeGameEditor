@@ -289,6 +289,18 @@ namespace Style {
 		float             border_bottom_left_radius()  const { return (float)rare.border_bottom_left_radius; }
 		CornerSizes       border_radius()              const { return {(float)rare.border_top_left_radius,     (float)rare.border_top_right_radius,
 		                                                               (float)rare.border_bottom_right_radius, (float)rare.border_bottom_left_radius}; }
+		// Forge: negative stored radii are percentages (in hundredths) of the border box; resolved against the smaller side since
+		// only circular corners are drawn.
+		bool              has_border_radius()          const { return rare.border_top_left_radius != 0 || rare.border_top_right_radius != 0 ||
+		                                                              rare.border_bottom_right_radius != 0 || rare.border_bottom_left_radius != 0; }
+		CornerSizes       border_radius(Vector2f border_size) const {
+			CornerSizes r = border_radius();
+			const float side = Math::Min(border_size.x, border_size.y);
+			for (float& v : r)
+				if (v < 0.f)
+					v = -v * 0.0001f * side;
+			return r;
+		}
 		TextOverflow      text_overflow()              const { return rare.text_overflow; }
 		String            text_overflow_string()       const { return GetLocalProperty(PropertyId::TextOverflow, String());; }
 		Clip              clip()                       const { return rare.clip; }
@@ -381,6 +393,8 @@ namespace Style {
 		void has_local_perspective     (bool value)              { rare.has_local_perspective      = value; }
 		void has_local_transform       (bool value)              { rare.has_local_transform        = value; }
 		void border_top_left_radius    (float value)             { rare.border_top_left_radius     = (int16_t)value; }
+		void border_radius_percent     (int corner, float percent) { int16_t v = (int16_t)-Math::Clamp(percent * 100.f, 1.f, 30000.f);
+			(corner == 0 ? rare.border_top_left_radius : corner == 1 ? rare.border_top_right_radius : corner == 2 ? rare.border_bottom_right_radius : rare.border_bottom_left_radius) = v; }
 		void border_top_right_radius   (float value)             { rare.border_top_right_radius    = (int16_t)value; }
 		void border_bottom_right_radius(float value)             { rare.border_bottom_right_radius = (int16_t)value; }
 		void border_bottom_left_radius (float value)             { rare.border_bottom_left_radius  = (int16_t)value; }

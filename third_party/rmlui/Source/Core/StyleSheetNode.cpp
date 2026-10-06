@@ -12,7 +12,7 @@ namespace Rml {
 // Forge: the boxes made for ::before and ::after match only selectors that name them.
 static inline bool IsPseudoElementTag(const String& tag)
 {
-	return tag.size() >= 10 && tag.compare(0, 6, "forge-") == 0 && (tag == "forge-before" || tag == "forge-after");
+	return tag.size() >= 10 && tag.compare(0, 6, "forge-") == 0 && (tag == "forge-before" || tag == "forge-after" || tag == "forge-marker");
 }
 
 static inline bool IsTextElement(const Element* element)

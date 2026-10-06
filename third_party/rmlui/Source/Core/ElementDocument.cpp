@@ -502,7 +502,157 @@ static bool WrapFlexText(Element* element)
 
 static bool IsGeneratedBox(const String& tag)
 {
-	return tag == "#text" || tag == "#anon" || tag == "forge-before" || tag == "forge-after";
+	return tag == "#text" || tag == "#anon" || tag == "forge-before" || tag == "forge-after" || tag == "forge-marker";
+}
+
+static String RomanNumeral(int value)
+{
+	static const int values[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
+	static const char* digits[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
+	String out;
+	for (int i = 0; i < 13 && value > 0; i++)
+		while (value >= values[i])
+		{
+			out += digits[i];
+			value -= values[i];
+		}
+	return out;
+}
+
+static String AlphaNumeral(int value)
+{
+	String out;
+	while (value > 0)
+	{
+		value--;
+		out.insert(out.begin(), char('a' + value % 26));
+		value /= 26;
+	}
+	return out;
+}
+
+// Forge: the marker text of a list item ("" for none), and whether it sits inside the item's first line box.
+static String ListMarkerText(Element* item, bool& inside)
+{
+	auto read = [item](const char* name) {
+		const Property* property = item->GetProperty(name);
+		return (property && property->unit == Unit::STRING ? StringUtilities::ToLower(property->Get<String>()) : String());
+	};
+	String type = read("list-style-type");
+	String position = read("list-style-position");
+	// The 'list-style' shorthand, when set, overrides the longhands (cascade order between them is not tracked).
+	StringList words;
+	StringUtilities::ExpandString(words, read("list-style"), ' ');
+	for (const String& word : words)
+	{
+		if (word == "inside" || word == "outside")
+			position = word;
+		else if (!word.empty() && word.compare(0, 4, "url(") != 0)
+			type = word;
+	}
+	inside = (position == "inside");
+	if (type.empty() || type == "none")
+		return String();
+	if (type[0] == '"' || type[0] == '\'')
+		return type.substr(1, type.size() >= 2 ? type.size() - 2 : 0);
+	if (type == "disc")
+		return "\xe2\x80\xa2 ";
+	if (type == "circle")
+		return "\xe2\x97\xa6 ";
+	if (type == "square")
+		return "\xe2\x96\xaa ";
+	if (type == "disclosure-closed")
+		return "\xe2\x96\xb8 ";
+	if (type == "disclosure-open")
+		return "\xe2\x96\xbe ";
+
+	// Ordinal: the item's number among its list's items, from the list's 'start' or an item's 'value'.
+	int number = 1;
+	if (Element* list = item->GetParentNode())
+	{
+		number = list->GetAttribute<int>("start", 1);
+		for (int i = 0; i < list->GetNumChildren(); i++)
+		{
+			Element* sibling = list->GetChild(i);
+			if (sibling->GetComputedValues().display() != Style::Display::ListItem)
+				continue;
+			if (sibling->HasAttribute("value"))
+				number = sibling->GetAttribute<int>("value", number);
+			if (sibling == item)
+				break;
+			number++;
+		}
+	}
+	String text;
+	if (type == "lower-roman" || type == "upper-roman")
+		text = RomanNumeral(number);
+	else if (type == "lower-alpha" || type == "lower-latin" || type == "upper-alpha" || type == "upper-latin")
+		text = AlphaNumeral(number);
+	else if (type == "decimal-leading-zero")
+		text = (number < 10 && number >= 0 ? "0" : "") + ToString(number);
+	else
+		text = ToString(number);
+	if (type.compare(0, 6, "upper-") == 0)
+		text = StringUtilities::ToUpper(text);
+	return text + ". ";
+}
+
+// Forge: gives list items (display: list-item) a first child box with the tag forge-marker holding their bullet or number. Returns true if the tree changed.
+static bool UpdateListMarkers(Element* element)
+{
+	bool changed = false;
+	if (element->GetComputedValues().display() == Style::Display::ListItem)
+	{
+		bool inside = false;
+		const String text = ListMarkerText(element, inside);
+		Element* marker = (element->GetNumChildren() > 0 && element->GetChild(0)->GetTagName() == "forge-marker" ? element->GetChild(0) : nullptr);
+		if (text.empty())
+		{
+			if (marker)
+			{
+				element->RemoveChild(marker);
+				changed = true;
+			}
+		}
+		else
+		{
+			if (!marker)
+			{
+				ElementPtr box = Factory::InstanceElement(element, "*", "forge-marker", XMLAttributes());
+				marker = (element->GetNumChildren() == 0 ? element->AppendChild(std::move(box)) : element->InsertBefore(std::move(box), element->GetChild(0)));
+				changed = true;
+			}
+			if (inside != marker->HasAttribute("inside"))
+			{
+				if (inside)
+					marker->SetAttribute("inside", "");
+				else
+					marker->RemoveAttribute("inside");
+				changed = true;
+			}
+			ElementText* text_element = (marker->GetNumChildren() > 0 ? rmlui_dynamic_cast<ElementText*>(marker->GetChild(0)) : nullptr);
+			if (!text_element)
+			{
+				if (ElementPtr created = Factory::InstanceElement(marker, "#text", "#text", XMLAttributes()))
+				{
+					text_element = rmlui_dynamic_cast<ElementText*>(created.get());
+					marker->AppendChild(std::move(created));
+				}
+			}
+			if (text_element && text_element->GetText() != text)
+			{
+				text_element->SetText(text);
+				changed = true;
+			}
+		}
+	}
+	for (int i = 0; i < element->GetNumChildren(); i++)
+	{
+		Element* child = element->GetChild(i);
+		if (!IsGeneratedBox(child->GetTagName()))
+			changed |= UpdateListMarkers(child);
+	}
+	return changed;
 }
 
 // Forge: gives elements matched by ::before / ::after rules a first / last child box with the tag forge-before / forge-after,
@@ -689,6 +839,7 @@ void ElementDocument::UpdateLayout()
 		if (const StyleSheet* sheet = GetStyleSheet(); sheet && UpdatePseudoElementBoxes(this, sheet))
 			Update(dp_ratio, vp_dimensions);
 		bool changed = UpdatePseudoElementContent(this);
+		changed |= UpdateListMarkers(this);
 		changed |= WrapFlexText(this);
 		if (changed)
 			Update(dp_ratio, vp_dimensions);

@@ -305,14 +305,14 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterShorthand(ShorthandId::BorderLeft, "border-left", "border-left-width, border-left-style, border-left-color", ShorthandType::FallThrough);
 	RegisterShorthand(ShorthandId::Border, "border", "border-top, border-right, border-bottom, border-left", ShorthandType::RecursiveRepeat);
 
-	RegisterProperty(PropertyId::BorderTopLeftRadius, "border-top-left-radius", "0px", false, false).AddParser("length");
-	RegisterProperty(PropertyId::BorderTopRightRadius, "border-top-right-radius", "0px", false, false).AddParser("length");
-	RegisterProperty(PropertyId::BorderBottomRightRadius, "border-bottom-right-radius", "0px", false, false).AddParser("length");
-	RegisterProperty(PropertyId::BorderBottomLeftRadius, "border-bottom-left-radius", "0px", false, false).AddParser("length");
+	RegisterProperty(PropertyId::BorderTopLeftRadius, "border-top-left-radius", "0px", false, false).AddParser("length_percent");
+	RegisterProperty(PropertyId::BorderTopRightRadius, "border-top-right-radius", "0px", false, false).AddParser("length_percent");
+	RegisterProperty(PropertyId::BorderBottomRightRadius, "border-bottom-right-radius", "0px", false, false).AddParser("length_percent");
+	RegisterProperty(PropertyId::BorderBottomLeftRadius, "border-bottom-left-radius", "0px", false, false).AddParser("length_percent");
 	RegisterShorthand(ShorthandId::BorderRadius, "border-radius", "border-top-left-radius, border-top-right-radius, border-bottom-right-radius, border-bottom-left-radius", ShorthandType::Box);
 
 	RegisterProperty(PropertyId::Display, "display", "inline", false, true)
-		.AddParser("keyword", "none, block, inline, inline-block, flow-root, flex, inline-flex, table, inline-table, table-row, table-row-group, table-column, table-column-group, table-cell, list-item=1, contents=1, grid=1, inline-grid=3"); // Forge: grid falls back to block for now
+		.AddParser("keyword", "none, block, inline, inline-block, flow-root, flex, inline-flex, table, inline-table, table-row, table-row-group, table-column, table-column-group, table-cell, list-item, contents=1, grid=1, inline-grid=3"); // Forge: grid falls back to block for now
 	RegisterProperty(PropertyId::Position, "position", "static", false, true).AddParser("keyword", "static, relative, absolute, fixed, sticky=1"); // Forge: sticky acts as relative
 	RegisterProperty(PropertyId::Top, "top", "auto", false, false).AddParser("keyword", "auto").AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockHeight);
 	RegisterProperty(PropertyId::Right, "right", "auto", false, false).AddParser("keyword", "auto").AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockWidth);
@@ -442,6 +442,10 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 
 	// Forge: the text of ::before and ::after boxes, kept as written (quotes and escapes) and read by ElementDocument.
 	RegisterProperty(PropertyId::Invalid, "content", "normal", false, true).AddParser("string");
+	// Forge: list markers, drawn by ElementDocument as a forge-marker box in list items. 'list-style' is kept whole and read there.
+	RegisterProperty(PropertyId::Invalid, "list-style-type", "disc", true, true).AddParser("string");
+	RegisterProperty(PropertyId::Invalid, "list-style-position", "outside", true, true).AddParser("string");
+	RegisterProperty(PropertyId::Invalid, "list-style", "", true, true).AddParser("string");
 
 	// Forge: logical properties, for left-to-right horizontal text.
 	const auto logical = [this](const char* name, const char* physical, ShorthandType type) {

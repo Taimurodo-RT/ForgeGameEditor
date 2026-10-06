@@ -154,8 +154,7 @@ bool ElementUtilities::GetClippingRegion(Element* element, Rectanglei& out_clip_
 			{
 				const TransformState* transform_state = clipping_element->GetTransformState();
 				const Matrix4f* transform = (transform_state ? transform_state->GetTransform() : nullptr);
-				const bool has_border_radius = (clip_computed.border_top_left_radius() > 0.f || clip_computed.border_top_right_radius() > 0.f ||
-					clip_computed.border_bottom_right_radius() > 0.f || clip_computed.border_bottom_left_radius() > 0.f);
+				const bool has_border_radius = clip_computed.has_border_radius();
 
 				// If the element has border-radius we always use a clip mask, since we can't easily predict if content is located on the curved
 				// region to be clipped. If the element has a transform we only use a clip mask when the content clips.

@@ -89,7 +89,7 @@ SharedPtr<BoxShadowRenderable> BoxShadowCache::GetHandle(Element* element, const
 		computed.border_bottom_color().ToPremultiplied(),
 		computed.border_left_color().ToPremultiplied(),
 	};
-	const CornerSizes border_radius = computed.border_radius();
+	const CornerSizes border_radius = computed.border_radius(element->GetBox().GetSize(BoxArea::Border));
 	BoxShadowGeometryInfo geom_info = GeometryBoxShadow::Resolve(element, border_radius, background_color, border_colors, computed.opacity());
 	return GetOrCreateBoxShadow(*render_manager, geom_info);
 }

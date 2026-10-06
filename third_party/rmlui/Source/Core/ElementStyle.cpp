@@ -1266,16 +1266,28 @@ void ElementStyle::ComputeValue(Style::ComputedValues& values, float dp_ratio, V
 		break;
 
 	case PropertyId::BorderTopLeftRadius:
-		values.border_top_left_radius(ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions));
+		if (p->unit == Unit::PERCENT) // Forge
+			values.border_radius_percent(0, p->Get<float>());
+		else
+			values.border_top_left_radius(Math::Max(0.f, ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions)));
 		break;
 	case PropertyId::BorderTopRightRadius:
-		values.border_top_right_radius(ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions));
+		if (p->unit == Unit::PERCENT) // Forge
+			values.border_radius_percent(1, p->Get<float>());
+		else
+			values.border_top_right_radius(Math::Max(0.f, ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions)));
 		break;
 	case PropertyId::BorderBottomRightRadius:
-		values.border_bottom_right_radius(ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions));
+		if (p->unit == Unit::PERCENT) // Forge
+			values.border_radius_percent(2, p->Get<float>());
+		else
+			values.border_bottom_right_radius(Math::Max(0.f, ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions)));
 		break;
 	case PropertyId::BorderBottomLeftRadius:
-		values.border_bottom_left_radius(ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions));
+		if (p->unit == Unit::PERCENT) // Forge
+			values.border_radius_percent(3, p->Get<float>());
+		else
+			values.border_bottom_left_radius(Math::Max(0.f, ComputeLength(p->GetNumericValue(), font_size, document_font_size, dp_ratio, vp_dimensions)));
 		break;
 
 	case PropertyId::Display:

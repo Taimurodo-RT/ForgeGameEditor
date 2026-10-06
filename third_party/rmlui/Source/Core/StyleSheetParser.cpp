@@ -300,7 +300,7 @@ static String RewritePseudoElementSelector(const String& in_selector)
 	static const struct {
 		const char* suffix;
 		const char* tag;
-	} pseudo[] = {{"::before", "forge-before"}, {"::after", "forge-after"}, {":before", "forge-before"}, {":after", "forge-after"}};
+	} pseudo[] = {{"::before", "forge-before"}, {"::after", "forge-after"}, {":before", "forge-before"}, {":after", "forge-after"}, {"::marker", "forge-marker"}};
 	for (const auto& p : pseudo)
 	{
 		const size_t n = strlen(p.suffix);

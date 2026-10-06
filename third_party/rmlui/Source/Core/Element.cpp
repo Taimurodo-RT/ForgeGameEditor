@@ -520,7 +520,7 @@ RenderBox Element::GetRenderBox(BoxArea fill_area, int index)
 	case BoxArea::Auto: RMLUI_ERROR;
 	}
 
-	return RenderBox{inner_size, box.offset, edge_sizes, meta->computed_values.border_radius()};
+	return RenderBox{inner_size, box.offset, edge_sizes, meta->computed_values.border_radius(box.padding_size + box.box.GetFrameSize(BoxArea::Border))};
 }
 
 int Element::GetNumBoxes()
@@ -2444,6 +2444,7 @@ void Element::AddToStackingContext(Vector<StackingContextChild>& stacking_childr
 		switch (display)
 		{
 		case Display::Block:
+		case Display::ListItem: // Forge
 		case Display::FlowRoot:
 		case Display::Table:
 		case Display::Flex:

@@ -45,7 +45,8 @@ namespace Style {
 		TableRowGroup,
 		TableColumn,
 		TableColumnGroup,
-		TableCell
+		TableCell,
+		ListItem // Forge: a block with a list marker
 	};
 	enum class Position : uint8_t { Static, Relative, Absolute, Fixed };
 
