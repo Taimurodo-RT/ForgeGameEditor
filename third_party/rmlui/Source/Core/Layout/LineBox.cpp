@@ -296,6 +296,31 @@ void LineBox::Close(Element* offset_parent, Vector2f offset_parent_position, Sty
 {
 	RMLUI_ASSERT(is_vertically_positioned && !is_closed);
 
+	// Forge: spaces at the end of the line hang past it in web documents, so they take no part in the line's width or alignment.
+	{
+		int last = -1;
+		for (int i = (int)fragments.size() - 1; i >= 0 && last < 0; i--)
+			if (fragments[i].type != FragmentType::InlineBox)
+				last = i;
+		if (last >= 0 && fragments[last].type == FragmentType::TextRun)
+		{
+			const float trimmed = fragments[last].box->TrimTrailingSpaces(fragments[last].fragment_handle);
+			if (trimmed > 0.f)
+			{
+				fragments[last].layout_width = Math::Max(fragments[last].layout_width - trimmed, 0.f);
+				for (int i = 0; i < (int)fragments.size(); i++)
+				{
+					Fragment& fragment = fragments[i];
+					if (fragment.type == FragmentType::InlineBox && i < last && last < (int)fragment.children_end_index)
+						fragment.layout_width = Math::Max(fragment.layout_width - trimmed, 0.f);
+					else if (i > last)
+						fragment.position.x -= trimmed;
+				}
+				box_cursor = Math::Max(box_cursor - trimmed, 0.f);
+			}
+		}
+	}
+
 	// Horizontal alignment using available space on our line.
 	if (box_cursor < line_width)
 	{

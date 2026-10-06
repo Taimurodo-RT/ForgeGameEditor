@@ -1,4 +1,5 @@
 #include "FreeTypeInterface.h"
+#include <hb.h>
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/FontMetrics.h"
 #include "../../../Include/RmlUi/Core/Log.h"
@@ -313,7 +314,8 @@ static void BuildGlyphMap(FT_Face ft_face, int size, FontGlyphMap& glyphs, const
 
 static bool BuildGlyph(FT_Face ft_face, const Character character, FontGlyphMap& glyphs, const float bitmap_scaling_factor)
 {
-	FT_UInt index = FT_Get_Char_Index(ft_face, (FT_ULong)FreeType::BaseCharacter(character));
+	const char32_t base = (char32_t)FreeType::BaseCharacter(character);
+	FT_UInt index = ((base & FreeType::GlyphIndexFlag) ? (FT_UInt)(base & 0xFFFF) : FT_Get_Char_Index(ft_face, (FT_ULong)base));
 	if (index == 0)
 		return false;
 
@@ -609,6 +611,30 @@ static void BitmapDownscale(byte* bitmap_new, const int new_width, const int new
 				bitmap_new[(f * new_width + g) * num_channels + i] = (byte)Math::Min(sum[i] * sumscale, 255.f);
 		}
 	}
+}
+
+void* FreeType::CreateShapingFont(FontFaceHandleFreetype face, int font_size)
+{
+	FT_Face ft_face = (FT_Face)face;
+	if (!ft_face || !ft_face->stream || !ft_face->stream->base || !FT_IS_SCALABLE(ft_face))
+		return nullptr;
+	// The face reads the font data FreeType holds in memory, which outlives the font face handles.
+	hb_blob_t* blob = hb_blob_create((const char*)ft_face->stream->base, (unsigned int)ft_face->stream->size, HB_MEMORY_MODE_READONLY, nullptr, nullptr);
+	hb_face_t* hb_face = hb_face_create(blob, (unsigned int)(ft_face->face_index & 0xFFFF));
+	hb_blob_destroy(blob);
+	hb_font_t* font = hb_font_create(hb_face);
+	hb_face_destroy(hb_face);
+	if (const long instance = (ft_face->face_index >> 16); instance > 0)
+		hb_font_set_var_named_instance(font, (unsigned int)(instance - 1));
+	// Positions come back in 1/64 pixel.
+	hb_font_set_scale(font, font_size * 64, font_size * 64);
+	return font;
+}
+
+void FreeType::ReleaseShapingFont(void* font)
+{
+	if (font)
+		hb_font_destroy((hb_font_t*)font);
 }
 
 } // namespace Rml

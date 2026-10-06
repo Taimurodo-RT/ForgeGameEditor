@@ -39,13 +39,8 @@ void ElementEffects::InstanceEffects()
 
 	const ComputedValues& computed = element->GetComputedValues();
 	blend_mode = GetMixBlendMode(element);
-	if (ElementDocument* document = element->GetOwnerDocument(); document && document->GetTagName() == "html")
-	{
-		const Property* opacity = element->GetLocalProperty(PropertyId::Opacity);
-		const float value = (opacity ? opacity->Get<float>() : 1.f);
-		if (value < 1.f)
-			opacity_filter = render_manager->CompileFilter("opacity", Dictionary{{"value", Variant(Math::Max(value, 0.f))}});
-	}
+	if (const float value = computed.group_opacity(); value < 1.f)
+		opacity_filter = render_manager->CompileFilter("opacity", Dictionary{{"value", Variant(Math::Max(value, 0.f))}});
 
 	if (computed.has_decorator() || computed.has_mask_image())
 	{

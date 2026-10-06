@@ -1140,6 +1140,7 @@ PropertyIdSet ElementStyle::ComputeValues(Style::ComputedValues& values, const S
 	if (ElementDocument* document = element->GetOwnerDocument(); document && document->GetTagName() == "html")
 	{
 		// Opacity fades an element and its contents as one picture (see ElementEffects), not each part on its own.
+		values.group_opacity(values.opacity());
 		values.opacity(1.f);
 
 		const PropertyId colors[] = {PropertyId::BorderTopColor, PropertyId::BorderRightColor, PropertyId::BorderBottomColor,

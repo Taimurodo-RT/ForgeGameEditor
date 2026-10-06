@@ -27,6 +27,8 @@ public:
 
 	// Forge: number of spaces in a fragment that can be widened for text justification.
 	virtual int GetJustificationOpportunities(LayoutFragmentHandle /*handle*/, bool /*trim_trailing*/) const { return 0; }
+	// Forge: removes collapsible spaces at the end of a line's last text fragment, returns the width removed.
+	virtual float TrimTrailingSpaces(LayoutFragmentHandle /*handle*/) { return 0.f; }
 
 	float GetHeightAboveBaseline() const { return height_above_baseline; }
 	float GetDepthBelowBaseline() const { return depth_below_baseline; }
@@ -107,6 +109,7 @@ public:
 
 	void Submit(const PlacedFragment& placed_fragment) override;
 	int GetJustificationOpportunities(LayoutFragmentHandle handle, bool trim_trailing) const override; // Forge
+	float TrimTrailingSpaces(LayoutFragmentHandle handle) override;                                    // Forge
 
 	String DebugDumpNameValue() const override;
 

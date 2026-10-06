@@ -70,6 +70,13 @@ private:
 	SharedPtr<const UnorderedMap<String, Character>> word_glyphs;
 	bool oblique = false; // Forge: synthesized italic
 
+	// Forge: the advance of each code point of 'string' in pixels as HarfBuzz shapes it, with kerning when asked; false when the
+	// string does not shape to one glyph per code point (ligatures of complex scripts), or there is no shaping font. A glyph the
+	// face lacks gets NaN, for the caller to use the fallback font's own advance.
+	// glyph_keys holds Character::Null for a code point drawn with its own glyph, or the GlyphKey of a substituted glyph.
+	bool ShapeAdvances(StringView string, bool kerning, Vector<float>& advances, Vector<Character>& glyph_keys) const;
+	void* shaping_font = nullptr; // hb_font_t
+
 	// Build and append glyph to 'glyphs'
 	bool AppendGlyph(Character character);
 

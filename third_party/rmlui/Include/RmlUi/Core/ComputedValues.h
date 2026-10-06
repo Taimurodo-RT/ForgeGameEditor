@@ -171,6 +171,7 @@ namespace Style {
 		float min_width = 0, max_width = FLT_MAX;
 		float min_height = 0, max_height = FLT_MAX;
 		float vertical_align_length = 0;
+		float group_opacity = 1; // Forge: in web documents, the opacity the element is faded with as a group
 
 		float perspective = 0;
 		float perspective_origin_x = 50.f;
@@ -255,6 +256,7 @@ namespace Style {
 		WordBreak      word_break()       const { return inherited.word_break; }
 		Colourb        color()            const { return inherited.color; }
 		float          opacity()          const { return inherited.opacity; }
+		float          group_opacity()    const { return rare.group_opacity; } // Forge
 		LineHeight     line_height()      const { return LineHeight(inherited.line_height, inherited.line_height_inherit_type, inherited.line_height_inherit); }
 		const String&  language()         const { return inherited.language; }
 		Direction      direction()        const { return inherited.direction; }
@@ -375,6 +377,7 @@ namespace Style {
 		void word_break        (WordBreak value)      { inherited.word_break         = value; }
 		void color             (Colourb value)        { inherited.color              = value; }
 		void opacity           (float value)          { inherited.opacity            = value; }
+		void group_opacity     (float value)          { rare.group_opacity           = value; } // Forge
 		void line_height       (LineHeight value)     { inherited.line_height = value.value; inherited.line_height_inherit_type = value.inherit_type; inherited.line_height_inherit = value.inherit_value;  }
 		void language          (const String& value)  { inherited.language           = value; }
 		void direction         (Direction value)      { inherited.direction          = value; }

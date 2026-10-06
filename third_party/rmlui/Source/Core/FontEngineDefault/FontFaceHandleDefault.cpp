@@ -6,6 +6,8 @@
 #include "FontFaceLayer.h"
 #include "FontProvider.h"
 #include "FreeTypeInterface.h"
+#include <hb.h>
+#include <cmath>
 #include <algorithm>
 #include <numeric>
 
@@ -25,6 +27,7 @@ FontFaceHandleDefault::~FontFaceHandleDefault()
 {
 	glyphs.clear();
 	layers.clear();
+	FreeType::ReleaseShapingFont(shaping_font);
 }
 
 bool FontFaceHandleDefault::Initialize(FontFaceHandleFreetype face, int font_size, bool load_default_glyphs, bool in_oblique)
@@ -39,6 +42,7 @@ bool FontFaceHandleDefault::Initialize(FontFaceHandleFreetype face, int font_siz
 
 	has_kerning = FreeType::HasKerning(ft_face);
 	FillKerningPairCache();
+	shaping_font = FreeType::CreateShapingFont(ft_face, font_size);
 
 	// Generate the default layer and layer configuration.
 	base_layer = GetOrCreateLayer(nullptr);
@@ -87,6 +91,58 @@ StringView FontFaceHandleDefault::ApplyWordGlyphs(StringView string, String& sto
 	return StringView(storage);
 }
 
+bool FontFaceHandleDefault::ShapeAdvances(StringView string, bool kerning, Vector<float>& advances, Vector<Character>& glyph_keys) const
+{
+	advances.clear();
+	glyph_keys.clear();
+	if (!shaping_font || string.empty())
+		return false;
+	static thread_local hb_buffer_t* buffer = hb_buffer_create();
+	hb_buffer_reset(buffer);
+	hb_buffer_add_utf8(buffer, string.begin(), (int)string.size(), 0, (int)string.size());
+	hb_buffer_guess_segment_properties(buffer);
+	if (hb_buffer_get_direction(buffer) != HB_DIRECTION_LTR)
+		return false;
+	// Glyphs are drawn per code point, so ligatures stay off; kerning follows font-kerning.
+	const hb_feature_t features[] = {
+		{HB_TAG('l', 'i', 'g', 'a'), 0, 0, (unsigned int)-1},
+		{HB_TAG('c', 'l', 'i', 'g'), 0, 0, (unsigned int)-1},
+		{HB_TAG('d', 'l', 'i', 'g'), 0, 0, (unsigned int)-1},
+		{HB_TAG('k', 'e', 'r', 'n'), kerning ? 1u : 0u, 0, (unsigned int)-1},
+	};
+	hb_font_t* font = (hb_font_t*)shaping_font;
+	hb_shape(font, buffer, features, (unsigned int)(sizeof(features) / sizeof(features[0])));
+
+	unsigned int count = 0;
+	const hb_glyph_info_t* infos = hb_buffer_get_glyph_infos(buffer, &count);
+	const hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer, nullptr);
+	if (count != (unsigned int)StringUtilities::LengthUTF8(string))
+		return false;
+	advances.resize(count);
+	glyph_keys.assign(count, Character::Null);
+	unsigned int previous_cluster = 0;
+	auto it_string = StringIteratorU8(string);
+	for (unsigned int i = 0; i < count; i++, ++it_string)
+	{
+		if (i > 0 && infos[i].cluster <= previous_cluster)
+			return false;
+		previous_cluster = infos[i].cluster;
+		if (infos[i].codepoint == 0)
+		{
+			advances[i] = std::nanf("");
+			continue;
+		}
+		// A glyph other than the code point's own came from a substitution such as a contextual alternate.
+		hb_codepoint_t nominal = 0;
+		if (hb_font_get_nominal_glyph(font, (hb_codepoint_t)(char32_t)*it_string, &nominal) && nominal != infos[i].codepoint)
+			glyph_keys[i] = FreeType::GlyphKey(infos[i].codepoint);
+		// As browsers place text without subpixel positioning: the glyph's own advance rounded to whole pixels, plus kerning.
+		const hb_position_t own = hb_font_get_glyph_h_advance(font, infos[i].codepoint);
+		advances[i] = Math::Round(float(own) / 64.f) + float(positions[i].x_advance - own) / 64.f;
+	}
+	return true;
+}
+
 int FontFaceHandleDefault::GetStringWidth(StringView in_string, const TextShapingContext& text_shaping_context, Character prior_character)
 {
 	RMLUI_ZoneScoped;
@@ -97,20 +153,27 @@ int FontFaceHandleDefault::GetStringWidth(StringView in_string, const TextShapin
 	bool is_kerning_enabled = IsKerningEnabled(text_shaping_context);
 	float width = 0.f; // Forge: fractional advances
 	float word_spacing = 0.f; // Forge
+	// Forge: widths and kerning from HarfBuzz when the string shapes one glyph per code point.
+	static thread_local Vector<float> shaped;
+	static thread_local Vector<Character> shaped_keys;
+	const bool is_shaped = ShapeAdvances(string, is_kerning_enabled, shaped, shaped_keys);
+	size_t index = 0;
 	for (auto it_string = StringIteratorU8(string); it_string; ++it_string)
 	{
 		Character character = *it_string;
+		const float shaped_advance = (is_shaped && index < shaped.size() ? shaped[index] : std::nanf(""));
+		index++;
 
 		const FontGlyph* glyph = GetOrAppendGlyph(character);
 		if (!glyph)
 			continue;
 
 		// Adjust the cursor for the kerning between this character and the previous one.
-		if (is_kerning_enabled)
+		if (is_kerning_enabled && !is_shaped)
 			width += (float)GetKerning(prior_character, character, has_set_size);
 
 		// Adjust the cursor for this character's advance.
-		width += glyph->advance_exact;
+		width += (std::isnan(shaped_advance) ? glyph->advance_exact : shaped_advance);
 		width += text_shaping_context.letter_spacing;
 		if (character == Character(' ') || character == Character(0xA0)) // Forge: word-spacing
 			word_spacing += text_shaping_context.word_spacing;
@@ -228,15 +291,32 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 		bool has_set_size = false;
 		const bool is_kerning_enabled = IsKerningEnabled(text_shaping_context);
 		Character prior_character = Character::Null;
+		static thread_local Vector<float> shaped;
+		static thread_local Vector<Character> shaped_keys;
+		const bool is_shaped = ShapeAdvances(string, is_kerning_enabled, shaped, shaped_keys);
+		size_t index = 0;
 		for (auto it_string = StringIteratorU8(string); it_string; ++it_string)
 		{
 			Character character = *it_string;
+			const float shaped_advance = (is_shaped && index < shaped.size() ? shaped[index] : std::nanf(""));
+			const Character shaped_key = (is_shaped && index < shaped_keys.size() ? shaped_keys[index] : Character::Null);
+			index++;
 			const FontGlyph* glyph = GetOrAppendGlyph(character);
 			if (!glyph)
 				continue;
+			// Draw the glyph shaping chose when it substituted one.
+			if (shaped_key != Character::Null)
+			{
+				Character key = shaped_key;
+				if (const FontGlyph* substituted = GetOrAppendGlyph(key, false); substituted && key == shaped_key)
+				{
+					character = shaped_key;
+					glyph = substituted;
+				}
+			}
 
 			// Adjust the cursor for the kerning between this character and the previous one.
-			if (is_kerning_enabled)
+			if (is_kerning_enabled && !is_shaped)
 				line_width += (float)GetKerning(prior_character, character, has_set_size);
 
 			const float x = position.x + line_width + word_spacing;
@@ -257,7 +337,7 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 			}
 			placed.push_back({key, x_whole, rgba});
 
-			line_width += glyph->advance_exact;
+			line_width += (std::isnan(shaped_advance) ? glyph->advance_exact : shaped_advance);
 			line_width += text_shaping_context.letter_spacing;
 			if (character == Character(' ') || character == Character(0xA0)) // Forge: word-spacing
 				word_spacing += text_shaping_context.word_spacing;

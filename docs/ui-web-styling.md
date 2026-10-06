@@ -38,15 +38,24 @@ tools/webcompat/run.sh build out [python]   # нужны Node с Playwright и P
 | Математика | `calc()`, `min()`, `max()`, `clamp()` с любыми единицами, в том числе `calc(100% - 2rem)`; `vmin`, `vmax`, `ch`, `ex`, `turn` внутри них |
 | Переменные | `var()` с запасным значением, и в сокращениях (`padding: var(--a) var(--b)`) |
 | Цвета | `rgb()`/`hsl()`/`hwb()` в старой и новой записи (`rgb(0 0 0 / .5)`), `color-mix()`, `currentColor`, любые регистры (`RGBA(...)`) |
-| Рамки | `border-style`: `none`, `hidden`, `solid` и др. (пока все рисуются сплошными) |
+| Рамки | все `border-style` (пунктир, точки, двойные, `groove`/`ridge`/`inset`/`outset`), радиусы в процентах, `outline` |
 | Логические свойства | `margin-block`, `padding-inline`, `inset-*`, `block-size`, `inline-size`, `border-start-start-radius` и др. (письмо слева направо) |
-| Текст | `line-height: normal` по метрикам шрифта, синтетический курсив, `text-align: start/end`, текст прямо внутри flex-контейнера |
-| Шрифты | списки семейств (`Inter, "Segoe UI", sans-serif`), подмена неизвестных семейств на свои (`fonts.json`, `aliases`), значки по именам: `<i>home</i>` шрифтом Material Symbols |
-| Ключевые слова | `position: sticky` (как `relative`), `overflow: clip/overlay`, `font-weight: lighter/bolder`, `display: list-item/contents/grid` (пока как блок) |
+| Раскладка | сетка `display: grid` (шаблоны, области, `repeat`/`auto-fill`/`auto-fit`, растяжение на несколько ячеек, авторазмещение), `flex: 1` как в браузере, схлопывание отступов родителя и ребёнка, таблицы с авто-шириной колонок |
+| Псевдоэлементы | `::before`/`::after` с `content`, `attr()` и escape-последовательностями, `::marker`, `::first-letter`; маркеры списков рисуются фигурами размером как в Chromium |
+| Фон | несколько слоёв: линейные, радиальные и конические градиенты, картинки (PNG, SVG, `data:`), `background-size`/`-position`/`-repeat` для всех слоёв |
+| Эффекты | размытые `box-shadow` и `text-shadow`, `filter` (в том числе `drop-shadow()`), все 16 режимов `mix-blend-mode` (свой шейдер наложения), прозрачность группой как в браузере |
+| Трансформации | `transform`, `transform-origin` и `perspective-origin` с ключевыми словами в любом порядке |
+| Цвета | все 148 именованных цветов CSS |
+| Текст | `line-height: normal` по метрикам шрифта, синтетический курсив, `text-align: start/end/justify`, `text-transform` (с `capitalize`, Юникод), `text-indent`, `word-spacing`, дробный `letter-spacing`, `line-clamp`, пробел в конце строки не расширяет блок |
+| Шрифты | ширины букв как в браузере (без хинтинга), субпиксельное положение букв, кернинг и контекстные формы букв через HarfBuzz (`font-kerning`), списки семейств (`Inter, "Segoe UI", sans-serif`), подмена неизвестных семейств на свои (`fonts.json`, `aliases`), значки по именам: `<i>home</i>` шрифтом Material Symbols |
+| Формы | флажки, переключатели и ползунки стоят на базовой линии как в браузере, точки в полях пароля, стили браузера по умолчанию для кнопок и полей |
+| Ключевые слова | `position: sticky` (как `relative`), `overflow: clip/overlay`, `font-weight: lighter/bolder`, `display: contents`, `all` |
+
+Совпадение с Chromium по `tools/webcompat` на 2026-10-06: 97,2% в среднем (Bootstrap 93,5–98,3%,
+Material 3 87,3–97,8%). Остаток в основном из-за сглаживания текста: Chromium сглаживает по субпикселям
+экрана, движок — в оттенках серого.
 
 ## Что дальше
 
-По убыванию пользы для Material 3 и Bootstrap: `::before`/`::after`, сетка (`display: grid`),
-градиенты и картинки в `background`, пунктирные и двойные рамки, `outline`, `text-shadow`,
-`mix-blend-mode`, `aspect-ratio`, `object-fit`, маркеры списков, `text-transform: capitalize`,
-`text-indent`, `word-spacing`, `line-clamp`.
+Холст редактора интерфейсов: слои, линейки, прилипание и умные направляющие; затем панель свойств,
+компоненты с вариантами, анимации и простой режим.

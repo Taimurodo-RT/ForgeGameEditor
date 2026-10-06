@@ -1809,11 +1809,7 @@ void Element::OnAttributeChange(const ElementAttributes& changed_attributes)
 // Forge: in web documents an element with opacity below 1 is faded as a group, which needs its own stacking context.
 static bool HasWebGroupOpacity(Element* element)
 {
-	ElementDocument* document = element->GetOwnerDocument();
-	if (!document || document->GetTagName() != "html")
-		return false;
-	const Property* opacity = element->GetLocalProperty(PropertyId::Opacity);
-	return opacity && opacity->Get<float>() < 1.f;
+	return element->GetComputedValues().group_opacity() < 1.f;
 }
 
 void Element::OnPropertyChange(const PropertyIdSet& changed_properties)

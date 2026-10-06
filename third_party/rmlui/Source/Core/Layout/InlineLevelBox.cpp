@@ -1,7 +1,9 @@
 #include "InlineLevelBox.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Core.h"
+#include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ElementText.h"
+#include "../../../Include/RmlUi/Core/ElementUtilities.h"
 #include "../../../Include/RmlUi/Core/FontEngineInterface.h"
 #include "LayoutDetails.h"
 #include "LayoutPools.h"
@@ -208,6 +210,29 @@ int InlineLevelBox_Text::GetJustificationOpportunities(LayoutFragmentHandle hand
 		if (text[i] == ' ')
 			count++;
 	return count;
+}
+
+float InlineLevelBox_Text::TrimTrailingSpaces(LayoutFragmentHandle handle)
+{
+	// Forge: in web documents a collapsible space at the end of a line hangs, so it adds no width to the line.
+	if ((size_t)handle >= fragments.size())
+		return 0.f;
+	Element* element = GetElement();
+	const ElementDocument* document = element->GetOwnerDocument();
+	if (!document || document->GetTagName() != "html")
+		return 0.f;
+	const Style::WhiteSpace white_space = element->GetComputedValues().white_space();
+	if (white_space != Style::WhiteSpace::Normal && white_space != Style::WhiteSpace::Nowrap && white_space != Style::WhiteSpace::Preline)
+		return 0.f;
+	String& text = fragments[handle];
+	size_t end = text.size();
+	while (end > 0 && text[end - 1] == ' ')
+		--end;
+	if (end == text.size())
+		return 0.f;
+	const int full_width = ElementUtilities::GetStringWidth(element, text);
+	text.resize(end);
+	return float(Math::Max(full_width - ElementUtilities::GetStringWidth(element, text), 0));
 }
 
 String InlineLevelBox_Text::DebugDumpNameValue() const

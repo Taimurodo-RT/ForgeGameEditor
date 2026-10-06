@@ -23,6 +23,13 @@ namespace FreeType {
 	{
 		return int((char32_t)character >> SubpixelShift);
 	}
+	// Forge: a key with this bit names a glyph of the face by its index instead of a code point, for the glyphs text shaping
+	// substitutes (contextual alternates).
+	constexpr char32_t GlyphIndexFlag = (char32_t)1 << 21;
+	inline Character GlyphKey(unsigned int glyph_index)
+	{
+		return Character(GlyphIndexFlag | (char32_t)(glyph_index & 0xFFFF));
+	}
 
 	// Initialize FreeType library.
 	bool Initialise();
@@ -54,6 +61,10 @@ namespace FreeType {
 
 	// Returns true if the font face has kerning.
 	bool HasKerning(FontFaceHandleFreetype face);
+
+	// Forge: a HarfBuzz font (hb_font_t) for the face at a pixel size, for shaping; nullptr if it cannot be made.
+	void* CreateShapingFont(FontFaceHandleFreetype face, int font_size);
+	void ReleaseShapingFont(void* font);
 
 } // namespace FreeType
 } // namespace Rml

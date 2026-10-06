@@ -543,6 +543,14 @@ bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictio
 			return ParseBackground(dictionary, property_value, name == "background");
 		if (name == "text-shadow")
 			return ParseTextShadow(dictionary, property_value);
+		// CSS lets the vertical keyword come first, as in 'top left'; the shorthand takes x first.
+		if ((name == "transform-origin" || name == "perspective-origin") && property_values.size() >= 2)
+		{
+			auto lower = [](const String& v) { return StringUtilities::ToLower(v); };
+			const String a = lower(property_values[0]), b = lower(property_values[1]);
+			if (a == "top" || a == "bottom" || b == "left" || b == "right")
+				std::swap(property_values[0], property_values[1]);
+		}
 	}
 
 	// Handle the special behavior of the flex shorthand first, otherwise it acts like 'FallThrough'.
