@@ -3,6 +3,8 @@
 #include "../../../Include/RmlUi/Core/Element.h"
 #include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ElementScroll.h"
+#include "../../../Include/RmlUi/Core/ElementText.h"
+#include "../../../Include/RmlUi/Core/StringUtilities.h"
 #include "../../../Include/RmlUi/Core/Profiling.h"
 #include "../../../Include/RmlUi/Core/Types.h"
 #include "ContainerBox.h"
@@ -259,6 +261,11 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 		const ComputedValues& computed = element->GetComputedValues();
 
 		if (computed.display() == Style::Display::None)
+		{
+			continue;
+		}
+		else if (auto text = rmlui_dynamic_cast<ElementText*>(element);
+				 text && StringUtilities::StripWhitespace(text->GetText()).empty()) // Forge: white space between tags makes no flex item
 		{
 			continue;
 		}
