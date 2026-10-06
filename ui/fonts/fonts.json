@@ -80,7 +80,8 @@
     {
       "file": "MaterialSymbolsRounded-Filled.ttf",
       "family": "Material Symbols Rounded",
-      "weight": 500
+      "weight": 500,
+      "icon_names": true
     },
     {
       "file": "Lora.ttf",
@@ -93,5 +94,38 @@
       "weight": 400,
       "style": "italic"
     }
-  ]
+  ],
+  "aliases_note": "Families a style may name that are not loaded (as in web pages: sans-serif, Arial, Segoe UI...) and the loaded family that stands in for them. \"\" is used when no family in a list is available.",
+  "aliases": {
+    "": "Onest",
+    "sans-serif": "Onest",
+    "system-ui": "Onest",
+    "ui-sans-serif": "Onest",
+    "-apple-system": "Onest",
+    "BlinkMacSystemFont": "Onest",
+    "Segoe UI": "Onest",
+    "Roboto": "Onest",
+    "Inter": "Onest",
+    "Helvetica Neue": "Onest",
+    "Helvetica": "Onest",
+    "Arial": "Onest",
+    "Noto Sans": "Onest",
+    "Liberation Sans": "Onest",
+    "serif": "Lora",
+    "ui-serif": "Lora",
+    "Georgia": "Lora",
+    "Times New Roman": "Lora",
+    "Times": "Lora",
+    "monospace": "JetBrains Mono",
+    "ui-monospace": "JetBrains Mono",
+    "SFMono-Regular": "JetBrains Mono",
+    "Menlo": "JetBrains Mono",
+    "Monaco": "JetBrains Mono",
+    "Consolas": "JetBrains Mono",
+    "Liberation Mono": "JetBrains Mono",
+    "Courier New": "JetBrains Mono",
+    "Material Symbols Outlined": "Material Symbols Rounded",
+    "Material Symbols Sharp": "Material Symbols Rounded",
+    "Material Icons": "Material Symbols Rounded"
+  }
 }

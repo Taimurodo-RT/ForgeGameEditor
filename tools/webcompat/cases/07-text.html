@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 14px; color: #1f2937; }
+.s { font-size: 12px; } .m { font-size: 16px; } .l { font-size: 24px; } .xl { font-size: 40px; line-height: 1; }
+.w4 { font-weight: 400; } .w5 { font-weight: 500; } .w6 { font-weight: 600; } .w7 { font-weight: 700; }
+.ls { letter-spacing: 3px; } .up { text-transform: uppercase; } .cap { text-transform: capitalize; }
+.u { text-decoration: underline; } .lt { text-decoration: line-through; } .ov { text-decoration: overline; }
+.box { width: 360px; background: #f3f4f6; padding: 6px; margin: 6px 0; }
+.r { text-align: right; } .c { text-align: center; } .j { text-align: justify; }
+.lh { line-height: 2; }
+.ell { width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #fef3c7; }
+.nw { white-space: nowrap; }
+.mono { font-family: "JetBrains Mono"; font-size: 14px; }
+.exo { font-family: "Exo 2"; font-weight: 700; font-size: 28px; }
+.it { font-style: italic; }
+.clamp { width: 300px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; background: #e0f2fe; }
+.indent { text-indent: 30px; width: 360px; }
+.ws { word-spacing: 12px; }
+</style></head><body>
+<div><span class="s">12px</span> <span class="m">16px</span> <span class="l">24px</span> <span class="xl">40px</span></div>
+<div class="m"><span class="w4">Regular 400</span> · <span class="w5">Medium 500</span> · <span class="w6">Semi 600</span> · <span class="w7">Bold 700</span></div>
+<div class="m"><span class="ls">spaced</span> <span class="up">upper case</span> <span class="cap">capital words here</span></div>
+<div class="m"><span class="u">underline</span> <span class="lt">strike</span> <span class="ov">overline</span> <span class="it">italic</span></div>
+<div class="box r">Right aligned text</div><div class="box c">Centered text</div>
+<div class="box j">Justified text spreads words so both edges of every full line line up, which needs several lines to show.</div>
+<div class="box lh">Line height two makes lines airy, wrapping onto a second line here.</div>
+<div class="ell">This line is far too long to fit and ends with an ellipsis</div>
+<div class="mono">const x = 42; // mono</div><div class="exo">Exo 2 Display</div>
+<div class="clamp">Clamped to two lines: a long sentence that keeps going and going so that it needs a third line to show.</div>
+<div class="indent">First line indented by thirty pixels, the rest of the paragraph wraps back to the edge.</div>
+<div class="ws">word spacing of twelve</div>
+</body></html>

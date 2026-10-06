@@ -126,23 +126,19 @@ FetchContent_Declare(freetype
   GIT_SHALLOW TRUE)
 
 # RmlUi: HTML/CSS-like documents for the editor and for game menus. Rendered
-# by engine/ui on SDL_GPU, so none of its backends or samples are built.
+# by engine/ui on SDL_GPU. It lives in third_party/rmlui, where the engine
+# extends it toward the web's styling.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
 set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
 set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 # RmlUi looks for an installed FreeType; it gets the one fetched above instead.
 set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON)
-FetchContent_Declare(rmlui
-  GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
-  GIT_TAG 6.3
-  GIT_SHALLOW TRUE)
-
 FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb libwebp glslang spirv_cross flecs box2d luau freetype)
 if(NOT TARGET Freetype::Freetype)
   add_library(Freetype::Freetype ALIAS freetype)
 endif()
-FetchContent_MakeAvailable(rmlui)
+add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/rmlui ${CMAKE_BINARY_DIR}/third_party/rmlui)
 # Engine code builds with strict warnings; RmlUi's headers are not ours to fix.
 foreach(t rmlui_core rmlui_debugger)
   get_target_property(dirs ${t} INTERFACE_INCLUDE_DIRECTORIES)

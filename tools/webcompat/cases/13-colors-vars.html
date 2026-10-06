@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html><head><style>
+:root { --brand: #e11d48; --brand-rgb: 225, 29, 72; --space: 10px; --radius: 12px; --pad: var(--space); }
+body { margin: 12px; font-size: 13px; }
+.grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.c { width: 130px; height: 60px; padding: 4px; box-sizing: border-box; }
+.v1 { background: var(--brand); color: #fff; border-radius: var(--radius); }
+.v2 { background: rgba(var(--brand-rgb), .25); }
+.v3 { background: var(--missing, #0891b2); color: #fff; }
+.v4 { padding: var(--pad); background: #f1f5f9; }
+.v5 { --brand: #16a34a; background: var(--brand); color: #fff; }
+.h1 { background: hsl(210, 80%, 50%); color: #fff; } .h2 { background: hsla(30, 90%, 50%, .5); }
+.n1 { background: tomato; } .n2 { background: rebeccapurple; color: #fff; } .n3 { background: #0f08; }
+.n4 { background: #abc; } .n5 { color: crimson; border: 3px solid currentColor; }
+.rgb { background: rgb(20 120 220 / 60%); color: #fff; }
+.mix { background: color-mix(in srgb, #2563eb 40%, white); }
+.ok { background: oklch(70% 0.15 150); }
+.tr { background: transparent; border: 1px dashed #999; }
+</style></head><body>
+<div class="grid">
+<div class="c v1">var()</div><div class="c v2">rgba(var())</div><div class="c v3">fallback</div><div class="c v4">var in var</div><div class="c v5">local override</div>
+<div class="c h1">hsl</div><div class="c h2">hsla</div><div class="c n1">tomato</div><div class="c n2">rebeccapurple</div><div class="c n3">#0f08</div>
+<div class="c n4">#abc</div><div class="c n5">currentColor</div><div class="c rgb">rgb / 60%</div><div class="c mix">color-mix</div><div class="c ok">oklch</div>
+<div class="c tr">transparent</div>
+</div>
+</body></html>

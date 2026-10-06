@@ -1,5 +1,7 @@
 #include "interfaces.h"
 
+#include "forge/ui/html.h"
+
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
@@ -67,10 +69,17 @@ bool FileInterface::read(const std::string& path, std::string& out) {
         watched_[path_to_utf8(full)] = time;
     }
 
+    const bool page = ends_with(path, ".html") || ends_with(path, ".htm");
+    if (page) out = html_to_rml(out, "/web/html.rcss"); // "/": the UI folder
+    // Web pages and their .css keep var() as real custom properties: their names (--surface, --primary...) are
+    // their own and must not be replaced by the editor's tokens.
     if (tokens_ && (ends_with(path, ".rcss") || ends_with(path, ".rml"))) {
         std::vector<std::string> missing;
         out = tokens_->substitute(out, &missing);
-        for (const std::string& name : missing) FORGE_WARN("ui: %s uses unknown token --%s", path.c_str(), name.c_str());
+        // A name the file defines itself (--name: ...) is its own custom property.
+        for (const std::string& name : missing)
+            if (out.find("--" + name + ":") == std::string::npos && out.find("--" + name + " :") == std::string::npos)
+                FORGE_WARN("ui: %s uses unknown token --%s", path.c_str(), name.c_str());
     }
     return true;
 }

@@ -1,0 +1,96 @@
+/* Browser defaults for web pages (.html) loaded as UI documents: what a page
+   looks like before its own styles, after Chromium's html.css. The engine
+   links this sheet first in every .html document, so page styles win. As in a
+   browser, the document is <html> with <body> inside; rem is the font size of
+   <html>, and the background of <html> (or of <body>) fills the window. */
+
+/* Marks these rules as browser defaults: any page rule wins over them, whatever its selector. */
+@forge-user-agent;
+
+/* As in CSS: no border unless a style says solid, dashed... */
+* { border-style: none; }
+
+html {
+	display: block;
+	width: 100%; /* the window, as in a browser; an RmlUi document would shrink to its content */
+	font-family: "Onest";
+	font-size: 16px;
+	line-height: normal;
+	color: #000000;
+}
+body { display: block; margin: 8px; }
+
+address, article, aside, blockquote, center, dialog, div, dl, dd, dt, fieldset,
+figcaption, figure, footer, form, h1, h2, h3, h4, h5, h6, header, hgroup, hr,
+legend, li, main, nav, ol, p, pre, search, section, summary, details, ul {
+	display: block;
+}
+span, a, b, strong, i, em, u, s, small, big, code, kbd, samp, var, sub, sup,
+abbr, cite, q, mark, label, time, del, ins { display: inline; }
+
+head, link, style, template, datalist { display: none; }
+
+p { margin: 16px 0; }
+h1 { font-size: 2em; margin: 0.67em 0; font-weight: bold; }
+h2 { font-size: 1.5em; margin: 0.83em 0; font-weight: bold; }
+h3 { font-size: 1.17em; margin: 1em 0; font-weight: bold; }
+h4 { font-size: 1em; margin: 1.33em 0; font-weight: bold; }
+h5 { font-size: 0.83em; margin: 1.67em 0; font-weight: bold; }
+h6 { font-size: 0.67em; margin: 2.33em 0; font-weight: bold; }
+
+ul, ol { margin: 1em 0; padding-left: 40px; }
+li ul, li ol { margin: 0; }
+dl { margin: 1em 0; }
+dd { margin-left: 40px; }
+blockquote, figure { margin: 1em 40px; }
+hr { margin: 0.5em 0; border: 1px inset #c0c0c0; }
+fieldset { margin: 0 2px; padding: 0.35em 0.75em 0.625em; border: 2px groove #c0c0c0; }
+
+b, strong, th { font-weight: bold; }
+i, em, cite, var, address, dfn { font-style: italic; }
+u, ins { text-decoration: underline; }
+s, del { text-decoration: line-through; }
+small { font-size: 0.83em; }
+big { font-size: 1.17em; }
+mark { background-color: #ffff00; color: #000000; }
+a { color: #0000ee; text-decoration: underline; cursor: pointer; }
+code, kbd, samp, pre { font-family: "JetBrains Mono"; font-size: 13px; }
+pre { margin: 1em 0; white-space: pre; }
+sub { font-size: 0.83em; vertical-align: sub; }
+sup { font-size: 0.83em; vertical-align: super; }
+
+table { display: table; border-color: #808080; }
+thead, tbody, tfoot { display: table-row-group; }
+tr { display: table-row; }
+td, th { display: table-cell; padding: 1px; vertical-align: middle; }
+th { text-align: center; }
+caption { display: block; text-align: center; }
+
+img { display: inline-block; }
+
+button {
+	display: inline-block;
+	padding: 1px 6px;
+	border: 2px outset #767676;
+	border-radius: 3px;
+	background-color: #efefef;
+	color: #000000;
+	font-size: 13.333px;
+	text-align: center;
+	cursor: pointer;
+}
+button:hover { background-color: #e5e5e5; }
+button:active { background-color: #f5f5f5; }
+
+input, textarea, select {
+	display: inline-block;
+	padding: 1px 2px;
+	border: 1px inset #767676;
+	border-radius: 2px;
+	background-color: #ffffff;
+	color: #000000;
+	font-size: 13.333px;
+}
+input.text, input.password, input[type="text"], input[type="password"], input[type="email"],
+input[type="search"], input[type="number"] { width: 150px; }
+textarea { width: 180px; height: 34px; }

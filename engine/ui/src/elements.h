@@ -19,6 +19,8 @@ namespace forge::ui {
 // icons.codepoints file shipped with the font.
 bool load_icon_codepoints(const std::filesystem::path& file);
 u32 icon_codepoint(std::string_view name);
+// All icon names with their codepoints, for drawing icon names written as text.
+Rml::UnorderedMap<Rml::String, Rml::Character> icon_word_glyphs();
 
 // <icon name="save"/>: one glyph of the icon font, chosen by name. The font
 // and size come from the style sheet like any text.

@@ -80,7 +80,8 @@ TEST_CASE("ui tokens: substitute") {
     Tokens t = make();
     std::vector<std::string> missing;
     CHECK(t.substitute("a { border-radius: var(--radius-md); }") == "a { border-radius: 12px; }");
-    CHECK(t.substitute("color: var(--nope, red);", &missing) == "color: red;");
+    // Not a token: left for RmlUi (a custom property of the style itself).
+    CHECK(t.substitute("color: var(--nope, red);", &missing) == "color: var(--nope, red);");
     REQUIRE(missing.size() == 1);
     CHECK(missing[0] == "nope");
     // Not a var() call: left as is.

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html><head><style>
+html { font-size: 16px; }
+body { margin: 10px; font-size: 14px; }
+.bar { height: 22px; margin: 5px 0; color: #fff; padding-left: 4px; background: #7c3aed; }
+.a { width: calc(100% - 200px); } .b { width: calc(50% + 2rem); } .c { width: min(300px, 50%); }
+.d { width: max(300px, 20%); } .e { width: clamp(100px, 40%, 250px); } .f { width: 20em; }
+.g { width: 15rem; } .h { width: 50vw; } .i { width: calc((100% - 30px) / 3); }
+.j { width: calc(10px * 12); } .k { height: 3vh; width: 30vmin; } .l { width: 25ch; }
+.p { padding: calc(4px + 1em) 0; background: #fbbf24; color: #000; }
+.box { position: relative; height: 60px; background: #e5e7eb; }
+.box span { position: absolute; left: calc(50% - 40px); top: calc(50% - 10px); width: 80px; height: 20px; background: #ef4444; }
+</style></head><body>
+<div class="bar a">calc(100% - 200px)</div><div class="bar b">calc(50% + 2rem)</div><div class="bar c">min(300px, 50%)</div>
+<div class="bar d">max(300px, 20%)</div><div class="bar e">clamp(100,40%,250)</div><div class="bar f">20em</div>
+<div class="bar g">15rem</div><div class="bar h">50vw</div><div class="bar i">(100%-30)/3</div>
+<div class="bar j">10px*12</div><div class="bar k">30vmin</div><div class="bar l">25ch</div>
+<div class="p">padding calc</div>
+<div class="box"><span></span></div>
+</body></html>

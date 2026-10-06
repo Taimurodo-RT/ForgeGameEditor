@@ -2,6 +2,7 @@ add_library(forge_ui STATIC
   src/ui.cpp
   src/tokens.cpp
   src/interfaces.cpp
+  src/html.cpp
   src/elements.cpp
   src/gpu_renderer.cpp)
 add_library(forge::ui ALIAS forge_ui)

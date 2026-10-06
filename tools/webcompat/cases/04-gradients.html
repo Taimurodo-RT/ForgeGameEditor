@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 16px; background: #fff; font-size: 13px; }
+.grid { display: flex; flex-wrap: wrap; gap: 14px; }
+.b { width: 178px; height: 110px; border-radius: 10px; color: #fff; padding: 6px; box-sizing: border-box; }
+.g1 { background: linear-gradient(90deg, #f43f5e, #6366f1); }
+.g2 { background: linear-gradient(160deg, #0ea5e9 0%, #22c55e 50%, #eab308 100%); }
+.g3 { background-image: radial-gradient(circle at 30% 30%, #fde68a, #b45309); }
+.g4 { background: conic-gradient(from 90deg, #ef4444, #eab308, #22c55e, #3b82f6, #ef4444); }
+.g5 { background: repeating-linear-gradient(45deg, #1e293b 0 10px, #334155 10px 20px); }
+.g6 { background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,.8)), linear-gradient(90deg, #f97316, #db2777); }
+.g7 { background: #4f46e5 linear-gradient(180deg, rgba(255,255,255,.25), rgba(255,255,255,0)); }
+.g8 { background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%); }
+.g9 { background: linear-gradient(to right, #fff 50%, #111 50%); color: #e11d48; }
+.g10 { background: linear-gradient(135deg, #a855f7 25%, transparent 25%) 0 0 / 20px 20px, #f3e8ff; color: #581c87; }
+.g11 { background: repeating-radial-gradient(circle, #0f766e 0 6px, #ccfbf1 6px 12px); }
+.g12 { background: linear-gradient(#e2e8f0, #e2e8f0) padding-box, linear-gradient(90deg, #06b6d4, #8b5cf6) border-box; border: 4px solid transparent; color: #111; }
+</style></head><body>
+<div class="grid">
+<div class="b g1">linear 90deg</div><div class="b g2">3 stops</div><div class="b g3">radial</div><div class="b g4">conic</div>
+<div class="b g5">repeating</div><div class="b g6">two layers</div><div class="b g7">color + layer</div><div class="b g8">ellipse</div>
+<div class="b g9">hard stop</div><div class="b g10">pattern size</div><div class="b g11">rep radial</div><div class="b g12">gradient border</div>
+</div>
+</body></html>
