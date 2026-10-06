@@ -19,6 +19,7 @@
 #include "demo_art.h"
 #include "level_editor.h"
 #include "logic_editor.h"
+#include "project_folder.h"
 #include "story_editor.h"
 #include "object_library.h"
 #include "slice_level.h"
@@ -282,6 +283,16 @@ public:
     std::filesystem::path sounds_folder = game_dir / "sounds";     // and sounds
     std::filesystem::path logic_file = game_dir / "logic.json";     // the links («Логика»)
     std::filesystem::path story_dir = game_dir;                     // dialogues/ and quests.json («Сюжет»)
+
+    // Before init: the game's data from another folder (the project's game/).
+    void use_game_dir(const std::filesystem::path& dir) {
+        game_dir = dir;
+        objects_folder = dir / "objects";
+        pictures_folder = dir / "pictures";
+        sounds_folder = dir / "sounds";
+        logic_file = dir / "logic.json";
+        story_dir = dir;
+    }
     // The objects shared by every game: this computer's, outside any game.
     std::filesystem::path shared_folder = default_shared_folder();
     slice::SliceLevel level_module;
@@ -1345,6 +1356,7 @@ struct Options {
     std::filesystem::path scene;
     std::filesystem::path level = utf8_path(SLICE_LEVEL_DIR);
     bool level_given = false;
+    std::filesystem::path project; // empty: the working folder
     std::filesystem::path assets; // empty: assets/ in the working folder
     std::string theme = "dark";
     u32 objects = 50'000;
@@ -1358,15 +1370,26 @@ public:
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window(), &w, &h);
         if (!options.scene.empty()) editor_.scene_path = options.scene;
+        // The author's work lives in the project folder, apart from the engine.
+        const std::filesystem::path project = options.project.empty() ? std::filesystem::current_path() : options.project;
+        ProjectGame pg;
+        if (std::string error; !prepare_project_game(project, utf8_path(SLICE_DATA_DIR), pg, &error)) {
+            FORGE_ERROR("Проект: %s", error.c_str());
+            return false;
+        }
+        if (pg.created) FORGE_INFO("Проект: игра скопирована в %s", path_to_utf8(pg.dir).c_str());
+        for (const std::string& f : pg.refreshed) FORGE_INFO("Проект: %s обновлён из движка", f.c_str());
+        editor_.use_game_dir(pg.dir);
         LevelConfig lc;
-        lc.folder = options.level;
+        lc.folder = options.level_given ? options.level : pg.dir / "level";
+        lc.game_data = pg.dir;
         lc.game_exe = utf8_path(FORGE_SLICE_EXE);
         if (char* pref = SDL_GetPrefPath("Forge", "Editor")) {
             lc.settings = utf8_path(pref);
             SDL_free(pref);
         }
         AssetsConfig ac;
-        ac.folder = options.assets.empty() ? std::filesystem::current_path() / "assets" : options.assets;
+        ac.folder = options.assets.empty() ? project / "assets" : options.assets;
         ac.library = ac.folder.parent_path() / ".forge" / "library";
         ac.settings = lc.settings;
         ac.window = window();
@@ -1749,6 +1772,8 @@ private:
             const auto cmd = lv().play_command(1.5, 2);
             check(cmd.size() >= 6 && cmd[1] == "--play" && cmd[2] == "--level" && cmd[4] == "--at" && cmd[5] == "1.50,2.00",
                   "the game is started with the level and the place");
+            check(cmd.size() >= 12 && cmd[cmd.size() - 2] == "--data" && utf8_path(cmd.back()) == ed_.game_dir,
+                  "and with the project's game data");
             check(lv().minimap_updates() > 0, "the minimap is drawn");
             break;
         }
@@ -3397,6 +3422,45 @@ private:
     f32 drag_from_x_ = 0, drag_from_y_ = 0;
 };
 
+// The project folder: the first start copies the game, later ones keep the
+// author's files and refresh only the engine's.
+int check_project_folder() {
+    namespace fs = std::filesystem;
+    int failures = 0;
+    auto check = [&](bool ok, const char* what) {
+        if (!ok) ++failures;
+        FORGE_INFO("%s project: %s", ok ? "ok  " : "FAIL", what);
+    };
+    std::error_code ec;
+    const fs::path project = fs::temp_directory_path() / utf8_path("forge_editor_проект");
+    fs::remove_all(project, ec);
+    const fs::path tmpl = utf8_path(SLICE_DATA_DIR);
+    ProjectGame pg;
+    std::string error;
+    check(prepare_project_game(project, tmpl, pg, &error) && pg.created && pg.dir == project / "game",
+          "the first start copies the game into game/");
+    check(fs::exists(pg.dir / "logic.json") && fs::exists(pg.dir / "dialogues") && fs::exists(pg.dir / "objects") &&
+              !fs::exists(project / "game.copying"),
+          "with its links, conversations and objects");
+    const std::string mine = "{\"links\": []}";
+    write_file_atomic(pg.dir / "logic.json", {reinterpret_cast<const u8*>(mine.data()), mine.size()});
+    write_file_atomic(pg.dir / "verbs.json", {reinterpret_cast<const u8*>(mine.data()), mine.size()});
+    fs::remove(pg.dir / "quests.json", ec);
+    fs::remove_all(pg.dir / "dialogues", ec);
+    check(prepare_project_game(project, tmpl, pg, &error) && !pg.created, "the next start keeps the project");
+    std::vector<u8> bytes;
+    check(read_file(pg.dir / "logic.json", bytes) && std::string(bytes.begin(), bytes.end()) == mine,
+          "the author's links stay as they are");
+    std::vector<u8> engine;
+    check(read_file(pg.dir / "verbs.json", bytes) && read_file(tmpl / "verbs.json", engine) && bytes == engine,
+          "the engine's verbs are refreshed");
+    check(fs::exists(pg.dir / "quests.json") && !fs::exists(pg.dir / "dialogues"),
+          "a missing data file comes back, a removed folder does not");
+    check(prepare_project_game(project, tmpl, pg, &error) && pg.refreshed.empty(), "nothing to refresh the third time");
+    fs::remove_all(project, ec);
+    return failures;
+}
+
 int run_offscreen(const Options& options, const char* screenshot, u32 frames, bool select, bool play, bool bench,
                   bool self_test, int tab, bool bench_level, u32 bench_assets, u32 bench_scheme) {
     jobs::init();
@@ -3442,6 +3506,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         // Nor the game's level, unless one is given.
         LevelConfig lc;
         lc.offscreen = true;
+        lc.game_data = editor.game_dir;
         lc.folder = options.level_given ? options.level : std::filesystem::temp_directory_path() / "forge_editor_level";
         if (!options.level_given) {
             std::error_code ec;
@@ -3683,8 +3748,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                        bench ? ", hierarchy scrolling" : "", update_ms / measured, render_ms / measured, worst_ms);
             result = screenshot ? (render::save_png(device, target, w, h, screenshot) ? 0 : 1) : 0;
             if (self_test) {
-                FORGE_INFO("self-test %s", test.passed() ? "passed" : "FAILED");
-                if (!test.passed()) result = 1;
+                const bool passed = test.passed() && check_project_folder() == 0;
+                FORGE_INFO("self-test %s", passed ? "passed" : "FAILED");
+                if (!passed) result = 1;
             }
         }
         editor.shutdown();
@@ -3713,6 +3779,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--ui") == 0 && has_value) app.options.ui_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--scene") == 0 && has_value) app.options.scene = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--assets") == 0 && has_value) app.options.assets = utf8_path(argv[++i]);
+        else if (std::strcmp(argv[i], "--project") == 0 && has_value) app.options.project = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--level") == 0 && has_value) {
             app.options.level = utf8_path(argv[++i]);
             app.options.level_given = true;

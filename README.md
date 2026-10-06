@@ -270,7 +270,8 @@ build/apps/ui_demo/forge_ui_demo                            # галерея к�
 build/apps/ui_demo/forge_ui_demo --theme fantasy --screenshot ui.png
 build/apps/ui_demo/forge_ui_demo --scroll --no-vsync        # список на 50 000 строк всё время прокручивается
 build/apps/ui_demo/forge_ui_demo --screenshot ui.png --frames 60 --reload-every 10   # цена перезагрузки документа
-build/apps/editor/forge_editor                              # редактор; уровень «Старой шахты», сцена в scene.forge.json
+build/apps/editor/forge_editor                              # редактор; ваш проект — папка, откуда он запущен
+build/apps/editor/forge_editor --project ПАПКА              # ...или эта папка проекта
 build/apps/editor/forge_editor --self-test                  # сам рисует, отменяет, двигает панели, сохраняет уровень
 build/apps/editor/forge_editor --bench --frames 600         # все 50 500 строк иерархии, прокрутка, замер
 build/apps/editor/forge_editor --bench-level                # полёт над уровнем с рисованием, замер кадра
@@ -280,6 +281,7 @@ build/apps/slice/forge_slice                                # игра «Ста�
 build/apps/slice/forge_slice --stress                       # та же игра с 200 000 существ и миллионом частиц
 build/apps/slice/forge_slice --test --screenshot slice.png  # сама проходит игру без окна и проверяет её
 build/apps/slice/forge_slice --play --level ПАПКА --at X,Y  # сразу новая игра из папки уровня, герой в X,Y
+build/apps/slice/forge_slice --data ПРОЕКТ/game             # игра с данными вашего проекта
 cmake --build build --config Release --target forge_slice_package   # готовая игра в build/dist/OldMine
 build/tests/forge_tests
 build/bench/forge_bench_jobs
@@ -329,7 +331,16 @@ R — повернуть ленту, правая кнопка — убрать,
 Delete удаляет, свойства (место, «Сколько», «Скорость»…) меняются в панели «Свойства». Ctrl+Z / Ctrl+Y — отмена и повтор,
 Ctrl+S — сохранить, F5 — играть отсюда. Щелчок по мини-карте переносит туда вид. Кнопка с плитками справа
 от сетки возвращает обычную раскладку панелей. При закрытии редактора уровень сохраняется сам.
-Уровень лежит в `games/slice/level` и в git не попадает (`.gitignore`): это ваши правки.
+Уровень лежит в `game/level` папки проекта (см. «Папка проекта» ниже).
+
+**Папка проекта.** Всё, что вы делаете в редакторе, живёт в папке проекта, отдельно от движка, так что
+обновление движка (`git pull` и сборка) его не трогает. Проект — папка, из которой запущен редактор (или
+`--project ПАПКА`): в `game/` — данные игры (уровень, разговоры, связи, шаблоны объектов, их картинки и
+звуки, `quests.json`, `game.json`), в `assets/` — «Ресурсы». При первом запуске `game/` копируется из
+`games/slice` движка вместе с правками, сделанными там раньше. Потом редактор только обновляет файлы движка,
+которые сам не пишет (`verbs.json`, `ideas.json`, `kinds.json`), и добавляет новые файлы данных, если они
+появились в движке; ваши файлы остаются как есть. «Играть отсюда» запускает игру с `--data ПРОЕКТ/game`.
+Пути `games/slice/...` выше — образец, с которого начинается проект.
 
 Управление на вкладке «Сцена» `forge_editor`: клик в иерархии или в мире — выделить (Ctrl — добавить, Shift — диапазон
 в иерархии), двойной клик по группе — раскрыть, перетаскивание объекта в мире — переместить, правая или
