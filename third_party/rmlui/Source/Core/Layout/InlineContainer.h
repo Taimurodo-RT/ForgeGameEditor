@@ -9,6 +9,7 @@ namespace Rml {
 
 class BlockContainer;
 class LineBox;
+class ElementText;
 
 /**
     A container for inline-level boxes.
@@ -22,6 +23,9 @@ public:
 	/// Creates a new block box in an inline context.
 	InlineContainer(BlockContainer* parent, float available_width);
 	~InlineContainer();
+
+	/// Forge: sets the indentation of the first line box (text-indent).
+	void SetTextIndent(float indent) { text_indent = indent; }
 
 	/// Adds a new inline-level element to this inline-context box.
 	/// @param[in] element The new inline-level element.
@@ -58,6 +62,8 @@ public:
 	// -- Inherited from LayoutBox --
 
 	float GetShrinkToFitWidth() const override;
+	/// Forge: true when the container holds no lines, e.g. only collapsed white-space.
+	bool IsEmptyOfLines() const { return box_size.y <= 0.f; }
 	bool GetBaselineOfLastLine(float& out_baseline) const override;
 	String DebugDumpTree(int depth) const override;
 
@@ -90,6 +96,15 @@ private:
 	bool wrap_content = false;
 	// The element's text-align property.
 	Style::TextAlign text_align = {};
+	// Forge: indentation of the first line (text-indent).
+	float text_indent = 0.f;
+	// Forge: line-clamp state; lines after 'line_clamp' are cut off and the last kept line ends with an ellipsis.
+	int line_clamp = 0;
+	int closed_lines = 0;
+	float clamp_height = -1.f;
+	ElementText* clamp_text = nullptr;
+	int clamp_line_index = -1;
+	float clamp_right = 0.f;
 
 	// The vertical position of the currently open line, or otherwise the next one to be placed, relative to the top of this box.
 	float box_cursor = 0;

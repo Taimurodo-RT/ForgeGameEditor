@@ -54,10 +54,8 @@ public:
 
 	ID GetOrCreateId(const String& name)
 	{
-		// All predefined properties must be set before possibly adding custom properties here
-		RMLUI_ASSERT(name_map.size() == reverse_map.size());
-
-		ID next_id = static_cast<ID>(name_map.size());
+		// Forge: custom IDs always start after the predefined ones, so custom properties may be registered in between them.
+		ID next_id = static_cast<ID>(std::max(name_map.size(), (size_t)ID::FirstCustomId));
 
 		// Only insert if not already in list
 		auto pair = reverse_map.emplace(name, next_id);
@@ -65,7 +63,11 @@ public:
 		bool inserted = pair.second;
 
 		if (inserted)
+		{
+			if (name_map.size() < (size_t)next_id)
+				name_map.resize((size_t)next_id);
 			name_map.push_back(name);
+		}
 
 		// Return the property id that already existed, or the new one if inserted
 		return it->second;

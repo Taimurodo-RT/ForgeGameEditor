@@ -297,6 +297,12 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::BorderRightStyle, "border-right-style", "auto", false, true).AddParser("keyword", border_styles);
 	RegisterProperty(PropertyId::BorderBottomStyle, "border-bottom-style", "auto", false, true).AddParser("keyword", border_styles);
 	RegisterProperty(PropertyId::BorderLeftStyle, "border-left-style", "auto", false, true).AddParser("keyword", border_styles);
+	// Forge: outlines, drawn around the border box (also following its rounded corners).
+	RegisterProperty(PropertyId::OutlineWidth, "outline-width", "medium", false, false).AddParser("keyword", "thin=1, medium=3, thick=5").AddParser("length");
+	RegisterProperty(PropertyId::OutlineStyle, "outline-style", "none", false, false).AddParser("keyword", border_styles);
+	RegisterProperty(PropertyId::OutlineColor, "outline-color", "currentcolor", false, false).AddParser("keyword", "currentcolor, invert=0, auto=0").AddParser("color");
+	RegisterProperty(PropertyId::OutlineOffset, "outline-offset", "0px", false, false).AddParser("length");
+	RegisterShorthand(ShorthandId::Invalid, "outline", "outline-width, outline-style, outline-color", ShorthandType::FallThrough);
 	RegisterShorthand(ShorthandId::BorderStyle, "border-style", "border-top-style, border-right-style, border-bottom-style, border-left-style", ShorthandType::Box);
 
 	RegisterShorthand(ShorthandId::BorderTop, "border-top", "border-top-width, border-top-style, border-top-color", ShorthandType::FallThrough);
@@ -312,7 +318,7 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterShorthand(ShorthandId::BorderRadius, "border-radius", "border-top-left-radius, border-top-right-radius, border-bottom-right-radius, border-bottom-left-radius", ShorthandType::Box);
 
 	RegisterProperty(PropertyId::Display, "display", "inline", false, true)
-		.AddParser("keyword", "none, block, inline, inline-block, flow-root, flex, inline-flex, table, inline-table, table-row, table-row-group, table-column, table-column-group, table-cell, list-item, grid, inline-grid, contents=1"); // Forge: grid falls back to block for now
+		.AddParser("keyword", "none, block, inline, inline-block, flow-root, flex, inline-flex, table, inline-table, table-row, table-row-group, table-column, table-column-group, table-cell, list-item, grid, inline-grid, contents=1, -webkit-box=1, flow=1"); // Forge: list-item, grid; -webkit-box (used for line clamping) acts as block
 	RegisterProperty(PropertyId::Position, "position", "static", false, true).AddParser("keyword", "static, relative, absolute, fixed, sticky=1"); // Forge: sticky acts as relative
 	RegisterProperty(PropertyId::Top, "top", "auto", false, false).AddParser("keyword", "auto").AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockHeight);
 	RegisterProperty(PropertyId::Right, "right", "auto", false, false).AddParser("keyword", "auto").AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockWidth);
@@ -363,6 +369,11 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::FontSize, "font-size", "12px", true, true).AddParser("length").AddParser("length_percent").SetRelativeTarget(RelativeTarget::ParentFontSize);
 	RegisterProperty(PropertyId::FontKerning, "font-kerning", "auto", true, true).AddParser("keyword", "auto, normal, none");
 	RegisterProperty(PropertyId::LetterSpacing, "letter-spacing", "normal", true, true).AddParser("keyword", "normal").AddParser("length");
+	RegisterProperty(PropertyId::WordSpacing, "word-spacing", "normal", true, true).AddParser("keyword", "normal").AddParser("length"); // Forge
+	RegisterProperty(PropertyId::TextIndent, "text-indent", "0px", true, true).AddParser("length_percent");                          // Forge
+	RegisterProperty(PropertyId::LineClamp, "line-clamp", "none", false, true).AddParser("keyword", "none").AddParser("number");     // Forge
+	RegisterShorthand(ShorthandId::Invalid, "-webkit-line-clamp", "line-clamp", ShorthandType::FallThrough);                         // Forge
+	RegisterProperty(PropertyId::Invalid, "-webkit-box-orient", "horizontal", false, false).AddParser("string");                     // Forge: ignored
 	RegisterShorthand(ShorthandId::Font, "font", "font-style, font-weight, font-size, font-family", ShorthandType::FallThrough);
 
 	RegisterProperty(PropertyId::TextAlign, "text-align", "left", true, true).AddParser("keyword", "left, right, center, justify, start=0, end=1, match-parent=0"); // Forge: start/end for left-to-right text

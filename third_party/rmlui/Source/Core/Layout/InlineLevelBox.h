@@ -25,12 +25,16 @@ public:
 	// Submit a fragment's position and size to be displayed on the underlying element.
 	virtual void Submit(const PlacedFragment& placed_fragment) = 0;
 
+	// Forge: number of spaces in a fragment that can be widened for text justification.
+	virtual int GetJustificationOpportunities(LayoutFragmentHandle /*handle*/, bool /*trim_trailing*/) const { return 0; }
+
 	float GetHeightAboveBaseline() const { return height_above_baseline; }
 	float GetDepthBelowBaseline() const { return depth_below_baseline; }
 	Style::VerticalAlign::Type GetVerticalAlign() const { return vertical_align_type; }
 	float GetVerticalOffsetFromParent() const { return vertical_offset_from_parent; }
 	float GetSpacingLeft() const { return spacing_left; }
 	float GetSpacingRight() const { return spacing_right; }
+	Element* GetBoxElement() const { return element; } // Forge
 
 	virtual String DebugDumpNameValue() const = 0;
 	virtual String DebugDumpTree(int depth) const;
@@ -102,6 +106,7 @@ public:
 		LayoutOverflowHandle overflow_handle) override;
 
 	void Submit(const PlacedFragment& placed_fragment) override;
+	int GetJustificationOpportunities(LayoutFragmentHandle handle, bool trim_trailing) const override; // Forge
 
 	String DebugDumpNameValue() const override;
 

@@ -189,7 +189,23 @@ void InlineLevelBox_Text::Submit(const PlacedFragment& placed_fragment)
 		line_offset = placed_fragment.position - element_offset;
 	}
 
-	text_element->AddLine(line_offset, std::move(fragments[fragment_index]));
+	text_element->AddLine(line_offset, std::move(fragments[fragment_index]), placed_fragment.justify_spacing);
+}
+
+int InlineLevelBox_Text::GetJustificationOpportunities(LayoutFragmentHandle handle, bool trim_trailing) const
+{
+	if ((size_t)handle >= fragments.size())
+		return 0;
+	const String& text = fragments[handle];
+	size_t end = text.size();
+	if (trim_trailing)
+		while (end > 0 && text[end - 1] == ' ')
+			--end;
+	int count = 0;
+	for (size_t i = 0; i < end; i++)
+		if (text[i] == ' ')
+			count++;
+	return count;
 }
 
 String InlineLevelBox_Text::DebugDumpNameValue() const

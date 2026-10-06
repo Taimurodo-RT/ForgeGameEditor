@@ -2,6 +2,7 @@
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Element.h"
 #include "../../../Include/RmlUi/Core/ElementScroll.h"
+#include "../../../Include/RmlUi/Core/Property.h"
 #include "../../../Include/RmlUi/Core/Profiling.h"
 #include "FloatedBoxSpace.h"
 #include "InlineContainer.h"
@@ -290,7 +291,7 @@ Vector2f BlockContainer::NextBoxPosition(const Box& child_box, Style::Clear clea
 	{
 		box_position.y += clear_margin;
 	}
-	else if (const LayoutBox* block_box = GetOpenLayoutBox())
+	else if (const LayoutBox* block_box = GetLastBoxForMarginCollapse())
 	{
 		// Check for a collapsing vertical margin with our last child, which will be vertically adjacent to the new box.
 		if (const Box* open_box = block_box->GetIfBox())
@@ -456,6 +457,17 @@ InlineContainer* BlockContainer::EnsureOpenInlineContainer()
 
 		auto inline_container_ptr = MakeUnique<InlineContainer>(this, available_width);
 		inline_container = inline_container_ptr.get();
+
+		// Forge: text-indent applies to the first formatted line of the block container.
+		if (child_boxes.empty() && !interrupted_line_box)
+		{
+			if (const Property* indent = element->GetProperty(PropertyId::TextIndent))
+			{
+				const float value = element->ResolveNumericValue(indent->GetNumericValue(), Math::Max(available_width, 0.f));
+				inline_container->SetTextIndent(value);
+			}
+		}
+
 		child_boxes.push_back(std::move(inline_container_ptr));
 
 		if (interrupted_line_box)
@@ -466,6 +478,18 @@ InlineContainer* BlockContainer::EnsureOpenInlineContainer()
 	}
 
 	return inline_container;
+}
+
+const LayoutBox* BlockContainer::GetLastBoxForMarginCollapse() const
+{
+	// Forge: white-space between blocks makes an inline container without lines, which must not separate the margins.
+	for (auto it = child_boxes.rbegin(); it != child_boxes.rend(); ++it)
+	{
+		if ((*it)->GetType() == Type::InlineContainer && rmlui_static_cast<const InlineContainer*>(it->get())->IsEmptyOfLines())
+			continue;
+		return it->get();
+	}
+	return nullptr;
 }
 
 const LayoutBox* BlockContainer::GetOpenLayoutBox() const

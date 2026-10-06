@@ -34,6 +34,7 @@ struct PlacedFragment {
 	float layout_width;
 	bool split_left;
 	bool split_right;
+	float justify_spacing = 0.f; // Forge: extra pixels after each space (text-align: justify).
 };
 
 } // namespace Rml

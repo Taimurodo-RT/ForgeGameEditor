@@ -165,6 +165,13 @@ enum class PropertyId : uint8_t {
 	BorderRightStyle,
 	BorderBottomStyle,
 	BorderLeftStyle,
+	WordSpacing,
+	TextIndent,
+	LineClamp,
+	OutlineWidth,
+	OutlineStyle,
+	OutlineColor,
+	OutlineOffset,
 
 	NumDefinedIds,
 	FirstCustomId = NumDefinedIds,

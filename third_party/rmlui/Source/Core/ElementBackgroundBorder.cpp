@@ -25,6 +25,7 @@ void ElementBackgroundBorder::Render(Element* element)
 		}
 
 		GenerateGeometry(element);
+		GenerateOutline(element);
 
 		background_dirty = false;
 		border_dirty = false;
@@ -40,6 +41,9 @@ void ElementBackgroundBorder::Render(Element* element)
 		const Vector2f offset = element->GetAbsoluteOffset(BoxArea::Border);
 		background->geometry.Render(offset);
 	}
+
+	if (Background* outline = GetBackground(BackgroundType::Outline))
+		outline->geometry.Render(element->GetAbsoluteOffset(BoxArea::Border));
 }
 
 void ElementBackgroundBorder::DirtyBackground()
@@ -159,6 +163,51 @@ void ElementBackgroundBorder::GenerateGeometry(Element* element)
 		MeshUtilities::GenerateBackgroundBorder(mesh, element->GetRenderBox(BoxArea::Padding, i), background_color, border_colors.data(),
 			border_styles); // Forge: border styles
 
+	geometry = render_manager->MakeGeometry(std::move(mesh));
+}
+
+void ElementBackgroundBorder::GenerateOutline(Element* element)
+{
+	RenderManager* render_manager = element->GetRenderManager();
+	const Property* style_property = element->GetProperty(PropertyId::OutlineStyle);
+	const int style = (style_property ? style_property->Get<int>() : 0);
+	const bool visible = style_property && style != (int)Style::BorderStyle::None && style != (int)Style::BorderStyle::Hidden;
+	const Property* width_property = element->GetProperty(PropertyId::OutlineWidth);
+	const float width = (width_property ? Math::Round(element->ResolveLength(width_property->GetNumericValue())) : 0.f);
+	if (!render_manager || !visible || width <= 0.f)
+	{
+		EraseBackground(BackgroundType::Outline);
+		return;
+	}
+
+	const ComputedValues& computed = element->GetComputedValues();
+	Colourb color = computed.color();
+	if (const Property* color_property = element->GetProperty(PropertyId::OutlineColor); color_property && color_property->unit == Unit::COLOUR)
+		color = color_property->Get<Colourb>();
+	const ColourbPremultiplied premultiplied = color.ToPremultiplied(computed.opacity());
+	const Property* offset_property = element->GetProperty(PropertyId::OutlineOffset);
+	const float offset = (offset_property ? Math::Round(element->ResolveLength(offset_property->GetNumericValue())) : 0.f);
+
+	const ColourbPremultiplied colors[4] = {premultiplied, premultiplied, premultiplied, premultiplied};
+	// 'auto' outlines (focus rings) are drawn solid.
+	const uint8_t outline_style = (style == (int)Style::BorderStyle::Auto ? (uint8_t)Style::BorderStyle::Solid : (uint8_t)style);
+	const uint8_t styles[4] = {outline_style, outline_style, outline_style, outline_style};
+
+	Geometry& geometry = GetOrCreateBackground(BackgroundType::Outline).geometry;
+	Mesh mesh = geometry.Release(Geometry::ReleaseMode::ClearMesh);
+	for (int i = 0; i < element->GetNumBoxes(); i++)
+	{
+		const RenderBox box = element->GetRenderBox(BoxArea::Border, i);
+		const float grow = offset + width;
+		const Vector2f fill_size = box.GetFillSize() + Vector2f(2.f * offset);
+		if (fill_size.x < 0.f || fill_size.y < 0.f)
+			continue;
+		CornerSizes radius = box.GetBorderRadius();
+		for (float& r : radius)
+			r = (r > 0.f ? Math::Max(r + grow, 0.f) : 0.f);
+		const RenderBox outline_box(fill_size, box.GetBorderOffset() - Vector2f(grow), EdgeSizes{width, width, width, width}, radius);
+		MeshUtilities::GenerateBackgroundBorder(mesh, outline_box, ColourbPremultiplied(0, 0, 0, 0), colors, styles);
+	}
 	geometry = render_manager->MakeGeometry(std::move(mesh));
 }
 

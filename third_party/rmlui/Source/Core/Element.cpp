@@ -1933,6 +1933,11 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 		changed_properties.Contains(PropertyId::BorderRightColor) ||  //
 		changed_properties.Contains(PropertyId::BorderBottomColor) || //
 		changed_properties.Contains(PropertyId::BorderLeftColor) ||   //
+		changed_properties.Contains(PropertyId::OutlineWidth) ||      // Forge: outlines
+		changed_properties.Contains(PropertyId::OutlineStyle) ||      //
+		changed_properties.Contains(PropertyId::OutlineColor) ||      //
+		changed_properties.Contains(PropertyId::OutlineOffset) ||     //
+		(changed_properties.Contains(PropertyId::Color) && GetLocalProperty(PropertyId::OutlineStyle)) || //
 		changed_properties.Contains(PropertyId::Opacity))
 	{
 		meta->background_border.DirtyBorder();
@@ -1946,7 +1951,8 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 
 	const bool font_changed = (changed_properties.Contains(PropertyId::FontFamily) || changed_properties.Contains(PropertyId::FontStyle) ||
 		changed_properties.Contains(PropertyId::FontWeight) || changed_properties.Contains(PropertyId::FontSize) ||
-		changed_properties.Contains(PropertyId::FontKerning) || changed_properties.Contains(PropertyId::LetterSpacing));
+		changed_properties.Contains(PropertyId::FontKerning) || changed_properties.Contains(PropertyId::LetterSpacing) ||
+		changed_properties.Contains(PropertyId::WordSpacing)); // Forge: word-spacing
 
 	// Dirty the effects data when their visual looks may have changed.
 	if (border_radius_changed ||                            //

@@ -243,7 +243,7 @@ bool ElementText::GenerateLine(String& line, int& line_length, float& line_width
 	const bool break_at_endline =
 		(white_space_property == WhiteSpace::Pre || white_space_property == WhiteSpace::Prewrap || white_space_property == WhiteSpace::Preline);
 
-	const TextShapingContext text_shaping_context{computed.language(), computed.direction(), computed.font_kerning(), computed.letter_spacing()};
+	const TextShapingContext text_shaping_context{computed.language(), computed.direction(), computed.font_kerning(), computed.letter_spacing(), computed.word_spacing()};
 	TextTransform text_transform_property = computed.text_transform();
 	WordBreak word_break = computed.word_break();
 
@@ -357,13 +357,21 @@ void ElementText::ClearLines()
 	geometry_dirty = true;
 }
 
-void ElementText::AddLine(Vector2f line_position, String line)
+void ElementText::AddLine(Vector2f line_position, String line, float justify_spacing)
 {
 	if (font_effects_dirty)
 		UpdateFontEffects();
 
-	lines.emplace_back(std::move(line), line_position);
+	lines.emplace_back(std::move(line), line_position, justify_spacing);
 
+	geometry_dirty = true;
+}
+
+void ElementText::SetLineEllipsis(int line_index, float right_edge)
+{
+	if (line_index < 0 || line_index >= (int)lines.size())
+		return;
+	lines[line_index].ellipsis_right = right_edge;
 	geometry_dirty = true;
 }
 
@@ -408,6 +416,7 @@ void ElementText::OnPropertyChange(const PropertyIdSet& changed_properties)
 		changed_properties.Contains(PropertyId::FontSize) ||        //
 		changed_properties.Contains(PropertyId::FontKerning) ||     //
 		changed_properties.Contains(PropertyId::LetterSpacing) ||   //
+		changed_properties.Contains(PropertyId::WordSpacing) ||     // Forge
 		changed_properties.Contains(PropertyId::RmlUi_Language) ||  //
 		changed_properties.Contains(PropertyId::RmlUi_Direction) || //
 		changed_properties.Contains(PropertyId::TextOverflow))
@@ -500,15 +509,38 @@ void ElementText::GenerateGeometry(RenderManager& render_manager, const FontFace
 	const TextOverflowResolved text_overflow = ResolveTextOverflow(GetParentNode(), font_face_handle);
 
 	const auto& computed = GetComputedValues();
-	const TextShapingContext text_shaping_context{computed.language(), computed.direction(), computed.font_kerning(), computed.letter_spacing()};
+	const TextShapingContext text_shaping_context{computed.language(), computed.direction(), computed.font_kerning(), computed.letter_spacing(), computed.word_spacing()};
 
 	TexturedMeshList mesh_list;
 	mesh_list.reserve(geometry.size());
 
 	for (Line& line : lines)
 	{
+		// Forge: justified lines widen their spaces.
+		TextShapingContext line_shaping_context = text_shaping_context;
+		line_shaping_context.word_spacing += line.justify_spacing;
+		if (line.ellipsis_right >= 0.f && !text_overflow.enabled)
+		{
+			// Forge: line-clamp, remove characters until the text with an ellipsis fits.
+			const String ellipsis = "\xE2\x80\xA6";
+			String text = line.text;
+			while (!text.empty() && text.back() == ' ')
+				text.pop_back();
+			String abbreviated = text + ellipsis;
+			StringIteratorU8 view(text, text.size());
+			while (line.position.x + GetFontEngineInterface()->GetStringWidth(font_face_handle, abbreviated, line_shaping_context) > line.ellipsis_right &&
+				view && view.get() != text.c_str())
+			{
+				--view;
+				abbreviated.assign(text.c_str(), view.get());
+				abbreviated += ellipsis;
+			}
+			line.width = GetFontEngineInterface()->GenerateString(render_manager, font_face_handle, font_effects_handle, abbreviated, line.position,
+				colour, opacity, line_shaping_context, mesh_list);
+			continue;
+		}
 		line.width = GetFontEngineInterface()->GenerateString(render_manager, font_face_handle, font_effects_handle, line.text, line.position, colour,
-			opacity, text_shaping_context, mesh_list);
+			opacity, line_shaping_context, mesh_list);
 	}
 
 	const auto text_overflows_on_line = [&](const Line& line) { return line.position.x + line.width > text_overflow.overflow_width; };
@@ -582,7 +614,101 @@ void ElementText::GenerateDecoration(Mesh& mesh, const FontFaceHandle font_face_
 	}
 }
 
+// Forge: Unicode-aware case mapping for text-transform (Latin-1, Latin Extended-A, Greek, Cyrillic, Armenian, full-width).
+static Character MapCase(Character c, bool upper)
+{
+	const char32_t u = (char32_t)c;
+	auto range = [&](char32_t lo_first, char32_t lo_last, char32_t up_first) -> char32_t {
+		if (upper && u >= lo_first && u <= lo_last)
+			return u - lo_first + up_first;
+		if (!upper && u >= up_first && u <= up_first + (lo_last - lo_first))
+			return u - up_first + lo_first;
+		return 0;
+	};
+	char32_t r = 0;
+	if ((r = range(U'a', U'z', U'A')) || (r = range(U'\u00E0', U'\u00F6', U'\u00C0')) || (r = range(U'\u00F8', U'\u00FE', U'\u00D8')) ||
+		(r = range(U'\u03B1', U'\u03C1', U'\u0391')) || (r = range(U'\u03C3', U'\u03CB', U'\u03A3')) ||
+		(r = range(U'\u0430', U'\u044F', U'\u0410')) || (r = range(U'\u0450', U'\u045F', U'\u0400')) ||
+		(r = range(U'\u0561', U'\u0586', U'\u0531')) || (r = range(U'\uFF41', U'\uFF5A', U'\uFF21')))
+		return (Character)r;
+	if (upper && u == U'\u03C2')
+		return (Character)U'\u03A3';
+	if (upper && u == U'\u00FF')
+		return (Character)U'\u0178';
+	if (!upper && u == U'\u0178')
+		return (Character)U'\u00FF';
+	// Paired blocks where even code points are upper case and the next odd one lower case.
+	auto paired = [&](char32_t first, char32_t last) { return u >= first && u <= last; };
+	if (paired(U'\u0100', U'\u012F') || paired(U'\u0132', U'\u0137') || paired(U'\u014A', U'\u0177') || paired(U'\u0460', U'\u0481') ||
+		paired(U'\u048A', U'\u04BF') || paired(U'\u04D0', U'\u052F') || paired(U'\u1E00', U'\u1EFF'))
+	{
+		const bool is_upper = (u % 2) == 0;
+		if (upper && !is_upper)
+			return (Character)(u - 1);
+		if (!upper && is_upper)
+			return (Character)(u + 1);
+		return c;
+	}
+	// Paired blocks where odd code points are upper case.
+	if (paired(U'\u0139', U'\u0148') || paired(U'\u0179', U'\u017E') || paired(U'\u04C1', U'\u04CE'))
+	{
+		const bool is_upper = (u % 2) == 1;
+		if (upper && !is_upper)
+			return (Character)(u - 1);
+		if (!upper && is_upper)
+			return (Character)(u + 1);
+	}
+	return c;
+}
+
+static void TransformText(String& text, size_t begin, Style::TextTransform transform, bool first_is_word_start)
+{
+	if (transform == Style::TextTransform::None || begin >= text.size())
+		return;
+	String result(text.begin(), text.begin() + begin);
+	result.reserve(text.size());
+	bool word_start = first_is_word_start;
+	const char* p = text.data() + begin;
+	const char* end = text.data() + text.size();
+	while (p < end)
+	{
+		const char* next = p + 1;
+		while (next < end && (*next & 0xC0) == 0x80)
+			++next;
+		Character c = StringUtilities::ToCharacter(p, end);
+		const bool space = StringUtilities::IsWhitespace(*p);
+		Character mapped = c;
+		if (transform == Style::TextTransform::Uppercase)
+			mapped = MapCase(c, true);
+		else if (transform == Style::TextTransform::Lowercase)
+			mapped = MapCase(c, false);
+		else if (transform == Style::TextTransform::Capitalize && word_start && !space)
+			mapped = MapCase(c, true);
+		if (mapped == c)
+			result.append(p, next);
+		else
+			result += StringUtilities::ToUTF8(mapped);
+		word_start = space;
+		p = next;
+	}
+	text = std::move(result);
+}
+
+static bool BuildTokenRaw(String& token, const char*& token_begin, const char* string_end, bool first_token, bool collapse_white_space,
+	bool break_at_endline, Style::TextTransform text_transformation, bool decode_escape_characters);
+
 static bool BuildToken(String& token, const char*& token_begin, const char* string_end, bool first_token, bool collapse_white_space,
+	bool break_at_endline, Style::TextTransform text_transformation, bool decode_escape_characters)
+{
+	const size_t begin = token.size();
+	const bool word_start = begin == 0 || StringUtilities::IsWhitespace(token.back());
+	const bool result = BuildTokenRaw(token, token_begin, string_end, first_token, collapse_white_space, break_at_endline,
+		Style::TextTransform::None, decode_escape_characters);
+	TransformText(token, begin, text_transformation, word_start);
+	return result;
+}
+
+static bool BuildTokenRaw(String& token, const char*& token_begin, const char* string_end, bool first_token, bool collapse_white_space,
 	bool break_at_endline, Style::TextTransform text_transformation, bool decode_escape_characters)
 {
 	RMLUI_ASSERT(token_begin != string_end);

@@ -51,6 +51,17 @@ float Style::ComputedValues::letter_spacing() const
 	return 0.f;
 }
 
+// Forge: word-spacing in pixels.
+float Style::ComputedValues::word_spacing() const
+{
+	if (inherited.has_word_spacing)
+	{
+		if (auto p = element->GetProperty(PropertyId::WordSpacing))
+			return element->ResolveLength(p->GetNumericValue());
+	}
+	return 0.f;
+}
+
 const Property* ComputedValues::GetLocalPropertyWithResolvedVariables(PropertyId id) const
 {
 	return element->GetStyle()->GetLocalPropertyWithResolvedVariables(id);

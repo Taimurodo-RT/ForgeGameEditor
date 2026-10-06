@@ -19,7 +19,7 @@ public:
 	Geometry* GetClipGeometry(Element* element, BoxArea clip_area);
 
 private:
-	enum class BackgroundType { BackgroundBorder, BoxShadowAndBackgroundBorder, ClipBorder, ClipPadding, ClipContent, Count };
+	enum class BackgroundType { BackgroundBorder, BoxShadowAndBackgroundBorder, ClipBorder, ClipPadding, ClipContent, Outline, Count };
 	struct Background {
 		Geometry geometry;
 		Texture texture;
@@ -30,6 +30,7 @@ private:
 	Background& GetOrCreateBackground(BackgroundType type);
 	void EraseBackground(BackgroundType type);
 
+	void GenerateOutline(Element* element); // Forge
 	void GenerateGeometry(Element* element);
 
 	bool background_dirty = false;

@@ -1449,6 +1449,16 @@ void ElementStyle::ComputeValue(Style::ComputedValues& values, float dp_ratio, V
 		values.has_letter_spacing(p->unit != Unit::KEYWORD);
 		dirty_font_face_handle = true;
 		break;
+	case PropertyId::WordSpacing: // Forge
+		values.has_word_spacing(p->unit != Unit::KEYWORD);
+		dirty_font_face_handle = true;
+		break;
+	case PropertyId::TextIndent: // Forge: read during layout.
+	case PropertyId::LineClamp:
+	case PropertyId::OutlineWidth: // Forge: read when generating the outline geometry.
+	case PropertyId::OutlineStyle:
+	case PropertyId::OutlineColor:
+	case PropertyId::OutlineOffset: break;
 
 	case PropertyId::TextAlign:
 		values.text_align((TextAlign)p->Get<int>());

@@ -26,6 +26,11 @@ InlineContainer::InlineContainer(BlockContainer* _parent, float _available_width
 	element_line_height = computed.line_height().value;
 	wrap_content = (computed.white_space() != Style::WhiteSpace::Nowrap);
 	text_align = computed.text_align();
+
+	// Forge: line-clamp.
+	if (const Property* clamp = parent->GetElement()->GetProperty(PropertyId::LineClamp))
+		if (clamp->unit == Unit::NUMBER)
+			line_clamp = Math::Max(clamp->Get<int>(), 0);
 }
 
 InlineContainer::~InlineContainer() {}
@@ -126,6 +131,8 @@ void InlineContainer::Close(UniquePtr<LineBox>* out_open_line_box, Vector2f& out
 
 	// Set this box's height.
 	box_size.y = Math::Max(box_cursor, 0.f);
+	if (line_clamp > 0 && closed_lines > line_clamp && clamp_height >= 0.f) // Forge: line-clamp
+		box_size.y = clamp_height;
 
 	// Find the overflow size for our content, relative to our local space.
 	Vector2f visible_overflow_size = {0.f, box_size.y};
@@ -156,11 +163,35 @@ void InlineContainer::CloseOpenLineBox(bool split_all_open_boxes, UniquePtr<Line
 
 		// Now that the line has been given a final position and size, close the line box to submit all the fragments.
 		// Our parent block container acts as the containing block for our inline boxes.
-		line_box->Close(parent->GetElement(), parent->GetPosition(), text_align);
+		line_box->Close(parent->GetElement(), parent->GetPosition(), text_align, !split_all_open_boxes); // Forge: wrapped lines are justified
 
 		// Move the cursor down, unless we should collapse the line.
 		if (!line_box->CanCollapseLine())
+		{
 			box_cursor = (line_box->GetPosition().y - position.y) + height_of_line;
+
+			// Forge: line-clamp.
+			if (line_clamp > 0)
+			{
+				closed_lines++;
+				if (closed_lines == line_clamp)
+				{
+					clamp_height = box_cursor;
+					clamp_text = nullptr;
+					if (InlineLevelBox* text_box = line_box->GetLastTextRunBox())
+					{
+						clamp_text = rmlui_dynamic_cast<ElementText*>(text_box->GetBoxElement());
+						clamp_right = line_box->GetPosition().x - parent->GetPosition().x + line_box->GetLineWidth();
+						if (clamp_text)
+							clamp_line_index = (int)clamp_text->GetLines().size() - 1;
+					}
+				}
+				else if (closed_lines == line_clamp + 1 && clamp_text)
+				{
+					clamp_text->SetLineEllipsis(clamp_line_index, clamp_right - clamp_text->GetRelativeOffset(BoxArea::Border).x);
+				}
+			}
+		}
 
 		// If we have any pending floating elements for our parent, then this would be an ideal time to place them.
 		parent->PlaceQueuedFloats(position.y + box_cursor);
@@ -208,6 +239,13 @@ void InlineContainer::UpdateLineBoxPlacement(LineBox* line_box, float minimum_wi
 		parent->GetBlockBoxSpace()->NextBoxPosition(parent, available_width, ideal_position_y, minimum_dimensions, !wrap_content);
 	available_width = Math::Max(available_width, 0.f);
 
+	// Forge: text-indent shifts the first line.
+	if (text_indent != 0.f && !line_boxes.empty() && line_boxes.front().get() == line_box)
+	{
+		line_box->SetLineBox(line_position + Vector2f(text_indent, 0.f), Math::Max(available_width - text_indent, 0.f), minimum_dimensions.y);
+		return;
+	}
+
 	line_box->SetLineBox(line_position, available_width, minimum_dimensions.y);
 }
 
@@ -217,7 +255,7 @@ float InlineContainer::GetShrinkToFitWidth() const
 
 	// Simply find our widest line.
 	for (const auto& line_box : line_boxes)
-		content_width = Math::Max(content_width, line_box->GetBoxCursor());
+		content_width = Math::Max(content_width, line_box->GetBoxCursor() + (line_box == line_boxes.front() ? text_indent : 0.f)); // Forge
 
 	return content_width;
 }

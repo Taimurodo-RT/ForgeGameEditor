@@ -47,12 +47,20 @@ public:
 
 	// Closes the line and submits all fragments. Thereby positioning, sizing, and placing their corresponding boxes.
 	// @note The line must have been vertically positioned before closing.
-	void Close(Element* offset_parent, Vector2f offset_parent_position, Style::TextAlign text_align);
+	void Close(Element* offset_parent, Vector2f offset_parent_position, Style::TextAlign text_align, bool justify_line = false);
 
 	float GetBoxCursor() const { return box_cursor; }
 	Vector2f GetPosition() const { return line_position; }
 	float GetLineWidth() const { return line_width; }
 	float GetLineMinimumHeight() const { return line_minimum_height; }
+	// Forge: the box of the last text run on this line, if any (used by line-clamp).
+	InlineLevelBox* GetLastTextRunBox() const
+	{
+		for (auto it = fragments.rbegin(); it != fragments.rend(); ++it)
+			if (it->type == FragmentType::TextRun)
+				return it->box;
+		return nullptr;
+	}
 
 	InlineBox* GetOpenInlineBox();
 

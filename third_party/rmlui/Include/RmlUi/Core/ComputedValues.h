@@ -91,7 +91,7 @@ namespace Style {
 			font_weight(FontWeight::Normal), font_kerning(FontKerning::Auto), has_letter_spacing(0), font_style(FontStyle::Normal),
 			has_font_effect(false), pointer_events(PointerEvents::Auto), focus(Focus::Auto), text_align(TextAlign::Left),
 			text_decoration(TextDecoration::None), text_transform(TextTransform::None), white_space(WhiteSpace::Normal),
-			word_break(WordBreak::Normal), direction(Direction::Auto), line_height_inherit_type(LineHeight::Number)
+			word_break(WordBreak::Normal), direction(Direction::Auto), has_word_spacing(false), line_height_inherit_type(LineHeight::Number)
 		{}
 
 		// Font face used to render text and resolve ex properties. Does not represent a true property
@@ -119,6 +119,7 @@ namespace Style {
 		WordBreak word_break : 2;
 
 		Direction direction : 2;
+		bool has_word_spacing : 1; // Forge
 
 		LineHeight::InheritType line_height_inherit_type : 1;
 		float line_height = 12.f * 1.2f;
@@ -240,6 +241,7 @@ namespace Style {
 		FontFaceHandle font_face_handle() const { return inherited.font_face_handle; }
 		float          font_size()        const { return inherited.font_size; }
 		float          letter_spacing()   const;
+		float          word_spacing()     const; // Forge
 		bool           has_font_effect()  const { return inherited.has_font_effect; }
 		FontStyle      font_style()       const { return inherited.font_style; }
 		FontWeight     font_weight()      const { return inherited.font_weight; }
@@ -359,6 +361,7 @@ namespace Style {
 		void font_face_handle  (FontFaceHandle value) { inherited.font_face_handle   = value; }
 		void font_size         (float value)          { inherited.font_size          = value; }
 		void has_letter_spacing(bool value)           { inherited.has_letter_spacing = value; }
+		void has_word_spacing(bool value)             { inherited.has_word_spacing = value; } // Forge
 		void has_font_effect   (bool value)           { inherited.has_font_effect    = value; }
 		void font_style        (FontStyle value)      { inherited.font_style         = value; }
 		void font_weight       (FontWeight value)     { inherited.font_weight        = value; }

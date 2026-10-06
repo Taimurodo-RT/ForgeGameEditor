@@ -108,6 +108,7 @@ private:
 	const InlineContainer* GetOpenInlineContainer() const;
 
 	const LayoutBox* GetOpenLayoutBox() const;
+	const LayoutBox* GetLastBoxForMarginCollapse() const; // Forge
 
 	/// Increment our cursor and content size, to enclose a sized block-level child box.
 	/// @param[in] child The child box.

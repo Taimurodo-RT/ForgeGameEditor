@@ -292,7 +292,7 @@ UniquePtr<LineBox> LineBox::DetermineVerticalPositioning(const InlineBoxRoot* ro
 	return new_line_box;
 }
 
-void LineBox::Close(Element* offset_parent, Vector2f offset_parent_position, Style::TextAlign text_align)
+void LineBox::Close(Element* offset_parent, Vector2f offset_parent_position, Style::TextAlign text_align, bool justify_line)
 {
 	RMLUI_ASSERT(is_vertically_positioned && !is_closed);
 
@@ -309,22 +309,61 @@ void LineBox::Close(Element* offset_parent, Vector2f offset_parent_position, Sty
 		}
 	}
 
-	// Position and size all inline-level boxes, place geometry boxes.
-	for (const Fragment& fragment : fragments)
+	// Forge: text-align: justify widens the spaces of every line except the last one of a paragraph.
+	Vector<int> opportunities;
+	float justify_spacing = 0.f;
+	if (justify_line && text_align == Style::TextAlign::Justify && box_cursor < line_width)
 	{
+		int last_text = -1;
+		for (int i = 0; i < (int)fragments.size(); i++)
+			if (fragments[i].type == FragmentType::TextRun)
+				last_text = i;
+		opportunities.assign(fragments.size(), 0);
+		int total = 0;
+		for (int i = 0; i < (int)fragments.size(); i++)
+		{
+			if (fragments[i].type == FragmentType::TextRun)
+				opportunities[i] = fragments[i].box->GetJustificationOpportunities(fragments[i].fragment_handle, i == last_text);
+			total += opportunities[i];
+		}
+		if (total > 0)
+			justify_spacing = (line_width - box_cursor) / float(total);
+		else
+			opportunities.clear();
+	}
+
+	// Position and size all inline-level boxes, place geometry boxes.
+	int opportunities_before = 0;
+	for (int fragment_index = 0; fragment_index < (int)fragments.size(); fragment_index++)
+	{
+		const Fragment& fragment = fragments[fragment_index];
 		// Skip inline boxes which have not been closed (moved down to next line).
 		if (fragment.type == FragmentType::InlineBox && fragment.children_end_index == 0)
 			continue;
 
 		RMLUI_ASSERT(fragment.layout_width >= 0.f);
 
+		float justify_offset = 0.f;
+		float justify_width = 0.f;
+		if (!opportunities.empty())
+		{
+			justify_offset = justify_spacing * float(opportunities_before);
+			int inside = opportunities[fragment_index];
+			if (fragment.type == FragmentType::InlineBox)
+				for (int i = fragment_index + 1; i < (int)fragment.children_end_index && i < (int)fragments.size(); i++)
+					inside += opportunities[i];
+			justify_width = justify_spacing * float(inside);
+			opportunities_before += opportunities[fragment_index];
+		}
+
 		const PlacedFragment placed_fragment = {
 			offset_parent,
 			fragment.fragment_handle,
-			line_position - offset_parent_position + fragment.position + Vector2f(offset_horizontal_alignment, 0.f),
-			fragment.layout_width,
+			line_position - offset_parent_position + fragment.position + Vector2f(offset_horizontal_alignment + justify_offset, 0.f),
+			fragment.layout_width + justify_width,
 			fragment.split_left,
 			fragment.split_right,
+			(fragment.type == FragmentType::TextRun ? justify_spacing : 0.f),
 		};
 		fragment.box->Submit(placed_fragment);
 	}

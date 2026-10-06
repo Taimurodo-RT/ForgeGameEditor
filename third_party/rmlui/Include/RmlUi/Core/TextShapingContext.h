@@ -13,6 +13,7 @@ struct TextShapingContext {
 	Style::Direction text_direction = Style::Direction::Auto;
 	Style::FontKerning font_kerning = Style::FontKerning::Auto;
 	float letter_spacing = 0.0f; // Measured in pixels.
+	float word_spacing = 0.0f;   // Forge: extra pixels after each space.
 };
 
 } // namespace Rml

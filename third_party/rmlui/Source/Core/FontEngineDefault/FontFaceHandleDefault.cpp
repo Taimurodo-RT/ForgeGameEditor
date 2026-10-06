@@ -96,6 +96,7 @@ int FontFaceHandleDefault::GetStringWidth(StringView in_string, const TextShapin
 	bool has_set_size = false;
 	bool is_kerning_enabled = IsKerningEnabled(text_shaping_context);
 	int width = 0;
+	float word_spacing = 0.f; // Forge
 	for (auto it_string = StringIteratorU8(string); it_string; ++it_string)
 	{
 		Character character = *it_string;
@@ -111,11 +112,13 @@ int FontFaceHandleDefault::GetStringWidth(StringView in_string, const TextShapin
 		// Adjust the cursor for this character's advance.
 		width += glyph->advance;
 		width += (int)text_shaping_context.letter_spacing;
+		if (character == Character(' ') || character == Character(0xA0)) // Forge: word-spacing
+			word_spacing += text_shaping_context.word_spacing;
 
 		prior_character = character;
 	}
 
-	return Math::Max(width, 0);
+	return Math::Max(width + (int)Math::Round(word_spacing), 0);
 }
 
 int FontFaceHandleDefault::GenerateLayerConfiguration(const FontEffectList& font_effects)
@@ -212,6 +215,7 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 
 	int geometry_index = 0;
 	int line_width = 0;
+	float word_spacing = 0.f; // Forge
 	bool has_set_size = false;
 	bool is_kerning_enabled = IsKerningEnabled(text_shaping_context);
 
@@ -243,6 +247,7 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 		RMLUI_ASSERT(geometry_index + num_textures <= (int)mesh_list.size());
 
 		line_width = 0;
+		word_spacing = 0.f;
 		Character prior_character = Character::Null;
 
 		// Set the mesh and textures to the geometries.
@@ -269,17 +274,20 @@ int FontFaceHandleDefault::GenerateString(RenderManager& render_manager, Texture
 			if (layer == base_layer && glyph->color_format == ColorFormat::RGBA8)
 				glyph_color = ColourbPremultiplied(layer_colour.alpha, layer_colour.alpha);
 
-			layer->GenerateGeometry(&mesh_list[geometry_index], character, Vector2f(position.x + line_width, position.y), glyph_color);
+			layer->GenerateGeometry(&mesh_list[geometry_index], character, Vector2f(position.x + line_width + Math::Round(word_spacing), position.y),
+				glyph_color);
 
 			line_width += glyph->advance;
 			line_width += (int)text_shaping_context.letter_spacing;
+			if (character == Character(' ') || character == Character(0xA0)) // Forge: word-spacing
+				word_spacing += text_shaping_context.word_spacing;
 			prior_character = character;
 		}
 
 		geometry_index += num_textures;
 	}
 
-	return Math::Max(line_width, 0);
+	return Math::Max(line_width + (int)Math::Round(word_spacing), 0);
 }
 
 bool FontFaceHandleDefault::UpdateLayersOnDirty()

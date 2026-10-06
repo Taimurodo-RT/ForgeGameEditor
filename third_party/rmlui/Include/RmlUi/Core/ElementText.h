@@ -40,17 +40,24 @@ public:
 	/// Adds a new line into the text element.
 	/// @param[in] line_position The position of this line, as an offset from the first line.
 	/// @param[in] line The contents of the line.
-	void AddLine(Vector2f line_position, String line);
+	/// Forge: justify_spacing adds extra pixels after each space of the line (text-align: justify).
+	void AddLine(Vector2f line_position, String line, float justify_spacing = 0.f);
+	/// Forge: cuts a line so that it ends with an ellipsis before the given right edge (line-clamp).
+	void SetLineEllipsis(int line_index, float right_edge);
 
 	/// Prevents the element from dirtying its document's layout when its text is changed.
 	void SuppressAutoLayout();
 
 	// Used to store the position and length of each line we have geometry for.
 	struct Line {
-		Line(String text, Vector2f position) : text(std::move(text)), position(position), width(0) {}
+		Line(String text, Vector2f position, float justify_spacing = 0.f) :
+			text(std::move(text)), position(position), width(0), justify_spacing(justify_spacing)
+		{}
 		String text;
 		Vector2f position;
 		int width;
+		float justify_spacing; // Forge
+		float ellipsis_right = -1.f; // Forge: line-clamp ellipsis limit, negative when unused
 	};
 
 	using LineList = Vector<Line>;
