@@ -349,7 +349,6 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 
 	// Need some work on this if we are to include images.
 	RegisterProperty(PropertyId::BackgroundColor, "background-color", "transparent", false, false).AddParser("color");
-	RegisterShorthand(ShorthandId::Background, "background", "background-color", ShorthandType::FallThrough);
 
 	RegisterProperty(PropertyId::Color, "color", "white", true, false).AddParser("color");
 
@@ -410,6 +409,12 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	// Decorators and effects
 	RegisterProperty(PropertyId::Decorator, "decorator", "", false, false).AddParser("decorator");
 	RegisterProperty(PropertyId::MaskImage, "mask-image", "", false, false).AddParser("decorator");
+	// Forge: 'background' and 'background-image' also set the decorator from gradient and url() layers (see PropertySpecification).
+	RegisterShorthand(ShorthandId::Background, "background", "background-color, decorator", ShorthandType::FallThrough);
+	RegisterShorthand(ShorthandId::Invalid, "background-image", "decorator", ShorthandType::FallThrough);
+	for (const char* name : {"background-size", "background-position", "background-repeat", "background-clip", "background-origin",
+			 "background-attachment", "background-blend-mode", "background-position-x", "background-position-y"})
+		RegisterProperty(PropertyId::Invalid, name, "", false, false).AddParser("string"); // Forge: accepted, not drawn yet
 	RegisterProperty(PropertyId::FontEffect, "font-effect", "", true, false).AddParser("font_effect");
 
 	RegisterProperty(PropertyId::Filter, "filter", "", false, false).AddParser("filter", "filter");

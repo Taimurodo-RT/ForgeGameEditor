@@ -82,6 +82,8 @@ public:
 	bool ParsePropertyDeclaration(PropertyDictionary& dictionary, PropertyId property_id, const String& property_value) const;
 	/// Parses a shorthand declaration, setting any parsed and validated properties on the given dictionary.
 	/// @return True if all properties were parsed successfully, false otherwise.
+	// Forge: CSS background layers to background-color and decorators.
+	bool ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand) const;
 	bool ParseShorthandDeclaration(PropertyDictionary& dictionary, ShorthandId shorthand_id, const String& property_value) const;
 
 	/// Sets all undefined properties in the dictionary to their defaults.

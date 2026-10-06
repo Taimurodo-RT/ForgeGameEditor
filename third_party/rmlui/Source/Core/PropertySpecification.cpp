@@ -318,6 +318,103 @@ bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& diction
 	return true;
 }
 
+// Forge: splits at top-level occurrences of 'separator' (whitespace when ' '), keeping (...) and quoted strings whole.
+static StringList SplitTopLevel(const String& value, char separator)
+{
+	StringList out;
+	String current;
+	int depth = 0;
+	char quote = 0;
+	for (char c : value)
+	{
+		if (quote)
+		{
+			current += c;
+			if (c == quote)
+				quote = 0;
+			continue;
+		}
+		if (c == '"' || c == '\'')
+			quote = c;
+		else if (c == '(')
+			depth++;
+		else if (c == ')' && depth > 0)
+			depth--;
+		const bool split = (depth == 0 && (separator == ' ' ? StringUtilities::IsWhitespace(c) : c == separator));
+		if (split)
+		{
+			if (!StringUtilities::StripWhitespace(current).empty())
+				out.push_back(StringUtilities::StripWhitespace(current));
+			current.clear();
+		}
+		else
+			current += c;
+	}
+	if (!StringUtilities::StripWhitespace(current).empty())
+		out.push_back(StringUtilities::StripWhitespace(current));
+	return out;
+}
+
+bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand) const
+{
+	static const char* const ignored_words[] = {"left", "right", "top", "bottom", "center", "repeat", "repeat-x", "repeat-y", "no-repeat", "space",
+		"round", "cover", "contain", "auto", "scroll", "fixed", "local", "/"};
+	static const char* const boxes[] = {"border-box", "padding-box", "content-box", "text"};
+
+	String color, decorator;
+	const StringList layers = SplitTopLevel(value, ',');
+	for (size_t layer_index = 0; layer_index < layers.size(); layer_index++)
+	{
+		const StringList tokens = SplitTopLevel(layers[layer_index], ' ');
+		String image, box, fit, align;
+		for (const String& token : tokens)
+		{
+			const String lower = StringUtilities::ToLower(token);
+			const size_t paren = lower.find('(');
+			const String function = (paren == String::npos ? String() : lower.substr(0, paren));
+			if (function.size() > 9 && function.compare(function.size() - 9, 9, "-gradient") == 0)
+				image = token;
+			else if (function == "url")
+			{
+				String path = StringUtilities::StripWhitespace(token.substr(4, token.size() - 5));
+				if (path.size() >= 2 && (path[0] == '"' || path[0] == '\''))
+					path = path.substr(1, path.size() - 2);
+				if (!StringUtilities::StartsWith(path, "data:"))
+					image = "image(" + path + ")";
+			}
+			else if (std::find_if(std::begin(boxes), std::end(boxes), [&](const char* b) { return lower == b; }) != std::end(boxes))
+				box = (lower == "text" ? String() : lower);
+			else if (lower == "cover" || lower == "contain")
+				fit = lower;
+			else if (lower == "no-repeat")
+				fit = (fit.empty() ? "scale-none" : fit);
+			else if (lower == "center")
+				align = "center center";
+			else if (lower == "none" || (!lower.empty() && ((lower[0] >= '0' && lower[0] <= '9') || lower[0] == '.' || lower[0] == '-')) ||
+				std::find_if(std::begin(ignored_words), std::end(ignored_words), [&](const char* w) { return lower == w; }) != std::end(ignored_words))
+				continue;
+			else if (shorthand && layer_index + 1 == layers.size())
+				color = token;
+		}
+		if (image.empty())
+			continue;
+		if (StringUtilities::StartsWith(image, "image(") && (!fit.empty() || !align.empty()))
+			image = image.substr(0, image.size() - 1) + " " + (fit.empty() ? "scale-none" : fit) + (align.empty() ? "" : " " + align) + ")";
+		if (!decorator.empty())
+			decorator += ", ";
+		decorator += image + (box.empty() ? "" : " " + box);
+	}
+
+	bool result = true;
+	if (shorthand)
+		result &= ParsePropertyDeclaration(dictionary, PropertyId::BackgroundColor, color.empty() ? String("transparent") : color);
+	if (!decorator.empty())
+		result &= ParsePropertyDeclaration(dictionary, PropertyId::Decorator, decorator);
+	else
+		dictionary.SetProperty(PropertyId::Decorator, *GetProperty(PropertyId::Decorator)->GetDefaultValue());
+	return result;
+}
+
 bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictionary, ShorthandId shorthand_id, const String& property_value) const
 {
 	const ShorthandDefinition* shorthand_definition = GetShorthand(shorthand_id);
@@ -343,6 +440,13 @@ bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictio
 	}
 	}
 	RMLUI_ASSERT(!property_values.empty());
+
+	// Forge: CSS backgrounds with image layers.
+	{
+		const String& name = shorthand_map->GetName(shorthand_id);
+		if (name == "background" || name == "background-image")
+			return ParseBackground(dictionary, property_value, name == "background");
+	}
 
 	// Handle the special behavior of the flex shorthand first, otherwise it acts like 'FallThrough'.
 	if (shorthand_definition->type == ShorthandType::Flex && !property_values.empty())
