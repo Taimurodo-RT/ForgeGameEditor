@@ -1,7 +1,9 @@
 #include "forge/core/jobs.h"
 #include "forge/core/time.h"
 #include "forge/scene/scene.h"
+#include "forge/data/binary.h"
 #include "forge/world/generators.h"
+#include "forge/world/region_store.h"
 
 #include <doctest/doctest.h>
 
@@ -21,6 +23,19 @@ FORGE_REFLECT_DECLARE(SceneTestHealth)
 FORGE_REFLECT(SceneTestHealth, 1) {
     t.field("hp", &SceneTestHealth::hp);
     t.field("team", &SceneTestHealth::team);
+}
+
+// SceneTestHealth as an older game saved it.
+struct SceneTestHealthV0 {
+    forge::i32 hp = 0;
+    forge::i32 team = 0;
+    forge::f32 armour = 0;
+};
+FORGE_REFLECT_DECLARE(SceneTestHealthV0)
+FORGE_REFLECT(SceneTestHealthV0, 1) {
+    t.field("hp", &SceneTestHealthV0::hp);
+    t.field("armour", &SceneTestHealthV0::armour);
+    t.field("team", &SceneTestHealthV0::team);
 }
 
 using namespace forge;
@@ -208,6 +223,79 @@ TEST_CASE("entities are saved and come back in a new session") {
         settle(w, s, kAway);
         CHECK(s.stats().entities == 1);
     }
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("entities saved by an older game keep their components") {
+    PoolScope pool;
+    const auto dir = std::filesystem::temp_directory_path() / ("forge_scene_old_" + std::to_string(time_now_ns()));
+    auto gen = std::make_shared<TopDownGenerator>(1);
+    {
+        // A chunk as an older game wrote it: SceneTestHealth had an i32 hp and an armour.
+        auto put = [](std::vector<u8>& out, const void* p, usize n) {
+            out.insert(out.end(), static_cast<const u8*>(p), static_cast<const u8*>(p) + n);
+        };
+        const reflect::TypeInfo* pos_t = reflect::type_of<Position>();
+        const reflect::TypeInfo* now_t = reflect::type_of<SceneTestHealth>();
+        const reflect::TypeInfo* old_t = reflect::type_of<SceneTestHealthV0>();
+        const u64 old_hash = 0x1234'5678'9ABC'DEF0ull;
+        std::vector<u8> layout;
+        data::append_schema(old_t, layout);
+
+        std::vector<u8> chunk;
+        const u32 magic = 0x32455346, count = 1;
+        const u8 visited = 1;
+        put(chunk, &magic, 4);
+        put(chunk, &visited, 1);
+        put(chunk, &count, 4);
+        std::vector<u8> table;
+        const u16 types = 1;
+        const u32 layout_size = static_cast<u32>(layout.size());
+        put(table, &types, 2);
+        put(table, &now_t->id, 8);
+        put(table, &old_hash, 8);
+        put(table, &layout_size, 4);
+        put(table, layout.data(), layout.size());
+        const u32 table_size = static_cast<u32>(table.size());
+        put(chunk, &table_size, 4);
+        put(chunk, table.data(), table.size());
+
+        const u16 components = 2;
+        put(chunk, &components, 2);
+        auto component = [&](const reflect::TypeInfo* t, u64 id, u64 hash, const void* object) {
+            std::vector<u8> payload;
+            data::append_binary(t, object, payload);
+            const u32 size = static_cast<u32>(payload.size());
+            put(chunk, &id, 8);
+            put(chunk, &hash, 8);
+            put(chunk, &size, 4);
+            put(chunk, payload.data(), payload.size());
+        };
+        const Position pos = Position::at_tile(5, 6);
+        component(pos_t, pos_t->id, pos_t->schema_hash(), &pos);
+        const SceneTestHealthV0 old{55, 2, 0.5f};
+        component(old_t, now_t->id, old_hash, &old);
+
+        world::RegionStore store("e");
+        REQUIRE(store.open(dir, 1));
+        REQUIRE(store.write({{ChunkCoord{0, 0}, &chunk}}));
+    }
+    World w(tight_desc(), gen);
+    Scene s(w);
+    s.register_component<SceneTestHealth>();
+    REQUIRE(w.open_save(dir));
+    REQUIRE(s.open_save(dir));
+    settle(w, s, kHome);
+    std::vector<flecs::entity_t> found;
+    s.query_radius(5, 6, 1, found);
+    REQUIRE(found.size() == 1);
+    const SceneTestHealth* h = s.ecs().entity(found[0]).try_get<SceneTestHealth>();
+    REQUIRE(h != nullptr);
+    CHECK(h->hp == 55.0f);
+    CHECK(h->team == 2);
+    CHECK(s.stats().upgraded == 1);
+    CHECK(s.stats().dropped == 0);
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
