@@ -113,10 +113,31 @@ ElementStyle::PropertyElementPair ElementStyle::GetSpecifiedProperty(const Prope
 	return {property_definition->GetDefaultValue(), nullptr};
 }
 
+// Forge: CSS-wide keywords on custom properties. 'inherit', 'unset' and 'revert' take the parent's value (custom properties inherit),
+// 'initial' makes the property guaranteed-invalid.
+enum class CustomKeyword { None, Inherit, Initial };
+static CustomKeyword GetCustomKeyword(const Property* property)
+{
+	if (property->unit != Unit::STRING)
+		return CustomKeyword::None;
+	const String value = StringUtilities::ToLower(StringUtilities::StripWhitespace(property->Get<String>()));
+	if (value == "inherit" || value == "unset" || value == "revert" || value == "revert-layer")
+		return CustomKeyword::Inherit;
+	if (value == "initial")
+		return CustomKeyword::Initial;
+	return CustomKeyword::None;
+}
+
 ElementStyle::PropertyElementPair ElementStyle::GetSpecifiedCustomProperty(const PropertySources& sources, const String& name)
 {
 	if (const Property* local_property = GetLocalCustomProperty(name, sources.inline_properties, sources.definition))
-		return {local_property, sources.element};
+	{
+		const CustomKeyword keyword = GetCustomKeyword(local_property);
+		if (keyword == CustomKeyword::Initial)
+			return {};
+		if (keyword == CustomKeyword::None)
+			return {local_property, sources.element};
+	}
 
 	Element* parent = sources.element->GetParentNode();
 	while (parent)
@@ -125,7 +146,11 @@ ElementStyle::PropertyElementPair ElementStyle::GetSpecifiedCustomProperty(const
 		if (const Property* variable_property =
 				ElementStyle::GetLocalCustomProperty(name, parent_style->inline_properties, parent_style->definition.get()))
 		{
-			return {variable_property, parent};
+			const CustomKeyword keyword = GetCustomKeyword(variable_property);
+			if (keyword == CustomKeyword::Initial)
+				return {};
+			if (keyword == CustomKeyword::None)
+				return {variable_property, parent};
 		}
 
 		parent = parent->GetParentNode();

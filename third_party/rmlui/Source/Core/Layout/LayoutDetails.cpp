@@ -446,7 +446,8 @@ void LayoutDetails::BuildBoxWidth(Box& box, const ComputedValues& computed, floa
 		}
 	}
 	// Otherwise, the margins that are set to auto will pick up the remaining width of the containing block.
-	else if (num_auto_margins > 0)
+	// Forge: for absolutely positioned boxes only when both 'left' and 'right' are set (CSS 2 §10.3.7), otherwise auto margins are zero.
+	else if (num_auto_margins > 0 && !(absolutely_positioned && inset_auto))
 	{
 		const float margin =
 			(containing_block.x - (GetInsetWidth() + box.GetSizeAcross(BoxDirection::Horizontal, BoxArea::Margin))) / float(num_auto_margins);
@@ -526,7 +527,8 @@ void LayoutDetails::BuildBoxHeight(Box& box, const ComputedValues& computed, flo
 		}
 	}
 	// Otherwise, the margins that are set to auto will pick up the remaining height of the containing block.
-	else if (num_auto_margins > 0)
+	// Forge: for absolutely positioned boxes only when both 'top' and 'bottom' are set.
+	else if (num_auto_margins > 0 && !(absolutely_positioned && inset_auto))
 	{
 		const float margin =
 			(containing_block_height - (GetInsetHeight() + box.GetSizeAcross(BoxDirection::Vertical, BoxArea::Margin))) / float(num_auto_margins);
