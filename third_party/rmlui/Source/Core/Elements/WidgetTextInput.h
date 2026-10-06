@@ -295,6 +295,9 @@ private:
 	Vector2f cursor_position;
 	Vector2f cursor_size;
 	Geometry cursor_geometry;
+
+	// Forge: vertical offset of the text in a single-line web field (text is centred vertically).
+	float vertical_offset = 0.f;
 };
 
 } // namespace Rml

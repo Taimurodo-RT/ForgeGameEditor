@@ -4,6 +4,7 @@
 #include "../../../Include/RmlUi/Core/Core.h"
 #include "../../../Include/RmlUi/Core/ElementScroll.h"
 #include "../../../Include/RmlUi/Core/ElementText.h"
+#include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ElementUtilities.h"
 #include "../../../Include/RmlUi/Core/Elements/ElementFormControl.h"
 #include "../../../Include/RmlUi/Core/Factory.h"
@@ -455,6 +456,13 @@ void WidgetTextInput::OnResize()
 	GenerateCursor();
 
 	Vector2f text_position = parent->GetBox().GetPosition(BoxArea::Content);
+
+	// Forge: as in a browser, a single-line field of a web page centres its text vertically.
+	vertical_offset = 0.f;
+	if (ElementDocument* document = parent->GetOwnerDocument(); document && document->GetTagName() == "html" && parent->GetTagName() == "input")
+		vertical_offset = Math::Max(0.f, Math::Round(0.5f * (parent->GetBox().GetSize(BoxArea::Content).y - GetLineHeight())));
+	text_position.y += vertical_offset;
+
 	text_element->SetOffset(text_position, parent);
 	selected_text_element->SetOffset(text_position, parent);
 
@@ -469,7 +477,8 @@ void WidgetTextInput::OnRender()
 
 	ElementUtilities::SetClippingRegion(text_element);
 
-	Vector2f text_translation = parent->GetAbsoluteOffset() - Vector2f(parent->GetScrollLeft(), parent->GetScrollTop());
+	Vector2f text_translation =
+		parent->GetAbsoluteOffset() - Vector2f(parent->GetScrollLeft(), parent->GetScrollTop()) + Vector2f(0.f, vertical_offset); // Forge
 	selection_composition_geometry.Render(text_translation);
 
 	if (cursor_visible && selection_length <= 0 && !parent->IsDisabled())

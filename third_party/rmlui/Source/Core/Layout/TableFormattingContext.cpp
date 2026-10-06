@@ -1,4 +1,5 @@
 #include "TableFormattingContext.h"
+#include <float.h>
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Element.h"
 #include "../../../Include/RmlUi/Core/ElementDocument.h"
@@ -67,6 +68,30 @@ UniquePtr<LayoutBox> TableFormattingContext::Format(ContainerBox* parent_contain
 			context.table_gap = -Vector2f(Math::Min(cell.border_left_width(), cell.border_right_width()),
 				Math::Min(cell.border_top_width(), cell.border_bottom_width()));
 		}
+	}
+
+	// Forge: in a web page, separated borders also leave the border spacing between the outer cells and the table's edges.
+	else if (ElementDocument* document = element_table->GetOwnerDocument();
+		document && document->GetTagName() == "html" && (context.table_gap.x > 0.f || context.table_gap.y > 0.f))
+	{
+		const Vector2f gap = Math::Max(context.table_gap, Vector2f(0.f));
+		box.SetEdge(BoxArea::Padding, BoxEdge::Left, box.GetEdge(BoxArea::Padding, BoxEdge::Left) + gap.x);
+		box.SetEdge(BoxArea::Padding, BoxEdge::Right, box.GetEdge(BoxArea::Padding, BoxEdge::Right) + gap.x);
+		box.SetEdge(BoxArea::Padding, BoxEdge::Top, box.GetEdge(BoxArea::Padding, BoxEdge::Top) + gap.y);
+		box.SetEdge(BoxArea::Padding, BoxEdge::Bottom, box.GetEdge(BoxArea::Padding, BoxEdge::Bottom) + gap.y);
+		Vector2f size = box.GetSize();
+		if (size.x >= 0.f)
+			size.x = Math::Max(size.x - 2.f * gap.x, 0.f);
+		if (size.y >= 0.f)
+			size.y = Math::Max(size.y - 2.f * gap.y, 0.f);
+		box.SetContent(size);
+		context.table_content_offset = box.GetPosition();
+		context.table_initial_content_size = Vector2f(Math::Max(size.x, 0.f), Math::Max(0.0f, size.y));
+		context.table_min_size = Math::Max(context.table_min_size - 2.f * gap, Vector2f(0.f));
+		if (context.table_max_size.x < FLT_MAX)
+			context.table_max_size.x = Math::Max(context.table_max_size.x - 2.f * gap.x, 0.f);
+		if (context.table_max_size.y < FLT_MAX)
+			context.table_max_size.y = Math::Max(context.table_max_size.y - 2.f * gap.y, 0.f);
 	}
 
 	Vector2f table_content_size, table_overflow_size;
