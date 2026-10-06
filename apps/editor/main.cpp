@@ -7,6 +7,7 @@
 //   forge_editor --bench [--frames N]   offscreen: every object listed, the hierarchy scrolling
 //   forge_editor --bench-level [--frames N]   offscreen: flying over the level while painting
 //   forge_editor --bench-assets [N]   offscreen: a project of N files (50 000), indexed, listed, searched
+//   forge_editor --bench-scheme [N]   offscreen: a scheme of N nodes (5 000) panned and a node dragged
 //   forge_editor --self-test [--screenshot out.png]   offscreen: drives the controls, fails on a wrong result
 //
 // The «Уровень» tab opens «Старая шахта» from games/slice/level (or --level
@@ -2442,8 +2443,9 @@ private:
             const script::Graph* g = sc.graph(1);
             if (!check(g && logic::when_node(*g), "the link is a scheme starting at «Когда»")) break;
             usize of1 = 0;
-            for (const auto& n : sc.node_views()) of1 += n.link == 1;
-            check(of1 == g->nodes.size() && shown("sc-frame-1"), "a frame with a node for each node of the scheme");
+            for (const auto& n : sc.node_views()) of1 += n.link == 1 && !n.hidden;
+            // Only the nodes near the view are in the document.
+            check(of1 > 0 && of1 <= g->nodes.size() && shown("sc-frame-1"), "a frame with the scheme's nodes");
             const std::string when = "sc-node-1-" + std::to_string(logic::when_node(*g));
             check(shown(when) && shown("sc-pin-1-" + std::to_string(logic::when_node(*g)) + "-o-next"), "«Когда» with its flow exit");
             check(click(when) && sc.selected_node() == logic::when_node(*g) && lg().selected_link() == 1, "a click on a node selects it");
@@ -2554,7 +2556,9 @@ private:
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(sc.graph(1)->find(when)->x == -208, "Ctrl+Z undoes it");
             const script::Graph* g2 = sc.graph(2);
-            check(g2 && click("sc-node-2-" + std::to_string(logic::when_node(*g2))) && lg().selected_link() == 2, "a node of the other link selects it");
+            // (Its frame may be out of view: only the nodes near it are in the document.)
+            if (g2) sc.select_node(2, logic::when_node(*g2));
+            check(g2 && lg().selected_link() == 2, "a node of the other link selects it");
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
         }
@@ -2723,6 +2727,54 @@ private:
             check(click("sc-drop-" + std::to_string(id)) && lg().links().schemes.empty(), "«Убрать» takes the door's away");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(lg().links().scheme_for("door") != nullptr, "Ctrl+Z brings it back");
+            break;
+        }
+        case 39: {
+            // With the mouse: the view panned, then a node dragged (the world
+            // under the view is moved; the node follows the mouse all the same).
+            SchemeView& sc = lg().scheme();
+            sc.focus(lg().links().scheme_for("door")->id);
+            Rml::Element* pane = ed_.find_element("lg-scheme");
+            if (!check(pane != nullptr, "the scheme pane")) break;
+            const Rml::Vector2f at = pane->GetAbsoluteOffset(Rml::BoxArea::Padding);
+            const f32 px = at.x + pane->GetClientWidth() - 30, py = at.y + pane->GetClientHeight() - 20;
+            const f32 pan_x = sc.pan_x(), pan_y = sc.pan_y();
+            mouse(SDL_EVENT_MOUSE_MOTION, px, py);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, px, py);
+            for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, px - 25.0f * static_cast<f32>(i), py - 10.0f * static_cast<f32>(i));
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, px - 100, py - 40);
+            check(sc.pan_x() == pan_x - 100 && sc.pan_y() == pan_y - 40, "dragging the empty pane pans the view");
+            break;
+        }
+        case 40: {
+            SchemeView& sc = lg().scheme();
+            const u32 id = lg().links().scheme_for("door")->id;
+            const script::Graph* g = sc.graph(id);
+            drag_node_ = 0;
+            for (const script::GraphNode& n : g->nodes)
+                if (n.def == "api.entity.move") drag_node_ = n.uid;
+            const SchemeView::NodeView* v = nullptr;
+            for (const SchemeView::NodeView& n : sc.node_views())
+                if (!n.hidden && static_cast<u32>(n.link) == id && static_cast<u32>(n.uid) == drag_node_) v = &n;
+            Rml::Element* pane = ed_.find_element("lg-scheme");
+            if (!check(v && pane, "«Сдвинуть» is in view")) break;
+            const Rml::Vector2f at = pane->GetAbsoluteOffset(Rml::BoxArea::Padding);
+            x_ = at.x + v->x + sc.pan_x() + 40;
+            y_ = at.y + v->y + sc.pan_y() + 12;
+            drag_from_x_ = g->find(drag_node_)->x;
+            drag_from_y_ = g->find(drag_node_)->y;
+            mouse(SDL_EVENT_MOUSE_MOTION, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            for (int i = 1; i <= 3; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x_ + 10.0f * static_cast<f32>(i), y_ + 7.0f * static_cast<f32>(i));
+            break;
+        }
+        case 41: {
+            SchemeView& sc = lg().scheme();
+            const u32 id = lg().links().scheme_for("door")->id;
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_ + 30, y_ + 21);
+            const script::GraphNode* n = sc.graph(id)->find(drag_node_);
+            // 30, 21 px: onto the grid, 32 and 16.
+            check(n && n->x == drag_from_x_ + 32 && n->y == drag_from_y_ + 16, "a node dragged with the mouse follows it, onto the grid");
             check(click("lg-mode-links") && lg().mode() == "links", "back to «Связи»");
             break;
         }
@@ -3102,10 +3154,12 @@ private:
     std::string drop_text_;
     bool typed_ = false;
     int failures_ = 0;
+    u32 drag_node_ = 0;
+    f32 drag_from_x_ = 0, drag_from_y_ = 0;
 };
 
 int run_offscreen(const Options& options, const char* screenshot, u32 frames, bool select, bool play, bool bench,
-                  bool self_test, int tab, bool bench_level, u32 bench_assets) {
+                  bool self_test, int tab, bool bench_level, u32 bench_assets, u32 bench_scheme) {
     jobs::init();
     SDL_GPUDevice* device = render::create_offscreen_device();
     if (!device) {
@@ -3189,9 +3243,126 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 editor.assets.open_folder("bench/10"); // 1 000 pictures: a thumbnail on every row
                 frames = std::max(frames, 600u);
             }
+            // A thing scheme of bench_scheme nodes: «Каждый шаг», then a long
+            // chain of «Сдвинуть», each with «Этот объект» wired in. The view
+            // is panned, then a node dragged, with the mouse.
+            u32 sc_frame = 0, sc_node = 0;
+            f32 sc_x = 0, sc_y = 0, sc_node_x = 0, sc_node_y = 0, sc_press_x = 0, sc_press_y = 0;
+            if (bench_scheme) {
+                editor.open_tab("logic");
+                SchemeView& sc = editor.logic_tab.scheme();
+                editor.logic_tab.set_mode("scheme");
+                sc_frame = editor.logic_tab.thing_scheme("door");
+                script::Graph g;
+                g.name = "bench";
+                u32 prev = g.add("std.event.tick", 0, 0).uid;
+                const char* prev_pin = script::kFlowNext;
+                for (u32 i = 1; i + 1 < bench_scheme; i += 2) {
+                    const u32 move = g.add("api.entity.move", 0, 0).uid;
+                    const u32 self = g.add("std.self", 0, 0).uid;
+                    g.link(prev, prev_pin, move, script::kFlowIn);
+                    g.link(self, "actor", move, "actor");
+                    prev = move;
+                }
+                const Stopwatch put;
+                sc.set_graph(sc_frame, g, "bench", true);
+                const f64 put_ms = put.elapsed_ms();
+                const Stopwatch order;
+                sc.arrange(sc_frame);
+                const f64 order_ms = order.elapsed_ms();
+                sc.focus(sc_frame);
+                FORGE_INFO("scheme: %s nodes, %s wires; put in and laid out %.1f ms, «Упорядочить» %.1f ms",
+                           group_digits(static_cast<u64>(sc.graph(sc_frame)->nodes.size())).c_str(), group_digits(static_cast<u64>(sc.graph(sc_frame)->links.size())).c_str(),
+                           put_ms, order_ms);
+                frames = std::max(frames, 120u);
+            }
+            auto sc_mouse = [&](SDL_EventType type, f32 x, f32 y) {
+                SDL_Event e{};
+                e.type = type;
+                if (type == SDL_EVENT_MOUSE_MOTION) {
+                    e.motion.x = x;
+                    e.motion.y = y;
+                } else {
+                    e.button.x = x;
+                    e.button.y = y;
+                    e.button.button = SDL_BUTTON_LEFT;
+                    e.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                }
+                editor.handle_event(e);
+            };
+            f64 pan_ms = 0, drag_ms = 0, pan_worst = 0, drag_worst = 0;
+            u32 pans = 0, drags = 0;
             for (u32 f = 0; f < frames; ++f) {
                 if (testing) testing = test.step(f);
                 else if (self_test) break;
+                // Pan: press on the empty pane under the frame, move; then drag
+                // a «Сдвинуть» in view about.
+                if (bench_scheme && f == 10) {
+                    if (Rml::Element* pane = editor.find_element("lg-scheme")) {
+                        const Rml::Vector2f at = pane->GetAbsoluteOffset(Rml::BoxArea::Border);
+                        sc_x = at.x + pane->GetClientWidth() - 40;
+                        sc_y = at.y + pane->GetClientHeight() - 20;
+                    }
+                    sc_mouse(SDL_EVENT_MOUSE_MOTION, sc_x, sc_y);
+                    sc_mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, sc_x, sc_y);
+                }
+                if (bench_scheme && f > 10 && f < 60) {
+                    sc_x += f < 35 ? -12.0f : 12.0f;
+                    sc_y += f < 35 ? -4.0f : 4.0f;
+                    const Stopwatch t;
+                    sc_mouse(SDL_EVENT_MOUSE_MOTION, sc_x, sc_y);
+                    const f64 ms = t.elapsed_ms();
+                    pan_ms += ms;
+                    pan_worst = std::max(pan_worst, ms);
+                    ++pans;
+                }
+                if (bench_scheme && f == 60) {
+                    sc_mouse(SDL_EVENT_MOUSE_BUTTON_UP, sc_x, sc_y);
+                    // A «Сдвинуть» in view.
+                    for (const SchemeView::NodeView& n : editor.logic_tab.scheme().node_views())
+                        if (static_cast<u32>(n.link) == sc_frame && !n.hidden && n.title == "Сдвинуть" &&
+                            n.x + editor.logic_tab.scheme().pan_x() > 300 && n.y + editor.logic_tab.scheme().pan_y() > 100) {
+                            sc_node = static_cast<u32>(n.uid);
+                            break;
+                        }
+                }
+                if (bench_scheme && f == 62) {
+                    // Its place on screen (the world sits at the pan already).
+                    Rml::Element* node = editor.find_element(("sc-node-" + std::to_string(sc_frame) + "-" + std::to_string(sc_node)).c_str());
+                    if (const script::GraphNode* n = editor.logic_tab.scheme().graph(sc_frame)->find(sc_node)) {
+                        sc_node_x = n->x;
+                        sc_node_y = n->y;
+                    }
+                    if (node) {
+                        const Rml::Vector2f at = node->GetAbsoluteOffset(Rml::BoxArea::Border);
+                        sc_x = at.x + 40;
+                        sc_y = at.y + 12;
+                        sc_press_x = sc_x;
+                        sc_press_y = sc_y;
+                        sc_mouse(SDL_EVENT_MOUSE_MOTION, sc_x, sc_y);
+                        sc_mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, sc_x, sc_y);
+                    } else {
+                        FORGE_WARN("scheme: the node to drag is not on screen");
+                    }
+                }
+                if (bench_scheme && f > 62 && f < 110) {
+                    sc_x += f < 90 ? 8.0f : -8.0f;
+                    sc_y += f < 90 ? 5.0f : -5.0f;
+                    const Stopwatch t;
+                    sc_mouse(SDL_EVENT_MOUSE_MOTION, sc_x, sc_y);
+                    const f64 ms = t.elapsed_ms();
+                    drag_ms += ms;
+                    drag_worst = std::max(drag_worst, ms);
+                    ++drags;
+                }
+                if (bench_scheme && f == 110) {
+                    const Stopwatch t;
+                    sc_mouse(SDL_EVENT_MOUSE_BUTTON_UP, sc_x, sc_y);
+                    const f64 ms = t.elapsed_ms();
+                    const script::GraphNode* now = editor.logic_tab.scheme().graph(sc_frame)->find(sc_node);
+                    FORGE_INFO("scheme: letting the node go (one step of the history) %.1f ms; it went %.0f, %.0f px (the mouse %.0f, %.0f)",
+                               ms, now ? now->x - sc_node_x : 0.0f, now ? now->y - sc_node_y : 0.0f, sc_x - sc_press_x, sc_y - sc_press_y);
+                }
                 if (bench_assets && f == frames / 2) {
                     // Search across everything, then scroll the results.
                     const Stopwatch search;
@@ -3237,6 +3408,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 const Stopwatch frame_timer;
                 editor.update(1.0 / 60.0);
                 const f64 cpu_update = frame_timer.elapsed_ms();
+                if (bench_scheme && cpu_update > 100) FORGE_INFO("scheme: frame %u update %.0f ms", f, cpu_update);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 const Stopwatch render_timer;
                 editor.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h);
@@ -3251,6 +3423,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 ++measured;
             }
             measured = std::max(measured, 1u);
+            if (bench_scheme)
+                FORGE_INFO("scheme: pan %.2f ms avg / %.2f worst per mouse move (%u), node drag %.2f ms avg / %.2f worst (%u)",
+                           pan_ms / std::max(pans, 1u), pan_worst, pans, drag_ms / std::max(drags, 1u), drag_worst, drags);
             if (bench_assets)
                 FORGE_INFO("assets: %s rows listed, %s previews made", group_digits(editor.assets.row_count()).c_str(),
                            group_digits(editor.assets.thumbs_made()).c_str());
@@ -3285,7 +3460,7 @@ int main(int argc, char** argv) {
     const char* screenshot = nullptr;
     u32 frames = 10;
     bool select = false, play = false, bench = false, self_test = false, bench_level = false;
-    u32 bench_assets = 0;
+    u32 bench_assets = 0, bench_scheme = 0;
     int tab = 0;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
@@ -3309,10 +3484,15 @@ int main(int argc, char** argv) {
             bench_assets = 50'000;
             if (has_value && argv[i + 1][0] != '-') bench_assets = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         }
+        else if (std::strcmp(argv[i], "--bench-scheme") == 0) {
+            bench_scheme = 5'000;
+            if (has_value && argv[i + 1][0] != '-') bench_scheme = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
+        }
         else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    if (screenshot || bench || self_test || bench_level || bench_assets)
-        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab, bench_level, bench_assets);
+    if (screenshot || bench || self_test || bench_level || bench_assets || bench_scheme)
+        return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab, bench_level, bench_assets,
+                             bench_scheme);
     return app.run(config);
 }

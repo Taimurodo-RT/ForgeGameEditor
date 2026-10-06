@@ -46,6 +46,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,9 @@ public:
     bool handle_event(const SDL_Event& e, f32 density);
     bool handle_key(const SDL_KeyboardEvent& k);
     bool dragging() const { return drag_ != Drag::None; }
+    // How far the view is panned (the world is drawn moved by it).
+    f32 pan_x() const { return pan_x_; }
+    f32 pan_y() const { return pan_y_; }
 
     // --- actions (the mouse, keys and the self-test) ---
     // The scheme of a link as shown (its own, or the one it would have).
@@ -82,6 +86,9 @@ public:
     bool move_node(u32 link, u32 node, f32 x, f32 y);
     // The nodes laid out in order (left to right, values under their step).
     bool arrange(u32 link);
+    // A whole scheme put in at once (one step of the history), laid out in
+    // order when asked.
+    bool set_graph(u32 link, const script::Graph& g, const std::string& label, bool arrange = false);
     // Joins an output (a flow exit or a value) to an input; false when they
     // do not fit. A flow exit or a value input keeps one wire: the new one.
     bool connect(u32 link, u32 from, const std::string& from_pin, u32 to, const std::string& to_pin);
@@ -117,6 +124,8 @@ public:
     void open_things();
     // Scrolls so the frame is at the top.
     void focus(u32 frame);
+    // Pans so the node is in view, when it is not.
+    void reveal(u32 link, u32 node);
     // A thing scheme's frame (not a link's).
     bool own(u32 frame) const;
     // Selects a frame: a link's selects the link.
@@ -140,6 +149,7 @@ public:
         int link = 0, uid = 0;
         float x = 0, y = 0, w = 0, h = 0;
         bool selected = false, lit = false, fixed = false, warning = false;
+        bool hidden = false; // a free place in the list (out of view)
         std::vector<RowView> rows;
         bool operator==(const NodeView&) const = default;
     };
@@ -182,6 +192,11 @@ private:
         std::vector<PinView> left, right;
         f32 w = 0, h = 0;
     };
+    // A node's look kept between redraws, with the row of each pin.
+    struct Look {
+        NodeBox box;
+        std::map<std::string, int> in_row, out_row;
+    };
     struct Lines : ui::LineSource {
         std::vector<ui::Line> list;
         u64 counter = 0;
@@ -195,7 +210,8 @@ private:
 
     // The graph to change: the shown one, copied.
     script::Graph editable(u32 link) const;
-    void commit(u32 link, const script::Graph& g, const std::string& label, const std::string& merge = {});
+    // moved_only: only places changed, so the logic needs no compiling again.
+    void commit(u32 link, const script::Graph& g, const std::string& label, const std::string& merge = {}, bool moved_only = false);
     const script::PinDef* in_pin(const script::Graph& g, u32 node, const std::string& pin) const;
     const script::PinDef* out_pin(const script::Graph& g, u32 node, const std::string& pin) const;
     bool known(u32 frame) const;
@@ -209,9 +225,17 @@ private:
     std::string node_title(u32 link, const script::GraphNode& n, const script::NodeDef* d) const;
     std::string out_title(u32 link, const script::GraphNode& n, const script::PinDef& p) const;
     std::string option_name(const std::string& list, const std::string& id) const;
-    NodeBox box_of(u32 link, const script::Graph& g, const script::GraphNode& n) const;
+    NodeBox box_of(u32 link, const script::Graph& g, const script::GraphNode& n,
+                   const std::set<std::pair<u32, std::string>>& wired_in) const;
+    static std::set<std::pair<u32, std::string>> wired_inputs(const script::Graph& g);
     void lay_out(u32 link, script::Graph& g) const;
     void rebuild_grid();
+    // The view again (panned, a node dragged); the schemes as they are.
+    void redraw();
+    bool place_nodes(std::vector<NodeView> fresh); // true: the list changed
+    void shift_node(const NodeView& v);
+    void unshift_node();
+    void set_pan(f32 x, f32 y);
     static u32 wire_color(const std::string& kind);
     void dirty(const char* name) {
         if (model_) model_.DirtyVariable(name);
@@ -222,6 +246,7 @@ private:
     script::NodeLibrary nodes_;
     std::map<u32, script::Graph> shown_; // per link, while the view is up
     std::map<u32, Place> places_;
+    std::map<u32, std::map<u32, Look>> looks_; // per frame, per node
     std::map<std::pair<u32, u32>, std::pair<std::string, bool>> node_problems_; // (link, node) -> text, warning
 
     u32 sel_link_node_ = 0, sel_node_ = 0;
@@ -242,7 +267,9 @@ private:
     u32 drag_link_ = 0, drag_node_ = 0;
     f32 grab_mx_ = 0, grab_my_ = 0, grab_x_ = 0, grab_y_ = 0;
     f32 mouse_x_ = 0, mouse_y_ = 0; // over the pane
+    f32 screen_x_ = 0, screen_y_ = 0; // the mouse on screen, last seen
     f32 pan_x_ = 0, pan_y_ = 0;
+    f32 cull_x_ = 0, cull_y_ = 0; // the pan when the view was last drawn
     f32 pane_x_ = 0, pane_y_ = 0;   // the pane on screen
     f32 pane_w_ = 0, pane_h_ = 0;
     u32 pick_link_ = 0, pick_node_ = 0;
@@ -262,6 +289,8 @@ private:
     std::vector<OptionView> m_choices_;
     float m_choose_x_ = 0, m_choose_y_ = 0;
     float m_pal_x_ = 0, m_pal_y_ = 0;
+    float m_pan_x_ = 0, m_pan_y_ = 0;     // where the world is placed
+    float m_slide_x_ = 0, m_slide_y_ = 0; // and slid from there while the view is dragged
     Rml::String m_search_, m_tip_;
 };
 

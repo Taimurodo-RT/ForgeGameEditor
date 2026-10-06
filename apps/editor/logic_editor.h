@@ -298,6 +298,8 @@ private:
     logic::Logic logic_;
     std::vector<logic::Thing> things_; // the hero and the templates
     std::map<u32, std::string> problems_;
+    std::vector<logic::Problem> compiled_; // every problem the logic has (the scheme marks nodes with them)
+    bool keep_compiled_ = false;           // the next rebuild only moved nodes: the code is the same
     u64 built_lib_ = ~0ull;
     bool dirty_ = true;
     std::string hero_icon_;

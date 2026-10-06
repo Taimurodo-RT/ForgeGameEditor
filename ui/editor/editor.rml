@@ -714,6 +714,7 @@
             <div id="lg-scheme" class="lg-scheme grow" data-if="lg_mode == 'scheme'" data-event-mousedown="sc_down">
                 <lines id="sc-grid" source="sc-grid" class="sc-lines"/>
                 <div class="lg-empty muted" data-if="sc_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи». А вещь может что-то делать и сама по себе: «Своя схема вещи».</div>
+                <div id="sc-world" class="sc-world" data-style-left="sc_pan_x + 'px'" data-style-top="sc_pan_y + 'px'" data-style-transform="'translate(' + sc_slide_x + 'px, ' + sc_slide_y + 'px)'">
                 <div data-for="f : sc_frames" class="sc-frame" data-attr-id="'sc-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit" data-class-custom="f.custom" data-class-own="f.own"
                      data-style-left="f.x + 'px'" data-style-top="f.y + 'px'" data-style-width="f.w + 'px'" data-style-height="f.h + 'px'" data-event-mousedown="sc_frame_down(f.id)">
                     <div class="sc-frame-head row">
@@ -730,7 +731,7 @@
                     <div class="sc-note" data-if="f.note != ''">{{ f.note }}</div>
                 </div>
                 <lines id="sc-wires" source="sc-wires" class="sc-lines"/>
-                <div data-for="n : sc_nodes" data-attr-class="'sc-node ' + n.tone + (n.selected ? ' selected' : '') + (n.lit ? ' lit' : '') + (n.problem != '' ? (n.warning ? ' warn' : ' bad') : '')"
+                <div data-for="n : sc_nodes" data-attr-class="'sc-node ' + n.tone + (n.hidden ? ' hidden' : '') + (n.selected ? ' selected' : '') + (n.lit ? ' lit' : '') + (n.problem != '' ? (n.warning ? ' warn' : ' bad') : '')"
                      data-attr-id="'sc-node-' + n.id" data-style-left="n.x + 'px'" data-style-top="n.y + 'px'" data-style-width="n.w + 'px'" data-style-height="n.h + 'px'"
                      data-attr-title="n.problem != '' ? n.problem : n.help" data-event-mousedown="sc_node_down(n.link, n.uid)" data-event-click="sc_node(n.link, n.uid)">
                     <div class="sc-node-head row">
@@ -755,6 +756,7 @@
                                  data-event-mousedown="sc_pin_down(n.link, n.uid, true, r.out.id)" data-event-click="sc_pin(n.link, n.uid, true, r.out.id)"><shape data-if="r.out.kind == 'flow'" kind="exec" data-attr-fill="r.out.wired || r.out.pending ? 'true' : 'false'"/><div data-if="r.out.kind != 'flow'" class="sc-dot"></div></div>
                         </div>
                     </div>
+                </div>
                 </div>
                 <div id="sc-own-add" class="sc-tools button tonal small" title="Что вещь делает сама по себе, без связей: при старте, каждый шаг, при ударе…" data-event-mousedown="sc_stop" data-event-click="sc_own_add"><icon class="s" name="add"/><span>Своя схема вещи</span></div>
                 <div id="sc-choose" class="sc-choose column" data-if="sc_choosing" data-style-left="sc_choose_x + 'px'" data-style-top="sc_choose_y + 'px'" data-event-mousedown="sc_stop">

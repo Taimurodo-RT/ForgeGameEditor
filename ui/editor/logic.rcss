@@ -416,12 +416,16 @@
     min-width: 0px;
     position: relative;
     overflow: hidden;
-    border-radius: 6px;
+    clip: always; /* the world inside is moved by a transform: its overflow is not measured */
     background-color: #1d1e22;
     color: #e4e6eb;
     cursor: move;
 }
 .sc-lines { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; pointer-events: none; }
+/* The world under the view: frames, wires and nodes, moved as one when panned */
+.sc-world { position: absolute; left: 0px; top: 0px; width: 1px; height: 1px; }
+.sc-world .sc-lines { width: 1px; height: 1px; }
+.sc-node.hidden { display: none; }
 .lg-scheme .lg-empty { color: #a9adb6; }
 
 /* A frame: a comment box with a coloured title bar */
