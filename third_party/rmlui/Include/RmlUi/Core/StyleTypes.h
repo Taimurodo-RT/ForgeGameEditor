@@ -46,7 +46,9 @@ namespace Style {
 		TableColumn,
 		TableColumnGroup,
 		TableCell,
-		ListItem // Forge: a block with a list marker
+		ListItem, // Forge: a block with a list marker
+		Grid,     // Forge
+		InlineGrid
 	};
 	enum class Position : uint8_t { Static, Relative, Absolute, Fixed };
 
@@ -138,7 +140,7 @@ namespace Style {
 	using FlexBasis = LengthPercentageAuto;
 	enum class FlexDirection : uint8_t { Row, RowReverse, Column, ColumnReverse };
 	enum class FlexWrap : uint8_t { Nowrap, Wrap, WrapReverse };
-	enum class JustifyContent : uint8_t { FlexStart, FlexEnd, Center, SpaceBetween, SpaceAround, SpaceEvenly };
+	enum class JustifyContent : uint8_t { FlexStart, FlexEnd, Center, SpaceBetween, SpaceAround, SpaceEvenly, Stretch /* Forge */ };
 
 	enum class Nav : uint8_t { None, Auto, Horizontal, Vertical, TreeOrder };
 

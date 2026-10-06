@@ -2383,7 +2383,9 @@ void Element::BuildLocalStackingContext()
 
 void Element::AddChildrenToStackingContext(Vector<StackingContextChild>& stacking_children)
 {
-	bool is_flex_container = (GetDisplay() == Style::Display::Flex);
+	// Forge: grid items stack like flex items (z-index without position).
+	bool is_flex_container = (GetDisplay() == Style::Display::Flex || GetDisplay() == Style::Display::InlineFlex ||
+		GetDisplay() == Style::Display::Grid || GetDisplay() == Style::Display::InlineGrid);
 	const int num_children = (int)children.size();
 	for (int i = 0; i < num_children; ++i)
 	{
@@ -2448,6 +2450,7 @@ void Element::AddToStackingContext(Vector<StackingContextChild>& stacking_childr
 		case Display::FlowRoot:
 		case Display::Table:
 		case Display::Flex:
+		case Display::Grid: // Forge
 			order = RenderOrder::Block;
 			render_as_atomic_unit = (display == Display::Table || is_flex_item);
 			break;
@@ -2455,6 +2458,7 @@ void Element::AddToStackingContext(Vector<StackingContextChild>& stacking_childr
 		case Display::Inline:
 		case Display::InlineBlock:
 		case Display::InlineFlex:
+		case Display::InlineGrid: // Forge
 		case Display::InlineTable:
 			order = RenderOrder::Inline;
 			render_as_atomic_unit = (display != Display::Inline || is_flex_item);

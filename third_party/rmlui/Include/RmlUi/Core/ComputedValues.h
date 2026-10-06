@@ -35,7 +35,7 @@ namespace Style {
 			left_type(LengthPercentageAuto::Auto), z_index_type(NumberAuto::Auto)
 		{}
 
-		Display display : 4;
+		Display display : 5; // Forge: room for list-item, grid and inline-grid
 		Position position : 2;
 
 		Float float_ : 2;
@@ -279,7 +279,7 @@ namespace Style {
 		AlignSelf         align_self()                 const { return GetLocalPropertyKeyword(PropertyId::AlignSelf, AlignSelf::Auto); }
 		FlexDirection     flex_direction()             const { return GetLocalPropertyKeyword(PropertyId::FlexDirection, FlexDirection::Row); }
 		FlexWrap          flex_wrap()                  const { return GetLocalPropertyKeyword(PropertyId::FlexWrap, FlexWrap::Nowrap); }
-		JustifyContent    justify_content()            const { return GetLocalPropertyKeyword(PropertyId::JustifyContent, JustifyContent::FlexStart); }
+		JustifyContent    justify_content()            const { return GetLocalPropertyKeyword(PropertyId::JustifyContent, JustifyContent::Stretch) /* Forge: CSS "normal" */; }
 		float             flex_grow()                  const { return GetLocalProperty(PropertyId::FlexGrow, 0.f); }
 		float             flex_shrink()                const { return GetLocalProperty(PropertyId::FlexShrink, 1.f); }
 		FlexBasis         flex_basis()                 const { return LengthPercentageAuto(rare.flex_basis_type, rare.flex_basis, rare.calc_offset[18]); }

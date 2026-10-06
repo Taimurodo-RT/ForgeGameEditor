@@ -2,6 +2,7 @@
 #include "../../Include/RmlUi/Core/Element.h"
 #include "../../Include/RmlUi/Core/Profiling.h"
 #include "../../Include/RmlUi/Core/StyleSheet.h"
+#include "../../Include/RmlUi/Core/StyleSheetSpecification.h"
 #include "StyleSheetFactory.h"
 #include "StyleSheetSelector.h"
 #include <algorithm>
@@ -104,9 +105,11 @@ UniquePtr<StyleSheetNode> StyleSheetNode::DeepCopy(StyleSheetNode* in_parent) co
 
 void StyleSheetNode::CollectPseudoElementHosts(Vector<const StyleSheetNode*>& before, Vector<const StyleSheetNode*>& after) const
 {
+	// Only rules that give the box content create it; rules like '*::before { box-sizing: border-box }' only style existing boxes.
+	const PropertyId content_id = StyleSheetSpecification::GetPropertyId("content");
 	for (const auto& child : children)
 	{
-		if (child->selector.combinator == SelectorCombinator::Child)
+		if (child->selector.combinator == SelectorCombinator::Child && child->properties.GetProperty(content_id))
 		{
 			if (child->selector.tag == "forge-before" && std::find(before.begin(), before.end(), this) == before.end())
 				before.push_back(this);

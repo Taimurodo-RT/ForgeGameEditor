@@ -12,6 +12,7 @@ enum class FormattingContextType {
 	Block,
 	Table,
 	Flex,
+	Grid, // Forge
 	None,
 };
 

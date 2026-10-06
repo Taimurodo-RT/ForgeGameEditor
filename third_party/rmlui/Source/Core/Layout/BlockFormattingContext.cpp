@@ -67,11 +67,13 @@ static OuterDisplayType GetOuterDisplayType(Style::Display display)
 	case Style::Display::ListItem: // Forge
 	case Style::Display::FlowRoot:
 	case Style::Display::Flex:
+	case Style::Display::Grid: // Forge
 	case Style::Display::Table: return OuterDisplayType::BlockLevel;
 
 	case Style::Display::Inline:
 	case Style::Display::InlineBlock:
 	case Style::Display::InlineFlex:
+	case Style::Display::InlineGrid: // Forge
 	case Style::Display::InlineTable: return OuterDisplayType::InlineLevel;
 
 	case Style::Display::TableRow:

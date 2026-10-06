@@ -479,7 +479,8 @@ static bool WrapFlexText(Element* element)
 {
 	bool changed = false;
 	const Style::Display display = element->GetComputedValues().display();
-	const bool flex = (display == Style::Display::Flex || display == Style::Display::InlineFlex);
+	const bool flex = (display == Style::Display::Flex || display == Style::Display::InlineFlex || display == Style::Display::Grid ||
+		display == Style::Display::InlineGrid);
 	for (int i = 0; i < element->GetNumChildren(); i++)
 	{
 		Element* child = element->GetChild(i);

@@ -427,7 +427,8 @@ void LayoutDetails::BuildBoxWidth(Box& box, const ComputedValues& computed, floa
 		// See CSS 2.1 section 10.3.7 for when this should be applied.
 		const bool shrink_to_fit = !replaced_element &&
 			((computed.float_() != Style::Float::None) || (absolutely_positioned && inset_auto) ||
-				(computed.display() == Style::Display::InlineBlock || computed.display() == Style::Display::InlineFlex));
+				(computed.display() == Style::Display::InlineBlock || computed.display() == Style::Display::InlineFlex ||
+					computed.display() == Style::Display::InlineGrid)); // Forge
 
 		if (!shrink_to_fit)
 		{

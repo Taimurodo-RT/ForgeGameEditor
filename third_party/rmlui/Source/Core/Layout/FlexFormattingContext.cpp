@@ -593,6 +593,7 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 						break;
 					}
 					//-fallthrough
+				case JustifyContent::Stretch: // Forge: as flex-start in flexbox
 				case JustifyContent::FlexStart: line.items.back().main_auto_margin_size_b = remaining_free_space; break;
 				case JustifyContent::FlexEnd: line.items.front().main_auto_margin_size_a = remaining_free_space; break;
 				case JustifyContent::Center:

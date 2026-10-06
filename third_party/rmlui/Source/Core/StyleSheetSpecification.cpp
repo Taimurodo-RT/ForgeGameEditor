@@ -312,7 +312,7 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterShorthand(ShorthandId::BorderRadius, "border-radius", "border-top-left-radius, border-top-right-radius, border-bottom-right-radius, border-bottom-left-radius", ShorthandType::Box);
 
 	RegisterProperty(PropertyId::Display, "display", "inline", false, true)
-		.AddParser("keyword", "none, block, inline, inline-block, flow-root, flex, inline-flex, table, inline-table, table-row, table-row-group, table-column, table-column-group, table-cell, list-item, contents=1, grid=1, inline-grid=3"); // Forge: grid falls back to block for now
+		.AddParser("keyword", "none, block, inline, inline-block, flow-root, flex, inline-flex, table, inline-table, table-row, table-row-group, table-column, table-column-group, table-cell, list-item, grid, inline-grid, contents=1"); // Forge: grid falls back to block for now
 	RegisterProperty(PropertyId::Position, "position", "static", false, true).AddParser("keyword", "static, relative, absolute, fixed, sticky=1"); // Forge: sticky acts as relative
 	RegisterProperty(PropertyId::Top, "top", "auto", false, false).AddParser("keyword", "auto").AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockHeight);
 	RegisterProperty(PropertyId::Right, "right", "auto", false, false).AddParser("keyword", "auto").AddParser("length_percent").SetRelativeTarget(RelativeTarget::ContainingBlockWidth);
@@ -421,9 +421,9 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::FillImage, "fill-image", "", false, false).AddParser("string");
 
 	// Flexbox
-	RegisterProperty(PropertyId::AlignContent, "align-content", "stretch", false, true).AddParser("keyword", "flex-start, flex-end, center, space-between, space-around, space-evenly, stretch");
-	RegisterProperty(PropertyId::AlignItems, "align-items", "stretch", false, true).AddParser("keyword", "flex-start, flex-end, center, baseline, stretch");
-	RegisterProperty(PropertyId::AlignSelf, "align-self", "auto", false, true).AddParser("keyword", "auto, flex-start, flex-end, center, baseline, stretch");
+	RegisterProperty(PropertyId::AlignContent, "align-content", "stretch", false, true).AddParser("keyword", "flex-start, flex-end, center, space-between, space-around, space-evenly, stretch, start=0, end=1, normal=6, left=0, right=1"); // Forge: CSS Box Alignment names
+	RegisterProperty(PropertyId::AlignItems, "align-items", "stretch", false, true).AddParser("keyword", "flex-start, flex-end, center, baseline, stretch, start=0, end=1, self-start=0, self-end=1, normal=4, left=0, right=1"); // Forge
+	RegisterProperty(PropertyId::AlignSelf, "align-self", "auto", false, true).AddParser("keyword", "auto, flex-start, flex-end, center, baseline, stretch, start=1, end=2, self-start=1, self-end=2, normal=0, left=1, right=2"); // Forge
 
 	RegisterProperty(PropertyId::FlexBasis, "flex-basis", "auto", false, true).AddParser("keyword", "auto").AddParser("length_percent");
 	RegisterProperty(PropertyId::FlexDirection, "flex-direction", "row", false, true).AddParser("keyword", "row, row-reverse, column, column-reverse");
@@ -431,7 +431,7 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::FlexGrow, "flex-grow", "0", false, true).AddParser("number");
 	RegisterProperty(PropertyId::FlexShrink, "flex-shrink", "1", false, true).AddParser("number");
 	RegisterProperty(PropertyId::FlexWrap, "flex-wrap", "nowrap", false, true).AddParser("keyword", "nowrap, wrap, wrap-reverse");
-	RegisterProperty(PropertyId::JustifyContent, "justify-content", "flex-start", false, true).AddParser("keyword", "flex-start, flex-end, center, space-between, space-around, space-evenly");
+	RegisterProperty(PropertyId::JustifyContent, "justify-content", "normal", false, true).AddParser("keyword", "flex-start, flex-end, center, space-between, space-around, space-evenly, stretch, start=0, end=1, normal=6, left=0, right=1"); // Forge: 'normal' and 'stretch' stretch grid tracks, and act as flex-start in flexbox
 
 	RegisterShorthand(ShorthandId::Flex, "flex", "flex-grow, flex-shrink, flex-basis", ShorthandType::Flex);
 	RegisterShorthand(ShorthandId::FlexFlow, "flex-flow", "flex-direction, flex-wrap", ShorthandType::FallThrough);
@@ -446,6 +446,19 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::Invalid, "list-style-type", "disc", true, true).AddParser("string");
 	RegisterProperty(PropertyId::Invalid, "list-style-position", "outside", true, true).AddParser("string");
 	RegisterProperty(PropertyId::Invalid, "list-style", "", true, true).AddParser("string");
+
+	// Forge: CSS grid, read by GridFormattingContext. Track lists and placements are kept as written.
+	for (const char* name : {"grid-template-columns", "grid-template-rows", "grid-template-areas", "grid-template", "grid", "grid-auto-rows",
+			 "grid-auto-columns", "grid-area", "grid-row", "grid-column", "grid-row-start", "grid-row-end", "grid-column-start", "grid-column-end"})
+		RegisterProperty(PropertyId::Invalid, name, "", false, true).AddParser("string");
+	RegisterProperty(PropertyId::Invalid, "grid-auto-flow", "row", false, true).AddParser("string");
+	RegisterProperty(PropertyId::Invalid, "justify-items", "normal", false, true)
+		.AddParser("keyword", "normal, start, end, center, stretch, baseline=1, left=1, right=2, flex-start=1, flex-end=2, self-start=1, self-end=2, legacy=0");
+	RegisterProperty(PropertyId::Invalid, "justify-self", "auto", false, true)
+		.AddParser("keyword", "auto, start, end, center, stretch, normal=0, baseline=1, left=1, right=2, flex-start=1, flex-end=2, self-start=1, self-end=2");
+	RegisterShorthand(ShorthandId::Invalid, "place-items", "align-items, justify-items", ShorthandType::Replicate);
+	RegisterShorthand(ShorthandId::Invalid, "place-self", "align-self, justify-self", ShorthandType::Replicate);
+	RegisterShorthand(ShorthandId::Invalid, "place-content", "align-content, justify-content", ShorthandType::Replicate);
 
 	// Forge: logical properties, for left-to-right horizontal text.
 	const auto logical = [this](const char* name, const char* physical, ShorthandType type) {

@@ -225,6 +225,22 @@ bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& diction
 	if (property_id != PropertyId::Invalid)
 		return ParsePropertyDeclaration(dictionary, property_id, property_value);
 
+	// Forge: 'all' sets every property (except direction and content) to a CSS-wide keyword, as in 'all: unset'.
+	if (property_name == "all")
+	{
+		const String keyword = StringUtilities::ToLower(StringUtilities::StripWhitespace(property_value));
+		if (keyword != "initial" && keyword != "inherit" && keyword != "unset" && keyword != "revert" && keyword != "revert-layer")
+			return false;
+		for (const PropertyId id : GetRegisteredProperties())
+		{
+			const String& name = property_map->GetName(id);
+			if (name == "direction" || name == "unicode-bidi" || name == "content" || StringUtilities::StartsWith(name, "-rmlui"))
+				continue;
+			ParsePropertyDeclaration(dictionary, id, keyword);
+		}
+		return true;
+	}
+
 	// Then, as a shorthand
 	ShorthandId shorthand_id = shorthand_map->GetId(property_name);
 	if (shorthand_id != ShorthandId::Invalid)
@@ -257,8 +273,20 @@ bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& diction
 	if (!property_definition)
 		return false;
 
-	// Forge: 'content' keeps its quotes and escapes ("\e5ca" "a" attr(title)); ElementDocument interprets it.
-	if (property_id == property_map->GetId("content"))
+	// Forge: 'content', list and grid properties keep their quotes and escapes ("\e5ca" "a" attr(title), "head head"); they are
+	// interpreted by ElementDocument and the grid layout. Variables are substituted first.
+	static const char* raw_names[] = {"content", "list-style-type", "list-style", "grid-template-columns", "grid-template-rows",
+		"grid-template-areas", "grid-template", "grid", "grid-auto-flow", "grid-auto-rows", "grid-auto-columns", "grid-area", "grid-row",
+		"grid-column", "grid-row-start", "grid-row-end", "grid-column-start", "grid-column-end"};
+	bool raw = false;
+	for (const char* name : raw_names)
+		raw |= (property_id == property_map->GetId(name));
+	if (raw && property_value.find("var(") != String::npos)
+	{
+		dictionary.SetProperty(property_id, Property{property_value, Unit::VAR_EXPRESSION});
+		return true;
+	}
+	if (raw)
 	{
 		Property content(StringUtilities::StripWhitespace(property_value), Unit::STRING);
 		content.definition = property_definition;

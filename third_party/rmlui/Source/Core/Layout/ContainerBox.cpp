@@ -4,6 +4,7 @@
 #include "../../../Include/RmlUi/Core/ElementScroll.h"
 #include "../../../Include/RmlUi/Core/Profiling.h"
 #include "FlexFormattingContext.h"
+#include "GridFormattingContext.h"
 #include "FormattingContext.h"
 #include "LayoutDetails.h"
 #include <algorithm>
@@ -267,6 +268,9 @@ float FlexContainer::GetShrinkToFitWidth() const
 		return box.GetSize().x;
 
 	// Infer shrink-to-fit width from the intrinsic width of the element.
+	const Style::Display display = element->GetDisplay();
+	if (display == Style::Display::Grid || display == Style::Display::InlineGrid) // Forge
+		return GridFormattingContext::GetMaxContentSize(element).x;
 	return FlexFormattingContext::GetMaxContentSize(element).x;
 }
 
