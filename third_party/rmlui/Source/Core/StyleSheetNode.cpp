@@ -9,9 +9,15 @@
 
 namespace Rml {
 
+// Forge: the boxes made for ::before and ::after match only selectors that name them.
+static inline bool IsPseudoElementTag(const String& tag)
+{
+	return tag.size() >= 10 && tag.compare(0, 6, "forge-") == 0 && (tag == "forge-before" || tag == "forge-after");
+}
+
 static inline bool IsTextElement(const Element* element)
 {
-	return element->GetTagName() == "#text" || element->GetTagName() == "#anon"; // Forge: anonymous boxes are not elements to CSS
+	return element->GetTagName() == "#text" || element->GetTagName() == "#anon" || IsPseudoElementTag(element->GetTagName()); // Forge: generated boxes are not elements to CSS
 }
 
 StyleSheetNode::StyleSheetNode()
@@ -96,6 +102,26 @@ UniquePtr<StyleSheetNode> StyleSheetNode::DeepCopy(StyleSheetNode* in_parent) co
 	return node;
 }
 
+void StyleSheetNode::CollectPseudoElementHosts(Vector<const StyleSheetNode*>& before, Vector<const StyleSheetNode*>& after) const
+{
+	for (const auto& child : children)
+	{
+		if (child->selector.combinator == SelectorCombinator::Child)
+		{
+			if (child->selector.tag == "forge-before" && std::find(before.begin(), before.end(), this) == before.end())
+				before.push_back(this);
+			else if (child->selector.tag == "forge-after" && std::find(after.begin(), after.end(), this) == after.end())
+				after.push_back(this);
+		}
+		child->CollectPseudoElementHosts(before, after);
+	}
+}
+
+bool StyleSheetNode::IsPseudoElementHost(const Element* element) const
+{
+	return !parent || IsApplicable(element, nullptr);
+}
+
 void StyleSheetNode::BuildIndex(StyleSheetIndex& styled_node_index) const
 {
 	// If this has properties defined, then we insert it into the styled node index.
@@ -152,6 +178,8 @@ const PropertyDictionary& StyleSheetNode::GetProperties() const
 bool StyleSheetNode::Match(const Element* element, const Element* scope) const
 {
 	if (!selector.tag.empty() && selector.tag != element->GetTagName())
+		return false;
+	if (selector.tag.empty() && IsPseudoElementTag(element->GetTagName()))
 		return false;
 
 	if (!selector.id.empty() && selector.id != element->GetId())
@@ -341,6 +369,8 @@ bool StyleSheetNode::IsApplicable(const Element* element, const Element* scope) 
 	}
 
 	if (!selector.tag.empty() && selector.tag != element->GetTagName())
+		return false;
+	if (selector.tag.empty() && IsPseudoElementTag(element->GetTagName()))
 		return false;
 
 	for (const String& name : selector.class_names)

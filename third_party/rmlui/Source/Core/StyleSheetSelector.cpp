@@ -8,7 +8,8 @@ namespace Rml {
 
 static inline bool IsTextElement(const Element* element)
 {
-	return element->GetTagName() == "#text" || element->GetTagName() == "#anon"; // Forge: anonymous boxes are not elements to CSS
+	const String& tag = element->GetTagName(); // Forge: generated boxes are not elements to CSS
+	return tag == "#text" || tag == "#anon" || tag == "forge-before" || tag == "forge-after";
 }
 
 // Returns true if a positive integer can be found for n in the equation an + b = count.

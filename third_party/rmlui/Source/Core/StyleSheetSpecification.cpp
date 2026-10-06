@@ -440,6 +440,9 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	RegisterProperty(PropertyId::RmlUi_Language, "-rmlui-language", "", true, true).AddParser("string");
 	RegisterProperty(PropertyId::RmlUi_Direction, "-rmlui-direction", "auto", true, true).AddParser("keyword", "auto, ltr, rtl");
 
+	// Forge: the text of ::before and ::after boxes, kept as written (quotes and escapes) and read by ElementDocument.
+	RegisterProperty(PropertyId::Invalid, "content", "normal", false, true).AddParser("string");
+
 	// Forge: logical properties, for left-to-right horizontal text.
 	const auto logical = [this](const char* name, const char* physical, ShorthandType type) {
 		RegisterShorthand(ShorthandId::Invalid, name, physical, type);

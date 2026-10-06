@@ -32,6 +32,11 @@ public:
 	/// Builds up a style sheet's index recursively.
 	void BuildIndex(StyleSheetIndex& styled_node_index) const;
 
+	/// Forge: finds the nodes whose elements get a ::before or ::after box (selectors rewritten to "host > forge-before").
+	void CollectPseudoElementHosts(Vector<const StyleSheetNode*>& before, Vector<const StyleSheetNode*>& after) const;
+	/// Forge: true if the element matches this host node.
+	bool IsPseudoElementHost(const Element* element) const;
+
 	/// Imports properties from a single rule definition into the node's properties and sets the appropriate specificity on them. Any existing
 	/// attributes sharing a key with a new attribute will be overwritten if they are of a lower specificity.
 	/// @param[in] properties The properties to import.

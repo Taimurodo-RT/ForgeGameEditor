@@ -1,4 +1,5 @@
 #include "StyleSheetParser.h"
+#include <cstring>
 #include "../../Include/RmlUi/Core/Core.h"
 #include "../../Include/RmlUi/Core/Decorator.h"
 #include "../../Include/RmlUi/Core/Factory.h"
@@ -289,6 +290,31 @@ static String SimplifyMediaQuery(const String& query, bool& never)
 
 // Forge: added to the specificity of !important declarations.
 static constexpr int ImportantSpecificity = 1 << 26;
+
+// Forge: 'a.b::before' becomes 'a.b > forge-before': the engine gives matching elements a first child box with that
+// tag (and a last one for ::after), see ElementDocument.
+static String RewritePseudoElementSelector(const String& in_selector)
+{
+	const String selector = StringUtilities::StripWhitespace(in_selector);
+	const String lower = StringUtilities::ToLower(selector);
+	static const struct {
+		const char* suffix;
+		const char* tag;
+	} pseudo[] = {{"::before", "forge-before"}, {"::after", "forge-after"}, {":before", "forge-before"}, {":after", "forge-after"}};
+	for (const auto& p : pseudo)
+	{
+		const size_t n = strlen(p.suffix);
+		if (lower.size() < n || lower.compare(lower.size() - n, n, p.suffix) != 0)
+			continue;
+		if (lower.size() > n && lower[lower.size() - n - 1] == ':')
+			continue; // '::after' matched by ':after'
+		String base = StringUtilities::StripWhitespace(selector.substr(0, selector.size() - n));
+		if (base.empty() || base.back() == '>' || base.back() == '+' || base.back() == '~')
+			base += "*";
+		return base + " > " + p.tag;
+	}
+	return selector;
+}
 // Forge: rules of a sheet that starts with '@forge-user-agent;' (the browser's own defaults) lose to every page rule.
 static constexpr int UserAgentSpecificity = -(1 << 25);
 
@@ -876,6 +902,8 @@ bool StyleSheetParser::Parse(MediaBlockList& style_sheets, Stream* _stream, int 
 
 		StringList rule_name_list;
 		StringUtilities::ExpandString(rule_name_list, selectors, ',', '(', ')');
+		for (String& rule_name : rule_name_list)
+			rule_name = RewritePseudoElementSelector(rule_name);
 
 		// Add style nodes to the root of the tree
 		for (size_t i = 0; i < rule_name_list.size(); i++)

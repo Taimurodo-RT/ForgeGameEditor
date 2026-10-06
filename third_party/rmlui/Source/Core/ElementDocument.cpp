@@ -500,15 +500,198 @@ static bool WrapFlexText(Element* element)
 	return changed;
 }
 
+static bool IsGeneratedBox(const String& tag)
+{
+	return tag == "#text" || tag == "#anon" || tag == "forge-before" || tag == "forge-after";
+}
+
+// Forge: gives elements matched by ::before / ::after rules a first / last child box with the tag forge-before / forge-after,
+// and removes boxes no rule asks for any more. Returns true if the tree changed.
+static bool UpdatePseudoElementBoxes(Element* element, const StyleSheet* sheet)
+{
+	bool changed = false;
+	for (int k = 0; k < 2; k++)
+	{
+		const bool after = (k == 1);
+		const String tag = (after ? "forge-after" : "forge-before");
+		Element* existing = nullptr;
+		for (int i = 0; i < element->GetNumChildren() && !existing; i++)
+			if (element->GetChild(i)->GetTagName() == tag)
+				existing = element->GetChild(i);
+
+		const bool needed = sheet->HasPseudoElement(element, after);
+		if (needed && !existing)
+		{
+			ElementPtr box = Factory::InstanceElement(element, "*", tag, XMLAttributes());
+			if (after || element->GetNumChildren() == 0)
+				element->AppendChild(std::move(box));
+			else
+				element->InsertBefore(std::move(box), element->GetChild(0));
+			changed = true;
+		}
+		else if (!needed && existing)
+		{
+			element->RemoveChild(existing);
+			changed = true;
+		}
+	}
+
+	for (int i = 0; i < element->GetNumChildren(); i++)
+	{
+		Element* child = element->GetChild(i);
+		if (!IsGeneratedBox(child->GetTagName()))
+			changed |= UpdatePseudoElementBoxes(child, sheet);
+	}
+	return changed;
+}
+
+// Forge: the text of a 'content' value: quoted strings with CSS escapes, attr(name), open-quote and close-quote. Returns false
+// for 'none' and 'normal', which make no box.
+static bool ParseContent(const String& value, const Element* host, String& out)
+{
+	out.clear();
+	const String lower = StringUtilities::ToLower(value);
+	if (lower.empty() || lower == "none" || lower == "normal")
+		return false;
+
+	auto hex_value = [](char c) {
+		if (c >= '0' && c <= '9')
+			return c - '0';
+		if (c >= 'a' && c <= 'f')
+			return c - 'a' + 10;
+		if (c >= 'A' && c <= 'F')
+			return c - 'A' + 10;
+		return -1;
+	};
+
+	size_t i = 0;
+	while (i < value.size())
+	{
+		const char c = value[i];
+		if (c == '"' || c == '\'')
+		{
+			i++;
+			while (i < value.size() && value[i] != c)
+			{
+				if (value[i] == '\\' && i + 1 < value.size())
+				{
+					i++;
+					if (hex_value(value[i]) >= 0)
+					{
+						uint32_t code = 0;
+						for (int n = 0; n < 6 && i < value.size() && hex_value(value[i]) >= 0; n++, i++)
+							code = code * 16 + (uint32_t)hex_value(value[i]);
+						if (i < value.size() && value[i] == ' ')
+							i++;
+						out += StringUtilities::ToUTF8(Character(code));
+					}
+					else
+						out += value[i++];
+				}
+				else
+					out += value[i++];
+			}
+			i++;
+		}
+		else if (lower.compare(i, 5, "attr(") == 0)
+		{
+			const size_t close = value.find(')', i);
+			if (close == String::npos)
+				break;
+			const String name = StringUtilities::StripWhitespace(value.substr(i + 5, close - i - 5));
+			if (const Variant* attribute = host->GetAttribute(name))
+				out += attribute->Get<String>();
+			i = close + 1;
+		}
+		else if (lower.compare(i, 10, "open-quote") == 0)
+		{
+			out += "\xe2\x80\x9c";
+			i += 10;
+		}
+		else if (lower.compare(i, 11, "close-quote") == 0)
+		{
+			out += "\xe2\x80\x9d";
+			i += 11;
+		}
+		else if (c == '(')
+		{
+			// counter(), url() and the like are not supported; skip the call.
+			const size_t close = value.find(')', i);
+			i = (close == String::npos ? value.size() : close + 1);
+		}
+		else
+			i++;
+	}
+	return true;
+}
+
+// Forge: puts the 'content' text into the ::before and ::after boxes and hides the ones without content. Returns true if anything changed.
+static bool UpdatePseudoElementContent(Element* element)
+{
+	bool changed = false;
+	for (int i = 0; i < element->GetNumChildren(); i++)
+	{
+		Element* child = element->GetChild(i);
+		const String& tag = child->GetTagName();
+		if (tag == "forge-before" || tag == "forge-after")
+		{
+			const Property* content = child->GetProperty("content");
+			String text;
+			const bool has_box = content && content->unit == Unit::STRING && ParseContent(content->Get<String>(), element, text);
+
+			const bool hidden = child->HasAttribute("forge-no-content");
+			if (hidden == has_box)
+			{
+				if (has_box)
+				{
+					child->RemoveAttribute("forge-no-content");
+					child->RemoveProperty(PropertyId::Display);
+				}
+				else
+				{
+					child->SetAttribute("forge-no-content", "");
+					child->SetProperty(PropertyId::Display, Property(Style::Display::None));
+				}
+				changed = true;
+			}
+
+			ElementText* text_element = (child->GetNumChildren() > 0 ? rmlui_dynamic_cast<ElementText*>(child->GetChild(0)) : nullptr);
+			if (!text.empty() && !text_element)
+			{
+				if (ElementPtr created = Factory::InstanceElement(child, "#text", "#text", XMLAttributes()))
+				{
+					text_element = rmlui_dynamic_cast<ElementText*>(created.get());
+					child->AppendChild(std::move(created));
+					changed = true;
+				}
+			}
+			if (text_element && text_element->GetText() != text)
+			{
+				text_element->SetText(text);
+				changed = true;
+			}
+		}
+		else if (!IsGeneratedBox(tag))
+			changed |= UpdatePseudoElementContent(child);
+	}
+	return changed;
+}
+
 void ElementDocument::UpdateLayout()
 {
 	// Note: Carefully consider when to call this function for performance reasons.
 	// Ideally, only called once per update loop.
-	if (layout_dirty && GetTagName() == "html" && WrapFlexText(this))
+	// Forge: in a web page, first make the boxes CSS asks for that are not in the document: ::before, ::after and anonymous flex items.
+	if (layout_dirty && GetTagName() == "html")
 	{
 		const float dp_ratio = (context ? context->GetDensityIndependentPixelRatio() : 1.0f);
 		const Vector2f vp_dimensions = (context ? Vector2f(context->GetDimensions()) : Vector2f(1.0f));
-		Update(dp_ratio, vp_dimensions);
+		if (const StyleSheet* sheet = GetStyleSheet(); sheet && UpdatePseudoElementBoxes(this, sheet))
+			Update(dp_ratio, vp_dimensions);
+		bool changed = UpdatePseudoElementContent(this);
+		changed |= WrapFlexText(this);
+		if (changed)
+			Update(dp_ratio, vp_dimensions);
 	}
 
 	if (layout_dirty)

@@ -257,6 +257,15 @@ bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& diction
 	if (!property_definition)
 		return false;
 
+	// Forge: 'content' keeps its quotes and escapes ("\e5ca" "a" attr(title)); ElementDocument interprets it.
+	if (property_id == property_map->GetId("content"))
+	{
+		Property content(StringUtilities::StripWhitespace(property_value), Unit::STRING);
+		content.definition = property_definition;
+		dictionary.SetProperty(property_id, content);
+		return true;
+	}
+
 	StringList property_values;
 	switch (ParsePropertyValues(property_values, property_value, SplitOption::None))
 	{

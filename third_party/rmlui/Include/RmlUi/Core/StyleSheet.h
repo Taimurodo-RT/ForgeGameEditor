@@ -53,6 +53,9 @@ public:
 	/// Returns the compiled element definition for a given element and its hierarchy.
 	SharedPtr<const ElementDefinition> GetElementDefinition(const Element* element) const;
 
+	/// Forge: true if a ::before (after = false) or ::after rule applies to the element.
+	bool HasPseudoElement(const Element* element, bool after) const;
+
 	/// Returns a list of instanced decorators from the declarations. The instances are cached for faster future retrieval.
 	const DecoratorPtrList& InstanceDecorators(RenderManager& render_manager, const DecoratorDeclarationList& declaration_list,
 		const PropertySource* decorator_source) const;
@@ -81,6 +84,9 @@ private:
 
 	// Map of all styled nodes, that is, they have one or more properties.
 	StyleSheetIndex styled_node_index;
+
+	// Forge: nodes whose elements get ::before and ::after boxes.
+	Vector<const StyleSheetNode*> pseudo_element_hosts[2];
 
 	// Index of node sets to element definitions.
 	using ElementDefinitionCache = UnorderedMap<StyleSheetIndex::NodeList, SharedPtr<const ElementDefinition>>;
