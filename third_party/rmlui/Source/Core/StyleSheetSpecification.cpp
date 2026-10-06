@@ -430,6 +430,7 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 			 "background-attachment", "background-blend-mode", "background-position-x", "background-position-y"})
 		RegisterProperty(PropertyId::Invalid, name, "", false, false).AddParser("string"); // Forge: accepted, not drawn yet
 	RegisterProperty(PropertyId::FontEffect, "font-effect", "", true, false).AddParser("font_effect");
+	RegisterShorthand(ShorthandId::Invalid, "text-shadow", "font-effect", ShorthandType::FallThrough); // Forge: mapped to font effects
 
 	RegisterProperty(PropertyId::Filter, "filter", "", false, false).AddParser("filter", "filter");
 	RegisterProperty(PropertyId::BackdropFilter, "backdrop-filter", "", false, false).AddParser("filter");

@@ -1,6 +1,7 @@
 #include "../../Include/RmlUi/Core/PropertySpecification.h"
 #include "../../Include/RmlUi/Core/Debug.h"
 #include "../../Include/RmlUi/Core/Log.h"
+#include "../../Include/RmlUi/Core/Math.h"
 #include "../../Include/RmlUi/Core/Profiling.h"
 #include "../../Include/RmlUi/Core/PropertyDefinition.h"
 #include "../../Include/RmlUi/Core/PropertyDictionary.h"
@@ -355,6 +356,52 @@ static StringList SplitTopLevel(const String& value, char separator)
 	return out;
 }
 
+bool PropertySpecification::ParseTextShadow(PropertyDictionary& dictionary, const String& value) const
+{
+	const PropertyId font_effect = property_map->GetId("font-effect");
+	const String trimmed = StringUtilities::StripWhitespace(value);
+	if (StringUtilities::ToLower(trimmed) == "none")
+		return ParsePropertyDeclaration(dictionary, font_effect, "none");
+
+	// The first shadow is drawn on top, while font effects draw later ones on top: reverse the list.
+	StringList effects;
+	for (const String& shadow : SplitTopLevel(trimmed, ','))
+	{
+		StringList lengths;
+		String color = "#000000";
+		for (const String& token : SplitTopLevel(shadow, ' '))
+		{
+			const char c = token.empty() ? 0 : token[0];
+			if ((c >= '0' && c <= '9') || c == '-' || c == '.' || c == '+')
+				lengths.push_back(token);
+			else if (!token.empty())
+				color = token;
+		}
+		if (lengths.size() < 2)
+			return false;
+		auto with_unit = [](const String& length) {
+			const bool unitless = !length.empty() && length.find_first_not_of("+-.0123456789") == String::npos;
+			return unitless ? length + "px" : length;
+		};
+		const String x = with_unit(lengths[0]), y = with_unit(lengths[1]);
+		float blur = 0.f;
+		if (lengths.size() >= 3)
+			blur = (float)std::atof(lengths[2].c_str()); // px; CSS blur radius is twice the standard deviation
+		if (blur <= 0.f)
+			effects.push_back("shadow(" + x + " " + y + " " + color + ")");
+		else
+		{
+			// The glow effect's blur has a standard deviation of 0.4 * width.
+			const int width = Math::Max(1, (int)Math::Round(blur * 1.25f));
+			effects.push_back("glow(0px " + std::to_string(width) + "px " + x + " " + y + " " + color + ")");
+		}
+	}
+	String list;
+	for (auto it = effects.rbegin(); it != effects.rend(); ++it)
+		list += (list.empty() ? "" : ", ") + *it;
+	return ParsePropertyDeclaration(dictionary, font_effect, list);
+}
+
 bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand) const
 {
 	static const char* const ignored_words[] = {"left", "right", "top", "bottom", "center", "repeat", "repeat-x", "repeat-y", "no-repeat", "space",
@@ -446,6 +493,8 @@ bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictio
 		const String& name = shorthand_map->GetName(shorthand_id);
 		if (name == "background" || name == "background-image")
 			return ParseBackground(dictionary, property_value, name == "background");
+		if (name == "text-shadow")
+			return ParseTextShadow(dictionary, property_value);
 	}
 
 	// Handle the special behavior of the flex shorthand first, otherwise it acts like 'FallThrough'.

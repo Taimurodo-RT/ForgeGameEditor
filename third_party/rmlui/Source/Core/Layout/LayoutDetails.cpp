@@ -1,10 +1,12 @@
 #include "LayoutDetails.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Element.h"
+#include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ElementScroll.h"
 #include "../../../Include/RmlUi/Core/ElementText.h"
 #include "../../../Include/RmlUi/Core/Math.h"
 #include "../../../Include/RmlUi/Core/Profiling.h"
+#include "../../../Include/RmlUi/Core/StringUtilities.h"
 #include "ContainerBox.h"
 #include "FormattingContext.h"
 #include "LayoutEngine.h"
@@ -20,6 +22,135 @@ static inline float BorderSizeToContentSize(float border_size, float border_padd
 
 	return Math::Max(0.0f, border_size - border_padding_edges_size);
 }
+
+// Forge: CSS margin collapsing between a block and its first or last in-flow child, for web pages.
+namespace {
+	using Style::Display;
+
+	bool IsBlockLevelFlowDisplay(Display display)
+	{
+		return display == Display::Block || display == Display::ListItem;
+	}
+
+	bool InWebDocument(Element* element)
+	{
+		ElementDocument* document = element->GetOwnerDocument();
+		return document && document->GetTagName() == "html";
+	}
+
+	float CollapseMargins(float a, float b)
+	{
+		return Math::Max(Math::Max(a, b), 0.f) + Math::Min(Math::Min(a, b), 0.f);
+	}
+
+	float FixedLength(const Style::LengthPercentageAuto& value)
+	{
+		return (value.type == Style::LengthPercentageAuto::Length ? value.value : 0.f);
+	}
+
+	// True if 'element' is a block in normal flow whose own margin may collapse with the margins of its children.
+	bool CanCollapseThrough(Element* element, bool top)
+	{
+		if (!element)
+			return false;
+		const ComputedValues& computed = element->GetComputedValues();
+		if (!InWebDocument(element) || !IsBlockLevelFlowDisplay(computed.display()) || element->GetTagName() == "html")
+			return false;
+		if (computed.position() == Style::Position::Absolute || computed.position() == Style::Position::Fixed ||
+			computed.float_() != Style::Float::None)
+			return false;
+		if (computed.overflow_x() != Style::Overflow::Visible || computed.overflow_y() != Style::Overflow::Visible)
+			return false;
+		// A block inside a flex, grid or table container (or inline content) establishes its own formatting context.
+		Element* parent = element->GetParentNode();
+		if (!parent || !IsBlockLevelFlowDisplay(parent->GetComputedValues().display()))
+		{
+			if (!parent || parent->GetTagName() != "html")
+				return false;
+		}
+		const auto padding = (top ? computed.padding_top() : computed.padding_bottom());
+		const float border = (top ? computed.border_top_width() : computed.border_bottom_width());
+		if (border > 0.f || padding.value != 0.f)
+			return false;
+		if (!top)
+		{
+			if (computed.height().type != Style::LengthPercentageAuto::Auto)
+				return false;
+			const auto min_height = computed.min_height();
+			if (min_height.value != 0.f)
+				return false;
+		}
+		return true;
+	}
+
+	bool IsWhiteSpaceText(Element* element)
+	{
+		if (auto text = rmlui_dynamic_cast<ElementText*>(element))
+		{
+			for (char c : text->GetText())
+				if (!StringUtilities::IsWhitespace(c))
+					return false;
+			return true;
+		}
+		return false;
+	}
+
+	// The first (or last) in-flow child of a block, if it is a block-level box with nothing before (or after) it.
+	Element* EdgeInFlowChild(Element* element, bool first)
+	{
+		const int count = element->GetNumChildren();
+		for (int n = 0; n < count; n++)
+		{
+			Element* child = element->GetChild(first ? n : count - 1 - n);
+			if (IsWhiteSpaceText(child))
+				continue;
+			if (rmlui_dynamic_cast<ElementText*>(child))
+				return nullptr;
+			const ComputedValues& computed = child->GetComputedValues();
+			if (computed.display() == Display::None || computed.position() == Style::Position::Absolute ||
+				computed.position() == Style::Position::Fixed || computed.float_() != Style::Float::None)
+				continue;
+			if (child->GetTagName() == "forge-marker" && !child->HasAttribute("inside"))
+				continue;
+			if (!IsBlockLevelFlowDisplay(computed.display()) && computed.display() != Display::Table && computed.display() != Display::FlowRoot &&
+				computed.display() != Display::Flex && computed.display() != Display::Grid)
+				return nullptr;
+			return child;
+		}
+		return nullptr;
+	}
+
+	// The margin of 'element' collapsed with the margins of its first (or last) children.
+	float ChainMargin(Element* element, bool top)
+	{
+		const ComputedValues& computed = element->GetComputedValues();
+		float margin = FixedLength(top ? computed.margin_top() : computed.margin_bottom());
+		if (CanCollapseThrough(element, top))
+			if (Element* child = EdgeInFlowChild(element, top))
+				margin = CollapseMargins(margin, ChainMargin(child, top));
+		return margin;
+	}
+
+	void CollapseParentChildMargins(Box& box, Element* element)
+	{
+		for (int i = 0; i < 2; i++)
+		{
+			const bool top = (i == 0);
+			const BoxEdge edge = (top ? BoxEdge::Top : BoxEdge::Bottom);
+			Element* parent = element->GetParentNode();
+			if (parent && CanCollapseThrough(parent, top) && EdgeInFlowChild(parent, top) == element)
+			{
+				// Our margin is carried by the parent.
+				box.SetEdge(BoxArea::Margin, edge, 0.f);
+			}
+			else if (CanCollapseThrough(element, top))
+			{
+				if (Element* child = EdgeInFlowChild(element, top))
+					box.SetEdge(BoxArea::Margin, edge, CollapseMargins(box.GetEdge(BoxArea::Margin, edge), ChainMargin(child, top)));
+			}
+		}
+	}
+} // namespace
 
 void LayoutDetails::BuildBox(Box& box, Vector2f containing_block, Element* element, BuildBoxMode box_context)
 {
@@ -100,6 +231,9 @@ void LayoutDetails::BuildBox(Box& box, Vector2f containing_block, Element* eleme
 
 	// Evaluate the margins, and width and height if they are auto.
 	BuildBoxSizeAndMargins(box, min_size, max_size, containing_block, element, box_context, replaced_element);
+
+	if (box_context == BuildBoxMode::Block && InWebDocument(element))
+		CollapseParentChildMargins(box, element);
 }
 
 void LayoutDetails::GetMinMaxWidth(float& min_width, float& max_width, const ComputedValues& computed, const Box& box, float containing_block_width)

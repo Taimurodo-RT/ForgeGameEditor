@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include "../../Include/RmlUi/Core/PropertyDefinition.h"
 #include "../../Include/RmlUi/Core/Log.h"
 #include "../../Include/RmlUi/Core/StyleSheetSpecification.h"
@@ -98,6 +100,45 @@ bool PropertyDefinition::ParseValue(Property& property, const String& value) con
 			property.parser_index = -1;
 			return true;
 		}
+	}
+
+	// Forge: units without a native representation (vmin, vmax, ch, ex) are evaluated like calc().
+	if (!Calc::ContainsMath(value))
+	{
+		static const char* const wrapped_units[] = {"vmin", "vmax", "ch", "ex"};
+		String rewritten;
+		bool changed = false;
+		for (size_t i = 0; i < value.size();)
+		{
+			const bool starts_number = (value[i] >= '0' && value[i] <= '9') || (value[i] == '.' && i + 1 < value.size() && value[i + 1] >= '0' && value[i + 1] <= '9');
+			const bool after_ident = (i > 0 && (std::isalnum((unsigned char)value[i - 1]) || value[i - 1] == '-' || value[i - 1] == '#' || value[i - 1] == '_'));
+			if (!starts_number || (after_ident && value[i - 1] != '-'))
+			{
+				rewritten += value[i++];
+				continue;
+			}
+			size_t end = i;
+			while (end < value.size() && ((value[end] >= '0' && value[end] <= '9') || value[end] == '.'))
+				end++;
+			size_t unit_end = end;
+			while (unit_end < value.size() && std::isalpha((unsigned char)value[unit_end]))
+				unit_end++;
+			const String unit = StringUtilities::ToLower(value.substr(end, unit_end - end));
+			const bool wrap = std::any_of(std::begin(wrapped_units), std::end(wrapped_units), [&](const char* u) { return unit == u; });
+			const bool negative = (!rewritten.empty() && rewritten.back() == '-' && (rewritten.size() == 1 || !std::isalnum((unsigned char)rewritten[rewritten.size() - 2])));
+			if (wrap)
+			{
+				if (negative)
+					rewritten.pop_back();
+				rewritten += "calc(" + String(negative ? "-" : "") + value.substr(i, unit_end - i) + ")";
+				changed = true;
+			}
+			else
+				rewritten += value.substr(i, unit_end - i);
+			i = unit_end;
+		}
+		if (changed)
+			return ParseValue(property, rewritten);
 	}
 
 	// Forge: fold math functions into plain values; keep the ones mixing per-element units for compute time.

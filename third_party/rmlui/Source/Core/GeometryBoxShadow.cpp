@@ -218,8 +218,19 @@ void GeometryBoxShadow::GenerateTexture(CallbackTexture& out_shadow_texture, Geo
 			{
 				Mesh mesh = mesh_padding_border;
 				Geometry geometry_padding_border = render_manager.MakeGeometry(std::move(mesh));
-				render_manager.SetClipMask(ClipMaskOperation::SetInverse, &geometry_padding_border, info.element_offset_in_texture);
-				geometry_shadow.Render(shadow_offset + info.element_offset_in_texture);
+				if (blur)
+				{
+					// Forge: as in CSS, blur the whole shadow shape first and cut out the border box afterwards. Cutting first
+					// makes the blur pull in transparency from inside the box, and the shadow too faint near its edge.
+					render_manager.DisableClipMask();
+					geometry_shadow.Render(shadow_offset + info.element_offset_in_texture);
+					render_manager.SetClipMask(ClipMaskOperation::SetInverse, &geometry_padding_border, info.element_offset_in_texture);
+				}
+				else
+				{
+					render_manager.SetClipMask(ClipMaskOperation::SetInverse, &geometry_padding_border, info.element_offset_in_texture);
+					geometry_shadow.Render(shadow_offset + info.element_offset_in_texture);
+				}
 			}
 
 			if (blur)

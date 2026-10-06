@@ -84,6 +84,8 @@ public:
 	/// @return True if all properties were parsed successfully, false otherwise.
 	// Forge: CSS background layers to background-color and decorators.
 	bool ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand) const;
+	// Forge: maps CSS text-shadow to font effects.
+	bool ParseTextShadow(PropertyDictionary& dictionary, const String& value) const;
 	bool ParseShorthandDeclaration(PropertyDictionary& dictionary, ShorthandId shorthand_id, const String& property_value) const;
 
 	/// Sets all undefined properties in the dictionary to their defaults.
