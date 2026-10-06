@@ -342,6 +342,7 @@ public:
         if (!level_config.offscreen) logic_tab.set_fired_file(LevelEditor::fired_file());
         logic_tab.init(ui_, game_dir, logic_file);
         story_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
+        story_tab.window = window;
         story_tab.init(ui_, story_dir);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
@@ -2922,6 +2923,92 @@ private:
             check(st().playing(), "the new conversation plays at once");
             check(click("st-talk-miner") && st().opened() == "miner", "back to Boris");
             break;
+        case 13:
+            // A Ren'Py game comes in as a story of several talks.
+            if (!st().import_renpy(utf8_path(FORGE_CONVERTERS_DIR) / "tests" / "renpy_game" / "game")) {
+                FORGE_INFO("self-test: Python не найден, импорт Ren'Py не проверяется");
+                st_step_ = 19;
+                return true;
+            }
+            check(st().importing(), "«Импорт из Ren'Py…» starts in the background");
+            break;
+        case 14:
+            if (st().importing() && ++st_wait_ < 20000) {
+                SDL_Delay(2);
+                return true;
+            }
+            check(!st().importing() && st().opened() == "renpy_game/script", "the game's script opens when it is in");
+            check(talk_text("renpy_game/chapter").find("\"call\"") == std::string::npos &&
+                      talk_text("renpy_game/script").find("\"call\": \"chapter:chapter_one\"") != std::string::npos,
+                  "a talk per script file, calling into each other");
+            check(st().playing() && st().play_node() == "start_1" && st().play_line().text == "Утро во дворе. Пахнет сиренью.",
+                  "the story plays from its start");
+            break;
+        case 15:
+            check(shown("st-talk-renpy_game/script") && shown("st-talk-renpy_game/chapter"), "the story's talks are listed");
+            check(shown("st-stage-start_1-0") && lit("st-line-start_1"), "the staging is shown with the line");
+            check(st().play_next() && st().play_line().choices.size() == 2, "an answer hidden by its condition is not offered");
+            check(st().play_choose(0) && st().opened() == "renpy_game/chapter" && st().play_node() == "chapter_one_1",
+                  "a call into another talk: the script follows the test there");
+            break;
+        case 16:
+            check(lit("st-line-chapter_one_1"), "the line shown is lit in that talk");
+            st().play_next();
+            st().play_next();
+            check(st().play_next() && st().play_node() == "chapter_one_6", "a while loop goes round, then on");
+            check(st().play_choose(0) && st().opened() == "renpy_game/script" && st().play_line().text == "Ты сегодня богат!",
+                  "return comes back after the call, the branch reads the variables");
+            check(st().phrases("renpy(\"result = greet(player)\")", true) == std::vector<std::string>{"Ren'Py: result = greet(player)"},
+                  "Ren'Py code kept as it was says so");
+            break;
+        case 17:
+            check(shown("st-state-met_boris") && shown("st-state-coins"), "the variables the talk checks can be set");
+            st().set_var("met_boris", 1);
+            st().play();
+            st().play_next();
+            check(st().play_line().choices.size() == 3, "with the variable set, the hidden answer shows");
+            check(st().begin_edit("stage", "start_1", 0) && st().editing(), "a staging step opens for typing");
+            st().set_edit_text("scene bg street\n");
+            break;
+        case 18: {
+            check(st().source().node("start_1")->stage[0] == "scene bg street" && talk_text("renpy_game/script").find("scene bg street") != std::string::npos,
+                  "the staging step is changed and written");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(st().source().node("start_1")->stage[0] == "scene bg yard", "Ctrl+Z");
+            break;
+        }
+        case 19: {
+            // A big talk shows a page at a time.
+            game::DialogueSource big;
+            big.id = "big";
+            big.speakers.push_back({"n", "Рассказчик", "", ""});
+            big.start.push_back({{}, "l0"});
+            for (int i = 0; i < 400; ++i) {
+                game::SourceNode n;
+                n.id = "l" + std::to_string(i);
+                n.text = "Строка " + std::to_string(i);
+                if (i % 100 == 0) n.scene = "Часть " + std::to_string(i / 100 + 1);
+                if (i + 1 < 400) n.next = "l" + std::to_string(i + 1);
+                big.nodes.push_back(n);
+            }
+            const std::string json = big.json();
+            write_file_atomic(ed_.story_dir / "dialogues" / "big.json", {reinterpret_cast<const u8*>(json.data()), json.size()});
+            check(st().open("big") && st().opened() == "big", "a big talk opens");
+            break;
+        }
+        case 20:
+            check(st().lines_shown() == 150 && st().line_shown("l0") && !st().line_shown("l200"), "a big talk shows a page of lines");
+            check(shown("st-goto-l300"), "its scenes are listed to go to");
+            click("st-goto-l300");
+            break;
+        case 21:
+            check(st().line_shown("l300") && !st().line_shown("l0"), "a scene clicked comes onto the page");
+            check(click("st-page-prev") && true, "the page buttons");
+            break;
+        case 22:
+            check(st().line_shown("l200") && !st().line_shown("l300"), "«Раньше» shows the lines before");
+            check(click("st-talk-miner") && st().opened() == "miner", "back to Boris");
+            break;
         default:
             st_step_ = -1;
             return true;
@@ -3299,7 +3386,7 @@ private:
     u64 object_ = 0;
     u32 as_step_ = 0, ol_step_ = 0, waited_ = 0, conv_wait_ = 0;
     int lg_step_ = 0;
-    int st_step_ = 0;
+    int st_step_ = 0, st_wait_ = 0;
     std::string st_new_; // a line the test added
     std::filesystem::path picture_file_;
     u64 new_template_ = 0;

@@ -30,9 +30,16 @@
 // "start") pick where to go. "goto": "end" ends it. "if" hides a choice or skips a
 // start entry; "do" runs actions (see vars.h) when the node is shown or the
 // choice is taken.
+//
+// Stories bigger than one talk (an imported visual novel) jump between
+// talks: "goto": "ch1:ch1_main" is node ch1_main of talk ch1 (the runner
+// asks its resolver for that talk). "call": "poem_scene" plays another part
+// and comes back: the node's next is where the story goes on once that part
+// reaches "goto": "return" (a "return" with nothing to come back to ends).
 
 #include "forge/game/vars.h"
 
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -77,6 +84,7 @@ struct DialogueNode {
     // whose condition holds is taken, else next.
     std::vector<DialogueEntry> branches;
     std::string next;
+    std::string call; // played first; its "return" comes back to next
 };
 
 // Problems found when loading: errors stop the dialogue from loading,
@@ -123,6 +131,12 @@ class DialogueRunner {
 public:
     DialogueRunner(Vars& vars, CallFn call = {}) : vars_(vars), call_(std::move(call)) {}
 
+    // Finds another talk by id for "talk:node" jumps (nullptr: there is none).
+    using Resolver = std::function<const Dialogue*(std::string_view talk)>;
+    void set_resolver(Resolver resolve) { resolve_ = std::move(resolve); }
+    // The talk being played (changes on "talk:node" jumps).
+    const Dialogue* dialogue() const { return dialogue_; }
+
     // False when no start entry applies (nothing to say right now).
     bool start(const Dialogue& dialogue);
     // Jumps straight to a node (editor preview).
@@ -150,6 +164,12 @@ private:
 
     Vars& vars_;
     CallFn call_;
+    Resolver resolve_;
+    struct Return {
+        const Dialogue* dialogue;
+        std::string go_to;
+    };
+    std::vector<Return> calls_; // where each "return" comes back to
     const Dialogue* dialogue_ = nullptr;
     const DialogueNode* node_ = nullptr;
     std::vector<u32> visible_; // line_.choices index -> node choice index

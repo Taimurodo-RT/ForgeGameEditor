@@ -492,7 +492,10 @@ std::string substitute(std::string_view text, const Vars& vars) {
             }
             const usize close = text.find('}', i);
             if (close != std::string_view::npos) {
-                out += vars.get(text.substr(i + 1, close - i - 1)).text();
+                // A variable nothing set yet shows as written: «Привет, {player}!».
+                const std::string_view name = text.substr(i + 1, close - i - 1);
+                if (vars.has(name)) out += vars.get(name).text();
+                else out += text.substr(i, close - i + 1);
                 i = close;
                 continue;
             }

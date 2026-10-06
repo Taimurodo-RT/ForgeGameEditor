@@ -40,6 +40,12 @@
 .st-nav-row.muted { cursor: default; color: var(--on-surface-variant); }
 .st-nav-row.muted:hover { background-color: transparent; }
 .st-nav-row .count { font-family: var(--font-mono); font-size: 11px; color: var(--on-surface-variant); }
+.st-nav-row.story { font-weight: 600; gap: var(--space-1); }
+.st-nav-row.sub { padding-left: var(--space-5); min-height: 32px; font-size: 13.5px; }
+.st-nav-row.scene { padding-left: 44px; min-height: 26px; font-size: 12.5px; color: var(--on-surface-variant); font-family: var(--font-mono); }
+.st-nav-row.scene:hover { color: var(--on-surface); }
+.st-nav-row.add.busy { opacity: 0.5; cursor: default; }
+.st-import-text { padding: var(--space-1) var(--space-2); font-size: 12.5px; color: var(--on-surface-variant); }
 .st-ava {
     display: block;
     width: 26px;
@@ -132,6 +138,7 @@
 .st-say-col { gap: var(--space-1); min-width: 0px; }
 .st-who {
     width: 92px;
+    gap: 2px;
     padding-top: 4px;
     font-size: 12.5px;
     font-weight: 600;
@@ -139,6 +146,11 @@
     cursor: pointer;
 }
 .st-line.junction .st-who { color: var(--on-surface-variant); cursor: default; }
+.st-pose { font-family: var(--font-mono); font-size: 11px; font-weight: 400; text-transform: none; color: var(--on-surface-variant); }
+/* A line with nothing to say: a jump, a call, staging */
+.st-line.silent { padding-top: 0px; padding-bottom: 0px; }
+.st-line.silent .st-who { display: none; }
+.st-line.silent .st-adds { display: none; }
 .st-say {
     font-family: Lora;
     font-size: 16px;
@@ -184,6 +196,14 @@
 .st-chip.eff { color: var(--rarity-epic, var(--tertiary)); border-color: var(--rarity-epic, var(--tertiary)); }
 .st-chip.go { color: var(--on-surface-variant); }
 .st-chip.else { color: var(--info); cursor: default; }
+.st-chip.code { color: var(--warning, #e0a050); border-color: var(--warning, #e0a050); }
+.st-chip.stage { color: var(--on-surface-variant); border-color: transparent; background-color: var(--surface-container-high); }
+.st-chip.stage.code { color: var(--warning, #e0a050); }
+.st-stage { margin-bottom: 2px; }
+.st-stage-item { display: flex; }
+/* Going on to the line just below: shown on hover, as the play reads on */
+.st-chip.seq { display: none; }
+.st-line:hover .st-chip.seq, .st-line.lit .st-chip.seq { display: flex; }
 .st-chip .more { margin-left: 2px; border-radius: 8px; }
 .st-chip .more:hover { background-color: var(--state-hover-layer); }
 .st-add-mark { width: 24px; height: 24px; line-height: 24px; text-align: center; border-radius: 12px; color: var(--on-surface-variant); cursor: pointer; }
@@ -234,6 +254,11 @@
 .st-add.danger { color: var(--on-surface-variant); }
 .st-add.danger:hover { color: var(--error); }
 .st-add.big { align-self: flex-start; margin-top: var(--space-3); height: 32px; font-size: 13.5px; }
+
+/* A big talk's pages */
+.st-pages { align-items: center; gap: var(--space-2); }
+.st-page-text { text-align: center; font-family: var(--font-mono); font-size: 12px; color: var(--on-surface-variant); }
+.st-pages .button.disabled { opacity: 0.35; cursor: default; }
 
 /* The test */
 .st-test {

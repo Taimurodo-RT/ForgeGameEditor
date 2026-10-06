@@ -178,6 +178,77 @@ class Sound(unittest.TestCase):
         self.assertIn("не читается как звук", result["error"])
 
 
+class RenPy(unittest.TestCase):
+    GAME = Path(__file__).resolve().parent / "renpy_game" / "game"
+
+    def convert(self):
+        result, out, _ = run("renpy", self.GAME / "script.rpy", {"whole": True})
+        self.assertTrue(result["ok"], result)
+        return out, {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in out.glob("*.json")}
+
+    def node(self, talk, nid):
+        return next(n for n in talk["nodes"] if n["id"] == nid)
+
+    def test_a_game_becomes_a_talk_per_script_file(self):
+        out, talks = self.convert()
+        self.assertEqual(sorted(talks), ["chapter", "script"])  # definitions.rpy has no labels
+        script = talks["script"]
+        self.assertEqual(script["speakers"]["a"], {"name": "Алиса", "color": "#c8a2e0"})
+        # A DynamicCharacter takes its name from the variable it reads.
+        self.assertEqual(talks["chapter"]["speakers"]["b"]["name"], "Борис")
+        self.assertEqual(script["start"], [{"goto": "start"}])
+        self.assertTrue((out / "Импорт Ren'Py.txt").exists())
+
+    def test_lines_staging_and_text(self):
+        _, talks = self.convert()
+        first = self.node(talks["script"], "start_1")
+        self.assertEqual(first["text"], "Утро во дворе. Пахнет сиренью.")  # {i} is dropped
+        self.assertEqual(first["stage"][:2], ["scene bg yard", "with fade"])
+        self.assertEqual(first["do"], "b_name = \"Борис\"")
+        hello = self.node(talks["script"], "start_2")
+        self.assertEqual(hello["text"], "Привет, {player}! Пойдёшь с нами?")  # [player] → {player}
+        self.assertEqual(hello["stage"], ["show alice happy at left"])
+        self.assertEqual(self.node(talks["script"], "start_4")["pose"], "smile")
+        # Defaults that are not zero are set when the story starts.
+        self.assertEqual(self.node(talks["script"], "start")["do"], "coins = 5")
+
+    def test_menus_conditions_and_jumps(self):
+        _, talks = self.convert()
+        script, chapter = talks["script"], talks["chapter"]
+        # A menu without a caption hangs on the line before it.
+        choices = self.node(script, "start_2")["choices"]
+        self.assertEqual([c["text"] for c in choices], ["Пойду.", "Только если Борис идёт.", "Нет, дела."])
+        self.assertEqual(choices[1]["if"], "met_boris")
+        self.assertEqual(self.node(script, "start_3"), {"id": "start_3", "do": "coins += 2", "next": "walk"})
+        self.assertEqual(self.node(script, "start_5")["next"], "return")
+        # A call into another file, if / elif / else.
+        self.assertEqual(self.node(script, "walk_1")["call"], "chapter:chapter_one")
+        self.assertEqual(self.node(script, "walk_2")["branches"],
+                         [{"if": "coins >= 7", "goto": "walk_3"}, {"if": "coins > 0", "goto": "walk_4"}])
+        self.assertEqual(self.node(script, "walk_2")["next"], "walk_5")
+        # A while loop comes back to its check; a menu caption is a line; a local label.
+        self.assertEqual(self.node(chapter, "chapter_one_5")["next"], "chapter_one_3")
+        caption = self.node(chapter, "chapter_one_6")
+        self.assertEqual(caption["text"], "Дальше?")
+        self.assertEqual(caption["choices"][1]["goto"], "chapter_one.stay")
+
+    def test_python_it_cannot_carry_is_kept(self):
+        out, talks = self.convert()
+        end = self.node(talks["script"], "walk_6")
+        self.assertEqual(end["stage"], ["$ renpy.pause(0.5)"])
+        self.assertEqual(end["do"], "renpy(\"result = greet(player)\")")
+        notes = (out / "Импорт Ren'Py.txt").read_text(encoding="utf-8")
+        self.assertIn("script.rpy:32: result = greet(player)", notes)
+
+    def test_a_folder_without_labels_is_said_plainly(self):
+        tmp = Path(tempfile.mkdtemp())
+        src = tmp / "only.rpy"
+        src.write_text("define a = Character('А')\n", encoding="utf-8")
+        result, _, _ = run("renpy", src, {})
+        self.assertFalse(result["ok"])
+        self.assertIn("нет ни одной метки", result["error"])
+
+
 class Runner(unittest.TestCase):
     def test_every_manifest_is_valid(self):
         for manifest in HERE.glob("*.converter.json"):

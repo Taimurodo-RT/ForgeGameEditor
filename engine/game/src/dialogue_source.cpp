@@ -107,6 +107,10 @@ bool DialogueSource::parse(std::string_view json, std::string* error) {
         node.branches = entries(yyjson_obj_get(n, "branches"));
         node.fallback = str(yyjson_obj_get(n, "fallback"));
         node.next = str(yyjson_obj_get(n, "next"));
+        node.call = str(yyjson_obj_get(n, "call"));
+        node.pose = str(yyjson_obj_get(n, "pose"));
+        yyjson_arr_iter sit = yyjson_arr_iter_with(yyjson_obj_get(n, "stage"));
+        for (yyjson_val* st; (st = yyjson_arr_iter_next(&sit));) node.stage.push_back(str(st));
         yyjson_arr_iter kit = yyjson_arr_iter_with(yyjson_obj_get(n, "keywords"));
         for (yyjson_val* k; (k = yyjson_arr_iter_next(&kit));) {
             SourceKeyword kw;
@@ -147,6 +151,12 @@ std::string DialogueSource::json() const {
         out += "    {\"id\": " + q(n.id);
         field(out, "scene", n.scene);
         field(out, "speaker", n.speaker);
+        field(out, "pose", n.pose);
+        if (!n.stage.empty()) {
+            out += ",\n     \"stage\": [";
+            for (usize j = 0; j < n.stage.size(); ++j) out += (j ? ", " : "") + q(n.stage[j]);
+            out += "]";
+        }
         if (!n.note.empty()) out += ",\n     \"note\": " + q(n.note);
         if (!n.text.empty()) out += ",\n     \"text\": " + q(n.text);
         if (!n.act.empty()) out += ",\n     \"do\": " + q(n.act);
@@ -181,6 +191,7 @@ std::string DialogueSource::json() const {
             }
             out += "\n     ]";
         }
+        if (!n.call.empty()) out += ",\n     \"call\": " + q(n.call);
         if (!n.next.empty()) out += ",\n     \"next\": " + q(n.next);
         out += "}";
     }
