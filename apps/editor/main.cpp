@@ -19,6 +19,7 @@
 #include "demo_art.h"
 #include "level_editor.h"
 #include "logic_editor.h"
+#include "story_editor.h"
 #include "object_library.h"
 #include "slice_level.h"
 
@@ -280,12 +281,14 @@ public:
     std::filesystem::path pictures_folder = game_dir / "pictures"; // the templates' own pictures
     std::filesystem::path sounds_folder = game_dir / "sounds";     // and sounds
     std::filesystem::path logic_file = game_dir / "logic.json";     // the links («Логика»)
+    std::filesystem::path story_dir = game_dir;                     // dialogues/ and quests.json («Сюжет»)
     // The objects shared by every game: this computer's, outside any game.
     std::filesystem::path shared_folder = default_shared_folder();
     slice::SliceLevel level_module;
     LevelEditor level{level_module};
     ObjectLibrary objects_tab{level_module};
     LogicEditor logic_tab{level_module};
+    StoryEditor story_tab{level_module.library()};
     AssetLibrary assets;
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
@@ -338,6 +341,8 @@ public:
         logic_tab.set_settings(level_config.settings, !level_config.offscreen);
         if (!level_config.offscreen) logic_tab.set_fired_file(LevelEditor::fired_file());
         logic_tab.init(ui_, game_dir, logic_file);
+        story_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
+        story_tab.init(ui_, story_dir);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
         if (!context_ || !bind_model()) return false;
@@ -378,6 +383,7 @@ public:
         if (m_tab_ == "assets") assets.undo();
         else if (m_tab_ == "objects") objects_tab.undo();
         else if (m_tab_ == "logic") logic_tab.undo();
+        else if (m_tab_ == "story") story_tab.undo();
         else if (m_tab_ == "level") level.undo();
         else if (history.undo()) FORGE_INFO("Отменено");
     }
@@ -385,6 +391,7 @@ public:
         if (m_tab_ == "assets") assets.redo();
         else if (m_tab_ == "objects") objects_tab.redo();
         else if (m_tab_ == "logic") logic_tab.redo();
+        else if (m_tab_ == "story") story_tab.redo();
         else if (m_tab_ == "level") level.redo();
         else if (history.redo()) FORGE_INFO("Повторено");
     }
@@ -393,6 +400,7 @@ public:
         if (m_tab_ == "assets") return assets.history();
         if (m_tab_ == "objects") return objects_tab.history();
         if (m_tab_ == "logic") return logic_tab.history();
+        if (m_tab_ == "story") return story_tab.history();
         return m_tab_ == "level" ? level.history() : history;
     }
     void open_tab(const std::string& key) {
@@ -402,7 +410,7 @@ public:
     }
     const std::string& tab() const { return m_tab_; }
     void save() {
-        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic") return; // files are saved as they change
+        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic" || m_tab_ == "story") return; // files are saved as they change
         if (m_tab_ == "level") {
             level.save();
             return;
@@ -512,6 +520,7 @@ public:
         assets.update(dt, m_tab_ == "assets" ? context_ : nullptr);
         if (m_tab_ == "objects") objects_tab.update(context_);
         if (m_tab_ == "logic") logic_tab.update(context_);
+        if (m_tab_ == "story") story_tab.update(context_);
         refresh_drawables();
         if (play.playing() && !paused_) simulate(static_cast<f32>(std::min(dt, 0.1)));
         hierarchy.refresh();
@@ -562,6 +571,7 @@ public:
         if (m_tab_ == "level") return level.handle_event(e, density, ui_used, context_) || ui_used;
         if (m_tab_ == "objects") return ui_used;
         if (m_tab_ == "logic") return logic_tab.handle_event(e, density, ui_used) || ui_used;
+        if (m_tab_ == "story") return story_tab.handle_event(e) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
             const f32 x = e.button.x * density, y = e.button.y * density;
@@ -794,11 +804,13 @@ private:
         assets.bind(model);
         objects_tab.bind(model);
         logic_tab.bind(model);
+        story_tab.bind(model);
         model_ = model.GetModelHandle();
         level.set_model(model_);
         assets.set_model(model_);
         objects_tab.set_model(model_);
         logic_tab.set_model(model_);
+        story_tab.set_model(model_);
         return true;
     }
 
@@ -910,12 +922,13 @@ private:
         set(m_can_undo_, h.can_undo(), "can_undo");
         set(m_can_redo_, h.can_redo(), "can_redo");
         set(m_undo_label_, h.undo_label(), "undo_label");
-        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && h.dirty(), "dirty"); // files are written at once
+        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && m_tab_ != "story" && h.dirty(), "dirty"); // files are written at once
         set(m_scene_name_,
             m_tab_ == "level"    ? level.title()
             : m_tab_ == "assets" ? std::string("Ресурсы проекта")
             : m_tab_ == "objects" ? std::string("Объекты: ") + level.title()
             : m_tab_ == "logic"   ? std::string("Логика: ") + level.title()
+            : m_tab_ == "story"   ? std::string("Сюжет: ") + level.title()
                                  : path_to_utf8(scene_path.filename()),
             "scene_name");
         set(m_has_selection_, !doc.selection().empty() && doc.find(doc.selection()[0]) != nullptr, "has_selection");
@@ -963,6 +976,8 @@ private:
         // a new selection is shown at once.
         if (m_tab_ == "logic") {
             set(m_status_, logic_tab.status(), "status");
+        } else if (m_tab_ == "story") {
+            set(m_status_, story_tab.status(), "status");
         } else if (m_tab_ == "objects") {
             set(m_status_, objects_tab.status(), "status");
         } else if (m_tab_ == "assets") {
@@ -1182,6 +1197,7 @@ private:
         if (m_tab_ == "assets") return assets.handle_key(k);
         if (m_tab_ == "objects") return objects_tab.handle_key(k);
         if (m_tab_ == "logic") return logic_tab.handle_key(k);
+        if (m_tab_ == "story") return story_tab.handle_key(k);
         if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
         if (m_tab_ != "world") return false; // the keys below act on the world view
@@ -1916,7 +1932,7 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 37) return lg_step_ >= 0 ? logic_step() : asset_step();
+        if (ol_step_ >= 37) return lg_step_ >= 0 ? logic_step() : st_step_ >= 0 ? story_step() : asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -2786,6 +2802,134 @@ private:
         return true;
     }
 
+    // --- the story tab ---
+    StoryEditor& st() { return ed_.story_tab; }
+    bool lit(const std::string& id) {
+        Rml::Element* e = ed_.find_element(id.c_str());
+        return e && e->IsClassSet("lit");
+    }
+    std::string talk_text(const std::string& talk) {
+        std::vector<u8> bytes;
+        read_file(ed_.story_dir / "dialogues" / utf8_path(talk + ".json"), bytes);
+        return {bytes.begin(), bytes.end()};
+    }
+    bool story_step() {
+        const game::DialogueSource& src = st().source();
+        switch (st_step_) {
+        case 0:
+            check(click_tab(7) && ed_.tab() == "story", "a click on the Story tab");
+            break;
+        case 1:
+            check(st().talks() == std::vector<std::string>{"miner", "smith"} && st().opened() == "miner", "the game's two conversations, Boris's open");
+            check(shown("st-talk-miner") && shown("st-talk-smith") && shown("st-line-hello") && shown("st-line-ask"),
+                  "the script shows the lines");
+            check(shown("st-topic-talk-0") && !shown("st-line-k_mine"), "topic answers are shown next to their words, not as lines");
+            check(st().phrases("quest.pickaxe >= 1", false) == std::vector<std::string>{"задание «Потерянная кирка»: ищет кирку или дальше"},
+                  "a condition says it in words");
+            check(st().phrases("quest.pickaxe = 3; give(\"coins\", 30)", true) ==
+                      std::vector<std::string>{"задание «Потерянная кирка» → выполнено", "герою: Монеты +30"},
+                  "actions say it in words");
+            check(st().playing() && st().play_node() == "hello" && lit("st-line-hello") && lit("st-rule-2"),
+                  "the test plays the start that fits, lit in the script");
+            check(click("st-say-hello") && st().editing(), "a click on a line opens it for typing");
+            break;
+        case 2:
+            check(shown("st-edit"), "the line is a field now");
+            st().set_edit_text("Эх, путник! Беда у меня.\n");
+            break;
+        case 3:
+            check(!st().editing() && src.node("hello")->text == "Эх, путник! Беда у меня.", "Enter keeps the new text");
+            check(talk_text("miner").find("Эх, путник! Беда у меня.") != std::string::npos, "it is written to the file at once");
+            check(st().play_line().text == "Эх, путник! Беда у меня.", "the test shows the new text");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(src.node("hello")->text.rfind("Эх, путник... Беда", 0) == 0, "Ctrl+Z gives the old text back");
+            break;
+        case 4:
+            check(st().play_next() && st().play_node() == "ask" && st().play_line().choices.size() == 3, "«Дальше» shows the question");
+            check(st().play_choose(0) && st().var("quest.pickaxe") == 1 && st().play_node() == "thanks_ahead",
+                  "an answer moves the quest");
+            break;
+        case 5:
+            check(lit("st-choice-ask-0") && lit("st-line-thanks_ahead"), "the answer taken and the line shown are lit");
+            st().step_item("pickaxe", 1);
+            st().play();
+            check(st().play_node() == "give_back" && st().var("quest.pickaxe") == 3 && st().var("inv.coins") == 30,
+                  "with the pickaxe the talk goes through the junction to the reward");
+            break;
+        case 6: {
+            check(click("st-rule-0-if") && st().menu_open() && st().menu_find("всегда (иначе)") >= 0, "a click on a mark opens its list");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!st().menu_open(), "Esc closes it");
+            check(st().open_menu("choice", "ask", 0, "if"), "the list of an answer's condition");
+            const int has = st().menu_find("у героя есть Кирка");
+            check(has >= 0 && st().menu_pick(static_cast<usize>(has)) && src.node("ask")->choices[0].cond == "has(\"pickaxe\")",
+                  "picked from the list, no formulas");
+            check(st().open_menu("choice", "ask", 0, "if") && st().menu_pick(static_cast<usize>(st().menu_find("своё условие…"))) &&
+                      st().editing(),
+                  "«своё условие…» opens it for typing");
+            st().set_edit_text("quest.pickaxe == 0\n");
+            break;
+        }
+        case 7:
+            check(src.node("ask")->choices[0].cond == "quest.pickaxe == 0", "a typed condition is kept");
+            check(st().open_menu("node", "give_back", -1, "do", 1) && st().menu_pick(static_cast<usize>(st().menu_find("убрать"))) &&
+                      src.node("give_back")->act == "quest.pickaxe = 3",
+                  "a change is taken off a line");
+            check(st().add_choice("thanks_ahead") && st().editing(), "«+ Ответ героя» adds one, open for typing");
+            st().set_edit_text("Понял.\n");
+            break;
+        case 8:
+            check(src.node("thanks_ahead")->choices.size() == 1 && src.node("thanks_ahead")->choices[0].text == "Понял.",
+                  "the hero's new answer");
+            check(st().add_topic("talk") && st().editing(), "«+ Тема» adds a topic, its words open for typing");
+            st().set_edit_text("погода, дождь\n");
+            break;
+        case 9:
+            check(src.node("talk")->keywords.back().words == std::vector<std::string>{"погода", "дождь"}, "the topic's words");
+            st().set_quest("pickaxe", 0);
+            st().play();
+            st().play_next();
+            check(st().play_choose(1) && st().play_node() == "talk", "to the questions");
+            check(st().play_ask("Какая сегодня погода?") && st().play_line().text == "…", "a typed question finds the new topic");
+            break;
+        case 10:
+            check(lit("st-topic-talk-" + std::to_string(src.node("talk")->keywords.size() - 1)), "the topic asked is lit");
+            check(st().play_next() && st().play_node() == "talk", "its answer goes back to the questions");
+            check(st().play_ask("где шахту искать") && st().play_line().text.rfind("Вход на западе", 0) == 0, "and the old ones");
+            st_new_ = st().add_line_after("give_back");
+            check(!st_new_.empty() && src.node("give_back")->next == st_new_ && st().editing(), "«+ Реплика» adds a line after");
+            st().set_edit_text("Иди с миром.\n");
+            break;
+        case 11:
+            check(src.node(st_new_) && src.node(st_new_)->text == "Иди с миром." && src.node(st_new_)->speaker == "miner",
+                  "the new line, said by the same speaker");
+            check(st().remove_line(st_new_) && src.node("give_back")->next.empty() && !src.node(st_new_), "«Убрать» takes it away again");
+            check(st().open_menu("node", "hello", -1, "next") && st().menu_pick(static_cast<usize>(st().menu_find("конец разговора"))) &&
+                      src.node("hello")->next.empty(),
+                  "where the talk goes on, from the list");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(src.node("hello")->next == "ask", "Ctrl+Z");
+            {
+                game::Dialogue d;
+                game::DialogueReport report;
+                check(d.load(talk_text("miner"), report) && report.ok(), "the game reads what the editor wrote");
+            }
+            check(!st().new_talk().empty() && st().talks().size() == 3 && st().editing(), "«Новый разговор»");
+            st().set_edit_text("Привет, путник!\n");
+            break;
+        case 12:
+            check(st().source().nodes.size() == 1 && st().source().nodes[0].text == "Привет, путник!", "the new conversation's first line");
+            check(st().playing(), "the new conversation plays at once");
+            check(click("st-talk-miner") && st().opened() == "miner", "back to Boris");
+            break;
+        default:
+            st_step_ = -1;
+            return true;
+        }
+        ++st_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -3093,7 +3237,13 @@ private:
 
     bool shown(const char* id) {
         Rml::Element* e = ed_.find_element(id);
-        return e && e->IsVisible(true);
+        if (e && e->IsVisible(true)) return true;
+        // Several elements may share an id while only one is shown.
+        Rml::ElementList all;
+        if (e && e->GetOwnerDocument()) e->GetOwnerDocument()->QuerySelectorAll(all, std::string("#") + id);
+        for (Rml::Element* x : all)
+            if (x->IsVisible(true)) return true;
+        return false;
     }
     bool tab_lit(int index) {
         Rml::Element* bar = ed_.find_element("editor-tabs");
@@ -3149,6 +3299,8 @@ private:
     u64 object_ = 0;
     u32 as_step_ = 0, ol_step_ = 0, waited_ = 0, conv_wait_ = 0;
     int lg_step_ = 0;
+    int st_step_ = 0;
+    std::string st_new_; // a line the test added
     std::filesystem::path picture_file_;
     u64 new_template_ = 0;
     std::string drop_text_;
@@ -3193,6 +3345,12 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             editor.logic_file = std::filesystem::temp_directory_path() / "forge_editor_logic.json";
             std::filesystem::remove(editor.logic_file, ec);
             std::filesystem::copy_file(editor.game_dir / "logic.json", editor.logic_file, ec);
+            // Nor its conversations.
+            editor.story_dir = std::filesystem::temp_directory_path() / "forge_editor_story";
+            std::filesystem::remove_all(editor.story_dir, ec);
+            std::filesystem::create_directories(editor.story_dir, ec);
+            std::filesystem::copy(editor.game_dir / "dialogues", editor.story_dir / "dialogues", std::filesystem::copy_options::recursive, ec);
+            std::filesystem::copy_file(editor.game_dir / "quests.json", editor.story_dir / "quests.json", ec);
         }
         // Nor the game's level, unless one is given.
         LevelConfig lc;

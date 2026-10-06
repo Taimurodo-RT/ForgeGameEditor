@@ -1,4 +1,5 @@
 #include "forge/game/dialogue.h"
+#include "forge/game/dialogue_source.h"
 #include "forge/game/quests.h"
 #include "forge/game/saves.h"
 #include "forge/game/vars.h"
@@ -242,9 +243,63 @@ TEST_CASE("game: words are lower-cased and split for keywords") {
     REQUIRE(words.size() == 4);
     CHECK(words[1] == "черт");
     CHECK(keyword_matches(words, "кирк*"));
-    CHECK_FALSE(keyword_matches(words, "кирк"));
+    CHECK_FALSE(keyword_matches(words, "кир")); // short words match only as they are
     CHECK(keyword_matches(words, "черт возьми"));
     CHECK_FALSE(keyword_matches(words, "возьми черт"));
+}
+
+TEST_CASE("game: a keyword matches the forms of its word") {
+    auto hit = [](const char* typed, const char* keyword) { return keyword_matches(split_words(typed), keyword); };
+    CHECK(hit("Где шахту найти?", "шахта"));
+    CHECK(hit("что в шахте", "шахта"));
+    CHECK(hit("за шахтой", "шахта"));
+    CHECK_FALSE(hit("ты шахтёр?", "шахта"));
+    CHECK(hit("кто такой кузнеца", "кузнец"));
+    CHECK(hit("с кузнецами", "кузнец"));
+    CHECK(hit("медью", "медь"));
+    CHECK_FALSE(hit("медведь", "медь"));
+    CHECK(hit("про воду", "вода"));
+    CHECK_FALSE(hit("водопад", "вода"));
+    CHECK(hit("старую шахту", "старая шахта"));
+}
+
+TEST_CASE("game: a dialogue's source is written back as it was read") {
+    const char* text = R"J({
+      "id": "miner",
+      "speakers": {"miner": {"name": "Борис", "color": "#e8b04a"}},
+      "start": [{"if": "quest.pickaxe >= 1", "goto": "waiting"}, {"goto": "hello"}],
+      "nodes": [
+        {"id": "hello", "scene": "Первая встреча", "speaker": "miner", "note": "Сидит на бревне.",
+         "text": "Эх, \"путник\"...", "do": ["met = 1", "gold += 2"], "next": "ask"},
+        {"id": "ask", "speaker": "miner", "text": "Поможешь?",
+         "keywords": [{"words": ["шахта", "кирк*"], "goto": "hello"}], "fallback": "hello",
+         "choices": [{"text": "Да.", "do": "quest.pickaxe = 1", "goto": "end"}, {"text": "Нет.", "if": "met == 1"}]},
+        {"id": "waiting", "branches": [{"if": "has(\"pickaxe\")", "goto": "hello"}], "next": "ask"}
+      ]})J";
+    DialogueSource a;
+    std::string error;
+    REQUIRE(a.parse(text, &error));
+    CHECK(a.node("hello")->scene == "Первая встреча");
+    CHECK(a.node("hello")->note == "Сидит на бревне.");
+    CHECK(a.node("hello")->act == "met = 1; gold += 2");
+    CHECK(a.node("waiting")->junction());
+    CHECK(a.node("ask")->choices[1].go.empty());
+    const std::string out = a.json();
+    DialogueSource b;
+    REQUIRE(b.parse(out, &error));
+    CHECK(b.json() == out);
+    CHECK(b.node("hello")->text == "Эх, \"путник\"...");
+    CHECK(b.node("ask")->keywords[0].words.size() == 2);
+    CHECK(b.node("ask")->choices[1].go == "end");
+    CHECK(b.start.size() == 2);
+    // The game plays what the editor writes.
+    Dialogue d;
+    DialogueReport report;
+    REQUIRE(d.load(out, report));
+    CHECK(report.ok());
+    CHECK(d.nodes().size() == 3);
+    CHECK(a.fresh_id("hello") == "hello2");
+    CHECK(a.index_of("waiting") == 2);
 }
 
 TEST_CASE("game: the quest journal follows quest variables") {

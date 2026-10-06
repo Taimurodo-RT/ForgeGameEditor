@@ -7,7 +7,7 @@
     {"goto": "hello"}
   ],
   "nodes": [
-    {"id": "hello", "speaker": "smith",
+    {"id": "hello", "scene": "Первая встреча", "note": "Мирон стучит молотом у наковальни.", "speaker": "smith",
      "text": "Я Мирон, кузнец. Скую что угодно, да меди нет. Принесёшь десять кусков, наточу твою кирку: будет копать вдвое быстрее.",
      "choices": [
        {"text": "Принесу.", "do": "quest.copper = 1", "goto": "ok"},
@@ -16,7 +16,7 @@
      ]},
     {"id": "ok", "speaker": "smith", "text": "Медь ищи в старой шахте, в полу и в потолке штольни. Без кирки её не взять."},
 
-    {"id": "check", "branches": [{"if": "has(\"copper\", 10)", "goto": "reward"}], "next": "not_yet"},
+    {"id": "check", "scene": "Герой вернулся с медью", "branches": [{"if": "has(\"copper\", 10)", "goto": "reward"}], "next": "not_yet"},
     {"id": "not_yet", "speaker": "smith",
      "text": "Нужно десять кусков меди, а у тебя {inv.copper}. Штольня в старой шахте, на западе.",
      "choices": [
@@ -27,13 +27,13 @@
      "text": "Добрая медь! Давай сюда кирку... Вот, теперь она рубит вдвое быстрее.",
      "do": "take(\"copper\", 10); quest.copper = 2; hero.dig_speed = 2"},
 
-    {"id": "after", "speaker": "smith",
+    {"id": "after", "scene": "После задания", "speaker": "smith",
      "text": "Как кирка, не тупится? Заходи, если что понадобится.",
      "choices": [
        {"text": "Продай факелы: 5 штук за 10 монет.", "if": "has(\"coins\", 10)", "goto": "buy"},
        {"text": "Пока.", "goto": "end"}
      ]},
-    {"id": "buy", "speaker": "smith", "text": "Держи, только не спали шахту.",
+    {"id": "buy", "scene": "Факелы", "speaker": "smith", "text": "Держи, только не спали шахту.",
      "do": "take(\"coins\", 10); give(\"torch\", 5)"}
   ]
 }

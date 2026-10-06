@@ -23,8 +23,9 @@
 //   }
 //
 // A node shows one line. With choices the player picks one; with keywords
-// the player may also type a question, matched by words ("кирк*" matches
-// any word starting with "кирк"). Without either, "next" follows (or the
+// the player may also type a question, matched by words: a word matches its
+// forms ("шахта" finds "шахту", "шахтой"), "кирк*" any word starting with
+// "кирк". Without either, "next" follows (or the
 // dialogue ends). A node without text is a junction: "branches" (like
 // "start") pick where to go. "goto": "end" ends it. "if" hides a choice or skips a
 // start entry; "do" runs actions (see vars.h) when the node is shown or the
@@ -53,7 +54,7 @@ struct DialogueChoice {
 };
 
 struct DialogueKeyword {
-    std::vector<std::string> words; // lower case; "stem*" matches by prefix
+    std::vector<std::string> words; // lower case; forms match; "stem*" matches by prefix
     Expr condition;
     Expr actions;
     std::string go_to;
