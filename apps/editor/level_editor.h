@@ -39,6 +39,7 @@ struct LevelConfig {
     std::filesystem::path folder;   // the level's files
     std::filesystem::path settings; // where the panel layout is kept
     std::filesystem::path game_exe; // the game, for «Играть отсюда»; empty: no launching
+    std::filesystem::path game_data; // the game's data for it (the project's game/); empty: the game's own
     bool offscreen = false;
 };
 
