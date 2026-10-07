@@ -1204,6 +1204,7 @@
                             <div id="ue-screen-pauses" class="ue-check row" data-event-click="ue_set('screen.pauses', '')"><icon class="xs" data-attr-name="ue_p.pauses ? 'check_box' : 'check_box_outline_blank'"/><span>Пока открыто, игра стоит</span></div>
                             <div id="ue-screen-esc" class="ue-check row" data-event-click="ue_set('screen.esc', '')"><icon class="xs" data-attr-name="ue_p.esc_closes ? 'check_box' : 'check_box_outline_blank'"/><span>Закрывается по Esc</span></div>
                         </div>
+                        <div id="ue-covers-game" class="ue-note ue-warn" data-if="ue_p.covers_game">Фон экрана сплошной и закроет весь мир. Сделайте его прозрачнее на вкладке «Дизайн» или выберите «Окно».</div>
                         <div class="ue-note" data-if="ue_p.screen_show == 'playing'">Как полоска здоровья и монеты: виден, пока игрок играет. Пустые места пропускают щелчки в мир.</div>
                         <div class="ue-note" data-if="ue_p.screen_show == 'command'">Откройте его кнопкой с действием «Показать экран» или блоком «Показать экран» в «Логике».</div>
                         <div class="ue-note" data-if="ue_p.screen_show == 'menu'">Игра покажет этот экран вместо своего главного меню. Кнопкам дайте действия «Новая игра», «Продолжить», «Загрузить», «Настройки», «Выйти».</div>

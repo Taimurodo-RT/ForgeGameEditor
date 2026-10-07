@@ -141,6 +141,8 @@ public:
     // conditions show the values the panel sets. Esc ends it.
     void set_checking(bool on);
     bool checking() const { return checking_; }
+    // The screen is shown while playing with a solid background: it hides the world.
+    bool covers_game() const;
     forge::game::Vars& check_vars() { return check_vars_; }
     const std::vector<std::string>& check_log() const { return check_log_; }
     // The page on the canvas (for tests: its elements).
@@ -357,6 +359,7 @@ private:
         // The link to the game.
         Rml::String screen_show; // "playing", "command", "menu"
         bool pauses = false, esc_closes = true;
+        bool covers_game = false; // shown while playing with a solid background: the world can't be seen
         Rml::String show_if;
         bool has_bar = false;
         Rml::String bar_value, bar_max, bar_from;

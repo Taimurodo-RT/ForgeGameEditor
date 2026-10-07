@@ -400,10 +400,19 @@ std::string UiEditor::new_screen() {
     std::string name = "screen";
     for (u32 n = 2; std::find(all.begin(), all.end(), name) != all.end(); ++n) name = "screen" + std::to_string(n);
     d::Screen s = d::make_screen("Экран " + std::to_string(all.size() + 1), 1920, 1080);
-    s.root.fills.push_back(solid(d::Color{0x1b, 0x21, 0x27, 255}));
+    // A window over the game: the world shows dimmed behind it.
+    s.show = d::ScreenShow::Command;
+    s.root.fills.push_back(solid(d::Color{0x1b, 0x21, 0x27, 0xb0}));
     write(name, s);
     open(name);
     return name;
+}
+
+bool UiEditor::covers_game() const {
+    return screen_.show == d::ScreenShow::Playing &&
+           std::any_of(screen_.root.fills.begin(), screen_.root.fills.end(), [](const d::Paint& f) {
+               return f.visible && f.opacity >= 1 && (f.kind != d::PaintKind::Solid || f.color.a == 255);
+           });
 }
 
 void UiEditor::apply(const std::string& name, const std::string& json, const std::vector<u32>& selection) {
@@ -1136,6 +1145,7 @@ void UiEditor::refresh_props() {
             p.screen_show = kScreenShowWords[static_cast<int>(screen_.show)];
             p.pauses = screen_.pauses;
             p.esc_closes = screen_.esc_closes;
+            p.covers_game = covers_game();
         }
         p.show_if = n->show_if;
         p.has_bar = !n->bar.value.empty();
@@ -3193,6 +3203,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("component", &Props::component);
         s.RegisterMember("text_style", &Props::text_style);
         s.RegisterMember("screen_show", &Props::screen_show);
+        s.RegisterMember("covers_game", &Props::covers_game);
         s.RegisterMember("pauses", &Props::pauses);
         s.RegisterMember("esc_closes", &Props::esc_closes);
         s.RegisterMember("show_if", &Props::show_if);
