@@ -167,11 +167,36 @@ public:
     f32 zoom() const { return zoom_; }
     void set_zoom(f32 zoom, f32 at_x, f32 at_y);
     void zoom_to_fit();
-    // Screen pixels to canvas pixels and back.
-    f32 to_canvas_x(f32 x) const { return pan_x_ + x * zoom_; }
-    f32 to_canvas_y(f32 y) const { return pan_y_ + y * zoom_; }
-    f32 to_screen_x(f32 x) const { return (x - pan_x_) / zoom_; }
-    f32 to_screen_y(f32 y) const { return (y - pan_y_) / zoom_; }
+    void update_aspect();
+    // Screen pixels to canvas pixels and back. A stretched screen shown on
+    // a player's screen of other proportions is drawn stretched too: its
+    // sides get their own zoom (zoom_x(), zoom_y()).
+    f32 zoom_x() const { return zoom_ * aspect_x_; }
+    f32 zoom_y() const { return zoom_ * aspect_y_; }
+    f32 to_canvas_x(f32 x) const { return pan_x_ + x * zoom_x(); }
+    f32 to_canvas_y(f32 y) const { return pan_y_ + y * zoom_y(); }
+    f32 to_screen_x(f32 x) const { return (x - pan_x_) / zoom_x(); }
+    f32 to_screen_y(f32 y) const { return (y - pan_y_) / zoom_y(); }
+
+    // The player's screen the canvas and «Проверить» show. 0 «Макет»: the
+    // screen's own size, where layers are drawn and moved; 1..5: the sizes
+    // a player may have (1280×720, 1920×1080, 2560×1440, 21:9 2560×1080,
+    // 4:3 1440×1080). The page meets them as in the game
+    // (game::fit_screen); the screen's data stays as it is.
+    struct ViewSize {
+        const char* label; // on the switch
+        f32 w, h;          // 0: the screen's own
+    };
+    static const std::vector<ViewSize>& view_sizes();
+    void set_view(int view);
+    int view() const { return view_; }
+    f32 view_w() const;
+    f32 view_h() const;
+    // The fit of the screen on that player's screen.
+    forge::game::ScreenFit view_fit() const;
+    // A size other than «Макет»: layers are not moved or drawn by mouse.
+    bool previewing() const { return view_ != 0; }
+    const Rml::String& view_note() const { return m_view_note_; }
     // The canvas element's box in the window (for tests and input).
     f32 canvas_left() const { return canvas_x_; }
     f32 canvas_top() const { return canvas_y_; }
@@ -259,6 +284,8 @@ private:
 
     // View.
     f32 zoom_ = 0.5f, pan_x_ = 40, pan_y_ = 40;
+    f32 aspect_x_ = 1, aspect_y_ = 1; // a stretched screen's proportions on the player's screen
+    int view_ = 0;
     f32 canvas_x_ = 0, canvas_y_ = 0, canvas_w_ = 0, canvas_h_ = 0;
     bool fit_pending_ = true;
     f32 mouse_x_ = 0, mouse_y_ = 0; // window pixels
@@ -449,6 +476,12 @@ private:
     std::vector<Box> m_guides_x_, m_guides_y_;
     Rml::String m_tool_ = "select";
     Rml::String m_zoom_text_;
+    struct ViewRow {
+        Rml::String label, title;
+    };
+    std::vector<ViewRow> m_views_;
+    int m_view_ = 0;
+    Rml::String m_view_note_; // what the canvas shows now, in words
     Rml::String m_title_;
     Rml::String m_renaming_; // a layer id or "screen:<name>" being renamed
     Rml::String m_rename_text_;

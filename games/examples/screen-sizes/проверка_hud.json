@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "title": "Проверка: HUD",
+  "next_id": 7,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "safe": 40.0,
+    "show": "playing"
+  },
+  "root": {
+    "id": 1,
+    "name": "Проверка: HUD",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Монеты",
+        "type": "text",
+        "x": 1380.0,
+        "y": 40.0,
+        "w": 500.0,
+        "h": 60.0,
+        "horizontal": "end",
+        "text": "Монеты: {inv.coins}",
+        "style": {
+          "family": "Onest",
+          "size": 40.0,
+          "weight": 400,
+          "align": "right",
+          "color": "#ffffff"
+        }
+      },
+      {
+        "id": 3,
+        "name": "Сердца",
+        "type": "rectangle",
+        "x": 40.0,
+        "y": 900.0,
+        "w": 400.0,
+        "h": 40.0,
+        "vertical": "end",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#c8323c"
+          }
+        ],
+        "bar": {
+          "value": "hero.hearts",
+          "max": "hero.hearts_max",
+          "from": "left"
+        }
+      },
+      {
+        "id": 4,
+        "name": "Кнопка «Сумка»",
+        "type": "frame",
+        "x": 1680.0,
+        "y": 860.0,
+        "w": 200.0,
+        "h": 80.0,
+        "horizontal": "end",
+        "vertical": "end",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#2a2018f0"
+          }
+        ],
+        "radius": [
+          12.0,
+          12.0,
+          12.0,
+          12.0
+        ],
+        "on_click": [
+          {
+            "do": "show",
+            "target": "проверка_сумка"
+          }
+        ],
+        "children": [
+          {
+            "id": 5,
+            "name": "Сумка",
+            "type": "text",
+            "x": 0.0,
+            "y": 18.0,
+            "w": 200.0,
+            "h": 44.0,
+            "text": "Сумка",
+            "style": {
+              "family": "Onest",
+              "size": 34.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#ffffff"
+            }
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "Середина",
+        "type": "text",
+        "x": 760.0,
+        "y": 40.0,
+        "w": 400.0,
+        "h": 50.0,
+        "horizontal": "center",
+        "text": "середина экрана",
+        "style": {
+          "family": "Onest",
+          "size": 30.0,
+          "weight": 400,
+          "align": "center",
+          "color": "#ffffff"
+        }
+      }
+    ]
+  }
+}

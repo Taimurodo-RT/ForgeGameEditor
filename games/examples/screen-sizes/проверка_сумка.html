@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Проверка: сумка</title>
+<!-- Made by Forge «Интерфейс» from Проверка: сумка.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background-color: rgba(0, 0, 0, 0.549);
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: calc(50% + -500px);
+  width: 1000px;
+  top: calc(50% + -400px);
+  height: 800px;
+  box-sizing: border-box;
+  background-color: rgba(30, 26, 22, 0.98);
+  border-radius: 16px 16px 16px 16px;
+  overflow: hidden;
+}
+#n3 {
+  position: absolute;
+  left: 40px;
+  width: 600px;
+  top: 30px;
+  height: 60px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 48px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+#n4 {
+  position: absolute;
+  left: 900px;
+  width: 60px;
+  top: 30px;
+  height: 60px;
+  box-sizing: border-box;
+  background-color: #5a2828;
+  border-radius: 30px 30px 30px 30px;
+}
+#n5 {
+  position: absolute;
+  left: 0px;
+  width: 60px;
+  top: 6px;
+  height: 48px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 40px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+#n6 {
+  position: absolute;
+  left: 40px;
+  width: 920px;
+  top: 120px;
+  height: 270px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+#n7 {
+  position: absolute;
+  left: 0px;
+  width: 296px;
+  top: 0px;
+  height: 80px;
+  box-sizing: border-box;
+  background-color: #342c24;
+  border-radius: 10px 10px 10px 10px;
+}
+#n8 {
+  position: absolute;
+  left: 10px;
+  width: 60px;
+  top: 10px;
+  height: 60px;
+  box-sizing: border-box;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+#n9 {
+  position: absolute;
+  left: 84px;
+  width: 200px;
+  top: 22px;
+  height: 36px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 26px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+#n10 {
+  position: absolute;
+  left: 0px;
+  width: 600px;
+  top: 0px;
+  height: 40px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 28px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+body, #n1 {
+  pointer-events: none;
+}
+#n2, #n3, #n4, #n5, #n6, #n7, #n9, #n10 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Проверка: сумка" forge-screen="command" forge-fit="fit" forge-size="1920 1080" forge-bars="#0a0e14">
+  <div id="n2" class="frame" title="Окно">
+    <div id="n3" class="text" title="Заголовок">Сумка</div>
+    <div id="n4" class="frame" title="Закрыть" forge-click="[[&quot;close&quot;,&quot;&quot;]]">
+      <div id="n5" class="text" title="×">×</div>
+    </div>
+    <div id="n6" class="frame" title="Вещи" forge-list="items" forge-list-gap="10" forge-cell="0 0 296 80">
+      <div id="n7" class="frame" title="Ячейка" forge-click="[[&quot;message&quot;,&quot;взял {item.id}&quot;]]">
+        <div id="n8" class="rectangle" title="Картинка предмета" forge-picture="item.icon"></div>
+        <div id="n9" class="text" title="Название" forge-text="{item.name} {item.count}">{item.name} {item.count}</div>
+      </div>
+      <div id="n10" class="text" title="Пусто">В сумке пусто</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

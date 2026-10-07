@@ -549,7 +549,9 @@ void UiEditor::propagate_library() {
 void UiEditor::rebuild_page() {
     page_dirty_ = false;
     if (!page_context_) return;
-    const Rml::Vector2i size{static_cast<int>(std::lround(screen_.width)), static_cast<int>(std::lround(screen_.height))};
+    update_aspect();
+    // The page is laid out on the player's screen (the screen's own size in «Макет»).
+    const Rml::Vector2i size{static_cast<int>(std::lround(view_w())), static_cast<int>(std::lround(view_h()))};
     if (page_context_->GetDimensions() != size) page_context_->SetDimensions(size);
     if (page_) {
         if (page_from_check_) check_->unload();
@@ -594,6 +596,9 @@ void UiEditor::rebuild_page() {
         return;
     }
     page_->Show();
+    // Meets the player's screen as in the game: the root's own forge-fit and forge-size.
+    if (Rml::Element* root = page_->GetElementById("n" + std::to_string(screen_.root.id)))
+        game::apply_screen_fit(root, view_fit(), root->GetAttribute<Rml::String>("forge-bars", ""));
     page_context_->Update(); // lay it out now: the canvas reads its boxes
     read_boxes();
 }
@@ -674,6 +679,8 @@ void UiEditor::scan_pictures() {
 void UiEditor::read_boxes() {
     boxes_.clear();
     if (!page_) return;
+    // Boxes are in the page's pixels: the fit places the root on the player's screen.
+    const game::ScreenFit fit = view_fit();
     // Layout boxes leave out transforms: a centred layer that hugs its
     // content is moved back by half its size (design::node_css), and so is
     // everything inside it.
@@ -687,13 +694,13 @@ void UiEditor::read_boxes() {
                 if (n.horizontal == d::Constraint::Center && n.width_sizing == d::Sizing::Hug) ox -= size.x * 0.5f;
                 if (n.vertical == d::Constraint::Center && n.height_sizing == d::Sizing::Hug) oy -= size.y * 0.5f;
             }
-            boxes_[n.id] = {at.x + ox, at.y + oy, size.x, size.y};
+            boxes_[n.id] = {at.x + ox - fit.left, at.y + oy - fit.top, size.x, size.y};
         }
         for (const d::Node& c : n.children) self(self, c, &n, ox, oy);
     };
     visit(visit, screen_.root, nullptr, 0.f, 0.f);
-    // The root is the whole screen.
-    boxes_[screen_.root.id] = {0, 0, screen_.width, screen_.height};
+    // The root is the whole screen (wider or taller than drawn when it grows to the player's).
+    boxes_[screen_.root.id] = {0, 0, fit.width, fit.height};
 }
 
 std::optional<d::Rect> UiEditor::layer_box(u32 id) const {
@@ -828,13 +835,70 @@ void UiEditor::read_canvas(Rml::Context* context) {
     }
 }
 
+const std::vector<UiEditor::ViewSize>& UiEditor::view_sizes() {
+    static const std::vector<ViewSize> sizes = {
+        {"Макет", 0, 0}, {"1280×720", 1280, 720}, {"1920×1080", 1920, 1080}, {"2560×1440", 2560, 1440},
+        {"21:9 · 2560×1080", 2560, 1080}, {"4:3 · 1440×1080", 1440, 1080}};
+    return sizes;
+}
+
+f32 UiEditor::view_w() const {
+    const ViewSize& v = view_sizes()[static_cast<usize>(view_)];
+    return v.w > 0 ? v.w : screen_.width;
+}
+
+f32 UiEditor::view_h() const {
+    const ViewSize& v = view_sizes()[static_cast<usize>(view_)];
+    return v.h > 0 ? v.h : screen_.height;
+}
+
+game::ScreenFit UiEditor::view_fit() const {
+    return game::fit_screen(d::screen_fit_word(screen_.fit), screen_.width, screen_.height, view_w(), view_h());
+}
+
+void UiEditor::set_view(int view) {
+    view = std::clamp(view, 0, static_cast<int>(view_sizes().size()) - 1);
+    if (view == view_) return;
+    view_ = view;
+    m_view_ = view;
+    dirty("ue_view");
+    if (drag_ != Drag::None) drag_ = Drag::None;
+    snap_lines_.clear();
+    snap_gaps_.clear();
+    page_dirty_ = true; // laid out again on that screen
+    rebuild_page();
+    zoom_to_fit();
+    refresh_props();
+}
+
+// A stretched screen on a player's screen of other proportions: its sides'
+// own zooms, and the words over the canvas.
+void UiEditor::update_aspect() {
+    const game::ScreenFit fit = view_fit();
+    const f32 s = std::min(fit.sx, fit.sy);
+    aspect_x_ = fit.sx / s;
+    aspect_y_ = fit.sy / s;
+    if (!previewing()) {
+        m_view_note_ = "";
+        return;
+    }
+    const char* how = screen_.fit == d::ScreenFit::Fit       ? "целиком, по краям полосы"
+                      : screen_.fit == d::ScreenFit::Stretch ? "растянут по сторонам"
+                                                             : "растёт по стороне, слои держатся своих краёв";
+    m_view_note_ = "Экран игрока " + fmt(view_w()) + "×" + fmt(view_h()) + ": экран " + fmt(screen_.width) + "×" +
+                   fmt(screen_.height) + " " + how + ", масштаб " +
+                   (fit.sx == fit.sy ? fmt(std::round(fit.sx * 1000) / 10) + "%"
+                                     : fmt(std::round(fit.sx * 1000) / 10) + "% × " + fmt(std::round(fit.sy * 1000) / 10) + "%") +
+                   ". Слои двигаются в «Макете».";
+}
+
 void UiEditor::set_zoom(f32 zoom, f32 at_x, f32 at_y) {
     zoom = std::clamp(zoom, 0.02f, 64.0f);
     // Keep the screen point under (at_x, at_y) (canvas pixels) in place.
     const f32 sx = to_screen_x(at_x), sy = to_screen_y(at_y);
     zoom_ = zoom;
-    pan_x_ = at_x - sx * zoom_;
-    pan_y_ = at_y - sy * zoom_;
+    pan_x_ = at_x - sx * zoom_x();
+    pan_y_ = at_y - sy * zoom_y();
     refresh_view();
 }
 
@@ -844,17 +908,29 @@ void UiEditor::zoom_to_fit() {
         return;
     }
     fit_pending_ = false;
+    update_aspect();
     const f32 margin = 48;
-    const f32 k = std::min((canvas_w_ - 2 * margin) / screen_.width, (canvas_h_ - 2 * margin) / screen_.height);
+    // The player's whole screen, in page pixels.
+    const game::ScreenFit fit = view_fit();
+    const f32 x0 = game::fit_to_page_x(fit, 0), y0 = game::fit_to_page_y(fit, 0);
+    const f32 w = view_w() / fit.sx, h = view_h() / fit.sy;
+    const f32 k = std::min((canvas_w_ - 2 * margin) / (w * aspect_x_), (canvas_h_ - 2 * margin) / (h * aspect_y_));
     zoom_ = std::clamp(k, 0.02f, 1.0f);
-    pan_x_ = std::round((canvas_w_ - screen_.width * zoom_) * 0.5f);
-    pan_y_ = std::round((canvas_h_ - screen_.height * zoom_) * 0.5f);
+    pan_x_ = std::round((canvas_w_ - w * zoom_x()) * 0.5f - x0 * zoom_x());
+    pan_y_ = std::round((canvas_h_ - h * zoom_y()) * 0.5f - y0 * zoom_y());
     refresh_view();
 }
 
 void UiEditor::refresh_view() {
-    m_frame_ = {to_canvas_x(0), to_canvas_y(0), screen_.width * zoom_, screen_.height * zoom_};
-    m_frame_label_ = {m_frame_.x, m_frame_.y - 22, screen_.title + "  " + fmt(screen_.width) + " × " + fmt(screen_.height)};
+    // The frame is the player's whole screen (bars around a fitted page included).
+    update_aspect();
+    const game::ScreenFit fit = view_fit();
+    const f32 x0 = game::fit_to_page_x(fit, 0), y0 = game::fit_to_page_y(fit, 0);
+    const f32 fw = view_w() / fit.sx, fh = view_h() / fit.sy;
+    m_frame_ = {to_canvas_x(x0), to_canvas_y(y0), fw * zoom_x(), fh * zoom_y()};
+    m_frame_label_ = {m_frame_.x, m_frame_.y - 22,
+                      previewing() ? screen_.title + "  на экране игрока " + fmt(view_w()) + " × " + fmt(view_h())
+                                   : screen_.title + "  " + fmt(screen_.width) + " × " + fmt(screen_.height)};
     m_zoom_text_ = fmt(std::round(zoom_ * 100)) + "%";
     m_guides_x_.clear();
     m_guides_y_.clear();
@@ -863,9 +939,10 @@ void UiEditor::refresh_view() {
         else m_guides_y_.push_back({0, to_canvas_y(g.position), canvas_w_, 1});
     }
     m_has_safe_ = screen_.safe > 0;
-    m_safe_ = {to_canvas_x(screen_.safe), to_canvas_y(screen_.safe), (screen_.width - 2 * screen_.safe) * zoom_,
-               (screen_.height - 2 * screen_.safe) * zoom_};
-    for (const char* name : {"ue_frame", "ue_frame_label", "ue_zoom", "ue_guides_x", "ue_guides_y", "ue_safe", "ue_has_safe"})
+    // Along the player's screen's edges.
+    m_safe_ = {to_canvas_x(x0 + screen_.safe), to_canvas_y(y0 + screen_.safe), (fw - 2 * screen_.safe) * zoom_x(),
+               (fh - 2 * screen_.safe) * zoom_y()};
+    for (const char* name : {"ue_frame", "ue_frame_label", "ue_zoom", "ue_guides_x", "ue_guides_y", "ue_safe", "ue_has_safe", "ue_view_note"})
         dirty(name);
     refresh_overlay();
     refresh_rulers();
@@ -918,21 +995,21 @@ void UiEditor::refresh_overlay() {
     // Selection: each layer's outline, the whole selection's box with its handles.
     m_selected_.clear();
     for (u32 id : selection_)
-        if (auto b = layer_box(id)) m_selected_.push_back({to_canvas_x(b->x), to_canvas_y(b->y), b->w * zoom_, b->h * zoom_});
+        if (auto b = layer_box(id)) m_selected_.push_back({to_canvas_x(b->x), to_canvas_y(b->y), b->w * zoom_x(), b->h * zoom_y()});
     const d::Rect sb = selection_box();
-    m_sel_box_ = {to_canvas_x(sb.x), to_canvas_y(sb.y), sb.w * zoom_, sb.h * zoom_};
+    m_sel_box_ = {to_canvas_x(sb.x), to_canvas_y(sb.y), sb.w * zoom_x(), sb.h * zoom_y()};
     m_handles_ = !selection_.empty() && !(selection_.size() == 1 && selection_[0] == screen_.root.id);
     m_size_label_ = selection_.empty() ? Rml::String() : fmt(std::round(sb.w * 100) / 100) + " × " + fmt(std::round(sb.h * 100) / 100);
     // Hover.
     m_hovering_ = false;
     if (hover_ && drag_ == Drag::None && std::find(selection_.begin(), selection_.end(), hover_) == selection_.end())
         if (auto b = layer_box(hover_)) {
-            m_hover_ = {to_canvas_x(b->x), to_canvas_y(b->y), b->w * zoom_, b->h * zoom_};
+            m_hover_ = {to_canvas_x(b->x), to_canvas_y(b->y), b->w * zoom_x(), b->h * zoom_y()};
             m_hovering_ = true;
         }
     m_marqueeing_ = drag_ == Drag::Marquee && dragged_;
     if (m_marqueeing_)
-        m_marquee_ = {to_canvas_x(marquee_.x), to_canvas_y(marquee_.y), marquee_.w * zoom_, marquee_.h * zoom_};
+        m_marquee_ = {to_canvas_x(marquee_.x), to_canvas_y(marquee_.y), marquee_.w * zoom_x(), marquee_.h * zoom_y()};
 
     // Snapping lines and gaps (pink), with the gaps' lengths.
     overlay_lines_.list.clear();
@@ -2629,7 +2706,10 @@ bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* conte
         auto pass = [&](f32 mx, f32 my, int down, int up) {
             mouse_x_ = mx;
             mouse_y_ = my;
-            check_mouse(to_screen_x(mx - canvas_x_), to_screen_y(my - canvas_y_), down, up);
+            // Page pixels on the canvas, the player's pixels on the page's context.
+            const game::ScreenFit fit = view_fit();
+            check_mouse(game::fit_to_view_x(fit, to_screen_x(mx - canvas_x_)), game::fit_to_view_y(fit, to_screen_y(my - canvas_y_)),
+                        down, up);
         };
         if (e.type == SDL_EVENT_MOUSE_MOTION) {
             pass(e.motion.x * density, e.motion.y * density, -1, -1);
@@ -2754,6 +2834,9 @@ bool UiEditor::press(f32 mx, f32 my, u8 button, u8 clicks, Rml::Context* /*conte
         }
     }
 
+    // On a player's screen other than «Макет» layers are looked at, not moved:
+    // where a drag would land depends on the screen.
+    if (previewing() && tool_ != Tool::Select) return true;
     // Drawing a new layer.
     if (tool_ != Tool::Select) {
         static const d::NodeType types[] = {d::NodeType::Frame, d::NodeType::Frame, d::NodeType::Rectangle,
@@ -2769,7 +2852,7 @@ bool UiEditor::press(f32 mx, f32 my, u8 button, u8 clicks, Rml::Context* /*conte
     }
 
     // A handle of the selection.
-    if (m_handles_) {
+    if (m_handles_ && !previewing()) {
         const Box& b = m_sel_box_;
         const f32 hx[8] = {b.x, b.x + b.w * 0.5f, b.x + b.w, b.x + b.w, b.x + b.w, b.x + b.w * 0.5f, b.x, b.x};
         const f32 hy[8] = {b.y, b.y, b.y, b.y + b.h * 0.5f, b.y + b.h, b.y + b.h, b.y + b.h, b.y + b.h * 0.5f};
@@ -2815,6 +2898,7 @@ bool UiEditor::press(f32 mx, f32 my, u8 button, u8 clicks, Rml::Context* /*conte
         } else if (std::find(selection_.begin(), selection_.end(), id) == selection_.end()) {
             select({id});
         }
+        if (previewing()) return true;
         drag_ = Drag::Move;
         grab_box_ = selection_box();
         grabbed_.clear();
@@ -3549,6 +3633,17 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_guides_y", &m_guides_y_);
     model.Bind("ue_tool", &m_tool_);
     model.Bind("ue_zoom", &m_zoom_text_);
+    if (auto v = model.RegisterStruct<ViewRow>()) {
+        v.RegisterMember("label", &ViewRow::label);
+        v.RegisterMember("title", &ViewRow::title);
+    }
+    model.RegisterArray<std::vector<ViewRow>>();
+    m_views_.clear();
+    for (const ViewSize& v : view_sizes())
+        m_views_.push_back({v.label, v.w > 0 ? "Экран игрока " + fmt(v.w) + "×" + fmt(v.h) : "Размер, в котором экран нарисован: слои двигаются здесь"});
+    model.Bind("ue_views", &m_views_);
+    model.Bind("ue_view", &m_view_);
+    model.Bind("ue_view_note", &m_view_note_);
     model.Bind("ue_title", &m_title_);
     model.Bind("ue_renaming", &m_renaming_);
     model.Bind("ue_rename_text", &m_rename_text_);
@@ -3623,6 +3718,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         else if (what == "100") set_zoom(1, canvas_w_ * 0.5f, canvas_h_ * 0.5f);
         else zoom_to_fit();
     });
+    on("ue_view", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { set_view(arg_int(a, 0)); });
     on("ue_select_screen", [this](Rml::Event&, const Rml::VariantList&) { select({screen_.root.id}); });
     on("ue_layer", [this, arg_int](Rml::Event& ev, const Rml::VariantList& a) {
         const u32 id = static_cast<u32>(arg_int(a, 0));

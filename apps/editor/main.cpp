@@ -3134,6 +3134,12 @@ private:
     }
     u32 ue_list_ = 0, ue_text_ = 0, ue_cell_ = 0;
     usize ue_items_ = 0;
+    u32 ue_edge_ = 0, ue_mid_ = 0; // layers stuck to the corner and to the middle
+    std::string ue_json_;          // the screen before looking at other sizes
+    editor::design::Rect ue_edge_box_, ue_mid_box_;
+    f64 ue_coins_before_ = 0;
+    std::string ue_expect_; // the thing of the clicked cell
+    usize ue_log_size_ = 0;
     objects::Template ue_coins_;          // the coins before the list's picture check
     std::filesystem::path ue_pictures_; // and the pictures folder
     // A screen point in window pixels.
@@ -3677,6 +3683,217 @@ private:
             if (!ue_coins_.id.empty()) check(lib.put(ue_coins_), "the coins' picture goes back");
             lib.set_pictures_folder(ue_pictures_);
             ue().set_panel("design");
+            break;
+        }
+        // --- the player's screen sizes (13.2) ---
+        case 30: {
+            check(ue().view() == 0 && !ue().previewing() && !shown("ue-view-note"), "the canvas starts at the screen's own size");
+            // A layer stuck to the bottom right corner and one to the middle.
+            ue_edge_ = ue().add_layer(d::NodeType::Rectangle, 1720, 980, 160, 60);
+            check(ue().set_property("horizontal", "end") && ue().set_property("vertical", "end"), "a layer stuck to the corner");
+            ue_mid_ = ue().add_layer(d::NodeType::Rectangle, 900, 20, 120, 60);
+            check(ue().set_property("horizontal", "center"), "a layer stuck to the middle");
+            check(ue().set_property("click.add", "") && ue().set_property("click.0.kind", "change") &&
+                      ue().set_property("click.0.target", "inv.coins += 5"),
+                  "its click adds coins");
+            // A click on a cell of the list says which thing it shows.
+            ue().select({ue_cell_});
+            check(ue().set_property("click.add", "") && !ue_node(ue_cell_)->on_click.empty(), "the cell gets an action");
+            const std::string at = "click." + std::to_string(ue_node(ue_cell_)->on_click.size() - 1);
+            check(ue().set_property(at + ".kind", "message") && ue().set_property(at + ".target", "взял {item.id}"),
+                  "the cell's click tells the logic which thing");
+            ue().select({});
+            break;
+        }
+        case 31: {
+            // Laid out: where they stand on «Макет».
+            ue_json_ = d::save_screen(ue().screen());
+            ue_edge_box_ = ue().layer_box(ue_edge_).value_or(d::Rect{});
+            ue_mid_box_ = ue().layer_box(ue_mid_).value_or(d::Rect{});
+            check(ue_edge_box_.x == 1720 && ue_edge_box_.y == 980 && ue_mid_box_.x == 900 && ue_mid_box_.y == 20, "they stand where they were drawn");
+            check(shown("ue-view-4") && click("ue-view-4"), "the switch over the canvas: 21:9");
+            break;
+        }
+        case 32: {
+            // 21:9 (2560×1080) against a 16:9 screen that grows: 640 wider, the same scale.
+            check(ue().view() == 4 && ue().previewing(), "21:9 is chosen");
+            check(d::save_screen(ue().screen()) == ue_json_, "choosing a size changes nothing of the screen");
+            Rml::ElementDocument* page = ue().page();
+            const Rml::Vector2i dims = page ? page->GetContext()->GetDimensions() : Rml::Vector2i();
+            check(dims.x == 2560 && dims.y == 1080, ("the page is laid out on a 2560×1080 screen: " + std::to_string(dims.x) + "×" +
+                                                          std::to_string(dims.y)).c_str());
+            const auto edge = ue().layer_box(ue_edge_), mid = ue().layer_box(ue_mid_);
+            check(edge && edge->x == ue_edge_box_.x + 640 && edge->y == ue_edge_box_.y, "the corner layer follows the right edge");
+            check(mid && mid->x == ue_mid_box_.x + 320, "the middle layer stays in the middle");
+            check(ue().layer_box(ue().screen().root.id)->w == 2560, "the screen is 2560 wide");
+            Rml::Element* img = ed_.find_element("ue-screen");
+            const Rml::Vector2f size = img ? img->GetBox().GetSize() : Rml::Vector2f();
+            check(size.y > 0 && std::fabs(size.x / size.y - 2560.0f / 1080.0f) < 0.01f, "the canvas shows 21:9 proportions");
+            check(shown("ue-view-note") && ue().view_note().find("2560×1080") != std::string::npos, ("and says which screen: " + ue().view_note()).c_str());
+            // A click picks the layer; a drag does not move it (layers move in «Макет»).
+            const f32 cx = ue_wx(edge ? edge->cx() : 0), cy = ue_wy(edge ? edge->cy() : 0);
+            left_click(cx, cy);
+            check(ue().selection().size() == 1 && ue().selection()[0] == ue_edge_, "a click on the canvas picks the layer where it shows");
+            ue_drag(cx, cy, cx + 120, cy + 60);
+            check(d::save_screen(ue().screen()) == ue_json_, "a drag on another size does not move it");
+            // Stretched, a 16:9 screen on 21:9 is drawn wider, its layout stays 1920.
+            ue().select({});
+            check(ue().set_property("screen.fit", "stretch"), "the screen is stretched");
+            break;
+        }
+        case 33: {
+            Rml::Element* img = ed_.find_element("ue-screen");
+            const Rml::Vector2f size = img ? img->GetBox().GetSize() : Rml::Vector2f();
+            check(size.y > 0 && std::fabs(size.x / size.y - 2560.0f / 1080.0f) < 0.01f, "stretched, the canvas is still 21:9");
+            const auto edge = ue().layer_box(ue_edge_);
+            check(edge && edge->x == ue_edge_box_.x && ue().layer_box(ue().screen().root.id)->w == 1920,
+                  "stretched, the layout keeps the drawn size");
+            const game::ScreenFit f = ue().view_fit();
+            check(std::fabs(f.sx - 2560.0f / 1920.0f) < 1e-4f && f.sy == 1, "and its sides are scaled apart");
+            ue().undo();
+            check(ue().screen().fit == d::ScreenFit::Expand && d::save_screen(ue().screen()) == ue_json_, "Ctrl+Z brings the growing back");
+            check(click("ue-view-5"), "4:3");
+            break;
+        }
+        case 34: {
+            // 4:3 (1440×1080): three quarters the size, 360 page pixels taller.
+            Rml::ElementDocument* page = ue().page();
+            const Rml::Vector2i dims = page ? page->GetContext()->GetDimensions() : Rml::Vector2i();
+            check(dims.x == 1440 && dims.y == 1080, "the page is laid out on a 1440×1080 screen");
+            const game::ScreenFit f = ue().view_fit();
+            check(std::fabs(f.sx - 0.75f) < 1e-4f && f.sx == f.sy && std::fabs(f.height - 1440) < 0.01f, "one scale, 0.75");
+            const auto edge = ue().layer_box(ue_edge_), mid = ue().layer_box(ue_mid_);
+            check(edge && edge->x == ue_edge_box_.x && edge->y == ue_edge_box_.y + 360, "the corner layer follows the bottom edge");
+            check(mid && mid->x == ue_mid_box_.x && mid->y == ue_mid_box_.y, "the middle one stays");
+            Rml::Element* img = ed_.find_element("ue-screen");
+            const Rml::Vector2f size = img ? img->GetBox().GetSize() : Rml::Vector2f();
+            check(size.y > 0 && std::fabs(size.x / size.y - 4.0f / 3.0f) < 0.01f, "the canvas shows 4:3 proportions");
+            ue().select({});
+            check(ue().set_property("screen.fit", "fit"), "whole, with bars");
+            break;
+        }
+        case 35: {
+            // Whole on 4:3: bars of 135 above and below, the layout as drawn.
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* root = page ? page->GetElementById("n" + std::to_string(ue().screen().root.id)) : nullptr;
+            const Rml::Vector2f at = root ? root->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f(-1, -1);
+            check(std::fabs(at.x) < 0.01f && std::fabs(at.y - 135) < 0.01f, "the page sits between bars of 135");
+            const auto edge = ue().layer_box(ue_edge_);
+            check(edge && edge->x == ue_edge_box_.x && edge->y == ue_edge_box_.y, "and its layers stand as drawn");
+            ue().undo();
+            check(d::save_screen(ue().screen()) == ue_json_, "Ctrl+Z: growing again");
+            check(click("ue-check"), "«Проверить» on 4:3");
+            break;
+        }
+        case 36: {
+            check(ue().checking() && ue().view() == 5, "the check runs on the chosen screen");
+            Rml::ElementDocument* page = ue().page();
+            const Rml::Vector2i dims = page ? page->GetContext()->GetDimensions() : Rml::Vector2i();
+            check(dims.x == 1440 && dims.y == 1080, "on 1440×1080");
+            ue_coins_before_ = ue().check_vars().get("inv.coins").number();
+            // The middle layer where it shows: the click goes through the 0.75 scale to the page.
+            const auto box = ue().layer_box(ue_mid_);
+            check(box.has_value(), "the layer is on the canvas");
+            if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
+            break;
+        }
+        case 37: {
+            check(ue().check_vars().get("inv.coins").number() == ue_coins_before_ + 5, "the click on 4:3 hit the layer where it shows");
+            // Things to fill the list, more than it shows.
+            for (const game::ScreenItem& t : ed_.ui_tab.game_items()) ue().check_vars().set("inv." + t.id, 1);
+            break;
+        }
+        case 38: {
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* box = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_list_)) : nullptr;
+            check(box && box->GetScrollHeight() > box->GetClientHeight() + 1, "the list scrolls");
+            if (box) box->SetScrollTop(98); // one row down
+            break;
+        }
+        case 39: {
+            // A cell in sight after scrolling: clicked where the canvas shows it.
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* box = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_list_)) : nullptr;
+            Rml::Element* content = box ? box->GetFirstChild() : nullptr;
+            const game::ScreenFit f = ue().view_fit();
+            ue_expect_.clear();
+            const std::vector<game::ScreenItem> things = ed_.ui_tab.game_items();
+            for (int i = 0; content && i < content->GetNumChildren() && ue_expect_.empty(); ++i) {
+                Rml::Element* c = content->GetChild(i);
+                if (c->GetComputedValues().display() == Rml::Style::Display::None) continue;
+                const Rml::Vector2f at = c->GetAbsoluteOffset(Rml::BoxArea::Border), size = c->GetBox().GetSize(Rml::BoxArea::Border);
+                const Rml::Vector2f top = box->GetAbsoluteOffset(Rml::BoxArea::Padding);
+                if (at.y < top.y + 1 || at.y + size.y > top.y + box->GetClientHeight()) continue; // not wholly in sight
+                Rml::ElementList texts;
+                c->QuerySelectorAll(texts, "[forge-text]");
+                const std::string text = texts.empty() ? std::string() : texts[0]->GetInnerRML();
+                for (const game::ScreenItem& t : things)
+                    if (text.rfind(t.name + " ", 0) == 0 && text.find_first_not_of("0123456789", t.name.size() + 1) == std::string::npos)
+                        ue_expect_ = t.id;
+                if (ue_expect_.empty()) continue;
+                // Page pixels (the layout's) to the canvas; a cell another layer covers there is skipped.
+                const f32 px = at.x - f.left + size.x * 0.5f, py = at.y - f.top + size.y * 0.5f;
+                bool mine = false;
+                for (Rml::Element* e = page->GetContext()->GetElementAtPoint({game::fit_to_view_x(f, px), game::fit_to_view_y(f, py)}); e;
+                     e = e->GetParentNode())
+                    mine = mine || e == c;
+                if (!mine) {
+                    ue_expect_.clear();
+                    continue;
+                }
+                ue_log_size_ = ue().check_log().size();
+                left_click(ue_wx(px), ue_wy(py));
+            }
+            check(!ue_expect_.empty(), "a cell wholly in sight after scrolling");
+            break;
+        }
+        case 40: {
+            const std::vector<std::string>& log = ue().check_log();
+            check(log.size() == ue_log_size_ + 1 && log.back() == "Сообщение «Логике»: взял " + ue_expect_,
+                  ("the click on 4:3 after scrolling acts on its own thing: " + (log.empty() ? std::string("ничего") : log.back()) +
+                   " (ждали " + ue_expect_ + ")").c_str());
+            ue().set_checking(false);
+            check(click("ue-view-0"), "back to «Макет»");
+            break;
+        }
+        case 41: {
+            check(ue().view() == 0 && !shown("ue-view-note"), "«Макет» again");
+            Rml::ElementDocument* page = ue().page();
+            const Rml::Vector2i dims = page ? page->GetContext()->GetDimensions() : Rml::Vector2i();
+            check(dims.x == 1920 && dims.y == 1080, "the page at its own size");
+            const auto edge = ue().layer_box(ue_edge_);
+            check(edge && edge->x == ue_edge_box_.x && edge->y == ue_edge_box_.y, "the corner layer back where it was drawn");
+            check(d::save_screen(ue().screen()) == ue_json_, "the screen as it was: layers, ids, copies' own values");
+            // Saved and opened again: the same.
+            check(ue().open(ue_other_) && ue().open("main_menu") && d::save_screen(ue().screen()) == ue_json_,
+                  "saved and opened again, the same");
+            // A real edit on «Макет» is undone and redone whole.
+            ue().select({ue_edge_});
+            check(ue().set_property("x", "1700") && ue_node(ue_edge_)->x == 1700, "the corner layer moved on «Макет»");
+            check(click("ue-view-3"), "2560×1440");
+            break;
+        }
+        case 42: {
+            // 2560×1440: the same proportions, 4/3 the size: the layout is the drawn one.
+            const game::ScreenFit f = ue().view_fit();
+            check(std::fabs(f.sx - 4.0f / 3.0f) < 1e-4f && std::fabs(f.width - 1920) < 0.01f, "2560×1440 is the screen at 4/3");
+            check(ue().layer_box(ue_edge_)->x == 1700, "the moved layer shows moved");
+            ue().undo();
+            check(ue_node(ue_edge_)->x == 1720 && d::save_screen(ue().screen()) == ue_json_, "Ctrl+Z on another size undoes the move");
+            ue().redo();
+            check(ue_node(ue_edge_)->x == 1700, "Ctrl+Y brings it back");
+            ue().undo();
+            check(click("ue-view-1"), "1280×720");
+            break;
+        }
+        case 43: {
+            const game::ScreenFit f = ue().view_fit();
+            Rml::ElementDocument* page = ue().page();
+            const Rml::Vector2i dims = page ? page->GetContext()->GetDimensions() : Rml::Vector2i();
+            check(dims.x == 1280 && dims.y == 720 && std::fabs(f.sx - 2.0f / 3.0f) < 1e-4f, "1280×720: two thirds");
+            const auto edge = ue().layer_box(ue_edge_);
+            check(edge && edge->x == ue_edge_box_.x && edge->y == ue_edge_box_.y, "the layout is the drawn one");
+            check(click("ue-view-0"), "back to «Макет»");
             break;
         }
         default:

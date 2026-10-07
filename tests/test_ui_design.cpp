@@ -1,6 +1,12 @@
+#include "forge/core/file.h"
+#include "forge/core/path.h"
 #include "forge/editor/ui_design.h"
 
 #include <doctest/doctest.h>
+
+#include <cstdlib>
+#include <filesystem>
+#include <span>
 
 using namespace forge;
 using namespace forge::editor::design;
@@ -636,4 +642,142 @@ TEST_CASE("ui design: movement survives saving and goes onto the page") {
     pulse.kind = MotionKind::Pulse;
     pulse.strength = 2;
     CHECK(motion_keys(pulse)[1].scale == doctest::Approx(1.16f));
+}
+
+// The screens for checking the player's screen sizes by hand (13.2):
+// games/examples/screen-sizes/ (copied into a game's ui/ folder). They are
+// built here, so they always load and their pages match what the editor
+// writes; FORGE_WRITE_EXAMPLES=1 writes them again.
+namespace {
+
+Node text_node(u32 id, const char* name, f32 x, f32 y, f32 w, f32 h, const char* text, f32 size, TextAlign align) {
+    Node n;
+    n.id = id;
+    n.name = name;
+    n.type = NodeType::Text;
+    n.x = x;
+    n.y = y;
+    n.w = w;
+    n.h = h;
+    n.text = text;
+    n.text_style.size = size;
+    n.text_style.align = align;
+    return n;
+}
+Paint solid(Color c) {
+    Paint p;
+    p.color = c;
+    return p;
+}
+
+std::pair<Screen, Screen> size_check_screens() {
+    // A HUD over the world: coins in the top right corner, hearts at the
+    // bottom left, the bag's button at the bottom right, a mark at the top middle.
+    Screen hud = make_screen("Проверка: HUD", 1920, 1080);
+    hud.show = ScreenShow::Playing;
+    hud.fit = ScreenFit::Expand;
+    hud.safe = 40;
+    Node coins = text_node(hud.next_id++, "Монеты", 1380, 40, 500, 60, "Монеты: {inv.coins}", 40, TextAlign::Right);
+    coins.horizontal = Constraint::End;
+    Node hearts = rect_node(hud.next_id++, 40, 900, 400, 40); // over the game's own bottom bar
+    hearts.name = "Сердца";
+    hearts.vertical = Constraint::End;
+    hearts.fills = {solid({200, 50, 60, 255})};
+    hearts.bar.value = "hero.hearts";
+    hearts.bar.max = "hero.hearts_max";
+    Node bag = rect_node(hud.next_id++, 1680, 860, 200, 80);
+    bag.name = "Кнопка «Сумка»";
+    bag.type = NodeType::Frame;
+    bag.horizontal = Constraint::End;
+    bag.vertical = Constraint::End;
+    bag.fills = {solid({42, 32, 24, 240})};
+    bag.radius = {12, 12, 12, 12};
+    bag.on_click = {{ActionKind::Show, "проверка_сумка"}};
+    bag.children = {text_node(hud.next_id++, "Сумка", 0, 18, 200, 44, "Сумка", 34, TextAlign::Center)};
+    Node mark = text_node(hud.next_id++, "Середина", 760, 40, 400, 50, "середина экрана", 30, TextAlign::Center);
+    mark.horizontal = Constraint::Center;
+    hud.root.children = {coins, hearts, bag, mark};
+
+    // The bag: a window in the middle, whole on any screen (bars around),
+    // a grid of the hero's things with pictures, a close button.
+    Screen bag_screen = make_screen("Проверка: сумка", 1920, 1080);
+    bag_screen.show = ScreenShow::Command;
+    bag_screen.fit = ScreenFit::Fit;
+    bag_screen.bars = {10, 14, 20, 255};
+    bag_screen.root.fills = {solid({0, 0, 0, 140})};
+    Node window = rect_node(bag_screen.next_id++, 460, 140, 1000, 800);
+    window.name = "Окно";
+    window.type = NodeType::Frame;
+    window.horizontal = Constraint::Center;
+    window.vertical = Constraint::Center;
+    window.fills = {solid({30, 26, 22, 250})};
+    window.radius = {16, 16, 16, 16};
+    window.clip = true;
+    Node title = text_node(bag_screen.next_id++, "Заголовок", 40, 30, 600, 60, "Сумка", 48, TextAlign::Left);
+    Node close = rect_node(bag_screen.next_id++, 900, 30, 60, 60);
+    close.name = "Закрыть";
+    close.type = NodeType::Frame;
+    close.fills = {solid({90, 40, 40, 255})};
+    close.radius = {30, 30, 30, 30};
+    close.on_click = {{ActionKind::Close, ""}};
+    close.children = {text_node(bag_screen.next_id++, "×", 0, 6, 60, 48, "×", 40, TextAlign::Center)};
+    Node list;
+    list.id = bag_screen.next_id++;
+    list.name = "Вещи";
+    list.type = NodeType::Frame;
+    list.x = 40;
+    list.y = 120;
+    list.w = 920;
+    list.h = 270; // three rows: the game's eleven things scroll
+    list.list = ListSource::Items;
+    list.list_gap = 10;
+    Node cell = rect_node(bag_screen.next_id++, 0, 0, 296, 80);
+    cell.name = "Ячейка";
+    cell.type = NodeType::Frame;
+    cell.fills = {solid({52, 44, 36, 255})};
+    cell.radius = {10, 10, 10, 10};
+    cell.on_click = {{ActionKind::Message, "взял {item.id}"}};
+    Node icon = rect_node(bag_screen.next_id++, 10, 10, 60, 60);
+    icon.name = "Картинка предмета";
+    icon.picture_from = "item.icon";
+    cell.children = {icon, text_node(bag_screen.next_id++, "Название", 84, 22, 200, 36, "{item.name} {item.count}", 26, TextAlign::Left)};
+    list.children = {cell, text_node(bag_screen.next_id++, "Пусто", 0, 0, 600, 40, "В сумке пусто", 28, TextAlign::Left)};
+    window.children = {title, close, list};
+    bag_screen.root.children = {window};
+    return {hud, bag_screen};
+}
+
+std::string read_text(const std::filesystem::path& p) {
+    std::vector<u8> bytes;
+    if (!read_file(p, bytes)) return {};
+    std::string out(bytes.begin(), bytes.end());
+    std::erase(out, '\r'); // a Windows checkout may turn line ends into CRLF
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("ui design: the screens for checking screen sizes are as the editor writes them") {
+    const std::filesystem::path dir = std::filesystem::path(FORGE_SOURCE_DIR) / "games" / "examples" / "screen-sizes";
+    const auto [hud, bag] = size_check_screens();
+    const std::pair<const char*, const Screen*> files[] = {{"проверка_hud", &hud}, {"проверка_сумка", &bag}};
+    const bool write = std::getenv("FORGE_WRITE_EXAMPLES") != nullptr;
+    for (const auto& [name, screen] : files) {
+        CAPTURE(name);
+        const std::string json = save_screen(*screen), html = screen_html(*screen);
+        const std::filesystem::path json_file = dir / utf8_path(std::string(name) + ".json"), html_file = dir / utf8_path(std::string(name) + ".html");
+        if (write) {
+            std::filesystem::create_directories(dir);
+            REQUIRE(write_file_atomic(json_file, std::span(reinterpret_cast<const u8*>(json.data()), json.size())));
+            REQUIRE(write_file_atomic(html_file, std::span(reinterpret_cast<const u8*>(html.data()), html.size())));
+        }
+        Screen back;
+        REQUIRE(load_screen(read_text(json_file), back));
+        CHECK(save_screen(back) == json);
+        CHECK(read_text(html_file) == html);
+    }
+    // What the check needs: stuck to corners, the middle, a list with pictures, a close button.
+    CHECK(contains(screen_html(hud), "forge-click=\"[[&quot;show&quot;,&quot;проверка_сумка&quot;]]\""));
+    CHECK(contains(screen_html(bag), "forge-fit=\"fit\""));
+    CHECK(contains(screen_html(bag), "forge-picture=\"item.icon\""));
 }

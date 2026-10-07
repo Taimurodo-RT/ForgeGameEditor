@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Проверка: HUD</title>
+<!-- Made by Forge «Интерфейс» from Проверка: HUD.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  right: 40px;
+  width: 500px;
+  top: 40px;
+  height: 60px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 40px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: right;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+#n3 {
+  position: absolute;
+  left: 40px;
+  width: 400px;
+  bottom: 140px;
+  height: 40px;
+  box-sizing: border-box;
+  background-color: #c8323c;
+}
+#n4 {
+  position: absolute;
+  right: 40px;
+  width: 200px;
+  bottom: 140px;
+  height: 80px;
+  box-sizing: border-box;
+  background-color: rgba(42, 32, 24, 0.941);
+  border-radius: 12px 12px 12px 12px;
+}
+#n5 {
+  position: absolute;
+  left: 0px;
+  width: 200px;
+  top: 18px;
+  height: 44px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 34px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+#n6 {
+  position: absolute;
+  left: calc(50% + -200px);
+  width: 400px;
+  top: 40px;
+  height: 50px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 30px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+body, #n1 {
+  pointer-events: none;
+}
+#n2, #n3, #n4, #n5, #n6 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Проверка: HUD" forge-screen="playing" forge-fit="expand" forge-size="1920 1080">
+  <div id="n2" class="text" title="Монеты" forge-text="Монеты: {inv.coins}">Монеты: {inv.coins}</div>
+  <div id="n3" class="rectangle" title="Сердца" forge-bar-value="hero.hearts" forge-bar-max="hero.hearts_max" forge-bar-from="left"></div>
+  <div id="n4" class="frame" title="Кнопка «Сумка»" forge-click="[[&quot;show&quot;,&quot;проверка_сумка&quot;]]">
+    <div id="n5" class="text" title="Сумка">Сумка</div>
+  </div>
+  <div id="n6" class="text" title="Середина">середина экрана</div>
+</div>
+</body>
+</html>

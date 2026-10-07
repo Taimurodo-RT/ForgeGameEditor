@@ -839,6 +839,82 @@ private:
             s.on_message = nullptr;
             return true;
         }});
+        // A screen drawn for another size than the player's: it meets this
+        // screen by game::fit_screen (the rule «Интерфейс» shows), a layer
+        // stuck to a corner stays there and a click lands where the layer shows.
+        steps_.push_back({"экран другого размера", 30, [&s, this](u32 f) {
+            static f64 coins0 = 0;
+            GameScreens& sc = s.screens();
+            struct Kind {
+                const char* fit;
+                f32 w, h; // drawn for
+            };
+            // 16:9 grown, 21:9 whole with bars, 4:3 stretched (the editor's 21:9 and 4:3 sizes).
+            static const Kind kinds[] = {{"expand", 1920, 1080}, {"fit", 2560, 1080}, {"stretch", 1440, 1080}};
+            const u32 k = f / 8, at = f % 8;
+            if (k >= std::size(kinds)) {
+                s.vars().set("inv.coins", coins0);
+                return true;
+            }
+            const Kind& kind = kinds[k];
+            const std::string name = std::string("тест_размер_") + kind.fit;
+            const Rml::Vector2i size = s.context()->GetDimensions();
+            const game::ScreenFit fit = game::fit_screen(kind.fit, kind.w, kind.h, static_cast<f32>(size.x), static_cast<f32>(size.y));
+            if (at == 0) {
+                if (k == 0) coins0 = s.vars().get("inv.coins").number();
+                char dims[64];
+                std::snprintf(dims, sizeof(dims), "%g %g", static_cast<double>(kind.w), static_cast<double>(kind.h));
+                const std::string page =
+                    "<html><head><style>html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }"
+                    " #t-size { position: relative; width: 100%; height: 100%; overflow: hidden; }" // as the editor writes a screen
+                    " body, #t-size { pointer-events: none; } #t-size > div { pointer-events: auto; }</style></head>"
+                    "<body><div id=\"t-size\" forge-screen=\"command\" forge-fit=\"" + std::string(kind.fit) + "\" forge-size=\"" + dims +
+                    "\" forge-bars=\"#102030\">"
+                    "<div id=\"t-corner\" style=\"position: absolute; right: 20px; bottom: 20px; width: 160px; height: 60px; background: #c33;\"></div>"
+                    "<div id=\"t-press\" style=\"position: absolute; left: 200px; top: 300px; width: 140px; height: 50px; background: #3c3;\" "
+                    "forge-click=\"[[&quot;change&quot;,&quot;inv.coins += 1&quot;]]\"></div>"
+                    "</div></body></html>";
+                check(sc.load_page(s.context(), name, page, "test/ui/" + name + ".html"), name + " строится");
+                sc.show(name, true);
+                s.vars().set("inv.coins", 0);
+            }
+            if (at == 3) {
+                // Layout pixels: the root's corner is where the fit puts it.
+                Rml::Element* root = s.find_element("t-size");
+                Rml::Element* corner = s.find_element("t-corner");
+                const Rml::Vector2f r = root ? root->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f(-1, -1);
+                const Rml::Vector2f c = corner ? corner->GetAbsoluteOffset(Rml::BoxArea::Border) - r : Rml::Vector2f(-1, -1);
+                check(std::fabs(r.x - fit.left) < 0.5f && std::fabs(r.y - fit.top) < 0.5f,
+                      name + ": экран стоит в " + std::to_string(r.x) + ", " + std::to_string(r.y));
+                check(std::fabs(c.x - (fit.width - 180)) < 0.5f && std::fabs(c.y - (fit.height - 80)) < 0.5f,
+                      name + ": угловой слой у своего угла: " + std::to_string(c.x) + ", " + std::to_string(c.y));
+                // Its corner on the player's screen: inside it, by the fit's scale.
+                const f32 right = game::fit_to_view_x(fit, c.x + 160), bottom = game::fit_to_view_y(fit, c.y + 60);
+                check(right <= static_cast<f32>(size.x) + 0.5f && bottom <= static_cast<f32>(size.y) + 0.5f,
+                      name + ": угол на экране игрока");
+                // The click where the layer shows (not where its layout box is).
+                const f32 x = game::fit_to_view_x(fit, 270), y = game::fit_to_view_y(fit, 325);
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_MOUSE_MOTION;
+                ev.motion.x = x;
+                ev.motion.y = y;
+                s.handle_event(ev);
+                for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                    ev = {};
+                    ev.type = t;
+                    ev.button.button = SDL_BUTTON_LEFT;
+                    ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    ev.button.x = x;
+                    ev.button.y = y;
+                    s.handle_event(ev);
+                }
+            }
+            if (at == 6) {
+                check(s.vars().get("inv.coins").number() == 1, name + ": нажатие попало в слой там, где он виден");
+                sc.remove(name);
+            }
+            return false;
+        }});
         // Where the picture is taken.
         steps_.push_back({"кадр", 200, [&s, &g, &talk, v, stand, this](u32 f) {
             const SliceGenerator& gen = g.generator();

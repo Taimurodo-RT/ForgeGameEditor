@@ -410,6 +410,7 @@ struct Screen {
 
 // A new screen with an empty root frame.
 Screen make_screen(std::string title, f32 width, f32 height);
+const char* screen_fit_word(ScreenFit f); // "expand", "fit", "stretch" (forge-fit)
 
 std::string save_screen(const Screen& screen);
 bool load_screen(std::string_view json, Screen& out, std::string* error = nullptr);

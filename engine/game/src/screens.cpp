@@ -530,39 +530,11 @@ struct GameScreens::Impl : Rml::EventListener {
         if (!p.root || (p.fit_w == w && p.fit_h == h)) return;
         p.fit_w = w;
         p.fit_h = h;
-        const f32 W = static_cast<f32>(std::max(w, 1)), H = static_cast<f32>(std::max(h, 1));
-        const f32 sx = W / p.width, sy = H / p.height, s = std::min(sx, sy);
-        char buf[96];
-        auto px = [&](f32 v) {
-            std::snprintf(buf, sizeof(buf), "%.3fpx", static_cast<double>(v));
-            return std::string(buf);
-        };
-        Rml::Element* r = p.root;
-        r->SetProperty("transform-origin", "0px 0px 0px");
-        if (p.fit == "stretch") {
-            r->SetProperty("width", px(p.width));
-            r->SetProperty("height", px(p.height));
-            p.design_w = p.width;
-            p.design_h = p.height;
-            std::snprintf(buf, sizeof(buf), "scale(%.5f, %.5f)", static_cast<double>(sx), static_cast<double>(sy));
-        } else if (p.fit == "fit") {
-            r->SetProperty("width", px(p.width));
-            r->SetProperty("height", px(p.height));
-            r->SetProperty("left", px((W - p.width * s) * 0.5f));
-            r->SetProperty("top", px((H - p.height * s) * 0.5f));
-            p.design_w = p.width;
-            p.design_h = p.height;
-            std::snprintf(buf, sizeof(buf), "scale(%.5f)", static_cast<double>(s));
-            if (!p.bars.empty())
-                if (Rml::Element* body = p.doc) body->SetProperty("background-color", p.bars);
-        } else { // expand: the smaller side's scale, the rest grows
-            r->SetProperty("width", px(W / s));
-            r->SetProperty("height", px(H / s));
-            p.design_w = W / s;
-            p.design_h = H / s;
-            std::snprintf(buf, sizeof(buf), "scale(%.5f)", static_cast<double>(s));
-        }
-        p.fit_transform = buf;
+        const ScreenFit f = fit_screen(p.fit, p.width, p.height, static_cast<f32>(w), static_cast<f32>(h));
+        apply_screen_fit(p.root, f, p.fit == "fit" ? p.bars : std::string());
+        p.design_w = f.width;
+        p.design_h = f.height;
+        p.fit_transform = screen_fit_transform(f);
         place(p, p.move_start ? -1.0f : 1.0f);
     }
 
@@ -670,6 +642,56 @@ struct GameScreens::Impl : Rml::EventListener {
         return nullptr;
     }
 };
+
+ScreenFit fit_screen(std::string_view mode, f32 page_w, f32 page_h, f32 view_w, f32 view_h) {
+    page_w = std::max(page_w, 1.0f);
+    page_h = std::max(page_h, 1.0f);
+    view_w = std::max(view_w, 1.0f);
+    view_h = std::max(view_h, 1.0f);
+    const f32 sx = view_w / page_w, sy = view_h / page_h, s = std::min(sx, sy);
+    ScreenFit f;
+    if (mode == "stretch") {
+        f.sx = sx;
+        f.sy = sy;
+        f.width = page_w;
+        f.height = page_h;
+    } else if (mode == "fit") {
+        f.sx = f.sy = s;
+        f.left = (view_w - page_w * s) * 0.5f;
+        f.top = (view_h - page_h * s) * 0.5f;
+        f.width = page_w;
+        f.height = page_h;
+    } else { // expand: the smaller side's scale, the rest grows
+        f.sx = f.sy = s;
+        f.width = view_w / s;
+        f.height = view_h / s;
+    }
+    return f;
+}
+
+std::string screen_fit_transform(const ScreenFit& f) {
+    char buf[96];
+    if (f.sx == f.sy) std::snprintf(buf, sizeof(buf), "scale(%.5f)", static_cast<double>(f.sx));
+    else std::snprintf(buf, sizeof(buf), "scale(%.5f, %.5f)", static_cast<double>(f.sx), static_cast<double>(f.sy));
+    return buf;
+}
+
+void apply_screen_fit(Rml::Element* root, const ScreenFit& f, const std::string& bars) {
+    if (!root) return;
+    char buf[48];
+    auto px = [&](f32 v) {
+        std::snprintf(buf, sizeof(buf), "%.3fpx", static_cast<double>(v));
+        return std::string(buf);
+    };
+    root->SetProperty("transform-origin", "0px 0px 0px");
+    root->SetProperty("width", px(f.width));
+    root->SetProperty("height", px(f.height));
+    root->SetProperty("left", px(f.left));
+    root->SetProperty("top", px(f.top));
+    root->SetProperty("transform", screen_fit_transform(f));
+    if (!bars.empty())
+        if (Rml::ElementDocument* doc = root->GetOwnerDocument()) doc->SetProperty("background-color", bars);
+}
 
 GameScreens::GameScreens() : impl_(std::make_unique<Impl>()) { impl_->self = this; }
 GameScreens::~GameScreens() { unload(); }
