@@ -48,6 +48,8 @@
 #include "forge/editor/document.h"
 #include "forge/editor/ui_design.h"
 #include "forge/editor/undo.h"
+#include "forge/game/screens.h"
+#include "forge/game/vars.h"
 #include "forge/ui/drawing.h"
 #include "forge/ui/ui.h"
 
@@ -56,6 +58,8 @@
 
 #include <array>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -130,6 +134,28 @@ public:
     // The screen's box of a layer (the screen's pixels), after layout.
     std::optional<editor::design::Rect> layer_box(u32 id) const;
 
+    // «Проверить»: the screen comes alive on the canvas. Buttons react to the
+    // mouse (hover, pressed) and do what they do in the game: one that opens
+    // a screen opens it here, «Изменить данные» changes the values in the
+    // panel, the rest are written in the panel's list. Texts, bars and
+    // conditions show the values the panel sets. Esc ends it.
+    void set_checking(bool on);
+    bool checking() const { return checking_; }
+    forge::game::Vars& check_vars() { return check_vars_; }
+    const std::vector<std::string>& check_log() const { return check_log_; }
+    // The page on the canvas (for tests: its elements).
+    Rml::ElementDocument* page() const { return page_; }
+    // Mouse on the screen's own pixels, as the check passes it to the page.
+    void check_mouse(f32 x, f32 y, int button_down, int button_up);
+
+    // The design panel's tab: "design" (how the layer looks) or "game"
+    // (what it does in the game: clicks, a bar, when it shows).
+    void set_panel(const std::string& tab) {
+        m_panel_ = tab == "game" ? "game" : "design";
+        dirty("ue_panel");
+    }
+    const Rml::String& panel() const { return m_panel_; }
+
     // The canvas view: zoom (1 = 100%) and where the screen's top left is
     // on the canvas (pixels of the canvas).
     f32 zoom() const { return zoom_; }
@@ -144,6 +170,9 @@ public:
     f32 canvas_left() const { return canvas_x_; }
     f32 canvas_top() const { return canvas_y_; }
 
+    // The game's values the panel offers for texts, bars and conditions
+    // ({name, what the author reads}); asked when the panel refreshes.
+    std::function<std::vector<std::pair<std::string, std::string>>()> game_values;
 private:
     friend class UiCommand;
 
@@ -191,6 +220,11 @@ private:
     bool press(f32 mx, f32 my, u8 button, u8 clicks, Rml::Context* context);
     void drag_to(f32 mx, f32 my);
     void release();
+
+    // «Проверить».
+    void check_action(const forge::game::ScreenAction& a);
+    void refresh_check();
+    void seed_check_vars();
 
     // Field edits.
     bool set_on(editor::design::Node& n, const std::string& field, const std::string& value);
@@ -320,6 +354,23 @@ private:
         bool can_make_component = false, lib_variant = false, instance = false, in_instance = false, changed_here = false;
         Rml::String component;
         Rml::String text_style; // the game's text style the text follows ("": its own)
+        // The link to the game.
+        Rml::String screen_show; // "playing", "command", "menu"
+        bool pauses = false, esc_closes = true;
+        Rml::String show_if;
+        bool has_bar = false;
+        Rml::String bar_value, bar_max, bar_from;
+    };
+    // What a click on the layer does in the game, one row each.
+    struct ClickRow {
+        int index = 0;
+        Rml::String kind, target;
+        Rml::String needs; // "screen", "text", "talk" or "" (no target)
+        Rml::String hint;  // the target field's placeholder
+    };
+    // A value of the game a screen can show («Монеты»: inv.coins).
+    struct ValueRow {
+        Rml::String name, label;
     };
     // The game's colours and text styles (shown on the library's page).
     struct GameColorRow {
@@ -336,6 +387,24 @@ private:
     std::vector<VariantRow> m_variants_; // the selected component variant's or instance's properties
     bool m_library_open_ = false;
     std::vector<GameColorRow> m_game_colors_;
+    std::vector<ClickRow> m_clicks_;
+    bool checking_ = false;
+    std::unique_ptr<forge::game::GameScreens> check_;
+    bool page_from_check_ = false;
+    forge::game::Vars check_vars_;
+    u64 check_seen_ = ~0ull;
+    std::vector<forge::game::ScreenAction> check_pending_; // clicks wait for the end of the page's event
+    std::vector<std::string> check_back_; // screens opened by clicks, to go back to
+    std::vector<std::string> check_log_;
+    struct CheckVarRow {
+        Rml::String name, label, value;
+    };
+    std::vector<CheckVarRow> m_check_vars_;
+    std::vector<Rml::String> m_check_log_;
+    bool m_checking_ = false;
+    Rml::String m_panel_ = "design"; // the design panel's tab: "design" or "game"
+    std::vector<ValueRow> m_values_;
+    std::vector<Rml::String> m_screen_names_; // the other screens (a click's target)
     std::vector<GameTextRow> m_game_texts_;
     std::vector<LayerRow> m_layers_;
     std::vector<Tick> m_ticks_x_, m_ticks_y_;

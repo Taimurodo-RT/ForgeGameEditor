@@ -153,6 +153,9 @@ public:
     // Plain words of a condition or an action, as the marks show them.
     std::vector<std::string> phrases(const std::string& source, bool action) const;
 
+    // The game's quests (quests.json), for the other tabs.
+    const game::QuestBook& quests() const { return quests_; }
+
 private:
     struct Chip {
         Rml::String kind, icon, text, part; // kind: cond, eff, go, else, stage, code; part: if, do, goto, next, call, stage

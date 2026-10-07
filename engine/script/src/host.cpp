@@ -544,7 +544,20 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
     // Messages sent during the last tick, in the order they were sent.
     im.inbox.clear();
     im.inbox.swap(im.outbox);
-    for (const Impl::Message& msg : im.inbox)
+    for (const Impl::Message& msg : im.inbox) {
+        if (msg.to == 0) { // to everyone listening
+            for (const auto& [e, dt] : im.due)
+                if (const Impl::Module* m = module_of(e); m && !m->fn[OnMessage].empty()) {
+                    ++stats_.messages;
+                    c.call(*m, OnMessage, e, [&](lua_State* T) {
+                        lua_pushlstring(T, msg.name.data(), msg.name.size());
+                        lua_pushnumber(T, msg.value);
+                        push_entity(T, msg.from);
+                        return 3;
+                    });
+                }
+            continue;
+        }
         if (const Impl::Module* m = module_of(msg.to)) {
             ++stats_.messages;
             c.call(*m, OnMessage, msg.to, [&](lua_State* T) {
@@ -554,6 +567,7 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
                 return 3;
             });
         }
+    }
 
     // Paused handlers whose time is up. Their entity's own time counts: a
     // wait in slow motion lasts longer, in stopped time or asleep it holds.

@@ -285,6 +285,53 @@ int api_send(lua_State* L) {
     return 0;
 }
 
+// --- the game around the world: its variables and screens ------------------
+
+GameBridge* bridge_of(lua_State* L) { return static_cast<GameBridge*>(ScriptHost::of(L).user(kGameBridge)); }
+
+int api_game_var(lua_State* L) {
+    size_t len = 0;
+    const char* name = luaL_checklstring(L, 1, &len);
+    GameBridge* b = bridge_of(L);
+    std::string text;
+    const f64 v = b ? b->var(std::string_view(name, len), &text) : 0;
+    if (!text.empty()) lua_pushlstring(L, text.data(), text.size());
+    else lua_pushnumber(L, v);
+    return 1;
+}
+
+int api_game_set_var(lua_State* L) {
+    size_t len = 0;
+    const char* name = luaL_checklstring(L, 1, &len);
+    GameBridge* b = bridge_of(L);
+    if (!b) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        size_t tlen = 0;
+        const char* text = lua_tolstring(L, 2, &tlen);
+        b->set_text(std::string_view(name, len), std::string_view(text, tlen));
+    } else if (lua_isboolean(L, 2)) b->set_var(std::string_view(name, len), lua_toboolean(L, 2) ? 1 : 0);
+    else b->set_var(std::string_view(name, len), luaL_optnumber(L, 2, 0));
+    return 0;
+}
+
+int api_game_add_var(lua_State* L) {
+    size_t len = 0;
+    const char* name = luaL_checklstring(L, 1, &len);
+    GameBridge* b = bridge_of(L);
+    if (b) b->set_var(std::string_view(name, len), b->var(std::string_view(name, len), nullptr) + luaL_optnumber(L, 2, 1));
+    return 0;
+}
+
+int screen_call(lua_State* L, const char* what) {
+    size_t len = 0;
+    const char* name = luaL_checklstring(L, 1, &len);
+    if (GameBridge* b = bridge_of(L)) b->screen(what, std::string_view(name, len));
+    return 0;
+}
+int api_ui_show(lua_State* L) { return screen_call(L, "show"); }
+int api_ui_hide(lua_State* L) { return screen_call(L, "hide"); }
+int api_ui_toggle(lua_State* L) { return screen_call(L, "toggle"); }
+
 // --- entities ---------------------------------------------------------------
 
 const scene::Position* position_of(Impl& im, flecs::entity_t e) {
@@ -612,6 +659,22 @@ void register_core_api(ScriptApi& api) {
     api.add("send", &api_send).action().category("События").icon("send").title("Отправить сообщение", "Send message")
         .param("target", V::Entity, "Кому", "Target").param("message", V::String, "Сообщение", "Message")
         .param("value", V::Number, "Значение", "Value", "0");
+
+    // The game: its variables (what screens show) and screens
+    api.add("game.var", &api_game_var).pure().category("Игра").icon("data_object").title("Переменная игры", "Game variable")
+        .help("То, что показывают экраны, диалоги и задания: «inv.coins», «hero.hearts». Пустая читается как 0.")
+        .param("name", V::String, "Имя", "Name").result("value", V::Any, "Значение", "Value");
+    api.add("game.set_var", &api_game_set_var).action().category("Игра").icon("edit_note").title("Задать переменную игры", "Set game variable")
+        .param("name", V::String, "Имя", "Name").param("value", V::Any, "Значение", "Value", "0");
+    api.add("game.add_var", &api_game_add_var).action().category("Игра").icon("exposure_plus_1").title("Прибавить к переменной игры", "Add to game variable")
+        .param("name", V::String, "Имя", "Name").param("amount", V::Number, "Сколько", "Amount", "1");
+    api.add("ui.show", &api_ui_show).action().category("Экраны").icon("visibility").title("Показать экран", "Show screen")
+        .help("Экран из вкладки «Интерфейс», по его имени.")
+        .param("name", V::String, "Экран", "Screen");
+    api.add("ui.hide", &api_ui_hide).action().category("Экраны").icon("visibility_off").title("Скрыть экран", "Hide screen")
+        .param("name", V::String, "Экран", "Screen");
+    api.add("ui.toggle", &api_ui_toggle).action().category("Экраны").icon("flip").title("Показать или скрыть экран", "Toggle screen")
+        .param("name", V::String, "Экран", "Screen");
 
     api.add("compare", &api_compare).hidden().pure().category("Логика").title("Сравнить", "Compare")
         .param("a", V::Any, "A", "A").param("op", V::String, "Как", "Op").param("b", V::Any, "B", "B")

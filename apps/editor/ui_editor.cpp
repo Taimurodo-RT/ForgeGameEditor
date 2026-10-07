@@ -110,6 +110,8 @@ const char* const kKindNames[] = {"Цвет", "Линейный градиент
 const char* const kFitWords[] = {"fill", "fit", "tile", "stretch"};
 const char* const kArtRepeatWords[] = {"stretch", "repeat", "round", "space"};
 const char* const kScreenFitWords[] = {"expand", "fit", "stretch"};
+const char* const kScreenShowWords[] = {"playing", "command", "menu"};
+const char* const kBarFromWords[] = {"left", "right", "bottom", "top"};
 // Where the sample pictures for drawn interfaces go in a game.
 const char* const kArtFolder = "pictures/интерфейс";
 const char* const kEffectWords[] = {"drop-shadow", "inner-shadow", "layer-blur", "background-blur"};
@@ -204,8 +206,12 @@ d::Screen sample_screen() {
     menu.layout.mode = d::LayoutMode::Column;
     menu.layout.gap = 24;
     menu.height_sizing = d::Sizing::Hug;
-    const char* labels[] = {"Новая игра", "Настройки", "Выход"};
-    for (const char* label : labels) {
+    // The game's main menu in place of its usual one: the buttons start a
+    // game, open the settings, leave.
+    s.show = d::ScreenShow::Menu;
+    const std::pair<const char*, d::ActionKind> buttons[] = {
+        {"Новая игра", d::ActionKind::NewGame}, {"Настройки", d::ActionKind::Settings}, {"Выход", d::ActionKind::Quit}};
+    for (const auto& [label, action] : buttons) {
         d::Node button;
         button.id = s.next_id++;
         button.name = std::string("Кнопка «") + label + "»";
@@ -220,6 +226,7 @@ d::Screen sample_screen() {
         button.fills.push_back(solid(d::Color{0x2a, 0x20, 0x18, 240}));
         button.strokes.push_back(d::Stroke{d::Color{0xe8, 0xb0, 0x4a, 0x55}, 2, d::StrokeAlign::Inside});
         button.effects.push_back({d::EffectKind::DropShadow, d::Color{0, 0, 0, 120}, 0, 12, 40, 0, true});
+        button.on_click.push_back({action, ""});
         d::Node text;
         text.id = s.next_id++;
         text.name = label;
@@ -329,6 +336,11 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
 }
 
 void UiEditor::shutdown() {
+    // The check's pages live in the UI's contexts: let them go while those still exist.
+    checking_ = false;
+    if (page_from_check_) page_ = nullptr;
+    page_from_check_ = false;
+    check_.reset();
     ui::register_line_source("ue-ruler-x", nullptr);
     ui::register_line_source("ue-ruler-y", nullptr);
     ui::register_line_source("ue-overlay", nullptr);
@@ -527,8 +539,30 @@ void UiEditor::rebuild_page() {
     const Rml::Vector2i size{static_cast<int>(std::lround(screen_.width)), static_cast<int>(std::lround(screen_.height))};
     if (page_context_->GetDimensions() != size) page_context_->SetDimensions(size);
     if (page_) {
-        page_context_->UnloadDocument(page_);
+        if (page_from_check_) check_->unload();
+        else page_context_->UnloadDocument(page_);
         page_ = nullptr;
+        page_from_check_ = false;
+    }
+    if (checking_ && !screen_.library) {
+        // The page as the game runs it: its clicks and its data.
+        if (!check_) {
+            check_ = std::make_unique<game::GameScreens>();
+            check_->actions_to_caller = true;
+            check_->on_action = [this](const game::ScreenAction& a, const std::string&) { check_pending_.push_back(a); };
+        }
+        if (check_->load_page(page_context_, name_, d::screen_html(screen_, html_options()),
+                              path_to_utf8(html_path(name_.empty() ? std::string("screen") : name_)))) {
+            page_ = check_->document(name_);
+            page_from_check_ = true;
+            check_->show(name_, true);
+            seed_check_vars();
+            check_->update(check_vars_, screen_.show != d::ScreenShow::Menu, screen_.show == d::ScreenShow::Menu, size.x, size.y);
+            page_context_->Update();
+            read_boxes();
+            refresh_check();
+            return;
+        }
     }
     const std::string rml = ui::html_to_rml(d::screen_html(screen_, html_options()), "/web/html.rcss");
     // The page's own address: pictures are found next to it (../pictures/...).
@@ -1099,6 +1133,32 @@ void UiEditor::refresh_props() {
             p.bars_hex = hex_of(screen_.bars);
             p.bars_swatch = swatch(screen_.bars);
             p.safe = fmt(screen_.safe);
+            p.screen_show = kScreenShowWords[static_cast<int>(screen_.show)];
+            p.pauses = screen_.pauses;
+            p.esc_closes = screen_.esc_closes;
+        }
+        p.show_if = n->show_if;
+        p.has_bar = !n->bar.value.empty();
+        p.bar_value = n->bar.value;
+        p.bar_max = n->bar.max;
+        p.bar_from = kBarFromWords[static_cast<int>(n->bar.from)];
+        m_clicks_.clear();
+        for (usize i = 0; i < n->on_click.size(); ++i) {
+            const d::Action& a = n->on_click[i];
+            ClickRow row;
+            row.index = static_cast<int>(i);
+            row.kind = d::action_word(a.kind);
+            row.target = a.target;
+            switch (a.kind) {
+            case d::ActionKind::Show:
+            case d::ActionKind::Hide:
+            case d::ActionKind::Toggle: row.needs = "screen"; break;
+            case d::ActionKind::Message: row.needs = "text"; row.hint = "имя сообщения: открыть_дверь"; break;
+            case d::ActionKind::Change: row.needs = "text"; row.hint = "inv.coins -= 5; shop.bought = 1"; break;
+            case d::ActionKind::Talk: row.needs = "text"; row.hint = "имя разговора"; break;
+            default: break;
+            }
+            m_clicks_.push_back(std::move(row));
         }
         p.has_frame = !n->frame.image.empty();
         if (p.has_frame) {
@@ -1167,6 +1227,16 @@ void UiEditor::refresh_props() {
         }
     }
     dirty("ue_variants");
+    dirty("ue_clicks");
+    // The values a screen can show, and the screens a click can open.
+    m_values_.clear();
+    if (game_values)
+        for (const auto& [name, label] : game_values()) m_values_.push_back({name, label});
+    dirty("ue_values");
+    m_screen_names_.clear();
+    for (const std::string& s : screens())
+        if (s != name_) m_screen_names_.push_back(s);
+    dirty("ue_screen_names");
     m_p_ = std::move(p);
     dirty("ue_p");
     dirty("ue_fills");
@@ -1174,6 +1244,29 @@ void UiEditor::refresh_props() {
 }
 
 // --- changes ----------------------------------------------------------------
+
+// The history's name for a change of a panel field, in the panel's words.
+std::string change_label(const std::string& field) {
+    auto starts = [&](const char* p) { return field.rfind(p, 0) == 0; };
+    static const std::pair<const char*, const char*> words[] = {
+        {"x", "Место"}, {"y", "Место"}, {"w", "Размер"}, {"h", "Размер"}, {"rotation", "Поворот"}, {"radius", "Скругление"},
+        {"opacity", "Прозрачность"}, {"blend", "Наложение"}, {"text_style", "Стиль текста"}, {"text.insert", "Данные в тексте"},
+        {"text", "Текст"}, {"family", "Шрифт"}, {"size", "Размер текста"}, {"weight", "Жирность"}, {"italic", "Курсив"},
+        {"line_height", "Высота строки"}, {"letter_spacing", "Межбуквенный интервал"}, {"text_align", "Выравнивание текста"},
+        {"text_case", "Регистр"}, {"decoration", "Подчёркивание"}, {"text_color", "Цвет текста"}, {"horizontal", "Прилипание"},
+        {"vertical", "Прилипание"}, {"width_sizing", "Ширина"}, {"height_sizing", "Высота"}, {"absolute", "Вне раскладки"},
+        {"clip", "Обрезка"}, {"show_if", "Условие показа"}, {"name", "Имя"}};
+    for (const auto& [f, word] : words)
+        if (field == f) return std::string("Изменено: ") + word;
+    static const std::pair<const char*, const char*> groups[] = {
+        {"fill", "Заливка"}, {"stroke", "Обводка"}, {"effect", "Эффекты"}, {"layout", "Автораскладка"}, {"frame.", "Рамка-картинка"},
+        {"mask.", "Маска"}, {"click", "При нажатии"}, {"bar.", "Полоска"}, {"screen.", "Настройки экрана"}, {"color.", "Цвета игры"},
+        {"textstyle.", "Стили текста"}, {"variant.", "Вариант"}, {"instance.", "Вариант копии"}, {"property.", "Свойство компонента"},
+        {"component.", "Компонент"}};
+    for (const auto& [p, word] : groups)
+        if (starts(p)) return std::string("Изменено: ") + word;
+    return "Изменено";
+}
 
 bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& value) {
     const bool root = n.id == screen_.root.id;
@@ -1379,10 +1472,98 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         return false;
     }
 
+    // The link to the game: a text's values, a bar, a condition, clicks.
+    if (field == "text.insert") { // a value of the game at the end of the text
+        if (n.type != d::NodeType::Text || value.empty()) return false;
+        n.text += (n.text.empty() || n.text.back() == ' ' ? "{" : " {") + value + "}";
+        return true;
+    }
+    if (field == "show_if") {
+        if (root || value == n.show_if) return false;
+        n.show_if = value;
+        return true;
+    }
+    if (field.rfind("bar.", 0) == 0) {
+        if (root) return false;
+        const std::string what = field.substr(4);
+        if (what == "add") {
+            if (!n.bar.value.empty()) return false;
+            n.bar = d::Bar{};
+            n.bar.value = "hero.hearts";
+            n.bar.max = "hero.hearts_max";
+            return true;
+        }
+        if (n.bar.value.empty()) return false;
+        if (what == "remove") n.bar = d::Bar{};
+        else if (what == "value") {
+            if (value.empty() || value == n.bar.value) return false;
+            n.bar.value = value;
+        } else if (what == "max") {
+            if (value.empty() || value == n.bar.max) return false;
+            n.bar.max = value;
+        } else if (what == "from") {
+            const int i = index_of(value, kBarFromWords);
+            if (i < 0) return false;
+            n.bar.from = static_cast<d::BarFrom>(i);
+        } else return false;
+        return true;
+    }
+    if (field == "click.add") {
+        if (root) return false;
+        d::Action a;
+        // A first guess that is often right: a button opens another screen.
+        a.kind = d::ActionKind::Show;
+        const std::vector<std::string> list = screens();
+        for (const std::string& s : list)
+            if (s != name_) {
+                a.target = s;
+                break;
+            }
+        if (a.target.empty()) a.kind = d::ActionKind::Close;
+        n.on_click.push_back(a);
+        return true;
+    }
+    {
+        usize i = 0;
+        std::string rest;
+        if (indexed("click", i, rest)) {
+            if (root || i >= n.on_click.size()) return false;
+            d::Action& a = n.on_click[i];
+            if (rest == "remove") n.on_click.erase(n.on_click.begin() + static_cast<std::ptrdiff_t>(i));
+            else if (rest == "kind") {
+                const std::optional<d::ActionKind> k = d::parse_action(value);
+                if (!k || *k == a.kind) return false;
+                a.kind = *k;
+                if (*k == d::ActionKind::Show || *k == d::ActionKind::Hide || *k == d::ActionKind::Toggle) {
+                    if (std::find(m_screen_names_.begin(), m_screen_names_.end(), a.target) == m_screen_names_.end())
+                        a.target = m_screen_names_.empty() ? std::string() : std::string(m_screen_names_.front());
+                } else a.target.clear();
+            } else if (rest == "target") {
+                if (value == a.target) return false;
+                a.target = value;
+            } else return false;
+            return true;
+        }
+    }
+
     // The screen's settings.
     if (field.rfind("screen.", 0) == 0) {
         if (!root) return false;
         const std::string f = field.substr(7);
+        if (f == "show") {
+            const int i = index_of(value, kScreenShowWords);
+            if (i < 0 || screen_.show == static_cast<d::ScreenShow>(i)) return false;
+            screen_.show = static_cast<d::ScreenShow>(i);
+            return true;
+        }
+        if (f == "pauses") {
+            screen_.pauses = !screen_.pauses;
+            return true;
+        }
+        if (f == "esc") {
+            screen_.esc_closes = !screen_.esc_closes;
+            return true;
+        }
         if (f == "font") {
             if (value.empty()) return false;
             screen_.text.family = value;
@@ -1764,7 +1945,7 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
         refresh_props();
         return false;
     }
-    commit(before, "Изменено: " + field);
+    commit(before, change_label(field));
     return true;
 }
 
@@ -2158,6 +2339,17 @@ bool UiEditor::edit_component() {
 void UiEditor::update(Rml::Context* context) {
     read_canvas(context);
     if (fit_pending_ && canvas_w_ > 0) zoom_to_fit();
+    if (checking_) {
+        // Clicks of the last events, now that the page is done with them.
+        std::vector<game::ScreenAction> actions;
+        actions.swap(check_pending_);
+        for (const game::ScreenAction& a : actions) check_action(a);
+        if (check_ && page_from_check_) {
+            const Rml::Vector2i size = page_context_->GetDimensions();
+            check_->update(check_vars_, screen_.show != d::ScreenShow::Menu, screen_.show == d::ScreenShow::Menu, size.x, size.y);
+            if (check_seen_ != check_vars_.version()) refresh_check();
+        }
+    }
     if (page_dirty_) {
         rebuild_page();
         refresh_overlay();
@@ -2166,6 +2358,38 @@ void UiEditor::update(Rml::Context* context) {
 }
 
 bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* context) {
+    if (checking_ && drag_ == Drag::None) {
+        // The canvas is the game's screen: the mouse goes to the page.
+        auto on_canvas = [&](f32 mx, f32 my) {
+            const f32 cx = mx - canvas_x_, cy = my - canvas_y_;
+            return cx >= 0 && cy >= 0 && cx < canvas_w_ && cy < canvas_h_;
+        };
+        auto pass = [&](f32 mx, f32 my, int down, int up) {
+            mouse_x_ = mx;
+            mouse_y_ = my;
+            check_mouse(to_screen_x(mx - canvas_x_), to_screen_y(my - canvas_y_), down, up);
+        };
+        if (e.type == SDL_EVENT_MOUSE_MOTION) {
+            pass(e.motion.x * density, e.motion.y * density, -1, -1);
+            return false;
+        }
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
+            const f32 mx = e.button.x * density, my = e.button.y * density;
+            Rml::Element* over = context ? context->GetHoverElement() : nullptr;
+            bool on_stage = false;
+            for (Rml::Element* el = over; el; el = el->GetParentNode()) {
+                if (el->GetId() == "ue-canvas") on_stage = true;
+                if (on_stage || el->IsClassSet("ue-panel")) break;
+            }
+            if (!on_stage || !on_canvas(mx, my)) return false;
+            pass(mx, my, 0, -1);
+            return true;
+        }
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
+            pass(e.button.x * density, e.button.y * density, -1, 0);
+            return false;
+        }
+    }
     switch (e.type) {
     case SDL_EVENT_KEY_UP:
         if (e.key.key == SDLK_SPACE) space_down_ = false;
@@ -2653,6 +2877,11 @@ void UiEditor::release() {
 }
 
 bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
+    if (checking_) {
+        // Keys do not edit while checking; Esc ends it.
+        if (k.key == SDLK_ESCAPE) set_checking(false);
+        return k.key == SDLK_ESCAPE || k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE;
+    }
     const bool ctrl = k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI);
     const bool shift = k.mod & SDL_KMOD_SHIFT;
     const bool alt = k.mod & SDL_KMOD_ALT;
@@ -2963,7 +3192,41 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("changed_here", &Props::changed_here);
         s.RegisterMember("component", &Props::component);
         s.RegisterMember("text_style", &Props::text_style);
+        s.RegisterMember("screen_show", &Props::screen_show);
+        s.RegisterMember("pauses", &Props::pauses);
+        s.RegisterMember("esc_closes", &Props::esc_closes);
+        s.RegisterMember("show_if", &Props::show_if);
+        s.RegisterMember("has_bar", &Props::has_bar);
+        s.RegisterMember("bar_value", &Props::bar_value);
+        s.RegisterMember("bar_max", &Props::bar_max);
+        s.RegisterMember("bar_from", &Props::bar_from);
     }
+    if (auto s = model.RegisterStruct<ClickRow>()) {
+        s.RegisterMember("index", &ClickRow::index);
+        s.RegisterMember("kind", &ClickRow::kind);
+        s.RegisterMember("target", &ClickRow::target);
+        s.RegisterMember("needs", &ClickRow::needs);
+        s.RegisterMember("hint", &ClickRow::hint);
+    }
+    model.RegisterArray<std::vector<ClickRow>>();
+    if (auto s = model.RegisterStruct<ValueRow>()) {
+        s.RegisterMember("name", &ValueRow::name);
+        s.RegisterMember("label", &ValueRow::label);
+    }
+    model.RegisterArray<std::vector<ValueRow>>();
+    model.Bind("ue_clicks", &m_clicks_);
+    model.Bind("ue_panel", &m_panel_);
+    if (auto s = model.RegisterStruct<CheckVarRow>()) {
+        s.RegisterMember("name", &CheckVarRow::name);
+        s.RegisterMember("label", &CheckVarRow::label);
+        s.RegisterMember("value", &CheckVarRow::value);
+    }
+    model.RegisterArray<std::vector<CheckVarRow>>();
+    model.Bind("ue_check_vars", &m_check_vars_);
+    model.Bind("ue_check_log", &m_check_log_);
+    model.Bind("ue_checking", &m_checking_);
+    model.Bind("ue_values", &m_values_);
+    model.Bind("ue_screen_names", &m_screen_names_);
     if (auto s = model.RegisterStruct<PictureRow>()) {
         s.RegisterMember("path", &PictureRow::path);
         s.RegisterMember("name", &PictureRow::name);
@@ -3126,6 +3389,15 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         if (a.size() > 1 && a[1].Get<bool>()) finish_rename(arg_str(a, 0));
     });
     on("ue_rename_done", [finish_rename, input_value](Rml::Event& ev, const Rml::VariantList&) { finish_rename(input_value(ev)); });
+    on("ue_check", [this](Rml::Event&, const Rml::VariantList&) { set_checking(!checking_); });
+    on("ue_check_var", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string name = arg_str(a, 0), text = arg_str(a, 1);
+        char* end = nullptr;
+        const double v = std::strtod(text.c_str(), &end);
+        if (!text.empty() && end && *end == 0) check_vars_.set(name, v);
+        else check_vars_.set(name, text);
+    });
+    on("ue_panel_tab", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_panel(arg_str(a, 0)); });
     on("ue_set", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
         set_property(arg_str(a, 0), arg_str(a, 1));
@@ -3146,6 +3418,122 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement()))
             set_property(arg_str(a, 0), input->GetValue());
     });
+}
+
+} // namespace forge::editor_app
+
+namespace forge::editor_app {
+
+// --- «Проверить» ---------------------------------------------------------------
+
+void UiEditor::set_checking(bool on) {
+    if (on == checking_) return;
+    if (on && screen_.library) return; // the components are not a screen of the game
+    checking_ = on;
+    m_checking_ = on;
+    check_back_.clear();
+    check_log_.clear();
+    check_pending_.clear();
+    if (on) {
+        select({});
+        set_tool(Tool::Select);
+        hover_ = 0;
+    }
+    page_dirty_ = true;
+    dirty("ue_checking");
+    refresh_check();
+    refresh_overlay();
+}
+
+void UiEditor::check_mouse(f32 x, f32 y, int down, int up) {
+    if (!page_context_ || !checking_) return;
+    const int ix = static_cast<int>(std::floor(x)), iy = static_cast<int>(std::floor(y));
+    page_context_->ProcessMouseMove(ix, iy, 0);
+    if (down >= 0) page_context_->ProcessMouseButtonDown(down, 0);
+    if (up >= 0) page_context_->ProcessMouseButtonUp(up, 0);
+}
+
+// What a value is called in the panel: its name in the game's words when known.
+void UiEditor::seed_check_vars() {
+    if (!check_) return;
+    for (const std::string& name : check_->variables(name_)) {
+        if (check_vars_.has(name)) continue;
+        // Something to look at: bars half full, a few coins.
+        const bool max = name.find("max") != std::string::npos;
+        check_vars_.set(name, max ? 10.0 : 5.0);
+    }
+}
+
+void UiEditor::refresh_check() {
+    m_check_vars_.clear();
+    m_check_log_.clear();
+    if (checking_ && check_) {
+        std::vector<std::pair<std::string, std::string>> known;
+        if (game_values) known = game_values();
+        for (const std::string& name : check_->variables(name_)) {
+            CheckVarRow row;
+            row.name = name;
+            row.label = name;
+            for (const auto& [n, label] : known)
+                if (n == name) row.label = label.substr(0, label.rfind(" · "));
+            row.value = check_vars_.get(name).text();
+            m_check_vars_.push_back(std::move(row));
+        }
+        for (auto it = check_log_.rbegin(); it != check_log_.rend() && m_check_log_.size() < 8; ++it) m_check_log_.push_back(*it);
+    }
+    check_seen_ = check_vars_.version();
+    dirty("ue_check_vars");
+    dirty("ue_check_log");
+}
+
+void UiEditor::check_action(const game::ScreenAction& a) {
+    const std::string& t = a.target;
+    std::string said;
+    if (a.what == "show" || a.what == "toggle") {
+        if (t == name_ && a.what == "toggle") {
+            said = "Скрыт экран «" + screen_.title + "»";
+            if (!check_back_.empty()) {
+                const std::string back = check_back_.back();
+                check_back_.pop_back();
+                open(back);
+            }
+        } else if (std::find(m_screen_names_.begin(), m_screen_names_.end(), t) != m_screen_names_.end() || t == name_) {
+            if (t != name_) {
+                check_back_.push_back(name_);
+                open(t);
+            }
+            said = "Открыт экран «" + screen_.title + "»";
+        } else said = "Нет экрана «" + t + "»";
+    } else if (a.what == "hide" || a.what == "close") {
+        const bool self = a.what == "close" || t.empty() || t == name_;
+        said = self ? "Экран закрыт" : "Скрыт экран «" + t + "»";
+        if (self && !check_back_.empty()) {
+            const std::string back = check_back_.back();
+            check_back_.pop_back();
+            open(back);
+        }
+    } else if (a.what == "change") {
+        std::string error;
+        const game::Expr e = game::Expr::parse_actions(t, &error);
+        if (!error.empty()) said = "Не читается: " + t;
+        else {
+            e.run(check_vars_);
+            said = "Данные: " + t;
+        }
+    } else if (a.what == "message") said = "Сообщение «Логике»: " + t;
+    else if (a.what == "talk") said = "Разговор «" + t + "»";
+    else {
+        static const std::pair<const char*, const char*> words[] = {
+            {"pause", "Пауза"}, {"resume", "Вернуться в игру"}, {"menu", "В главное меню"}, {"quit", "Выйти из игры"},
+            {"new", "Новая игра"}, {"continue", "Продолжить"}, {"load", "Загрузить"}, {"save", "Сохранить"},
+            {"settings", "Настройки"}};
+        said = a.what;
+        for (const auto& [w, ru] : words)
+            if (a.what == w) said = std::string("Кнопка: ") + ru;
+    }
+    check_log_.push_back(said);
+    if (check_log_.size() > 32) check_log_.erase(check_log_.begin());
+    refresh_check();
 }
 
 } // namespace forge::editor_app

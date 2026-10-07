@@ -4,7 +4,10 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <map>
 #include <memory>
+#include <string>
+#include <vector>
 
 using namespace forge;
 using namespace forge::world;
@@ -224,6 +227,47 @@ TEST_CASE("components through reflection, triggers and messages") {
     std::string err;
     CHECK_FALSE(room.scripts.run("forge.set(1, 'NoSuch', 'x', 1)", &err));
     CHECK(err.find("NoSuch") != std::string::npos);
+}
+
+TEST_CASE("scripts reach the game's variables and screens, and hear messages sent to everyone") {
+    PoolScope pool;
+    Room room;
+    struct Bridge final : GameBridge {
+        std::map<std::string, f64, std::less<>> numbers;
+        std::map<std::string, std::string, std::less<>> texts;
+        std::vector<std::string> screens;
+        f64 var(std::string_view name, std::string* text) override {
+            if (auto t = texts.find(name); t != texts.end() && text) *text = t->second;
+            auto n = numbers.find(name);
+            return n == numbers.end() ? 0 : n->second;
+        }
+        void set_var(std::string_view name, f64 v) override { numbers[std::string(name)] = v; }
+        void set_text(std::string_view name, std::string_view t) override { texts[std::string(name)] = std::string(t); }
+        void screen(std::string_view what, std::string_view name) override { screens.push_back(std::string(what) + " " + std::string(name)); }
+    } bridge;
+    room.scripts.set_user(kGameBridge, &bridge);
+    bridge.numbers["inv.coins"] = 3;
+    REQUIRE(room.scripts.load("shop", R"(
+        local S = {}
+        function S.on_message(self, name, value, from)
+            if name == "купил" then
+                forge.game.add_var("inv.coins", -2)
+                forge.game.set_var("shop.last", "кирка")
+                if forge.game.var("inv.coins") < 2 then forge.ui.show("Пусто") end
+                forge.ui.hide("Лавка")
+            end
+        end
+        return S
+    )"));
+    room.thing(4, 5, "shop");
+    room.thing(8, 5, "shop");
+    room.run(2);
+    room.scripts.send(0, "купил"); // a button's message: to every listening thing
+    room.run(2);
+    CHECK(bridge.numbers["inv.coins"] == -1); // both things heard it
+    CHECK(bridge.texts["shop.last"] == "кирка");
+    CHECK(bridge.screens == std::vector<std::string>{"show Пусто", "hide Лавка", "show Пусто", "hide Лавка"});
+    CHECK(room.scripts.errors().empty());
 }
 
 TEST_CASE("every engine function has a description for the node palette") {

@@ -33,6 +33,7 @@ int App::run(const AppConfig& config) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_EVENT_QUIT) quit_ = true;
+                track_window(event);
                 on_event(event);
             }
         }
@@ -42,7 +43,7 @@ int App::run(const AppConfig& config) {
         previous = now;
 
         on_frame(static_cast<f64>(frame_ns) / 1e9);
-        if (!config.headless) render_frame();
+        if (!config.headless && !hidden_) render_frame();
 
         update_stats(frame_ns);
         FORGE_FRAME_MARK();
@@ -55,12 +56,44 @@ int App::run(const AppConfig& config) {
             SDL_SetWindowTitle(window_, title);
         }
         if (config.max_frames && stats_.frame >= config.max_frames) quit_ = true;
+        if (!config.headless) throttle(config, now);
     }
 
     on_shutdown();
     destroy_window_and_gpu();
     jobs::shutdown();
     return 0;
+}
+
+void App::track_window(const SDL_Event& event) {
+    switch (event.type) {
+    case SDL_EVENT_WINDOW_FOCUS_GAINED: focused_ = true; break;
+    case SDL_EVENT_WINDOW_FOCUS_LOST: focused_ = false; break;
+    case SDL_EVENT_WINDOW_MINIMIZED:
+    case SDL_EVENT_WINDOW_HIDDEN: hidden_ = true; break;
+    case SDL_EVENT_WINDOW_RESTORED:
+    case SDL_EVENT_WINDOW_MAXIMIZED:
+    case SDL_EVENT_WINDOW_SHOWN: hidden_ = false; break;
+    default: break;
+    }
+}
+
+// Without this a minimized window spins: acquiring its image fails at once,
+// so the loop runs flat out on a core and keeps the GPU driver busy, which
+// starves other programs (a game started next to the editor could hang).
+void App::throttle(const AppConfig& config, u64 frame_start_ns) {
+    u32 fps = 0;
+    if (hidden_) fps = 20;
+    else if (!focused_ && config.background_fps) fps = config.background_fps;
+    if (!fps) return;
+    const u64 budget = 1'000'000'000ull / fps;
+    const u64 spent = time_now_ns() - frame_start_ns;
+    if (spent >= budget) return;
+    // Sleep until the frame's time is up or an event arrives (a click on the
+    // window wakes it at once).
+    const u64 left_ms = (budget - spent) / 1'000'000ull;
+    if (left_ms == 0) return;
+    SDL_WaitEventTimeout(nullptr, static_cast<Sint32>(left_ms)); // leaves the event queued
 }
 
 bool App::create_window_and_gpu(const AppConfig& config) {

@@ -24,6 +24,11 @@ struct AppConfig {
     // Frame times in the window title (tools and demos; a game turns it off).
     bool stats_in_title = true;
     bool fullscreen = false;
+    // Frames per second while the window is in the background (another
+    // program has focus); 0 keeps the full rate. A tool sets it so it leaves
+    // the CPU and GPU to the program the user is busy with. A minimized or
+    // hidden window always idles: nothing is drawn and the loop sleeps.
+    u32 background_fps = 0;
     // Shader bytecode the app can provide; picks the GPU backends allowed.
     SDL_GPUShaderFormat shader_formats =
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXBC | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL;
@@ -69,6 +74,8 @@ private:
     bool create_window_and_gpu(const AppConfig& config);
     void destroy_window_and_gpu();
     void render_frame();
+    void track_window(const SDL_Event& event);
+    void throttle(const AppConfig& config, u64 frame_start_ns);
     void update_stats(u64 frame_ns);
 
     SDL_Window* window_ = nullptr;
@@ -78,6 +85,8 @@ private:
     std::string status_;
     bool quit_ = false;
     bool sdl_initialized_ = false;
+    bool focused_ = true;
+    bool hidden_ = false; // minimized or hidden: there is nothing to draw into
 };
 
 } // namespace forge

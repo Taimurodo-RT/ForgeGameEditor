@@ -462,3 +462,60 @@ TEST_CASE("ui design: deleted component and style identities stay reserved after
     CHECK(reopened.next_id == 8);
     CHECK(fresh_style_key(reopened, true) == "c31");
 }
+
+TEST_CASE("ui design: the link to the game survives saving and goes onto the page") {
+    Screen screen = make_screen("Лавка", 1280, 720);
+    screen.show = ScreenShow::Command;
+    screen.pauses = true;
+    screen.esc_closes = false;
+    screen.fit = ScreenFit::Fit;
+    screen.root.fills.clear();
+    Node buy = rect_node(screen.next_id++, 10, 10, 200, 60);
+    buy.name = "Купить";
+    buy.on_click = {{ActionKind::Change, "inv.coins -= 5; shop.bought = 1"}, {ActionKind::Message, "купил"}, {ActionKind::Close, ""}};
+    Node bar = rect_node(screen.next_id++, 10, 100, 300, 20);
+    bar.bar = {"hero.hearts", "hero.hearts_max", BarFrom::Bottom};
+    bar.show_if = "inv.key > 0";
+    bar.fills.push_back(Paint{}); // white: it shows something
+    Node label;
+    label.id = screen.next_id++;
+    label.type = NodeType::Text;
+    label.text = "Монеты: {inv.coins} & \"всё\"";
+    Node empty_frame;
+    empty_frame.id = screen.next_id++;
+    screen.root.children = {buy, bar, label, empty_frame};
+
+    Screen back;
+    REQUIRE(load_screen(save_screen(screen), back));
+    CHECK(back.show == ScreenShow::Command);
+    CHECK(back.pauses);
+    CHECK_FALSE(back.esc_closes);
+    CHECK(back.root.children[0].on_click == buy.on_click);
+    CHECK(back.root.children[1].bar == bar.bar);
+    CHECK(back.root.children[1].show_if == "inv.key > 0");
+    CHECK(parse_action("toggle") == ActionKind::Toggle);
+    CHECK_FALSE(parse_action("fly"));
+
+    // Screens from before the link stay off the game until shown.
+    Screen old;
+    REQUIRE(load_screen(R"({"title": "Старый", "settings": {"fit": "expand"}, "root": {"id": 1, "type": "frame"}})", old));
+    CHECK(old.show == ScreenShow::Command);
+
+    const std::string html = screen_html(screen);
+    CHECK(contains(html, "forge-screen=\"command\" forge-fit=\"fit\" forge-size=\"1280 720\" forge-bars=\"#000000\" forge-pauses=\"1\" forge-esc=\"0\""));
+    CHECK(contains(html, "forge-click=\"[[&quot;change&quot;,&quot;inv.coins -= 5; shop.bought = 1&quot;],[&quot;message&quot;,&quot;купил&quot;],[&quot;close&quot;,&quot;&quot;]]\""));
+    CHECK(contains(html, "forge-bar-value=\"hero.hearts\" forge-bar-max=\"hero.hearts_max\" forge-bar-from=\"bottom\""));
+    CHECK(contains(html, "forge-show-if=\"inv.key &gt; 0\""));
+    CHECK(contains(html, "forge-text=\"Монеты: {inv.coins} &amp; &quot;всё&quot;\""));
+    // Only what shows something takes clicks: the empty frame lets them through to the world.
+    const std::string root = "#n" + std::to_string(screen.root.id);
+    CHECK(contains(html, "body, " + root + " {\n  pointer-events: none;"));
+    const std::string mouse = "#n" + std::to_string(buy.id) + ", #n" + std::to_string(bar.id) + ", #n" + std::to_string(label.id) + " {\n  pointer-events: auto;";
+    CHECK(contains(html, mouse));
+    CHECK_FALSE(contains(html, "#n" + std::to_string(empty_frame.id) + ", "));
+
+    // On a component's copy, what the copy does in the game is its own.
+    CHECK(override_of("click.0.kind") == "game");
+    CHECK(override_of("bar.value") == "game");
+    CHECK(override_of("show_if") == "game");
+}

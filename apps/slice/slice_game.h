@@ -223,6 +223,7 @@ private:
     forge::logic::Verbs verbs_;
     forge::logic::Logic links_;
     std::unique_ptr<forge::logic::Game> logic_;
+    std::unique_ptr<forge::script::GameBridge> bridge_; // scripts' way to the shell's variables and screens
     std::FILE* fired_ = nullptr;
     std::unordered_map<u32, u64> fired_last_; // link -> ms
     struct Deed {

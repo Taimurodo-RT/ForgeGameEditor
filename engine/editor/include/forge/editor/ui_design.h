@@ -168,6 +168,58 @@ struct AutoLayout {
     bool operator==(const AutoLayout&) const = default;
 };
 
+// --- the link to the game ---
+// What a layer does with the game's data while the game runs. The game's
+// variables (game::Vars: "hero.hearts", "inv.coins", "quest.pickaxe"...) are
+// what the screens show and change; logic schemes read and set them too.
+//
+// A text shows variables put into it: «Монеты: {inv.coins}».
+
+// «Полоска»: the layer is cut to value / max of its length (a health bar).
+// value and max are expressions on the game's variables ("hero.hearts", "5",
+// "hero.hearts_max"); the part kept starts at the side `from` names.
+enum class BarFrom : u8 { Left, Right, Bottom, Top };
+struct Bar {
+    std::string value; // empty: not a bar
+    std::string max = "100";
+    BarFrom from = BarFrom::Left;
+    bool operator==(const Bar&) const = default;
+};
+
+// What a click on a layer does in the game («При нажатии»), in order.
+enum class ActionKind : u8 {
+    Show,    // shows the screen named target
+    Hide,    // hides the screen named target
+    Toggle,  // shows or hides it
+    Close,   // hides the screen the layer is on
+    Message, // tells the game's logic: schemes «При сообщении» with this name run
+    Change,  // changes variables: "inv.coins -= 5; shop.bought = 1"
+    Talk,    // starts the dialogue named target
+    Pause,   // the game's pause menu
+    Resume,  // back to the game from the pause menu
+    Menu,    // to the main menu
+    Quit,    // leaves the game
+    NewGame, // starts a new game (a main menu's button)
+    Continue, // goes on from the newest save
+    Load,    // the list of saves to load
+    Save,    // the list of saves to save into
+    Settings, // the game's settings
+};
+const char* action_word(ActionKind k); // "show", "hide", ... (the file and the page)
+std::optional<ActionKind> parse_action(std::string_view word);
+struct Action {
+    ActionKind kind = ActionKind::Show;
+    std::string target;
+    bool operator==(const Action&) const = default;
+};
+
+// When the game shows a screen.
+enum class ScreenShow : u8 {
+    Playing, // over the world while the player plays (a HUD)
+    Command, // only when a button or the logic shows it (a shop, an inventory)
+    Menu,    // the main menu, in place of the game's usual one
+};
+
 enum class NodeType : u8 { Frame, Rectangle, Ellipse, Text, Image };
 const char* node_type_name(NodeType t); // "frame", "rectangle", ...
 
@@ -200,8 +252,15 @@ struct Node {
     FrameArt frame; // drawn over the fills
     MaskArt mask;
 
-    std::string text; // texts
+    std::string text; // texts; {name} shows a variable of the game
     TextStyle text_style;
+
+    // The link to the game: shown only while show_if holds (an expression on
+    // the game's variables, "inv.key > 0"; empty: always), a bar, and what a
+    // click does.
+    std::string show_if;
+    Bar bar;
+    std::vector<Action> on_click;
 
     std::vector<Node> children; // frames, drawn first to last (last on top)
 
@@ -257,6 +316,9 @@ struct Screen {
     ScreenFit fit = ScreenFit::Expand;
     Color bars{0, 0, 0, 255}; // Fit: the bars' colour
     f32 safe = 0;             // the safe margin along every edge (pixels): what matters stays inside
+    ScreenShow show = ScreenShow::Playing;
+    bool pauses = false;     // the world stops while it is shown (Command screens)
+    bool esc_closes = true;  // Esc hides it (Command screens)
     bool library = false;     // the game's components (ui/components.json), not a screen the game shows
     // The library's game styles: named colours and text styles that layers on
     // every screen can use (Paint::style, TextStyle::style); changing one
