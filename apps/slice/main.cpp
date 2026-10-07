@@ -24,8 +24,10 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 
 #include <SDL3/SDL_main.h> // the window-only entry point on Windows
+#include <SDL3/SDL_timer.h>
 
 #include <cmath>
 #include <cstdio>
@@ -581,7 +583,7 @@ private:
                     "</div></body></html>";
                 const std::string window =
                     "<html><head><style>body, #t-window { pointer-events: none; } #t-window > div { pointer-events: auto; }</style></head>"
-                    "<body><div id=\"t-window\" forge-screen=\"command\" forge-pauses=\"1\" forge-size=\"" + dims + "\">"
+                    "<body><div id=\"t-window\" forge-screen=\"command\" forge-pauses=\"1\" forge-appear=\"rise\" forge-appear-time=\"0.3\" forge-size=\"" + dims + "\">"
                     "<div id=\"t-buy\" style=\"position: absolute; left: 300px; top: 300px; width: 120px; height: 40px; background: #353;\" "
                     "forge-click=\"[[&quot;change&quot;,&quot;inv.coins += 5&quot;],[&quot;message&quot;,&quot;купил&quot;],[&quot;close&quot;,&quot;&quot;]]\">Купить</div>"
                     "</div></body></html>";
@@ -609,17 +611,21 @@ private:
             if (f == 7) {
                 check(sc.shown("тест_окно") && shown("t-buy"), "кнопка открыла окно");
                 check(sc.pauses(), "окно ставит мир на паузу");
-                check(click(s, "t-buy"), "кнопка в окне нажимается");
+                Rml::Element* w = s.find_element("t-window");
+                check(w && w->GetLocalProperty("opacity") && w->GetProperty<float>("opacity") < 1, "окно появляется плавно");
+                SDL_Delay(350); // let it finish rising, or the click lands below the moving button on a slow machine
             }
-            if (f == 9) {
+            if (f == 9) check(click(s, "t-buy"), "кнопка в окне нажимается");
+            if (f == 11) {
                 check(s.vars().get("inv.coins").number() == 12, "покупка изменила монеты");
                 check(messages == 1, "логика получила сообщение");
                 check(!sc.shown("тест_окно"), "окно закрылось");
+                check(sc.document("тест_окно") && sc.document("тест_окно")->IsVisible(), "и уходит плавно");
                 Rml::Element* coins = s.find_element("t-coins");
                 check(coins && coins->GetInnerRML() == "Монеты: 12", "текст следит за монетами");
                 sc.show("тест_окно", true);
             }
-            if (f == 11) {
+            if (f == 13) {
                 SDL_Event ev{};
                 ev.type = SDL_EVENT_KEY_DOWN;
                 ev.key.key = SDLK_ESCAPE;
@@ -627,7 +633,9 @@ private:
                 s.handle_event(ev);
                 check(!sc.shown("тест_окно") && s.screen() == forge::game::Screen::Playing, "Esc закрывает окно, а не игру");
             }
-            if (f < 13) return false;
+            if (f == 14) SDL_Delay(350); // the window's going away (started by the frame after Esc) takes 0.3 s
+            if (f == 16) check(sc.document("тест_окно") && !sc.document("тест_окно")->IsVisible(), "ушедшее окно скрыто");
+            if (f < 17) return false;
             sc.remove("тест_hud");
             sc.remove("тест_окно");
             s.on_message = nullptr;

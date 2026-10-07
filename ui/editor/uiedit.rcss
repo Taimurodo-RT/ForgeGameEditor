@@ -347,3 +347,5 @@ input.text.ue-field:placeholder-shown { color: var(--outline); }
 .ue-note.ue-warn { color: var(--warning); margin-bottom: 6px; }
 .ue-sec.ue-comp .ue-sec-title, .ue-sec.ue-comp .ue-key { color: #c7a8ff; }
 input.text.ue-hex.ue-sans { font-family: var(--font-sans); }
+.ue-key-row { padding: 6px 0px; border-top: 1px var(--outline-variant); }
+.ue-key-row:first-child { border-top-width: 0px; }

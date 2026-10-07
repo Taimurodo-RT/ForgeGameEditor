@@ -150,10 +150,11 @@ public:
     // Mouse on the screen's own pixels, as the check passes it to the page.
     void check_mouse(f32 x, f32 y, int button_down, int button_up);
 
-    // The design panel's tab: "design" (how the layer looks) or "game"
-    // (what it does in the game: clicks, a bar, when it shows).
+    // The design panel's tab: "design" (how the layer looks), "game" (what
+    // it does in the game: clicks, a bar, when it shows) or "motion" (how it
+    // moves).
     void set_panel(const std::string& tab) {
-        m_panel_ = tab == "game" ? "game" : "design";
+        m_panel_ = tab == "game" || tab == "motion" ? tab : "design";
         dirty("ue_panel");
     }
     const Rml::String& panel() const { return m_panel_; }
@@ -363,6 +364,18 @@ private:
         Rml::String show_if;
         bool has_bar = false;
         Rml::String bar_value, bar_max, bar_from;
+        // Movement.
+        Rml::String motion_kind = "none", motion_duration, motion_delay, motion_strength, motion_easing;
+        bool motion_loop = true, motion_back = false;
+        Rml::String smooth, smooth_easing;
+        Rml::String appear = "none", appear_time;
+    };
+    // One key of the layer's own movement («Своё по ключам»).
+    struct KeyRow {
+        int index = 0;
+        Rml::String at, x, y, scale, rotation, opacity, radius, blur, brightness;
+        bool tint = false;
+        Rml::String hex, swatch;
     };
     // What a click on the layer does in the game, one row each.
     struct ClickRow {
@@ -391,6 +404,7 @@ private:
     bool m_library_open_ = false;
     std::vector<GameColorRow> m_game_colors_;
     std::vector<ClickRow> m_clicks_;
+    std::vector<KeyRow> m_keys_;
     bool checking_ = false;
     std::unique_ptr<forge::game::GameScreens> check_;
     bool page_from_check_ = false;

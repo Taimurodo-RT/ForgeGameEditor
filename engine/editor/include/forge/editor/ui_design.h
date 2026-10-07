@@ -220,6 +220,59 @@ enum class ScreenShow : u8 {
     Menu,    // the main menu, in place of the game's usual one
 };
 
+// Movement («Анимация»). How a change speeds up and slows down.
+enum class Easing : u8 {
+    Smooth,  // starts and ends gently (CSS ease)
+    Linear,  // even
+    EaseIn,  // speeds up
+    EaseOut, // slows down
+    Back,    // overshoots a little and comes back
+    Bounce,  // bounces at the end
+    Elastic, // springs at the end
+};
+// A layer's own movement, over and over or once when the screen appears.
+enum class MotionKind : u8 {
+    None,
+    Pulse,  // grows a little and back
+    Float,  // drifts up and down
+    Swing,  // tilts left and right
+    Spin,   // turns round
+    Shake,  // shakes side to side
+    Blink,  // fades out and in
+    Custom, // the author's keys
+};
+// One moment of a movement: where the layer is then, relative to its place.
+struct MotionKey {
+    f32 at = 0;       // 0..1 of the duration
+    f32 x = 0, y = 0; // shift, pixels
+    f32 scale = 1;
+    f32 rotation = 0; // degrees
+    f32 opacity = 1;
+    // Like the web, more than the place changes: the colour (a text's
+    // letters, else the layer's fill), the corners, a blur and the brightness.
+    bool tint = false; // color applies
+    Color color{255, 255, 255, 255};
+    f32 radius = -1;     // corners, pixels (-1: as the layer has them)
+    f32 blur = 0;        // pixels
+    f32 brightness = 1;  // 1: as it is, 0: black, 2: twice as bright
+    bool operator==(const MotionKey&) const = default;
+};
+struct Motion {
+    MotionKind kind = MotionKind::None;
+    f32 duration = 1; // seconds, one pass
+    f32 delay = 0;    // seconds before it starts
+    Easing easing = Easing::Smooth;
+    bool loop = true;      // over and over (else once)
+    bool back = false;     // every other pass backwards
+    f32 strength = 1;      // presets: how far they go (1: as designed)
+    std::vector<MotionKey> keys; // Custom
+    bool operator==(const Motion&) const = default;
+};
+// The keys a movement goes through (a preset's, or the author's sorted by time).
+std::vector<MotionKey> motion_keys(const Motion& m);
+// How a window comes and goes.
+enum class Appear : u8 { None, Fade, Rise, Drop, Zoom, FromLeft, FromRight };
+
 enum class NodeType : u8 { Frame, Rectangle, Ellipse, Text, Image };
 const char* node_type_name(NodeType t); // "frame", "rectangle", ...
 
@@ -261,6 +314,12 @@ struct Node {
     std::string show_if;
     Bar bar;
     std::vector<Action> on_click;
+
+    // Movement: its own (motion), and how long a change of its look takes
+    // (smooth, seconds; 0: at once), such as a button's look on hover.
+    Motion motion;
+    f32 smooth = 0;
+    Easing smooth_easing = Easing::Smooth;
 
     std::vector<Node> children; // frames, drawn first to last (last on top)
 
@@ -319,6 +378,8 @@ struct Screen {
     ScreenShow show = ScreenShow::Command; // a window until told otherwise: it never covers the game by surprise
     bool pauses = false;     // the world stops while it is shown (Command screens)
     bool esc_closes = true;  // Esc hides it (Command screens)
+    Appear appear = Appear::None; // how it comes and goes (Command and Menu screens)
+    f32 appear_time = 0.25f;      // seconds
     bool library = false;     // the game's components (ui/components.json), not a screen the game shows
     // The library's game styles: named colours and text styles that layers on
     // every screen can use (Paint::style, TextStyle::style); changing one
@@ -408,11 +469,19 @@ struct HtmlOptions {
     // The game's components: instances whose component has states (hover,
     // pressed...) get the other variants' looks for them.
     const Screen* library = nullptr;
+    // Layers' movements play (the game, «Проверить»); off on the canvas, where
+    // the author places things where they stand.
+    bool motion = true;
 };
 std::string screen_html(const Screen& screen, const HtmlOptions& options = {});
 // The CSS of one layer (what the page's <style> holds for it), for tests and
 // the code view: "#n12 { ... }". Every layer is an element with id "n<id>".
 std::string node_css(const Node& node, const Node* parent, f32 parent_w, f32 parent_h);
+// The same, with movement: keyframes gets the layer's @keyframes (nullptr:
+// it doesn't move), smooth_from_parent the smooth changes of the component
+// or layer it is in.
+std::string node_css(const Node& node, const Node* parent, f32 parent_w, f32 parent_h, std::string* keyframes,
+                     f32 smooth_from_parent);
 
 // --- snapping on the canvas ---
 struct Rect {
