@@ -316,7 +316,7 @@ struct Screen {
     ScreenFit fit = ScreenFit::Expand;
     Color bars{0, 0, 0, 255}; // Fit: the bars' colour
     f32 safe = 0;             // the safe margin along every edge (pixels): what matters stays inside
-    ScreenShow show = ScreenShow::Playing;
+    ScreenShow show = ScreenShow::Command; // a window until told otherwise: it never covers the game by surprise
     bool pauses = false;     // the world stops while it is shown (Command screens)
     bool esc_closes = true;  // Esc hides it (Command screens)
     bool library = false;     // the game's components (ui/components.json), not a screen the game shows

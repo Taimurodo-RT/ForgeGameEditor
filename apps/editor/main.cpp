@@ -3394,6 +3394,9 @@ private:
             // The link to the game: a window the first button opens.
             ue_other_ = ue().new_screen();
             ue().select({});
+            check(ue().screen().show == d::ScreenShow::Command, "a new screen is a window: it never covers the game by surprise");
+            check(ue().set_property("screen.show", "playing") && !ue().covers_game(), "its dimmed background lets the game show");
+            check(ue().set_property("fill.0.color", "#1B2127") && ue().covers_game(), "a solid screen over the game is pointed out");
             check(ue().set_property("screen.show", "command") && ue().set_property("screen.pauses", "") &&
                       ue().screen().show == d::ScreenShow::Command && ue().screen().pauses,
                   "a screen becomes a window that stops the game");

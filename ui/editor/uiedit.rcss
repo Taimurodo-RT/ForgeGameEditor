@@ -344,5 +344,6 @@ input.text.ue-field:placeholder-shown { color: var(--outline); }
 .ue-btn:hover { background-color: var(--surface-container-highest); }
 .ue-btn.off { opacity: 0.5; }
 .ue-note { font-size: 11.5px; line-height: 16px; color: var(--on-surface-variant); }
+.ue-note.ue-warn { color: var(--warning); margin-bottom: 6px; }
 .ue-sec.ue-comp .ue-sec-title, .ue-sec.ue-comp .ue-key { color: #c7a8ff; }
 input.text.ue-hex.ue-sans { font-family: var(--font-sans); }
