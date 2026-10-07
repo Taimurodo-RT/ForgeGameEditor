@@ -3141,8 +3141,9 @@ private:
     std::string ue_expect_; // the thing of the clicked cell
     usize ue_log_size_ = 0;
     // The wheel over a list in «Проверить», on every size and fit.
-    int ue_wheel_ = 0, ue_wheel_phase_ = 0, ue_wheel_frames_ = 0;
-    f32 ue_wheel_top_ = -1, ue_pan_x_ = 0, ue_pan_y_ = 0;
+    int ue_wheel_ = 0, ue_wheel_phase_ = 0, ue_notches_ = 0;
+    f32 ue_wheel_top_ = -1, ue_pan_x_ = 0, ue_pan_y_ = 0, ue_wheel_x_ = 0, ue_wheel_y_ = 0;
+    u64 ue_wheel_start_ = 0, ue_wheel_still_ = 0; // real milliseconds: the wheel's first notch, the scroll's last change
     struct UeSpot {
         std::string id;
         f32 x0, y0, x1, y1;
@@ -3898,25 +3899,36 @@ private:
                 check(px >= 0, (run + "a point of the list in sight").c_str());
                 ue_pan_x_ = ue().to_canvas_x(0);
                 ue_pan_y_ = ue().to_canvas_y(0);
-                mouse(SDL_EVENT_MOUSE_MOTION, ue_wx(px), ue_wy(py));
+                ue_wheel_x_ = ue_wx(px);
+                ue_wheel_y_ = ue_wy(py);
+                mouse(SDL_EVENT_MOUSE_MOTION, ue_wheel_x_, ue_wheel_y_);
                 wheel(1, 0);  // sideways: the list has nowhere to go, and the canvas must not move
                 wheel(0, -1); // one notch down
                 check(ue().to_canvas_x(0) == ue_pan_x_ && ue().to_canvas_y(0) == ue_pan_y_,
                       (run + "the wheel does not move the canvas").c_str());
+                ue_notches_ = 1;
                 ue_wheel_top_ = -1;
-                ue_wheel_frames_ = 0;
+                ue_wheel_start_ = ue_wheel_still_ = SDL_GetTicks();
                 ue_wheel_phase_ = 2;
                 return true;
             }
             case 2: {
-                // The page scrolls over a few frames: wait until it stands.
+                // The page scrolls smoothly, by the clock, not by frames: it has
+                // stopped when its scroll has not changed for 300 real ms.
                 const f32 top = box ? box->GetScrollTop() : 0;
-                if ((top <= 0 || top != ue_wheel_top_) && ++ue_wheel_frames_ < 240) {
+                const u64 now = SDL_GetTicks();
+                if (top != ue_wheel_top_) {
                     ue_wheel_top_ = top;
+                    ue_wheel_still_ = now;
+                }
+                const bool timeout = now - ue_wheel_start_ > 8000;
+                if (now - ue_wheel_still_ < 300 && !timeout) {
+                    SDL_Delay(5);
                     return true;
                 }
-                check(top > 0, (run + "the wheel scrolled the list: " + std::to_string(top)).c_str());
-                check(box && box->GetScrollLeft() == 0, (run + "and not sideways").c_str());
+                const std::string state = "прокрутка " + std::to_string(top) + " px, щелчков колеса " + std::to_string(ue_notches_) +
+                                          ", прошло " + std::to_string(now - ue_wheel_start_) + " мс";
+                check(!timeout, (run + "the scroll comes to a stop: " + state).c_str());
                 // A cell in sight where, before the wheel, another thing stood:
                 // clicked where the canvas shows it now.
                 ue_expect_.clear();
@@ -3928,7 +3940,20 @@ private:
                         if (x >= s.x0 && x < s.x1 && y >= s.y0 && y < s.y1) before = s.id;
                     if (before != c.spot.id && on_top(c.cell, x, y)) ue_expect_ = c.spot.id, cx = x, cy = y; // the lowest
                 }
-                check(!ue_expect_.empty(), (run + "a cell in sight where another thing stood before the wheel").c_str());
+                // Not far enough for another thing to stand there: the wheel
+                // turns one more notch, as a player would (up to 6).
+                const bool bottom = box && box->GetScrollTop() + box->GetClientHeight() >= box->GetScrollHeight() - 0.5f;
+                if (ue_expect_.empty() && !timeout && !bottom && ue_notches_ < 6) {
+                    mouse(SDL_EVENT_MOUSE_MOTION, ue_wheel_x_, ue_wheel_y_);
+                    wheel(0, -1);
+                    ++ue_notches_;
+                    ue_wheel_still_ = now;
+                    return true;
+                }
+                check(top > 0, (run + "the wheel scrolled the list: " + state).c_str());
+                check(box && box->GetScrollLeft() == 0, (run + "and not sideways").c_str());
+                check(ue().to_canvas_x(0) == ue_pan_x_ && ue().to_canvas_y(0) == ue_pan_y_, (run + "the canvas stood still").c_str());
+                check(!ue_expect_.empty(), (run + "a cell in sight where another thing stood before the wheel: " + state).c_str());
                 ue_log_size_ = ue().check_log().size();
                 if (!ue_expect_.empty()) left_click(ue_wx(cx), ue_wy(cy));
                 ue_wheel_phase_ = 3;
