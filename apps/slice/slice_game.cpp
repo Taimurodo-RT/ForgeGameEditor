@@ -569,10 +569,19 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
         return Value(!a.empty() && take(a[0].text(), a.size() > 1 ? a[1].number() : 1.0));
     });
 
-    // What the screens' lists call the things the hero carries, in their order.
+    // What the screens' lists call the things the hero carries, in their
+    // order; item.icon is the picture of the pickup that gives it, if any.
     std::vector<game::ScreenItem> items;
-    for (const char* id : {"coins", "key", "pickaxe", "torch", "wood", "dirt", "stone", "sand", "copper", "iron", "gold"})
-        items.push_back({id, item_title(id), "", ""});
+    for (const char* id : {"coins", "key", "pickaxe", "torch", "wood", "dirt", "stone", "sand", "copper", "iron", "gold"}) {
+        game::ScreenItem& i = items.emplace_back(game::ScreenItem{id, item_title(id), "", ""});
+        for (const objects::Template& t : library_.templates())
+            if (library_.item_of(t) == id) {
+                i.picture = library_.picture_in(t, shell.game_dir());
+                i.about = t.about;
+                if (!i.picture.empty()) break;
+            }
+    }
+    screen_items_ = items;
     shell.screens().set_items(std::move(items));
 
     // The HUD: its own document in the shell's context.

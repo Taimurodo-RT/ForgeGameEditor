@@ -388,13 +388,14 @@ public:
             std::vector<game::ScreenItem> out;
             const objects::Library& lib = *level_module.library();
             for (const objects::Template& t : lib.templates()) {
-                if (!lib.has_block(t, "pickup")) continue;
-                const objects::PropDef* what = lib.prop_of(t, "what");
-                if (!what) continue;
-                std::string item = lib.value(t, *what);
-                if (item.size() >= 2 && item.front() == '"') item = item.substr(1, item.size() - 2);
-                if (item.empty() || std::any_of(out.begin(), out.end(), [&](const game::ScreenItem& i) { return i.id == item; })) continue;
-                out.push_back({item, t.name, "", t.about});
+                const std::string item = lib.item_of(t);
+                if (item.empty()) continue;
+                // item.icon: the template's own picture, as the game's pages
+                // find it (several pickups of one thing: the first with one).
+                const std::string picture = lib.picture_in(t, ui_game_dir);
+                auto have = std::find_if(out.begin(), out.end(), [&](const game::ScreenItem& i) { return i.id == item; });
+                if (have == out.end()) out.push_back({item, t.name, picture, t.about});
+                else if (have->picture.empty()) have->picture = picture;
             }
             return out;
         };
@@ -3133,6 +3134,8 @@ private:
     }
     u32 ue_list_ = 0, ue_text_ = 0, ue_cell_ = 0;
     usize ue_items_ = 0;
+    objects::Template ue_coins_;          // the coins before the list's picture check
+    std::filesystem::path ue_pictures_; // and the pictures folder
     // A screen point in window pixels.
     f32 ue_wx(f32 x) { return ue().canvas_left() + ue().to_canvas_x(x); }
     f32 ue_wy(f32 y) { return ue().canvas_top() + ue().to_canvas_y(y); }
@@ -3579,6 +3582,25 @@ private:
             check(again && again->list == d::ListSource::Items && again->list_gap == 6 && !again->children.empty() &&
                       again->children[0].id == cell && ue_node(text) && ue_node(text)->text == "{item.name} {item.count}",
                   "the list, its cell and the cell's text are kept");
+            // «Картинка предмета» on the cell's text: the coins get a picture
+            // of the game's (a sample under pictures/интерфейс), the rest have none.
+            ue().select({text});
+            check(ue().set_property("picture_from", "item.icon") && ue_node(text)->picture_from == "item.icon",
+                  "the cell's text shows the element's picture");
+            check(ue_file(".html").find("forge-picture=\"item.icon\"") != std::string::npos, "the game's page carries it");
+            objects::Library& lib = *ed_.level_module.library();
+            ue_pictures_ = lib.pictures_folder();
+            lib.set_pictures_folder(ed_.ui_game_dir / "pictures");
+            const objects::Template* coins = nullptr; // the first pickup of coins: the list's name for them
+            for (const objects::Template& t : lib.templates())
+                if (!coins && lib.item_of(t) == "coins") coins = &t;
+            check(coins && std::filesystem::exists(ed_.ui_game_dir / utf8_path("pictures/интерфейс/камень.png")), "a picture to give");
+            if (coins) {
+                ue_coins_ = *coins;
+                objects::Template with = *coins;
+                with.picture = "интерфейс/камень.png";
+                check(lib.put(with), "the coins get the picture");
+            }
             ue().set_checking(true);
             break;
         }
@@ -3593,6 +3615,35 @@ private:
             check(items > 0 && ue_list_cells(content) == items,
                   "every thing the hero carries has a cell");
             ue_items_ = items;
+            // item.icon: a cell shows its thing's picture (the coins' now), or none.
+            const std::vector<game::ScreenItem> things = ed_.ui_tab.game_items();
+            int right = 0, with = 0, without = 0;
+            for (int i = 0; content && i < content->GetNumChildren(); ++i) {
+                Rml::Element* c = content->GetChild(i);
+                if (c->GetComputedValues().display() == Rml::Style::Display::None) continue;
+                Rml::ElementList pics;
+                c->QuerySelectorAll(pics, "[forge-picture]");
+                if (pics.empty()) continue;
+                const Rml::Property* p = pics[0]->GetLocalProperty("decorator");
+                const std::string look = p ? p->ToString() : std::string("none");
+                const std::string text = pics[0]->GetInnerRML();
+                for (const game::ScreenItem& t : things) {
+                    // "{item.name} {item.count}": the name, a space, digits.
+                    if (text.size() <= t.name.size() + 1 || text.compare(0, t.name.size() + 1, t.name + " ") != 0 ||
+                        text.find_first_not_of("0123456789", t.name.size() + 1) != std::string::npos)
+                        continue;
+                    const bool ok = t.picture.empty() ? look == "none" : look.find("../" + t.picture) != std::string::npos;
+                    if (!ok) FORGE_ERROR("«%s» (%s) shows %s", t.name.c_str(), t.picture.c_str(), look.c_str());
+                    right += ok;
+                    (t.picture.empty() ? without : with) += 1;
+                    break;
+                }
+            }
+            const auto coins = std::find_if(things.begin(), things.end(), [](const game::ScreenItem& t) { return t.id == "coins"; });
+            check(coins != things.end() && coins->picture == "pictures/интерфейс/камень.png",
+                  "the game's coins have the picture as a path in the game's folder");
+            check(right == static_cast<int>(items) && with > 0 && without > 0,
+                  "every cell shows its thing's picture, or none without one");
             for (const auto& [name, value] : ue().check_vars().all())
                 if (name.rfind("inv.", 0) == 0 && value.number() > 0) {
                     ue().check_vars().set(name, 0);
@@ -3622,6 +3673,9 @@ private:
                                       : nullptr;
             check(empty && empty->GetComputedValues().visibility() == Rml::Style::Visibility::Visible, "and the «empty» text shows");
             ue().set_checking(false);
+            objects::Library& lib = *ed_.level_module.library();
+            if (!ue_coins_.id.empty()) check(lib.put(ue_coins_), "the coins' picture goes back");
+            lib.set_pictures_folder(ue_pictures_);
             ue().set_panel("design");
             break;
         }

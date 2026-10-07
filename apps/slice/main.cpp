@@ -674,6 +674,17 @@ private:
                 for (auto& [top, text] : seen) out.push_back(text);
                 return out;
             };
+            auto columns = [&](const char* list) {
+                std::vector<float> lefts;
+                Rml::Element* box = s.find_element(list);
+                Rml::Element* content = box ? box->GetFirstChild() : nullptr;
+                for (int i = 0; content && i < content->GetNumChildren(); ++i) {
+                    Rml::Element* c = content->GetChild(i);
+                    if (c->GetComputedValues().display() == Rml::Style::Display::None) continue;
+                    if (std::find(lefts.begin(), lefts.end(), c->GetOffsetLeft()) == lefts.end()) lefts.push_back(c->GetOffsetLeft());
+                }
+                return lefts.size();
+            };
             auto empty_shown = [&]() {
                 Rml::Element* e = s.find_element("t-empty");
                 return e && e->GetComputedValues().visibility() == Rml::Style::Visibility::Visible;
@@ -701,19 +712,51 @@ private:
                     "<div id=\"t-items\" style=\"position: absolute; left: 100px; top: 100px; width: 400px; height: 300px; overflow-y: auto;\" "
                     "forge-list=\"items\" forge-list-gap=\"4\" forge-cell=\"0 0 380 40\">"
                     "<div class=\"cell\" forge-click=\"[[&quot;message&quot;,&quot;взял {item.id}&quot;]]\">"
-                    "<div forge-text=\"{item.name}: {item.count}\">?</div></div>"
+                    "<div forge-text=\"{item.name}: {item.count}\">?</div><div forge-picture=\"item.icon\"></div></div>"
                     "<div id=\"t-empty\">Пусто</div></div>"
                     "<div id=\"t-journal\" style=\"position: absolute; left: 600px; top: 100px; width: 400px; height: 300px; overflow-y: auto;\" "
                     "forge-list=\"quests\" forge-list-gap=\"4\" forge-cell=\"0 0 380 40\">"
                     "<div class=\"cell\"><div forge-text=\"{item.title}\">?</div></div></div>"
+                    // A grid: 3 cells a row (a short last row), then 2 when narrower.
+                    "<div id=\"t-grid\" style=\"position: absolute; left: 100px; top: 450px; width: 400px; height: 200px; overflow-y: auto;\" "
+                    "forge-list=\"items\" forge-list-gap=\"4\" forge-cell=\"0 0 120 40\">"
+                    "<div class=\"cell\" style=\"width: 120px;\"><div forge-text=\"{item.name}\">?</div></div></div>"
+                    // The cell's own condition: only what the hero has more than one of
+                    // (written with line breaks, as the editor writes pages).
+                    "<div id=\"t-cond\" style=\"position: absolute; left: 600px; top: 450px; width: 400px; height: 300px; overflow-y: auto;\" "
+                    "forge-list=\"items\" forge-list-gap=\"4\" forge-cell=\"0 0 380 40\">\n    "
+                    "<div class=\"cell\" forge-show-if=\"item.count &gt; 1\"><div forge-text=\"{item.name}\">?</div></div>\n  </div>"
                     "</div></body></html>";
-                check(sc.load_page(s.context(), "тест_сумка", page, "test/ui/тест_сумка.html"), "экран со списками строится");
+                // At the game's own ui/ (not written there): item.icon finds ../pictures/ as a game screen does.
+                check(sc.load_page(s.context(), "тест_сумка", page, path_to_utf8(s.game_dir() / "ui" / "тест_сумка.html")),
+                      "экран со списками строится");
                 sc.show("тест_сумка", true);
                 s.on_message = [](const std::string& m) { said.push_back(m); };
             }
             if (f == 3) {
                 check(joined(cells("t-items")) == "Монеты: 3 | Ключ: 1", "список вещей: " + joined(cells("t-items")));
                 check(!empty_shown(), "пока есть вещи, «Пусто» не видно");
+                // item.icon: the picture of the pickup that gives the thing, or none.
+                Rml::Element* box = s.find_element("t-items");
+                Rml::Element* content = box ? box->GetFirstChild() : nullptr;
+                int pictured = 0;
+                for (int i = 0; content && i < content->GetNumChildren(); ++i) {
+                    Rml::Element* c = content->GetChild(i);
+                    Rml::Element* icon = c->GetNumChildren() > 1 ? c->GetChild(1) : nullptr;
+                    if (!icon || c->GetComputedValues().display() == Rml::Style::Display::None) continue;
+                    const std::string name = c->GetChild(0)->GetInnerRML();
+                    std::string want;
+                    for (const game::ScreenItem& t : g_.screen_items())
+                        if (name.rfind(t.name + ":", 0) == 0) want = t.picture;
+                    const Rml::Property* p = icon->GetLocalProperty("decorator");
+                    const std::string look = p ? p->ToString() : std::string("none");
+                    check(want.empty() ? look == "none" : look.find("../" + want) != std::string::npos,
+                          name + ": картинка «" + want + "», показано " + look);
+                    pictured += !want.empty();
+                }
+                FORGE_INFO("списки: у %d вещей из видимых своя картинка", pictured);
+                check(cells("t-grid").size() == 2, "2 вещи в сетке по 3: видно 2 ячейки, а не " + std::to_string(cells("t-grid").size()));
+                check(joined(cells("t-cond")) == "Монеты", "условие ячейки прячет то, чего одна штука: " + joined(cells("t-cond")));
                 usize journal = s.quests().journal(s.vars()).size();
                 check(cells("t-journal").size() == journal, "в списке заданий " + std::to_string(cells("t-journal").size()) +
                                                                 " из " + std::to_string(journal));
@@ -721,6 +764,7 @@ private:
             }
             if (f == 5) {
                 check(joined(cells("t-items")) == "Монеты: 3 | Ключ: 1 | Факелы: 2", "подобранное появилось: " + joined(cells("t-items")));
+                check(cells("t-grid").size() == 3 && columns("t-grid") == 3, "3 вещи: полный ряд из 3");
                 s.vars().set("inv.coins", 7);
             }
             if (f == 7) {
@@ -730,11 +774,15 @@ private:
             }
             if (f == 9) {
                 check(joined(cells("t-items")) == "Факелы: 2", "убранное исчезло: " + joined(cells("t-items")));
+                check(cells("t-grid").size() == 1, "в сетке осталась 1 ячейка, а не " + std::to_string(cells("t-grid").size()));
                 s.vars().set("inv.torch", 0);
             }
             if (f == 11) {
                 check(cells("t-items").empty(), "последний предмет убран, ячеек нет: " + joined(cells("t-items")));
                 check(empty_shown(), "пустой список показывает «Пусто»");
+                check(cells("t-grid").empty() && cells("t-cond").empty(), "в пустых сетке и списке с условием ячеек не видно: " +
+                                                                              std::to_string(cells("t-grid").size()) + ", " +
+                                                                              std::to_string(cells("t-cond").size()));
                 char id[16];
                 for (int i = 1; i <= 500; ++i) {
                     std::snprintf(id, sizeof(id), "inv.t%04d", i);
@@ -743,14 +791,25 @@ private:
             }
             if (f == 13) {
                 check(!empty_shown(), "с вещами «Пусто» снова скрыто");
-                check(sc.list_cells("тест_сумка") < 30, "ячеек сделано только для видимого: " + std::to_string(sc.list_cells("тест_сумка")));
+                check(sc.list_cells("тест_сумка") < 80, "ячеек сделано только для видимого (4 списка по 500): " + std::to_string(sc.list_cells("тест_сумка")));
                 check(cells("t-items").size() >= 6 && cells("t-items").front() == "t0001: 1", "500 вещей: " + cells("t-items").front());
+                // 200 px high, 44 a row: 5 rows of 3 in sight.
+                check(cells("t-grid").size() == 15 && columns("t-grid") == 3, "сетка снова заполнена: " + std::to_string(cells("t-grid").size()));
+                // Cells hidden while the list was empty come back under their own condition: t0001 (one) stays hidden.
+                const std::vector<std::string> cond = cells("t-cond");
+                check(!cond.empty() && cond.front() == "t0002" && std::find(cond.begin(), cond.end(), "t0001") == cond.end(),
+                      "после пустого списка условие ячейки снова действует: " + joined(cond));
+                if (Rml::Element* grid = s.find_element("t-grid")) grid->SetProperty("width", "260px");
                 if (Rml::Element* box = s.find_element("t-items")) box->SetScrollTop(4000); // 4000 / 44: the 91st first
             }
             if (f == 15) {
                 const std::vector<std::string> now = cells("t-items");
                 check(!now.empty() && now.front() == "t0091: 91", "после прокрутки сверху t0091: " + (now.empty() ? std::string() : now.front()));
-                check(sc.list_cells("тест_сумка") < 30, "после прокрутки ячеек столько же: " + std::to_string(sc.list_cells("тест_сумка")));
+                check(sc.list_cells("тест_сумка") < 80, "после прокрутки ячеек всё так же мало: " + std::to_string(sc.list_cells("тест_сумка")));
+                check(cells("t-grid").size() == 10 && columns("t-grid") == 2, "уже сетка: 5 рядов по 2, а не " +
+                                                                                 std::to_string(cells("t-grid").size()));
+                // Scrolled to the end: the last row is short (500 = 249 rows of 2 and 2), no extra cells.
+                if (Rml::Element* grid = s.find_element("t-grid")) grid->SetScrollTop(100000);
                 // A click on a cell acts on the element it shows now.
                 Rml::Element* box = s.find_element("t-items");
                 Rml::Element* hit = box ? s.context()->GetElementAtPoint(box->GetAbsoluteOffset(Rml::BoxArea::Border) + Rml::Vector2f(190, 60)) : nullptr;
@@ -759,8 +818,17 @@ private:
             if (f == 17) {
                 // 4000 + 60 = 4060 / 44: the 93rd (t0093).
                 check(said.size() == 1 && said[0] == "взял t0093", "нажатие пришло от своей ячейки: " + (said.empty() ? std::string("ничего") : said[0]));
+                const std::vector<std::string> end = cells("t-grid");
+                check(!end.empty() && end.back() == "t0500" && std::count(end.begin(), end.end(), "t0500") == 1,
+                      "в конце сетки последняя вещь одна и последняя: " + joined(end));
+                s.vars().set("inv.t0500", 0); // the last row gets one cell shorter
             }
-            if (f < 18) return false;
+            if (f == 19) {
+                const std::vector<std::string> end = cells("t-grid");
+                check(!end.empty() && end.back() == "t0499" && std::find(end.begin(), end.end(), "t0500") == end.end(),
+                      "неполный последний ряд: лишней ячейки нет: " + joined(end));
+            }
+            if (f < 20) return false;
             char id[16];
             for (int i = 1; i <= 500; ++i) {
                 std::snprintf(id, sizeof(id), "inv.t%04d", i);

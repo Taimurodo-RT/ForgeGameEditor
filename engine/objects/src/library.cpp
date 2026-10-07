@@ -365,6 +365,24 @@ Library::Library() = default;
 fs::path Library::picture_file(const Template& t) const {
     return t.picture.empty() ? fs::path() : pictures_ / utf8_path(t.picture);
 }
+
+std::string Library::picture_in(const Template& t, const fs::path& folder) const {
+    if (t.picture.empty()) return {};
+    std::error_code ec;
+    const fs::path rel = fs::relative(picture_file(t), folder, ec);
+    if (ec || rel.empty() || *rel.begin() == "..") return {};
+    std::string out = path_to_utf8(rel);
+    std::replace(out.begin(), out.end(), '\\', '/');
+    return out;
+}
+
+std::string Library::item_of(const Template& t) const {
+    const PropDef* what = has_block(t, "pickup") ? prop_of(t, "what") : nullptr;
+    if (!what) return {};
+    std::string item = value(t, *what);
+    if (item.size() >= 2 && item.front() == '"') item = item.substr(1, item.size() - 2);
+    return item;
+}
 Library::~Library() = default;
 
 fs::path Library::sound_file(std::string_view name) const {

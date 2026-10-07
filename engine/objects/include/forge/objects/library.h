@@ -181,6 +181,10 @@ public:
     void set_pictures_folder(std::filesystem::path folder) { pictures_ = std::move(folder); }
     // The template's picture file (empty without one).
     std::filesystem::path picture_file(const Template& t) const;
+    // The same, as a path inside folder ("pictures/coin.png", with /) for
+    // pages of a game in that folder; empty without a picture or when it is
+    // not in that folder.
+    std::string picture_in(const Template& t, const std::filesystem::path& folder) const;
     // Where the sounds of templates are: "sounds" next to the kinds file,
     // unless set; a sound's file there (empty name: none).
     const std::filesystem::path& sounds_folder() const { return sounds_; }
@@ -218,6 +222,8 @@ public:
     std::vector<Part> parts_of(const Template& t) const;
     std::vector<const PropDef*> props_of(const Template& t) const;
     const PropDef* prop_of(const Template& t, std::string_view prop_id) const;
+    // The thing a pickup gives ("key", its «what»); empty for anything else.
+    std::string item_of(const Template& t) const;
     // A template with a block added (with the blocks it needs, without the
     // ones it excludes) or taken away (with the ones that need it). Not
     // stored: give it to put().

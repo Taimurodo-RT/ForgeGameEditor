@@ -114,6 +114,7 @@ struct ListView {
     Rml::Element* box = nullptr;     // scrolls
     Rml::Element* content = nullptr; // as tall as every cell together; the cells sit in it
     Rml::ElementPtr cell;            // the cell everything is cloned from
+    Rml::Element* template_element = nullptr; // the cell on the page, until make_lists() takes it out
     std::string source;
     f32 gap = 8, cx = 0, cy = 0, cw = 100, ch = 40;
     std::vector<Rml::Element*> empties; // shown while the list is empty
@@ -121,7 +122,8 @@ struct ListView {
         Rml::Element* element = nullptr;
         std::vector<Bound> bound;
         Vars vars;      // item.* over the game's
-        i64 row = -1; // the element it shows (-1: hidden)
+        i64 row = -1; // the element it shows (-1: none)
+        bool shown = false; // in sight (else display: none)
         u64 seen = ~0ull;
         f32 left = -1, top = -1;
     };
@@ -234,8 +236,14 @@ struct GameScreens::Impl : Rml::EventListener {
             if (p.appear_time <= 0) p.appear_time = 0.25f;
         }
         bind_layer(p.name, e, p.bound);
-        int first = 0;
-        if (e->HasAttribute("forge-list") && e->GetNumChildren() > 0) {
+        // The cell is the list's first element (a page written with line
+        // breaks has text between them); the elements after it show when
+        // the list is empty.
+        Rml::Element* cell = nullptr;
+        if (e->HasAttribute("forge-list"))
+            for (int i = 0; i < e->GetNumChildren() && !cell; ++i)
+                if (e->GetChild(i)->GetTagName() != "#text") cell = e->GetChild(i);
+        if (cell) {
             auto list = std::make_unique<ListView>();
             list->box = e;
             list->source = attr("forge-list");
@@ -243,18 +251,22 @@ struct GameScreens::Impl : Rml::EventListener {
             std::sscanf(attr("forge-cell").c_str(), "%f %f %f %f", &list->cx, &list->cy, &list->cw, &list->ch);
             list->cw = std::max(list->cw, 1.0f);
             list->ch = std::max(list->ch, 1.0f);
-            for (int i = 1; i < e->GetNumChildren(); ++i) list->empties.push_back(e->GetChild(i));
+            list->template_element = cell;
+            for (int i = 0; i < e->GetNumChildren(); ++i)
+                if (e->GetChild(i) != cell && e->GetChild(i)->GetTagName() != "#text") list->empties.push_back(e->GetChild(i));
             p.lists.push_back(std::move(list));
-            first = 1; // the cell is not on the page: its copies are
         }
-        for (int i = first; i < e->GetNumChildren(); ++i) scan(p, e->GetChild(i));
+        // The cell is not on the page: its copies are.
+        for (int i = 0; i < e->GetNumChildren(); ++i)
+            if (e->GetChild(i) != cell) scan(p, e->GetChild(i));
     }
 
     // The cells come out of the page and an empty box takes their place;
     // update() fills it.
     void make_lists(Page& p) {
         for (auto& l : p.lists) {
-            l->cell = l->box->RemoveChild(l->box->GetChild(0));
+            l->cell = l->box->RemoveChild(l->template_element);
+            l->template_element = nullptr;
             Rml::ElementPtr content = p.doc->CreateElement("div");
             content->SetProperty("display", "block");
             content->SetProperty("position", "relative");
@@ -378,6 +390,7 @@ struct GameScreens::Impl : Rml::EventListener {
             clone->SetProperty("position", "absolute");
             clone->SetProperty("margin", "0px");
             clone->SetProperty("pointer-events", "auto");
+            clone->SetProperty("display", "none"); // shown when it gets an element
             c->element = l.content->AppendChild(std::move(clone));
             auto visit = [&](auto&& rec, Rml::Element* e) -> void {
                 bind_layer(p.name, e, c->bound);
@@ -392,13 +405,22 @@ struct GameScreens::Impl : Rml::EventListener {
             ListView::Cell& c = *l.cells[static_cast<usize>(i)];
             const i64 row = i < want ? first * cols + i : -1;
             if (row < 0 || row >= n) {
-                if (c.row != -1) {
-                    c.row = -1;
+                c.row = -1;
+                if (c.shown) {
+                    c.shown = false;
                     c.element->SetProperty("display", "none");
                 }
                 continue;
             }
-            if (c.row == -1) c.element->RemoveProperty("display");
+            bool refill = row != c.row || data_changed || c.seen != v.version();
+            if (!c.shown) {
+                // Back in sight: shown, then its layers' conditions apply again
+                // (the cell's own show-if too, which also sets display).
+                c.shown = true;
+                c.element->RemoveProperty("display");
+                for (Bound& b : c.bound) b.shown = -1;
+                refill = true;
+            }
             const f32 left = l.cx + static_cast<f32>(row % cols) * step_x, top = l.cy + static_cast<f32>(row / cols) * step_y;
             char buf[48];
             if (left != c.left) {
@@ -411,7 +433,7 @@ struct GameScreens::Impl : Rml::EventListener {
                 std::snprintf(buf, sizeof(buf), "%.2fpx", static_cast<double>(top));
                 c.element->SetProperty("top", buf);
             }
-            if (row != c.row || data_changed || c.seen != v.version()) {
+            if (refill) {
                 c.row = row;
                 c.seen = v.version();
                 c.vars.set_parent(&v);
