@@ -43,6 +43,8 @@ tools/webcompat/run.sh build out [python]   # нужны Node с Playwright и P
 | Раскладка | сетка `display: grid` (шаблоны, области, `repeat`/`auto-fill`/`auto-fit`, растяжение на несколько ячеек, авторазмещение), `flex: 1` как в браузере, схлопывание отступов родителя и ребёнка, таблицы с авто-шириной колонок |
 | Псевдоэлементы | `::before`/`::after` с `content`, `attr()` и escape-последовательностями, `::marker`, `::first-letter`; маркеры списков рисуются фигурами размером как в Chromium |
 | Фон | несколько слоёв: линейные, радиальные и конические градиенты, картинки (PNG, SVG, `data:`), `background-size`/`-position`/`-repeat` для всех слоёв |
+| Рисованные рамки | `border-image` и все его части (`-source`, `-slice` с `fill`, `-width`, `-outset`, `-repeat`: `stretch`/`repeat`/`round`/`space`); картинка режется на девять частей, углы не тянутся (`ElementBorderImage`) |
+| Маски | `mask`, `mask-image` (картинки, `data:`, градиенты), `mask-size`/`-position`/`-repeat`, приставка `-webkit-` (декоратор `forge-mask`) |
 | Эффекты | размытые `box-shadow` и `text-shadow`, `filter` (в том числе `drop-shadow()`), все 16 режимов `mix-blend-mode` (свой шейдер наложения), прозрачность группой как в браузере |
 | Трансформации | `transform`, `transform-origin` и `perspective-origin` с ключевыми словами в любом порядке |
 | Цвета | все 148 именованных цветов CSS |

@@ -3202,6 +3202,40 @@ private:
             key(SDLK_1, SDL_KMOD_SHIFT);
             check(ue().zoom() < 1 && ue().zoom() > 0.2f, "Shift+1 fits the screen again");
             break;
+        case 9:
+            // The screen's own settings, with nothing selected.
+            ue().select({});
+            check(ue().set_property("screen.font_size", "30") && ue().screen().text.size == 30 &&
+                      ue_file(".html").find("font-size: 30px") != std::string::npos,
+                  "the screen's text size goes to the page");
+            check(ue().set_property("screen.safe", "40") && ue().screen().safe == 40, "the safe area is set");
+            break;
+        case 10: {
+            check(shown("ue-screen-font"), "with nothing selected the panel shows the screen's settings");
+            check(shown("ue-safe"), "the safe area is drawn");
+            // Drawn art on a button: a frame picture, a mask, a tiled texture.
+            const u32 button = ue_named("Кнопка «Новая игра»");
+            ue().select({button});
+            check(button && ue().set_property("frame.add", "") && ue_node(button)->frame.image == "pictures/интерфейс/рамка_дерево.png",
+                  "a frame picture is added to a button");
+            check(std::filesystem::exists(ed_.ui_game_dir / utf8_path("pictures/интерфейс/рамка_дерево.png")),
+                  "the sample pictures are in the game");
+            check(ue_node(button)->frame.slice[0] == 32, "the sample frame comes with its cut");
+            check(ue_file(".html").find("border-image-source") != std::string::npos, "the frame is on the page");
+            check(ue().set_property("mask.add", "") && ue_file(".html").find("mask-image") != std::string::npos, "a mask is added");
+            const usize fill = ue_node(button)->fills.size();
+            check(ue().set_property("fill.add", "") && ue().set_property("fill." + std::to_string(fill) + ".kind", "image") &&
+                      ue().set_property("fill." + std::to_string(fill) + ".image", "pictures/интерфейс/камень.png") &&
+                      ue().set_property("fill." + std::to_string(fill) + ".fit", "tile") &&
+                      ue().set_property("fill." + std::to_string(fill) + ".tile", "32"),
+                  "a tiled texture is set");
+            check(ue_file(".html").find("32px auto") != std::string::npos, "the tiles' size is on the page");
+            const auto box = ue().layer_box(button);
+            check(box && box->w > 100, "the button is still laid out");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(ue_node(button)->fills.size() == fill + 1 && ue_node(button)->fills[fill].tile == 0, "undo takes back a step");
+            break;
+        }
         default:
             ue_step_ = -1;
             return true;

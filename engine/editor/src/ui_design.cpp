@@ -37,6 +37,8 @@ const char* const kDecorations[] = {"none", "underline", "strike"};
 const char* const kConstraints[] = {"start", "end", "both", "center", "scale"};
 const char* const kSizings[] = {"fixed", "hug", "fill"};
 const char* const kLayouts[] = {"none", "row", "column", "wrap"};
+const char* const kArtRepeats[] = {"stretch", "repeat", "round", "space"};
+const char* const kScreenFits[] = {"expand", "fit", "stretch"};
 const char* const kNodeTypes[] = {"frame", "rectangle", "ellipse", "text", "image"};
 const char* const kTypeWords[] = {"Рамка", "Прямоугольник", "Эллипс", "Текст", "Картинка"};
 
@@ -121,6 +123,11 @@ yyjson_mut_val* write_paint(yyjson_mut_doc* doc, const Paint& p) {
     if (p.kind == PaintKind::Image) {
         yyjson_mut_obj_add_strcpy(doc, o, "image", p.image.c_str());
         yyjson_mut_obj_add_str(doc, o, "fit", word(p.fit, kFits));
+        if (p.fit == ImageFit::Tile) {
+            if (p.tile > 0) put_num(doc, o, "tile", p.tile);
+            if (p.offset_x != 0) put_num(doc, o, "offset_x", p.offset_x);
+            if (p.offset_y != 0) put_num(doc, o, "offset_y", p.offset_y);
+        }
     }
     if (p.opacity != 1) put_num(doc, o, "opacity", p.opacity);
     if (!p.visible) yyjson_mut_obj_add_bool(doc, o, "visible", false);
@@ -198,6 +205,26 @@ yyjson_mut_val* write_node(yyjson_mut_doc* doc, const Node& n) {
         }
         yyjson_mut_obj_add_val(doc, o, "effects", a);
     }
+    if (!n.frame.image.empty()) {
+        const FrameArt& f = n.frame;
+        yyjson_mut_val* fo = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, fo, "image", f.image.c_str());
+        yyjson_mut_val* slice = yyjson_mut_arr(doc);
+        for (f32 v : f.slice) yyjson_mut_arr_add_real(doc, slice, v);
+        yyjson_mut_obj_add_val(doc, fo, "slice", slice);
+        if (f.scale != 1) put_num(doc, fo, "scale", f.scale);
+        if (!f.fill) yyjson_mut_obj_add_bool(doc, fo, "fill", false);
+        if (f.repeat != ArtRepeat::Stretch) yyjson_mut_obj_add_str(doc, fo, "repeat", word(f.repeat, kArtRepeats));
+        if (!f.visible) yyjson_mut_obj_add_bool(doc, fo, "visible", false);
+        yyjson_mut_obj_add_val(doc, o, "frame", fo);
+    }
+    if (!n.mask.image.empty()) {
+        yyjson_mut_val* mo = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, mo, "image", n.mask.image.c_str());
+        yyjson_mut_obj_add_str(doc, mo, "fit", word(n.mask.fit, kFits));
+        if (!n.mask.visible) yyjson_mut_obj_add_bool(doc, mo, "visible", false);
+        yyjson_mut_obj_add_val(doc, o, "mask", mo);
+    }
     if (n.type == NodeType::Text) {
         yyjson_mut_obj_add_strcpy(doc, o, "text", n.text.c_str());
         const TextStyle& t = n.text_style;
@@ -269,6 +296,9 @@ Paint read_paint(yyjson_val* o) {
     }
     p.image = str(o, "image");
     p.fit = enum_of(o, "fit", kFits, ImageFit::Fill);
+    p.tile = std::max(num(o, "tile", 0), 0.0f);
+    p.offset_x = num(o, "offset_x", 0);
+    p.offset_y = num(o, "offset_y", 0);
     p.opacity = num(o, "opacity", 1);
     p.visible = flag(o, "visible", true);
     return p;
@@ -330,6 +360,19 @@ bool read_node(yyjson_val* o, Node& n, int depth) {
             e.visible = flag(v, "visible", true);
             n.effects.push_back(e);
         }
+    }
+    if (yyjson_val* f = yyjson_obj_get(o, "frame"); yyjson_is_obj(f)) {
+        n.frame.image = str(f, "image");
+        if (yyjson_is_arr(yyjson_obj_get(f, "slice"))) n.frame.slice = nums<4>(f, "slice");
+        n.frame.scale = std::max(num(f, "scale", 1), 0.01f);
+        n.frame.fill = flag(f, "fill", true);
+        n.frame.repeat = enum_of(f, "repeat", kArtRepeats, ArtRepeat::Stretch);
+        n.frame.visible = flag(f, "visible", true);
+    }
+    if (yyjson_val* m = yyjson_obj_get(o, "mask"); yyjson_is_obj(m)) {
+        n.mask.image = str(m, "image");
+        n.mask.fit = enum_of(m, "fit", kFits, ImageFit::Stretch);
+        n.mask.visible = flag(m, "visible", true);
     }
     n.text = str(o, "text");
     if (yyjson_val* t = yyjson_obj_get(o, "style"); yyjson_is_obj(t)) {
@@ -447,6 +490,16 @@ std::string save_screen(const Screen& screen) {
         }
         yyjson_mut_obj_add_val(doc, root, "guides", a);
     }
+    {
+        yyjson_mut_val* so = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, so, "font", screen.text.family.c_str());
+        put_num(doc, so, "font_size", screen.text.size);
+        yyjson_mut_obj_add_val(doc, so, "text_color", color_val(doc, screen.text.color));
+        yyjson_mut_obj_add_str(doc, so, "fit", word(screen.fit, kScreenFits));
+        if (screen.fit == ScreenFit::Fit) yyjson_mut_obj_add_val(doc, so, "bars", color_val(doc, screen.bars));
+        if (screen.safe > 0) put_num(doc, so, "safe", screen.safe);
+        yyjson_mut_obj_add_val(doc, root, "settings", so);
+    }
     yyjson_mut_obj_add_val(doc, root, "root", write_node(doc, screen.root));
     usize len = 0;
     char* text = yyjson_mut_write(doc, YYJSON_WRITE_PRETTY_TWO_SPACES, &len);
@@ -472,6 +525,14 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         usize i, n;
         yyjson_val* g;
         yyjson_arr_foreach(a, i, n, g) s.guides.push_back({flag(g, "vertical", true), num(g, "at", 0)});
+    }
+    if (yyjson_val* so = yyjson_obj_get(root, "settings"); yyjson_is_obj(so)) {
+        s.text.family = str(so, "font", s.text.family);
+        s.text.size = std::max(num(so, "font_size", s.text.size), 1.0f);
+        s.text.color = color_of(so, "text_color", s.text.color);
+        s.fit = enum_of(so, "fit", kScreenFits, ScreenFit::Expand);
+        s.bars = color_of(so, "bars", s.bars);
+        s.safe = std::max(num(so, "safe", 0), 0.0f);
     }
     const bool ok = read_node(yyjson_obj_get(root, "root"), s.root, 0);
     yyjson_doc_free(doc);
@@ -653,7 +714,11 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) {
                     switch (p.fit) {
                     case ImageFit::Fill: size = "cover"; position = "center"; break;
                     case ImageFit::Fit: size = "contain"; position = "center"; break;
-                    case ImageFit::Tile: repeat = "repeat"; break;
+                    case ImageFit::Tile:
+                        repeat = "repeat";
+                        if (p.tile > 0) size = px(p.tile) + " auto";
+                        position = px(p.offset_x) + " " + px(p.offset_y);
+                        break;
                     case ImageFit::Stretch: size = "100% 100%"; break;
                     }
                     break;
@@ -679,6 +744,25 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) {
         const f32 offset = s.align == StrokeAlign::Inside ? -s.width : s.align == StrokeAlign::Center ? -s.width * 0.5f : 0;
         add(css, "outline-offset", px(offset));
         break; // one stroke for now
+    }
+
+    // The frame picture: CSS border-image over the layer's own box (no border, so nothing inside moves).
+    if (!n.frame.image.empty() && n.frame.visible) {
+        const FrameArt& f = n.frame;
+        std::string widths;
+        for (f32 v : f.slice) widths += (widths.empty() ? "" : " ") + px(v * f.scale);
+        add(css, "border-image-source", "url(" + css_string("../" + f.image) + ")");
+        add(css, "border-image-slice", fmt(f.slice[0]) + " " + fmt(f.slice[1]) + " " + fmt(f.slice[2]) + " " + fmt(f.slice[3]) +
+                                           (f.fill ? " fill" : ""));
+        add(css, "border-image-width", widths);
+        add(css, "border-image-repeat", word(f.repeat, kArtRepeats));
+    }
+    if (!n.mask.image.empty() && n.mask.visible) {
+        add(css, "mask-image", "url(" + css_string("../" + n.mask.image) + ")");
+        const ImageFit fit = n.mask.fit;
+        add(css, "mask-size", fit == ImageFit::Fill ? "cover" : fit == ImageFit::Fit ? "contain" : fit == ImageFit::Tile ? "auto" : "100% 100%");
+        add(css, "mask-position", "center");
+        add(css, "mask-repeat", fit == ImageFit::Tile ? "repeat" : "no-repeat");
     }
 
     if (n.type == NodeType::Ellipse) add(css, "border-radius", "50%");
@@ -725,8 +809,8 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) {
 
     if (n.type == NodeType::Text) {
         const TextStyle& t = n.text_style;
-        add(css, "font-family", css_string(t.family));
-        add(css, "font-size", px(t.size));
+        if (!t.family.empty()) add(css, "font-family", css_string(t.family)); // else the screen's
+        if (t.size > 0) add(css, "font-size", px(t.size));
         add(css, "font-weight", std::to_string(t.weight));
         if (t.italic) add(css, "font-style", "italic");
         add(css, "line-height", t.line_height > 0 ? px(t.line_height) : "normal");
@@ -776,6 +860,9 @@ std::string screen_html(const Screen& screen, const HtmlOptions& options) {
     html += "<!-- Made by Forge «Интерфейс» from " + escape_html(screen.title) +
             ".json; changes here are overwritten. -->\n<style>\nhtml, body {\n  margin: 0;\n  width: 100%;\n  height: 100%;\n"
             "  overflow: hidden;\n}\n";
+    // The screen's texts by default.
+    html += "body {\n  font-family: " + css_string(screen.text.family) + ";\n  font-size: " + px(screen.text.size) +
+            ";\n  color: " + css_color(screen.text.color) + ";\n}\n";
     write_css(screen.root, nullptr, screen.width, screen.height, html);
     html += "</style>\n</head>\n<body>\n";
     write_elements(screen.root, html, 0);

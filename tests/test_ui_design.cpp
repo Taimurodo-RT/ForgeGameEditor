@@ -94,6 +94,68 @@ TEST_CASE("ui design: a screen survives saving and loading") {
     CHECK_FALSE(error.empty());
 }
 
+TEST_CASE("ui design: drawn art and screen settings survive saving and become CSS") {
+    Screen s = make_screen("Окно", 1280, 720);
+    s.text.family = "Exo 2";
+    s.text.size = 30;
+    s.text.color = Color{10, 20, 30, 255};
+    s.fit = ScreenFit::Fit;
+    s.bars = Color{1, 2, 3, 255};
+    s.safe = 48;
+    Node panel = rect_node(s.next_id++, 100, 100, 400, 300);
+    Paint tile;
+    tile.kind = PaintKind::Image;
+    tile.image = "pictures/камень.png";
+    tile.fit = ImageFit::Tile;
+    tile.tile = 64;
+    tile.offset_x = 5;
+    tile.offset_y = -3;
+    panel.fills.push_back(tile);
+    panel.frame.image = "pictures/рамка.png";
+    panel.frame.slice = {20, 24, 20, 24};
+    panel.frame.scale = 2;
+    panel.frame.repeat = ArtRepeat::Round;
+    panel.mask.image = "pictures/клякса.png";
+    panel.mask.fit = ImageFit::Fit;
+    s.root.children.push_back(panel);
+    Node label = rect_node(s.next_id++, 10, 10, 100, 40);
+    label.type = NodeType::Text;
+    label.text = "Привет";
+    label.text_style.family.clear(); // the screen's font
+    label.text_style.size = 0;
+    s.root.children.push_back(label);
+
+    Screen back;
+    REQUIRE(load_screen(save_screen(s), back));
+    CHECK(back.text.family == "Exo 2");
+    CHECK(back.text.size == 30);
+    CHECK(back.text.color == s.text.color);
+    CHECK(back.fit == ScreenFit::Fit);
+    CHECK(back.bars == s.bars);
+    CHECK(back.safe == 48);
+    REQUIRE(back.root.children.size() == 2);
+    CHECK(back.root.children[0].fills == panel.fills);
+    CHECK(back.root.children[0].frame == panel.frame);
+    CHECK(back.root.children[0].mask == panel.mask);
+    CHECK(back.root.children[1].text_style.family.empty());
+    CHECK(back.root.children[1].text_style.size == 0);
+
+    const std::string css = node_css(panel, &s.root, 1280, 720);
+    CHECK(contains(css, "background-size: 64px auto"));
+    CHECK(contains(css, "background-position: 5px -3px"));
+    CHECK(contains(css, "background-repeat: repeat"));
+    CHECK(contains(css, "border-image-slice: 20 24 20 24 fill"));
+    CHECK(contains(css, "border-image-width: 40px 48px 40px 48px"));
+    CHECK(contains(css, "border-image-repeat: round"));
+    CHECK(contains(css, "mask-size: contain"));
+    const std::string text_css = node_css(label, &s.root, 1280, 720);
+    CHECK_FALSE(contains(text_css, "font-family"));
+    CHECK_FALSE(contains(text_css, "font-size"));
+    const std::string html = screen_html(s);
+    CHECK(contains(html, "font-family: \"Exo 2\""));
+    CHECK(contains(html, "font-size: 30px"));
+}
+
 TEST_CASE("ui design: constraints become CSS that keeps the layer in place") {
     Node parent;
     Node n = rect_node(5, 100, 50, 200, 80);

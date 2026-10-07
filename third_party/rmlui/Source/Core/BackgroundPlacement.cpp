@@ -87,6 +87,21 @@ namespace {
 
 } // namespace
 
+String PlacementString(Element* element, const char* name)
+{
+	return BackgroundString(element, name);
+}
+
+bool ResolvePlacementLength(Element* element, const String& token, float percent_base, float& out_value)
+{
+	return ResolveBackgroundLength(element, token, percent_base, out_value);
+}
+
+StringList PlacementTokens(const String& value)
+{
+	return SplitSpaces(value);
+}
+
 bool HasBackgroundPlacement(Element* element)
 {
 	const String size = BackgroundString(element, "background-size");
@@ -96,8 +111,9 @@ bool HasBackgroundPlacement(Element* element)
 		!(repeat.empty() || repeat == "repeat");
 }
 
-bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natural, bool no_intrinsic_size, BackgroundPlacement& out)
+bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natural, bool no_intrinsic_size, BackgroundPlacement& out, const char* prefix)
 {
+	const String p = prefix;
 	if (area.x <= 0.f || area.y <= 0.f)
 		return false;
 	const bool fill_area = (natural.x <= 0.f || natural.y <= 0.f);
@@ -105,7 +121,7 @@ bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natura
 		natural = area;
 
 	// Size.
-	const StringList size_tokens = SplitSpaces(BackgroundString(element, "background-size"));
+	const StringList size_tokens = SplitSpaces(BackgroundString(element, (p + "-size").c_str()));
 	const float ratio = natural.x / natural.y;
 	Vector2f image = natural;
 	const String first = (size_tokens.empty() ? String("auto") : size_tokens[0]);
@@ -132,7 +148,7 @@ bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natura
 		return false;
 
 	// Position: keywords, percentages and lengths, also with edge offsets such as 'right 0.75rem center'.
-	const StringList position_tokens = SplitSpaces(BackgroundString(element, "background-position"));
+	const StringList position_tokens = SplitSpaces(BackgroundString(element, (p + "-position").c_str()));
 	float position[2] = {0.f, 0.f};
 	{
 		struct Part {
@@ -175,7 +191,7 @@ bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natura
 	}
 
 	// Repeat.
-	const String repeat = BackgroundString(element, "background-repeat");
+	const String repeat = BackgroundString(element, (p + "-repeat").c_str());
 	bool repeat_x = true, repeat_y = true;
 	if (repeat == "no-repeat" || repeat == "no-repeat no-repeat")
 		repeat_x = repeat_y = false;
@@ -206,9 +222,9 @@ void GenerateBackgroundTiles(Mesh& mesh, Vector2f origin, Vector2f area, const B
 	const float start_y = first_tile(placement.position.y, image.y, placement.repeat_y);
 	const int max_tiles = 4096;
 	int count = 0;
-	for (float y = start_y; y < area.y && count < max_tiles; y += image.y)
+	for (float y = start_y; y < area.y - 0.01f && count < max_tiles; y += image.y)
 	{
-		for (float x = start_x; x < area.x && count < max_tiles; x += image.x)
+		for (float x = start_x; x < area.x - 0.01f && count < max_tiles; x += image.x)
 		{
 			// Clip the tile to the painting area.
 			const Vector2f p0 = {Math::Max(x, 0.f), Math::Max(y, 0.f)};

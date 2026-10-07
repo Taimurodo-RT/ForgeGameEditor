@@ -14,6 +14,8 @@ public:
 	/// @param texture[in] The texture to apply to the tile.
 	/// @return True if the image is valid, false otherwise.
 	bool Initialise(const Tile& tile, Texture texture);
+	/// Forge: as a CSS mask image, placed by mask-size, -position and -repeat.
+	void SetMask(bool value) { mask = value; }
 
 	/// Called on a decorator to generate any required per-element data for a newly decorated element.
 	DecoratorDataHandle GenerateElementData(Element* element, BoxArea paint_area) const override;
@@ -25,16 +27,20 @@ public:
 
 private:
 	Tile tile;
+	bool mask = false;
 };
 
 class DecoratorTiledImageInstancer : public DecoratorTiledInstancer {
 public:
-	DecoratorTiledImageInstancer();
+	DecoratorTiledImageInstancer(bool mask = false);
 	~DecoratorTiledImageInstancer();
 
 	/// Instances an image decorator.
 	SharedPtr<Decorator> InstanceDecorator(const String& name, const PropertyDictionary& properties,
 		const DecoratorInstancerInterface& instancer_interface) override;
+
+private:
+	bool mask;
 };
 
 } // namespace Rml

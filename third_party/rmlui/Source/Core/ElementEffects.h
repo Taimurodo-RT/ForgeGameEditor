@@ -3,6 +3,7 @@
 #include "../../Include/RmlUi/Core/CompiledFilterShader.h"
 #include "../../Include/RmlUi/Core/RenderInterface.h"
 #include "../../Include/RmlUi/Core/Types.h"
+#include "ElementBorderImage.h"
 
 namespace Rml {
 
@@ -63,6 +64,8 @@ private:
 	BlendMode blend_mode = BlendMode::Blend;
 	// Forge: in web documents, opacity below 1 renders the element in its own layer, composited with this filter.
 	CompiledFilter opacity_filter;
+	// Forge: CSS border-image, drawn over the background.
+	ElementBorderImage border_image;
 
 	// If set, a full reload is necessary.
 	bool effects_dirty = false;

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 14px; font-size: 13px; background: #f5efe4; }
+.row { display: flex; gap: 14px; margin-bottom: 14px; align-items: flex-start; }
+.t { width: 170px; height: 90px; color: #fff; padding: 6px; box-sizing: border-box; background: url(art/tile.png); }
+.t2 { background: url(art/tile.png) 5px 3px / 32px 32px; }
+.t3 { background: #334 url(art/tile.png) repeat-x 0 50% / 24px; }
+.t4 { background: url(art/tile.png) center / 48px 24px round; }
+.f { width: 170px; height: 90px; box-sizing: border-box; padding: 8px; border: 20px solid transparent; border-image: url(art/frame.png) 20 stretch; }
+.f2 { border-image: url(art/frame.png) 20 fill round; }
+.f3 { border-image: url(art/frame.png) 20 fill / 12px repeat; }
+.f4 { border-width: 10px; border-image-source: url(art/frame.png); border-image-slice: 20 fill; border-image-width: 30px; border-image-repeat: stretch space; }
+.f5 { width: 220px; height: 60px; border-image: url(art/frame.png) 33% fill / 16px / 4px stretch; }
+.m { width: 128px; height: 128px; background: linear-gradient(135deg, #f97316, #7c3aed); mask-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABa0lEQVR4nO2b2xLCIAxEo+P//7I+4XSUS0KATdKcx9op2WVJcUQiHG/g2F9egDFNCC88Do1TE31q7C67E2BqtmvsMMC86CsrYygRbiL+RPoEuJrtGrMGuBdekBgQRvSVp+DeVevWzPonmivmVBKOGKUZBLEklpuifSCqLywzYsWD0M1RpUHSBK2imgBvPWCEWM9sAiyKJ5qoS+qYVeE1WNokCfAknohZL9cAb+ILw7ojvAVUcAzwOvuFbv0jA7yLLzR19AyIIr5Q1ZM9oHE92uwX/nRlAtAFoKltF3fHn7NFPVbD7ROQBqALQJMGoAtAkwagC0BzewNam5Ko3wWIfjTfPgFpQOO6qZ+wF/KnKxPQ+SxaCqp6RgmIYkJTB2cJeDehW3/2AOZ9XlMwrBtxSuwUrHpnRVneKos0zfYAq2kQ1xXhkBSRQseKtwA6DarxdxR/IhGmzgm22GGEuZOiUlz+qSJJkiRJkiQkH9wBJmZoyVi9AAAAAElFTkSuQmCC); mask-size: 100% 100%; }
+.m2 { width: 170px; height: 90px; background: #0ea5e9; mask: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABa0lEQVR4nO2b2xLCIAxEo+P//7I+4XSUS0KATdKcx9op2WVJcUQiHG/g2F9egDFNCC88Do1TE31q7C67E2BqtmvsMMC86CsrYygRbiL+RPoEuJrtGrMGuBdekBgQRvSVp+DeVevWzPonmivmVBKOGKUZBLEklpuifSCqLywzYsWD0M1RpUHSBK2imgBvPWCEWM9sAiyKJ5qoS+qYVeE1WNokCfAknohZL9cAb+ILw7ojvAVUcAzwOvuFbv0jA7yLLzR19AyIIr5Q1ZM9oHE92uwX/nRlAtAFoKltF3fHn7NFPVbD7ROQBqALQJMGoAtAkwagC0BzewNam5Ko3wWIfjTfPgFpQOO6qZ+wF/KnKxPQ+SxaCqp6RgmIYkJTB2cJeDehW3/2AOZ9XlMwrBtxSuwUrHpnRVneKos0zfYAq2kQ1xXhkBSRQseKtwA6DarxdxR/IhGmzgm22GGEuZOiUlz+qSJJkiRJkiQkH9wBJmZoyVi9AAAAAElFTkSuQmCC) center / 64px 64px no-repeat; }
+.m3 { width: 170px; height: 90px; background: #16a34a; -webkit-mask-image: linear-gradient(to right, #000, transparent); }
+</style></head><body>
+<div class="row"><div class="t">tile</div><div class="t t2">tile 32 offset</div><div class="t t3">repeat-x</div><div class="t t4">round</div></div>
+<div class="row"><div class="f">stretch</div><div class="f f2">fill round</div><div class="f f3">width 12 repeat</div><div class="f f4">longhands</div></div>
+<div class="row"><div class="f f5">outset</div></div>
+<div class="row"><div class="m"></div><div class="m2"></div><div class="m3"></div></div>
+</body></html>
