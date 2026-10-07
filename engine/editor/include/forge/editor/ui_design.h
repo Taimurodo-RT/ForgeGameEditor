@@ -27,6 +27,12 @@
 // plain HTML and CSS, so everything the UI engine can draw from the web is
 // available, and the page can be read and checked in a browser.
 //
+// Components (a button made once, used on every screen) live in the game's
+// library, ui/components.json: see Node::component. A component's variants
+// that name a state (Наведение, Нажата, Выключена) become the instance's
+// look in that state on the page: a button drawn with pictures for each
+// state just works.
+//
 // The snapping helpers at the end are the canvas's: they move a box so that
 // its edges or middle line up with the screen's and other layers', and say
 // which guide lines to draw.
@@ -37,6 +43,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace forge::editor::design {
@@ -71,6 +78,7 @@ struct Paint {
     f32 offset_x = 0, offset_y = 0; // Tile: where the tiles start
     f32 opacity = 1;
     bool visible = true;
+    std::string style; // Solid: the key of a colour of the game's (Screen::colors), followed when it changes
     bool operator==(const Paint&) const = default;
 };
 
@@ -141,6 +149,7 @@ struct TextStyle {
     TextCase text_case = TextCase::None;
     TextDecoration decoration = TextDecoration::None;
     Color color{255, 255, 255, 255};
+    std::string style; // the key of a text style of the game's (Screen::text_styles), followed when it changes
     bool operator==(const TextStyle&) const = default;
 };
 
@@ -196,6 +205,19 @@ struct Node {
 
     std::vector<Node> children; // frames, drawn first to last (last on top)
 
+    // Components. In the game's library (a screen of its own, Screen::library)
+    // every layer at the top is a variant of a component: component is the
+    // component's name and variant its values ({"Состояние", "Наведение"}).
+    // On a screen, a copy of a component (an instance) has component and
+    // variant set at its top; it and every layer inside it keep the id of the
+    // library layer they copy (master), and the fields the author changed
+    // here (overrides: "text", "fills", ...) survive when the component
+    // changes.
+    std::string component;
+    std::vector<std::pair<std::string, std::string>> variant;
+    u32 master = 0;
+    std::vector<std::string> overrides;
+
     bool is_container() const { return type == NodeType::Frame; }
 };
 
@@ -204,6 +226,18 @@ struct Guide {
     bool vertical = true; // a vertical line at x = position
     f32 position = 0;
     bool operator==(const Guide&) const = default;
+};
+
+// key: what layers refer to it by (stays when it is renamed); name: what the author sees.
+struct NamedColor {
+    std::string key, name;
+    Color color;
+    bool operator==(const NamedColor&) const = default;
+};
+struct NamedTextStyle {
+    std::string key, name;
+    TextStyle style;
+    bool operator==(const NamedTextStyle&) const = default;
 };
 
 // How a screen meets a player's screen of another size. Expand: scaled by the
@@ -219,10 +253,17 @@ struct Screen {
     std::vector<Guide> guides;
     u32 next_id = 1;
     // The screen's settings.
-    TextStyle text{"Onest", 24, 400, false, 0, 0, {}, {}, {}, {255, 255, 255, 255}}; // its texts' font, size and colour by default
+    TextStyle text{"Onest", 24, 400, false, 0, 0, {}, {}, {}, {255, 255, 255, 255}, {}}; // its texts' font, size and colour by default
     ScreenFit fit = ScreenFit::Expand;
     Color bars{0, 0, 0, 255}; // Fit: the bars' colour
     f32 safe = 0;             // the safe margin along every edge (pixels): what matters stays inside
+    bool library = false;     // the game's components (ui/components.json), not a screen the game shows
+    // The library's game styles: named colours and text styles that layers on
+    // every screen can use (Paint::style, TextStyle::style); changing one
+    // changes them all.
+    std::vector<NamedColor> colors;
+    std::vector<NamedTextStyle> text_styles;
+    u32 next_style_id = 1; // persisted: deleted styles must never acquire new owners
 };
 
 // A new screen with an empty root frame.
@@ -230,6 +271,7 @@ Screen make_screen(std::string title, f32 width, f32 height);
 
 std::string save_screen(const Screen& screen);
 bool load_screen(std::string_view json, Screen& out, std::string* error = nullptr);
+std::string fresh_style_key(Screen& library, bool color);
 
 // --- the tree ---
 Node* find(Node& root, u32 id);
@@ -245,10 +287,65 @@ void renumber(Screen& screen, Node& node);
 // "Прямоугольник 3": the type's word and the next free number on the screen.
 std::string fresh_name(const Screen& screen, NodeType type);
 
+// --- components ---
+// One component of the library: its variants (library layer ids, in order)
+// and its properties with the values the variants use.
+struct ComponentProperty {
+    std::string name;
+    std::vector<std::string> values;
+};
+struct Component {
+    std::string name;
+    std::vector<u32> variants;
+    std::vector<ComponentProperty> properties;
+};
+std::vector<Component> components(const Screen& library);
+const Component* find_component(const std::vector<Component>& list, std::string_view name);
+// The library layer for these values: the variant matching most of them
+// (the first variant when none match); nullptr for an unknown component.
+const Node* find_variant(const Screen& library, std::string_view component,
+                         const std::vector<std::pair<std::string, std::string>>& values);
+// The value of a property in a variant list ("" when missing).
+std::string variant_value(const std::vector<std::pair<std::string, std::string>>& values, std::string_view property);
+void set_variant_value(std::vector<std::pair<std::string, std::string>>& values, const std::string& property,
+                       const std::string& value);
+// A copy of a component for screen (fresh ids from screen.next_id); nullopt
+// for an unknown component.
+std::optional<Node> make_instance(Screen& screen, const Screen& library, std::string_view component,
+                                  const std::vector<std::pair<std::string, std::string>>& values = {});
+// Brings an instance up to date with its component (its variant's layers,
+// with the author's overrides kept); true when anything changed.
+bool sync_instance(Screen& screen, Node& instance, const Screen& library);
+// Every instance on the screen; true when anything changed.
+bool sync_instances(Screen& screen, const Screen& library);
+// Gives the layers that use the library's colours and text styles their
+// current values; true when anything changed.
+bool apply_styles(Screen& screen, const Screen& library);
+
+// The override a design panel field belongs to ("fill.0.color" -> "fills",
+// "w" -> "size"); empty for fields that are not kept (place, name).
+std::string override_of(std::string_view field);
+// Turns an instance back into plain layers.
+void detach(Node& instance);
+// The top of the instance holding id (the instance itself for its top);
+// nullptr when id is not in an instance.
+const Node* instance_of(const Node& root, u32 id);
+// The states of a button that a variant property can name, with the page's
+// selector for them: "Наведение" -> ":hover", "Нажата" -> ":active",
+// "Выключена" -> ".disabled", "Выбрана" -> ".selected", "Фокус" -> ":focus".
+// Empty for anything else (the usual look).
+std::string state_selector(std::string_view value);
+// The property of a component that switches states (the one whose values
+// name states), or "".
+std::string state_property(const Component& component, const Screen& library);
+
 // --- the page the game shows ---
 struct HtmlOptions {
     // Stylesheets linked before the screen's own styles (fonts, a game theme).
     std::vector<std::string> stylesheets;
+    // The game's components: instances whose component has states (hover,
+    // pressed...) get the other variants' looks for them.
+    const Screen* library = nullptr;
 };
 std::string screen_html(const Screen& screen, const HtmlOptions& options = {});
 // The CSS of one layer (what the page's <style> holds for it), for tests and
