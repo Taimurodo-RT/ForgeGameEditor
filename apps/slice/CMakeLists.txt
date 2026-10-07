@@ -27,7 +27,7 @@ install(FILES $<TARGET_FILE:forge_slice> DESTINATION . RENAME OldMine${CMAKE_EXE
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
         COMPONENT slice)
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/ui/forge-ui ${PROJECT_SOURCE_DIR}/ui/fonts ${PROJECT_SOURCE_DIR}/ui/game
-                  ${PROJECT_SOURCE_DIR}/ui/slice
+                  ${PROJECT_SOURCE_DIR}/ui/slice ${PROJECT_SOURCE_DIR}/ui/web
         DESTINATION data/ui COMPONENT slice)
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/slice/ DESTINATION data/game COMPONENT slice)
 add_custom_target(forge_slice_package
