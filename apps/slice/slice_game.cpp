@@ -240,6 +240,7 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
         });
     });
     L->scripts = std::make_unique<script::ScriptHost>(*L->sim, *L->scene);
+    L->scripts->set_user(script::kGameBridge, bridge_.get());
     L->links = std::make_unique<logic::Runtime>(*L->scripts, library_, *logic_);
     L->links->load(links_, verbs_);
     L->links->attach(*L->scene);
@@ -280,6 +281,26 @@ public:
 
 private:
     SliceGame& g_;
+};
+
+// Scripts and schemes reach the game's variables and screens through this.
+class ShellBridge final : public script::GameBridge {
+public:
+    explicit ShellBridge(game::Shell& shell) : s_(shell) {}
+    f64 var(std::string_view name, std::string* text) override {
+        const game::Value v = s_.vars().get(name);
+        if (text && v.is_text()) *text = v.text();
+        return v.number();
+    }
+    void set_var(std::string_view name, f64 number) override { s_.vars().set(name, number); }
+    void set_text(std::string_view name, std::string_view text) override { s_.vars().set(name, std::string(text)); }
+    void screen(std::string_view what, std::string_view name) override {
+        if (what == "toggle") s_.screens().toggle(name);
+        else s_.screens().show(name, what == "show");
+    }
+
+private:
+    game::Shell& s_;
 };
 
 void SliceGame::note_fired(u32 link) {
@@ -497,6 +518,11 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     pictures_.update(library_, make_sheet(), sheet_);
     sounds_.init(library_.sounds_folder(), options_.silent);
     logic_ = std::make_unique<SliceLogic>(*this);
+    bridge_ = std::make_unique<ShellBridge>(shell);
+    // A button's «Сообщение логике» goes to every scheme listening nearby.
+    shell.on_message = [this](const std::string& message) {
+        if (level_ && level_->scripts) level_->scripts->send(0, message);
+    };
     things_.push_back(logic::hero_thing());
     for (const objects::Template& t : library_.templates()) things_.push_back(logic::thing_of(library_, t));
     overlay_.set_allowed(options_.edit_links);
@@ -611,6 +637,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
         hs.x = options_.at_x;
         hs.y = options_.at_y - kHeroHalfH;
     }
+    shell_->vars().set("hero.hearts_max", kHearts); // for a screen's bar of hearts
     if (new_game) {
         shell_->vars().set("hero.hearts", kHearts);
         shell_->vars().set("inv.torch", 5);

@@ -13,10 +13,14 @@
 //   game.json             {"title": "...", "org": "...", "theme": "fantasy", "autosave_minutes": 5}
 //   dialogues/*.json      dialogues (dialogue.h); the file name is the id
 //   quests.json           quests (quests.h)
+//   ui/*.html             the game's own screens from the editor's
+//                         «Интерфейс» (screens.h): a HUD, windows, a main
+//                         menu in place of the usual one
 
 #include "forge/game/dialogue.h"
 #include "forge/game/quests.h"
 #include "forge/game/saves.h"
+#include "forge/game/screens.h"
 #include "forge/game/vars.h"
 
 #include <SDL3/SDL_events.h>
@@ -122,6 +126,11 @@ public:
     bool in_dialogue() const;
     // A short message at the top of the screen for a few seconds.
     void toast(std::string text);
+    // The game's own screens (ui/*.html).
+    GameScreens& screens() { return *screens_; }
+    // A button's «Сообщение логике»: the game passes it to its logic (the
+    // schemes «При сообщении» with that name).
+    std::function<void(const std::string& message)> on_message;
     f64 playtime() const { return playtime_; }
 
     // --- for menus, tests and the offscreen runner ---
@@ -156,6 +165,8 @@ private:
     void load_game_data();
     bool begin(std::string_view slot_id);
     void end_dialogue();
+    void start_loading(std::function<void()> work);
+    void screen_action(const ScreenAction& action);
     Value call(std::string_view name, const std::vector<Value>& args);
 
     Game* game_ = nullptr;
@@ -178,6 +189,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Dialogue>> dialogues_;
     std::unordered_map<std::string, CallFn> calls_;
     std::unique_ptr<DialogueRunner> runner_;
+    std::unique_ptr<GameScreens> screens_;
     std::vector<std::string> data_errors_;
 
     Screen screen_ = Screen::Main;

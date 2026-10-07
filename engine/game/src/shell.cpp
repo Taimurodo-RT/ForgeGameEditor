@@ -90,6 +90,7 @@ struct Shell::Model {
     std::vector<Rml::String> d_choices;
     std::vector<Rml::String> toasts;
     Rml::String fps, playtime;
+    bool own_menu = false; // the game's main menu (ui/) instead of this one
 
     std::vector<Toast> toast_list;
     u64 seen_vars = ~0ull;
@@ -144,6 +145,9 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     if (!ui_->load_document(context_, "game/shell.rml")) return false;
     if (!game.init(*this, device, format)) return false;
     load_game_data(); // after the game defined the functions dialogues may call
+    screens_ = std::make_unique<GameScreens>();
+    screens_->on_action = [this](const ScreenAction& a, const std::string&) { screen_action(a); };
+    screens_->load(context_, config_.game_dir, window != nullptr && config.dev);
     apply_settings(settings_);
     show(Screen::Main);
     return true;
@@ -155,6 +159,7 @@ void Shell::shutdown() {
     game_->shutdown();
     game_ = nullptr;
     if (runner_) runner_->stop();
+    screens_.reset(); // its pages live in the UI's context
     if (ui_) ui_->shutdown();
     context_ = nullptr;
 }
@@ -196,6 +201,48 @@ void Shell::load_game_data() {
         for (const std::string& err : errors) data_errors_.push_back("задания: " + err);
     }
     for (const std::string& err : data_errors_) FORGE_ERROR("%s", err.c_str());
+}
+
+void Shell::start_loading(std::function<void()> work) {
+    show(Screen::Loading);
+    model_->pending = std::move(work);
+    model_->pending_frames = 1;
+}
+
+// What a button on one of the game's screens does, beyond showing and hiding
+// screens (GameScreens does that itself).
+void Shell::screen_action(const ScreenAction& a) {
+    const std::string& t = a.target;
+    if (a.what == "message") {
+        if (on_message) on_message(t);
+        else FORGE_INFO("сообщение логике: %s", t.c_str());
+    } else if (a.what == "change") {
+        std::string error;
+        const Expr e = Expr::parse_actions(t, &error);
+        if (!error.empty()) FORGE_WARN("кнопка: «%s» не читается: %s", t.c_str(), error.c_str());
+        else e.run(vars_, [this](std::string_view n, const std::vector<Value>& args) { return call(n, args); });
+    } else if (a.what == "talk") {
+        if (!talk(t)) FORGE_WARN("разговор «%s» не начался", t.c_str());
+    } else if (a.what == "pause") pause(true);
+    else if (a.what == "resume") pause(false);
+    else if (a.what == "menu") to_main_menu();
+    else if (a.what == "quit") quit_ = true;
+    else if (a.what == "new") start_loading([this] { new_game(); });
+    else if (a.what == "continue") {
+        if (!slots_->list().empty()) start_loading([this] { if (!continue_game()) show(Screen::Main); });
+    } else if (a.what == "load" || a.what == "save") {
+        if (a.what == "save" && !game_->running()) return;
+        if (a.what == "load" && slots_->list().empty()) {
+            toast("Сохранений пока нет");
+            return;
+        }
+        model_->slots_mode = a.what;
+        if (screen_ != Screen::Slots) back_ = screen_;
+        show(Screen::Slots);
+    } else if (a.what == "settings") {
+        back_ = screen_;
+        show(Screen::Settings);
+    } else FORGE_WARN("кнопка: неизвестное действие «%s»", a.what.c_str());
 }
 
 void Shell::define(const std::string& name, CallFn fn) { calls_[name] = std::move(fn); }
@@ -344,6 +391,7 @@ void Shell::to_main_menu() {
         game_->end();
     }
     runner_->stop();
+    screens_->hide_commands();
     show(Screen::Main);
 }
 
@@ -399,7 +447,9 @@ bool Shell::handle_event(const SDL_Event& e) {
     }
     switch (screen_) {
     case Screen::Playing:
-        if (k == SDLK_ESCAPE) pause(true);
+        if (k == SDLK_ESCAPE) {
+            if (!screens_->close_top()) pause(true); // a window of the game's closes first
+        }
         else if (k == SDLK_J) {
             back_ = Screen::Playing;
             show(Screen::Journal);
@@ -436,8 +486,13 @@ void Shell::update(f64 dt) {
         since_autosave_ += dt;
         if (autosave_s_ > 0 && since_autosave_ >= autosave_s_ && !in_dialogue()) save("autosave", "Автосохранение", true);
     }
+    // A window of the game's may stop the world while it is open.
+    const bool stopped = playing && screens_->pauses();
     // A game that is not running draws its menu backdrop.
-    game_->update(dt, playing || !game_->running(), playing && !in_dialogue());
+    game_->update(dt, (playing && !stopped) || !game_->running(), playing && !stopped && !in_dialogue());
+    const bool in_game = game_->running() && screen_ != Screen::Main && screen_ != Screen::Loading;
+    screens_->update(vars_, in_game, screen_ == Screen::Main, static_cast<int>(width_), static_cast<int>(height_),
+                     [this](std::string_view n, const std::vector<Value>& args) { return call(n, args); });
     for (Toast& t : m.toast_list) t.left -= dt;
     std::erase_if(m.toast_list, [](const Toast& t) { return t.left <= 0; });
     m.fps_avg = m.fps_avg == 0 ? dt : m.fps_avg * 0.95 + dt * 0.05;
@@ -519,16 +574,13 @@ void Shell::bind_model() {
     c.Bind("toasts", &m.toasts);
     c.Bind("fps", &m.fps);
     c.Bind("playtime", &m.playtime);
+    c.Bind("own_menu", &m.own_menu);
 
     auto on = [&](const char* name, std::function<void(Rml::Event&, const Rml::VariantList&)> fn) {
         c.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
     };
     auto arg_str = [](const Rml::VariantList& a, usize i) { return i < a.size() ? a[i].Get<Rml::String>() : Rml::String(); };
-    auto loading = [this](std::function<void()> work) {
-        show(Screen::Loading);
-        model_->pending = std::move(work);
-        model_->pending_frames = 1;
-    };
+    auto loading = [this](std::function<void()> work) { start_loading(std::move(work)); };
 
     on("new_game", [this, loading](Rml::Event&, const Rml::VariantList&) { loading([this] { new_game(); }); });
     on("continue_game", [this, loading](Rml::Event&, const Rml::VariantList&) { loading([this] { if (!continue_game()) show(Screen::Main); }); });
@@ -621,6 +673,7 @@ void Shell::refresh_model() {
         }
     };
     set(m.screen, Rml::String(screen_key(screen_)));
+    set(m.own_menu, screens_ && screens_->has_menu());
     set(m.title, Rml::String(title_));
 
     if (m.slots_dirty) {

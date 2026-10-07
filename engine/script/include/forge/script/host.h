@@ -155,6 +155,8 @@ public:
     bool run(std::string_view source, std::string* error = nullptr);
 
     // A message for an entity's on_message, delivered at the next tick.
+    // to = 0: to every scripted entity running then (a button's «Сообщение
+    // логике»).
     void send(flecs::entity_t to, std::string_view message, f64 value = 0, flecs::entity_t from = 0);
 
     // Per-node time of graphs compiled with CompileOptions::profile, slowest
@@ -194,6 +196,22 @@ private:
     std::vector<std::pair<std::string, void*>> users_;
     ScriptStats stats_;
     f64 world_time_ = 0;
+};
+
+// What scripts reach of the game around the world: its variables (the ones
+// dialogues, quests, saves and screens use: "hero.hearts", "inv.coins") and
+// its screens. The game sets it with set_user(kGameBridge, &bridge); without
+// one, variables read 0 and screens do nothing.
+inline constexpr std::string_view kGameBridge = "game";
+class GameBridge {
+public:
+    virtual ~GameBridge() = default;
+    // A number, or a text (text set): what the variable holds.
+    virtual f64 var(std::string_view name, std::string* text) = 0;
+    virtual void set_var(std::string_view name, f64 number) = 0;
+    virtual void set_text(std::string_view name, std::string_view text) = 0;
+    // "show", "hide" or "toggle" a screen by its name.
+    virtual void screen(std::string_view what, std::string_view name) = 0;
 };
 
 // The engine's own functions (log, wait, entities, variables, time…).

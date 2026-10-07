@@ -184,6 +184,14 @@ int FontFaceHandleDefault::GetStringWidth(StringView in_string, const TextShapin
 	return Math::Max((int)Math::Round(width + word_spacing), 0);
 }
 
+// Forge: effects parsed from the same text (type and values) have the same fingerprint and draw the same.
+static bool SameFontEffect(const FontEffect* a, const FontEffect* b)
+{
+	if (a == b)
+		return true;
+	return a && b && a->GetFingerprint() != 0 && a->GetFingerprint() == b->GetFingerprint();
+}
+
 int FontFaceHandleDefault::GenerateLayerConfiguration(const FontEffectList& font_effects)
 {
 	if (font_effects.empty())
@@ -211,7 +219,9 @@ int FontFaceHandleDefault::GenerateLayerConfiguration(const FontEffectList& font
 
 			// If the ith layer's effect doesn't match the equivalent effect, then this
 			// configuration can't match.
-			if (configuration[i]->GetFontEffect() != font_effects[effect_index].get())
+			// Forge: an equal effect from another document (same fingerprint) matches too, so reloading
+			// a document doesn't add a configuration each time.
+			if (!SameFontEffect(configuration[i]->GetFontEffect(), font_effects[effect_index].get()))
 				break;
 
 			// Check the next one ...
@@ -557,8 +567,10 @@ FontFaceLayer* FontFaceHandleDefault::GetOrCreateLayer(const SharedPtr<const Fon
 {
 	// Search for the font effect layer first, it may have been instanced before as part of a different configuration.
 	const FontEffect* font_effect_ptr = font_effect.get();
-	auto it =
-		std::find_if(layers.begin(), layers.end(), [font_effect_ptr](const EffectLayerPair& pair) { return pair.font_effect == font_effect_ptr; });
+	// Forge: by fingerprint too: each document instances its own effects, and a layer per instance
+	// grew memory every time a page with text-shadow was reloaded.
+	auto it = std::find_if(layers.begin(), layers.end(),
+		[font_effect_ptr](const EffectLayerPair& pair) { return SameFontEffect(pair.font_effect, font_effect_ptr); });
 
 	if (it != layers.end())
 		return it->layer.get();

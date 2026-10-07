@@ -4,7 +4,11 @@
 body {
     width: 100%;
     height: 100%;
+    /* Clicks go through to the game's own screens and the world, except
+       where a menu or the dialogue box is. */
+    pointer-events: none;
 }
+.screen, .dialogue-layer { pointer-events: auto; }
 
 .screen {
     position: absolute;

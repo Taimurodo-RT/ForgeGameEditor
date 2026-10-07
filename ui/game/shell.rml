@@ -15,7 +15,7 @@
 <body data-model="shell">
 
     <!-- Main menu over the game's backdrop -->
-    <div id="main-menu" class="screen menu-screen" data-if="screen == 'main'">
+    <div id="main-menu" class="screen menu-screen" data-if="screen == 'main' &amp;&amp; !own_menu">
         <div class="menu-column">
             <div class="game-title">{{ title }}</div>
             <div class="menu-list">

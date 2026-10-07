@@ -363,6 +363,27 @@ public:
         story_tab.init(ui_, story_dir);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
+        // What screens can show: the game's values in the author's words.
+        ui_tab.game_values = [this] {
+            std::vector<std::pair<std::string, std::string>> out = {
+                {"hero.hearts", "Сердца героя"}, {"hero.hearts_max", "Сердец всего"}, {"inv.coins", "Монеты"}, {"inv.copper", "Медь"}};
+            const objects::Library& lib = *level_module.library();
+            for (const objects::Template& t : lib.templates()) {
+                if (!lib.has_block(t, "pickup")) continue;
+                const objects::PropDef* what = lib.prop_of(t, "what");
+                if (!what) continue;
+                std::string item = lib.value(t, *what);
+                if (item.size() >= 2 && item.front() == '"') item = item.substr(1, item.size() - 2);
+                if (!item.empty()) out.emplace_back("inv." + item, t.name);
+            }
+            for (const game::Quest& q : story_tab.quests().quests())
+                if (!q.var.empty()) out.emplace_back(q.var, "Задание «" + q.title + "»");
+            std::vector<std::pair<std::string, std::string>> unique;
+            for (auto& [name, label] : out)
+                if (std::none_of(unique.begin(), unique.end(), [&](const auto& u) { return u.first == name; }))
+                    unique.emplace_back(name, label + " · " + name);
+            return unique;
+        };
         // The «Интерфейс» tab draws game screens in a context of its own (after the editor's: F8 inspects the editor).
         if (!context_ || !ui_tab.init(ui_, ui_game_dir) || !bind_model()) return false;
         ui::register_list_source("hierarchy", &hierarchy);
@@ -3097,12 +3118,14 @@ private:
         for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x0 + (x1 - x0) * static_cast<f32>(i) / 4, y0 + (y1 - y0) * static_cast<f32>(i) / 4);
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x1, y1);
     }
-    std::string ue_file(const char* ext) {
+    std::string ue_file(const char* ext, const std::string& name = "main_menu") {
         std::vector<u8> bytes;
-        read_file(ed_.ui_game_dir / "ui" / ("main_menu" + std::string(ext)), bytes);
+        read_file(ed_.ui_game_dir / "ui" / (name + std::string(ext)), bytes);
         return std::string(bytes.begin(), bytes.end());
     }
     u32 ue_inst_ = 0;
+    std::string ue_other_; // a second screen, a window the menu opens
+    u32 ue_bar_ = 0;
     const editor::design::Node* ue_node(u32 id) { return editor::design::find(ue().screen().root, id); }
     bool ui_step() {
         namespace d = editor::design;
@@ -3365,6 +3388,75 @@ private:
                 check(ue_node(ue_inst_)->w == resized, "redo restores the copy's resized width");
                 check(ue().open("main_menu") && ue_node(ue_inst_)->w == resized, "the copy's size survives reopening");
             }
+            break;
+        }
+        case 18: {
+            // The link to the game: a window the first button opens.
+            ue_other_ = ue().new_screen();
+            ue().select({});
+            check(ue().set_property("screen.show", "command") && ue().set_property("screen.pauses", "") &&
+                      ue().screen().show == d::ScreenShow::Command && ue().screen().pauses,
+                  "a screen becomes a window that stops the game");
+            check(ue_file(".html", ue_other_).find("forge-screen=\"command\" forge-fit=\"expand\"") != std::string::npos &&
+                      ue_file(".html", ue_other_).find("forge-pauses=\"1\"") != std::string::npos,
+                  "the window's page says so");
+            check(ue().open("main_menu"), "back to the menu");
+            ue().select({ue_named("Кнопка «Новая игра»")});
+            check(click("ue-tab-game"), "the panel's «В игре» tab");
+            break;
+        }
+        case 19: {
+            check(shown("ue-click-add") && !shown("ue-fill-add"), "the tab shows what the layer does in the game");
+            // The game's own menu may come without actions; a new one's button starts a game.
+            while (!ue_node(ue_named("Кнопка «Новая игра»"))->on_click.empty())
+                if (!ue().set_property("click.0.remove", "")) break;
+            check(ue_node(ue_named("Кнопка «Новая игра»"))->on_click.empty(), "the button's actions go");
+            check(click("ue-click-add"), "an action is added");
+            const d::Node* exit = ue_node(ue_named("Кнопка «Новая игра»"));
+            check(exit && exit->on_click.size() == 1 && exit->on_click[0].kind == d::ActionKind::Show &&
+                      exit->on_click[0].target == ue_other_,
+                  "a new action opens the other screen");
+            check(ue().set_property("click.add", "") && ue().set_property("click.1.kind", "change") &&
+                      ue().set_property("click.1.target", "inv.coins += 5"),
+                  "a second action changes the coins");
+            ue().select({ue_named("Название игры")});
+            check(ue().set_property("text.insert", "inv.coins") && ue_node(ue_named("Название игры"))->text == "Старая шахта {inv.coins}",
+                  "a value of the game goes into the text");
+            ue_bar_ = ue().add_layer(d::NodeType::Rectangle, 100, 950, 400, 30);
+            check(ue().set_property("bar.add", "") && ue().set_property("show_if", "inv.coins > 7") &&
+                      ue_node(ue_bar_)->bar.value == "hero.hearts",
+                  "a rectangle becomes a bar shown with enough coins");
+            const std::string html = ue_file(".html");
+            check(html.find("forge-click=\"[[&quot;show&quot;,&quot;" + ue_other_ + "&quot;],[&quot;change&quot;,&quot;inv.coins += 5&quot;]]\"") !=
+                          std::string::npos &&
+                      html.find("forge-text=\"Старая шахта {inv.coins}\"") != std::string::npos &&
+                      html.find("forge-bar-value=\"hero.hearts\"") != std::string::npos &&
+                      html.find("forge-show-if=\"inv.coins &gt; 7\"") != std::string::npos,
+                  "the page carries the clicks, the text, the bar and the condition");
+            ue().select({});
+            check(click("ue-check"), "«Проверить»");
+            break;
+        }
+        case 20: {
+            check(ue().checking() && shown("ue-check-var-0"), "the check shows the values the screen reads");
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* title_el = page ? page->GetElementById(Rml::String("n") + std::to_string(title)) : nullptr;
+            check(title_el && title_el->GetInnerRML() == "Старая шахта 5", "the title shows the coins");
+            Rml::Element* bar = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_bar_)) : nullptr;
+            check(bar && !bar->IsVisible(true), "the bar waits for enough coins");
+            const auto box = ue().layer_box(ue_named("Кнопка «Новая игра»"));
+            check(box.has_value(), "the button is on the canvas");
+            if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
+            break;
+        }
+        case 21: {
+            check(ue().check_vars().get("inv.coins").number() == 10, "the click changed the coins");
+            check(ue().opened() == ue_other_, "and opened the window on the canvas");
+            check(ue().check_log().size() == 2, "the panel lists what the button did");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().checking(), "Esc ends the check");
+            check(ue().open("main_menu"), "back to the menu");
+            ue().set_panel("design");
             break;
         }
         default:
@@ -4183,6 +4275,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
 int main(int argc, char** argv) {
     AppConfig config;
     config.title = "Forge — редактор";
+    config.background_fps = 30; // leave the PC to the game the user starts next to the editor
     config.shader_formats = render::supported_shader_formats();
     EditorApp app;
     const char* screenshot = nullptr;

@@ -22,6 +22,7 @@
 #include "forge/core/path.h"
 #include "forge/game/runner.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 
 #include <SDL3/SDL_main.h> // the window-only entry point on Windows
@@ -554,6 +555,82 @@ private:
             }
             if (f < 114) return false;
             check(!o.on(), "F2 ещё раз — обратно к игре");
+            return true;
+        }});
+        // Screens drawn in «Интерфейс» (written here by hand, as the editor
+        // writes them): a HUD with data in it and a window a button opens.
+        steps_.push_back({"экраны игры", 60, [&s, this](u32 f) {
+            static int messages = 0;
+            GameScreens& sc = s.screens();
+            auto shown = [&](const char* id) {
+                Rml::Element* e = s.find_element(id);
+                return e && e->IsVisible(true);
+            };
+            if (f == 0) {
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y); // scale 1: clicks land where the boxes are
+                const std::string hud =
+                    "<html><head><style>body, #t-root { pointer-events: none; } #t-root > div { pointer-events: auto; }</style></head>"
+                    "<body><div id=\"t-root\" forge-screen=\"playing\" forge-fit=\"expand\" forge-size=\"" + dims + "\">"
+                    "<div id=\"t-coins\" forge-text=\"Монеты: {inv.coins}\">?</div>"
+                    "<div id=\"t-bar\" style=\"position: absolute; left: 0; top: 40px; width: 200px; height: 20px; background: red;\" "
+                    "forge-bar-value=\"hero.hearts\" forge-bar-max=\"hero.hearts_max\" forge-bar-from=\"left\"></div>"
+                    "<div id=\"t-key\" forge-show-if=\"inv.key &gt; 0\">ключ</div>"
+                    "<div id=\"t-open\" style=\"position: absolute; left: 300px; top: 100px; width: 120px; height: 40px; background: #333;\" "
+                    "forge-click=\"[[&quot;show&quot;,&quot;тест_окно&quot;]]\">Открыть</div>"
+                    "</div></body></html>";
+                const std::string window =
+                    "<html><head><style>body, #t-window { pointer-events: none; } #t-window > div { pointer-events: auto; }</style></head>"
+                    "<body><div id=\"t-window\" forge-screen=\"command\" forge-pauses=\"1\" forge-size=\"" + dims + "\">"
+                    "<div id=\"t-buy\" style=\"position: absolute; left: 300px; top: 300px; width: 120px; height: 40px; background: #353;\" "
+                    "forge-click=\"[[&quot;change&quot;,&quot;inv.coins += 5&quot;],[&quot;message&quot;,&quot;купил&quot;],[&quot;close&quot;,&quot;&quot;]]\">Купить</div>"
+                    "</div></body></html>";
+                check(sc.load_page(s.context(), "тест_hud", hud, "test/ui/тест_hud.html"), "экран HUD строится");
+                check(sc.load_page(s.context(), "тест_окно", window, "test/ui/тест_окно.html"), "окно строится");
+                s.vars().set("inv.coins", 7);
+                s.vars().set("inv.key", 0);
+                s.vars().set("hero.hearts", 5);
+                s.on_message = [](const std::string& m) { if (m == "купил") ++messages; };
+            }
+            if (f == 3) {
+                Rml::Element* coins = s.find_element("t-coins");
+                check(coins && coins->GetInnerRML() == "Монеты: 7", "текст показывает монеты: " + (coins ? coins->GetInnerRML() : std::string("нет")));
+                check(shown("t-bar") && !shown("t-key"), "полоска видна, ключа без ключа нет");
+                check(!shown("t-buy"), "окно пока скрыто");
+                s.vars().set("hero.hearts", 1);
+                s.vars().set("inv.key", 1);
+            }
+            if (f == 5) {
+                Rml::Element* bar = s.find_element("t-bar");
+                check(bar && bar->GetLocalProperty("mask-image"), "полоска обрезана по сердцам");
+                check(shown("t-key"), "с ключом ключ виден");
+                check(click(s, "t-open"), "кнопка нажимается");
+            }
+            if (f == 7) {
+                check(sc.shown("тест_окно") && shown("t-buy"), "кнопка открыла окно");
+                check(sc.pauses(), "окно ставит мир на паузу");
+                check(click(s, "t-buy"), "кнопка в окне нажимается");
+            }
+            if (f == 9) {
+                check(s.vars().get("inv.coins").number() == 12, "покупка изменила монеты");
+                check(messages == 1, "логика получила сообщение");
+                check(!sc.shown("тест_окно"), "окно закрылось");
+                Rml::Element* coins = s.find_element("t-coins");
+                check(coins && coins->GetInnerRML() == "Монеты: 12", "текст следит за монетами");
+                sc.show("тест_окно", true);
+            }
+            if (f == 11) {
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_KEY_DOWN;
+                ev.key.key = SDLK_ESCAPE;
+                ev.key.down = true;
+                s.handle_event(ev);
+                check(!sc.shown("тест_окно") && s.screen() == forge::game::Screen::Playing, "Esc закрывает окно, а не игру");
+            }
+            if (f < 13) return false;
+            sc.remove("тест_hud");
+            sc.remove("тест_окно");
+            s.on_message = nullptr;
             return true;
         }});
         // Where the picture is taken.

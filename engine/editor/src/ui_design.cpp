@@ -42,6 +42,10 @@ const char* const kLayouts[] = {"none", "row", "column", "wrap"};
 const char* const kArtRepeats[] = {"stretch", "repeat", "round", "space"};
 const char* const kScreenFits[] = {"expand", "fit", "stretch"};
 const char* const kNodeTypes[] = {"frame", "rectangle", "ellipse", "text", "image"};
+const char* const kBarFroms[] = {"left", "right", "bottom", "top"};
+const char* const kActions[] = {"show", "hide", "toggle", "close", "message", "change", "talk", "pause", "resume",
+                                "menu", "quit", "new", "continue", "load", "save", "settings"};
+const char* const kScreenShows[] = {"playing", "command", "menu"};
 const char* const kTypeWords[] = {"Рамка", "Прямоугольник", "Эллипс", "Текст", "Картинка"};
 
 int hex_digit(char c) {
@@ -249,6 +253,24 @@ yyjson_mut_val* write_node(yyjson_mut_doc* doc, const Node& n) {
         yyjson_mut_obj_add_strcpy(doc, o, "text", n.text.c_str());
         yyjson_mut_obj_add_val(doc, o, "style", write_text_style(doc, n.text_style));
     }
+    if (!n.show_if.empty()) yyjson_mut_obj_add_strcpy(doc, o, "show_if", n.show_if.c_str());
+    if (!n.bar.value.empty()) {
+        yyjson_mut_val* bo = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_strcpy(doc, bo, "value", n.bar.value.c_str());
+        yyjson_mut_obj_add_strcpy(doc, bo, "max", n.bar.max.c_str());
+        yyjson_mut_obj_add_str(doc, bo, "from", word(n.bar.from, kBarFroms));
+        yyjson_mut_obj_add_val(doc, o, "bar", bo);
+    }
+    if (!n.on_click.empty()) {
+        yyjson_mut_val* a = yyjson_mut_arr(doc);
+        for (const Action& act : n.on_click) {
+            yyjson_mut_val* ao = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_str(doc, ao, "do", word(act.kind, kActions));
+            if (!act.target.empty()) yyjson_mut_obj_add_strcpy(doc, ao, "target", act.target.c_str());
+            yyjson_mut_arr_append(a, ao);
+        }
+        yyjson_mut_obj_add_val(doc, o, "on_click", a);
+    }
     if (!n.component.empty()) yyjson_mut_obj_add_strcpy(doc, o, "component", n.component.c_str());
     if (!n.variant.empty()) {
         yyjson_mut_val* vo = yyjson_mut_obj(doc);
@@ -412,6 +434,21 @@ bool read_node(yyjson_val* o, Node& n, int depth) {
     if (yyjson_val* t = yyjson_obj_get(o, "style"); yyjson_is_obj(t)) {
         read_text_style(t, n.text_style);
     }
+    n.show_if = str(o, "show_if");
+    if (yyjson_val* b = yyjson_obj_get(o, "bar"); yyjson_is_obj(b)) {
+        n.bar.value = str(b, "value");
+        n.bar.max = str(b, "max", "100");
+        n.bar.from = enum_of(b, "from", kBarFroms, BarFrom::Left);
+    }
+    if (yyjson_val* a = yyjson_obj_get(o, "on_click"); yyjson_is_arr(a)) {
+        usize i, count;
+        yyjson_val* v;
+        yyjson_arr_foreach(a, i, count, v) {
+            if (!yyjson_is_obj(v)) continue;
+            const std::optional<ActionKind> kind = parse_action(str(v, "do"));
+            if (kind) n.on_click.push_back({*kind, str(v, "target")});
+        }
+    }
     n.component = str(o, "component");
     if (yyjson_val* vo = yyjson_obj_get(o, "variant"); yyjson_is_obj(vo)) {
         yyjson_val *key, *value;
@@ -494,6 +531,12 @@ std::string color_hex(Color c) {
 
 const char* blend_css(Blend b) { return word(b, kBlends); }
 const char* node_type_name(NodeType t) { return word(t, kNodeTypes); }
+const char* action_word(ActionKind k) { return word(k, kActions); }
+std::optional<ActionKind> parse_action(std::string_view text) {
+    for (usize i = 0; i < std::size(kActions); ++i)
+        if (text == kActions[i]) return static_cast<ActionKind>(i);
+    return std::nullopt;
+}
 
 Screen make_screen(std::string title, f32 width, f32 height) {
     Screen s;
@@ -538,6 +581,11 @@ std::string save_screen(const Screen& screen) {
         yyjson_mut_obj_add_str(doc, so, "fit", word(screen.fit, kScreenFits));
         if (screen.fit == ScreenFit::Fit) yyjson_mut_obj_add_val(doc, so, "bars", color_val(doc, screen.bars));
         if (screen.safe > 0) put_num(doc, so, "safe", screen.safe);
+        if (!screen.library) {
+            yyjson_mut_obj_add_str(doc, so, "show", word(screen.show, kScreenShows));
+            if (screen.pauses) yyjson_mut_obj_add_bool(doc, so, "pauses", true);
+            if (!screen.esc_closes) yyjson_mut_obj_add_bool(doc, so, "esc_closes", false);
+        }
         yyjson_mut_obj_add_val(doc, root, "settings", so);
     }
     if (!screen.colors.empty()) {
@@ -597,6 +645,11 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         s.fit = enum_of(so, "fit", kScreenFits, ScreenFit::Expand);
         s.bars = color_of(so, "bars", s.bars);
         s.safe = std::max(num(so, "safe", 0), 0.0f);
+        // Screens made before the game showed them: only on command, so
+        // none appears over the game by surprise.
+        s.show = enum_of(so, "show", kScreenShows, ScreenShow::Command);
+        s.pauses = flag(so, "pauses", false);
+        s.esc_closes = flag(so, "esc_closes", true);
     }
     if (yyjson_val* a = yyjson_obj_get(root, "colors"); yyjson_is_arr(a)) {
         usize i, n;
@@ -750,6 +803,11 @@ void keep_override(Node& to, const Node& from, std::string_view field) {
     else if (field == "blend") to.blend = from.blend;
     else if (field == "frame") to.frame = from.frame;
     else if (field == "mask") to.mask = from.mask;
+    else if (field == "game") {
+        to.show_if = from.show_if;
+        to.bar = from.bar;
+        to.on_click = from.on_click;
+    }
     else if (field == "layout") {
         to.layout = from.layout;
         to.clip = from.clip;
@@ -979,6 +1037,7 @@ std::string override_of(std::string_view field) {
     if (starts("radius")) return "radius";
     if (starts("frame.")) return "frame";
     if (starts("mask.")) return "mask";
+    if (field == "show_if" || starts("bar.") || starts("click")) return "game";
     if (field == "opacity" || field == "blend" || field == "visible" || field == "text" || field == "name")
         return std::string(field);
     if (field == "family" || field == "size" || field == "weight" || field == "italic" || field == "line_height" ||
@@ -1338,10 +1397,80 @@ void write_states(const Screen& screen, const Screen& library, std::string& css)
     visit(visit, screen.root, nullptr, screen.width, screen.height);
 }
 
-void write_elements(const Node& n, std::string& html, int depth) {
+// A JSON string literal (for the click attribute).
+std::string json_string(std::string_view text) {
+    std::string out = "\"";
+    for (char c : text) {
+        if (c == '"' || c == '\\') out += '\\';
+        if (static_cast<unsigned char>(c) < 0x20) {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+            out += buf;
+            continue;
+        }
+        out += c;
+    }
+    return out + "\"";
+}
+
+// What the game reads off a layer while it runs (forge::game::GameScreens):
+// forge-text (a text with variables in it), forge-show-if, forge-bar-*,
+// forge-click (a JSON list of [what, target]).
+void write_game_attributes(const Node& n, std::string& html) {
+    auto attr = [&](const char* name, std::string_view value) {
+        html += std::string(" ") + name + "=\"" + escape_html(value) + "\"";
+    };
+    if (n.type == NodeType::Text && n.text.find('{') != std::string::npos) attr("forge-text", n.text);
+    if (!n.show_if.empty()) attr("forge-show-if", n.show_if);
+    if (!n.bar.value.empty()) {
+        attr("forge-bar-value", n.bar.value);
+        attr("forge-bar-max", n.bar.max);
+        attr("forge-bar-from", word(n.bar.from, kBarFroms));
+    }
+    if (!n.on_click.empty()) {
+        std::string list = "[";
+        for (const Action& a : n.on_click) {
+            if (list.size() > 1) list += ",";
+            list += "[" + json_string(action_word(a.kind)) + "," + json_string(a.target) + "]";
+        }
+        attr("forge-click", list + "]");
+    }
+}
+
+// Layers that show something (or do something when clicked) take the mouse in
+// the game; the rest of a screen lets clicks through to the world under it.
+bool takes_mouse(const Node& n) {
+    if (!n.on_click.empty() || n.type == NodeType::Text || n.type == NodeType::Image) return true;
+    if (!n.frame.image.empty() && n.frame.visible) return true;
+    for (const Paint& p : n.fills)
+        if (p.visible && p.opacity > 0 && (p.kind != PaintKind::Solid || p.color.a > 0)) return true;
+    for (const Stroke& st : n.strokes)
+        if (st.visible && st.width > 0 && st.color.a > 0) return true;
+    return false;
+}
+void mouse_layers(const Node& n, std::string& list) {
+    if (takes_mouse(n)) {
+        if (!list.empty()) list += ", ";
+        list += "#n" + std::to_string(n.id);
+    }
+    for (const Node& c : n.children) mouse_layers(c, list);
+}
+
+void write_elements(const Node& n, std::string& html, int depth, const Screen* screen = nullptr) {
     html.append(static_cast<usize>(depth) * 2, ' ');
     html += "<div id=\"n" + std::to_string(n.id) + "\" class=\"" + node_type_name(n.type) + "\" title=\"" +
-            escape_html(n.name) + "\">";
+            escape_html(n.name) + "\"";
+    if (screen) { // the root: how the game shows the screen
+        char size[64];
+        std::snprintf(size, sizeof(size), "%g %g", static_cast<double>(screen->width), static_cast<double>(screen->height));
+        html += std::string(" forge-screen=\"") + word(screen->show, kScreenShows) + "\" forge-fit=\"" +
+                word(screen->fit, kScreenFits) + "\" forge-size=\"" + size + "\"";
+        if (screen->fit == ScreenFit::Fit) html += " forge-bars=\"" + color_hex(screen->bars) + "\"";
+        if (screen->pauses) html += " forge-pauses=\"1\"";
+        if (!screen->esc_closes) html += " forge-esc=\"0\"";
+    }
+    write_game_attributes(n, html);
+    html += ">";
     if (n.type == NodeType::Text) {
         html += escape_html(n.text);
     } else if (!n.children.empty()) {
@@ -1367,8 +1496,16 @@ std::string screen_html(const Screen& screen, const HtmlOptions& options) {
             ";\n  color: " + css_color(screen.text.color) + ";\n}\n";
     write_css(screen.root, nullptr, screen.width, screen.height, html);
     if (options.library && !screen.library) write_states(screen, *options.library, html);
+    if (!screen.library) {
+        // Over the world only what shows something takes the mouse (the
+        // screen itself is see-through for clicks).
+        std::string list;
+        for (const Node& c : screen.root.children) mouse_layers(c, list);
+        html += "body, #n" + std::to_string(screen.root.id) + " {\n  pointer-events: none;\n}\n";
+        if (!list.empty()) html += list + " {\n  pointer-events: auto;\n}\n";
+    }
     html += "</style>\n</head>\n<body>\n";
-    write_elements(screen.root, html, 0);
+    write_elements(screen.root, html, 0, screen.library ? nullptr : &screen);
     html += "</body>\n</html>\n";
     return html;
 }
