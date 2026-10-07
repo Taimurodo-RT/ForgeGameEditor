@@ -3850,8 +3850,7 @@ private:
         case 40: {
             const std::vector<std::string>& log = ue().check_log();
             check(log.size() == ue_log_size_ + 1 && log.back() == "Сообщение «Логике»: взял " + ue_expect_,
-                  ("the click on 4:3 after scrolling acts on its own thing: " + (log.empty() ? std::string("ничего") : log.back()) +
-                   " (ждали " + ue_expect_ + ")").c_str());
+                  ("the click on 4:3 after scrolling acts on its own thing: " + ue_log_since(ue_log_size_) + " (ждали " + ue_expect_ + ")").c_str());
             ue().set_checking(false);
             check(click("ue-view-0"), "back to «Макет»");
             break;
@@ -4228,6 +4227,13 @@ private:
         if (!bar || index >= bar->GetNumChildren()) return false;
         bar->GetChild(index)->Click();
         return true;
+    }
+    // What «Проверить» wrote since a count of lines, joined (for a failure's message).
+    std::string ue_log_since(usize from) {
+        const std::vector<std::string>& log = ue().check_log();
+        std::string out = std::to_string(log.size() - std::min(from, log.size())) + " строк:";
+        for (usize i = std::min(from, log.size()); i < log.size(); ++i) out += " [" + log[i] + "]";
+        return out;
     }
     bool check(bool ok, const char* what) {
         if (ok) {
