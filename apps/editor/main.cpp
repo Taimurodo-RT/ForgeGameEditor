@@ -3140,6 +3140,14 @@ private:
     f64 ue_coins_before_ = 0;
     std::string ue_expect_; // the thing of the clicked cell
     usize ue_log_size_ = 0;
+    // The wheel over a list in «Проверить», on every size and fit.
+    int ue_wheel_ = 0, ue_wheel_phase_ = 0, ue_wheel_frames_ = 0;
+    f32 ue_wheel_top_ = -1, ue_pan_x_ = 0, ue_pan_y_ = 0;
+    struct UeSpot {
+        std::string id;
+        f32 x0, y0, x1, y1;
+    };
+    std::vector<UeSpot> ue_seen_; // where each cell stood before the wheel (page pixels)
     objects::Template ue_coins_;          // the coins before the list's picture check
     std::filesystem::path ue_pictures_; // and the pictures folder
     // A screen point in window pixels.
@@ -3697,11 +3705,17 @@ private:
                       ue().set_property("click.0.target", "inv.coins += 5"),
                   "its click adds coins");
             // A click on a cell of the list says which thing it shows.
+            // The cell is a copy of the menu's «Настройки» button and came with
+            // its «Настройки» action: the cell does one thing, so that one goes.
             ue().select({ue_cell_});
-            check(ue().set_property("click.add", "") && !ue_node(ue_cell_)->on_click.empty(), "the cell gets an action");
-            const std::string at = "click." + std::to_string(ue_node(ue_cell_)->on_click.size() - 1);
-            check(ue().set_property(at + ".kind", "message") && ue().set_property(at + ".target", "взял {item.id}"),
+            while (!ue_node(ue_cell_)->on_click.empty())
+                if (!ue().set_property("click.0.remove", "")) break;
+            check(ue_node(ue_cell_)->on_click.empty(), "the cell's copied actions go");
+            check(ue().set_property("click.add", "") && ue_node(ue_cell_)->on_click.size() == 1, "the cell gets an action");
+            check(ue().set_property("click.0.kind", "message") && ue().set_property("click.0.target", "взял {item.id}"),
                   "the cell's click tells the logic which thing");
+            check(ue_file(".html").find("forge-click=\"[[&quot;message&quot;,&quot;взял {item.id}&quot;]]\"") != std::string::npos,
+                  "the game's page gives the cell just that action");
             ue().select({});
             break;
         }
@@ -3799,63 +3813,160 @@ private:
         }
         case 37: {
             check(ue().check_vars().get("inv.coins").number() == ue_coins_before_ + 5, "the click on 4:3 hit the layer where it shows");
-            // Things to fill the list, more than it shows.
-            for (const game::ScreenItem& t : ed_.ui_tab.game_items()) ue().check_vars().set("inv." + t.id, 1);
             break;
         }
         case 38: {
-            Rml::ElementDocument* page = ue().page();
-            Rml::Element* box = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_list_)) : nullptr;
-            check(box && box->GetScrollHeight() > box->GetClientHeight() + 1, "the list scrolls");
-            if (box) box->SetScrollTop(98); // one row down
-            break;
-        }
-        case 39: {
-            // A cell in sight after scrolling: clicked where the canvas shows it.
+            // The wheel over the list, as the player turns it: on every size,
+            // growing, whole with bars and stretched where the sizes differ.
+            static const std::pair<int, const char*> kRuns[] = {{5, "expand"}, {5, "fit"},    {5, "stretch"}, {4, "expand"}, {4, "fit"},
+                                                                {4, "stretch"}, {1, "expand"}, {2, "expand"},  {3, "expand"}};
+            if (ue_wheel_ >= static_cast<int>(std::size(kRuns))) break;
+            const auto [view, fit] = kRuns[ue_wheel_];
+            const std::string run = std::string(editor_app::UiEditor::view_sizes()[static_cast<usize>(view)].label) + " " + fit + ": ";
             Rml::ElementDocument* page = ue().page();
             Rml::Element* box = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_list_)) : nullptr;
             Rml::Element* content = box ? box->GetFirstChild() : nullptr;
             const game::ScreenFit f = ue().view_fit();
-            ue_expect_.clear();
-            const std::vector<game::ScreenItem> things = ed_.ui_tab.game_items();
-            for (int i = 0; content && i < content->GetNumChildren() && ue_expect_.empty(); ++i) {
-                Rml::Element* c = content->GetChild(i);
-                if (c->GetComputedValues().display() == Rml::Style::Display::None) continue;
-                const Rml::Vector2f at = c->GetAbsoluteOffset(Rml::BoxArea::Border), size = c->GetBox().GetSize(Rml::BoxArea::Border);
-                const Rml::Vector2f top = box->GetAbsoluteOffset(Rml::BoxArea::Padding);
-                if (at.y < top.y + 1 || at.y + size.y > top.y + box->GetClientHeight()) continue; // not wholly in sight
+            // The thing a cell shows, by its text.
+            auto thing_of = [&](Rml::Element* c) {
                 Rml::ElementList texts;
                 c->QuerySelectorAll(texts, "[forge-text]");
                 const std::string text = texts.empty() ? std::string() : texts[0]->GetInnerRML();
-                for (const game::ScreenItem& t : things)
+                for (const game::ScreenItem& t : ed_.ui_tab.game_items())
                     if (text.rfind(t.name + " ", 0) == 0 && text.find_first_not_of("0123456789", t.name.size() + 1) == std::string::npos)
-                        ue_expect_ = t.id;
-                if (ue_expect_.empty()) continue;
-                // Page pixels (the layout's) to the canvas; a cell another layer covers there is skipped.
-                const f32 px = at.x - f.left + size.x * 0.5f, py = at.y - f.top + size.y * 0.5f;
-                bool mine = false;
+                        return t.id;
+                return std::string();
+            };
+            // Whether the page's topmost element at a page point is (inside) this one.
+            auto on_top = [&](Rml::Element* el, f32 px, f32 py) {
                 for (Rml::Element* e = page->GetContext()->GetElementAtPoint({game::fit_to_view_x(f, px), game::fit_to_view_y(f, py)}); e;
                      e = e->GetParentNode())
-                    mine = mine || e == c;
-                if (!mine) {
-                    ue_expect_.clear();
-                    continue;
+                    if (e == el) return true;
+                return false;
+            };
+            // The cells (wholly in sight, or all), with their boxes in page pixels.
+            struct Seen {
+                Rml::Element* cell;
+                UeSpot spot;
+            };
+            auto cells = [&](bool whole) {
+                std::vector<Seen> out;
+                const Rml::Vector2f top = box->GetAbsoluteOffset(Rml::BoxArea::Padding);
+                for (int i = 0; content && i < content->GetNumChildren(); ++i) {
+                    Rml::Element* c = content->GetChild(i);
+                    if (c->GetComputedValues().display() == Rml::Style::Display::None) continue;
+                    const Rml::Vector2f at = c->GetAbsoluteOffset(Rml::BoxArea::Border), size = c->GetBox().GetSize(Rml::BoxArea::Border);
+                    if (whole && (at.y < top.y - 0.5f || at.y + size.y > top.y + box->GetClientHeight() + 0.5f)) continue;
+                    const std::string id = thing_of(c);
+                    const f32 x = at.x - f.left, y = at.y - f.top;
+                    if (!id.empty()) out.push_back({c, {id, x, y, x + size.x, y + size.y}});
                 }
-                ue_log_size_ = ue().check_log().size();
-                left_click(ue_wx(px), ue_wy(py));
+                return out;
+            };
+            auto wheel = [&](f32 x, f32 y) {
+                SDL_Event e{};
+                e.type = SDL_EVENT_MOUSE_WHEEL;
+                e.wheel.x = x;
+                e.wheel.y = y;
+                ed_.handle_event(e);
+            };
+            switch (ue_wheel_phase_) {
+            case 0: // the size and fit, then «Проверить» with more things than the list shows
+                ue().set_checking(false);
+                ue().select({});
+                if (std::string(fit) != "expand") check(ue().set_property("screen.fit", fit), (run + "the fit is set").c_str());
+                check(click("ue-view-" + std::to_string(view)) && ue().view() == view, (run + "the size is chosen").c_str());
+                ue().set_checking(true);
+                for (const game::ScreenItem& t : ed_.ui_tab.game_items()) ue().check_vars().set("inv." + t.id, 1);
+                ue_wheel_phase_ = 1;
+                return true;
+            case 1: {
+                check(box && box->GetScrollHeight() > box->GetClientHeight() + 1 && box->GetScrollTop() == 0,
+                      (run + "the list scrolls, from the top").c_str());
+                if (!box) break;
+                ue_seen_.clear();
+                for (const Seen& c : cells(false)) ue_seen_.push_back(c.spot);
+                // A point of the list no other layer covers.
+                const Rml::Vector2f at = box->GetAbsoluteOffset(Rml::BoxArea::Padding);
+                f32 px = -1, py = -1;
+                for (int j = 1; j < 8 && px < 0; ++j)
+                    for (int i = 1; i < 8 && px < 0; ++i) {
+                        const f32 x = at.x - f.left + box->GetClientWidth() * static_cast<f32>(i) / 8;
+                        const f32 y = at.y - f.top + box->GetClientHeight() * static_cast<f32>(j) / 8;
+                        if (on_top(box, x, y)) px = x, py = y;
+                    }
+                check(px >= 0, (run + "a point of the list in sight").c_str());
+                ue_pan_x_ = ue().to_canvas_x(0);
+                ue_pan_y_ = ue().to_canvas_y(0);
+                mouse(SDL_EVENT_MOUSE_MOTION, ue_wx(px), ue_wy(py));
+                wheel(1, 0);  // sideways: the list has nowhere to go, and the canvas must not move
+                wheel(0, -1); // one notch down
+                check(ue().to_canvas_x(0) == ue_pan_x_ && ue().to_canvas_y(0) == ue_pan_y_,
+                      (run + "the wheel does not move the canvas").c_str());
+                ue_wheel_top_ = -1;
+                ue_wheel_frames_ = 0;
+                ue_wheel_phase_ = 2;
+                return true;
             }
-            check(!ue_expect_.empty(), "a cell wholly in sight after scrolling");
+            case 2: {
+                // The page scrolls over a few frames: wait until it stands.
+                const f32 top = box ? box->GetScrollTop() : 0;
+                if ((top <= 0 || top != ue_wheel_top_) && ++ue_wheel_frames_ < 240) {
+                    ue_wheel_top_ = top;
+                    return true;
+                }
+                check(top > 0, (run + "the wheel scrolled the list: " + std::to_string(top)).c_str());
+                check(box && box->GetScrollLeft() == 0, (run + "and not sideways").c_str());
+                // A cell in sight where, before the wheel, another thing stood:
+                // clicked where the canvas shows it now.
+                ue_expect_.clear();
+                f32 cx = 0, cy = 0;
+                for (const Seen& c : cells(true)) {
+                    const f32 x = (c.spot.x0 + c.spot.x1) * 0.5f, y = (c.spot.y0 + c.spot.y1) * 0.5f;
+                    std::string before;
+                    for (const UeSpot& s : ue_seen_)
+                        if (x >= s.x0 && x < s.x1 && y >= s.y0 && y < s.y1) before = s.id;
+                    if (before != c.spot.id && on_top(c.cell, x, y)) ue_expect_ = c.spot.id, cx = x, cy = y; // the lowest
+                }
+                check(!ue_expect_.empty(), (run + "a cell in sight where another thing stood before the wheel").c_str());
+                ue_log_size_ = ue().check_log().size();
+                if (!ue_expect_.empty()) left_click(ue_wx(cx), ue_wy(cy));
+                ue_wheel_phase_ = 3;
+                return true;
+            }
+            default: {
+                const std::vector<std::string>& log = ue().check_log();
+                check(log.size() == ue_log_size_ + 1 && log.back() == "Сообщение «Логике»: взял " + ue_expect_,
+                      (run + "the click after the wheel acts on its own thing: " + ue_log_since(ue_log_size_) + " (ждали " +
+                       ue_expect_ + ")")
+                          .c_str());
+                check(ue().to_canvas_x(0) == ue_pan_x_ && ue().to_canvas_y(0) == ue_pan_y_, (run + "the canvas stood still").c_str());
+                ue().set_checking(false);
+                if (std::string(fit) != "expand") ue().undo();
+                check(d::save_screen(ue().screen()) == ue_json_, (run + "the screen is as it was").c_str());
+                ++ue_wheel_;
+                ue_wheel_phase_ = 0;
+                return true;
+            }
+            }
+            break;
+        }
+        case 39: {
+            // On «Макет» the wheel pans the canvas, as before.
+            check(!ue().checking() && click("ue-view-0"), "back to «Макет»");
+            const f32 y0 = ue().to_canvas_y(0);
+            mouse(SDL_EVENT_MOUSE_MOTION, ue_wx(960), ue_wy(540));
+            SDL_Event e{};
+            e.type = SDL_EVENT_MOUSE_WHEEL;
+            e.wheel.y = -1;
+            ed_.handle_event(e);
+            check(ue().to_canvas_y(0) != y0, "on «Макет» the wheel pans the canvas");
+            e.wheel.y = 1;
+            ed_.handle_event(e);
+            check(ue().to_canvas_y(0) == y0, "and back");
             break;
         }
         case 40: {
-            const std::vector<std::string>& log = ue().check_log();
-            check(log.size() == ue_log_size_ + 1 && log.back() == "Сообщение «Логике»: взял " + ue_expect_,
-                  ("the click on 4:3 after scrolling acts on its own thing: " + ue_log_since(ue_log_size_) + " (ждали " + ue_expect_ + ")").c_str());
-            ue().set_checking(false);
-            check(click("ue-view-0"), "back to «Макет»");
-            break;
-        }
-        case 41: {
             check(ue().view() == 0 && !shown("ue-view-note"), "«Макет» again");
             Rml::ElementDocument* page = ue().page();
             const Rml::Vector2i dims = page ? page->GetContext()->GetDimensions() : Rml::Vector2i();
@@ -3872,7 +3983,7 @@ private:
             check(click("ue-view-3"), "2560×1440");
             break;
         }
-        case 42: {
+        case 41: {
             // 2560×1440: the same proportions, 4/3 the size: the layout is the drawn one.
             const game::ScreenFit f = ue().view_fit();
             check(std::fabs(f.sx - 4.0f / 3.0f) < 1e-4f && std::fabs(f.width - 1920) < 0.01f, "2560×1440 is the screen at 4/3");
@@ -3885,7 +3996,7 @@ private:
             check(click("ue-view-1"), "1280×720");
             break;
         }
-        case 43: {
+        case 42: {
             const game::ScreenFit f = ue().view_fit();
             Rml::ElementDocument* page = ue().page();
             const Rml::Vector2i dims = page ? page->GetContext()->GetDimensions() : Rml::Vector2i();

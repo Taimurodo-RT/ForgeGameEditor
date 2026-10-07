@@ -2731,6 +2731,19 @@ bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* conte
             pass(e.button.x * density, e.button.y * density, -1, 0);
             return false;
         }
+        // The wheel over the player's screen scrolls the page as in the game
+        // (Ctrl+wheel still zooms the canvas; off the screen it pans).
+        if (e.type == SDL_EVENT_MOUSE_WHEEL && !(SDL_GetModState() & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) && on_canvas(mouse_x_, mouse_y_) &&
+            ui_ && page_context_) {
+            const game::ScreenFit fit = view_fit();
+            const f32 vx = game::fit_to_view_x(fit, to_screen_x(mouse_x_ - canvas_x_));
+            const f32 vy = game::fit_to_view_y(fit, to_screen_y(mouse_y_ - canvas_y_));
+            if (vx >= 0 && vy >= 0 && vx < view_w() && vy < view_h()) {
+                pass(mouse_x_, mouse_y_, -1, -1);
+                ui_->handle_event(page_context_, e); // the game's own way: ProcessMouseWheel
+                return true;
+            }
+        }
     }
     switch (e.type) {
     case SDL_EVENT_KEY_UP:
