@@ -429,6 +429,26 @@ void UiEditor::apply(const std::string& name, const std::string& json, const std
     dirty_all();
 }
 
+void UiEditor::remember_geometry(const std::string& before) {
+    if (screen_.library) return;
+    d::Screen previous;
+    if (!d::load_screen(before, previous)) return;
+    for (u32 id : selection_) {
+        d::Node* n = d::find(screen_.root, id);
+        const d::Node* was = d::find(previous.root, id);
+        const d::Node* instance = d::instance_of(screen_.root, id);
+        if (!n || !was || !n->master || !instance) continue;
+        auto keep = [&](const char* field) {
+            if (std::find(n->overrides.begin(), n->overrides.end(), field) == n->overrides.end())
+                n->overrides.push_back(field);
+        };
+        if (n->w != was->w || n->h != was->h || n->width_sizing != was->width_sizing || n->height_sizing != was->height_sizing)
+            keep("size");
+        if (instance->id != id && (n->x != was->x || n->y != was->y || n->absolute != was->absolute)) keep("place");
+        if (n->layout != was->layout || n->clip != was->clip) keep("layout");
+    }
+}
+
 void UiEditor::commit(const std::string& before, std::string label, std::string merge) {
     std::string after = d::save_screen(screen_);
     if (after == before) return; // nothing changed (a field given its own value)
@@ -1194,19 +1214,11 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
     if (root && screen_.library && (field.rfind("color.", 0) == 0 || field.rfind("textstyle.", 0) == 0)) {
         const bool is_color = field.rfind("color.", 0) == 0;
         const std::string rest = field.substr(is_color ? 6 : 10);
-        auto fresh_key = [&](const char* prefix) {
-            for (u32 k = 1;; ++k) {
-                const std::string key = prefix + std::to_string(k);
-                const bool taken = std::any_of(screen_.colors.begin(), screen_.colors.end(), [&](const auto& c) { return c.key == key; }) ||
-                                   std::any_of(screen_.text_styles.begin(), screen_.text_styles.end(), [&](const auto& t) { return t.key == key; });
-                if (!taken) return key;
-            }
-        };
         if (rest == "add") {
-            if (is_color) screen_.colors.push_back({fresh_key("c"), "Цвет " + std::to_string(screen_.colors.size() + 1), {232, 176, 74, 255}});
+            if (is_color) screen_.colors.push_back({d::fresh_style_key(screen_, true), "Цвет " + std::to_string(screen_.colors.size() + 1), {232, 176, 74, 255}});
             else {
                 d::NamedTextStyle t;
-                t.key = fresh_key("t");
+                t.key = d::fresh_style_key(screen_, false);
                 t.name = "Текст " + std::to_string(screen_.text_styles.size() + 1);
                 t.style.family = m_families_.empty() ? std::string("Onest") : std::string(m_families_.front());
                 t.style.size = 32;
@@ -1932,6 +1944,7 @@ bool UiEditor::add_auto_layout() {
     if (n->layout.padding == std::array<f32, 4>{}) n->layout.padding = {10, 10, 10, 10};
     n->width_sizing = d::Sizing::Hug;
     n->height_sizing = d::Sizing::Hug;
+    remember_geometry(before);
     commit(before, "Автораскладка");
     return true;
 }
@@ -1947,6 +1960,7 @@ bool UiEditor::move_selection(f32 dx, f32 dy) {
         n->x += dx;
         n->y += dy;
     }
+    remember_geometry(before);
     commit(before, "Сдвинуто", "nudge");
     return true;
 }
@@ -2595,6 +2609,7 @@ void UiEditor::release() {
     case Drag::Marquee: break;
     case Drag::Move:
         if (moved) {
+            remember_geometry(grab_json_);
             commit(grab_json_, selection_.size() > 1 ? "Сдвинуты слои" : "Сдвинуто");
             history_.seal();
         } else if (!(SDL_GetModState() & SDL_KMOD_SHIFT) && selection_.size() > 1) {
@@ -2606,6 +2621,7 @@ void UiEditor::release() {
         break;
     case Drag::Resize:
         if (moved) {
+            remember_geometry(grab_json_);
             commit(grab_json_, "Размер");
             history_.seal();
         }

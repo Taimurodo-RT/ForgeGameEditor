@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -514,6 +515,8 @@ std::string save_screen(const Screen& screen) {
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_uint(doc, root, "version", 1);
     yyjson_mut_obj_add_strcpy(doc, root, "title", screen.title.c_str());
+    yyjson_mut_obj_add_uint(doc, root, "next_id", screen.next_id);
+    if (screen.library) yyjson_mut_obj_add_uint(doc, root, "next_style_id", screen.next_style_id);
     if (screen.library) yyjson_mut_obj_add_bool(doc, root, "library", true);
     put_num(doc, root, "width", screen.width);
     put_num(doc, root, "height", screen.height);
@@ -577,6 +580,8 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
     yyjson_val* root = yyjson_doc_get_root(doc);
     Screen s;
     s.title = str(root, "title");
+    s.next_id = static_cast<u32>(yyjson_get_uint(yyjson_obj_get(root, "next_id")));
+    s.next_style_id = std::max(1u, static_cast<u32>(yyjson_get_uint(yyjson_obj_get(root, "next_style_id"))));
     s.library = flag(root, "library", false);
     s.width = std::max(num(root, "width", 1920), 1.0f);
     s.height = std::max(num(root, "height", 1080), 1.0f);
@@ -618,9 +623,28 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
     }
     s.root.w = s.width;
     s.root.h = s.height;
-    s.next_id = max_id(s.root) + 1;
+    s.next_id = std::max(s.next_id, max_id(s.root) + 1);
+    // Older libraries had no counter. Reserve all of their current style keys.
+    auto reserve_style = [&](const std::string& key) {
+        if (key.size() < 2 || (key[0] != 'c' && key[0] != 't')) return;
+        u32 id = 0;
+        const auto result = std::from_chars(key.data() + 1, key.data() + key.size(), id);
+        if (result.ec == std::errc{} && result.ptr == key.data() + key.size() && id < UINT32_MAX)
+            s.next_style_id = std::max(s.next_style_id, id + 1);
+    };
+    for (const NamedColor& color : s.colors) reserve_style(color.key);
+    for (const NamedTextStyle& style : s.text_styles) reserve_style(style.key);
     out = std::move(s);
     return true;
+}
+
+std::string fresh_style_key(Screen& library, bool color) {
+    for (;;) {
+        const std::string key = std::string(color ? "c" : "t") + std::to_string(library.next_style_id++);
+        const bool used = std::any_of(library.colors.begin(), library.colors.end(), [&](const auto& c) { return c.key == key; }) ||
+                          std::any_of(library.text_styles.begin(), library.text_styles.end(), [&](const auto& t) { return t.key == key; });
+        if (!used) return key;
+    }
 }
 
 Node* find(Node& root, u32 id) {

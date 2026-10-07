@@ -426,3 +426,39 @@ TEST_CASE("ui design: game colours and text styles follow the library") {
     CHECK(again.root.children[0].fills[0].style == "c1");
     CHECK(again.root.children[1].text_style.style == "t1");
 }
+
+TEST_CASE("ui design: deleted component and style identities stay reserved after reload") {
+    Screen lib = make_screen("Library", 1920, 1080);
+    lib.library = true;
+    const std::string color = fresh_style_key(lib, true);
+    const std::string text = fresh_style_key(lib, false);
+    lib.colors.push_back({color, "Gold", {200, 150, 50, 255}});
+    lib.text_styles.push_back({text, "Heading", {}});
+    Node component;
+    component.id = lib.next_id++;
+    component.component = "Old button";
+    const u32 old_master = component.id;
+    lib.root.children.push_back(component);
+    Screen screen = make_screen("Menu", 1920, 1080);
+    auto copy = make_instance(screen, lib, component.component);
+    REQUIRE(copy);
+    screen.root.children.push_back(*copy);
+    lib.root.children.clear();
+    lib.colors.clear();
+    lib.text_styles.clear();
+    Screen reopened;
+    REQUIRE(load_screen(save_screen(lib), reopened));
+    CHECK(fresh_style_key(reopened, true) != color);
+    CHECK(fresh_style_key(reopened, false) != text);
+    CHECK(reopened.next_id > old_master);
+    component.id = reopened.next_id++;
+    component.component = "Unrelated button";
+    reopened.root.children.push_back(component);
+    CHECK_FALSE(sync_instances(screen, reopened));
+    CHECK(screen.root.children[0].component == "Old button");
+
+    // Compatibility with libraries written before identity counters were saved.
+    REQUIRE(load_screen(R"({"library":true,"root":{"id":7},"colors":[{"key":"c20"}],"text_styles":[{"key":"t30"}]})", reopened));
+    CHECK(reopened.next_id == 8);
+    CHECK(fresh_style_key(reopened, true) == "c31");
+}

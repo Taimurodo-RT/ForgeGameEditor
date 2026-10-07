@@ -155,6 +155,7 @@ private:
     void apply(const std::string& name, const std::string& json, const std::vector<u32>& selection);
     // Records a change: the screen as it is now against before.
     void commit(const std::string& before, std::string label, std::string merge = {});
+    void remember_geometry(const std::string& before);
 
     // The library changed: every screen's instances follow it.
     void propagate_library();

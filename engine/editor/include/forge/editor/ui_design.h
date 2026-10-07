@@ -263,6 +263,7 @@ struct Screen {
     // changes them all.
     std::vector<NamedColor> colors;
     std::vector<NamedTextStyle> text_styles;
+    u32 next_style_id = 1; // persisted: deleted styles must never acquire new owners
 };
 
 // A new screen with an empty root frame.
@@ -270,6 +271,7 @@ Screen make_screen(std::string title, f32 width, f32 height);
 
 std::string save_screen(const Screen& screen);
 bool load_screen(std::string_view json, Screen& out, std::string* error = nullptr);
+std::string fresh_style_key(Screen& library, bool color);
 
 // --- the tree ---
 Node* find(Node& root, u32 id);

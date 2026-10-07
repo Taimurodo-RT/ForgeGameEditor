@@ -3335,6 +3335,38 @@ private:
             check(ue_file(".html").find("#123456") != std::string::npos, "and its page too");
             break;
         }
+        case 16: {
+            const std::string color = ue().library().colors[0].key;
+            const std::string text = ue().library().text_styles[0].key;
+            check(ue().open_library(), "open styles for deletion and recreation");
+            ue().select({});
+            check(ue().set_property("color.0.remove", "") && ue().set_property("color.add", ""), "replace a game colour");
+            check(ue().set_property("textstyle.0.remove", "") && ue().set_property("textstyle.add", ""), "replace a text style");
+            check(ue().library().colors[0].key != color && ue().library().text_styles[0].key != text,
+                  "new styles never reuse deleted styles' keys");
+            check(ue().open("main_menu"), "reopen the styled screen");
+            check(ue().screen().root.fills[0].color == d::Color{0x12, 0x34, 0x56, 255} &&
+                      ue_node(ue_named("Название игры"))->text_style.size == 90,
+                  "new unrelated styles do not recolour or resize existing screens");
+            ue().select({ue_inst_});
+            break;
+        }
+        case 17: {
+            const auto box = ue().layer_box(ue_inst_);
+            check(box.has_value(), "the component copy is laid out for resizing");
+            if (box) {
+                const f32 width = ue_node(ue_inst_)->w;
+                ue_drag(ue_wx(box->right()), ue_wy(box->cy()), ue_wx(box->right() + 80), ue_wy(box->cy()));
+                const f32 resized = ue_node(ue_inst_)->w;
+                check(resized > width + 40, "resizing a component copy with the mouse persists");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(ue_node(ue_inst_)->w == width, "undo restores the copy's original width");
+                ue().redo();
+                check(ue_node(ue_inst_)->w == resized, "redo restores the copy's resized width");
+                check(ue().open("main_menu") && ue_node(ue_inst_)->w == resized, "the copy's size survives reopening");
+            }
+            break;
+        }
         default:
             ue_step_ = -1;
             return true;
