@@ -48,7 +48,13 @@ class Vars {
 public:
     Value get(std::string_view name) const;
     void set(std::string_view name, Value value);
-    bool has(std::string_view name) const { return values_.find(std::string(name)) != values_.end(); }
+    bool has(std::string_view name) const {
+        return values_.find(name) != values_.end() || (parent_ && parent_->has(name));
+    }
+    // What this one does not have is read from parent (a list's element
+    // over the game's variables: item.name here, inv.coins there). Saving
+    // and all() see only its own.
+    void set_parent(const Vars* parent) { parent_ = parent; }
     void clear() { values_.clear(); }
     const std::map<std::string, Value, std::less<>>& all() const { return values_; }
     // Bumped by every set(); views compare it to know when to refresh.
@@ -61,6 +67,7 @@ public:
 private:
     std::map<std::string, Value, std::less<>> values_;
     u64 version_ = 0;
+    const Vars* parent_ = nullptr;
 };
 
 // Functions an expression may call, answered by the game. Unknown names

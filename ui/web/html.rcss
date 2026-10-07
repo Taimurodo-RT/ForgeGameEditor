@@ -118,3 +118,15 @@ input[type="range"] { border: none; padding: 0; margin: 2px; width: 129px; heigh
 input[type="range"] slidertrack { height: 4px; border-radius: 2px; background-color: #efefef; border: 1px solid #b2b2b2; }
 input[type="range"] sliderbar { width: 16px; height: 16px; margin-top: -6px; border-radius: 8px; background-color: #0075ff; }
 input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc { width: 0; height: 0; }
+
+/* Scrollbars of boxes with overflow: auto or scroll, thin as in a browser.
+   Without a size an RmlUi scrollbar takes the whole box. */
+scrollbarvertical { width: 10px; }
+scrollbarhorizontal { height: 10px; }
+scrollbarvertical slidertrack, scrollbarhorizontal slidertrack { background-color: #00000014; }
+scrollbarvertical sliderbar, scrollbarhorizontal sliderbar { background-color: #8c8c8ccc; border-radius: 5px; }
+scrollbarvertical sliderbar { min-height: 24px; margin: 1px 2px; }
+scrollbarhorizontal sliderbar { min-width: 24px; margin: 2px 1px; }
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc,
+scrollbarhorizontal sliderarrowdec, scrollbarhorizontal sliderarrowinc { width: 0px; height: 0px; }
+scrollbarcorner { background-color: transparent; }

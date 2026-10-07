@@ -27,6 +27,7 @@ struct Options {
     const char* screenshot = nullptr;
     u32 frames = 120;
     bool test = false;
+    bool window = false; // --test in a real window (the GPU's own numbers)
     bool vsync = true;
     bool play = false; // a new game right away, past the main menu
 };
@@ -70,7 +71,8 @@ void fatal(SDL_Window* window, const std::string& what) {
 
 class GameApp final : public App {
 public:
-    GameApp(Game& game, const Options& options) : game_(game), options_(options) {}
+    GameApp(Game& game, const Options& options, const GameMain* main = nullptr) : game_(game), options_(options), main_(main) {}
+    int failures() const { return failures_; }
 
     bool on_init() override {
         int w = 0, h = 0;
@@ -88,6 +90,14 @@ public:
         if (!shell_.handle_event(e) && shell_.screen() == Screen::Playing && !shell_.in_dialogue()) game_.handle_event(e);
     }
     void on_frame(f64 dt) override {
+        if (testing_ && main_ && main_->test) {
+            testing_ = main_->test(shell_, frame_++, failures_);
+            if (!testing_) {
+                if (failures_ == 0) FORGE_INFO("self-test passed");
+                else FORGE_ERROR("self-test: %d checks failed", failures_);
+                request_quit();
+            }
+        }
         shell_.update(std::min(dt, 0.1));
         if (shell_.quit_requested()) {
             if (shell_.screen() != Screen::Main) shell_.to_main_menu(); // autosaves
@@ -106,6 +116,10 @@ public:
 private:
     Game& game_;
     Options options_;
+    const GameMain* main_ = nullptr;
+    bool testing_ = true;
+    u32 frame_ = 0;
+    int failures_ = 0;
     Shell shell_;
 };
 
@@ -183,6 +197,7 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
         if (std::strcmp(argv[i], "--screenshot") == 0 && has_value) o.screenshot = argv[++i];
         else if (std::strcmp(argv[i], "--frames") == 0 && has_value) o.frames = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--test") == 0) o.test = true;
+        else if (std::strcmp(argv[i], "--window") == 0) o.window = true;
         else if (std::strcmp(argv[i], "--ui") == 0 && has_value) o.shell.ui_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--data") == 0 && has_value) o.shell.game_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--user") == 0 && has_value) o.shell.user_dir = utf8_path(argv[++i]);
@@ -192,12 +207,12 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
     }
 
     if (o.screenshot || o.test) {
-        // Offscreen runs never touch the player's saves.
+        // Test runs never touch the player's saves.
         if (o.shell.user_dir.empty()) {
             o.shell.user_dir = fs::temp_directory_path() / "forge_game_offscreen";
             fs::remove_all(o.shell.user_dir, ec);
         }
-        return run_offscreen(game, main, o);
+        if (!o.window || !o.test) return run_offscreen(game, main, o);
     }
 
     AppConfig config;
@@ -205,7 +220,7 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
     config.shader_formats = render::supported_shader_formats();
     config.stats_in_title = false;
     config.vsync = o.vsync;
-    GameApp app(game, o);
+    GameApp app(game, o, o.test ? &main : nullptr);
     // Settings that must be known before the window opens.
     const GameInfo info = read_game_info(o.shell.game_dir);
     if (o.shell.user_dir.empty()) o.shell.user_dir = user_dir(info.org, info.title);
@@ -215,7 +230,7 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
     open_log(o.shell.user_dir);
     const int code = app.run(config);
     close_log();
-    return code;
+    return code != 0 ? code : app.failures() > 0 ? 1 : 0;
 }
 
 } // namespace forge::game

@@ -168,6 +168,36 @@ TEST_CASE("a template's own picture is kept in its file") {
     CHECK(read->rev == t->rev); // a picture does not touch the copies' values
 }
 
+TEST_CASE("a pickup names its thing and its picture for the game's pages") {
+    const auto dir = temp_folder("forge_objects_items_test");
+    write_text(dir / "kinds.json", R"({
+      "blocks": [
+        {"id": "body", "name": "Тело", "components": {"ObjTestBody": {"half": 0.4}}},
+        {"id": "pickup", "name": "Подбирается", "components": {"ObjTestPickup": {"count": 1}}, "needs": ["body"],
+         "props": [{"id": "what", "name": "Что это", "bind": "ObjTestPickup.what",
+                    "choices": [{"id": "coins", "name": "Монеты", "value": 1}]}]}
+      ],
+      "kinds": [
+        {"id": "pickup", "name": "Подбираемое", "blocks": ["body", "pickup"]},
+        {"id": "thing", "name": "Вещь", "blocks": ["body"]}
+      ]
+    })");
+    write_text(dir / "objects" / "coins.object.json",
+               R"({"id": "coins", "name": "Монеты", "kind": "pickup", "values": {"what": "coins"}, "picture": "монета.png"})");
+    write_text(dir / "objects" / "box.object.json", R"({"id": "box", "name": "Ящик", "kind": "thing"})");
+    Library lib;
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    const Template& coins = *lib.find("coins");
+    const Template& box = *lib.find("box");
+    CHECK(lib.item_of(coins) == "coins");
+    CHECK(lib.item_of(box).empty()); // not a pickup
+    // The pictures folder is next to the kinds file: inside the game's folder.
+    CHECK(lib.picture_in(coins, dir) == "pictures/монета.png");
+    CHECK(lib.picture_in(box, dir).empty()); // no picture of its own
+    // Pictures outside the game's folder are not reachable from its pages.
+    CHECK(lib.picture_in(coins, dir / "objects").empty());
+}
+
 TEST_CASE("a template is copied between a game and the shared library") {
     Fixture f;
     const auto shared_dir = temp_folder("forge_objects_shared_test");

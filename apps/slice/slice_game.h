@@ -106,6 +106,8 @@ public:
     // Where a villager stands (who: 0 the miner, 1 the smith); NaN when not loaded.
     f64 npc_x(u8 who) const;
     u32 count_items(ItemKind kind) const;
+    // The things the screens' lists know (names and pictures), as given to them.
+    const std::vector<forge::game::ScreenItem>& screen_items() const { return screen_items_; }
     // A «Зверёк» copy moving by a scheme, and where it is now (NaN: gone).
     flecs::entity_t spawn_critter(f64 x, f64 feet_y, Scheme scheme);
     f64 critter_x(flecs::entity_t e) const;
@@ -177,6 +179,7 @@ private:
     std::shared_ptr<SliceGenerator> gen_;
     // Object kinds and templates: before the levels, whose scenes use it.
     forge::objects::Library library_;
+    std::vector<forge::game::ScreenItem> screen_items_;
 
     std::unique_ptr<Level> level_;
     bool running_ = false;

@@ -475,4 +475,22 @@ TEST_CASE("game: settings load with defaults and clamp what is off") {
     CHECK(format_playtime(3900) == "1 ч 05 мин");
 }
 
+TEST_CASE("vars: an element of a list reads through to the game's") {
+    Vars game;
+    game.set("inv.coins", 12);
+    Vars row;
+    row.set_parent(&game);
+    row.set("item.name", "Ключ");
+    CHECK(row.get("item.name").text() == "Ключ");
+    CHECK(row.get("inv.coins").number() == 12);
+    CHECK(row.has("inv.coins"));
+    CHECK_FALSE(row.has("inv.key"));
+    CHECK(substitute("{item.name}: {inv.coins}", row) == "Ключ: 12");
+    // Its own value wins; saving sees only its own.
+    row.set("inv.coins", 1);
+    CHECK(row.get("inv.coins").number() == 1);
+    CHECK(row.to_json().find("item.name") != std::string::npos);
+    CHECK(game.get("inv.coins").number() == 12);
+}
+
 } // namespace gametest

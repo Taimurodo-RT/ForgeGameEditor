@@ -49,6 +49,7 @@ const char* const kScreenShows[] = {"playing", "command", "menu"};
 const char* const kEasings[] = {"smooth", "linear", "in", "out", "back", "bounce", "elastic"};
 const char* const kMotions[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
 const char* const kAppears[] = {"none", "fade", "rise", "drop", "zoom", "left", "right"};
+const char* const kLists[] = {"", "items", "quests"};
 const char* const kTypeWords[] = {"Рамка", "Прямоугольник", "Эллипс", "Текст", "Картинка"};
 
 int hex_digit(char c) {
@@ -257,6 +258,11 @@ yyjson_mut_val* write_node(yyjson_mut_doc* doc, const Node& n) {
         yyjson_mut_obj_add_val(doc, o, "style", write_text_style(doc, n.text_style));
     }
     if (!n.show_if.empty()) yyjson_mut_obj_add_strcpy(doc, o, "show_if", n.show_if.c_str());
+    if (!n.picture_from.empty()) yyjson_mut_obj_add_strcpy(doc, o, "picture_from", n.picture_from.c_str());
+    if (n.list != ListSource::None) {
+        yyjson_mut_obj_add_str(doc, o, "list", word(n.list, kLists));
+        put_num(doc, o, "list_gap", n.list_gap);
+    }
     if (!n.bar.value.empty()) {
         yyjson_mut_val* bo = yyjson_mut_obj(doc);
         yyjson_mut_obj_add_strcpy(doc, bo, "value", n.bar.value.c_str());
@@ -472,6 +478,9 @@ bool read_node(yyjson_val* o, Node& n, int depth) {
         read_text_style(t, n.text_style);
     }
     n.show_if = str(o, "show_if");
+    n.picture_from = str(o, "picture_from");
+    n.list = enum_of(o, "list", kLists, ListSource::None);
+    n.list_gap = std::max(num(o, "list_gap", 8), 0.0f);
     if (yyjson_val* b = yyjson_obj_get(o, "bar"); yyjson_is_obj(b)) {
         n.bar.value = str(b, "value");
         n.bar.max = str(b, "max", "100");
@@ -603,6 +612,18 @@ std::string color_hex(Color c) {
 const char* blend_css(Blend b) { return word(b, kBlends); }
 const char* node_type_name(NodeType t) { return word(t, kNodeTypes); }
 const char* action_word(ActionKind k) { return word(k, kActions); }
+
+const char* list_word(ListSource s) { return word(s, kLists); }
+
+std::vector<std::pair<std::string, std::string>> list_fields(ListSource s) {
+    if (s == ListSource::Quests)
+        return {{"item.title", "Название задания"}, {"item.text", "Что сейчас делать"}, {"item.done", "Выполнено (1 или 0)"},
+                {"item.index", "Номер в списке"}};
+    if (s == ListSource::Items)
+        return {{"item.name", "Название предмета"}, {"item.count", "Сколько"}, {"item.icon", "Картинка предмета"},
+                {"item.about", "Описание"}, {"item.id", "Имя в данных"}, {"item.index", "Номер в списке"}};
+    return {};
+}
 std::optional<ActionKind> parse_action(std::string_view text) {
     for (usize i = 0; i < std::size(kActions); ++i)
         if (text == kActions[i]) return static_cast<ActionKind>(i);
@@ -889,6 +910,9 @@ void keep_override(Node& to, const Node& from, std::string_view field) {
         to.show_if = from.show_if;
         to.bar = from.bar;
         to.on_click = from.on_click;
+        to.picture_from = from.picture_from;
+        to.list = from.list;
+        to.list_gap = from.list_gap;
     }
     else if (field == "layout") {
         to.layout = from.layout;
@@ -1119,7 +1143,8 @@ std::string override_of(std::string_view field) {
     if (starts("radius")) return "radius";
     if (starts("frame.")) return "frame";
     if (starts("mask.")) return "mask";
-    if (field == "show_if" || starts("bar.") || starts("click")) return "game";
+    if (field == "show_if" || starts("bar.") || starts("click") || field == "picture_from" || starts("list"))
+        return "game";
     if (starts("motion") || starts("smooth")) return "motion";
     if (field == "opacity" || field == "blend" || field == "visible" || field == "text" || field == "name")
         return std::string(field);
@@ -1491,7 +1516,15 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::str
 
     if (n.opacity < 1) add(css, "opacity", fmt(std::max(n.opacity, 0.0f)));
     if (n.blend != Blend::Normal) add(css, "mix-blend-mode", blend_css(n.blend));
-    if (n.clip) add(css, "overflow", "hidden");
+    if (n.list != ListSource::None) {
+        add(css, "overflow-x", "hidden");
+        add(css, "overflow-y", "auto");
+    } else if (n.clip) add(css, "overflow", "hidden");
+    if (!n.picture_from.empty()) {
+        add(css, "background-size", "contain");
+        add(css, "background-repeat", "no-repeat");
+        add(css, "background-position", "center");
+    }
     if (n.rotation != 0) transforms.push_back("rotate(" + fmt(n.rotation) + "deg)");
     std::string transform;
     for (const std::string& part : transforms) transform += (transform.empty() ? "" : " ") + part;
@@ -1636,6 +1669,13 @@ void write_game_attributes(const Node& n, std::string& html) {
     };
     if (n.type == NodeType::Text && n.text.find('{') != std::string::npos) attr("forge-text", n.text);
     if (!n.show_if.empty()) attr("forge-show-if", n.show_if);
+    if (!n.picture_from.empty()) attr("forge-picture", n.picture_from);
+    if (n.list != ListSource::None && !n.children.empty()) {
+        const Node& cell = n.children.front();
+        attr("forge-list", list_word(n.list));
+        attr("forge-list-gap", fmt(n.list_gap));
+        attr("forge-cell", fmt(cell.x) + " " + fmt(cell.y) + " " + fmt(cell.w) + " " + fmt(cell.h));
+    }
     if (!n.bar.value.empty()) {
         attr("forge-bar-value", n.bar.value);
         attr("forge-bar-max", n.bar.max);
@@ -1655,6 +1695,7 @@ void write_game_attributes(const Node& n, std::string& html) {
 // the game; the rest of a screen lets clicks through to the world under it.
 bool takes_mouse(const Node& n) {
     if (!n.on_click.empty() || n.type == NodeType::Text || n.type == NodeType::Image) return true;
+    if (n.list != ListSource::None) return true; // the wheel scrolls it
     if (!n.frame.image.empty() && n.frame.visible) return true;
     for (const Paint& p : n.fills)
         if (p.visible && p.opacity > 0 && (p.kind != PaintKind::Solid || p.color.a > 0)) return true;

@@ -125,6 +125,9 @@ public:
     bool remove_selection();
     bool duplicate_selection();
     bool wrap_selection_in_frame();
+    // A new list frame (selected) around the layer, which becomes its cell; one
+    // step of the history.
+    bool make_list(u32 cell, editor::design::ListSource source);
     bool add_auto_layout();
     bool move_selection(f32 dx, f32 dy);
     // Changes a field of the selected layers by its name in the design panel
@@ -176,6 +179,9 @@ public:
     // The game's values the panel offers for texts, bars and conditions
     // ({name, what the author reads}); asked when the panel refreshes.
     std::function<std::vector<std::pair<std::string, std::string>>()> game_values;
+    // What lists show in «Проверить»: the game's things (inv.<id>) and its quests.
+    std::function<std::vector<game::ScreenItem>()> game_items;
+    std::function<const game::QuestBook*()> game_quests;
 private:
     friend class UiCommand;
 
@@ -362,6 +368,10 @@ private:
         bool pauses = false, esc_closes = true;
         bool covers_game = false; // shown while playing with a solid background: the world can't be seen
         Rml::String show_if;
+        // Lists: the frame's own (list: "none", "items", "quests"), and the
+        // list whose cell the layer is in (in_list: its fields can be shown).
+        Rml::String list = "none", list_gap, picture_from, in_list;
+        bool list_no_cell = false;
         bool has_bar = false;
         Rml::String bar_value, bar_max, bar_from;
         // Movement.
