@@ -427,6 +427,11 @@ void StyleSheetSpecification::RegisterDefaultProperties()
 	for (const char* name : {"background-size", "background-position", "background-repeat", "background-clip", "background-origin",
 			 "background-attachment", "background-blend-mode", "background-position-x", "background-position-y"})
 		RegisterProperty(PropertyId::Invalid, name, "", false, false).AddParser("string"); // Forge: size, position and repeat place url() images in web pages
+	// Forge: mask-size, -position and -repeat place url() mask images; border-image draws a picture cut into nine parts
+	// around the element (see ElementBorderImage). 'mask', 'mask-image' and 'border-image' are parsed by PropertySpecification.
+	for (const char* name : {"mask-size", "mask-position", "mask-repeat", "mask-mode", "mask-origin", "mask-clip", "mask-composite",
+			 "border-image-source", "border-image-slice", "border-image-width", "border-image-outset", "border-image-repeat"})
+		RegisterProperty(PropertyId::Invalid, name, "", false, false).AddParser("string");
 	RegisterShorthand(ShorthandId::Background, "background", "background-color, decorator, background-size, background-position, background-repeat",
 		ShorthandType::FallThrough);
 	RegisterShorthand(ShorthandId::Invalid, "background-image", "decorator", ShorthandType::FallThrough);

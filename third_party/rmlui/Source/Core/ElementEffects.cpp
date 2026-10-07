@@ -41,6 +41,7 @@ void ElementEffects::InstanceEffects()
 	blend_mode = GetMixBlendMode(element);
 	if (const float value = computed.group_opacity(); value < 1.f)
 		opacity_filter = render_manager->CompileFilter("opacity", Dictionary{{"value", Variant(Math::Max(value, 0.f))}});
+	border_image.Instance(element);
 
 	if (computed.has_decorator() || computed.has_mask_image())
 	{
@@ -154,6 +155,8 @@ void ElementEffects::ReloadEffectsData()
 		if (decorator_data_failed)
 			Log::Message(Log::LT_WARNING, "Could not generate decorator element data: %s", element->GetAddress().c_str());
 
+		border_image.Generate(element);
+
 		bool filter_compile_failed = false;
 		for (FilterEntryList* list : {&filters, &backdrop_filters})
 		{
@@ -185,6 +188,7 @@ void ElementEffects::ReleaseEffects()
 	filters.clear();
 	backdrop_filters.clear();
 	opacity_filter = CompiledFilter{};
+	border_image.Release();
 }
 
 void ElementEffects::RenderEffects(RenderStage render_stage)
@@ -206,6 +210,8 @@ void ElementEffects::RenderEffects(RenderStage render_stage)
 			}
 		}
 	}
+	if (render_stage == RenderStage::Decoration && border_image.Active())
+		border_image.Render(element);
 
 	const bool own_layer = (!filters.empty() || !mask_images.empty() || blend_mode != BlendMode::Blend || opacity_filter);
 	if (!own_layer && backdrop_filters.empty())

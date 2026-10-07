@@ -1144,6 +1144,7 @@
                     <div data-for="g : ue_guides_x" class="ue-guide-x" data-style-left="g.x + 'px'"><span/></div>
                     <div data-for="g : ue_guides_y" class="ue-guide-y" data-style-top="g.y + 'px'"><span/></div>
                     <div class="ue-hover" data-if="ue_hovering" data-style-left="ue_hover.x + 'px'" data-style-top="ue_hover.y + 'px'" data-style-width="ue_hover.w + 'px'" data-style-height="ue_hover.h + 'px'"/>
+                    <div id="ue-safe" class="ue-safe" data-if="ue_has_safe" data-style-left="ue_safe.x + 'px'" data-style-top="ue_safe.y + 'px'" data-style-width="ue_safe.w + 'px'" data-style-height="ue_safe.h + 'px'"/>
                     <div data-for="b : ue_selected" class="ue-picked" data-style-left="b.x + 'px'" data-style-top="b.y + 'px'" data-style-width="b.w + 'px'" data-style-height="b.h + 'px'"><span/></div>
                     <div id="ue-selection" class="ue-selection" data-if="ue_handles" data-style-left="ue_sel_box.x + 'px'" data-style-top="ue_sel_box.y + 'px'" data-style-width="ue_sel_box.w + 'px'" data-style-height="ue_sel_box.h + 'px'">
                         <div class="ue-handle tl"/><div class="ue-handle t" data-if="ue_sel_box.w >= 24"/><div class="ue-handle tr"/><div class="ue-handle r" data-if="ue_sel_box.h >= 24"/>
@@ -1170,6 +1171,38 @@
                             <div class="ue-num"><span>В</span><input id="ue-h" type="text" data-attr-value="ue_p.h" data-event-change="ue_text('h', ev.value, ev.linebreak)" data-event-blur="ue_commit('h')"/></div>
                             <div class="ue-num" data-if="!ue_p.root"><icon class="xs" name="rotate_right"/><input id="ue-rot" type="text" data-attr-value="ue_p.rotation" data-event-change="ue_text('rotation', ev.value, ev.linebreak)" data-event-blur="ue_commit('rotation')"/></div>
                             <div class="ue-num" data-if="!ue_p.root && !ue_p.text"><icon class="xs" name="rounded_corner"/><input id="ue-radius" type="text" data-attr-value="ue_p.radius" data-event-change="ue_text('radius', ev.value, ev.linebreak)" data-event-blur="ue_commit('radius')"/></div>
+                        </div>
+                    </div>
+
+                    <!-- The screen's own settings (nothing selected, or the screen) -->
+                    <div class="ue-sec" data-if="ue_p.root">
+                        <div class="ue-sec-title">Текст экрана <span class="muted">для текстов без своего шрифта</span></div>
+                        <div class="ue-line row">
+                            <select id="ue-screen-font" class="ue-select grow" data-value="ue_p.screen_font" data-event-change="ue_pick('screen.font')">
+                                <option data-for="f : ue_families" data-attr-value="f">{{ f }}</option>
+                            </select>
+                            <div class="ue-num ue-short" title="Размер"><icon class="xs" name="format_size"/><input id="ue-screen-size" type="text" data-attr-value="ue_p.screen_size" data-event-change="ue_text('screen.font_size', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.font_size')"/></div>
+                        </div>
+                        <div class="ue-paint row">
+                            <div class="ue-swatch" data-style-background-color="ue_p.screen_text_swatch"/>
+                            <input id="ue-screen-color" type="text" class="ue-hex grow" data-attr-value="ue_p.screen_text_hex" data-event-change="ue_text('screen.text_color', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.text_color')"/>
+                        </div>
+                    </div>
+                    <div class="ue-sec" data-if="ue_p.root">
+                        <div class="ue-sec-title">На экране игрока <span class="muted">другого размера</span></div>
+                        <div class="ue-line row">
+                            <select id="ue-screen-fit" class="ue-select grow" data-value="ue_p.screen_fit" data-event-change="ue_pick('screen.fit')">
+                                <option value="expand">Подстроить: края раздвигаются</option><option value="fit">Вписать целиком, с полосами</option><option value="stretch">Растянуть</option>
+                            </select>
+                        </div>
+                        <div class="ue-paint row" data-if="ue_p.screen_fit == 'fit'">
+                            <span class="ue-key">Полосы</span>
+                            <div class="ue-swatch" data-style-background-color="ue_p.bars_swatch"/>
+                            <input type="text" class="ue-hex grow" data-attr-value="ue_p.bars_hex" data-event-change="ue_text('screen.bars', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.bars')"/>
+                        </div>
+                        <div class="ue-line row" title="Отступ от краёв, за который не стоит выносить важное: на телевизорах и телефонах края могут быть не видны">
+                            <span class="ue-key">Безопасная зона</span>
+                            <div class="ue-num grow"><icon class="xs" name="crop_free"/><input id="ue-screen-safe" type="text" data-attr-value="ue_p.safe" data-event-change="ue_text('screen.safe', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.safe')"/></div>
                         </div>
                     </div>
 
@@ -1251,6 +1284,7 @@
                         <input id="ue-content" type="text" class="ue-field" data-attr-value="ue_p.content" data-event-change="ue_text('text', ev.value, ev.linebreak)" data-event-blur="ue_commit('text')"/>
                         <div class="ue-line row">
                             <select class="ue-select grow" data-value="ue_p.family" data-event-change="ue_pick('family')">
+                                <option value="">Как у экрана</option>
                                 <option data-for="f : ue_families" data-attr-value="f">{{ f }}</option>
                             </select>
                         </div>
@@ -1293,7 +1327,10 @@
                                 <div class="ue-swatch grad" data-if="f.kind == 'linear' || f.kind == 'radial'"><icon class="xs" name="gradient"/></div>
                                 <div class="ue-swatch grad" data-if="f.kind == 'image'"><icon class="xs" name="image"/></div>
                                 <input type="text" class="ue-hex grow" data-if="f.kind != 'image'" data-attr-value="f.hex" data-event-change="ue_text('fill.' + f.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.color')"/>
-                                <input type="text" class="ue-hex grow" data-if="f.kind == 'image'" data-attr-value="f.image" title="Путь в папке игры: pictures/фон.png" data-event-change="ue_text('fill.' + f.index + '.image', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.image')"/>
+                                <select class="ue-select grow" data-if="f.kind == 'image'" data-value="f.image" title="Картинка из папки игры pictures" data-event-change="ue_pick('fill.' + f.index + '.image')">
+                                    <option value="">Выберите картинку</option>
+                                    <option data-for="pic : ue_pictures" data-attr-value="pic.path">{{ pic.name }}</option>
+                                </select>
                                 <input type="text" class="ue-pct" data-attr-value="f.opacity" data-event-change="ue_text('fill.' + f.index + '.opacity', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.opacity')"/>
                                 <div class="ue-mini" title="Показать или скрыть" data-event-click="ue_set('fill.' + f.index + '.visible', '')"><icon class="xs" data-attr-name="f.visible ? 'visibility' : 'visibility_off'"/></div>
                                 <div class="ue-mini" title="Убрать" data-event-click="ue_set('fill.' + f.index + '.remove', '')"><icon class="xs" name="remove"/></div>
@@ -1307,9 +1344,67 @@
                                     <option value="fill">Заполнить</option><option value="fit">Вписать</option><option value="tile">Плиткой</option><option value="stretch">Растянуть</option>
                                 </select>
                             </div>
+                            <div class="ue-grid3" data-if="f.kind == 'image' && f.fit == 'tile'">
+                                <div class="ue-num" title="Ширина плитки (пусто: как у картинки)"><icon class="xs" name="grid_view"/><input type="text" data-attr-value="f.tile" data-event-change="ue_text('fill.' + f.index + '.tile', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.tile')"/></div>
+                                <div class="ue-num" title="Сдвиг плиток по горизонтали"><span>X</span><input type="text" data-attr-value="f.offset_x" data-event-change="ue_text('fill.' + f.index + '.offset_x', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.offset_x')"/></div>
+                                <div class="ue-num" title="Сдвиг плиток по вертикали"><span>Y</span><input type="text" data-attr-value="f.offset_y" data-event-change="ue_text('fill.' + f.index + '.offset_y', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.offset_y')"/></div>
+                            </div>
                             <div class="ue-paint row" data-if="f.kind == 'linear' || f.kind == 'radial'">
                                 <span class="ue-key">до</span>
                                 <input type="text" class="ue-hex grow" data-attr-value="f.hex2" data-event-change="ue_text('fill.' + f.index + '.color2', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.color2')"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- The frame picture, cut into nine parts -->
+                    <div class="ue-sec" data-if="!ue_p.root && !ue_p.text">
+                        <div class="ue-sec-title row"><span class="grow">Рамка-картинка <span class="muted">углы не тянутся</span></span>
+                            <div id="ue-frame-add" class="ue-mini" data-if="!ue_p.has_frame" title="Обрамить слой нарисованной рамкой" data-event-click="ue_set('frame.add', '')"><icon class="xs" name="add"/></div>
+                        </div>
+                        <div data-if="ue_p.has_frame" class="column" data-class-off="!ue_p.frame_visible">
+                            <div class="ue-paint row">
+                                <div class="ue-swatch grad"><icon class="xs" name="crop_square"/></div>
+                                <select id="ue-frame-image" class="ue-select grow" data-value="ue_p.frame_image" data-event-change="ue_pick('frame.image')">
+                                    <option data-for="pic : ue_pictures" data-attr-value="pic.path">{{ pic.name }}</option>
+                                </select>
+                                <div class="ue-mini" title="Показать или скрыть" data-event-click="ue_set('frame.visible', '')"><icon class="xs" data-attr-name="ue_p.frame_visible ? 'visibility' : 'visibility_off'"/></div>
+                                <div class="ue-mini" title="Убрать" data-event-click="ue_set('frame.remove', '')"><icon class="xs" name="remove"/></div>
+                            </div>
+                            <div class="ue-line row"><span class="ue-key">Углы картинки</span><span class="muted">сверху, справа, снизу, слева</span></div>
+                            <div class="ue-grid4">
+                                <div class="ue-num" title="Сверху"><icon class="xs" name="border_top"/><input id="ue-frame-t" type="text" data-attr-value="ue_p.frame_t" data-event-change="ue_text('frame.slice.0', ev.value, ev.linebreak)" data-event-blur="ue_commit('frame.slice.0')"/></div>
+                                <div class="ue-num" title="Справа"><icon class="xs" name="border_right"/><input type="text" data-attr-value="ue_p.frame_r" data-event-change="ue_text('frame.slice.1', ev.value, ev.linebreak)" data-event-blur="ue_commit('frame.slice.1')"/></div>
+                                <div class="ue-num" title="Снизу"><icon class="xs" name="border_bottom"/><input type="text" data-attr-value="ue_p.frame_b" data-event-change="ue_text('frame.slice.2', ev.value, ev.linebreak)" data-event-blur="ue_commit('frame.slice.2')"/></div>
+                                <div class="ue-num" title="Слева"><icon class="xs" name="border_left"/><input type="text" data-attr-value="ue_p.frame_l" data-event-change="ue_text('frame.slice.3', ev.value, ev.linebreak)" data-event-blur="ue_commit('frame.slice.3')"/></div>
+                            </div>
+                            <div class="ue-line row">
+                                <select id="ue-frame-repeat" class="ue-select grow" data-value="ue_p.frame_repeat" data-event-change="ue_pick('frame.repeat')">
+                                    <option value="stretch">Края тянутся</option><option value="repeat">Края повторяются</option><option value="round">Повторяются целыми</option><option value="space">С промежутками</option>
+                                </select>
+                                <div class="ue-num ue-short" title="Масштаб рамки"><icon class="xs" name="zoom_in"/><input id="ue-frame-scale" type="text" data-attr-value="ue_p.frame_scale" data-event-change="ue_text('frame.scale', ev.value, ev.linebreak)" data-event-blur="ue_commit('frame.scale')"/></div>
+                            </div>
+                            <div class="ue-check row" data-event-click="ue_set('frame.fill', '')"><icon class="xs" data-attr-name="ue_p.frame_fill ? 'check_box' : 'check_box_outline_blank'"/><span>Рисовать середину картинки</span></div>
+                        </div>
+                    </div>
+
+                    <!-- The mask: a picture cuts the layer's shape -->
+                    <div class="ue-sec" data-if="!ue_p.root">
+                        <div class="ue-sec-title row"><span class="grow">Маска <span class="muted">форма по картинке</span></span>
+                            <div id="ue-mask-add" class="ue-mini" data-if="!ue_p.has_mask" title="Обрезать слой по форме картинки" data-event-click="ue_set('mask.add', '')"><icon class="xs" name="add"/></div>
+                        </div>
+                        <div data-if="ue_p.has_mask" class="column" data-class-off="!ue_p.mask_visible">
+                            <div class="ue-paint row">
+                                <div class="ue-swatch grad"><icon class="xs" name="texture"/></div>
+                                <select id="ue-mask-image" class="ue-select grow" data-value="ue_p.mask_image" data-event-change="ue_pick('mask.image')">
+                                    <option data-for="pic : ue_pictures" data-attr-value="pic.path">{{ pic.name }}</option>
+                                </select>
+                                <div class="ue-mini" title="Показать или скрыть" data-event-click="ue_set('mask.visible', '')"><icon class="xs" data-attr-name="ue_p.mask_visible ? 'visibility' : 'visibility_off'"/></div>
+                                <div class="ue-mini" title="Убрать" data-event-click="ue_set('mask.remove', '')"><icon class="xs" name="remove"/></div>
+                            </div>
+                            <div class="ue-line row">
+                                <select class="ue-select grow" data-value="ue_p.mask_fit" data-event-change="ue_pick('mask.fit')">
+                                    <option value="stretch">Растянуть по слою</option><option value="fill">Заполнить</option><option value="fit">Вписать</option><option value="tile">Плиткой</option>
+                                </select>
                             </div>
                         </div>
                     </div>

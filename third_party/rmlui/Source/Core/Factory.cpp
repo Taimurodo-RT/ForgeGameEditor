@@ -87,6 +87,7 @@ struct DefaultInstancers {
 	DecoratorTiledVerticalInstancer decorator_tiled_vertical;
 	DecoratorTiledBoxInstancer decorator_tiled_box;
 	DecoratorTiledImageInstancer decorator_image;
+	DecoratorTiledImageInstancer decorator_mask{true}; // Forge: CSS url() mask images
 	DecoratorNinePatchInstancer decorator_ninepatch;
 	DecoratorShaderInstancer decorator_shader;
 	DecoratorStraightGradientInstancer decorator_straight_gradient;
@@ -199,6 +200,7 @@ void Factory::Initialise()
 	RegisterDecoratorInstancer("tiled-vertical", &default_instancers.decorator_tiled_vertical);
 	RegisterDecoratorInstancer("tiled-box", &default_instancers.decorator_tiled_box);
 	RegisterDecoratorInstancer("image", &default_instancers.decorator_image);
+	RegisterDecoratorInstancer("forge-mask", &default_instancers.decorator_mask);
 	RegisterDecoratorInstancer("ninepatch", &default_instancers.decorator_ninepatch);
 	RegisterDecoratorInstancer("shader", &default_instancers.decorator_shader);
 

@@ -1,4 +1,7 @@
 #include "ElementBackgroundBorder.h"
+#include "../../Include/RmlUi/Core/StyleSheetSpecification.h"
+#include "../../Include/RmlUi/Core/StringUtilities.h"
+#include "../../Include/RmlUi/Core/Property.h"
 #include "../../Include/RmlUi/Core/Box.h"
 #include "../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../Include/RmlUi/Core/Context.h"
@@ -131,6 +134,15 @@ void ElementBackgroundBorder::GenerateGeometry(Element* element)
 		computed.border_bottom_color().ToPremultiplied(opacity),
 		computed.border_left_color().ToPremultiplied(opacity),
 	};
+
+	// Forge: a border picture (border-image) takes the place of the border's own drawing.
+	{
+		static const PropertyId source_id = StyleSheetSpecification::GetPropertyId("border-image-source");
+		const Property* source = (source_id != PropertyId::Invalid ? element->GetProperty(source_id) : nullptr);
+		if (source && source->unit == Unit::STRING && StringUtilities::StartsWith(StringUtilities::ToLower(source->Get<String>()), "url("))
+			for (ColourbPremultiplied& colour : border_colors)
+				colour = ColourbPremultiplied(0, 0, 0, 0);
+	}
 
 	const uint8_t border_styles[4] = {uint8_t(computed.border_top_style()), uint8_t(computed.border_right_style()),
 		uint8_t(computed.border_bottom_style()), uint8_t(computed.border_left_style())};

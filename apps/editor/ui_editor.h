@@ -14,7 +14,15 @@
 // of the other layers and of guides, equal gaps between neighbours (pink
 // lines and numbers, as in Figma). Right: the selected layer's design:
 // place and size, constraints, auto layout, fills, stroke, corners, effects,
-// opacity and blend, text.
+// opacity and blend, text; drawn art: a picture fill repeated as a texture,
+// a frame picture cut into nine parts, a mask picture. With nothing selected
+// the panel shows the screen's settings: background, default text, how it
+// fits a player's screen of another size, the safe margin (dashed on the
+// canvas, snapped to).
+//
+// Sample pictures for drawn interfaces (ui/art: frames, buttons, textures,
+// masks) are copied into the game's pictures/интерфейс/ when the tab starts,
+// unless the author already has them.
 //
 // Tools: V select, F frame, R rectangle, O ellipse, T text (drag to draw,
 // or click for a default size). Wheel: scroll; Ctrl+wheel: zoom at the
@@ -37,6 +45,7 @@
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -121,6 +130,10 @@ private:
     // --- the page on the canvas ---
     void rebuild_page();
     void read_boxes();
+    // The game's pictures (pictures/..., for the panel's lists).
+    void scan_pictures();
+    void install_art(const std::filesystem::path& art_dir);
+    std::array<f32, 4> art_slice(const std::string& picture) const;
     // The layer under a screen point: the deepest visible, unlocked one;
     // then the one to pick at the current selection's level (deep: the deepest).
     u32 hit(f32 x, f32 y, bool deep) const;
@@ -229,7 +242,7 @@ private:
     };
     struct FillRow {
         int index = 0;
-        Rml::String kind, kind_name, hex, hex2, opacity, swatch, angle, image, fit;
+        Rml::String kind, kind_name, hex, hex2, opacity, swatch, angle, image, fit, tile, offset_x, offset_y;
         bool visible = true;
     };
     struct EffectRow {
@@ -253,6 +266,12 @@ private:
         Rml::String content, family, size, weight, line_height, letter_spacing, text_align, text_case, decoration,
             text_hex, text_swatch = "transparent";
         bool italic = false;
+        // The screen.
+        Rml::String screen_font, screen_size, screen_text_hex, screen_text_swatch = "transparent", screen_fit, bars_hex,
+            bars_swatch = "transparent", safe;
+        // Drawn art.
+        bool has_frame = false, frame_visible = true, frame_fill = true, has_mask = false, mask_visible = true;
+        Rml::String frame_image, frame_t, frame_r, frame_b, frame_l, frame_scale, frame_repeat, mask_image, mask_fit;
     };
 
     std::vector<ScreenRow> m_screens_;
@@ -279,6 +298,13 @@ private:
     std::vector<FillRow> m_fills_;
     std::vector<EffectRow> m_effects_;
     std::vector<Rml::String> m_families_;
+    struct PictureRow {
+        Rml::String path, name;
+    };
+    std::vector<PictureRow> m_pictures_;
+    std::unordered_map<std::string, std::array<f32, 4>> art_slices_; // the samples' cuts, by file name
+    Box m_safe_;
+    bool m_has_safe_ = false;
     std::vector<int> m_nine_{0, 1, 2, 3, 4, 5, 6, 7, 8}; // the 3x3 align grid
     std::vector<u32> closed_; // frames folded in the layer list
 };

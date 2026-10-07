@@ -38,7 +38,7 @@ DecoratorDataHandle DecoratorTiledImage::GenerateElementData(Element* element, B
 		// Forge: CSS background images, sized, positioned and repeated by background-size, -position and -repeat.
 		BackgroundPlacement placement;
 		const Vector2f natural = tile.GetNaturalDimensions(element);
-		if (ComputeBackgroundPlacement(element, size, natural, tile.vector_image, placement))
+		if (ComputeBackgroundPlacement(element, size, natural, tile.vector_image, placement, mask ? "mask" : "background"))
 			GenerateBackgroundTiles(mesh, offset, size, placement, computed.image_color().ToPremultiplied(computed.opacity()), tile.tile_data.texcoords[0],
 				tile.tile_data.texcoords[1], false);
 	}
@@ -61,7 +61,7 @@ void DecoratorTiledImage::RenderElement(Element* element, DecoratorDataHandle el
 	data->Render(element->GetAbsoluteOffset(BoxArea::Border), GetTexture());
 }
 
-DecoratorTiledImageInstancer::DecoratorTiledImageInstancer() : DecoratorTiledInstancer(1)
+DecoratorTiledImageInstancer::DecoratorTiledImageInstancer(bool mask) : DecoratorTiledInstancer(1), mask(mask)
 {
 	RegisterTileProperty("image", true);
 	RegisterShorthand("decorator", "image", ShorthandType::RecursiveRepeat);
@@ -82,6 +82,7 @@ SharedPtr<Decorator> DecoratorTiledImageInstancer::InstanceDecorator(const Strin
 
 	if (!decorator->Initialise(tile, texture))
 		return nullptr;
+	decorator->SetMask(mask);
 
 	return decorator;
 }

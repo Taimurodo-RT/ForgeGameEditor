@@ -222,6 +222,14 @@ bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& diction
 {
 	RMLUI_ZoneScoped;
 
+	// Forge: CSS masks ('-webkit-' names too) from url() and gradient layers; the CSS border-image shorthand.
+	if (StringUtilities::StartsWith(property_name, "-webkit-mask"))
+		return ParsePropertyDeclaration(dictionary, property_name.substr(8), property_value);
+	if ((property_name == "mask" || property_name == "mask-image") && property_value.find("var(") == String::npos)
+		return ParseBackground(dictionary, property_value, property_name == "mask", true);
+	if (property_name == "border-image" && property_value.find("var(") == String::npos)
+		return ParseBorderImage(dictionary, property_value);
+
 	// Try as a property first
 	PropertyId property_id = property_map->GetId(property_name);
 	if (property_id != PropertyId::Invalid)
@@ -403,7 +411,7 @@ bool PropertySpecification::ParseTextShadow(PropertyDictionary& dictionary, cons
 	return ParsePropertyDeclaration(dictionary, font_effect, list);
 }
 
-bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand) const
+bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand, bool mask) const
 {
 	static const char* const ignored_words[] = {"left", "right", "top", "bottom", "center", "repeat", "repeat-x", "repeat-y", "no-repeat", "space",
 		"round", "cover", "contain", "auto", "scroll", "fixed", "local", "/"};
@@ -464,9 +472,9 @@ bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, cons
 				if (path.size() >= 2 && (path[0] == '"' || path[0] == '\''))
 					path = path.substr(1, path.size() - 2);
 				if (StringUtilities::StartsWith(StringUtilities::ToLower(path), "data:"))
-					image = "image(" + DataUri::Register(path) + ")"; // Forge: data URIs are stored behind a short key
+					image = String(mask ? "forge-mask(" : "image(") + DataUri::Register(path) + ")"; // Forge: data URIs are stored behind a short key
 				else
-					image = "image(" + path + ")";
+					image = String(mask ? "forge-mask(" : "image(") + path + ")";
 			}
 			else if (std::find_if(std::begin(boxes), std::end(boxes), [&](const char* b) { return lower == b; }) != std::end(boxes))
 				box = (lower == "text" ? String() : lower);
@@ -496,18 +504,64 @@ bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, cons
 	}
 
 	bool result = true;
+	const String prefix = (mask ? "mask" : "background");
 	if (shorthand)
 	{
-		result &= ParsePropertyDeclaration(dictionary, PropertyId::BackgroundColor, color.empty() ? String("transparent") : color);
-		ParsePropertyDeclaration(dictionary, "background-size", css_size.empty() ? String("auto") : css_size);
-		ParsePropertyDeclaration(dictionary, "background-position", css_position.empty() ? String("0% 0%") : css_position);
-		ParsePropertyDeclaration(dictionary, "background-repeat", css_repeat.empty() ? String("repeat") : css_repeat);
+		if (!mask)
+			result &= ParsePropertyDeclaration(dictionary, PropertyId::BackgroundColor, color.empty() ? String("transparent") : color);
+		ParsePropertyDeclaration(dictionary, prefix + "-size", css_size.empty() ? String("auto") : css_size);
+		ParsePropertyDeclaration(dictionary, prefix + "-position", css_position.empty() ? String("0% 0%") : css_position);
+		ParsePropertyDeclaration(dictionary, prefix + "-repeat", css_repeat.empty() ? String("repeat") : css_repeat);
 	}
+	const PropertyId target = (mask ? PropertyId::MaskImage : PropertyId::Decorator);
 	if (!decorator.empty())
-		result &= ParsePropertyDeclaration(dictionary, PropertyId::Decorator, decorator);
+		result &= ParsePropertyDeclaration(dictionary, target, decorator);
 	else
-		dictionary.SetProperty(PropertyId::Decorator, *GetProperty(PropertyId::Decorator)->GetDefaultValue());
+		dictionary.SetProperty(target, *GetProperty(target)->GetDefaultValue());
 	return result;
+}
+
+bool PropertySpecification::ParseBorderImage(PropertyDictionary& dictionary, const String& value) const
+{
+	// border-image: <source> || <slice> [ / <width> [ / <outset> ]? ]? || <repeat>
+	String source = "none", slice, width, outset, repeat;
+	String spaced;
+	{
+		int depth = 0;
+		for (char c : value)
+		{
+			if (c == '(')
+				depth++;
+			else if (c == ')')
+				depth--;
+			if (c == '/' && depth == 0)
+				spaced += " / ";
+			else
+				spaced += c;
+		}
+	}
+	int part = 0; // 0: slice, 1: width, 2: outset
+	auto append = [](String& list, const String& word) { list += (list.empty() ? "" : " ") + word; };
+	for (const String& token : SplitTopLevel(spaced, ' '))
+	{
+		const String lower = StringUtilities::ToLower(token);
+		if (lower.empty())
+			continue;
+		if (lower == "/")
+			part++;
+		else if (StringUtilities::StartsWith(lower, "url(") || lower.find("-gradient(") != String::npos || lower == "none")
+			source = token;
+		else if (lower == "stretch" || lower == "repeat" || lower == "round" || lower == "space")
+			append(repeat, lower);
+		else
+			append(part == 0 ? slice : part == 1 ? width : outset, lower);
+	}
+	ParsePropertyDeclaration(dictionary, "border-image-source", source);
+	ParsePropertyDeclaration(dictionary, "border-image-slice", slice.empty() ? String("100%") : slice);
+	ParsePropertyDeclaration(dictionary, "border-image-width", width.empty() ? String("1") : width);
+	ParsePropertyDeclaration(dictionary, "border-image-outset", outset.empty() ? String("0") : outset);
+	ParsePropertyDeclaration(dictionary, "border-image-repeat", repeat.empty() ? String("stretch") : repeat);
+	return true;
 }
 
 bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictionary, ShorthandId shorthand_id, const String& property_value) const

@@ -9,6 +9,7 @@
 #include <yyjson.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -107,6 +108,10 @@ const char* const kLayoutWords[] = {"none", "row", "column", "wrap"};
 const char* const kKindWords[] = {"solid", "linear", "radial", "image"};
 const char* const kKindNames[] = {"Цвет", "Линейный градиент", "Радиальный градиент", "Картинка"};
 const char* const kFitWords[] = {"fill", "fit", "tile", "stretch"};
+const char* const kArtRepeatWords[] = {"stretch", "repeat", "round", "space"};
+const char* const kScreenFitWords[] = {"expand", "fit", "stretch"};
+// Where the sample pictures for drawn interfaces go in a game.
+const char* const kArtFolder = "pictures/интерфейс";
 const char* const kEffectWords[] = {"drop-shadow", "inner-shadow", "layer-blur", "background-blur"};
 const char* const kEffectNames[] = {"Тень", "Внутренняя тень", "Размытие слоя", "Размытие фона"};
 const char* const kAlignWords[] = {"left", "center", "right", "justify"};
@@ -290,6 +295,8 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
         }
     }
     if (m_families_.empty()) m_families_.push_back("Onest");
+    install_art(ui.root() / "art");
+    scan_pictures();
 
     page_context_ = ui.create_context("ui-design", 1920, 1080);
     if (!page_context_) return false;
@@ -415,7 +422,10 @@ void UiEditor::set_shown(bool shown) {
     if (shown == shown_) return;
     shown_ = shown;
     if (ui_ && page_context_) ui_->set_active(page_context_, shown);
-    if (shown) page_dirty_ = true;
+    if (shown) {
+        page_dirty_ = true;
+        scan_pictures();
+    }
 }
 
 void UiEditor::rebuild_page() {
@@ -440,6 +450,79 @@ void UiEditor::rebuild_page() {
     page_->Show();
     page_context_->Update(); // lay it out now: the canvas reads its boxes
     read_boxes();
+}
+
+void UiEditor::install_art(const std::filesystem::path& art_dir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path to = game_dir_ / utf8_path(kArtFolder);
+    for (const fs::directory_entry& e : fs::directory_iterator(art_dir, ec)) {
+        if (!e.is_regular_file(ec) || e.path().extension() != ".png") continue;
+        const fs::path mine = to / e.path().filename();
+        if (fs::exists(mine, ec)) continue;
+        fs::create_directories(to, ec);
+        fs::copy_file(e.path(), mine, ec);
+    }
+    // The cuts of the frame pictures (art.json: {"pictures": {"name.png": {"slice": [t, r, b, l]}}}).
+    std::vector<u8> bytes;
+    if (!read_file(art_dir / "art.json", bytes)) return;
+    yyjson_doc* doc = yyjson_read(reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0);
+    if (!doc) return;
+    yyjson_val* pictures = yyjson_obj_get(yyjson_doc_get_root(doc), "pictures");
+    usize i, n;
+    yyjson_val *key, *val;
+    yyjson_obj_foreach(pictures, i, n, key, val) {
+        yyjson_val* slice = yyjson_obj_get(val, "slice");
+        if (!yyjson_is_arr(slice) || yyjson_arr_size(slice) != 4) continue;
+        std::array<f32, 4> cut{};
+        for (usize k = 0; k < 4; ++k) cut[k] = static_cast<f32>(yyjson_get_num(yyjson_arr_get(slice, k)));
+        art_slices_[yyjson_get_str(key)] = cut;
+    }
+    yyjson_doc_free(doc);
+}
+
+std::array<f32, 4> UiEditor::art_slice(const std::string& picture) const {
+    const usize slash = picture.find_last_of('/');
+    auto it = art_slices_.find(slash == std::string::npos ? picture : picture.substr(slash + 1));
+    return it != art_slices_.end() ? it->second : std::array<f32, 4>{16, 16, 16, 16};
+}
+
+void UiEditor::scan_pictures() {
+    namespace fs = std::filesystem;
+    std::vector<PictureRow> rows;
+    std::error_code ec;
+    const fs::path root = game_dir_ / "pictures";
+    for (fs::recursive_directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        std::string ext = path_to_utf8(it->path().extension());
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".svg" && ext != ".tga") continue;
+        std::string path = path_to_utf8(it->path().lexically_relative(game_dir_));
+        std::replace(path.begin(), path.end(), '\\', '/');
+        // Shown as the picture's own name, then its folder: «рамка_дерево (интерфейс)».
+        std::string name = path_to_utf8(it->path().stem());
+        std::string folder = path_to_utf8(it->path().parent_path().lexically_relative(root));
+        std::replace(folder.begin(), folder.end(), '\\', '/');
+        if (!folder.empty() && folder != ".") name += " (" + folder + ")";
+        rows.push_back({path, name});
+        if (rows.size() >= 2000) break;
+    }
+    std::sort(rows.begin(), rows.end(), [](const PictureRow& a, const PictureRow& b) { return a.path < b.path; });
+    // A picture a layer uses but the folder lacks stays listed, so the lists show it.
+    auto keep = [&](const std::string& path) {
+        if (!path.empty() && std::none_of(rows.begin(), rows.end(), [&](const PictureRow& r) { return r.path == path; }))
+            rows.push_back({path, path + " (нет файла)"});
+    };
+    auto visit = [&](auto&& self, const d::Node& n) -> void {
+        for (const d::Paint& p : n.fills)
+            if (p.kind == d::PaintKind::Image) keep(p.image);
+        keep(n.frame.image);
+        keep(n.mask.image);
+        for (const d::Node& c : n.children) self(self, c);
+    };
+    visit(visit, screen_.root);
+    m_pictures_ = std::move(rows);
+    dirty("ue_pictures");
 }
 
 void UiEditor::read_boxes() {
@@ -540,6 +623,12 @@ d::SnapTargets UiEditor::snap_targets() const {
     };
     visit(visit, screen_.root, false);
     for (const d::Guide& g : screen_.guides) (g.vertical ? t.xs : t.ys).push_back(g.position);
+    if (screen_.safe > 0) {
+        t.xs.push_back(screen_.safe);
+        t.xs.push_back(screen_.width - screen_.safe);
+        t.ys.push_back(screen_.safe);
+        t.ys.push_back(screen_.height - screen_.safe);
+    }
     return t;
 }
 
@@ -608,7 +697,11 @@ void UiEditor::refresh_view() {
         if (g.vertical) m_guides_x_.push_back({to_canvas_x(g.position), 0, 1, canvas_h_});
         else m_guides_y_.push_back({0, to_canvas_y(g.position), canvas_w_, 1});
     }
-    for (const char* name : {"ue_frame", "ue_frame_label", "ue_zoom", "ue_guides_x", "ue_guides_y"}) dirty(name);
+    m_has_safe_ = screen_.safe > 0;
+    m_safe_ = {to_canvas_x(screen_.safe), to_canvas_y(screen_.safe), (screen_.width - 2 * screen_.safe) * zoom_,
+               (screen_.height - 2 * screen_.safe) * zoom_};
+    for (const char* name : {"ue_frame", "ue_frame_label", "ue_zoom", "ue_guides_x", "ue_guides_y", "ue_safe", "ue_has_safe"})
+        dirty(name);
     refresh_overlay();
     refresh_rulers();
 }
@@ -771,7 +864,8 @@ void UiEditor::refresh_props() {
     Props p;
     m_fills_.clear();
     m_effects_.clear();
-    const d::Node* n = selection_.empty() ? nullptr : d::find(screen_.root, selection_[0]);
+    // Nothing selected: the screen itself, with its settings.
+    const d::Node* n = selection_.empty() ? &screen_.root : d::find(screen_.root, selection_[0]);
     if (n) {
         const d::Node* parent = d::parent_of(screen_.root, n->id);
         p.any = true;
@@ -830,7 +924,7 @@ void UiEditor::refresh_props() {
         const d::TextStyle& t = n->text_style;
         p.content = n->text;
         p.family = t.family;
-        p.size = fmt(t.size);
+        p.size = t.size > 0 ? fmt(t.size) : "Экран";
         p.weight = std::to_string(t.weight);
         p.italic = t.italic;
         p.line_height = t.line_height > 0 ? fmt(t.line_height) : "Авто";
@@ -852,11 +946,18 @@ void UiEditor::refresh_props() {
             row.angle = fmt(f.angle);
             row.image = f.image;
             row.fit = kFitWords[static_cast<int>(f.fit)];
+            row.tile = f.tile > 0 ? fmt(f.tile) : "Своя";
+            row.offset_x = fmt(f.offset_x);
+            row.offset_y = fmt(f.offset_y);
             if (f.kind == d::PaintKind::Solid) {
                 row.hex = hex_of(f.color);
                 row.swatch = swatch(f.color);
             } else if (f.kind == d::PaintKind::Image) {
-                row.hex = f.image;
+                // The picture's name, without its folder and type.
+                const usize slash = f.image.find_last_of('/');
+                row.hex = slash == std::string::npos ? f.image : f.image.substr(slash + 1);
+                const usize dot = row.hex.find_last_of('.');
+                if (dot != std::string::npos && dot > 0) row.hex.resize(dot);
                 row.swatch = "#808080";
             } else {
                 const d::Color a = f.stops.empty() ? d::Color{} : f.stops.front().color;
@@ -866,6 +967,35 @@ void UiEditor::refresh_props() {
                 row.swatch = swatch(a);
             }
             m_fills_.push_back(std::move(row));
+        }
+        if (p.root) {
+            p.screen_font = screen_.text.family;
+            p.screen_size = fmt(screen_.text.size);
+            p.screen_text_hex = hex_of(screen_.text.color);
+            p.screen_text_swatch = swatch(screen_.text.color);
+            p.screen_fit = kScreenFitWords[static_cast<int>(screen_.fit)];
+            p.bars_hex = hex_of(screen_.bars);
+            p.bars_swatch = swatch(screen_.bars);
+            p.safe = fmt(screen_.safe);
+        }
+        p.has_frame = !n->frame.image.empty();
+        if (p.has_frame) {
+            const d::FrameArt& f = n->frame;
+            p.frame_visible = f.visible;
+            p.frame_fill = f.fill;
+            p.frame_image = f.image;
+            p.frame_t = fmt(f.slice[0]);
+            p.frame_r = fmt(f.slice[1]);
+            p.frame_b = fmt(f.slice[2]);
+            p.frame_l = fmt(f.slice[3]);
+            p.frame_scale = fmt(std::round(f.scale * 100)) + "%";
+            p.frame_repeat = kArtRepeatWords[static_cast<int>(f.repeat)];
+        }
+        p.has_mask = !n->mask.image.empty();
+        if (p.has_mask) {
+            p.mask_visible = n->mask.visible;
+            p.mask_image = n->mask.image;
+            p.mask_fit = kFitWords[static_cast<int>(n->mask.fit)];
         }
         for (usize i = 0; i < n->effects.size(); ++i) {
             const d::Effect& e = n->effects[i];
@@ -1020,6 +1150,120 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         return false;
     }
 
+    // The screen's settings.
+    if (field.rfind("screen.", 0) == 0) {
+        if (!root) return false;
+        const std::string f = field.substr(7);
+        if (f == "font") {
+            if (value.empty()) return false;
+            screen_.text.family = value;
+            return true;
+        }
+        if (f == "font_size") return set_num(screen_.text.size, 1, 2000);
+        if (f == "text_color") return color(screen_.text.color);
+        if (f == "fit") {
+            const int i = index_of(value, kScreenFitWords);
+            if (i < 0) return false;
+            screen_.fit = static_cast<d::ScreenFit>(i);
+            return true;
+        }
+        if (f == "bars") return color(screen_.bars);
+        if (f == "safe") return set_num(screen_.safe, 0, std::min(screen_.width, screen_.height) * 0.45f);
+        return false;
+    }
+
+    // The frame picture.
+    if (field.rfind("frame.", 0) == 0) {
+        if (root || n.type == d::NodeType::Text) return false;
+        d::FrameArt& f = n.frame;
+        const std::string what = field.substr(6);
+        if (what == "add") {
+            if (!f.image.empty()) return false;
+            std::string pick = std::string(kArtFolder) + "/рамка_дерево.png";
+            if (std::none_of(m_pictures_.begin(), m_pictures_.end(), [&](const PictureRow& r) { return r.path == pick; }))
+                pick = m_pictures_.empty() ? std::string() : std::string(m_pictures_.front().path);
+            if (pick.empty()) return false;
+            f = d::FrameArt{};
+            f.image = pick;
+            f.slice = art_slice(pick);
+            return true;
+        }
+        if (f.image.empty()) return false;
+        if (what == "remove") {
+            f = d::FrameArt{};
+            return true;
+        }
+        if (what == "visible") {
+            f.visible = !f.visible;
+            return true;
+        }
+        if (what == "fill") {
+            f.fill = !f.fill;
+            return true;
+        }
+        if (what == "image") {
+            if (value.empty()) return false;
+            f.image = value;
+            f.slice = art_slice(value);
+            return true;
+        }
+        if (what == "scale") {
+            f32 pct = f.scale * 100;
+            if (!set_num(pct, 1, 10000)) return false;
+            f.scale = pct / 100;
+            return true;
+        }
+        if (what == "repeat") {
+            const int i = index_of(value, kArtRepeatWords);
+            if (i < 0) return false;
+            f.repeat = static_cast<d::ArtRepeat>(i);
+            return true;
+        }
+        if (what.rfind("slice.", 0) == 0) {
+            const int i = std::atoi(what.substr(6).c_str());
+            return i >= 0 && i < 4 && set_num(f.slice[static_cast<usize>(i)], 0, 4096);
+        }
+        return false;
+    }
+
+    // The mask picture.
+    if (field.rfind("mask.", 0) == 0) {
+        if (root) return false;
+        d::MaskArt& m = n.mask;
+        const std::string what = field.substr(5);
+        if (what == "add") {
+            if (!m.image.empty()) return false;
+            std::string pick = std::string(kArtFolder) + "/клякса.png";
+            if (std::none_of(m_pictures_.begin(), m_pictures_.end(), [&](const PictureRow& r) { return r.path == pick; }))
+                pick = m_pictures_.empty() ? std::string() : std::string(m_pictures_.front().path);
+            if (pick.empty()) return false;
+            m = d::MaskArt{};
+            m.image = pick;
+            return true;
+        }
+        if (m.image.empty()) return false;
+        if (what == "remove") {
+            m = d::MaskArt{};
+            return true;
+        }
+        if (what == "visible") {
+            m.visible = !m.visible;
+            return true;
+        }
+        if (what == "image") {
+            if (value.empty()) return false;
+            m.image = value;
+            return true;
+        }
+        if (what == "fit") {
+            const int i = index_of(value, kFitWords);
+            if (i < 0) return false;
+            m.fit = static_cast<d::ImageFit>(i);
+            return true;
+        }
+        return false;
+    }
+
     // Fills.
     if (field == "fill.add") {
         d::Paint p;
@@ -1047,6 +1291,15 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             f.image = value;
             return true;
         }
+        if (rest == "tile") {
+            if (value.empty() || value == "Своя") {
+                f.tile = 0;
+                return true;
+            }
+            return set_num(f.tile, 0, 1e4f);
+        }
+        if (rest == "offset_x") return set_num(f.offset_x, -1e4f, 1e4f);
+        if (rest == "offset_y") return set_num(f.offset_y, -1e4f, 1e4f);
         if (rest == "fit") {
             const int i = index_of(value, kFitWords);
             if (i < 0) return false;
@@ -1151,11 +1404,17 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         return true;
     }
     if (field == "family") {
-        if (value.empty()) return false;
-        t.family = value;
+        t.family = value; // empty: the screen's font
         return true;
     }
-    if (field == "size") return set_num(t.size, 1, 2000);
+    if (field == "size") {
+        if (value.empty() || value == "Экран") {
+            t.size = 0;
+            return true;
+        }
+        if (t.size <= 0) t.size = screen_.text.size;
+        return set_num(t.size, 1, 2000);
+    }
     if (field == "weight") {
         f32 w = t.weight;
         if (!set_num(w, 100, 900)) return false;
@@ -1197,10 +1456,11 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
 }
 
 bool UiEditor::set_property(const std::string& field, const std::string& value) {
-    if (selection_.empty()) return false;
     const std::string before = d::save_screen(screen_);
     bool any = false;
-    for (u32 id : selection_)
+    // Nothing selected: the screen's settings.
+    const std::vector<u32> targets = selection_.empty() ? std::vector<u32>{screen_.root.id} : selection_;
+    for (u32 id : targets)
         if (d::Node* n = d::find(screen_.root, id)) any = set_on(*n, field, value) || any;
     if (!any) {
         // Back to what it was (a field that did not take the value shows the old one).
@@ -1253,7 +1513,9 @@ u32 UiEditor::add_layer(d::NodeType type, f32 x, f32 y, f32 w, f32 h, u32 parent
         n.text = "Текст";
         n.width_sizing = d::Sizing::Hug;
         n.height_sizing = d::Sizing::Hug;
-        n.text_style.size = 32;
+        n.text_style.family.clear(); // the screen's font and size
+        n.text_style.size = 0;
+        n.text_style.color = screen_.text.color;
         break;
     case d::NodeType::Image: {
         d::Paint p;
@@ -2083,6 +2345,9 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("angle", &FillRow::angle);
         s.RegisterMember("image", &FillRow::image);
         s.RegisterMember("fit", &FillRow::fit);
+        s.RegisterMember("tile", &FillRow::tile);
+        s.RegisterMember("offset_x", &FillRow::offset_x);
+        s.RegisterMember("offset_y", &FillRow::offset_y);
         s.RegisterMember("visible", &FillRow::visible);
     }
     model.RegisterArray<std::vector<FillRow>>();
@@ -2156,7 +2421,34 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("text_hex", &Props::text_hex);
         s.RegisterMember("text_swatch", &Props::text_swatch);
         s.RegisterMember("italic", &Props::italic);
+        s.RegisterMember("screen_font", &Props::screen_font);
+        s.RegisterMember("screen_size", &Props::screen_size);
+        s.RegisterMember("screen_text_hex", &Props::screen_text_hex);
+        s.RegisterMember("screen_text_swatch", &Props::screen_text_swatch);
+        s.RegisterMember("screen_fit", &Props::screen_fit);
+        s.RegisterMember("bars_hex", &Props::bars_hex);
+        s.RegisterMember("bars_swatch", &Props::bars_swatch);
+        s.RegisterMember("safe", &Props::safe);
+        s.RegisterMember("has_frame", &Props::has_frame);
+        s.RegisterMember("frame_visible", &Props::frame_visible);
+        s.RegisterMember("frame_fill", &Props::frame_fill);
+        s.RegisterMember("frame_image", &Props::frame_image);
+        s.RegisterMember("frame_t", &Props::frame_t);
+        s.RegisterMember("frame_r", &Props::frame_r);
+        s.RegisterMember("frame_b", &Props::frame_b);
+        s.RegisterMember("frame_l", &Props::frame_l);
+        s.RegisterMember("frame_scale", &Props::frame_scale);
+        s.RegisterMember("frame_repeat", &Props::frame_repeat);
+        s.RegisterMember("has_mask", &Props::has_mask);
+        s.RegisterMember("mask_visible", &Props::mask_visible);
+        s.RegisterMember("mask_image", &Props::mask_image);
+        s.RegisterMember("mask_fit", &Props::mask_fit);
     }
+    if (auto s = model.RegisterStruct<PictureRow>()) {
+        s.RegisterMember("path", &PictureRow::path);
+        s.RegisterMember("name", &PictureRow::name);
+    }
+    model.RegisterArray<std::vector<PictureRow>>();
     model.RegisterArray<std::vector<Rml::String>>();
     model.RegisterArray<std::vector<int>>();
 
@@ -2187,6 +2479,9 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_effects", &m_effects_);
     model.Bind("ue_families", &m_families_);
     model.Bind("ue_nine", &m_nine_);
+    model.Bind("ue_pictures", &m_pictures_);
+    model.Bind("ue_safe", &m_safe_);
+    model.Bind("ue_has_safe", &m_has_safe_);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [this, fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) {

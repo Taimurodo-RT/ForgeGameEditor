@@ -82,8 +82,10 @@ public:
 	bool ParsePropertyDeclaration(PropertyDictionary& dictionary, PropertyId property_id, const String& property_value) const;
 	/// Parses a shorthand declaration, setting any parsed and validated properties on the given dictionary.
 	/// @return True if all properties were parsed successfully, false otherwise.
-	// Forge: CSS background layers to background-color and decorators.
-	bool ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand) const;
+	// Forge: CSS background layers to background-color and decorators; with 'mask', CSS mask layers to mask-image.
+	bool ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand, bool mask = false) const;
+	// Forge: the CSS border-image shorthand to its longhands.
+	bool ParseBorderImage(PropertyDictionary& dictionary, const String& value) const;
 	// Forge: maps CSS text-shadow to font effects.
 	bool ParseTextShadow(PropertyDictionary& dictionary, const String& value) const;
 	bool ParseShorthandDeclaration(PropertyDictionary& dictionary, ShorthandId shorthand_id, const String& property_value) const;

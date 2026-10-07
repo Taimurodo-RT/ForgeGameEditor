@@ -20,7 +20,17 @@ struct BackgroundPlacement {
 /// Computes the placement of an image of the given natural size over an area. Images without an intrinsic size (gradients,
 /// SVG pictures) pass 'no_intrinsic_size'; for them 'auto' fills the area (gradients, natural <= 0) or acts as 'contain' (SVG).
 /// Returns false when nothing should be drawn.
-bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natural, bool no_intrinsic_size, BackgroundPlacement& out);
+/// Forge: 'prefix' is "background" or "mask" (mask-size, -position and -repeat).
+bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natural, bool no_intrinsic_size, BackgroundPlacement& out,
+	const char* prefix = "background");
+
+/// Forge: the first value of a placement-like string property (background-size, border-image-slice...), lower case; empty without one.
+String PlacementString(Element* element, const char* name);
+/// Forge: resolves a length, percentage (of percent_base) or math function; false for numbers without a unit only when
+/// 'unitless_ok' is false, and for 'auto' and keywords.
+bool ResolvePlacementLength(Element* element, const String& token, float percent_base, float& out_value);
+/// Splits at spaces outside parentheses.
+StringList PlacementTokens(const String& value);
 
 /// True if the element sets any of background-size, -position or -repeat to something other than the initial value.
 bool HasBackgroundPlacement(Element* element);

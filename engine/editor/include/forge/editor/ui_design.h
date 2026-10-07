@@ -14,6 +14,14 @@
 // and one of nine alignments); its children then size to their content, to a
 // fixed size or fill the free space.
 //
+// Drawn interfaces: a picture fill can repeat as a texture (its tile size and
+// offset), a layer can wear a frame picture cut into nine parts whose corners
+// keep their shape while the sides stretch or repeat (FrameArt, CSS
+// border-image), and a picture can cut the layer's shape (MaskArt, CSS
+// mask-image). The screen itself has settings: its background is the root
+// frame's fills, the default font for its texts, how it fits the player's
+// screen and a safe margin along the edges.
+//
 // On disk a screen is game/ui/<name>.json (save_screen, load_screen). What the
 // game shows is the page screen_html() writes from it (game/ui/<name>.html):
 // plain HTML and CSS, so everything the UI engine can draw from the web is
@@ -59,6 +67,8 @@ struct Paint {
     std::vector<GradientStop> stops;
     std::string image; // a path relative to the game folder (pictures/...)
     ImageFit fit = ImageFit::Fill;
+    f32 tile = 0;                 // Tile: one tile's width in pixels (0: the picture's own size)
+    f32 offset_x = 0, offset_y = 0; // Tile: where the tiles start
     f32 opacity = 1;
     bool visible = true;
     bool operator==(const Paint&) const = default;
@@ -93,13 +103,36 @@ enum class Blend : u8 {
 };
 const char* blend_css(Blend b);
 
+// A frame picture cut into nine parts: the corners keep their shape, the
+// sides and the middle stretch or repeat. slice: how far in from each edge
+// of the picture the cuts are (picture pixels: top, right, bottom, left);
+// on the layer the parts are slice * scale wide.
+enum class ArtRepeat : u8 { Stretch, Repeat, Round, Space };
+struct FrameArt {
+    std::string image; // empty: no frame picture
+    std::array<f32, 4> slice{16, 16, 16, 16};
+    f32 scale = 1;
+    bool fill = true; // draw the middle part too
+    ArtRepeat repeat = ArtRepeat::Stretch;
+    bool visible = true;
+    bool operator==(const FrameArt&) const = default;
+};
+
+// A picture whose opaque parts show the layer (with what is inside it).
+struct MaskArt {
+    std::string image; // empty: no mask
+    ImageFit fit = ImageFit::Stretch;
+    bool visible = true;
+    bool operator==(const MaskArt&) const = default;
+};
+
 enum class TextAlign : u8 { Left, Center, Right, Justify };
 enum class TextCase : u8 { None, Upper, Lower, Title };
 enum class TextDecoration : u8 { None, Underline, Strike };
 
 struct TextStyle {
-    std::string family = "Onest";
-    f32 size = 24;
+    std::string family = "Onest"; // empty: the screen's font
+    f32 size = 24;                // 0: the screen's size
     u16 weight = 400;
     bool italic = false;
     f32 line_height = 0;    // pixels; 0: the font's own
@@ -155,6 +188,8 @@ struct Node {
     f32 opacity = 1;
     Blend blend = Blend::Normal;
     std::vector<Effect> effects;
+    FrameArt frame; // drawn over the fills
+    MaskArt mask;
 
     std::string text; // texts
     TextStyle text_style;
@@ -171,12 +206,23 @@ struct Guide {
     bool operator==(const Guide&) const = default;
 };
 
+// How a screen meets a player's screen of another size. Expand: scaled by the
+// smaller side to keep its proportions, then grown to fill the rest (layers
+// keep to their constraints). Fit: scaled whole, with bars along the sides.
+// Stretch: scaled on each axis to fill it.
+enum class ScreenFit : u8 { Expand, Fit, Stretch };
+
 struct Screen {
     std::string title;          // shown in the list of screens
     f32 width = 1920, height = 1080; // the size it was drawn for
     Node root;                  // the screen itself (a frame; its fills are the background)
     std::vector<Guide> guides;
     u32 next_id = 1;
+    // The screen's settings.
+    TextStyle text{"Onest", 24, 400, false, 0, 0, {}, {}, {}, {255, 255, 255, 255}}; // its texts' font, size and colour by default
+    ScreenFit fit = ScreenFit::Expand;
+    Color bars{0, 0, 0, 255}; // Fit: the bars' colour
+    f32 safe = 0;             // the safe margin along every edge (pixels): what matters stays inside
 };
 
 // A new screen with an empty root frame.

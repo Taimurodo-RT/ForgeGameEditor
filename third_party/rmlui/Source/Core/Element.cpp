@@ -1959,12 +1959,24 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 		StyleSheetSpecification::GetPropertyId("background-position"), StyleSheetSpecification::GetPropertyId("background-repeat")};
 	const bool background_placement_changed = changed_properties.Contains(background_placement[0]) ||
 		changed_properties.Contains(background_placement[1]) || changed_properties.Contains(background_placement[2]);
+	// Forge: mask-size, -position and -repeat place mask images; border-image-* draw the border picture.
+	static const PropertyId image_placement[8] = {StyleSheetSpecification::GetPropertyId("mask-size"),
+		StyleSheetSpecification::GetPropertyId("mask-position"), StyleSheetSpecification::GetPropertyId("mask-repeat"),
+		StyleSheetSpecification::GetPropertyId("border-image-source"), StyleSheetSpecification::GetPropertyId("border-image-slice"),
+		StyleSheetSpecification::GetPropertyId("border-image-width"), StyleSheetSpecification::GetPropertyId("border-image-outset"),
+		StyleSheetSpecification::GetPropertyId("border-image-repeat")};
+	bool image_placement_changed = false;
+	for (const PropertyId id : image_placement)
+		image_placement_changed |= changed_properties.Contains(id);
 
 	// Dirty the effects if they've changed.
-	if (border_radius_changed || filter_or_mask_changed || background_placement_changed || changed_properties.Contains(PropertyId::Decorator))
+	if (border_radius_changed || filter_or_mask_changed || background_placement_changed || image_placement_changed ||
+		changed_properties.Contains(PropertyId::Decorator))
 	{
 		meta->effects.DirtyEffects();
 	}
+	if (changed_properties.Contains(image_placement[3]))
+		meta->background_border.DirtyBorder();
 
 	const bool font_changed = (changed_properties.Contains(PropertyId::FontFamily) || changed_properties.Contains(PropertyId::FontStyle) ||
 		changed_properties.Contains(PropertyId::FontWeight) || changed_properties.Contains(PropertyId::FontSize) ||
