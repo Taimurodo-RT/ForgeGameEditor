@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 12px; font-size: 14px; }
+ul.l { list-style: none; padding: 0; margin: 0 0 10px; display: flex; gap: 6px; }
+ul.l li { padding: 6px 10px; background: #e5e7eb; }
+ul.l li:first-child { background: #fecaca; } ul.l li:last-child { background: #bbf7d0; }
+ul.l li:nth-child(3) { background: #bfdbfe; } ul.l li:nth-child(2n+5) { outline: 2px solid #111; }
+ul.l li:not(.skip) { font-weight: 700; }
+.tag::before { content: "#"; color: #2563eb; margin-right: 2px; }
+.req::after { content: " *"; color: #dc2626; }
+.badge { position: relative; display: inline-block; padding: 6px 12px; background: #1f2937; color: #fff; margin: 8px 20px 8px 0; }
+.badge::after { content: ""; position: absolute; top: -5px; right: -5px; width: 12px; height: 12px; border-radius: 50%; background: #ef4444; }
+.quote::before { content: "\201C"; font-size: 40px; color: #9ca3af; line-height: 0; vertical-align: -14px; }
+[data-kind="warn"] { background: #fef3c7; } [data-kind^="er"] { background: #fee2e2; } [title] { border-bottom: 2px dotted #555; }
+.sib h4 + p { color: #16a34a; } .sib h4 ~ span { color: #9333ea; } .sib > p { margin: 2px 0; }
+.chk { display: inline-block; width: 18px; height: 18px; border: 2px solid #374151; border-radius: 4px; position: relative; vertical-align: middle; }
+.chk.on { background: #2563eb; border-color: #2563eb; }
+.chk.on::after { content: ""; position: absolute; left: 5px; top: 1px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.first::first-letter { font-size: 30px; color: #b45309; }
+.bul { margin: 6px 0; } .bul li { margin: 2px 0; }
+</style></head><body>
+<ul class="l"><li>one</li><li class="skip">two</li><li>three</li><li class="skip">four</li><li>five</li><li>six</li><li>seven</li></ul>
+<div><span class="tag">tag</span> &nbsp; <span class="req">Required</span></div>
+<span class="badge">Inbox</span><span class="badge">Alerts</span>
+<div class="quote">Quote mark made by a pseudo element</div>
+<div data-kind="warn">attribute equals</div><div data-kind="error">attribute starts with</div><div><span title="x">has title</span></div>
+<div class="sib"><h4>Heading</h4><p>adjacent sibling</p><p>not adjacent</p><span>general sibling</span></div>
+<div><span class="chk"></span> <span class="chk on"></span> checkbox drawn with ::after</div>
+<p class="first">First letter styled bigger.</p>
+<ul class="bul"><li>bullet one</li><li>bullet two</li></ul><ol class="bul"><li>number one</li><li>number two</li></ol>
+</body></html>

@@ -125,24 +125,41 @@ FetchContent_Declare(freetype
   GIT_TAG VER-2-14-3
   GIT_SHALLOW TRUE)
 
+# lunasvg: draws SVG pictures (icons, and the SVG data URIs web styles use) into textures for the UI.
+set(LUNASVG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(lunasvg
+  GIT_REPOSITORY https://github.com/sammycage/lunasvg.git
+  GIT_TAG v3.5.0
+  GIT_SHALLOW TRUE)
+
+# HarfBuzz: text shaping. The UI takes glyph widths and kerning from it, so text is as wide as in a browser.
+# Only its single-file build (src/harfbuzz.cc) is compiled, with no optional backends.
+FetchContent_Declare(harfbuzz
+  GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+  GIT_TAG 14.5.1
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure)
+
 # RmlUi: HTML/CSS-like documents for the editor and for game menus. Rendered
-# by engine/ui on SDL_GPU, so none of its backends or samples are built.
+# by engine/ui on SDL_GPU. It lives in third_party/rmlui, where the engine
+# extends it toward the web's styling.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
 set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
 set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 # RmlUi looks for an installed FreeType; it gets the one fetched above instead.
 set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON)
-FetchContent_Declare(rmlui
-  GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
-  GIT_TAG 6.3
-  GIT_SHALLOW TRUE)
-
-FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb libwebp glslang spirv_cross flecs box2d luau freetype)
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb libwebp glslang spirv_cross flecs box2d luau freetype lunasvg harfbuzz)
+add_library(harfbuzz STATIC ${harfbuzz_SOURCE_DIR}/src/harfbuzz.cc)
+target_include_directories(harfbuzz SYSTEM PUBLIC ${harfbuzz_SOURCE_DIR}/src)
+if(MSVC)
+  target_compile_options(harfbuzz PRIVATE /bigobj)
+endif()
 if(NOT TARGET Freetype::Freetype)
   add_library(Freetype::Freetype ALIAS freetype)
 endif()
-FetchContent_MakeAvailable(rmlui)
+add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/rmlui ${CMAKE_BINARY_DIR}/third_party/rmlui)
+target_link_libraries(rmlui_core PRIVATE harfbuzz)
 # Engine code builds with strict warnings; RmlUi's headers are not ours to fix.
 foreach(t rmlui_core rmlui_debugger)
   get_target_property(dirs ${t} INTERFACE_INCLUDE_DIRECTORIES)

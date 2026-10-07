@@ -3,8 +3,9 @@
 // Design tokens of Forge UI, read from the design system's tokens.json.
 //
 // Styles write var(--primary) or var(--radius-md, 12px); the engine replaces
-// them with the value for the active theme while it reads the file (RmlUi
-// itself has no CSS variables). A theme switch re-reads the styles.
+// them with the value for the active theme while it reads the file, so a
+// theme switch re-reads the styles. Other var() calls are a style's own
+// custom properties and are left to RmlUi.
 //
 // Names available to styles:
 //   colours and shadows     --surface, --primary, --elevation-2, ... (per theme)
@@ -44,8 +45,9 @@ public:
     const std::string* find(std::string_view name) const;
     usize size() const;
 
-    // Replaces every var(--name) and var(--name, fallback) in text. Names
-    // without a value keep the fallback (or become empty) and are listed in
+    // Replaces every var(--name) and var(--name, fallback) whose name is a
+    // token. Other names are left for RmlUi, which resolves the document's own
+    // custom properties (--my-color: ...) and fallbacks; they are listed in
     // missing.
     std::string substitute(std::string_view text, std::vector<std::string>* missing = nullptr) const;
 

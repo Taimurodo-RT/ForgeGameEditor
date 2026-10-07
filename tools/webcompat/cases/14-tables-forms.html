@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 12px; font-size: 13px; }
+table { border-collapse: collapse; margin-bottom: 14px; }
+th, td { border: 1px solid #94a3b8; padding: 4px 10px; }
+th { background: #e2e8f0; } tr:nth-child(even) td { background: #f8fafc; }
+.sep { border-collapse: separate; border-spacing: 4px; } .sep td { border: 1px solid #f97316; }
+.form { display: flex; flex-direction: column; gap: 8px; width: 300px; }
+input.t { padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; width: auto; }
+button.p { padding: 8px 14px; border: 0; border-radius: 6px; background: #2563eb; color: #fff; font-size: 14px; }
+</style></head><body>
+<table><tr><th>Name</th><th>Level</th><th>Class</th></tr><tr><td>Borin</td><td>12</td><td>Miner</td></tr><tr><td>Elsa</td><td>9</td><td>Mage</td></tr><tr><td>Tom</td><td>3</td><td>Thief</td></tr></table>
+<table class="sep"><tr><td>separate</td><td>spacing 4</td></tr></table>
+<div class="form"><input class="t" type="text" value="Typed value"/><button class="p">Primary</button><button>Default button</button><label><input type="checkbox" checked="checked"/> Check me</label></div>
+</body></html>

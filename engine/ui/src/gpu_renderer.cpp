@@ -5,6 +5,7 @@
 #include "forge/render/gpu.h"
 
 #include "shaders/ui_blend_mask_frag.h"
+#include "shaders/ui_blend_modes_frag.h"
 #include "shaders/ui_blur_frag.h"
 #include "shaders/ui_blur_vert.h"
 #include "shaders/ui_color_matrix_frag.h"
@@ -18,6 +19,8 @@
 #include <RmlUi/Core/DecorationTypes.h>
 #include <RmlUi/Core/FileInterface.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/DataUri.h>
+#include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Core/Math.h>
 
 #if defined(__GNUC__)
@@ -29,6 +32,7 @@
 #endif
 #define STBI_NO_STDIO
 #include <stb_image.h>
+#include <lunasvg.h>
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #elif defined(_MSC_VER)
@@ -196,8 +200,9 @@ bool GpuRenderer::init(SDL_GPUDevice* device, u32 msaa) {
     fs_blend_mask_ = render::create_shader(device, shaders::ui_blend_mask_frag);
     fs_drop_shadow_ = render::create_shader(device, shaders::ui_drop_shadow_frag);
     fs_blur_ = render::create_shader(device, shaders::ui_blur_frag);
+    fs_blend_modes_ = render::create_shader(device, shaders::ui_blend_modes_frag);
     if (!vs_main_ || !vs_fullscreen_ || !vs_blur_ || !fs_texture_ || !fs_gradient_ || !fs_passthrough_ ||
-        !fs_color_matrix_ || !fs_blend_mask_ || !fs_drop_shadow_ || !fs_blur_)
+        !fs_color_matrix_ || !fs_blend_mask_ || !fs_drop_shadow_ || !fs_blur_ || !fs_blend_modes_)
         return false;
     if (!create_pipelines()) return false;
 
@@ -238,13 +243,14 @@ void GpuRenderer::shutdown() {
     SDL_GPUGraphicsPipeline* pipelines[] = {
         geometry_[0], geometry_[1], geometry_[2], geometry_[3], gradient_[0], gradient_[1], composite_[0][0],
         composite_[0][1], composite_[1][0], composite_[1][1], stencil_fill_, copy_, copy_blend_, color_matrix_,
-        blend_mask_, blur_, drop_shadow_};
+        blend_mask_, blur_, drop_shadow_, blend_modes_[0], blend_modes_[1]};
     for (SDL_GPUGraphicsPipeline* p : pipelines)
         if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
     for (auto& [format, p] : output_) SDL_ReleaseGPUGraphicsPipeline(device_, p);
     output_.clear();
     SDL_GPUShader* shaders[] = {vs_main_,        vs_fullscreen_,  vs_blur_,       fs_texture_, fs_gradient_,
-                                fs_passthrough_, fs_color_matrix_, fs_blend_mask_, fs_drop_shadow_, fs_blur_};
+                                fs_passthrough_, fs_color_matrix_, fs_blend_mask_, fs_drop_shadow_, fs_blur_,
+                                fs_blend_modes_};
     for (SDL_GPUShader* s : shaders)
         if (s) SDL_ReleaseGPUShader(device_, s);
     if (linear_clamp_) SDL_ReleaseGPUSampler(device_, linear_clamp_);
@@ -336,6 +342,9 @@ bool GpuRenderer::create_pipelines() {
                                              t ? Stencil::Test : Stencil::None, false);
     stencil_fill_ = make_pipeline(vs_fullscreen_, fs_passthrough_, kColorFormat, ms, true, Blend::None,
                                   Stencil::WriteReplace, false);
+    for (int t = 0; t < 2; ++t)
+        blend_modes_[t] = make_pipeline(vs_fullscreen_, fs_blend_modes_, kColorFormat, ms, true, Blend::None,
+                                        t ? Stencil::Test : Stencil::None, false);
 
     const SDL_GPUSampleCount one = SDL_GPU_SAMPLECOUNT_1;
     copy_ = make_pipeline(vs_fullscreen_, fs_passthrough_, kColorFormat, one, false, Blend::None, Stencil::None, false);
@@ -353,7 +362,7 @@ bool GpuRenderer::create_pipelines() {
         if (!p) return false;
     return gradient_[0] && gradient_[1] && composite_[0][0] && composite_[0][1] && composite_[1][0] &&
            composite_[1][1] && stencil_fill_ && copy_ && copy_blend_ && color_matrix_ && blend_mask_ && blur_ &&
-           drop_shadow_;
+           drop_shadow_ && blend_modes_[0] && blend_modes_[1];
 }
 
 SDL_GPUGraphicsPipeline* GpuRenderer::output_pipeline(SDL_GPUTextureFormat format) {
@@ -541,17 +550,68 @@ void GpuRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
     if (geometry) release_geometry_.push_back(reinterpret_cast<Geometry*>(geometry));
 }
 
+// SVG pictures are drawn at this size (longest side) and scaled by the UI like any image.
+constexpr float kSvgRasterSize = 128.0f;
+
 Rml::TextureHandle GpuRenderer::LoadTexture(Rml::Vector2i& dimensions, const Rml::String& source) {
-    Rml::FileInterface* files = Rml::GetFileInterface();
-    Rml::FileHandle file = files->Open(source);
-    if (!file) {
-        FORGE_WARN("ui: image not found: %s", source.c_str());
-        return {};
+    std::vector<u8> bytes;
+    bool svg = false;
+    // Data URIs come either as a key from the style sheet (see Rml::DataUri) or directly, as in <img src="data:...">.
+    Rml::String uri;
+    if (!Rml::DataUri::Lookup(source, uri) && Rml::StringUtilities::StartsWith(source, "data:")) uri = source;
+    const bool data_uri = !uri.empty();
+    if (data_uri) {
+        Rml::String media_type, decoded;
+        if (!Rml::DataUri::Decode(uri, media_type, decoded)) {
+            FORGE_WARN("ui: cannot read data URI image");
+            return {};
+        }
+        bytes.assign(decoded.begin(), decoded.end());
+        svg = media_type.find("svg") != Rml::String::npos;
+    } else {
+        Rml::FileInterface* files = Rml::GetFileInterface();
+        Rml::FileHandle file = files->Open(source);
+        if (!file) {
+            FORGE_WARN("ui: image not found: %s", source.c_str());
+            return {};
+        }
+        const size_t size = files->Length(file);
+        bytes.resize(size);
+        files->Read(bytes.data(), size, file);
+        files->Close(file);
+        const Rml::String lower = Rml::StringUtilities::ToLower(source);
+        svg = lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".svg") == 0;
     }
-    const size_t size = files->Length(file);
-    std::vector<u8> bytes(size);
-    files->Read(bytes.data(), size, file);
-    files->Close(file);
+
+    if (svg) {
+        auto document = lunasvg::Document::loadFromData(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        if (!document) {
+            FORGE_WARN("ui: cannot read SVG picture %s", data_uri ? "(data URI)" : source.c_str());
+            return {};
+        }
+        float doc_w = document->width(), doc_h = document->height();
+        if (doc_w <= 0.0f || doc_h <= 0.0f) doc_w = doc_h = 1.0f;
+        const float scale = kSvgRasterSize / std::max(doc_w, doc_h);
+        const int w = std::max(1, static_cast<int>(std::lround(doc_w * scale)));
+        const int h = std::max(1, static_cast<int>(std::lround(doc_h * scale)));
+        lunasvg::Bitmap bitmap = document->renderToBitmap(w, h);
+        if (bitmap.isNull()) return {};
+        // lunasvg gives premultiplied BGRA rows (ARGB32); the renderer wants premultiplied RGBA.
+        std::vector<u8> pixels(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+        for (int y = 0; y < h; ++y) {
+            const u8* row = bitmap.data() + static_cast<size_t>(y) * static_cast<size_t>(bitmap.stride());
+            for (int x = 0; x < w; ++x) {
+                const u8* p = row + x * 4;
+                u8* out = pixels.data() + (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4;
+                out[0] = p[2];
+                out[1] = p[1];
+                out[2] = p[0];
+                out[3] = p[3];
+            }
+        }
+        dimensions = {w, h};
+        return GenerateTexture({pixels.data(), pixels.size()}, dimensions);
+    }
 
     int w = 0, h = 0, channels = 0;
     stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &w, &h, &channels, 4);
@@ -1247,6 +1307,22 @@ void GpuRenderer::composite(const Op& op) {
     const u32 destination = static_cast<u32>(op.rect.p0.y);
     resolve_layer(source, postprocess_[0]);
     render_filters(op.index, op.count);
+
+    // mix-blend-mode: the shader reads a copy of the backdrop and writes the blended result over it.
+    const int blend_mode = static_cast<int>(op.mode) - static_cast<int>(Rml::BlendMode::Multiply);
+    if (blend_mode >= 0) {
+        resolve_layer(destination, postprocess_[1]);
+        begin_layer_pass(destination);
+        bind_pipeline(blend_modes_[clip_enabled_ ? 1 : 0]);
+        SDL_GPUTextureSamplerBinding bindings[2] = {{postprocess_[0], linear_clamp_}, {postprocess_[1], linear_clamp_}};
+        SDL_BindGPUFragmentSamplers(pass_, 0, bindings, 2);
+        const i32 mode[4] = {blend_mode, 0, 0, 0};
+        SDL_PushGPUVertexUniformData(cmd_, 0, &kQuadIdentity, sizeof(kQuadIdentity));
+        SDL_PushGPUFragmentUniformData(cmd_, 0, mode, sizeof(mode));
+        SDL_DrawGPUPrimitives(pass_, 3, 1, 0, 0);
+        ++stats_.draws;
+        return;
+    }
 
     begin_layer_pass(destination);
     const bool blend = static_cast<Rml::BlendMode>(op.mode) == Rml::BlendMode::Blend;

@@ -1,0 +1,930 @@
+#include "../../Include/RmlUi/Core/PropertySpecification.h"
+#include "../../Include/RmlUi/Core/DataUri.h"
+#include "../../Include/RmlUi/Core/Debug.h"
+#include "../../Include/RmlUi/Core/Log.h"
+#include "../../Include/RmlUi/Core/Math.h"
+#include "../../Include/RmlUi/Core/Profiling.h"
+#include "../../Include/RmlUi/Core/PropertyDefinition.h"
+#include "../../Include/RmlUi/Core/PropertyDictionary.h"
+#include "IdNameMap.h"
+#include "PropertyShorthandDefinition.h"
+#include <algorithm>
+#include <limits.h>
+#include <stdint.h>
+
+namespace Rml {
+
+static void SetShorthandPropertiesToPendingSubstitution(PropertyDictionary& dictionary, const ShorthandDefinition* shorthand_definition)
+{
+	for (const ShorthandItem& shorthand_item : shorthand_definition->items)
+	{
+		if (shorthand_item.type == ShorthandItemType::Property)
+		{
+			Property property;
+			property.unit = Unit::SHORTHAND_PLACEHOLDER;
+			dictionary.SetProperty(shorthand_item.property_id, property);
+		}
+		else if (shorthand_item.type == ShorthandItemType::Shorthand)
+		{
+			SetShorthandPropertiesToPendingSubstitution(dictionary, shorthand_item.shorthand_definition);
+		}
+	}
+}
+
+PropertySpecification::PropertySpecification(size_t reserve_num_properties, size_t reserve_num_shorthands) :
+	// Increment reserve numbers by one because the 'invalid' property occupies the first element
+	properties(reserve_num_properties + 1), shorthands(reserve_num_shorthands + 1),
+	property_map(MakeUnique<PropertyIdNameMap>(reserve_num_properties + 1)), shorthand_map(MakeUnique<ShorthandIdNameMap>(reserve_num_shorthands + 1))
+{}
+
+PropertySpecification::~PropertySpecification() {}
+
+PropertyDefinition& PropertySpecification::RegisterProperty(const String& property_name, const String& default_value, bool inherited,
+	bool forces_layout, PropertyId id)
+{
+	if (id == PropertyId::Invalid)
+		id = property_map->GetOrCreateId(property_name);
+	else
+		property_map->AddPair(id, property_name);
+
+	size_t index = (size_t)id;
+
+	if (index >= size_t(PropertyId::MaxNumIds))
+	{
+		Log::Message(Log::LT_ERROR,
+			"Fatal error while registering property '%s': Maximum number of allowed properties exceeded. Continuing execution may lead to crash.",
+			property_name.c_str());
+		RMLUI_ERROR;
+		return *properties[0];
+	}
+
+	if (index < properties.size())
+	{
+		// We don't want to owerwrite an existing entry.
+		if (properties[index])
+		{
+			Log::Message(Log::LT_ERROR, "While registering property '%s': The property is already registered.", property_name.c_str());
+			return *properties[index];
+		}
+	}
+	else
+	{
+		// Resize vector to hold the new index
+		properties.resize((index * 3) / 2 + 1);
+	}
+
+	// Create and insert the new property
+	properties[index] = MakeUnique<PropertyDefinition>(id, default_value, inherited, forces_layout);
+	property_ids.Insert(id);
+	if (inherited)
+		property_ids_inherited.Insert(id);
+	if (forces_layout)
+		property_ids_forcing_layout.Insert(id);
+
+	return *properties[index];
+}
+
+const PropertyDefinition* PropertySpecification::GetProperty(PropertyId id) const
+{
+	if (id == PropertyId::Invalid || (size_t)id >= properties.size())
+		return nullptr;
+
+	return properties[(size_t)id].get();
+}
+
+const PropertyDefinition* PropertySpecification::GetProperty(const String& property_name) const
+{
+	return GetProperty(property_map->GetId(property_name));
+}
+
+const PropertyIdSet& PropertySpecification::GetRegisteredProperties() const
+{
+	return property_ids;
+}
+
+const PropertyIdSet& PropertySpecification::GetRegisteredInheritedProperties() const
+{
+	return property_ids_inherited;
+}
+
+const PropertyIdSet& PropertySpecification::GetRegisteredPropertiesForcingLayout() const
+{
+	return property_ids_forcing_layout;
+}
+
+ShorthandId PropertySpecification::RegisterShorthand(const String& shorthand_name, const String& property_names, ShorthandType type, ShorthandId id)
+{
+	if (id == ShorthandId::Invalid)
+		id = shorthand_map->GetOrCreateId(shorthand_name);
+	else
+		shorthand_map->AddPair(id, shorthand_name);
+
+	StringList property_list;
+	StringUtilities::ExpandString(property_list, StringUtilities::ToLower(property_names));
+
+	// Construct the new shorthand definition and resolve its properties.
+	UniquePtr<ShorthandDefinition> property_shorthand(new ShorthandDefinition());
+
+	for (const String& raw_name : property_list)
+	{
+		ShorthandItem item;
+		bool optional = false;
+		bool repeats = false;
+		String name = raw_name;
+
+		if (!raw_name.empty() && raw_name.back() == '?')
+		{
+			optional = true;
+			name.pop_back();
+		}
+		if (!raw_name.empty() && raw_name.back() == '#')
+		{
+			repeats = true;
+			name.pop_back();
+		}
+
+		PropertyId property_id = property_map->GetId(name);
+		if (property_id != PropertyId::Invalid)
+		{
+			// We have a valid property
+			if (const PropertyDefinition* property = GetProperty(property_id))
+				item = ShorthandItem(property_id, property, optional, repeats);
+		}
+		else
+		{
+			// Otherwise, we must be a shorthand
+			ShorthandId shorthand_id = shorthand_map->GetId(name);
+
+			// Test for valid shorthand id. The recursive types (and only those) can hold other shorthands.
+			if (shorthand_id != ShorthandId::Invalid && (type == ShorthandType::RecursiveRepeat || type == ShorthandType::RecursiveCommaSeparated))
+			{
+				if (const ShorthandDefinition* shorthand = GetShorthand(shorthand_id))
+					item = ShorthandItem(shorthand_id, shorthand, optional, repeats);
+			}
+		}
+
+		if (item.type == ShorthandItemType::Invalid)
+		{
+			Log::Message(Log::LT_ERROR, "Shorthand property '%s' was registered with invalid property '%s'.", shorthand_name.c_str(), name.c_str());
+			return ShorthandId::Invalid;
+		}
+		property_shorthand->items.push_back(item);
+	}
+
+	property_shorthand->id = id;
+	property_shorthand->type = type;
+	property_shorthand->inherited = std::any_of(property_shorthand->items.begin(), property_shorthand->items.end(), [](const ShorthandItem& item) {
+		return (item.type == ShorthandItemType::Property && item.property_definition->IsInherited()) ||
+			(item.type == ShorthandItemType::Shorthand && item.shorthand_definition->inherited);
+	});
+
+	const size_t index = (size_t)id;
+
+	if (index >= size_t(ShorthandId::MaxNumIds))
+	{
+		Log::Message(Log::LT_ERROR, "Error while registering shorthand '%s': Maximum number of allowed shorthands exceeded.", shorthand_name.c_str());
+		return ShorthandId::Invalid;
+	}
+
+	if (index < shorthands.size())
+	{
+		// We don't want to overwrite an existing entry.
+		if (shorthands[index])
+		{
+			Log::Message(Log::LT_ERROR, "The shorthand '%s' already exists, ignoring.", shorthand_name.c_str());
+			return ShorthandId::Invalid;
+		}
+	}
+	else
+	{
+		// Resize vector to hold the new index
+		shorthands.resize((index * 3) / 2 + 1);
+	}
+
+	shorthands[index] = std::move(property_shorthand);
+	return id;
+}
+
+const ShorthandDefinition* PropertySpecification::GetShorthand(ShorthandId id) const
+{
+	if (id == ShorthandId::Invalid || (size_t)id >= shorthands.size())
+		return nullptr;
+
+	return shorthands[(size_t)id].get();
+}
+
+const ShorthandDefinition* PropertySpecification::GetShorthand(const String& shorthand_name) const
+{
+	return GetShorthand(shorthand_map->GetId(shorthand_name));
+}
+
+bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& dictionary, const String& property_name, const String& property_value) const
+{
+	RMLUI_ZoneScoped;
+
+	// Try as a property first
+	PropertyId property_id = property_map->GetId(property_name);
+	if (property_id != PropertyId::Invalid)
+		return ParsePropertyDeclaration(dictionary, property_id, property_value);
+
+	// Forge: 'all' sets every property (except direction and content) to a CSS-wide keyword, as in 'all: unset'.
+	if (property_name == "all")
+	{
+		const String keyword = StringUtilities::ToLower(StringUtilities::StripWhitespace(property_value));
+		if (keyword != "initial" && keyword != "inherit" && keyword != "unset" && keyword != "revert" && keyword != "revert-layer")
+			return false;
+		for (const PropertyId id : GetRegisteredProperties())
+		{
+			const String& name = property_map->GetName(id);
+			if (name == "direction" || name == "unicode-bidi" || name == "content" || StringUtilities::StartsWith(name, "-rmlui"))
+				continue;
+			ParsePropertyDeclaration(dictionary, id, keyword);
+		}
+		return true;
+	}
+
+	// Then, as a shorthand
+	ShorthandId shorthand_id = shorthand_map->GetId(property_name);
+	if (shorthand_id != ShorthandId::Invalid)
+		return ParseShorthandDeclaration(dictionary, shorthand_id, property_value);
+
+	if (StringUtilities::StartsWith(property_name, "--"))
+	{
+		Unit unit = {};
+		StringList property_values;
+		// Allow empty strings for custom properties, otherwise one has to specify an extra pair of quotes for an empty string with the API.
+		ParsePropertyResult parse_result =
+			(property_value.empty() ? ParsePropertyResult::Success : ParsePropertyValues(property_values, property_value, SplitOption::None));
+		switch (parse_result)
+		{
+		case ParsePropertyResult::Success: unit = Unit::STRING; break;
+		case ParsePropertyResult::ContainsVariable: unit = Unit::VAR_EXPRESSION; break;
+		case ParsePropertyResult::Error: return false;
+		}
+		dictionary.SetCustomProperty(property_name, Property{property_value, unit});
+		return true;
+	}
+
+	return false;
+}
+
+bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& dictionary, PropertyId property_id, const String& property_value) const
+{
+	// Parse as a single property.
+	const PropertyDefinition* property_definition = GetProperty(property_id);
+	if (!property_definition)
+		return false;
+
+	// Forge: 'content', list and grid properties keep their quotes and escapes ("\e5ca" "a" attr(title), "head head"); they are
+	// interpreted by ElementDocument and the grid layout. Variables are substituted first.
+	static const char* raw_names[] = {"content", "list-style-type", "list-style", "grid-template-columns", "grid-template-rows",
+		"grid-template-areas", "grid-template", "grid", "grid-auto-flow", "grid-auto-rows", "grid-auto-columns", "grid-area", "grid-row",
+		"grid-column", "grid-row-start", "grid-row-end", "grid-column-start", "grid-column-end"};
+	bool raw = false;
+	for (const char* name : raw_names)
+		raw |= (property_id == property_map->GetId(name));
+	if (raw && property_value.find("var(") != String::npos)
+	{
+		dictionary.SetProperty(property_id, Property{property_value, Unit::VAR_EXPRESSION});
+		return true;
+	}
+	if (raw)
+	{
+		Property content(StringUtilities::StripWhitespace(property_value), Unit::STRING);
+		content.definition = property_definition;
+		dictionary.SetProperty(property_id, content);
+		return true;
+	}
+
+	StringList property_values;
+	switch (ParsePropertyValues(property_values, property_value, SplitOption::None))
+	{
+	case ParsePropertyResult::Success: break;
+	case ParsePropertyResult::ContainsVariable:
+	{
+		dictionary.SetProperty(property_id, Property{property_value, Unit::VAR_EXPRESSION});
+		return true;
+	}
+	case ParsePropertyResult::Error:
+	{
+		return false;
+	}
+	}
+	RMLUI_ASSERT(!property_values.empty());
+
+	Property new_property;
+	if (!property_definition->ParseValue(new_property, property_values[0]))
+		return false;
+
+	dictionary.SetProperty(property_id, new_property);
+	return true;
+}
+
+// Forge: splits at top-level occurrences of 'separator' (whitespace when ' '), keeping (...) and quoted strings whole.
+static StringList SplitTopLevel(const String& value, char separator)
+{
+	StringList out;
+	String current;
+	int depth = 0;
+	char quote = 0;
+	for (char c : value)
+	{
+		if (quote)
+		{
+			current += c;
+			if (c == quote)
+				quote = 0;
+			continue;
+		}
+		if (c == '"' || c == '\'')
+			quote = c;
+		else if (c == '(')
+			depth++;
+		else if (c == ')' && depth > 0)
+			depth--;
+		const bool split = (depth == 0 && (separator == ' ' ? StringUtilities::IsWhitespace(c) : c == separator));
+		if (split)
+		{
+			if (!StringUtilities::StripWhitespace(current).empty())
+				out.push_back(StringUtilities::StripWhitespace(current));
+			current.clear();
+		}
+		else
+			current += c;
+	}
+	if (!StringUtilities::StripWhitespace(current).empty())
+		out.push_back(StringUtilities::StripWhitespace(current));
+	return out;
+}
+
+bool PropertySpecification::ParseTextShadow(PropertyDictionary& dictionary, const String& value) const
+{
+	const PropertyId font_effect = property_map->GetId("font-effect");
+	const String trimmed = StringUtilities::StripWhitespace(value);
+	if (StringUtilities::ToLower(trimmed) == "none")
+		return ParsePropertyDeclaration(dictionary, font_effect, "none");
+
+	// The first shadow is drawn on top, while font effects draw later ones on top: reverse the list.
+	StringList effects;
+	for (const String& shadow : SplitTopLevel(trimmed, ','))
+	{
+		StringList lengths;
+		String color = "#000000";
+		for (const String& token : SplitTopLevel(shadow, ' '))
+		{
+			const char c = token.empty() ? 0 : token[0];
+			if ((c >= '0' && c <= '9') || c == '-' || c == '.' || c == '+')
+				lengths.push_back(token);
+			else if (!token.empty())
+				color = token;
+		}
+		if (lengths.size() < 2)
+			return false;
+		auto with_unit = [](const String& length) {
+			const bool unitless = !length.empty() && length.find_first_not_of("+-.0123456789") == String::npos;
+			return unitless ? length + "px" : length;
+		};
+		const String x = with_unit(lengths[0]), y = with_unit(lengths[1]);
+		float blur = 0.f;
+		if (lengths.size() >= 3)
+			blur = (float)std::atof(lengths[2].c_str()); // px; CSS blur radius is twice the standard deviation
+		if (blur <= 0.f)
+			effects.push_back("shadow(" + x + " " + y + " " + color + ")");
+		else
+		{
+			// The glow effect's blur has a standard deviation of 0.4 * width.
+			const int width = Math::Max(1, (int)Math::Round(blur * 1.25f));
+			effects.push_back("glow(0px " + std::to_string(width) + "px " + x + " " + y + " " + color + ")");
+		}
+	}
+	String list;
+	for (auto it = effects.rbegin(); it != effects.rend(); ++it)
+		list += (list.empty() ? "" : ", ") + *it;
+	return ParsePropertyDeclaration(dictionary, font_effect, list);
+}
+
+bool PropertySpecification::ParseBackground(PropertyDictionary& dictionary, const String& value, bool shorthand) const
+{
+	static const char* const ignored_words[] = {"left", "right", "top", "bottom", "center", "repeat", "repeat-x", "repeat-y", "no-repeat", "space",
+		"round", "cover", "contain", "auto", "scroll", "fixed", "local", "/"};
+	static const char* const boxes[] = {"border-box", "padding-box", "content-box", "text"};
+
+	String color, decorator;
+	String css_size, css_position, css_repeat; // Forge: of the last layer, for background-size, -position and -repeat
+	const StringList layers = SplitTopLevel(value, ',');
+	for (size_t layer_index = 0; layer_index < layers.size(); layer_index++)
+	{
+		// Put spaces around a top-level '/', which separates the position from the size.
+		String layer;
+		{
+			int depth = 0;
+			char quote = 0;
+			for (char c : layers[layer_index])
+			{
+				if (quote)
+					quote = (c == quote ? 0 : quote);
+				else if (c == '"' || c == '\'')
+					quote = c;
+				else if (c == '(')
+					depth++;
+				else if (c == ')')
+					depth--;
+				if (c == '/' && depth == 0 && !quote)
+					layer += " / ";
+				else
+					layer += c;
+			}
+		}
+		const StringList tokens = SplitTopLevel(layer, ' ');
+		String image, box, fit, align;
+		String layer_size, layer_position, layer_repeat;
+		bool after_slash = false;
+		for (const String& token : tokens)
+		{
+			const String lower = StringUtilities::ToLower(token);
+			{
+				const bool is_length = !lower.empty() && ((lower[0] >= '0' && lower[0] <= '9') || lower[0] == '.' || lower[0] == '-' || lower[0] == '+');
+				auto append = [](String& list, const String& word) { list += (list.empty() ? "" : " ") + word; };
+				if (lower == "/")
+					after_slash = true;
+				else if (lower == "repeat" || lower == "repeat-x" || lower == "repeat-y" || lower == "no-repeat" || lower == "space" || lower == "round")
+					append(layer_repeat, lower);
+				else if (after_slash && (is_length || lower == "auto" || lower == "cover" || lower == "contain"))
+					append(layer_size, lower);
+				else if (!after_slash && (is_length || lower == "left" || lower == "right" || lower == "top" || lower == "bottom" || lower == "center"))
+					append(layer_position, lower);
+			}
+			const size_t paren = lower.find('(');
+			const String function = (paren == String::npos ? String() : lower.substr(0, paren));
+			if (function.size() > 9 && function.compare(function.size() - 9, 9, "-gradient") == 0)
+				image = token;
+			else if (function == "url")
+			{
+				String path = StringUtilities::StripWhitespace(token.substr(4, token.size() - 5));
+				if (path.size() >= 2 && (path[0] == '"' || path[0] == '\''))
+					path = path.substr(1, path.size() - 2);
+				if (StringUtilities::StartsWith(StringUtilities::ToLower(path), "data:"))
+					image = "image(" + DataUri::Register(path) + ")"; // Forge: data URIs are stored behind a short key
+				else
+					image = "image(" + path + ")";
+			}
+			else if (std::find_if(std::begin(boxes), std::end(boxes), [&](const char* b) { return lower == b; }) != std::end(boxes))
+				box = (lower == "text" ? String() : lower);
+			else if (lower == "cover" || lower == "contain")
+				fit = lower;
+			else if (lower == "no-repeat")
+				fit = (fit.empty() ? "scale-none" : fit);
+			else if (lower == "center")
+				align = "center center";
+			else if (lower == "none" || (!lower.empty() && ((lower[0] >= '0' && lower[0] <= '9') || lower[0] == '.' || lower[0] == '-')) ||
+				std::find_if(std::begin(ignored_words), std::end(ignored_words), [&](const char* w) { return lower == w; }) != std::end(ignored_words))
+				continue;
+			else if (shorthand && layer_index + 1 == layers.size())
+				color = token;
+		}
+		if (image.empty())
+			continue;
+		// Forge: placement of the last layer with an image (a trailing colour-only layer has none).
+		css_size = layer_size;
+		css_position = layer_position;
+		css_repeat = layer_repeat;
+		if (StringUtilities::StartsWith(image, "image(") && (!fit.empty() || !align.empty()))
+			image = image.substr(0, image.size() - 1) + " " + (fit.empty() ? "scale-none" : fit) + (align.empty() ? "" : " " + align) + ")";
+		if (!decorator.empty())
+			decorator += ", ";
+		decorator += image + (box.empty() ? "" : " " + box);
+	}
+
+	bool result = true;
+	if (shorthand)
+	{
+		result &= ParsePropertyDeclaration(dictionary, PropertyId::BackgroundColor, color.empty() ? String("transparent") : color);
+		ParsePropertyDeclaration(dictionary, "background-size", css_size.empty() ? String("auto") : css_size);
+		ParsePropertyDeclaration(dictionary, "background-position", css_position.empty() ? String("0% 0%") : css_position);
+		ParsePropertyDeclaration(dictionary, "background-repeat", css_repeat.empty() ? String("repeat") : css_repeat);
+	}
+	if (!decorator.empty())
+		result &= ParsePropertyDeclaration(dictionary, PropertyId::Decorator, decorator);
+	else
+		dictionary.SetProperty(PropertyId::Decorator, *GetProperty(PropertyId::Decorator)->GetDefaultValue());
+	return result;
+}
+
+bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictionary, ShorthandId shorthand_id, const String& property_value) const
+{
+	const ShorthandDefinition* shorthand_definition = GetShorthand(shorthand_id);
+	if (!shorthand_definition)
+		return false;
+
+	const SplitOption split_option =
+		(shorthand_definition->type == ShorthandType::RecursiveCommaSeparated ? SplitOption::Comma : SplitOption::Whitespace);
+
+	StringList property_values;
+	switch (ParsePropertyValues(property_values, property_value, split_option))
+	{
+	case ParsePropertyResult::Success: break;
+	case ParsePropertyResult::ContainsVariable:
+	{
+		dictionary.SetVarShorthand(shorthand_id, Property{property_value, Unit::VAR_EXPRESSION});
+		SetShorthandPropertiesToPendingSubstitution(dictionary, shorthand_definition);
+		return true;
+	}
+	case ParsePropertyResult::Error:
+	{
+		return false;
+	}
+	}
+	RMLUI_ASSERT(!property_values.empty());
+
+	// Forge: CSS backgrounds with image layers.
+	{
+		const String& name = shorthand_map->GetName(shorthand_id);
+		if (name == "background" || name == "background-image")
+			return ParseBackground(dictionary, property_value, name == "background");
+		if (name == "text-shadow")
+			return ParseTextShadow(dictionary, property_value);
+		// CSS lets the vertical keyword come first, as in 'top left'; the shorthand takes x first.
+		if ((name == "transform-origin" || name == "perspective-origin") && property_values.size() >= 2)
+		{
+			auto lower = [](const String& v) { return StringUtilities::ToLower(v); };
+			const String a = lower(property_values[0]), b = lower(property_values[1]);
+			if (a == "top" || a == "bottom" || b == "left" || b == "right")
+				std::swap(property_values[0], property_values[1]);
+		}
+	}
+
+	// Handle the special behavior of the flex shorthand first, otherwise it acts like 'FallThrough'.
+	if (shorthand_definition->type == ShorthandType::Flex && !property_values.empty())
+	{
+		RMLUI_ASSERT(shorthand_definition->items.size() == 3);
+		if (property_values[0] == "none")
+		{
+			property_values = {"0", "0", "auto"};
+		}
+		else
+		{
+			// Default values when omitted from the 'flex' shorthand is specified here. These defaults are special
+			// for this shorthand only, otherwise each underlying property has a different default value.
+			const char* default_omitted_values[] = {"1", "1", "0%"}; // flex-grow, flex-shrink, flex-basis (Forge: 0% as in CSS)
+			Property new_property;
+			bool result = true;
+			for (int i = 0; i < 3; i++)
+			{
+				auto& item = shorthand_definition->items[i];
+				result &= item.property_definition->ParseValue(new_property, default_omitted_values[i]);
+				dictionary.SetProperty(item.property_id, new_property);
+			}
+			(void)result;
+			RMLUI_ASSERT(result);
+		}
+	}
+
+	// If this definition is a 'box'-style shorthand (x-top x-right x-bottom x-left) that needs replication.
+	if (shorthand_definition->type == ShorthandType::Box && property_values.size() < 4)
+	{
+		// This array tells which property index each side is parsed from
+		Array<int, 4> box_side_to_value_index = {0, 0, 0, 0};
+		switch (property_values.size())
+		{
+		case 1:
+			// Only one value is defined, so it is parsed onto all four sides.
+			box_side_to_value_index = {0, 0, 0, 0};
+			break;
+		case 2:
+			// Two values are defined, so the first one is parsed onto the top and bottom value, the second onto
+			// the left and right.
+			box_side_to_value_index = {0, 1, 0, 1};
+			break;
+		case 3:
+			// Three values are defined, so the first is parsed into the top value, the second onto the left and
+			// right, and the third onto the bottom.
+			box_side_to_value_index = {0, 1, 2, 1};
+			break;
+		default: RMLUI_ERROR; break;
+		}
+
+		for (int i = 0; i < 4; i++)
+		{
+			RMLUI_ASSERT(shorthand_definition->items[i].type == ShorthandItemType::Property);
+			Property new_property;
+			int value_index = box_side_to_value_index[i];
+			if (!shorthand_definition->items[i].property_definition->ParseValue(new_property, property_values[value_index]))
+				return false;
+
+			dictionary.SetProperty(shorthand_definition->items[i].property_definition->GetId(), new_property);
+		}
+	}
+	else if (shorthand_definition->type == ShorthandType::RecursiveRepeat)
+	{
+		bool result = true;
+
+		for (size_t i = 0; i < shorthand_definition->items.size(); i++)
+		{
+			const ShorthandItem& item = shorthand_definition->items[i];
+			if (item.type == ShorthandItemType::Property)
+				result &= ParsePropertyDeclaration(dictionary, item.property_id, property_value);
+			else if (item.type == ShorthandItemType::Shorthand)
+				result &= ParseShorthandDeclaration(dictionary, item.shorthand_id, property_value);
+			else
+				result = false;
+		}
+
+		if (!result)
+			return false;
+	}
+	else if (shorthand_definition->type == ShorthandType::RecursiveCommaSeparated)
+	{
+		size_t num_optional = 0;
+		for (auto& item : shorthand_definition->items)
+			if (item.optional)
+				num_optional += 1;
+
+		if (property_values.size() + num_optional < shorthand_definition->items.size())
+		{
+			// Not enough subvalues declared.
+			return false;
+		}
+
+		size_t subvalue_i = 0;
+		String temp_subvalue;
+		for (size_t i = 0; i < shorthand_definition->items.size() && subvalue_i < property_values.size(); i++)
+		{
+			bool result = false;
+
+			const String* subvalue = &property_values[subvalue_i];
+
+			const ShorthandItem& item = shorthand_definition->items[i];
+			if (item.repeats)
+			{
+				property_values.erase(property_values.begin(), property_values.begin() + subvalue_i);
+				temp_subvalue.clear();
+				StringUtilities::JoinString(temp_subvalue, property_values);
+				subvalue = &temp_subvalue;
+			}
+
+			if (item.type == ShorthandItemType::Property)
+				result = ParsePropertyDeclaration(dictionary, item.property_id, *subvalue);
+			else if (item.type == ShorthandItemType::Shorthand)
+				result = ParseShorthandDeclaration(dictionary, item.shorthand_id, *subvalue);
+
+			if (result)
+				subvalue_i += 1;
+			else if (item.repeats || !item.optional)
+				return false;
+
+			if (item.repeats)
+				break;
+		}
+	}
+	else
+	{
+		RMLUI_ASSERT(shorthand_definition->type == ShorthandType::Box || shorthand_definition->type == ShorthandType::FallThrough ||
+			shorthand_definition->type == ShorthandType::Replicate || shorthand_definition->type == ShorthandType::Flex);
+
+		// Abort over-specified shorthand values.
+		if (property_values.size() > shorthand_definition->items.size())
+			return false;
+
+		size_t value_index = 0;
+		size_t property_index = 0;
+
+		for (; value_index < property_values.size() && property_index < shorthand_definition->items.size(); property_index++)
+		{
+			Property new_property;
+
+			if (!shorthand_definition->items[property_index].property_definition->ParseValue(new_property, property_values[value_index]))
+			{
+				// This definition failed to parse; if we're falling through, try the next property. If there is no
+				// next property, then abort!
+				if (shorthand_definition->type == ShorthandType::FallThrough || shorthand_definition->type == ShorthandType::Flex)
+				{
+					if (property_index + 1 < shorthand_definition->items.size())
+						continue;
+				}
+				return false;
+			}
+
+			dictionary.SetProperty(shorthand_definition->items[property_index].property_id, new_property);
+
+			// Increment the value index, unless we're replicating the last value and we're up to the last value.
+			if (shorthand_definition->type != ShorthandType::Replicate || value_index < property_values.size() - 1)
+				value_index++;
+		}
+
+		// Abort if we still have values left to parse but no more properties to pass them to.
+		if (shorthand_definition->type != ShorthandType::Replicate && value_index < property_values.size() &&
+			property_index >= shorthand_definition->items.size())
+			return false;
+	}
+
+	return true;
+}
+
+void PropertySpecification::SetPropertyDefaults(PropertyDictionary& dictionary) const
+{
+	for (const auto& property : properties)
+	{
+		if (property && dictionary.GetProperty(property->GetId()) == nullptr)
+			dictionary.SetProperty(property->GetId(), *property->GetDefaultValue());
+	}
+}
+
+String PropertySpecification::PropertiesToString(const PropertyDictionary& dictionary, bool include_name, char delimiter) const
+{
+	const PropertyMap& properties = dictionary.GetProperties();
+
+	// For determinism we print the strings in order of increasing property ids.
+	Vector<PropertyId> ids;
+	ids.reserve(properties.size());
+	for (auto& pair : properties)
+		ids.push_back(pair.first);
+
+	std::sort(ids.begin(), ids.end());
+
+	String result;
+	for (PropertyId id : ids)
+	{
+		const Property& p = properties.find(id)->second;
+		if (include_name)
+			result += property_map->GetName(id) + ": ";
+		result += p.ToString() + delimiter;
+	}
+
+	if (!result.empty())
+		result.pop_back();
+
+	return result;
+}
+
+PropertySpecification::ParsePropertyResult PropertySpecification::ParsePropertyValues(StringList& values_list, const String& values,
+	const SplitOption split_option) const
+{
+	RMLUI_ASSERT(values_list.empty());
+
+	const bool split_values = (split_option != SplitOption::None);
+	const bool split_by_comma = (split_option == SplitOption::Comma);
+	const bool split_by_whitespace = (split_option == SplitOption::Whitespace);
+
+	String value;
+
+	auto SubmitExactValue = [&]() {
+		values_list.push_back(std::move(value));
+		value.clear();
+	};
+
+	auto SubmitValue = [&]() {
+		value = StringUtilities::StripWhitespace(value);
+		if (!value.empty())
+			SubmitExactValue();
+	};
+
+	auto IsAllWhitespace = [](const String& string) { return std::all_of(string.begin(), string.end(), StringUtilities::IsWhitespace); };
+	auto IsIdentifierChar = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_'; };
+	auto EndsWithVariable = [&](const String& string) {
+		return StringUtilities::EndsWith(string, "var") && (string.size() == 3 || !IsIdentifierChar(string[string.size() - 4]));
+	};
+
+	auto Error = [&]() {
+		values_list.clear();
+		return ParsePropertyResult::Error;
+	};
+	auto ContainsVariable = [&]() {
+		values_list.clear();
+		return ParsePropertyResult::ContainsVariable;
+	};
+
+	enum ParseState { VALUE, VALUE_PARENTHESIS, VALUE_QUOTE, VALUE_QUOTE_ESCAPE_NEXT };
+	ParseState state = VALUE;
+	int open_parentheses = 0;
+	char open_quote_character = 0;
+	size_t character_index = 0;
+
+	while (character_index < values.size())
+	{
+		const char character = values[character_index];
+		character_index++;
+
+		switch (state)
+		{
+		case VALUE:
+		{
+			if (character == ';')
+			{
+				if (value.size() > 0)
+				{
+					values_list.push_back(value);
+					value.clear();
+				}
+			}
+			else if ((split_by_comma && character == ',') || (split_by_whitespace && StringUtilities::IsWhitespace(character)))
+			{
+				SubmitValue();
+			}
+			else if (character == '"' || character == '\'')
+			{
+				state = VALUE_QUOTE;
+				open_quote_character = character;
+				if (split_by_whitespace)
+					SubmitValue();
+				else if (split_by_comma)
+					value += character;
+				else if (IsAllWhitespace(value))
+					value.clear();
+				else
+					return Error();
+			}
+			else if (character == '(')
+			{
+				if (EndsWithVariable(value))
+					return ContainsVariable();
+				open_parentheses = 1;
+				value += character;
+				state = VALUE_PARENTHESIS;
+			}
+			else
+			{
+				value += character;
+			}
+		}
+		break;
+		case VALUE_PARENTHESIS:
+		{
+			if (character == '(')
+			{
+				if (EndsWithVariable(value))
+					return ContainsVariable();
+				open_parentheses++;
+			}
+			else if (character == ')')
+			{
+				open_parentheses--;
+				if (open_parentheses == 0)
+					state = VALUE;
+			}
+			else if (character == '"' || character == '\'')
+			{
+				state = VALUE_QUOTE;
+				open_quote_character = character;
+			}
+
+			value += character;
+		}
+		break;
+		case VALUE_QUOTE:
+		{
+			if (character == open_quote_character)
+			{
+				if (open_parentheses == 0)
+				{
+					state = VALUE;
+					if (split_by_comma)
+						value += character;
+					else
+						SubmitExactValue();
+				}
+				else
+				{
+					state = VALUE_PARENTHESIS;
+					value += character;
+				}
+			}
+			else if (character == '\\')
+			{
+				state = VALUE_QUOTE_ESCAPE_NEXT;
+			}
+			else
+			{
+				value += character;
+			}
+		}
+		break;
+		case VALUE_QUOTE_ESCAPE_NEXT:
+		{
+			if (character == '"' || character == '\'' || character == '\\')
+			{
+				value += character;
+			}
+			else
+			{
+				value += '\\';
+				value += character;
+			}
+			state = VALUE_QUOTE;
+		}
+		break;
+		}
+	}
+
+	if (state == VALUE)
+		SubmitValue();
+
+	if (!split_values && values_list.size() > 1)
+		return Error();
+
+	if (values_list.empty())
+		return ParsePropertyResult::Error;
+
+	return ParsePropertyResult::Success;
+}
+
+} // namespace Rml

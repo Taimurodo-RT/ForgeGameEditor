@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 12px; font-size: 13px; }
+.f { display: flex; background: #e2e8f0; margin-bottom: 10px; padding: 6px; gap: 6px; }
+.f div { background: #6366f1; color: #fff; padding: 6px 10px; }
+.between { justify-content: space-between; }
+.around { justify-content: space-around; }
+.evenly { justify-content: space-evenly; }
+.center { justify-content: center; align-items: center; height: 60px; }
+.col { flex-direction: column; width: 160px; }
+.wrap { flex-wrap: wrap; width: 380px; }
+.wrap div { width: 90px; }
+.grow div:nth-child(1) { flex: 1; } .grow div:nth-child(2) { flex: 2; } .grow div:nth-child(3) { flex: 0 0 120px; }
+.ord div:nth-child(1) { order: 3; } .ord div:nth-child(2) { order: 1; } .ord div:nth-child(3) { order: 2; }
+.self { height: 70px; align-items: flex-start; } .self div:nth-child(2) { align-self: flex-end; } .self div:nth-child(3) { align-self: stretch; } .self div:nth-child(4) { align-self: center; }
+.base { align-items: baseline; } .base div:nth-child(2) { font-size: 26px; }
+.rev { flex-direction: row-reverse; }
+.inl { display: inline-flex; margin-right: 10px; }
+.auto div:last-child { margin-left: auto; }
+</style></head><body>
+<div class="f between"><div>A</div><div>B</div><div>C</div></div>
+<div class="f around"><div>A</div><div>B</div><div>C</div></div>
+<div class="f evenly"><div>A</div><div>B</div><div>C</div></div>
+<div class="f center"><div>centered</div></div>
+<div class="f grow"><div>flex 1</div><div>flex 2</div><div>120px</div></div>
+<div class="f ord"><div>1 (order 3)</div><div>2 (order 1)</div><div>3 (order 2)</div></div>
+<div class="f self"><div>start</div><div>end</div><div>stretch</div><div>center</div></div>
+<div class="f base"><div>base</div><div>Big</div><div>line</div></div>
+<div class="f rev"><div>1</div><div>2</div><div>3</div></div>
+<div class="f auto"><div>left</div><div>left 2</div><div>pushed right</div></div>
+<div class="f wrap"><div>w1</div><div>w2</div><div>w3</div><div>w4</div><div>w5</div><div>w6</div></div>
+<div class="f inl"><div>inline</div><div>flex</div></div><div class="f inl"><div>second</div></div>
+</body></html>

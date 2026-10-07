@@ -87,6 +87,16 @@ bool Ui::Impl::load_fonts() {
             weight > 0 ? static_cast<Rml::Style::FontWeight>(weight) : Rml::Style::FontWeight::Auto;
         if (Rml::LoadFontFace(std::string("fonts/") + file, family, font_style, font_weight, fallback)) ++loaded;
         else FORGE_ERROR("ui: cannot load font %s", file);
+        // An icon font whose icons are also written as words (<i>home</i>), like its ligatures in a browser.
+        if (yyjson_get_bool(yyjson_obj_get(font, "icon_names"))) Rml::SetFontFamilyWordGlyphs(family, icon_word_glyphs());
+    }
+    // Names of fonts that are not loaded, standing for loaded ones (font-family: Arial, sans-serif).
+    yyjson_val* aliases = yyjson_obj_get(yyjson_doc_get_root(doc), "aliases");
+    yyjson_val *key, *value;
+    yyjson_obj_iter iter = yyjson_obj_iter_with(aliases);
+    while ((key = yyjson_obj_iter_next(&iter))) {
+        value = yyjson_obj_iter_get_val(key);
+        if (yyjson_is_str(value)) Rml::SetFontFamilyAlias(yyjson_get_str(key), yyjson_get_str(value));
     }
     yyjson_doc_free(doc);
     FORGE_INFO("ui: %u font faces", loaded);

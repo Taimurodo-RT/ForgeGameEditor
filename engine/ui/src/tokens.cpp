@@ -316,7 +316,9 @@ std::string Tokens::substitute(std::string_view text, std::vector<std::string>* 
         if (const std::string* value = find(name)) {
             out += *value;
         } else {
-            if (comma != std::string_view::npos) out += substitute(trim(inner.substr(comma + 1)), missing);
+            // Not a token: the style's own custom property (or a typo). RmlUi
+            // resolves it, with its fallback, when the style is computed.
+            out.append(text.substr(start, end - start));
             if (missing) missing->push_back(name);
         }
         pos = end;

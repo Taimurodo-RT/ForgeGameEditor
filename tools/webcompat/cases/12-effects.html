@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 14px; font-size: 13px; }
+.row { display: flex; gap: 14px; margin-bottom: 14px; }
+.b { width: 170px; height: 100px; color: #fff; padding: 6px; box-sizing: border-box; background: linear-gradient(135deg, #f97316, #7c3aed); }
+.o { opacity: .45; } .bl { filter: blur(3px); } .gr { filter: grayscale(1); } .br { filter: brightness(1.5); }
+.hue { filter: hue-rotate(120deg); } .sat { filter: saturate(3); } .inv { filter: invert(1); } .ds { filter: drop-shadow(6px 6px 4px rgba(0,0,0,.5)); }
+.stage { position: relative; width: 360px; height: 120px; background: repeating-linear-gradient(45deg, #0ea5e9 0 14px, #fde047 14px 28px); }
+.glass { position: absolute; left: 30px; top: 20px; width: 300px; height: 80px; background: rgba(255,255,255,.35); backdrop-filter: blur(8px); border-radius: 14px; color: #111; padding: 8px; box-sizing: border-box; }
+.mix { position: relative; width: 300px; height: 120px; background: #22c55e; }
+.mix div { position: absolute; width: 140px; height: 90px; top: 15px; }
+.m1 { left: 20px; background: #ef4444; mix-blend-mode: multiply; } .m2 { left: 140px; background: #3b82f6; mix-blend-mode: screen; }
+.vis { visibility: hidden; }
+</style></head><body>
+<div class="row"><div class="b o">opacity .45</div><div class="b bl">blur 3</div><div class="b gr">grayscale</div><div class="b br">brightness</div></div>
+<div class="row"><div class="b hue">hue-rotate</div><div class="b sat">saturate</div><div class="b inv">invert</div><div class="b ds">drop-shadow</div></div>
+<div class="row"><div class="stage"><div class="glass">frosted glass: backdrop-filter</div></div><div class="mix"><div class="m1">multiply</div><div class="m2">screen</div></div></div>
+<div class="row"><div class="b vis">hidden</div><div class="b">after hidden</div></div>
+</body></html>

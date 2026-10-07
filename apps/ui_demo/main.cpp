@@ -4,6 +4,8 @@
 //
 //   forge_ui_demo [--ui DIR] [--theme dark|light|fantasy|parchment] [--scroll] [--no-vsync] [--msaa N]
 //   forge_ui_demo --screenshot out.png [--theme NAME] [--frames N] [--scroll] [--reload-every N]   offscreen
+//   forge_ui_demo --page a.html [--page b.html ...] --out DIR [--size 800x600]   offscreen: each web page
+//                 drawn on white into DIR/<name>.png (tools/webcompat compares them with a browser)
 //
 // --scroll keeps scrolling the 50 000-row list, to measure it.
 // F8 opens the element inspector.
@@ -24,8 +26,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #ifndef FORGE_UI_DIR
 #define FORGE_UI_DIR "ui"
@@ -276,6 +280,81 @@ int run_screenshot(const std::filesystem::path& ui_dir, const std::string& theme
     return result;
 }
 
+// Web pages drawn the way a browser shows them: on white, at a fixed size.
+int run_pages(const std::filesystem::path& ui_dir, const std::vector<std::string>& pages, const std::string& out_dir,
+              u32 w, u32 h) {
+    jobs::init();
+    SDL_GPUDevice* device = render::create_offscreen_device();
+    if (!device) {
+        jobs::shutdown();
+        return 1;
+    }
+    SDL_GPUTexture* target = render::create_render_target(device, w, h);
+    int failed = 0;
+    {
+        ui::Ui ui;
+        ui::UiConfig config;
+        config.root = ui_dir;
+        config.hot_reload = false;
+        config.debugger = false;
+        config.msaa = 4;
+        Rml::Context* context = target && ui.init(device, nullptr, config) ? ui.create_context("page", w, h) : nullptr;
+        for (const std::string& page : pages) {
+            if (!context) {
+                ++failed;
+                break;
+            }
+            const std::filesystem::path path = std::filesystem::absolute(utf8_path(page));
+            Rml::ElementDocument* doc = ui.load_document(context, path_to_utf8(path));
+            if (!doc) {
+                FORGE_ERROR("page: %s did not load", page.c_str());
+                ++failed;
+                continue;
+            }
+            for (u32 f = 0; f < 3; ++f) { // fonts and images arrive in the first frames
+                ui.update();
+                SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
+                SDL_GPUColorTargetInfo clear{};
+                clear.texture = target;
+                clear.load_op = SDL_GPU_LOADOP_CLEAR;
+                clear.store_op = SDL_GPU_STOREOP_STORE;
+                clear.clear_color = {1, 1, 1, 1};
+                SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &clear, 1, nullptr));
+                ui.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h);
+                SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+                SDL_WaitForGPUFences(device, true, &fence, 1);
+                SDL_ReleaseGPUFence(device, fence);
+            }
+            // FORGE_UI_DUMP="selector": logs the border box of each matching element, to compare layouts with a browser.
+            if (const char* dump = std::getenv("FORGE_UI_DUMP")) {
+                Rml::ElementList found;
+                doc->QuerySelectorAll(found, dump);
+                for (Rml::Element* e : found) {
+                    if (std::getenv("FORGE_UI_DUMP_OPACITY")) {
+                        const Rml::Property* op = e->GetLocalProperty(Rml::PropertyId::Opacity);
+                        if (!op || op->Get<float>() >= 1.f) continue;
+                        FORGE_INFO("opacity %.2f from %s:%d (%s)", op->Get<float>(), op->source ? op->source->path.c_str() : "?",
+                                   op->source ? op->source->line_number : -1, op->source ? op->source->rule_name.c_str() : "");
+                    }
+                    FORGE_INFO("box %s.%s @%.1f,%.1f %.1fx%.1f font %.2fpx/%d ls %.2f", e->GetTagName().c_str(), e->GetClassNames().c_str(),
+                               e->GetAbsoluteTop(), e->GetAbsoluteLeft(), e->GetOffsetWidth(), e->GetOffsetHeight(),
+                               e->GetComputedValues().font_size(), (int)e->GetComputedValues().font_weight(),
+                               e->GetComputedValues().letter_spacing());
+                }
+            }
+            const std::string out = path_to_utf8(utf8_path(out_dir) / (path_to_utf8(path.stem()))) + ".png";
+            if (!render::save_png(device, target, w, h, out.c_str())) ++failed;
+            doc->Close();
+            ui.update();
+        }
+        ui.shutdown();
+    }
+    if (target) SDL_ReleaseGPUTexture(device, target);
+    render::destroy_offscreen_device(device);
+    jobs::shutdown();
+    return failed == 0 ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -286,6 +365,9 @@ int main(int argc, char** argv) {
     const char* screenshot = nullptr;
     u32 frames = 10;
     u32 reload_every = 0;
+    std::vector<std::string> pages;
+    std::string out_dir = ".";
+    u32 page_w = 800, page_h = 600;
     for (int i = 1; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
         if (std::strcmp(argv[i], "--no-vsync") == 0) config.vsync = false;
@@ -296,7 +378,11 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--screenshot") == 0 && has_value) screenshot = argv[++i];
         else if (std::strcmp(argv[i], "--frames") == 0 && has_value) frames = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--reload-every") == 0 && has_value) reload_every = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
+        else if (std::strcmp(argv[i], "--page") == 0 && has_value) pages.push_back(argv[++i]);
+        else if (std::strcmp(argv[i], "--out") == 0 && has_value) out_dir = argv[++i];
+        else if (std::strcmp(argv[i], "--size") == 0 && has_value) std::sscanf(argv[++i], "%ux%u", &page_w, &page_h);
     }
+    if (!pages.empty()) return run_pages(app.ui_dir, pages, out_dir, page_w, page_h);
     if (screenshot) return run_screenshot(app.ui_dir, app.theme, screenshot, frames, app.msaa, app.scroll, reload_every);
     return app.run(config);
 }

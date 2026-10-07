@@ -95,6 +95,13 @@ u32 icon_codepoint(std::string_view name) {
     return it != g_icons.end() ? it->second : 0;
 }
 
+Rml::UnorderedMap<Rml::String, Rml::Character> icon_word_glyphs() {
+    Rml::UnorderedMap<Rml::String, Rml::Character> words;
+    words.reserve(g_icons.size());
+    for (const auto& [name, codepoint] : g_icons) words[name] = static_cast<Rml::Character>(codepoint);
+    return words;
+}
+
 ElementIcon::ElementIcon(const Rml::String& tag_name) : Rml::Element(tag_name) {}
 
 void ElementIcon::OnAttributeChange(const Rml::ElementAttributes& changed) {
