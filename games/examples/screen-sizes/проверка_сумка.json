@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "title": "Проверка: сумка",
+  "next_id": 11,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "fit",
+    "bars": "#0a0e14",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Проверка: сумка",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "fills": [
+      {
+        "kind": "solid",
+        "color": "#0000008c"
+      }
+    ],
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 460.0,
+        "y": 140.0,
+        "w": 1000.0,
+        "h": 800.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "clip": true,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1e1a16fa"
+          }
+        ],
+        "radius": [
+          16.0,
+          16.0,
+          16.0,
+          16.0
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 40.0,
+            "y": 30.0,
+            "w": 600.0,
+            "h": 60.0,
+            "text": "Сумка",
+            "style": {
+              "family": "Onest",
+              "size": 48.0,
+              "weight": 400,
+              "align": "left",
+              "color": "#ffffff"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Закрыть",
+            "type": "frame",
+            "x": 900.0,
+            "y": 30.0,
+            "w": 60.0,
+            "h": 60.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#5a2828"
+              }
+            ],
+            "radius": [
+              30.0,
+              30.0,
+              30.0,
+              30.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 5,
+                "name": "×",
+                "type": "text",
+                "x": 0.0,
+                "y": 6.0,
+                "w": 60.0,
+                "h": 48.0,
+                "text": "×",
+                "style": {
+                  "family": "Onest",
+                  "size": 40.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#ffffff"
+                }
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "name": "Вещи",
+            "type": "frame",
+            "x": 40.0,
+            "y": 120.0,
+            "w": 920.0,
+            "h": 270.0,
+            "list": "items",
+            "list_gap": 10.0,
+            "children": [
+              {
+                "id": 7,
+                "name": "Ячейка",
+                "type": "frame",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 296.0,
+                "h": 80.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#342c24"
+                  }
+                ],
+                "radius": [
+                  10.0,
+                  10.0,
+                  10.0,
+                  10.0
+                ],
+                "on_click": [
+                  {
+                    "do": "message",
+                    "target": "взял {item.id}"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 8,
+                    "name": "Картинка предмета",
+                    "type": "rectangle",
+                    "x": 10.0,
+                    "y": 10.0,
+                    "w": 60.0,
+                    "h": 60.0,
+                    "picture_from": "item.icon"
+                  },
+                  {
+                    "id": 9,
+                    "name": "Название",
+                    "type": "text",
+                    "x": 84.0,
+                    "y": 22.0,
+                    "w": 200.0,
+                    "h": 36.0,
+                    "text": "{item.name} {item.count}",
+                    "style": {
+                      "family": "Onest",
+                      "size": 26.0,
+                      "weight": 400,
+                      "align": "left",
+                      "color": "#ffffff"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 10,
+                "name": "Пусто",
+                "type": "text",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 600.0,
+                "h": 40.0,
+                "text": "В сумке пусто",
+                "style": {
+                  "family": "Onest",
+                  "size": 28.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#ffffff"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

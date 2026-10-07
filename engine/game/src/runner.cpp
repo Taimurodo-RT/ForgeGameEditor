@@ -30,6 +30,9 @@ struct Options {
     bool window = false; // --test in a real window (the GPU's own numbers)
     bool vsync = true;
     bool play = false; // a new game right away, past the main menu
+    // --size WxH: the window (in the system's points: a high-DPI screen has
+    // more pixels) or the picture of a run without a window (pixels).
+    u32 width = 0, height = 0;
 };
 
 // A packaged game has no console: everything logged also goes to log.txt
@@ -130,7 +133,8 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
         jobs::shutdown();
         return 1;
     }
-    const u32 w = 1600, h = 900;
+    const u32 w = o.width ? o.width : 1600, h = o.height ? o.height : 900;
+    FORGE_INFO("экран игрока: %u×%u пикселей (без окна)", w, h);
     SDL_GPUTexture* target = render::create_render_target(device, w, h);
     int result = 1;
     {
@@ -204,6 +208,13 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
         else if (std::strcmp(argv[i], "--theme") == 0 && has_value) o.shell.theme = argv[++i];
         else if (std::strcmp(argv[i], "--no-vsync") == 0) o.vsync = false;
         else if (std::strcmp(argv[i], "--play") == 0) o.play = true;
+        else if (std::strcmp(argv[i], "--size") == 0 && has_value) {
+            unsigned w = 0, h = 0;
+            if (std::sscanf(argv[++i], "%ux%u", &w, &h) == 2 && w >= 320 && h >= 200 && w <= 16384 && h <= 16384) {
+                o.width = w;
+                o.height = h;
+            } else FORGE_ERROR("--size: нужно ШИРИНАxВЫСОТА, например 2560x1080");
+        }
     }
 
     if (o.screenshot || o.test) {
@@ -219,6 +230,10 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
     config.title = "Forge";
     config.shader_formats = render::supported_shader_formats();
     config.stats_in_title = false;
+    if (o.width) {
+        config.width = static_cast<int>(o.width);
+        config.height = static_cast<int>(o.height);
+    }
     config.vsync = o.vsync;
     GameApp app(game, o, o.test ? &main : nullptr);
     // Settings that must be known before the window opens.

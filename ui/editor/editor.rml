@@ -1093,6 +1093,9 @@
             <div id="ue-check" class="ue-check-btn row" data-class-on="ue_checking" title="Проверить: экран оживает, как в игре (Esc — закончить)" data-event-click="ue_check">
                 <icon class="s" data-attr-name="ue_checking ? 'stop_circle' : 'play_circle'"/><span>{{ ue_checking ? 'Закончить проверку' : 'Проверить' }}</span>
             </div>
+            <div id="ue-views" class="ue-views row" title="Экран игрока: как экран выглядит в игре на таком мониторе">
+                <div data-for="v : ue_views" class="ue-view" data-attr-id="'ue-view-' + it_index" data-class-selected="ue_view == it_index" data-attr-title="v.title" data-event-click="ue_view(it_index)">{{ v.label }}</div>
+            </div>
             <div class="grow"/>
             <div class="ue-zoom row">
                 <div class="ue-tool" title="Мельче (−)" data-event-click="ue_zoom('out')"><icon name="zoom_out"/></div>
@@ -1147,6 +1150,7 @@
                     <div data-for="t : ue_ticks_y" class="ue-tick-y" data-style-top="(t.at - 3) + 'px'">{{ t.label }}</div>
                 </div>
                 <div id="ue-canvas" class="ue-canvas" data-class-drawing="ue_tool != 'select'">
+                    <div id="ue-view-note" class="ue-view-note" data-if="ue_view_note != ''">{{ ue_view_note }}</div>
                     <div class="ue-frame-label" data-style-left="ue_frame_label.x + 'px'" data-style-top="ue_frame_label.y + 'px'" data-event-click="ue_select_screen">{{ ue_frame_label.text }}</div>
                     <div class="ue-frame-shadow" data-style-left="ue_frame.x + 'px'" data-style-top="ue_frame.y + 'px'" data-style-width="ue_frame.w + 'px'" data-style-height="ue_frame.h + 'px'"/>
                     <img id="ue-screen" class="ue-screen" src="/gpu/ui-screen" data-style-left="ue_frame.x + 'px'" data-style-top="ue_frame.y + 'px'" data-style-width="ue_frame.w + 'px'" data-style-height="ue_frame.h + 'px'"/>

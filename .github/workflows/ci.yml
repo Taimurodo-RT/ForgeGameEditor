@@ -95,12 +95,15 @@ jobs:
           ./build/apps/slice/forge_slice --test --screenshot world-slice-village.png
           ./build/apps/slice/forge_slice --test --scene mine --screenshot world-slice-mine.png
           ./build/apps/slice/forge_slice --test --scene menu --screenshot world-slice-menu.png
+          ./build/apps/slice/forge_slice --test --scene menu --size 2560x1080 --screenshot world-slice-menu-21x9.png
           ./build/apps/slice/forge_slice --stress --test --scene stress --screenshot world-slice-stress.png
       - name: Package the vertical slice
         run: cmake --build build --config Release --target forge_slice_package
       - name: Packaged game finds its data
         if: runner.os == 'Linux'
-        run: ./build/dist/OldMine/OldMine --test --scene menu --screenshot world-slice-packaged.png
+        run: |
+          ./build/dist/OldMine/OldMine --test --scene menu --screenshot world-slice-packaged.png
+          ./build/dist/OldMine/OldMine --test --scene menu --size 1440x1080 --screenshot world-slice-packaged-4x3.png
       - uses: actions/upload-artifact@v4
         with:
           name: OldMine-${{ runner.os }}

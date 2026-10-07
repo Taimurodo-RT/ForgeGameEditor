@@ -115,6 +115,7 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     config_ = config;
     width_ = width;
     height_ = height;
+    FORGE_INFO("экран игрока: %u×%u пикселей", width, height); // screens meet these pixels (forge-fit)
     model_ = std::make_unique<Model>();
     runner_ = std::make_unique<DialogueRunner>(vars_, [this](std::string_view n, const std::vector<Value>& a) { return call(n, a); });
 
@@ -505,6 +506,7 @@ void Shell::update(f64 dt) {
 void Shell::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) {
     if (context_->GetDimensions() != Rml::Vector2i(static_cast<int>(width), static_cast<int>(height)))
         context_->SetDimensions({static_cast<int>(width), static_cast<int>(height)});
+    if (width != width_ || height != height_) FORGE_INFO("экран игрока: %u×%u пикселей", width, height);
     width_ = width;
     height_ = height;
     game_->render(cmd, target, width, height);

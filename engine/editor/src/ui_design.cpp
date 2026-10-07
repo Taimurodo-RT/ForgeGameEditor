@@ -614,6 +614,7 @@ const char* node_type_name(NodeType t) { return word(t, kNodeTypes); }
 const char* action_word(ActionKind k) { return word(k, kActions); }
 
 const char* list_word(ListSource s) { return word(s, kLists); }
+const char* screen_fit_word(ScreenFit f) { return word(f, kScreenFits); }
 
 std::vector<std::pair<std::string, std::string>> list_fields(ListSource s) {
     if (s == ListSource::Quests)

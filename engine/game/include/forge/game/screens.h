@@ -63,6 +63,30 @@ struct ScreenItem {
     std::string about;
 };
 
+// How a page drawn for page_w × page_h meets a player's screen of
+// view_w × view_h pixels (forge-fit). The one rule for the game, the
+// editor's canvas and its «Проверить»:
+//   expand   one scale for both sides (the smaller side's), the page grows
+//            on the other side: layers stuck to an edge follow it;
+//   fit      the whole page at one scale, centred, bars around it;
+//   stretch  each side scaled on its own.
+struct ScreenFit {
+    f32 sx = 1, sy = 1;      // the scale of a page pixel on the player's screen
+    f32 left = 0, top = 0;   // where the page's corner is (player's pixels)
+    f32 width = 0, height = 0; // the page's size it lays out at (page pixels)
+};
+ScreenFit fit_screen(std::string_view mode, f32 page_w, f32 page_h, f32 view_w, f32 view_h);
+// The same in page pixels: a point of the player's screen, and back.
+inline f32 fit_to_view_x(const ScreenFit& f, f32 x) { return f.left + x * f.sx; }
+inline f32 fit_to_view_y(const ScreenFit& f, f32 y) { return f.top + y * f.sy; }
+inline f32 fit_to_page_x(const ScreenFit& f, f32 x) { return (x - f.left) / f.sx; }
+inline f32 fit_to_page_y(const ScreenFit& f, f32 y) { return (y - f.top) / f.sy; }
+// Puts a page's top layer where the fit says (size, place, scale); bars:
+// the colour around a fitted page ("" leaves the page's own).
+void apply_screen_fit(Rml::Element* root, const ScreenFit& f, const std::string& bars = {});
+// Its transform alone ("scale(...)"), for movements to build on.
+std::string screen_fit_transform(const ScreenFit& f);
+
 struct ScreenAction {
     std::string what;   // "show", "hide", "toggle", "close", "message", "change", "talk",
                         // "pause", "resume", "menu", "quit", "new", "continue", "load", "save", "settings"

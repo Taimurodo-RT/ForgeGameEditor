@@ -2,6 +2,7 @@
 #include "forge/game/dialogue_source.h"
 #include "forge/game/quests.h"
 #include "forge/game/saves.h"
+#include "forge/game/screens.h"
 #include "forge/game/vars.h"
 
 #include "forge/core/file.h"
@@ -491,6 +492,64 @@ TEST_CASE("vars: an element of a list reads through to the game's") {
     CHECK(row.get("inv.coins").number() == 1);
     CHECK(row.to_json().find("item.name") != std::string::npos);
     CHECK(game.get("inv.coins").number() == 12);
+}
+
+TEST_CASE("screens: a page meets every player's screen by one rule") {
+    using doctest::Approx;
+    // Drawn for 1920×1080, the five sizes of «Интерфейс» and two extremes.
+    struct Case {
+        f32 w, h;
+    };
+    const Case views[] = {{1280, 720}, {1920, 1080}, {2560, 1440}, {2560, 1080}, {1440, 1080}, {3840, 1080}, {1080, 1920}};
+    for (const Case& v : views) {
+        CAPTURE(v.w);
+        CAPTURE(v.h);
+        // expand: one scale, the smaller side's; the page grows on the other side and fills the screen.
+        const ScreenFit e = fit_screen("expand", 1920, 1080, v.w, v.h);
+        CHECK(e.sx == e.sy);
+        CHECK(e.sx == Approx(std::min(v.w / 1920, v.h / 1080)));
+        CHECK(e.left == 0);
+        CHECK(e.top == 0);
+        CHECK(e.width * e.sx == Approx(v.w));
+        CHECK(e.height * e.sy == Approx(v.h));
+        CHECK((e.width >= 1920 - 0.01f && e.height >= 1080 - 0.01f));
+        // fit: the whole page, centred, the same proportions; bars on two sides at most.
+        const ScreenFit f = fit_screen("fit", 1920, 1080, v.w, v.h);
+        CHECK(f.sx == f.sy);
+        CHECK(f.width == 1920);
+        CHECK(f.height == 1080);
+        CHECK(fit_to_view_x(f, 960) == Approx(v.w / 2)); // the centre stays the centre
+        CHECK(fit_to_view_y(f, 540) == Approx(v.h / 2));
+        CHECK((f.left == Approx(0) || f.top == Approx(0)));
+        CHECK(f.left >= -0.01f);
+        CHECK(f.top >= -0.01f);
+        // stretch: the page's corners are the screen's.
+        const ScreenFit s = fit_screen("stretch", 1920, 1080, v.w, v.h);
+        CHECK(fit_to_view_x(s, 1920) == Approx(v.w));
+        CHECK(fit_to_view_y(s, 1080) == Approx(v.h));
+        // A point goes to the player's screen and back to the same page pixel.
+        for (const ScreenFit& any : {e, f, s}) {
+            CHECK(fit_to_page_x(any, fit_to_view_x(any, 1234.5f)) == Approx(1234.5f));
+            CHECK(fit_to_page_y(any, fit_to_view_y(any, 77.25f)) == Approx(77.25f));
+        }
+    }
+    // 21:9 against a 16:9 page: expand widens it by 640 (a layer stuck to the right moves with the edge).
+    const ScreenFit wide = fit_screen("expand", 1920, 1080, 2560, 1080);
+    CHECK(wide.sx == 1);
+    CHECK(wide.width == 2560);
+    // 4:3: three quarters the size, 360 page pixels taller.
+    const ScreenFit tall = fit_screen("expand", 1920, 1080, 1440, 1080);
+    CHECK(tall.sx == Approx(0.75f));
+    CHECK(tall.height == Approx(1440));
+    // fit on 4:3: bars above and below, 135 pixels each.
+    const ScreenFit boxed = fit_screen("fit", 1920, 1080, 1440, 1080);
+    CHECK(boxed.left == Approx(0));
+    CHECK(boxed.top == Approx(135));
+    // Nonsense sizes never divide by zero.
+    const ScreenFit none = fit_screen("expand", 0, 0, 0, 0);
+    CHECK(none.sx > 0);
+    CHECK(screen_fit_transform(wide) == "scale(1.00000)");
+    CHECK(screen_fit_transform(fit_screen("stretch", 1920, 1080, 2560, 1080)) == "scale(1.33333, 1.00000)");
 }
 
 } // namespace gametest
