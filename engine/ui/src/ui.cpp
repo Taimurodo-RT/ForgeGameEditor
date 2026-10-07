@@ -37,6 +37,15 @@ struct Ui::Impl {
     };
     std::vector<Rml::Context*> contexts;
     std::vector<Document> documents;
+    struct Offscreen {
+        std::string image;
+        SDL_GPUTexture* texture = nullptr;
+        u32 width = 0, height = 0;
+    };
+    std::unordered_map<Rml::Context*, Offscreen> offscreen;
+    std::unordered_map<Rml::Context*, bool> inactive;
+    void release_offscreen(Offscreen& o);
+    bool ensure_offscreen(Rml::Context* context, Offscreen& o);
     std::unique_ptr<Rml::ElementInstancer> icon_instancer;
     std::unique_ptr<Rml::ElementInstancer> list_instancer;
     std::unique_ptr<Rml::ElementInstancer> lines_instancer;
@@ -153,6 +162,8 @@ void Ui::shutdown() {
     if (!m.initialized) return;
     m.documents.clear();
     m.contexts.clear();
+    for (auto& [context, o] : m.offscreen) m.release_offscreen(o);
+    m.offscreen.clear();
     Rml::Shutdown();
     m.renderer.shutdown();
     m.system.destroy_cursors();
@@ -191,6 +202,72 @@ bool Ui::handle_event(Rml::Context* context, const SDL_Event& event) {
         return true;
     }
     return process_event(context, impl_->window, event);
+}
+
+void Ui::Impl::release_offscreen(Offscreen& o) {
+    if (!o.image.empty()) {
+        renderer.drop_external_texture(o.image);
+        Rml::ReleaseTexture("/gpu/" + o.image);
+        Rml::ReleaseTexture("gpu/" + o.image);
+    }
+    if (o.texture) SDL_ReleaseGPUTexture(device, o.texture);
+    o = Offscreen{};
+}
+
+bool Ui::Impl::ensure_offscreen(Rml::Context* context, Offscreen& o) {
+    const Rml::Vector2i size = context->GetDimensions();
+    const u32 w = static_cast<u32>(std::max(size.x, 1)), h = static_cast<u32>(std::max(size.y, 1));
+    if (o.texture && o.width == w && o.height == h) return true;
+    const std::string image = o.image;
+    release_offscreen(o);
+    o.image = image;
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    info.width = w;
+    info.height = h;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    o.texture = SDL_CreateGPUTexture(device, &info);
+    if (!o.texture) {
+        FORGE_ERROR("ui: offscreen texture %ux%u: %s", w, h, SDL_GetError());
+        return false;
+    }
+    o.width = w;
+    o.height = h;
+    renderer.set_external_texture(o.image, o.texture, w, h);
+    return true;
+}
+
+void Ui::set_offscreen(Rml::Context* context, const std::string& image) {
+    Impl& m = *impl_;
+    auto it = m.offscreen.find(context);
+    if (it != m.offscreen.end()) {
+        if (it->second.image == image) return;
+        m.release_offscreen(it->second);
+        m.offscreen.erase(it);
+    }
+    if (image.empty()) return;
+    Impl::Offscreen& o = m.offscreen[context];
+    o.image = image;
+    m.ensure_offscreen(context, o);
+}
+
+void Ui::set_active(Rml::Context* context, bool active) {
+    if (active) impl_->inactive.erase(context);
+    else impl_->inactive[context] = true;
+}
+
+void Ui::destroy_context(Rml::Context* context) {
+    Impl& m = *impl_;
+    set_offscreen(context, "");
+    m.inactive.erase(context);
+    m.documents.erase(std::remove_if(m.documents.begin(), m.documents.end(),
+                                     [&](const Impl::Document& d) { return d.context == context; }),
+                      m.documents.end());
+    m.contexts.erase(std::remove(m.contexts.begin(), m.contexts.end(), context), m.contexts.end());
+    Rml::RemoveContext(context->GetName());
 }
 
 void Ui::Impl::restyle() {
@@ -264,7 +341,8 @@ void Ui::update() {
     FORGE_ZONE_N("UiUpdate");
     const u64 start = time_now_ns();
     impl_->poll_files();
-    for (Rml::Context* context : impl_->contexts) context->Update();
+    for (Rml::Context* context : impl_->contexts)
+        if (!impl_->inactive.count(context)) context->Update();
     impl_->stats.update_ms = ns_to_ms(time_now_ns() - start);
 }
 
@@ -274,14 +352,26 @@ void Ui::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextur
     const u64 start = time_now_ns();
     Impl& m = *impl_;
     m.stats.draws = m.stats.passes = m.stats.uploads = 0;
-    for (Rml::Context* context : m.contexts) {
-        m.renderer.begin_frame(width, height);
+    auto draw = [&](Rml::Context* context, SDL_GPUTexture* into, SDL_GPUTextureFormat into_format, u32 w, u32 h) {
+        m.renderer.begin_frame(w, h);
         context->Render();
-        m.renderer.end_frame(cmd, target, format);
+        m.renderer.end_frame(cmd, into, into_format);
         m.stats.draws += m.renderer.stats().draws;
         m.stats.passes += m.renderer.stats().passes;
         m.stats.uploads += m.renderer.stats().uploads;
+    };
+    // Offscreen contexts first: the others may show their pictures.
+    for (Rml::Context* context : m.contexts) {
+        auto it = m.offscreen.find(context);
+        if (it == m.offscreen.end() || m.inactive.count(context)) continue;
+        Impl::Offscreen& o = it->second;
+        if (!m.ensure_offscreen(context, o)) continue;
+        if (!cmd) continue;
+        m.renderer.clear_texture(cmd, o.texture);
+        draw(context, o.texture, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, o.width, o.height);
     }
+    for (Rml::Context* context : m.contexts)
+        if (!m.offscreen.count(context) && !m.inactive.count(context)) draw(context, target, format, width, height);
     m.stats.render_ms = ns_to_ms(time_now_ns() - start);
 }
 

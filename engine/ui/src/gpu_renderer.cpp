@@ -56,6 +56,7 @@ struct GpuRenderer::Geometry {
 struct GpuRenderer::Texture {
     SDL_GPUTexture* texture = nullptr;
     u32 width = 0, height = 0;
+    bool external = false; // owned by the app (set_external_texture)
 };
 
 namespace {
@@ -240,6 +241,8 @@ void GpuRenderer::shutdown() {
     for (Upload& u : uploads_) (void)u; // buffers were created by geometries that RmlUi releases itself
     uploads_.clear();
     destroy_targets();
+    for (TargetSet& set : spare_targets_) release_targets(set);
+    spare_targets_.clear();
     SDL_GPUGraphicsPipeline* pipelines[] = {
         geometry_[0], geometry_[1], geometry_[2], geometry_[3], gradient_[0], gradient_[1], composite_[0][0],
         composite_[0][1], composite_[1][0], composite_[1][1], stencil_fill_, copy_, copy_blend_, color_matrix_,
@@ -374,8 +377,64 @@ SDL_GPUGraphicsPipeline* GpuRenderer::output_pipeline(SDL_GPUTextureFormat forma
     return p;
 }
 
+GpuRenderer::TargetSet GpuRenderer::take_targets() {
+    TargetSet set;
+    set.width = target_width_;
+    set.height = target_height_;
+    set.layers = std::move(layers_);
+    layers_.clear();
+    layer_needs_clear_.clear();
+    set.depth_stencil = depth_stencil_;
+    depth_stencil_ = nullptr;
+    for (int i = 0; i < 3; ++i) {
+        set.postprocess[i] = postprocess_[i];
+        postprocess_[i] = nullptr;
+    }
+    set.mask = mask_;
+    mask_ = nullptr;
+    target_width_ = target_height_ = 0;
+    return set;
+}
+
+void GpuRenderer::put_targets(TargetSet&& set) {
+    target_width_ = set.width;
+    target_height_ = set.height;
+    layers_ = std::move(set.layers);
+    layer_needs_clear_.assign(layers_.size(), true);
+    depth_stencil_ = set.depth_stencil;
+    for (int i = 0; i < 3; ++i) postprocess_[i] = set.postprocess[i];
+    mask_ = set.mask;
+    stats_.layers = static_cast<u32>(layers_.size());
+}
+
+void GpuRenderer::release_targets(TargetSet& set) {
+    for (SDL_GPUTexture* t : set.layers)
+        if (t) SDL_ReleaseGPUTexture(device_, t);
+    if (set.depth_stencil) SDL_ReleaseGPUTexture(device_, set.depth_stencil);
+    for (SDL_GPUTexture* t : set.postprocess)
+        if (t) SDL_ReleaseGPUTexture(device_, t);
+    if (set.mask) SDL_ReleaseGPUTexture(device_, set.mask);
+    set = TargetSet{};
+}
+
 bool GpuRenderer::ensure_targets(u32 width, u32 height) {
     if (width == target_width_ && height == target_height_ && depth_stencil_) return true;
+    // Another size: keep the current set for later (the window and a game
+    // screen take turns every frame) and reuse a kept set of this size.
+    if (depth_stencil_) {
+        spare_targets_.push_back(take_targets());
+        if (spare_targets_.size() > 2) {
+            release_targets(spare_targets_.front());
+            spare_targets_.erase(spare_targets_.begin());
+        }
+    }
+    for (size_t i = 0; i < spare_targets_.size(); ++i) {
+        if (spare_targets_[i].width != width || spare_targets_[i].height != height) continue;
+        TargetSet set = std::move(spare_targets_[i]);
+        spare_targets_.erase(spare_targets_.begin() + static_cast<std::ptrdiff_t>(i));
+        put_targets(std::move(set));
+        return true;
+    }
     destroy_targets();
     target_width_ = width;
     target_height_ = height;
@@ -553,7 +612,34 @@ void GpuRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
 // SVG pictures are drawn at this size (longest side) and scaled by the UI like any image.
 constexpr float kSvgRasterSize = 128.0f;
 
+void GpuRenderer::set_external_texture(const std::string& name, SDL_GPUTexture* texture, u32 width, u32 height) {
+    external_[name] = {texture, width, height};
+}
+
+void GpuRenderer::drop_external_texture(const std::string& name) { external_.erase(name); }
+
+void GpuRenderer::clear_texture(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* texture) {
+    SDL_GPUColorTargetInfo color{};
+    color.texture = texture;
+    color.load_op = SDL_GPU_LOADOP_CLEAR;
+    color.store_op = SDL_GPU_STOREOP_STORE;
+    color.clear_color = {0, 0, 0, 0};
+    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &color, 1, nullptr);
+    if (pass) SDL_EndGPURenderPass(pass);
+}
+
 Rml::TextureHandle GpuRenderer::LoadTexture(Rml::Vector2i& dimensions, const Rml::String& source) {
+    // Textures the app draws itself: "/gpu/<name>" (documents may pass it with or without the slash).
+    {
+        const size_t at = source.find("gpu/");
+        if (at == 0 || (at == 1 && source[0] == '/')) {
+            auto it = external_.find(source.substr(at + 4));
+            if (it == external_.end()) return {};
+            Texture* texture = new Texture{it->second.texture, it->second.width, it->second.height, true};
+            dimensions = {static_cast<int>(it->second.width), static_cast<int>(it->second.height)};
+            return reinterpret_cast<Rml::TextureHandle>(texture);
+        }
+    }
     std::vector<u8> bytes;
     bool svg = false;
     // Data URIs come either as a key from the style sheet (see Rml::DataUri) or directly, as in <img src="data:...">.
@@ -947,7 +1033,7 @@ void GpuRenderer::flush_releases() {
     for (Texture* t : release_textures_) {
         for (Upload& u : uploads_)
             if (u.texture == t) u.texture = nullptr;
-        SDL_ReleaseGPUTexture(device_, t->texture);
+        if (!t->external) SDL_ReleaseGPUTexture(device_, t->texture);
         delete t;
     }
     release_textures_.clear();

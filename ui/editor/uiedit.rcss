@@ -1,0 +1,304 @@
+/* The «Интерфейс» tab (the #ui-editor part of editor.rml): screens and
+   layers on the left, the canvas with rulers in the middle, the selected
+   layer's design on the right. Canvas colours follow Figma's: blue for the
+   selection, pink for snapping. */
+
+#ui-editor {
+    flex: 1 1 0px;
+    min-height: 0px;
+    position: relative;
+    padding: 0px var(--space-2) var(--space-2) var(--space-2);
+}
+
+.ue-bar { height: 52px; gap: var(--space-3); align-items: center; }
+.ue-tools, .ue-zoom {
+    gap: 2px;
+    padding: 3px;
+    border-radius: 8px;
+    background-color: var(--surface-container-low);
+    align-items: center;
+}
+.ue-tool {
+    width: 34px;
+    height: 32px;
+    border-radius: 6px;
+    text-align: center;
+    padding-top: 6px;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+}
+.ue-tool:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.ue-tool.selected { background-color: #2f7bf5; color: #ffffff; }
+.ue-zoom-text {
+    min-width: 52px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--on-surface);
+    cursor: pointer;
+}
+
+.ue-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
+
+/* Panels */
+.ue-panel {
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+    overflow-y: auto;
+    padding: var(--space-1);
+}
+.ue-left { width: 248px; }
+.ue-right { width: 300px; }
+.ue-row, .ue-layer {
+    min-height: 32px;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0px var(--space-2);
+    border-radius: 6px;
+    font-size: 13.5px;
+    cursor: pointer;
+}
+.ue-row:hover, .ue-layer:hover { background-color: var(--state-hover-layer); }
+.ue-row.selected { background-color: var(--surface-container-highest); font-weight: 600; }
+.ue-row.add { color: var(--primary); font-weight: 600; }
+.ue-row.add icon { color: var(--primary); }
+.ue-row .count { font-size: 11px; font-family: var(--font-mono); color: var(--on-surface-variant); }
+.ue-row .name, .ue-layer .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ue-layers { min-height: 0px; }
+.ue-layer { min-height: 28px; padding-right: var(--space-1); font-size: 13px; }
+.ue-layer.selected { background-color: #2f7bf540; }
+.ue-layer.off .name, .ue-layer.off .ue-type { opacity: 0.45; }
+.ue-layer .ue-type { color: var(--on-surface-variant); }
+.ue-fold { width: 16px; height: 16px; color: var(--on-surface-variant); }
+.ue-eye { width: 22px; height: 22px; padding-top: 3px; text-align: center; border-radius: 4px; color: var(--on-surface-variant); opacity: 0; }
+.ue-layer:hover .ue-eye, .ue-eye.on { opacity: 1; }
+.ue-eye:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.ue-rename {
+    height: 24px;
+    padding: 0px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--on-surface);
+    background-color: var(--surface-container-lowest);
+    border: 1px #2f7bf5;
+}
+.ue-empty { padding: var(--space-3) var(--space-2); font-size: 13px; color: var(--on-surface-variant); }
+
+/* The canvas and its rulers */
+.ue-stage {
+    position: relative;
+    min-width: 0px;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: var(--surface-container-lowest);
+}
+.ue-corner {
+    position: absolute;
+    left: 0px; top: 0px; width: 20px; height: 20px;
+    background-color: var(--surface-container);
+    border-right: 1px var(--outline-variant);
+    border-bottom: 1px var(--outline-variant);
+}
+.ue-ruler {
+    position: absolute;
+    background-color: var(--surface-container);
+    overflow: hidden;
+    cursor: pointer;
+}
+.ue-ruler-x { left: 20px; top: 0px; right: 0px; height: 20px; border-bottom: 1px var(--outline-variant); cursor: n-resize; }
+.ue-ruler-y { left: 0px; top: 20px; bottom: 0px; width: 20px; border-right: 1px var(--outline-variant); cursor: e-resize; }
+.ue-ruler-lines { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; }
+.ue-ruler-sel { position: absolute; background-color: #2f7bf540; }
+.ue-ruler-x .ue-ruler-sel { top: 0px; height: 20px; }
+.ue-ruler-y .ue-ruler-sel { left: 0px; width: 20px; }
+.ue-tick-x {
+    position: absolute;
+    top: 1px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--on-surface-variant);
+    white-space: nowrap;
+}
+.ue-tick-y {
+    position: absolute;
+    left: 3px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 12px;
+    color: var(--on-surface-variant);
+    white-space: nowrap;
+    transform: rotate(-90deg);
+    transform-origin: 0px 0px;
+}
+.ue-canvas {
+    position: absolute;
+    left: 20px; top: 20px; right: 0px; bottom: 0px;
+    overflow: hidden;
+    cursor: default;
+}
+.ue-canvas.drawing { cursor: crosshair; }
+.ue-frame-label {
+    position: absolute;
+    font-size: 12px;
+    color: var(--on-surface-variant);
+    white-space: nowrap;
+    cursor: pointer;
+}
+.ue-frame-label:hover { color: #2f7bf5; }
+.ue-frame-shadow { position: absolute; box-shadow: 0px 6px 28px #00000070; }
+.ue-screen { position: absolute; }
+.ue-guide-x { position: absolute; top: 0px; bottom: 0px; width: 1px; background-color: #ff4d4d; }
+.ue-guide-y { position: absolute; left: 0px; right: 0px; height: 1px; background-color: #ff4d4d; }
+.ue-hover { position: absolute; border: 1.5px #2f7bf5; }
+.ue-picked { position: absolute; border: 1px #2f7bf5; }
+.ue-selection { position: absolute; border: 1.5px #2f7bf5; }
+.ue-handle {
+    position: absolute;
+    width: 9px; height: 9px;
+    background-color: #ffffff;
+    border: 1.5px #2f7bf5;
+    border-radius: 2px;
+}
+.ue-handle.tl { left: -5px; top: -5px; }
+.ue-handle.t { left: 50%; top: -5px; margin-left: -5px; }
+.ue-handle.tr { right: -5px; top: -5px; }
+.ue-handle.r { right: -5px; top: 50%; margin-top: -5px; }
+.ue-handle.br { right: -5px; bottom: -5px; }
+.ue-handle.b { left: 50%; bottom: -5px; margin-left: -5px; }
+.ue-handle.bl { left: -5px; bottom: -5px; }
+.ue-handle.l { left: -5px; top: 50%; margin-top: -5px; }
+.ue-size {
+    position: absolute;
+    left: 50%;
+    bottom: -26px;
+    transform: translateX(-50%);
+    padding: 1px 6px;
+    border-radius: 4px;
+    background-color: #2f7bf5;
+    color: #ffffff;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: nowrap;
+}
+.ue-marquee { position: absolute; border: 1px #2f7bf5; background-color: #2f7bf518; }
+.ue-overlay { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; pointer-events: none; }
+.ue-measure {
+    position: absolute;
+    padding: 0px 4px;
+    border-radius: 3px;
+    background-color: #ff247c;
+    color: #ffffff;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    transform: translateX(-50%);
+}
+
+/* The design panel */
+.ue-props { gap: 0px; }
+.ue-head { gap: var(--space-2); align-items: center; padding: var(--space-2); font-weight: 600; font-size: 14px; }
+.ue-head .muted { font-weight: 400; font-size: 12px; color: var(--on-surface-variant); }
+.ue-sec { padding: var(--space-2); border-top: 1px var(--outline-variant); }
+.ue-sec-title {
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--on-surface);
+    align-items: center;
+}
+.ue-sec-title .muted { font-weight: 400; color: var(--on-surface-variant); }
+.ue-gap { gap: 6px; }
+.ue-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ue-line { gap: 6px; align-items: center; margin-bottom: 6px; }
+.ue-key { width: 104px; font-size: 12px; color: var(--on-surface-variant); }
+.ue-num {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0px 6px;
+    border-radius: 5px;
+    background-color: var(--surface-container);
+    font-size: 11.5px;
+    color: var(--on-surface-variant);
+}
+.ue-num:hover { background-color: var(--surface-container-high); }
+.ue-num span { min-width: 12px; font-family: var(--font-mono); }
+.ue-num input.text, input.text.ue-hex, input.text.ue-pct, input.text.ue-field {
+    flex: 1 1 0px;
+    min-width: 0px;
+    height: 24px;
+    line-height: 24px;
+    padding: 0px 2px;
+    border-width: 0px;
+    border-radius: 0px;
+    background-color: transparent;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--on-surface);
+}
+input.text.ue-hex:focus, input.text.ue-pct:focus, .ue-num input.text:focus { background-color: var(--surface-container-highest); border-radius: 3px; }
+.ue-short { width: 86px; flex: 0 0 86px; }
+input.text.ue-field { width: 100%; height: 28px; padding: 0px 6px; margin-bottom: 6px; border-radius: 5px; background-color: var(--surface-container); font-family: var(--font-sans); }
+.ue-select {
+    height: 28px;
+    padding: 6px 6px 0px 6px;
+    border-width: 0px;
+    border-radius: 5px;
+    background-color: var(--surface-container);
+    font-size: 12px;
+    color: var(--on-surface);
+}
+.ue-check { gap: 6px; align-items: center; height: 26px; font-size: 12px; color: var(--on-surface-variant); cursor: pointer; }
+.ue-check:hover { color: var(--on-surface); }
+.ue-mini {
+    width: 24px; height: 24px;
+    padding-top: 4px;
+    text-align: center;
+    border-radius: 4px;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+}
+.ue-mini:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.ue-seg { gap: 2px; padding: 2px; border-radius: 6px; background-color: var(--surface-container); }
+.ue-seg-btn {
+    width: 28px; height: 24px;
+    padding-top: 4px;
+    text-align: center;
+    border-radius: 4px;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+}
+.ue-seg-btn:hover { color: var(--on-surface); }
+.ue-seg-btn.selected { background-color: var(--surface-container-highest); color: var(--on-surface); }
+.ue-align9 {
+    display: grid;
+    grid-template-columns: 20px 20px 20px;
+    gap: 2px;
+    padding: 4px;
+    border-radius: 6px;
+    background-color: var(--surface-container);
+}
+.ue-a9 { width: 20px; height: 20px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.ue-a9 i { display: block; width: 4px; height: 4px; border-radius: 2px; background-color: var(--outline); }
+.ue-a9:hover i { background-color: var(--on-surface-variant); }
+.ue-a9.selected { background-color: var(--surface-container-highest); }
+.ue-a9.selected i { width: 10px; height: 10px; border-radius: 2px; background-color: #2f7bf5; }
+.ue-fill { gap: 0px; margin-bottom: 8px; }
+.ue-fill.off .ue-paint { opacity: 0.5; }
+.ue-paint {
+    gap: 6px;
+    align-items: center;
+    height: 28px;
+    padding: 0px 2px 0px 6px;
+    margin-bottom: 6px;
+    border-radius: 5px;
+    background-color: var(--surface-container);
+}
+.ue-swatch {
+    width: 16px; height: 16px;
+    border-radius: 3px;
+    border: 1px #ffffff30;
+}
+.ue-swatch.grad { border: 0px; color: var(--on-surface-variant); }
+.ue-pct { flex: 0 0 44px; width: 44px; text-align: right; }
