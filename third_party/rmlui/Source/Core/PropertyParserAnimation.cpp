@@ -31,6 +31,13 @@ struct PropertyParserAnimationData {
 		{"infinite", {KeywordType::Infinite}},
 		{"paused", {KeywordType::Paused}},
 
+		// Forge: the web's own easing words.
+		{"linear", {Tween{Tween::Linear, Tween::InOut}}},
+		{"ease", {Tween{Tween::Quadratic, Tween::Out}}},
+		{"ease-in", {Tween{Tween::Cubic, Tween::In}}},
+		{"ease-out", {Tween{Tween::Cubic, Tween::Out}}},
+		{"ease-in-out", {Tween{Tween::Cubic, Tween::InOut}}},
+
 		{"back-in", {Tween{Tween::Back, Tween::In}}},
 		{"back-out", {Tween{Tween::Back, Tween::Out}}},
 		{"back-in-out", {Tween{Tween::Back, Tween::InOut}}},

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace forge::game {
 
@@ -97,6 +98,13 @@ struct GameScreens::Page {
     bool visible = false; // on screen now
     u64 order = 0;        // when it was shown (Esc closes the newest)
     int fit_w = -1, fit_h = -1;
+    std::string fit_transform; // the scale fit() gives the root
+    f32 design_w = 1920, design_h = 1080; // the root's size in the page's pixels
+    // How it comes and goes (forge-appear): the movement under way.
+    std::string appear;
+    f32 appear_time = 0.25f;
+    u64 move_start = 0;   // 0: none
+    bool leaving = false; // going away: hidden when the movement ends
     std::vector<Bound> bound;
 };
 
@@ -134,6 +142,10 @@ struct GameScreens::Impl : Rml::EventListener {
             p.bars = attr("forge-bars");
             p.pauses = attr("forge-pauses") == "1";
             p.esc = attr("forge-esc") != "0";
+            p.appear = attr("forge-appear");
+            if (p.appear == "none") p.appear.clear();
+            p.appear_time = std::clamp(static_cast<f32>(std::atof(attr("forge-appear-time").c_str())), 0.0f, 10.0f);
+            if (p.appear_time <= 0) p.appear_time = 0.25f;
         }
         Bound b;
         b.element = e;
@@ -254,23 +266,64 @@ struct GameScreens::Impl : Rml::EventListener {
         if (p.fit == "stretch") {
             r->SetProperty("width", px(p.width));
             r->SetProperty("height", px(p.height));
+            p.design_w = p.width;
+            p.design_h = p.height;
             std::snprintf(buf, sizeof(buf), "scale(%.5f, %.5f)", static_cast<double>(sx), static_cast<double>(sy));
-            r->SetProperty("transform", buf);
         } else if (p.fit == "fit") {
             r->SetProperty("width", px(p.width));
             r->SetProperty("height", px(p.height));
             r->SetProperty("left", px((W - p.width * s) * 0.5f));
             r->SetProperty("top", px((H - p.height * s) * 0.5f));
+            p.design_w = p.width;
+            p.design_h = p.height;
             std::snprintf(buf, sizeof(buf), "scale(%.5f)", static_cast<double>(s));
-            r->SetProperty("transform", buf);
             if (!p.bars.empty())
                 if (Rml::Element* body = p.doc) body->SetProperty("background-color", p.bars);
         } else { // expand: the smaller side's scale, the rest grows
             r->SetProperty("width", px(W / s));
             r->SetProperty("height", px(H / s));
+            p.design_w = W / s;
+            p.design_h = H / s;
             std::snprintf(buf, sizeof(buf), "scale(%.5f)", static_cast<double>(s));
-            r->SetProperty("transform", buf);
         }
+        p.fit_transform = buf;
+        place(p, p.move_start ? -1.0f : 1.0f);
+    }
+
+    // The root's transform and opacity at a point of its coming (0..1, 1:
+    // where it stays; -1: wherever its movement is now).
+    void place(Page& p, f32 t) {
+        if (!p.root) return;
+        if (t < 0) t = progress(p);
+        if (p.appear.empty() || t >= 1) {
+            p.root->SetProperty("transform", p.fit_transform);
+            p.root->RemoveProperty("opacity");
+            return;
+        }
+        t = std::clamp(t, 0.0f, 1.0f);
+        const f32 e = p.leaving ? t * t * t : 1 - (1 - t) * (1 - t) * (1 - t); // in: slows down; out: speeds up
+        const f32 away = 1 - e;
+        f32 dx = 0, dy = 0, z = 1;
+        if (p.appear == "rise") dy = 48 * away;
+        else if (p.appear == "drop") dy = -48 * away;
+        else if (p.appear == "left") dx = -80 * away;
+        else if (p.appear == "right") dx = 80 * away;
+        else if (p.appear == "zoom") {
+            z = 0.9f + 0.1f * e;
+            dx = p.design_w * (1 - z) * 0.5f;
+            dy = p.design_h * (1 - z) * 0.5f;
+        }
+        char buf[192];
+        std::snprintf(buf, sizeof(buf), "%s translate(%.2fpx, %.2fpx) scale(%.4f)", p.fit_transform.c_str(), static_cast<double>(dx),
+                      static_cast<double>(dy), static_cast<double>(z));
+        p.root->SetProperty("transform", buf);
+        p.root->SetProperty("opacity", std::to_string(e));
+    }
+    f32 progress(const Page& p) const {
+        if (!p.move_start) return 1;
+        const f64 t = static_cast<f64>(time_now_ns() - p.move_start) * 1e-9 / std::max(p.appear_time, 0.01f);
+        const f32 f = static_cast<f32>(std::min(t, 1.0));
+        return p.leaving ? 1 - f : f;
     }
 
     void bind(Page& p, const Vars& vars, const CallFn& call) {
@@ -359,11 +412,43 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
             impl_->fit(p, width, height);
             impl_->bind(p, vars, call);
         }
-        if (visible == p.visible) continue;
-        p.visible = visible;
-        if (visible) p.doc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
-        else p.doc->Hide();
-        restacked = true;
+        if (visible != p.visible) {
+            p.visible = visible;
+            const bool moves = !p.appear.empty() && p.root;
+            if (visible) {
+                if (!p.doc->IsVisible()) {
+                    p.doc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+                    restacked = true;
+                }
+                // Comes in (from wherever it was going away).
+                const f32 from = p.move_start ? impl_->progress(p) : 0.0f;
+                p.leaving = false;
+                p.move_start = moves ? time_now_ns() - static_cast<u64>(from * p.appear_time * 1e9) : 0;
+                if (moves) impl_->place(p, from);
+            } else if (moves) {
+                const f32 from = p.move_start ? impl_->progress(p) : 1.0f;
+                p.leaving = true;
+                p.move_start = time_now_ns() - static_cast<u64>((1 - from) * p.appear_time * 1e9);
+            } else {
+                p.doc->Hide();
+                restacked = true;
+            }
+        }
+        if (p.move_start) {
+            const f32 t = impl_->progress(p);
+            const bool done = p.leaving ? t <= 0 : t >= 1;
+            if (done) {
+                p.move_start = 0;
+                if (p.leaving) {
+                    p.leaving = false;
+                    p.doc->Hide();
+                    restacked = true;
+                }
+                impl_->place(p, 1);
+            } else {
+                impl_->place(p, t);
+            }
+        }
     }
     if (restacked) impl_->restack();
 }

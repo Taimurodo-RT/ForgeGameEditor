@@ -46,6 +46,9 @@ const char* const kBarFroms[] = {"left", "right", "bottom", "top"};
 const char* const kActions[] = {"show", "hide", "toggle", "close", "message", "change", "talk", "pause", "resume",
                                 "menu", "quit", "new", "continue", "load", "save", "settings"};
 const char* const kScreenShows[] = {"playing", "command", "menu"};
+const char* const kEasings[] = {"smooth", "linear", "in", "out", "back", "bounce", "elastic"};
+const char* const kMotions[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
+const char* const kAppears[] = {"none", "fade", "rise", "drop", "zoom", "left", "right"};
 const char* const kTypeWords[] = {"Рамка", "Прямоугольник", "Эллипс", "Текст", "Картинка"};
 
 int hex_digit(char c) {
@@ -271,6 +274,40 @@ yyjson_mut_val* write_node(yyjson_mut_doc* doc, const Node& n) {
         }
         yyjson_mut_obj_add_val(doc, o, "on_click", a);
     }
+    if (n.motion.kind != MotionKind::None) {
+        const Motion& m = n.motion;
+        yyjson_mut_val* mo = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_str(doc, mo, "kind", word(m.kind, kMotions));
+        put_num(doc, mo, "duration", m.duration);
+        if (m.delay > 0) put_num(doc, mo, "delay", m.delay);
+        yyjson_mut_obj_add_str(doc, mo, "easing", word(m.easing, kEasings));
+        if (!m.loop) yyjson_mut_obj_add_bool(doc, mo, "loop", false);
+        if (m.back) yyjson_mut_obj_add_bool(doc, mo, "back", true);
+        if (m.strength != 1) put_num(doc, mo, "strength", m.strength);
+        if (!m.keys.empty()) {
+            yyjson_mut_val* ka = yyjson_mut_arr(doc);
+            for (const MotionKey& k : m.keys) {
+                yyjson_mut_val* ko = yyjson_mut_obj(doc);
+                put_num(doc, ko, "at", k.at);
+                if (k.x != 0) put_num(doc, ko, "x", k.x);
+                if (k.y != 0) put_num(doc, ko, "y", k.y);
+                if (k.scale != 1) put_num(doc, ko, "scale", k.scale);
+                if (k.rotation != 0) put_num(doc, ko, "rotation", k.rotation);
+                if (k.opacity != 1) put_num(doc, ko, "opacity", k.opacity);
+                if (k.tint) yyjson_mut_obj_add_val(doc, ko, "color", color_val(doc, k.color));
+                if (k.radius >= 0) put_num(doc, ko, "radius", k.radius);
+                if (k.blur > 0) put_num(doc, ko, "blur", k.blur);
+                if (k.brightness != 1) put_num(doc, ko, "brightness", k.brightness);
+                yyjson_mut_arr_append(ka, ko);
+            }
+            yyjson_mut_obj_add_val(doc, mo, "keys", ka);
+        }
+        yyjson_mut_obj_add_val(doc, o, "motion", mo);
+    }
+    if (n.smooth > 0) {
+        put_num(doc, o, "smooth", n.smooth);
+        if (n.smooth_easing != Easing::Smooth) yyjson_mut_obj_add_str(doc, o, "smooth_easing", word(n.smooth_easing, kEasings));
+    }
     if (!n.component.empty()) yyjson_mut_obj_add_strcpy(doc, o, "component", n.component.c_str());
     if (!n.variant.empty()) {
         yyjson_mut_val* vo = yyjson_mut_obj(doc);
@@ -449,6 +486,40 @@ bool read_node(yyjson_val* o, Node& n, int depth) {
             if (kind) n.on_click.push_back({*kind, str(v, "target")});
         }
     }
+    if (yyjson_val* mo = yyjson_obj_get(o, "motion"); yyjson_is_obj(mo)) {
+        Motion& m = n.motion;
+        m.kind = enum_of(mo, "kind", kMotions, MotionKind::None);
+        m.duration = std::clamp(num(mo, "duration", 1), 0.05f, 600.0f);
+        m.delay = std::max(num(mo, "delay", 0), 0.0f);
+        m.easing = enum_of(mo, "easing", kEasings, Easing::Smooth);
+        m.loop = flag(mo, "loop", true);
+        m.back = flag(mo, "back", false);
+        m.strength = std::max(num(mo, "strength", 1), 0.0f);
+        if (yyjson_val* ka = yyjson_obj_get(mo, "keys"); yyjson_is_arr(ka)) {
+            usize ki, kn;
+            yyjson_val* kv;
+            yyjson_arr_foreach(ka, ki, kn, kv) {
+                if (!yyjson_is_obj(kv)) continue;
+                MotionKey k;
+                k.at = std::clamp(num(kv, "at", 0), 0.0f, 1.0f);
+                k.x = num(kv, "x", 0);
+                k.y = num(kv, "y", 0);
+                k.scale = num(kv, "scale", 1);
+                k.rotation = num(kv, "rotation", 0);
+                k.opacity = std::clamp(num(kv, "opacity", 1), 0.0f, 1.0f);
+                if (yyjson_obj_get(kv, "color")) {
+                    k.tint = true;
+                    k.color = color_of(kv, "color", k.color);
+                }
+                k.radius = num(kv, "radius", -1);
+                k.blur = std::max(num(kv, "blur", 0), 0.0f);
+                k.brightness = std::max(num(kv, "brightness", 1), 0.0f);
+                m.keys.push_back(k);
+            }
+        }
+    }
+    n.smooth = std::max(num(o, "smooth", 0), 0.0f);
+    n.smooth_easing = enum_of(o, "smooth_easing", kEasings, Easing::Smooth);
     n.component = str(o, "component");
     if (yyjson_val* vo = yyjson_obj_get(o, "variant"); yyjson_is_obj(vo)) {
         yyjson_val *key, *value;
@@ -585,6 +656,10 @@ std::string save_screen(const Screen& screen) {
             yyjson_mut_obj_add_str(doc, so, "show", word(screen.show, kScreenShows));
             if (screen.pauses) yyjson_mut_obj_add_bool(doc, so, "pauses", true);
             if (!screen.esc_closes) yyjson_mut_obj_add_bool(doc, so, "esc_closes", false);
+            if (screen.appear != Appear::None) {
+                yyjson_mut_obj_add_str(doc, so, "appear", word(screen.appear, kAppears));
+                put_num(doc, so, "appear_time", screen.appear_time);
+            }
         }
         yyjson_mut_obj_add_val(doc, root, "settings", so);
     }
@@ -650,6 +725,8 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         s.show = enum_of(so, "show", kScreenShows, ScreenShow::Command);
         s.pauses = flag(so, "pauses", false);
         s.esc_closes = flag(so, "esc_closes", true);
+        s.appear = enum_of(so, "appear", kAppears, Appear::None);
+        s.appear_time = std::clamp(num(so, "appear_time", 0.25f), 0.05f, 10.0f);
     }
     if (yyjson_val* a = yyjson_obj_get(root, "colors"); yyjson_is_arr(a)) {
         usize i, n;
@@ -803,6 +880,11 @@ void keep_override(Node& to, const Node& from, std::string_view field) {
     else if (field == "blend") to.blend = from.blend;
     else if (field == "frame") to.frame = from.frame;
     else if (field == "mask") to.mask = from.mask;
+    else if (field == "motion") {
+        to.motion = from.motion;
+        to.smooth = from.smooth;
+        to.smooth_easing = from.smooth_easing;
+    }
     else if (field == "game") {
         to.show_if = from.show_if;
         to.bar = from.bar;
@@ -1038,6 +1120,7 @@ std::string override_of(std::string_view field) {
     if (starts("frame.")) return "frame";
     if (starts("mask.")) return "mask";
     if (field == "show_if" || starts("bar.") || starts("click")) return "game";
+    if (starts("motion") || starts("smooth")) return "motion";
     if (field == "opacity" || field == "blend" || field == "visible" || field == "text" || field == "name")
         return std::string(field);
     if (field == "family" || field == "size" || field == "weight" || field == "italic" || field == "line_height" ||
@@ -1095,7 +1178,125 @@ std::string state_property(const Component& component, const Screen&) {
     return {};
 }
 
-std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) {
+namespace {
+
+// --- movement ---
+
+const char* easing_css(Easing e) {
+    switch (e) {
+    case Easing::Smooth: return "ease-in-out";
+    case Easing::Linear: return "linear";
+    case Easing::EaseIn: return "ease-in";
+    case Easing::EaseOut: return "ease-out";
+    case Easing::Back: return "back-out";
+    case Easing::Bounce: return "bounce-out";
+    case Easing::Elastic: return "elastic-out";
+    }
+    return "ease-in-out";
+}
+
+} // namespace
+
+std::vector<MotionKey> motion_keys(const Motion& m) {
+    const f32 k = m.strength;
+    auto key = [](f32 at) {
+        MotionKey mk;
+        mk.at = at;
+        return mk;
+    };
+    std::vector<MotionKey> out;
+    switch (m.kind) {
+    case MotionKind::None: break;
+    case MotionKind::Pulse: {
+        out = {key(0), key(0.5f), key(1)};
+        out[1].scale = 1 + 0.08f * k;
+        break;
+    }
+    case MotionKind::Float: {
+        out = {key(0), key(0.5f), key(1)};
+        out[1].y = -8 * k;
+        break;
+    }
+    case MotionKind::Swing: {
+        out = {key(0), key(0.25f), key(0.75f), key(1)};
+        out[1].rotation = 8 * k;
+        out[2].rotation = -8 * k;
+        break;
+    }
+    case MotionKind::Spin: {
+        out = {key(0), key(1)};
+        out[1].rotation = 360;
+        break;
+    }
+    case MotionKind::Shake: {
+        const f32 xs[] = {0, -6, 6, -6, 6, -3, 0};
+        const f32 ats[] = {0, 0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 1};
+        for (int i = 0; i < 7; ++i) {
+            out.push_back(key(ats[i]));
+            out.back().x = xs[i] * k;
+        }
+        break;
+    }
+    case MotionKind::Blink: {
+        out = {key(0), key(0.5f), key(1)};
+        out[1].opacity = std::clamp(1 - 0.8f * k, 0.0f, 1.0f);
+        break;
+    }
+    case MotionKind::Custom: {
+        out = m.keys;
+        std::stable_sort(out.begin(), out.end(), [](const MotionKey& a, const MotionKey& b) { return a.at < b.at; });
+        // From its place and back to it, unless the author says otherwise.
+        if (out.empty() || out.front().at > 0) out.insert(out.begin(), key(0));
+        if (out.back().at < 1) out.push_back(key(1));
+        break;
+    }
+    }
+    return out;
+}
+
+namespace {
+
+// @keyframes for a layer's motion: every key states every property that
+// moves, on top of the layer's own transform, filter, opacity and colour.
+void write_keyframes(const Node& n, const std::string& name, const std::string& transform, const std::string& filter,
+                     std::string& out) {
+    const std::vector<MotionKey> keys = motion_keys(n.motion);
+    bool place = false, fade = false, tint = false, corners = false, look = false;
+    for (const MotionKey& k : keys) {
+        place |= k.x != 0 || k.y != 0 || k.scale != 1 || k.rotation != 0;
+        fade |= k.opacity != 1;
+        tint |= k.tint;
+        corners |= k.radius >= 0;
+        look |= k.blur > 0 || k.brightness != 1;
+    }
+    const bool text = n.type == NodeType::Text;
+    Color base_color = text ? n.text_style.color : Color{0, 0, 0, 0};
+    if (!text)
+        for (const Paint& p : n.fills)
+            if (p.visible && p.kind == PaintKind::Solid) base_color = p.color;
+    const f32 base_radius = n.radius[0];
+    out += "@keyframes " + name + " {\n";
+    for (const MotionKey& k : keys) {
+        out += "  " + fmt(k.at * 100) + "% {\n";
+        auto line = [&](const char* property, const std::string& value) { out += "    " + std::string(property) + ": " + value + ";\n"; };
+        if (place)
+            line("transform", (transform.empty() ? "" : transform + " ") + "translate(" + px(k.x) + ", " + px(k.y) + ") scale(" +
+                                  fmt(k.scale) + ") rotate(" + fmt(k.rotation) + "deg)");
+        if (fade) line("opacity", fmt(std::clamp(k.opacity * n.opacity, 0.0f, 1.0f)));
+        if (tint) line(text ? "color" : "background-color", css_color(k.tint ? k.color : base_color));
+        if (corners && n.type != NodeType::Ellipse) line("border-radius", px(k.radius >= 0 ? k.radius : base_radius));
+        if (look)
+            line("filter", (filter.empty() ? "" : filter + " ") + "blur(" + px(k.blur) + ") brightness(" + fmt(k.brightness) + ")");
+        out += "  }\n";
+    }
+    out += "}\n";
+}
+
+} // namespace
+
+std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) { return node_css(n, parent, pw, ph, nullptr, 0); }
+
+std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::string* keyframes, f32 smooth_from_parent) {
     std::string css = "#n" + std::to_string(n.id) + " {\n";
     if (!n.visible) add(css, "display", "none");
 
@@ -1292,10 +1493,22 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) {
     if (n.blend != Blend::Normal) add(css, "mix-blend-mode", blend_css(n.blend));
     if (n.clip) add(css, "overflow", "hidden");
     if (n.rotation != 0) transforms.push_back("rotate(" + fmt(n.rotation) + "deg)");
-    if (!transforms.empty()) {
-        std::string t;
-        for (const std::string& part : transforms) t += (t.empty() ? "" : " ") + part;
-        add(css, "transform", t);
+    std::string transform;
+    for (const std::string& part : transforms) transform += (transform.empty() ? "" : " ") + part;
+    if (!transform.empty()) add(css, "transform", transform);
+
+    // Movement: changes of the look ease in (states), and the layer's own motion.
+    const f32 smooth = n.smooth > 0 ? n.smooth : smooth_from_parent;
+    if (smooth > 0) add(css, "transition", "all " + fmt(smooth) + "s " + easing_css(n.smooth > 0 ? n.smooth_easing : Easing::Smooth));
+    if (keyframes && n.motion.kind != MotionKind::None) {
+        const std::string name = "m" + std::to_string(n.id);
+        write_keyframes(n, name, transform, filter, *keyframes);
+        const Motion& m = n.motion;
+        std::string a = fmt(m.duration) + "s " + easing_css(m.easing);
+        if (m.delay > 0) a += " " + fmt(m.delay) + "s";
+        if (m.loop) a += " infinite";
+        if (m.back) a += " alternate";
+        add(css, "animation", a + " " + name);
     }
 
     if (n.type == NodeType::Text) {
@@ -1322,9 +1535,10 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) {
 
 namespace {
 
-void write_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::string& css) {
-    css += node_css(n, parent, pw, ph);
-    for (const Node& c : n.children) write_css(c, &n, n.w, n.h, css);
+void write_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::string& css, std::string* keyframes, f32 smooth) {
+    css += node_css(n, parent, pw, ph, keyframes, smooth);
+    const f32 inner = n.smooth > 0 ? n.smooth : smooth;
+    for (const Node& c : n.children) write_css(c, &n, n.w, n.h, css, keyframes, inner);
 }
 
 // The CSS of every layer of a subtree by id (parent: the subtree's parent, with its size).
@@ -1468,6 +1682,9 @@ void write_elements(const Node& n, std::string& html, int depth, const Screen* s
         if (screen->fit == ScreenFit::Fit) html += " forge-bars=\"" + color_hex(screen->bars) + "\"";
         if (screen->pauses) html += " forge-pauses=\"1\"";
         if (!screen->esc_closes) html += " forge-esc=\"0\"";
+        if (screen->appear != Appear::None)
+            html += std::string(" forge-appear=\"") + word(screen->appear, kAppears) + "\" forge-appear-time=\"" +
+                    fmt(screen->appear_time) + "\"";
     }
     write_game_attributes(n, html);
     html += ">";
@@ -1494,7 +1711,9 @@ std::string screen_html(const Screen& screen, const HtmlOptions& options) {
     // The screen's texts by default.
     html += "body {\n  font-family: " + css_string(screen.text.family) + ";\n  font-size: " + px(screen.text.size) +
             ";\n  color: " + css_color(screen.text.color) + ";\n}\n";
-    write_css(screen.root, nullptr, screen.width, screen.height, html);
+    std::string keyframes;
+    write_css(screen.root, nullptr, screen.width, screen.height, html, options.motion ? &keyframes : nullptr, 0);
+    html += keyframes;
     if (options.library && !screen.library) write_states(screen, *options.library, html);
     if (!screen.library) {
         // Over the world only what shows something takes the mouse (the

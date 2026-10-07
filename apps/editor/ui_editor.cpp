@@ -112,6 +112,10 @@ const char* const kArtRepeatWords[] = {"stretch", "repeat", "round", "space"};
 const char* const kScreenFitWords[] = {"expand", "fit", "stretch"};
 const char* const kScreenShowWords[] = {"playing", "command", "menu"};
 const char* const kBarFromWords[] = {"left", "right", "bottom", "top"};
+// Movement (the file's words, design::Motion and friends).
+const char* const kMotionWords[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
+const char* const kEasingWords[] = {"smooth", "linear", "in", "out", "back", "bounce", "elastic"};
+const char* const kAppearWords[] = {"none", "fade", "rise", "drop", "zoom", "left", "right"};
 // Where the sample pictures for drawn interfaces go in a game.
 const char* const kArtFolder = "pictures/интерфейс";
 const char* const kEffectWords[] = {"drop-shadow", "inner-shadow", "layer-blur", "background-blur"};
@@ -573,7 +577,10 @@ void UiEditor::rebuild_page() {
             return;
         }
     }
-    const std::string rml = ui::html_to_rml(d::screen_html(screen_, html_options()), "/web/html.rcss");
+    // On the canvas things stand where they are placed: movements play in «Проверить» and the game.
+    d::HtmlOptions still = html_options();
+    still.motion = false;
+    const std::string rml = ui::html_to_rml(d::screen_html(screen_, still), "/web/html.rcss");
     // The page's own address: pictures are found next to it (../pictures/...).
     std::string url = path_to_utf8(html_path(name_.empty() ? std::string("screen") : name_));
     std::replace(url.begin(), url.end(), '\\', '/');
@@ -1152,6 +1159,42 @@ void UiEditor::refresh_props() {
         p.bar_value = n->bar.value;
         p.bar_max = n->bar.max;
         p.bar_from = kBarFromWords[static_cast<int>(n->bar.from)];
+        {
+            const d::Motion& m = n->motion;
+            p.motion_kind = kMotionWords[static_cast<int>(m.kind)];
+            p.motion_duration = fmt(m.duration);
+            p.motion_delay = fmt(m.delay);
+            p.motion_strength = fmt(std::round(m.strength * 100)) + "%";
+            p.motion_easing = kEasingWords[static_cast<int>(m.easing)];
+            p.motion_loop = m.loop;
+            p.motion_back = m.back;
+            p.smooth = fmt(n->smooth);
+            p.smooth_easing = kEasingWords[static_cast<int>(n->smooth_easing)];
+            m_keys_.clear();
+            if (m.kind == d::MotionKind::Custom)
+                for (usize i = 0; i < m.keys.size(); ++i) {
+                    const d::MotionKey& k = m.keys[i];
+                    KeyRow row;
+                    row.index = static_cast<int>(i);
+                    row.at = fmt(std::round(k.at * 100)) + "%";
+                    row.x = fmt(k.x);
+                    row.y = fmt(k.y);
+                    row.scale = fmt(std::round(k.scale * 100)) + "%";
+                    row.rotation = fmt(k.rotation);
+                    row.opacity = fmt(std::round(k.opacity * 100)) + "%";
+                    row.radius = k.radius >= 0 ? fmt(k.radius) : "";
+                    row.blur = fmt(k.blur);
+                    row.brightness = fmt(std::round(k.brightness * 100)) + "%";
+                    row.tint = k.tint;
+                    row.hex = hex_of(k.color);
+                    row.swatch = swatch(k.color);
+                    m_keys_.push_back(std::move(row));
+                }
+            if (p.root) {
+                p.appear = kAppearWords[static_cast<int>(screen_.appear)];
+                p.appear_time = fmt(screen_.appear_time);
+            }
+        }
         m_clicks_.clear();
         for (usize i = 0; i < n->on_click.size(); ++i) {
             const d::Action& a = n->on_click[i];
@@ -1238,6 +1281,7 @@ void UiEditor::refresh_props() {
     }
     dirty("ue_variants");
     dirty("ue_clicks");
+    dirty("ue_keys");
     // The values a screen can show, and the screens a click can open.
     m_values_.clear();
     if (game_values)
@@ -1272,7 +1316,7 @@ std::string change_label(const std::string& field) {
         {"fill", "Заливка"}, {"stroke", "Обводка"}, {"effect", "Эффекты"}, {"layout", "Автораскладка"}, {"frame.", "Рамка-картинка"},
         {"mask.", "Маска"}, {"click", "При нажатии"}, {"bar.", "Полоска"}, {"screen.", "Настройки экрана"}, {"color.", "Цвета игры"},
         {"textstyle.", "Стили текста"}, {"variant.", "Вариант"}, {"instance.", "Вариант копии"}, {"property.", "Свойство компонента"},
-        {"component.", "Компонент"}};
+        {"component.", "Компонент"}, {"motion.", "Движение"}, {"smooth", "Плавная смена вида"}};
     for (const auto& [p, word] : groups)
         if (starts(p)) return std::string("Изменено: ") + word;
     return "Изменено";
@@ -1299,6 +1343,13 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         const std::optional<f32> v = number(target * 100);
         if (!v) return false;
         target = std::clamp(*v / 100, 0.0f, 1.0f);
+        return true;
+    };
+    // A percentage with no top (a size of 150%).
+    auto percent_any = [&](f32& target) {
+        const std::optional<f32> v = number(target * 100);
+        if (!v) return false;
+        target = std::clamp(*v / 100, 0.0f, 100.0f);
         return true;
     };
     // "fill.2.color" -> index 2, rest "color"
@@ -1556,6 +1607,110 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         }
     }
 
+    // Movement: the layer's own, and how smoothly its look changes.
+    if (field == "smooth") return !root && set_num(n.smooth, 0, 10);
+    if (field == "smooth.easing") {
+        const int i = index_of(value, kEasingWords);
+        if (i < 0 || n.smooth_easing == static_cast<d::Easing>(i)) return false;
+        n.smooth_easing = static_cast<d::Easing>(i);
+        return true;
+    }
+    if (field.rfind("motion.", 0) == 0) {
+        if (root) return false; // the screen comes and goes (screen.appear) instead
+        d::Motion& m = n.motion;
+        const std::string what = field.substr(7);
+        if (what == "kind") {
+            const int i = index_of(value, kMotionWords);
+            if (i < 0 || m.kind == static_cast<d::MotionKind>(i)) return false;
+            const d::MotionKind was = m.kind;
+            m.kind = static_cast<d::MotionKind>(i);
+            if (m.kind == d::MotionKind::Custom && m.keys.empty()) {
+                // Starts from what the preset did, to change from there.
+                d::Motion from = m;
+                from.kind = was == d::MotionKind::None ? d::MotionKind::Pulse : was;
+                m.keys = d::motion_keys(from);
+            }
+            if (m.kind == d::MotionKind::Spin && was == d::MotionKind::None) m.easing = d::Easing::Linear;
+            return true;
+        }
+        if (m.kind == d::MotionKind::None) return false;
+        if (what == "duration") return set_num(m.duration, 0.05f, 600);
+        if (what == "delay") return set_num(m.delay, 0, 600);
+        if (what == "strength") return percent_any(m.strength);
+        if (what == "loop") {
+            m.loop = !m.loop;
+            return true;
+        }
+        if (what == "back") {
+            m.back = !m.back;
+            return true;
+        }
+        if (what == "easing") {
+            const int i = index_of(value, kEasingWords);
+            if (i < 0 || m.easing == static_cast<d::Easing>(i)) return false;
+            m.easing = static_cast<d::Easing>(i);
+            return true;
+        }
+        if (m.kind != d::MotionKind::Custom) return false;
+        if (what == "key.add") {
+            // Halfway between the last two keys, or at the end.
+            d::MotionKey k;
+            std::vector<d::MotionKey> keys = d::motion_keys(m);
+            k.at = keys.size() >= 2 ? (keys[keys.size() - 2].at + keys.back().at) * 0.5f : 0.5f;
+            m.keys.push_back(k);
+            std::stable_sort(m.keys.begin(), m.keys.end(), [](const d::MotionKey& a, const d::MotionKey& b) { return a.at < b.at; });
+            return true;
+        }
+        usize i = 0;
+        std::string rest;
+        if (!indexed("motion.key", i, rest) || i >= m.keys.size()) return false;
+        d::MotionKey& k = m.keys[i];
+        if (rest == "remove") {
+            m.keys.erase(m.keys.begin() + static_cast<std::ptrdiff_t>(i));
+            return true;
+        }
+        if (rest == "at") {
+            if (!percent(k.at)) return false;
+            std::stable_sort(m.keys.begin(), m.keys.end(), [](const d::MotionKey& a, const d::MotionKey& b) { return a.at < b.at; });
+            return true;
+        }
+        if (rest == "x") return set_num(k.x);
+        if (rest == "y") return set_num(k.y);
+        if (rest == "scale") return percent_any(k.scale);
+        if (rest == "rotation") return set_num(k.rotation, -3600, 3600);
+        if (rest == "opacity") return percent(k.opacity);
+        if (rest == "radius") {
+            if (value.empty()) {
+                if (k.radius < 0) return false;
+                k.radius = -1;
+                return true;
+            }
+            f32 r = std::max(k.radius, 0.0f);
+            if (!set_num(r, 0, 10000)) return false;
+            k.radius = r;
+            return true;
+        }
+        if (rest == "blur") return set_num(k.blur, 0, 500);
+        if (rest == "brightness") return percent_any(k.brightness);
+        if (rest == "color") {
+            if (value.empty()) {
+                if (!k.tint) return false;
+                k.tint = false;
+                return true;
+            }
+            if (!color(k.color)) return false;
+            k.tint = true;
+            return true;
+        }
+        if (rest == "color.add") {
+            if (k.tint) return false;
+            k.tint = true;
+            k.color = n.type == d::NodeType::Text ? n.text_style.color : d::Color{232, 176, 74, 255};
+            return true;
+        }
+        return false;
+    }
+
     // The screen's settings.
     if (field.rfind("screen.", 0) == 0) {
         if (!root) return false;
@@ -1574,6 +1729,13 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             screen_.esc_closes = !screen_.esc_closes;
             return true;
         }
+        if (f == "appear") {
+            const int i = index_of(value, kAppearWords);
+            if (i < 0 || screen_.appear == static_cast<d::Appear>(i)) return false;
+            screen_.appear = static_cast<d::Appear>(i);
+            return true;
+        }
+        if (f == "appear_time") return set_num(screen_.appear_time, 0.05f, 10);
         if (f == "font") {
             if (value.empty()) return false;
             screen_.text.family = value;
@@ -3211,7 +3373,35 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("bar_value", &Props::bar_value);
         s.RegisterMember("bar_max", &Props::bar_max);
         s.RegisterMember("bar_from", &Props::bar_from);
+        s.RegisterMember("motion_kind", &Props::motion_kind);
+        s.RegisterMember("motion_duration", &Props::motion_duration);
+        s.RegisterMember("motion_delay", &Props::motion_delay);
+        s.RegisterMember("motion_strength", &Props::motion_strength);
+        s.RegisterMember("motion_easing", &Props::motion_easing);
+        s.RegisterMember("motion_loop", &Props::motion_loop);
+        s.RegisterMember("motion_back", &Props::motion_back);
+        s.RegisterMember("smooth", &Props::smooth);
+        s.RegisterMember("smooth_easing", &Props::smooth_easing);
+        s.RegisterMember("appear", &Props::appear);
+        s.RegisterMember("appear_time", &Props::appear_time);
     }
+    if (auto s = model.RegisterStruct<KeyRow>()) {
+        s.RegisterMember("index", &KeyRow::index);
+        s.RegisterMember("at", &KeyRow::at);
+        s.RegisterMember("x", &KeyRow::x);
+        s.RegisterMember("y", &KeyRow::y);
+        s.RegisterMember("scale", &KeyRow::scale);
+        s.RegisterMember("rotation", &KeyRow::rotation);
+        s.RegisterMember("opacity", &KeyRow::opacity);
+        s.RegisterMember("radius", &KeyRow::radius);
+        s.RegisterMember("blur", &KeyRow::blur);
+        s.RegisterMember("brightness", &KeyRow::brightness);
+        s.RegisterMember("tint", &KeyRow::tint);
+        s.RegisterMember("hex", &KeyRow::hex);
+        s.RegisterMember("swatch", &KeyRow::swatch);
+    }
+    model.RegisterArray<std::vector<KeyRow>>();
+    model.Bind("ue_keys", &m_keys_);
     if (auto s = model.RegisterStruct<ClickRow>()) {
         s.RegisterMember("index", &ClickRow::index);
         s.RegisterMember("kind", &ClickRow::kind);

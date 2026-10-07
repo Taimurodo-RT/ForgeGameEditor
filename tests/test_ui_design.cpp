@@ -519,3 +519,64 @@ TEST_CASE("ui design: the link to the game survives saving and goes onto the pag
     CHECK(override_of("bar.value") == "game");
     CHECK(override_of("show_if") == "game");
 }
+
+TEST_CASE("ui design: movement survives saving and goes onto the page") {
+    Screen s = make_screen("Магазин", 1280, 720);
+    s.appear = Appear::Rise;
+    s.appear_time = 0.4f;
+    Node coin = rect_node(s.next_id++, 100, 100, 64, 64);
+    coin.fills.push_back(Paint{});
+    coin.motion.kind = MotionKind::Custom;
+    coin.motion.duration = 2;
+    coin.motion.back = true;
+    MotionKey k;
+    k.at = 0.5f;
+    k.y = -10;
+    k.tint = true;
+    k.color = {255, 0, 0, 255};
+    k.blur = 2;
+    coin.motion.keys.push_back(k);
+    Node button = rect_node(s.next_id++, 200, 100, 120, 40);
+    button.smooth = 0.2f;
+    button.smooth_easing = Easing::EaseOut;
+    button.children.push_back(rect_node(s.next_id++, 0, 0, 10, 10));
+    s.root.children.push_back(coin);
+    s.root.children.push_back(button);
+
+    Screen back;
+    REQUIRE(load_screen(save_screen(s), back));
+    CHECK(back.appear == Appear::Rise);
+    CHECK(back.appear_time == doctest::Approx(0.4f));
+    CHECK(back.root.children[0].motion == s.root.children[0].motion);
+    CHECK(back.root.children[1].smooth == doctest::Approx(0.2f));
+    CHECK(back.root.children[1].smooth_easing == Easing::EaseOut);
+
+    // A custom movement starts and ends where the layer stands.
+    const std::vector<MotionKey> keys = motion_keys(s.root.children[0].motion);
+    REQUIRE(keys.size() == 3);
+    CHECK(keys.front().at == 0);
+    CHECK(keys.back().at == 1);
+
+    const std::string page = screen_html(s, {});
+    const std::string coin_id = std::to_string(s.root.children[0].id);
+    CHECK(contains(page, "@keyframes m" + coin_id));
+    CHECK(contains(page, "animation: 2s ease-in-out infinite alternate m" + coin_id));
+    CHECK(contains(page, "translate(0px, -10px)"));
+    CHECK(contains(page, "background-color: #ff0000"));
+    CHECK(contains(page, "blur(2px) brightness(1)"));
+    CHECK(contains(page, "transition: all 0.2s ease-out"));
+    CHECK(contains(page, "forge-appear=\"rise\" forge-appear-time=\"0.4\""));
+    // The child changes smoothly with its button.
+    CHECK(contains(node_css(button.children[0], &button, 120, 40, nullptr, 0.2f), "transition: all 0.2s"));
+
+    // On the canvas nothing moves.
+    HtmlOptions still;
+    still.motion = false;
+    CHECK_FALSE(contains(screen_html(s, still), "@keyframes"));
+
+    // Presets scale with their strength.
+    Motion pulse;
+    pulse.kind = MotionKind::Pulse;
+    pulse.strength = 2;
+    CHECK(motion_keys(pulse)[1].scale == doctest::Approx(1.16f));
+}

@@ -3126,6 +3126,7 @@ private:
     u32 ue_inst_ = 0;
     std::string ue_other_; // a second screen, a window the menu opens
     u32 ue_bar_ = 0;
+    std::string ue_moved_; // the title's movement at one moment
     const editor::design::Node* ue_node(u32 id) { return editor::design::find(ue().screen().root, id); }
     bool ui_step() {
         namespace d = editor::design;
@@ -3459,6 +3460,49 @@ private:
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
             check(!ue().checking(), "Esc ends the check");
             check(ue().open("main_menu"), "back to the menu");
+            // Movement: the title floats, the button eases into its looks, the window rises.
+            ue().select({ue_named("Название игры")});
+            check(click("ue-tab-motion"), "the panel's «Движение» tab");
+            break;
+        }
+        case 22: {
+            check(shown("ue-motion-kind") && !shown("ue-motion-duration"), "a layer stands still at first");
+            check(ue().set_property("motion.kind", "float") && ue().set_property("motion.duration", "0.4") &&
+                      ue_node(title)->motion.kind == d::MotionKind::Float,
+                  "the title floats");
+            check(ue().set_property("motion.kind", "custom") && ue_node(title)->motion.keys.size() == 3 &&
+                      ue_node(title)->motion.keys[1].y < 0,
+                  "its own keys start from the float");
+            check(ue().set_property("motion.key.1.color.add", "") && ue().set_property("motion.key.1.color", "#FF0000") &&
+                      ue_node(title)->motion.keys[1].tint,
+                  "a key changes the colour too, like the web");
+            check(ue_file(".html").find("@keyframes m" + std::to_string(title)) != std::string::npos, "the game's page moves it");
+            ue().select({ue_named("Кнопка «Новая игра»")});
+            check(ue().set_property("smooth", "0.15") && ue_file(".html").find("transition: all 0.15s") != std::string::npos,
+                  "the button's looks change smoothly");
+            check(ue().open(ue_other_), "the window");
+            ue().select({});
+            check(ue().set_property("screen.appear", "rise") && ue_file(".html", ue_other_).find("forge-appear=\"rise\"") != std::string::npos,
+                  "the window rises when it opens");
+            check(ue().open("main_menu"), "back to the menu");
+            ue().set_checking(true);
+            break;
+        }
+        case 23: {
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* t = page ? page->GetElementById(Rml::String("n") + std::to_string(title)) : nullptr;
+            const Rml::Property* p = t ? t->GetProperty("transform") : nullptr;
+            ue_moved_ = p ? p->ToString() : std::string();
+            check(t && !ue_moved_.empty(), "in the check the title moves");
+            SDL_Delay(120);
+            break;
+        }
+        case 24: {
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* t = page ? page->GetElementById(Rml::String("n") + std::to_string(title)) : nullptr;
+            const Rml::Property* p = t ? t->GetProperty("transform") : nullptr;
+            check(p && p->ToString() != ue_moved_, "and keeps moving");
+            ue().set_checking(false);
             ue().set_panel("design");
             break;
         }
