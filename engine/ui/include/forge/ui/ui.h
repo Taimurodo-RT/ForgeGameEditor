@@ -67,6 +67,16 @@ public:
     // path is relative to the UI folder. The document is shown.
     Rml::ElementDocument* load_document(Rml::Context* context, const std::string& path);
 
+    // Draws the context into a texture of its own size instead of over the
+    // window; documents show it as <img src="/gpu/<image>"/> (the editor's
+    // view of a game screen). An empty image name draws it over the window
+    // again. Offscreen contexts are drawn before the others.
+    void set_offscreen(Rml::Context* context, const std::string& image);
+    // A context that is not active is neither updated nor drawn.
+    void set_active(Rml::Context* context, bool active);
+    // Removes a context made by create_context with its documents.
+    void destroy_context(Rml::Context* context);
+
     // Feeds an SDL event to the context. True when the UI used it (the mouse
     // is over UI, a text field has focus), so the game or editor should not.
     bool handle_event(Rml::Context* context, const SDL_Event& event);

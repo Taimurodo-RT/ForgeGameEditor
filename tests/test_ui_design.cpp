@@ -1,0 +1,201 @@
+#include "forge/editor/ui_design.h"
+
+#include <doctest/doctest.h>
+
+using namespace forge;
+using namespace forge::editor::design;
+
+namespace {
+
+Node rect_node(u32 id, f32 x, f32 y, f32 w, f32 h) {
+    Node n;
+    n.id = id;
+    n.name = "Прямоугольник " + std::to_string(id);
+    n.type = NodeType::Rectangle;
+    n.x = x;
+    n.y = y;
+    n.w = w;
+    n.h = h;
+    return n;
+}
+
+bool contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
+
+} // namespace
+
+TEST_CASE("ui design: colours read and write as hex") {
+    CHECK(parse_color("#fff") == Color{255, 255, 255, 255});
+    CHECK(parse_color("#12345680") == Color{0x12, 0x34, 0x56, 0x80});
+    CHECK(parse_color(" 0a0b0c ") == Color{10, 11, 12, 255});
+    CHECK_FALSE(parse_color("#12345"));
+    CHECK_FALSE(parse_color("red"));
+    CHECK(color_hex(Color{255, 0, 16, 255}) == "#ff0010");
+    CHECK(color_hex(Color{255, 0, 16, 128}) == "#ff001080");
+}
+
+TEST_CASE("ui design: a screen survives saving and loading") {
+    Screen s = make_screen("Главное меню", 1920, 1080);
+    s.root.fills.push_back(Paint{});
+    Node panel = rect_node(s.next_id++, 100, 200, 640, 480);
+    panel.type = NodeType::Frame;
+    panel.layout.mode = LayoutMode::Column;
+    panel.layout.gap = 12;
+    panel.layout.padding = {24, 24, 24, 24};
+    panel.layout.align = 4;
+    panel.horizontal = Constraint::Center;
+    panel.vertical = Constraint::Scale;
+    panel.radius = {16, 16, 16, 16};
+    Paint g;
+    g.kind = PaintKind::Linear;
+    g.angle = 90;
+    g.stops = {{Color{255, 0, 0, 255}, 0}, {Color{0, 0, 255, 128}, 1}};
+    panel.fills.push_back(g);
+    panel.strokes.push_back(Stroke{Color{255, 255, 255, 64}, 2, StrokeAlign::Outside, StrokeStyle::Dashed, true});
+    panel.effects.push_back(Effect{EffectKind::DropShadow, Color{0, 0, 0, 100}, 0, 8, 24, 2, true});
+    panel.blend = Blend::Multiply;
+    panel.opacity = 0.75f;
+    Node title;
+    title.id = s.next_id++;
+    title.name = "Заголовок";
+    title.type = NodeType::Text;
+    title.text = "Пауза\nвторая строка";
+    title.text_style.size = 40;
+    title.text_style.weight = 700;
+    title.width_sizing = Sizing::Fill;
+    title.height_sizing = Sizing::Hug;
+    panel.children.push_back(title);
+    s.root.children.push_back(panel);
+    s.guides.push_back({true, 960});
+
+    const std::string json = save_screen(s);
+    Screen back;
+    std::string error;
+    REQUIRE(load_screen(json, back, &error));
+    CHECK(back.title == "Главное меню");
+    CHECK(back.guides == s.guides);
+    REQUIRE(back.root.children.size() == 1);
+    const Node& p = back.root.children[0];
+    CHECK(p.layout == panel.layout);
+    CHECK(p.horizontal == Constraint::Center);
+    CHECK(p.vertical == Constraint::Scale);
+    CHECK(p.fills == panel.fills);
+    CHECK(p.strokes == panel.strokes);
+    CHECK(p.effects == panel.effects);
+    CHECK(p.blend == Blend::Multiply);
+    CHECK(p.opacity == doctest::Approx(0.75));
+    REQUIRE(p.children.size() == 1);
+    CHECK(p.children[0].text == "Пауза\nвторая строка");
+    CHECK(p.children[0].text_style == title.text_style);
+    CHECK(p.children[0].width_sizing == Sizing::Fill);
+    CHECK(back.next_id == s.next_id);
+    CHECK(save_screen(back) == json);
+
+    CHECK_FALSE(load_screen("{ broken", back, &error));
+    CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("ui design: constraints become CSS that keeps the layer in place") {
+    Node parent;
+    Node n = rect_node(5, 100, 50, 200, 80);
+    CHECK(contains(node_css(n, &parent, 1920, 1080), "left: 100px;"));
+    CHECK(contains(node_css(n, &parent, 1920, 1080), "width: 200px;"));
+    n.horizontal = Constraint::End;
+    CHECK(contains(node_css(n, &parent, 1920, 1080), "right: 1620px;"));
+    n.horizontal = Constraint::Both;
+    const std::string both = node_css(n, &parent, 1920, 1080);
+    CHECK(contains(both, "left: 100px;"));
+    CHECK(contains(both, "right: 1620px;"));
+    CHECK_FALSE(contains(both, "width:"));
+    n.horizontal = Constraint::Center;
+    CHECK(contains(node_css(n, &parent, 1920, 1080), "left: calc(50% + -860px);"));
+    n.vertical = Constraint::Scale;
+    CHECK(contains(node_css(n, &parent, 1920, 1080), "top: 4.63%;"));
+}
+
+TEST_CASE("ui design: auto layout becomes flex") {
+    Node frame;
+    frame.id = 2;
+    frame.layout.mode = LayoutMode::Row;
+    frame.layout.gap = 8;
+    frame.layout.align = 5; // middle right
+    const std::string css = node_css(frame, nullptr, 0, 0);
+    CHECK(contains(css, "display: flex;"));
+    CHECK(contains(css, "gap: 8px;"));
+    CHECK(contains(css, "justify-content: flex-end;"));
+    CHECK(contains(css, "align-items: center;"));
+    Node child = rect_node(3, 0, 0, 50, 20);
+    child.width_sizing = Sizing::Fill;
+    const std::string c = node_css(child, &frame, 400, 100);
+    CHECK(contains(c, "position: relative;"));
+    CHECK(contains(c, "flex: 1 1 0;"));
+    CHECK(contains(c, "height: 20px;"));
+}
+
+TEST_CASE("ui design: the page holds every layer") {
+    Screen s = make_screen("HUD", 1280, 720);
+    Node t;
+    t.id = s.next_id++;
+    t.type = NodeType::Text;
+    t.text = "<Монеты> & очки";
+    s.root.children.push_back(t);
+    const std::string html = screen_html(s, {{"../fonts.css"}});
+    CHECK(contains(html, "<!DOCTYPE html>"));
+    CHECK(contains(html, "<link rel=\"stylesheet\" href=\"../fonts.css\">"));
+    CHECK(contains(html, "id=\"n1\""));
+    CHECK(contains(html, "&lt;Монеты&gt; &amp; очки"));
+    CHECK(contains(html, "#n2 {"));
+}
+
+TEST_CASE("ui design: tree helpers") {
+    Screen s = make_screen("Экран", 100, 100);
+    Node a = rect_node(s.next_id++, 0, 0, 10, 10);
+    a.type = NodeType::Frame;
+    a.children.push_back(rect_node(s.next_id++, 0, 0, 5, 5));
+    const u32 inner = a.children[0].id;
+    s.root.children.push_back(a);
+    CHECK(path_to(s.root, inner) == std::vector<u32>{1, 2, 3});
+    CHECK(parent_of(s.root, inner)->id == 2);
+    CHECK(fresh_name(s, NodeType::Rectangle) == "Прямоугольник 4");
+    std::optional<Node> taken = remove(s.root, 2);
+    REQUIRE(taken);
+    CHECK(s.root.children.empty());
+    renumber(s, *taken);
+    CHECK(taken->id == 4);
+    CHECK(taken->children[0].id == 5);
+}
+
+TEST_CASE("ui design: snapping to edges, middles and equal gaps") {
+    SnapTargets t;
+    t.frame = {0, 0, 1000, 600};
+    t.boxes = {{100, 100, 100, 50}};
+    // Left edge 3 px from the other box's right edge.
+    SnapResult r = snap_box({203, 310, 80, 40}, t, 6);
+    CHECK(r.snapped_x);
+    CHECK(r.dx == doctest::Approx(-3));
+    CHECK_FALSE(r.snapped_y);
+    CHECK_FALSE(r.lines.empty());
+    // The middle of the screen.
+    r = snap_box({458, 278, 80, 40}, t, 6);
+    CHECK(r.dx == doctest::Approx(2));
+    CHECK(r.dy == doctest::Approx(2));
+    // Equal gaps between two boxes in a row.
+    t.boxes = {{0, 400, 100, 50}, {400, 400, 100, 50}};
+    r = snap_box({198, 410, 100, 30}, t, 6);
+    CHECK(r.dx == doctest::Approx(2));
+    CHECK(r.gaps.size() == 2);
+    // A grid when nothing is near.
+    t.boxes.clear();
+    t.frame = {};
+    t.grid = 8;
+    r = snap_box({13, 21, 10, 10}, t, 2);
+    CHECK(r.dx == doctest::Approx(3));
+    CHECK(r.dy == doctest::Approx(3));
+    // Resizing moves only the dragged edge.
+    t = {};
+    t.boxes = {{0, 0, 100, 100}};
+    r = snap_edges({200, 0, 98, 50}, false, true, false, false, t, 6);
+    CHECK(r.dx == doctest::Approx(0));
+    r = snap_edges({20, 200, 78, 50}, false, true, false, false, t, 6);
+    CHECK(r.dx == doctest::Approx(2));
+    CHECK(r.dy == 0);
+}

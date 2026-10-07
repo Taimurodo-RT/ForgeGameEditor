@@ -34,6 +34,13 @@ public:
 
     u32 msaa_samples() const { return samples_; }
 
+    // A texture drawn by the app (a UI context drawn offscreen), shown by
+    // documents as <img src="/gpu/<name>"/>. The renderer never releases it.
+    void set_external_texture(const std::string& name, SDL_GPUTexture* texture, u32 width, u32 height);
+    void drop_external_texture(const std::string& name);
+    // Clears texture to transparent, for drawing a context into it.
+    void clear_texture(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* texture);
+
     // Frame statistics for the profiler and tests.
     struct Stats {
         u32 draws = 0;
@@ -206,6 +213,24 @@ private:
     SDL_GPUTexture* depth_stencil_ = nullptr;
     SDL_GPUTexture* postprocess_[3] = {};
     SDL_GPUTexture* mask_ = nullptr;
+    // Targets of other sizes, kept for contexts drawn offscreen at their own
+    // size (a game screen in the editor), so frames don't recreate them.
+    struct TargetSet {
+        u32 width = 0, height = 0;
+        std::vector<SDL_GPUTexture*> layers;
+        SDL_GPUTexture* depth_stencil = nullptr;
+        SDL_GPUTexture* postprocess[3] = {};
+        SDL_GPUTexture* mask = nullptr;
+    };
+    std::vector<TargetSet> spare_targets_;
+    struct External {
+        SDL_GPUTexture* texture;
+        u32 width, height;
+    };
+    std::unordered_map<std::string, External> external_;
+    TargetSet take_targets();
+    void put_targets(TargetSet&& set);
+    void release_targets(TargetSet& set);
 
     // Recording.
     u32 width_ = 0, height_ = 0;

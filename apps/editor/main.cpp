@@ -23,6 +23,7 @@
 #include "logic_editor.h"
 #include "project_folder.h"
 #include "story_editor.h"
+#include "ui_editor.h"
 #include "object_library.h"
 #include "slice_level.h"
 
@@ -285,6 +286,7 @@ public:
     std::filesystem::path sounds_folder = game_dir / "sounds";     // and sounds
     std::filesystem::path logic_file = game_dir / "logic.json";     // the links («Логика»)
     std::filesystem::path story_dir = game_dir;                     // dialogues/ and quests.json («Сюжет»)
+    std::filesystem::path ui_game_dir = game_dir;                   // ui/ («Интерфейс»)
 
     // Before init: the game's data from another folder (the project's game/).
     void use_game_dir(const std::filesystem::path& dir) {
@@ -294,6 +296,7 @@ public:
         sounds_folder = dir / "sounds";
         logic_file = dir / "logic.json";
         story_dir = dir;
+        ui_game_dir = dir;
     }
     // The objects shared by every game: this computer's, outside any game.
     std::filesystem::path shared_folder = default_shared_folder();
@@ -302,6 +305,7 @@ public:
     ObjectLibrary objects_tab{level_module};
     LogicEditor logic_tab{level_module};
     StoryEditor story_tab{level_module.library()};
+    UiEditor ui_tab;
     AssetLibrary assets;
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
@@ -359,7 +363,8 @@ public:
         story_tab.init(ui_, story_dir);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
-        if (!context_ || !bind_model()) return false;
+        // The «Интерфейс» tab draws game screens in a context of its own (after the editor's: F8 inspects the editor).
+        if (!context_ || !ui_tab.init(ui_, ui_game_dir) || !bind_model()) return false;
         ui::register_list_source("hierarchy", &hierarchy);
         // Loading fills the inputs from the model, which fires their change
         // events: not edits.
@@ -385,6 +390,7 @@ public:
         if (level.dirty()) level.save();
         level.shutdown();
         assets.shutdown();
+        ui_tab.shutdown();
         log_set_sink(nullptr, nullptr);
         ui::register_list_source("hierarchy", nullptr);
         sprites_.shutdown();
@@ -398,6 +404,7 @@ public:
         else if (m_tab_ == "objects") objects_tab.undo();
         else if (m_tab_ == "logic") logic_tab.undo();
         else if (m_tab_ == "story") story_tab.undo();
+        else if (m_tab_ == "ui") ui_tab.undo();
         else if (m_tab_ == "level") level.undo();
         else if (history.undo()) FORGE_INFO("Отменено");
     }
@@ -406,6 +413,7 @@ public:
         else if (m_tab_ == "objects") objects_tab.redo();
         else if (m_tab_ == "logic") logic_tab.redo();
         else if (m_tab_ == "story") story_tab.redo();
+        else if (m_tab_ == "ui") ui_tab.redo();
         else if (m_tab_ == "level") level.redo();
         else if (history.redo()) FORGE_INFO("Повторено");
     }
@@ -415,6 +423,7 @@ public:
         if (m_tab_ == "objects") return objects_tab.history();
         if (m_tab_ == "logic") return logic_tab.history();
         if (m_tab_ == "story") return story_tab.history();
+        if (m_tab_ == "ui") return ui_tab.history();
         return m_tab_ == "level" ? level.history() : history;
     }
     void open_tab(const std::string& key) {
@@ -424,7 +433,7 @@ public:
     }
     const std::string& tab() const { return m_tab_; }
     void save() {
-        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic" || m_tab_ == "story") return; // files are saved as they change
+        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic" || m_tab_ == "story" || m_tab_ == "ui") return; // files are saved as they change
         if (m_tab_ == "level") {
             level.save();
             return;
@@ -535,6 +544,8 @@ public:
         if (m_tab_ == "objects") objects_tab.update(context_);
         if (m_tab_ == "logic") logic_tab.update(context_);
         if (m_tab_ == "story") story_tab.update(context_);
+        ui_tab.set_shown(m_tab_ == "ui");
+        if (m_tab_ == "ui") ui_tab.update(context_);
         refresh_drawables();
         if (play.playing() && !paused_) simulate(static_cast<f32>(std::min(dt, 0.1)));
         hierarchy.refresh();
@@ -586,6 +597,7 @@ public:
         if (m_tab_ == "objects") return ui_used;
         if (m_tab_ == "logic") return logic_tab.handle_event(e, density, ui_used) || ui_used;
         if (m_tab_ == "story") return story_tab.handle_event(e) || ui_used;
+        if (m_tab_ == "ui") return ui_tab.handle_event(e, density, context_) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
             const f32 x = e.button.x * density, y = e.button.y * density;
@@ -819,12 +831,14 @@ private:
         objects_tab.bind(model);
         logic_tab.bind(model);
         story_tab.bind(model);
+        ui_tab.bind(model);
         model_ = model.GetModelHandle();
         level.set_model(model_);
         assets.set_model(model_);
         objects_tab.set_model(model_);
         logic_tab.set_model(model_);
         story_tab.set_model(model_);
+        ui_tab.set_model(model_);
         return true;
     }
 
@@ -936,13 +950,14 @@ private:
         set(m_can_undo_, h.can_undo(), "can_undo");
         set(m_can_redo_, h.can_redo(), "can_redo");
         set(m_undo_label_, h.undo_label(), "undo_label");
-        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && m_tab_ != "story" && h.dirty(), "dirty"); // files are written at once
+        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && m_tab_ != "story" && m_tab_ != "ui" && h.dirty(), "dirty"); // files are written at once
         set(m_scene_name_,
             m_tab_ == "level"    ? level.title()
             : m_tab_ == "assets" ? std::string("Ресурсы проекта")
             : m_tab_ == "objects" ? std::string("Объекты: ") + level.title()
             : m_tab_ == "logic"   ? std::string("Логика: ") + level.title()
             : m_tab_ == "story"   ? std::string("Сюжет: ") + level.title()
+            : m_tab_ == "ui"      ? std::string("Интерфейс: ") + ui_tab.screen().title
                                  : path_to_utf8(scene_path.filename()),
             "scene_name");
         set(m_has_selection_, !doc.selection().empty() && doc.find(doc.selection()[0]) != nullptr, "has_selection");
@@ -992,6 +1007,8 @@ private:
             set(m_status_, logic_tab.status(), "status");
         } else if (m_tab_ == "story") {
             set(m_status_, story_tab.status(), "status");
+        } else if (m_tab_ == "ui") {
+            set(m_status_, ui_tab.status(), "status");
         } else if (m_tab_ == "objects") {
             set(m_status_, objects_tab.status(), "status");
         } else if (m_tab_ == "assets") {
@@ -1212,6 +1229,7 @@ private:
         if (m_tab_ == "objects") return objects_tab.handle_key(k);
         if (m_tab_ == "logic") return logic_tab.handle_key(k);
         if (m_tab_ == "story") return story_tab.handle_key(k);
+        if (m_tab_ == "ui") return ui_tab.handle_key(k);
         if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
         if (m_tab_ != "world") return false; // the keys below act on the world view
@@ -1961,7 +1979,7 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 37) return lg_step_ >= 0 ? logic_step() : st_step_ >= 0 ? story_step() : asset_step();
+        if (ol_step_ >= 37) return lg_step_ >= 0 ? logic_step() : st_step_ >= 0 ? story_step() : ue_step_ >= 0 ? ui_step() : asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -3061,6 +3079,137 @@ private:
         return true;
     }
 
+    // «Интерфейс»: the canvas played with the mouse and keys.
+    UiEditor& ue() { return ed_.ui_tab; }
+    u32 ue_named(const editor::design::Node& n, const std::string& name) {
+        if (n.name == name) return n.id;
+        for (const editor::design::Node& c : n.children)
+            if (u32 id = ue_named(c, name)) return id;
+        return 0;
+    }
+    u32 ue_named(const std::string& name) { return ue_named(ue().screen().root, name); }
+    // A screen point in window pixels.
+    f32 ue_wx(f32 x) { return ue().canvas_left() + ue().to_canvas_x(x); }
+    f32 ue_wy(f32 y) { return ue().canvas_top() + ue().to_canvas_y(y); }
+    void ue_drag(f32 x0, f32 y0, f32 x1, f32 y1) {
+        mouse(SDL_EVENT_MOUSE_MOTION, x0, y0);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0);
+        for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x0 + (x1 - x0) * static_cast<f32>(i) / 4, y0 + (y1 - y0) * static_cast<f32>(i) / 4);
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x1, y1);
+    }
+    std::string ue_file(const char* ext) {
+        std::vector<u8> bytes;
+        read_file(ed_.ui_game_dir / "ui" / ("main_menu" + std::string(ext)), bytes);
+        return std::string(bytes.begin(), bytes.end());
+    }
+    const editor::design::Node* ue_node(u32 id) { return editor::design::find(ue().screen().root, id); }
+    bool ui_step() {
+        namespace d = editor::design;
+        const u32 title = ue_named("Название игры");
+        switch (ue_step_) {
+        case 0:
+            check(click_tab(8) && ed_.tab() == "ui", "a click on the Interface tab");
+            break;
+        case 1: {
+            check(ue().opened() == "main_menu" && ue().screen().title == "Главное меню", "a new game gets a main menu screen");
+            ue_html_ = ue_file(".html");
+            check(ue_html_.find("Старая шахта") != std::string::npos, "the screen is written as a page the game can show");
+            check(title && shown("ue-layer-" + std::to_string(title)) && shown("ue-layer-" + std::to_string(ue_named("Новая игра"))),
+                  "the layers list shows the screen's layers");
+            const auto box = ue().layer_box(title);
+            check(box && box->w > 300 && box->h > 50, "the engine laid the screen out");
+            check(ue().zoom() > 0.2f && ue().zoom() < 1.0f, "the screen fits the canvas");
+            if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
+            break;
+        }
+        case 2: {
+            check(ue().selection() == std::vector<u32>{title}, "a click on the title selects it");
+            check(shown("ue-selection"), "the selection has its frame and handles");
+            const auto box = ue().layer_box(title);
+            if (box) ue_drag(ue_wx(box->cx()), ue_wy(box->cy()), ue_wx(box->cx() + 77), ue_wy(box->cy() + 333));
+            break;
+        }
+        case 3: {
+            const d::Node* n = ue_node(title);
+            check(n && std::abs(n->x - 217) < 8 && std::abs(n->y - 483) < 8, "dragging moves the title");
+            {
+                d::Screen saved;
+                const d::Node* m = d::load_screen(ue_file(".json"), saved) ? d::find(saved.root, title) : nullptr;
+                check(n && m && m->x == n->x && m->y == n->y, "the move is saved");
+            }
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            n = ue_node(title);
+            check(n && n->x == 140 && n->y == 150, "undo puts it back");
+            key(SDLK_R, SDL_KMOD_NONE);
+            check(ue().tool() == UiEditor::Tool::Rectangle, "R picks the rectangle");
+            ue_drag(ue_wx(1203), ue_wy(613), ue_wx(1503), ue_wy(813));
+            break;
+        }
+        case 4: {
+            ue_rect_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            const d::Node* r = ue_node(ue_rect_);
+            check(r && r->type == d::NodeType::Rectangle && std::abs(r->w - 300) < 8 && std::abs(r->h - 200) < 8,
+                  "dragging with the rectangle tool draws one");
+            check(ue().tool() == UiEditor::Tool::Select, "then the tool is back to select");
+            check(ue().set_property("w", "250") && r && ue_node(ue_rect_)->w == 250, "its width typed in");
+            check(ue().set_property("fill.0.color", "#FF0000") && ue_file(".html").find("n" + std::to_string(ue_rect_)) != std::string::npos,
+                  "its colour is set and it is on the page");
+            break;
+        }
+        case 5: {
+            // Its left edge brought near the title's: it snaps onto it.
+            const auto box = ue().layer_box(ue_rect_);
+            const auto t = ue().layer_box(title);
+            check(box && t, "both are laid out");
+            if (box && t) ue_drag(ue_wx(box->cx()), ue_wy(box->cy()), ue_wx(box->cx() - (box->x - t->x) + 3), ue_wy(box->cy()));
+            break;
+        }
+        case 6: {
+            const d::Node* r = ue_node(ue_rect_);
+            const auto t = ue().layer_box(title);
+            check(r && t && std::abs(r->x - t->x) < 0.01f, "a moved layer snaps to another's edge");
+            const usize before = ue().screen().root.children.size();
+            key(SDLK_D, SDL_KMOD_CTRL);
+            check(ue().screen().root.children.size() == before + 1 && ue().selection().size() == 1 && ue().selection()[0] != ue_rect_,
+                  "Ctrl+D duplicates");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(ue().screen().root.children.size() == before && ue().selection().empty(), "Delete removes");
+            ue().select({ue_rect_});
+            key(SDLK_D, SDL_KMOD_CTRL);
+            ue().select({ue_rect_, ue().selection()[0]});
+            key(SDLK_A, SDL_KMOD_SHIFT);
+            const d::Node* parent = ue().selection().size() == 1 ? ue_node(ue().selection()[0]) : nullptr;
+            check(parent && parent->layout.mode != d::LayoutMode::None && parent->children.size() == 2,
+                  "Shift+A puts the two into a frame with auto layout");
+            break;
+        }
+        case 7: {
+            // A guide pulled from the top ruler, then dragged back onto it.
+            f32 rx = 0, ry = 0;
+            check(element_center("ue-ruler-x", rx, ry), "the top ruler is there");
+            ue_drag(rx, ry, rx, ue_wy(540));
+            check(ue().screen().guides.size() == 1 && !ue().screen().guides[0].vertical &&
+                      std::abs(ue().screen().guides[0].position - 540) < 2,
+                  "a guide is pulled out of the ruler");
+            const f32 gy = ue_wy(ue().screen().guides.empty() ? 0 : ue().screen().guides[0].position);
+            ue_drag(rx, gy, rx, ry);
+            check(ue().screen().guides.empty(), "a guide dragged back onto the ruler is gone");
+            break;
+        }
+        case 8:
+            key(SDLK_0, SDL_KMOD_SHIFT);
+            check(std::abs(ue().zoom() - 1) < 0.001f, "Shift+0 shows 100%");
+            key(SDLK_1, SDL_KMOD_SHIFT);
+            check(ue().zoom() < 1 && ue().zoom() > 0.2f, "Shift+1 fits the screen again");
+            break;
+        default:
+            ue_step_ = -1;
+            return true;
+        }
+        ++ue_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -3431,6 +3580,9 @@ private:
     u32 as_step_ = 0, ol_step_ = 0, waited_ = 0, conv_wait_ = 0;
     int lg_step_ = 0;
     int st_step_ = 0, st_wait_ = 0;
+    int ue_step_ = 0;
+    u32 ue_rect_ = 0;
+    std::string ue_html_;
     std::string st_new_; // a line the test added
     std::filesystem::path picture_file_;
     u64 new_template_ = 0;
@@ -3521,6 +3673,12 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             std::filesystem::create_directories(editor.story_dir, ec);
             std::filesystem::copy(editor.game_dir / "dialogues", editor.story_dir / "dialogues", std::filesystem::copy_options::recursive, ec);
             std::filesystem::copy_file(editor.game_dir / "quests.json", editor.story_dir / "quests.json", ec);
+            // Nor its screens.
+            editor.ui_game_dir = std::filesystem::temp_directory_path() / "forge_editor_ui";
+            std::filesystem::remove_all(editor.ui_game_dir, ec);
+            std::filesystem::create_directories(editor.ui_game_dir, ec);
+            if (std::filesystem::exists(editor.game_dir / "ui", ec))
+                std::filesystem::copy(editor.game_dir / "ui", editor.ui_game_dir / "ui", std::filesystem::copy_options::recursive, ec);
         }
         // Nor the game's level, unless one is given.
         LevelConfig lc;
@@ -3780,6 +3938,11 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                     editor.reveal(first);
                 }
                 if (f == 2 && play) editor.toggle_play();
+                if (f == 3 && select && editor.tab() == "ui") { // a button of the menu, for its design
+                    const editor::design::Node& root = editor.ui_tab.screen().root;
+                    if (!root.children.empty() && !root.children.back().children.empty())
+                        editor.ui_tab.select({root.children.back().children.front().id});
+                }
                 if (f == 1 && !options.talk.empty()) {
                     editor.open_tab("story");
                     const std::string& t = options.talk;
