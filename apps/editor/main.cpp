@@ -384,6 +384,21 @@ public:
                     unique.emplace_back(name, label + " · " + name);
             return unique;
         };
+        ui_tab.game_items = [this] {
+            std::vector<game::ScreenItem> out;
+            const objects::Library& lib = *level_module.library();
+            for (const objects::Template& t : lib.templates()) {
+                if (!lib.has_block(t, "pickup")) continue;
+                const objects::PropDef* what = lib.prop_of(t, "what");
+                if (!what) continue;
+                std::string item = lib.value(t, *what);
+                if (item.size() >= 2 && item.front() == '"') item = item.substr(1, item.size() - 2);
+                if (item.empty() || std::any_of(out.begin(), out.end(), [&](const game::ScreenItem& i) { return i.id == item; })) continue;
+                out.push_back({item, t.name, "", t.about});
+            }
+            return out;
+        };
+        ui_tab.game_quests = [this] { return &story_tab.quests(); };
         // The «Интерфейс» tab draws game screens in a context of its own (after the editor's: F8 inspects the editor).
         if (!context_ || !ui_tab.init(ui_, ui_game_dir) || !bind_model()) return false;
         ui::register_list_source("hierarchy", &hierarchy);
@@ -3109,6 +3124,15 @@ private:
         return 0;
     }
     u32 ue_named(const std::string& name) { return ue_named(ue().screen().root, name); }
+    // The cells a list shows now (its content's children not hidden).
+    static usize ue_list_cells(Rml::Element* content) {
+        usize n = 0;
+        for (int i = 0; content && i < content->GetNumChildren(); ++i)
+            if (content->GetChild(i)->GetComputedValues().display() != Rml::Style::Display::None) ++n;
+        return n;
+    }
+    u32 ue_list_ = 0, ue_text_ = 0, ue_cell_ = 0;
+    usize ue_items_ = 0;
     // A screen point in window pixels.
     f32 ue_wx(f32 x) { return ue().canvas_left() + ue().to_canvas_x(x); }
     f32 ue_wy(f32 y) { return ue().canvas_top() + ue().to_canvas_y(y); }
@@ -3502,6 +3526,101 @@ private:
             Rml::Element* t = page ? page->GetElementById(Rml::String("n") + std::to_string(title)) : nullptr;
             const Rml::Property* p = t ? t->GetProperty("transform") : nullptr;
             check(p && p->ToString() != ue_moved_, "and keeps moving");
+            ue().set_checking(false);
+            ue().set_panel("design");
+            break;
+        }
+        case 25: {
+            // A list: a component's copy becomes the cell of the hero's things.
+            const u32 cell = ue().place_component("Кнопка меню");
+            check(cell != 0, "a copy of the button for the cell");
+            ue().select({cell});
+            ue().set_panel("game");
+            check(ue().set_property("list", "items"), "«Список: Вещи героя» on the copy");
+            const u32 list = ue().selection().empty() ? 0 : ue().selection()[0];
+            const d::Node* l = ue_node(list);
+            check(l && l->list == d::ListSource::Items && l->children.size() == 2 && l->children[0].id == cell &&
+                      !l->children[0].component.empty(),
+                  "a list frame stands around the copy, with an «empty» text after it");
+            ue().undo();
+            check(!ue_node(list) && ue_node(cell) && d::path_to(ue().screen().root, cell).size() == 2,
+                  "Ctrl+Z takes the list away in one step");
+            ue().redo();
+            check(ue_node(list) && ue_node(list)->list == d::ListSource::Items, "and Ctrl+Y brings it back");
+            ue_list_ = list;
+            // The cell's text shows the element's name and count.
+            const d::Node* inst = ue_node(cell);
+            u32 text = 0;
+            if (inst)
+                for (const d::Node& c : inst->children)
+                    if (c.type == d::NodeType::Text) text = c.id;
+            check(text != 0, "the copy has a text");
+            ue_text_ = text;
+            ue_cell_ = cell;
+            ue().select({text});
+            break;
+        }
+        case 26: {
+            const u32 text = ue_text_, cell = ue_cell_, list = ue_list_;
+            check(shown("ue-picture-from"), "inside the cell the panel offers the element's picture");
+            check(ue().set_property("text", "") && ue().set_property("text.insert", "item.name") &&
+                      ue().set_property("text.insert", "item.count"),
+                  "the element's name and count go into the cell's text");
+            check(ue_node(text) && ue_node(text)->text == "{item.name} {item.count}", "the cell's text has the element's name and count");
+            ue().select({list});
+            check(ue().set_property("list_gap", "6") && ue_node(list)->list_gap == 6, "the space between cells");
+            const std::string html = ue_file(".html");
+            check(html.find("forge-list=\"items\" forge-list-gap=\"6\"") != std::string::npos &&
+                      html.find("forge-text=\"{item.name} {item.count}\"") != std::string::npos,
+                  "the game's page carries the list and the cell's text");
+            // Saved: it is there when the screen opens again.
+            check(ue().open(ue_other_) && ue().open("main_menu"), "the screen opens again");
+            const d::Node* again = ue_node(list);
+            check(again && again->list == d::ListSource::Items && again->list_gap == 6 && !again->children.empty() &&
+                      again->children[0].id == cell && ue_node(text) && ue_node(text)->text == "{item.name} {item.count}",
+                  "the list, its cell and the cell's text are kept");
+            ue().set_checking(true);
+            break;
+        }
+        case 27: {
+            // «Проверить»: a cell for every thing the game has, showing it.
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* box = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_list_)) : nullptr;
+            Rml::Element* content = box ? box->GetFirstChild() : nullptr;
+            usize items = 0;
+            for (const auto& [name, value] : ue().check_vars().all())
+                if (name.rfind("inv.", 0) == 0 && value.number() > 0) ++items;
+            check(items > 0 && ue_list_cells(content) == items,
+                  "every thing the hero carries has a cell");
+            ue_items_ = items;
+            for (const auto& [name, value] : ue().check_vars().all())
+                if (name.rfind("inv.", 0) == 0 && value.number() > 0) {
+                    ue().check_vars().set(name, 0);
+                    break;
+                }
+            break;
+        }
+        case 28: {
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* box = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_list_)) : nullptr;
+            Rml::Element* content = box ? box->GetFirstChild() : nullptr;
+            check(ue_list_cells(content) + 1 == ue_items_, "a thing set to 0 leaves the list");
+            std::vector<std::string> names;
+            for (const auto& [name, value] : ue().check_vars().all())
+                if (name.rfind("inv.", 0) == 0) names.push_back(name);
+            for (const std::string& n : names) ue().check_vars().set(n, 0);
+            break;
+        }
+        case 29: {
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* box = page ? page->GetElementById(Rml::String("n") + std::to_string(ue_list_)) : nullptr;
+            Rml::Element* content = box ? box->GetFirstChild() : nullptr;
+            check(content && ue_list_cells(content) == 0, "with nothing left, no cells");
+            const d::Node* l = ue_node(ue_list_);
+            Rml::Element* empty = l && l->children.size() > 1 && page
+                                      ? page->GetElementById(Rml::String("n") + std::to_string(l->children[1].id))
+                                      : nullptr;
+            check(empty && empty->GetComputedValues().visibility() == Rml::Style::Visibility::Visible, "and the «empty» text shows");
             ue().set_checking(false);
             ue().set_panel("design");
             break;

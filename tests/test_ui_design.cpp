@@ -520,6 +520,63 @@ TEST_CASE("ui design: the link to the game survives saving and goes onto the pag
     CHECK(override_of("show_if") == "game");
 }
 
+TEST_CASE("ui design: a list of the game's survives saving and goes onto the page") {
+    Screen screen = make_screen("Сумка", 1280, 720);
+    Node list;
+    list.id = screen.next_id++;
+    list.name = "Список";
+    list.w = 400;
+    list.h = 300;
+    list.list = ListSource::Items;
+    list.list_gap = 6;
+    Node cell = rect_node(screen.next_id++, 10, 12, 120, 48);
+    cell.name = "Ячейка";
+    Node name;
+    name.id = screen.next_id++;
+    name.type = NodeType::Text;
+    name.text = "{item.name} ×{item.count}";
+    Node icon = rect_node(screen.next_id++, 0, 0, 40, 40);
+    icon.picture_from = "item.icon";
+    cell.on_click = {{ActionKind::Message, "взять {item.id}"}};
+    cell.children = {name, icon};
+    Node empty;
+    empty.id = screen.next_id++;
+    empty.type = NodeType::Text;
+    empty.text = "Пусто";
+    list.children = {cell, empty};
+    screen.root.children = {list};
+
+    Screen back;
+    REQUIRE(load_screen(save_screen(screen), back));
+    const Node& l = back.root.children[0];
+    CHECK(l.list == ListSource::Items);
+    CHECK(l.list_gap == 6);
+    REQUIRE(l.children.size() == 2);
+    CHECK(l.children[0].children[1].picture_from == "item.icon");
+    CHECK(l.children[0].children[0].text == "{item.name} ×{item.count}");
+    // Not a list: nothing written.
+    CHECK_FALSE(contains(save_screen(make_screen("Пустой", 100, 100)), "\"list\""));
+
+    const std::string html = screen_html(screen);
+    CHECK(contains(html, "forge-list=\"items\" forge-list-gap=\"6\" forge-cell=\"10 12 120 48\""));
+    CHECK(contains(html, "forge-picture=\"item.icon\""));
+    CHECK(contains(html, "forge-text=\"{item.name} ×{item.count}\""));
+    // The list scrolls, under the mouse's wheel too.
+    CHECK(contains(node_css(l, &back.root, 1280, 720), "overflow-y: auto;"));
+    CHECK(contains(html, "#n" + std::to_string(list.id) + ", "));
+    // The journal.
+    list.list = ListSource::Quests;
+    screen.root.children = {list};
+    CHECK(contains(screen_html(screen), "forge-list=\"quests\""));
+    CHECK(list_fields(ListSource::Quests).front().first == "item.title");
+    CHECK(list_fields(ListSource::None).empty());
+
+    // On a component's copy, the list and the picture are its own.
+    CHECK(override_of("list") == "game");
+    CHECK(override_of("list_gap") == "game");
+    CHECK(override_of("picture_from") == "game");
+}
+
 TEST_CASE("ui design: movement survives saving and goes onto the page") {
     Screen s = make_screen("Магазин", 1280, 720);
     s.appear = Appear::Rise;

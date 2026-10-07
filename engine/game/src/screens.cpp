@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <unordered_map>
 
 namespace forge::game {
 
@@ -77,10 +78,57 @@ struct Bound {
     bool has_bar = false;
     Expr value, max;            // forge-bar-*
     std::string from = "left";
+    bool has_picture = false;
+    Expr picture;               // forge-picture: a path in the game folder
     // What was put on the element last, so unchanged values are not set again.
     std::string shown_text;
     int shown = -1;  // -1: not yet
     f64 fraction = -1;
+    std::string shown_picture = "\x01"; // not yet
+};
+
+// One element of a list: what a cell shows of it.
+struct Row {
+    std::string id;
+    f64 count = 0;
+    const ScreenItem* item = nullptr; // items: what the game says about it
+    std::string title, text;          // quests
+    bool done = false;
+    bool operator==(const Row& o) const {
+        return id == o.id && count == o.count && item == o.item && title == o.title && text == o.text && done == o.done;
+    }
+};
+
+// A list's elements, made again when the game's variables change.
+struct Rows {
+    u64 seen = ~0ull;
+    const void* source_seen = nullptr;
+    u64 changed = 1; // bumped when the elements differ from before
+    std::vector<Row> rows;
+};
+
+// A layer repeating its cell for every element of a list (forge-list). Only
+// the cells in sight are made: they are moved and given other elements as
+// the list scrolls.
+struct ListView {
+    Rml::Element* box = nullptr;     // scrolls
+    Rml::Element* content = nullptr; // as tall as every cell together; the cells sit in it
+    Rml::ElementPtr cell;            // the cell everything is cloned from
+    std::string source;
+    f32 gap = 8, cx = 0, cy = 0, cw = 100, ch = 40;
+    std::vector<Rml::Element*> empties; // shown while the list is empty
+    struct Cell {
+        Rml::Element* element = nullptr;
+        std::vector<Bound> bound;
+        Vars vars;      // item.* over the game's
+        i64 row = -1; // the element it shows (-1: hidden)
+        u64 seen = ~0ull;
+        f32 left = -1, top = -1;
+    };
+    std::vector<std::unique_ptr<Cell>> cells;
+    int empty_shown = -1;
+    f32 height = -1;
+    u64 rows_seen = 0;
 };
 
 struct GameScreens::Page {
@@ -106,6 +154,7 @@ struct GameScreens::Page {
     u64 move_start = 0;   // 0: none
     bool leaving = false; // going away: hidden when the movement ends
     std::vector<Bound> bound;
+    std::vector<std::unique_ptr<ListView>> lists;
 };
 
 struct GameScreens::Impl : Rml::EventListener {
@@ -116,6 +165,12 @@ struct GameScreens::Impl : Rml::EventListener {
     u64 next_poll = 0;
     u64 shows = 0;
     std::vector<std::unique_ptr<Page>> pages;
+    // The lists' data.
+    std::vector<ScreenItem> items;
+    std::unordered_map<std::string, usize> item_index;
+    const QuestBook* quests = nullptr;
+    Rows item_rows, quest_rows;
+    f64 lists_ms = 0;
 
     void ProcessEvent(Rml::Event& event) override { self->click(event.GetTargetElement()); }
 
@@ -128,6 +183,37 @@ struct GameScreens::Impl : Rml::EventListener {
         for (auto& p : pages)
             if (p->doc == doc) return p.get();
         return nullptr;
+    }
+
+    // A layer's own link to the data (forge-text, -show-if, -bar-*, -picture)
+    // goes into out; false when it has none.
+    bool bind_layer(const std::string& page, Rml::Element* e, std::vector<Bound>& out) {
+        const auto attr = [&](const char* name) { return e->GetAttribute<Rml::String>(name, ""); };
+        Bound b;
+        b.element = e;
+        bool any = false;
+        if (e->HasAttribute("forge-text")) {
+            b.text = attr("forge-text");
+            any = true;
+        }
+        if (e->HasAttribute("forge-show-if")) {
+            b.show = parse_expr(attr("forge-show-if"), page, "условие");
+            b.has_show = true;
+            any = true;
+        }
+        if (e->HasAttribute("forge-bar-value")) {
+            b.value = parse_expr(attr("forge-bar-value"), page, "значение полоски");
+            b.max = parse_expr(attr("forge-bar-max"), page, "наибольшее значение полоски");
+            b.from = attr("forge-bar-from");
+            b.has_bar = true;
+            any = true;
+        }
+        if (e->HasAttribute("forge-picture")) {
+            b.picture = parse_expr(attr("forge-picture"), page, "картинка");
+            b.has_picture = true;
+            any = true;
+        }
+        return any ? (out.push_back(std::move(b)), true) : false;
     }
 
     void scan(Page& p, Rml::Element* e) {
@@ -147,27 +233,192 @@ struct GameScreens::Impl : Rml::EventListener {
             p.appear_time = std::clamp(static_cast<f32>(std::atof(attr("forge-appear-time").c_str())), 0.0f, 10.0f);
             if (p.appear_time <= 0) p.appear_time = 0.25f;
         }
-        Bound b;
-        b.element = e;
-        bool any = false;
-        if (e->HasAttribute("forge-text")) {
-            b.text = attr("forge-text");
-            any = true;
+        bind_layer(p.name, e, p.bound);
+        int first = 0;
+        if (e->HasAttribute("forge-list") && e->GetNumChildren() > 0) {
+            auto list = std::make_unique<ListView>();
+            list->box = e;
+            list->source = attr("forge-list");
+            list->gap = std::max(static_cast<f32>(std::atof(attr("forge-list-gap").c_str())), 0.0f);
+            std::sscanf(attr("forge-cell").c_str(), "%f %f %f %f", &list->cx, &list->cy, &list->cw, &list->ch);
+            list->cw = std::max(list->cw, 1.0f);
+            list->ch = std::max(list->ch, 1.0f);
+            for (int i = 1; i < e->GetNumChildren(); ++i) list->empties.push_back(e->GetChild(i));
+            p.lists.push_back(std::move(list));
+            first = 1; // the cell is not on the page: its copies are
         }
-        if (e->HasAttribute("forge-show-if")) {
-            b.show = parse_expr(attr("forge-show-if"), p.name, "условие");
-            b.has_show = true;
-            any = true;
+        for (int i = first; i < e->GetNumChildren(); ++i) scan(p, e->GetChild(i));
+    }
+
+    // The cells come out of the page and an empty box takes their place;
+    // update() fills it.
+    void make_lists(Page& p) {
+        for (auto& l : p.lists) {
+            l->cell = l->box->RemoveChild(l->box->GetChild(0));
+            Rml::ElementPtr content = p.doc->CreateElement("div");
+            content->SetProperty("display", "block");
+            content->SetProperty("position", "relative");
+            content->SetProperty("margin", "0px");
+            content->SetProperty("padding", "0px");
+            content->SetProperty("width", "100%");
+            content->SetProperty("height", "0px");
+            content->SetProperty("flex", "none");
+            content->SetProperty("pointer-events", "none");
+            l->content = l->box->InsertBefore(std::move(content), l->box->GetFirstChild());
         }
-        if (e->HasAttribute("forge-bar-value")) {
-            b.value = parse_expr(attr("forge-bar-value"), p.name, "значение полоски");
-            b.max = parse_expr(attr("forge-bar-max"), p.name, "наибольшее значение полоски");
-            b.from = attr("forge-bar-from");
-            b.has_bar = true;
-            any = true;
+    }
+
+    // The elements of a list now.
+    const Rows& rows(const std::string& source, const Vars& v) {
+        if (source == "quests") {
+            Rows& r = quest_rows;
+            if (r.seen == v.version() && r.source_seen == quests) return r;
+            r.seen = v.version();
+            r.source_seen = quests;
+            std::vector<Row> next;
+            if (quests)
+                for (const JournalEntry& j : quests->journal(v)) {
+                    Row row;
+                    row.id = j.quest->id;
+                    row.title = j.quest->title;
+                    row.text = j.text;
+                    row.done = j.state == QuestState::Done;
+                    next.push_back(std::move(row));
+                }
+            if (next != r.rows) {
+                r.rows = std::move(next);
+                ++r.changed;
+            }
+            return r;
         }
-        if (any) p.bound.push_back(std::move(b));
-        for (int i = 0; i < e->GetNumChildren(); ++i) scan(p, e->GetChild(i));
+        // items: every inv.<id> above 0, the game's known things first in its order
+        Rows& r = item_rows;
+        if (r.seen == v.version() && r.source_seen == items.data()) return r;
+        r.seen = v.version();
+        r.source_seen = items.data();
+        std::vector<Row> known(items.size()), others;
+        constexpr std::string_view prefix = "inv.";
+        const auto& all = v.all();
+        for (auto it = all.lower_bound(prefix); it != all.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it) {
+            if (it->second.is_text()) continue;
+            const f64 count = it->second.number();
+            if (count <= 0) continue;
+            Row row;
+            row.id = it->first.substr(prefix.size());
+            row.count = count;
+            auto k = item_index.find(row.id);
+            if (k != item_index.end()) {
+                row.item = &items[k->second];
+                known[k->second] = std::move(row);
+            } else {
+                others.push_back(std::move(row));
+            }
+        }
+        std::vector<Row> next;
+        next.reserve(known.size() + others.size());
+        for (Row& row : known)
+            if (!row.id.empty()) next.push_back(std::move(row));
+        for (Row& row : others) next.push_back(std::move(row));
+        if (next != r.rows) {
+            r.rows = std::move(next);
+            ++r.changed;
+        }
+        return r;
+    }
+
+    static void fill(ListView::Cell& c, const Row& row, i64 index, const std::string& source) {
+        c.vars.clear();
+        c.vars.set("item.id", row.id);
+        c.vars.set("item.index", static_cast<f64>(index + 1));
+        if (source == "quests") {
+            c.vars.set("item.title", row.title);
+            c.vars.set("item.name", row.title);
+            c.vars.set("item.text", row.text);
+            c.vars.set("item.done", row.done);
+        } else {
+            c.vars.set("item.name", row.item && !row.item->name.empty() ? row.item->name : row.id);
+            c.vars.set("item.count", row.count);
+            c.vars.set("item.icon", row.item ? row.item->picture : std::string());
+            c.vars.set("item.about", row.item ? row.item->about : std::string());
+        }
+    }
+
+    // A list's cells for where it is scrolled now.
+    void update_list(Page& p, ListView& l, const Vars& v, const CallFn& call) {
+        const Rows& r = rows(l.source, v);
+        const i64 n = static_cast<i64>(r.rows.size());
+        const int empty = n == 0 ? 1 : 0;
+        if (empty != l.empty_shown) {
+            l.empty_shown = empty;
+            for (Rml::Element* e : l.empties) {
+                if (empty) e->RemoveProperty("visibility");
+                else e->SetProperty("visibility", "hidden");
+            }
+        }
+        const f32 W = l.box->GetClientWidth(), H = l.box->GetClientHeight();
+        const f32 step_x = l.cw + l.gap, step_y = l.ch + l.gap;
+        const i64 cols = std::max<i64>(1, static_cast<i64>((W - l.cx + l.gap) / step_x));
+        const i64 lines = (n + cols - 1) / cols;
+        const f32 height = n ? l.cy * 2 + static_cast<f32>(lines) * step_y - l.gap : 0;
+        if (height != l.height) {
+            l.height = height;
+            char buf[48];
+            std::snprintf(buf, sizeof(buf), "%.2fpx", static_cast<double>(height));
+            l.content->SetProperty("height", buf);
+        }
+        const f32 scroll = l.box->GetScrollTop();
+        i64 first = std::max<i64>(0, static_cast<i64>(std::floor((scroll - l.cy) / step_y)));
+        i64 last = std::min<i64>(lines - 1, static_cast<i64>(std::floor((scroll + H - l.cy) / step_y)));
+        if (H <= 0) last = std::min<i64>(lines - 1, first); // not laid out yet: one line
+        const i64 want = last >= first ? (last - first + 1) * cols : 0;
+        while (static_cast<i64>(l.cells.size()) < want) {
+            auto c = std::make_unique<ListView::Cell>();
+            Rml::ElementPtr clone = l.cell->Clone();
+            clone->SetAttribute("forge-item", "");
+            clone->SetProperty("position", "absolute");
+            clone->SetProperty("margin", "0px");
+            clone->SetProperty("pointer-events", "auto");
+            c->element = l.content->AppendChild(std::move(clone));
+            auto visit = [&](auto&& rec, Rml::Element* e) -> void {
+                bind_layer(p.name, e, c->bound);
+                for (int i = 0; i < e->GetNumChildren(); ++i) rec(rec, e->GetChild(i));
+            };
+            visit(visit, c->element);
+            l.cells.push_back(std::move(c));
+        }
+        const bool data_changed = l.rows_seen != r.changed;
+        l.rows_seen = r.changed;
+        for (i64 i = 0; i < static_cast<i64>(l.cells.size()); ++i) {
+            ListView::Cell& c = *l.cells[static_cast<usize>(i)];
+            const i64 row = i < want ? first * cols + i : -1;
+            if (row < 0 || row >= n) {
+                if (c.row != -1) {
+                    c.row = -1;
+                    c.element->SetProperty("display", "none");
+                }
+                continue;
+            }
+            if (c.row == -1) c.element->RemoveProperty("display");
+            const f32 left = l.cx + static_cast<f32>(row % cols) * step_x, top = l.cy + static_cast<f32>(row / cols) * step_y;
+            char buf[48];
+            if (left != c.left) {
+                c.left = left;
+                std::snprintf(buf, sizeof(buf), "%.2fpx", static_cast<double>(left));
+                c.element->SetProperty("left", buf);
+            }
+            if (top != c.top) {
+                c.top = top;
+                std::snprintf(buf, sizeof(buf), "%.2fpx", static_cast<double>(top));
+                c.element->SetProperty("top", buf);
+            }
+            if (row != c.row || data_changed || c.seen != v.version()) {
+                c.row = row;
+                c.seen = v.version();
+                c.vars.set_parent(&v);
+                fill(c, r.rows[static_cast<usize>(row)], row, l.source);
+                for (Bound& b : c.bound) apply(b, c.vars, call);
+            }
+        }
     }
 
     bool open(Page& p, const std::string& html, const std::string& address) {
@@ -186,7 +437,9 @@ struct GameScreens::Impl : Rml::EventListener {
         p.bound.clear();
         p.fit_w = p.fit_h = -1;
         p.visible = false;
+        p.lists.clear();
         scan(p, p.doc);
+        make_lists(p);
         restack();
         return true;
     }
@@ -211,6 +464,7 @@ struct GameScreens::Impl : Rml::EventListener {
         p.doc = nullptr;
         p.root = nullptr;
         p.bound.clear();
+        p.lists.clear();
     }
 
     bool load_file(Page& p) {
@@ -244,7 +498,7 @@ struct GameScreens::Impl : Rml::EventListener {
             load_file(*p);
         }
         std::erase_if(pages, [&](const std::unique_ptr<Page>& p) {
-            if (fs::exists(p->path, ec)) return false;
+            if (p->path.empty() || fs::exists(p->path, ec)) return false; // pages from memory have no file
             close(*p);
             return true;
         });
@@ -326,40 +580,72 @@ struct GameScreens::Impl : Rml::EventListener {
         return p.leaving ? 1 - f : f;
     }
 
-    void bind(Page& p, const Vars& vars, const CallFn& call) {
-        for (Bound& b : p.bound) {
-            if (b.has_show) {
-                const int on = b.show.test(vars, call) ? 1 : 0;
-                if (on != b.shown) {
-                    b.shown = on;
-                    if (on) b.element->RemoveProperty("display");
-                    else b.element->SetProperty("display", "none");
-                }
-            }
-            if (!b.text.empty()) {
-                std::string text = substitute(b.text, vars);
-                if (text != b.shown_text) {
-                    b.element->SetInnerRML(Rml::StringUtilities::EncodeRml(text));
-                    b.shown_text = std::move(text);
-                }
-            }
-            if (b.has_bar) {
-                const f64 max = b.max.eval(vars, call).number();
-                f64 t = max > 0 ? b.value.eval(vars, call).number() / max : 0;
-                t = std::clamp(t, 0.0, 1.0);
-                t = std::round(t * 1000.0) / 1000.0;
-                if (t == b.fraction) continue;
-                b.fraction = t;
-                if (t >= 1) {
-                    b.element->RemoveProperty("mask-image");
-                    continue;
-                }
-                const char* to = b.from == "right" ? "to left" : b.from == "bottom" ? "to top" : b.from == "top" ? "to bottom" : "to right";
-                char buf[160];
-                std::snprintf(buf, sizeof(buf), "linear-gradient(%s, #000 %.1f%%, #0000 %.1f%%)", to, t * 100.0, t * 100.0);
-                b.element->SetProperty("mask-image", buf);
+    // Puts the data on one layer (only what changed).
+    void apply(Bound& b, const Vars& vars, const CallFn& call) {
+        if (b.has_show) {
+            const int on = b.show.test(vars, call) ? 1 : 0;
+            if (on != b.shown) {
+                b.shown = on;
+                if (on) b.element->RemoveProperty("display");
+                else b.element->SetProperty("display", "none");
             }
         }
+        if (!b.text.empty()) {
+            std::string text = substitute(b.text, vars);
+            if (text != b.shown_text) {
+                b.element->SetInnerRML(Rml::StringUtilities::EncodeRml(text));
+                b.shown_text = std::move(text);
+            }
+        }
+        if (b.has_picture) {
+            std::string path = b.picture.eval(vars, call).text();
+            if (path == "0") path.clear();
+            if (path != b.shown_picture) {
+                if (path.empty()) b.element->SetProperty("background-image", "none");
+                else {
+                    std::string url = "url(\"../" + path + "\")";
+                    b.element->SetProperty("background-image", url);
+                }
+                b.shown_picture = std::move(path);
+            }
+        }
+        if (b.has_bar) {
+            const f64 max = b.max.eval(vars, call).number();
+            f64 t = max > 0 ? b.value.eval(vars, call).number() / max : 0;
+            t = std::clamp(t, 0.0, 1.0);
+            t = std::round(t * 1000.0) / 1000.0;
+            if (t == b.fraction) return;
+            b.fraction = t;
+            if (t >= 1) {
+                b.element->RemoveProperty("mask-image");
+                return;
+            }
+            const char* to = b.from == "right" ? "to left" : b.from == "bottom" ? "to top" : b.from == "top" ? "to bottom" : "to right";
+            char buf[160];
+            std::snprintf(buf, sizeof(buf), "linear-gradient(%s, #000 %.1f%%, #0000 %.1f%%)", to, t * 100.0, t * 100.0);
+            b.element->SetProperty("mask-image", buf);
+        }
+    }
+
+    void bind(Page& p, const Vars& vars, const CallFn& call) {
+        for (Bound& b : p.bound) apply(b, vars, call);
+        if (p.lists.empty()) return;
+        const u64 t0 = time_now_ns();
+        for (auto& l : p.lists) update_list(p, *l, vars, call);
+        lists_ms += static_cast<f64>(time_now_ns() - t0) * 1e-6;
+    }
+
+    // The cell an element is in, if any.
+    ListView::Cell* cell_of(Rml::Element* e) {
+        for (; e; e = e->GetParentNode()) {
+            if (!e->HasAttribute("forge-item")) continue;
+            for (auto& p : pages)
+                for (auto& l : p->lists)
+                    for (auto& c : l->cells)
+                        if (c->element == e) return c->row >= 0 ? c.get() : nullptr;
+            return nullptr;
+        }
+        return nullptr;
     }
 };
 
@@ -403,6 +689,7 @@ void GameScreens::remove(std::string_view name) {
 
 void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, int height, const CallFn& call) {
     if (impl_->watch && !impl_->dir.empty()) impl_->poll();
+    impl_->lists_ms = 0;
     bool restacked = false;
     for (auto& page : impl_->pages) {
         Page& p = *page;
@@ -522,8 +809,12 @@ bool GameScreens::click(Rml::Element* element) {
         if (!e->HasAttribute("forge-click")) continue;
         Page* p = impl_->of(e->GetOwnerDocument());
         const std::string page = p ? p->name : std::string();
-        for (const ScreenAction& a : parse_actions(e->GetAttribute<Rml::String>("forge-click", "")))
+        // In a list's cell, {item.id} and the like are the element it shows now.
+        const ListView::Cell* cell = impl_->cell_of(e);
+        for (ScreenAction a : parse_actions(e->GetAttribute<Rml::String>("forge-click", ""))) {
+            if (cell) a.target = substitute(a.target, cell->vars);
             if ((actions_to_caller || !run_page_action(a, page)) && on_action) on_action(a, page);
+        }
         return true;
     }
     return false;
@@ -545,7 +836,8 @@ std::vector<std::string> GameScreens::variables(std::string_view name) const {
         for (int i = 0; i < e->GetNumChildren(); ++i) self(self, e->GetChild(i));
     };
     visit(visit, p->doc);
-    for (const char* sheet : {"forge-click"}) (void)sheet;
+    for (const auto& l : p->lists)
+        if (l->cell) visit(visit, l->cell.get());
     // Variables changed by clicks («Изменить данные»).
     auto clicks = [&](auto&& self, Rml::Element* e) -> void {
         if (e->HasAttribute("forge-click"))
@@ -557,9 +849,45 @@ std::vector<std::string> GameScreens::variables(std::string_view name) const {
         for (int i = 0; i < e->GetNumChildren(); ++i) self(self, e->GetChild(i));
     };
     clicks(clicks, p->doc);
+    for (const auto& l : p->lists)
+        if (l->cell) clicks(clicks, l->cell.get());
+    // Cells read their element (item.*), not the game's variables; a list
+    // reads the variables its elements come from.
+    std::erase_if(out, [](const std::string& v) { return v.rfind("item.", 0) == 0; });
+    for (const auto& l : p->lists) {
+        if (l->source == "quests" && impl_->quests) {
+            for (const Quest& q : impl_->quests->quests())
+                if (!q.var.empty()) out.push_back(q.var);
+        } else if (l->source != "quests") {
+            for (const ScreenItem& it : impl_->items) out.push_back("inv." + it.id);
+        }
+    }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
 }
+
+void GameScreens::set_items(std::vector<ScreenItem> items) {
+    impl_->items = std::move(items);
+    impl_->item_index.clear();
+    for (usize i = 0; i < impl_->items.size(); ++i) impl_->item_index.emplace(impl_->items[i].id, i);
+    impl_->item_rows.seen = ~0ull;
+    impl_->item_rows.source_seen = nullptr;
+}
+
+void GameScreens::set_quests(const QuestBook* quests) {
+    impl_->quests = quests;
+    impl_->quest_rows.seen = ~0ull;
+}
+
+usize GameScreens::list_cells(std::string_view name) const {
+    const Page* p = impl_->find(name);
+    usize n = 0;
+    if (p)
+        for (const auto& l : p->lists) n += l->cells.size();
+    return n;
+}
+
+f64 GameScreens::lists_ms() const { return impl_->lists_ms; }
 
 } // namespace forge::game

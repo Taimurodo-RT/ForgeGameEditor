@@ -213,6 +213,19 @@ struct Action {
     bool operator==(const Action&) const = default;
 };
 
+// «Список»: a frame that repeats its first layer (the cell) once for every
+// element of one of the game's lists, in rows that wrap, and scrolls. Inside
+// the cell, texts and conditions read the element as item.<field>: «{item.name}
+// ×{item.count}». The frame's other layers show only while the list is empty.
+enum class ListSource : u8 {
+    None,
+    Items,  // what the hero carries (inv.<id> above 0): id, name, count, icon, about, index
+    Quests, // the journal (started quests): id, title, text, done, index
+};
+const char* list_word(ListSource s); // "items", "quests" ("" for none)
+// The fields a cell can show, with their names for the author: {"item.name", "Название"}.
+std::vector<std::pair<std::string, std::string>> list_fields(ListSource s);
+
 // When the game shows a screen.
 enum class ScreenShow : u8 {
     Playing, // over the world while the player plays (a HUD)
@@ -314,6 +327,12 @@ struct Node {
     std::string show_if;
     Bar bar;
     std::vector<Action> on_click;
+    // A picture from the data (an expression giving a path in the game
+    // folder): "item.icon" shows the icon of a list's element. Empty: none.
+    std::string picture_from;
+    // Frames: a list of the game's (the first layer is the cell).
+    ListSource list = ListSource::None;
+    f32 list_gap = 8; // pixels between cells
 
     // Movement: its own (motion), and how long a change of its look takes
     // (smooth, seconds; 0: at once), such as a button's look on hover.

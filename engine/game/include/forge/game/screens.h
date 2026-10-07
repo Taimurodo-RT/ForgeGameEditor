@@ -18,10 +18,24 @@
 //                     forge-bar-value, -max, -from
 //                                    cut to value / max of its length
 //                     forge-click    what a click does: [["show", "Магазин"], ...]
+//                     forge-picture  a picture from the data: "item.icon"
+//                     forge-list     a list of the game's: "items" (what the
+//                                    hero carries) or "quests" (the journal).
+//                                    Its first layer is the cell, repeated once
+//                                    per element (forge-cell: its "x y w h",
+//                                    forge-list-gap: the space between cells,
+//                                    in rows that wrap); the other layers show
+//                                    only while the list is empty. Inside a
+//                                    cell, item.<field> reads the element:
+//                                    items: id, name, count, icon, about, index;
+//                                    quests: id, title, text, done, index.
+//                                    Only the cells in sight exist: scrolling
+//                                    10 000 elements moves a few dozen cells.
 //
 // The same class runs the editor's «Проверить»: it shows one page and its
 // clicks, with variables the author sets by hand.
 
+#include "forge/game/quests.h"
 #include "forge/game/vars.h"
 
 #include <filesystem>
@@ -40,6 +54,14 @@ class ElementDocument;
 namespace forge::game {
 
 enum class ScreenRole : u8 { Playing, Command, Menu };
+
+// What the game says about one kind of thing the hero carries (inv.<id>).
+struct ScreenItem {
+    std::string id;
+    std::string name;    // shown as item.name (the id when there is none)
+    std::string picture; // item.icon: a path in the game folder (pictures/...), may be empty
+    std::string about;
+};
 
 struct ScreenAction {
     std::string what;   // "show", "hide", "toggle", "close", "message", "change", "talk",
@@ -97,6 +119,16 @@ public:
     std::vector<std::string> variables(std::string_view name) const;
 
     Rml::ElementDocument* document(std::string_view name) const;
+
+    // The lists' data: the names and pictures of the things inv.<id> counts
+    // (in the order lists show them; others follow by id), and the quests the
+    // journal list shows.
+    void set_items(std::vector<ScreenItem> items);
+    void set_quests(const QuestBook* quests);
+    // Cells a page's lists hold now (made once, reused while scrolling).
+    usize list_cells(std::string_view name) const;
+    // Time the last update() spent on lists (milliseconds).
+    f64 lists_ms() const;
 
 private:
     struct Page;

@@ -39,7 +39,8 @@ bool Value::operator==(const Value& o) const {
 
 Value Vars::get(std::string_view name) const {
     auto it = values_.find(name);
-    return it == values_.end() ? Value() : it->second;
+    if (it != values_.end()) return it->second;
+    return parent_ ? parent_->get(name) : Value();
 }
 
 void Vars::set(std::string_view name, Value value) {

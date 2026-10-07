@@ -143,10 +143,12 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     if (!context_) return false;
     bind_model();
     if (!ui_->load_document(context_, "game/shell.rml")) return false;
-    if (!game.init(*this, device, format)) return false;
-    load_game_data(); // after the game defined the functions dialogues may call
+    // The game's screens: made before the game, which tells them what its things are called.
     screens_ = std::make_unique<GameScreens>();
     screens_->on_action = [this](const ScreenAction& a, const std::string&) { screen_action(a); };
+    screens_->set_quests(&quests_); // the journal's list
+    if (!game.init(*this, device, format)) return false;
+    load_game_data(); // after the game defined the functions dialogues may call
     screens_->load(context_, config_.game_dir, window != nullptr && config.dev);
     apply_settings(settings_);
     show(Screen::Main);

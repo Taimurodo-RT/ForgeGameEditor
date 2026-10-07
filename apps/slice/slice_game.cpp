@@ -569,6 +569,12 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
         return Value(!a.empty() && take(a[0].text(), a.size() > 1 ? a[1].number() : 1.0));
     });
 
+    // What the screens' lists call the things the hero carries, in their order.
+    std::vector<game::ScreenItem> items;
+    for (const char* id : {"coins", "key", "pickaxe", "torch", "wood", "dirt", "stone", "sand", "copper", "iron", "gold"})
+        items.push_back({id, item_title(id), "", ""});
+    shell.screens().set_items(std::move(items));
+
     // The HUD: its own document in the shell's context.
     hud_ = std::make_unique<Hud>();
     Rml::Context* ctx = shell.context();

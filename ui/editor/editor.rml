@@ -1253,6 +1253,28 @@
                                 </select></div>
                         </div>
                     </div>
+                    <div class="ue-sec ue-game" data-if="!ue_p.root &amp;&amp; ue_p.in_list == ''">
+                        <div class="ue-sec-title">Список <span class="muted">ячейка на каждый элемент</span></div>
+                        <div class="ue-line row">
+                            <select id="ue-list" class="ue-select grow" data-value="ue_p.list" data-event-change="ue_pick('list')">
+                                <option value="none">Не список</option><option value="items">Вещи героя</option><option value="quests">Задания из журнала</option>
+                            </select>
+                        </div>
+                        <div class="ue-note" data-if="ue_p.list == 'none' &amp;&amp; (!ue_p.container || ue_p.instance)">Выберите список, и этот слой станет ячейкой: вокруг появится прокручиваемый список.</div>
+                        <div data-if="ue_p.list != 'none'" class="column">
+                            <div class="ue-line row"><span class="ue-key">Между ячейками</span><input id="ue-list-gap" type="text" class="ue-field grow" data-attr-value="ue_p.list_gap" data-event-change="ue_text('list_gap', ev.value, ev.linebreak)" data-event-blur="ue_commit('list_gap')"/></div>
+                            <div class="ue-note ue-warn" data-if="ue_p.list_no_cell">Положите в рамку ячейку, например копию компонента: первый слой повторится для каждого элемента.</div>
+                            <div class="ue-note" data-if="!ue_p.list_no_cell">Первый слой внутри — ячейка: в игре она повторится для каждого элемента, рядами, и список прокручивается. Остальные слои видны, только пока список пуст. В тексты ячейки вставьте «Элемент списка» из данных.</div>
+                        </div>
+                    </div>
+                    <div class="ue-sec ue-game" data-if="!ue_p.root &amp;&amp; ue_p.in_list != ''">
+                        <div class="ue-sec-title">Картинка из данных</div>
+                        <div class="ue-line row">
+                            <select id="ue-picture-from" class="ue-select grow" data-value="ue_p.picture_from" data-event-change="ue_pick('picture_from')">
+                                <option value="">Своя</option><option value="item.icon">Картинка предмета</option>
+                            </select>
+                        </div>
+                    </div>
                     <div class="ue-sec ue-game" data-if="!ue_p.root">
                         <div class="ue-sec-title">Показывать, если <span class="muted">пусто — всегда</span></div>
                         <input id="ue-show-if" type="text" class="ue-field" placeholder="inv.key &gt; 0" data-attr-value="ue_p.show_if" data-event-change="ue_text('show_if', ev.value, ev.linebreak)" data-event-blur="ue_commit('show_if')"/>

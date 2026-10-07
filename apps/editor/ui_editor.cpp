@@ -564,6 +564,9 @@ void UiEditor::rebuild_page() {
             check_->actions_to_caller = true;
             check_->on_action = [this](const game::ScreenAction& a, const std::string&) { check_pending_.push_back(a); };
         }
+        // Lists show the game's things and quests.
+        check_->set_items(game_items ? game_items() : std::vector<game::ScreenItem>{});
+        check_->set_quests(game_quests ? game_quests() : nullptr);
         if (check_->load_page(page_context_, name_, d::screen_html(screen_, html_options()),
                               path_to_utf8(html_path(name_.empty() ? std::string("screen") : name_)))) {
             page_ = check_->document(name_);
@@ -1155,6 +1158,20 @@ void UiEditor::refresh_props() {
             p.covers_game = covers_game();
         }
         p.show_if = n->show_if;
+        p.list = n->list == d::ListSource::None ? "none" : d::list_word(n->list);
+        p.list_gap = fmt(n->list_gap);
+        p.list_no_cell = n->list != d::ListSource::None && n->children.empty();
+        p.picture_from = n->picture_from;
+        p.in_list.clear();
+        {
+            // In a list's cell (the list's first layer, or inside it)?
+            const std::vector<u32> path = d::path_to(screen_.root, n->id);
+            for (usize i = 0; i + 1 < path.size(); ++i) {
+                const d::Node* up = d::find(screen_.root, path[i]);
+                if (up && up->list != d::ListSource::None && !up->children.empty() && up->children.front().id == path[i + 1])
+                    p.in_list = d::list_word(up->list);
+            }
+        }
         p.has_bar = !n->bar.value.empty();
         p.bar_value = n->bar.value;
         p.bar_max = n->bar.max;
@@ -1284,6 +1301,11 @@ void UiEditor::refresh_props() {
     dirty("ue_keys");
     // The values a screen can show, and the screens a click can open.
     m_values_.clear();
+    if (!p.in_list.empty()) {
+        const std::string in = p.in_list;
+        const d::ListSource src = in == "quests" ? d::ListSource::Quests : in == "items" ? d::ListSource::Items : d::ListSource::None;
+        for (const auto& [name, label] : d::list_fields(src)) m_values_.push_back({name, "Элемент списка: " + label});
+    }
     if (game_values)
         for (const auto& [name, label] : game_values()) m_values_.push_back({name, label});
     dirty("ue_values");
@@ -1309,7 +1331,8 @@ std::string change_label(const std::string& field) {
         {"line_height", "Высота строки"}, {"letter_spacing", "Межбуквенный интервал"}, {"text_align", "Выравнивание текста"},
         {"text_case", "Регистр"}, {"decoration", "Подчёркивание"}, {"text_color", "Цвет текста"}, {"horizontal", "Прилипание"},
         {"vertical", "Прилипание"}, {"width_sizing", "Ширина"}, {"height_sizing", "Высота"}, {"absolute", "Вне раскладки"},
-        {"clip", "Обрезка"}, {"show_if", "Условие показа"}, {"name", "Имя"}};
+        {"clip", "Обрезка"}, {"show_if", "Условие показа"}, {"name", "Имя"}, {"list", "Список"}, {"list_gap", "Расстояние в списке"},
+        {"picture_from", "Картинка из данных"}};
     for (const auto& [f, word] : words)
         if (field == f) return std::string("Изменено: ") + word;
     static const std::pair<const char*, const char*> groups[] = {
@@ -1542,6 +1565,19 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
     if (field == "show_if") {
         if (root || value == n.show_if) return false;
         n.show_if = value;
+        return true;
+    }
+    if (field == "list") { // repeats the first layer for every element of a list of the game's
+        if (root || !n.is_container()) return false;
+        const d::ListSource s = value == "items" ? d::ListSource::Items : value == "quests" ? d::ListSource::Quests : d::ListSource::None;
+        if (s == n.list) return false;
+        n.list = s;
+        return true;
+    }
+    if (field == "list_gap") return n.list != d::ListSource::None && set_num(n.list_gap, 0, 1e4f);
+    if (field == "picture_from") {
+        if (root || value == n.picture_from) return false;
+        n.picture_from = value;
         return true;
     }
     if (field.rfind("bar.", 0) == 0) {
@@ -2095,6 +2131,14 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
         commit(before, "Переименовано");
         return true;
     }
+    // A layer that is not a plain frame (a component's copy, a rectangle...)
+    // becomes the cell of a new list around it.
+    if (field == "list" && targets.size() == 1 && value != "none" && !screen_.library) {
+        const d::Node* n = d::find(screen_.root, targets[0]);
+        if (n && n->id != screen_.root.id && (!n->is_container() || !n->component.empty()) &&
+            !d::instance_of(screen_.root, d::parent_of(screen_.root, n->id)->id))
+            return make_list(n->id, value == "quests" ? d::ListSource::Quests : d::ListSource::Items);
+    }
     for (u32 id : targets)
         if (d::Node* n = d::find(screen_.root, id)) {
             const bool copy = !screen_.library && n->master && d::instance_of(screen_.root, n->id);
@@ -2220,6 +2264,52 @@ bool UiEditor::duplicate_selection() {
     if (fresh.empty()) return false;
     selection_ = fresh;
     commit(before, "Создана копия");
+    return true;
+}
+
+bool UiEditor::make_list(u32 cell_id, d::ListSource source) {
+    d::Node* parent = d::parent_of(screen_.root, cell_id);
+    if (!parent || source == d::ListSource::None) return false;
+    const std::string before = d::save_screen(screen_);
+    auto it = std::find_if(parent->children.begin(), parent->children.end(), [&](const d::Node& c) { return c.id == cell_id; });
+    if (it == parent->children.end()) return false;
+    d::Node cell = std::move(*it);
+    const usize at = static_cast<usize>(it - parent->children.begin());
+    parent->children.erase(it);
+    // The list stands where the cell was: room for a few of them under each other.
+    d::Node list;
+    list.id = screen_.next_id++;
+    list.type = d::NodeType::Frame;
+    list.name = source == d::ListSource::Quests ? "Список заданий" : "Список вещей";
+    list.list = source;
+    list.x = cell.x;
+    list.y = cell.y;
+    list.w = std::round(cell.w + list.list_gap * 2);
+    list.h = std::round(cell.h * 5 + list.list_gap * 6);
+    list.horizontal = cell.horizontal;
+    list.vertical = cell.vertical;
+    cell.x = list.list_gap;
+    cell.y = list.list_gap;
+    cell.absolute = false;
+    cell.horizontal = d::Constraint::Start;
+    cell.vertical = d::Constraint::Start;
+    // What the list shows while it is empty.
+    d::Node empty;
+    empty.id = screen_.next_id++;
+    empty.type = d::NodeType::Text;
+    empty.name = "Пока пусто";
+    empty.text = source == d::ListSource::Quests ? "Заданий пока нет" : "Пока ничего нет";
+    empty.x = list.list_gap;
+    empty.y = list.list_gap;
+    empty.w = std::max(cell.w, 120.0f);
+    empty.h = 32;
+    empty.text_style.size = 20;
+    list.children.push_back(std::move(cell));
+    list.children.push_back(std::move(empty));
+    const u32 id = list.id;
+    parent->children.insert(parent->children.begin() + static_cast<std::ptrdiff_t>(std::min(at, parent->children.size())), std::move(list));
+    selection_ = {id};
+    commit(before, "Сделан список");
     return true;
 }
 
@@ -3369,6 +3459,11 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("pauses", &Props::pauses);
         s.RegisterMember("esc_closes", &Props::esc_closes);
         s.RegisterMember("show_if", &Props::show_if);
+        s.RegisterMember("list", &Props::list);
+        s.RegisterMember("list_gap", &Props::list_gap);
+        s.RegisterMember("list_no_cell", &Props::list_no_cell);
+        s.RegisterMember("picture_from", &Props::picture_from);
+        s.RegisterMember("in_list", &Props::in_list);
         s.RegisterMember("has_bar", &Props::has_bar);
         s.RegisterMember("bar_value", &Props::bar_value);
         s.RegisterMember("bar_max", &Props::bar_max);
@@ -3659,9 +3754,9 @@ void UiEditor::seed_check_vars() {
     if (!check_) return;
     for (const std::string& name : check_->variables(name_)) {
         if (check_vars_.has(name)) continue;
-        // Something to look at: bars half full, a few coins.
+        // Something to look at: bars half full, a few coins, quests begun.
         const bool max = name.find("max") != std::string::npos;
-        check_vars_.set(name, max ? 10.0 : 5.0);
+        check_vars_.set(name, max ? 10.0 : name.rfind("quest.", 0) == 0 ? 1.0 : 5.0);
     }
 }
 
