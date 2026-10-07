@@ -3,6 +3,7 @@
 #include <yyjson.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -131,7 +132,25 @@ yyjson_mut_val* write_paint(yyjson_mut_doc* doc, const Paint& p) {
     }
     if (p.opacity != 1) put_num(doc, o, "opacity", p.opacity);
     if (!p.visible) yyjson_mut_obj_add_bool(doc, o, "visible", false);
+    if (!p.style.empty()) yyjson_mut_obj_add_strcpy(doc, o, "style", p.style.c_str());
     return o;
+}
+
+yyjson_mut_val* write_text_style(yyjson_mut_doc* doc, const TextStyle& t) {
+    yyjson_mut_val* to = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_strcpy(doc, to, "family", t.family.c_str());
+    put_num(doc, to, "size", t.size);
+    yyjson_mut_obj_add_uint(doc, to, "weight", t.weight);
+    if (t.italic) yyjson_mut_obj_add_bool(doc, to, "italic", true);
+    if (t.line_height > 0) put_num(doc, to, "line_height", t.line_height);
+    if (t.letter_spacing != 0) put_num(doc, to, "letter_spacing", t.letter_spacing);
+    yyjson_mut_obj_add_str(doc, to, "align", word(t.align, kTextAligns));
+    if (t.text_case != TextCase::None) yyjson_mut_obj_add_str(doc, to, "case", word(t.text_case, kTextCases));
+    if (t.decoration != TextDecoration::None)
+        yyjson_mut_obj_add_str(doc, to, "decoration", word(t.decoration, kDecorations));
+    yyjson_mut_obj_add_val(doc, to, "color", color_val(doc, t.color));
+    if (!t.style.empty()) yyjson_mut_obj_add_strcpy(doc, to, "style", t.style.c_str());
+    return to;
 }
 
 yyjson_mut_val* write_node(yyjson_mut_doc* doc, const Node& n) {
@@ -227,20 +246,19 @@ yyjson_mut_val* write_node(yyjson_mut_doc* doc, const Node& n) {
     }
     if (n.type == NodeType::Text) {
         yyjson_mut_obj_add_strcpy(doc, o, "text", n.text.c_str());
-        const TextStyle& t = n.text_style;
-        yyjson_mut_val* to = yyjson_mut_obj(doc);
-        yyjson_mut_obj_add_strcpy(doc, to, "family", t.family.c_str());
-        put_num(doc, to, "size", t.size);
-        yyjson_mut_obj_add_uint(doc, to, "weight", t.weight);
-        if (t.italic) yyjson_mut_obj_add_bool(doc, to, "italic", true);
-        if (t.line_height > 0) put_num(doc, to, "line_height", t.line_height);
-        if (t.letter_spacing != 0) put_num(doc, to, "letter_spacing", t.letter_spacing);
-        yyjson_mut_obj_add_str(doc, to, "align", word(t.align, kTextAligns));
-        if (t.text_case != TextCase::None) yyjson_mut_obj_add_str(doc, to, "case", word(t.text_case, kTextCases));
-        if (t.decoration != TextDecoration::None)
-            yyjson_mut_obj_add_str(doc, to, "decoration", word(t.decoration, kDecorations));
-        yyjson_mut_obj_add_val(doc, to, "color", color_val(doc, t.color));
-        yyjson_mut_obj_add_val(doc, o, "style", to);
+        yyjson_mut_obj_add_val(doc, o, "style", write_text_style(doc, n.text_style));
+    }
+    if (!n.component.empty()) yyjson_mut_obj_add_strcpy(doc, o, "component", n.component.c_str());
+    if (!n.variant.empty()) {
+        yyjson_mut_val* vo = yyjson_mut_obj(doc);
+        for (const auto& [property, value] : n.variant) yyjson_mut_obj_add_strncpy(doc, vo, property.c_str(), value.c_str(), value.size());
+        yyjson_mut_obj_add_val(doc, o, "variant", vo);
+    }
+    if (n.master) yyjson_mut_obj_add_uint(doc, o, "master", n.master);
+    if (!n.overrides.empty()) {
+        yyjson_mut_val* a = yyjson_mut_arr(doc);
+        for (const std::string& field : n.overrides) yyjson_mut_arr_add_strcpy(doc, a, field.c_str());
+        yyjson_mut_obj_add_val(doc, o, "overrides", a);
     }
     if (!n.children.empty()) {
         yyjson_mut_val* a = yyjson_mut_arr(doc);
@@ -301,7 +319,22 @@ Paint read_paint(yyjson_val* o) {
     p.offset_y = num(o, "offset_y", 0);
     p.opacity = num(o, "opacity", 1);
     p.visible = flag(o, "visible", true);
+    p.style = str(o, "style");
     return p;
+}
+
+void read_text_style(yyjson_val* t, TextStyle& s) {
+    s.family = str(t, "family", s.family);
+    s.size = num(t, "size", s.size);
+    s.weight = static_cast<u16>(num(t, "weight", s.weight));
+    s.italic = flag(t, "italic", false);
+    s.line_height = num(t, "line_height", 0);
+    s.letter_spacing = num(t, "letter_spacing", 0);
+    s.align = enum_of(t, "align", kTextAligns, TextAlign::Left);
+    s.text_case = enum_of(t, "case", kTextCases, TextCase::None);
+    s.decoration = enum_of(t, "decoration", kDecorations, TextDecoration::None);
+    s.color = color_of(t, "color", s.color);
+    s.style = str(t, "style");
 }
 
 bool read_node(yyjson_val* o, Node& n, int depth) {
@@ -376,17 +409,20 @@ bool read_node(yyjson_val* o, Node& n, int depth) {
     }
     n.text = str(o, "text");
     if (yyjson_val* t = yyjson_obj_get(o, "style"); yyjson_is_obj(t)) {
-        TextStyle& s = n.text_style;
-        s.family = str(t, "family", s.family);
-        s.size = num(t, "size", s.size);
-        s.weight = static_cast<u16>(num(t, "weight", s.weight));
-        s.italic = flag(t, "italic", false);
-        s.line_height = num(t, "line_height", 0);
-        s.letter_spacing = num(t, "letter_spacing", 0);
-        s.align = enum_of(t, "align", kTextAligns, TextAlign::Left);
-        s.text_case = enum_of(t, "case", kTextCases, TextCase::None);
-        s.decoration = enum_of(t, "decoration", kDecorations, TextDecoration::None);
-        s.color = color_of(t, "color", s.color);
+        read_text_style(t, n.text_style);
+    }
+    n.component = str(o, "component");
+    if (yyjson_val* vo = yyjson_obj_get(o, "variant"); yyjson_is_obj(vo)) {
+        yyjson_val *key, *value;
+        yyjson_obj_iter it = yyjson_obj_iter_with(vo);
+        while ((key = yyjson_obj_iter_next(&it))) {
+            value = yyjson_obj_iter_get_val(key);
+            if (yyjson_is_str(value)) n.variant.emplace_back(yyjson_get_str(key), yyjson_get_str(value));
+        }
+    }
+    n.master = static_cast<u32>(num(o, "master", 0));
+    if (yyjson_val* a = yyjson_obj_get(o, "overrides"); yyjson_is_arr(a)) {
+        yyjson_arr_foreach(a, i, count, v) if (yyjson_is_str(v)) n.overrides.emplace_back(yyjson_get_str(v));
     }
     if (yyjson_val* a = yyjson_obj_get(o, "children"); yyjson_is_arr(a)) {
         yyjson_arr_foreach(a, i, count, v) {
@@ -478,6 +514,7 @@ std::string save_screen(const Screen& screen) {
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_uint(doc, root, "version", 1);
     yyjson_mut_obj_add_strcpy(doc, root, "title", screen.title.c_str());
+    if (screen.library) yyjson_mut_obj_add_bool(doc, root, "library", true);
     put_num(doc, root, "width", screen.width);
     put_num(doc, root, "height", screen.height);
     if (!screen.guides.empty()) {
@@ -500,6 +537,27 @@ std::string save_screen(const Screen& screen) {
         if (screen.safe > 0) put_num(doc, so, "safe", screen.safe);
         yyjson_mut_obj_add_val(doc, root, "settings", so);
     }
+    if (!screen.colors.empty()) {
+        yyjson_mut_val* a = yyjson_mut_arr(doc);
+        for (const NamedColor& c : screen.colors) {
+            yyjson_mut_val* co = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_strcpy(doc, co, "key", c.key.c_str());
+            yyjson_mut_obj_add_strcpy(doc, co, "name", c.name.c_str());
+            yyjson_mut_obj_add_val(doc, co, "color", color_val(doc, c.color));
+            yyjson_mut_arr_append(a, co);
+        }
+        yyjson_mut_obj_add_val(doc, root, "colors", a);
+    }
+    if (!screen.text_styles.empty()) {
+        yyjson_mut_val* a = yyjson_mut_arr(doc);
+        for (const NamedTextStyle& t : screen.text_styles) {
+            yyjson_mut_val* to = write_text_style(doc, t.style);
+            yyjson_mut_obj_add_strcpy(doc, to, "key", t.key.c_str());
+            yyjson_mut_obj_add_strcpy(doc, to, "name", t.name.c_str());
+            yyjson_mut_arr_append(a, to);
+        }
+        yyjson_mut_obj_add_val(doc, root, "text_styles", a);
+    }
     yyjson_mut_obj_add_val(doc, root, "root", write_node(doc, screen.root));
     usize len = 0;
     char* text = yyjson_mut_write(doc, YYJSON_WRITE_PRETTY_TWO_SPACES, &len);
@@ -519,6 +577,7 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
     yyjson_val* root = yyjson_doc_get_root(doc);
     Screen s;
     s.title = str(root, "title");
+    s.library = flag(root, "library", false);
     s.width = std::max(num(root, "width", 1920), 1.0f);
     s.height = std::max(num(root, "height", 1080), 1.0f);
     if (yyjson_val* a = yyjson_obj_get(root, "guides"); yyjson_is_arr(a)) {
@@ -533,6 +592,23 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         s.fit = enum_of(so, "fit", kScreenFits, ScreenFit::Expand);
         s.bars = color_of(so, "bars", s.bars);
         s.safe = std::max(num(so, "safe", 0), 0.0f);
+    }
+    if (yyjson_val* a = yyjson_obj_get(root, "colors"); yyjson_is_arr(a)) {
+        usize i, n;
+        yyjson_val* c;
+        yyjson_arr_foreach(a, i, n, c) s.colors.push_back({str(c, "key"), str(c, "name"), color_of(c, "color", Color{})});
+    }
+    if (yyjson_val* a = yyjson_obj_get(root, "text_styles"); yyjson_is_arr(a)) {
+        usize i, n;
+        yyjson_val* t;
+        yyjson_arr_foreach(a, i, n, t) {
+            NamedTextStyle named;
+            named.key = str(t, "key");
+            named.name = str(t, "name");
+            read_text_style(t, named.style);
+            named.style.style.clear();
+            s.text_styles.push_back(std::move(named));
+        }
     }
     const bool ok = read_node(yyjson_obj_get(root, "root"), s.root, 0);
     yyjson_doc_free(doc);
@@ -602,6 +678,338 @@ std::string fresh_name(const Screen& screen, NodeType type) {
     };
     visit(visit, screen.root);
     return base + " " + std::to_string(highest + 1);
+}
+
+// --- components ---
+
+namespace {
+
+std::string node_text(const Node& n) {
+    yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
+    yyjson_mut_doc_set_root(doc, write_node(doc, n));
+    usize len = 0;
+    char* text = yyjson_mut_write(doc, 0, &len);
+    std::string out = text ? std::string(text, len) : std::string();
+    std::free(text);
+    yyjson_mut_doc_free(doc);
+    return out;
+}
+
+void set_masters(Node& n) {
+    n.master = n.id;
+    for (Node& c : n.children) set_masters(c);
+}
+
+// The layers of an instance with their masters and their names' path from
+// its top ("Надпись", "Иконка/Тень"): another variant's layers are found by
+// that path.
+struct Mine {
+    u32 master;
+    std::string path;
+    const Node* node;
+};
+void index_layers(const Node& n, const std::string& path, std::vector<Mine>& out) {
+    out.push_back({n.master, path, &n});
+    for (const Node& c : n.children) index_layers(c, path.empty() ? c.name : path + "/" + c.name, out);
+}
+
+// Copies one override from the author's layer onto the component's.
+void keep_override(Node& to, const Node& from, std::string_view field) {
+    if (field == "text") to.text = from.text;
+    else if (field == "text_style") to.text_style = from.text_style;
+    else if (field == "fills") to.fills = from.fills;
+    else if (field == "strokes") to.strokes = from.strokes;
+    else if (field == "effects") to.effects = from.effects;
+    else if (field == "radius") to.radius = from.radius;
+    else if (field == "visible") to.visible = from.visible;
+    else if (field == "opacity") to.opacity = from.opacity;
+    else if (field == "blend") to.blend = from.blend;
+    else if (field == "frame") to.frame = from.frame;
+    else if (field == "mask") to.mask = from.mask;
+    else if (field == "layout") {
+        to.layout = from.layout;
+        to.clip = from.clip;
+    } else if (field == "size") {
+        to.w = from.w;
+        to.h = from.h;
+        to.width_sizing = from.width_sizing;
+        to.height_sizing = from.height_sizing;
+    } else if (field == "place") {
+        to.x = from.x;
+        to.y = from.y;
+        to.rotation = from.rotation;
+        to.horizontal = from.horizontal;
+        to.vertical = from.vertical;
+        to.absolute = from.absolute;
+    } else if (field == "name") to.name = from.name;
+}
+
+// Lower case for the Russian and Latin letters of state names.
+std::string lower(std::string_view text) {
+    std::string out;
+    for (usize i = 0; i < text.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c < 0x80) {
+            out += static_cast<char>(std::tolower(c));
+        } else if (c == 0xD0 && i + 1 < text.size()) {
+            const unsigned char d = static_cast<unsigned char>(text[i + 1]);
+            if (d >= 0x90 && d <= 0x9F) out += {static_cast<char>(0xD0), static_cast<char>(d + 0x20)}; // А..П
+            else if (d >= 0xA0 && d <= 0xAF) out += {static_cast<char>(0xD1), static_cast<char>(d - 0x20)}; // Р..Я
+            else if (d == 0x81) out += {static_cast<char>(0xD1), static_cast<char>(0x91)}; // Ё
+            else out += {static_cast<char>(c), static_cast<char>(d)};
+            ++i;
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<Component> components(const Screen& library) {
+    std::vector<Component> out;
+    for (const Node& n : library.root.children) {
+        if (n.component.empty()) continue;
+        auto it = std::find_if(out.begin(), out.end(), [&](const Component& c) { return c.name == n.component; });
+        if (it == out.end()) {
+            out.push_back({n.component, {}, {}});
+            it = out.end() - 1;
+        }
+        it->variants.push_back(n.id);
+        for (const auto& [property, value] : n.variant) {
+            auto p = std::find_if(it->properties.begin(), it->properties.end(),
+                                  [&](const ComponentProperty& cp) { return cp.name == property; });
+            if (p == it->properties.end()) {
+                it->properties.push_back({property, {}});
+                p = it->properties.end() - 1;
+            }
+            if (std::find(p->values.begin(), p->values.end(), value) == p->values.end()) p->values.push_back(value);
+        }
+    }
+    return out;
+}
+
+const Component* find_component(const std::vector<Component>& list, std::string_view name) {
+    for (const Component& c : list)
+        if (c.name == name) return &c;
+    return nullptr;
+}
+
+std::string variant_value(const std::vector<std::pair<std::string, std::string>>& values, std::string_view property) {
+    for (const auto& [p, v] : values)
+        if (p == property) return v;
+    return {};
+}
+
+void set_variant_value(std::vector<std::pair<std::string, std::string>>& values, const std::string& property,
+                       const std::string& value) {
+    for (auto& [p, v] : values)
+        if (p == property) {
+            v = value;
+            return;
+        }
+    values.emplace_back(property, value);
+}
+
+const Node* find_variant(const Screen& library, std::string_view component,
+                         const std::vector<std::pair<std::string, std::string>>& values) {
+    const Node* best = nullptr;
+    int best_score = -1;
+    for (const Node& n : library.root.children) {
+        if (n.component != component) continue;
+        int score = 0;
+        for (const auto& [property, value] : values)
+            if (variant_value(n.variant, property) == value) ++score;
+        if (score > best_score) {
+            best = &n;
+            best_score = score;
+        }
+    }
+    return best;
+}
+
+std::optional<Node> make_instance(Screen& screen, const Screen& library, std::string_view component,
+                                  const std::vector<std::pair<std::string, std::string>>& values) {
+    const Node* v = find_variant(library, component, values);
+    if (!v) return std::nullopt;
+    Node n = *v;
+    set_masters(n);
+    renumber(screen, n);
+    n.x = n.y = 0;
+    n.horizontal = n.vertical = Constraint::Start;
+    n.absolute = false;
+    n.locked = false;
+    n.visible = true;
+    n.overrides.clear();
+    return n;
+}
+
+bool sync_instance(Screen& screen, Node& instance, const Screen& library) {
+    // The component by its variant first: a renamed component keeps its copies.
+    std::string name = instance.component;
+    for (const Node& variant : library.root.children)
+        if (variant.id == instance.master && !variant.component.empty()) name = variant.component;
+    const Node* v = find_variant(library, name, instance.variant);
+    if (!v) return false;
+    const Node old = instance;
+    std::vector<Mine> mine;
+    index_layers(old, {}, mine);
+    Node fresh = *v;
+    set_masters(fresh);
+    std::vector<u32> used;
+    auto unused = [&](const Node* node) { return node != &old && std::find(used.begin(), used.end(), node->id) == used.end(); };
+    auto visit = [&](auto&& self, Node& n, const std::string& path, bool top) -> void {
+        const Node* was = nullptr;
+        if (top) was = &old;
+        for (const Mine& m : mine)
+            if (!was && m.master == n.master && unused(m.node)) was = m.node;
+        for (const Mine& m : mine)
+            if (!was && m.path == path && unused(m.node)) was = m.node;
+        if (was) {
+            n.id = was->id;
+            used.push_back(was->id);
+            for (const std::string& field : was->overrides) keep_override(n, *was, field);
+            n.overrides = was->overrides;
+        } else {
+            n.id = screen.next_id++;
+            n.overrides.clear();
+        }
+        for (Node& c : n.children) self(self, c, path.empty() ? c.name : path + "/" + c.name, false);
+    };
+    visit(visit, fresh, {}, true);
+    // The instance's own place on the screen stays.
+    fresh.name = old.name;
+    fresh.x = old.x;
+    fresh.y = old.y;
+    fresh.rotation = old.rotation;
+    fresh.horizontal = old.horizontal;
+    fresh.vertical = old.vertical;
+    fresh.absolute = old.absolute;
+    fresh.width_sizing = old.width_sizing; // how it sits in its parent's layout
+    fresh.height_sizing = old.height_sizing;
+    fresh.visible = old.visible;
+    fresh.locked = old.locked;
+    fresh.component = name;
+    std::vector<std::pair<std::string, std::string>> values = v->variant;
+    fresh.variant = values;
+    if (node_text(fresh) == node_text(old)) return false;
+    instance = std::move(fresh);
+    return true;
+}
+
+bool sync_instances(Screen& screen, const Screen& library) {
+    bool changed = false;
+    auto visit = [&](auto&& self, Node& n) -> void {
+        if (!n.component.empty() && n.master) {
+            changed |= sync_instance(screen, n, library);
+            return; // what is inside came from the library
+        }
+        for (Node& c : n.children) self(self, c);
+    };
+    if (!screen.library) visit(visit, screen.root);
+    else
+        for (Node& variant : screen.root.children)
+            for (Node& c : variant.children) visit(visit, c); // components made of components
+    return changed;
+}
+
+bool apply_styles(Screen& screen, const Screen& library) {
+    bool changed = false;
+    auto visit = [&](auto&& self, Node& n) -> void {
+        for (Paint& p : n.fills) {
+            if (p.style.empty() || p.kind != PaintKind::Solid) continue;
+            for (const NamedColor& c : library.colors)
+                if (c.key == p.style && p.color != c.color) {
+                    p.color = c.color;
+                    changed = true;
+                }
+        }
+        if (!n.text_style.style.empty())
+            for (const NamedTextStyle& t : library.text_styles) {
+                if (t.key != n.text_style.style) continue;
+                TextStyle s = t.style;
+                s.style = t.key;
+                s.align = n.text_style.align; // where the text sits is the layer's own
+                if (s != n.text_style) {
+                    n.text_style = s;
+                    changed = true;
+                }
+            }
+        for (Node& c : n.children) self(self, c);
+    };
+    visit(visit, screen.root);
+    return changed;
+}
+
+std::string override_of(std::string_view field) {
+    auto starts = [&](std::string_view prefix) { return field.substr(0, prefix.size()) == prefix; };
+    if (field == "x" || field == "y" || field == "rotation" || field == "horizontal" || field == "vertical" ||
+        field == "absolute")
+        return "place";
+    if (field == "w" || field == "h" || field == "width_sizing" || field == "height_sizing") return "size";
+    if (starts("layout") || field == "clip") return "layout";
+    if (starts("fill")) return "fills";
+    if (starts("stroke")) return "strokes";
+    if (starts("effect")) return "effects";
+    if (starts("radius")) return "radius";
+    if (starts("frame.")) return "frame";
+    if (starts("mask.")) return "mask";
+    if (field == "opacity" || field == "blend" || field == "visible" || field == "text" || field == "name")
+        return std::string(field);
+    if (field == "family" || field == "size" || field == "weight" || field == "italic" || field == "line_height" ||
+        field == "letter_spacing" || field == "text_align" || field == "text_case" || field == "decoration" ||
+        field == "text_color" || field == "text_style")
+        return "text_style";
+    return {};
+}
+
+void detach(Node& instance) {
+    auto visit = [&](auto&& self, Node& n, bool top) -> void {
+        if (!top && !n.component.empty() && n.master) return; // an instance inside stays one
+        n.master = 0;
+        n.overrides.clear();
+        if (top) {
+            n.component.clear();
+            n.variant.clear();
+        }
+        for (Node& c : n.children) self(self, c, false);
+    };
+    visit(visit, instance, true);
+}
+
+const Node* instance_of(const Node& root, u32 id) {
+    const std::vector<u32> path = path_to(root, id);
+    const Node* n = &root;
+    for (usize i = 0; i < path.size(); ++i) {
+        if (i > 0) {
+            const Node* next = nullptr;
+            for (const Node& c : n->children)
+                if (c.id == path[i]) next = &c;
+            if (!next) return nullptr;
+            n = next;
+        }
+        if (!n->component.empty() && n->master) return n;
+    }
+    return nullptr;
+}
+
+std::string state_selector(std::string_view value) {
+    const std::string v = lower(value);
+    auto starts = [&](std::string_view prefix) { return v.rfind(prefix, 0) == 0; };
+    if (starts("навед") || starts("hover")) return ":hover";
+    if (starts("нажат") || starts("press") || starts("active")) return ":active";
+    if (starts("выключ") || starts("недоступ") || starts("disabled")) return ".disabled";
+    if (starts("выбран") || starts("selected")) return ".selected";
+    if (starts("фокус") || starts("focus")) return ":focus";
+    return {};
+}
+
+std::string state_property(const Component& component, const Screen&) {
+    for (const ComponentProperty& p : component.properties)
+        for (const std::string& value : p.values)
+            if (!state_selector(value).empty()) return p.name;
+    return {};
 }
 
 std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph) {
@@ -836,6 +1244,76 @@ void write_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::string& c
     for (const Node& c : n.children) write_css(c, &n, n.w, n.h, css);
 }
 
+// The CSS of every layer of a subtree by id (parent: the subtree's parent, with its size).
+void css_by_id(const Node& n, const Node* parent, f32 pw, f32 ph, std::vector<std::pair<u32, std::string>>& out) {
+    out.emplace_back(n.id, node_css(n, parent, pw, ph));
+    for (const Node& c : n.children) css_by_id(c, &n, n.w, n.h, out);
+}
+
+// Instances of components with states: the other states' looks, as rules
+// that apply in that state ("#n5:hover #n7 {...}"), only where they differ.
+void write_states(const Screen& screen, const Screen& library, std::string& css) {
+    const std::vector<Component> list = components(library);
+    auto visit = [&](auto&& self, const Node& n, const Node* parent, f32 pw, f32 ph) -> void {
+        if (n.component.empty() || !n.master) {
+            for (const Node& c : n.children) self(self, c, &n, n.w, n.h);
+            return;
+        }
+        const Component* component = find_component(list, n.component);
+        const std::string property = component ? state_property(*component, library) : std::string();
+        if (property.empty()) return;
+        std::vector<std::pair<u32, std::string>> base;
+        css_by_id(n, parent, pw, ph, base);
+        const std::string now = variant_value(n.variant, property);
+        for (const ComponentProperty& p : component->properties) {
+            if (p.name != property) continue;
+            for (const std::string& value : p.values) {
+                const std::string selector = state_selector(value);
+                if (selector.empty() || value == now) continue;
+                std::vector<std::pair<std::string, std::string>> values = n.variant;
+                set_variant_value(values, property, value);
+                const Node* v = find_variant(library, n.component, values);
+                if (!v || variant_value(v->variant, property) != value) continue;
+                Screen scratch;
+                scratch.next_id = 0x40000000u; // layers the usual look lacks: not on the page
+                Node look = n;
+                look.variant = values;
+                sync_instance(scratch, look, library);
+                std::vector<std::pair<u32, std::string>> other;
+                css_by_id(look, parent, pw, ph, other);
+                const std::string top = "#n" + std::to_string(n.id) + selector;
+                for (const auto& [id, rule] : base) {
+                    const auto it = std::find_if(other.begin(), other.end(), [&](const auto& o) { return o.first == id; });
+                    const std::string head = "#n" + std::to_string(id);
+                    const std::string where = id == n.id ? top : top + " " + head;
+                    if (it == other.end()) {
+                        css += where + " {\n  display: none;\n}\n";
+                    } else if (it->second != rule) {
+                        // What the usual look sets and this one does not goes back to its default.
+                        std::string body = it->second.substr(head.size());
+                        auto names = [](const std::string& r) {
+                            std::vector<std::string> out;
+                            for (usize at = r.find("\n  "); at != std::string::npos; at = r.find("\n  ", at + 1)) {
+                                const usize colon = r.find(':', at);
+                                if (colon != std::string::npos) out.push_back(r.substr(at + 3, colon - at - 3));
+                            }
+                            return out;
+                        };
+                        const std::vector<std::string> mine = names(body);
+                        std::string resets;
+                        for (const std::string& name : names(rule))
+                            if (std::find(mine.begin(), mine.end(), name) == mine.end())
+                                resets += "  " + name + (name == "display" ? ": block;\n" : ": unset;\n");
+                        body.insert(body.size() - 2, resets);
+                        css += where + body;
+                    }
+                }
+            }
+        }
+    };
+    visit(visit, screen.root, nullptr, screen.width, screen.height);
+}
+
 void write_elements(const Node& n, std::string& html, int depth) {
     html.append(static_cast<usize>(depth) * 2, ' ');
     html += "<div id=\"n" + std::to_string(n.id) + "\" class=\"" + node_type_name(n.type) + "\" title=\"" +
@@ -864,6 +1342,7 @@ std::string screen_html(const Screen& screen, const HtmlOptions& options) {
     html += "body {\n  font-family: " + css_string(screen.text.family) + ";\n  font-size: " + px(screen.text.size) +
             ";\n  color: " + css_color(screen.text.color) + ";\n}\n";
     write_css(screen.root, nullptr, screen.width, screen.height, html);
+    if (options.library && !screen.library) write_states(screen, *options.library, html);
     html += "</style>\n</head>\n<body>\n";
     write_elements(screen.root, html, 0);
     html += "</body>\n</html>\n";

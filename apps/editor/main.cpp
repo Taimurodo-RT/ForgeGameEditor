@@ -3102,6 +3102,7 @@ private:
         read_file(ed_.ui_game_dir / "ui" / ("main_menu" + std::string(ext)), bytes);
         return std::string(bytes.begin(), bytes.end());
     }
+    u32 ue_inst_ = 0;
     const editor::design::Node* ue_node(u32 id) { return editor::design::find(ue().screen().root, id); }
     bool ui_step() {
         namespace d = editor::design;
@@ -3234,6 +3235,104 @@ private:
             check(box && box->w > 100, "the button is still laid out");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(ue_node(button)->fills.size() == fill + 1 && ue_node(button)->fills[fill].tile == 0, "undo takes back a step");
+            ue().select({ue_named("Кнопка «Настройки»")});
+            break;
+        }
+        case 11: {
+            // A button made a component, from the panel.
+            f32 bx = 0, by = 0;
+            check(element_center("ue-make-component", bx, by), "a layer can be made a component");
+            left_click(bx, by);
+            const u32 id = ue().selection().empty() ? 0 : ue().selection()[0];
+            const d::Node* n = ue_node(id);
+            check(n && n->component == "Кнопка «Настройки»" && n->master != 0, "the button is now a copy of a component");
+            check(d::find_component(d::components(ue().library()), "Кнопка «Настройки»"), "the component is in the library");
+            check(std::filesystem::exists(ed_.ui_game_dir / "ui" / "components.json"), "the library is saved");
+            ue_inst_ = id;
+            break;
+        }
+        case 12: {
+            check(shown("ue-comp-0") && shown("ue-detach-instance"), "the components list and the copy's panel show");
+            // The copy's own text, then the component changes.
+            const u32 label = ue_named("Настройки");
+            ue().select({label});
+            check(ue().set_property("text", "Опции") && ue_node(label)->overrides == std::vector<std::string>{"text"},
+                  "a change on the copy is its own");
+            ue().select({ue_inst_});
+            check(ue().edit_component() && ue().library_open() && ue().selection().size() == 1, "the component opens in the library");
+            check(ue().add_variant(true), "button states are added");
+            const std::vector<d::Component> list = d::components(ue().library());
+            const d::Component* c = d::find_component(list, "Кнопка «Настройки»");
+            check(c && c->variants.size() == 4 && d::state_property(*c, ue().library()) == "Состояние", "four states");
+            u32 hover = 0;
+            for (const d::Node& v : ue().screen().root.children)
+                if (d::variant_value(v.variant, "Состояние") == "Наведение") hover = v.id;
+            ue().select({hover});
+            check(hover && ue().set_property("fill.0.color", "#FF8800"), "the hover look is drawn");
+            check(ue().set_property("component.name", "Кнопка меню"), "the component is renamed");
+            check(ue().open("main_menu"), "back to the screen");
+            const d::Node* n = ue_node(ue_inst_);
+            check(n && n->component == "Кнопка меню" && n->variant.size() == 1, "the copy follows the component");
+            check(n && n->children.size() == 1 && n->children[0].text == "Опции",
+                  "and keeps its own text");
+            const std::string html = ue_file(".html");
+            check(html.find("#n" + std::to_string(ue_inst_) + ":hover {") != std::string::npos &&
+                      html.find("#ff8800") != std::string::npos,
+                  "the page shows the hover look on hover");
+            check(html.find("#n" + std::to_string(ue_inst_) + ".disabled {") != std::string::npos, "and the disabled one");
+            break;
+        }
+        case 13: {
+            // Another copy from the list, its state picked.
+            f32 cx = 0, cy = 0;
+            check(element_center("ue-comp-0", cx, cy), "the component is listed");
+            const usize before = ue().screen().root.children.size();
+            left_click(cx, cy);
+            check(ue().screen().root.children.size() == before + 1, "a click puts a copy on the screen");
+            const u32 copy = ue().selection().empty() ? 0 : ue().selection()[0];
+            check(ue().set_property("instance.Состояние", "Выключена") && ue_node(copy) && ue_node(copy)->opacity == 0.5f,
+                  "the copy shows another state");
+            check(ue().detach_instance() && ue_node(copy)->component.empty(), "a copy can be detached");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(ue().screen().root.children.size() == before, "undo takes the copy away");
+            ue().select({ue_inst_});
+            check(ue().reset_instance() && ue_node(ue_inst_)->children[0].text == "Настройки", "reset forgets the copy's text");
+            break;
+        }
+        case 14: {
+            // The game's colours and text styles, set on the library's page.
+            check(ue().open_library(), "the library opens");
+            ue().select({});
+            check(ue().set_property("color.add", "") && ue().set_property("color.0.name", "Золото") &&
+                      ue().set_property("color.0.color", "#E8B04A") && ue().library().colors.size() == 1,
+                  "a game colour is added");
+            check(ue().set_property("textstyle.add", "") && ue().set_property("textstyle.0.size", "72") &&
+                      ue().library().text_styles.size() == 1,
+                  "a text style is added");
+            break;
+        }
+        case 15: {
+            check(shown("ue-color-add") && shown("ue-color-name-0"), "the library's page shows the game's styles");
+            const std::string color = ue().library().colors.empty() ? std::string() : ue().library().colors[0].key;
+            const std::string text = ue().library().text_styles.empty() ? std::string() : ue().library().text_styles[0].key;
+            check(ue().open("main_menu"), "back to the screen");
+            ue().select({});
+            check(ue().set_property("fill.0.style", color) && ue().screen().root.fills[0].color == d::Color{0xE8, 0xB0, 0x4A, 255},
+                  "the background takes the game colour");
+            ue().select({ue_named("Название игры")});
+            check(ue().set_property("text_style", text) && ue_node(ue_named("Название игры"))->text_style.size == 72,
+                  "the title takes the text style");
+            // Changed in the library: changed on the screen.
+            check(ue().open_library(), "the library again");
+            ue().select({});
+            check(ue().set_property("color.0.color", "#123456") && ue().set_property("textstyle.0.size", "90"), "the styles change");
+            check(ue().open("main_menu"), "back to the screen");
+            check(ue().screen().root.fills[0].color == d::Color{0x12, 0x34, 0x56, 255} &&
+                      ue_node(ue_named("Название игры"))->text_style.size == 90,
+                  "the screen follows the game's styles");
+            check(ue_file(".html").find("#123456") != std::string::npos, "and its page too");
             break;
         }
         default:

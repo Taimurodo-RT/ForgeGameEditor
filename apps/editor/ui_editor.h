@@ -32,6 +32,15 @@
 // Shift+A gives it auto layout, Ctrl+] / Ctrl+[ bring forward / send back,
 // Esc selects the parent, Enter the first child.
 //
+// Components: a layer made a component lives in the game's library
+// (ui/components.json, «Компоненты» above the screens); the screens get
+// copies of it (instances, purple in the layer list) that follow every change
+// of the component while keeping what was changed on the copy itself (its
+// text, colours...). A component can have variants (a property and its
+// values: «Состояние»: Обычная, Наведение, Нажата, Выключена); a copy picks
+// one, and the variants named after states are what the button looks like
+// when hovered, pressed or disabled in the game.
+//
 // Screens are the game's ui/<name>.json; every change writes it and the page
 // ui/<name>.html at once (one step of the tab's history each; a drag is one
 // step).
@@ -81,6 +90,26 @@ public:
     std::string new_screen();
     const editor::design::Screen& screen() const { return screen_; }
 
+    // --- components ---
+    // The library is ui/components.json, opened on the canvas like a screen.
+    static constexpr const char* kLibrary = "components";
+    bool open_library() { return open(kLibrary); }
+    bool library_open() const { return name_ == kLibrary; }
+    const editor::design::Screen& library() const { return library_; }
+    // The selected layer becomes a component: on a screen it moves into the
+    // library and an instance takes its place; in the library it is named one.
+    bool make_component();
+    // A copy of a component in the middle of the open screen; its id.
+    u32 place_component(const std::string& component);
+    // A new variant of the selected component (a copy beside it); states:
+    // the usual look plus hover, pressed and disabled variants at once.
+    bool add_variant(bool states);
+    // The selected instance: its changes forgotten, or turned into plain layers.
+    bool reset_instance();
+    bool detach_instance();
+    // Opens the library at the selected instance's variant.
+    bool edit_component();
+
     enum class Tool : u8 { Select, Frame, Rectangle, Ellipse, Text };
     void set_tool(Tool tool);
     Tool tool() const { return tool_; }
@@ -126,6 +155,10 @@ private:
     void apply(const std::string& name, const std::string& json, const std::vector<u32>& selection);
     // Records a change: the screen as it is now against before.
     void commit(const std::string& before, std::string label, std::string merge = {});
+
+    // The library changed: every screen's instances follow it.
+    void propagate_library();
+    editor::design::HtmlOptions html_options() const;
 
     // --- the page on the canvas ---
     void rebuild_page();
@@ -174,6 +207,7 @@ private:
 
     std::string name_;
     editor::design::Screen screen_;
+    editor::design::Screen library_; // the components (the open screen when name_ is kLibrary)
     std::vector<u32> selection_;
     std::unordered_map<u32, editor::design::Rect> boxes_; // after the page's layout
     Tool tool_ = Tool::Select;
@@ -227,7 +261,16 @@ private:
         int id = 0;
         Rml::String name, icon;
         int depth = 0;
-        bool selected = false, visible = true, locked = false, container = false, open = true, hidden_by_parent = false;
+        bool selected = false, visible = true, locked = false, container = false, open = true, hidden_by_parent = false,
+             component = false; // an instance, or a component in the library
+    };
+    struct ComponentRow {
+        Rml::String name, icon;
+        int variants = 0;
+    };
+    struct VariantRow {
+        Rml::String property, value;
+        std::vector<Rml::String> values;
     };
     struct Tick {
         float at = 0;
@@ -242,7 +285,7 @@ private:
     };
     struct FillRow {
         int index = 0;
-        Rml::String kind, kind_name, hex, hex2, opacity, swatch, angle, image, fit, tile, offset_x, offset_y;
+        Rml::String kind, kind_name, hex, hex2, opacity, swatch, angle, image, fit, tile, offset_x, offset_y, style;
         bool visible = true;
     };
     struct EffectRow {
@@ -272,9 +315,27 @@ private:
         // Drawn art.
         bool has_frame = false, frame_visible = true, frame_fill = true, has_mask = false, mask_visible = true;
         Rml::String frame_image, frame_t, frame_r, frame_b, frame_l, frame_scale, frame_repeat, mask_image, mask_fit;
+        // Components.
+        bool can_make_component = false, lib_variant = false, instance = false, in_instance = false, changed_here = false;
+        Rml::String component;
+        Rml::String text_style; // the game's text style the text follows ("": its own)
+    };
+    // The game's colours and text styles (shown on the library's page).
+    struct GameColorRow {
+        int index = 0;
+        Rml::String key, name, hex, swatch;
+    };
+    struct GameTextRow {
+        int index = 0;
+        Rml::String key, name, family, size, weight, hex, swatch;
     };
 
     std::vector<ScreenRow> m_screens_;
+    std::vector<ComponentRow> m_components_;
+    std::vector<VariantRow> m_variants_; // the selected component variant's or instance's properties
+    bool m_library_open_ = false;
+    std::vector<GameColorRow> m_game_colors_;
+    std::vector<GameTextRow> m_game_texts_;
     std::vector<LayerRow> m_layers_;
     std::vector<Tick> m_ticks_x_, m_ticks_y_;
     std::vector<Box> m_selected_;

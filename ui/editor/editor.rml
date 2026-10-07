@@ -1102,6 +1102,7 @@
             <!-- Screens and layers -->
             <div class="ue-left ue-panel column">
                 <div class="lg-nav-title">Экраны</div>
+                <div id="ue-library" class="ue-row row" data-class-selected="ue_library_open" title="Кнопки, полоски, окошки: сделаны один раз, стоят на любых экранах" data-event-click="ue_library"><icon class="s ue-comp-icon" name="widgets"/><span class="grow name">Компоненты</span><span class="count">{{ ue_components.size }}</span></div>
                 <div data-for="s : ue_screens" class="ue-row row" data-attr-id="'ue-screen-' + s.name" data-class-selected="s.selected" data-event-click="ue_screen(s.name)" data-event-dblclick="ue_rename('screen')">
                     <icon class="s" name="web_asset"/>
                     <span class="grow name" data-if="!(s.selected && ue_renaming == 'screen')">{{ s.title }}</span>
@@ -1111,7 +1112,7 @@
                 <div id="ue-new-screen" class="ue-row row add" data-event-click="ue_new_screen"><icon class="s" name="add"/><span>Новый экран</span></div>
                 <div class="lg-nav-title">Слои</div>
                 <div class="ue-layers grow">
-                    <div data-for="l : ue_layers" class="ue-layer row" data-attr-id="'ue-layer-' + l.id" data-class-selected="l.selected" data-class-off="!l.visible || l.hidden_by_parent" data-style-padding-left="(6 + l.depth * 16) + 'px'" data-event-click="ue_layer(l.id)" data-event-dblclick="ue_rename(l.id)">
+                    <div data-for="l : ue_layers" class="ue-layer row" data-attr-id="'ue-layer-' + l.id" data-class-selected="l.selected" data-class-comp="l.component" data-class-off="!l.visible || l.hidden_by_parent" data-style-padding-left="(6 + l.depth * 16) + 'px'" data-event-click="ue_layer(l.id)" data-event-dblclick="ue_rename(l.id)">
                         <div class="ue-fold" data-if="l.container" data-event-click="ue_layer_fold(l.id)"><icon class="xs" data-attr-name="l.open ? 'expand_more' : 'chevron_right'"/></div>
                         <div class="ue-fold" data-if="!l.container"/>
                         <icon class="s ue-type" data-attr-name="l.icon"/>
@@ -1121,6 +1122,11 @@
                         <div class="ue-eye" data-class-on="!l.visible" title="Показать или скрыть" data-event-click="ue_layer_eye(l.id)"><icon class="xs" data-attr-name="l.visible ? 'visibility' : 'visibility_off'"/></div>
                     </div>
                     <div class="ue-empty" data-if="ue_layers.size == 0">Пока пусто: выберите инструмент сверху и нарисуйте на экране.</div>
+                </div>
+                <div class="lg-nav-title" title="Щелчок по компоненту ставит его копию на экран">Компоненты</div>
+                <div class="ue-comps">
+                    <div data-for="c : ue_components" class="ue-row row" data-attr-id="'ue-comp-' + it_index" title="Поставить на экран" data-event-click="ue_place(c.name)"><icon class="s ue-comp-icon" data-attr-name="c.icon"/><span class="grow name">{{ c.name }}</span><span class="count" data-if="c.variants > 1">{{ c.variants }}</span></div>
+                    <div class="ue-empty" data-if="ue_components.size == 0">Выделите слой и нажмите «Сделать компонентом» справа: его можно будет ставить на любые экраны.</div>
                 </div>
             </div>
 
@@ -1163,6 +1169,41 @@
                 <div data-if="ue_p.any" class="ue-props column">
                     <div class="ue-head row"><icon class="s" data-attr-name="ue_p.root ? 'web_asset' : ue_p.icon"/><span class="grow name">{{ ue_p.name }}</span><span class="muted">{{ ue_p.type_name }}</span></div>
 
+                    <!-- Components -->
+                    <div class="ue-sec" data-if="ue_p.can_make_component && !ue_p.many">
+                        <div id="ue-make-component" class="ue-btn row" title="Сделать один раз, ставить на любые экраны" data-event-click="ue_component('make')"><icon class="xs" name="widgets"/><span>Сделать компонентом</span></div>
+                    </div>
+                    <div class="ue-sec ue-comp" data-if="ue_p.lib_variant">
+                        <div class="ue-sec-title">Компонент</div>
+                        <input id="ue-comp-name" type="text" class="ue-field" data-attr-value="ue_p.component" data-event-change="ue_text('component.name', ev.value, ev.linebreak)" data-event-blur="ue_commit('component.name')"/>
+                        <div data-for="v : ue_variants" class="ue-line row">
+                            <span class="ue-key">{{ v.property }}</span>
+                            <input type="text" class="ue-field grow" data-attr-id="'ue-variant-' + it_index" data-attr-value="v.value" data-event-change="ue_text('variant.' + v.property, ev.value, ev.linebreak)" data-event-blur="ue_commit('variant.' + v.property)"/>
+                        </div>
+                        <div class="ue-line row">
+                            <div id="ue-add-variant" class="ue-btn row grow" title="Копия рядом с другим значением" data-event-click="ue_component('variant')"><icon class="xs" name="add"/><span>Вариант</span></div>
+                            <div id="ue-add-states" class="ue-btn row grow" title="Наведение, Нажата, Выключена" data-event-click="ue_component('states')"><icon class="xs" name="touch_app"/><span>Состояния</span></div>
+                        </div>
+                        <div class="ue-note">Варианты «Наведение», «Нажата» и «Выключена» — это вид кнопки в игре под мышью, при нажатии и когда она недоступна. Нарисуйте их, как хотите: другие картинки, цвета, тени.</div>
+                    </div>
+                    <div class="ue-sec ue-comp" data-if="ue_p.instance">
+                        <div class="ue-sec-title row"><span class="grow">Копия компонента</span><div id="ue-edit-component" class="ue-mini" title="Изменить сам компонент" data-event-click="ue_component('edit')"><icon class="xs" name="edit"/></div></div>
+                        <div class="ue-line row"><icon class="xs ue-comp-icon" name="widgets"/><span class="grow">{{ ue_p.component }}</span></div>
+                        <div data-for="v : ue_variants" class="ue-line row">
+                            <span class="ue-key">{{ v.property }}</span>
+                            <select class="ue-select grow" data-attr-id="'ue-instance-' + it_index" data-value="v.value" data-event-change="ue_pick('instance.' + v.property)">
+                                <option data-for="x : v.values" data-attr-value="x">{{ x }}</option>
+                            </select>
+                        </div>
+                        <div class="ue-line row">
+                            <div id="ue-reset-instance" class="ue-btn row grow" data-class-off="!ue_p.changed_here" title="Вернуть всё как у компонента" data-event-click="ue_component('reset')"><icon class="xs" name="restart_alt"/><span>Сбросить</span></div>
+                            <div id="ue-detach-instance" class="ue-btn row grow" title="Сделать обычными слоями: компонент перестанет её менять" data-event-click="ue_component('detach')"><icon class="xs" name="link_off"/><span>Отвязать</span></div>
+                        </div>
+                    </div>
+                    <div class="ue-sec ue-comp" data-if="ue_p.in_instance">
+                        <div class="ue-note">Часть копии «{{ ue_p.component }}». То, что вы здесь поменяете, останется только у этой копии, остальное будет меняться вместе с компонентом.</div>
+                    </div>
+
                     <div class="ue-sec">
                         <div class="ue-grid2">
                             <div class="ue-num" data-if="!ue_p.root"><span>X</span><input id="ue-x" type="text" data-attr-value="ue_p.x" data-event-change="ue_text('x', ev.value, ev.linebreak)" data-event-blur="ue_commit('x')"/></div>
@@ -1174,8 +1215,42 @@
                         </div>
                     </div>
 
+                    <!-- The game's styles (the library's page, nothing selected) -->
+                    <div class="ue-sec" data-if="ue_p.root && ue_library_open">
+                        <div class="ue-sec-title row"><span class="grow">Цвета игры <span class="muted">меняются везде сразу</span></span><div id="ue-color-add" class="ue-mini" title="Добавить цвет" data-event-click="ue_set('color.add', '')"><icon class="xs" name="add"/></div></div>
+                        <div data-for="c : ue_game_colors" class="ue-paint row">
+                            <div class="ue-swatch" data-style-background-color="c.swatch"/>
+                            <input type="text" class="ue-hex ue-sans grow" data-attr-id="'ue-color-name-' + c.index" data-attr-value="c.name" data-event-change="ue_text('color.' + c.index + '.name', ev.value, ev.linebreak)" data-event-blur="ue_commit('color.' + c.index + '.name')"/>
+                            <input type="text" class="ue-hex ue-short" data-attr-value="c.hex" data-event-change="ue_text('color.' + c.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('color.' + c.index + '.color')"/>
+                            <div class="ue-mini" title="Убрать" data-event-click="ue_set('color.' + c.index + '.remove', '')"><icon class="xs" name="remove"/></div>
+                        </div>
+                        <div class="ue-note" data-if="ue_game_colors.size == 0">Главные цвета игры: выберите их в заливке слоя вместо своего цвета, и смена цвета здесь перекрасит все экраны.</div>
+                    </div>
+                    <div class="ue-sec" data-if="ue_p.root && ue_library_open">
+                        <div class="ue-sec-title row"><span class="grow">Стили текста</span><div id="ue-textstyle-add" class="ue-mini" title="Добавить стиль текста" data-event-click="ue_set('textstyle.add', '')"><icon class="xs" name="add"/></div></div>
+                        <div data-for="t : ue_game_texts" class="ue-fill column">
+                            <div class="ue-paint row">
+                                <icon class="xs" name="title"/>
+                                <input type="text" class="ue-hex ue-sans grow" data-attr-value="t.name" data-event-change="ue_text('textstyle.' + t.index + '.name', ev.value, ev.linebreak)" data-event-blur="ue_commit('textstyle.' + t.index + '.name')"/>
+                                <div class="ue-mini" title="Убрать" data-event-click="ue_set('textstyle.' + t.index + '.remove', '')"><icon class="xs" name="remove"/></div>
+                            </div>
+                            <div class="ue-line row">
+                                <select class="ue-select grow" data-value="t.family" data-event-change="ue_pick('textstyle.' + t.index + '.family')">
+                                    <option data-for="f : ue_families" data-attr-value="f">{{ f }}</option>
+                                </select>
+                                <div class="ue-num ue-short" title="Размер"><icon class="xs" name="format_size"/><input type="text" data-attr-value="t.size" data-event-change="ue_text('textstyle.' + t.index + '.size', ev.value, ev.linebreak)" data-event-blur="ue_commit('textstyle.' + t.index + '.size')"/></div>
+                            </div>
+                            <div class="ue-paint row">
+                                <div class="ue-swatch" data-style-background-color="t.swatch"/>
+                                <input type="text" class="ue-hex grow" data-attr-value="t.hex" data-event-change="ue_text('textstyle.' + t.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('textstyle.' + t.index + '.color')"/>
+                                <div class="ue-num ue-short" title="Жирность (100–900)"><icon class="xs" name="format_bold"/><input type="text" data-attr-value="t.weight" data-event-change="ue_text('textstyle.' + t.index + '.weight', ev.value, ev.linebreak)" data-event-blur="ue_commit('textstyle.' + t.index + '.weight')"/></div>
+                            </div>
+                        </div>
+                        <div class="ue-note" data-if="ue_game_texts.size == 0">Заголовки, кнопки, подсказки: шрифт, размер и цвет в одном месте для всей игры.</div>
+                    </div>
+
                     <!-- The screen's own settings (nothing selected, or the screen) -->
-                    <div class="ue-sec" data-if="ue_p.root">
+                    <div class="ue-sec" data-if="ue_p.root && !ue_library_open">
                         <div class="ue-sec-title">Текст экрана <span class="muted">для текстов без своего шрифта</span></div>
                         <div class="ue-line row">
                             <select id="ue-screen-font" class="ue-select grow" data-value="ue_p.screen_font" data-event-change="ue_pick('screen.font')">
@@ -1188,7 +1263,7 @@
                             <input id="ue-screen-color" type="text" class="ue-hex grow" data-attr-value="ue_p.screen_text_hex" data-event-change="ue_text('screen.text_color', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.text_color')"/>
                         </div>
                     </div>
-                    <div class="ue-sec" data-if="ue_p.root">
+                    <div class="ue-sec" data-if="ue_p.root && !ue_library_open">
                         <div class="ue-sec-title">На экране игрока <span class="muted">другого размера</span></div>
                         <div class="ue-line row">
                             <select id="ue-screen-fit" class="ue-select grow" data-value="ue_p.screen_fit" data-event-change="ue_pick('screen.fit')">
@@ -1282,6 +1357,13 @@
                     <div class="ue-sec" data-if="ue_p.text">
                         <div class="ue-sec-title">Текст</div>
                         <input id="ue-content" type="text" class="ue-field" data-attr-value="ue_p.content" data-event-change="ue_text('text', ev.value, ev.linebreak)" data-event-blur="ue_commit('text')"/>
+                        <div class="ue-line row" data-if="ue_game_texts.size > 0">
+                            <span class="ue-key">Стиль текста</span>
+                            <select id="ue-text-style" class="ue-select grow" title="Стиль текста игры: меняется везде сразу" data-value="ue_p.text_style" data-event-change="ue_pick('text_style')">
+                                <option value="">Свой</option>
+                                <option data-for="t : ue_game_texts" data-attr-value="t.key">{{ t.name }}</option>
+                            </select>
+                        </div>
                         <div class="ue-line row">
                             <select class="ue-select grow" data-value="ue_p.family" data-event-change="ue_pick('family')">
                                 <option value="">Как у экрана</option>
@@ -1338,6 +1420,10 @@
                             <div class="ue-line row">
                                 <select class="ue-select grow" data-value="f.kind" data-event-change="ue_pick('fill.' + f.index + '.kind')">
                                     <option value="solid">Цвет</option><option value="linear">Линейный градиент</option><option value="radial">Радиальный градиент</option><option value="image">Картинка</option>
+                                </select>
+                                <select class="ue-select grow" data-if="f.kind == 'solid' && ue_game_colors.size > 0" data-attr-id="'ue-fill-style-' + f.index" title="Цвет игры: меняется везде сразу" data-value="f.style" data-event-change="ue_pick('fill.' + f.index + '.style')">
+                                    <option value="">Свой цвет</option>
+                                    <option data-for="c : ue_game_colors" data-attr-value="c.key">{{ c.name }}</option>
                                 </select>
                                 <div class="ue-num ue-short" data-if="f.kind == 'linear'" title="Угол"><icon class="xs" name="rotate_right"/><input type="text" data-attr-value="f.angle" data-event-change="ue_text('fill.' + f.index + '.angle', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.angle')"/></div>
                                 <select class="ue-select ue-short" data-if="f.kind == 'image'" data-value="f.fit" data-event-change="ue_pick('fill.' + f.index + '.fit')">

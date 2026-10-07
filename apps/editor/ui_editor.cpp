@@ -276,6 +276,21 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
     std::error_code ec;
     std::filesystem::create_directories(ui_dir(), ec);
     if (screens().empty()) write("main_menu", sample_screen());
+    // The components: their own file, made empty the first time.
+    {
+        std::vector<u8> bytes;
+        d::Screen lib;
+        if (!read_file(json_path(kLibrary), bytes) ||
+            !d::load_screen(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), lib)) {
+            lib = d::make_screen("Компоненты", 1920, 1080);
+            lib.root.name = "Компоненты";
+            lib.root.clip = false;
+            lib.root.fills.push_back(solid(d::Color{0x2c, 0x2f, 0x36, 255}));
+        }
+        lib.library = true;
+        library_ = std::move(lib);
+        if (!std::filesystem::exists(json_path(kLibrary), ec)) write(kLibrary, library_);
+    }
 
     // Font families the screens can use: the UI's own fonts.
     std::vector<u8> bytes;
@@ -324,7 +339,8 @@ std::vector<std::string> UiEditor::screens() const {
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(ui_dir(), ec)) {
         if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
-        out.push_back(path_to_utf8(entry.path().stem()));
+        std::string name = path_to_utf8(entry.path().stem());
+        if (name != kLibrary) out.push_back(std::move(name));
     }
     std::sort(out.begin(), out.end());
     return out;
@@ -332,7 +348,7 @@ std::vector<std::string> UiEditor::screens() const {
 
 bool UiEditor::write(const std::string& name, const d::Screen& screen) const {
     const std::string json = d::save_screen(screen);
-    const std::string html = d::screen_html(screen);
+    const std::string html = d::screen_html(screen, html_options());
     const bool ok = write_file_atomic(json_path(name), {reinterpret_cast<const u8*>(json.data()), json.size()}) &&
                     write_file_atomic(html_path(name), {reinterpret_cast<const u8*>(html.data()), html.size()});
     if (!ok) FORGE_ERROR("Не удалось сохранить экран %s", name.c_str());
@@ -349,6 +365,12 @@ bool UiEditor::open(const std::string& name) {
         return false;
     }
     if (s.title.empty()) s.title = name;
+    if (name == kLibrary) {
+        s.library = true;
+        library_ = s;
+    } else if (d::sync_instances(s, library_) | d::apply_styles(s, library_)) {
+        write(name, s); // its components or the game's styles changed since
+    }
     if (name != name_) {
         fit_pending_ = true;
         closed_.clear();
@@ -376,8 +398,27 @@ void UiEditor::apply(const std::string& name, const std::string& json, const std
     d::Screen s;
     if (!d::load_screen(json, s)) return;
     if (s.title.empty()) s.title = name;
-    // The page and its file at once: the game reads the page.
-    write(name, s);
+    if (name == kLibrary) {
+        s.library = true;
+        d::sync_instances(s, s);
+        d::apply_styles(s, s);
+        library_ = s;
+        write(name, s);
+        propagate_library();
+        if (name_ != kLibrary) {
+            // A step of a change made from a screen (Сделать компонентом): stay there.
+            const std::vector<u32> keep = selection_;
+            select(keep);
+            page_dirty_ = true;
+            dirty_all();
+            return;
+        }
+    } else {
+        d::sync_instances(s, library_);
+        d::apply_styles(s, library_);
+        // The page and its file at once: the game reads the page.
+        write(name, s);
+    }
     if (name != name_) fit_pending_ = true;
     name_ = name;
     screen_ = std::move(s);
@@ -428,6 +469,38 @@ void UiEditor::set_shown(bool shown) {
     }
 }
 
+d::HtmlOptions UiEditor::html_options() const {
+    d::HtmlOptions options;
+    options.library = &library_;
+    return options;
+}
+
+void UiEditor::propagate_library() {
+    for (const std::string& name : screens()) {
+        std::vector<u8> bytes;
+        d::Screen s;
+        if (!read_file(json_path(name), bytes) ||
+            !d::load_screen(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), s))
+            continue;
+        if (s.title.empty()) s.title = name;
+        bool has_instances = false;
+        auto visit = [&](auto&& self, const d::Node& n) -> void {
+            if (!n.component.empty() && n.master) has_instances = true;
+            for (const d::Node& c : n.children) self(self, c);
+        };
+        visit(visit, s.root);
+        const bool styled = d::apply_styles(s, library_);
+        if (!has_instances && !styled) continue;
+        d::sync_instances(s, library_);
+        d::apply_styles(s, library_);
+        write(name, s); // the page too: the states' looks may have changed
+        if (name == name_) {
+            screen_ = std::move(s);
+            page_dirty_ = true;
+        }
+    }
+}
+
 void UiEditor::rebuild_page() {
     page_dirty_ = false;
     if (!page_context_) return;
@@ -437,7 +510,7 @@ void UiEditor::rebuild_page() {
         page_context_->UnloadDocument(page_);
         page_ = nullptr;
     }
-    const std::string rml = ui::html_to_rml(d::screen_html(screen_), "/web/html.rcss");
+    const std::string rml = ui::html_to_rml(d::screen_html(screen_, html_options()), "/web/html.rcss");
     // The page's own address: pictures are found next to it (../pictures/...).
     std::string url = path_to_utf8(html_path(name_.empty() ? std::string("screen") : name_));
     std::replace(url.begin(), url.end(), '\\', '/');
@@ -639,6 +712,25 @@ void UiEditor::dirty(const char* name) {
 }
 
 void UiEditor::dirty_all() {
+    m_components_.clear();
+    for (const d::Component& c : d::components(library_))
+        m_components_.push_back({c.name, c.properties.empty() ? "widgets" : "view_cozy", static_cast<int>(c.variants.size())});
+    dirty("ue_components");
+    m_library_open_ = library_open();
+    dirty("ue_library_open");
+    m_game_colors_.clear();
+    for (usize i = 0; i < library_.colors.size(); ++i) {
+        const d::NamedColor& c = library_.colors[i];
+        m_game_colors_.push_back({static_cast<int>(i), c.key, c.name, hex_of(c.color), swatch(c.color)});
+    }
+    m_game_texts_.clear();
+    for (usize i = 0; i < library_.text_styles.size(); ++i) {
+        const d::NamedTextStyle& t = library_.text_styles[i];
+        m_game_texts_.push_back({static_cast<int>(i), t.key, t.name, t.style.family, fmt(t.style.size),
+                                 std::to_string(t.style.weight), hex_of(t.style.color), swatch(t.style.color)});
+    }
+    dirty("ue_game_colors");
+    dirty("ue_game_texts");
     refresh_screens();
     refresh_layers();
     refresh_props();
@@ -846,6 +938,14 @@ void UiEditor::refresh_layers() {
                            ? (c.layout.mode == d::LayoutMode::Column ? "view_agenda" : "view_column")
                            : type_icon(c.type);
             row.depth = depth;
+            row.component = !c.component.empty() && (c.master || screen_.library);
+            if (row.component) row.icon = screen_.library ? "view_cozy" : "widgets";
+            if (row.component && screen_.library && depth == 0) {
+                // A variant: the component's name and its values («Кнопка · Наведение»).
+                std::string name = c.component;
+                for (const auto& [property, value] : c.variant) name += " · " + value;
+                row.name = name;
+            }
             row.selected = std::find(selection_.begin(), selection_.end(), c.id) != selection_.end();
             row.visible = c.visible;
             row.locked = c.locked;
@@ -924,6 +1024,7 @@ void UiEditor::refresh_props() {
         const d::TextStyle& t = n->text_style;
         p.content = n->text;
         p.family = t.family;
+        p.text_style = t.style;
         p.size = t.size > 0 ? fmt(t.size) : "Экран";
         p.weight = std::to_string(t.weight);
         p.italic = t.italic;
@@ -949,6 +1050,7 @@ void UiEditor::refresh_props() {
             row.tile = f.tile > 0 ? fmt(f.tile) : "Своя";
             row.offset_x = fmt(f.offset_x);
             row.offset_y = fmt(f.offset_y);
+            row.style = f.style;
             if (f.kind == d::PaintKind::Solid) {
                 row.hex = hex_of(f.color);
                 row.swatch = swatch(f.color);
@@ -1014,6 +1116,37 @@ void UiEditor::refresh_props() {
             m_effects_.push_back(std::move(row));
         }
     }
+    // Components.
+    m_variants_.clear();
+    if (n && !p.many && !p.root) {
+        const d::Node* inst = screen_.library ? nullptr : d::instance_of(screen_.root, n->id);
+        const bool top_of_library = screen_.library && d::parent_of(screen_.root, n->id) == &screen_.root;
+        p.instance = inst && inst->id == n->id;
+        p.in_instance = inst && inst->id != n->id;
+        p.changed_here = inst && !n->overrides.empty();
+        p.lib_variant = top_of_library && !n->component.empty();
+        p.can_make_component = !inst && (screen_.library ? top_of_library && n->component.empty() : true);
+        const d::Node* named = p.lib_variant ? n : inst;
+        if (named) {
+            p.component = named->component;
+            const std::vector<d::Component> list = d::components(library_);
+            if (const d::Component* c = d::find_component(list, named->component))
+                for (const d::ComponentProperty& prop : c->properties) {
+                    VariantRow row;
+                    row.property = prop.name;
+                    row.value = d::variant_value(named->variant, prop.name);
+                    for (const std::string& v : prop.values) row.values.push_back(v);
+                    m_variants_.push_back(std::move(row));
+                }
+        }
+        if (p.lib_variant) {
+            // Its own values (a property the others lack too).
+            for (const auto& [property, value] : n->variant)
+                if (std::none_of(m_variants_.begin(), m_variants_.end(), [&](const VariantRow& r) { return r.property == property; }))
+                    m_variants_.push_back({property, value, {value}});
+        }
+    }
+    dirty("ue_variants");
     m_p_ = std::move(p);
     dirty("ue_p");
     dirty("ue_fills");
@@ -1056,6 +1189,90 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         rest = tail.substr(dot + 1);
         return true;
     };
+
+    // The game's colours and text styles (the library's settings).
+    if (root && screen_.library && (field.rfind("color.", 0) == 0 || field.rfind("textstyle.", 0) == 0)) {
+        const bool is_color = field.rfind("color.", 0) == 0;
+        const std::string rest = field.substr(is_color ? 6 : 10);
+        auto fresh_key = [&](const char* prefix) {
+            for (u32 k = 1;; ++k) {
+                const std::string key = prefix + std::to_string(k);
+                const bool taken = std::any_of(screen_.colors.begin(), screen_.colors.end(), [&](const auto& c) { return c.key == key; }) ||
+                                   std::any_of(screen_.text_styles.begin(), screen_.text_styles.end(), [&](const auto& t) { return t.key == key; });
+                if (!taken) return key;
+            }
+        };
+        if (rest == "add") {
+            if (is_color) screen_.colors.push_back({fresh_key("c"), "Цвет " + std::to_string(screen_.colors.size() + 1), {232, 176, 74, 255}});
+            else {
+                d::NamedTextStyle t;
+                t.key = fresh_key("t");
+                t.name = "Текст " + std::to_string(screen_.text_styles.size() + 1);
+                t.style.family = m_families_.empty() ? std::string("Onest") : std::string(m_families_.front());
+                t.style.size = 32;
+                t.style.weight = 700;
+                screen_.text_styles.push_back(std::move(t));
+            }
+            return true;
+        }
+        const usize dot = rest.find('.');
+        if (dot == std::string::npos) return false;
+        const usize i = static_cast<usize>(std::atoi(rest.substr(0, dot).c_str()));
+        const std::string what = rest.substr(dot + 1);
+        if (is_color) {
+            if (i >= screen_.colors.size()) return false;
+            d::NamedColor& c = screen_.colors[i];
+            if (what == "remove") {
+                screen_.colors.erase(screen_.colors.begin() + static_cast<std::ptrdiff_t>(i));
+                return true;
+            }
+            if (what == "name") {
+                if (value.empty()) return false;
+                c.name = value;
+                return true;
+            }
+            if (what == "color") return color(c.color);
+            return false;
+        }
+        if (i >= screen_.text_styles.size()) return false;
+        d::NamedTextStyle& t = screen_.text_styles[i];
+        if (what == "remove") {
+            screen_.text_styles.erase(screen_.text_styles.begin() + static_cast<std::ptrdiff_t>(i));
+            return true;
+        }
+        if (what == "name") {
+            if (value.empty()) return false;
+            t.name = value;
+            return true;
+        }
+        if (what == "family") {
+            if (value.empty()) return false;
+            t.style.family = value;
+            return true;
+        }
+        if (what == "size") return set_num(t.style.size, 1, 2000);
+        if (what == "weight") {
+            f32 w = t.style.weight;
+            if (!set_num(w, 100, 900)) return false;
+            t.style.weight = static_cast<u16>(std::round(w / 100) * 100);
+            return true;
+        }
+        if (what == "color") return color(t.style.color);
+        return false;
+    }
+
+    // A component variant's value (library), an instance's choice (screens).
+    if (field.rfind("variant.", 0) == 0) {
+        if (!screen_.library || n.component.empty() || value.empty()) return false;
+        d::set_variant_value(n.variant, field.substr(8), value);
+        return true;
+    }
+    if (field.rfind("instance.", 0) == 0) {
+        if (screen_.library || n.component.empty() || !n.master || value.empty()) return false;
+        d::set_variant_value(n.variant, field.substr(9), value);
+        d::sync_instance(screen_, n, library_);
+        return true;
+    }
 
     if (field == "name") {
         if (value.empty()) return false;
@@ -1319,7 +1536,23 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             f.kind = kind;
             return true;
         }
+        if (rest == "style") {
+            // A colour of the game's, or "" for the layer's own.
+            if (value.empty()) {
+                f.style.clear();
+                return true;
+            }
+            for (const d::NamedColor& c : library_.colors)
+                if (c.key == value) {
+                    f.kind = d::PaintKind::Solid;
+                    f.color = c.color;
+                    f.style = c.key;
+                    return true;
+                }
+            return false;
+        }
         if (rest == "color") {
+            f.style.clear(); // its own colour now
             if (f.kind == d::PaintKind::Solid) return color(f.color);
             if (f.stops.empty()) f.stops = {{f.color, 0}, {f.color, 1}};
             return color(f.stops.front().color);
@@ -1403,6 +1636,23 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         n.text = value;
         return true;
     }
+    if (field == "text_style") {
+        if (value.empty()) {
+            t.style.clear();
+            return true;
+        }
+        for (const d::NamedTextStyle& named : library_.text_styles)
+            if (named.key == value) {
+                const d::TextAlign align = t.align;
+                t = named.style;
+                t.style = named.key;
+                t.align = align;
+                return true;
+            }
+        return false;
+    }
+    // A change of the look by hand: the text no longer follows its style.
+    if (field != "text_align") t.style.clear();
     if (field == "family") {
         t.family = value; // empty: the screen's font
         return true;
@@ -1460,8 +1710,42 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
     bool any = false;
     // Nothing selected: the screen's settings.
     const std::vector<u32> targets = selection_.empty() ? std::vector<u32>{screen_.root.id} : selection_;
+    // A component's name and its properties' names: on all its variants.
+    if (screen_.library && (field == "component.name" || field.rfind("property.", 0) == 0)) {
+        const d::Node* n = targets.empty() ? nullptr : d::find(screen_.root, targets[0]);
+        if (!n || n->component.empty() || value.empty()) return false;
+        const std::string component = n->component;
+        const std::string old = field == "component.name" ? std::string() : field.substr(9);
+        const std::vector<d::Component> list = d::components(screen_);
+        if (field == "component.name" && value != component && d::find_component(list, value)) return false; // taken
+        for (d::Node& v : screen_.root.children) {
+            if (v.component != component) continue;
+            if (field == "component.name") v.component = value;
+            else
+                for (auto& [property, val] : v.variant)
+                    if (property == old) property = value;
+            any = true;
+        }
+        if (!any) return false;
+        commit(before, "Переименовано");
+        return true;
+    }
     for (u32 id : targets)
-        if (d::Node* n = d::find(screen_.root, id)) any = set_on(*n, field, value) || any;
+        if (d::Node* n = d::find(screen_.root, id)) {
+            const bool copy = !screen_.library && n->master && d::instance_of(screen_.root, n->id);
+            const std::string was = copy ? d::save_screen(screen_) : std::string();
+            if (!set_on(*n, field, value)) continue;
+            any = true;
+            // Inside a copy of a component: this copy's own change, kept when the component changes
+            // (a field given the value it had is no change).
+            if (copy && d::save_screen(screen_) != was) {
+                const std::string kept = d::override_of(field);
+                const bool top = !n->component.empty();
+                if (!kept.empty() && !(top && kept == "place") &&
+                    std::find(n->overrides.begin(), n->overrides.end(), kept) == n->overrides.end())
+                    n->overrides.push_back(kept);
+            }
+        }
     if (!any) {
         // Back to what it was (a field that did not take the value shows the old one).
         d::load_screen(before, screen_);
@@ -1496,6 +1780,7 @@ void UiEditor::set_tool(Tool tool) {
 u32 UiEditor::add_layer(d::NodeType type, f32 x, f32 y, f32 w, f32 h, u32 parent_id) {
     d::Node* parent = parent_id ? d::find(screen_.root, parent_id) : &screen_.root;
     if (!parent || !parent->is_container()) parent = &screen_.root;
+    if (!screen_.library && d::instance_of(screen_.root, parent->id)) parent = &screen_.root; // a copy of a component keeps its layers
     const d::Rect pbox = layer_box(parent->id).value_or(d::Rect{});
     d::Node n;
     n.id = screen_.next_id++;
@@ -1535,8 +1820,12 @@ bool UiEditor::remove_selection() {
     if (selection_.empty()) return false;
     const std::string before = d::save_screen(screen_);
     bool any = false;
-    for (u32 id : selection_)
+    for (u32 id : selection_) {
+        // A layer of a copy of a component stays (it can be hidden).
+        const d::Node* inst = screen_.library ? nullptr : d::instance_of(screen_.root, id);
+        if (inst && inst->id != id) continue;
         if (id != screen_.root.id && d::remove(screen_.root, id)) any = true;
+    }
     if (!any) return false;
     selection_.clear();
     commit(before, "Удалено");
@@ -1549,6 +1838,7 @@ bool UiEditor::duplicate_selection() {
     std::vector<u32> fresh;
     for (u32 id : selection_) {
         if (id == screen_.root.id) continue;
+        if (const d::Node* inst = screen_.library ? nullptr : d::instance_of(screen_.root, id); inst && inst->id != id) continue;
         d::Node* parent = d::parent_of(screen_.root, id);
         if (!parent) continue;
         auto it = std::find_if(parent->children.begin(), parent->children.end(), [&](const d::Node& c) { return c.id == id; });
@@ -1572,9 +1862,10 @@ bool UiEditor::wrap_selection_in_frame() {
     if (selection_.empty() || selection_[0] == screen_.root.id) return false;
     d::Node* parent = d::parent_of(screen_.root, selection_[0]);
     if (!parent) return false;
-    // Only siblings go into one frame.
+    // Only siblings go into one frame, and not inside a copy of a component.
     for (u32 id : selection_)
         if (d::parent_of(screen_.root, id) != parent) return false;
+    if (!screen_.library && d::instance_of(screen_.root, parent->id)) return false;
     const std::string before = d::save_screen(screen_);
     const d::Rect box = selection_box();
     const d::Rect pbox = layer_box(parent->id).value_or(d::Rect{});
@@ -1661,6 +1952,194 @@ bool UiEditor::move_selection(f32 dx, f32 dy) {
 }
 
 // --- frame and input --------------------------------------------------------
+
+// --- components -------------------------------------------------------------
+
+bool UiEditor::make_component() {
+    if (selection_.size() != 1) return false;
+    d::Node* n = d::find(screen_.root, selection_[0]);
+    if (!n || n->id == screen_.root.id) return false;
+    if (!screen_.library && d::instance_of(screen_.root, n->id)) return false;
+    const std::vector<d::Component> list = d::components(library_);
+    const std::string base = n->name.empty() ? std::string("Компонент") : n->name;
+    std::string name = base;
+    for (int k = 2; d::find_component(list, name); ++k) name = base + " " + std::to_string(k);
+    if (screen_.library) {
+        // In the library: a layer at the top is named a component.
+        if (d::parent_of(screen_.root, n->id) != &screen_.root || !n->component.empty()) return false;
+        const std::string before = d::save_screen(screen_);
+        n->component = name;
+        commit(before, "Сделан компонент «" + name + "»");
+        return true;
+    }
+    // On a screen: the layer goes into the library, a copy of it takes its place.
+    const std::string label = "Сделан компонент «" + name + "»";
+    const d::Rect box = layer_box(n->id).value_or(d::Rect{n->x, n->y, n->w, n->h});
+    d::Screen lib = library_;
+    d::Node master = *n;
+    d::renumber(lib, master);
+    master.component = name;
+    master.variant.clear();
+    master.master = 0;
+    master.overrides.clear();
+    master.horizontal = master.vertical = d::Constraint::Start;
+    master.absolute = false;
+    master.locked = false;
+    master.visible = true;
+    if (master.width_sizing == d::Sizing::Fill) {
+        master.width_sizing = d::Sizing::Fixed;
+        master.w = std::round(box.w);
+    }
+    if (master.height_sizing == d::Sizing::Fill) {
+        master.height_sizing = d::Sizing::Fixed;
+        master.h = std::round(box.h);
+    }
+    f32 right = 80;
+    for (const d::Node& c : lib.root.children) right = std::max(right, c.x + c.w + 80);
+    master.x = right;
+    master.y = 80;
+    lib.root.children.push_back(std::move(master));
+    history_.seal();
+    history_.begin_group(label);
+    history_.execute(std::make_unique<UiCommand>(*this, kLibrary, d::save_screen(library_), d::save_screen(lib), selection_,
+                                                 selection_, label, std::string()));
+    // The screen: the copy where the layer was.
+    const std::string before = d::save_screen(screen_);
+    n = d::find(screen_.root, selection_.empty() ? 0 : selection_[0]);
+    std::optional<d::Node> inst = n ? d::make_instance(screen_, library_, name) : std::nullopt;
+    if (inst) {
+        inst->name = n->name;
+        inst->x = n->x;
+        inst->y = n->y;
+        inst->rotation = n->rotation;
+        inst->horizontal = n->horizontal;
+        inst->vertical = n->vertical;
+        inst->width_sizing = n->width_sizing;
+        inst->height_sizing = n->height_sizing;
+        inst->absolute = n->absolute;
+        inst->visible = n->visible;
+        const u32 id = inst->id;
+        *n = std::move(*inst);
+        selection_ = {id};
+        commit(before, label);
+    }
+    history_.end_group();
+    history_.seal();
+    return inst.has_value();
+}
+
+u32 UiEditor::place_component(const std::string& component) {
+    if (screen_.library) {
+        // In the library: show it.
+        for (const d::Node& v : screen_.root.children)
+            if (v.component == component) {
+                select({v.id});
+                return v.id;
+            }
+        return 0;
+    }
+    const std::string before = d::save_screen(screen_);
+    std::optional<d::Node> inst = d::make_instance(screen_, library_, component);
+    if (!inst) return 0;
+    inst->x = std::round((screen_.width - inst->w) * 0.5f);
+    inst->y = std::round((screen_.height - inst->h) * 0.5f);
+    const u32 id = inst->id;
+    screen_.root.children.push_back(std::move(*inst));
+    selection_ = {id};
+    commit(before, "Добавлен компонент «" + component + "»");
+    return id;
+}
+
+bool UiEditor::add_variant(bool states) {
+    if (!screen_.library || selection_.size() != 1) return false;
+    d::Node* v = d::find(screen_.root, selection_[0]);
+    if (!v || v->component.empty() || d::parent_of(screen_.root, v->id) != &screen_.root) return false;
+    const std::string before = d::save_screen(screen_);
+    const std::string component = v->component;
+    auto exists = [&](const std::vector<std::pair<std::string, std::string>>& values) {
+        for (const d::Node& o : screen_.root.children)
+            if (o.component == component && o.variant == values) return true;
+        return false;
+    };
+    std::vector<d::Node> made;
+    if (states) {
+        const std::string property = "Состояние";
+        if (d::variant_value(v->variant, property).empty()) d::set_variant_value(v->variant, property, "Обычная");
+        const char* const looks[] = {"Наведение", "Нажата", "Выключена"};
+        f32 y = v->y;
+        for (const char* look : looks) {
+            std::vector<std::pair<std::string, std::string>> values = v->variant;
+            d::set_variant_value(values, property, look);
+            if (exists(values)) continue;
+            d::Node copy = *v;
+            d::renumber(screen_, copy);
+            copy.variant = values;
+            y += v->h + 40;
+            copy.y = y;
+            if (std::string(look) == "Выключена") copy.opacity = 0.5f; // a start: dimmed
+            made.push_back(std::move(copy));
+        }
+    } else {
+        if (v->variant.empty()) d::set_variant_value(v->variant, "Вид", "1");
+        const std::string property = v->variant.back().first;
+        std::vector<std::pair<std::string, std::string>> values = v->variant;
+        for (int k = 2;; ++k) {
+            d::set_variant_value(values, property, std::to_string(k));
+            if (!exists(values)) break;
+        }
+        d::Node copy = *v;
+        d::renumber(screen_, copy);
+        copy.variant = values;
+        f32 right = v->x;
+        for (const d::Node& o : screen_.root.children)
+            if (o.component == component && std::abs(o.y - v->y) < 1) right = std::max(right, o.x + o.w);
+        copy.x = right + 40;
+        made.push_back(std::move(copy));
+    }
+    std::vector<u32> fresh;
+    for (d::Node& m : made) {
+        fresh.push_back(m.id);
+        screen_.root.children.push_back(std::move(m));
+    }
+    if (!fresh.empty()) selection_ = {fresh.front()};
+    commit(before, states ? "Добавлены состояния" : "Добавлен вариант");
+    return true;
+}
+
+bool UiEditor::reset_instance() {
+    if (screen_.library || selection_.size() != 1) return false;
+    d::Node* n = d::find(screen_.root, selection_[0]);
+    if (!n || n->component.empty() || !n->master) return false;
+    const std::string before = d::save_screen(screen_);
+    auto forget = [](auto&& self, d::Node& node) -> void {
+        node.overrides.clear();
+        for (d::Node& c : node.children) self(self, c);
+    };
+    forget(forget, *n);
+    d::sync_instance(screen_, *n, library_);
+    commit(before, "Сброшены изменения копии");
+    return true;
+}
+
+bool UiEditor::detach_instance() {
+    if (screen_.library || selection_.size() != 1) return false;
+    d::Node* n = d::find(screen_.root, selection_[0]);
+    if (!n || n->component.empty() || !n->master) return false;
+    const std::string before = d::save_screen(screen_);
+    d::detach(*n);
+    commit(before, "Копия отвязана от компонента");
+    return true;
+}
+
+bool UiEditor::edit_component() {
+    if (screen_.library || selection_.size() != 1) return false;
+    const d::Node* inst = d::instance_of(screen_.root, selection_[0]);
+    if (!inst) return false;
+    const u32 master = inst->master;
+    if (!open_library()) return false;
+    if (d::find(screen_.root, master)) select({master});
+    return true;
+}
 
 void UiEditor::update(Rml::Context* context) {
     read_canvas(context);
@@ -2253,6 +2732,9 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
                 if (sel && sel->is_container() && sel->id != screen_.root.id && !shift) target = sel;
                 else if (d::Node* p = d::parent_of(screen_.root, selection_[0])) target = p;
             }
+            // Not into a copy of a component: beside it.
+            if (const d::Node* inst = screen_.library ? nullptr : d::instance_of(screen_.root, target->id))
+                if (d::Node* p = d::parent_of(screen_.root, inst->id)) target = p;
             std::vector<u32> fresh;
             for (d::Node n : clipboard_) {
                 d::renumber(screen_, n);
@@ -2314,8 +2796,22 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("container", &LayerRow::container);
         s.RegisterMember("open", &LayerRow::open);
         s.RegisterMember("hidden_by_parent", &LayerRow::hidden_by_parent);
+        s.RegisterMember("component", &LayerRow::component);
     }
     model.RegisterArray<std::vector<LayerRow>>();
+    model.RegisterArray<std::vector<Rml::String>>();
+    if (auto s = model.RegisterStruct<ComponentRow>()) {
+        s.RegisterMember("name", &ComponentRow::name);
+        s.RegisterMember("icon", &ComponentRow::icon);
+        s.RegisterMember("variants", &ComponentRow::variants);
+    }
+    model.RegisterArray<std::vector<ComponentRow>>();
+    if (auto s = model.RegisterStruct<VariantRow>()) {
+        s.RegisterMember("property", &VariantRow::property);
+        s.RegisterMember("value", &VariantRow::value);
+        s.RegisterMember("values", &VariantRow::values);
+    }
+    model.RegisterArray<std::vector<VariantRow>>();
     if (auto s = model.RegisterStruct<Tick>()) {
         s.RegisterMember("at", &Tick::at);
         s.RegisterMember("label", &Tick::label);
@@ -2348,6 +2844,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("tile", &FillRow::tile);
         s.RegisterMember("offset_x", &FillRow::offset_x);
         s.RegisterMember("offset_y", &FillRow::offset_y);
+        s.RegisterMember("style", &FillRow::style);
         s.RegisterMember("visible", &FillRow::visible);
     }
     model.RegisterArray<std::vector<FillRow>>();
@@ -2443,13 +2940,19 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("mask_visible", &Props::mask_visible);
         s.RegisterMember("mask_image", &Props::mask_image);
         s.RegisterMember("mask_fit", &Props::mask_fit);
+        s.RegisterMember("can_make_component", &Props::can_make_component);
+        s.RegisterMember("lib_variant", &Props::lib_variant);
+        s.RegisterMember("instance", &Props::instance);
+        s.RegisterMember("in_instance", &Props::in_instance);
+        s.RegisterMember("changed_here", &Props::changed_here);
+        s.RegisterMember("component", &Props::component);
+        s.RegisterMember("text_style", &Props::text_style);
     }
     if (auto s = model.RegisterStruct<PictureRow>()) {
         s.RegisterMember("path", &PictureRow::path);
         s.RegisterMember("name", &PictureRow::name);
     }
     model.RegisterArray<std::vector<PictureRow>>();
-    model.RegisterArray<std::vector<Rml::String>>();
     model.RegisterArray<std::vector<int>>();
 
     model.Bind("ue_screens", &m_screens_);
@@ -2482,6 +2985,30 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_pictures", &m_pictures_);
     model.Bind("ue_safe", &m_safe_);
     model.Bind("ue_has_safe", &m_has_safe_);
+    if (auto s = model.RegisterStruct<GameColorRow>()) {
+        s.RegisterMember("index", &GameColorRow::index);
+        s.RegisterMember("key", &GameColorRow::key);
+        s.RegisterMember("name", &GameColorRow::name);
+        s.RegisterMember("hex", &GameColorRow::hex);
+        s.RegisterMember("swatch", &GameColorRow::swatch);
+    }
+    model.RegisterArray<std::vector<GameColorRow>>();
+    if (auto s = model.RegisterStruct<GameTextRow>()) {
+        s.RegisterMember("index", &GameTextRow::index);
+        s.RegisterMember("key", &GameTextRow::key);
+        s.RegisterMember("name", &GameTextRow::name);
+        s.RegisterMember("family", &GameTextRow::family);
+        s.RegisterMember("size", &GameTextRow::size);
+        s.RegisterMember("weight", &GameTextRow::weight);
+        s.RegisterMember("hex", &GameTextRow::hex);
+        s.RegisterMember("swatch", &GameTextRow::swatch);
+    }
+    model.RegisterArray<std::vector<GameTextRow>>();
+    model.Bind("ue_game_colors", &m_game_colors_);
+    model.Bind("ue_game_texts", &m_game_texts_);
+    model.Bind("ue_components", &m_components_);
+    model.Bind("ue_variants", &m_variants_);
+    model.Bind("ue_library_open", &m_library_open_);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [this, fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) {
@@ -2497,6 +3024,18 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
 
     on("ue_screen", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { open(arg_str(a, 0)); });
     on("ue_new_screen", [this](Rml::Event&, const Rml::VariantList&) { new_screen(); });
+    on("ue_library", [this](Rml::Event&, const Rml::VariantList&) { open_library(); });
+    on("ue_place", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { place_component(arg_str(a, 0)); });
+    on("ue_component", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        const std::string what = arg_str(a, 0);
+        if (what == "make") make_component();
+        else if (what == "variant") add_variant(false);
+        else if (what == "states") add_variant(true);
+        else if (what == "reset") reset_instance();
+        else if (what == "detach") detach_instance();
+        else if (what == "edit") edit_component();
+    });
     on("ue_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         const std::string t = arg_str(a, 0);
         set_tool(t == "frame" ? Tool::Frame : t == "rectangle" ? Tool::Rectangle : t == "ellipse" ? Tool::Ellipse
