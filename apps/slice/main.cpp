@@ -613,9 +613,10 @@ private:
                 check(sc.pauses(), "окно ставит мир на паузу");
                 Rml::Element* w = s.find_element("t-window");
                 check(w && w->GetLocalProperty("opacity") && w->GetProperty<float>("opacity") < 1, "окно появляется плавно");
-                check(click(s, "t-buy"), "кнопка в окне нажимается");
+                SDL_Delay(350); // let it finish rising, or the click lands below the moving button on a slow machine
             }
-            if (f == 9) {
+            if (f == 9) check(click(s, "t-buy"), "кнопка в окне нажимается");
+            if (f == 11) {
                 check(s.vars().get("inv.coins").number() == 12, "покупка изменила монеты");
                 check(messages == 1, "логика получила сообщение");
                 check(!sc.shown("тест_окно"), "окно закрылось");
@@ -624,7 +625,7 @@ private:
                 check(coins && coins->GetInnerRML() == "Монеты: 12", "текст следит за монетами");
                 sc.show("тест_окно", true);
             }
-            if (f == 11) {
+            if (f == 13) {
                 SDL_Event ev{};
                 ev.type = SDL_EVENT_KEY_DOWN;
                 ev.key.key = SDLK_ESCAPE;
@@ -632,9 +633,9 @@ private:
                 s.handle_event(ev);
                 check(!sc.shown("тест_окно") && s.screen() == forge::game::Screen::Playing, "Esc закрывает окно, а не игру");
             }
-            if (f == 12) SDL_Delay(350); // the window's going away (started by the frame after Esc) takes 0.3 s
-            if (f == 14) check(sc.document("тест_окно") && !sc.document("тест_окно")->IsVisible(), "ушедшее окно скрыто");
-            if (f < 15) return false;
+            if (f == 14) SDL_Delay(350); // the window's going away (started by the frame after Esc) takes 0.3 s
+            if (f == 16) check(sc.document("тест_окно") && !sc.document("тест_окно")->IsVisible(), "ушедшее окно скрыто");
+            if (f < 17) return false;
             sc.remove("тест_hud");
             sc.remove("тест_окно");
             s.on_message = nullptr;
