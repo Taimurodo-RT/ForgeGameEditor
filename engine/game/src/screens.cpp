@@ -759,7 +759,8 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
     for (auto& page : impl_->pages) {
         Page& p = *page;
         if (!p.doc) continue;
-        const bool visible = p.role == ScreenRole::Menu ? menu : p.role == ScreenRole::Playing ? playing : p.shown && !menu;
+        // A window opened from the menu is over the menu (the game starting closes it: `Shell::begin`).
+        const bool visible = p.role == ScreenRole::Menu ? menu : p.role == ScreenRole::Playing ? playing : p.shown;
         if (visible) {
             impl_->fit(p, width, height);
             impl_->bind(p, vars, call);

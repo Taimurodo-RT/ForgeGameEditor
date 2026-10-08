@@ -292,6 +292,7 @@ bool Shell::begin(std::string_view slot_id) {
     std::string error;
     if (game_->running()) game_->end();
     runner_->stop();
+    screens_->hide_commands(); // the menu's windows stay with the menu
     vars_.clear();
     playtime_ = 0;
     if (!slots_->begin_session(slot_id, &error)) {
@@ -454,6 +455,7 @@ bool Shell::handle_event(const SDL_Event& e) {
         return true; // the hero does not move while talking
     }
     switch (screen_) {
+    case Screen::Main: return k == SDLK_ESCAPE && screens_->close_top(); // a window opened from the menu
     case Screen::Playing:
         if (k == SDLK_ESCAPE) {
             if (!screens_->close_top()) pause(true); // a window of the game's closes first

@@ -395,6 +395,7 @@ private:
 
     // «Проверить».
     void check_action(const forge::game::ScreenAction& a);
+    std::string menu_screen() const; // the screen the game shows as its menu
     void refresh_check();
     void seed_check_vars();
 

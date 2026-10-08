@@ -334,6 +334,63 @@ private:
             }
             return false;
         }});
+        // A window a button of the game's own menu opens: over the menu, closed by «В главное меню» and Esc,
+        // and by the game starting.
+        steps_.push_back({"окно из главного меню поверх меню", 20, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            auto shown = [&](const char* id) {
+                Rml::Element* e = s.find_element(id);
+                return e && e->IsVisible(true);
+            };
+            if (f == 0) {
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y);
+                // The window's button stands where the menu's is: a press there goes to the one on top.
+                const std::string place = "position: absolute; left: 300px; top: 200px; width: 200px; height: 60px;";
+                const std::string menu =
+                    "<html><head><style>body, #m-root { pointer-events: none; } #m-root > div { pointer-events: auto; }</style></head>"
+                    "<body><div id=\"m-root\" forge-screen=\"menu\" forge-size=\"" + dims + "\">"
+                    "<div id=\"m-open\" style=\"" + place + " background: #335;\" "
+                    "forge-click=\"[[&quot;show&quot;,&quot;тест_из_меню&quot;]]\">Об игре</div></div></body></html>";
+                const std::string window =
+                    "<html><head><style>body, #w-root { pointer-events: none; } #w-root > div { pointer-events: auto; }</style></head>"
+                    "<body><div id=\"w-root\" forge-screen=\"command\" forge-size=\"" + dims + "\">"
+                    "<div id=\"w-back\" style=\"" + place + " background: #533;\" "
+                    "forge-click=\"[[&quot;menu&quot;,&quot;&quot;]]\">В главное меню</div></div></body></html>";
+                check(s.screen() == Screen::Main, "главное меню открыто");
+                check(sc.load_page(s.context(), "тест_меню", menu, "test/ui/тест_меню.html"), "меню строится");
+                check(sc.load_page(s.context(), "тест_из_меню", window, "test/ui/тест_из_меню.html"), "окно строится");
+            }
+            if (f == 2) {
+                check(shown("m-open") && !shown("w-back"), "меню видно, окно пока закрыто");
+                check(click(s, "m-open"), "кнопка меню нажимается");
+            }
+            if (f == 4) {
+                check(sc.shown("тест_из_меню") && shown("w-back"), "окно открылось поверх главного меню, а не под ним");
+                check(click(s, "w-back"), "нажатие там, где обе кнопки");
+            }
+            if (f == 6) {
+                check(!shown("w-back") && shown("m-open") && s.screen() == Screen::Main,
+                      "«В главное меню» в окне: окно закрыто, меню на месте");
+                check(click(s, "m-open"), "окно ещё раз");
+            }
+            if (f == 8) {
+                check(shown("w-back"), "окно снова поверх меню");
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_KEY_DOWN;
+                ev.key.key = SDLK_ESCAPE;
+                ev.key.down = true;
+                s.handle_event(ev);
+            }
+            if (f == 10) {
+                check(!shown("w-back") && shown("m-open"), "Esc закрывает окно над меню");
+                // Left open over the game's own menu: «Новая игра» there closes it (checked in «старт»).
+                sc.remove("тест_меню");
+                check(sc.show("тест_из_меню", true), "окно открыто перед новой игрой");
+                return true;
+            }
+            return false;
+        }});
         steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
             if (f < 5) return false;
             if (f == 5) {
@@ -346,6 +403,8 @@ private:
         }});
         steps_.push_back({"старт", 180, [&s, &g, this](u32 f) {
             if (f == 0) {
+                check(!s.screens().shown("тест_из_меню"), "новая игра закрыла окно, открытое из меню");
+                s.screens().remove("тест_из_меню");
                 check(g.running() && g.hero_alive(), "герой появился");
                 check(s.screen() == Screen::Playing, "идёт игра");
                 check(g.location() == "Деревня", "герой в деревне, а не в «" + g.location() + "»");
