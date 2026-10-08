@@ -107,7 +107,8 @@
 .ue-row.add icon { color: var(--primary); }
 .ue-row .count { font-size: 11px; font-family: var(--font-mono); color: var(--on-surface-variant); }
 .ue-row .name, .ue-layer .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ue-layers { min-height: 0px; }
+/* The list scrolls in its own place: else its lower rows, past its height, lie under the components and cannot be clicked. */
+.ue-layers { min-height: 0px; overflow-y: auto; }
 .ue-layer { min-height: 28px; padding-right: var(--space-1); font-size: 13px; }
 .ue-layer.selected { background-color: #2f7bf540; }
 .ue-layer.drop-above { border-top: 2px #2f7bf5; }
@@ -465,3 +466,35 @@ input.text.ue-hex.ue-sans { font-family: var(--font-sans); }
 }
 .ue-menu-note { padding: var(--space-1) var(--space-3) var(--space-2) var(--space-3); font-size: 12.5px; color: var(--on-surface-variant); }
 .ue-create-menu { max-height: 560px; overflow-y: auto; }
+
+/* The panel over the selected layer (13.10). Rows of 32 px, 6 px apart, a 1 px border and 6 px padding, widths
+   280 / 300 / 320 with them: UiEditor::refresh_overlay places it by these. Its kinds are ue-float-*, never the
+   design system's .button / .text. */
+.ue-float {
+    position: absolute;
+    z-index: 20;
+    box-sizing: border-box;
+    width: 280px;
+    padding: 6px;
+    gap: 6px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--outline-variant);
+    background-color: var(--surface-container-high);
+    box-shadow: var(--elevation-2);
+    overflow: visible;
+    cursor: default;
+}
+.ue-float.ue-float-button { width: 300px; }
+.ue-float.ue-float-text { width: 320px; }
+.ue-float-row { height: 32px; gap: 6px; align-items: center; }
+.ue-float .ue-select { height: 32px; padding-top: 8px; background-color: var(--surface-container-highest); }
+.ue-float .ue-num { height: 32px; background-color: var(--surface-container-highest); }
+.ue-float input.text.ue-field { height: 32px; margin-bottom: 0px; background-color: var(--surface-container-highest); }
+.ue-float .ue-seg { background-color: var(--surface-container-highest); }
+.ue-float .ue-seg-btn.selected { background-color: #2f7bf5; color: #ffffff; }
+.ue-f-size { width: 72px; flex: 0 0 72px; }
+.ue-float .ue-swatch { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 6px; }
+.ue-float .ue-swatch-fill { border-radius: 5px; }
+.ue-f-icon { width: 20px; flex: 0 0 20px; color: var(--on-surface-variant); }
+.ue-f-note { font-size: 12px; color: var(--on-surface-variant); }

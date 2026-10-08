@@ -1613,6 +1613,7 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::str
                 case PaintKind::Linear: image = "linear-gradient(" + fmt(p.angle) + "deg, " + gradient_stops(p) + ")"; break;
                 case PaintKind::Radial: image = "radial-gradient(ellipse farthest-side, " + gradient_stops(p) + ")"; break;
                 case PaintKind::Image:
+                    if (p.image.empty()) continue; // no file picked yet: nothing drawn (a url of "../" names the game's folder)
                     image = "url(" + css_string("../" + p.image) + ")";
                     switch (p.fit) {
                     case ImageFit::Fill: size = "cover"; position = "center"; break;
@@ -1632,10 +1633,12 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::str
                 join(repeats, repeat);
                 join(positions, position);
             }
-            add(css, "background-image", images);
-            add(css, "background-size", sizes);
-            add(css, "background-repeat", repeats);
-            add(css, "background-position", positions);
+            if (!images.empty()) {
+                add(css, "background-image", images);
+                add(css, "background-size", sizes);
+                add(css, "background-repeat", repeats);
+                add(css, "background-position", positions);
+            }
         }
     }
 

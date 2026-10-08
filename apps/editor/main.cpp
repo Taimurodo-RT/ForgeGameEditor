@@ -3313,6 +3313,116 @@ private:
         const bool at_y = std::fabs(y - ue_cm_y_) < 1.5f || (y < ue_cm_y_ && std::fabs(y + m->GetOffsetHeight() - bottom) < 1.5f);
         return whole && at_x && at_y;
     }
+    // The panel over the selected layer (13.10): the stage, the screen before, its text, button and picture, history
+    // then, the option picked.
+    int ue_fl_stage_ = 0;
+    std::string ue_fl_json_, ue_fl_pick_;
+    u32 ue_fl_text_ = 0, ue_fl_btn_ = 0, ue_fl_pic_ = 0;
+    usize ue_fl_cursor_ = 0;
+    // The panel's box in window pixels (false when it is not shown).
+    bool ue_fl_box(f32& x, f32& y, f32& w, f32& h) {
+        Rml::Element* e = ed_.find_element("ue-float");
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
+        x = p.x;
+        y = p.y;
+        w = size.x;
+        h = size.y;
+        return true;
+    }
+    // As laid out: 10 px over the layer (under: 34 px under it, past its size), centred on it unless the canvas's
+    // edge is nearer, whole on the canvas; why not, when not.
+    bool ue_fl_placed(u32 id, bool above, std::string& why) {
+        f32 x = 0, y = 0, w = 0, h = 0;
+        const auto b = ue().layer_box(id);
+        Rml::Element* canvas = ed_.find_element("ue-canvas");
+        if (!b || !canvas || !ue_fl_box(x, y, w, h)) return why = "no panel", false;
+        const f32 cl = ue().canvas_left(), ct = ue().canvas_top();
+        const f32 cw = canvas->GetBox().GetSize(Rml::BoxArea::Border).x, ch = canvas->GetBox().GetSize(Rml::BoxArea::Border).y;
+        const f32 top = ue_wy(b->y), bottom = ue_wy(b->y + b->h), middle = (ue_wx(b->x) + ue_wx(b->x + b->w)) * 0.5f;
+        const f32 want_x = std::clamp(middle - w * 0.5f, cl + 4, cl + cw - w - 4);
+        const f32 want_y = above ? top - 10 - h : bottom + 34;
+        why = "panel " + std::to_string(x) + "," + std::to_string(y) + " " + std::to_string(w) + "x" + std::to_string(h) + ", want " +
+              std::to_string(want_x) + "," + std::to_string(want_y);
+        return std::fabs(x - want_x) < 1.5f && std::fabs(y - want_y) < 1.5f && x >= cl + 3 && y >= ct + 3 && x + w <= cl + cw - 3 &&
+               y + h <= ct + ch - 3;
+    }
+    // A drop-down's first option other than what it shows (nullopt: none).
+    std::optional<std::string> ue_fl_other(const char* id) {
+        auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element(id));
+        for (int i = 0; select && i < select->GetNumOptions(); ++i)
+            if (Rml::Element* o = select->GetOption(i)) {
+                const Rml::String v = o->GetAttribute<Rml::String>("value", "");
+                if (v != select->GetValue()) return v;
+            }
+        return std::nullopt;
+    }
+    // Typed into a field as from the keyboard and left as it is: no Enter, the field keeps the keyboard.
+    bool ue_fl_type_only(const char* id, const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+        if (!e) return false;
+        e->Focus();
+        key(SDLK_END, SDL_KMOD_NONE);
+        const Rml::String old = e->GetValue();
+        const usize letters = static_cast<usize>(std::count_if(old.begin(), old.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+        for (usize i = 0; i < letters; ++i) key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+        SDL_Event t{};
+        t.type = SDL_EVENT_TEXT_INPUT;
+        t.text.text = text.c_str();
+        ed_.handle_event(t);
+        return e->GetValue() == text && e->IsPseudoClassSet("focus");
+    }
+    // The panel and the rest of the editor (13.10): the screen, the sound picked, the copy of the component, what
+    // «Проверить» had played and said.
+    std::string ue_fl_screen_, ue_fl_sound_;
+    // A frame restacked together with one of its own layers (Codex's review on PR #70, in PR #69's restacking).
+    int ue_rs_stage_ = 0;
+    u32 ue_rs_a_ = 0, ue_rs_b_ = 0, ue_rs_c_ = 0, ue_rs_d_ = 0, ue_rs_e_ = 0, ue_rs_f_ = 0, ue_rs_g_ = 0;
+    std::string ue_rs_screen_, ue_rs_json_, ue_rs_others_;
+    usize ue_rs_cursor_ = 0;
+    // A click on a layer's row in the list, Shift held or not; dx aside (two clicks on one spot are a double click).
+    // The point is checked to be on the row (the list scrolls under the components): ue_rs_show a frame before.
+    bool ue_rs_row(u32 id, bool shift, f32 dx) {
+        Rml::Element* row = ed_.find_element(("ue-layer-" + std::to_string(id)).c_str());
+        if (!row) return false;
+        f32 x = 0, y = 0;
+        if (!ue_mv_row(id, 0.5f, x, y)) return false;
+        Rml::Element* under = ed_.context() ? ed_.context()->GetElementAtPoint({x + dx, y}) : nullptr;
+        while (under && under != row) under = under->GetParentNode();
+        if (!under) return false;
+        SDL_SetModState(shift ? SDL_KMOD_LSHIFT : SDL_KMOD_NONE);
+        left_click(x + dx, y);
+        SDL_SetModState(SDL_KMOD_NONE);
+        return true;
+    }
+    void ue_rs_show(u32 id) {
+        if (Rml::Element* row = ed_.find_element(("ue-layer-" + std::to_string(id)).c_str())) row->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+    }
+    // A layer with all its own: ids, places and sizes.
+    std::string ue_rs_branch(u32 id) {
+        const editor::design::Node* n = ue_node(id);
+        if (!n) return "?";
+        std::string out = std::to_string(n->id) + ":" + std::to_string(n->x) + "," + std::to_string(n->y) + "," + std::to_string(n->w) +
+                          "," + std::to_string(n->h) + "[";
+        for (const editor::design::Node& c : n->children) out += ue_rs_branch(c.id) + " ";
+        return out + "]";
+    }
+    u32 ue_fl_inst_ = 0, ue_fl_clicks_ = 0;
+    usize ue_fl_log_ = 0;
+    // A layer of a screen as written on disk.
+    std::optional<editor::design::Node> ue_fl_on_disk(const std::string& screen, u32 id) {
+        editor::design::Screen s;
+        if (!editor::design::load_screen(ue_file(".json", screen), s)) return std::nullopt;
+        const editor::design::Node* n = editor::design::find(s.root, id);
+        return n ? std::optional<editor::design::Node>(*n) : std::nullopt;
+    }
+    // A click on the canvas at a layer's centre.
+    bool ue_fl_click(u32 id) {
+        const auto b = ue().layer_box(id);
+        if (!b) return false;
+        left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+        return true;
+    }
     // Moving layers between frames (13.6): the example screen, as it was, its history.
     int ue_mv_stage_ = 0;
     std::string ue_mv_json_, ue_mv_orig_;
@@ -7075,6 +7185,771 @@ private:
             default: break;
             }
             ue_cm_stage_ = 0;
+            break;
+        }
+        case 148: {
+            // The panel over the selected layer (13.10), with the mouse and keys through the editor's own way in: over
+            // one text, button or picture in «Полный», 10 px above it (under it with no room above, gone when it is out
+            // of sight); not for several layers, the screen, «Простой», «Проверить», a player's size or a carried
+            // layer. Each change is one step Ctrl+Z takes back, a field given what it shows makes none, and the
+            // panel's clicks, keys and hover stay its own.
+            namespace d = editor::design;
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_fl_stage_;
+                return true;
+            };
+            const d::Node& root = ue().screen().root;
+            auto steps = [&] { return ue().history().cursor(); };
+            auto only = [&](u32 id) { return ue().selection() == std::vector<u32>{id}; };
+            // The wheel over the canvas's far corner (away from the panel): the view moves by dy × 60 px.
+            auto wheel = [&](f32 dy) {
+                Rml::Element* canvas = ed_.find_element("ue-canvas");
+                const Rml::Vector2f size = canvas ? canvas->GetBox().GetSize(Rml::BoxArea::Border) : Rml::Vector2f(0, 0);
+                const f32 x = ue().canvas_left() + size.x - 30, y = ue().canvas_top() + size.y - 30;
+                mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+                SDL_Event w{};
+                w.type = SDL_EVENT_MOUSE_WHEEL;
+                w.wheel.y = dy;
+                w.wheel.mouse_x = x;
+                w.wheel.mouse_y = y;
+                ed_.handle_event(w);
+            };
+            std::string why;
+            f32 px = 0, py = 0, pw = 0, ph = 0;
+            switch (ue_fl_stage_++) {
+            case 0: {
+                ue().set_simple(false);
+                ue().set_view(0);
+                ue().new_screen();
+                ue_fl_text_ = ue().create("text");
+                ue_fl_btn_ = ue().create("button");
+                ue_fl_pic_ = ue().create("picture");
+                check(ue_fl_text_ && ue_fl_btn_ && ue_fl_pic_ && root.children.size() == 3, "a new screen with a text, a button and a picture");
+                // The text just over the button (the button's panel will lie over it), the picture away from both.
+                for (const auto& [id, x, y] : {std::tuple{ue_fl_btn_, "200", "500"}, std::tuple{ue_fl_text_, "200", "430"},
+                                               std::tuple{ue_fl_pic_, "1300", "500"}}) {
+                    ue().select({id});
+                    ue().set_property("x", x);
+                    ue().set_property("y", y);
+                }
+                // The text follows a text style of the game's: a field given what it shows keeps it so.
+                const std::vector<d::NamedTextStyle>& styles = ue().library().text_styles;
+                ue().select({ue_fl_text_});
+                check(!styles.empty() && ue().set_property("text_style", styles[0].key), "the text takes the game's text style");
+                ue().select({});
+                return true;
+            }
+            case 1: {
+                const auto t = ue().layer_box(ue_fl_text_), b = ue().layer_box(ue_fl_btn_);
+                check(t && b && t->y + t->h <= b->y && t->x == b->x, "the text lies just over the button");
+                check(ue().float_panel().empty() && !shown("ue-float"), "nothing selected: no panel");
+                ue_fl_json_ = d::save_screen(ue().screen());
+                ue_fl_cursor_ = steps();
+                check(ue_fl_click(ue_fl_text_), "a click on the text");
+                return true;
+            }
+            case 2: {
+                if (wait(shown("ue-f-family"), "the text's panel is laid out")) return true;
+                const d::Node* n = ue_node(ue_fl_text_);
+                check(only(ue_fl_text_) && ue().float_panel() == "text" && ue_fl_box(px, py, pw, ph) && std::fabs(pw - 320) < 0.5f &&
+                          std::fabs(ph - (2 * 7 + 2 * 32 + 6)) < 0.5f,
+                      "the text selected: its panel, 320 px wide, two rows");
+                check(shown("ue-f-size") && shown("ue-f-weight") && shown("ue-f-color") && shown("ue-f-align-justify") && !shown("ue-f-action") &&
+                          !shown("ue-f-picture") && !shown("ue-f-sound"),
+                      "font, size, weight, colour and alignment; nothing of a button's or a picture's");
+                {
+                    const bool placed = ue_fl_placed(ue_fl_text_, true, why);
+                    check(placed, "10 px above the text, centred on it: " + why);
+                }
+                const f32 size = n ? n->text_style.size : 0;
+                const std::string shown_size = size == std::floor(size) ? std::to_string(static_cast<int>(size)) : std::to_string(size);
+                check(n && !n->text_style.style.empty() && ue_field("ue-f-size") == shown_size,
+                      "the size field shows the text's size, its text style's: " + ue_field("ue-f-size") + " / " + shown_size);
+                check(steps() == ue_fl_cursor_, "selecting is no step");
+                check(ue_type("ue-f-size", shown_size) && steps() == ue_fl_cursor_ && n && !ue_node(ue_fl_text_)->text_style.style.empty(),
+                      "its size typed as it is: no step, the text still follows its style");
+                check(ue_open("ue-f-family"), "a click opens the fonts");
+                return true;
+            }
+            case 3: {
+                const std::optional<std::string> font = ue_fl_other("ue-f-family");
+                ue_fl_pick_ = font.value_or("?");
+                check(font && ue_option("ue-f-family", *font) && ue_option_hovered_, "a click on the font «" + ue_fl_pick_ + "», the pointer finds it");
+                const d::Node* n = ue_node(ue_fl_text_);
+                check(n && n->text_style.family == ue_fl_pick_ && steps() == ue_fl_cursor_ + 1 && ue().history().undo_label() == "Изменено: Шрифт",
+                      "the text's font, one step: " + ue().history().undo_label());
+                check(only(ue_fl_text_) && root.children.size() == 3, "the click is the panel's: the text still selected");
+                return true; // the fonts' list goes on the next frame
+            }
+            case 4:
+                check(ue_open("ue-f-weight"), "a click opens the weights");
+                return true;
+            case 5: {
+                const d::Node* n = ue_node(ue_fl_text_);
+                const std::string weight = n && n->text_style.weight == 700 ? "400" : "700";
+                check(ue_option("ue-f-weight", weight) && ue_option_hovered_, "a click on the weight " + weight);
+                n = ue_node(ue_fl_text_);
+                check(n && std::to_string(n->text_style.weight) == weight && steps() == ue_fl_cursor_ + 2 &&
+                          ue().history().undo_label() == "Изменено: Жирность",
+                      "the weight, one step: " + ue().history().undo_label());
+                // Typed: Backspace and the digits are the field's (the text stays), Enter keeps the size.
+                check(ue_type("ue-f-size", "48"), "48 typed into the size");
+                n = ue_node(ue_fl_text_);
+                check(n && n->text_style.size == 48 && steps() == ue_fl_cursor_ + 3 && ue().history().undo_label() == "Изменено: Размер текста" &&
+                          root.children.size() == 3 && only(ue_fl_text_),
+                      "the size 48, one step; the keys did nothing else: " + ue().history().undo_label());
+                return true;
+            }
+            case 6: {
+                check(ue_field("ue-f-size") == "48", "the field shows 48: " + ue_field("ue-f-size"));
+                check(ue_type("ue-f-size", "48") && steps() == ue_fl_cursor_ + 3, "48 typed again: no step");
+                check(ue_cm_press("ue-f-align-center"), "a click on «По центру»");
+                const d::Node* n = ue_node(ue_fl_text_);
+                check(n && n->text_style.align == d::TextAlign::Center && steps() == ue_fl_cursor_ + 4 &&
+                          ue().history().undo_label() == "Изменено: Выравнивание текста" && only(ue_fl_text_),
+                      "centred, one step, the text still selected: " + ue().history().undo_label());
+                return true;
+            }
+            case 7: {
+                Rml::Element* center = ed_.find_element("ue-f-align-center");
+                Rml::Element* left = ed_.find_element("ue-f-align-left");
+                check(center && left && center->IsClassSet("selected") && !left->IsClassSet("selected"), "«По центру» lit");
+                check(ue_cm_press("ue-f-color") && ue().picker_open() && ue().picker_field() == "text_color", "the colour opens the picker on the text's colour");
+                ue_cm_key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().picker_open() && steps() == ue_fl_cursor_ + 4 && only(ue_fl_text_), "Esc puts it away: no step");
+                for (int i = 0; i < 4; ++i) ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_fl_json_ && steps() == ue_fl_cursor_, "Ctrl+Z four times: the text as it was");
+                // Where it does not show.
+                ue().select({ue_fl_text_, ue_fl_btn_});
+                check(ue().float_panel().empty(), "two layers: no panel");
+                ue().select({root.id});
+                check(ue().float_panel().empty(), "the screen: no panel");
+                ue().select({ue_fl_text_});
+                check(ue().float_panel() == "text", "the text again: its panel");
+                ue().set_simple(true);
+                check(only(ue_fl_text_) && ue().float_panel().empty(), "«Простой»: no panel (its own panel has all of it)");
+                ue().set_simple(false);
+                check(ue().float_panel() == "text", "«Полный» again: the panel");
+                ue().set_view(1);
+                check(ue().float_panel().empty(), "a player's size: no panel");
+                ue().set_view(0);
+                check(ue().float_panel() == "text", "«Макет» again: the panel");
+                check(click("ue-check") && ue().checking() && ue().float_panel().empty(), "«Проверить»: no panel");
+                ue().set_checking(false);
+                ue().select({ue_fl_text_});
+                check(ue().float_panel() == "text", "back from «Проверить»: the panel");
+                return true;
+            }
+            case 8: {
+                if (wait(shown("ue-f-family"), "the text's panel is laid out")) return true;
+                // Carried: gone while it moves, back over it where it is let go.
+                const auto t = ue().layer_box(ue_fl_text_);
+                check(t.has_value(), "the text's box");
+                if (!t) break;
+                const f32 x = ue_wx(t->cx()), y = ue_wy(t->cy());
+                mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+                mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+                check(ue().float_panel() == "text", "pressed, not moved yet: the panel stays");
+                {
+                    // The view moved while it is held: still not carried, the panel stays.
+                    SDL_Event w{};
+                    w.type = SDL_EVENT_MOUSE_WHEEL;
+                    w.wheel.y = -0.5f;
+                    w.wheel.mouse_x = x;
+                    w.wheel.mouse_y = y;
+                    ed_.handle_event(w);
+                }
+                check(!ue().canvas_moving() && ue().float_panel() == "text", "the view moved while pressed: the panel stays");
+                mouse(SDL_EVENT_MOUSE_MOTION, x - 40, y - 40);
+                check(ue().canvas_moving() && ue().float_panel().empty(), "carried: no panel");
+                mouse(SDL_EVENT_MOUSE_BUTTON_UP, x - 40, y - 40);
+                check(!ue().canvas_moving() && ue().float_panel() == "text" && steps() == ue_fl_cursor_ + 1, "let go: one step, the panel back");
+                return true;
+            }
+            case 9: {
+                if (wait(shown("ue-f-family"), "the text's panel is laid out")) return true;
+                {
+                    const bool placed = ue_fl_placed(ue_fl_text_, true, why);
+                    check(placed, "over the text where it is now: " + why);
+                }
+                ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_fl_json_ && steps() == ue_fl_cursor_, "Ctrl+Z: the text back");
+                // No room above: the view moved until the text's top is 30 px under the canvas's top.
+                const auto t = ue().layer_box(ue_fl_text_);
+                check(t.has_value(), "the text's box");
+                if (t) wheel(-(ue().to_canvas_y(t->y) - 30) / 60);
+                return true;
+            }
+            case 10: {
+                if (wait(shown("ue-f-family"), "the text's panel is laid out")) return true;
+                const auto t = ue().layer_box(ue_fl_text_);
+                check(t && ue_fl_box(px, py, pw, ph) && ue().to_canvas_y(t->y) >= 0 && ue().to_canvas_y(t->y) < 10 + ph + 4,
+                      "the text's top near the canvas's top: " + std::to_string(t ? ue().to_canvas_y(t->y) : -1));
+                {
+                    const bool placed = ue_fl_placed(ue_fl_text_, false, why);
+                    check(placed, "no room above: under the text, past its size: " + why);
+                }
+                // Out of sight above the canvas: none.
+                if (t) wheel(-(ue().to_canvas_y(t->y + t->h) + 40) / 60);
+                check(only(ue_fl_text_) && ue().float_panel().empty(), "the text out of sight: no panel");
+                ue().zoom_to_fit();
+                check(ue().float_panel() == "text", "fitted again: the panel");
+                ue_fl_json_ = d::save_screen(ue().screen());
+                ue_fl_cursor_ = steps();
+                check(ue_fl_click(ue_fl_btn_), "a click on the button");
+                return true;
+            }
+            case 11: {
+                if (wait(shown("ue-f-action"), "the button's panel is laid out")) return true;
+                check(only(ue_fl_btn_) && ue().float_panel() == "button" && ue_fl_box(px, py, pw, ph) && std::fabs(pw - 300) < 0.5f &&
+                          std::fabs(ph - (2 * 7 + 32)) < 0.5f,
+                      "the button: its panel, 300 px wide, one row");
+                check(ue_field("ue-f-action") == "none" && !shown("ue-f-sound") && !shown("ue-f-target") && !shown("ue-f-message") &&
+                          !shown("ue-f-family") && !shown("ue-f-many"),
+                      "«Ничего» on a click; no sound, screen or message yet");
+                {
+                    const bool placed = ue_fl_placed(ue_fl_btn_, true, why);
+                    check(placed, "above the button: " + why);
+                }
+                const auto p = ue().layer_box(ue_fl_pic_);
+                if (p) mouse(SDL_EVENT_MOUSE_MOTION, ue_wx(p->cx()), ue_wy(p->cy()));
+                return true;
+            }
+            case 12: {
+                check(shown("ue-hover"), "the pointer over the picture: it is outlined");
+                // Over the panel, the text under it is not.
+                const auto t = ue().layer_box(ue_fl_text_);
+                check(t && ue_fl_box(px, py, pw, ph), "the text and the panel");
+                if (!t) break;
+                const f32 l = std::max(px, ue_wx(t->x)), r = std::min(px + pw, ue_wx(t->x + t->w));
+                const f32 top = std::max(py, ue_wy(t->y)), bottom = std::min(py + ph, ue_wy(t->y + t->h));
+                check(l + 4 < r && top + 4 < bottom, "the panel lies over the text");
+                mouse(SDL_EVENT_MOUSE_MOTION, (l + r) * 0.5f, (top + bottom) * 0.5f);
+                return true;
+            }
+            case 13: {
+                check(!shown("ue-hover"), "the pointer over the panel: the text under it is not outlined");
+                // The panel's own clicks: its edge, the right button on it.
+                check(ue_fl_box(px, py, pw, ph), "the panel");
+                left_click(px + 3, py + 3);
+                check(only(ue_fl_btn_) && steps() == ue_fl_cursor_ && root.children.size() == 3, "a click on the panel's edge: the button stays selected");
+                right_click(px + 3, py + 3);
+                check(ue().menu().empty() && only(ue_fl_btn_), "the right button on the panel: no menu");
+                check(ue_open("ue-f-action"), "a click opens the actions");
+                return true;
+            }
+            case 14: {
+                check(ue_option("ue-f-action", "show") && ue_option_hovered_, "a click on «Открыть экран»");
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(n && n->on_click.size() == 1 && n->on_click[0].kind == d::ActionKind::Show && !n->on_click[0].target.empty() &&
+                          n->on_click[0].target != ue().opened() && steps() == ue_fl_cursor_ + 1 && ue().history().undo_label() == "Изменено: При нажатии",
+                      "the button opens another screen, one step: " + ue().history().undo_label());
+                return true;
+            }
+            case 15: {
+                if (wait(shown("ue-f-target") && shown("ue-f-sound"), "the screen and the sound under the action")) return true;
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(ue_fl_box(px, py, pw, ph) && std::fabs(ph - (2 * 7 + 3 * 32 + 2 * 6)) < 0.5f && n && ue_field("ue-f-target") == n->on_click[0].target,
+                      "three rows: the action, its screen, the sound");
+                {
+                    const bool placed = ue_fl_placed(ue_fl_btn_, true, why);
+                    check(placed, "still 10 px above the button: " + why);
+                }
+                check(ue_open("ue-f-sound"), "a click opens the sounds");
+                return true;
+            }
+            case 16: {
+                check(ue_option("ue-f-sound", "none") && ue_option_hovered_, "a click on «Без звука»");
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(n && n->click_sound == "none" && steps() == ue_fl_cursor_ + 2 && ue().history().undo_label() == "Изменено: Звук нажатия",
+                      "no sound on its click, one step: " + ue().history().undo_label());
+                check(ue_open("ue-f-action"), "the actions again");
+                return true;
+            }
+            case 17: {
+                check(ue_option("ue-f-action", "message"), "a click on «Сообщение «Логике»»");
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(n && n->on_click.size() == 1 && n->on_click[0].kind == d::ActionKind::Message && n->on_click[0].target.empty() &&
+                          steps() == ue_fl_cursor_ + 3,
+                      "a message, one step");
+                return true;
+            }
+            case 18: {
+                if (wait(shown("ue-f-message") && !shown("ue-f-target"), "the message's field instead of the screen")) return true;
+                check(ue_field("ue-f-sound") == "none", "the sound still «Без звука»: " + ue_field("ue-f-sound"));
+                check(ue_type("ue-f-message", "открыть_дверь"), "the message typed");
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(n && n->on_click[0].target == "открыть_дверь" && steps() == ue_fl_cursor_ + 4 && root.children.size() == 3 && only(ue_fl_btn_),
+                      "the message kept, one step; the keys did nothing else");
+                for (int i = 0; i < 4; ++i) ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_fl_json_ && steps() == ue_fl_cursor_, "Ctrl+Z four times: the button as it was");
+                // Two actions: the panel names them and keeps the sound.
+                ue().select({ue_fl_btn_});
+                check(ue().set_property("click.add", "") && ue().set_property("click.add", ""), "two actions from «В игре»");
+                return true;
+            }
+            case 19: {
+                if (wait(shown("ue-f-many"), "the note on several actions")) return true;
+                const bool placed = ue_fl_placed(ue_fl_btn_, true, why);
+                check(!shown("ue-f-action") && shown("ue-f-sound") && placed, "no action list, the sound; above it: " + why);
+                ue_cm_key(SDLK_Z);
+                ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_fl_json_ && steps() == ue_fl_cursor_, "Ctrl+Z twice: no actions again");
+                check(ue_fl_click(ue_fl_pic_), "a click on the picture");
+                return true;
+            }
+            case 20: {
+                if (wait(shown("ue-f-picture"), "the picture's panel is laid out")) return true;
+                check(only(ue_fl_pic_) && ue().float_panel() == "picture" && ue_fl_box(px, py, pw, ph) && std::fabs(pw - 280) < 0.5f &&
+                          !shown("ue-f-action") && !shown("ue-f-family"),
+                      "the picture: its panel, 280 px wide, its file only");
+                {
+                    const bool placed = ue_fl_placed(ue_fl_pic_, true, why);
+                    check(placed, "above the picture: " + why);
+                }
+                check(ue_open("ue-f-picture"), "a click opens the game's pictures");
+                return true;
+            }
+            case 21: {
+                // «Нет»: the picture keeps its fill and names no file (case 149 picks another file).
+                ue_fl_pick_ = "";
+                check(ue_option("ue-f-picture", "") && ue_option_hovered_, "a click on «Нет»");
+                const d::Node* n = ue_node(ue_fl_pic_);
+                check(n && !n->fills.empty() && n->fills[0].image.empty() && steps() == ue_fl_cursor_ + 1 &&
+                          ue().history().undo_label() == "Изменено: Картинка",
+                      "the picture shows it, one step: " + ue().history().undo_label());
+                return true; // drawn on the next frame
+            }
+            case 22: {
+                // «Нет» too is drawn (as nothing: the page names no file, and no folder is read as a picture).
+                {
+                    const std::string html = ue_file(".html", ue().opened());
+                    check(html.find("url(\"../\")") == std::string::npos && html.find("url('../')") == std::string::npos,
+                          "no picture: the page names no folder as one");
+                }
+                ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_fl_json_ && steps() == ue_fl_cursor_, "Ctrl+Z: as it was");
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            }
+            default: break;
+            }
+            ue_fl_stage_ = 0;
+            break;
+        }
+        case 149: {
+            // The panel over the layer with the rest of the editor (13.10), the whole way: one selection and the same
+            // values as the panel on the right both ways, one history for both, a field left mid-typing kept by its
+            // own layer when another layer, screen or tab is clicked, a copy of a component keeping what the panel
+            // changed on it while its component changes, the screen read again from disk, and the button in
+            // «Проверить» doing what was picked, with its sound.
+            namespace d = editor::design;
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_fl_stage_;
+                return true;
+            };
+            const d::Node& root = ue().screen().root;
+            auto steps = [&] { return ue().history().cursor(); };
+            auto only = [&](u32 id) { return ue().selection() == std::vector<u32>{id}; };
+            auto label_of = [&](u32 id) -> const d::Node* {
+                const d::Node* n = ue_node(id);
+                return n ? d::block_label(*n) : nullptr;
+            };
+            switch (ue_fl_stage_++) {
+            case 0: {
+                ue().set_simple(false);
+                ue().set_view(0);
+                ue_fl_screen_ = ue().new_screen();
+                ue_fl_btn_ = ue().create("button");
+                ue_fl_text_ = ue().create("text");
+                ue_fl_pic_ = ue().create("picture");
+                check(ue_fl_btn_ && ue_fl_text_ && ue_fl_pic_ && root.children.size() == 3, "a new screen with a button, a text and a picture");
+                for (const auto& [id, x, y] : {std::tuple{ue_fl_btn_, "200", "500"}, std::tuple{ue_fl_text_, "200", "300"},
+                                               std::tuple{ue_fl_pic_, "1300", "500"}}) {
+                    ue().select({id});
+                    ue().set_property("x", x);
+                    ue().set_property("y", y);
+                }
+                ue().select({});
+                return true;
+            }
+            case 1:
+                ue_fl_json_ = d::save_screen(ue().screen());
+                ue_fl_cursor_ = steps();
+                check(ue_fl_click(ue_fl_btn_), "a click on the button");
+                return true;
+            case 2:
+                if (wait(shown("ue-f-action"), "the button's panel is laid out")) return true;
+                check(click("ue-tab-game") && ue().panel() == "game", "the right panel's «В игре»");
+                check(ue_open("ue-f-action"), "a click opens the panel's actions");
+                return true;
+            case 3: {
+                check(ue_option("ue-f-action", "settings") && ue_option_hovered_, "«Настройки» picked on the panel over the button");
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(n && n->on_click.size() == 1 && n->on_click[0].kind == d::ActionKind::Settings && steps() == ue_fl_cursor_ + 1,
+                      "the button opens the settings, one step");
+                return true;
+            }
+            case 4: {
+                if (wait(shown("ue-click-kind-0") && shown("ue-f-sound"), "both panels show the action")) return true;
+                check(ue_field("ue-click-kind-0") == "settings" && ue_field("ue-f-action") == "settings",
+                      "the right panel shows what the panel over the button picked: " + ue_field("ue-click-kind-0"));
+                check(ue_sd_open("ue-click-sound"), "a click opens the right panel's sounds");
+                return true;
+            }
+            case 5: {
+                // A sound of the game's on the right.
+                ue_fl_sound_.clear();
+                if (auto* sel = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element("ue-click-sound")))
+                    for (int i = 0; i < sel->GetNumOptions() && ue_fl_sound_.empty(); ++i) {
+                        const Rml::String v = sel->GetOption(i)->GetAttribute<Rml::String>("value", "");
+                        if (!v.empty() && v != "none" && v.rfind("add:", 0) != 0) ue_fl_sound_ = v;
+                    }
+                check(!ue_fl_sound_.empty() && ue_option("ue-click-sound", ue_fl_sound_) && ue_option_hovered_,
+                      "the game's sound «" + ue_fl_sound_ + "» picked on the right");
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(n && n->click_sound == ue_fl_sound_ && steps() == ue_fl_cursor_ + 2, "the button's sound, one step");
+                return true;
+            }
+            case 6: {
+                if (wait(ue_field("ue-f-sound") == ue_fl_sound_, "the panel over the button shows the sound")) return true;
+                check(only(ue_fl_btn_) && ue().float_panel() == "button", "one selection for both panels");
+                // One history: Ctrl+Z takes back the right panel's change, then the other panel's.
+                ue_cm_key(SDLK_Z);
+                const d::Node* n = ue_node(ue_fl_btn_);
+                check(n && n->click_sound.empty() && n->on_click.size() == 1 && steps() == ue_fl_cursor_ + 1, "Ctrl+Z: the sound as the screen's");
+                ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_fl_json_ && steps() == ue_fl_cursor_, "Ctrl+Z: no action, as it was");
+                ue_cm_key(SDLK_Y);
+                ue_cm_key(SDLK_Y);
+                n = ue_node(ue_fl_btn_);
+                check(n && n->on_click.size() == 1 && n->on_click[0].kind == d::ActionKind::Settings && n->click_sound == ue_fl_sound_ &&
+                          steps() == ue_fl_cursor_ + 2,
+                      "Ctrl+Y twice: both back");
+                return true;
+            }
+            case 7: {
+                if (wait(ue_field("ue-f-sound") == ue_fl_sound_ && ue_field("ue-click-sound") == ue_fl_sound_, "both panels show the sound again"))
+                    return true;
+                check(ue_field("ue-f-action") == "settings" && ue_field("ue-click-kind-0") == "settings", "and the action, on both");
+                check(ue_fl_click(ue_fl_pic_), "a click on the picture");
+                return true;
+            }
+            case 8:
+                if (wait(shown("ue-f-picture"), "the picture's panel is laid out")) return true;
+                check(click("ue-tab-design") && ue().panel() == "design", "the right panel's «Дизайн»");
+                ue_fl_cursor_ = steps();
+                check(ue_open("ue-f-picture"), "a click opens the panel's pictures");
+                return true;
+            case 9: {
+                // Another of the game's pictures (not «Нет»).
+                std::optional<std::string> other;
+                if (auto* sel = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element("ue-f-picture")))
+                    for (int i = 0; i < sel->GetNumOptions() && !other; ++i) {
+                        const Rml::String v = sel->GetOption(i)->GetAttribute<Rml::String>("value", "");
+                        if (!v.empty() && v != sel->GetValue()) other = v;
+                    }
+                ue_fl_pick_ = other.value_or("?");
+                check(other && ue_option("ue-f-picture", *other), "the picture «" + ue_fl_pick_ + "» picked on the panel over it");
+                const d::Node* n = ue_node(ue_fl_pic_);
+                check(n && n->fills[0].image == ue_fl_pick_ && steps() == ue_fl_cursor_ + 1, "one step");
+                return true;
+            }
+            case 10:
+                if (wait(shown("ue-fill-image-0"), "the right panel's fill")) return true;
+                check(ue_field("ue-fill-image-0") == ue_fl_pick_, "the right panel shows the same picture: " + ue_field("ue-fill-image-0"));
+                check(ue_fl_click(ue_fl_text_), "a click on the text");
+                return true;
+            case 11: {
+                if (wait(shown("ue-f-size"), "the text's panel is laid out")) return true;
+                // Left mid-typing, then another layer clicked: the size is the text's, not the button's.
+                const d::Node* label = label_of(ue_fl_btn_);
+                const f32 label_size = label ? label->text_style.size : 0;
+                ue_fl_cursor_ = steps();
+                check(ue_fl_type_only("ue-f-size", "56"), "56 typed into the size, no Enter");
+                check(ue_fl_click(ue_fl_btn_), "a click on the button while typing");
+                const d::Node* t = ue_node(ue_fl_text_);
+                label = label_of(ue_fl_btn_);
+                check(t && t->text_style.size == 56 && label && label->text_style.size == label_size && only(ue_fl_btn_) &&
+                          steps() == ue_fl_cursor_ + 1 && ue().history().undo_label() == "Изменено: Размер текста",
+                      "the text keeps its 56, the button's label its size; one step; the button selected");
+                check(ue_fl_click(ue_fl_text_), "the text again");
+                return true;
+            }
+            case 12: {
+                if (wait(shown("ue-f-size"), "the text's panel is laid out")) return true;
+                check(ue_field("ue-f-size") == "56" && ue_field("ue-font-size") == "56", "both panels show 56");
+                // Then another screen clicked in the list.
+                ue_fl_json_ = ue_file(".json", "main_menu");
+                check(ue_fl_type_only("ue-f-size", "60"), "60 typed, no Enter");
+                f32 x = 0, y = 0;
+                check(element_center("ue-screen-main_menu", x, y), "the menu's row in the list of screens");
+                left_click(x, y);
+                const std::optional<d::Node> t = ue_fl_on_disk(ue_fl_screen_, ue_fl_text_);
+                check(ue().opened() == "main_menu" && t && t->text_style.size == 60 && ue_file(".json", "main_menu") == ue_fl_json_,
+                      "the menu open; 60 written to the text of the screen left, the menu untouched");
+                check(ue().open(ue_fl_screen_), "back to the screen");
+                ue().select({ue_fl_text_});
+                return true;
+            }
+            case 13: {
+                if (wait(shown("ue-f-size"), "the text's panel is laid out")) return true;
+                // Then another tab clicked.
+                check(ue_field("ue-f-size") == "60" && ue_fl_type_only("ue-f-size", "64"), "60 shown; 64 typed, no Enter");
+                Rml::Element* bar = ed_.find_element("editor-tabs");
+                f32 x = 0, y = 0;
+                if (bar && bar->GetNumChildren() > 0) {
+                    Rml::Element* level = bar->GetChild(0);
+                    const Rml::Vector2f p = level->GetAbsoluteOffset(Rml::BoxArea::Border) + level->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+                    x = p.x;
+                    y = p.y;
+                }
+                check(x > 0, "the «Уровень» tab");
+                left_click(x, y);
+                const d::Node* t = ue_node(ue_fl_text_);
+                check(ed_.tab() != "ui" && t && t->text_style.size == 64 && ue().opened() == ue_fl_screen_, "another tab; 64 kept by the text");
+                check(click_tab(8) && ed_.tab() == "ui", "back to «Интерфейс»");
+                return true;
+            }
+            case 14: {
+                // Read again from disk: what both panels changed is there.
+                check(ue().open("main_menu") && ue().open(ue_fl_screen_), "the screen closed and opened again");
+                const d::Node* b = ue_node(ue_fl_btn_);
+                const d::Node* t = ue_node(ue_fl_text_);
+                const d::Node* p = ue_node(ue_fl_pic_);
+                check(b && b->on_click.size() == 1 && b->on_click[0].kind == d::ActionKind::Settings && b->click_sound == ue_fl_sound_ && t &&
+                          t->text_style.size == 64 && p && p->fills[0].image == ue_fl_pick_,
+                      "the action, the sound, the size and the picture as left");
+                check(ue_file(".html", ue_fl_screen_).find(ue_fl_sound_) != std::string::npos, "the game's page has the button's sound");
+                // A component made of the button: its copy takes the button's place.
+                ue().select({ue_fl_btn_});
+                check(ue().make_component(), "the button made a component");
+                ue_fl_inst_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+                const d::Node* inst = ue_node(ue_fl_inst_);
+                check(inst && !inst->component.empty(), "a copy of it selected");
+                return true;
+            }
+            case 15:
+                if (wait(shown("ue-f-action"), "the copy's panel is laid out")) return true;
+                check(ue().float_panel() == "button" && ue_field("ue-f-action") == "settings", "the copy: the button's panel, «Настройки»");
+                ue_fl_cursor_ = steps();
+                check(ue_open("ue-f-action"), "a click opens the actions");
+                return true;
+            case 16: {
+                check(ue_option("ue-f-action", "quit"), "«Выйти из игры» picked for this copy");
+                const d::Node* inst = ue_node(ue_fl_inst_);
+                check(inst && inst->on_click.size() == 1 && inst->on_click[0].kind == d::ActionKind::Quit &&
+                          std::find(inst->overrides.begin(), inst->overrides.end(), "game") != inst->overrides.end() && steps() == ue_fl_cursor_ + 1,
+                      "the copy's own action, kept as its own change; one step");
+                // The component changes: its label bigger, another action.
+                const std::string component = inst ? inst->component : std::string();
+                check(ue().open_library(), "the components");
+                u32 master = 0;
+                for (const d::Node& c : ue().screen().root.children)
+                    if (c.component == component) master = c.id;
+                const d::Node* m = ue_node(master);
+                const d::Node* ml = m ? d::block_label(*m) : nullptr;
+                const u32 master_label = ml ? ml->id : 0; // a change loads the screen anew: ids, not pointers
+                ue().select({master});
+                check(master && ue().set_property("click.0.kind", "pause"), "the component's action: pause");
+                ue().select({master_label});
+                check(master_label && ue().set_property("size", "40"), "the component's label: 40");
+                check(ue().open(ue_fl_screen_), "back to the screen");
+                inst = ue_node(ue_fl_inst_);
+                const d::Node* il = label_of(ue_fl_inst_);
+                check(inst && inst->on_click.size() == 1 && inst->on_click[0].kind == d::ActionKind::Quit && il && il->text_style.size == 40,
+                      "the copy keeps its own action and follows its component's label");
+                // The copy's label through the panel.
+                if (il) ue().select({il->id});
+                return true;
+            }
+            case 17: {
+                if (wait(shown("ue-f-size"), "the copy's label's panel is laid out")) return true;
+                check(ue_field("ue-f-size") == "40", "its size 40 on the panel");
+                ue_fl_cursor_ = steps();
+                check(ue_type("ue-f-size", "44"), "44 typed");
+                const d::Node* il = label_of(ue_fl_inst_);
+                check(il && il->text_style.size == 44 && std::find(il->overrides.begin(), il->overrides.end(), "text_style") != il->overrides.end() &&
+                          steps() == ue_fl_cursor_ + 1,
+                      "the copy's label 44, its own change; one step");
+                return true;
+            }
+            case 18: {
+                if (wait(ue_field("ue-font-size") == "44", "the right panel shows 44")) return true;
+                // The component's label changes again: this copy keeps 44.
+                const d::Node* inst = ue_node(ue_fl_inst_);
+                const std::string component = inst ? inst->component : std::string();
+                check(ue().open_library(), "the components");
+                u32 master_label = 0;
+                for (const d::Node& c : ue().screen().root.children)
+                    if (const d::Node* ml = c.component == component ? d::block_label(c) : nullptr) master_label = ml->id;
+                ue().select({master_label});
+                check(master_label && ue().set_property("size", "50"), "the component's label: 50");
+                check(ue().open(ue_fl_screen_), "back to the screen");
+                const d::Node* il = label_of(ue_fl_inst_);
+                inst = ue_node(ue_fl_inst_);
+                check(il && il->text_style.size == 44 && inst && inst->on_click[0].kind == d::ActionKind::Quit, "the copy keeps 44 and its action");
+                const std::optional<d::Node> disk = ue_fl_on_disk(ue_fl_screen_, ue_fl_inst_);
+                check(disk && disk->on_click.size() == 1 && disk->on_click[0].kind == d::ActionKind::Quit, "and so on disk");
+                // «Проверить»: the copy pressed as the game would.
+                check(click("ue-check") && ue().checking(), "«Проверить»");
+                return true;
+            }
+            case 19: {
+                if (wait(ue().page() != nullptr, "the live page")) return true;
+                ue_fl_log_ = ue().check_log().size();
+                ue_fl_clicks_ = ue().check_sound().clicks();
+                const auto box = ue().layer_box(ue_fl_inst_);
+                check(box.has_value(), "the copy on the canvas");
+                if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
+                return true;
+            }
+            case 20: {
+                const std::vector<std::string>& log = ue().check_log();
+                check(log.size() == ue_fl_log_ + 1 && log.back() == "Кнопка: Выйти из игры", "the copy pressed does its own action: " + ue_log_since(ue_fl_log_));
+                check(ue().check_sound().clicks() == ue_fl_clicks_ + 1, "with its sound once");
+                ue().set_checking(false);
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            }
+            default: break;
+            }
+            ue_fl_stage_ = 0;
+            break;
+        }
+        case 150: {
+            // A frame and one of its own layers restacked together (PR #69; Codex's review on PR #70): each moves among
+            // its own neighbours whichever was selected first, by keys and by the layer's menu; one step each, undone
+            // and redone whole (order, ids, selection); the other branches untouched; the order kept on disk.
+            // The screen: A (C, D, E), B (G), F; A and B are frames.
+            namespace d = editor::design;
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_rs_stage_;
+                return true;
+            };
+            const d::Node& root = ue().screen().root;
+            auto steps = [&] { return ue().history().cursor(); };
+            auto ids = [](std::initializer_list<u32> list) {
+                std::string out;
+                for (u32 id : list) out += (out.empty() ? "" : " ") + std::to_string(id);
+                return out;
+            };
+            const u32 a = ue_rs_a_, b = ue_rs_b_, c = ue_rs_c_, dd = ue_rs_d_, e = ue_rs_e_, f = ue_rs_f_;
+            auto order = [&](std::initializer_list<u32> top, std::initializer_list<u32> in_a) {
+                return ue_mv_kids(root.id) == ids(top) && ue_mv_kids(a) == ids(in_a);
+            };
+            auto others = [&] { return ue_rs_branch(b) + ue_rs_branch(f); };
+            auto picked = [&] {
+                std::string out;
+                for (u32 id : ue().selection()) out += (out.empty() ? "" : " ") + std::to_string(id);
+                return "selected " + out + "; layers " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a) + "; last step " + ue().history().undo_label();
+            };
+            const auto top_both = static_cast<SDL_Keymod>(SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT);
+            switch (ue_rs_stage_++) {
+            case 0: {
+                ue().set_simple(false);
+                ue().set_view(0);
+                ue_rs_screen_ = ue().new_screen();
+                ue_rs_c_ = ue().create("rectangle");
+                ue_rs_d_ = ue().create("rectangle");
+                ue_rs_e_ = ue().create("rectangle");
+                ue().select({ue_rs_c_, ue_rs_d_, ue_rs_e_});
+                ue_cm_key(SDLK_G);
+                ue_rs_a_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+                ue_rs_g_ = ue().create("rectangle");
+                ue().select({ue_rs_g_});
+                ue_cm_key(SDLK_G);
+                ue_rs_b_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+                ue_rs_f_ = ue().create("ellipse");
+                const d::Node* fa = ue_node(ue_rs_a_);
+                const d::Node* fb = ue_node(ue_rs_b_);
+                check(fa && fb && fa->type == d::NodeType::Frame && fb->type == d::NodeType::Frame &&
+                          ue_mv_kids(root.id) == ids({ue_rs_a_, ue_rs_b_, ue_rs_f_}) && ue_mv_kids(ue_rs_a_) == ids({ue_rs_c_, ue_rs_d_, ue_rs_e_}) &&
+                          ue_mv_kids(ue_rs_b_) == ids({ue_rs_g_}),
+                      "a new screen: frame A with C, D, E, frame B with G, then F");
+                ue().select({});
+                return true;
+            }
+            case 1:
+                ue_rs_show(a);
+                return true;
+            case 2: {
+                ue_rs_json_ = d::save_screen(ue().screen());
+                ue_rs_others_ = others();
+                ue_rs_cursor_ = steps();
+                const bool clicked = ue_rs_row(a, false, -20);
+                check(clicked && ue().selection() == std::vector<u32>{a}, "a click on A's row in the list: " + picked());
+                ue_rs_show(c);
+                return true;
+            }
+            case 3: {
+                {
+                    const bool clicked = ue_rs_row(c, true, 20);
+                    check(clicked && ue().selection() == std::vector<u32>{a, c}, "Shift and a click on C's row, inside A: A, then C, selected: " + picked());
+                }
+                ue_cm_key(SDLK_RIGHTBRACKET);
+                check(order({b, a, f}, {dd, c, e}) && steps() == ue_rs_cursor_ + 1 && ue().history().undo_label() == "Выше" &&
+                          ue().selection() == std::vector<u32>{a, c},
+                      "Ctrl+]: A one higher among the screen's layers and C among A's, one step: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                check(others() == ue_rs_others_, "B with G and F untouched");
+                const std::string up = d::save_screen(ue().screen());
+                ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_rs_json_ && steps() == ue_rs_cursor_ && ue().selection() == std::vector<u32>{a, c},
+                      "Ctrl+Z: the order, ids and selection as before");
+                ue_cm_key(SDLK_Y);
+                check(d::save_screen(ue().screen()) == up && steps() == ue_rs_cursor_ + 1 && ue().selection() == std::vector<u32>{a, c},
+                      "Ctrl+Y: as moved, both still selected");
+                ue_cm_key(SDLK_RIGHTBRACKET, top_both);
+                check(order({b, f, a}, {dd, e, c}) && ue().history().undo_label() == "На самый верх",
+                      "Ctrl+Shift+]: both on top of their own neighbours: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                ue_cm_key(SDLK_LEFTBRACKET);
+                check(order({b, a, f}, {dd, c, e}) && ue().history().undo_label() == "Ниже",
+                      "Ctrl+[: both one lower: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                ue_cm_key(SDLK_LEFTBRACKET, top_both);
+                check(order({a, b, f}, {c, dd, e}) && ue().history().undo_label() == "В самый низ" && steps() == ue_rs_cursor_ + 4,
+                      "Ctrl+Shift+[: both the lowest, four steps in all: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                check(others() == ue_rs_others_, "B with G and F still untouched");
+                for (int i = 0; i < 4; ++i) ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_rs_json_ && steps() == ue_rs_cursor_ && ue().selection() == std::vector<u32>{a, c},
+                      "four Ctrl+Z: as it was, both selected");
+                ue().select({});
+                ue_rs_show(c);
+                return true;
+            }
+            case 4: {
+                // The other way round: the layer first, then its frame.
+                const bool clicked = ue_rs_row(c, false, -20);
+                check(clicked && ue().selection() == std::vector<u32>{c}, "a click on C's row: " + picked());
+                ue_rs_show(a);
+                return true;
+            }
+            case 5: {
+                const bool clicked = ue_rs_row(a, true, 20);
+                check(clicked && ue().selection() == std::vector<u32>{c, a}, "Shift and a click on A's row: C, then A, selected: " + picked());
+                check(ue_cm_right_row(a), "the right button on A's row");
+                return true;
+            }
+            case 6:
+                if (wait(shown("ue-ctx-up"), "the layer's menu is laid out")) return true;
+                check(ue().selection() == std::vector<u32>{c, a}, "the menu keeps both selected");
+                check(ue_cm_press("ue-ctx-up"), "«Выше»");
+                return true;
+            case 7: {
+                check(order({b, a, f}, {dd, c, e}) && steps() == ue_rs_cursor_ + 1 && ue().history().undo_label() == "Выше" && ue().menu().empty(),
+                      "«Выше» from the menu: the same order, whichever was selected first: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                check(others() == ue_rs_others_, "B with G and F untouched");
+                const std::string up = d::save_screen(ue().screen());
+                check(ue().open("main_menu") && ue().open(ue_rs_screen_), "the screen closed and opened again");
+                check(order({b, a, f}, {dd, c, e}) && d::save_screen(ue().screen()) == up, "from disk: the order as left");
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            }
+            default: break;
+            }
+            ue_rs_stage_ = 0;
             break;
         }
         default:
