@@ -598,6 +598,8 @@ public:
         ui_.update();
         // The colour picker stands beside its swatch once its size is known.
         if (m_tab_ == "ui" && ui_tab.place_picker(context_)) context_->Update();
+        // A key whose time was typed moved among its keys: the keyboard stays with that key's row.
+        if (m_tab_ == "ui" && ui_tab.follow_moved_key(context_)) context_->Update();
         level.set_ui_updating(false);
         assets.set_ui_updating(false);
         objects_tab.set_ui_updating(false);
@@ -3208,7 +3210,7 @@ private:
     std::string ue_tl_json_, ue_tl_moved_;
     usize ue_tl_cursor_ = 0;
     f64 ue_tl_t_ = 0;
-    bool ue_tl_typed_ = false;
+    int ue_tl_stage_ = 0;
     // A window x on the timeline's track at a time (seconds), and a key's mark.
     // The timeline scrolled into the panel's view, as the author would see it before using it.
     void ue_tl_into_view() {
@@ -3366,6 +3368,29 @@ private:
         const bool typed = e->GetValue() == text;
         key(SDLK_RETURN, SDL_KMOD_NONE);
         e->Blur();
+        return typed;
+    }
+    // Typed with Enter, the field kept (no blur after it).
+    bool ue_type_enter(const char* id, const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+        if (!e) return false;
+        e->Focus();
+        return ue_type_here(text);
+    }
+    // Typed into the field that has the keyboard, as it is: its text replaced, Enter.
+    bool ue_type_here(const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.context()->GetFocusElement());
+        if (!e) return false;
+        key(SDLK_END, SDL_KMOD_NONE);
+        const Rml::String old = e->GetValue();
+        const usize letters = static_cast<usize>(std::count_if(old.begin(), old.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+        for (usize i = 0; i < letters; ++i) key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+        SDL_Event t{};
+        t.type = SDL_EVENT_TEXT_INPUT;
+        t.text.text = text.c_str();
+        ed_.handle_event(t);
+        const bool typed = e->GetValue() == text;
+        key(SDLK_RETURN, SDL_KMOD_NONE);
         return typed;
     }
     // A drop-down used with the mouse: a click opens it, and on a later frame (once its list is laid out) a click on the option.
@@ -5305,7 +5330,10 @@ private:
             break;
         }
         case 129: {
-            if (!ue_tl_typed_) {
+            // Each stage on its own frame: the panel is laid out (and rebuilt after a key moves) in between.
+            const std::string focused = ed_.context()->GetFocusElement() ? ed_.context()->GetFocusElement()->GetId() : std::string();
+            switch (ue_tl_stage_++) {
+            case 0: {
                 // The third key past the left end: at 0 %, after the key there.
                 check(ue_tl_carry(2, ue_tl_x(0) - 200), "the green key carried past the left end");
                 const d::Motion& m = ue_node(ue_tl_rect_)->motion;
@@ -5315,16 +5343,81 @@ private:
                 check(d::save_screen(ue().screen()) == ue_tl_json_ && ue().history().cursor() == ue_tl_cursor_, "Ctrl+Z: back");
                 left_click(ue_tl_x(1), ue_tl_y());
                 check(ue().timeline_key() == 0, "the first key picked on the timeline");
-                ue_tl_typed_ = true;
-                return true; // its row's fields laid out on the next frame
+                return true;
             }
-            // The time typed in the picked key's field, past the green key: the pick follows it.
-            // Enter moves it, and the blur after it (the field still named for the old place) leaves the neighbour be.
-            const bool typed = ue_type("ue-key-at-0", "60");
-            check(typed && ue_list(ue_tl_ats()) == "50 60 75 100" && ue().timeline_key() == 1 && ue().history().cursor() == ue_tl_cursor_ + 1,
-                  "60 typed: second now, still picked, one step: " + ue_list(ue_tl_ats()) + ", picked " + std::to_string(ue().timeline_key()));
-            key(SDLK_Z, SDL_KMOD_CTRL);
-            check(d::save_screen(ue().screen()) == ue_tl_json_ && ue().history().cursor() == ue_tl_cursor_, "Ctrl+Z: back again");
+            case 1: {
+                // The time typed in the picked key's field, past the red key: the pick follows it.
+                // Enter moves it, and the blur at once after it (the field still named for the old place) leaves the neighbour be.
+                const bool typed = ue_type("ue-key-at-0", "60");
+                check(typed && ue_list(ue_tl_ats()) == "50 60 75 100" && ue().timeline_key() == 1 && ue().history().cursor() == ue_tl_cursor_ + 1,
+                      "60 typed: second now, still picked, one step: " + ue_list(ue_tl_ats()) + ", picked " + std::to_string(ue().timeline_key()));
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(d::save_screen(ue().screen()) == ue_tl_json_ && ue().history().cursor() == ue_tl_cursor_, "Ctrl+Z: back again");
+                left_click(ue_tl_x(1), ue_tl_y());
+                return true;
+            }
+            case 2: {
+                // Typed again and Enter, the field kept: the keyboard stays with the key once the panel is laid out.
+                check(ue().timeline_key() == 0, "the first key picked again");
+                const bool typed = ue_type_enter("ue-key-at-0", "60");
+                check(typed && ue_list(ue_tl_ats()) == "50 60 75 100" && ue().timeline_key() == 1 && ue().history().cursor() == ue_tl_cursor_ + 1,
+                      "60 and Enter, the field kept: " + ue_list(ue_tl_ats()));
+                return true;
+            }
+            case 3: {
+                auto* at = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element("ue-key-at-1"));
+                check(focused == "ue-key-at-1" && at && at->GetValue() == "60%",
+                      "a frame on: the keyboard in the moved key's field (60%), not its neighbour's: " + focused);
+                // More typed without picking another field: the same key, not the red one (x 200) now in its old row.
+                const bool typed = ue_type_here("70");
+                check(typed && ue_list(ue_tl_ats()) == "50 70 75 100" && ue_list(ue_tl_xs()) == "200 0 150 0" &&
+                          ue().timeline_key() == 1 && ue().history().cursor() == ue_tl_cursor_ + 2,
+                      "70 typed on: the same key: " + ue_list(ue_tl_ats()) + " / x " + ue_list(ue_tl_xs()));
+                return true;
+            }
+            case 4: {
+                // Tab: on to that key's X; and leaving the field changes nothing.
+                key(SDLK_TAB, SDL_KMOD_NONE);
+                const std::string next = ed_.context()->GetFocusElement() ? ed_.context()->GetFocusElement()->GetId() : std::string();
+                check(next == "ue-key-x-1", "Tab: the moved key's X: " + next);
+                const bool typed = ue_type_here("300");
+                check(typed && ue_list(ue_tl_xs()) == "200 300 150 0" && ue().history().cursor() == ue_tl_cursor_ + 3,
+                      "its X typed: " + ue_list(ue_tl_xs()));
+                const std::string before = d::save_screen(ue().screen());
+                if (Rml::Element* f = ed_.context()->GetFocusElement()) f->Blur();
+                check(d::save_screen(ue().screen()) == before && ue().history().cursor() == ue_tl_cursor_ + 3, "leaving the field: nothing more");
+                for (int i = 0; i < 3; ++i) key(SDLK_Z, SDL_KMOD_CTRL);
+                check(d::save_screen(ue().screen()) == ue_tl_json_ && ue().history().cursor() == ue_tl_cursor_, "Ctrl+Z three times: as before");
+                left_click(ue_tl_x(2.5), ue_tl_y()); // the 75 % key (green)
+                return true;
+            }
+            case 5: {
+                // Backwards past a neighbour: 75 % typed to 25 %, the field kept.
+                check(ue().timeline_key() == 2, "the green key picked");
+                const bool typed = ue_type_enter("ue-key-at-2", "25");
+                check(typed && ue_list(ue_tl_ats()) == "0 25 50 100" && ue_list(ue_tl_xs()) == "0 150 200 0" && ue().timeline_key() == 1,
+                      "25 and Enter: second now: " + ue_list(ue_tl_ats()) + " / x " + ue_list(ue_tl_xs()));
+                return true;
+            }
+            case 6: {
+                check(focused == "ue-key-at-1", "a frame on: the keyboard with it: " + focused);
+                const bool typed = ue_type_here("10");
+                check(typed && ue_list(ue_tl_ats()) == "0 10 50 100" && ue_list(ue_tl_xs()) == "0 150 200 0" &&
+                          ue_node(ue_tl_rect_)->motion.keys[1].color == d::Color{0, 255, 0, 255} && ue().history().cursor() == ue_tl_cursor_ + 2,
+                      "10 typed on: the same green key: " + ue_list(ue_tl_ats()) + " / x " + ue_list(ue_tl_xs()));
+                if (Rml::Element* f = ed_.context()->GetFocusElement()) f->Blur();
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(d::save_screen(ue().screen()) == ue_tl_json_ && ue().history().cursor() == ue_tl_cursor_, "Ctrl+Z twice: as before");
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                check(ue_list(ue_tl_ats()) == "0 25 50 100" && ue_list(ue_tl_xs()) == "0 150 200 0", "Ctrl+Y: at 25 % again, the same key");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(d::save_screen(ue().screen()) == ue_tl_json_, "Ctrl+Z: back");
+                break;
+            }
+            default: break;
+            }
+            ue_tl_stage_ = 0;
             // The preview: a click on the track before the delay is over.
             ue().select({ue_tl_rect_});
             left_click(ue_tl_x(0.5), ue_tl_y());

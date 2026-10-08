@@ -183,6 +183,9 @@ public:
     // After the UI's layout: the open picker beside its swatch, inside the
     // window. True when it moved (the UI is laid out again to show it there).
     bool place_picker(Rml::Context* context);
+    // After the UI's layout: a field of a key row that moved (its time typed) keeps the keyboard on
+    // that key's row, not on the neighbour's that took its place. True when the focus moved.
+    bool follow_moved_key(Rml::Context* context);
 
     enum class Tool : u8 { Select, Frame, Rectangle, Ellipse, Text };
     void set_tool(Tool tool);
@@ -592,6 +595,8 @@ private:
         usize from = 0, to = 0;
     } key_remap_;
     std::string remap_key_field(const std::string& field) const;
+    // The focused key field to move to once the panel is laid out: {its id now, its id then}.
+    std::string focus_from_, focus_to_;
     struct KeyDrag {
         bool on = false, moved = false;
         int from = -1, index = -1; // where the key was, where it is now

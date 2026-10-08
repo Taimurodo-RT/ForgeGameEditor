@@ -2114,7 +2114,21 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             f32 at = k.at;
             if (!percent(at)) return false;
             moved_key_ = d::move_motion_key(m, i, at);
-            if (!previewing_ && moved_key_ != i) key_remap_ = KeyRemap{true, i, moved_key_};
+            if (!previewing_ && moved_key_ != i) {
+                key_remap_ = KeyRemap{true, i, moved_key_};
+                // The keyboard in a field of a row that moves follows its key (the next frame, once laid out).
+                Rml::Element* focus = context_ ? context_->GetFocusElement() : nullptr;
+                const std::string id = focus ? focus->GetId() : std::string();
+                const usize dash = id.rfind('-');
+                if (id.rfind("ue-key-", 0) == 0 && dash != std::string::npos) {
+                    const std::string field = remap_key_field("motion.key." + id.substr(dash + 1) + ".");
+                    const std::string to = id.substr(0, dash + 1) + field.substr(11, field.size() - 12);
+                    if (to != id) {
+                        focus_from_ = id;
+                        focus_to_ = to;
+                    }
+                }
+            }
             if (!selection_.empty() && n.id == selection_[0] && selected_key_ == static_cast<int>(i))
                 selected_key_ = static_cast<int>(moved_key_);
             return true;
@@ -4937,6 +4951,21 @@ void UiEditor::refresh_picker() {
 
 // Beside the swatch it opened from, inside the window: left of the panel, or right of the swatch when there is
 // no room; never past an edge (a small window scrolls the picker itself).
+bool UiEditor::follow_moved_key(Rml::Context* context) {
+    if (focus_to_.empty() || !context) return false;
+    const std::string from = std::move(focus_from_), to = std::move(focus_to_);
+    focus_from_.clear();
+    focus_to_.clear();
+    Rml::Element* focus = context->GetFocusElement();
+    if (!focus || focus->GetId() != from) return false; // left the field meanwhile: nothing to follow
+    auto* field = rmlui_dynamic_cast<Rml::ElementFormControlInput*>(element_in(context, to.c_str()));
+    if (!field) return false;
+    field->Focus();
+    const int end = static_cast<int>(Rml::StringUtilities::LengthUTF8(field->GetValue()));
+    field->SetSelectionRange(end, end);
+    return true;
+}
+
 bool UiEditor::place_picker(Rml::Context* context) {
     Rml::Element* p = element_in(context, "ue-picker");
     if (!picker_.open || !p || !context || p->GetComputedValues().display() == Rml::Style::Display::None) return false;
