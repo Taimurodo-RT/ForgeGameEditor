@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,19 @@ public:
     // Waits for the GPU: for a click (the colour picker's eyedropper), not
     // for every frame.
     bool read_pixel(Rml::Context* context, u32 x, u32 y, u8 rgba[4]);
+    // A context's own clock (seconds), for showing a moment of its movements
+    // (the editor's timeline): while it is set the context's animations see
+    // this time, not the wall clock's. Moving it forward plays the way between
+    // in steps, as RmlUi plays them (it moves at most 0.1 s at a time); moving
+    // it back does not undo what played: load the document again first. nullopt
+    // gives the context the wall clock again (load its documents again then).
+    void set_clock(Rml::Context* context, std::optional<double> seconds);
+    // Runs code that loads or shows documents of a context at its clock (RmlUi
+    // starts a document's movements as it loads it): without the context's
+    // clock set, just runs it.
+    void at_clock(Rml::Context* context, const std::function<void()>& run);
+    // Updates a context now (layout, its movements at its clock) outside update().
+    void update_context(Rml::Context* context);
     // A context that is not active is neither updated nor drawn.
     void set_active(Rml::Context* context, bool active);
     // Removes a context made by create_context with its documents.

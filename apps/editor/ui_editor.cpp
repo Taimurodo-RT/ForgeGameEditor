@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -385,6 +386,7 @@ bool UiEditor::write(const std::string& name, const d::Screen& screen) const {
 
 bool UiEditor::open(const std::string& name) {
     close_picker(true);
+    end_preview();
     std::vector<u8> bytes;
     if (!read_file(json_path(name), bytes)) return false;
     d::Screen s;
@@ -457,7 +459,10 @@ void UiEditor::apply(const std::string& name, const std::string& json, const std
         // The page and its file at once: the game reads the page.
         write(name, s);
     }
-    if (name != name_) fit_pending_ = true;
+    if (name != name_) {
+        fit_pending_ = true;
+        end_preview();
+    }
     name_ = name;
     screen_ = std::move(s);
     selection_.clear();
@@ -499,12 +504,14 @@ void UiEditor::commit(const std::string& before, std::string label, std::string 
 
 void UiEditor::undo() {
     close_picker(true);
+    selected_key_ = -1; // the keys may stand elsewhere now: none picked rather than another
     history_.seal();
     history_.undo();
 }
 
 void UiEditor::redo() {
     close_picker(true);
+    selected_key_ = -1;
     history_.seal();
     history_.redo();
 }
@@ -566,6 +573,8 @@ void UiEditor::propagate_library() {
 void UiEditor::rebuild_page() {
     page_dirty_ = false;
     if (!page_context_) return;
+    // The timeline's preview plays the page on its own clock, from 0 (the wall clock otherwise).
+    if (ui_) ui_->set_clock(page_context_, preview_.on && !checking_ ? std::optional<double>(0.0) : std::nullopt);
     update_aspect();
     // The page is laid out on the player's screen (the screen's own size in «Макет»).
     const Rml::Vector2i size{static_cast<int>(std::lround(view_w())), static_cast<int>(std::lround(view_h()))};
@@ -599,24 +608,40 @@ void UiEditor::rebuild_page() {
             return;
         }
     }
-    // On the canvas things stand where they are placed: movements play in «Проверить» and the game.
+    // On the canvas things stand where they are placed: movements play in «Проверить» and the game, and on
+    // the timeline's preview, where the page plays them on its own clock up to the moment shown.
     d::HtmlOptions still = html_options();
-    still.motion = false;
+    still.motion = preview_.on;
     const std::string rml = ui::html_to_rml(d::screen_html(screen_, still), "/web/html.rcss");
     // The page's own address: pictures are found next to it (../pictures/...).
     std::string url = path_to_utf8(html_path(name_.empty() ? std::string("screen") : name_));
     std::replace(url.begin(), url.end(), '\\', '/');
     std::replace(url.begin(), url.end(), ':', '|');
-    page_ = page_context_->LoadDocumentFromMemory(rml, url);
+    // Loaded and shown at the page's clock: RmlUi starts the movements there (the preview's 0).
+    auto load = [&]() {
+        page_ = page_context_->LoadDocumentFromMemory(rml, url);
+        if (page_) page_->Show();
+    };
+    if (ui_) ui_->at_clock(page_context_, load);
+    else load();
     if (!page_) {
         FORGE_ERROR("Экран %s не построился", name_.c_str());
         return;
     }
-    page_->Show();
     // Meets the player's screen as in the game: the root's own forge-fit and forge-size.
     if (Rml::Element* root = page_->GetElementById("n" + std::to_string(screen_.root.id)))
         game::apply_screen_fit(root, view_fit(), root->GetAttribute<Rml::String>("forge-bars", ""));
-    page_context_->Update(); // lay it out now: the canvas reads its boxes
+    // Lay it out now: the canvas reads its boxes (in the preview, played up to its moment).
+    if (ui_) {
+        ui_->update_context(page_context_);
+        if (preview_.on) {
+            ui_->set_clock(page_context_, preview_.t);
+            ui_->update_context(page_context_);
+            preview_.built = preview_.t;
+        }
+    } else {
+        page_context_->Update();
+    }
     read_boxes();
 }
 
@@ -1300,6 +1325,7 @@ void UiEditor::refresh_props() {
                     row.blur = fmt(k.blur);
                     row.brightness = fmt(std::round(k.brightness * 100)) + "%";
                     row.tint = k.tint;
+                    row.selected = static_cast<int>(i) == selected_key_;
                     row.hex = hex_of(k.color);
                     row.swatch = swatch(k.color);
                     m_keys_.push_back(std::move(row));
@@ -1415,6 +1441,7 @@ void UiEditor::refresh_props() {
     dirty("ue_fills");
     dirty("ue_effects");
     refresh_simple(n);
+    refresh_timeline();
 }
 
 // --- «Простой» -----------------------------------------------------------------
@@ -2062,6 +2089,11 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             k.at = keys.size() >= 2 ? (keys[keys.size() - 2].at + keys.back().at) * 0.5f : 0.5f;
             m.keys.push_back(k);
             std::stable_sort(m.keys.begin(), m.keys.end(), [](const d::MotionKey& a, const d::MotionKey& b) { return a.at < b.at; });
+            // The new key is picked (the last of those at its time).
+            if (!selection_.empty() && n.id == selection_[0])
+                selected_key_ = static_cast<int>(std::upper_bound(m.keys.begin(), m.keys.end(), k.at,
+                                                              [](f32 t, const d::MotionKey& a) { return t < a.at; }) -
+                                             m.keys.begin()) - 1;
             return true;
         }
         usize i = 0;
@@ -2070,11 +2102,21 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         d::MotionKey& k = m.keys[i];
         if (rest == "remove") {
             m.keys.erase(m.keys.begin() + static_cast<std::ptrdiff_t>(i));
+            if (!selection_.empty() && n.id == selection_[0]) {
+                if (selected_key_ == static_cast<int>(i)) selected_key_ = -1;
+                else if (selected_key_ > static_cast<int>(i)) --selected_key_;
+            }
             return true;
         }
         if (rest == "at") {
-            if (!percent(k.at)) return false;
-            std::stable_sort(m.keys.begin(), m.keys.end(), [](const d::MotionKey& a, const d::MotionKey& b) { return a.at < b.at; });
+            // Typed or carried on the timeline: the key keeps its place among keys of the same time
+            // (d::move_motion_key), and a picked key stays picked where it went.
+            f32 at = k.at;
+            if (!percent(at)) return false;
+            moved_key_ = d::move_motion_key(m, i, at);
+            if (!previewing_ && moved_key_ != i) key_remap_ = KeyRemap{true, i, moved_key_};
+            if (!selection_.empty() && n.id == selection_[0] && selected_key_ == static_cast<int>(i))
+                selected_key_ = static_cast<int>(moved_key_);
             return true;
         }
         if (rest == "x") return set_num(k.x);
@@ -2556,6 +2598,11 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
 
 void UiEditor::select(const std::vector<u32>& ids) {
     close_picker(true);
+    if (ids != selection_) {
+        // Another layer: its own keys, and the canvas back to editing.
+        selected_key_ = -1;
+        end_preview();
+    }
     selection_.clear();
     for (u32 id : ids)
         if (d::find(screen_.root, id) && std::find(selection_.begin(), selection_.end(), id) == selection_.end())
@@ -2990,7 +3037,20 @@ bool UiEditor::edit_component() {
 
 void UiEditor::update(Rml::Context* context) {
     context_ = context;
+    key_remap_.on = false; // the panel's fields name the keys as they are now
     read_canvas(context);
+    if (preview_.playing) {
+        // Played on: the page's clock goes with the wall clock; a movement that plays once stops at its end.
+        const u64 now = time_now_ns();
+        double t = preview_.t + static_cast<double>(now - preview_.last_ns) / 1e9;
+        preview_.last_ns = now;
+        const d::Node* n = selection_.size() == 1 ? d::find(screen_.root, selection_[0]) : nullptr;
+        if (n && !n->motion.loop && t >= n->motion.delay + n->motion.duration) {
+            t = n->motion.delay + n->motion.duration;
+            preview_.playing = false;
+        }
+        preview_at(t);
+    }
     if (fit_pending_ && canvas_w_ > 0) zoom_to_fit();
     if (checking_) {
         // Clicks of the last events, now that the page is done with them.
@@ -3013,6 +3073,7 @@ void UiEditor::update(Rml::Context* context) {
 bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* context) {
     context_ = context;
     if (picker_event(e, density, context)) return true;
+    if (timeline_event(e, density, context)) return true;
     if (checking_ && drag_ == Drag::None) {
         // The canvas is the game's screen: the mouse goes to the page.
         auto on_canvas = [&](f32 mx, f32 my) {
@@ -3560,6 +3621,25 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
         } else if (k.key == SDLK_RETURN || k.key == SDLK_KP_ENTER) close_picker(true);
         return true;
     }
+    if (key_drag_.on) {
+        // A key being carried: Esc puts it back where it was, no step; other keys wait.
+        if (k.key == SDLK_ESCAPE) {
+            d::load_screen(key_drag_.before, screen_);
+            selected_key_ = key_drag_.from;
+            key_drag_ = KeyDrag{};
+            page_dirty_ = true;
+            refresh_props();
+        }
+        return true;
+    }
+    if (preview_.on && k.key == SDLK_ESCAPE) {
+        end_preview(); // back to editing, the layer still selected
+        return true;
+    }
+    if (preview_.on && k.key == SDLK_SPACE && !(k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT))) {
+        preview_play(!preview_.playing);
+        return true;
+    }
     if (checking_) {
         // Keys do not edit while checking; Esc ends it.
         if (k.key == SDLK_ESCAPE) set_checking(false);
@@ -3956,11 +4036,36 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("blur", &KeyRow::blur);
         s.RegisterMember("brightness", &KeyRow::brightness);
         s.RegisterMember("tint", &KeyRow::tint);
+        s.RegisterMember("selected", &KeyRow::selected);
         s.RegisterMember("hex", &KeyRow::hex);
         s.RegisterMember("swatch", &KeyRow::swatch);
     }
     model.RegisterArray<std::vector<KeyRow>>();
     model.Bind("ue_keys", &m_keys_);
+    if (auto s = model.RegisterStruct<TimelineMark>()) {
+        s.RegisterMember("index", &TimelineMark::index);
+        s.RegisterMember("x", &TimelineMark::x);
+        s.RegisterMember("selected", &TimelineMark::selected);
+        s.RegisterMember("tint", &TimelineMark::tint);
+        s.RegisterMember("swatch", &TimelineMark::swatch);
+        s.RegisterMember("title", &TimelineMark::title);
+    }
+    model.RegisterArray<std::vector<TimelineMark>>();
+    if (auto s = model.RegisterStruct<TimelineView>()) {
+        s.RegisterMember("show", &TimelineView::show);
+        s.RegisterMember("preview", &TimelineView::preview);
+        s.RegisterMember("playing", &TimelineView::playing);
+        s.RegisterMember("repeat", &TimelineView::repeat);
+        s.RegisterMember("note", &TimelineView::note);
+        s.RegisterMember("time", &TimelineView::time);
+        s.RegisterMember("span", &TimelineView::span);
+        s.RegisterMember("delay_w", &TimelineView::delay_w);
+        s.RegisterMember("pass_w", &TimelineView::pass_w);
+        s.RegisterMember("head_x", &TimelineView::head_x);
+        s.RegisterMember("keys", &TimelineView::keys);
+        s.RegisterMember("ghosts", &TimelineView::ghosts);
+    }
+    model.Bind("ue_tl", &m_tl_);
     if (auto s = model.RegisterStruct<ClickRow>()) {
         s.RegisterMember("index", &ClickRow::index);
         s.RegisterMember("kind", &ClickRow::kind);
@@ -4230,13 +4335,13 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     });
     // Fields: Enter keeps the value at once, leaving the field keeps it too.
     on("ue_text", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
-        if (a.size() > 2 && a[2].Get<bool>()) set_property(arg_str(a, 0), arg_str(a, 1));
+        if (a.size() > 2 && a[2].Get<bool>()) set_property(remap_key_field(arg_str(a, 0)), arg_str(a, 1));
     });
     on("ue_commit", [this, arg_str, input_value](Rml::Event& ev, const Rml::VariantList& a) {
         const std::string value = input_value(ev);
         // Unchanged fields do not make a step of the history.
         const std::string before = d::save_screen(screen_);
-        if (!set_property(arg_str(a, 0), value)) return;
+        if (!set_property(remap_key_field(arg_str(a, 0)), value)) return;
         (void)before;
     });
     // The colour picker: a swatch opens it beside itself.
@@ -4260,6 +4365,17 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     on("ue_cp_dropper", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
         picker_dropper(!picker_.dropper);
+    });
+    on("ue_tl_pick", [this](Rml::Event&, const Rml::VariantList& a) {
+        if (!a.empty()) pick_key(a[0].Get<int>());
+    });
+    on("ue_tl_play", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        preview_play(!preview_.playing);
+    });
+    on("ue_tl_stop", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        end_preview();
     });
     on("ue_cp_live", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
@@ -4310,6 +4426,7 @@ namespace forge::editor_app {
 
 void UiEditor::set_checking(bool on) {
     close_picker(true);
+    end_preview();
     if (on == checking_) return;
     if (on && screen_.library) return; // the components are not a screen of the game
     if (on) {
@@ -4859,6 +4976,228 @@ void UiEditor::picker_drag_to(f32 mx, f32 my, Rml::Context* context) {
 }
 
 // The mouse and Esc while the picker is open: what is under it gets nothing.
+// --- The movement's timeline ---------------------------------------------------------------
+
+bool UiEditor::timeline_wanted() const {
+    if (checking_ || simple_ || m_panel_ != "motion" || selection_.size() != 1) return false;
+    const d::Node* n = d::find(screen_.root, selection_[0]);
+    return n && n->id != screen_.root.id && n->motion.kind == d::MotionKind::Custom;
+}
+
+bool UiEditor::timeline_shown() const { return m_tl_.show; }
+
+f32 UiEditor::timeline_span() const {
+    const d::Node* n = selection_.size() == 1 ? d::find(screen_.root, selection_[0]) : nullptr;
+    if (!n) return 1;
+    const d::Motion& m = n->motion;
+    return m.delay + m.duration * (m.loop ? 2.0f : 1.0f);
+}
+
+void UiEditor::pick_key(int index) {
+    const d::Node* n = selection_.size() == 1 ? d::find(screen_.root, selection_[0]) : nullptr;
+    if (!n || index < 0 || index >= static_cast<int>(n->motion.keys.size()) || index == selected_key_) return;
+    selected_key_ = index;
+    refresh_props();
+}
+
+void UiEditor::refresh_timeline() {
+    TimelineView v;
+    const d::Node* n = selection_.size() == 1 ? d::find(screen_.root, selection_[0]) : nullptr;
+    if (!timeline_wanted()) {
+        if (preview_.on && !key_drag_.on) end_preview();
+        if (n && n->motion.kind != d::MotionKind::None && n->motion.kind != d::MotionKind::Custom && !simple_ && !checking_)
+            v.note = "Шкала ключей — у движения «Своё, по ключам». Выберите его выше: ключи начнутся с этого движения.";
+        else if (selection_.size() > 1 && !simple_ && !checking_)
+            v.note = "Шкала ключей — у одного выбранного слоя.";
+        m_tl_ = std::move(v);
+        dirty("ue_tl");
+        return;
+    }
+    const d::Motion& m = n->motion;
+    if (selected_key_ >= static_cast<int>(m.keys.size())) selected_key_ = -1;
+    const f32 span = timeline_span();
+    auto x_of = [&](f32 seconds) { return std::clamp(seconds / span * 100.0f, 0.0f, 100.0f); };
+    v.show = true;
+    v.repeat = m.loop;
+    v.delay_w = x_of(m.delay);
+    v.pass_w = x_of(m.delay + m.duration) - v.delay_w;
+    v.span = fmt(std::round(span * 100) / 100) + " с";
+    for (usize i = 0; i < m.keys.size(); ++i) {
+        const d::MotionKey& k = m.keys[i];
+        TimelineMark mark;
+        mark.index = static_cast<int>(i);
+        mark.x = x_of(m.delay + k.at * m.duration);
+        mark.selected = static_cast<int>(i) == selected_key_;
+        mark.tint = k.tint;
+        if (k.tint) mark.swatch = swatch(k.color);
+        mark.title = "Ключ " + std::to_string(i + 1) + ": " + fmt(std::round(k.at * 100)) + "% (" +
+                     fmt(std::round((m.delay + k.at * m.duration) * 100) / 100) + " с). Тяните, чтобы сдвинуть во времени.";
+        v.keys.push_back(std::move(mark));
+    }
+    // What the author does not move: the layer's own place at a pass's ends without a key, the second pass.
+    const std::vector<d::MotionKey> played = d::motion_keys(m);
+    auto ghost = [&](f32 seconds, const char* title) {
+        TimelineMark mark;
+        mark.x = x_of(seconds);
+        mark.title = title;
+        v.ghosts.push_back(std::move(mark));
+    };
+    if (m.keys.empty() || m.keys.front().at > 0) ghost(m.delay, "Начало: слой на своём месте (ключа нет)");
+    if (m.keys.empty() || m.keys.back().at < 1) ghost(m.delay + m.duration, "Конец: слой на своём месте (ключа нет)");
+    if (m.loop)
+        for (const d::MotionKey& k : played)
+            ghost(m.delay + m.duration + (m.back ? 1 - k.at : k.at) * m.duration,
+                  m.back ? "Второй проход: обратно (Туда и обратно)" : "Второй проход: снова (Повторять)");
+    v.preview = preview_.on;
+    v.playing = preview_.playing;
+    if (preview_.on) {
+        // Where the head stands: past the second pass a repeating movement goes round again.
+        double t = preview_.t;
+        if (m.loop && t > m.delay) t = m.delay + std::fmod(t - m.delay, 2.0 * m.duration);
+        v.head_x = x_of(static_cast<f32>(t));
+        v.time = fmt(static_cast<f32>(std::round(preview_.t * 100) / 100)) + " с";
+    }
+    m_tl_ = std::move(v);
+    dirty("ue_tl");
+}
+
+std::string UiEditor::remap_key_field(const std::string& field) const {
+    static const std::string head = "motion.key.";
+    if (!key_remap_.on || field.rfind(head, 0) != 0) return field;
+    const usize dot = field.find('.', head.size());
+    if (dot == std::string::npos) return field;
+    usize i = 0;
+    const auto [end, ec] = std::from_chars(field.data() + head.size(), field.data() + dot, i);
+    if (ec != std::errc{} || end != field.data() + dot) return field;
+    const usize from = key_remap_.from, to = key_remap_.to;
+    if (i == from) i = to;
+    else if (from < to && i > from && i <= to) --i;
+    else if (to < from && i >= to && i < from) ++i;
+    return head + std::to_string(i) + field.substr(dot);
+}
+
+f32 UiEditor::timeline_time_at(f32 mx) const {
+    Rml::Element* track = element_in(context_, "ue-tl-track");
+    if (!track) return 0;
+    const f32 left = track->GetAbsoluteOffset(Rml::BoxArea::Border).x;
+    const f32 w = track->GetBox().GetSize(Rml::BoxArea::Border).x;
+    if (w <= 0) return 0;
+    return std::clamp((mx - left) / w, 0.0f, 1.0f) * timeline_span();
+}
+
+// The carried key at the mouse: the screen as it was at the press, with the key at its new time
+// (whole percent of the pass, 0..100). Nothing goes into the history until it is let go.
+void UiEditor::key_drag_to(f32 mx) {
+    const d::Node* n = selection_.size() == 1 ? d::find(screen_.root, selection_[0]) : nullptr;
+    if (!n) return;
+    const d::Motion& m = n->motion;
+    const f32 at = std::clamp(std::round((timeline_time_at(mx - key_drag_.grab) - m.delay) / m.duration * 100.0f), 0.0f, 100.0f);
+    d::load_screen(key_drag_.before, screen_);
+    selected_key_ = key_drag_.from;
+    previewing_ = true;
+    if (set_property("motion.key." + std::to_string(key_drag_.from) + ".at", fmt(at))) key_drag_.index = static_cast<int>(moved_key_);
+    else key_drag_.index = key_drag_.from;
+    previewing_ = false;
+    selected_key_ = key_drag_.index;
+    page_dirty_ = true;
+    refresh_props();
+}
+
+bool UiEditor::timeline_event(const SDL_Event& e, f32 density, Rml::Context* context) {
+    if (key_drag_.on) {
+        switch (e.type) {
+        case SDL_EVENT_MOUSE_MOTION: {
+            const f32 mx = e.motion.x * density;
+            if (!key_drag_.moved && std::abs(mx - key_drag_.down_x) < 3) return true; // a click, not a move yet
+            key_drag_.moved = true;
+            key_drag_to(mx);
+            return true;
+        }
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (e.button.button != SDL_BUTTON_LEFT) return true;
+            key_drag_.on = false;
+            if (key_drag_.moved) commit(key_drag_.before, "Изменено: Время ключа"); // one step (none if it came back)
+            refresh_props();
+            return true;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN: return true;
+        default: return false;
+        }
+    }
+    if (scrubbing_) {
+        if (e.type == SDL_EVENT_MOUSE_MOTION) {
+            preview_at(timeline_time_at(e.motion.x * density));
+            return true;
+        }
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+            scrubbing_ = false;
+            return true;
+        }
+        return e.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+    }
+    if (e.type != SDL_EVENT_MOUSE_BUTTON_DOWN || e.button.button != SDL_BUTTON_LEFT || !m_tl_.show) return false;
+    const f32 mx = e.button.x * density;
+    for (Rml::Element* el = context ? context->GetHoverElement() : nullptr; el; el = el->GetParentNode()) {
+        const Rml::String& id = el->GetId();
+        if (id.rfind("ue-tl-key-", 0) == 0) {
+            // A key: picked, and carried while the mouse moves.
+            const int index = std::atoi(id.c_str() + 10);
+            pick_key(index);
+            key_drag_ = KeyDrag{};
+            key_drag_.on = true;
+            key_drag_.from = key_drag_.index = index;
+            key_drag_.down_x = mx;
+            key_drag_.grab = mx - (el->GetAbsoluteOffset(Rml::BoxArea::Border).x + el->GetBox().GetSize(Rml::BoxArea::Border).x * 0.5f);
+            key_drag_.before = d::save_screen(screen_);
+            history_.seal();
+            return true;
+        }
+        if (id == "ue-tl-track") {
+            // Elsewhere on the track: that moment on the canvas.
+            scrubbing_ = true;
+            preview_play(false);
+            preview_at(timeline_time_at(mx));
+            return true;
+        }
+    }
+    return false;
+}
+
+void UiEditor::preview_at(double seconds) {
+    if (!timeline_wanted()) return;
+    seconds = std::max(seconds, 0.0);
+    // Back in time: the page again from its start (what played cannot be unplayed).
+    if (!preview_.on || seconds < preview_.built) page_dirty_ = true;
+    preview_.on = true;
+    preview_.t = seconds;
+    if (!page_dirty_ && ui_ && page_context_) {
+        ui_->set_clock(page_context_, seconds);
+        preview_.built = seconds;
+    }
+    refresh_timeline();
+}
+
+void UiEditor::preview_play(bool on) {
+    if (on == preview_.playing) return;
+    if (on) {
+        if (!timeline_wanted()) return;
+        // From the start when it stands at the end of a movement that plays once.
+        const d::Node* n = d::find(screen_.root, selection_[0]);
+        const double end = n ? n->motion.delay + n->motion.duration : 0;
+        preview_at(!preview_.on || (n && !n->motion.loop && preview_.t >= end) ? 0.0 : preview_.t);
+        preview_.last_ns = time_now_ns();
+    }
+    preview_.playing = on;
+    refresh_timeline();
+}
+
+void UiEditor::end_preview() {
+    if (!preview_.on) return;
+    preview_ = Preview{};
+    scrubbing_ = false;
+    page_dirty_ = true; // the canvas stands still again
+    refresh_timeline();
+}
+
 bool UiEditor::picker_event(const SDL_Event& e, f32 density, Rml::Context* context) {
     if (!picker_.open) return false;
     switch (e.type) {

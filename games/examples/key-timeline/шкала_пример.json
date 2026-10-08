@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "title": "Шкала: пример",
+  "next_id": 4,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Шкала: пример",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Заголовок",
+        "type": "text",
+        "x": 660.0,
+        "y": 80.0,
+        "w": 600.0,
+        "h": 60.0,
+        "text": "Шкала времени",
+        "style": {
+          "family": "Onest",
+          "size": 48.0,
+          "weight": 400,
+          "align": "left",
+          "color": "#ffffff"
+        }
+      },
+      {
+        "id": 3,
+        "name": "Монета",
+        "type": "ellipse",
+        "x": 200.0,
+        "y": 480.0,
+        "w": 120.0,
+        "h": 120.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "motion": {
+          "kind": "custom",
+          "duration": 3.0,
+          "delay": 0.5,
+          "easing": "linear",
+          "back": true,
+          "keys": [
+            {
+              "at": 0.0
+            },
+            {
+              "at": 0.3,
+              "x": 400.0,
+              "y": -120.0
+            },
+            {
+              "at": 0.6,
+              "x": 800.0,
+              "scale": 1.3,
+              "color": "#ff4040"
+            },
+            {
+              "at": 1.0,
+              "x": 1200.0
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

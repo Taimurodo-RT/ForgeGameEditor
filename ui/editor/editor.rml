@@ -1418,11 +1418,32 @@
                             <div id="ue-motion-loop" class="ue-check row" data-event-click="ue_set('motion.loop', '')"><icon class="xs" data-attr-name="ue_p.motion_loop ? 'check_box' : 'check_box_outline_blank'"/><span>Повторять</span></div>
                             <div id="ue-motion-back" class="ue-check row" data-event-click="ue_set('motion.back', '')"><icon class="xs" data-attr-name="ue_p.motion_back ? 'check_box' : 'check_box_outline_blank'"/><span>Туда и обратно</span></div>
                         </div>
+                        <div id="ue-tl-note" class="ue-note" data-if="ue_tl.note != '' &amp;&amp; ue_p.motion_kind != 'custom'">{{ ue_tl.note }}</div>
                     </div>
                     <div class="ue-sec" data-if="!ue_p.root &amp;&amp; ue_p.motion_kind == 'custom'">
                         <div class="ue-sec-title row"><span class="grow">Ключи <span class="muted">где слой в этот момент</span></span>
                             <div id="ue-key-add" class="ue-mini" title="Ещё ключ" data-event-click="ue_set('motion.key.add', '')"><icon class="xs" name="add"/></div></div>
-                        <div data-for="k : ue_keys" class="ue-key-row column">
+                        <!-- The timeline: the keys over time (drag one to move it), the moment shown on the canvas -->
+                        <div id="ue-tl" class="ue-tl column" data-if="ue_tl.show">
+                            <div id="ue-tl-track" class="ue-tl-track" title="Щелчок или протяжка: экран на холсте в этот момент">
+                                <div class="ue-tl-delay" data-if="ue_tl.delay_w > 0" data-style-width="ue_tl.delay_w + '%'"/>
+                                <div class="ue-tl-pass" data-style-left="ue_tl.delay_w + '%'" data-style-width="ue_tl.pass_w + '%'"/>
+                                <div data-for="g : ue_tl.ghosts" class="ue-tl-ghost" data-attr-title="g.title" data-style-left="g.x + '%'"/>
+                                <div data-for="m : ue_tl.keys" class="ue-tl-key" data-attr-id="'ue-tl-key-' + m.index" data-class-selected="m.selected" data-attr-title="m.title" data-style-left="m.x + '%'"><div class="ue-tl-dot"/><div class="ue-tl-tint" data-if="m.tint" data-style-background-color="m.swatch"/></div>
+                                <div id="ue-tl-head" class="ue-tl-head" data-if="ue_tl.preview" data-style-left="ue_tl.head_x + '%'"/>
+                            </div>
+                            <div class="ue-tl-scale row"><span>0 с</span><div class="grow"/><span>{{ ue_tl.span }}</span></div>
+                            <div class="ue-line row">
+                                <div id="ue-tl-play" class="ue-btn row" data-event-click="ue_tl_play" data-attr-title="ue_tl.playing ? 'Пауза (пробел)' : 'Проиграть на холсте (пробел)'"><icon class="xs" data-attr-name="ue_tl.playing ? 'pause' : 'play_arrow'"/><span>{{ ue_tl.playing ? 'Пауза' : 'Проиграть' }}</span></div>
+                                <span id="ue-tl-time" class="grow muted" data-if="ue_tl.preview">{{ ue_tl.time }}</span>
+                                <div class="grow" data-if="!ue_tl.preview"/>
+                                <div id="ue-tl-stop" class="ue-btn row" data-if="ue_tl.preview" title="Холст снова неподвижен (Esc)" data-event-click="ue_tl_stop"><icon class="xs" name="edit"/><span>К редактированию</span></div>
+                            </div>
+                            <div class="ue-note" data-if="ue_tl.preview">Холст показывает экран, как его видит игрок в этот момент. В проект и историю это не идёт.</div>
+                            <div class="ue-note" data-if="!ue_tl.preview">Ромб — ключ: щелчок выбирает, перетаскивание двигает во времени (шаг 1%). Серые метки — место слоя без ключа и второй проход.</div>
+                        </div>
+                        <div class="ue-note" data-if="ue_tl.note != ''">{{ ue_tl.note }}</div>
+                        <div data-for="k : ue_keys" class="ue-key-row column" data-attr-id="'ue-key-row-' + k.index" data-class-selected="k.selected" data-event-click="ue_tl_pick(k.index)">
                             <div class="ue-line row"><span class="ue-key">Момент</span>
                                 <input type="text" class="ue-field grow" data-attr-id="'ue-key-at-' + k.index" data-attr-value="k.at" data-event-change="ue_text('motion.key.' + k.index + '.at', ev.value, ev.linebreak)" data-event-blur="ue_commit('motion.key.' + k.index + '.at')"/>
                                 <div class="ue-mini" data-attr-id="'ue-key-remove-' + k.index" title="Убрать ключ" data-event-click="ue_set('motion.key.' + k.index + '.remove', '')"><icon class="xs" name="remove"/></div></div>
@@ -1452,7 +1473,7 @@
                         <div class="ue-line row"><span class="ue-key">Ход</span>
                             <select id="ue-smooth-easing" class="ue-select grow" data-value="ue_p.smooth_easing" data-event-change="ue_pick('smooth.easing')"><option value="smooth">Плавно</option><option value="linear">Ровно</option><option value="in">Разгон</option><option value="out">Торможение</option><option value="back">С отскоком назад</option><option value="bounce">Подпрыгивает</option><option value="elastic">Пружинит</option></select></div>
                     </div>
-                    <div class="ue-note">На холсте всё стоит на месте. Движение видно в «Проверить» и в игре.</div>
+                    <div class="ue-note" data-if="!ue_tl.preview">На холсте всё стоит на месте. Движение видно в «Проверить», в игре и в просмотре на шкале ключей.</div>
                     </div>
                     <div class="column" data-if="ue_panel == 'design' || (ue_library_open &amp;&amp; ue_panel != 'motion')">
 

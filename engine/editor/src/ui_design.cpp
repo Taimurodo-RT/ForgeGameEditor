@@ -1280,6 +1280,32 @@ std::vector<MotionKey> motion_keys(const Motion& m) {
     return out;
 }
 
+usize move_motion_key(Motion& m, usize index, f32 at) {
+    if (index >= m.keys.size()) return index;
+    at = std::clamp(at, 0.0f, 1.0f);
+    // Keys written out of order (by hand, an old file) are put in order first, as motion_keys plays them.
+    if (!std::is_sorted(m.keys.begin(), m.keys.end(), [](const MotionKey& a, const MotionKey& b) { return a.at < b.at; })) {
+        std::vector<usize> order(m.keys.size());
+        for (usize i = 0; i < order.size(); ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) { return m.keys[a].at < m.keys[b].at; });
+        std::vector<MotionKey> sorted;
+        for (usize i : order) sorted.push_back(m.keys[i]);
+        index = static_cast<usize>(std::find(order.begin(), order.end(), index) - order.begin());
+        m.keys = std::move(sorted);
+    }
+    MotionKey k = m.keys[index];
+    const f32 was = k.at;
+    if (at == was) return index;
+    k.at = at;
+    m.keys.erase(m.keys.begin() + static_cast<std::ptrdiff_t>(index));
+    // Later: before the keys at its new time; earlier: after them.
+    auto it = at > was ? std::lower_bound(m.keys.begin(), m.keys.end(), at, [](const MotionKey& a, f32 t) { return a.at < t; })
+                       : std::upper_bound(m.keys.begin(), m.keys.end(), at, [](f32 t, const MotionKey& a) { return t < a.at; });
+    const usize to = static_cast<usize>(it - m.keys.begin());
+    m.keys.insert(it, k);
+    return to;
+}
+
 namespace {
 
 // @keyframes for a layer's motion: every key states every property that
