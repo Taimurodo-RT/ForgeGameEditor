@@ -15,6 +15,22 @@ target_link_libraries(forge_slice PRIVATE forge_slice_lib forge::platform)
 # source tree, so edits show up at once. A packaged game has them in "data".
 target_compile_definitions(forge_slice PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"
                                                SLICE_DATA_DIR="${PROJECT_SOURCE_DIR}/games/slice")
+# The screens of games/examples/simple-mode, as the editor's «Простой» makes them, built into the
+# game for its self-test: they run in the game's own screens, packaged too.
+file(GLOB SIMPLE_PAGES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/games/examples/simple-mode/*.html)
+list(SORT SIMPLE_PAGES)
+set(SIMPLE_PAGES_H "// Made by apps/slice/CMakeLists.txt from games/examples/simple-mode/*.html.\n")
+string(APPEND SIMPLE_PAGES_H "struct SimplePage {\n    const char* name;\n    const char* html;\n};\n")
+string(APPEND SIMPLE_PAGES_H "static const SimplePage kSimplePages[] = {\n")
+foreach(page ${SIMPLE_PAGES})
+  get_filename_component(page_name ${page} NAME_WE)
+  file(READ ${page} page_html)
+  string(APPEND SIMPLE_PAGES_H "    {\"${page_name}\", R\"forge_page(${page_html})forge_page\"},\n")
+endforeach()
+string(APPEND SIMPLE_PAGES_H "};\n")
+file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/simple_pages.h CONTENT "${SIMPLE_PAGES_H}" @ONLY)
+target_include_directories(forge_slice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+
 # A game window without a console on Windows (log.txt in the save folder
 # keeps the messages).
 set_target_properties(forge_slice PROPERTIES WIN32_EXECUTABLE TRUE)

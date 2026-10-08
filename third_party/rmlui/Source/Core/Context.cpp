@@ -1444,16 +1444,32 @@ Element* Context::GetElementAtPoint(Vector2f point, const Element* ignore_elemen
 		return nullptr;
 
 	// Projection may fail if we have a singular transformation matrix.
+	const Vector2f window_point = point;
 	bool projection_result = element->Project(point);
 
 	// Check if the point is actually within this element.
 	bool within_element = (projection_result && element->IsPointWithinElement(point));
-	if (within_element)
+	if (within_element && element->GetComputedValues().clip() != Style::Clip::Type::None)
 	{
 		// The element may have been clipped out of view if it overflows an ancestor, so check its clipping region.
-		Rectanglei clip_region;
-		if (ElementUtilities::GetClippingRegion(element, clip_region))
-			within_element = clip_region.Contains(Vector2i(point));
+		// Forge: each clipping ancestor in its own coordinates (the point projected by its transforms). The combined
+		// region mixed the window's coordinates (outside a transform) with a transformed page's, so a page scaled
+		// down to a smaller window lost the clicks on its right and bottom.
+		for (Element* clipping = element->GetOffsetParent(); clipping && within_element; clipping = clipping->GetOffsetParent())
+		{
+			const ComputedValues& c = clipping->GetComputedValues();
+			const bool clips = c.overflow_x() != Style::Overflow::Visible || c.overflow_y() != Style::Overflow::Visible ||
+				c.clip() == Style::Clip::Type::Always;
+			if (!clips || c.clip() == Style::Clip::Type::None)
+				continue;
+			Vector2f local = window_point;
+			if (!clipping->Project(local))
+				continue;
+			const BoxArea area = clipping->GetClipArea();
+			const Rectanglef region =
+				Rectanglef::FromPositionSize(clipping->GetAbsoluteOffset(area).Round(), clipping->GetRenderBox(area).GetFillSize());
+			within_element = region.Contains(local);
+		}
 	}
 
 	if (within_element)

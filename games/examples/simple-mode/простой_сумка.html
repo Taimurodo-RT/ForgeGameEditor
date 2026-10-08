@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Простой: сумка</title>
+<!-- Made by Forge «Интерфейс» from Простой: сумка.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background-color: rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: calc(50% + -208px);
+  top: calc(50% + -279.2px);
+  box-sizing: border-box;
+  transform: translateX(-50%) translateY(-50%);
+  font-size: 32px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+#n4 {
+  position: absolute;
+  left: calc(50% + -308px);
+  width: 616px;
+  top: calc(50% + -220px);
+  height: 360px;
+  box-sizing: border-box;
+  background-color: rgba(0, 0, 0, 0.502);
+  border-radius: 12px 12px 12px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+#n5 {
+  position: absolute;
+  left: 8px;
+  width: 296px;
+  top: 8px;
+  height: 80px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 0px 16px 0px 16px;
+  justify-content: flex-start;
+  align-items: center;
+  background-color: rgba(42, 32, 24, 0.941);
+  border-radius: 10px 10px 10px 10px;
+}
+#n6 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+#n7 {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  box-sizing: border-box;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+#n8 {
+  position: absolute;
+  left: calc(50% + -160px);
+  width: 320px;
+  top: calc(50% + 180px);
+  height: 80px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(42, 32, 24, 0.941);
+  border-radius: 14px 14px 14px 14px;
+}
+#n9 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+body, #n1 {
+  pointer-events: none;
+}
+#n2, #n4, #n5, #n6, #n7, #n8, #n9 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Простой: сумка" forge-screen="command" forge-fit="expand" forge-size="1920 1080">
+  <div id="n2" class="text" title="Текст 1">Сумка</div>
+  <div id="n4" class="frame" title="Список 1" forge-list="items" forge-list-gap="8" forge-cell="8 8 296 80">
+    <div id="n5" class="frame" title="Ячейка">
+      <div id="n6" class="text" title="Предмет" forge-text="{item.name} {item.count}" forge-picture="item.icon">{item.name} {item.count}</div>
+    </div>
+    <div id="n7" class="text" title="Пока пусто">Пока ничего нет</div>
+  </div>
+  <div id="n8" class="frame" title="Кнопка 1" forge-click="[[&quot;close&quot;,&quot;&quot;]]">
+    <div id="n9" class="text" title="Надпись">Закрыть</div>
+  </div>
+</div>
+</body>
+</html>

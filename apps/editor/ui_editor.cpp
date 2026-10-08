@@ -1394,6 +1394,266 @@ void UiEditor::refresh_props() {
     dirty("ue_p");
     dirty("ue_fills");
     dirty("ue_effects");
+    refresh_simple(n);
+}
+
+// --- «Простой» -----------------------------------------------------------------
+
+void UiEditor::set_simple(bool on) {
+    if (on == simple_) return;
+    simple_ = on;
+    m_simple_ = on;
+    if (on) set_tool(Tool::Select); // blocks are added from the bar, not drawn
+    dirty("ue_simple");
+    refresh_props();
+}
+
+void UiEditor::refresh_simple(const d::Node* n) {
+    SimpleProps s;
+    if (n) {
+        const bool root = n->id == screen_.root.id;
+        const d::Block b = d::block_of(*n, root);
+        static const char* icons[] = {"web_asset", "smart_button", "title", "image", "linear_scale", "view_list", "tag", "rectangle"};
+        s.root = root;
+        s.many = selection_.size() > 1;
+        s.block = d::block_key(b);
+        s.word = d::block_word(b);
+        s.icon = icons[static_cast<int>(b)];
+        s.name = root ? screen_.title : n->name;
+        const d::Node* label = b == d::Block::Text ? n : b == d::Block::Button ? d::block_label(*n) : nullptr;
+        s.has_text = label != nullptr;
+        if (label) {
+            s.text = label->text;
+            s.size = fmt(label->text_style.size > 0 ? label->text_style.size : screen_.text.size);
+        }
+        s.has_text_color = b == d::Block::Button && label;
+        if (s.has_text_color) {
+            s.text_hex = hex_of(label->text_style.color);
+            s.text_swatch = swatch(label->text_style.color);
+        }
+        s.has_color = b != d::Block::Picture;
+        if (b == d::Block::Text) {
+            s.hex = hex_of(n->text_style.color);
+            s.swatch = swatch(n->text_style.color);
+        } else if (!n->fills.empty() && n->fills[0].kind == d::PaintKind::Solid) {
+            s.hex = hex_of(n->fills[0].color);
+            s.swatch = swatch(n->fills[0].color);
+            s.style = n->fills[0].style;
+        } else s.hex = "";
+        s.x = m_p_.x;
+        s.y = m_p_.y;
+        s.w = m_p_.w;
+        s.h = m_p_.h;
+        s.anchor_h = kConstraintWords[static_cast<int>(n->horizontal)];
+        s.anchor_v = kConstraintWords[static_cast<int>(n->vertical)];
+        s.can_act = !root && b != d::Block::List && !screen_.library;
+        s.act_editable = d::simple_action_editable(*n);
+        if (!n->on_click.empty() && s.act_editable) {
+            const d::Action& a = n->on_click[0];
+            s.action = d::action_word(a.kind);
+            s.target = a.target;
+            s.needs = a.kind == d::ActionKind::Show ? "screen" : a.kind == d::ActionKind::Message ? "text" : "";
+        }
+        s.picture = b == d::Block::Picture;
+        for (const d::Paint& f : n->fills)
+            if (f.kind == d::PaintKind::Image) {
+                s.image = f.image;
+                break;
+            }
+        s.bar = b == d::Block::Bar;
+        s.bar_value = n->bar.value;
+        s.bar_max = n->bar.max;
+        s.list = b == d::Block::List;
+        s.list_source = d::list_word(n->list);
+        s.in_list = !m_p_.in_list.empty() && n->type == d::NodeType::Text;
+        s.picture_from = n->picture_from;
+        s.show = kScreenShowWords[static_cast<int>(screen_.show)];
+        if (b == d::Block::Group || b == d::Block::List)
+            s.inside = "Внутри слоёв: " + std::to_string(n->children.size()) + ". Выберите любой из них на холсте или в списке слева.";
+        const std::vector<std::string> hidden = d::simple_hidden(*n, root);
+        s.has_hidden = !hidden.empty();
+        if (s.has_hidden) {
+            std::string text = "Не показано в простом режиме: ";
+            for (usize i = 0; i < hidden.size(); ++i) text += (i ? ", " : "") + hidden[i];
+            s.hidden = text + ". Это сохраняется как есть; править — в «Полном».";
+        }
+    }
+    m_s_shown_ = s;
+    m_s_ = std::move(s);
+    dirty("ue_s");
+}
+
+u32 UiEditor::add_block(d::Block b) {
+    if (b == d::Block::Screen || screen_.library || checking_) return 0;
+    const std::string before = d::save_screen(screen_);
+    d::BlockOptions o;
+    o.library = &library_;
+    if (!m_pictures_.empty()) o.picture = m_pictures_.front().path;
+    d::Node n = d::make_block(screen_, b, 0, 0, o);
+    // Where nothing is yet, as near the middle of the screen as there is room; on a full screen, a step aside
+    // from a block already in the middle.
+    const f32 cx = std::round((screen_.width - n.w) * 0.5f), cy = std::round((screen_.height - n.h) * 0.5f);
+    auto free_at = [&](f32 x, f32 y) {
+        constexpr f32 gap = 16;
+        return std::none_of(screen_.root.children.begin(), screen_.root.children.end(), [&](const d::Node& c) {
+            return c.visible && x < c.x + c.w + gap && c.x < x + n.w + gap && y < c.y + c.h + gap && c.y < y + n.h + gap;
+        });
+    };
+    f32 x = cx, y = cy, best = -1;
+    constexpr f32 step = 40;
+    for (f32 ty = 0; ty + n.h <= screen_.height; ty += step)
+        for (f32 tx = 0; tx + n.w <= screen_.width; tx += step) {
+            const f32 px = std::round(cx + std::round((tx - cx) / step) * step), py = std::round(cy + std::round((ty - cy) / step) * step);
+            if (px < 0 || py < 0 || px + n.w > screen_.width || py + n.h > screen_.height || !free_at(px, py)) continue;
+            const f32 dist = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+            if (best < 0 || dist < best) {
+                best = dist;
+                x = px;
+                y = py;
+            }
+        }
+    for (int i = 0; best < 0 && i < 20; ++i) {
+        const bool taken = std::any_of(screen_.root.children.begin(), screen_.root.children.end(),
+                                       [&](const d::Node& c) { return c.x == x && c.y == y; });
+        if (!taken) break;
+        x += 32;
+        y += 32;
+    }
+    n.x = x;
+    n.y = y;
+    const u32 id = n.id;
+    screen_.root.children.push_back(std::move(n));
+    selection_ = {id};
+    page_dirty_ = true;
+    commit(before, std::string("Добавлено: ") + d::block_word(b));
+    select({id});
+    return id;
+}
+
+// What the simple panel shows in a drop-down now.
+std::string UiEditor::simple_shown(const std::string& field) const {
+    if (field == "action") return m_s_shown_.action;
+    if (field == "target") return m_s_shown_.target;
+    if (field == "picture") return m_s_shown_.image;
+    if (field == "bar_value") return m_s_shown_.bar_value;
+    if (field == "bar_max") return m_s_shown_.bar_max;
+    if (field == "list") return m_s_shown_.list_source;
+    if (field == "show") return m_s_shown_.show;
+    if (field == "anchor_h") return m_s_shown_.anchor_h;
+    if (field == "anchor_v") return m_s_shown_.anchor_v;
+    return {};
+}
+
+bool UiEditor::set_simple_property(const std::string& field, const std::string& value) {
+    if (selection_.size() > 1) return false;
+    const u32 id = selection_.empty() ? screen_.root.id : selection_[0];
+    const d::Node* n = d::find(screen_.root, id);
+    if (!n) return false;
+    const bool root = id == screen_.root.id;
+    const d::Block b = d::block_of(*n, root);
+    const d::Node* label = b == d::Block::Text ? n : b == d::Block::Button ? d::block_label(*n) : nullptr;
+    struct Op {
+        u32 id;
+        std::string field, value;
+        bool tidy = false; // keeps things in order: already so is fine
+    };
+    std::vector<Op> ops;
+    std::string word;
+    if (field == "name") {
+        ops.push_back({id, "name", value});
+        word = "Название";
+    } else if (field == "text" || field == "size" || field == "text_color") {
+        if (!label || (field == "text_color" && b != d::Block::Button)) return false;
+        ops.push_back({label->id, field, value});
+        word = field == "text" ? "Надпись" : field == "size" ? "Размер букв" : "Цвет надписи";
+    } else if (field == "color") {
+        if (b == d::Block::Picture) return false;
+        word = root ? "Фон" : "Цвет";
+        if (b == d::Block::Text) ops.push_back({id, "text_color", value});
+        else {
+            if (n->fills.empty()) ops.push_back({id, "fill.add", ""});
+            else if (n->fills[0].kind != d::PaintKind::Solid) return false; // a gradient or a picture: «Полный»
+            if (!value.empty() && value[0] == '@') ops.push_back({id, "fill.0.style", value.substr(1)});
+            else ops.push_back({id, "fill.0.color", value});
+        }
+    } else if (field == "x" || field == "y" || field == "w" || field == "h") {
+        if (root) return false;
+        ops.push_back({id, field, value});
+        word = "Место и размер";
+    } else if (field == "anchor_h" || field == "anchor_v") {
+        if (root) return false;
+        ops.push_back({id, field == "anchor_h" ? "horizontal" : "vertical", value});
+        word = "Держится";
+    } else if (field == "action") {
+        if (root || b == d::Block::List || screen_.library || !d::simple_action_editable(*n)) return false;
+        word = "При нажатии";
+        const usize had = n->on_click.size();
+        if (value == "none") {
+            if (!had) return false;
+            ops.push_back({id, "click.0.remove", ""});
+        } else {
+            const std::optional<d::ActionKind> k = d::parse_action(value);
+            if (!k || !d::simple_action(*k)) return false;
+            if (!had) {
+                ops.push_back({id, "click.add", ""}); // a first guess: show the next screen
+                d::Action guess;
+                const std::vector<std::string> list = screens();
+                guess.kind = std::any_of(list.begin(), list.end(), [&](const std::string& s) { return s != name_; })
+                                 ? d::ActionKind::Show
+                                 : d::ActionKind::Close;
+                if (guess.kind != *k) ops.push_back({id, "click.0.kind", value});
+            } else if (n->on_click[0].kind != *k) ops.push_back({id, "click.0.kind", value});
+            else return false;
+            // What the action is about follows its kind: another screen to open; a new kind starts with nothing left over.
+            const std::string target = had ? n->on_click[0].target : std::string();
+            if (*k == d::ActionKind::Show) {
+                const std::vector<std::string> list = screens();
+                const bool known = std::find(list.begin(), list.end(), target) != list.end() && target != name_;
+                const auto other = std::find_if(list.begin(), list.end(), [&](const std::string& s) { return s != name_; });
+                if (had && !known && other != list.end()) ops.push_back({id, "click.0.target", *other, true});
+            } else ops.push_back({id, "click.0.target", "", true});
+        }
+    } else if (field == "target") {
+        if (n->on_click.size() != 1 || !d::simple_action_editable(*n)) return false;
+        ops.push_back({id, "click.0.target", value});
+        word = "При нажатии";
+    } else if (field == "picture") {
+        if (b != d::Block::Picture) return false;
+        usize k = 0;
+        while (k < n->fills.size() && n->fills[k].kind != d::PaintKind::Image) ++k;
+        if (k == n->fills.size()) return false;
+        ops.push_back({id, "fill." + std::to_string(k) + ".image", value});
+        word = "Картинка";
+    } else if (field == "bar_value" || field == "bar_max") {
+        if (b != d::Block::Bar) return false;
+        ops.push_back({id, field == "bar_value" ? "bar.value" : "bar.max", value});
+        word = "Полоска";
+    } else if (field == "list") {
+        if (b != d::Block::List || (value != "items" && value != "quests")) return false;
+        ops.push_back({id, "list", value});
+        word = "Список";
+    } else if (field == "picture_from") {
+        if (n->type != d::NodeType::Text || m_p_.in_list.empty()) return false;
+        ops.push_back({id, "picture_from", value});
+        word = "Картинка предмета";
+    } else if (field == "show") {
+        if (!root) return false;
+        ops.push_back({id, "screen.show", value});
+        word = "Когда видно";
+    } else return false;
+
+    const std::string before = d::save_screen(screen_);
+    for (const Op& op : ops) {
+        d::Node* t = d::find(screen_.root, op.id);
+        if (!t || (!set_field(*t, op.field, op.value) && !op.tidy)) {
+            d::load_screen(before, screen_);
+            refresh_props();
+            return false;
+        }
+    }
+    commit(before, "Изменено: " + word);
+    refresh_props();
+    return true;
 }
 
 // --- changes ----------------------------------------------------------------
@@ -2183,6 +2443,21 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
     return false;
 }
 
+bool UiEditor::set_field(d::Node& n, const std::string& field, const std::string& value) {
+    const bool copy = !screen_.library && n.master && d::instance_of(screen_.root, n.id);
+    const std::string was = copy ? d::save_screen(screen_) : std::string();
+    if (!set_on(n, field, value)) return false;
+    // Inside a copy of a component: this copy's own change, kept when the component changes
+    // (a field given the value it had is no change).
+    if (copy && d::save_screen(screen_) != was) {
+        const std::string kept = d::override_of(field);
+        const bool top = !n.component.empty();
+        if (!kept.empty() && !(top && kept == "place") && std::find(n.overrides.begin(), n.overrides.end(), kept) == n.overrides.end())
+            n.overrides.push_back(kept);
+    }
+    return true;
+}
+
 bool UiEditor::set_property(const std::string& field, const std::string& value) {
     const std::string before = d::save_screen(screen_);
     bool any = false;
@@ -2217,21 +2492,8 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
             return make_list(n->id, value == "quests" ? d::ListSource::Quests : d::ListSource::Items);
     }
     for (u32 id : targets)
-        if (d::Node* n = d::find(screen_.root, id)) {
-            const bool copy = !screen_.library && n->master && d::instance_of(screen_.root, n->id);
-            const std::string was = copy ? d::save_screen(screen_) : std::string();
-            if (!set_on(*n, field, value)) continue;
-            any = true;
-            // Inside a copy of a component: this copy's own change, kept when the component changes
-            // (a field given the value it had is no change).
-            if (copy && d::save_screen(screen_) != was) {
-                const std::string kept = d::override_of(field);
-                const bool top = !n->component.empty();
-                if (!kept.empty() && !(top && kept == "place") &&
-                    std::find(n->overrides.begin(), n->overrides.end(), kept) == n->overrides.end())
-                    n->overrides.push_back(kept);
-            }
-        }
+        if (d::Node* n = d::find(screen_.root, id))
+            if (set_field(*n, field, value)) any = true;
     if (!any) {
         // Back to what it was (a field that did not take the value shows the old one).
         d::load_screen(before, screen_);
@@ -3251,10 +3513,10 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (!ctrl && !alt) {
         switch (k.key) {
         case SDLK_V: set_tool(Tool::Select); return true;
-        case SDLK_F: set_tool(Tool::Frame); return true;
-        case SDLK_R: set_tool(Tool::Rectangle); return true;
-        case SDLK_O: set_tool(Tool::Ellipse); return true;
-        case SDLK_T: set_tool(Tool::Text); return true;
+        case SDLK_F: return !simple_ && (set_tool(Tool::Frame), true);
+        case SDLK_R: return !simple_ && (set_tool(Tool::Rectangle), true);
+        case SDLK_O: return !simple_ && (set_tool(Tool::Ellipse), true);
+        case SDLK_T: return !simple_ && (set_tool(Tool::Text), true);
         case SDLK_A:
             if (shift) return add_auto_layout();
             break;
@@ -3466,6 +3728,48 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("shadow", &EffectRow::shadow);
     }
     model.RegisterArray<std::vector<EffectRow>>();
+    if (auto s = model.RegisterStruct<SimpleProps>()) {
+        s.RegisterMember("root", &SimpleProps::root);
+        s.RegisterMember("many", &SimpleProps::many);
+        s.RegisterMember("has_text", &SimpleProps::has_text);
+        s.RegisterMember("has_color", &SimpleProps::has_color);
+        s.RegisterMember("has_text_color", &SimpleProps::has_text_color);
+        s.RegisterMember("can_act", &SimpleProps::can_act);
+        s.RegisterMember("act_editable", &SimpleProps::act_editable);
+        s.RegisterMember("picture", &SimpleProps::picture);
+        s.RegisterMember("bar", &SimpleProps::bar);
+        s.RegisterMember("list", &SimpleProps::list);
+        s.RegisterMember("in_list", &SimpleProps::in_list);
+        s.RegisterMember("has_hidden", &SimpleProps::has_hidden);
+        s.RegisterMember("block", &SimpleProps::block);
+        s.RegisterMember("word", &SimpleProps::word);
+        s.RegisterMember("icon", &SimpleProps::icon);
+        s.RegisterMember("name", &SimpleProps::name);
+        s.RegisterMember("text", &SimpleProps::text);
+        s.RegisterMember("size", &SimpleProps::size);
+        s.RegisterMember("hex", &SimpleProps::hex);
+        s.RegisterMember("swatch", &SimpleProps::swatch);
+        s.RegisterMember("style", &SimpleProps::style);
+        s.RegisterMember("text_hex", &SimpleProps::text_hex);
+        s.RegisterMember("text_swatch", &SimpleProps::text_swatch);
+        s.RegisterMember("x", &SimpleProps::x);
+        s.RegisterMember("y", &SimpleProps::y);
+        s.RegisterMember("w", &SimpleProps::w);
+        s.RegisterMember("h", &SimpleProps::h);
+        s.RegisterMember("anchor_h", &SimpleProps::anchor_h);
+        s.RegisterMember("anchor_v", &SimpleProps::anchor_v);
+        s.RegisterMember("action", &SimpleProps::action);
+        s.RegisterMember("target", &SimpleProps::target);
+        s.RegisterMember("needs", &SimpleProps::needs);
+        s.RegisterMember("image", &SimpleProps::image);
+        s.RegisterMember("bar_value", &SimpleProps::bar_value);
+        s.RegisterMember("bar_max", &SimpleProps::bar_max);
+        s.RegisterMember("list_source", &SimpleProps::list_source);
+        s.RegisterMember("picture_from", &SimpleProps::picture_from);
+        s.RegisterMember("show", &SimpleProps::show);
+        s.RegisterMember("inside", &SimpleProps::inside);
+        s.RegisterMember("hidden", &SimpleProps::hidden);
+    }
     if (auto s = model.RegisterStruct<Props>()) {
         s.RegisterMember("any", &Props::any);
         s.RegisterMember("many", &Props::many);
@@ -3661,6 +3965,8 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_renaming", &m_renaming_);
     model.Bind("ue_rename_text", &m_rename_text_);
     model.Bind("ue_p", &m_p_);
+    model.Bind("ue_s", &m_s_);
+    model.Bind("ue_simple", &m_simple_);
     model.Bind("ue_fills", &m_fills_);
     model.Bind("ue_effects", &m_effects_);
     model.Bind("ue_families", &m_families_);
@@ -3718,6 +4024,31 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         else if (what == "reset") reset_instance();
         else if (what == "detach") detach_instance();
         else if (what == "edit") edit_component();
+    });
+    // «Простой»: the mode, the blocks, the simple panel's fields.
+    on("ue_mode", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_simple(arg_str(a, 0) == "simple"); });
+    on("ue_block", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        if (const std::optional<d::Block> b = d::parse_block(arg_str(a, 0))) add_block(*b);
+    });
+    on("ue_sset", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        if (simple_) set_simple_property(arg_str(a, 0), arg_str(a, 1));
+    });
+    on("ue_stext", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        if (simple_ && a.size() > 2 && a[2].Get<bool>()) set_simple_property(arg_str(a, 0), arg_str(a, 1));
+    });
+    on("ue_scommit", [this, arg_str, input_value](Rml::Event& ev, const Rml::VariantList& a) {
+        if (simple_) set_simple_property(arg_str(a, 0), input_value(ev));
+    });
+    on("ue_spick", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement());
+        // Only the author's own pick: the panel filling its drop-downs (a select whose value is not
+        // among its options picks another) neither has the focus nor differs from what it shows.
+        if (!simple_ || !input || !input->IsPseudoClassSet("focus")) return;
+        const std::string field = arg_str(a, 0), value = input->GetValue();
+        if (value == simple_shown(field)) return;
+        set_simple_property(field, value);
     });
     on("ue_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         const std::string t = arg_str(a, 0);
@@ -3819,9 +4150,12 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         (void)before;
     });
     on("ue_pick", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
-        // A <select>: its value is the new one.
-        if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement()))
-            set_property(arg_str(a, 0), input->GetValue());
+        // A <select>: its value is the new one. Only the author's pick counts: the panel filling its
+        // drop-downs fires changes too (and a select whose value is not among its options picks another),
+        // while the panel is hidden as well («Простой»); those never have the focus.
+        auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement());
+        if (simple_ || !input || !input->IsPseudoClassSet("focus")) return;
+        set_property(arg_str(a, 0), input->GetValue());
     });
 }
 

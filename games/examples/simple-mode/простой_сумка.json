@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "title": "Простой: сумка",
+  "next_id": 10,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Простой: сумка",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "fills": [
+      {
+        "kind": "solid",
+        "color": "#00000099"
+      }
+    ],
+    "children": [
+      {
+        "id": 2,
+        "name": "Текст 1",
+        "type": "text",
+        "x": 652.0,
+        "y": 240.0,
+        "w": 200.0,
+        "h": 41.6,
+        "horizontal": "center",
+        "vertical": "center",
+        "width_sizing": "hug",
+        "height_sizing": "hug",
+        "text": "Сумка",
+        "style": {
+          "family": "",
+          "size": 32.0,
+          "weight": 400,
+          "align": "left",
+          "color": "#ffffff"
+        }
+      },
+      {
+        "id": 4,
+        "name": "Список 1",
+        "type": "frame",
+        "x": 652.0,
+        "y": 320.0,
+        "w": 616.0,
+        "h": 360.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#00000080"
+          }
+        ],
+        "radius": [
+          12.0,
+          12.0,
+          12.0,
+          12.0
+        ],
+        "list": "items",
+        "list_gap": 8.0,
+        "children": [
+          {
+            "id": 5,
+            "name": "Ячейка",
+            "type": "frame",
+            "x": 8.0,
+            "y": 8.0,
+            "w": 296.0,
+            "h": 80.0,
+            "layout": {
+              "mode": "row",
+              "gap": 0.0,
+              "padding": [
+                0.0,
+                16.0,
+                0.0,
+                16.0
+              ],
+              "align": 3
+            },
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2a2018f0"
+              }
+            ],
+            "radius": [
+              10.0,
+              10.0,
+              10.0,
+              10.0
+            ],
+            "children": [
+              {
+                "id": 6,
+                "name": "Предмет",
+                "type": "text",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 200.0,
+                "h": 31.2,
+                "width_sizing": "hug",
+                "height_sizing": "hug",
+                "text": "{item.name} {item.count}",
+                "style": {
+                  "family": "",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#ffffff"
+                },
+                "picture_from": "item.icon"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "name": "Пока пусто",
+            "type": "text",
+            "x": 8.0,
+            "y": 8.0,
+            "w": 200.0,
+            "h": 26.0,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "Пока ничего нет",
+            "style": {
+              "family": "",
+              "size": 20.0,
+              "weight": 400,
+              "align": "left",
+              "color": "#ffffff"
+            }
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Кнопка 1",
+        "type": "frame",
+        "x": 800.0,
+        "y": 720.0,
+        "w": 320.0,
+        "h": 80.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "layout": {
+          "mode": "row",
+          "gap": 0.0,
+          "padding": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "align": 4
+        },
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#2a2018f0"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "close"
+          }
+        ],
+        "children": [
+          {
+            "id": 9,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 200.0,
+            "h": 41.6,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "Закрыть",
+            "style": {
+              "family": "",
+              "size": 32.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#ffffff"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -51,6 +51,7 @@
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -3170,6 +3171,49 @@ private:
     u32 ue_bar_ = 0;
     std::string ue_moved_; // the title's movement at one moment
     const editor::design::Node* ue_node(u32 id) { return editor::design::find(ue().screen().root, id); }
+    // «Простой»: the screen and history before a change, the beginner's own screen and blocks.
+    std::string ue_disk_, ue_json2_, ue_simple_screen_;
+    usize ue_cursor_ = 0, ue_entries_ = 0;
+    u32 ue_simple_btn_ = 0;
+    std::vector<u32> ue_blocks_;
+    // Typed into a field as from the keyboard: focus, End and Backspace over the old text, the text, Enter, then away.
+    // (Ctrl+A is not used: RmlUi reads the modifiers from the real keyboard, not from the event.)
+    bool ue_type(const char* id, const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+        if (!e) return false;
+        e->Focus();
+        key(SDLK_END, SDL_KMOD_NONE);
+        const Rml::String old = e->GetValue();
+        const usize letters = static_cast<usize>(std::count_if(old.begin(), old.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+        for (usize i = 0; i < letters; ++i) key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+        SDL_Event t{};
+        t.type = SDL_EVENT_TEXT_INPUT;
+        t.text.text = text.c_str();
+        ed_.handle_event(t);
+        const bool typed = e->GetValue() == text;
+        key(SDLK_RETURN, SDL_KMOD_NONE);
+        e->Blur();
+        return typed;
+    }
+    // A drop-down used with the mouse: a click opens it, and on a later frame (once its list is laid out) a click on the option.
+    bool ue_open(const char* id) {
+        f32 x = 0, y = 0;
+        if (!element_center(id, x, y)) return false;
+        left_click(x, y);
+        return true;
+    }
+    bool ue_option(const char* id, const std::string& value) {
+        auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element(id));
+        for (int i = 0; select && i < select->GetNumOptions(); ++i) {
+            Rml::Element* o = select->GetOption(i);
+            if (!o || o->GetAttribute<Rml::String>("value", "") != value) continue;
+            if (!o->IsVisible(true)) return false;
+            const Rml::Vector2f p = o->GetAbsoluteOffset(Rml::BoxArea::Border) + o->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+            left_click(p.x, p.y);
+            return select->GetValue() == value;
+        }
+        return false;
+    }
     bool ui_step() {
         namespace d = editor::design;
         const u32 title = ue_named("Название игры");
@@ -4029,6 +4073,224 @@ private:
             const auto edge = ue().layer_box(ue_edge_);
             check(edge && edge->x == ue_edge_box_.x && edge->y == ue_edge_box_.y, "the layout is the drawn one");
             check(click("ue-view-0"), "back to «Макет»");
+            break;
+        }
+        // --- «Простой / Полный» (13.3) ---
+        case 43: {
+            // The menu as the tests left it: copies of components, a list, movement, drawn art.
+            check(!ue().simple() && shown("ue-mode-simple") && shown("ue-tool-frame"), "the switch shows «Полный» chosen");
+            ue().select({});
+            ue_json_ = d::save_screen(ue().screen());
+            ue_disk_ = ue_file(".json");
+            ue_cursor_ = ue().history().cursor();
+            ue_entries_ = ue().history().size();
+            check(click("ue-mode-simple") && ue().simple(), "«Простой» is chosen");
+            check(d::save_screen(ue().screen()) == ue_json_ && ue_file(".json") == ue_disk_, "choosing it changes nothing of the screen");
+            check(ue().history().cursor() == ue_cursor_ && ue().history().size() == ue_entries_, "and is no step of the history");
+            break;
+        }
+        case 44: {
+            check(!shown("ue-tool-frame") && !shown("ue-tool-ellipse") && shown("ue-block-button") && shown("ue-block-list"),
+                  "the drawing tools give way to the blocks");
+            check(shown("ue-simple") && shown("ue-s-show") && !shown("ue-tab-design"), "the screen in plain words: when it shows");
+            // Every layer looked at in plain words: nothing changes.
+            std::vector<u32> ids;
+            auto visit = [&](auto&& self, const d::Node& n) -> void {
+                ids.push_back(n.id);
+                for (const d::Node& c : n.children) self(self, c);
+            };
+            visit(visit, ue().screen().root);
+            for (u32 id : ids) ue().select({id});
+            check(ids.size() > 10 && d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_,
+                  ("every one of the " + std::to_string(ids.size()) + " layers seen in «Простой», nothing changed").c_str());
+            // A layer with movement: what is not shown is named, kept and a click away.
+            u32 moving = 0;
+            for (u32 id : ids)
+                if (const d::Node* n = ue_node(id); n && n->motion.kind != d::MotionKind::None && !moving) moving = id;
+            check(moving != 0, "the menu has a moving layer");
+            ue().select({moving});
+            break;
+        }
+        case 45: {
+            Rml::Element* hidden = ed_.find_element("ue-s-hidden");
+            const std::string text = hidden ? std::string(hidden->GetInnerRML()) : std::string();
+            check(shown("ue-s-hidden") && text.find("движение") != std::string::npos && shown("ue-s-to-full"),
+                  ("the moving layer says its movement is in «Полный»: " + text).c_str());
+            check(click("ue-s-to-full") && !ue().simple() && d::save_screen(ue().screen()) == ue_json_,
+                  "its link opens «Полный», the screen as it was");
+            check(click("ue-mode-simple") && ue().simple() && ue().history().cursor() == ue_cursor_, "and back to «Простой»");
+            // The list and its cell's text.
+            ue().select({ue_list_});
+            break;
+        }
+        case 46: {
+            check(shown("ue-s-list") && shown("ue-s-name"), "a list in plain words: what it lists");
+            ue().select({ue_text_});
+            break;
+        }
+        case 47: {
+            check(shown("ue-s-picture-from") && shown("ue-s-text"), "the cell's text: its words and the thing's picture");
+            // The new game button: drawn art and a frame picture the simple panel does not show.
+            ue_simple_btn_ = ue_named("Кнопка «Новая игра»");
+            ue().select({ue_simple_btn_});
+            break;
+        }
+        case 48: {
+            Rml::Element* word = ed_.find_element("ue-s-block");
+            check(word && std::string(word->GetInnerRML()) == "Кнопка", "the menu's button reads as a button");
+            Rml::Element* hidden = ed_.find_element("ue-s-hidden");
+            const std::string text = hidden ? std::string(hidden->GetInnerRML()) : std::string();
+            check(text.find("рисованная рамка") != std::string::npos && text.find("маска") != std::string::npos,
+                  ("and names its frame picture and mask: " + text).c_str());
+            // Typed into the label's field, as the author would.
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            check(ue_type("ue-s-text", "Играть"), "the label typed in «Простой»");
+            break;
+        }
+        case 49: {
+            const d::Node* button = ue_node(ue_simple_btn_);
+            const d::Node* label = button ? d::block_label(*button) : nullptr;
+            check(label && label->text == "Играть", "the button says «Играть»");
+            check(ue().history().cursor() == ue_cursor_ + 1 && ue().history().undo_label() == "Изменено: Надпись",
+                  ("one step of the history: " + ue().history().undo_label()).c_str());
+            // Nothing else changed: the label put back gives the screen as it was.
+            d::Screen back;
+            check(d::load_screen(d::save_screen(ue().screen()), back), "the screen reads back");
+            if (d::Node* b = d::find(back.root, ue_simple_btn_))
+                if (d::Node* l = d::block_label(*b)) l->text = "Новая игра";
+            check(d::save_screen(back) == ue_json_, "only the label changed: ids, art, copies, list, movement kept");
+            ue_json2_ = d::save_screen(ue().screen());
+            check(click("ue-mode-full") && !ue().simple(), "back to «Полный»");
+            check(d::save_screen(ue().screen()) == ue_json2_ && ue().history().cursor() == ue_cursor_ + 1,
+                  "the switch changes nothing and keeps the history");
+            break;
+        }
+        case 50: {
+            check(shown("ue-tab-design") && shown("ue-tool-frame") && !shown("ue-simple"), "«Полный» shows its panel and tools");
+            ue().undo();
+            check(d::save_screen(ue().screen()) == ue_json_, "Ctrl+Z after the switch takes back the simple change");
+            ue().redo();
+            check(d::save_screen(ue().screen()) == ue_json2_, "Ctrl+Y brings it again");
+            check(click("ue-mode-simple") && ue().simple(), "«Простой» again");
+            ue().undo();
+            check(d::save_screen(ue().screen()) == ue_json_, "Ctrl+Z in «Простой»");
+            ue().redo();
+            check(d::save_screen(ue().screen()) == ue_json2_, "Ctrl+Y in «Простой»");
+            check(ue().open(ue_other_) && ue().open("main_menu") && d::save_screen(ue().screen()) == ue_json2_,
+                  "closed and opened again: the same, ids and all");
+            // A screen of a beginner's own, from the blocks.
+            check(click("ue-new-screen"), "a new screen");
+            break;
+        }
+        case 51: {
+            check(ue().simple() && ue().screen().root.children.empty(), "the new screen is empty and still «Простой»");
+            ue_simple_screen_ = ue().opened();
+            ue_blocks_.clear();
+            static const std::pair<const char*, d::Block> blocks[] = {{"button", d::Block::Button}, {"text", d::Block::Text},
+                                                                       {"bar", d::Block::Bar}, {"list", d::Block::List},
+                                                                       {"picture", d::Block::Picture}};
+            for (const auto& [key, block] : blocks) {
+                const usize at = ue().history().cursor();
+                check(click(std::string("ue-block-") + key), (std::string("a click on the block ") + key).c_str());
+                const u32 id = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+                const d::Node* n = ue_node(id);
+                check(n && d::block_of(*n) == block && ue().history().cursor() == at + 1 &&
+                          ue().history().undo_label() == std::string("Добавлено: ") + d::block_word(block),
+                      (std::string("one step adds a ") + d::block_word(block)).c_str());
+                ue_blocks_.push_back(id);
+            }
+            // Each block where there is room, none over another.
+            bool apart = true;
+            for (usize i = 0; i < ue_blocks_.size(); ++i)
+                for (usize j = i + 1; j < ue_blocks_.size(); ++j) {
+                    const d::Node* a = ue_node(ue_blocks_[i]);
+                    const d::Node* b = ue_node(ue_blocks_[j]);
+                    if (!a || !b || (a->x < b->x + b->w && b->x < a->x + a->w && a->y < b->y + b->h && b->y < a->y + a->h)) apart = false;
+                }
+            check(apart, "the new blocks lie side by side");
+            ue().select({ue_blocks_[0]});
+            break;
+        }
+        case 52: {
+            Rml::Element* word = ed_.find_element("ue-s-block");
+            check(word && std::string(word->GetInnerRML()) == "Кнопка" && shown("ue-s-action") && !shown("ue-s-hidden"),
+                  "the new button: its action, nothing hidden");
+            ue_cursor_ = ue().history().cursor();
+            check(ue_type("ue-s-text", "Настройки"), "its label typed");
+            check(ue().history().cursor() == ue_cursor_ + 1, "Enter keeps it: one step");
+            check(ue_open("ue-s-action"), "a click opens the action's list");
+            break;
+        }
+        case 53:
+            check(ue_option("ue-s-action", "settings"), "a click on «Настройки» in it");
+            break;
+        case 54: {
+            const d::Node* button = ue_node(ue_blocks_[0]);
+            check(button && button->on_click.size() == 1 && button->on_click[0].kind == d::ActionKind::Settings &&
+                      button->on_click[0].target.empty() && d::block_label(*button)->text == "Настройки",
+                  "the button says «Настройки» and opens the game's settings");
+            check(ue().history().cursor() == ue_cursor_ + 2 && ue().history().undo_label() == "Изменено: При нажатии",
+                  ("two changes, two steps: " + std::to_string(ue().history().cursor() - ue_cursor_) + ", last " +
+                   ue().history().undo_label()).c_str());
+            check(ue_open("ue-s-anchor-h"), "a click opens where it keeps");
+            break;
+        }
+        case 55:
+            check(ue_option("ue-s-anchor-h", "end"), "a click on «Справа»");
+            break;
+        case 56: {
+            check(ue_node(ue_blocks_[0])->horizontal == d::Constraint::End && ue().history().cursor() == ue_cursor_ + 3,
+                  "it keeps to the right edge: one more step");
+            check(ue_type("ue-s-color", "#3366cc") && ue_node(ue_blocks_[0])->fills[0].color == d::Color{0x33, 0x66, 0xcc, 255} &&
+                      ue().history().cursor() == ue_cursor_ + 4,
+                  "its colour typed: one more step");
+            ue().select({ue_blocks_[1]});
+            break;
+        }
+        case 57: {
+            check(ue_type("ue-s-text", "Монеты: {inv.coins}") && ue_node(ue_blocks_[1])->text == "Монеты: {inv.coins}",
+                  "the text shows the coins");
+            // Everything kept, on the page the game reads.
+            const std::string html = ue_file(".html", ue_simple_screen_);
+            check(html.find("forge-click=\"[[&quot;settings&quot;,&quot;&quot;]]\"") != std::string::npos &&
+                      html.find("forge-bar-value=\"hero.hearts\"") != std::string::npos &&
+                      html.find("forge-list=\"items\"") != std::string::npos && html.find("{inv.coins}") != std::string::npos,
+                  "the game's page has the button, the bar, the list and the text");
+            ue_json_ = d::save_screen(ue().screen());
+            ue().undo();
+            check(ue_node(ue_blocks_[1])->text == "Текст", "Ctrl+Z: the text as it was");
+            ue().redo();
+            check(d::save_screen(ue().screen()) == ue_json_, "Ctrl+Y: as typed");
+            check(ue().open("main_menu") && ue().open(ue_simple_screen_) && d::save_screen(ue().screen()) == ue_json_,
+                  "saved, opened again: the same");
+            check(click("ue-check"), "«Проверить»");
+            break;
+        }
+        case 58: {
+            check(ue().checking(), "the beginner's screen comes alive");
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* list = page ? page->GetElementById("n" + std::to_string(ue_blocks_[3])) : nullptr;
+            Rml::Element* content = list ? list->GetFirstChild() : nullptr;
+            usize carried = 0;
+            for (const auto& [name, value] : ue().check_vars().all())
+                if (name.rfind("inv.", 0) == 0 && value.number() > 0) ++carried;
+            check(content && ue_list_cells(content) == carried, ("the list has a cell for every thing carried: " +
+                                                                 std::to_string(carried)).c_str());
+            const auto box = ue().layer_box(ue_blocks_[0]);
+            check(box.has_value(), "the button is on the canvas");
+            ue_log_size_ = ue().check_log().size();
+            if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
+            break;
+        }
+        case 59: {
+            const std::vector<std::string>& log = ue().check_log();
+            check(log.size() == ue_log_size_ + 1 && log.back() == "Кнопка: Настройки",
+                  ("the button pressed does what was picked: " + ue_log_since(ue_log_size_)).c_str());
+            ue().set_checking(false);
+            check(click("ue-mode-full") && !ue().simple() && d::save_screen(ue().screen()) == ue_json_,
+                  "«Полный» shows the same screen");
+            check(ue().open("main_menu"), "back to the menu");
             break;
         }
         default:

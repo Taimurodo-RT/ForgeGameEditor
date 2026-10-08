@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "title": "Простой: HUD",
+  "next_id": 7,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "playing"
+  },
+  "root": {
+    "id": 1,
+    "name": "Простой: HUD",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Текст 1",
+        "type": "text",
+        "x": 1500.0,
+        "y": 40.0,
+        "w": 200.0,
+        "h": 41.6,
+        "horizontal": "end",
+        "width_sizing": "hug",
+        "height_sizing": "hug",
+        "text": "Монеты: {inv.coins}",
+        "style": {
+          "family": "",
+          "size": 32.0,
+          "weight": 400,
+          "align": "left",
+          "color": "#ffffff"
+        }
+      },
+      {
+        "id": 4,
+        "name": "Полоска 1",
+        "type": "rectangle",
+        "x": 40.0,
+        "y": 1000.0,
+        "w": 400.0,
+        "h": 32.0,
+        "vertical": "end",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#d94a3a"
+          }
+        ],
+        "radius": [
+          8.0,
+          8.0,
+          8.0,
+          8.0
+        ],
+        "bar": {
+          "value": "hero.hearts",
+          "max": "hero.hearts_max",
+          "from": "left"
+        }
+      },
+      {
+        "id": 5,
+        "name": "Кнопка 1",
+        "type": "frame",
+        "x": 1560.0,
+        "y": 960.0,
+        "w": 320.0,
+        "h": 80.0,
+        "horizontal": "end",
+        "vertical": "end",
+        "layout": {
+          "mode": "row",
+          "gap": 0.0,
+          "padding": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "align": 4
+        },
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#2a2018f0"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "show",
+            "target": "простой_сумка"
+          }
+        ],
+        "children": [
+          {
+            "id": 6,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 200.0,
+            "h": 41.6,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "Сумка",
+            "style": {
+              "family": "",
+              "size": 32.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#ffffff"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

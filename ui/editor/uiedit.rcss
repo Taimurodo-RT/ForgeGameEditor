@@ -46,6 +46,28 @@
 }
 .ue-view:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
 .ue-view.selected { background-color: #2f7bf5; color: #ffffff; }
+/* «Простой / Полный» and the simple blocks */
+.ue-mode, .ue-blocks {
+    gap: 2px; padding: 3px; border-radius: 8px; background-color: var(--surface-container-low); align-items: center; margin-right: 8px;
+}
+.ue-mode-btn {
+    height: 28px; padding: 6px 12px 0 12px; border-radius: 6px; font-size: 12.5px; font-weight: 600; white-space: nowrap;
+    color: var(--on-surface-variant); cursor: pointer;
+}
+.ue-mode-btn:hover { background-color: var(--state-hover-layer); color: var(--on-surface); }
+.ue-mode-btn.selected { background-color: #2f7bf5; color: #ffffff; }
+.ue-block {
+    gap: 5px; height: 28px; padding: 0 10px; border-radius: 6px; align-items: center; font-size: 12.5px; white-space: nowrap;
+    color: var(--on-surface); cursor: pointer;
+}
+.ue-block:hover { background-color: var(--state-hover-layer); }
+.ue-s-theme { gap: 6px; align-items: center; min-height: 28px; flex-wrap: wrap; }
+.ue-s-chip {
+    width: 22px; height: 22px; border-radius: 11px; border: 2px var(--surface-container-highest); cursor: pointer;
+}
+.ue-s-chip.selected { border: 2px #2f7bf5; }
+.ue-s-link { gap: 6px; align-items: center; height: 26px; font-size: 12.5px; color: #4b8ff7; cursor: pointer; }
+.ue-s-link:hover { color: #7aaeff; }
 .ue-view-note {
     position: absolute; left: 12px; top: 10px; right: 12px; z-index: 3; padding: 6px 10px; border-radius: 6px;
     font-size: 12.5px; color: var(--on-surface); background-color: var(--surface-container-high); pointer-events: none;

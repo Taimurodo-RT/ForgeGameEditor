@@ -1083,7 +1083,18 @@
     <div id="ui-editor" class="column" data-if="tab == 'ui'">
         <div class="ue-bar row">
             <div class="st-crumb row"><icon class="s" name="dashboard"/><span>Интерфейс</span><icon class="s" name="chevron_right"/><b>{{ ue_title }}</b></div>
-            <div class="ue-tools row">
+            <div id="ue-mode" class="ue-mode row" title="Простой: кнопки, тексты, картинки, полоски и списки обычными словами. Полный: все настройки. Экран от этого не меняется.">
+                <div id="ue-mode-simple" class="ue-mode-btn" data-class-selected="ue_simple" data-event-click="ue_mode('simple')">Простой</div>
+                <div id="ue-mode-full" class="ue-mode-btn" data-class-selected="!ue_simple" data-event-click="ue_mode('full')">Полный</div>
+            </div>
+            <div id="ue-blocks" class="ue-blocks row" data-if="ue_simple &amp;&amp; !ue_library_open">
+                <div id="ue-block-button" class="ue-block row" title="Кнопка с надписью: назначьте ей действие справа" data-event-click="ue_block('button')"><icon class="s" name="smart_button"/><span>Кнопка</span></div>
+                <div id="ue-block-text" class="ue-block row" title="Надпись, можно с данными игры" data-event-click="ue_block('text')"><icon class="s" name="title"/><span>Текст</span></div>
+                <div id="ue-block-picture" class="ue-block row" title="Картинка из папки игры" data-event-click="ue_block('picture')"><icon class="s" name="image"/><span>Картинка</span></div>
+                <div id="ue-block-bar" class="ue-block row" title="Полоска по данным игры: здоровье, опыт" data-event-click="ue_block('bar')"><icon class="s" name="linear_scale"/><span>Полоска</span></div>
+                <div id="ue-block-list" class="ue-block row" title="Список вещей героя или заданий" data-event-click="ue_block('list')"><icon class="s" name="view_list"/><span>Список</span></div>
+            </div>
+            <div class="ue-tools row" data-if="!ue_simple">
                 <div id="ue-tool-select" class="ue-tool" data-class-selected="ue_tool == 'select'" title="Выбор и перемещение (V)" data-event-click="ue_tool('select')"><icon name="near_me"/></div>
                 <div id="ue-tool-frame" class="ue-tool" data-class-selected="ue_tool == 'frame'" title="Рамка (F): держит другие слои, умеет автораскладку" data-event-click="ue_tool('frame')"><icon name="tag"/></div>
                 <div id="ue-tool-rectangle" class="ue-tool" data-class-selected="ue_tool == 'rectangle'" title="Прямоугольник (R)" data-event-click="ue_tool('rectangle')"><icon name="rectangle"/></div>
@@ -1189,7 +1200,101 @@
                     </div>
                 </div>
                 <div class="ue-empty" data-if="!ue_p.any && !ue_checking">Выберите слой на холсте или в списке слева. Щелчок по названию экрана над ним — фон и размер экрана.</div>
-                <div data-if="ue_p.any && !ue_checking" class="ue-props column">
+                <!-- «Простой»: the selected block in plain words. C++: UiEditor::refresh_simple, set_simple_property. -->
+                <div id="ue-simple" data-if="ue_p.any && !ue_checking && ue_simple" class="ue-props column">
+                    <div class="ue-head row"><icon class="s" data-attr-name="ue_s.icon"/><span class="grow name">{{ ue_s.name }}</span><span id="ue-s-block" class="muted">{{ ue_s.word }}</span></div>
+                    <div class="ue-sec" data-if="ue_s.many"><div class="ue-note">Выбрано несколько слоёв. В простом режиме они правятся по одному: выберите один.</div></div>
+                    <div class="column" data-if="!ue_s.many">
+                    <div class="ue-sec">
+                        <div class="ue-line row"><span class="ue-key">Название</span><input id="ue-s-name" type="text" class="ue-field grow" data-attr-value="ue_s.name" data-event-change="ue_stext('name', ev.value, ev.linebreak)" data-event-blur="ue_scommit('name')"/></div>
+                        <div class="ue-line row" data-if="ue_s.has_text"><span class="ue-key">{{ ue_s.block == 'button' ? 'Надпись' : 'Текст' }}</span><input id="ue-s-text" type="text" class="ue-field grow" data-attr-value="ue_s.text" data-event-change="ue_stext('text', ev.value, ev.linebreak)" data-event-blur="ue_scommit('text')"/></div>
+                        <div class="ue-line row" data-if="ue_s.has_text"><span class="ue-key">Размер букв</span><input id="ue-s-size" type="text" class="ue-field grow" data-attr-value="ue_s.size" data-event-change="ue_stext('size', ev.value, ev.linebreak)" data-event-blur="ue_scommit('size')"/></div>
+                        <div class="ue-line row" data-if="ue_s.has_color"><span class="ue-key">{{ ue_s.root ? 'Фон' : (ue_s.block == 'text' ? 'Цвет букв' : 'Цвет') }}</span>
+                            <div class="ue-swatch" data-style-background-color="ue_s.swatch"/>
+                            <input id="ue-s-color" type="text" class="ue-hex grow" placeholder="нет" data-attr-value="ue_s.hex" data-event-change="ue_stext('color', ev.value, ev.linebreak)" data-event-blur="ue_scommit('color')"/></div>
+                        <div class="ue-s-theme row" data-if="ue_s.has_color &amp;&amp; ue_s.block != 'text' &amp;&amp; ue_game_colors.size > 0" title="Цвета игры: поменяете цвет в компонентах, и он поменяется везде">
+                            <span class="ue-key">Тема игры</span>
+                            <div data-for="c : ue_game_colors" class="ue-s-chip" data-attr-id="'ue-s-theme-' + it_index" data-attr-title="c.name" data-class-selected="ue_s.style == c.key" data-style-background-color="c.swatch" data-event-click="ue_sset('color', '@' + c.key)"/>
+                        </div>
+                        <div class="ue-line row" data-if="ue_s.has_text_color"><span class="ue-key">Цвет надписи</span>
+                            <div class="ue-swatch" data-style-background-color="ue_s.text_swatch"/>
+                            <input id="ue-s-text-color" type="text" class="ue-hex grow" data-attr-value="ue_s.text_hex" data-event-change="ue_stext('text_color', ev.value, ev.linebreak)" data-event-blur="ue_scommit('text_color')"/></div>
+                        <div class="ue-line row" data-if="ue_s.picture"><span class="ue-key">Картинка</span>
+                            <select id="ue-s-picture" class="ue-select grow" data-value="ue_s.image" data-event-change="ue_spick('picture')">
+                                <option value="">Нет</option><option data-for="pic : ue_pictures" data-attr-value="pic.path">{{ pic.name }}</option>
+                            </select></div>
+                        <div class="ue-check row" data-if="ue_s.in_list" id="ue-s-picture-from" data-event-click="ue_sset('picture_from', ue_s.picture_from == '' ? 'item.icon' : '')"><icon class="xs" data-attr-name="ue_s.picture_from != '' ? 'check_box' : 'check_box_outline_blank'"/><span>Показывать картинку предмета</span></div>
+                    </div>
+
+                    <div class="ue-sec" data-if="ue_s.root">
+                        <div class="ue-sec-title">Когда видно</div>
+                        <select id="ue-s-show" class="ue-select" data-value="ue_s.show" data-event-change="ue_spick('show')">
+                            <option value="playing">Всегда, поверх игры</option><option value="command">Окно: открывает кнопка</option><option value="menu">Главное меню игры</option>
+                        </select>
+                    </div>
+
+                    <div class="ue-sec" data-if="ue_s.bar">
+                        <div class="ue-sec-title">Полоска <span class="muted">длина по данным игры</span></div>
+                        <div class="ue-line row"><span class="ue-key">Сколько</span>
+                            <select id="ue-s-bar" class="ue-select grow" data-value="ue_s.bar_value" data-event-change="ue_spick('bar_value')">
+                                <option data-for="v : ue_values" data-attr-value="v.name">{{ v.label }}</option>
+                            </select></div>
+                        <div class="ue-line row"><span class="ue-key">Из скольких</span>
+                            <select id="ue-s-bar-max" class="ue-select grow" data-value="ue_s.bar_max" data-event-change="ue_spick('bar_max')">
+                                <option data-for="v : ue_values" data-attr-value="v.name">{{ v.label }}</option>
+                            </select></div>
+                    </div>
+
+                    <div class="ue-sec" data-if="ue_s.list">
+                        <div class="ue-sec-title">Список <span class="muted">ячейка на каждый предмет</span></div>
+                        <select id="ue-s-list" class="ue-select" data-value="ue_s.list_source" data-event-change="ue_spick('list')">
+                            <option value="items">Вещи героя</option><option value="quests">Задания из журнала</option>
+                        </select>
+                        <div class="ue-note">Первый слой внутри — ячейка: в игре она повторится для каждого предмета, список прокручивается.</div>
+                    </div>
+                    <div class="ue-sec" data-if="ue_s.inside != ''"><div class="ue-note">{{ ue_s.inside }}</div></div>
+
+                    <div class="ue-sec" data-if="ue_s.can_act">
+                        <div class="ue-sec-title">При нажатии <span class="muted">в игре</span></div>
+                        <select id="ue-s-action" class="ue-select" data-if="ue_s.act_editable" data-value="ue_s.action" data-event-change="ue_spick('action')">
+                            <option value="none">Ничего</option><option value="show">Открыть экран</option><option value="close">Закрыть этот экран</option>
+                            <option value="new">Новая игра</option><option value="continue">Продолжить игру</option><option value="load">Загрузить</option><option value="save">Сохранить</option>
+                            <option value="settings">Настройки</option><option value="pause">Пауза</option><option value="resume">Вернуться в игру</option>
+                            <option value="menu">В главное меню</option><option value="quit">Выйти из игры</option><option value="message">Сообщение «Логике»</option>
+                        </select>
+                        <div class="ue-line row" data-if="ue_s.act_editable &amp;&amp; ue_s.needs == 'screen'"><span class="ue-key">Какой</span>
+                            <select id="ue-s-target" class="ue-select grow" data-value="ue_s.target" data-event-change="ue_spick('target')">
+                                <option data-for="n : ue_screen_names" data-attr-value="n">{{ n }}</option>
+                            </select></div>
+                        <div class="ue-line row" data-if="ue_s.act_editable &amp;&amp; ue_s.needs == 'text'"><span class="ue-key">Какое</span>
+                            <input id="ue-s-message" type="text" class="ue-field grow" placeholder="открыть_дверь" data-attr-value="ue_s.target" data-event-change="ue_stext('target', ev.value, ev.linebreak)" data-event-blur="ue_scommit('target')"/></div>
+                        <div class="ue-note" data-if="!ue_s.act_editable">Здесь несколько действий или особые. Они работают; посмотреть и поменять их можно в «Полном».</div>
+                    </div>
+
+                    <div class="ue-sec" data-if="!ue_s.root">
+                        <div class="ue-sec-title">Место и размер</div>
+                        <div class="ue-grid2">
+                            <div class="ue-num"><span>X</span><input id="ue-s-x" type="text" data-attr-value="ue_s.x" data-event-change="ue_stext('x', ev.value, ev.linebreak)" data-event-blur="ue_scommit('x')"/></div>
+                            <div class="ue-num"><span>Y</span><input id="ue-s-y" type="text" data-attr-value="ue_s.y" data-event-change="ue_stext('y', ev.value, ev.linebreak)" data-event-blur="ue_scommit('y')"/></div>
+                            <div class="ue-num"><span>Ш</span><input id="ue-s-w" type="text" data-attr-value="ue_s.w" data-event-change="ue_stext('w', ev.value, ev.linebreak)" data-event-blur="ue_scommit('w')"/></div>
+                            <div class="ue-num"><span>В</span><input id="ue-s-h" type="text" data-attr-value="ue_s.h" data-event-change="ue_stext('h', ev.value, ev.linebreak)" data-event-blur="ue_scommit('h')"/></div>
+                        </div>
+                        <div class="ue-line row" title="На экране игрока другого размера"><span class="ue-key">Держится</span>
+                            <select id="ue-s-anchor-h" class="ue-select grow" data-value="ue_s.anchor_h" data-event-change="ue_spick('anchor_h')">
+                                <option value="start">Слева</option><option value="center">По центру</option><option value="end">Справа</option><option value="both">Тянется</option><option value="scale">Масштаб</option>
+                            </select>
+                            <select id="ue-s-anchor-v" class="ue-select grow" data-value="ue_s.anchor_v" data-event-change="ue_spick('anchor_v')">
+                                <option value="start">Сверху</option><option value="center">По центру</option><option value="end">Снизу</option><option value="both">Тянется</option><option value="scale">Масштаб</option>
+                            </select></div>
+                    </div>
+
+                    <div id="ue-s-hidden" class="ue-sec" data-if="ue_s.has_hidden">
+                        <div class="ue-note ue-warn">{{ ue_s.hidden }}</div>
+                        <div id="ue-s-to-full" class="ue-s-link row" data-event-click="ue_mode('full')"><icon class="xs" name="tune"/><span>Открыть в «Полном»</span></div>
+                    </div>
+                    </div>
+                </div>
+                <div data-if="ue_p.any && !ue_checking && !ue_simple" class="ue-props column">
                     <div class="ue-head row"><icon class="s" data-attr-name="ue_p.root ? 'web_asset' : ue_p.icon"/><span class="grow name">{{ ue_p.name }}</span><span class="muted">{{ ue_p.type_name }}</span></div>
                     <div class="ue-tabs row">
                         <div id="ue-tab-design" class="ue-tab" data-class-on="ue_panel == 'design'" data-event-click="ue_panel_tab('design')">Дизайн</div>
