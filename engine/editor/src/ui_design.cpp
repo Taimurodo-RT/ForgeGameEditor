@@ -1,5 +1,7 @@
 #include "forge/editor/ui_design.h"
 
+#include "forge/core/path.h"
+
 #include <yyjson.h>
 
 #include <algorithm>
@@ -845,6 +847,12 @@ void renumber(Screen& screen, Node& node) {
     for (Node& c : node.children) renumber(screen, c);
 }
 
+std::filesystem::path screen_file(const std::filesystem::path& ui_dir, std::string_view name, std::string_view ext) {
+    std::string file(name);
+    file += ext;
+    return ui_dir / utf8_path(file);
+}
+
 std::string fresh_name(const Screen& screen, NodeType type) {
     const std::string base = word(type, kTypeWords);
     int highest = 0;
@@ -1320,11 +1328,37 @@ std::string move_refusal(const Screen& screen, const std::vector<u32>& ids, u32 
     return {};
 }
 
+bool move_stays(const Screen& screen, const std::vector<u32>& ids, u32 parent, usize index) {
+    const std::vector<u32> moving = movable_order(screen, ids);
+    const Node* target = find(screen.root, parent);
+    if (moving.empty() || !target) return false;
+    for (u32 id : moving) {
+        const std::vector<u32> path = path_to(screen.root, id);
+        if (path.size() < 2 || path[path.size() - 2] != parent) return false;
+    }
+    // The children's order now, and as the move would make it.
+    std::vector<u32> now, after;
+    usize kept = 0;
+    bool placed = false;
+    for (const Node& c : target->children) {
+        now.push_back(c.id);
+        if (std::find(moving.begin(), moving.end(), c.id) != moving.end()) continue;
+        if (kept++ == index) {
+            after.insert(after.end(), moving.begin(), moving.end());
+            placed = true;
+        }
+        after.push_back(c.id);
+    }
+    if (!placed) after.insert(after.end(), moving.begin(), moving.end());
+    return now == after;
+}
+
 bool move_layers(Screen& screen, const std::vector<u32>& ids, u32 parent, usize index,
                  const std::vector<std::pair<f32, f32>>& places) {
     if (!move_refusal(screen, ids, parent).empty()) return false;
     const std::vector<u32> moving = movable_order(screen, ids);
     if (!places.empty() && places.size() != moving.size()) return false;
+    if (move_stays(screen, ids, parent, index)) return true; // where they are: nothing changes
     // Where they go: before the index-th of the parent's children that stay.
     const Node* target = find(screen.root, parent);
     u32 before = 0;

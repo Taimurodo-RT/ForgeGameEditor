@@ -326,8 +326,8 @@ private:
 
     // --- files ---
     std::filesystem::path ui_dir() const { return game_dir_ / "ui"; }
-    std::filesystem::path json_path(const std::string& name) const { return ui_dir() / (name + ".json"); }
-    std::filesystem::path html_path(const std::string& name) const { return ui_dir() / (name + ".html"); }
+    std::filesystem::path json_path(const std::string& name) const { return editor::design::screen_file(ui_dir(), name, ".json"); }
+    std::filesystem::path html_path(const std::string& name) const { return editor::design::screen_file(ui_dir(), name, ".html"); }
     bool write(const std::string& name, const editor::design::Screen& screen) const;
     void apply(const std::string& name, const std::string& json, const std::vector<u32>& selection);
     // Records a change: the screen as it is now against before.

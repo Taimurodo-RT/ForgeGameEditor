@@ -201,6 +201,49 @@ TEST_CASE("layer move: into a row it joins the flow at its place; several keep t
     CHECK(kids(s, 9) == std::vector<u32>{11, 10, 6, 2});
 }
 
+TEST_CASE("layer move: let go where it already is, nothing changes, «Вне раскладки» too") {
+    d::Screen s = move_screen();
+    d::find(s.root, 10)->absolute = true; // «Ячейка 1» out of the row's flow, first in it
+    const std::string before = d::save_screen(s);
+    // Before «Ячейка 2» (its row in the list just under it): where it is.
+    CHECK(d::move_stays(s, {10}, 9, 0));
+    REQUIRE(d::move_layers(s, {10}, 9, 0, {{0, 0}}));
+    CHECK(d::save_screen(s) == before);
+    // An ordinary layer in a free frame: the button before the picture, as it is; on top of «Рамка А» is not.
+    CHECK(d::move_stays(s, {4}, 3, 0));
+    REQUIRE(d::move_layers(s, {4}, 3, 0, {{5, 5}}));
+    CHECK(d::save_screen(s) == before);
+    CHECK(!d::move_stays(s, {4}, 3, kOnTop));
+    // Several, in their order: the same; the other way round they are moved.
+    CHECK(d::move_stays(s, {10, 11}, 9, 0));
+    CHECK(!d::move_stays(s, {4}, 7, kOnTop));
+    // Truly moved after «Ячейка 2»: it joins the flow there (as the author meant).
+    REQUIRE(d::move_layers(s, {10}, 9, 1));
+    CHECK(kids(s, 9) == std::vector<u32>{11, 10});
+    CHECK(!d::find(s.root, 10)->absolute);
+}
+
+TEST_CASE("layer move: a screen with a Russian name is written and read under that name") {
+    // On Windows a path from a narrow string goes through the code page: «перенос_пример» came out garbled.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_layer_move_names";
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir);
+    const d::Screen screen = move_screen();
+    const std::string json = d::save_screen(screen);
+    const std::filesystem::path file = d::screen_file(dir, "перенос_пример", ".json");
+    CHECK(forge::path_to_utf8(file.filename()) == "перенос_пример.json");
+    REQUIRE(forge::write_file_atomic(file, std::span(reinterpret_cast<const forge::u8*>(json.data()), json.size())));
+    std::vector<std::string> names;
+    for (const auto& e : std::filesystem::directory_iterator(dir)) names.push_back(forge::path_to_utf8(e.path().filename()));
+    CHECK(names == std::vector<std::string>{"перенос_пример.json"});
+    d::Screen back;
+    REQUIRE(d::load_screen(read_text(d::screen_file(dir, "перенос_пример", ".json")), back));
+    CHECK(d::save_screen(back) == json);
+    CHECK(d::screen_file(dir, "перенос_пример", ".html") == dir / forge::utf8_path("перенос_пример.html"));
+    std::filesystem::remove_all(dir, ec);
+}
+
 TEST_CASE("layer move: refused moves change nothing and say why") {
     d::Screen s = move_screen();
     const std::string before = d::save_screen(s);

@@ -2891,6 +2891,10 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
         return false;
     }
     const std::vector<u32> order = d::movable_order(screen_, ids);
+    if (d::move_stays(screen_, ids, parent, index)) {
+        show_move_note({}); // let go where they are: nothing changes, no step
+        return true;
+    }
     const d::Node* target = d::find(screen_.root, parent);
     const bool flow = target->layout.mode != d::LayoutMode::None;
     const std::string label = parent == screen_.root.id ? std::string("Перенесено на экран") : "Перенесено в «" + target->name + "»";
@@ -2905,6 +2909,23 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
     }
     if (!d::move_layers(screen_, ids, parent, index, places)) return false;
     page_dirty_ = true;
+    if (!flow) {
+        // Out of a row or column (or a size that filled its frame): the size it showed, fixed now. A size that
+        // follows its content (Hug) still does.
+        for (u32 id : order) {
+            d::Node* n = d::find(screen_.root, id);
+            const auto w = want.find(id);
+            if (!n || w == want.end()) continue;
+            if (n->width_sizing != d::Sizing::Hug && (n->width_sizing == d::Sizing::Fill || n->w != std::round(w->second.w))) {
+                n->width_sizing = d::Sizing::Fixed;
+                n->w = std::round(w->second.w);
+            }
+            if (n->height_sizing != d::Sizing::Hug && (n->height_sizing == d::Sizing::Fill || n->h != std::round(w->second.h))) {
+                n->height_sizing = d::Sizing::Fixed;
+                n->h = std::round(w->second.h);
+            }
+        }
+    }
     if (!flow && page_) {
         // Measured on the page: where a frame's size or a layer's anchoring counts otherwise, put right.
         rebuild_page();
@@ -2914,9 +2935,13 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
             d::Node* n = d::find(screen_.root, id);
             if (w == want.end() || !b || !n) continue;
             const f32 ex = std::round(w->second.x - b->x), ey = std::round(w->second.y - b->y);
-            if (ex == 0 && ey == 0) continue;
+            const f32 ew = n->width_sizing == d::Sizing::Fixed ? std::round(w->second.w - b->w) : 0;
+            const f32 eh = n->height_sizing == d::Sizing::Fixed ? std::round(w->second.h - b->h) : 0;
+            if (ex == 0 && ey == 0 && ew == 0 && eh == 0) continue;
             n->x += ex;
             n->y += ey;
+            n->w += ew;
+            n->h += eh;
             page_dirty_ = true;
         }
     }
@@ -2929,9 +2954,10 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
                 if (const d::Node* n = d::find(screen_.root, id)) hidden = n->name;
     show_move_note(hidden.empty() ? std::string()
                                   : "«" + hidden + "» стоит за краем рамки и не виден: подвиньте его внутрь (Ctrl+Z вернёт как было).");
+    selection_ = order;
+    remember_geometry(before); // a copy of a component keeps the size it got here as its own
     commit(before, label);
     history_.seal();
-    selection_ = order;
     refresh_layers();
     refresh_props();
     refresh_overlay();
