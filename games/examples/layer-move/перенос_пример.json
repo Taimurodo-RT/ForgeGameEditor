@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "title": "Перенос: пример",
+  "next_id": 13,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Перенос: пример",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Заголовок",
+        "type": "text",
+        "x": 560.0,
+        "y": 60.0,
+        "w": 800.0,
+        "h": 60.0,
+        "text": "Перенос между рамками",
+        "style": {
+          "family": "Onest",
+          "size": 48.0,
+          "weight": 400,
+          "align": "center",
+          "color": "#ffffff"
+        }
+      },
+      {
+        "id": 3,
+        "name": "Рамка А",
+        "type": "frame",
+        "x": 160.0,
+        "y": 200.0,
+        "w": 640.0,
+        "h": 640.0,
+        "clip": true,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1e2a3a"
+          }
+        ],
+        "radius": [
+          16.0,
+          16.0,
+          16.0,
+          16.0
+        ],
+        "children": [
+          {
+            "id": 4,
+            "name": "Кнопка",
+            "type": "frame",
+            "x": 60.0,
+            "y": 80.0,
+            "w": 240.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "on_click": [
+              {
+                "do": "change",
+                "target": "demo.presses += 1"
+              }
+            ],
+            "children": [
+              {
+                "id": 5,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 240.0,
+                "h": 80.0,
+                "text": "Нажми",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#1b2127"
+                }
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "name": "Картинка",
+            "type": "rectangle",
+            "x": 60.0,
+            "y": 240.0,
+            "w": 200.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "image",
+                "image": "pictures/интерфейс/камень.png",
+                "fit": "fill"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "name": "Рамка Б",
+        "type": "frame",
+        "x": 1000.0,
+        "y": 200.0,
+        "w": 760.0,
+        "h": 640.0,
+        "clip": true,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#24303f"
+          }
+        ],
+        "radius": [
+          16.0,
+          16.0,
+          16.0,
+          16.0
+        ],
+        "children": [
+          {
+            "id": 8,
+            "name": "Подпись",
+            "type": "text",
+            "x": 40.0,
+            "y": 24.0,
+            "w": 400.0,
+            "h": 48.0,
+            "text": "Рамка Б",
+            "style": {
+              "family": "Onest",
+              "size": 24.0,
+              "weight": 400,
+              "align": "left",
+              "color": "#ffffff"
+            }
+          },
+          {
+            "id": 9,
+            "name": "Ряд",
+            "type": "frame",
+            "x": 40.0,
+            "y": 380.0,
+            "w": 680.0,
+            "h": 220.0,
+            "layout": {
+              "mode": "row",
+              "gap": 16.0,
+              "padding": [
+                20.0,
+                20.0,
+                20.0,
+                20.0
+              ],
+              "align": 0
+            },
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2c3a4d"
+              }
+            ],
+            "children": [
+              {
+                "id": 10,
+                "name": "Ячейка 1",
+                "type": "rectangle",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 140.0,
+                "h": 140.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#4a6a8a"
+                  }
+                ]
+              },
+              {
+                "id": 11,
+                "name": "Ячейка 2",
+                "type": "rectangle",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 140.0,
+                "h": 140.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#5a7a9a"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "name": "Окошко",
+            "type": "frame",
+            "x": 420.0,
+            "y": 100.0,
+            "w": 300.0,
+            "h": 220.0,
+            "clip": true,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#3a4a60"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,5 +1,7 @@
 #include "forge/editor/ui_design.h"
 
+#include "forge/core/path.h"
+
 #include <yyjson.h>
 
 #include <algorithm>
@@ -845,6 +847,12 @@ void renumber(Screen& screen, Node& node) {
     for (Node& c : node.children) renumber(screen, c);
 }
 
+std::filesystem::path screen_file(const std::filesystem::path& ui_dir, std::string_view name, std::string_view ext) {
+    std::string file(name);
+    file += ext;
+    return ui_dir / utf8_path(file);
+}
+
 std::string fresh_name(const Screen& screen, NodeType type) {
     const std::string base = word(type, kTypeWords);
     int highest = 0;
@@ -1278,6 +1286,150 @@ std::vector<MotionKey> motion_keys(const Motion& m) {
     }
     }
     return out;
+}
+
+std::vector<u32> movable_order(const Screen& screen, const std::vector<u32>& ids) {
+    std::vector<u32> out;
+    auto visit = [&](auto&& self, const Node& n, bool inside) -> void {
+        for (const Node& c : n.children) {
+            const bool picked = std::find(ids.begin(), ids.end(), c.id) != ids.end();
+            if (picked && !inside) out.push_back(c.id);
+            self(self, c, inside || picked);
+        }
+    };
+    visit(visit, screen.root, false);
+    return out;
+}
+
+std::string move_refusal(const Screen& screen, const std::vector<u32>& ids, u32 parent) {
+    const std::vector<u32> moving = movable_order(screen, ids);
+    if (moving.empty()) return "Экран целиком не переносится: выберите слой.";
+    const Node* target = find(screen.root, parent);
+    if (!target || !target->is_container()) return "Положить можно только в рамку.";
+    const std::vector<u32> target_path = path_to(screen.root, parent);
+    for (u32 id : moving)
+        if (std::find(target_path.begin(), target_path.end(), id) != target_path.end())
+            return "Рамку нельзя положить в саму себя или в то, что внутри неё.";
+    if (const Node* instance = instance_of(screen.root, parent))
+        return "Внутрь копии компонента «" + instance->component + "» класть нельзя: её слои задаёт компонент.";
+    for (u32 id : target_path)
+        if (const Node* a = find(screen.root, id); a && a->list != ListSource::None)
+            return "В список класть нельзя: он повторяет свою первую ячейку.";
+    if (screen.library && parent == screen.root.id) return "Наверху библиотеки только варианты компонентов.";
+    for (u32 id : moving) {
+        if (const Node* instance = instance_of(screen.root, id); instance && instance->id != id)
+            return "Слой копии компонента «" + instance->component + "» не выносится из неё: её слои задаёт компонент.";
+        const std::vector<u32> path = path_to(screen.root, id);
+        for (usize i = 0; i + 1 < path.size(); ++i)
+            if (const Node* a = find(screen.root, path[i]); a && a->list != ListSource::None)
+                return "Слой списка не выносится: список повторяет свою первую ячейку.";
+        if (screen.library && path.size() == 2) return "Вариант компонента остаётся наверху библиотеки.";
+    }
+    return {};
+}
+
+bool place_at(Node& n, const Rect& box, f32 pw, f32 ph, const Rect& parent_box) {
+    bool fits = true;
+    // The inverse of node_css's anchoring for one axis: rel and shown are the wanted start and length in the
+    // frame's shown box (shown_parent long); own_parent the frame's own length.
+    auto axis = [&fits](Constraint c, bool hug, f32 rel, f32 shown, f32 own_parent, f32 shown_parent, f32& pos, f32& size) {
+        const f32 grown = shown_parent - own_parent; // what a row or column added to the frame
+        auto whole = [](f32 v) { return std::round(v); };
+        switch (c) {
+        case Constraint::Start:
+            pos = whole(rel);
+            if (!hug) size = whole(shown);
+            break;
+        case Constraint::End:
+            pos = whole(rel - grown);
+            if (!hug) size = whole(shown);
+            break;
+        case Constraint::Both:
+            pos = whole(rel);
+            size = whole(shown - grown);
+            if (size < 1) {
+                size = 1;
+                fits = false;
+            }
+            break;
+        case Constraint::Center:
+            if (hug) pos = whole(rel + shown * 0.5f - grown * 0.5f - size * 0.5f);
+            else {
+                pos = whole(rel - grown * 0.5f);
+                size = whole(shown);
+            }
+            break;
+        case Constraint::Scale: {
+            // Shares of the frame's shown size: kept to a hundredth of a pixel of the frame's own size.
+            const f32 k = shown_parent > 0 && own_parent > 0 ? own_parent / shown_parent : 1.0f;
+            pos = std::round(rel * k * 100.0f) / 100.0f;
+            if (!hug) size = std::round(shown * k * 100.0f) / 100.0f;
+            break;
+        }
+        }
+    };
+    axis(n.horizontal, n.width_sizing == Sizing::Hug, box.x - parent_box.x, box.w, pw, parent_box.w, n.x, n.w);
+    axis(n.vertical, n.height_sizing == Sizing::Hug, box.y - parent_box.y, box.h, ph, parent_box.h, n.y, n.h);
+    return fits;
+}
+
+bool move_stays(const Screen& screen, const std::vector<u32>& ids, u32 parent, usize index) {
+    const std::vector<u32> moving = movable_order(screen, ids);
+    const Node* target = find(screen.root, parent);
+    if (moving.empty() || !target) return false;
+    for (u32 id : moving) {
+        const std::vector<u32> path = path_to(screen.root, id);
+        if (path.size() < 2 || path[path.size() - 2] != parent) return false;
+    }
+    // The children's order now, and as the move would make it.
+    std::vector<u32> now, after;
+    usize kept = 0;
+    bool placed = false;
+    for (const Node& c : target->children) {
+        now.push_back(c.id);
+        if (std::find(moving.begin(), moving.end(), c.id) != moving.end()) continue;
+        if (kept++ == index) {
+            after.insert(after.end(), moving.begin(), moving.end());
+            placed = true;
+        }
+        after.push_back(c.id);
+    }
+    if (!placed) after.insert(after.end(), moving.begin(), moving.end());
+    return now == after;
+}
+
+bool move_layers(Screen& screen, const std::vector<u32>& ids, u32 parent, usize index,
+                 const std::vector<std::pair<f32, f32>>& places) {
+    if (!move_refusal(screen, ids, parent).empty()) return false;
+    const std::vector<u32> moving = movable_order(screen, ids);
+    if (!places.empty() && places.size() != moving.size()) return false;
+    if (move_stays(screen, ids, parent, index)) return true; // where they are: nothing changes
+    // Where they go: before the index-th of the parent's children that stay.
+    const Node* target = find(screen.root, parent);
+    u32 before = 0;
+    usize kept = 0;
+    for (const Node& c : target->children) {
+        if (std::find(moving.begin(), moving.end(), c.id) != moving.end()) continue;
+        if (kept++ == index) {
+            before = c.id;
+            break;
+        }
+    }
+    std::vector<Node> taken;
+    for (u32 id : moving)
+        if (std::optional<Node> n = remove(screen.root, id)) taken.push_back(std::move(*n));
+    Node* into = find(screen.root, parent);
+    if (!into || taken.size() != moving.size()) return false;
+    for (usize i = 0; i < taken.size(); ++i) {
+        if (!places.empty()) {
+            taken[i].x = places[i].first;
+            taken[i].y = places[i].second;
+        }
+        taken[i].absolute = false; // in a frame with auto layout it joins the flow; elsewhere x and y place it
+    }
+    auto at = std::find_if(into->children.begin(), into->children.end(), [&](const Node& c) { return before && c.id == before; });
+    into->children.insert(at, std::make_move_iterator(taken.begin()), std::make_move_iterator(taken.end()));
+    return true;
 }
 
 usize move_motion_key(Motion& m, usize index, f32 at) {

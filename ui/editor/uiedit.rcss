@@ -110,6 +110,11 @@
 .ue-layers { min-height: 0px; }
 .ue-layer { min-height: 28px; padding-right: var(--space-1); font-size: 13px; }
 .ue-layer.selected { background-color: #2f7bf540; }
+.ue-layer.drop-above { border-top: 2px #2f7bf5; }
+.ue-layer.drop-below { border-bottom: 2px #2f7bf5; }
+.ue-layer.drop-into { background-color: #2f7bf555; border: 1px #2f7bf5; }
+.ue-layer.drop-no { background-color: #f5402f30; }
+.ue-move-note { padding: var(--space-1) var(--space-2); font-size: 12px; color: #ffb4a8; }
 .ue-layer.off .name, .ue-layer.off .ue-type { opacity: 0.45; }
 .ue-layer .ue-type { color: var(--on-surface-variant); }
 .ue-fold { width: 16px; height: 16px; color: var(--on-surface-variant); }
@@ -193,6 +198,8 @@
 .ue-guide-x { position: absolute; top: 0px; bottom: 0px; width: 1px; background-color: #ff4d4d; }
 .ue-guide-y { position: absolute; left: 0px; right: 0px; height: 1px; background-color: #ff4d4d; }
 .ue-hover { position: absolute; border: 1.5px #2f7bf5; }
+.ue-drop { position: absolute; border: 2px #2f7bf5; background-color: #2f7bf514; }
+.ue-drop-label { position: absolute; left: 0px; top: -24px; padding: 2px 8px; background-color: #2f7bf5; color: #ffffff; font-size: 12px; white-space: nowrap; border-radius: 4px; }
 .ue-picked { position: absolute; border: 1px #2f7bf5; }
 .ue-selection { position: absolute; border: 1.5px #2f7bf5; }
 .ue-handle {

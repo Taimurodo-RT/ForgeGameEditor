@@ -40,6 +40,7 @@
 #include "forge/core/types.h"
 
 #include <array>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -435,6 +436,31 @@ void renumber(Screen& screen, Node& node);
 // "Прямоугольник 3": the type's word and the next free number on the screen.
 std::string fresh_name(const Screen& screen, NodeType type);
 
+// A screen's file in the game's ui folder: name (UTF-8, Cyrillic too) plus ext
+// (".json", ".html"). Built through UTF-8 on every platform: a narrow string
+// would go through the Windows code page and garble the name.
+std::filesystem::path screen_file(const std::filesystem::path& ui_dir, std::string_view name, std::string_view ext);
+
+// --- moving layers between frames (13.6) ---
+// The layers among ids that move, in their drawing order (first drawn first): a layer
+// inside another of them goes with it; the root and unknown ids are left out.
+std::vector<u32> movable_order(const Screen& screen, const std::vector<u32>& ids);
+// Why these layers cannot go into parent, in the author's words; empty when they can.
+// Refused: the screen itself; a parent that is not a frame, is one of them or inside
+// one; inside a copy of a component (its layers are the component's), or a layer of
+// one taken out; a list (it repeats its first layer) and a list's layers; the
+// library's variants (they stay at its top) and its top for other layers.
+std::string move_refusal(const Screen& screen, const std::vector<u32>& ids, u32 parent);
+// Moves the layers (movable_order) into parent, before its child at index among the
+// children that do not move (index past the end: on top), each as it is: id, children,
+// links, movement, overrides. places: their x and y in parent, one per moved layer
+// (empty: kept). In a parent with auto layout they join its flow. False when refused.
+bool move_layers(Screen& screen, const std::vector<u32>& ids, u32 parent, usize index,
+                 const std::vector<std::pair<f32, f32>>& places = {});
+// True when moving them there would leave them where they are: in parent already, in the
+// same order among its children. move_layers then changes nothing (not even «Вне раскладки»).
+bool move_stays(const Screen& screen, const std::vector<u32>& ids, u32 parent, usize index);
+
 // --- components ---
 // One component of the library: its variants (library layer ids, in order)
 // and its properties with the values the variants use.
@@ -516,6 +542,16 @@ struct Rect {
     f32 cx() const { return x + w * 0.5f; }
     f32 cy() const { return y + h * 0.5f; }
 };
+
+// --- moving layers between frames (13.6), continued ---
+// Sets a layer's place in a free frame (and its size, unless it follows its content) so that it
+// shows at box (page pixels). The frame's own size is pw by ph; it shows at parent_box, which a
+// row or column around it may stretch. Counted through the layer's anchoring as the page counts
+// it: «Пропорционально» in the frame's shown size, «Справа/Снизу» and «По центру» from its shown
+// edge or middle, «Растянуть» keeping the gaps (the size the anchoring leaves). The anchoring
+// stays as it is. False when it cannot show there: «Растянуть» in a frame stretched more than
+// the layer is long leaves no size (it gets 1).
+bool place_at(Node& n, const Rect& box, f32 pw, f32 ph, const Rect& parent_box);
 
 // A line drawn while snapping: on x (vertical) or y (horizontal), spanning
 // from..to along the other axis.

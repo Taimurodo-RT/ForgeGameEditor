@@ -203,6 +203,27 @@ public:
     bool make_list(u32 cell, editor::design::ListSource source);
     bool add_auto_layout();
     bool move_selection(f32 dx, f32 dy);
+    // Moving layers between frames (13.6): ids (a frame with all inside it) into
+    // parent, before its index-th child of those that stay (past the end: on
+    // top), each where it is on the screen (its place counted from the new
+    // frame, its size kept; in a row or column it joins the flow there). One
+    // step of the history; false (and move_note() says why) when refused, or
+    // on a player's screen other than «Макет». Everything of the layers stays:
+    // ids, children, clicks, links to the game's colours and styles, movement,
+    // a copy's own changes.
+    bool move_into(const std::vector<u32>& ids, u32 parent, usize index);
+    // Why the last move was refused, or that a moved layer is hidden by its new frame's edge (empty: neither).
+    const std::string& move_note() const { return m_move_note_; }
+    // A layer carried in the layers' list or on the canvas, and where it would go.
+    bool layer_dragging() const { return tree_.on && tree_.moved; }
+    bool layer_pressed() const { return tree_.on; }
+    bool canvas_moving() const { return drag_ == Drag::Move && dragged_; }
+    u32 drop_parent() const { return tree_.on ? tree_.parent : drop_parent_; }
+    usize drop_index() const { return tree_.on ? tree_.index : drop_index_; }
+    static constexpr double drop_wait_seconds() { return kDropWait; } // how long the mouse rests over a frame to go in
+    // The part of a layer the mouse can reach on the canvas: its box inside every frame around it that hides
+    // what sticks out (a frame with «Обрезать», a list); nullopt when none of it shows.
+    std::optional<editor::design::Rect> visible_box(u32 id) const;
     // Changes a field of the selected layers by its name in the design panel
     // ("x", "w", "fill.0.color", "text", "layout.gap"...); false when the
     // value does not fit.
@@ -305,8 +326,8 @@ private:
 
     // --- files ---
     std::filesystem::path ui_dir() const { return game_dir_ / "ui"; }
-    std::filesystem::path json_path(const std::string& name) const { return ui_dir() / (name + ".json"); }
-    std::filesystem::path html_path(const std::string& name) const { return ui_dir() / (name + ".html"); }
+    std::filesystem::path json_path(const std::string& name) const { return editor::design::screen_file(ui_dir(), name, ".json"); }
+    std::filesystem::path html_path(const std::string& name) const { return editor::design::screen_file(ui_dir(), name, ".html"); }
     bool write(const std::string& name, const editor::design::Screen& screen) const;
     void apply(const std::string& name, const std::string& json, const std::vector<u32>& selection);
     // Records a change: the screen as it is now against before.
@@ -328,6 +349,18 @@ private:
     // then the one to pick at the current selection's level (deep: the deepest).
     u32 hit(f32 x, f32 y, bool deep) const;
     u32 container_at(f32 x, f32 y) const;
+    // The frame a carried layer would go into at a screen point: the deepest shown, unlocked frame there that
+    // takes it (not one of the carried, not a copy of a component or a list), else the screen. Where among its
+    // children: in a row or column by the point, otherwise on top.
+    u32 drop_target(f32 x, f32 y, const std::vector<u32>& moving, usize& index) const;
+    // The layers' list under the mouse while carrying: target and index (false: nowhere).
+    bool tree_target(Rml::Context* context, f32 my);
+    bool tree_event(const SDL_Event& e, f32 density, Rml::Context* context);
+    // move_into with the boxes the layers are to keep (screen pixels) and the screen before the gesture.
+    bool move_to(const std::vector<u32>& ids, u32 parent, usize index,
+                 const std::unordered_map<u32, editor::design::Rect>& want, const std::string& before);
+    void show_move_note(std::string note);
+    void end_tree_drag();
     editor::design::Rect selection_box() const;
     editor::design::SnapTargets snap_targets() const;
 
@@ -423,6 +456,25 @@ private:
     // Drag.
     Drag drag_ = Drag::None;
     bool dragged_ = false;
+    std::unordered_map<u32, editor::design::Rect> grab_boxes_; // each carried layer's box at the grab
+    f32 grab_sx_ = 0, grab_sy_ = 0;                            // the carried layers' shift (screen pixels)
+    u32 drop_parent_ = 0;                                      // the frame a carried layer goes into (0: its own)
+    u32 drop_wait_ = 0;                                        // the frame under the mouse, waited on
+    u64 drop_wait_ns_ = 0;
+    static constexpr double kDropWait = 0.5;                   // seconds the mouse rests over a frame to go in
+    usize drop_index_ = 0;
+    // A layer carried in the layers' list: nothing changes until it is let go.
+    struct TreeDrag {
+        bool on = false, moved = false;
+        u32 id = 0;                // the row pressed
+        f32 down_x = 0, down_y = 0;
+        std::vector<u32> moving;   // what goes (the selection, when the row is in it)
+        u32 row = 0;               // the row under the mouse
+        Rml::String where;         // "above", "below", "into", "no"
+        u32 parent = 0;            // 0: nowhere
+        usize index = 0;
+    };
+    TreeDrag tree_;
     f32 grab_mx_ = 0, grab_my_ = 0;       // window pixels
     f32 grab_pan_x_ = 0, grab_pan_y_ = 0; // view at the grab
     std::string grab_json_;               // the screen at the grab (undo)
@@ -463,6 +515,7 @@ private:
         int depth = 0;
         bool selected = false, visible = true, locked = false, container = false, open = true, hidden_by_parent = false,
              component = false; // an instance, or a component in the library
+        Rml::String drop;           // a layer carried over the list: "above", "below", "into" or "no" (refused)
     };
     struct ComponentRow {
         Rml::String name, icon;
@@ -642,6 +695,11 @@ private:
     bool m_handles_ = false;
     Box m_hover_;
     bool m_hovering_ = false;
+    Box m_drop_;                 // the frame a layer carried on the canvas goes into
+    bool m_dropping_ = false;
+    Rml::String m_drop_label_;   // «В рамку «Б»»
+    std::string m_move_note_;    // why a move was refused
+    Rml::String m_move_note_shown_;
     Box m_marquee_;
     bool m_marqueeing_ = false;
     std::vector<Label> m_measures_;

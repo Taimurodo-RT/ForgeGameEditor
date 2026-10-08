@@ -10,6 +10,7 @@ target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render for
 target_compile_definitions(forge_editor_app PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"
                                                    SLICE_DATA_DIR="${PROJECT_SOURCE_DIR}/games/slice"
                                                    SLICE_LEVEL_DIR="${PROJECT_SOURCE_DIR}/games/slice/level"
+                                                   FORGE_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/games/examples"
                                                    FORGE_SLICE_EXE="$<TARGET_FILE:forge_slice>")
 add_dependencies(forge_editor_app forge_slice)
 forge_target_defaults(forge_editor_app)
