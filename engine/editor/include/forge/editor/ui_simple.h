@@ -35,6 +35,8 @@ Block block_of(const Node& node, bool root = false);
 const char* block_word(Block b); // "Кнопка", "Текст"...
 const char* block_key(Block b);  // "button", "text"... (the panel and the page's ids)
 std::optional<Block> parse_block(std::string_view key);
+// "Кнопка 3": the word and the next number no layer of the screen has.
+std::string fresh_block_name(const Screen& screen, const char* word);
 
 // A button's label: its first text, depth first (nullptr: none).
 const Node* block_label(const Node& node);

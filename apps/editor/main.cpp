@@ -3255,6 +3255,64 @@ private:
         m.set_volume(audio::Bus::Ui, 1);
         return p;
     }
+    // «Создать +» and the right button's menus (13.8): the stage, the screen, its layers, history and the mouse's point.
+    int ue_cm_stage_ = 0, ue_cm_kind_ = 0;
+    std::string ue_cm_screen_;
+    u32 ue_cm_btn_ = 0, ue_cm_inst_ = 0;
+    usize ue_cm_cursor_ = 0, ue_cm_count_ = 0;
+    f32 ue_cm_x_ = 0, ue_cm_y_ = 0;
+    std::vector<u32> ue_cm_sel_;
+    // An element's top left corner in window pixels (false when it is not shown).
+    bool ue_cm_corner(const char* id, f32& x, f32& y) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border);
+        x = p.x;
+        y = p.y;
+        return true;
+    }
+    // A menu's item pressed with the mouse.
+    bool ue_cm_press(const char* id) {
+        f32 x = 0, y = 0;
+        if (!element_center(id, x, y)) return false;
+        left_click(x, y);
+        return true;
+    }
+    // The right button on a layer on the canvas.
+    bool ue_cm_right(u32 id) {
+        const auto b = ue().layer_box(id);
+        if (!b) return false;
+        ue_cm_x_ = ue_wx(b->cx());
+        ue_cm_y_ = ue_wy(b->cy());
+        right_click(ue_cm_x_, ue_cm_y_);
+        return true;
+    }
+    // The right button on a layer's row in the list of layers (brought into sight).
+    bool ue_cm_right_row(u32 id) {
+        Rml::Element* e = ed_.find_element(("ue-layer-" + std::to_string(id)).c_str());
+        if (!e) return false;
+        e->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+        if (!ue_mv_row(id, 0.5f, ue_cm_x_, ue_cm_y_)) return false;
+        right_click(ue_cm_x_, ue_cm_y_);
+        return true;
+    }
+    void ue_cm_key(SDL_Keycode k, SDL_Keymod mod = SDL_KMOD_LCTRL) {
+        ue_sd_key(k, true, false, mod);
+        ue_sd_key(k, false, false, mod);
+    }
+    // The open menu is at the mouse, or moved just enough to stay whole in the tab.
+    bool ue_cm_at_mouse(const char* menu) {
+        Rml::Element* m = ed_.find_element(menu);
+        Rml::Element* tab = ed_.find_element("ui-editor");
+        f32 x = 0, y = 0;
+        if (!m || !tab || !ue_cm_corner(menu, x, y)) return false;
+        const Rml::Vector2f t = tab->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const f32 right = t.x + tab->GetOffsetWidth(), bottom = t.y + tab->GetOffsetHeight();
+        const bool whole = x >= t.x - 0.5f && y >= t.y - 0.5f && x + m->GetOffsetWidth() <= right + 0.5f && y + m->GetOffsetHeight() <= bottom + 0.5f;
+        const bool at_x = std::fabs(x - ue_cm_x_) < 1.5f || (x < ue_cm_x_ && std::fabs(x + m->GetOffsetWidth() - right) < 1.5f);
+        const bool at_y = std::fabs(y - ue_cm_y_) < 1.5f || (y < ue_cm_y_ && std::fabs(y + m->GetOffsetHeight() - bottom) < 1.5f);
+        return whole && at_x && at_y;
+    }
     // Moving layers between frames (13.6): the example screen, as it was, its history.
     int ue_mv_stage_ = 0;
     std::string ue_mv_json_, ue_mv_orig_;
@@ -6644,6 +6702,379 @@ private:
             default: break;
             }
             ue_sd_stage_ = 0;
+            break;
+        }
+        case 147: {
+            // «Создать +» and the right button's menus (13.8), with the mouse and keys through the editor's own way in:
+            // each kind made from «Создать» (one step, selected, where nothing is yet), the layer's menu on the canvas
+            // and on its row in the list, the screen's menu and «Вставить сюда», the order of the layers (refused in a
+            // list and in a copy of a component), hide and lock, Esc and a click aside closing a menu, «Простой» and
+            // «Проверить».
+            namespace d = editor::design;
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_cm_stage_;
+                return true;
+            };
+            const d::Node& root = ue().screen().root;
+            auto index_of = [&](u32 id) {
+                for (usize i = 0; i < root.children.size(); ++i)
+                    if (root.children[i].id == id) return static_cast<int>(i);
+                return -1;
+            };
+            auto top_named = [&](const char* prefix) -> u32 {
+                for (const d::Node& c : root.children)
+                    if (c.name.rfind(prefix, 0) == 0) return c.id;
+                return 0;
+            };
+            auto steps = [&] { return ue().history().cursor(); };
+            static const char* const kKinds[] = {"text", "picture", "bar", "list", "frame", "rectangle", "ellipse"};
+            switch (ue_cm_stage_++) {
+            case 0: {
+                ue().set_simple(false);
+                ue_cm_screen_ = ue().new_screen();
+                ue().select({});
+                check(ue().opened() == ue_cm_screen_ && root.children.empty() && ue().view() == 0 && !ue().checking() && ue().menu().empty(),
+                      "a new empty screen, «Макет», «Полный», no menu");
+                ue_cm_cursor_ = steps();
+                f32 x = 0, y = 0;
+                check(shown("ue-create") && !shown("ue-create-menu") && element_center("ue-create", x, y), "«Создать» over the canvas");
+                left_click(x, y);
+                return true;
+            }
+            case 1:
+                if (wait(shown("ue-new-button"), "the create menu is laid out")) return true;
+                return true; // its place is settled a frame later
+            case 2: {
+                Rml::Element* b = ed_.find_element("ue-create");
+                check(ue().menu() == "create" && b && b->IsClassSet("on"), "a click on «Создать» opens its menu, the button lit");
+                bool all = true;
+                for (const char* id : {"ue-new-button", "ue-new-text", "ue-new-picture", "ue-new-bar", "ue-new-list", "ue-new-frame",
+                                       "ue-new-rectangle", "ue-new-ellipse"})
+                    all = all && shown(id);
+                check(all, "elements (button, text, picture, bar, list) and shapes (frame, rectangle, ellipse)");
+                const usize comps = d::components(ue().library()).size();
+                check(comps > 0 ? shown("ue-new-comp-" + std::to_string(comps - 1)) && !shown("ue-new-comp-" + std::to_string(comps)) &&
+                                      !shown("ue-create-no-comps")
+                                : shown("ue-create-no-comps"),
+                      "and each of the game's components: " + std::to_string(comps));
+                f32 mx = 0, my = 0, bx = 0, by = 0;
+                const bool placed = b && ue_cm_corner("ue-create-menu", mx, my) && ue_cm_corner("ue-create", bx, by);
+                check(placed && std::fabs(mx - bx) < 1.5f && my >= by + b->GetOffsetHeight() && my <= by + b->GetOffsetHeight() + 8,
+                      "under the button: menu " + std::to_string(mx) + "," + std::to_string(my) + ", button " + std::to_string(bx) + "," +
+                          std::to_string(by) + " +" + std::to_string(b ? b->GetOffsetHeight() : 0));
+                check(ue_cm_press("ue-new-button"), "a click on «Кнопка»");
+                return true;
+            }
+            case 3: {
+                const d::Node* n = root.children.size() == 1 ? &root.children[0] : nullptr;
+                check(ue().menu().empty(), "the menu closes");
+                check(n && d::block_of(*n) == d::Block::Button && n->name == "Кнопка 1" && ue().selection() == std::vector<u32>{n->id},
+                      "a button made, selected");
+                check(steps() == ue_cm_cursor_ + 1 && ue().history().undo_label() == "Добавлено: Кнопка", "one step: " + ue().history().undo_label());
+                // As a block of «Простой»: the free place nearest the middle, on a grid of 40.
+                check(n && std::fabs(n->x + n->w * 0.5f - ue().screen().width * 0.5f) <= 40 && std::fabs(n->y + n->h * 0.5f - ue().screen().height * 0.5f) <= 40,
+                      "in the middle of the screen");
+                ue_cm_btn_ = n ? n->id : 0;
+                ue_cm_key(SDLK_Z);
+                check(root.children.empty(), "Ctrl+Z: gone");
+                ue_cm_key(SDLK_Y);
+                check(root.children.size() == 1 && root.children[0].id == ue_cm_btn_, "Ctrl+Y: back");
+                ue_cm_kind_ = 0;
+                return true;
+            }
+            case 4: {
+                // Each other kind, «Создать» opened again by a click.
+                const std::string id = std::string("ue-new-") + kKinds[ue_cm_kind_];
+                if (ue().menu() != "create") {
+                    check(click("ue-create") && ue().menu() == "create", "«Создать» again");
+                    --ue_cm_stage_;
+                    return true;
+                }
+                if (wait(shown(id), "the create menu is laid out")) return true;
+                ue_cm_count_ = root.children.size();
+                ue_cm_cursor_ = steps();
+                check(ue_cm_press(id.c_str()), "a click on " + id);
+                return true;
+            }
+            case 5: {
+                const std::string kind = kKinds[ue_cm_kind_];
+                const d::Node* n = root.children.size() == ue_cm_count_ + 1 ? &root.children.back() : nullptr;
+                bool ok = n && ue().menu().empty() && ue().selection() == std::vector<u32>{n->id} && steps() == ue_cm_cursor_ + 1 &&
+                          ue().history().undo_label() == "Добавлено: " + (n->name.rfind(' ') != std::string::npos ? n->name.substr(0, n->name.rfind(' ')) : n->name);
+                if (n) {
+                    if (kind == "frame") ok = ok && n->type == d::NodeType::Frame && n->children.empty() && !n->fills.empty() && n->name == "Рамка 1";
+                    else if (kind == "rectangle") ok = ok && n->type == d::NodeType::Rectangle && n->name == "Прямоугольник 1";
+                    else if (kind == "ellipse") ok = ok && n->type == d::NodeType::Ellipse && n->name == "Эллипс 1";
+                    else ok = ok && kind == d::block_key(d::block_of(*n));
+                    for (usize i = 0; ok && i + 1 < root.children.size(); ++i) {
+                        const d::Node& c = root.children[i];
+                        ok = !(n->x < c.x + c.w && c.x < n->x + n->w && n->y < c.y + c.h && c.y < n->y + n->h);
+                    }
+                }
+                check(ok, "«" + kind + "» from «Создать»: one step (" + ue().history().undo_label() + "), selected, where nothing is yet, the menu closed");
+                if (++ue_cm_kind_ < static_cast<int>(std::size(kKinds))) ue_cm_stage_ = 4;
+                return true;
+            }
+            case 6:
+                // The layer's menu on the canvas.
+                ue().select({});
+                ue_cm_cursor_ = steps();
+                check(ue_cm_right(ue_cm_btn_), "the right button on the button");
+                return true;
+            case 7:
+                if (wait(shown("ue-ctx-cut"), "the layer's menu is laid out")) return true;
+                return true;
+            case 8: {
+                check(ue().menu() == "layer" && ue().selection() == std::vector<u32>{ue_cm_btn_}, "it selects the button and opens the layer's menu");
+                bool all = true;
+                for (const char* id : {"ue-ctx-cut", "ue-ctx-copy", "ue-ctx-paste", "ue-ctx-duplicate", "ue-ctx-delete", "ue-ctx-up", "ue-ctx-down",
+                                       "ue-ctx-top", "ue-ctx-bottom", "ue-ctx-frame", "ue-ctx-hide", "ue-ctx-lock", "ue-ctx-component"})
+                    all = all && shown(id);
+                check(all && !shown("ue-ctx-edit-component") && !shown("ue-ctx-detach") && !shown("ue-ctx-all") && !shown("ue-create-menu"),
+                      "cut, copy, paste, duplicate, delete; the order; frame, hide, lock; make a component");
+                Rml::Element* paste = ed_.find_element("ue-ctx-paste");
+                check(paste && paste->IsClassSet("disabled") == !ue().can_paste(), "«Вставить» greyed only while nothing is copied");
+                check(ue_cm_at_mouse("ue-ctx"), "the menu is at the mouse");
+                check(ue_cm_press("ue-ctx-copy"), "«Копировать»");
+                return true;
+            }
+            case 9:
+                check(ue().menu().empty() && ue().can_paste() && steps() == ue_cm_cursor_, "copied: the menu closed, no step");
+                // On nothing: the screen's menu.
+                ue_cm_x_ = ue_wx(12);
+                ue_cm_y_ = ue_wy(12);
+                right_click(ue_cm_x_, ue_cm_y_);
+                return true;
+            case 10:
+                if (wait(shown("ue-ctx-all"), "the screen's menu is laid out")) return true;
+                return true;
+            case 11: {
+                check(ue().menu() == "empty" && ue().selection().empty(), "on nothing: the screen's menu, nothing selected");
+                check(shown("ue-ctx-create") && shown("ue-ctx-paste-here") && shown("ue-ctx-all") && !shown("ue-ctx-cut") && !shown("ue-ctx-hide"),
+                      "«Создать…», «Вставить сюда», «Выделить всё»");
+                Rml::Element* here = ed_.find_element("ue-ctx-paste-here");
+                check(here && !here->IsClassSet("disabled") && ue_cm_at_mouse("ue-ctx"), "«Вставить сюда» lit, the menu at the mouse");
+                ue_cm_count_ = root.children.size();
+                check(ue_cm_press("ue-ctx-paste-here"), "«Вставить сюда»");
+                return true;
+            }
+            case 12: {
+                const d::Node* n = root.children.size() == ue_cm_count_ + 1 ? &root.children.back() : nullptr;
+                const d::Node* b = ue_node(ue_cm_btn_);
+                check(n && b && n->id != b->id && n->name == b->name && n->w == b->w && n->h == b->h && n->x == 12 && n->y == 12 &&
+                          ue().selection() == std::vector<u32>{n->id},
+                      "a copy of the button with its corner where the right button was, selected");
+                check(steps() == ue_cm_cursor_ + 1 && ue().history().undo_label() == "Вставлено", "one step: " + ue().history().undo_label());
+                ue_cm_cursor_ = steps();
+                // «Создать…» from the screen's menu, at the screen's right edge.
+                ue_cm_x_ = ue_wx(ue().screen().width - 8);
+                ue_cm_y_ = ue_wy(8);
+                right_click(ue_cm_x_, ue_cm_y_);
+                return true;
+            }
+            case 13:
+                if (wait(shown("ue-ctx-create"), "the screen's menu is laid out")) return true;
+                check(ue().menu() == "empty" && ue_cm_press("ue-ctx-create"), "«Создать…»");
+                return true;
+            case 14:
+                if (wait(shown("ue-new-ellipse"), "the create menu is laid out")) return true;
+                return true;
+            case 15:
+                check(ue().menu() == "create" && !shown("ue-ctx") && ue_cm_at_mouse("ue-create-menu"),
+                      "«Создать…» opens the create menu in its place, whole in the tab");
+                ue_cm_key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().menu().empty() && ue().selection().empty() && steps() == ue_cm_cursor_, "Esc closes it, nothing else");
+                return true;
+            case 16:
+                check(!shown("ue-create-menu") && !shown("ue-ctx"), "the menus are gone");
+                // The order: the button is the lowest layer.
+                check(index_of(ue_cm_btn_) == 0, "the button is the lowest layer");
+                ue().select({});
+                check(ue_cm_right(ue_cm_btn_), "its menu");
+                return true;
+            case 17:
+                if (wait(shown("ue-ctx-top"), "the layer's menu is laid out")) return true;
+                check(ue_cm_press("ue-ctx-top"), "«На самый верх»");
+                return true;
+            case 18:
+                check(index_of(ue_cm_btn_) == static_cast<int>(root.children.size()) - 1 && steps() == ue_cm_cursor_ + 1 &&
+                          ue().history().undo_label() == "На самый верх",
+                      "the button on top, one step: " + ue().history().undo_label());
+                ue_cm_cursor_ = steps();
+                check(ue_cm_right(ue_cm_btn_), "its menu again");
+                return true;
+            case 19:
+                if (wait(shown("ue-ctx-up"), "the layer's menu is laid out")) return true;
+                check(ue_cm_press("ue-ctx-up"), "«Выше» on the top layer");
+                return true;
+            case 20: {
+                const int top = static_cast<int>(root.children.size()) - 1;
+                check(index_of(ue_cm_btn_) == top && steps() == ue_cm_cursor_ && ue().menu().empty(), "already on top: no step");
+                ue_cm_key(SDLK_LEFTBRACKET);
+                check(index_of(ue_cm_btn_) == top - 1 && ue().history().undo_label() == "Ниже", "Ctrl+[: one lower");
+                ue_cm_key(SDLK_LEFTBRACKET, static_cast<SDL_Keymod>(SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT));
+                check(index_of(ue_cm_btn_) == 0 && ue().history().undo_label() == "В самый низ", "Ctrl+Shift+[: the lowest");
+                ue_cm_key(SDLK_RIGHTBRACKET);
+                check(index_of(ue_cm_btn_) == 1 && ue().history().undo_label() == "Выше" && steps() == ue_cm_cursor_ + 3, "Ctrl+]: one higher");
+                for (int i = 0; i < 3; ++i) ue_cm_key(SDLK_Z);
+                check(index_of(ue_cm_btn_) == top && steps() == ue_cm_cursor_, "Ctrl+Z three times: on top again");
+                // Two layers together keep their order.
+                const u32 text = top_named("Текст"), picture = top_named("Картинка");
+                check(index_of(text) == 0 && index_of(picture) == 1, "the text and the picture are the two lowest");
+                ue().select({text, picture});
+                ue_cm_key(SDLK_RIGHTBRACKET);
+                check(index_of(text) == 1 && index_of(picture) == 2 && steps() == ue_cm_cursor_ + 1, "both one higher together, in their order");
+                ue_cm_key(SDLK_Z);
+                check(index_of(text) == 0 && index_of(picture) == 1 && steps() == ue_cm_cursor_, "Ctrl+Z: back");
+                // In a list the order is the list's.
+                const d::Node* list = ue_node(top_named("Список"));
+                check(list && !list->children.empty(), "the list has its cell");
+                if (list && !list->children.empty()) ue().select({list->children[0].id});
+                ue_cm_key(SDLK_RIGHTBRACKET);
+                check(steps() == ue_cm_cursor_ && ue().move_note().find("В списке") != std::string::npos, "refused in a list: " + ue().move_note());
+                // A copy of a component from «Создать».
+                ue().select({});
+                check(click("ue-create"), "«Создать»");
+                return true;
+            }
+            case 21: {
+                const usize comps = d::components(ue().library()).size();
+                if (comps == 0) {
+                    ue_cm_stage_ = 25; // no component in this game: nothing to place
+                    return true;
+                }
+                if (wait(shown("ue-new-comp-0"), "the create menu is laid out")) return true;
+                ue_cm_count_ = root.children.size();
+                ue_cm_cursor_ = steps();
+                check(ue_cm_press("ue-new-comp-0"), "a click on the first component");
+                return true;
+            }
+            case 22: {
+                const std::string first = d::components(ue().library())[0].name;
+                const d::Node* n = root.children.size() == ue_cm_count_ + 1 ? &root.children.back() : nullptr;
+                check(n && n->component == first && ue().selection() == std::vector<u32>{n->id} && steps() == ue_cm_cursor_ + 1 && ue().menu().empty(),
+                      "a copy of «" + first + "» placed, selected, one step");
+                ue_cm_inst_ = n ? n->id : 0;
+                ue_cm_cursor_ = steps();
+                if (n && !n->children.empty()) {
+                    ue().select({n->children[0].id});
+                    ue_cm_key(SDLK_RIGHTBRACKET);
+                    check(steps() == ue_cm_cursor_ && ue().move_note().find("компонента") != std::string::npos,
+                          "the copy's layers keep the component's order: " + ue().move_note());
+                }
+                ue().select({});
+                check(ue_cm_right(ue_cm_inst_), "the right button on the copy");
+                return true;
+            }
+            case 23:
+                if (wait(shown("ue-ctx-detach"), "the layer's menu is laid out")) return true;
+                check(ue().selection() == std::vector<u32>{ue_cm_inst_} && shown("ue-ctx-edit-component") && !shown("ue-ctx-component"),
+                      "a copy's menu: «Открыть компонент», «Отвязать от компонента»");
+                check(ue_cm_press("ue-ctx-detach"), "«Отвязать от компонента»");
+                return true;
+            case 24: {
+                const d::Node* n = ue_node(ue_cm_inst_);
+                check(n && n->component.empty() && steps() == ue_cm_cursor_ + 1, "detached, one step: " + ue().history().undo_label());
+                ue_cm_key(SDLK_Z);
+                n = ue_node(ue_cm_inst_);
+                check(n && !n->component.empty() && steps() == ue_cm_cursor_, "Ctrl+Z: a copy again");
+                return true;
+            }
+            case 25: {
+                // Hide and lock from the row's menu in the list of layers.
+                ue().select({ue_cm_btn_});
+                ue_cm_cursor_ = steps();
+                check(ue_cm_right_row(top_named("Прямоугольник")), "the right button on the rectangle's row");
+                return true;
+            }
+            case 26:
+                if (wait(shown("ue-ctx-hide"), "the layer's menu is laid out")) return true;
+                return true;
+            case 27: {
+                const u32 rect = top_named("Прямоугольник");
+                check(ue().menu() == "layer" && ue().selection() == std::vector<u32>{rect}, "the row's layer selected, its menu open");
+                check(ue_cm_at_mouse("ue-ctx"), "the menu at the mouse");
+                check(ue_cm_press("ue-ctx-hide"), "«Скрыть»");
+                return true;
+            }
+            case 28: {
+                const d::Node* r = ue_node(top_named("Прямоугольник"));
+                check(r && !r->visible && steps() == ue_cm_cursor_ + 1 && ue().history().undo_label() == "Скрыт слой", "hidden, one step");
+                check(ue_cm_right_row(top_named("Прямоугольник")), "its menu again");
+                return true;
+            }
+            case 29: {
+                if (wait(shown("ue-ctx-hide"), "the layer's menu is laid out")) return true;
+                Rml::Element* hide = ed_.find_element("ue-ctx-hide");
+                check(hide && hide->GetInnerRML().find("Показать") != std::string::npos, "now it offers «Показать»");
+                check(ue_cm_press("ue-ctx-lock"), "«Закрепить»");
+                return true;
+            }
+            case 30: {
+                const d::Node* r = ue_node(top_named("Прямоугольник"));
+                check(r && r->locked && steps() == ue_cm_cursor_ + 2 && ue().history().undo_label() == "Слой закреплён", "locked, one step");
+                ue_cm_key(SDLK_Z);
+                ue_cm_key(SDLK_Z);
+                r = ue_node(top_named("Прямоугольник"));
+                check(r && r->visible && !r->locked && steps() == ue_cm_cursor_, "Ctrl+Z twice: shown and free");
+                // A click aside closes a menu and does nothing else.
+                ue().select({ue_cm_btn_});
+                ue_cm_sel_ = ue().selection();
+                check(click("ue-create") && ue().menu() == "create", "«Создать» open");
+                return true;
+            }
+            case 31: {
+                if (wait(shown("ue-new-ellipse"), "the create menu is laid out")) return true;
+                const auto t = ue().layer_box(top_named("Текст"));
+                check(t.has_value(), "the text on the canvas");
+                if (t) left_click(ue_wx(t->cx()), ue_wy(t->cy()));
+                return true;
+            }
+            case 32:
+                check(ue().menu().empty() && ue().selection() == ue_cm_sel_ && steps() == ue_cm_cursor_,
+                      "a click on the canvas beside the menu closes it: the text not selected, no step");
+                // The wheel moves the view: the menu would point at nothing.
+                check(ue_cm_right(ue_cm_btn_) && ue().menu() == "layer", "the button's menu");
+                {
+                    SDL_Event w{};
+                    w.type = SDL_EVENT_MOUSE_WHEEL;
+                    w.wheel.y = 1;
+                    w.wheel.mouse_x = ue_cm_x_;
+                    w.wheel.mouse_y = ue_cm_y_;
+                    ed_.handle_event(w);
+                }
+                check(ue().menu().empty() && steps() == ue_cm_cursor_, "the wheel over the canvas closes it");
+                ue().set_simple(true);
+                return true;
+            case 33:
+                check(ue().simple() && !shown("ue-create"), "«Простой»: no «Создать» (its own blocks are there)");
+                ue().select({});
+                check(ue_cm_right(ue_cm_btn_), "the right button on the button");
+                return true;
+            case 34:
+                if (wait(shown("ue-ctx-hide"), "the layer's menu is laid out")) return true;
+                check(shown("ue-ctx-copy") && shown("ue-ctx-top") && !shown("ue-ctx-frame") && !shown("ue-ctx-component"),
+                      "«Простой»: the layer's menu without frames and components");
+                ue_cm_key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().menu().empty() && steps() == ue_cm_cursor_, "Esc closes it");
+                ue().set_simple(false);
+                ue().select({});
+                check(click("ue-check") && ue().checking(), "«Проверить»");
+                return true;
+            case 35:
+                ue_cm_right(ue_cm_btn_);
+                click("ue-create");
+                return true;
+            case 36:
+                check(ue().checking() && ue().menu().empty() && !shown("ue-ctx") && !shown("ue-create-menu") && steps() == ue_cm_cursor_,
+                      "«Проверить»: neither the right button nor «Создать» opens a menu");
+                ue().set_checking(false);
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            default: break;
+            }
+            ue_cm_stage_ = 0;
             break;
         }
         default:

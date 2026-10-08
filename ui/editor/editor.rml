@@ -1094,6 +1094,7 @@
                 <div id="ue-block-bar" class="ue-block row" title="Полоска по данным игры: здоровье, опыт" data-event-click="ue_block('bar')"><icon class="s" name="linear_scale"/><span>Полоска</span></div>
                 <div id="ue-block-list" class="ue-block row" title="Список вещей героя или заданий" data-event-click="ue_block('list')"><icon class="s" name="view_list"/><span>Список</span></div>
             </div>
+            <div id="ue-create" class="ue-create-btn row" data-if="!ue_simple &amp;&amp; !ue_library_open" data-class-on="ue_menu == 'create'" title="Создать: кнопку, текст, картинку, полоску, список, рамку, фигуру или копию компонента" data-event-click="ue_create_menu"><icon class="s" name="add"/><span>Создать</span><icon class="s" name="expand_more"/></div>
             <div class="ue-tools row" data-if="!ue_simple">
                 <div id="ue-tool-select" class="ue-tool" data-class-selected="ue_tool == 'select'" title="Выбор и перемещение (V)" data-event-click="ue_tool('select')"><icon name="near_me"/></div>
                 <div id="ue-tool-frame" class="ue-tool" data-class-selected="ue_tool == 'frame'" title="Рамка (F): держит другие слои, умеет автораскладку" data-event-click="ue_tool('frame')"><icon name="tag"/></div>
@@ -1129,7 +1130,7 @@
                 <div id="ue-new-screen" class="ue-row row add" data-event-click="ue_new_screen"><icon class="s" name="add"/><span>Новый экран</span></div>
                 <div class="lg-nav-title">Слои</div>
                 <div class="ue-layers grow">
-                    <div data-for="l : ue_layers" class="ue-layer row" data-attr-id="'ue-layer-' + l.id" data-class-selected="l.selected" data-class-drop-above="l.drop == 'above'" data-class-drop-below="l.drop == 'below'" data-class-drop-into="l.drop == 'into'" data-class-drop-no="l.drop == 'no'" data-class-comp="l.component" data-class-off="!l.visible || l.hidden_by_parent" data-style-padding-left="(6 + l.depth * 16) + 'px'" data-event-click="ue_layer(l.id)" data-event-dblclick="ue_rename(l.id)">
+                    <div data-for="l : ue_layers" class="ue-layer row" data-attr-id="'ue-layer-' + l.id" data-class-selected="l.selected" data-class-drop-above="l.drop == 'above'" data-class-drop-below="l.drop == 'below'" data-class-drop-into="l.drop == 'into'" data-class-drop-no="l.drop == 'no'" data-class-comp="l.component" data-class-off="!l.visible || l.hidden_by_parent" data-style-padding-left="(6 + l.depth * 16) + 'px'" data-event-click="ue_layer(l.id)" data-event-mousedown="ue_layer_menu(l.id)" data-event-dblclick="ue_rename(l.id)">
                         <div class="ue-fold" data-if="l.container" data-event-click="ue_layer_fold(l.id)"><icon class="xs" data-attr-name="l.open ? 'expand_more' : 'chevron_right'"/></div>
                         <div class="ue-fold" data-if="!l.container"/>
                         <icon class="s ue-type" data-attr-name="l.icon"/>
@@ -1138,7 +1139,7 @@
                         <div class="ue-eye" data-class-on="l.locked" title="Закрепить: не выбирается на холсте" data-event-click="ue_layer_lock(l.id)"><icon class="xs" data-attr-name="l.locked ? 'lock' : 'lock_open'"/></div>
                         <div class="ue-eye" data-class-on="!l.visible" title="Показать или скрыть" data-event-click="ue_layer_eye(l.id)"><icon class="xs" data-attr-name="l.visible ? 'visibility' : 'visibility_off'"/></div>
                     </div>
-                    <div class="ue-empty" data-if="ue_layers.size == 0">Пока пусто: выберите инструмент сверху и нарисуйте на экране.</div>
+                    <div class="ue-empty" data-if="ue_layers.size == 0">Пока пусто: «Создать» сверху или инструмент, и нарисуйте на экране.</div>
                 </div>
                 <div id="ue-move-note" class="ue-move-note" data-if="ue_move_note != ''">{{ ue_move_note }}</div>
                 <div class="lg-nav-title" title="Щелчок по компоненту ставит его копию на экран">Компоненты</div>
@@ -1898,6 +1899,55 @@
                 </div>
             </div>
         </div>
+
+        <!-- «Создать +» and the right button's menus (13.8). C++: UiEditor::open_menu, create, the ue_menu_do actions. -->
+        <div class="as-backdrop" data-if="ue_menu != ''" data-event-mousedown="ue_menu_close"/>
+        <div id="ue-create-menu" class="as-menu menu-list ue-menu ue-create-menu" data-if="ue_menu == 'create'" data-style-left="ue_menu_x + 'px'" data-style-top="ue_menu_y + 'px'">
+            <div class="ue-menu-group row"><icon class="s" name="interests"/><span>Элементы</span></div>
+            <div id="ue-new-button" class="menu-item" title="Рамка с надписью: назначьте ей действие справа" data-event-click="ue_create('button')"><icon name="smart_button"/><span class="label">Кнопка</span></div>
+            <div id="ue-new-text" class="menu-item" title="Надпись, можно с данными игры" data-event-click="ue_create('text')"><icon name="title"/><span class="label">Текст</span></div>
+            <div id="ue-new-picture" class="menu-item" title="Картинка из папки игры" data-event-click="ue_create('picture')"><icon name="image"/><span class="label">Картинка</span></div>
+            <div id="ue-new-bar" class="menu-item" title="Полоска по данным игры: здоровье, опыт" data-event-click="ue_create('bar')"><icon name="linear_scale"/><span class="label">Полоска</span></div>
+            <div id="ue-new-list" class="menu-item" title="Список вещей героя или заданий" data-event-click="ue_create('list')"><icon name="view_list"/><span class="label">Список</span></div>
+            <div class="divider"/>
+            <div class="ue-menu-group row"><icon class="s" name="shapes"/><span>Фигуры</span></div>
+            <div id="ue-new-frame" class="menu-item" title="Рамка: держит другие слои, умеет автораскладку" data-event-click="ue_create('frame')"><icon name="tag"/><span class="label">Рамка</span></div>
+            <div id="ue-new-rectangle" class="menu-item" data-event-click="ue_create('rectangle')"><icon name="rectangle"/><span class="label">Прямоугольник</span></div>
+            <div id="ue-new-ellipse" class="menu-item" data-event-click="ue_create('ellipse')"><icon name="circle"/><span class="label">Эллипс</span></div>
+            <div class="divider"/>
+            <div class="ue-menu-group row"><icon class="s" name="widgets"/><span>Компоненты</span></div>
+            <div data-for="c : ue_components" class="menu-item" data-attr-id="'ue-new-comp-' + it_index" title="Копия компонента: меняется вместе с ним" data-event-click="ue_place(c.name)"><icon data-attr-name="c.icon"/><span class="label">{{ c.name }}</span></div>
+            <div id="ue-create-no-comps" class="ue-menu-note" data-if="ue_components.size == 0">Пока нет. Правая кнопка по кнопке → «Сделать компонентом».</div>
+        </div>
+        <div id="ue-ctx" class="as-menu menu-list ue-menu" data-if="ue_menu == 'layer' || ue_menu == 'empty'" data-style-left="ue_menu_x + 'px'" data-style-top="ue_menu_y + 'px'">
+            <div data-if="ue_menu == 'layer'">
+                <div id="ue-ctx-cut" class="menu-item" data-event-click="ue_menu_do('cut')"><icon name="content_cut"/><span class="label">Вырезать</span><span class="trailing">Ctrl+X</span></div>
+                <div id="ue-ctx-copy" class="menu-item" data-event-click="ue_menu_do('copy')"><icon name="content_copy"/><span class="label">Копировать</span><span class="trailing">Ctrl+C</span></div>
+                <div id="ue-ctx-paste" class="menu-item" data-class-disabled="!ue_menu_paste" data-event-click="ue_menu_do('paste')"><icon name="content_paste"/><span class="label">Вставить</span><span class="trailing">Ctrl+V</span></div>
+                <div id="ue-ctx-duplicate" class="menu-item" data-event-click="ue_menu_do('duplicate')"><icon name="library_add"/><span class="label">Дублировать</span><span class="trailing">Ctrl+D</span></div>
+                <div id="ue-ctx-delete" class="menu-item" data-event-click="ue_menu_do('delete')"><icon name="delete"/><span class="label">Удалить</span><span class="trailing">Del</span></div>
+                <div class="divider"/>
+                <div id="ue-ctx-up" class="menu-item" data-event-click="ue_menu_do('up')"><icon name="flip_to_front"/><span class="label">Выше</span><span class="trailing">Ctrl+]</span></div>
+                <div id="ue-ctx-down" class="menu-item" data-event-click="ue_menu_do('down')"><icon name="flip_to_back"/><span class="label">Ниже</span><span class="trailing">Ctrl+[</span></div>
+                <div id="ue-ctx-top" class="menu-item" data-event-click="ue_menu_do('top')"><icon name="vertical_align_top"/><span class="label">На самый верх</span><span class="trailing">Ctrl+Shift+]</span></div>
+                <div id="ue-ctx-bottom" class="menu-item" data-event-click="ue_menu_do('bottom')"><icon name="vertical_align_bottom"/><span class="label">В самый низ</span><span class="trailing">Ctrl+Shift+[</span></div>
+                <div class="divider"/>
+                <div id="ue-ctx-frame" class="menu-item" data-if="!ue_simple" data-event-click="ue_menu_do('frame')"><icon name="crop_free"/><span class="label">В рамку</span><span class="trailing">Ctrl+G</span></div>
+                <div id="ue-ctx-hide" class="menu-item" data-event-click="ue_menu_do('hide')"><icon data-attr-name="ue_menu_hidden ? 'visibility' : 'visibility_off'"/><span class="label">{{ ue_menu_hidden ? 'Показать' : 'Скрыть' }}</span></div>
+                <div id="ue-ctx-lock" class="menu-item" data-event-click="ue_menu_do('lock')"><icon data-attr-name="ue_menu_locked ? 'lock_open' : 'lock'"/><span class="label">{{ ue_menu_locked ? 'Открепить' : 'Закрепить' }}</span></div>
+                <div data-if="!ue_simple &amp;&amp; (ue_menu_component || ue_menu_instance)">
+                    <div class="divider"/>
+                    <div id="ue-ctx-component" class="menu-item" data-if="ue_menu_component" title="Сделать один раз, ставить на любые экраны" data-event-click="ue_menu_do('component')"><icon name="widgets"/><span class="label">Сделать компонентом</span></div>
+                    <div id="ue-ctx-edit-component" class="menu-item" data-if="ue_menu_instance" data-event-click="ue_menu_do('edit_component')"><icon name="edit"/><span class="label">Открыть компонент</span></div>
+                    <div id="ue-ctx-detach" class="menu-item" data-if="ue_menu_instance" title="Копия станет обычными слоями и больше не будет меняться с компонентом" data-event-click="ue_menu_do('detach')"><icon name="link_off"/><span class="label">Отвязать от компонента</span></div>
+                </div>
+            </div>
+            <div data-if="ue_menu == 'empty'">
+                <div id="ue-ctx-create" class="menu-item" data-if="!ue_simple &amp;&amp; !ue_library_open" data-event-click="ue_menu_do('create')"><icon name="add"/><span class="label">Создать…</span></div>
+                <div id="ue-ctx-paste-here" class="menu-item" data-class-disabled="!ue_menu_paste" title="Скопированные слои — левым верхним углом туда, где была мышь" data-event-click="ue_menu_do('paste')"><icon name="content_paste"/><span class="label">Вставить сюда</span></div>
+                <div id="ue-ctx-all" class="menu-item" data-event-click="ue_menu_do('all')"><icon name="select_all"/><span class="label">Выделить всё</span><span class="trailing">Ctrl+A</span></div>
+            </div>
+        </div>
     </div>
 
     <div id="assets" class="column" data-if="tab == 'assets'">
@@ -2249,7 +2299,7 @@
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'scheme'">Ctrl+Z / Ctrl+Y отмена и повтор · тяните от точки к точке, чтобы соединить · правый щелчок по рамке — новая нода · Alt+щелчок по точке убирает провода · Delete убирает выбранное</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'code'">Код собран из связей · щелчок по строке: её связь · Ctrl+Z / Ctrl+Y отмена и повтор</span>
         <span class="muted" data-if="tab == 'story'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по реплике: править · Enter сохранить · Esc отмена · щелчок по пометке: выбрать из списка</span>
-        <span class="muted" data-if="tab == 'ui'">V F R O T инструменты · Ctrl+колесо: масштаб · пробел или средняя кнопка: двигать холст · Shift+A автораскладка · Ctrl+G в рамку · Ctrl+D копия · Ctrl: без прилипания</span>
+        <span class="muted" data-if="tab == 'ui'">V F R O T инструменты · правая кнопка: меню · Ctrl+колесо: масштаб · пробел или средняя кнопка: двигать холст · Shift+A автораскладка · Ctrl+G в рамку · Ctrl+D копия · Ctrl: без прилипания</span>
         <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic' && tab != 'story' && tab != 'ui'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>

@@ -199,6 +199,28 @@ public:
     bool remove_selection();
     bool duplicate_selection();
     bool wrap_selection_in_frame();
+    // «Создать +» (13.8): a new layer of that kind ("button", "text", "picture", "bar", "list", "frame",
+    // "rectangle", "ellipse") where there is room in the middle of the screen, selected; one step of the
+    // history; 0 when none is made here (the library, «Проверить»).
+    u32 create(const std::string& kind);
+    // The layers' clipboard (Ctrl+C, Ctrl+X, Ctrl+V). paste: into the selected frame, else beside the
+    // selection (beside: always beside), else on the screen.
+    bool copy_selection();
+    bool cut_selection();
+    bool paste(bool beside = false);
+    bool paste_at(f32 x, f32 y); // on the screen, the copied layers' top left corner at the screen's point
+    bool can_paste() const { return !clipboard_.empty(); }
+    // Among their siblings: up (on top) or down one step, or to the top or the bottom (to_end). One step of
+    // the history; false when nothing moves or when refused (move_note() says why).
+    bool restack_selection(bool up, bool to_end);
+    // Hidden / locked for every selected layer (all hidden: all shown again); one step of the history.
+    bool toggle_hidden();
+    bool toggle_locked();
+    // The menus over the tab: "" none, "create" (under «Создать +»), "layer" (the selected layers', on the right
+    // button over a layer on the canvas or in the layers' list), "empty" (the screen's, on the right button over
+    // nothing). x, y: the window's pixels.
+    void open_menu(const std::string& menu, f32 x, f32 y);
+    const std::string& menu() const { return menu_; }
     // A new list frame (selected) around the layer, which becomes its cell; one
     // step of the history.
     bool make_list(u32 cell, editor::design::ListSource source);
@@ -372,6 +394,7 @@ private:
     bool move_to(const std::vector<u32>& ids, u32 parent, usize index,
                  const std::unordered_map<u32, editor::design::Rect>& want, const std::string& before);
     void show_move_note(std::string note);
+    u32 place_new(editor::design::Node n, const std::string& before, const std::string& label);
     void end_tree_drag();
     editor::design::Rect selection_box() const;
     editor::design::SnapTargets snap_targets() const;
@@ -636,6 +659,13 @@ private:
 
     std::vector<ScreenRow> m_screens_;
     std::vector<ComponentRow> m_components_;
+    // The menus (13.8): which is open, where (the tab's pixels), and what the layer's menu offers.
+    std::string menu_;
+    Rml::String m_menu_;
+    f32 m_menu_x_ = 0, m_menu_y_ = 0;
+    f32 menu_sx_ = 0, menu_sy_ = 0; // the screen's point the right button was on («Вставить сюда»)
+    bool menu_under_button_ = false; // «Создать» opened by its button: the menu stays under it
+    bool m_menu_paste_ = false, m_menu_hidden_ = false, m_menu_locked_ = false, m_menu_instance_ = false, m_menu_component_ = false;
     std::vector<VariantRow> m_variants_; // the selected component variant's or instance's properties
     bool m_library_open_ = false;
     std::vector<GameColorRow> m_game_colors_;

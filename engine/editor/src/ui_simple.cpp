@@ -24,18 +24,6 @@ Paint solid(Color c) {
     return p;
 }
 
-// "Кнопка 3": the block's word and the next number no layer of the screen has.
-std::string fresh_block_name(const Screen& s, const char* word) {
-    int top = 0;
-    const std::string prefix = std::string(word) + " ";
-    auto visit = [&](auto&& self, const Node& n) -> void {
-        if (n.name.rfind(prefix, 0) == 0) top = std::max(top, std::atoi(n.name.c_str() + prefix.size()));
-        for (const Node& c : n.children) self(self, c);
-    };
-    visit(visit, s.root);
-    return prefix + std::to_string(top + 1);
-}
-
 Node text_node(Screen& s, std::string name, std::string text, f32 size) {
     Node t;
     t.id = s.next_id++;
@@ -53,6 +41,18 @@ Node text_node(Screen& s, std::string name, std::string text, f32 size) {
 }
 
 } // namespace
+
+// "Кнопка 3": the block's word and the next number no layer of the screen has.
+std::string fresh_block_name(const Screen& s, const char* word) {
+    int top = 0;
+    const std::string prefix = std::string(word) + " ";
+    auto visit = [&](auto&& self, const Node& n) -> void {
+        if (n.name.rfind(prefix, 0) == 0) top = std::max(top, std::atoi(n.name.c_str() + prefix.size()));
+        for (const Node& c : n.children) self(self, c);
+    };
+    visit(visit, s.root);
+    return prefix + std::to_string(top + 1);
+}
 
 const char* block_word(Block b) { return kBlockWords[static_cast<int>(b)]; }
 const char* block_key(Block b) { return kBlockKeys[static_cast<int>(b)]; }
