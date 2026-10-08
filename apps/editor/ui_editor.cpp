@@ -2898,16 +2898,9 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
     const d::Node* target = d::find(screen_.root, parent);
     const bool flow = target->layout.mode != d::LayoutMode::None;
     const std::string label = parent == screen_.root.id ? std::string("Перенесено на экран") : "Перенесено в «" + target->name + "»";
-    const d::Rect pbox = layer_box(parent).value_or(d::Rect{});
-    // In a free frame each keeps its place on the screen: counted from the new frame; its size stays.
-    std::vector<std::pair<f32, f32>> places;
-    for (u32 id : order) {
-        const d::Node* n = d::find(screen_.root, id);
-        const auto w = want.find(id);
-        if (flow || w == want.end()) places.emplace_back(n->x, n->y);
-        else places.emplace_back(std::round(w->second.x - pbox.x), std::round(w->second.y - pbox.y));
-    }
-    if (!d::move_layers(screen_, ids, parent, index, places)) return false;
+    const d::Rect pbox = layer_box(parent).value_or(d::Rect{0, 0, target->w, target->h});
+    std::string squeezed; // anchored «Растянуть» in a frame stretched more than it is long
+    if (!d::move_layers(screen_, ids, parent, index)) return false;
     page_dirty_ = true;
     if (!flow) {
         // Out of a row or column (or a size that filled its frame): the size it showed, fixed now. A size that
@@ -2924,24 +2917,30 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
                 n->height_sizing = d::Sizing::Fixed;
                 n->h = std::round(w->second.h);
             }
+            // In a free frame each keeps its place on the screen, counted from the new frame through its anchoring.
+            if (!d::place_at(*n, w->second, target->w, target->h, pbox)) squeezed = n->name;
         }
     }
     if (!flow && page_) {
-        // Measured on the page: where a frame's size or a layer's anchoring counts otherwise, put right.
+        // Measured on the page: where the frame shows otherwise now, or the page rounds otherwise, put right
+        // through the anchoring again (the wanted box moved by what is off).
         rebuild_page();
+        const d::Rect shown_parent = layer_box(parent).value_or(pbox);
         for (u32 id : order) {
             const auto w = want.find(id);
             const auto b = layer_box(id);
             d::Node* n = d::find(screen_.root, id);
             if (w == want.end() || !b || !n) continue;
-            const f32 ex = std::round(w->second.x - b->x), ey = std::round(w->second.y - b->y);
-            const f32 ew = n->width_sizing == d::Sizing::Fixed ? std::round(w->second.w - b->w) : 0;
-            const f32 eh = n->height_sizing == d::Sizing::Fixed ? std::round(w->second.h - b->h) : 0;
-            if (ex == 0 && ey == 0 && ew == 0 && eh == 0) continue;
-            n->x += ex;
-            n->y += ey;
-            n->w += ew;
-            n->h += eh;
+            const bool hug_w = n->width_sizing == d::Sizing::Hug, hug_h = n->height_sizing == d::Sizing::Hug;
+            const d::Rect off{w->second.x - b->x, w->second.y - b->y, hug_w ? 0 : w->second.w - b->w, hug_h ? 0 : w->second.h - b->h};
+            if (std::fabs(off.x) < 0.5f && std::fabs(off.y) < 0.5f && std::fabs(off.w) < 0.5f && std::fabs(off.h) < 0.5f) continue;
+            // Where the frame shows otherwise than before the move, the anchoring's answer for it; else what the
+            // page made of it is off (its rounding, a size it keeps): the wanted box moved by that much.
+            const f32 x0 = n->x, y0 = n->y, w0 = n->w, h0 = n->h;
+            if (!d::place_at(*n, w->second, target->w, target->h, shown_parent)) squeezed = n->name;
+            if (squeezed.empty() && n->x == x0 && n->y == y0 && n->w == w0 && n->h == h0)
+                d::place_at(*n, {w->second.x + off.x, w->second.y + off.y, w->second.w + off.w, w->second.h + off.h}, target->w, target->h,
+                            shown_parent);
             page_dirty_ = true;
         }
     }
@@ -2952,8 +2951,12 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
         for (u32 id : order)
             if (!visible_box(id))
                 if (const d::Node* n = d::find(screen_.root, id)) hidden = n->name;
-    show_move_note(hidden.empty() ? std::string()
-                                  : "«" + hidden + "» стоит за краем рамки и не виден: подвиньте его внутрь (Ctrl+Z вернёт как было).");
+    std::string note;
+    if (!squeezed.empty())
+        note = "«" + squeezed + "» привязан «Растянуть», а рамка растянута сильнее его размера: размер стал 1 px, поправьте его или привязку (Ctrl+Z вернёт как было).";
+    else if (!hidden.empty())
+        note = "«" + hidden + "» стоит за краем рамки и не виден: подвиньте его внутрь (Ctrl+Z вернёт как было).";
+    show_move_note(note);
     selection_ = order;
     remember_geometry(before); // a copy of a component keeps the size it got here as its own
     commit(before, label);

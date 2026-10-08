@@ -1328,6 +1328,51 @@ std::string move_refusal(const Screen& screen, const std::vector<u32>& ids, u32 
     return {};
 }
 
+bool place_at(Node& n, const Rect& box, f32 pw, f32 ph, const Rect& parent_box) {
+    bool fits = true;
+    // The inverse of node_css's anchoring for one axis: rel and shown are the wanted start and length in the
+    // frame's shown box (shown_parent long); own_parent the frame's own length.
+    auto axis = [&fits](Constraint c, bool hug, f32 rel, f32 shown, f32 own_parent, f32 shown_parent, f32& pos, f32& size) {
+        const f32 grown = shown_parent - own_parent; // what a row or column added to the frame
+        auto whole = [](f32 v) { return std::round(v); };
+        switch (c) {
+        case Constraint::Start:
+            pos = whole(rel);
+            if (!hug) size = whole(shown);
+            break;
+        case Constraint::End:
+            pos = whole(rel - grown);
+            if (!hug) size = whole(shown);
+            break;
+        case Constraint::Both:
+            pos = whole(rel);
+            size = whole(shown - grown);
+            if (size < 1) {
+                size = 1;
+                fits = false;
+            }
+            break;
+        case Constraint::Center:
+            if (hug) pos = whole(rel + shown * 0.5f - grown * 0.5f - size * 0.5f);
+            else {
+                pos = whole(rel - grown * 0.5f);
+                size = whole(shown);
+            }
+            break;
+        case Constraint::Scale: {
+            // Shares of the frame's shown size: kept to a hundredth of a pixel of the frame's own size.
+            const f32 k = shown_parent > 0 && own_parent > 0 ? own_parent / shown_parent : 1.0f;
+            pos = std::round(rel * k * 100.0f) / 100.0f;
+            if (!hug) size = std::round(shown * k * 100.0f) / 100.0f;
+            break;
+        }
+        }
+    };
+    axis(n.horizontal, n.width_sizing == Sizing::Hug, box.x - parent_box.x, box.w, pw, parent_box.w, n.x, n.w);
+    axis(n.vertical, n.height_sizing == Sizing::Hug, box.y - parent_box.y, box.h, ph, parent_box.h, n.y, n.h);
+    return fits;
+}
+
 bool move_stays(const Screen& screen, const std::vector<u32>& ids, u32 parent, usize index) {
     const std::vector<u32> moving = movable_order(screen, ids);
     const Node* target = find(screen.root, parent);

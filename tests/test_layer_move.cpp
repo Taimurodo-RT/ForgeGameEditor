@@ -223,6 +223,39 @@ TEST_CASE("layer move: let go where it already is, nothing changes, «Вне р�
     CHECK(!d::find(s.root, 10)->absolute);
 }
 
+TEST_CASE("layer move: the place in a stretched frame is counted through the anchoring") {
+    // «Окошко», its own 140 by 100, shown 328 by 180 at 1372, 600 (a row stretches it); the button to stay at
+    // 220, 280, 240 by 80 on the screen.
+    const d::Rect frame{1372, 600, 328, 180}, want{220, 280, 240, 80};
+    auto placed = [&](d::Constraint h, d::Constraint v) {
+        d::Node n = layer(d::NodeType::Frame, "Кнопка", 60, 80, 240, 80, {});
+        n.horizontal = h;
+        n.vertical = v;
+        CHECK(d::place_at(n, want, 140, 100, frame) == (h != d::Constraint::Both));
+        return n;
+    };
+    const d::Node scale = placed(d::Constraint::Scale, d::Constraint::Scale);
+    CHECK(scale.x == doctest::Approx(-491.71).epsilon(1e-4)); // -1152 of 328 shown: the same share of 140
+    CHECK(scale.w == doctest::Approx(102.44).epsilon(1e-4));
+    CHECK(scale.y == doctest::Approx(-177.78).epsilon(1e-4));
+    CHECK(scale.h == doctest::Approx(44.44).epsilon(1e-4));
+    CHECK((scale.horizontal == d::Constraint::Scale && scale.vertical == d::Constraint::Scale));
+    const d::Node start = placed(d::Constraint::Start, d::Constraint::Start);
+    CHECK((start.x == -1152 && start.y == -320 && start.w == 240 && start.h == 80));
+    const d::Node end = placed(d::Constraint::End, d::Constraint::End); // from the shown right and bottom edges
+    CHECK((end.x == -1340 && end.y == -400 && end.w == 240 && end.h == 80));
+    // «Растянуть»: the gaps kept, the size what is left; 80 high in a frame grown by 80 leaves none (1, and said).
+    const d::Node both = placed(d::Constraint::Both, d::Constraint::Both);
+    CHECK((both.x == -1152 && both.w == 52 && both.y == -320 && both.h == 1));
+    const d::Node center = placed(d::Constraint::Center, d::Constraint::Center);
+    CHECK((center.x == -1246 && center.y == -360 && center.w == 240 && center.h == 80));
+    // Not stretched: plain offsets from the frame, whatever the anchoring.
+    d::Node plain = layer(d::NodeType::Frame, "Кнопка", 0, 0, 10, 10, {});
+    plain.horizontal = d::Constraint::Scale;
+    d::place_at(plain, {1400, 650, 50, 20}, 328, 180, frame);
+    CHECK((plain.x == 28 && plain.y == 50 && plain.w == 50 && plain.h == 20));
+}
+
 TEST_CASE("layer move: a screen with a Russian name is written and read under that name") {
     // On Windows a path from a narrow string goes through the code page: «перенос_пример» came out garbled.
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_layer_move_names";

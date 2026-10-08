@@ -543,6 +543,16 @@ struct Rect {
     f32 cy() const { return y + h * 0.5f; }
 };
 
+// --- moving layers between frames (13.6), continued ---
+// Sets a layer's place in a free frame (and its size, unless it follows its content) so that it
+// shows at box (page pixels). The frame's own size is pw by ph; it shows at parent_box, which a
+// row or column around it may stretch. Counted through the layer's anchoring as the page counts
+// it: «Пропорционально» in the frame's shown size, «Справа/Снизу» and «По центру» from its shown
+// edge or middle, «Растянуть» keeping the gaps (the size the anchoring leaves). The anchoring
+// stays as it is. False when it cannot show there: «Растянуть» in a frame stretched more than
+// the layer is long leaves no size (it gets 1).
+bool place_at(Node& n, const Rect& box, f32 pw, f32 ph, const Rect& parent_box);
+
 // A line drawn while snapping: on x (vertical) or y (horizontal), spanning
 // from..to along the other axis.
 struct SnapLine {
