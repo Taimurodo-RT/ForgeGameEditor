@@ -400,6 +400,7 @@ bool UiEditor::write(const std::string& name, const d::Screen& screen) const {
 
 bool UiEditor::open(const std::string& name) {
     close_picker(true);
+    if (!menu_.empty()) open_menu("", 0, 0);
     end_preview();
     std::vector<u8> bytes;
     if (!read_file(json_path(name), bytes)) return false;
@@ -520,6 +521,7 @@ void UiEditor::commit(const std::string& before, std::string label, std::string 
 
 void UiEditor::undo() {
     if (drag_ != Drag::None || tree_.on || key_drag_.on) return; // in the middle of a gesture: it ends first
+    if (!menu_.empty()) open_menu("", 0, 0); // what it was opened on may be gone
     close_picker(true);
     selected_key_ = -1; // the keys may stand elsewhere now: none picked rather than another
     history_.seal();
@@ -528,6 +530,7 @@ void UiEditor::undo() {
 
 void UiEditor::redo() {
     if (drag_ != Drag::None || tree_.on || key_drag_.on) return;
+    if (!menu_.empty()) open_menu("", 0, 0);
     close_picker(true);
     selected_key_ = -1;
     history_.seal();
@@ -548,6 +551,7 @@ std::string UiEditor::status() const {
 void UiEditor::set_shown(bool shown) {
     if (shown == shown_) return;
     if (!shown) close_picker(true);
+    if (!shown && !menu_.empty()) open_menu("", 0, 0);
     // A hidden tab is not updated: its check is silent until the tab is back, where the screen's music comes
     // again (once: the screens ask for it anew).
     if (!shown && check_) check_->stop_music();
@@ -1665,6 +1669,7 @@ void UiEditor::refresh_props() {
 
 void UiEditor::set_simple(bool on) {
     close_picker(true);
+    if (!menu_.empty()) open_menu("", 0, 0);
     if (on == simple_) return;
     simple_ = on;
     m_simple_ = on;
@@ -1757,7 +1762,33 @@ u32 UiEditor::add_block(d::Block b) {
     d::BlockOptions o;
     o.library = &library_;
     if (!m_pictures_.empty()) o.picture = m_pictures_.front().path;
-    d::Node n = d::make_block(screen_, b, 0, 0, o);
+    return place_new(d::make_block(screen_, b, 0, 0, o), before, std::string("Добавлено: ") + d::block_word(b));
+}
+
+u32 UiEditor::create(const std::string& kind) {
+    if (screen_.library || checking_) return 0;
+    if (const std::optional<d::Block> b = d::parse_block(kind); b && *b != d::Block::Screen && *b != d::Block::Group && *b != d::Block::Shape)
+        return add_block(*b);
+    const std::string before = d::save_screen(screen_);
+    d::Node n;
+    const char* word = kind == "frame" ? "Рамка" : kind == "rectangle" ? "Прямоугольник" : kind == "ellipse" ? "Эллипс" : nullptr;
+    if (!word) return 0;
+    if (kind == "frame") {
+        // A frame to hold others: seen on the screen (a dark panel), not an empty outline.
+        n = d::make_block(screen_, d::Block::Group, 0, 0);
+        n.fills.push_back({});
+        n.fills.back().color = {0x2a, 0x30, 0x3a, 255};
+        n.radius = {12, 12, 12, 12};
+    } else {
+        n = d::make_block(screen_, d::Block::Shape, 0, 0);
+        if (kind == "ellipse") n.type = d::NodeType::Ellipse;
+    }
+    n.name = d::fresh_block_name(screen_, word);
+    return place_new(std::move(n), before, std::string("Добавлено: ") + word);
+}
+
+// A new layer on the screen where nothing is yet, as near the middle as there is room; selected, one step.
+u32 UiEditor::place_new(d::Node n, const std::string& before, const std::string& label) {
     // Where nothing is yet, as near the middle of the screen as there is room; on a full screen, a step aside
     // from a block already in the middle.
     const f32 cx = std::round((screen_.width - n.w) * 0.5f), cy = std::round((screen_.height - n.h) * 0.5f);
@@ -1793,7 +1824,7 @@ u32 UiEditor::add_block(d::Block b) {
     screen_.root.children.push_back(std::move(n));
     selection_ = {id};
     page_dirty_ = true;
-    commit(before, std::string("Добавлено: ") + d::block_word(b));
+    commit(before, label);
     select({id});
     return id;
 }
@@ -3474,6 +3505,28 @@ void UiEditor::update(Rml::Context* context) {
         refresh_overlay();
         refresh_props();
     }
+    if (!menu_.empty() && context) {
+        // An open menu stays whole in the tab, going up once its height is known; «Создать»'s stays under its button.
+        Rml::Element* tab = nullptr;
+        for (int i = 0; !tab && i < context->GetNumDocuments(); ++i) tab = context->GetDocument(i)->GetElementById("ui-editor");
+        Rml::Element* m = tab ? tab->GetElementById(menu_ == "create" ? "ue-create-menu" : "ue-ctx") : nullptr;
+        f32 x = m_menu_x_, y = m_menu_y_;
+        if (Rml::Element* b = tab && menu_under_button_ ? tab->GetElementById("ue-create") : nullptr; b && b->IsVisible(true)) {
+            const Rml::Vector2f at = b->GetAbsoluteOffset(Rml::BoxArea::Border) - tab->GetAbsoluteOffset(Rml::BoxArea::Border);
+            x = at.x;
+            y = at.y + b->GetOffsetHeight() + 4;
+        }
+        // Shown (`data-if` only hides it: until then its size is the last menu's).
+        if (m && m->IsVisible() && m->GetOffsetHeight() > 0) y = std::min(y, std::max(0.0f, tab->GetOffsetHeight() - m->GetOffsetHeight()));
+        if (x != m_menu_x_) {
+            m_menu_x_ = x;
+            dirty("ue_menu_x");
+        }
+        if (y != m_menu_y_) {
+            m_menu_y_ = y;
+            dirty("ue_menu_y");
+        }
+    }
 }
 
 bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* context) {
@@ -3567,6 +3620,24 @@ bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* conte
             if (el->IsClassSet("ue-panel")) break;
         }
         if (!on_stage) return false;
+        if (e.button.button == SDL_BUTTON_RIGHT && !checking_ && drag_ == Drag::None) {
+            // The right button: the layer under it (selected, unless it is in the selection) and its menu; over
+            // nothing, the screen's.
+            const f32 cx = mouse_x_ - canvas_x_, cy = mouse_y_ - canvas_y_;
+            if (cx < 0 || cy < 0 || cx >= canvas_w_ || cy >= canvas_h_) return true; // the rulers: no menu
+            const u32 layer = hit(to_screen_x(cx), to_screen_y(cy), false);
+            // On the selection (or a layer inside it) the selection stays: its menu is for all of it.
+            bool on_selection = false;
+            if (const u32 deepest = hit(to_screen_x(cx), to_screen_y(cy), true))
+                for (u32 id : d::path_to(screen_.root, deepest))
+                    on_selection = on_selection || std::find(selection_.begin(), selection_.end(), id) != selection_.end();
+            if (layer && !on_selection) select({layer});
+            if (!layer) select({});
+            menu_sx_ = to_screen_x(cx);
+            menu_sy_ = to_screen_y(cy);
+            open_menu(layer ? "layer" : "empty", mouse_x_, mouse_y_);
+            return true;
+        }
         return press(mouse_x_, mouse_y_, e.button.button, e.button.clicks, context);
     }
     case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -3578,6 +3649,7 @@ bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* conte
     case SDL_EVENT_MOUSE_WHEEL: {
         const f32 cx = mouse_x_ - canvas_x_, cy = mouse_y_ - canvas_y_;
         if (cx < 0 || cy < 0 || cx >= canvas_w_ || cy >= canvas_h_) return false;
+        if (!menu_.empty()) open_menu("", 0, 0); // the view moves: the menu would point at nothing
         const SDL_Keymod mods = SDL_GetModState();
         if (mods & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) {
             set_zoom(zoom_ * std::pow(1.15f, e.wheel.y), cx, cy);
@@ -4060,6 +4132,13 @@ void UiEditor::release() {
 }
 
 bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
+    const bool modifier = k.key == SDLK_LCTRL || k.key == SDLK_RCTRL || k.key == SDLK_LSHIFT || k.key == SDLK_RSHIFT ||
+                          k.key == SDLK_LALT || k.key == SDLK_RALT || k.key == SDLK_LGUI || k.key == SDLK_RGUI;
+    if (!menu_.empty() && !modifier) {
+        // A menu open: Esc closes it; other keys close it and do their work.
+        open_menu("", 0, 0);
+        if (k.key == SDLK_ESCAPE) return true;
+    }
     if (picker_.open) {
         // The picker has the keys: Esc puts the eyedropper away, then cancels; Enter keeps the colour.
         if (k.key == SDLK_ESCAPE) {
@@ -4191,66 +4270,186 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
             select(all);
             return true;
         }
-        case SDLK_C:
-        case SDLK_X: {
-            clipboard_.clear();
-            for (u32 id : selection_)
-                if (id != screen_.root.id)
-                    if (const d::Node* n = d::find(screen_.root, id)) clipboard_.push_back(*n);
-            if (k.key == SDLK_X) remove_selection();
-            return !clipboard_.empty();
-        }
-        case SDLK_V: {
-            if (clipboard_.empty()) return false;
-            const std::string before = d::save_screen(screen_);
-            // Into the selected frame, else beside the selection, else on the screen.
-            d::Node* target = &screen_.root;
-            if (!selection_.empty()) {
-                d::Node* sel = d::find(screen_.root, selection_[0]);
-                if (sel && sel->is_container() && sel->id != screen_.root.id && !shift) target = sel;
-                else if (d::Node* p = d::parent_of(screen_.root, selection_[0])) target = p;
-            }
-            // Not into a copy of a component: beside it.
-            if (const d::Node* inst = screen_.library ? nullptr : d::instance_of(screen_.root, target->id))
-                if (d::Node* p = d::parent_of(screen_.root, inst->id)) target = p;
-            std::vector<u32> fresh;
-            for (d::Node n : clipboard_) {
-                d::renumber(screen_, n);
-                n.x += 10;
-                n.y += 10;
-                fresh.push_back(n.id);
-                target->children.push_back(std::move(n));
-            }
-            selection_ = fresh;
-            commit(before, "Вставлено");
-            return true;
-        }
+        case SDLK_C: return copy_selection();
+        case SDLK_X: return cut_selection();
+        case SDLK_V: return paste(shift);
         case SDLK_RIGHTBRACKET:
-        case SDLK_LEFTBRACKET: {
-            // Forward / back among the siblings (Shift: to the top / bottom).
-            if (selection_.empty()) return false;
-            const std::string before = d::save_screen(screen_);
-            const bool up = k.key == SDLK_RIGHTBRACKET;
-            for (u32 id : selection_) {
-                d::Node* parent = d::parent_of(screen_.root, id);
-                if (!parent) continue;
-                auto& kids = parent->children;
-                auto it = std::find_if(kids.begin(), kids.end(), [&](const d::Node& c) { return c.id == id; });
-                if (it == kids.end()) continue;
-                const usize i = static_cast<usize>(it - kids.begin());
-                const usize to = shift ? (up ? kids.size() - 1 : 0) : (up ? std::min(i + 1, kids.size() - 1) : (i ? i - 1 : 0));
-                if (to == i) continue;
-                d::Node n = std::move(kids[i]);
-                kids.erase(kids.begin() + static_cast<std::ptrdiff_t>(i));
-                kids.insert(kids.begin() + static_cast<std::ptrdiff_t>(to), std::move(n));
-            }
-            commit(before, up ? "Выше" : "Ниже");
-            return true;
-        }
+        case SDLK_LEFTBRACKET: return restack_selection(k.key == SDLK_RIGHTBRACKET, shift); // Shift: to the top / bottom
         default: break;
         }
     }
     return false;
+}
+
+// --- the layers' menu (13.8) -----------------------------------------------------
+
+bool UiEditor::copy_selection() {
+    std::vector<d::Node> copied;
+    for (u32 id : selection_)
+        if (id != screen_.root.id)
+            if (const d::Node* n = d::find(screen_.root, id)) copied.push_back(*n);
+    if (copied.empty()) return false;
+    clipboard_ = std::move(copied);
+    return true;
+}
+
+bool UiEditor::cut_selection() { return copy_selection() && remove_selection(); }
+
+bool UiEditor::paste(bool beside) {
+    if (clipboard_.empty() || checking_) return false;
+    const std::string before = d::save_screen(screen_);
+    // Into the selected frame, else beside the selection, else on the screen.
+    d::Node* target = &screen_.root;
+    if (!selection_.empty()) {
+        d::Node* sel = d::find(screen_.root, selection_[0]);
+        if (sel && sel->is_container() && sel->id != screen_.root.id && !beside) target = sel;
+        else if (d::Node* p = d::parent_of(screen_.root, selection_[0])) target = p;
+    }
+    // Not into a copy of a component: beside it.
+    if (const d::Node* inst = screen_.library ? nullptr : d::instance_of(screen_.root, target->id))
+        if (d::Node* p = d::parent_of(screen_.root, inst->id)) target = p;
+    std::vector<u32> fresh;
+    for (d::Node n : clipboard_) {
+        d::renumber(screen_, n);
+        n.x += 10;
+        n.y += 10;
+        fresh.push_back(n.id);
+        target->children.push_back(std::move(n));
+    }
+    selection_ = fresh;
+    commit(before, "Вставлено");
+    return true;
+}
+
+bool UiEditor::paste_at(f32 x, f32 y) {
+    if (clipboard_.empty() || checking_) return false;
+    const std::string before = d::save_screen(screen_);
+    f32 left = clipboard_[0].x, top = clipboard_[0].y;
+    for (const d::Node& n : clipboard_) {
+        left = std::min(left, n.x);
+        top = std::min(top, n.y);
+    }
+    x = std::clamp(std::round(x), 0.0f, std::max(0.0f, screen_.width - 1));
+    y = std::clamp(std::round(y), 0.0f, std::max(0.0f, screen_.height - 1));
+    std::vector<u32> fresh;
+    for (d::Node n : clipboard_) {
+        d::renumber(screen_, n);
+        n.x = x + n.x - left;
+        n.y = y + n.y - top;
+        fresh.push_back(n.id);
+        screen_.root.children.push_back(std::move(n));
+    }
+    selection_ = fresh;
+    commit(before, "Вставлено");
+    return true;
+}
+
+bool UiEditor::restack_selection(bool up, bool to_end) {
+    if (selection_.empty() || checking_) return false;
+    for (u32 id : selection_) {
+        // A copy's layers are the component's; a list repeats its first cell, so its order is not the author's.
+        if (const d::Node* inst = d::instance_of(screen_.root, id); inst && inst->id != id) {
+            show_move_note("Слои копии компонента «" + inst->component + "» задаёт компонент: порядок меняется в нём.");
+            return false;
+        }
+        if (const d::Node* p = d::parent_of(screen_.root, id); p && p->list != d::ListSource::None) {
+            show_move_note("В списке порядок не меняется: он повторяет свою первую ячейку.");
+            return false;
+        }
+    }
+    const std::string before = d::save_screen(screen_);
+    // Each frame's selected children move together, keeping their order among themselves.
+    std::vector<d::Node*> parents;
+    for (u32 id : selection_)
+        if (d::Node* p = d::parent_of(screen_.root, id); p && std::find(parents.begin(), parents.end(), p) == parents.end()) parents.push_back(p);
+    for (d::Node* parent : parents) {
+        auto& kids = parent->children;
+        auto chosen = [&](const d::Node& c) { return std::find(selection_.begin(), selection_.end(), c.id) != selection_.end(); };
+        if (to_end) {
+            std::stable_partition(kids.begin(), kids.end(), [&](const d::Node& c) { return up ? !chosen(c) : chosen(c); });
+        } else if (up) {
+            // From the top down: each chosen one past the next sibling that is not chosen.
+            for (usize i = kids.size(); i-- > 1;)
+                if (!chosen(kids[i]) && chosen(kids[i - 1])) {
+                    usize first = i - 1;
+                    while (first > 0 && chosen(kids[first - 1])) --first;
+                    std::rotate(kids.begin() + static_cast<std::ptrdiff_t>(first), kids.begin() + static_cast<std::ptrdiff_t>(i),
+                                kids.begin() + static_cast<std::ptrdiff_t>(i + 1));
+                    i = first;
+                }
+        } else {
+            for (usize i = 0; i + 1 < kids.size(); ++i)
+                if (!chosen(kids[i]) && chosen(kids[i + 1])) {
+                    usize last = i + 1;
+                    while (last + 1 < kids.size() && chosen(kids[last + 1])) ++last;
+                    std::rotate(kids.begin() + static_cast<std::ptrdiff_t>(i), kids.begin() + static_cast<std::ptrdiff_t>(i + 1),
+                                kids.begin() + static_cast<std::ptrdiff_t>(last + 1));
+                    i = last;
+                }
+        }
+    }
+    if (d::save_screen(screen_) == before) return false; // already there: no step
+    commit(before, to_end ? (up ? "На самый верх" : "В самый низ") : (up ? "Выше" : "Ниже"));
+    return true;
+}
+
+bool UiEditor::toggle_hidden() {
+    if (selection_.empty() || checking_) return false;
+    const std::string before = d::save_screen(screen_);
+    bool all_hidden = true;
+    for (u32 id : selection_)
+        if (const d::Node* n = d::find(screen_.root, id); n && n->visible) all_hidden = false;
+    for (u32 id : selection_)
+        if (d::Node* n = d::find(screen_.root, id); n && id != screen_.root.id) n->visible = all_hidden;
+    if (d::save_screen(screen_) == before) return false;
+    commit(before, all_hidden ? "Показан слой" : "Скрыт слой");
+    return true;
+}
+
+bool UiEditor::toggle_locked() {
+    if (selection_.empty() || checking_) return false;
+    const std::string before = d::save_screen(screen_);
+    bool all_locked = true;
+    for (u32 id : selection_)
+        if (const d::Node* n = d::find(screen_.root, id); n && !n->locked) all_locked = false;
+    for (u32 id : selection_)
+        if (d::Node* n = d::find(screen_.root, id); n && id != screen_.root.id) n->locked = !all_locked;
+    if (d::save_screen(screen_) == before) return false;
+    commit(before, all_locked ? "Слой откреплён" : "Слой закреплён");
+    return true;
+}
+
+void UiEditor::open_menu(const std::string& menu, f32 x, f32 y) {
+    menu_ = checking_ ? std::string() : menu;
+    menu_under_button_ = false;
+    if (!menu_.empty() && context_) {
+        // Where the right button was, inside the tab (the menu stays whole on the window).
+        Rml::Element* tab = nullptr;
+        for (int i = 0; !tab && i < context_->GetNumDocuments(); ++i) tab = context_->GetDocument(i)->GetElementById("ui-editor");
+        if (tab) {
+            const Rml::Vector2f at = tab->GetAbsoluteOffset(Rml::BoxArea::Border);
+            constexpr f32 kMenuW = 290; // .ue-menu; its height is known once it is laid out (`update`)
+            x = std::clamp(x - at.x, 0.0f, std::max(0.0f, tab->GetOffsetWidth() - kMenuW));
+            y = std::clamp(y - at.y, 0.0f, std::max(0.0f, tab->GetOffsetHeight()));
+        }
+    }
+    m_menu_x_ = x;
+    m_menu_y_ = y;
+    const d::Node* one = selection_.size() == 1 ? d::find(screen_.root, selection_[0]) : nullptr;
+    m_menu_paste_ = !clipboard_.empty();
+    m_menu_hidden_ = !selection_.empty();
+    m_menu_locked_ = !selection_.empty();
+    for (u32 id : selection_)
+        if (const d::Node* n = d::find(screen_.root, id)) {
+            m_menu_hidden_ = m_menu_hidden_ && !n->visible;
+            m_menu_locked_ = m_menu_locked_ && n->locked;
+        }
+    m_menu_instance_ = one && !one->component.empty() && !screen_.library;
+    m_menu_component_ = one && one->id != screen_.root.id && one->component.empty() && !d::instance_of(screen_.root, one->id);
+    m_menu_ = menu_;
+    for (const char* v : {"ue_menu", "ue_menu_x", "ue_menu_y", "ue_menu_paste", "ue_menu_hidden", "ue_menu_locked", "ue_menu_instance",
+                          "ue_menu_component"})
+        dirty(v);
 }
 
 // --- the document -----------------------------------------------------------
@@ -4674,6 +4873,14 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_game_colors", &m_game_colors_);
     model.Bind("ue_game_texts", &m_game_texts_);
     model.Bind("ue_components", &m_components_);
+    model.Bind("ue_menu", &m_menu_);
+    model.Bind("ue_menu_x", &m_menu_x_);
+    model.Bind("ue_menu_y", &m_menu_y_);
+    model.Bind("ue_menu_paste", &m_menu_paste_);
+    model.Bind("ue_menu_hidden", &m_menu_hidden_);
+    model.Bind("ue_menu_locked", &m_menu_locked_);
+    model.Bind("ue_menu_instance", &m_menu_instance_);
+    model.Bind("ue_menu_component", &m_menu_component_);
     model.Bind("ue_variants", &m_variants_);
     model.Bind("ue_library_open", &m_library_open_);
 
@@ -4692,7 +4899,67 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     on("ue_screen", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { open(arg_str(a, 0)); });
     on("ue_new_screen", [this](Rml::Event&, const Rml::VariantList&) { new_screen(); });
     on("ue_library", [this](Rml::Event&, const Rml::VariantList&) { open_library(); });
-    on("ue_place", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { place_component(arg_str(a, 0)); });
+    on("ue_place", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        open_menu("", 0, 0);
+        place_component(arg_str(a, 0));
+    });
+    // «Создать +» and the right button's menus (13.8). Whatever is chosen closes the menu first.
+    on("ue_create_menu", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        if (menu_ == "create") return open_menu("", 0, 0);
+        // Under the button (and kept there while the bar is laid out again: `update`).
+        Rml::Element* b = ev.GetCurrentElement();
+        const Rml::Vector2f at = b ? b->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f{};
+        open_menu("create", at.x, at.y + (b ? b->GetOffsetHeight() + 4 : 0));
+        menu_under_button_ = menu_ == "create";
+    });
+    on("ue_create", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        open_menu("", 0, 0);
+        create(arg_str(a, 0));
+    });
+    on("ue_menu_close", [this](Rml::Event&, const Rml::VariantList&) { open_menu("", 0, 0); });
+    on("ue_menu_do", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        const std::string what = arg_str(a, 0), was = menu_;
+        const f32 x = m_menu_x_, y = m_menu_y_;
+        open_menu("", 0, 0);
+        if (what == "cut") cut_selection();
+        else if (what == "copy") copy_selection();
+        else if (what == "paste") was == "empty" ? paste_at(menu_sx_, menu_sy_) : paste();
+        else if (what == "duplicate") duplicate_selection();
+        else if (what == "delete") remove_selection();
+        else if (what == "up") restack_selection(true, false);
+        else if (what == "down") restack_selection(false, false);
+        else if (what == "top") restack_selection(true, true);
+        else if (what == "bottom") restack_selection(false, true);
+        else if (what == "frame") wrap_selection_in_frame();
+        else if (what == "hide") toggle_hidden();
+        else if (what == "lock") toggle_locked();
+        else if (what == "component") make_component();
+        else if (what == "edit_component") edit_component();
+        else if (what == "detach") detach_instance();
+        else if (what == "all") {
+            std::vector<u32> all;
+            for (const d::Node& c : screen_.root.children)
+                if (c.visible && !c.locked) all.push_back(c.id);
+            select(all);
+        } else if (what == "create") {
+            // The create menu where this one was (the tab's pixels back to the window's).
+            Rml::Element* tab = nullptr;
+            for (int i = 0; !tab && context_ && i < context_->GetNumDocuments(); ++i) tab = context_->GetDocument(i)->GetElementById("ui-editor");
+            const Rml::Vector2f at = tab ? tab->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f{};
+            open_menu("create", x + at.x, y + at.y);
+        }
+    });
+    // The right button on a layer's row: its menu (the row's layer selected, unless it is in the selection).
+    on("ue_layer_menu", [this, arg_int](Rml::Event& ev, const Rml::VariantList& a) {
+        if (ev.GetParameter<int>("button", 0) != 1 || checking_) return;
+        ev.StopPropagation();
+        const u32 id = static_cast<u32>(arg_int(a, 0));
+        if (std::find(selection_.begin(), selection_.end(), id) == selection_.end()) select({id});
+        open_menu("layer", ev.GetParameter<float>("mouse_x", 0), ev.GetParameter<float>("mouse_y", 0));
+    });
     on("ue_component", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
         const std::string what = arg_str(a, 0);
@@ -4927,6 +5194,7 @@ void UiEditor::set_checking(bool on) {
 
 // «Проверить» on or off, the selection as it is (the picker's eyedropper keeps its layers).
 void UiEditor::switch_checking(bool on) {
+    if (!menu_.empty()) open_menu("", 0, 0);
     // Leaving: the screen's music stops; coming in: files added since are read again.
     if (!on && check_) check_->stop_music();
     if (on) check_sound_.forget();
