@@ -2145,6 +2145,7 @@
         <div class="ue-cp-head row">
             <span class="grow ue-ellipsis">{{ ue_cp.title }}</span>
             <div id="ue-cp-dropper" class="ue-mini" data-class-selected="ue_cp.dropper" title="Пипетка: щёлкните по экрану на холсте, возьмётся цвет, который там виден" data-event-click="ue_cp_dropper"><icon class="xs" name="colorize"/></div>
+            <div id="ue-cp-live" class="ue-mini" data-if="ue_cp.can_live" data-class-selected="ue_cp.live" title="Пипетка на экране «Проверить»: экран оживает, как в игре; щелчок берёт цвет, кнопки не нажимаются" data-event-click="ue_cp_live"><icon class="xs" name="play_circle"/></div>
         </div>
         <div id="ue-cp-sv" class="ue-cp-sv" data-style-background-color="ue_cp.hue_swatch" title="Насыщенность (вправо) и яркость (вверх)">
             <div class="ue-cp-white"/><div class="ue-cp-black"/>

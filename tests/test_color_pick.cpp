@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <span>
+#include <string>
 
 namespace d = forge::editor::design;
 
@@ -96,7 +97,9 @@ namespace {
 std::string read_text(const std::filesystem::path& p) {
     std::vector<forge::u8> bytes;
     if (!forge::read_file(p, bytes)) return {};
-    return std::string(bytes.begin(), bytes.end());
+    std::string out(bytes.begin(), bytes.end());
+    std::erase(out, '\r'); // a Windows checkout may turn line ends into CRLF
+    return out;
 }
 
 // games/examples/color-picker: colours as the picker leaves them, alpha everywhere it can be.
@@ -167,6 +170,21 @@ TEST_CASE("color pick: the example screen keeps every colour and alpha in its fi
     REQUIRE(d::load_screen(read_text(json_file), back));
     CHECK(d::save_screen(back) == json);
     CHECK(read_text(html_file) == html);
+    // The same comparison holds for either line ending a checkout may give.
+    {
+        std::string crlf;
+        for (char c : html) {
+            if (c == '\n') crlf += '\r';
+            crlf += c;
+        }
+        const std::filesystem::path tmp = std::filesystem::temp_directory_path() / "forge_palette_crlf.html";
+        for (const std::string* bytes : {&html, static_cast<const std::string*>(&crlf)}) {
+            REQUIRE(forge::write_file_atomic(tmp, std::span(reinterpret_cast<const forge::u8*>(bytes->data()), bytes->size())));
+            CHECK(read_text(tmp) == html);
+        }
+        CHECK(crlf != html);
+        std::filesystem::remove(tmp);
+    }
     // Saved and read again: the same colours, alpha included.
     CHECK(back.root.children[0].fills[0].color == d::Color{0x1b, 0x21, 0x27, 0x99});
     CHECK(back.root.children[0].effects[0].color == d::Color{0, 0, 0, 0x80});

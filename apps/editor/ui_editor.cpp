@@ -1012,11 +1012,12 @@ void UiEditor::refresh_rulers() {
 void UiEditor::refresh_overlay() {
     // Selection: each layer's outline, the whole selection's box with its handles.
     m_selected_.clear();
-    for (u32 id : selection_)
+    const std::vector<u32> none;
+    for (u32 id : checking_ ? none : selection_)
         if (auto b = layer_box(id)) m_selected_.push_back({to_canvas_x(b->x), to_canvas_y(b->y), b->w * zoom_x(), b->h * zoom_y()});
     const d::Rect sb = selection_box();
     m_sel_box_ = {to_canvas_x(sb.x), to_canvas_y(sb.y), sb.w * zoom_x(), sb.h * zoom_y()};
-    m_handles_ = !selection_.empty() && !(selection_.size() == 1 && selection_[0] == screen_.root.id);
+    m_handles_ = !checking_ && !selection_.empty() && !(selection_.size() == 1 && selection_[0] == screen_.root.id);
     m_size_label_ = selection_.empty() ? Rml::String() : fmt(std::round(sb.w * 100) / 100) + " × " + fmt(std::round(sb.h * 100) / 100);
     // Hover.
     m_hovering_ = false;
@@ -4058,6 +4059,8 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     if (auto s = model.RegisterStruct<PickerView>()) {
         s.RegisterMember("open", &PickerView::open);
         s.RegisterMember("dropper", &PickerView::dropper);
+        s.RegisterMember("live", &PickerView::live);
+        s.RegisterMember("can_live", &PickerView::can_live);
         s.RegisterMember("title", &PickerView::title);
         s.RegisterMember("hex", &PickerView::hex);
         s.RegisterMember("alpha", &PickerView::alpha);
@@ -4258,14 +4261,19 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         ev.StopPropagation();
         picker_dropper(!picker_.dropper);
     });
+    on("ue_cp_live", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        picker_live(!picker_.live);
+    });
     on("ue_cp_theme", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
         picker_theme(arg_str(a, 0));
     });
     // HEX and alpha: kept on Enter and on leaving the field; leaving it as it was shown changes nothing.
+    // Enter on the shown colour of layers that differ gives it to all of them.
     // (Taken, the field shows the colour as the picker writes it: "36c" becomes "3366CC".)
     on("ue_cp_hex", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
-        if (picker_.open && a.size() > 1 && a[1].Get<bool>() && arg_str(a, 0) != m_cp_.hex && picker_hex(arg_str(a, 0)))
+        if (picker_.open && a.size() > 1 && a[1].Get<bool>() && (arg_str(a, 0) != m_cp_.hex || picker_.mixed) && picker_hex(arg_str(a, 0)))
             if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement())) input->SetValue(m_cp_.hex);
     });
     on("ue_cp_hex_done", [this, input_value](Rml::Event& ev, const Rml::VariantList&) {
@@ -4275,7 +4283,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
             if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement())) input->SetValue(m_cp_.hex);
     });
     on("ue_cp_alpha", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
-        if (picker_.open && a.size() > 1 && a[1].Get<bool>() && arg_str(a, 0) != m_cp_.alpha && picker_alpha(arg_str(a, 0)))
+        if (picker_.open && a.size() > 1 && a[1].Get<bool>() && (arg_str(a, 0) != m_cp_.alpha || picker_.mixed) && picker_alpha(arg_str(a, 0)))
             if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement())) input->SetValue(m_cp_.alpha);
     });
     on("ue_cp_alpha_done", [this, input_value](Rml::Event& ev, const Rml::VariantList&) {
@@ -4304,20 +4312,35 @@ void UiEditor::set_checking(bool on) {
     close_picker(true);
     if (on == checking_) return;
     if (on && screen_.library) return; // the components are not a screen of the game
+    if (on) {
+        select({});
+        set_tool(Tool::Select);
+    }
+    switch_checking(on);
+}
+
+// «Проверить» on or off, the selection as it is (the picker's eyedropper keeps its layers).
+void UiEditor::switch_checking(bool on) {
     checking_ = on;
     m_checking_ = on;
     check_back_.clear();
     check_log_.clear();
     check_pending_.clear();
-    if (on) {
-        select({});
-        set_tool(Tool::Select);
-        hover_ = 0;
-    }
+    hover_ = 0;
     page_dirty_ = true;
     dirty("ue_checking");
     refresh_check();
     refresh_overlay();
+}
+
+bool UiEditor::picker_live(bool on) {
+    if (!picker_.open || picker_.live == on) return false;
+    if (on && (screen_.library || checking_)) return false;
+    picker_.live = on;
+    switch_checking(on);
+    picker_dropper(on);
+    refresh_picker();
+    return true;
 }
 
 void UiEditor::check_mouse(f32 x, f32 y, int down, int up) {
@@ -4437,7 +4460,10 @@ bool over(Rml::Element* e, f32 x, f32 y) {
 // The colour a picker field starts from (the first selected layer's); none
 // where the field has no colour to pick (a picture fill, no stroke...).
 std::optional<d::Color> UiEditor::color_of(const std::string& field) const {
-    const u32 id = selection_.empty() ? screen_.root.id : selection_[0];
+    return color_of(field, selection_.empty() ? screen_.root.id : selection_[0]);
+}
+
+std::optional<d::Color> UiEditor::color_of(const std::string& field, u32 id) const {
     const d::Node* n = d::find(screen_.root, id);
     if (!n) return std::nullopt;
     const bool root = id == screen_.root.id;
@@ -4528,6 +4554,17 @@ bool UiEditor::open_picker(const std::string& field, f32 x, f32 y, f32 w, f32 h)
         picker_.label = change_label(field);
     }
     picker_.link = picker_.start_link;
+    // Several layers with different colours here: the picker shows the first one's, and a colour picked
+    // (even that one) goes to all of them.
+    if (!simple && selection_.size() > 1) {
+        const usize fill = static_cast<usize>(std::atoi(field.c_str() + 5));
+        for (usize k = 1; k < selection_.size() && !picker_.mixed; ++k) {
+            const std::optional<d::Color> other = color_of(field, selection_[k]);
+            const d::Node* m = d::find(screen_.root, selection_[k]);
+            const std::string other_link = picker_.linkable && m && fill < m->fills.size() ? m->fills[fill].style : "";
+            picker_.mixed = !other || !(*other == *start) || other_link != picker_.start_link;
+        }
+    }
     picker_.open = true;
     history_.seal();
     // Where it first stands, before its own size is known (place_picker puts it right).
@@ -4540,7 +4577,9 @@ bool UiEditor::open_picker(const std::string& field, f32 x, f32 y, f32 w, f32 h)
 // The screen as it was when the picker opened, with the picker's colour (or game colour) on its field.
 void UiEditor::picker_preview() {
     d::load_screen(picker_.before, screen_);
-    if (!(picker_.color == picker_.start && picker_.link == picker_.start_link)) {
+    // Opened and looked at: nothing. A colour picked: on the field of every selected layer, even when it is
+    // the one shown at the start (the others may differ; an empty frame «has» white only on the swatch).
+    if (picker_.picked) {
         previewing_ = true;
         if (picker_.simple) {
             set_simple_property(picker_.field.substr(7), picker_.link.empty() ? d::color_hex(picker_.color) : "@" + picker_.link);
@@ -4564,6 +4603,7 @@ void UiEditor::picker_set(d::Color c, const std::string& link) {
     if (!picker_.open) return;
     picker_.color = c;
     picker_.link = link;
+    picker_.picked = true;
     picker_.hsva = d::color_to_hsva(c, picker_.hsva);
     m_cp_.hex_note.clear();
     picker_preview();
@@ -4574,6 +4614,7 @@ void UiEditor::picker_square(f32 saturation, f32 brightness) {
     if (!picker_.open) return;
     picker_.hsva.s = std::clamp(saturation, 0.0f, 1.0f);
     picker_.hsva.v = std::clamp(brightness, 0.0f, 1.0f);
+    picker_.picked = true;
     picker_.color = d::hsva_to_color(picker_.hsva);
     picker_.link.clear();
     m_cp_.hex_note.clear();
@@ -4585,6 +4626,7 @@ void UiEditor::picker_hue(f32 at) {
     if (!picker_.open) return;
     picker_.hsva.h = std::clamp(at, 0.0f, 1.0f) * 360.0f;
     if (picker_.hsva.h >= 360.0f) picker_.hsva.h = 359.99f; // the bar's right end: red, as its left
+    picker_.picked = true;
     picker_.color = d::hsva_to_color(picker_.hsva);
     picker_.link.clear();
     m_cp_.hex_note.clear();
@@ -4595,6 +4637,7 @@ void UiEditor::picker_hue(f32 at) {
 void UiEditor::picker_alpha_at(f32 at) {
     if (!picker_.open) return;
     picker_.hsva.a = std::clamp(at, 0.0f, 1.0f);
+    picker_.picked = true;
     picker_.color = d::hsva_to_color(picker_.hsva);
     picker_.link.clear();
     m_cp_.hex_note.clear();
@@ -4643,9 +4686,11 @@ void UiEditor::picker_dropper(bool on) {
     if (!picker_.open || picker_.dropper == on) return;
     picker_.dropper = on;
     picker_.drag = 0;
-    m_cp_.hint = on ? "Пипетка: щёлкните по экрану на холсте — возьмётся цвет, который виден в этой точке (с его "
-                      "прозрачностью). Щелчок мимо экрана, правая кнопка или Esc — убрать пипетку."
-                    : "";
+    m_cp_.hint = !on           ? ""
+                 : picker_.live ? "Пипетка на экране «Проверить»: щелчок берёт цвет, который виден в этой точке, кнопки "
+                                  "не нажимаются. Esc — убрать пипетку, «Готово» или «Отмена» — назад к слоям."
+                                : "Пипетка: щёлкните по экрану на холсте — возьмётся цвет, который виден в этой точке (с его "
+                                  "прозрачностью). Щелчок мимо экрана, правая кнопка или Esc — убрать пипетку.";
     refresh_picker();
 }
 
@@ -4679,11 +4724,14 @@ void UiEditor::close_picker(bool keep) {
     if (!picker_.open) return;
     const std::string before = std::move(picker_.before);
     const std::string label = picker_.label;
+    const bool live = picker_.live;
     picker_.open = false;
     picker_.dropper = false;
+    picker_.live = false;
     picker_.drag = 0;
     m_cp_.hex_note.clear();
     m_cp_.hint.clear();
+    if (live) switch_checking(false); // back to the layers, still selected
     if (keep) {
         commit(before, label); // one step, none when nothing changed
     } else {
@@ -4697,6 +4745,8 @@ void UiEditor::close_picker(bool keep) {
 void UiEditor::refresh_picker() {
     m_cp_.open = picker_.open;
     m_cp_.dropper = picker_.dropper;
+    m_cp_.live = picker_.live;
+    m_cp_.can_live = picker_.open && !screen_.library;
     if (picker_.open) {
         const d::Color c = picker_.color;
         const std::string& f = picker_.field;
@@ -4761,6 +4811,8 @@ void UiEditor::refresh_picker() {
                     note = "Текст следует стилю «" + t.name + "»: свой цвет отвяжет его от стиля (шрифт и размер останутся).";
         if (n && !screen_.library && n->master && d::instance_of(screen_.root, n->id))
             note += std::string(note.empty() ? "" : " ") + "Это копия компонента: цвет станет её собственным, остальное следует компоненту.";
+        if (picker_.mixed)
+            note = "У выделенных слоёв (" + std::to_string(selection_.size()) + ") разные цвета, показан первый. Выбранный цвет получат все. " + note;
         m_cp_.note = note;
     }
     dirty("ue_cp");

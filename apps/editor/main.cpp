@@ -3186,6 +3186,27 @@ private:
     editor::design::Color ue_cp_color_{};
     std::string ue_cp_key_;
     usize ue_cp_overrides_ = 0;
+    u32 ue_cp_frame_ = 0, ue_cp_red_ = 0, ue_cp_green_ = 0, ue_cp_linked_ = 0;
+    editor::design::Color ue_cp_want_{};
+    bool ue_cp_clicked_ = false; // the eyedropper's click on the live screen made; the game's frame after it is checked
+    // A point of a layer on the page the canvas shows (as drawn: the player's size in «Проверить»), at fractions of
+    // its box, in window pixels; then clicked.
+    bool ue_page_click(u32 id, f32 fx, f32 fy) {
+        Rml::ElementDocument* page = ue().page();
+        Rml::Element* e = page ? page->GetElementById("n" + std::to_string(id)) : nullptr;
+        Rml::Element* image = ed_.find_element("ue-screen");
+        if (!e || !image || !page->GetContext()) return false;
+        const Rml::Vector2i texture = page->GetContext()->GetDimensions();
+        const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * Rml::Vector2f(fx, fy);
+        const Rml::Vector2f at = image->GetAbsoluteOffset(Rml::BoxArea::Border), size = image->GetBox().GetSize(Rml::BoxArea::Border);
+        if (texture.x <= 0 || texture.y <= 0 || size.x <= 0) return false;
+        left_click(at.x + p.x / static_cast<f32>(texture.x) * size.x, at.y + p.y / static_cast<f32>(texture.y) * size.y);
+        return true;
+    }
+    std::string ue_text_of(const char* id) {
+        Rml::Element* e = ed_.find_element(id);
+        return e && e->IsVisible(true) ? e->GetInnerRML() : std::string();
+    }
     // A point of an element at fractions of its box, window pixels (false when it is not shown).
     bool ue_point(const char* id, f32 fx, f32 fy, f32& x, f32& y) {
         Rml::Element* e = ed_.find_element(id);
@@ -4937,8 +4958,178 @@ private:
             check(button && c.red == want.r && c.green == want.g && c.blue == want.b && c.alpha == want.a,
                   "«Проверить» shows the button in the game colour");
             ue().set_checking(false);
-            check(click("ue-mode-full") && !ue().simple(), "«Полный»");
-            check(ue().open("main_menu"), "back to the menu");
+            // An empty frame in «Простой»: its swatch shows white (no fill yet); white picked must not get lost.
+            ue_cp_frame_ = ue().add_layer(d::NodeType::Frame, 40, 300, 200, 120);
+            ue().select({ue_cp_frame_});
+            check(ue().set_property("fill.0.remove", ""), "its fill taken away (a frame starts white)");
+            break;
+        }
+        case 102: {
+            const d::Node* f = ue_node(ue_cp_frame_);
+            check(f && f->fills.empty(), "a frame without a fill");
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            check(ue_press("ue-s-swatch") && ue().picker_color() == d::Color{255, 255, 255, 255}, "its swatch: white, as a fill would start");
+            break;
+        }
+        case 103:
+            check(ue_press("ue-cp-done") && d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_,
+                  "opened and «Готово» untouched: no fill added, no step");
+            check(ue_press("ue-s-swatch"), "the picker again");
+            break;
+        case 104: {
+            check(ue_type("ue-cp-hex", "#ffffff") && ue_press("ue-cp-done"), "white picked by its HEX, «Готово»");
+            const d::Node* f = ue_node(ue_cp_frame_);
+            check(f && f->fills.size() == 1 && f->fills[0].color == d::Color{255, 255, 255, 255} &&
+                      ue().history().cursor() == ue_cursor_ + 1,
+                  "the frame is white now (the white picked was not taken for «nothing changed»): one step");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d::save_screen(ue().screen()) == ue_json_, "Ctrl+Z: no fill again");
+            // The eyedropper on the live screen («Проверить»): the coins' text takes the button's colour.
+            ue().select({ue_blocks_[1]});
+            break;
+        }
+        case 105:
+        case 114:
+        case 117:
+            if (ue_step_ == 105) {
+                ue_json_ = d::save_screen(ue().screen());
+                ue_cursor_ = ue().history().cursor();
+            } else {
+                check(ue().view() == (ue_step_ == 114 ? 5 : 4), "the player's size: " + std::to_string(ue().view()));
+            }
+            check(ue_press("ue-s-swatch") && ue().picker_field() == "simple.color", "the text block's colour in the picker");
+            break;
+        case 106:
+        case 115:
+        case 118:
+            check(shown("ue-cp-live") && ue_press("ue-cp-live"), "the picker's «Проверить» eyedropper");
+            check(ue().checking() && ue().picker_open() && ue().picker_living() && ue().picker_dropping(),
+                  "the screen comes alive, the picker stays open with its eyedropper");
+            check(ue().selection() == std::vector<u32>{ue_blocks_[1]}, "the text stays its target");
+            break;
+        case 107: {
+            check(!shown("ue-simple") && !shown("ue-selection") && shown("ue-picker"), "no panel and no selection box over the live screen");
+            if (!ue_cp_clicked_) {
+                ue_cp_want_ = ue().library().colors[0].color;
+                check(ue().page() && ue().check_log().empty(), "the live page, nothing pressed yet");
+                check(ue_page_click(ue_blocks_[0], 0.08f, 0.5f), "a click on the button as the game draws it");
+                ue_cp_clicked_ = true;
+                return true; // the game's next frame: a pressed button would act there
+            }
+            ue_cp_clicked_ = false;
+            check(!ue().picker_dropping() && ue().picker_color() == ue_cp_want_,
+                  "the eyedropper takes the drawn pixel: " + d::color_hex(ue().picker_color()) + " (the button: " + d::color_hex(ue_cp_want_) + ")");
+            check(ue().check_log().empty(), "the button under the click is not pressed: " + ue_log_since(0));
+            check(ue().checking() && ue().selection() == std::vector<u32>{ue_blocks_[1]}, "still live, the target kept");
+            check(ue_press("ue-cp-done"), "«Готово»");
+            check(!ue().checking() && !ue().picker_open() && ue().selection() == std::vector<u32>{ue_blocks_[1]},
+                  "back to the layers, the text still selected");
+            check(ue_node(ue_blocks_[1])->text_style.color == ue_cp_want_ && ue().history().cursor() == ue_cursor_ + 1,
+                  "the text in the button's colour: one step");
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            break;
+        }
+        case 108:
+        case 111:
+            check(ue_press("ue-s-swatch"), "the picker again");
+            break;
+        case 109:
+        case 112:
+            check(ue_press("ue-cp-live") && ue().checking(), "live again");
+            break;
+        case 110:
+            if (!ue_cp_clicked_) {
+                check(ue_page_click(ue_blocks_[0], 0.08f, 0.5f), "a click on the button");
+                ue_cp_clicked_ = true;
+                return true;
+            }
+            ue_cp_clicked_ = false;
+            check(!ue().picker_dropping() && ue().picker_color() == ue_cp_want_ && ue().check_log().empty(), "a colour taken, nothing pressed");
+            check(ue_press("ue-cp-cancel"), "«Отмена»");
+            check(!ue().checking() && d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_ &&
+                      ue().check_log().empty(),
+                  "«Отмена»: back to the layers, all as it was, nothing pressed, no step");
+            break;
+        case 113:
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().picker_dropping() && ue().picker_open() && ue().checking(), "Esc: the eyedropper away, still live");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().picker_open() && !ue().checking() && d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_,
+                  "Esc again: closed, back to the layers, nothing changed");
+            // The same on the player's 4:3 screen, then on 21:9.
+            ue().set_view(5);
+            ue().select({ue_blocks_[1]});
+            break;
+        case 116:
+        case 119: {
+            const std::string size = ue_step_ == 116 ? "4:3" : "21:9";
+            if (!ue_cp_clicked_) {
+                check(ue_page_click(ue_blocks_[0], 0.08f, 0.5f), size + ": a click on the button");
+                ue_cp_clicked_ = true;
+                return true;
+            }
+            ue_cp_clicked_ = false;
+            check(ue().picker_color() == ue_cp_want_, size + ": the drawn pixel " + d::color_hex(ue().picker_color()));
+            check(ue().check_log().empty() && ue().selection() == std::vector<u32>{ue_blocks_[1]}, size + ": nothing pressed, the target kept");
+            check(ue_press("ue-cp-cancel") && !ue().checking() && d::save_screen(ue().screen()) == ue_json_, size + ": «Отмена»");
+            if (ue_step_ == 116) {
+                ue().set_view(4);
+                ue().select({ue_blocks_[1]});
+            } else {
+                ue().set_view(0);
+                // Several layers with different colours: what is picked goes to all of them.
+                check(click("ue-mode-full") && !ue().simple(), "«Полный»");
+                check(ue().open("main_menu"), "back to the menu");
+                ue_cp_red_ = ue().add_layer(d::NodeType::Rectangle, 100, 860, 120, 80);
+                ue_cp_green_ = ue().add_layer(d::NodeType::Rectangle, 240, 860, 120, 80);
+                ue_cp_linked_ = ue().add_layer(d::NodeType::Rectangle, 380, 860, 120, 80);
+                ue().select({ue_cp_red_});
+                ue().set_property("fill.0.color", "#ff0000");
+                ue().select({ue_cp_green_});
+                ue().set_property("fill.0.color", "#00ff00");
+                ue().select({ue_cp_linked_});
+                ue().set_property("fill.0.style", ue_cp_key_);
+                ue().select({ue_cp_red_, ue_cp_green_, ue_cp_linked_});
+            }
+            break;
+        }
+        case 120:
+            check(ue_node(ue_cp_red_)->fills[0].color == d::Color{255, 0, 0, 255} && ue_node(ue_cp_green_)->fills[0].color == d::Color{0, 255, 0, 255} &&
+                      ue_node(ue_cp_linked_)->fills[0].style == ue_cp_key_,
+                  "red, green and one in the game colour, all three selected");
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            check(ue_press("ue-sw-fill-0") && ue().picker_color() == d::Color{255, 0, 0, 255}, "the picker shows the first one's red");
+            break;
+        case 121:
+            check(ue_text_of("ue-cp-note").find("разные цвета") != std::string::npos, "and says the layers differ: " + ue_text_of("ue-cp-note"));
+            check(ue_press("ue-cp-done") && d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_,
+                  "opened and «Готово» untouched: nothing changed, no step");
+            check(ue_press("ue-sw-fill-0"), "the picker again");
+            break;
+        case 122: {
+            if (Rml::Element* hex = ed_.find_element("ue-cp-hex")) {
+                hex->Focus();
+                hex->Blur();
+            }
+            check(d::save_screen(ue().screen()) == ue_json_, "the HEX field focused and left: nothing changes");
+            check(ue_type("ue-cp-hex", "#ff0000"), "red picked by its HEX (the first one's own colour)");
+            check(ue_node(ue_cp_green_)->fills[0].color == d::Color{255, 0, 0, 255} && ue_node(ue_cp_linked_)->fills[0].style.empty(),
+                  "the canvas shows all three red");
+            check(ue_press("ue-cp-done") && ue().history().cursor() == ue_cursor_ + 1, "«Готово»: one step");
+            for (u32 id : {ue_cp_red_, ue_cp_green_, ue_cp_linked_}) {
+                const d::Node* n = ue_node(id);
+                check(n && n->fills[0].color == d::Color{255, 0, 0, 255} && n->fills[0].style.empty(), "every one red, with no link");
+            }
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d::save_screen(ue().screen()) == ue_json_ && ue_node(ue_cp_green_)->fills[0].color == d::Color{0, 255, 0, 255} &&
+                      ue_node(ue_cp_linked_)->fills[0].style == ue_cp_key_,
+                  "one Ctrl+Z: green and the game colour's link back");
+            ue().select({ue_cp_red_, ue_cp_green_, ue_cp_linked_});
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(!ue_node(ue_cp_red_) && !ue_node(ue_cp_green_) && !ue_node(ue_cp_linked_), "the three layers deleted again");
             break;
         }
         default:

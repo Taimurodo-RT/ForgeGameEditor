@@ -169,6 +169,13 @@ public:
     // puts it away. It neither selects nor changes another layer.
     void picker_dropper(bool on);
     bool picker_dropping() const { return picker_.dropper; }
+    // The eyedropper on the screen as «Проверить» runs it (the game's values,
+    // the player's size): the canvas comes alive with the picker still open on
+    // the selected layers' colour. Its clicks are the eyedropper's, never the
+    // game's (no button is pressed). Closing the picker, «Готово» or «Отмена»,
+    // ends that check and shows the layers again.
+    bool picker_live(bool on);
+    bool picker_living() const { return picker_.live; }
     // Takes the colour the canvas shows at a window point; false off the screen.
     bool picker_sample(f32 mx, f32 my);
     // keep: «Готово»; otherwise «Отмена».
@@ -333,6 +340,9 @@ private:
     // The colour picker.
     struct Picker {
         bool open = false, simple = false, linkable = false, dropper = false;
+        bool picked = false; // a colour was chosen (even the one it opened with): it goes to every selected layer
+        bool mixed = false;  // the selected layers differ in this colour (or its link)
+        bool live = false;   // «Проверить» runs for the eyedropper (picker_live)
         std::string field, before, label, link, start_link;
         editor::design::Color start{}, color{};
         editor::design::Hsva hsva;
@@ -344,18 +354,20 @@ private:
     bool previewing_ = false; // commit() keeps nothing: the picker shows its colour
     Rml::Context* context_ = nullptr; // the editor's (the panels', the canvas's)
     struct PickerView {
-        bool open = false, dropper = false;
+        bool open = false, dropper = false, live = false, can_live = false;
         Rml::String title, hex, alpha, hex_note, note, link, hint;
         Rml::String old_swatch = "transparent", new_swatch = "transparent", hue_swatch = "#ff0000", alpha_bar = "none";
         float sv_x = 0, sv_y = 0, hue_x = 0, alpha_x = 0; // percent
     };
     PickerView m_cp_;
     std::optional<editor::design::Color> color_of(const std::string& field) const;
+    std::optional<editor::design::Color> color_of(const std::string& field, u32 id) const;
     void picker_set(editor::design::Color c, const std::string& link);
     void picker_preview();
     void refresh_picker();
     bool picker_event(const SDL_Event& e, f32 density, Rml::Context* context);
     void picker_drag_to(f32 mx, f32 my, Rml::Context* context);
+    void switch_checking(bool on);
 
     ui::Ui* ui_ = nullptr;
     std::filesystem::path game_dir_;
