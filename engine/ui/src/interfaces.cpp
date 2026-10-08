@@ -127,7 +127,13 @@ std::unordered_map<std::string, std::filesystem::file_time_type> FileInterface::
 // ---------------------------------------------------------------------------
 // System
 
-double SystemInterface::GetElapsedTime() { return static_cast<double>(time_now_ns() - g_start_ns) / 1e9; }
+namespace {
+const double* g_clock = nullptr;
+} // namespace
+
+void set_clock_now(const double* seconds) { g_clock = seconds; }
+
+double SystemInterface::GetElapsedTime() { return g_clock ? *g_clock : static_cast<double>(time_now_ns() - g_start_ns) / 1e9; }
 
 bool SystemInterface::LogMessage(Rml::Log::Type type, const Rml::String& message) {
     switch (type) {

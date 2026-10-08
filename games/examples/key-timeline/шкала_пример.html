@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Шкала: пример</title>
+<!-- Made by Forge «Интерфейс» from Шкала: пример.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: 660px;
+  width: 600px;
+  top: 80px;
+  height: 60px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 48px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+#n3 {
+  position: absolute;
+  left: 200px;
+  width: 120px;
+  top: 480px;
+  height: 120px;
+  box-sizing: border-box;
+  background-color: #e8b04a;
+  border-radius: 50%;
+  animation: 3s linear 0.5s infinite alternate m3;
+}
+@keyframes m3 {
+  0% {
+    transform: translate(0px, 0px) scale(1) rotate(0deg);
+    background-color: #e8b04a;
+  }
+  30% {
+    transform: translate(400px, -120px) scale(1) rotate(0deg);
+    background-color: #e8b04a;
+  }
+  60% {
+    transform: translate(800px, 0px) scale(1.3) rotate(0deg);
+    background-color: #ff4040;
+  }
+  100% {
+    transform: translate(1200px, 0px) scale(1) rotate(0deg);
+    background-color: #e8b04a;
+  }
+}
+body, #n1 {
+  pointer-events: none;
+}
+#n2, #n3 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Шкала: пример" forge-screen="command" forge-fit="expand" forge-size="1920 1080">
+  <div id="n2" class="text" title="Заголовок">Шкала времени</div>
+  <div id="n3" class="ellipse" title="Монета"></div>
+</div>
+</body>
+</html>

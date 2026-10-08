@@ -44,6 +44,13 @@ struct Ui::Impl {
     };
     std::unordered_map<Rml::Context*, Offscreen> offscreen;
     std::unordered_map<Rml::Context*, bool> inactive;
+    struct Clock {
+        double want = 0; // where the context's time should be
+        double at = 0;   // where its last update left it
+        bool started = false;
+    };
+    std::unordered_map<Rml::Context*, Clock> clocks;
+    void update(Rml::Context* context);
     void release_offscreen(Offscreen& o);
     bool ensure_offscreen(Rml::Context* context, Offscreen& o);
     std::unique_ptr<Rml::ElementInstancer> icon_instancer;
@@ -304,11 +311,63 @@ void Ui::destroy_context(Rml::Context* context) {
     Impl& m = *impl_;
     set_offscreen(context, "");
     m.inactive.erase(context);
+    m.clocks.erase(context);
     m.documents.erase(std::remove_if(m.documents.begin(), m.documents.end(),
                                      [&](const Impl::Document& d) { return d.context == context; }),
                       m.documents.end());
     m.contexts.erase(std::remove(m.contexts.begin(), m.contexts.end(), context), m.contexts.end());
     Rml::RemoveContext(context->GetName());
+}
+
+void Ui::set_clock(Rml::Context* context, std::optional<double> seconds) {
+    if (!context) return;
+    if (!seconds) {
+        impl_->clocks.erase(context);
+        return;
+    }
+    Impl::Clock& c = impl_->clocks[context];
+    c.want = std::max(*seconds, 0.0);
+    if (!c.started || c.want < c.at) {
+        c.at = c.want; // from here (a document loaded again starts its movements at this time)
+        c.started = true;
+    }
+}
+
+void Ui::at_clock(Rml::Context* context, const std::function<void()>& run) {
+    auto it = impl_->clocks.find(context);
+    if (it == impl_->clocks.end()) {
+        run();
+        return;
+    }
+    double now = it->second.at;
+    set_clock_now(&now);
+    run();
+    set_clock_now(nullptr);
+}
+
+void Ui::update_context(Rml::Context* context) {
+    if (context) impl_->update(context);
+}
+
+// RmlUi plays movements by the time between updates, at most 0.1 s at once: a jump goes in steps.
+void Ui::Impl::update(Rml::Context* context) {
+    auto it = clocks.find(context);
+    if (it == clocks.end()) {
+        context->Update();
+        return;
+    }
+    Clock& c = it->second;
+    constexpr double step = 0.05;
+    double now = c.at;
+    set_clock_now(&now);
+    for (int guard = 0; guard < 100000; ++guard) {
+        now = std::min(c.at + step, c.want);
+        if (guard == 0) now = c.at; // the first update at where it stands (a new document starts there)
+        context->Update();
+        c.at = now;
+        if (now >= c.want) break;
+    }
+    set_clock_now(nullptr);
 }
 
 void Ui::Impl::restyle() {
@@ -383,7 +442,7 @@ void Ui::update() {
     const u64 start = time_now_ns();
     impl_->poll_files();
     for (Rml::Context* context : impl_->contexts)
-        if (!impl_->inactive.count(context)) context->Update();
+        if (!impl_->inactive.count(context)) impl_->update(context);
     impl_->stats.update_ms = ns_to_ms(time_now_ns() - start);
 }
 

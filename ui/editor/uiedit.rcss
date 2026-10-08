@@ -425,3 +425,17 @@ input.text.ue-field:placeholder-shown { color: var(--outline); }
 input.text.ue-hex.ue-sans { font-family: var(--font-sans); }
 .ue-key-row { padding: 6px 0px; border-top: 1px var(--outline-variant); }
 .ue-key-row:first-child { border-top-width: 0px; }
+.ue-key-row.selected { background-color: var(--surface-container-high); border-left: 2px var(--primary); padding-left: 4px; }
+/* The movement's timeline */
+.ue-tl { gap: 4px; padding: 4px 0px 8px 0px; }
+.ue-tl-track { position: relative; height: 34px; margin: 0px 8px; border-radius: 4px; background-color: var(--surface-container-lowest); border: 1px var(--outline-variant); cursor: pointer; }
+.ue-tl-delay { position: absolute; left: 0px; top: 0px; bottom: 0px; background-color: var(--surface-container-high); }
+.ue-tl-pass { position: absolute; top: 0px; bottom: 0px; background-color: var(--surface-container); border-left: 1px var(--outline); border-right: 1px var(--outline); }
+.ue-tl-ghost { position: absolute; top: 13px; width: 8px; height: 8px; margin-left: -4px; border-radius: 4px; border: 1px var(--outline); }
+.ue-tl-key { position: absolute; top: 5px; width: 18px; height: 24px; margin-left: -9px; cursor: ew-resize; }
+.ue-tl-dot { position: absolute; left: 4px; top: 7px; width: 10px; height: 10px; transform: rotate(45deg); background-color: var(--on-surface-variant); border: 1px var(--surface); }
+.ue-tl-key:hover .ue-tl-dot { background-color: var(--on-surface); }
+.ue-tl-key.selected .ue-tl-dot { background-color: var(--primary); border-color: var(--on-primary); }
+.ue-tl-tint { position: absolute; left: 6px; top: 9px; width: 6px; height: 6px; transform: rotate(45deg); }
+.ue-tl-head { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background-color: var(--error); }
+.ue-tl-scale { margin: 0px 8px; font-size: 11px; color: var(--on-surface-variant); }

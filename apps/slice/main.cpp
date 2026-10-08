@@ -26,11 +26,14 @@
 #include "forge/core/path.h"
 #include "forge/core/time.h"
 #include "forge/game/runner.h"
+#include "forge/ui/ui.h"
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Transform.h>
+#include <RmlUi/Core/TransformPrimitive.h>
 
 #include <SDL3/SDL_main.h> // the window-only entry point on Windows
 #include <SDL3/SDL_timer.h>
@@ -774,6 +777,55 @@ private:
                 check(rgba("n5", "outline-color") == "255 255 255 128", "обводка белая на 50 %: " + rgba("n5", "outline-color"));
             }
             if (f < 5) return false;
+            sc.remove(name);
+            return true;
+        }});
+        // The screen of games/examples/key-timeline: the coin where the editor's timeline shows it at a moment,
+        // in the game's own screens. The context's clock is set (as the editor's preview sets the canvas's), so
+        // each moment is exact: before the delay, between keys, the colour at a key, the second pass backwards.
+        steps_.push_back({"движение по ключам в заданный момент", 8, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            const char* const name = "шкала_пример";
+            Rml::ElementDocument* doc = sc.document(name);
+            Rml::Element* coin = doc ? doc->GetElementById("n3") : nullptr;
+            auto shift = [&]() -> f32 {
+                const Rml::Property* p = coin ? coin->GetProperty("transform") : nullptr;
+                const Rml::TransformPtr t = p ? p->Get<Rml::TransformPtr>() : nullptr;
+                if (t)
+                    for (const Rml::TransformPrimitive& prim : t->GetPrimitives())
+                        if (prim.type == Rml::TransformPrimitive::TRANSLATE2D) return prim.translate_2d.values[0].number;
+                return 0;
+            };
+            // Seconds since the screen appeared; where the coin is then (3 s a pass after 0.5 s, keys at 0, 30, 60, 100 %;
+            // at 60 % it is red). Only forward: what played is not unplayed.
+            static const f32 moments[][3] = {{0.25f, 0, 0}, {0.95f, 200, 0}, {1.85f, 600, 0}, {2.3f, 800, 1}, {5.0f, 666.667f, 0}};
+            if (f == 0) {
+                check(std::size(kTimelinePages) == 1, "в игру встроен экран примера шкалы");
+                s.ui().set_clock(s.context(), 0.0);
+                s.ui().at_clock(s.context(), [&]() { // its movements start at the context's clock
+                    for (const SimplePage& p : kTimelinePages)
+                        check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                              std::string("экран примера строится: ") + p.name);
+                    sc.show(name, true);
+                    // Shown now, not by the screens' next update on the wall clock: RmlUi starts movements as it shows.
+                    if (Rml::ElementDocument* d = sc.document(name)) d->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+                });
+                return false;
+            }
+            if (f >= 2 && f <= 6) {
+                const f32* m = moments[f - 2];
+                const f32 got = shift();
+                check(std::abs(got - m[1]) < 0.5f,
+                      "монета в " + std::to_string(m[0]) + " с: сдвиг " + std::to_string(got) + " (ждали " + std::to_string(m[1]) + ")");
+                if (m[2] > 0) {
+                    const Rml::Colourb c = coin ? coin->GetProperty<Rml::Colourb>("background-color") : Rml::Colourb();
+                    check(std::abs(c.red - 255) <= 1 && std::abs(c.green - 64) <= 1 && std::abs(c.blue - 64) <= 1,
+                          "монета на третьем ключе красная: " + std::to_string(c.red) + " " + std::to_string(c.green) + " " + std::to_string(c.blue));
+                }
+            }
+            if (f >= 1 && f <= 5) s.ui().set_clock(s.context(), static_cast<double>(moments[f - 1][0]));
+            if (f < 7) return false;
+            s.ui().set_clock(s.context(), std::nullopt);
             sc.remove(name);
             return true;
         }});

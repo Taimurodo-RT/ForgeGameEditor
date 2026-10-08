@@ -59,6 +59,9 @@ private:
     std::unordered_map<std::string, std::string> memory_;
 };
 
+// The time RmlUi reads while a context with its own clock is updated (Ui::set_clock); unset, the wall clock.
+void set_clock_now(const double* seconds);
+
 class SystemInterface final : public Rml::SystemInterface {
 public:
     void set_window(SDL_Window* window) { window_ = window; }

@@ -183,6 +183,9 @@ public:
     // After the UI's layout: the open picker beside its swatch, inside the
     // window. True when it moved (the UI is laid out again to show it there).
     bool place_picker(Rml::Context* context);
+    // After the UI's layout: a field of a key row that moved (its time typed) keeps the keyboard on
+    // that key's row, not on the neighbour's that took its place. True when the focus moved.
+    bool follow_moved_key(Rml::Context* context);
 
     enum class Tool : u8 { Select, Frame, Rectangle, Ellipse, Text };
     void set_tool(Tool tool);
@@ -231,6 +234,26 @@ public:
         dirty("ue_panel");
     }
     const Rml::String& panel() const { return m_panel_; }
+
+    // --- The movement's timeline («Движение», «Своё, по ключам», one layer) ---
+    // The key picked on the timeline or in its row (-1: none); picking changes nothing.
+    int timeline_key() const { return selected_key_; }
+    void pick_key(int index);
+    bool timeline_shown() const;
+    // Seconds the timeline spans: the delay, a pass, and a second pass when it repeats.
+    f32 timeline_span() const;
+    // A key carried along the timeline by the mouse: one step when let go, none on Esc.
+    bool key_dragging() const { return key_drag_.on; }
+    // The canvas showing the screen as the player sees it `seconds` after it
+    // appears (its movements played by the same engine as the game's). Nothing
+    // of it goes into the screen or the history; another layer or screen,
+    // «Проверить», Esc or «К редактированию» end it.
+    void preview_at(double seconds);
+    void preview_play(bool on);
+    void end_preview();
+    bool motion_preview() const { return preview_.on; }
+    bool preview_playing() const { return preview_.playing; }
+    double preview_time() const { return preview_.t; }
 
     // The canvas view: zoom (1 = 100%) and where the screen's top left is
     // on the canvas (pixels of the canvas).
@@ -518,7 +541,7 @@ private:
     struct KeyRow {
         int index = 0;
         Rml::String at, x, y, scale, rotation, opacity, radius, blur, brightness;
-        bool tint = false;
+        bool tint = false, selected = false;
         Rml::String hex, swatch;
     };
     // What a click on the layer does in the game, one row each.
@@ -549,6 +572,51 @@ private:
     std::vector<GameColorRow> m_game_colors_;
     std::vector<ClickRow> m_clicks_;
     std::vector<KeyRow> m_keys_;
+    // The timeline: a mark per key (and pale ones for what is not the author's to move).
+    struct TimelineMark {
+        int index = -1; // the key's (-1: the layer's own place at an end, or the second pass)
+        float x = 0;    // percent of the track
+        bool selected = false, tint = false;
+        Rml::String swatch = "transparent", title;
+    };
+    struct TimelineView {
+        bool show = false, preview = false, playing = false, repeat = false;
+        Rml::String note, time, span;
+        float delay_w = 0, pass_w = 100, head_x = 0; // percent
+        std::vector<TimelineMark> keys, ghosts;
+    };
+    TimelineView m_tl_;
+    int selected_key_ = -1;
+    usize moved_key_ = 0; // where the last key moved by «motion.key.N.at» is now
+    // A key moved by its typed time: until the panel is laid out again (the next frame), its row's fields
+    // still name the old place, so their events (the blur after Enter) go to where the keys are now.
+    struct KeyRemap {
+        bool on = false;
+        usize from = 0, to = 0;
+    } key_remap_;
+    std::string remap_key_field(const std::string& field) const;
+    // The focused key field to move to once the panel is laid out: {its id now, its id then}.
+    std::string focus_from_, focus_to_;
+    struct KeyDrag {
+        bool on = false, moved = false;
+        int from = -1, index = -1; // where the key was, where it is now
+        f32 down_x = 0, grab = 0;  // the mouse at the press; how far from the key's mark (track pixels)
+        std::string before;
+    };
+    KeyDrag key_drag_;
+    bool scrubbing_ = false;
+    struct Preview {
+        bool on = false, playing = false;
+        double t = 0;     // seconds since the screen appeared
+        double built = 0; // the time the page was built and played up to
+        u64 last_ns = 0;
+    };
+    Preview preview_;
+    void refresh_timeline();
+    bool timeline_event(const SDL_Event& e, f32 density, Rml::Context* context);
+    void key_drag_to(f32 mx);
+    f32 timeline_time_at(f32 mx) const;
+    bool timeline_wanted() const;
     bool checking_ = false;
     std::unique_ptr<forge::game::GameScreens> check_;
     bool page_from_check_ = false;

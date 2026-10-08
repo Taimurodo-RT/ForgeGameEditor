@@ -283,6 +283,11 @@ struct Motion {
 };
 // The keys a movement goes through (a preset's, or the author's sorted by time).
 std::vector<MotionKey> motion_keys(const Motion& m);
+// The author's key `index` moved to the time `at` (0..1, clamped), the keys
+// kept in time order; returns where that key is now. A key it reaches with
+// the same time stays on the side it was: the moved key passes only the keys
+// it goes strictly beyond. Nothing else of any key changes.
+usize move_motion_key(Motion& m, usize index, f32 at);
 // How a window comes and goes.
 enum class Appear : u8 { None, Fade, Rise, Drop, Zoom, FromLeft, FromRight };
 
