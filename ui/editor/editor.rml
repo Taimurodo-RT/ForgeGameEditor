@@ -1169,7 +1169,7 @@
                     <img id="ue-screen" class="ue-screen" src="/gpu/ui-screen" data-style-left="ue_frame.x + 'px'" data-style-top="ue_frame.y + 'px'" data-style-width="ue_frame.w + 'px'" data-style-height="ue_frame.h + 'px'"/>
                     <div data-for="g : ue_guides_x" class="ue-guide-x" data-style-left="g.x + 'px'"><span/></div>
                     <div data-for="g : ue_guides_y" class="ue-guide-y" data-style-top="g.y + 'px'"><span/></div>
-                    <div class="ue-hover" data-if="ue_hovering" data-style-left="ue_hover.x + 'px'" data-style-top="ue_hover.y + 'px'" data-style-width="ue_hover.w + 'px'" data-style-height="ue_hover.h + 'px'"/>
+                    <div id="ue-hover" class="ue-hover" data-if="ue_hovering" data-style-left="ue_hover.x + 'px'" data-style-top="ue_hover.y + 'px'" data-style-width="ue_hover.w + 'px'" data-style-height="ue_hover.h + 'px'"/>
                     <div id="ue-drop" class="ue-drop" data-if="ue_dropping" data-style-left="ue_drop.x + 'px'" data-style-top="ue_drop.y + 'px'" data-style-width="ue_drop.w + 'px'" data-style-height="ue_drop.h + 'px'"><div id="ue-drop-label" class="ue-drop-label">{{ ue_drop_label }}</div></div>
                     <div id="ue-safe" class="ue-safe" data-if="ue_has_safe" data-style-left="ue_safe.x + 'px'" data-style-top="ue_safe.y + 'px'" data-style-width="ue_safe.w + 'px'" data-style-height="ue_safe.h + 'px'"/>
                     <div data-for="b : ue_selected" class="ue-picked" data-style-left="b.x + 'px'" data-style-top="b.y + 'px'" data-style-width="b.w + 'px'" data-style-height="b.h + 'px'"><span/></div>
@@ -1181,6 +1181,60 @@
                     <div class="ue-marquee" data-if="ue_marqueeing" data-style-left="ue_marquee.x + 'px'" data-style-top="ue_marquee.y + 'px'" data-style-width="ue_marquee.w + 'px'" data-style-height="ue_marquee.h + 'px'"/>
                     <lines class="ue-overlay" source="ue-overlay"/>
                     <div data-for="m : ue_measures" class="ue-measure" data-style-left="m.x + 'px'" data-style-top="m.y + 'px'">{{ m.text }}</div>
+                    <!-- The panel over the selected layer (13.10), «Полный». C++: UiEditor::refresh_overlay (where), ue_fpick/ue_ftext/ue_fcommit/ue_fset. -->
+                    <div id="ue-float" class="ue-float ue-panel column" data-if="ue_float != ''" data-class-ue-float-text="ue_float == 'text'" data-class-ue-float-button="ue_float == 'button'" data-style-left="ue_float_x + 'px'" data-style-top="ue_float_y + 'px'">
+                        <div class="ue-float-row row" data-if="ue_float == 'text'">
+                            <select id="ue-f-family" class="ue-select grow" title="Шрифт" data-value="ue_p.family" data-event-change="ue_fpick('family')">
+                                <option value="">Как у экрана</option>
+                                <option data-for="f : ue_families" data-attr-value="f">{{ f }}</option>
+                            </select>
+                            <div class="ue-num ue-f-size" title="Размер букв"><input id="ue-f-size" type="text" data-attr-value="ue_s.size" data-event-change="ue_ftext('size', ev.value, ev.linebreak)" data-event-blur="ue_fcommit('size')"/><span>px</span></div>
+                        </div>
+                        <div class="ue-float-row row" data-if="ue_float == 'text'">
+                            <select id="ue-f-weight" class="ue-select grow" title="Толщина букв" data-value="ue_p.weight" data-event-change="ue_fpick('weight')">
+                                <option value="300">Тонкий</option><option value="400">Обычный</option><option value="500">Средний</option><option value="600">Полужирный</option><option value="700">Жирный</option><option value="800">Очень жирный</option><option value="900">Чёрный</option>
+                            </select>
+                            <div class="ue-swatch ue-checker" id="ue-f-color" title="Цвет текста: палитра" data-event-click="ue_color('text_color')"><div class="ue-swatch-fill" data-style-background-color="ue_p.text_swatch"/></div>
+                            <div class="ue-seg row">
+                                <div id="ue-f-align-left" class="ue-seg-btn" title="По левому краю" data-class-selected="ue_p.text_align == 'left'" data-event-click="ue_fset('text_align', 'left')"><icon class="xs" name="format_align_left"/></div>
+                                <div id="ue-f-align-center" class="ue-seg-btn" title="По центру" data-class-selected="ue_p.text_align == 'center'" data-event-click="ue_fset('text_align', 'center')"><icon class="xs" name="format_align_center"/></div>
+                                <div id="ue-f-align-right" class="ue-seg-btn" title="По правому краю" data-class-selected="ue_p.text_align == 'right'" data-event-click="ue_fset('text_align', 'right')"><icon class="xs" name="format_align_right"/></div>
+                                <div id="ue-f-align-justify" class="ue-seg-btn" title="По ширине" data-class-selected="ue_p.text_align == 'justify'" data-event-click="ue_fset('text_align', 'justify')"><icon class="xs" name="format_align_justify"/></div>
+                            </div>
+                        </div>
+                        <div class="ue-float-row row" data-if="ue_float == 'button'">
+                            <icon class="s ue-f-icon" name="touch_app" title="При нажатии"/>
+                            <select id="ue-f-action" class="ue-select grow" title="При нажатии в игре" data-if="ue_s.act_editable" data-value="ue_s.action" data-event-change="ue_fpick('action')">
+                                <option value="none">Ничего</option><option value="show">Открыть экран</option><option value="close">Закрыть этот экран</option>
+                                <option value="new">Новая игра</option><option value="continue">Продолжить игру</option><option value="load">Загрузить</option><option value="save">Сохранить</option>
+                                <option value="settings">Настройки</option><option value="pause">Пауза</option><option value="resume">Вернуться в игру</option>
+                                <option value="menu">В главное меню</option><option value="quit">Выйти из игры</option><option value="message">Сообщение «Логике»</option>
+                            </select>
+                            <div id="ue-f-many" class="ue-f-note grow" data-if="!ue_s.act_editable">Несколько действий: справа, «В игре»</div>
+                        </div>
+                        <div class="ue-float-row row" data-if="ue_float == 'button' &amp;&amp; ue_s.act_editable &amp;&amp; ue_s.needs == 'screen'">
+                            <icon class="s ue-f-icon" name="web_asset" title="Какой экран"/>
+                            <select id="ue-f-target" class="ue-select grow" title="Какой экран открыть" data-value="ue_s.target" data-event-change="ue_fpick('target')">
+                                <option data-for="n : ue_screen_names" data-attr-value="n">{{ n }}</option>
+                            </select>
+                        </div>
+                        <div class="ue-float-row row" data-if="ue_float == 'button' &amp;&amp; ue_s.act_editable &amp;&amp; ue_s.needs == 'text'">
+                            <icon class="s ue-f-icon" name="forum" title="Какое сообщение"/>
+                            <input id="ue-f-message" type="text" class="ue-field grow" placeholder="открыть_дверь" data-attr-value="ue_s.target" data-event-change="ue_ftext('target', ev.value, ev.linebreak)" data-event-blur="ue_fcommit('target')"/>
+                        </div>
+                        <div class="ue-float-row row" data-if="ue_float == 'button' &amp;&amp; (ue_s.action != 'none' || !ue_s.act_editable)">
+                            <icon class="s ue-f-icon" name="volume_up" title="Звук нажатия"/>
+                            <select id="ue-f-sound" class="ue-select grow" title="Звук нажатия" data-event-change="ue_fpick('click_sound')">
+                                <option value="">Как у экрана</option><option value="none">Без звука</option><option data-for="snd : ue_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                            </select>
+                        </div>
+                        <div class="ue-float-row row" data-if="ue_float == 'picture'">
+                            <icon class="s ue-f-icon" name="image" title="Картинка"/>
+                            <select id="ue-f-picture" class="ue-select grow" title="Картинка из папки игры" data-value="ue_s.image" data-event-change="ue_fpick('picture')">
+                                <option value="">Нет</option><option data-for="pic : ue_pictures" data-attr-value="pic.path">{{ pic.name }}</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1761,7 +1815,7 @@
                                 <div class="ue-swatch ue-checker" data-if="f.kind == 'solid' || f.kind == 'linear' || f.kind == 'radial'" data-attr-id="'ue-sw-fill-' + f.index" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('fill.' + f.index + '.color')"><div class="ue-swatch-fill" data-style-background-color="f.swatch"/></div>
                                 <div class="ue-swatch grad" data-if="f.kind == 'image'"><icon class="xs" name="image"/></div>
                                 <input type="text" class="ue-hex grow" data-if="f.kind != 'image'" data-attr-id="'ue-fill-hex-' + f.index" data-attr-value="f.hex" data-event-change="ue_text('fill.' + f.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.color')"/>
-                                <select class="ue-select grow" data-if="f.kind == 'image'" data-value="f.image" title="Картинка из папки игры pictures" data-event-change="ue_pick('fill.' + f.index + '.image')">
+                                <select class="ue-select grow" data-if="f.kind == 'image'" data-attr-id="'ue-fill-image-' + f.index" data-value="f.image" title="Картинка из папки игры pictures" data-event-change="ue_pick('fill.' + f.index + '.image')">
                                     <option value="">Выберите картинку</option>
                                     <option data-for="pic : ue_pictures" data-attr-value="pic.path">{{ pic.name }}</option>
                                 </select>

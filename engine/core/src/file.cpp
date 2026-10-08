@@ -7,6 +7,9 @@ namespace forge {
 namespace fs = std::filesystem;
 
 bool read_file(const fs::path& path, std::vector<u8>& out) {
+    // A folder is no file (on Linux the stream opens it and reports an endless size).
+    std::error_code ec;
+    if (fs::is_directory(path, ec)) return false;
     std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in) return false;
     const std::streamoff size = in.tellg();

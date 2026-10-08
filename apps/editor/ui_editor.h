@@ -221,6 +221,11 @@ public:
     // nothing). x, y: the window's pixels.
     void open_menu(const std::string& menu, f32 x, f32 y);
     const std::string& menu() const { return menu_; }
+    // The panel over the selected layer (13.10), in «Полный»: "text", "button", "picture" or "" (none); where it
+    // stands on the canvas (the canvas's pixels).
+    const Rml::String& float_panel() const { return m_float_; }
+    f32 float_x() const { return m_float_x_; }
+    f32 float_y() const { return m_float_y_; }
     // A new list frame (selected) around the layer, which becomes its cell; one
     // step of the history.
     bool make_list(u32 cell, editor::design::ListSource source);
@@ -754,6 +759,8 @@ private:
     std::vector<Tick> m_ticks_x_, m_ticks_y_;
     std::vector<Box> m_selected_;
     Box m_sel_box_;
+    Rml::String m_float_; // the panel over the selected layer: its kind, "" when none
+    f32 m_float_x_ = 0, m_float_y_ = 0;
     bool m_handles_ = false;
     Box m_hover_;
     bool m_hovering_ = false;

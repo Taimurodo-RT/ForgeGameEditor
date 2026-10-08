@@ -806,7 +806,8 @@ void UiEditor::sync_sound_selects() {
     if (!context_ || !shown_) return;
     const std::pair<const char*, const Rml::String*> selects[] = {
         {"ue-screen-music", &m_p_.music}, {"ue-screen-button-sound", &m_p_.button_sound}, {"ue-click-sound", &m_p_.click_sound},
-        {"ue-s-music", &m_s_.music},      {"ue-s-button-sound", &m_s_.button_sound},      {"ue-s-click-sound", &m_s_.click_sound}};
+        {"ue-s-music", &m_s_.music},      {"ue-s-button-sound", &m_s_.button_sound},      {"ue-s-click-sound", &m_s_.click_sound},
+        {"ue-f-sound", &m_s_.click_sound}};
     for (const auto& [id, value] : selects) {
         Rml::Element* e = nullptr;
         for (int i = 0; !e && i < context_->GetNumDocuments(); ++i) e = context_->GetDocument(i)->GetElementById(id);
@@ -1225,6 +1226,41 @@ void UiEditor::refresh_overlay() {
     m_sel_box_ = {to_canvas_x(sb.x), to_canvas_y(sb.y), sb.w * zoom_x(), sb.h * zoom_y()};
     m_handles_ = !checking_ && !selection_.empty() && !(selection_.size() == 1 && selection_[0] == screen_.root.id);
     m_size_label_ = selection_.empty() ? Rml::String() : fmt(std::round(sb.w * 100) / 100) + " × " + fmt(std::round(sb.h * 100) / 100);
+    // The panel over the selected layer (13.10): in «Полный», for one text, button or picture, while nothing is
+    // carried; above the layer, else under it (past its size), else at the canvas's top; whole on the canvas.
+    m_float_.clear();
+    const d::Node* one = selection_.size() == 1 ? d::find(screen_.root, selection_[0]) : nullptr;
+    // Not while a layer is carried, resized, drawn or a rectangle is pulled (a click without moving keeps it).
+    const bool dragging = dragged_ && drag_ != Drag::None && drag_ != Drag::Pan;
+    if (one && one->id != screen_.root.id && !simple_ && !checking_ && !previewing() && !preview_.on && !dragging && canvas_w_ > 0) {
+        const d::Block b = d::block_of(*one);
+        int rows = 1;
+        f32 w = 280;
+        if (one->type == d::NodeType::Text) {
+            m_float_ = "text";
+            rows = 2;
+            w = 320;
+        } else if (b == d::Block::Button && !screen_.library) {
+            m_float_ = "button";
+            const bool editable = d::simple_action_editable(*one);
+            const bool acts = !one->on_click.empty();
+            const d::ActionKind kind = acts ? one->on_click[0].kind : d::ActionKind::Show;
+            rows += editable && acts && (kind == d::ActionKind::Show || kind == d::ActionKind::Message); // which screen, what message
+            rows += !editable || acts;                                                                  // its sound
+            w = 300;
+        } else if (b == d::Block::Picture) m_float_ = "picture";
+        const Box& sel = m_sel_box_;
+        const bool seen = sel.x + sel.w >= 0 && sel.x <= canvas_w_ && sel.y + sel.h >= 0 && sel.y <= canvas_h_;
+        if (!seen) m_float_.clear();
+        if (!m_float_.empty()) {
+            constexpr f32 kEdge = 1 + 6, kRow = 32, kGap = 6, kAway = 10, kUnder = 34; // .ue-float; kUnder: past the size label
+            const f32 h = 2 * kEdge + static_cast<f32>(rows) * kRow + static_cast<f32>(rows - 1) * kGap;
+            m_float_x_ = std::round(std::clamp(sel.x + sel.w * 0.5f - w * 0.5f, 4.0f, std::max(4.0f, canvas_w_ - w - 4)));
+            m_float_y_ = sel.y - kAway - h >= 4                     ? std::round(sel.y - kAway - h)
+                         : sel.y + sel.h + kUnder + h <= canvas_h_ - 4 ? std::round(sel.y + sel.h + kUnder)
+                                                                         : 4.0f;
+        }
+    }
     // Hover.
     m_hovering_ = false;
     if (hover_ && drag_ == Drag::None && std::find(selection_.begin(), selection_.end(), hover_) == selection_.end())
@@ -1305,7 +1341,8 @@ void UiEditor::refresh_overlay() {
         }
     ++overlay_lines_.v;
     for (const char* name : {"ue_selected", "ue_sel_box", "ue_handles", "ue_size_label", "ue_hover", "ue_hovering",
-                             "ue_marquee", "ue_marqueeing", "ue_measures", "ue_drop", "ue_dropping", "ue_drop_label"})
+                             "ue_marquee", "ue_marqueeing", "ue_measures", "ue_drop", "ue_dropping", "ue_drop_label", "ue_float",
+                             "ue_float_x", "ue_float_y"})
         dirty(name);
 }
 
@@ -1676,6 +1713,7 @@ void UiEditor::set_simple(bool on) {
     if (on) set_tool(Tool::Select); // blocks are added from the bar, not drawn
     dirty("ue_simple");
     refresh_props();
+    refresh_overlay(); // the panel over the layer is «Полный»'s
 }
 
 void UiEditor::refresh_simple(const d::Node* n) {
@@ -3599,6 +3637,9 @@ bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* conte
         u32 over = 0;
         if (cx >= 0 && cy >= 0 && cx < canvas_w_ && cy < canvas_h_ && tool_ == Tool::Select)
             over = hit(to_screen_x(cx), to_screen_y(cy), SDL_GetModState() & SDL_KMOD_CTRL);
+        // Over the panel above the selection: what is under the panel is not hovered.
+        for (Rml::Element* el = context ? context->GetHoverElement() : nullptr; el && over; el = el->GetParentNode())
+            if (el->GetId() == "ue-float") over = 0;
         if (over != hover_) {
             hover_ = over;
             refresh_overlay();
@@ -4788,6 +4829,9 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_selected", &m_selected_);
     model.Bind("ue_sel_box", &m_sel_box_);
     model.Bind("ue_handles", &m_handles_);
+    model.Bind("ue_float", &m_float_);
+    model.Bind("ue_float_x", &m_float_x_);
+    model.Bind("ue_float_y", &m_float_y_);
     model.Bind("ue_hover", &m_hover_);
     model.Bind("ue_hovering", &m_hovering_);
     model.Bind("ue_drop", &m_drop_);
@@ -4999,6 +5043,27 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         const std::string field = arg_str(a, 0), value = input->GetValue();
         if (value == simple_shown(field)) return;
         set_simple_property(field, value);
+    });
+    // The panel over the selected layer (13.10), in «Полный»: a text's look as the full panel sets it; a button's
+    // one action and its sound, a picture's file as «Простой» does. Only the author's own picks and typing count
+    // (a field given what it shows changes nothing: set_field).
+    auto float_write = [this](const std::string& field, const std::string& value) {
+        if (simple_ || selection_.size() != 1) return false;
+        if (field == "family" || field == "size" || field == "weight" || field == "text_align") return set_property(field, value);
+        return set_simple_property(field, value);
+    };
+    on("ue_fpick", [arg_str, float_write](Rml::Event& ev, const Rml::VariantList& a) {
+        auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement());
+        if (!input || !input->IsPseudoClassSet("focus")) return;
+        float_write(arg_str(a, 0), input->GetValue());
+    });
+    on("ue_ftext", [arg_str, float_write](Rml::Event&, const Rml::VariantList& a) {
+        if (a.size() > 2 && a[2].Get<bool>()) float_write(arg_str(a, 0), arg_str(a, 1));
+    });
+    on("ue_fcommit", [arg_str, float_write, input_value](Rml::Event& ev, const Rml::VariantList& a) { float_write(arg_str(a, 0), input_value(ev)); });
+    on("ue_fset", [arg_str, float_write](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        float_write(arg_str(a, 0), arg_str(a, 1));
     });
     on("ue_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         const std::string t = arg_str(a, 0);

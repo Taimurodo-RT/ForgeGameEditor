@@ -162,6 +162,29 @@ TEST_CASE("ui design: drawn art and screen settings survive saving and become CS
     CHECK(contains(html, "font-size: 30px"));
 }
 
+TEST_CASE("ui design: a picture fill without a file draws nothing and names no folder") {
+    Screen s = make_screen("Окно", 1280, 720);
+    Node picture = rect_node(s.next_id++, 100, 100, 160, 160);
+    Paint empty;
+    empty.kind = PaintKind::Image;
+    picture.fills.push_back(empty);
+    const std::string alone = node_css(picture, &s.root, 1280, 720);
+    CHECK_FALSE(contains(alone, "url("));
+    CHECK_FALSE(contains(alone, "background-image"));
+    // Under it a colour: only the colour.
+    Paint solid;
+    solid.kind = PaintKind::Solid;
+    solid.color = Color{200, 10, 10, 255};
+    picture.fills.insert(picture.fills.begin(), solid);
+    const std::string under = node_css(picture, &s.root, 1280, 720);
+    CHECK_FALSE(contains(under, "url("));
+    CHECK(contains(under, "background-image: linear-gradient("));
+    // Read as a file, a folder fails instead of asking for endless memory.
+    std::vector<u8> bytes;
+    CHECK_FALSE(forge::read_file(std::filesystem::temp_directory_path(), bytes));
+    CHECK(bytes.empty());
+}
+
 TEST_CASE("ui design: constraints become CSS that keeps the layer in place") {
     Node parent;
     Node n = rect_node(5, 100, 50, 200, 80);
