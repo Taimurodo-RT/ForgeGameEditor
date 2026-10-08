@@ -254,6 +254,47 @@ void Ui::set_offscreen(Rml::Context* context, const std::string& image) {
     m.ensure_offscreen(context, o);
 }
 
+bool Ui::read_pixel(Rml::Context* context, u32 x, u32 y, u8 rgba[4]) {
+    Impl& m = *impl_;
+    auto it = m.offscreen.find(context);
+    if (it == m.offscreen.end() || !it->second.texture || x >= it->second.width || y >= it->second.height) return false;
+    SDL_GPUTransferBufferCreateInfo tb_info{};
+    tb_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    tb_info.size = 4;
+    SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(m.device, &tb_info);
+    if (!tb) return false;
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m.device);
+    if (!cmd) {
+        SDL_ReleaseGPUTransferBuffer(m.device, tb);
+        return false;
+    }
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion src{};
+    src.texture = it->second.texture;
+    src.x = x;
+    src.y = y;
+    src.w = 1;
+    src.h = 1;
+    src.d = 1;
+    SDL_GPUTextureTransferInfo dst{};
+    dst.transfer_buffer = tb;
+    SDL_DownloadFromGPUTexture(copy, &src, &dst);
+    SDL_EndGPUCopyPass(copy);
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    bool ok = false;
+    if (fence) {
+        SDL_WaitForGPUFences(m.device, true, &fence, 1);
+        SDL_ReleaseGPUFence(m.device, fence);
+        if (const auto* p = static_cast<const u8*>(SDL_MapGPUTransferBuffer(m.device, tb, false))) {
+            std::copy(p, p + 4, rgba);
+            SDL_UnmapGPUTransferBuffer(m.device, tb);
+            ok = true;
+        }
+    }
+    SDL_ReleaseGPUTransferBuffer(m.device, tb);
+    return ok;
+}
+
 void Ui::set_active(Rml::Context* context, bool active) {
     if (active) impl_->inactive.erase(context);
     else impl_->inactive[context] = true;

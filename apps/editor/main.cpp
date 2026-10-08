@@ -596,6 +596,8 @@ public:
         assets.set_ui_updating(true);
         objects_tab.set_ui_updating(true);
         ui_.update();
+        // The colour picker stands beside its swatch once its size is known.
+        if (m_tab_ == "ui" && ui_tab.place_picker(context_)) context_->Update();
         level.set_ui_updating(false);
         assets.set_ui_updating(false);
         objects_tab.set_ui_updating(false);
@@ -3179,6 +3181,83 @@ private:
     Rml::Element* ue_panel_ = nullptr; // the simple panel's scrolling part
     bool ue_option_outside_ = false, ue_option_hovered_ = false; // the last option clicked: outside its panel, under the pointer
     std::vector<u32> ue_blocks_;
+    // «Палитра цвета»: the layers, colours and panel the picker's checks work on.
+    u32 ue_cp_btn_ = 0, ue_cp_title_ = 0, ue_cp_rect_ = 0;
+    editor::design::Color ue_cp_color_{};
+    std::string ue_cp_key_;
+    usize ue_cp_overrides_ = 0;
+    // A point of an element at fractions of its box, window pixels (false when it is not shown).
+    bool ue_point(const char* id, f32 fx, f32 fy, f32& x, f32& y) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
+        x = at.x + size.x * fx;
+        y = at.y + size.y * fy;
+        return true;
+    }
+    // A click with the mouse in the middle of an element, scrolled into its panel's view first (as the author would).
+    bool ue_press(const std::string& id) {
+        if (Rml::Element* e = ed_.find_element(id.c_str()); e && e->IsVisible(true)) {
+            e->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
+            ed_.context()->Update();
+        }
+        f32 x = 0, y = 0;
+        if (!ue_point(id.c_str(), 0.5f, 0.5f, x, y)) return false;
+        left_click(x, y);
+        return true;
+    }
+    // Held down at one point of an element, moved in steps and let go at another (the picker's square and bars).
+    bool ue_slide(const char* id, f32 fx0, f32 fy0, f32 fx1, f32 fy1, const std::function<void()>& between = {}) {
+        f32 x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        if (!ue_point(id, fx0, fy0, x0, y0) || !ue_point(id, fx1, fy1, x1, y1)) return false;
+        mouse(SDL_EVENT_MOUSE_MOTION, x0, y0);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0);
+        for (int i = 1; i <= 4; ++i) {
+            mouse(SDL_EVENT_MOUSE_MOTION, x0 + (x1 - x0) * static_cast<f32>(i) / 4, y0 + (y1 - y0) * static_cast<f32>(i) / 4);
+            if (between) between();
+        }
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x1, y1);
+        return true;
+    }
+    // Typed into a field without Enter (the text stays in it).
+    bool ue_keys(const char* id, const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+        if (!e) return false;
+        e->Focus();
+        key(SDLK_END, SDL_KMOD_NONE);
+        const Rml::String old = e->GetValue();
+        const usize letters = static_cast<usize>(std::count_if(old.begin(), old.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+        for (usize i = 0; i < letters; ++i) key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+        SDL_Event t{};
+        t.type = SDL_EVENT_TEXT_INPUT;
+        t.text.text = text.c_str();
+        ed_.handle_event(t);
+        return e->GetValue() == text;
+    }
+    std::string ue_field(const char* id) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+        return e ? std::string(e->GetValue()) : std::string("<none>");
+    }
+    // The picker wholly inside the window, its «Готово» and HEX field found by the pointer where they show.
+    bool ue_picker_reachable(std::string& why) {
+        Rml::Element* p = ed_.find_element("ue-picker");
+        Rml::Context* c = ed_.context();
+        if (!p || !c || !p->IsVisible(true)) return why = "no picker", false;
+        const Rml::Vector2f at = p->GetAbsoluteOffset(Rml::BoxArea::Border), size = p->GetBox().GetSize(Rml::BoxArea::Border);
+        const Rml::Vector2i w = c->GetDimensions();
+        why = "picker " + std::to_string(static_cast<int>(at.x)) + "," + std::to_string(static_cast<int>(at.y)) + " " +
+              std::to_string(static_cast<int>(size.x)) + "x" + std::to_string(static_cast<int>(size.y)) + " in " +
+              std::to_string(w.x) + "x" + std::to_string(w.y);
+        if (at.x < 0 || at.y < 0 || at.x + size.x > static_cast<f32>(w.x) || at.y + size.y > static_cast<f32>(w.y)) return false;
+        for (const char* id : {"ue-cp-done", "ue-cp-cancel", "ue-cp-hex", "ue-cp-sv"}) {
+            f32 x = 0, y = 0;
+            if (!ue_point(id, 0.5f, 0.5f, x, y)) return why += std::string(", no ") + id, false;
+            bool found = false;
+            for (Rml::Element* e = c->GetElementAtPoint({x, y}); e; e = e->GetParentNode()) found = found || e->GetId() == id;
+            if (!found) return why += std::string(", the pointer misses ") + id, false;
+        }
+        return true;
+    }
     // Typed into a field as from the keyboard: focus, End and Backspace over the old text, the text, Enter, then away.
     // (Ctrl+A is not used: RmlUi reads the modifiers from the real keyboard, not from the event.)
     bool ue_type(const char* id, const std::string& text) {
@@ -4391,6 +4470,474 @@ private:
             ue().set_checking(false);
             check(click("ue-mode-full") && !ue().simple() && d::save_screen(ue().screen()) == ue_json_,
                   "«Полный» shows the same screen");
+            check(ue().open("main_menu"), "back to the menu");
+            break;
+        }
+        // --- «Палитра цвета» (13.4): one picker for every colour, used with the mouse and keys ---
+        case 63:
+            check(!ue().simple() && ue().opened() == "main_menu", "the menu, in «Полный»");
+            ue_cp_btn_ = ue_named("Кнопка «Новая игра»");
+            ue().select({ue_cp_btn_});
+            break;
+        case 64: {
+            const d::Node* b = ue_node(ue_cp_btn_);
+            check(b && !b->fills.empty() && b->fills[0].kind == d::PaintKind::Solid, "the button has a colour fill");
+            ue_json_ = d::save_screen(ue().screen());
+            ue_disk_ = ue_file(".json");
+            ue_cursor_ = ue().history().cursor();
+            ue_entries_ = ue().history().size();
+            ue_cp_color_ = b ? b->fills[0].color : d::Color{};
+            check(ue_press("ue-sw-fill-0") && ue().picker_open() && ue().picker_field() == "fill.0.color",
+                  "a click on the fill's swatch opens the picker on the fill");
+            check(ue().picker_color() == ue_cp_color_, "it starts from the fill's colour, alpha too: " + d::color_hex(ue_cp_color_));
+            check(d::save_screen(ue().screen()) == ue_json_ && ue_file(".json") == ue_disk_ && ue().history().cursor() == ue_cursor_,
+                  "opening it changes nothing");
+            break;
+        }
+        case 65: {
+            check(shown("ue-picker") && shown("ue-cp-sv") && shown("ue-cp-hue") && shown("ue-cp-alpha") && shown("ue-cp-hex") &&
+                      shown("ue-cp-alpha-field") && shown("ue-cp-dropper"),
+                  "the picker shows its square, hue, alpha over the checkerboard, HEX, alpha % and eyedropper");
+            std::string hex = d::color_hex(ue_cp_color_).substr(1);
+            for (char& ch : hex) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            check(ue_field("ue-cp-hex") == hex, "the HEX field shows " + hex + ": " + ue_field("ue-cp-hex"));
+            std::string why;
+            const bool reachable = ue_picker_reachable(why);
+            check(reachable, "the picker is inside the window, its controls under the pointer: " + why);
+            // Looked at: focused, left, Enter, without typing.
+            for (const char* id : {"ue-cp-hex", "ue-cp-alpha-field"}) {
+                Rml::Element* e = ed_.find_element(id);
+                if (!e) continue;
+                e->Focus();
+                e->Blur();
+                e->Focus();
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                e->Blur();
+            }
+            check(ue().picker_open() && ue().picker_color() == ue_cp_color_ && d::save_screen(ue().screen()) == ue_json_,
+                  "its fields focused, left and Enter without typing: nothing changes");
+            check(ue_press("ue-cp-cancel") && !ue().picker_open(), "«Отмена» closes it");
+            check(d::save_screen(ue().screen()) == ue_json_ && ue_file(".json") == ue_disk_ && ue().history().cursor() == ue_cursor_ &&
+                      ue().history().size() == ue_entries_,
+                  "opened and closed: the screen, its file and the history as they were");
+            check(ue_press("ue-sw-fill-0") && ue().picker_open(), "opened again");
+            break;
+        }
+        case 66: {
+            check(ue_press("ue-cp-done") && !ue().picker_open(), "«Готово» without a change closes it");
+            check(d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_ && ue().history().size() == ue_entries_,
+                  "and makes no step of the history");
+            check(ue_press("ue-sw-fill-0") && ue().picker_open(), "opened again");
+            break;
+        }
+        case 67: {
+            // Dragged on the square, the hue and the alpha: the canvas shows it, nothing is written or kept yet.
+            bool quiet = true;
+            auto still = [&] { quiet = quiet && ue().history().cursor() == ue_cursor_ && ue_file(".json") == ue_disk_; };
+            check(ue_slide("ue-cp-sv", 0.2f, 0.7f, 0.8f, 0.1f, still), "the square dragged");
+            const d::Hsva sv = d::color_to_hsva(ue().picker_color());
+            check(std::abs(sv.s - 0.8f) < 0.03f && std::abs(sv.v - 0.9f) < 0.03f,
+                  "saturation and brightness where the mouse let go: " + std::to_string(sv.s) + " " + std::to_string(sv.v));
+            check(ue_slide("ue-cp-hue", 0.1f, 0.5f, 0.55f, 0.5f, still), "the hue dragged");
+            const d::Hsva hue = d::color_to_hsva(ue().picker_color());
+            check(std::abs(hue.h - 198) < 4 && std::abs(hue.s - 0.8f) < 0.03f, "the hue changes, the square's place kept: " + std::to_string(hue.h));
+            check(ue_slide("ue-cp-alpha", 0.9f, 0.5f, 0.5f, 0.5f, still), "the alpha dragged");
+            check(std::abs(ue().picker_color().a - 128) <= 3, "alpha in the middle: " + std::to_string(ue().picker_color().a));
+            check(quiet, "while dragging: no step of the history, the file not written");
+            const d::Node* b = ue_node(ue_cp_btn_);
+            check(b && b->fills[0].color == ue().picker_color(), "the canvas shows the picked colour on the button");
+            check(ue().selection() == std::vector<u32>{ue_cp_btn_}, "the button stays selected");
+            ue_cp_color_ = ue().picker_color();
+            check(ue_press("ue-cp-done") && !ue().picker_open(), "«Готово»");
+            break;
+        }
+        case 68: {
+            check(ue().history().cursor() == ue_cursor_ + 1 && ue().history().undo_label() == "Изменено: Заливка",
+                  "one finished pick, one step: " + ue().history().undo_label());
+            const d::Node* b = ue_node(ue_cp_btn_);
+            check(b && b->fills[0].color == ue_cp_color_, "the fill has the picked colour, alpha too");
+            d::Screen saved;
+            check(d::load_screen(ue_file(".json"), saved) && d::find(saved.root, ue_cp_btn_) &&
+                      d::find(saved.root, ue_cp_btn_)->fills[0].color == ue_cp_color_,
+                  "written into the screen's file");
+            // Nothing else changed: put the colour back and it is the screen as it was (ids, other fills, stroke, text).
+            d::Screen back;
+            check(d::load_screen(d::save_screen(ue().screen()), back), "the screen reads back");
+            if (d::Node* n = d::find(back.root, ue_cp_btn_)) {
+                d::Screen was;
+                d::load_screen(ue_json_, was);
+                n->fills[0].color = d::find(was.root, ue_cp_btn_)->fills[0].color;
+            }
+            check(d::save_screen(back) == ue_json_, "only the fill's colour changed");
+            ue_json2_ = d::save_screen(ue().screen());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d::save_screen(ue().screen()) == ue_json_, "Ctrl+Z takes the whole pick back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(d::save_screen(ue().screen()) == ue_json2_, "Ctrl+Y brings it again");
+            ue_disk_ = ue_file(".json");
+            ue_cursor_ = ue().history().cursor();
+            check(ue_press("ue-sw-fill-0") && ue().picker_open(), "the picker again");
+            break;
+        }
+        case 69: {
+            // A HEX typed and Enter shows it; Esc puts everything back.
+            check(ue_type("ue-cp-hex", "#3366cc") && ue_node(ue_cp_btn_)->fills[0].color == d::Color{0x33, 0x66, 0xcc, 255},
+                  "#3366cc typed: the canvas shows it");
+            check(ue_file(".json") == ue_disk_ && ue().history().cursor() == ue_cursor_, "not written, no step");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().picker_open() && d::save_screen(ue().screen()) == ue_json2_ && ue_file(".json") == ue_disk_ &&
+                      ue().history().cursor() == ue_cursor_,
+                  "Esc: the colour as it was, nothing written, no step");
+            check(ue_press("ue-sw-fill-0") && ue().picker_open(), "the picker again");
+            break;
+        }
+        case 70: {
+            // Esc while the HEX field has the keyboard, with a colour typed but not entered.
+            check(ue_keys("ue-cp-hex", "ff0000"), "ff0000 typed, no Enter");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().picker_open() && d::save_screen(ue().screen()) == ue_json2_ && ue().history().cursor() == ue_cursor_,
+                  "Esc in the field: closed, nothing changed");
+            check(ue_press("ue-sw-fill-0") && ue().picker_open(), "the picker again");
+            break;
+        }
+        case 71:
+            // A part of a colour, a typo: the document stays as it is, the field says why.
+            check(ue_type("ue-cp-hex", "3366c"), "3366c typed");
+            check(d::save_screen(ue().screen()) == ue_json2_ && ue().picker_color() == ue_cp_color_,
+                  "an incomplete HEX changes nothing");
+            break;
+        case 72: {
+            check(shown("ue-cp-hex-note"), "and the picker says what is missing");
+            check(ue_type("ue-cp-hex", "zz66cc") && d::save_screen(ue().screen()) == ue_json2_, "a typo changes nothing");
+            break;
+        }
+        case 73: {
+            // (A frame later: the field shows the picker's HEX again after the typo.)
+            const bool typed = ue_type("ue-cp-hex", "36c");
+            check(typed && ue().picker_color() == d::Color{0x33, 0x66, 0xcc, 255},
+                  "three digits: #3366CC: " + std::to_string(typed) + " " + d::color_hex(ue().picker_color()) + " field " + ue_field("ue-cp-hex"));
+            check(ue_type("ue-cp-alpha-field", "50") && ue().picker_color() == d::Color{0x33, 0x66, 0xcc, 128}, "alpha 50 %");
+            break;
+        }
+        case 74: {
+            check(ue_field("ue-cp-hex") == "3366CC80", "the HEX shows the alpha too: " + ue_field("ue-cp-hex"));
+            check(ue_press("ue-cp-done"), "«Готово»");
+            check(!shown("ue-cp-hex-note") && ue_node(ue_cp_btn_)->fills[0].color == d::Color{0x33, 0x66, 0xcc, 128} &&
+                      ue().history().cursor() == ue_cursor_ + 1,
+                  "#3366CC at 50 %: one step");
+            // A colour of the game's: the fill follows it.
+            ue_cp_key_ = ue().library().colors.empty() ? std::string() : ue().library().colors[0].key;
+            check(!ue_cp_key_.empty(), "the game has a colour");
+            ue_cursor_ = ue().history().cursor();
+            check(ue_press("ue-sw-fill-0") && ue().picker_open(), "the picker again");
+            break;
+        }
+        case 75: {
+            check(shown("ue-cp-theme-0"), "the game's colours are in the picker");
+            check(ue_press("ue-cp-theme-0") && ue().picker_link() == ue_cp_key_ && ue_node(ue_cp_btn_)->fills[0].style == ue_cp_key_ &&
+                      ue_node(ue_cp_btn_)->fills[0].color == ue().library().colors[0].color,
+                  "a game colour picked: the fill follows it");
+            check(ue_press("ue-cp-done") && ue().history().cursor() == ue_cursor_ + 1, "«Готово»: one step");
+            ue_json2_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            break;
+        }
+        case 76: {
+            // Looked at again, in the picker and in the panel's HEX field: the link stays.
+            check(ue_press("ue-sw-fill-0") && ue().picker_link() == ue_cp_key_, "opened on a linked fill, the link shows");
+            break;
+        }
+        case 77: {
+            Rml::Element* hex = ed_.find_element("ue-cp-hex");
+            if (hex) {
+                hex->Focus();
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                hex->Blur();
+            }
+            check(ue_press("ue-cp-done") && d::save_screen(ue().screen()) == ue_json2_ && ue().history().cursor() == ue_cursor_,
+                  "Enter on the shown HEX and «Готово»: link kept, no step");
+            Rml::Element* field = ed_.find_element("ue-fill-hex-0");
+            check(field && shown("ue-fill-hex-0"), "the panel's HEX field of the fill");
+            if (field) {
+                field->Focus();
+                field->Blur();
+                field->Focus();
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                field->Blur();
+            }
+            check(d::save_screen(ue().screen()) == ue_json2_ && ue_node(ue_cp_btn_)->fills[0].style == ue_cp_key_ &&
+                      ue().history().cursor() == ue_cursor_,
+                  "the panel's HEX field focused, left, Enter: the link to the game colour kept, no step");
+            check(ue_press("ue-sw-fill-0"), "the picker again");
+            break;
+        }
+        case 78:
+            // A colour of one's own dragged: the link goes in the preview only; Esc brings it back.
+            check(ue_slide("ue-cp-sv", 0.5f, 0.5f, 0.3f, 0.2f) && ue().picker_link().empty() && ue_node(ue_cp_btn_)->fills[0].style.empty(),
+                  "dragged: its own colour on the canvas");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().picker_open() && d::save_screen(ue().screen()) == ue_json2_ && ue_node(ue_cp_btn_)->fills[0].style == ue_cp_key_ &&
+                      ue().history().cursor() == ue_cursor_,
+                  "Esc: the link to the game colour is back, no step");
+            check(ue_press("ue-sw-fill-0"), "the picker again");
+            break;
+        case 79: {
+            check(ue_type("ue-cp-hex", "#20C060") && ue_press("ue-cp-done"), "#20C060 typed, «Готово»");
+            const d::Node* b = ue_node(ue_cp_btn_);
+            check(b && b->fills[0].style.empty() && b->fills[0].color == d::Color{0x20, 0xc0, 0x60, 255} &&
+                      ue().history().cursor() == ue_cursor_ + 1,
+                  "its own colour now: the link gone, one step");
+            d::Screen back;
+            d::load_screen(d::save_screen(ue().screen()), back);
+            d::Screen was;
+            d::load_screen(ue_json2_, was);
+            d::find(back.root, ue_cp_btn_)->fills[0] = d::find(was.root, ue_cp_btn_)->fills[0];
+            check(d::save_screen(back) == ue_json2_, "only this fill changed");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d::save_screen(ue().screen()) == ue_json2_ && ue_node(ue_cp_btn_)->fills[0].style == ue_cp_key_,
+                  "Ctrl+Z: the link back");
+            // The game colour changed with the picker on the library's page: the button follows.
+            check(ue().open_library(), "the library");
+            ue().select({});
+            break;
+        }
+        case 80:
+            check(ue_press("ue-sw-color-0") && ue().picker_field() == "color.0.color", "the game colour's swatch opens the picker");
+            break;
+        case 81:
+            check(ue_type("ue-cp-hex", "#AA3311") && ue_press("ue-cp-done"), "#AA3311 for the game colour");
+            check(ue().library().colors[0].color == d::Color{0xaa, 0x33, 0x11, 255}, "the game colour is #AA3311");
+            check(ue().open("main_menu"), "back to the menu");
+            check(ue_node(ue_cp_btn_)->fills[0].style == ue_cp_key_ && ue_node(ue_cp_btn_)->fills[0].color == d::Color{0xaa, 0x33, 0x11, 255},
+                  "the linked button follows the game colour");
+            check(ue_file(".html").find("#aa3311") != std::string::npos, "and its page too");
+            // The eyedropper: the title's colour taken from the canvas, from a rectangle in the game colour (the
+            // menu's buttons show drawn frame pictures over their fills: what is seen there is the picture).
+            ue_cp_rect_ = ue().add_layer(d::NodeType::Rectangle, 1500, 100, 200, 120);
+            ue().select({ue_cp_rect_});
+            check(ue().set_property("fill.0.style", ue_cp_key_), "a rectangle in the game colour");
+            ue_cp_title_ = ue_named("Название игры");
+            ue().select({ue_cp_title_});
+            break;
+        case 82:
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            check(ue_press("ue-sw-text") && ue().picker_field() == "text_color", "the title's text colour in the picker");
+            break;
+        case 83: {
+            check(ue_press("ue-cp-dropper") && ue().picker_dropping(), "the eyedropper picked up");
+            // Away with Esc, then with the right button, then a click off the screen: nothing taken, the picker stays.
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().picker_dropping() && ue().picker_open(), "Esc puts the eyedropper away, the picker stays");
+            check(ue_press("ue-cp-dropper") && ue().picker_dropping(), "picked up again");
+            const auto box = ue().layer_box(ue_cp_rect_);
+            check(box.has_value(), "the rectangle is on the canvas");
+            if (box) right_click(ue_wx(box->cx()), ue_wy(box->cy()));
+            check(!ue().picker_dropping() && ue().picker_open() && d::save_screen(ue().screen()) == ue_json_,
+                  "the right button puts it away: nothing taken");
+            check(ue_press("ue-cp-dropper"), "picked up again");
+            left_click(ue().canvas_left() + 6, ue().canvas_top() + 6); // the pasteboard, off the screen
+            check(!ue().picker_dropping() && d::save_screen(ue().screen()) == ue_json_ && ue().selection() == std::vector<u32>{ue_cp_title_},
+                  "a click off the screen puts it away: nothing taken, nothing selected");
+            check(ue_press("ue-cp-dropper"), "picked up again");
+            break;
+        }
+        case 84: {
+            // On the canvas over the rectangle: its colour, exactly.
+            const auto box = ue().layer_box(ue_cp_rect_);
+            if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
+            check(!ue().picker_dropping() && ue().picker_color() == d::Color{0xaa, 0x33, 0x11, 255},
+                  "the eyedropper takes the colour seen on the canvas: " + d::color_hex(ue().picker_color()));
+            check(ue().selection() == std::vector<u32>{ue_cp_title_}, "the title stays selected: the click selected nothing");
+            d::Screen now, was;
+            d::load_screen(d::save_screen(ue().screen()), now);
+            d::load_screen(ue_json_, was);
+            check(d::save_screen(now) != ue_json_ && d::find(now.root, ue_cp_title_)->text_style.color == d::Color{0xaa, 0x33, 0x11, 255},
+                  "the title shows it");
+            d::find(now.root, ue_cp_title_)->text_style = d::find(was.root, ue_cp_title_)->text_style;
+            check(d::save_screen(now) == ue_json_, "no other layer changed (the rectangle under the click neither)");
+            check(ue_press("ue-cp-done") && ue().history().cursor() == ue_cursor_ + 1, "«Готово»: one step");
+            ue().select({ue_cp_btn_});
+            break;
+        }
+        case 85: {
+            // At the bottom of the scrolled panel: the stroke's swatch scrolled down to the panel's edge.
+            Rml::Element* swatch = ed_.find_element("ue-sw-stroke");
+            Rml::Element* panel = nullptr;
+            for (Rml::Element* a = swatch ? swatch->GetParentNode() : nullptr; a && !panel; a = a->GetParentNode()) {
+                const auto o = a->GetComputedValues().overflow_y();
+                if (o == Rml::Style::Overflow::Auto || o == Rml::Style::Overflow::Scroll) panel = a;
+            }
+            check(swatch && panel, "the stroke's swatch in the scrolling design panel");
+            if (swatch && panel) {
+                const f32 bottom = panel->GetAbsoluteOffset(Rml::BoxArea::Padding).y + panel->GetClientHeight();
+                const f32 y = swatch->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+                panel->SetScrollTop(panel->GetScrollTop() + (y - (bottom - 26)));
+            }
+            break;
+        }
+        case 86: {
+            f32 x = 0, y = 0;
+            check(ue_point("ue-sw-stroke", 0.5f, 0.5f, x, y) && y > ed_.context()->GetDimensions().y * 0.6f,
+                  "the swatch is low in the window: " + std::to_string(static_cast<int>(y)));
+            check(ue_press("ue-sw-stroke") && ue().picker_field() == "stroke.color", "a click opens the picker on the stroke");
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            break;
+        }
+        case 87: {
+            std::string why;
+            const bool reachable = ue_picker_reachable(why);
+            check(reachable, "opened from the panel's bottom edge it stays inside the window: " + why);
+            // A click outside the picker, on the canvas over another layer: it closes, the canvas is not clicked.
+            const auto box = ue().layer_box(ue_cp_title_);
+            if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
+            check(!ue().picker_open() && ue().selection() == std::vector<u32>{ue_cp_btn_} && d::save_screen(ue().screen()) == ue_json_ &&
+                      ue().history().cursor() == ue_cursor_,
+                  "a click outside closes it: the title under it is not selected, nothing moves, no step");
+            // At the window's very corner.
+            const Rml::Vector2i w = ed_.context()->GetDimensions();
+            check(ue().open_picker("stroke.color", static_cast<f32>(w.x) - 4, static_cast<f32>(w.y) - 4, 2, 2), "opened at the corner");
+            break;
+        }
+        case 88: {
+            std::string why;
+            const bool reachable = ue_picker_reachable(why);
+            check(reachable, "at the window's corner it stays inside: " + why);
+            ue().close_picker(false);
+            check(d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_, "cancelled: nothing changed");
+            // A copy of a component: its colour becomes its own; Esc adds nothing.
+            ue().select({ue_inst_});
+            break;
+        }
+        case 89: {
+            const d::Node* copy = ue_node(ue_inst_);
+            check(copy && copy->master && !copy->fills.empty(), "the copy of «Кнопка «Настройки»» has a fill");
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            ue_cp_overrides_ = copy ? copy->overrides.size() : 0;
+            check(ue_press("ue-sw-fill-0") && ue().picker_open(), "the copy's fill in the picker");
+            break;
+        }
+        case 90: {
+            check(ue_type("ue-cp-hex", "#5544AA"), "#5544AA typed");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(d::save_screen(ue().screen()) == ue_json_ && ue_node(ue_inst_)->overrides.size() == ue_cp_overrides_,
+                  "Esc: nothing kept, no change of its own added");
+            check(ue_press("ue-sw-fill-0"), "the picker again");
+            break;
+        }
+        case 91: {
+            check(ue_type("ue-cp-hex", "#5544AA") && ue_press("ue-cp-done"), "#5544AA, «Готово»");
+            const d::Node* copy = ue_node(ue_inst_);
+            check(copy && copy->fills[0].color == d::Color{0x55, 0x44, 0xaa, 255} &&
+                      std::find(copy->overrides.begin(), copy->overrides.end(), "fills") != copy->overrides.end() &&
+                      ue().history().cursor() == ue_cursor_ + 1,
+                  "the copy keeps its own fill colour, one step");
+            const d::Node* master = copy ? d::find_variant(ue().library(), copy->component, copy->variant) : nullptr;
+            check(!master || master->fills.empty() || master->fills[0].color != d::Color{0x55, 0x44, 0xaa, 255},
+                  "the component itself is not recoloured");
+            // A gradient's stops: the rectangle with a linear fill.
+            ue().select({ue_cp_rect_});
+            check(ue().set_property("fill.0.kind", "linear") && ue().set_property("effect.add", ""), "a gradient and a shadow");
+            break;
+        }
+        case 92: {
+            const d::Node* r = ue_node(ue_cp_rect_);
+            check(r && r->fills[0].stops.size() == 2, "the gradient has two stops");
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            check(ue_press("ue-sw-fill2-0") && ue().picker_field() == "fill.0.color2" && r && ue().picker_color() == r->fills[0].stops.back().color,
+                  "the last stop's swatch opens the picker on it");
+            break;
+        }
+        case 93: {
+            const d::GradientStop first = ue_node(ue_cp_rect_)->fills[0].stops.front();
+            const f32 last_at = ue_node(ue_cp_rect_)->fills[0].stops.back().position;
+            check(ue_type("ue-cp-hex", "#00FF0080") && ue_press("ue-cp-done"), "#00FF0080 for the last stop");
+            const d::Paint& f = ue_node(ue_cp_rect_)->fills[0];
+            check(f.stops.size() == 2 && f.stops.front() == first && f.stops.back().color == d::Color{0, 0xff, 0, 0x80} &&
+                      f.stops.back().position == last_at && ue().history().cursor() == ue_cursor_ + 1,
+                  "only the last stop's colour changed, its alpha kept: one step");
+            check(ue_press("ue-sw-effect-0") && ue().picker_field() == "effect.0.color", "the shadow's swatch opens the picker");
+            break;
+        }
+        case 94: {
+            check(ue_type("ue-cp-alpha-field", "50") && ue_press("ue-cp-done"), "the shadow at 50 % (it was 25 %)");
+            check(ue_node(ue_cp_rect_)->effects[0].color.a == 128 && ue().history().cursor() == ue_cursor_ + 2,
+                  "the shadow's alpha: one step: " + d::color_hex(ue_node(ue_cp_rect_)->effects[0].color) + " " +
+                      std::to_string(ue().history().cursor() - ue_cursor_));
+            // «Простой»: the same picker on the beginner's button.
+            check(ue().open(ue_simple_screen_) && click("ue-mode-simple") && ue().simple(), "the beginner's screen in «Простой»");
+            ue().select({ue_blocks_[0]});
+            break;
+        }
+        case 95: {
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            check(ue_press("ue-s-swatch") && ue().picker_field() == "simple.color" &&
+                      ue().picker_color() == ue_node(ue_blocks_[0])->fills[0].color,
+                  "the simple panel's colour swatch opens the same picker");
+            break;
+        }
+        case 96: {
+            check(shown("ue-picker") && shown("ue-cp-theme-0"), "with the game's colours");
+            check(ue_press("ue-cp-theme-0") && ue_press("ue-cp-done"), "a game colour, «Готово»");
+            const d::Node* b = ue_node(ue_blocks_[0]);
+            check(b && b->fills[0].style == ue_cp_key_ && ue().history().cursor() == ue_cursor_ + 1 &&
+                      ue().history().undo_label() == "Изменено: Цвет",
+                  "the button follows the game colour: one step «" + ue().history().undo_label() + "»");
+            ue_json2_ = d::save_screen(ue().screen());
+            // A click on the mode switch while the picker is open goes to the picker's outside: kept, mode as it was.
+            check(ue_press("ue-s-swatch"), "the picker again");
+            break;
+        }
+        case 97: {
+            check(ue_type("ue-cp-hex", "#FF8800"), "#FF8800 typed");
+            check(ue_press("ue-mode-full") && !ue().picker_open() && ue().simple(), "a click on «Полный» closes the picker, the mode stays");
+            check(ue_node(ue_blocks_[0])->fills[0].color == d::Color{0xff, 0x88, 0, 255} && ue().history().cursor() == ue_cursor_ + 2,
+                  "the colour kept: one step");
+            // Switched by code while open: kept first, then the switch; Ctrl+Z in «Полный» takes it back.
+            check(ue_press("ue-s-swatch"), "the picker again");
+            break;
+        }
+        case 98: {
+            check(ue_type("ue-cp-hex", "#0088FF"), "#0088FF typed");
+            ue().set_simple(false);
+            check(!ue().picker_open() && !ue().simple() && ue_node(ue_blocks_[0])->fills[0].color == d::Color{0, 0x88, 0xff, 255} &&
+                      ue().history().cursor() == ue_cursor_ + 3,
+                  "«Полный» while it is open: the colour kept as one step");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d::save_screen(ue().screen()) == ue_json2_, "Ctrl+Z twice in «Полный»: back to the game colour");
+            check(click("ue-mode-simple") && ue().simple(), "«Простой» again");
+            ue().select({ue_blocks_[0]});
+            break;
+        }
+        case 99:
+            check(ue_press("ue-s-text-swatch") && ue().picker_field() == "simple.text_color", "the label's colour swatch");
+            break;
+        case 100: {
+            check(ue_type("ue-cp-hex", "#102030") && ue_press("ue-cp-done"), "#102030 for the label");
+            const d::Node* label = d::block_label(*ue_node(ue_blocks_[0]));
+            check(label && label->text_style.color == d::Color{0x10, 0x20, 0x30, 255} && ue().history().undo_label() == "Изменено: Цвет надписи",
+                  "the label's colour: " + ue().history().undo_label());
+            ue_json2_ = d::save_screen(ue().screen());
+            check(ue().open("main_menu") && ue().open(ue_simple_screen_) && d::save_screen(ue().screen()) == ue_json2_,
+                  "saved, opened again: the same colours and link");
+            check(click("ue-check"), "«Проверить»");
+            break;
+        }
+        case 101: {
+            check(ue().checking(), "the screen comes alive");
+            Rml::ElementDocument* page = ue().page();
+            Rml::Element* button = page ? page->GetElementById("n" + std::to_string(ue_blocks_[0])) : nullptr;
+            const d::Color want = ue().library().colors[0].color;
+            const Rml::Colourb c = button ? button->GetProperty<Rml::Colourb>("background-color") : Rml::Colourb();
+            check(button && c.red == want.r && c.green == want.g && c.blue == want.b && c.alpha == want.a,
+                  "«Проверить» shows the button in the game colour");
+            ue().set_checking(false);
+            check(click("ue-mode-full") && !ue().simple(), "«Полный»");
             check(ue().open("main_menu"), "back to the menu");
             break;
         }

@@ -742,6 +742,41 @@ private:
             s.vars().set("hero.hearts_max", max0);
             return true;
         }});
+        // The screen of games/examples/color-picker: colours with alpha (a see-through panel, its shadow, a title,
+        // a gradient fading out, a stroke) reach the game's own screens as the editor wrote them.
+        steps_.push_back({"цвета палитры с прозрачностью", 6, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            const char* const name = "палитра_пример";
+            auto in = [&](const char* id) -> Rml::Element* {
+                Rml::ElementDocument* d = sc.document(name);
+                return d ? d->GetElementById(id) : nullptr;
+            };
+            auto rgba = [&](const char* id, const char* property) {
+                Rml::Element* e = in(id);
+                if (!e) return std::string("нет");
+                const Rml::Colourb c = e->GetProperty<Rml::Colourb>(property);
+                return std::to_string(c.red) + " " + std::to_string(c.green) + " " + std::to_string(c.blue) + " " + std::to_string(c.alpha);
+            };
+            if (f == 0) {
+                check(std::size(kColorPages) == 1, "в игру встроен экран примера палитры");
+                for (const SimplePage& p : kColorPages)
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                          std::string("экран примера строится: ") + p.name);
+                sc.show(name, true);
+            }
+            if (f == 3) {
+                check(sc.shown(name), "экран примера палитры показан");
+                check(rgba("n2", "background-color") == "27 33 39 153", "панель #1B2127 на 60 %: " + rgba("n2", "background-color"));
+                check(in("n2") && in("n2")->GetLocalProperty("box-shadow"), "у панели тень");
+                check(rgba("n3", "color") == "255 255 255 204", "заголовок белый на 80 %: " + rgba("n3", "color"));
+                check(in("n4") && in("n4")->GetLocalProperty("decorator"), "полоса с градиентом до прозрачного");
+                check(rgba("n5", "background-color") == "232 176 74 255", "кнопка #E8B04A сплошная: " + rgba("n5", "background-color"));
+                check(rgba("n5", "outline-color") == "255 255 255 128", "обводка белая на 50 %: " + rgba("n5", "outline-color"));
+            }
+            if (f < 5) return false;
+            sc.remove(name);
+            return true;
+        }});
         // A page drawn bigger than the window, scaled down to it: every button up to the window's right and
         // bottom edges takes the click where it shows, the pointer over it finds it, and the empty bars beside a
         // fitted page take none. (RmlUi checked the clipping of a

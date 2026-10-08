@@ -1210,14 +1210,14 @@
                         <div class="ue-line row" data-if="ue_s.has_text"><span class="ue-key">{{ ue_s.block == 'button' ? 'Надпись' : 'Текст' }}</span><input id="ue-s-text" type="text" class="ue-field grow" data-attr-value="ue_s.text" data-event-change="ue_stext('text', ev.value, ev.linebreak)" data-event-blur="ue_scommit('text')"/></div>
                         <div class="ue-line row" data-if="ue_s.has_text"><span class="ue-key">Размер букв</span><input id="ue-s-size" type="text" class="ue-field grow" data-attr-value="ue_s.size" data-event-change="ue_stext('size', ev.value, ev.linebreak)" data-event-blur="ue_scommit('size')"/></div>
                         <div class="ue-line row" data-if="ue_s.has_color"><span class="ue-key">{{ ue_s.root ? 'Фон' : (ue_s.block == 'text' ? 'Цвет букв' : 'Цвет') }}</span>
-                            <div class="ue-swatch" data-style-background-color="ue_s.swatch"/>
+                            <div class="ue-swatch ue-checker" id="ue-s-swatch" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('simple.color')"><div class="ue-swatch-fill" data-style-background-color="ue_s.swatch"/></div>
                             <input id="ue-s-color" type="text" class="ue-hex grow" placeholder="нет" data-attr-value="ue_s.hex" data-event-change="ue_stext('color', ev.value, ev.linebreak)" data-event-blur="ue_scommit('color')"/></div>
                         <div class="ue-s-theme row" data-if="ue_s.has_color &amp;&amp; ue_s.block != 'text' &amp;&amp; ue_game_colors.size > 0" title="Цвета игры: поменяете цвет в компонентах, и он поменяется везде">
                             <span class="ue-key">Тема игры</span>
                             <div data-for="c : ue_game_colors" class="ue-s-chip" data-attr-id="'ue-s-theme-' + it_index" data-attr-title="c.name" data-class-selected="ue_s.style == c.key" data-style-background-color="c.swatch" data-event-click="ue_sset('color', '@' + c.key)"/>
                         </div>
                         <div class="ue-line row" data-if="ue_s.has_text_color"><span class="ue-key">Цвет надписи</span>
-                            <div class="ue-swatch" data-style-background-color="ue_s.text_swatch"/>
+                            <div class="ue-swatch ue-checker" id="ue-s-text-swatch" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('simple.text_color')"><div class="ue-swatch-fill" data-style-background-color="ue_s.text_swatch"/></div>
                             <input id="ue-s-text-color" type="text" class="ue-hex grow" data-attr-value="ue_s.text_hex" data-event-change="ue_stext('text_color', ev.value, ev.linebreak)" data-event-blur="ue_scommit('text_color')"/></div>
                         <div class="ue-line row" data-if="ue_s.picture"><span class="ue-key">Картинка</span>
                             <select id="ue-s-picture" class="ue-select grow" data-value="ue_s.image" data-event-change="ue_spick('picture')">
@@ -1436,7 +1436,7 @@
                                 <input type="text" class="ue-field grow" data-attr-id="'ue-key-opacity-' + k.index" data-attr-value="k.opacity" data-event-change="ue_text('motion.key.' + k.index + '.opacity', ev.value, ev.linebreak)" data-event-blur="ue_commit('motion.key.' + k.index + '.opacity')"/></div>
                             <div class="ue-line row"><span class="ue-key">Цвет</span>
                                 <div data-if="!k.tint" class="ue-btn row grow" data-attr-id="'ue-key-color-add-' + k.index" data-event-click="ue_set('motion.key.' + k.index + '.color.add', '')"><icon class="xs" name="add"/><span>Менять цвет</span></div>
-                                <div data-if="k.tint" class="ue-swatch" data-style-background-color="k.swatch"></div>
+                                <div class="ue-swatch ue-checker" data-if="k.tint" data-attr-id="'ue-sw-key-' + k.index" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('motion.key.' + k.index + '.color')"><div class="ue-swatch-fill" data-style-background-color="k.swatch"/></div>
                                 <input data-if="k.tint" type="text" class="ue-field grow ue-hex" data-attr-id="'ue-key-color-' + k.index" data-attr-value="k.hex" data-event-change="ue_text('motion.key.' + k.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('motion.key.' + k.index + '.color')"/>
                                 <div data-if="k.tint" class="ue-mini" title="Не менять цвет" data-event-click="ue_set('motion.key.' + k.index + '.color', '')"><icon class="xs" name="remove"/></div></div>
                             <div class="ue-line row"><span class="ue-key">Скругление</span>
@@ -1506,7 +1506,7 @@
                     <div class="ue-sec" data-if="ue_p.root && ue_library_open">
                         <div class="ue-sec-title row"><span class="grow">Цвета игры <span class="muted">меняются везде сразу</span></span><div id="ue-color-add" class="ue-mini" title="Добавить цвет" data-event-click="ue_set('color.add', '')"><icon class="xs" name="add"/></div></div>
                         <div data-for="c : ue_game_colors" class="ue-paint row">
-                            <div class="ue-swatch" data-style-background-color="c.swatch"/>
+                            <div class="ue-swatch ue-checker" data-attr-id="'ue-sw-color-' + c.index" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('color.' + c.index + '.color')"><div class="ue-swatch-fill" data-style-background-color="c.swatch"/></div>
                             <input type="text" class="ue-hex ue-sans grow" data-attr-id="'ue-color-name-' + c.index" data-attr-value="c.name" data-event-change="ue_text('color.' + c.index + '.name', ev.value, ev.linebreak)" data-event-blur="ue_commit('color.' + c.index + '.name')"/>
                             <input type="text" class="ue-hex ue-short" data-attr-value="c.hex" data-event-change="ue_text('color.' + c.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('color.' + c.index + '.color')"/>
                             <div class="ue-mini" title="Убрать" data-event-click="ue_set('color.' + c.index + '.remove', '')"><icon class="xs" name="remove"/></div>
@@ -1528,7 +1528,7 @@
                                 <div class="ue-num ue-short" title="Размер"><icon class="xs" name="format_size"/><input type="text" data-attr-value="t.size" data-event-change="ue_text('textstyle.' + t.index + '.size', ev.value, ev.linebreak)" data-event-blur="ue_commit('textstyle.' + t.index + '.size')"/></div>
                             </div>
                             <div class="ue-paint row">
-                                <div class="ue-swatch" data-style-background-color="t.swatch"/>
+                                <div class="ue-swatch ue-checker" data-attr-id="'ue-sw-textstyle-' + t.index" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('textstyle.' + t.index + '.color')"><div class="ue-swatch-fill" data-style-background-color="t.swatch"/></div>
                                 <input type="text" class="ue-hex grow" data-attr-value="t.hex" data-event-change="ue_text('textstyle.' + t.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('textstyle.' + t.index + '.color')"/>
                                 <div class="ue-num ue-short" title="Жирность (100–900)"><icon class="xs" name="format_bold"/><input type="text" data-attr-value="t.weight" data-event-change="ue_text('textstyle.' + t.index + '.weight', ev.value, ev.linebreak)" data-event-blur="ue_commit('textstyle.' + t.index + '.weight')"/></div>
                             </div>
@@ -1546,7 +1546,7 @@
                             <div class="ue-num ue-short" title="Размер"><icon class="xs" name="format_size"/><input id="ue-screen-size" type="text" data-attr-value="ue_p.screen_size" data-event-change="ue_text('screen.font_size', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.font_size')"/></div>
                         </div>
                         <div class="ue-paint row">
-                            <div class="ue-swatch" data-style-background-color="ue_p.screen_text_swatch"/>
+                            <div class="ue-swatch ue-checker" id="ue-sw-screen-text" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('screen.text_color')"><div class="ue-swatch-fill" data-style-background-color="ue_p.screen_text_swatch"/></div>
                             <input id="ue-screen-color" type="text" class="ue-hex grow" data-attr-value="ue_p.screen_text_hex" data-event-change="ue_text('screen.text_color', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.text_color')"/>
                         </div>
                     </div>
@@ -1559,7 +1559,7 @@
                         </div>
                         <div class="ue-paint row" data-if="ue_p.screen_fit == 'fit'">
                             <span class="ue-key">Полосы</span>
-                            <div class="ue-swatch" data-style-background-color="ue_p.bars_swatch"/>
+                            <div class="ue-swatch ue-checker" id="ue-sw-bars" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('screen.bars')"><div class="ue-swatch-fill" data-style-background-color="ue_p.bars_swatch"/></div>
                             <input type="text" class="ue-hex grow" data-attr-value="ue_p.bars_hex" data-event-change="ue_text('screen.bars', ev.value, ev.linebreak)" data-event-blur="ue_commit('screen.bars')"/>
                         </div>
                         <div class="ue-line row" title="Отступ от краёв, за который не стоит выносить важное: на телевизорах и телефонах края могут быть не видны">
@@ -1689,7 +1689,7 @@
                             </div>
                         </div>
                         <div class="ue-paint row">
-                            <div class="ue-swatch" data-style-background-color="ue_p.text_swatch"/>
+                            <div class="ue-swatch ue-checker" id="ue-sw-text" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('text_color')"><div class="ue-swatch-fill" data-style-background-color="ue_p.text_swatch"/></div>
                             <input id="ue-text-color" type="text" class="ue-hex grow" data-attr-value="ue_p.text_hex" data-event-change="ue_text('text_color', ev.value, ev.linebreak)" data-event-blur="ue_commit('text_color')"/>
                         </div>
                     </div>
@@ -1699,10 +1699,9 @@
                         <div class="ue-sec-title row"><span class="grow">{{ ue_p.root ? 'Фон экрана' : 'Заливка' }}</span><div id="ue-fill-add" class="ue-mini" title="Добавить заливку" data-event-click="ue_set('fill.add', '')"><icon class="xs" name="add"/></div></div>
                         <div data-for="f : ue_fills" class="ue-fill column" data-class-off="!f.visible">
                             <div class="ue-paint row">
-                                <div class="ue-swatch" data-if="f.kind == 'solid'" data-style-background-color="f.swatch"/>
-                                <div class="ue-swatch grad" data-if="f.kind == 'linear' || f.kind == 'radial'"><icon class="xs" name="gradient"/></div>
+                                <div class="ue-swatch ue-checker" data-if="f.kind == 'solid' || f.kind == 'linear' || f.kind == 'radial'" data-attr-id="'ue-sw-fill-' + f.index" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('fill.' + f.index + '.color')"><div class="ue-swatch-fill" data-style-background-color="f.swatch"/></div>
                                 <div class="ue-swatch grad" data-if="f.kind == 'image'"><icon class="xs" name="image"/></div>
-                                <input type="text" class="ue-hex grow" data-if="f.kind != 'image'" data-attr-value="f.hex" data-event-change="ue_text('fill.' + f.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.color')"/>
+                                <input type="text" class="ue-hex grow" data-if="f.kind != 'image'" data-attr-id="'ue-fill-hex-' + f.index" data-attr-value="f.hex" data-event-change="ue_text('fill.' + f.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.color')"/>
                                 <select class="ue-select grow" data-if="f.kind == 'image'" data-value="f.image" title="Картинка из папки игры pictures" data-event-change="ue_pick('fill.' + f.index + '.image')">
                                     <option value="">Выберите картинку</option>
                                     <option data-for="pic : ue_pictures" data-attr-value="pic.path">{{ pic.name }}</option>
@@ -1731,6 +1730,7 @@
                             </div>
                             <div class="ue-paint row" data-if="f.kind == 'linear' || f.kind == 'radial'">
                                 <span class="ue-key">до</span>
+                                <div class="ue-swatch ue-checker" data-attr-id="'ue-sw-fill2-' + f.index" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('fill.' + f.index + '.color2')"><div class="ue-swatch-fill" data-style-background-color="f.swatch2"/></div>
                                 <input type="text" class="ue-hex grow" data-attr-value="f.hex2" data-event-change="ue_text('fill.' + f.index + '.color2', ev.value, ev.linebreak)" data-event-blur="ue_commit('fill.' + f.index + '.color2')"/>
                             </div>
                         </div>
@@ -1797,7 +1797,7 @@
                         </div>
                         <div data-if="ue_p.has_stroke" class="column ue-gap">
                             <div class="ue-paint row">
-                                <div class="ue-swatch" data-style-background-color="ue_p.stroke_swatch"/>
+                                <div class="ue-swatch ue-checker" id="ue-sw-stroke" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('stroke.color')"><div class="ue-swatch-fill" data-style-background-color="ue_p.stroke_swatch"/></div>
                                 <input type="text" class="ue-hex grow" data-attr-value="ue_p.stroke_hex" data-event-change="ue_text('stroke.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('stroke.color')"/>
                                 <div class="ue-num ue-short" title="Толщина"><icon class="xs" name="line_weight"/><input type="text" data-attr-value="ue_p.stroke_width" data-event-change="ue_text('stroke.width', ev.value, ev.linebreak)" data-event-blur="ue_commit('stroke.width')"/></div>
                             </div>
@@ -1830,7 +1830,7 @@
                                 <div class="ue-num" title="Разрастание"><icon class="xs" name="open_in_full"/><input type="text" data-attr-value="e.spread" data-event-change="ue_text('effect.' + e.index + '.spread', ev.value, ev.linebreak)" data-event-blur="ue_commit('effect.' + e.index + '.spread')"/></div>
                             </div>
                             <div class="ue-paint row" data-if="e.shadow">
-                                <div class="ue-swatch" data-style-background-color="e.swatch"/>
+                                <div class="ue-swatch ue-checker" data-attr-id="'ue-sw-effect-' + e.index" title="Палитра: щёлкните, чтобы выбрать цвет" data-event-click="ue_color('effect.' + e.index + '.color')"><div class="ue-swatch-fill" data-style-background-color="e.swatch"/></div>
                                 <input type="text" class="ue-hex grow" data-attr-value="e.hex" data-event-change="ue_text('effect.' + e.index + '.color', ev.value, ev.linebreak)" data-event-blur="ue_commit('effect.' + e.index + '.color')"/>
                             </div>
                             <div class="ue-num" data-if="!e.shadow" title="Размытие"><icon class="xs" name="blur_on"/><input type="text" data-attr-value="e.blur" data-event-change="ue_text('effect.' + e.index + '.blur', ev.value, ev.linebreak)" data-event-blur="ue_commit('effect.' + e.index + '.blur')"/></div>
@@ -2134,6 +2134,48 @@
                 <div class="divider"/>
                 <div class="menu-item" data-event-click="as_show"><icon name="folder_open"/><span class="label">Показать в проводнике Windows</span></div>
             </div>
+        </div>
+    </div>
+
+
+    <!-- «Интерфейс»: the colour picker (opened by a colour's swatch). The cover under it takes the click
+         outside it (that click keeps the colour and goes no further: the canvas under it is not clicked). -->
+    <div id="ue-cp-cover" class="ue-cp-cover" data-if="ue_cp.open" data-class-dropper="ue_cp.dropper" data-event-mousedown="ue_cp_outside"/>
+    <div id="ue-picker" class="ue-picker column" data-if="ue_cp.open" data-class-dropper="ue_cp.dropper">
+        <div class="ue-cp-head row">
+            <span class="grow ue-ellipsis">{{ ue_cp.title }}</span>
+            <div id="ue-cp-dropper" class="ue-mini" data-class-selected="ue_cp.dropper" title="Пипетка: щёлкните по экрану на холсте, возьмётся цвет, который там виден" data-event-click="ue_cp_dropper"><icon class="xs" name="colorize"/></div>
+        </div>
+        <div id="ue-cp-sv" class="ue-cp-sv" data-style-background-color="ue_cp.hue_swatch" title="Насыщенность (вправо) и яркость (вверх)">
+            <div class="ue-cp-white"/><div class="ue-cp-black"/>
+            <div class="ue-cp-dot" data-style-left="ue_cp.sv_x + '%'" data-style-top="ue_cp.sv_y + '%'"/>
+        </div>
+        <div id="ue-cp-hue" class="ue-cp-bar ue-cp-hue" title="Оттенок"><div class="ue-cp-knob" data-style-left="ue_cp.hue_x + '%'"/></div>
+        <div id="ue-cp-alpha" class="ue-cp-bar ue-checker" title="Прозрачность: в клетку видно, где цвет прозрачный">
+            <div class="ue-cp-fill" data-style-decorator="ue_cp.alpha_bar"/>
+            <div class="ue-cp-knob" data-style-left="ue_cp.alpha_x + '%'"/>
+        </div>
+        <div class="ue-cp-fields row">
+            <div class="ue-cp-compare ue-checker row" title="Было и стало">
+                <div id="ue-cp-old" class="grow" data-style-background-color="ue_cp.old_swatch"/>
+                <div id="ue-cp-new" class="grow" data-style-background-color="ue_cp.new_swatch"/>
+            </div>
+            <input id="ue-cp-hex" type="text" class="ue-hex grow" title="HEX: 3, 4, 6 или 8 знаков 0–9 A–F" data-attr-value="ue_cp.hex" data-event-change="ue_cp_hex(ev.value, ev.linebreak)" data-event-blur="ue_cp_hex_done"/>
+            <input id="ue-cp-alpha-field" type="text" class="ue-pct" title="Непрозрачность в процентах: 100 — сплошной, 0 — невидимый" data-attr-value="ue_cp.alpha" data-event-change="ue_cp_alpha(ev.value, ev.linebreak)" data-event-blur="ue_cp_alpha_done"/>
+        </div>
+        <div id="ue-cp-hex-note" class="ue-note ue-warn" data-if="ue_cp.hex_note != ''">{{ ue_cp.hex_note }}</div>
+        <div class="ue-note" data-if="ue_cp.hex_note == ''">HEX: FF8800 или F80; с прозрачностью FF880080. Enter применяет.</div>
+        <div class="column" data-if="ue_game_colors.size > 0">
+            <div class="ue-key">Цвета игры</div>
+            <div class="ue-s-theme row">
+                <div data-for="c : ue_game_colors" class="ue-s-chip ue-checker" data-attr-id="'ue-cp-theme-' + it_index" data-attr-title="c.name" data-class-selected="ue_cp.link == c.key" data-event-click="ue_cp_theme(c.key)"><div class="ue-swatch-fill" data-style-background-color="c.swatch"/></div>
+            </div>
+        </div>
+        <div id="ue-cp-note" class="ue-note" data-if="ue_cp.note != ''">{{ ue_cp.note }}</div>
+        <div id="ue-cp-hint" class="ue-note ue-cp-hint" data-if="ue_cp.hint != ''">{{ ue_cp.hint }}</div>
+        <div class="ue-cp-buttons row">
+            <div id="ue-cp-cancel" class="ue-btn grow" title="Esc: всё как было" data-event-click="ue_cp_close(false)">Отмена</div>
+            <div id="ue-cp-done" class="ue-btn ue-btn-primary grow" title="Enter или щелчок мимо палитры" data-event-click="ue_cp_close(true)">Готово</div>
         </div>
     </div>
 

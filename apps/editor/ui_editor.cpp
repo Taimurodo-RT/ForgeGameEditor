@@ -324,6 +324,18 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
     install_art(ui.root() / "art");
     scan_pictures();
 
+    // The checkerboard under colours that may be see-through (the picker, the swatches).
+    {
+        u8 checker[16 * 16 * 4];
+        for (u32 y = 0; y < 16; ++y)
+            for (u32 x = 0; x < 16; ++x) {
+                const u8 v = ((x / 8) + (y / 8)) % 2 ? 0xc8 : 0xff;
+                u8* p = checker + (y * 16 + x) * 4;
+                p[0] = p[1] = p[2] = v;
+                p[3] = 255;
+            }
+        ui.set_image("ue-checker", checker, 16, 16);
+    }
     page_context_ = ui.create_context("ui-design", 1920, 1080);
     if (!page_context_) return false;
     page_context_->SetDensityIndependentPixelRatio(1.0f);
@@ -372,6 +384,7 @@ bool UiEditor::write(const std::string& name, const d::Screen& screen) const {
 }
 
 bool UiEditor::open(const std::string& name) {
+    close_picker(true);
     std::vector<u8> bytes;
     if (!read_file(json_path(name), bytes)) return false;
     d::Screen s;
@@ -475,6 +488,7 @@ void UiEditor::remember_geometry(const std::string& before) {
 }
 
 void UiEditor::commit(const std::string& before, std::string label, std::string merge) {
+    if (previewing_) return; // the picker shows a colour: kept by «Готово» as one step
     std::string after = d::save_screen(screen_);
     if (after == before) return; // nothing changed (a field given its own value)
     // The selection before the change is not known here any more; keep what
@@ -484,11 +498,13 @@ void UiEditor::commit(const std::string& before, std::string label, std::string 
 }
 
 void UiEditor::undo() {
+    close_picker(true);
     history_.seal();
     history_.undo();
 }
 
 void UiEditor::redo() {
+    close_picker(true);
     history_.seal();
     history_.redo();
 }
@@ -506,6 +522,7 @@ std::string UiEditor::status() const {
 
 void UiEditor::set_shown(bool shown) {
     if (shown == shown_) return;
+    if (!shown) close_picker(true);
     shown_ = shown;
     if (ui_ && page_context_) ui_->set_active(page_context_, shown);
     if (shown) {
@@ -857,6 +874,7 @@ game::ScreenFit UiEditor::view_fit() const {
 }
 
 void UiEditor::set_view(int view) {
+    close_picker(true);
     view = std::clamp(view, 0, static_cast<int>(view_sizes().size()) - 1);
     if (view == view_) return;
     view_ = view;
@@ -1217,6 +1235,7 @@ void UiEditor::refresh_props() {
                 row.hex = hex_of(a);
                 row.hex2 = hex_of(b);
                 row.swatch = swatch(a);
+                row.swatch2 = swatch(b);
             }
             m_fills_.push_back(std::move(row));
         }
@@ -1400,6 +1419,7 @@ void UiEditor::refresh_props() {
 // --- «Простой» -----------------------------------------------------------------
 
 void UiEditor::set_simple(bool on) {
+    close_picker(true);
     if (on == simple_) return;
     simple_ = on;
     m_simple_ = on;
@@ -2454,8 +2474,28 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
 
 bool UiEditor::set_field(d::Node& n, const std::string& field, const std::string& value) {
     const bool copy = !screen_.library && n.master && d::instance_of(screen_.root, n.id);
-    const std::string was = copy ? d::save_screen(screen_) : std::string();
+    // The game's colours and text styles a fill or a text follows: a field given the value it shows (a
+    // colour field left after a look, Enter on it) keeps them; only a real change cuts them.
+    const bool linking = field == "text_style" || (field.rfind("fill.", 0) == 0 && field.ends_with(".style"));
+    std::vector<std::string> fill_links;
+    for (const d::Paint& f : n.fills) fill_links.push_back(f.style);
+    const std::string text_link = n.text_style.style;
+    const bool linked = !text_link.empty() || std::any_of(fill_links.begin(), fill_links.end(), [](const std::string& l) { return !l.empty(); });
+    const std::string was = copy || (linked && !linking) ? d::save_screen(screen_) : std::string();
     if (!set_on(n, field, value)) return false;
+    if (linked && !linking && n.fills.size() == fill_links.size()) {
+        std::vector<std::string> cut_fills;
+        for (const d::Paint& f : n.fills) cut_fills.push_back(f.style);
+        const std::string cut_text = n.text_style.style;
+        if (cut_fills != fill_links || cut_text != text_link) {
+            for (usize i = 0; i < n.fills.size(); ++i) n.fills[i].style = fill_links[i];
+            n.text_style.style = text_link;
+            if (d::save_screen(screen_) != was) { // a real change: its own colour now
+                for (usize i = 0; i < n.fills.size(); ++i) n.fills[i].style = cut_fills[i];
+                n.text_style.style = cut_text;
+            }
+        }
+    }
     // Inside a copy of a component: this copy's own change, kept when the component changes
     // (a field given the value it had is no change).
     if (copy && d::save_screen(screen_) != was) {
@@ -2514,6 +2554,7 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
 }
 
 void UiEditor::select(const std::vector<u32>& ids) {
+    close_picker(true);
     selection_.clear();
     for (u32 id : ids)
         if (d::find(screen_.root, id) && std::find(selection_.begin(), selection_.end(), id) == selection_.end())
@@ -2947,6 +2988,7 @@ bool UiEditor::edit_component() {
 }
 
 void UiEditor::update(Rml::Context* context) {
+    context_ = context;
     read_canvas(context);
     if (fit_pending_ && canvas_w_ > 0) zoom_to_fit();
     if (checking_) {
@@ -2968,6 +3010,8 @@ void UiEditor::update(Rml::Context* context) {
 }
 
 bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* context) {
+    context_ = context;
+    if (picker_event(e, density, context)) return true;
     if (checking_ && drag_ == Drag::None) {
         // The canvas is the game's screen: the mouse goes to the page.
         auto on_canvas = [&](f32 mx, f32 my) {
@@ -3507,6 +3551,14 @@ void UiEditor::release() {
 }
 
 bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
+    if (picker_.open) {
+        // The picker has the keys: Esc puts the eyedropper away, then cancels; Enter keeps the colour.
+        if (k.key == SDLK_ESCAPE) {
+            if (picker_.dropper) picker_dropper(false);
+            else close_picker(false);
+        } else if (k.key == SDLK_RETURN || k.key == SDLK_KP_ENTER) close_picker(true);
+        return true;
+    }
     if (checking_) {
         // Keys do not edit while checking; Esc ends it.
         if (k.key == SDLK_ESCAPE) set_checking(false);
@@ -3711,6 +3763,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("kind_name", &FillRow::kind_name);
         s.RegisterMember("hex", &FillRow::hex);
         s.RegisterMember("hex2", &FillRow::hex2);
+        s.RegisterMember("swatch2", &FillRow::swatch2);
         s.RegisterMember("opacity", &FillRow::opacity);
         s.RegisterMember("swatch", &FillRow::swatch);
         s.RegisterMember("angle", &FillRow::angle);
@@ -4002,6 +4055,26 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("swatch", &GameTextRow::swatch);
     }
     model.RegisterArray<std::vector<GameTextRow>>();
+    if (auto s = model.RegisterStruct<PickerView>()) {
+        s.RegisterMember("open", &PickerView::open);
+        s.RegisterMember("dropper", &PickerView::dropper);
+        s.RegisterMember("title", &PickerView::title);
+        s.RegisterMember("hex", &PickerView::hex);
+        s.RegisterMember("alpha", &PickerView::alpha);
+        s.RegisterMember("old_swatch", &PickerView::old_swatch);
+        s.RegisterMember("new_swatch", &PickerView::new_swatch);
+        s.RegisterMember("hue_swatch", &PickerView::hue_swatch);
+        s.RegisterMember("alpha_bar", &PickerView::alpha_bar);
+        s.RegisterMember("hex_note", &PickerView::hex_note);
+        s.RegisterMember("note", &PickerView::note);
+        s.RegisterMember("link", &PickerView::link);
+        s.RegisterMember("hint", &PickerView::hint);
+        s.RegisterMember("sv_x", &PickerView::sv_x);
+        s.RegisterMember("sv_y", &PickerView::sv_y);
+        s.RegisterMember("hue_x", &PickerView::hue_x);
+        s.RegisterMember("alpha_x", &PickerView::alpha_x);
+    }
+    model.Bind("ue_cp", &m_cp_);
     model.Bind("ue_game_colors", &m_game_colors_);
     model.Bind("ue_game_texts", &m_game_texts_);
     model.Bind("ue_components", &m_components_);
@@ -4163,6 +4236,54 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         if (!set_property(arg_str(a, 0), value)) return;
         (void)before;
     });
+    // The colour picker: a swatch opens it beside itself.
+    on("ue_color", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        Rml::Element* swatch = ev.GetCurrentElement();
+        if (!swatch) return;
+        const Rml::Vector2f at = swatch->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f size = swatch->GetBox().GetSize(Rml::BoxArea::Border);
+        open_picker(arg_str(a, 0), at.x, at.y, size.x, size.y);
+    });
+    on("ue_cp_outside", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        if (!picker_.open || picker_.dropper) return; // the eyedropper's click is the canvas's to give
+        close_picker(true); // the cover under the picker has the click: the canvas under it gets nothing
+    });
+    on("ue_cp_close", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        close_picker(!a.empty() && a[0].Get<bool>());
+    });
+    on("ue_cp_dropper", [this](Rml::Event& ev, const Rml::VariantList&) {
+        ev.StopPropagation();
+        picker_dropper(!picker_.dropper);
+    });
+    on("ue_cp_theme", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        picker_theme(arg_str(a, 0));
+    });
+    // HEX and alpha: kept on Enter and on leaving the field; leaving it as it was shown changes nothing.
+    // (Taken, the field shows the colour as the picker writes it: "36c" becomes "3366CC".)
+    on("ue_cp_hex", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        if (picker_.open && a.size() > 1 && a[1].Get<bool>() && arg_str(a, 0) != m_cp_.hex && picker_hex(arg_str(a, 0)))
+            if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement())) input->SetValue(m_cp_.hex);
+    });
+    on("ue_cp_hex_done", [this, input_value](Rml::Event& ev, const Rml::VariantList&) {
+        const std::string value = input_value(ev);
+        if (!picker_.open || value == m_cp_.hex) return;
+        if (!picker_hex(value))
+            if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement())) input->SetValue(m_cp_.hex);
+    });
+    on("ue_cp_alpha", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
+        if (picker_.open && a.size() > 1 && a[1].Get<bool>() && arg_str(a, 0) != m_cp_.alpha && picker_alpha(arg_str(a, 0)))
+            if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement())) input->SetValue(m_cp_.alpha);
+    });
+    on("ue_cp_alpha_done", [this, input_value](Rml::Event& ev, const Rml::VariantList&) {
+        const std::string value = input_value(ev);
+        if (!picker_.open || value == m_cp_.alpha) return;
+        if (!picker_alpha(value))
+            if (auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement())) input->SetValue(m_cp_.alpha);
+    });
     on("ue_pick", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
         // A <select>: its value is the new one. Only the author's pick counts: the panel filling its
         // drop-downs fires changes too (and a select whose value is not among its options picks another),
@@ -4180,6 +4301,7 @@ namespace forge::editor_app {
 // --- «Проверить» ---------------------------------------------------------------
 
 void UiEditor::set_checking(bool on) {
+    close_picker(true);
     if (on == checking_) return;
     if (on && screen_.library) return; // the components are not a screen of the game
     checking_ = on;
@@ -4287,6 +4409,442 @@ void UiEditor::check_action(const game::ScreenAction& a) {
     check_log_.push_back(said);
     if (check_log_.size() > 32) check_log_.erase(check_log_.begin());
     refresh_check();
+}
+
+} // namespace forge::editor_app
+
+namespace forge::editor_app {
+
+// --- the colour picker ------------------------------------------------------------
+
+namespace {
+
+Rml::Element* element_in(Rml::Context* context, const char* id) {
+    for (int i = 0; context && i < context->GetNumDocuments(); ++i)
+        if (Rml::Element* e = context->GetDocument(i)->GetElementById(id)) return e;
+    return nullptr;
+}
+
+bool over(Rml::Element* e, f32 x, f32 y) {
+    if (!e || !e->IsVisible(true)) return false;
+    const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f size = e->GetBox().GetSize(Rml::BoxArea::Border);
+    return x >= at.x && y >= at.y && x < at.x + size.x && y < at.y + size.y;
+}
+
+} // namespace
+
+// The colour a picker field starts from (the first selected layer's); none
+// where the field has no colour to pick (a picture fill, no stroke...).
+std::optional<d::Color> UiEditor::color_of(const std::string& field) const {
+    const u32 id = selection_.empty() ? screen_.root.id : selection_[0];
+    const d::Node* n = d::find(screen_.root, id);
+    if (!n) return std::nullopt;
+    const bool root = id == screen_.root.id;
+    // "fill.2.color" -> 2, "color"
+    auto indexed = [&](const char* prefix, usize& index, std::string& rest) {
+        const std::string p = std::string(prefix) + ".";
+        if (field.rfind(p, 0) != 0) return false;
+        const std::string tail = field.substr(p.size());
+        const usize dot = tail.find('.');
+        if (dot == std::string::npos || dot == 0) return false;
+        for (usize i = 0; i < dot; ++i)
+            if (tail[i] < '0' || tail[i] > '9') return false;
+        index = static_cast<usize>(std::atoi(tail.substr(0, dot).c_str()));
+        rest = tail.substr(dot + 1);
+        return true;
+    };
+    usize i = 0;
+    std::string rest;
+    if (field == "simple.color" || field == "simple.text_color") {
+        if (selection_.size() > 1) return std::nullopt;
+        const d::Block b = d::block_of(*n, root);
+        if (field == "simple.text_color") {
+            const d::Node* label = b == d::Block::Button ? d::block_label(*n) : nullptr;
+            return label ? std::optional<d::Color>(label->text_style.color) : std::nullopt;
+        }
+        if (b == d::Block::Picture) return std::nullopt;
+        if (b == d::Block::Text) return n->text_style.color;
+        if (n->fills.empty()) return d::Color{255, 255, 255, 255}; // a fill is added when a colour is picked
+        if (n->fills[0].kind != d::PaintKind::Solid) return std::nullopt; // a gradient or a picture: «Полный»
+        return n->fills[0].color;
+    }
+    if (indexed("fill", i, rest) && (rest == "color" || rest == "color2")) {
+        if (i >= n->fills.size()) return std::nullopt;
+        const d::Paint& f = n->fills[i];
+        if (f.kind == d::PaintKind::Image) return std::nullopt;
+        if (f.kind == d::PaintKind::Solid) return rest == "color" ? std::optional<d::Color>(f.color) : std::nullopt;
+        if (f.stops.empty()) return f.color;
+        return rest == "color" ? f.stops.front().color : f.stops.back().color;
+    }
+    if (field == "stroke.color") return n->strokes.empty() ? std::nullopt : std::optional<d::Color>(n->strokes[0].color);
+    if (indexed("effect", i, rest) && rest == "color")
+        return i < n->effects.size() ? std::optional<d::Color>(n->effects[i].color) : std::nullopt;
+    if (field == "text_color") return n->type == d::NodeType::Text ? std::optional<d::Color>(n->text_style.color) : std::nullopt;
+    if (field == "screen.text_color") return screen_.text.color;
+    if (field == "screen.bars") return screen_.bars;
+    if (indexed("motion.key", i, rest) && rest == "color") {
+        if (i >= n->motion.keys.size() || !n->motion.keys[i].tint) return std::nullopt;
+        return n->motion.keys[i].color;
+    }
+    if (screen_.library && root && indexed("color", i, rest) && rest == "color")
+        return i < screen_.colors.size() ? std::optional<d::Color>(screen_.colors[i].color) : std::nullopt;
+    if (screen_.library && root && indexed("textstyle", i, rest) && rest == "color")
+        return i < screen_.text_styles.size() ? std::optional<d::Color>(screen_.text_styles[i].style.color) : std::nullopt;
+    return std::nullopt;
+}
+
+bool UiEditor::open_picker(const std::string& field, f32 x, f32 y, f32 w, f32 h) {
+    close_picker(true);
+    const bool simple = field.rfind("simple.", 0) == 0;
+    if (simple != simple_ || checking_) return false; // the panel shown has the field
+    const std::optional<d::Color> start = color_of(field);
+    if (!start) return false;
+    picker_ = Picker{};
+    picker_.field = field;
+    picker_.simple = simple;
+    picker_.before = d::save_screen(screen_);
+    picker_.start = picker_.color = *start;
+    picker_.hsva = d::color_to_hsva(*start);
+    picker_.ax = x;
+    picker_.ay = y;
+    picker_.aw = w;
+    picker_.ah = h;
+    const u32 id = selection_.empty() ? screen_.root.id : selection_[0];
+    const d::Node* n = d::find(screen_.root, id);
+    const bool root = id == screen_.root.id;
+    // A fill follows a colour of the game's (a link); the rest of the colours get a copy of one.
+    if (simple) {
+        const d::Block b = n ? d::block_of(*n, root) : d::Block::Text;
+        picker_.linkable = field == "simple.color" && b != d::Block::Text && b != d::Block::Picture;
+        if (picker_.linkable && n && !n->fills.empty()) picker_.start_link = n->fills[0].style;
+        picker_.label = std::string("Изменено: ") +
+                        (field == "simple.text_color" ? "Цвет надписи" : root ? "Фон" : "Цвет");
+    } else {
+        const usize dot = field.rfind('.');
+        picker_.linkable = field.rfind("fill.", 0) == 0 && field.substr(dot + 1) == "color" && n &&
+                           n->fills[static_cast<usize>(std::atoi(field.c_str() + 5))].kind == d::PaintKind::Solid;
+        if (picker_.linkable) picker_.start_link = n->fills[static_cast<usize>(std::atoi(field.c_str() + 5))].style;
+        picker_.label = change_label(field);
+    }
+    picker_.link = picker_.start_link;
+    picker_.open = true;
+    history_.seal();
+    // Where it first stands, before its own size is known (place_picker puts it right).
+    picker_.left = picker_.top = -1;
+    if (Rml::Element* p = element_in(context_, "ue-picker")) p->SetProperty("visibility", "hidden");
+    refresh_picker();
+    return true;
+}
+
+// The screen as it was when the picker opened, with the picker's colour (or game colour) on its field.
+void UiEditor::picker_preview() {
+    d::load_screen(picker_.before, screen_);
+    if (!(picker_.color == picker_.start && picker_.link == picker_.start_link)) {
+        previewing_ = true;
+        if (picker_.simple) {
+            set_simple_property(picker_.field.substr(7), picker_.link.empty() ? d::color_hex(picker_.color) : "@" + picker_.link);
+        } else if (!picker_.link.empty()) {
+            set_property(picker_.field.substr(0, picker_.field.rfind('.')) + ".style", picker_.link);
+        } else {
+            set_property(picker_.field, d::color_hex(picker_.color));
+        }
+        previewing_ = false;
+        // On the library's page its own copies and styled layers follow at once, as after the change.
+        if (screen_.library) {
+            d::sync_instances(screen_, screen_);
+            d::apply_styles(screen_, screen_);
+        }
+    }
+    page_dirty_ = true;
+    refresh_props();
+}
+
+void UiEditor::picker_set(d::Color c, const std::string& link) {
+    if (!picker_.open) return;
+    picker_.color = c;
+    picker_.link = link;
+    picker_.hsva = d::color_to_hsva(c, picker_.hsva);
+    m_cp_.hex_note.clear();
+    picker_preview();
+    refresh_picker();
+}
+
+void UiEditor::picker_square(f32 saturation, f32 brightness) {
+    if (!picker_.open) return;
+    picker_.hsva.s = std::clamp(saturation, 0.0f, 1.0f);
+    picker_.hsva.v = std::clamp(brightness, 0.0f, 1.0f);
+    picker_.color = d::hsva_to_color(picker_.hsva);
+    picker_.link.clear();
+    m_cp_.hex_note.clear();
+    picker_preview();
+    refresh_picker();
+}
+
+void UiEditor::picker_hue(f32 at) {
+    if (!picker_.open) return;
+    picker_.hsva.h = std::clamp(at, 0.0f, 1.0f) * 360.0f;
+    if (picker_.hsva.h >= 360.0f) picker_.hsva.h = 359.99f; // the bar's right end: red, as its left
+    picker_.color = d::hsva_to_color(picker_.hsva);
+    picker_.link.clear();
+    m_cp_.hex_note.clear();
+    picker_preview();
+    refresh_picker();
+}
+
+void UiEditor::picker_alpha_at(f32 at) {
+    if (!picker_.open) return;
+    picker_.hsva.a = std::clamp(at, 0.0f, 1.0f);
+    picker_.color = d::hsva_to_color(picker_.hsva);
+    picker_.link.clear();
+    m_cp_.hex_note.clear();
+    picker_preview();
+    refresh_picker();
+}
+
+bool UiEditor::picker_hex(const std::string& text) {
+    if (!picker_.open) return false;
+    const std::optional<d::Color> c = d::parse_hex_input(text);
+    if (!c) {
+        // A part of a colour or a typo: nothing changes, the reason shows under the field.
+        m_cp_.hex_note = d::hex_problem(text);
+        dirty("ue_cp");
+        return false;
+    }
+    picker_set(*c, "");
+    return true;
+}
+
+bool UiEditor::picker_alpha(const std::string& percent) {
+    if (!picker_.open) return false;
+    const std::optional<u8> a = d::parse_alpha_input(percent);
+    if (!a) {
+        m_cp_.hex_note = "Прозрачность: число от 0 до 100";
+        dirty("ue_cp");
+        return false;
+    }
+    d::Color c = picker_.color;
+    c.a = *a;
+    picker_set(c, "");
+    return true;
+}
+
+bool UiEditor::picker_theme(const std::string& key) {
+    if (!picker_.open) return false;
+    for (const d::NamedColor& c : library_.colors)
+        if (c.key == key) {
+            picker_set(c.color, picker_.linkable ? key : std::string());
+            return true;
+        }
+    return false;
+}
+
+void UiEditor::picker_dropper(bool on) {
+    if (!picker_.open || picker_.dropper == on) return;
+    picker_.dropper = on;
+    picker_.drag = 0;
+    m_cp_.hint = on ? "Пипетка: щёлкните по экрану на холсте — возьмётся цвет, который виден в этой точке (с его "
+                      "прозрачностью). Щелчок мимо экрана, правая кнопка или Esc — убрать пипетку."
+                    : "";
+    refresh_picker();
+}
+
+bool UiEditor::picker_sample(f32 mx, f32 my) {
+    if (!picker_.open || !ui_ || !page_context_ || !context_) return false;
+    // The screen's picture where the canvas shows it (not where the panels or the picker cover it).
+    Rml::Element* image = element_in(context_, "ue-screen");
+    if (!over(element_in(context_, "ue-canvas"), mx, my) || !over(image, mx, my) || over(element_in(context_, "ue-picker"), mx, my))
+        return false;
+    const Rml::Vector2f at = image->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f size = image->GetBox().GetSize(Rml::BoxArea::Border);
+    const Rml::Vector2i texture = page_context_->GetDimensions();
+    if (size.x <= 0 || size.y <= 0 || texture.x <= 0 || texture.y <= 0) return false;
+    const u32 px = static_cast<u32>(std::clamp(static_cast<int>((mx - at.x) / size.x * static_cast<f32>(texture.x)), 0, texture.x - 1));
+    const u32 py = static_cast<u32>(std::clamp(static_cast<int>((my - at.y) / size.y * static_cast<f32>(texture.y)), 0, texture.y - 1));
+    u8 rgba[4] = {};
+    if (!ui_->read_pixel(page_context_, px, py, rgba)) return false;
+    const d::Color c = d::unpremultiply(rgba[0], rgba[1], rgba[2], rgba[3]);
+    if (c.a == 0) {
+        m_cp_.hint = "Здесь ничего не нарисовано (прозрачно). Щёлкните по слою на экране, Esc — убрать пипетку.";
+        dirty("ue_cp");
+        return true; // the eyedropper stays
+    }
+    picker_.dropper = false;
+    m_cp_.hint = "Взят цвет экрана в точке " + std::to_string(px) + ", " + std::to_string(py) + ".";
+    picker_set(c, "");
+    return true;
+}
+
+void UiEditor::close_picker(bool keep) {
+    if (!picker_.open) return;
+    const std::string before = std::move(picker_.before);
+    const std::string label = picker_.label;
+    picker_.open = false;
+    picker_.dropper = false;
+    picker_.drag = 0;
+    m_cp_.hex_note.clear();
+    m_cp_.hint.clear();
+    if (keep) {
+        commit(before, label); // one step, none when nothing changed
+    } else {
+        d::load_screen(before, screen_);
+        page_dirty_ = true;
+        refresh_props();
+    }
+    refresh_picker();
+}
+
+void UiEditor::refresh_picker() {
+    m_cp_.open = picker_.open;
+    m_cp_.dropper = picker_.dropper;
+    if (picker_.open) {
+        const d::Color c = picker_.color;
+        const std::string& f = picker_.field;
+        auto named = [&](const char* prefix, bool colors) {
+            const usize i = static_cast<usize>(std::atoi(f.c_str() + std::strlen(prefix)));
+            if (colors) return i < screen_.colors.size() ? screen_.colors[i].name : std::string();
+            return i < screen_.text_styles.size() ? screen_.text_styles[i].name : std::string();
+        };
+        std::string title;
+        if (f == "simple.color") title = m_s_.root ? "Фон экрана" : m_s_.block == "text" ? "Цвет букв" : "Цвет";
+        else if (f == "simple.text_color") title = "Цвет надписи";
+        else if (f.rfind("fill.", 0) == 0) {
+            const usize i = static_cast<usize>(std::atoi(f.c_str() + 5));
+            const bool gradient = i < m_fills_.size() && m_fills_[i].kind != "solid";
+            title = gradient ? (f.ends_with("color2") ? "Градиент: последний цвет" : "Градиент: первый цвет")
+                             : (m_p_.root ? "Фон экрана" : "Заливка");
+        } else if (f == "stroke.color") title = "Обводка";
+        else if (f.rfind("effect.", 0) == 0) title = "Цвет тени";
+        else if (f == "text_color") title = "Цвет текста";
+        else if (f == "screen.text_color") title = "Текст экрана";
+        else if (f == "screen.bars") title = "Полосы по краям";
+        else if (f.rfind("motion.key.", 0) == 0) title = "Цвет в движении";
+        else if (f.rfind("color.", 0) == 0) title = "Цвет игры «" + named("color.", true) + "»";
+        else if (f.rfind("textstyle.", 0) == 0) title = "Стиль «" + named("textstyle.", false) + "»: цвет";
+        m_cp_.title = title;
+        m_cp_.hex = hex_of(c);
+        m_cp_.alpha = fmt(std::round(c.a / 2.55f)) + "%";
+        m_cp_.old_swatch = swatch(picker_.start);
+        m_cp_.new_swatch = swatch(c);
+        m_cp_.hue_swatch = swatch(d::hsva_to_color({picker_.hsva.h, 1, 1, 1}));
+        char bar[160];
+        std::snprintf(bar, sizeof(bar), "linear-gradient(90deg, rgba(%d, %d, %d, 0) 0%%, rgba(%d, %d, %d, 255) 100%%)", c.r, c.g,
+                      c.b, c.r, c.g, c.b);
+        m_cp_.alpha_bar = bar;
+        m_cp_.sv_x = picker_.hsva.s * 100;
+        m_cp_.sv_y = (1 - picker_.hsva.v) * 100;
+        m_cp_.hue_x = picker_.hsva.h / 360 * 100;
+        m_cp_.alpha_x = picker_.hsva.a * 100;
+        m_cp_.link = picker_.link;
+        // What the colour is tied to, in words.
+        std::string note;
+        const u32 id = selection_.empty() ? screen_.root.id : selection_[0];
+        const d::Node* n = d::find(screen_.root, id);
+        if (!picker_.link.empty()) {
+            for (const d::NamedColor& g : library_.colors)
+                if (g.key == picker_.link)
+                    note = "Связан с цветом игры «" + g.name + "»: поменяете его в «Компонентах», и этот цвет поменяется тоже.";
+        } else if (picker_.linkable && !library_.colors.empty()) {
+            note = !picker_.start_link.empty() ? "Свой цвет: связь с цветом игры снимется после «Готово»."
+                                               : "Свой цвет. Цвет игры ниже свяжет его с темой игры.";
+        } else if (!library_.colors.empty() && f.rfind("color.", 0) != 0) {
+            note = "Цвет игры сюда копируется как есть: связь с темой бывает только у заливки.";
+        }
+        if (f.rfind("color.", 0) == 0) note = "Все слои, связанные с этим цветом, на всех экранах поменяются после «Готово».";
+        if (f.rfind("textstyle.", 0) == 0) note = "Все тексты этого стиля на всех экранах поменяются после «Готово».";
+        const d::Node* text = n && f == "simple.text_color" ? d::block_label(*n)
+                              : n && (f == "text_color" || (f == "simple.color" && m_s_.block == "text")) ? n
+                                                                                                          : nullptr;
+        if (text && !text->text_style.style.empty())
+            for (const d::NamedTextStyle& t : library_.text_styles)
+                if (t.key == text->text_style.style)
+                    note = "Текст следует стилю «" + t.name + "»: свой цвет отвяжет его от стиля (шрифт и размер останутся).";
+        if (n && !screen_.library && n->master && d::instance_of(screen_.root, n->id))
+            note += std::string(note.empty() ? "" : " ") + "Это копия компонента: цвет станет её собственным, остальное следует компоненту.";
+        m_cp_.note = note;
+    }
+    dirty("ue_cp");
+}
+
+// Beside the swatch it opened from, inside the window: left of the panel, or right of the swatch when there is
+// no room; never past an edge (a small window scrolls the picker itself).
+bool UiEditor::place_picker(Rml::Context* context) {
+    Rml::Element* p = element_in(context, "ue-picker");
+    if (!picker_.open || !p || !context || p->GetComputedValues().display() == Rml::Style::Display::None) return false;
+    const Rml::Vector2f size = p->GetBox().GetSize(Rml::BoxArea::Border);
+    if (size.x <= 0 || size.y <= 0) return false; // not laid out yet
+    const Rml::Vector2i window = context->GetDimensions();
+    const f32 W = static_cast<f32>(window.x), H = static_cast<f32>(window.y), m = 8;
+    f32 x = picker_.ax - size.x - 12;
+    if (x < m) x = picker_.ax + picker_.aw + 12;
+    x = std::clamp(x, m, std::max(m, W - size.x - m));
+    f32 y = std::clamp(picker_.ay + picker_.ah * 0.5f - 60, m, std::max(m, H - size.y - m));
+    const f32 tall = std::max(120.0f, H - 2 * m);
+    if (x != picker_.left || y != picker_.top || p->GetProperty<float>("max-height") != tall ||
+        p->GetComputedValues().visibility() != Rml::Style::Visibility::Visible) {
+        picker_.left = x;
+        picker_.top = y;
+        p->SetProperty("left", std::to_string(static_cast<int>(x)) + "px");
+        p->SetProperty("top", std::to_string(static_cast<int>(y)) + "px");
+        p->SetProperty("max-height", std::to_string(static_cast<int>(tall)) + "px");
+        p->SetProperty("visibility", "visible"); // shown once it stands in its place
+        return true;
+    }
+    return false;
+}
+
+void UiEditor::picker_drag_to(f32 mx, f32 my, Rml::Context* context) {
+    const char* id = picker_.drag == 1 ? "ue-cp-sv" : picker_.drag == 2 ? "ue-cp-hue" : "ue-cp-alpha";
+    Rml::Element* e = element_in(context, id);
+    if (!e) return;
+    const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f size = e->GetBox().GetSize(Rml::BoxArea::Border);
+    const f32 u = size.x > 0 ? std::clamp((mx - at.x) / size.x, 0.0f, 1.0f) : 0;
+    const f32 v = size.y > 0 ? std::clamp((my - at.y) / size.y, 0.0f, 1.0f) : 0;
+    if (picker_.drag == 1) picker_square(u, 1 - v);
+    else if (picker_.drag == 2) picker_hue(u);
+    else picker_alpha_at(u);
+}
+
+// The mouse and Esc while the picker is open: what is under it gets nothing.
+bool UiEditor::picker_event(const SDL_Event& e, f32 density, Rml::Context* context) {
+    if (!picker_.open) return false;
+    switch (e.type) {
+    case SDL_EVENT_KEY_DOWN:
+        // (Without a text field's focus the keys came by handle_key already.)
+        if (e.key.key != SDLK_ESCAPE) return false;
+        if (picker_.dropper) picker_dropper(false);
+        else close_picker(false);
+        return true;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        mouse_x_ = e.button.x * density;
+        mouse_y_ = e.button.y * density;
+        if (picker_.dropper) {
+            if (e.button.button != SDL_BUTTON_LEFT || !picker_sample(mouse_x_, mouse_y_)) picker_dropper(false);
+            return true;
+        }
+        if (e.button.button != SDL_BUTTON_LEFT) return true;
+        for (Rml::Element* el = context ? context->GetHoverElement() : nullptr; el; el = el->GetParentNode()) {
+            const Rml::String& id = el->GetId();
+            if (id == "ue-cp-sv") picker_.drag = 1;
+            else if (id == "ue-cp-hue") picker_.drag = 2;
+            else if (id == "ue-cp-alpha") picker_.drag = 3;
+            if (picker_.drag || id == "ue-picker") break;
+        }
+        if (picker_.drag) picker_drag_to(mouse_x_, mouse_y_, context);
+        return true;
+    }
+    case SDL_EVENT_MOUSE_MOTION:
+        mouse_x_ = e.motion.x * density;
+        mouse_y_ = e.motion.y * density;
+        if (picker_.drag) picker_drag_to(mouse_x_, mouse_y_, context);
+        return true;
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        picker_.drag = 0;
+        return true;
+    case SDL_EVENT_MOUSE_WHEEL: return true;
+    default: return false;
+    }
 }
 
 } // namespace forge::editor_app
