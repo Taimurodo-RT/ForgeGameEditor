@@ -47,6 +47,7 @@
 
 #include "forge/editor/document.h"
 #include "forge/editor/ui_design.h"
+#include "forge/editor/ui_simple.h"
 #include "forge/editor/undo.h"
 #include "forge/game/screens.h"
 #include "forge/game/vars.h"
@@ -113,6 +114,23 @@ public:
     bool detach_instance();
     // Opens the library at the selected instance's variant.
     bool edit_component();
+
+    // «Простой / Полный»: how the tab shows the screen. Simple: blocks a
+    // beginner knows (a button, a text, a picture, a bar, a list) with a few
+    // plain properties; what they do not show is kept and named. Choosing
+    // changes nothing of the screen and makes no step of the history.
+    void set_simple(bool on);
+    bool simple() const { return simple_; }
+    // A new block in the middle of the screen, selected; one step of the history.
+    u32 add_block(editor::design::Block block);
+    // A simple property of the selected block (the screen with nothing
+    // selected): "name", "text", "size", "color" ("#rrggbb", or "@key" for a
+    // colour of the game's), "text_color", "x", "y", "w", "h", "anchor_h",
+    // "anchor_v", "action" ("none" or show, close, message, new, continue,
+    // load, save, settings, pause, resume, menu, quit), "target", "picture",
+    // "bar_value", "bar_max", "list", "picture_from", "show". One step of the
+    // history however many layers it changes; false when it does not fit.
+    bool set_simple_property(const std::string& field, const std::string& value);
 
     enum class Tool : u8 { Select, Frame, Rectangle, Ellipse, Text };
     void set_tool(Tool tool);
@@ -262,6 +280,10 @@ private:
 
     // Field edits.
     bool set_on(editor::design::Node& n, const std::string& field, const std::string& value);
+    // set_on, and inside a copy of a component the change is the copy's own.
+    bool set_field(editor::design::Node& n, const std::string& field, const std::string& value);
+    std::string simple_shown(const std::string& field) const;
+    void refresh_simple(const editor::design::Node* n);
 
     ui::Ui* ui_ = nullptr;
     std::filesystem::path game_dir_;
@@ -486,6 +508,21 @@ private:
     Rml::String m_renaming_; // a layer id or "screen:<name>" being renamed
     Rml::String m_rename_text_;
     Props m_p_;
+    // «Простой»: the selected block's plain properties.
+    bool simple_ = false;
+    bool m_simple_ = false;
+    struct SimpleProps {
+        bool root = false, many = false, has_text = false, has_color = false, has_text_color = false, can_act = false,
+             act_editable = true, picture = false, bar = false, list = false, in_list = false, has_hidden = false;
+        Rml::String block, word, icon, name, text, size, hex, swatch = "transparent", style, text_hex,
+            text_swatch = "transparent";
+        Rml::String x, y, w, h, anchor_h, anchor_v;
+        Rml::String action = "none", target, needs;
+        Rml::String image, bar_value, bar_max, list_source, picture_from, show, inside;
+        Rml::String hidden;
+    };
+    SimpleProps m_s_;
+    SimpleProps m_s_shown_; // as last shown: the drop-downs write into m_s_ before their change arrives
     std::vector<FillRow> m_fills_;
     std::vector<EffectRow> m_effects_;
     std::vector<Rml::String> m_families_;

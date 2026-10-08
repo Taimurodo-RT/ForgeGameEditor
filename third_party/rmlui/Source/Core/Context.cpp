@@ -1444,6 +1444,7 @@ Element* Context::GetElementAtPoint(Vector2f point, const Element* ignore_elemen
 		return nullptr;
 
 	// Projection may fail if we have a singular transformation matrix.
+	const Vector2f window_point = point;
 	bool projection_result = element->Project(point);
 
 	// Check if the point is actually within this element.
@@ -1451,9 +1452,40 @@ Element* Context::GetElementAtPoint(Vector2f point, const Element* ignore_elemen
 	if (within_element)
 	{
 		// The element may have been clipped out of view if it overflows an ancestor, so check its clipping region.
-		Rectanglei clip_region;
-		if (ElementUtilities::GetClippingRegion(element, clip_region))
-			within_element = clip_region.Contains(Vector2i(point));
+		// Forge: the same walk as ElementUtilities::GetClippingRegion (clip: none stops it, clip: <number> skips that
+		// many regions, only ancestors whose content overflows clip), but each region is checked in its own
+		// element's coordinates, the point projected by its transforms. The combined region mixed the window's
+		// coordinates (outside a transform) with a transformed page's, so a page scaled down to a smaller window
+		// lost the clicks on its right and bottom.
+		const Style::Clip target_clip = element->GetComputedValues().clip();
+		int num_ignored_clips = target_clip.GetNumber();
+		for (Element* clipping = (target_clip == Style::Clip::Type::None ? nullptr : element->GetOffsetParent());
+			 clipping && within_element; clipping = clipping->GetOffsetParent())
+		{
+			const ComputedValues& c = clipping->GetComputedValues();
+			const bool clip_enabled = (c.overflow_x() != Style::Overflow::Visible || c.overflow_y() != Style::Overflow::Visible);
+			const bool clip_always = (c.clip() == Style::Clip::Type::Always);
+			const bool clip_none = (c.clip() == Style::Clip::Type::None);
+			if ((clip_always || clip_enabled) && num_ignored_clips == 0)
+			{
+				const BoxArea area = clipping->GetClipArea();
+				const bool has_clipping_content = (clip_always || clipping->GetClientWidth() < clipping->GetScrollWidth() - 0.5f ||
+					clipping->GetClientHeight() < clipping->GetScrollHeight() - 0.5f);
+				Vector2f local = window_point;
+				if (has_clipping_content && clipping->Project(local))
+				{
+					Rectanglef region =
+						Rectanglef::FromPositionSize(clipping->GetAbsoluteOffset(area).Round(), clipping->GetRenderBox(area).GetFillSize());
+					Math::SnapToPixelGrid(region);
+					within_element = Rectanglei(region).Contains(Vector2i(local));
+				}
+			}
+			if (num_ignored_clips > 0 && clip_enabled)
+				num_ignored_clips--;
+			num_ignored_clips = Math::Max(num_ignored_clips, c.clip().GetNumber());
+			if (clip_none)
+				break;
+		}
 	}
 
 	if (within_element)

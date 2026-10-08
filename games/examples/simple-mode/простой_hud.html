@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Простой: HUD</title>
+<!-- Made by Forge «Интерфейс» from Простой: HUD.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  right: 220px;
+  top: 40px;
+  box-sizing: border-box;
+  font-size: 32px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+#n4 {
+  position: absolute;
+  left: 40px;
+  width: 400px;
+  bottom: 48px;
+  height: 32px;
+  box-sizing: border-box;
+  background-color: #d94a3a;
+  border-radius: 8px 8px 8px 8px;
+}
+#n5 {
+  position: absolute;
+  right: 40px;
+  width: 320px;
+  bottom: 40px;
+  height: 80px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(42, 32, 24, 0.941);
+  border-radius: 14px 14px 14px 14px;
+}
+#n6 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+body, #n1 {
+  pointer-events: none;
+}
+#n2, #n4, #n5, #n6 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Простой: HUD" forge-screen="playing" forge-fit="expand" forge-size="1920 1080">
+  <div id="n2" class="text" title="Текст 1" forge-text="Монеты: {inv.coins}">Монеты: {inv.coins}</div>
+  <div id="n4" class="rectangle" title="Полоска 1" forge-bar-value="hero.hearts" forge-bar-max="hero.hearts_max" forge-bar-from="left"></div>
+  <div id="n5" class="frame" title="Кнопка 1" forge-click="[[&quot;show&quot;,&quot;простой_сумка&quot;]]">
+    <div id="n6" class="text" title="Надпись">Сумка</div>
+  </div>
+</div>
+</body>
+</html>

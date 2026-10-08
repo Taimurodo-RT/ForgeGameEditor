@@ -43,6 +43,8 @@
 #include <string>
 #include <vector>
 
+#include "simple_pages.h" // the screens of games/examples/simple-mode
+
 using namespace forge;
 using namespace forge::game;
 using namespace slice;
@@ -650,6 +652,263 @@ private:
             sc.remove("тест_hud");
             sc.remove("тест_окно");
             s.on_message = nullptr;
+            return true;
+        }});
+        // The example screens made of «Простой»'s blocks (games/examples/simple-mode, built in): the HUD's
+        // coins, hearts and button, the bag its button opens, with a cell per thing and a button that closes it.
+        steps_.push_back({"экраны из простых блоков", 30, [&s, this](u32 f) {
+            static std::vector<std::pair<std::string, f64>> kept;
+            static f64 hearts0 = 0, max0 = 0;
+            GameScreens& sc = s.screens();
+            auto in = [&](const char* page, const char* id) -> Rml::Element* {
+                Rml::ElementDocument* d = sc.document(page);
+                return d ? d->GetElementById(id) : nullptr;
+            };
+            // A click where the layer shows: its place on the drawn 1920 × 1080 screen, by the fit.
+            auto press = [&](const char* page, const char* id) {
+                Rml::Element* root = in(page, "n1");
+                Rml::Element* e = in(page, id);
+                if (!root || !e) return false;
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const game::ScreenFit fit = game::fit_screen("expand", 1920, 1080, static_cast<f32>(size.x), static_cast<f32>(size.y));
+                const Rml::Vector2f c = e->GetAbsoluteOffset(Rml::BoxArea::Border) - root->GetAbsoluteOffset(Rml::BoxArea::Border) +
+                                        e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+                const f32 x = game::fit_to_view_x(fit, c.x), y = game::fit_to_view_y(fit, c.y);
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_MOUSE_MOTION;
+                ev.motion.x = x;
+                ev.motion.y = y;
+                s.handle_event(ev);
+                for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                    ev = {};
+                    ev.type = t;
+                    ev.button.button = SDL_BUTTON_LEFT;
+                    ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    ev.button.x = x;
+                    ev.button.y = y;
+                    s.handle_event(ev);
+                }
+                return true;
+            };
+            auto cells = [&]() {
+                std::string out;
+                Rml::Element* list = in("простой_сумка", "n4");
+                Rml::Element* content = list ? list->GetFirstChild() : nullptr;
+                for (int i = 0; content && i < content->GetNumChildren(); ++i) {
+                    Rml::Element* c = content->GetChild(i);
+                    if (c->GetComputedValues().display() == Rml::Style::Display::None || !c->GetChild(0)) continue;
+                    out += (out.empty() ? "" : " | ") + c->GetChild(0)->GetInnerRML();
+                }
+                return out;
+            };
+            if (f == 0) {
+                check(std::size(kSimplePages) == 2, "в игру встроены 2 экрана примера");
+                for (const SimplePage& p : kSimplePages)
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                          std::string("экран примера строится: ") + p.name);
+                kept.clear();
+                for (const auto& [name, value] : s.vars().all())
+                    if (name.rfind("inv.", 0) == 0 && value.number() != 0) kept.emplace_back(name, value.number());
+                for (const auto& [name, value] : kept) s.vars().set(name, 0);
+                hearts0 = s.vars().get("hero.hearts").number();
+                max0 = s.vars().get("hero.hearts_max").number();
+                s.vars().set("inv.coins", 4);
+                s.vars().set("inv.key", 1);
+                s.vars().set("hero.hearts", 2);
+                s.vars().set("hero.hearts_max", 4);
+            }
+            if (f == 3) {
+                Rml::Element* coins = in("простой_hud", "n2");
+                check(sc.shown("простой_hud") && coins && coins->GetInnerRML() == "Монеты: 4",
+                      "текст из блока показывает монеты: " + (coins ? coins->GetInnerRML() : std::string("нет")));
+                Rml::Element* bar = in("простой_hud", "n4");
+                check(bar && bar->GetLocalProperty("mask-image"), "полоска из блока обрезана по сердцам");
+                check(!sc.shown("простой_сумка"), "сумка пока закрыта");
+                check(press("простой_hud", "n5"), "кнопка «Сумка» нажимается");
+            }
+            if (f == 6) {
+                check(sc.shown("простой_сумка"), "кнопка из блока открыла сумку");
+                check(cells() == "Монеты 4 | Ключ 1", "в списке из блока ячейка на каждую вещь: " + cells());
+                check(press("простой_сумка", "n8"), "кнопка «Закрыть» нажимается");
+            }
+            if (f == 9) check(!sc.shown("простой_сумка"), "кнопка «Закрыть» закрыла сумку");
+            if (f < 10) return false;
+            sc.remove("простой_hud");
+            sc.remove("простой_сумка");
+            s.vars().set("inv.coins", 0);
+            s.vars().set("inv.key", 0);
+            for (const auto& [name, value] : kept) s.vars().set(name, value);
+            s.vars().set("hero.hearts", hearts0);
+            s.vars().set("hero.hearts_max", max0);
+            return true;
+        }});
+        // A page drawn bigger than the window, scaled down to it: every button up to the window's right and
+        // bottom edges takes the click where it shows, the pointer over it finds it, and the empty bars beside a
+        // fitted page take none. (RmlUi checked the clipping of a
+        // scaled page in the window's coordinates against the page's, and lost the right and bottom.)
+        steps_.push_back({"нажатия у краёв уменьшенной страницы", 12, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            static const char* const spots[][2] = {{"left: 0px; top: 0px;", "лево-верх"},      {"right: 0px; top: 0px;", "право-верх"},
+                                                   {"left: 0px; bottom: 0px;", "лево-низ"},     {"right: 0px; bottom: 0px;", "право-низ"},
+                                                   {"right: 0px; top: 45%;", "правый край"},    {"left: 45%; bottom: 0px;", "нижний край"}};
+            constexpr usize kSpots = std::size(spots);
+            const Rml::Vector2i size = s.context()->GetDimensions();
+            const f32 vw = static_cast<f32>(size.x), vh = static_cast<f32>(size.y);
+            // Drawn a quarter bigger than the window: scale 0.8. The window-shaped one grows; the wide one fits with bars.
+            const f32 ew = std::round(vw * 1.25f), eh = std::round(vh * 1.25f), fw = ew, fh = std::round(vh * 0.625f);
+            const game::ScreenFit grow = game::fit_screen("expand", ew, eh, vw, vh), bars = game::fit_screen("fit", fw, fh, vw, vh);
+            auto count = [&](const std::string& name) { return s.vars().get(name).number(); };
+            auto total = [&]() {
+                f64 n = count("probe.half");
+                for (usize i = 0; i < kSpots; ++i) n += count("probe.e" + std::to_string(i));
+                return n;
+            };
+            // The pointer and a click at a point of the page, where the fit shows it; what is under the pointer.
+            auto press = [&](const game::ScreenFit& fit, f32 x, f32 y) {
+                const f32 wx = game::fit_to_view_x(fit, x), wy = game::fit_to_view_y(fit, y);
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_MOUSE_MOTION;
+                ev.motion.x = wx;
+                ev.motion.y = wy;
+                s.handle_event(ev);
+                Rml::Element* hover = s.context()->GetHoverElement();
+                for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                    ev = {};
+                    ev.type = t;
+                    ev.button.button = SDL_BUTTON_LEFT;
+                    ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    ev.button.x = wx;
+                    ev.button.y = wy;
+                    s.handle_event(ev);
+                }
+                return hover ? hover->GetId() : Rml::String();
+            };
+            const std::string style = "<style>html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }"
+                                      " .root { position: relative; width: 100%; height: 100%; overflow: hidden; }"
+                                      " body, .root { pointer-events: none; } .root > div { pointer-events: auto; position: absolute;"
+                                      " width: 160px; height: 60px; background: #c63; }</style>";
+            auto dims = [](f32 w, f32 h) { return std::to_string(static_cast<int>(w)) + " " + std::to_string(static_cast<int>(h)); };
+            if (f == 0) {
+                std::string page = "<html><head>" + style + "</head><body><div class=\"root\" forge-screen=\"command\" forge-fit=\"expand\" forge-size=\"" +
+                                   dims(ew, eh) + "\">";
+                for (usize i = 0; i < kSpots; ++i)
+                    page += "<div id=\"t-e" + std::to_string(i) + "\" style=\"" + spots[i][0] + "\" forge-click=\"[[&quot;change&quot;,&quot;probe.e" +
+                            std::to_string(i) + " += 1&quot;]]\"></div>";
+                page += "</div></body></html>";
+                // A layer half out of the page's bottom: its outer half is in the bars.
+                const std::string wide = "<html><head>" + style + "</head><body><div class=\"root\" forge-screen=\"command\" forge-fit=\"fit\" forge-size=\"" +
+                                         dims(fw, fh) + "\" forge-bars=\"#102030\"><div id=\"t-half\" style=\"left: 200px; bottom: -30px;\" "
+                                         "forge-click=\"[[&quot;change&quot;,&quot;probe.half += 1&quot;]]\"></div></div></body></html>";
+                check(sc.load_page(s.context(), "тест_края", page, "test/ui/тест_края.html") &&
+                          sc.load_page(s.context(), "тест_полосы", wide, "test/ui/тест_полосы.html"),
+                      "уменьшенные страницы строятся");
+                for (usize i = 0; i < kSpots; ++i) s.vars().set("probe.e" + std::to_string(i), 0);
+                s.vars().set("probe.half", 0);
+                sc.show("тест_края", true);
+            }
+            if (f == 3) {
+                check(grow.sx < 0.81f && grow.sx > 0.79f, "страница уменьшена до 0,8: " + std::to_string(grow.sx));
+                Rml::ElementDocument* doc = sc.document("тест_края");
+                for (usize i = 0; i < kSpots; ++i) {
+                    Rml::Element* b = doc ? doc->GetElementById("t-e" + std::to_string(i)) : nullptr;
+                    Rml::Element* root = b ? b->GetParentNode() : nullptr;
+                    if (!b || !root) {
+                        check(false, std::string("кнопка есть: ") + spots[i][1]);
+                        continue;
+                    }
+                    // Its middle and a point 4 px (page) inside its outer corner, where the window edge is nearest.
+                    const Rml::Vector2f at = b->GetAbsoluteOffset(Rml::BoxArea::Border) - root->GetAbsoluteOffset(Rml::BoxArea::Border);
+                    const Rml::Vector2f box = b->GetBox().GetSize(Rml::BoxArea::Border);
+                    const f64 before = total();
+                    const std::string id = "t-e" + std::to_string(i);
+                    const std::string under = press(grow, at.x + box.x * 0.5f, at.y + box.y * 0.5f);
+                    const f32 cx = at.x + box.x * 0.5f > grow.width * 0.5f ? at.x + box.x - 4 : at.x + 4;
+                    const f32 cy = at.y + box.y * 0.5f > grow.height * 0.5f ? at.y + box.y - 4 : at.y + 4;
+                    const std::string corner = press(grow, cx, cy);
+                    check(under == id && corner == id, std::string(spots[i][1]) + ": указатель над кнопкой находит её (" + under + ", у края " + corner + ")");
+                    check(count("probe.e" + std::to_string(i)) == 2 && total() == before + 2,
+                          std::string(spots[i][1]) + ": два нажатия попали в эту кнопку и только в неё");
+                }
+                sc.show("тест_края", false);
+                sc.show("тест_полосы", true);
+            }
+            if (f == 6) {
+                check(bars.top > 1 && bars.sx < 0.81f, "широкая страница вписана с полосами сверху и снизу");
+                Rml::ElementDocument* doc = sc.document("тест_полосы");
+                Rml::Element* half = doc ? doc->GetElementById("t-half") : nullptr;
+                const f64 before = total();
+                // Inside the page: the half of the layer that shows.
+                check(half && press(bars, 280, fh - 10) == "t-half" && count("probe.half") == 1, "видимая половина слоя нажимается");
+                // In the bars, where nothing is drawn: above the page, and below it away from the layer. (The layer's
+                // outer half shows in the bar below, as RmlUi draws a placed layer sticking out of an unscrolled page.)
+                press(bars, 280, -10);
+                press(bars, 10, -bars.top / bars.sy * 0.5f);
+                press(bars, fw - 20, fh + 10);
+                press(bars, fw * 0.5f, fh + bars.top / bars.sy * 0.5f);
+                check(total() == before + 1, "щелчки по полосам вне страницы ничего не делают: " + std::to_string(total() - before - 1));
+            }
+            if (f < 7) return false;
+            sc.remove("тест_края");
+            sc.remove("тест_полосы");
+            return true;
+        }});
+        // Clipping in hit testing, as RmlUi draws it: a layer under «clip: none» leaves the clipping of the
+        // layers around it (as a drop-down's list does), «clip: N» leaves N of them, and without either a layer
+        // outside a clipping parent takes no pointer.
+        steps_.push_back({"отсечение и нажатия", 6, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            struct Probe {
+                const char* id;   // the layer looked for under the pointer
+                f32 x, y;         // the point (window pixels)
+                bool found;       // whether it is found there
+                const char* what;
+            };
+            // Boxes at 100 px steps down the window; the buttons stick out to the right of their 100 × 100 parent.
+            static const Probe probes[] = {
+                {"c-none", 160, 140, true, "clip: none на предке выводит из отсечения внешнего"},
+                {"c-plain", 160, 240, false, "без clip: none слой за краем отсекающего родителя не нажимается"},
+                {"c-plain", 60, 240, true, "та же кнопка внутри родителя нажимается"},
+                {"c-one", 160, 340, false, "clip: 1 пропускает одну область, внешний родитель всё равно отсекает"},
+                {"c-two", 160, 440, true, "clip: 2 пропускает обе области"},
+                {"c-auto", 160, 540, false, "clip: auto во вложенных отсекающих слоях"},
+            };
+            if (f == 0) {
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y); // scale 1
+                auto box = [](int top, const std::string& inner_style, const std::string& id, const std::string& button_style) {
+                    // The inner layer is in the flow, so the outer one's content overflows it and it clips (RmlUi,
+                    // as it draws, clips only what makes a layer scroll: absolutely placed layers do not).
+                    return "<div style=\"position: absolute; left: 0px; top: " + std::to_string(top) +
+                           "px; width: 100px; height: 100px; overflow: hidden;\">"
+                           "<div style=\"position: relative; width: 300px; height: 100px; " + inner_style + "\">"
+                           "<div id=\"" + id + "\" style=\"position: absolute; left: 40px; top: 20px; width: 140px; height: 40px; "
+                           "background: #f00; " + button_style + "\"></div></div></div>";
+                };
+                const std::string page =
+                    "<html><head><style>html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }"
+                    " .root { position: relative; width: 100%; height: 100%; } body, .root { pointer-events: none; }"
+                    " .root div { pointer-events: auto; }</style></head><body><div class=\"root\" forge-screen=\"command\" forge-size=\"" +
+                    dims + "\">" +
+                    box(100, "clip: none;", "c-none", "") + box(200, "", "c-plain", "") +
+                    box(300, "overflow: hidden;", "c-one", "clip: 1;") + box(400, "overflow: hidden;", "c-two", "clip: 2;") +
+                    box(500, "overflow: hidden;", "c-auto", "") + "</div></body></html>";
+                check(sc.load_page(s.context(), "тест_отсечение", page, "test/ui/тест_отсечение.html"), "страница отсечения строится");
+                sc.show("тест_отсечение", true);
+            }
+            if (f == 3) {
+                for (const Probe& p : probes) {
+                    SDL_Event ev{};
+                    ev.type = SDL_EVENT_MOUSE_MOTION;
+                    ev.motion.x = p.x;
+                    ev.motion.y = p.y;
+                    s.handle_event(ev);
+                    Rml::Element* hover = s.context()->GetHoverElement();
+                    const std::string id = hover ? hover->GetId() : std::string();
+                    check((id == p.id) == p.found, std::string(p.what) + " (под указателем «" + id + "»)");
+                }
+            }
+            if (f < 4) return false;
+            sc.remove("тест_отсечение");
             return true;
         }});
         // Lists on a screen: the hero's things and the journal, a cell per
