@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "title": "Звук: игра",
+  "next_id": 4,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "playing",
+    "music": "мелодия игры.wav",
+    "button_sound": "щелчок.wav"
+  },
+  "root": {
+    "id": 1,
+    "name": "Звук: игра",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 40.0,
+        "y": 40.0,
+        "w": 240.0,
+        "h": 90.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "show",
+            "target": "звук_окно"
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 240.0,
+            "h": 90.0,
+            "text": "Окно",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#1b2127"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

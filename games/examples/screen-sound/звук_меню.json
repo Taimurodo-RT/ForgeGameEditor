@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "title": "Звук: меню",
+  "next_id": 10,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "menu",
+    "music": "мелодия меню.wav",
+    "button_sound": "щелчок.wav"
+  },
+  "root": {
+    "id": 1,
+    "name": "Звук: меню",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "fills": [
+      {
+        "kind": "solid",
+        "color": "#181e26"
+      }
+    ],
+    "children": [
+      {
+        "id": 2,
+        "name": "Заголовок",
+        "type": "text",
+        "x": 460.0,
+        "y": 120.0,
+        "w": 1000.0,
+        "h": 90.0,
+        "text": "Звук экрана",
+        "style": {
+          "family": "Onest",
+          "size": 64.0,
+          "weight": 400,
+          "align": "center",
+          "color": "#ffffff"
+        }
+      },
+      {
+        "id": 3,
+        "name": "Нажми",
+        "type": "frame",
+        "x": 760.0,
+        "y": 300.0,
+        "w": 400.0,
+        "h": 90.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "change",
+            "target": "demo.presses += 1"
+          }
+        ],
+        "children": [
+          {
+            "id": 4,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 400.0,
+            "h": 90.0,
+            "text": "Нажми",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#1b2127"
+            }
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "name": "Звон",
+        "type": "frame",
+        "x": 760.0,
+        "y": 420.0,
+        "w": 400.0,
+        "h": 90.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "change",
+            "target": "demo.rings += 1"
+          }
+        ],
+        "click_sound": "звон.wav",
+        "children": [
+          {
+            "id": 6,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 400.0,
+            "h": 90.0,
+            "text": "Звон",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#1b2127"
+            }
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "name": "Тихо",
+        "type": "frame",
+        "x": 760.0,
+        "y": 540.0,
+        "w": 400.0,
+        "h": 90.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "change",
+            "target": "demo.quiet += 1"
+          }
+        ],
+        "click_sound": "none",
+        "children": [
+          {
+            "id": 8,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 400.0,
+            "h": 90.0,
+            "text": "Тихо",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#1b2127"
+            }
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Счёт",
+        "type": "text",
+        "x": 360.0,
+        "y": 700.0,
+        "w": 1200.0,
+        "h": 60.0,
+        "text": "Нажми: {demo.presses}   Звон: {demo.rings}   Тихо: {demo.quiet}",
+        "style": {
+          "family": "Onest",
+          "size": 32.0,
+          "weight": 400,
+          "align": "center",
+          "color": "#c8d2dc"
+        }
+      }
+    ]
+  }
+}

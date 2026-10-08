@@ -39,6 +39,11 @@
 
 namespace forge::editor_app {
 
+// A file into the game's folder (pictures, sounds), under its own name; the
+// same file already there is used as it is, another one of that name gets a
+// number. The name it has there; empty when it cannot be copied.
+std::string copy_into(const std::filesystem::path& source, const std::filesystem::path& folder, const char* what);
+
 class ObjectLibrary {
 public:
     explicit ObjectLibrary(level::LevelModule& module);

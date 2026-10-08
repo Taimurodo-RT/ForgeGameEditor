@@ -153,6 +153,8 @@ struct GameScreens::Page {
     // How it comes and goes (forge-appear): the movement under way.
     std::string appear;
     f32 appear_time = 0.25f;
+    // Its sound: the music while it is up, its buttons' sound.
+    std::string music, button_sound;
     u64 move_start = 0;   // 0: none
     bool leaving = false; // going away: hidden when the movement ends
     std::vector<Bound> bound;
@@ -167,6 +169,7 @@ struct GameScreens::Impl : Rml::EventListener {
     u64 next_poll = 0;
     u64 shows = 0;
     std::vector<std::unique_ptr<Page>> pages;
+    std::string music; // what on_music was told last
     // The lists' data.
     std::vector<ScreenItem> items;
     std::unordered_map<std::string, usize> item_index;
@@ -234,6 +237,8 @@ struct GameScreens::Impl : Rml::EventListener {
             if (p.appear == "none") p.appear.clear();
             p.appear_time = std::clamp(static_cast<f32>(std::atof(attr("forge-appear-time").c_str())), 0.0f, 10.0f);
             if (p.appear_time <= 0) p.appear_time = 0.25f;
+            p.music = attr("forge-music");
+            p.button_sound = attr("forge-button-sound");
         }
         bind_layer(p.name, e, p.bound);
         // The cell is the list's first element (a page written with line
@@ -629,6 +634,22 @@ struct GameScreens::Impl : Rml::EventListener {
         lists_ms += static_cast<f64>(time_now_ns() - t0) * 1e-6;
     }
 
+    // The music of the screens up now: the newest window shown by command
+    // that has music, else a menu's, else a screen's over the world (by name,
+    // so it does not depend on the order the files were read in).
+    std::string wanted_music() const {
+        const Page* top = nullptr;
+        auto rank = [](const Page& p) { return p.role == ScreenRole::Command ? 2 : p.role == ScreenRole::Menu ? 1 : 0; };
+        for (const auto& page : pages) {
+            const Page& p = *page;
+            if (!p.doc || !p.visible || p.music.empty()) continue;
+            if (!top || rank(p) > rank(*top) ||
+                (rank(p) == rank(*top) && (p.role == ScreenRole::Command ? p.order > top->order : p.name < top->name)))
+                top = &p;
+        }
+        return top ? top->music : std::string();
+    }
+
     // The cell an element is in, if any.
     ListView::Cell* cell_of(Rml::Element* e) {
         for (; e; e = e->GetParentNode()) {
@@ -782,6 +803,25 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
         }
     }
     if (restacked) impl_->restack();
+    if (std::string m = impl_->wanted_music(); m != impl_->music) {
+        impl_->music = std::move(m);
+        if (on_music) on_music(impl_->music);
+    }
+}
+
+const std::string& GameScreens::music() const { return impl_->music; }
+
+void GameScreens::stop_music() {
+    impl_->music.clear();
+    if (on_music) on_music({});
+}
+
+bool GameScreens::has_focus(Rml::Context* context) const {
+    Rml::Element* focus = context ? context->GetFocusElement() : nullptr;
+    if (!focus || !impl_->of(focus->GetOwnerDocument())) return false;
+    for (Rml::Element* e = focus; e; e = e->GetParentNode())
+        if (e->HasAttribute("forge-click")) return true;
+    return false;
 }
 
 bool GameScreens::show(std::string_view name, bool on) {
@@ -851,8 +891,16 @@ bool GameScreens::run_page_action(const ScreenAction& a, const std::string& page
 bool GameScreens::click(Rml::Element* element) {
     for (Rml::Element* e = element; e; e = e->GetParentNode()) {
         if (!e->HasAttribute("forge-click")) continue;
+        for (Rml::Element* up = e; up; up = up->GetParentNode())
+            if (up->HasAttribute("forge-disabled")) return true; // off: no actions, no sound
         Page* p = impl_->of(e->GetOwnerDocument());
         const std::string page = p ? p->name : std::string();
+        // Its sound once, as it does what it does.
+        std::string sound = e->HasAttribute("forge-click-sound") ? e->GetAttribute<Rml::String>("forge-click-sound", "")
+                            : p                                  ? p->button_sound
+                                                                 : std::string();
+        if (sound == "none") sound.clear();
+        if (!sound.empty() && on_sound) on_sound(sound);
         // In a list's cell, {item.id} and the like are the element it shows now.
         const ListView::Cell* cell = impl_->cell_of(e);
         for (ScreenAction a : parse_actions(e->GetAttribute<Rml::String>("forge-click", ""))) {

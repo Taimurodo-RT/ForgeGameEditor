@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "title": "Звук: окно",
+  "next_id": 8,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "pauses": true,
+    "music": "мелодия окна.wav"
+  },
+  "root": {
+    "id": 1,
+    "name": "Звук: окно",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "fills": [
+      {
+        "kind": "solid",
+        "color": "#00000078"
+      }
+    ],
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 560.0,
+        "y": 240.0,
+        "w": 800.0,
+        "h": 600.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#24303f"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 0.0,
+            "y": 40.0,
+            "w": 800.0,
+            "h": 70.0,
+            "text": "Окно со своей музыкой",
+            "style": {
+              "family": "Onest",
+              "size": 44.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#ffffff"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Звон",
+            "type": "frame",
+            "x": 200.0,
+            "y": 220.0,
+            "w": 400.0,
+            "h": 90.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "change",
+                "target": "demo.rings += 1"
+              }
+            ],
+            "click_sound": "звон.wav",
+            "children": [
+              {
+                "id": 5,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 400.0,
+                "h": 90.0,
+                "text": "Звон",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#1b2127"
+                }
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "name": "Закрыть",
+            "type": "frame",
+            "x": 200.0,
+            "y": 360.0,
+            "w": 400.0,
+            "h": 90.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 7,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 400.0,
+                "h": 90.0,
+                "text": "Закрыть",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#1b2127"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

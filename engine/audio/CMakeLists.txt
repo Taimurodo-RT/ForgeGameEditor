@@ -1,4 +1,4 @@
-add_library(forge_audio STATIC src/audio.cpp src/vorbis.c)
+add_library(forge_audio STATIC src/audio.cpp src/screen_sounds.cpp src/vorbis.c)
 add_library(forge::audio ALIAS forge_audio)
 target_include_directories(forge_audio PUBLIC include)
 target_link_libraries(forge_audio PUBLIC forge::core PRIVATE SDL3::SDL3-static stb_headers)

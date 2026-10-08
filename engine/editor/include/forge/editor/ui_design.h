@@ -333,6 +333,9 @@ struct Node {
     std::string show_if;
     Bar bar;
     std::vector<Action> on_click;
+    // Its sound when pressed («Звук нажатия»): "" as the screen's buttons,
+    // "none" none, else a file of the game's sounds folder ("щелчок.wav").
+    std::string click_sound;
     // A picture from the data (an expression giving a path in the game
     // folder): "item.icon" shows the icon of a list's element. Empty: none.
     std::string picture_from;
@@ -405,6 +408,9 @@ struct Screen {
     bool esc_closes = true;  // Esc hides it (Command screens)
     Appear appear = Appear::None; // how it comes and goes (Command and Menu screens)
     f32 appear_time = 0.25f;      // seconds
+    // Its sound: the music while it is up and its buttons' sound when
+    // pressed, files of the game's sounds folder ("": none).
+    std::string music, button_sound;
     bool library = false;     // the game's components (ui/components.json), not a screen the game shows
     // The library's game styles: named colours and text styles that layers on
     // every screen can use (Paint::style, TextStyle::style); changing one

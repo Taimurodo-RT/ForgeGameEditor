@@ -1,9 +1,13 @@
 #include "ui_editor.h"
 
+#include "object_library.h"
+
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/core/time.h"
+#include "forge/audio/audio.h"
+#include "forge/game/saves.h"
 #include "forge/ui/html.h"
 
 #include <yyjson.h>
@@ -331,6 +335,7 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
     if (m_families_.empty()) m_families_.push_back("Onest");
     install_art(ui.root() / "art");
     scan_pictures();
+    scan_sounds();
 
     // The checkerboard under colours that may be see-through (the picker, the swatches).
     {
@@ -365,6 +370,8 @@ void UiEditor::shutdown() {
     if (page_from_check_) page_ = nullptr;
     page_from_check_ = false;
     check_.reset();
+    check_sound_.detach();
+    check_mixer_.close();
     ui::register_line_source("ue-ruler-x", nullptr);
     ui::register_line_source("ue-ruler-y", nullptr);
     ui::register_line_source("ue-overlay", nullptr);
@@ -417,6 +424,8 @@ bool UiEditor::open(const std::string& name) {
     screen_ = std::move(s);
     selection_.clear();
     page_dirty_ = true;
+    sound_note_.clear();
+    scan_sounds();
     dirty_all();
     return true;
 }
@@ -544,6 +553,7 @@ void UiEditor::set_shown(bool shown) {
     if (shown) {
         page_dirty_ = true;
         scan_pictures();
+        scan_sounds();
     }
 }
 
@@ -600,7 +610,24 @@ void UiEditor::rebuild_page() {
             check_ = std::make_unique<game::GameScreens>();
             check_->actions_to_caller = true;
             check_->on_action = [this](const game::ScreenAction& a, const std::string&) { check_pending_.push_back(a); };
+            // The screen's sound, as the game plays it (not while the picker samples the page).
+            check_->on_music = [this](const std::string& name) { check_sound_.music(picker_.live ? std::string() : name); };
+            check_->on_sound = [this](const std::string& name) {
+                if (!picker_.live) check_sound_.click(name);
+            };
         }
+        if (!check_mixer_open_) {
+            // The device opens on the first «Проверить»; without one the sound still "plays" (tests).
+            check_mixer_open_ = true;
+            if (!silent && !check_mixer_.open()) FORGE_WARN("Звука в «Проверить» нет: не открылось устройство вывода");
+            // The game's volumes as a new player has them.
+            const game::Settings volumes;
+            check_mixer_.set_master(volumes.master_volume);
+            check_mixer_.set_volume(audio::Bus::Music, volumes.music_volume);
+            check_mixer_.set_volume(audio::Bus::Sound, volumes.sound_volume);
+            check_mixer_.set_volume(audio::Bus::Ui, volumes.sound_volume);
+        }
+        check_sound_.attach(&check_mixer_, sounds_folder());
         // Lists show the game's things and quests.
         check_->set_items(game_items ? game_items() : std::vector<game::ScreenItem>{});
         check_->set_quests(game_quests ? game_quests() : nullptr);
@@ -725,6 +752,88 @@ void UiEditor::scan_pictures() {
     visit(visit, screen_.root);
     m_pictures_ = std::move(rows);
     dirty("ue_pictures");
+}
+
+// The game's sounds (game/sounds, WAV and OGG), the ones the screen uses but
+// the folder lacks («нет файла»), then those of «Ресурсы» not there yet.
+void UiEditor::scan_sounds() {
+    namespace fs = std::filesystem;
+    std::vector<SoundRow> rows;
+    std::error_code ec;
+    for (const fs::directory_entry& e : fs::directory_iterator(sounds_folder(), ec)) {
+        if (!e.is_regular_file(ec) || !audio::readable(e.path())) continue;
+        rows.push_back({path_to_utf8(e.path().filename()), path_to_utf8(e.path().stem())});
+        if (rows.size() >= 1000) break;
+    }
+    std::sort(rows.begin(), rows.end(), [](const SoundRow& a, const SoundRow& b) { return a.value < b.value; });
+    auto listed = [&](const std::string& name) {
+        return std::any_of(rows.begin(), rows.end(), [&](const SoundRow& r) { return r.value == name; });
+    };
+    auto keep = [&](const std::string& name) {
+        if (!name.empty() && name != "none" && !listed(name)) rows.push_back({name, name + " (нет файла)"});
+    };
+    keep(screen_.music);
+    keep(screen_.button_sound);
+    auto visit = [&](auto&& self, const d::Node& n) -> void {
+        keep(n.click_sound);
+        for (const d::Node& c : n.children) self(self, c);
+    };
+    visit(visit, screen_.root);
+    if (list_sounds) {
+        usize added = 0;
+        for (const fs::path& file : list_sounds()) {
+            if (!audio::readable(file) || listed(path_to_utf8(file.filename()))) continue;
+            rows.push_back({"add:" + path_to_utf8(file), path_to_utf8(file.stem()) + " — из «Ресурсов»"});
+            if (++added >= 300) break;
+        }
+    }
+    if (rows == m_sounds_) return;
+    m_sounds_ = std::move(rows);
+    dirty("ue_sounds");
+}
+
+// The sounds' drop-downs are not bound to the panel: their options come from a list, and a select whose value is
+// not (yet) among its options picks another, which a binding would write back over what is set. They are set
+// from here once the options are there instead. Not while the author has one open.
+void UiEditor::sync_sound_selects() {
+    if (!context_ || !shown_) return;
+    const std::pair<const char*, const Rml::String*> selects[] = {
+        {"ue-screen-music", &m_p_.music}, {"ue-screen-button-sound", &m_p_.button_sound}, {"ue-click-sound", &m_p_.click_sound},
+        {"ue-s-music", &m_s_.music},      {"ue-s-button-sound", &m_s_.button_sound},      {"ue-s-click-sound", &m_s_.click_sound}};
+    for (const auto& [id, value] : selects) {
+        Rml::Element* e = nullptr;
+        for (int i = 0; !e && i < context_->GetNumDocuments(); ++i) e = context_->GetDocument(i)->GetElementById(id);
+        auto* select = rmlui_dynamic_cast<Rml::ElementFormControl*>(e);
+        if (!select || select->IsPseudoClassSet("focus") || select->GetValue() == *value) continue;
+        select->SetValue(*value);
+    }
+}
+
+std::vector<std::pair<std::string, std::string>> UiEditor::sound_choices() const {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const SoundRow& r : m_sounds_) out.emplace_back(r.value, r.name);
+    return out;
+}
+
+std::optional<std::string> UiEditor::sound_pick(const std::string& value) {
+    sound_note_.clear();
+    if (value.rfind("add:", 0) != 0) return value;
+    const std::filesystem::path source = utf8_path(value.substr(4));
+    const std::string shown = path_to_utf8(source.filename());
+    std::string error;
+    if (!audio::readable(source)) sound_note_ = "«" + shown + "»: игра читает WAV и OGG. Переведите его в «Ресурсах»: «Конвертировать…» → OGG.";
+    else if (!audio::load(source, &error)) sound_note_ = "«" + shown + "» не звучит: " + error;
+    if (!sound_note_.empty()) {
+        FORGE_WARN("%s", sound_note_.c_str());
+        return std::nullopt;
+    }
+    const std::string name = copy_into(source, sounds_folder(), "звук");
+    if (name.empty()) {
+        sound_note_ = "«" + shown + "» не скопировался в папку звуков игры.";
+        return std::nullopt;
+    }
+    scan_sounds();
+    return name;
 }
 
 void UiEditor::read_boxes() {
@@ -1379,7 +1488,11 @@ void UiEditor::refresh_props() {
             p.pauses = screen_.pauses;
             p.esc_closes = screen_.esc_closes;
             p.covers_game = covers_game();
+            p.music = screen_.music;
+            p.button_sound = screen_.button_sound;
         }
+        p.click_sound = n->click_sound;
+        p.sound_note = sound_note_;
         p.show_if = n->show_if;
         p.list = n->list == d::ListSource::None ? "none" : d::list_word(n->list);
         p.list_gap = fmt(n->list_gap);
@@ -1617,6 +1730,9 @@ void UiEditor::refresh_simple(const d::Node* n) {
         s.in_list = !m_p_.in_list.empty() && n->type == d::NodeType::Text;
         s.picture_from = n->picture_from;
         s.show = kScreenShowWords[static_cast<int>(screen_.show)];
+        s.music = screen_.music;
+        s.button_sound = screen_.button_sound;
+        s.click_sound = n->click_sound;
         if (b == d::Block::Group || b == d::Block::List)
             s.inside = "Внутри слоёв: " + std::to_string(n->children.size()) + ". Выберите любой из них на холсте или в списке слева.";
         const std::vector<std::string> hidden = d::simple_hidden(*n, root);
@@ -1699,11 +1815,22 @@ std::string UiEditor::simple_shown(const std::string& field) const {
     if (field == "show") return m_s_shown_.show;
     if (field == "anchor_h") return m_s_shown_.anchor_h;
     if (field == "anchor_v") return m_s_shown_.anchor_v;
+    if (field == "music") return m_s_shown_.music;
+    if (field == "button_sound") return m_s_shown_.button_sound;
+    if (field == "click_sound") return m_s_shown_.click_sound;
     return {};
 }
 
 bool UiEditor::set_simple_property(const std::string& field, const std::string& value) {
     if (selection_.size() > 1) return false;
+    if ((field == "music" || field == "button_sound" || field == "click_sound") && value.rfind("add:", 0) == 0) {
+        const std::optional<std::string> name = sound_pick(value);
+        if (!name) {
+            refresh_props();
+            return false;
+        }
+        return set_simple_property(field, *name);
+    }
     const u32 id = selection_.empty() ? screen_.root.id : selection_[0];
     const d::Node* n = d::find(screen_.root, id);
     if (!n) return false;
@@ -1798,6 +1925,14 @@ bool UiEditor::set_simple_property(const std::string& field, const std::string& 
         if (!root) return false;
         ops.push_back({id, "screen.show", value});
         word = "Когда видно";
+    } else if (field == "music" || field == "button_sound") {
+        if (!root || screen_.library) return false;
+        ops.push_back({id, "screen." + field, value});
+        word = field == "music" ? "Музыка экрана" : "Звук кнопок экрана";
+    } else if (field == "click_sound") {
+        if (root || n->on_click.empty()) return false;
+        ops.push_back({id, "click_sound", value});
+        word = "Звук нажатия";
     } else return false;
 
     const std::string before = d::save_screen(screen_);
@@ -1816,6 +1951,19 @@ bool UiEditor::set_simple_property(const std::string& field, const std::string& 
 
 // --- changes ----------------------------------------------------------------
 
+// The fields that take a sound of the game's sounds folder.
+static bool sound_field(const std::string& field) {
+    return field == "click_sound" || field == "screen.music" || field == "screen.button_sound";
+}
+
+// A sound's name as a field keeps it: "" (none, or a button's «как у
+// экрана»), "none" (a button's «без звука») or a WAV or OGG of game/sounds.
+static bool sound_name_ok(const std::string& value, bool button) {
+    if (value.empty()) return true;
+    if (value == "none") return button;
+    return value.find_first_of("/\\:") == std::string::npos && value != "." && value != ".." && audio::readable(utf8_path(value));
+}
+
 // The history's name for a change of a panel field, in the panel's words.
 std::string change_label(const std::string& field) {
     auto starts = [&](const char* p) { return field.rfind(p, 0) == 0; };
@@ -1827,7 +1975,8 @@ std::string change_label(const std::string& field) {
         {"text_case", "Регистр"}, {"decoration", "Подчёркивание"}, {"text_color", "Цвет текста"}, {"horizontal", "Прилипание"},
         {"vertical", "Прилипание"}, {"width_sizing", "Ширина"}, {"height_sizing", "Высота"}, {"absolute", "Вне раскладки"},
         {"clip", "Обрезка"}, {"show_if", "Условие показа"}, {"name", "Имя"}, {"list", "Список"}, {"list_gap", "Расстояние в списке"},
-        {"picture_from", "Картинка из данных"}};
+        {"picture_from", "Картинка из данных"}, {"click_sound", "Звук нажатия"}, {"screen.music", "Музыка экрана"},
+        {"screen.button_sound", "Звук кнопок экрана"}};
     for (const auto& [f, word] : words)
         if (field == f) return std::string("Изменено: ") + word;
     static const std::pair<const char*, const char*> groups[] = {
@@ -2100,6 +2249,11 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         } else return false;
         return true;
     }
+    if (field == "click_sound") {
+        if (root || value == n.click_sound || !sound_name_ok(value, true)) return false;
+        n.click_sound = value;
+        return true;
+    }
     if (field == "click.add") {
         if (root) return false;
         d::Action a;
@@ -2296,6 +2450,12 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             return true;
         }
         if (f == "appear_time") return set_num(screen_.appear_time, 0.05f, 10);
+        if (f == "music" || f == "button_sound") {
+            std::string& sound = f == "music" ? screen_.music : screen_.button_sound;
+            if (screen_.library || value == sound || !sound_name_ok(value, false)) return false;
+            sound = value;
+            return true;
+        }
         if (f == "font") {
             if (value.empty()) return false;
             screen_.text.family = value;
@@ -2666,6 +2826,15 @@ bool UiEditor::set_field(d::Node& n, const std::string& field, const std::string
 }
 
 bool UiEditor::set_property(const std::string& field, const std::string& value) {
+    // A sound of «Ресурсы»: into the game's sounds first.
+    if (sound_field(field) && value.rfind("add:", 0) == 0) {
+        const std::optional<std::string> name = sound_pick(value);
+        if (!name) {
+            refresh_props();
+            return false;
+        }
+        return set_property(field, *name);
+    }
     const std::string before = d::save_screen(screen_);
     bool any = false;
     // Nothing selected: the screen's settings.
@@ -3264,6 +3433,7 @@ void UiEditor::update(Rml::Context* context) {
         refresh_overlay();
     }
     key_remap_.on = false; // the panel's fields name the keys as they are now
+    sync_sound_selects();
     read_canvas(context);
     if (preview_.playing) {
         // Played on: the page's clock goes with the wall clock; a movement that plays once stops at its end.
@@ -3278,6 +3448,13 @@ void UiEditor::update(Rml::Context* context) {
         preview_at(t);
     }
     if (fit_pending_ && canvas_w_ > 0) zoom_to_fit();
+    {
+        // Without a device the check's sounds still end in time.
+        const u64 now = time_now_ns();
+        if (check_mixer_open_ && !check_mixer_.has_device() && check_sound_ns_)
+            check_mixer_.advance(static_cast<f64>(now - check_sound_ns_) * 1e-9);
+        check_sound_ns_ = now;
+    }
     if (checking_) {
         // Clicks of the last events, now that the page is done with them.
         std::vector<game::ScreenAction> actions;
@@ -4200,6 +4377,9 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("show", &SimpleProps::show);
         s.RegisterMember("inside", &SimpleProps::inside);
         s.RegisterMember("hidden", &SimpleProps::hidden);
+        s.RegisterMember("music", &SimpleProps::music);
+        s.RegisterMember("button_sound", &SimpleProps::button_sound);
+        s.RegisterMember("click_sound", &SimpleProps::click_sound);
     }
     if (auto s = model.RegisterStruct<Props>()) {
         s.RegisterMember("any", &Props::any);
@@ -4311,6 +4491,10 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("smooth_easing", &Props::smooth_easing);
         s.RegisterMember("appear", &Props::appear);
         s.RegisterMember("appear_time", &Props::appear_time);
+        s.RegisterMember("music", &Props::music);
+        s.RegisterMember("button_sound", &Props::button_sound);
+        s.RegisterMember("click_sound", &Props::click_sound);
+        s.RegisterMember("sound_note", &Props::sound_note);
     }
     if (auto s = model.RegisterStruct<KeyRow>()) {
         s.RegisterMember("index", &KeyRow::index);
@@ -4385,6 +4569,11 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("name", &PictureRow::name);
     }
     model.RegisterArray<std::vector<PictureRow>>();
+    if (auto s = model.RegisterStruct<SoundRow>()) {
+        s.RegisterMember("value", &SoundRow::value);
+        s.RegisterMember("name", &SoundRow::name);
+    }
+    model.RegisterArray<std::vector<SoundRow>>();
     model.RegisterArray<std::vector<int>>();
 
     model.Bind("ue_screens", &m_screens_);
@@ -4432,6 +4621,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_families", &m_families_);
     model.Bind("ue_nine", &m_nine_);
     model.Bind("ue_pictures", &m_pictures_);
+    model.Bind("ue_sounds", &m_sounds_);
     model.Bind("ue_safe", &m_safe_);
     model.Bind("ue_has_safe", &m_has_safe_);
     if (auto s = model.RegisterStruct<GameColorRow>()) {
@@ -4731,6 +4921,9 @@ void UiEditor::set_checking(bool on) {
 
 // «Проверить» on or off, the selection as it is (the picker's eyedropper keeps its layers).
 void UiEditor::switch_checking(bool on) {
+    // Leaving: the screen's music stops; coming in: files added since are read again.
+    if (!on && check_) check_->stop_music();
+    if (on) check_sound_.forget();
     checking_ = on;
     m_checking_ = on;
     check_back_.clear();

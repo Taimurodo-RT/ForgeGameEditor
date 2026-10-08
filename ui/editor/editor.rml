@@ -1234,6 +1234,18 @@
                             <option value="playing">Всегда, поверх игры</option><option value="command">Окно: открывает кнопка</option><option value="menu">Главное меню игры</option>
                         </select>
                     </div>
+                    <div class="ue-sec" data-if="ue_s.root">
+                        <div class="ue-sec-title">Звук <span class="muted">из папки звуков игры</span></div>
+                        <div class="ue-line row"><span class="ue-key">Музыка</span>
+                            <select id="ue-s-music" class="ue-select grow" data-event-change="ue_spick('music')">
+                                <option value="">Нет</option><option data-for="snd : ue_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                            </select></div>
+                        <div class="ue-line row"><span class="ue-key">Кнопки</span>
+                            <select id="ue-s-button-sound" class="ue-select grow" data-event-change="ue_spick('button_sound')">
+                                <option value="">Без звука</option><option data-for="snd : ue_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                            </select></div>
+                        <div class="ue-note ue-warn" data-if="ue_p.sound_note != ''">{{ ue_p.sound_note }}</div>
+                    </div>
 
                     <div class="ue-sec" data-if="ue_s.bar">
                         <div class="ue-sec-title">Полоска <span class="muted">длина по данным игры</span></div>
@@ -1271,6 +1283,11 @@
                         <div class="ue-line row" data-if="ue_s.act_editable &amp;&amp; ue_s.needs == 'text'"><span class="ue-key">Какое</span>
                             <input id="ue-s-message" type="text" class="ue-field grow" placeholder="открыть_дверь" data-attr-value="ue_s.target" data-event-change="ue_stext('target', ev.value, ev.linebreak)" data-event-blur="ue_scommit('target')"/></div>
                         <div class="ue-note" data-if="!ue_s.act_editable">Здесь несколько действий или особые. Они работают; посмотреть и поменять их можно в «Полном».</div>
+                        <div class="ue-line row" data-if="ue_s.action != 'none' || !ue_s.act_editable"><span class="ue-key">Звук</span>
+                            <select id="ue-s-click-sound" class="ue-select grow" data-event-change="ue_spick('click_sound')">
+                                <option value="">Как у экрана</option><option value="none">Без звука</option><option data-for="snd : ue_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                            </select></div>
+                        <div class="ue-note ue-warn" data-if="(ue_s.action != 'none' || !ue_s.act_editable) &amp;&amp; ue_p.sound_note != ''">{{ ue_p.sound_note }}</div>
                     </div>
 
                     <div class="ue-sec" data-if="!ue_s.root">
@@ -1321,6 +1338,19 @@
                         <div class="ue-note" data-if="ue_p.screen_show == 'command'">Откройте его кнопкой с действием «Показать экран» или блоком «Показать экран» в «Логике».</div>
                         <div class="ue-note" data-if="ue_p.screen_show == 'menu'">Игра покажет этот экран вместо своего главного меню. Кнопкам дайте действия «Новая игра», «Продолжить», «Загрузить», «Настройки», «Выйти».</div>
                     </div>
+                    <div class="ue-sec ue-game" data-if="ue_p.root">
+                        <div class="ue-sec-title">Звук <span class="muted">из папки звуков игры</span></div>
+                        <div class="ue-line row"><span class="ue-key">Музыка</span>
+                            <select id="ue-screen-music" class="ue-select grow" data-event-change="ue_pick('screen.music')">
+                                <option value="">Нет</option><option data-for="snd : ue_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                            </select></div>
+                        <div class="ue-line row"><span class="ue-key">Кнопки</span>
+                            <select id="ue-screen-button-sound" class="ue-select grow" data-event-change="ue_pick('screen.button_sound')">
+                                <option value="">Без звука</option><option data-for="snd : ue_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                            </select></div>
+                        <div class="ue-note ue-warn" data-if="ue_p.sound_note != ''">{{ ue_p.sound_note }}</div>
+                        <div class="ue-note">Музыка играет, пока экран открыт; если открыт и экран поверх со своей музыкой, звучит его. «Кнопки» — звук нажатия всех кнопок экрана, если у кнопки не задан свой. Громкость — из настроек игры.</div>
+                    </div>
 
                     <!-- The layer in the game: what a click does, a bar, when it shows -->
                     <div class="ue-sec ue-game" data-if="!ue_p.root">
@@ -1346,6 +1376,11 @@
                             </div>
                         </div>
                         <div class="ue-note" data-if="ue_clicks.size == 0">Кнопка может открыть окно, сказать «Логике», изменить монеты, начать разговор или новую игру.</div>
+                        <div class="ue-line row" data-if="ue_clicks.size &gt; 0"><span class="ue-key">Звук</span>
+                            <select id="ue-click-sound" class="ue-select grow" data-event-change="ue_pick('click_sound')">
+                                <option value="">Как у экрана</option><option value="none">Без звука</option><option data-for="snd : ue_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                            </select></div>
+                        <div class="ue-note ue-warn" data-if="ue_clicks.size &gt; 0 &amp;&amp; ue_p.sound_note != ''">{{ ue_p.sound_note }}</div>
                     </div>
                     <div class="ue-sec ue-game" data-if="!ue_p.root">
                         <div class="ue-sec-title row"><span class="grow">Полоска <span class="muted">длина по данным игры</span></span>

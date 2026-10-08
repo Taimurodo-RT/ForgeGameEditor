@@ -304,6 +304,13 @@ u32 Mixer::voices() const {
     return n;
 }
 
+u32 Mixer::voices(Bus bus) const {
+    std::lock_guard lock(mutex_);
+    u32 n = 0;
+    for (const Slot& s : slots_) n += !s.stopping && s.bus == bus ? 1 : 0;
+    return n;
+}
+
 void Mixer::mix(f32* out, u32 frames) {
     std::lock_guard lock(mutex_);
     mix_locked(out, frames);

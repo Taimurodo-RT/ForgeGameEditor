@@ -45,6 +45,7 @@
 // ui/<name>.html at once (one step of the tab's history each; a drag is one
 // step).
 
+#include "forge/audio/screen_sounds.h"
 #include "forge/editor/color_pick.h"
 #include "forge/editor/document.h"
 #include "forge/editor/ui_design.h"
@@ -321,6 +322,16 @@ public:
     // What lists show in «Проверить»: the game's things (inv.<id>) and its quests.
     std::function<std::vector<game::ScreenItem>()> game_items;
     std::function<const game::QuestBook*()> game_quests;
+    // Sounds of «Ресурсы» the author can pick for a screen's music and its
+    // buttons besides the game's own (a pick is copied into game/sounds).
+    std::function<std::vector<std::filesystem::path>()> list_sounds;
+    // «Проверить» plays without a device (tests); its sound, for tests.
+    bool silent = false;
+    std::filesystem::path sounds_folder() const { return game_dir_ / "sounds"; }
+    const forge::audio::ScreenSounds& check_sound() const { return check_sound_; }
+    forge::audio::Mixer& check_mixer() { return check_mixer_; }
+    // The sounds the drop-downs offer: {value, what the author reads}.
+    std::vector<std::pair<std::string, std::string>> sound_choices() const;
 private:
     friend class UiCommand;
 
@@ -589,6 +600,9 @@ private:
         bool motion_loop = true, motion_back = false;
         Rml::String smooth, smooth_easing;
         Rml::String appear = "none", appear_time;
+        // Sound: the screen's music and its buttons' sound, a button's own
+        // ("": as the screen's, "none": none).
+        Rml::String music, button_sound, click_sound, sound_note;
     };
     // One key of the layer's own movement («Своё по ключам»).
     struct KeyRow {
@@ -672,6 +686,22 @@ private:
     bool timeline_wanted() const;
     bool checking_ = false;
     std::unique_ptr<forge::game::GameScreens> check_;
+    // «Проверить»'s sound: the screen's music and its buttons.
+    forge::audio::Mixer check_mixer_;
+    bool check_mixer_open_ = false;
+    u64 check_sound_ns_ = 0;
+    forge::audio::ScreenSounds check_sound_;
+    struct SoundRow {
+        Rml::String value, name;
+        bool operator==(const SoundRow&) const = default;
+    };
+    std::vector<SoundRow> m_sounds_;
+    Rml::String sound_note_; // why the last pick did not take
+    void scan_sounds();
+    void sync_sound_selects();
+    // A drop-down's sound: a name of game/sounds as it is, "add:<path>" a
+    // file of «Ресурсы» copied there first. Empty when it cannot be used.
+    std::optional<std::string> sound_pick(const std::string& value);
     bool page_from_check_ = false;
     forge::game::Vars check_vars_;
     u64 check_seen_ = ~0ull;
@@ -731,6 +761,7 @@ private:
         Rml::String action = "none", target, needs;
         Rml::String image, bar_value, bar_max, list_source, picture_from, show, inside;
         Rml::String hidden;
+        Rml::String music, button_sound, click_sound;
     };
     SimpleProps m_s_;
     SimpleProps m_s_shown_; // as last shown: the drop-downs write into m_s_ before their change arrives

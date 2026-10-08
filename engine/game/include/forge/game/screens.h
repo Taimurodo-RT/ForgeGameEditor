@@ -13,11 +13,20 @@
 //                                    another size (expand, fit, stretch)
 //                     forge-pauses   the world stops while it is shown
 //                     forge-esc="0"  Esc does not close it
+//                     forge-music    the music it plays while it is up (a
+//                                    file of the game's sounds folder)
+//                     forge-button-sound
+//                                    its buttons' sound when pressed
 //   on any layer:     forge-text     a text with {variables} put in
 //                     forge-show-if  shown only while this holds
 //                     forge-bar-value, -max, -from
 //                                    cut to value / max of its length
 //                     forge-click    what a click does: [["show", "Магазин"], ...]
+//                     forge-click-sound
+//                                    its own sound when pressed ("none": none;
+//                                    without it, the screen's forge-button-sound)
+//                     forge-disabled a button that is off («Выключена»): a
+//                                    click on it does nothing and makes no sound
 //                     forge-picture  a picture from the data: "item.icon"
 //                     forge-list     a list of the game's: "items" (what the
 //                                    hero carries) or "quests" (the journal).
@@ -34,6 +43,14 @@
 //
 // The same class runs the editor's «Проверить»: it shows one page and its
 // clicks, with variables the author sets by hand.
+//
+// Sound (forge::audio::ScreenSounds plays it): one music at a time, the
+// music of the topmost screen up that has one: the newest window shown by
+// command, else the menu, else the screens over the world. A screen without
+// music lets the one under it play; none up with music: silence. on_music
+// says when that changes (a page loaded again with the same music changes
+// nothing). A button's sound goes to on_sound once per press, with its
+// actions: a click or Enter / Space on a button with the keyboard's focus.
 
 #include "forge/game/quests.h"
 #include "forge/game/vars.h"
@@ -136,9 +153,24 @@ public:
     // close); false for anything else.
     bool run_page_action(const ScreenAction& action, const std::string& page);
 
-    // Clicks give the actions of the nearest layer up the tree that has any.
-    // Returns true when the element (or a parent) had actions.
+    // Clicks give the actions of the nearest layer up the tree that has any
+    // (and its sound). Returns true when the element (or a parent) had
+    // actions; a button that is off (forge-disabled) takes the click and
+    // does nothing.
     bool click(Rml::Element* element);
+
+    // The music of the screens up now ("": none), as update() last saw it.
+    const std::string& music() const;
+    // Says the music changed (update(); "" when none is wanted).
+    std::function<void(const std::string& name)> on_music;
+    // Leaving (the editor's «Проверить», the game): on_music(""), and the
+    // next update() starts the music again.
+    void stop_music();
+    // A button's sound, once per press.
+    std::function<void(const std::string& name)> on_sound;
+    // The keyboard's focus is on a button of these pages (a held Enter or
+    // Space must not press it again with every repeat).
+    bool has_focus(Rml::Context* context) const;
     // The variables a page reads (for the editor's «Проверить» panel).
     std::vector<std::string> variables(std::string_view name) const;
 
