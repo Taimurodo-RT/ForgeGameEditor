@@ -1280,6 +1280,79 @@ std::vector<MotionKey> motion_keys(const Motion& m) {
     return out;
 }
 
+std::vector<u32> movable_order(const Screen& screen, const std::vector<u32>& ids) {
+    std::vector<u32> out;
+    auto visit = [&](auto&& self, const Node& n, bool inside) -> void {
+        for (const Node& c : n.children) {
+            const bool picked = std::find(ids.begin(), ids.end(), c.id) != ids.end();
+            if (picked && !inside) out.push_back(c.id);
+            self(self, c, inside || picked);
+        }
+    };
+    visit(visit, screen.root, false);
+    return out;
+}
+
+std::string move_refusal(const Screen& screen, const std::vector<u32>& ids, u32 parent) {
+    const std::vector<u32> moving = movable_order(screen, ids);
+    if (moving.empty()) return "Экран целиком не переносится: выберите слой.";
+    const Node* target = find(screen.root, parent);
+    if (!target || !target->is_container()) return "Положить можно только в рамку.";
+    const std::vector<u32> target_path = path_to(screen.root, parent);
+    for (u32 id : moving)
+        if (std::find(target_path.begin(), target_path.end(), id) != target_path.end())
+            return "Рамку нельзя положить в саму себя или в то, что внутри неё.";
+    if (const Node* instance = instance_of(screen.root, parent))
+        return "Внутрь копии компонента «" + instance->component + "» класть нельзя: её слои задаёт компонент.";
+    for (u32 id : target_path)
+        if (const Node* a = find(screen.root, id); a && a->list != ListSource::None)
+            return "В список класть нельзя: он повторяет свою первую ячейку.";
+    if (screen.library && parent == screen.root.id) return "Наверху библиотеки только варианты компонентов.";
+    for (u32 id : moving) {
+        if (const Node* instance = instance_of(screen.root, id); instance && instance->id != id)
+            return "Слой копии компонента «" + instance->component + "» не выносится из неё: её слои задаёт компонент.";
+        const std::vector<u32> path = path_to(screen.root, id);
+        for (usize i = 0; i + 1 < path.size(); ++i)
+            if (const Node* a = find(screen.root, path[i]); a && a->list != ListSource::None)
+                return "Слой списка не выносится: список повторяет свою первую ячейку.";
+        if (screen.library && path.size() == 2) return "Вариант компонента остаётся наверху библиотеки.";
+    }
+    return {};
+}
+
+bool move_layers(Screen& screen, const std::vector<u32>& ids, u32 parent, usize index,
+                 const std::vector<std::pair<f32, f32>>& places) {
+    if (!move_refusal(screen, ids, parent).empty()) return false;
+    const std::vector<u32> moving = movable_order(screen, ids);
+    if (!places.empty() && places.size() != moving.size()) return false;
+    // Where they go: before the index-th of the parent's children that stay.
+    const Node* target = find(screen.root, parent);
+    u32 before = 0;
+    usize kept = 0;
+    for (const Node& c : target->children) {
+        if (std::find(moving.begin(), moving.end(), c.id) != moving.end()) continue;
+        if (kept++ == index) {
+            before = c.id;
+            break;
+        }
+    }
+    std::vector<Node> taken;
+    for (u32 id : moving)
+        if (std::optional<Node> n = remove(screen.root, id)) taken.push_back(std::move(*n));
+    Node* into = find(screen.root, parent);
+    if (!into || taken.size() != moving.size()) return false;
+    for (usize i = 0; i < taken.size(); ++i) {
+        if (!places.empty()) {
+            taken[i].x = places[i].first;
+            taken[i].y = places[i].second;
+        }
+        taken[i].absolute = false; // in a frame with auto layout it joins the flow; elsewhere x and y place it
+    }
+    auto at = std::find_if(into->children.begin(), into->children.end(), [&](const Node& c) { return before && c.id == before; });
+    into->children.insert(at, std::make_move_iterator(taken.begin()), std::make_move_iterator(taken.end()));
+    return true;
+}
+
 usize move_motion_key(Motion& m, usize index, f32 at) {
     if (index >= m.keys.size()) return index;
     at = std::clamp(at, 0.0f, 1.0f);

@@ -164,6 +164,13 @@ d::Paint solid(d::Color c) {
 }
 
 bool inside(const d::Rect& r, f32 x, f32 y) { return x >= r.x && y >= r.y && x < r.right() && y < r.bottom(); }
+// What two boxes share (w or h 0 when nothing).
+d::Rect overlap(const d::Rect& a, const d::Rect& b) {
+    const f32 x = std::max(a.x, b.x), y = std::max(a.y, b.y);
+    return {x, y, std::max(0.0f, std::min(a.right(), b.right()) - x), std::max(0.0f, std::min(a.bottom(), b.bottom()) - y)};
+}
+// A frame that hides what sticks out of it on the page: «Обрезать», a list (it scrolls), the screen.
+bool clips(const d::Node& n, bool root) { return root || n.clip || n.list != d::ListSource::None; }
 bool intersects(const d::Rect& a, const d::Rect& b) {
     return a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom();
 }
@@ -503,6 +510,7 @@ void UiEditor::commit(const std::string& before, std::string label, std::string 
 }
 
 void UiEditor::undo() {
+    if (drag_ != Drag::None || tree_.on || key_drag_.on) return; // in the middle of a gesture: it ends first
     close_picker(true);
     selected_key_ = -1; // the keys may stand elsewhere now: none picked rather than another
     history_.seal();
@@ -510,6 +518,7 @@ void UiEditor::undo() {
 }
 
 void UiEditor::redo() {
+    if (drag_ != Drag::None || tree_.on || key_drag_.on) return;
     close_picker(true);
     selected_key_ = -1;
     history_.seal();
@@ -752,20 +761,24 @@ std::optional<d::Rect> UiEditor::layer_box(u32 id) const {
 }
 
 u32 UiEditor::hit(f32 x, f32 y, bool deep) const {
-    // The deepest layer under the point, the topmost of siblings first.
+    // The deepest layer under the point, the topmost of siblings first; only where it shows
+    // (what a frame that clips hides is not there for the mouse).
     std::vector<u32> path;
-    auto visit = [&](auto&& self, const d::Node& n, std::vector<u32>& at) -> bool {
+    auto visit = [&](auto&& self, const d::Node& n, std::vector<u32>& at, const d::Rect& clip) -> bool {
         if (!n.visible) return false;
+        auto box = boxes_.find(n.id);
+        d::Rect inner = clip;
+        if (box != boxes_.end() && clips(n, n.id == screen_.root.id)) inner = overlap(clip, box->second);
         for (auto it = n.children.rbegin(); it != n.children.rend(); ++it) {
             at.push_back(it->id);
-            if (self(self, *it, at)) return true;
+            if (self(self, *it, at, inner)) return true;
             at.pop_back();
         }
         if (n.id == screen_.root.id || n.locked) return false;
-        auto box = boxes_.find(n.id);
-        return box != boxes_.end() && inside(box->second, x, y);
+        return box != boxes_.end() && inside(box->second, x, y) && inside(clip, x, y);
     };
-    if (!visit(visit, screen_.root, path) || path.empty()) return 0;
+    const d::Rect everywhere{-1e9f, -1e9f, 2e9f, 2e9f};
+    if (!visit(visit, screen_.root, path, everywhere) || path.empty()) return 0;
     if (deep) return path.back();
     // At the level of the selection: a child of the root, or of a frame the
     // selection is in (Figma's way: a click picks the outer layer, a double
@@ -787,13 +800,65 @@ u32 UiEditor::container_at(f32 x, f32 y) const {
     auto visit = [&](auto&& self, const d::Node& n) -> void {
         for (const d::Node& c : n.children) {
             if (!c.visible || c.locked || !c.is_container()) continue;
-            auto box = boxes_.find(c.id);
-            if (box == boxes_.end() || !inside(box->second, x, y)) continue;
+            const auto box = visible_box(c.id);
+            if (!box || !inside(*box, x, y)) continue;
             found = c.id;
             self(self, c);
         }
     };
     visit(visit, screen_.root);
+    return found;
+}
+
+std::optional<d::Rect> UiEditor::visible_box(u32 id) const {
+    const auto own = layer_box(id);
+    if (!own) return std::nullopt;
+    d::Rect r = *own;
+    const std::vector<u32> path = d::path_to(screen_.root, id);
+    for (usize i = 0; i + 1 < path.size(); ++i) {
+        const d::Node* a = d::find(screen_.root, path[i]);
+        const auto box = layer_box(path[i]);
+        if (!a || !box || !clips(*a, i == 0)) continue;
+        r = overlap(r, *box);
+    }
+    if (r.w <= 0 || r.h <= 0) return std::nullopt;
+    return r;
+}
+
+u32 UiEditor::drop_target(f32 x, f32 y, const std::vector<u32>& moving, usize& index) const {
+    auto carried = [&](u32 id) { return std::find(moving.begin(), moving.end(), id) != moving.end(); };
+    u32 found = screen_.root.id;
+    auto visit = [&](auto&& self, const d::Node& n) -> void {
+        // The topmost of siblings first, as the mouse finds them.
+        for (auto it = n.children.rbegin(); it != n.children.rend(); ++it) {
+            const d::Node& c = *it;
+            if (!c.visible || c.locked || !c.is_container() || carried(c.id) || c.list != d::ListSource::None ||
+                d::instance_of(screen_.root, c.id))
+                continue; // not a place for it, nor is anything inside
+            const auto box = visible_box(c.id);
+            if (!box || !inside(*box, x, y)) continue;
+            found = c.id;
+            self(self, c);
+            return;
+        }
+    };
+    visit(visit, screen_.root);
+    const d::Node* target = d::find(screen_.root, found);
+    index = target ? target->children.size() : 0; // a free frame: on top of what is there
+    if (target && target->layout.mode != d::LayoutMode::None) {
+        // A row, a column or rows that wrap: before the first that stays past the point, in reading order.
+        index = 0;
+        for (const d::Node& c : target->children) {
+            if (carried(c.id)) continue;
+            const auto b = layer_box(c.id);
+            if (!b) continue;
+            bool past = false;
+            if (target->layout.mode == d::LayoutMode::Column) past = y > b->cy();
+            else if (target->layout.mode == d::LayoutMode::Wrap) past = y >= b->bottom() || (y >= b->y && x > b->cx());
+            else past = x > b->cx();
+            if (past) ++index;
+        }
+    }
     return found;
 }
 
@@ -1087,9 +1152,44 @@ void UiEditor::refresh_overlay() {
         }
         overlay_lines_.list.push_back(std::move(line));
     }
+    // A layer carried into another frame: that frame outlined and named; in a row or column, a line where it goes.
+    m_dropping_ = false;
+    m_drop_label_.clear();
+    if (drag_ == Drag::Move && dragged_ && drop_parent_)
+        if (const d::Node* t = d::find(screen_.root, drop_parent_)) {
+            const auto b = t->id == screen_.root.id ? layer_box(t->id) : visible_box(t->id);
+            if (b) {
+                m_drop_ = {to_canvas_x(b->x), to_canvas_y(b->y), b->w * zoom_x(), b->h * zoom_y()};
+                m_dropping_ = true;
+                m_drop_label_ = t->id == screen_.root.id ? Rml::String("На экран") : "В рамку «" + t->name + "»";
+            }
+            if (t->layout.mode != d::LayoutMode::None) {
+                std::vector<d::Rect> kept;
+                for (const d::Node& c : t->children)
+                    if (std::find(selection_.begin(), selection_.end(), c.id) == selection_.end())
+                        if (const auto cb = layer_box(c.id)) kept.push_back(*cb);
+                const bool column = t->layout.mode == d::LayoutMode::Column;
+                const f32 half = t->layout.gap * 0.5f;
+                ui::Line line;
+                line.width = 2;
+                line.color = rgba(0x2f, 0x7b, 0xf5);
+                if (!kept.empty()) {
+                    const bool after = drop_index_ >= kept.size();
+                    const d::Rect& c = kept[std::min(drop_index_, kept.size() - 1)];
+                    if (column) {
+                        const f32 y = after ? c.bottom() + half : c.y - half;
+                        line.points = {to_canvas_x(c.x), to_canvas_y(y), to_canvas_x(c.right()), to_canvas_y(y)};
+                    } else {
+                        const f32 x = after ? c.right() + half : c.x - half;
+                        line.points = {to_canvas_x(x), to_canvas_y(c.y), to_canvas_x(x), to_canvas_y(c.bottom())};
+                    }
+                    overlay_lines_.list.push_back(std::move(line));
+                }
+            }
+        }
     ++overlay_lines_.v;
     for (const char* name : {"ue_selected", "ue_sel_box", "ue_handles", "ue_size_label", "ue_hover", "ue_hovering",
-                             "ue_marquee", "ue_marqueeing", "ue_measures"})
+                             "ue_marquee", "ue_marqueeing", "ue_measures", "ue_drop", "ue_dropping", "ue_drop_label"})
         dirty(name);
 }
 
@@ -1146,6 +1246,7 @@ void UiEditor::refresh_layers() {
             row.container = !c.children.empty();
             row.open = std::find(closed_.begin(), closed_.end(), c.id) == closed_.end();
             row.hidden_by_parent = parent_hidden;
+            if (tree_.on && tree_.moved && tree_.row == c.id) row.drop = tree_.where;
             m_layers_.push_back(row);
             if (row.container && row.open) self(self, c, depth + 1, parent_hidden || !c.visible);
         }
@@ -2121,8 +2222,8 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
                 const std::string id = focus ? focus->GetId() : std::string();
                 const usize dash = id.rfind('-');
                 if (id.rfind("ue-key-", 0) == 0 && dash != std::string::npos) {
-                    const std::string field = remap_key_field("motion.key." + id.substr(dash + 1) + ".");
-                    const std::string to = id.substr(0, dash + 1) + field.substr(11, field.size() - 12);
+                    const std::string mapped = remap_key_field("motion.key." + id.substr(dash + 1) + ".");
+                    const std::string to = id.substr(0, dash + 1) + mapped.substr(11, mapped.size() - 12);
                     if (to != id) {
                         focus_from_ = id;
                         focus_to_ = to;
@@ -2612,6 +2713,7 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
 
 void UiEditor::select(const std::vector<u32>& ids) {
     close_picker(true);
+    if (ids != selection_ && !m_move_note_.empty()) show_move_note({});
     if (ids != selection_) {
         // Another layer: its own keys, and the canvas back to editing.
         selected_key_ = -1;
@@ -2761,6 +2863,78 @@ bool UiEditor::make_list(u32 cell_id, d::ListSource source) {
     parent->children.insert(parent->children.begin() + static_cast<std::ptrdiff_t>(std::min(at, parent->children.size())), std::move(list));
     selection_ = {id};
     commit(before, "Сделан список");
+    return true;
+}
+
+void UiEditor::show_move_note(std::string note) {
+    m_move_note_ = std::move(note);
+    m_move_note_shown_ = m_move_note_;
+    dirty("ue_move_note");
+}
+
+bool UiEditor::move_into(const std::vector<u32>& ids, u32 parent, usize index) {
+    if (page_dirty_ && page_ && !checking_) rebuild_page(); // the boxes as the screen is now
+    std::unordered_map<u32, d::Rect> want;
+    for (u32 id : d::movable_order(screen_, ids))
+        if (const auto b = layer_box(id)) want[id] = *b;
+    return move_to(ids, parent, index, want, d::save_screen(screen_));
+}
+
+bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, const std::unordered_map<u32, d::Rect>& want,
+                       const std::string& before) {
+    std::string why;
+    if (checking_) why = "Во время «Проверить» слои не переносятся.";
+    else if (previewing()) why = "Переносить слои между рамками можно в размере «Макет»: на экране игрока другого размера места другие.";
+    else why = d::move_refusal(screen_, ids, parent);
+    if (!why.empty()) {
+        show_move_note(why);
+        return false;
+    }
+    const std::vector<u32> order = d::movable_order(screen_, ids);
+    const d::Node* target = d::find(screen_.root, parent);
+    const bool flow = target->layout.mode != d::LayoutMode::None;
+    const std::string label = parent == screen_.root.id ? std::string("Перенесено на экран") : "Перенесено в «" + target->name + "»";
+    const d::Rect pbox = layer_box(parent).value_or(d::Rect{});
+    // In a free frame each keeps its place on the screen: counted from the new frame; its size stays.
+    std::vector<std::pair<f32, f32>> places;
+    for (u32 id : order) {
+        const d::Node* n = d::find(screen_.root, id);
+        const auto w = want.find(id);
+        if (flow || w == want.end()) places.emplace_back(n->x, n->y);
+        else places.emplace_back(std::round(w->second.x - pbox.x), std::round(w->second.y - pbox.y));
+    }
+    if (!d::move_layers(screen_, ids, parent, index, places)) return false;
+    page_dirty_ = true;
+    if (!flow && page_) {
+        // Measured on the page: where a frame's size or a layer's anchoring counts otherwise, put right.
+        rebuild_page();
+        for (u32 id : order) {
+            const auto w = want.find(id);
+            const auto b = layer_box(id);
+            d::Node* n = d::find(screen_.root, id);
+            if (w == want.end() || !b || !n) continue;
+            const f32 ex = std::round(w->second.x - b->x), ey = std::round(w->second.y - b->y);
+            if (ex == 0 && ey == 0) continue;
+            n->x += ex;
+            n->y += ey;
+            page_dirty_ = true;
+        }
+    }
+    // Kept where it was, it may stand outside the frame that now hides what sticks out: said, not moved.
+    if (page_ && page_dirty_) rebuild_page();
+    std::string hidden;
+    if (page_)
+        for (u32 id : order)
+            if (!visible_box(id))
+                if (const d::Node* n = d::find(screen_.root, id)) hidden = n->name;
+    show_move_note(hidden.empty() ? std::string()
+                                  : "«" + hidden + "» стоит за краем рамки и не виден: подвиньте его внутрь (Ctrl+Z вернёт как было).");
+    commit(before, label);
+    history_.seal();
+    selection_ = order;
+    refresh_layers();
+    refresh_props();
+    refresh_overlay();
     return true;
 }
 
@@ -3051,6 +3225,11 @@ bool UiEditor::edit_component() {
 
 void UiEditor::update(Rml::Context* context) {
     context_ = context;
+    if (drag_ == Drag::Move && dragged_ && drop_wait_ && drop_parent_ != drop_wait_ &&
+        time_now_ns() - drop_wait_ns_ >= static_cast<u64>(kDropWait * 1e9)) {
+        drop_parent_ = drop_wait_; // rested over another frame: let go here, it goes in
+        refresh_overlay();
+    }
     key_remap_.on = false; // the panel's fields name the keys as they are now
     read_canvas(context);
     if (preview_.playing) {
@@ -3088,6 +3267,7 @@ bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* conte
     context_ = context;
     if (picker_event(e, density, context)) return true;
     if (timeline_event(e, density, context)) return true;
+    if (tree_event(e, density, context)) return true;
     if (checking_ && drag_ == Drag::None) {
         // The canvas is the game's screen: the mouse goes to the page.
         auto on_canvas = [&](f32 mx, f32 my) {
@@ -3306,8 +3486,15 @@ bool UiEditor::press(f32 mx, f32 my, u8 button, u8 clicks, Rml::Context* /*conte
         drag_ = Drag::Move;
         grab_box_ = selection_box();
         grabbed_.clear();
+        grab_boxes_.clear();
+        grab_sx_ = grab_sy_ = 0;
+        drop_parent_ = drop_wait_ = 0;
         for (u32 sel : selection_)
-            if (const d::Node* n = d::find(screen_.root, sel)) grabbed_.push_back({sel, n->x, n->y, n->w, n->h});
+            if (const d::Node* n = d::find(screen_.root, sel)) {
+                grabbed_.push_back({sel, n->x, n->y, n->w, n->h});
+                if (const auto b = layer_box(sel)) grab_boxes_[sel] = *b;
+            }
+        grab_json_ = d::save_screen(screen_);
         return true;
     }
     // Empty canvas: a selection rectangle.
@@ -3376,11 +3563,32 @@ void UiEditor::drag_to(f32 mx, f32 my) {
         }
         dx = moved.x - grab_box_.x;
         dy = moved.y - grab_box_.y;
+        grab_sx_ = dx;
+        grab_sy_ = dy;
+        {
+            // Into another frame: the mouse rests over it (kDropWait) and it is let go there. Passing over a
+            // frame changes nothing; back over its own frame it stays in it.
+            usize index = 0;
+            const u32 target = drop_target(sx, sy, selection_, index);
+            bool own = true;
+            for (u32 id : d::movable_order(screen_, selection_)) {
+                const d::Node* p = d::parent_of(screen_.root, id);
+                if (!p || p->id != target) own = false;
+            }
+            const u32 wanted = !own && d::move_refusal(screen_, selection_, target).empty() ? target : 0;
+            if (wanted != drop_wait_) {
+                drop_wait_ = wanted;
+                drop_wait_ns_ = time_now_ns();
+                drop_parent_ = 0;
+            }
+            drop_index_ = index;
+        }
         for (const Grabbed& g : grabbed_) {
             d::Node* n = d::find(screen_.root, g.id);
             d::Node* parent = d::parent_of(screen_.root, g.id);
             if (!n || !parent || n->locked) continue;
             if (parent->layout.mode != d::LayoutMode::None && !n->absolute) {
+                if (drop_parent_) continue; // going elsewhere: its row keeps its order
                 // In an auto layout a drag changes the order.
                 const bool row = parent->layout.mode != d::LayoutMode::Column;
                 const f32 at = row ? sx : sy;
@@ -3582,7 +3790,17 @@ void UiEditor::release() {
     }
     case Drag::Marquee: break;
     case Drag::Move:
-        if (moved) {
+        if (moved && drop_parent_) {
+            // Into another frame: each where it was let go, one step with the move.
+            const u32 into = drop_parent_;
+            drop_parent_ = drop_wait_ = 0;
+            std::unordered_map<u32, d::Rect> want;
+            for (const auto& [id, box] : grab_boxes_) want[id] = {box.x + grab_sx_, box.y + grab_sy_, box.w, box.h};
+            if (!move_to(selection_, into, drop_index_, want, grab_json_)) {
+                d::load_screen(grab_json_, screen_); // refused: nothing changes
+                page_dirty_ = true;
+            }
+        } else if (moved) {
             remember_geometry(grab_json_);
             commit(grab_json_, selection_.size() > 1 ? "Сдвинуты слои" : "Сдвинуто");
             history_.seal();
@@ -3644,6 +3862,28 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
             page_dirty_ = true;
             refresh_props();
         }
+        return true;
+    }
+    if (tree_.on) {
+        // A layer carried in the list: Esc lets it go where it was (nothing changed yet).
+        if (k.key == SDLK_ESCAPE) {
+            end_tree_drag();
+            show_move_note({});
+        }
+        return true;
+    }
+    if ((drag_ == Drag::Move || drag_ == Drag::Resize) && k.key == SDLK_ESCAPE) {
+        // Moving or resizing with the mouse: Esc puts all of it back, no step.
+        d::load_screen(grab_json_, screen_);
+        drag_ = Drag::None;
+        dragged_ = false;
+        drop_parent_ = drop_wait_ = 0;
+        snap_lines_.clear();
+        snap_gaps_.clear();
+        page_dirty_ = true;
+        refresh_layers();
+        refresh_props();
+        refresh_overlay();
         return true;
     }
     if (preview_.on && k.key == SDLK_ESCAPE) {
@@ -3819,6 +4059,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("open", &LayerRow::open);
         s.RegisterMember("hidden_by_parent", &LayerRow::hidden_by_parent);
         s.RegisterMember("component", &LayerRow::component);
+        s.RegisterMember("drop", &LayerRow::drop);
     }
     model.RegisterArray<std::vector<LayerRow>>();
     model.RegisterArray<std::vector<Rml::String>>();
@@ -4122,6 +4363,10 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_handles", &m_handles_);
     model.Bind("ue_hover", &m_hover_);
     model.Bind("ue_hovering", &m_hovering_);
+    model.Bind("ue_drop", &m_drop_);
+    model.Bind("ue_dropping", &m_dropping_);
+    model.Bind("ue_drop_label", &m_drop_label_);
+    model.Bind("ue_move_note", &m_move_note_shown_);
     model.Bind("ue_marquee", &m_marquee_);
     model.Bind("ue_marqueeing", &m_marqueeing_);
     model.Bind("ue_measures", &m_measures_);
@@ -4274,6 +4519,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     on("ue_view", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { set_view(arg_int(a, 0)); });
     on("ue_select_screen", [this](Rml::Event&, const Rml::VariantList&) { select({screen_.root.id}); });
     on("ue_layer", [this, arg_int](Rml::Event& ev, const Rml::VariantList& a) {
+        if (tree_.moved) return; // let go after carrying: not a click
         const u32 id = static_cast<u32>(arg_int(a, 0));
         if (ev.GetParameter<int>("shift_key", 0)) {
             std::vector<u32> sel = selection_;
@@ -5187,6 +5433,102 @@ bool UiEditor::timeline_event(const SDL_Event& e, f32 density, Rml::Context* con
             preview_at(timeline_time_at(mx));
             return true;
         }
+    }
+    return false;
+}
+
+void UiEditor::end_tree_drag() {
+    const bool shown = tree_.moved;
+    tree_ = TreeDrag{};
+    if (shown) refresh_layers();
+}
+
+bool UiEditor::tree_target(Rml::Context* context, f32 my) {
+    tree_.row = 0;
+    tree_.where.clear();
+    tree_.parent = 0;
+    Rml::Element* row_el = nullptr;
+    for (Rml::Element* el = context ? context->GetHoverElement() : nullptr; el; el = el->GetParentNode())
+        if (el->GetId().rfind("ue-layer-", 0) == 0) {
+            row_el = el;
+            break;
+        }
+    if (!row_el) return false;
+    const u32 row = static_cast<u32>(std::atoi(row_el->GetId().c_str() + 9));
+    const d::Node* n = d::find(screen_.root, row);
+    const d::Node* p = d::parent_of(screen_.root, row);
+    if (!n || !p) return false;
+    tree_.row = row;
+    if (std::find(tree_.moving.begin(), tree_.moving.end(), row) != tree_.moving.end()) return false; // over itself
+    // The list shows the top of the drawing first: above a row is over that layer, below it is under it.
+    const f32 top = row_el->GetAbsoluteOffset(Rml::BoxArea::Border).y, h = std::max(1.0f, row_el->GetBox().GetSize(Rml::BoxArea::Border).y);
+    const f32 at = (my - top) / h;
+    const bool frame = n->is_container();
+    if (frame && at >= 0.25f && at <= 0.75f) tree_.where = "into";
+    else tree_.where = at < 0.5f ? "above" : "below";
+    // Just under an open frame's row are its own layers: there it goes in, on top of them.
+    const bool open = std::find(closed_.begin(), closed_.end(), row) == closed_.end();
+    if (tree_.where == "below" && frame && open && !n->children.empty()) tree_.where = "into";
+    usize index = 0;
+    if (tree_.where == "into") {
+        tree_.parent = row;
+        index = n->children.size();
+    } else {
+        tree_.parent = p->id;
+        for (const d::Node& c : p->children) {
+            if (c.id == row) break;
+            if (std::find(tree_.moving.begin(), tree_.moving.end(), c.id) == tree_.moving.end()) ++index;
+        }
+        if (tree_.where == "above") ++index;
+    }
+    tree_.index = index;
+    std::string why = previewing() ? std::string("Переносить слои между рамками можно в размере «Макет».")
+                                   : d::move_refusal(screen_, tree_.moving, tree_.parent);
+    if (!why.empty()) {
+        tree_.where = "no";
+        tree_.parent = 0;
+    }
+    show_move_note(why);
+    return tree_.parent != 0;
+}
+
+bool UiEditor::tree_event(const SDL_Event& e, f32 density, Rml::Context* context) {
+    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT && !checking_ && !tree_.on) {
+        // Pressed on a layer's row (not its eye, lock, fold or name being typed): it may be carried.
+        for (Rml::Element* el = context ? context->GetHoverElement() : nullptr; el; el = el->GetParentNode()) {
+            if (el->IsClassSet("ue-eye") || el->IsClassSet("ue-fold") || el->GetTagName() == "input") return false;
+            if (el->GetId().rfind("ue-layer-", 0) == 0) {
+                tree_ = TreeDrag{};
+                tree_.on = true;
+                tree_.id = static_cast<u32>(std::atoi(el->GetId().c_str() + 9));
+                tree_.down_x = e.button.x * density;
+                tree_.down_y = e.button.y * density;
+                return false; // the click selects it as before
+            }
+            if (el->IsClassSet("ue-panel")) break;
+        }
+        return false;
+    }
+    if (!tree_.on) return false;
+    if (e.type == SDL_EVENT_MOUSE_MOTION) {
+        const f32 mx = e.motion.x * density, my = e.motion.y * density;
+        if (!tree_.moved && std::hypot(mx - tree_.down_x, my - tree_.down_y) < 5) return false; // a click, not a carry yet
+        if (!tree_.moved) {
+            tree_.moved = true;
+            // The selection goes when the row is in it; otherwise the row's layer alone (then selected).
+            if (std::find(selection_.begin(), selection_.end(), tree_.id) == selection_.end()) select({tree_.id});
+            tree_.moving = d::movable_order(screen_, selection_);
+        }
+        tree_target(context, my);
+        refresh_layers();
+        return true;
+    }
+    if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
+        const bool moved = tree_.moved;
+        const TreeDrag t = tree_;
+        end_tree_drag();
+        if (moved && t.parent) move_into(t.moving, t.parent, t.index);
+        return moved;
     }
     return false;
 }

@@ -19,7 +19,7 @@ target_compile_definitions(forge_slice PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DI
 # game for its self-test: they run in the game's own screens, packaged too.
 file(GLOB SIMPLE_PAGES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/games/examples/simple-mode/*.html)
 list(SORT SIMPLE_PAGES)
-set(SIMPLE_PAGES_H "// Made by apps/slice/CMakeLists.txt from games/examples/simple-mode/*.html color-picker/*.html and key-timeline/*.html.\n")
+set(SIMPLE_PAGES_H "// Made by apps/slice/CMakeLists.txt from games/examples/simple-mode/*.html color-picker/*.html, key-timeline/*.html and layer-move/перенос_готово.html.\n")
 string(APPEND SIMPLE_PAGES_H "struct SimplePage {\n    const char* name;\n    const char* html;\n};\n")
 string(APPEND SIMPLE_PAGES_H "static const SimplePage kSimplePages[] = {\n")
 foreach(page ${SIMPLE_PAGES})
@@ -48,6 +48,10 @@ foreach(page ${TIMELINE_PAGES})
   string(APPEND SIMPLE_PAGES_H "    {\"${page_name}\", R\"forge_page(${page_html})forge_page\"},\n")
 endforeach()
 string(APPEND SIMPLE_PAGES_H "};\n")
+# And the finished screen of games/examples/layer-move: the button moved from frame A into frame B.
+file(READ ${PROJECT_SOURCE_DIR}/games/examples/layer-move/перенос_готово.html page_html)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/games/examples/layer-move/перенос_готово.html)
+string(APPEND SIMPLE_PAGES_H "static const SimplePage kMovePages[] = {\n    {\"перенос_готово\", R\"forge_page(${page_html})forge_page\"},\n};\n")
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/simple_pages.h CONTENT "${SIMPLE_PAGES_H}" @ONLY)
 target_include_directories(forge_slice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 

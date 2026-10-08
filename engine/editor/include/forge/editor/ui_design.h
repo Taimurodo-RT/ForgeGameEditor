@@ -435,6 +435,23 @@ void renumber(Screen& screen, Node& node);
 // "Прямоугольник 3": the type's word and the next free number on the screen.
 std::string fresh_name(const Screen& screen, NodeType type);
 
+// --- moving layers between frames (13.6) ---
+// The layers among ids that move, in their drawing order (first drawn first): a layer
+// inside another of them goes with it; the root and unknown ids are left out.
+std::vector<u32> movable_order(const Screen& screen, const std::vector<u32>& ids);
+// Why these layers cannot go into parent, in the author's words; empty when they can.
+// Refused: the screen itself; a parent that is not a frame, is one of them or inside
+// one; inside a copy of a component (its layers are the component's), or a layer of
+// one taken out; a list (it repeats its first layer) and a list's layers; the
+// library's variants (they stay at its top) and its top for other layers.
+std::string move_refusal(const Screen& screen, const std::vector<u32>& ids, u32 parent);
+// Moves the layers (movable_order) into parent, before its child at index among the
+// children that do not move (index past the end: on top), each as it is: id, children,
+// links, movement, overrides. places: their x and y in parent, one per moved layer
+// (empty: kept). In a parent with auto layout they join its flow. False when refused.
+bool move_layers(Screen& screen, const std::vector<u32>& ids, u32 parent, usize index,
+                 const std::vector<std::pair<f32, f32>>& places = {});
+
 // --- components ---
 // One component of the library: its variants (library layer ids, in order)
 // and its properties with the values the variants use.

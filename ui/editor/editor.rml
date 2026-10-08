@@ -1129,7 +1129,7 @@
                 <div id="ue-new-screen" class="ue-row row add" data-event-click="ue_new_screen"><icon class="s" name="add"/><span>Новый экран</span></div>
                 <div class="lg-nav-title">Слои</div>
                 <div class="ue-layers grow">
-                    <div data-for="l : ue_layers" class="ue-layer row" data-attr-id="'ue-layer-' + l.id" data-class-selected="l.selected" data-class-comp="l.component" data-class-off="!l.visible || l.hidden_by_parent" data-style-padding-left="(6 + l.depth * 16) + 'px'" data-event-click="ue_layer(l.id)" data-event-dblclick="ue_rename(l.id)">
+                    <div data-for="l : ue_layers" class="ue-layer row" data-attr-id="'ue-layer-' + l.id" data-class-selected="l.selected" data-class-drop-above="l.drop == 'above'" data-class-drop-below="l.drop == 'below'" data-class-drop-into="l.drop == 'into'" data-class-drop-no="l.drop == 'no'" data-class-comp="l.component" data-class-off="!l.visible || l.hidden_by_parent" data-style-padding-left="(6 + l.depth * 16) + 'px'" data-event-click="ue_layer(l.id)" data-event-dblclick="ue_rename(l.id)">
                         <div class="ue-fold" data-if="l.container" data-event-click="ue_layer_fold(l.id)"><icon class="xs" data-attr-name="l.open ? 'expand_more' : 'chevron_right'"/></div>
                         <div class="ue-fold" data-if="!l.container"/>
                         <icon class="s ue-type" data-attr-name="l.icon"/>
@@ -1140,6 +1140,7 @@
                     </div>
                     <div class="ue-empty" data-if="ue_layers.size == 0">Пока пусто: выберите инструмент сверху и нарисуйте на экране.</div>
                 </div>
+                <div id="ue-move-note" class="ue-move-note" data-if="ue_move_note != ''">{{ ue_move_note }}</div>
                 <div class="lg-nav-title" title="Щелчок по компоненту ставит его копию на экран">Компоненты</div>
                 <div class="ue-comps">
                     <div data-for="c : ue_components" class="ue-row row" data-attr-id="'ue-comp-' + it_index" title="Поставить на экран" data-event-click="ue_place(c.name)"><icon class="s ue-comp-icon" data-attr-name="c.icon"/><span class="grow name">{{ c.name }}</span><span class="count" data-if="c.variants > 1">{{ c.variants }}</span></div>
@@ -1168,6 +1169,7 @@
                     <div data-for="g : ue_guides_x" class="ue-guide-x" data-style-left="g.x + 'px'"><span/></div>
                     <div data-for="g : ue_guides_y" class="ue-guide-y" data-style-top="g.y + 'px'"><span/></div>
                     <div class="ue-hover" data-if="ue_hovering" data-style-left="ue_hover.x + 'px'" data-style-top="ue_hover.y + 'px'" data-style-width="ue_hover.w + 'px'" data-style-height="ue_hover.h + 'px'"/>
+                    <div id="ue-drop" class="ue-drop" data-if="ue_dropping" data-style-left="ue_drop.x + 'px'" data-style-top="ue_drop.y + 'px'" data-style-width="ue_drop.w + 'px'" data-style-height="ue_drop.h + 'px'"><div id="ue-drop-label" class="ue-drop-label">{{ ue_drop_label }}</div></div>
                     <div id="ue-safe" class="ue-safe" data-if="ue_has_safe" data-style-left="ue_safe.x + 'px'" data-style-top="ue_safe.y + 'px'" data-style-width="ue_safe.w + 'px'" data-style-height="ue_safe.h + 'px'"/>
                     <div data-for="b : ue_selected" class="ue-picked" data-style-left="b.x + 'px'" data-style-top="b.y + 'px'" data-style-width="b.w + 'px'" data-style-height="b.h + 'px'"><span/></div>
                     <div id="ue-selection" class="ue-selection" data-if="ue_handles" data-style-left="ue_sel_box.x + 'px'" data-style-top="ue_sel_box.y + 'px'" data-style-width="ue_sel_box.w + 'px'" data-style-height="ue_sel_box.h + 'px'">

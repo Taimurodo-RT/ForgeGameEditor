@@ -829,6 +829,65 @@ private:
             sc.remove(name);
             return true;
         }});
+        // The finished screen of games/examples/layer-move: the button the author carried from frame A into frame B
+        // takes the click at its new place and does what it did before; its old place in A is now empty.
+        steps_.push_back({"перенесённая кнопка нажимается на новом месте", 6, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            const char* const name = "перенос_готово";
+            auto presses = [&]() { return s.vars().get("demo.presses").number(); };
+            // A click at a point of the 1920x1080 page, where the fit shows it; what is under the pointer.
+            auto press = [&](f32 x, f32 y) {
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const game::ScreenFit fit = game::fit_screen("expand", 1920, 1080, static_cast<f32>(size.x), static_cast<f32>(size.y));
+                const f32 wx = game::fit_to_view_x(fit, x), wy = game::fit_to_view_y(fit, y);
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_MOUSE_MOTION;
+                ev.motion.x = wx;
+                ev.motion.y = wy;
+                s.handle_event(ev);
+                Rml::Element* hover = s.context()->GetHoverElement();
+                for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                    ev = {};
+                    ev.type = t;
+                    ev.button.button = SDL_BUTTON_LEFT;
+                    ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    ev.button.x = wx;
+                    ev.button.y = wy;
+                    s.handle_event(ev);
+                }
+                return hover ? hover->GetId() : Rml::String();
+            };
+            static f64 before = 0;
+            if (f == 0) {
+                check(std::size(kMovePages) == 1, "в игру встроен экран примера переноса");
+                for (const SimplePage& p : kMovePages)
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                          std::string("экран примера строится: ") + p.name);
+                s.vars().set("demo.presses", 0);
+                sc.show(name, true);
+            }
+            if (f == 2) {
+                Rml::ElementDocument* doc = sc.document(name);
+                Rml::Element* button = doc ? doc->GetElementById("n4") : nullptr;
+                Rml::Element* parent = button ? button->GetParentNode() : nullptr;
+                check(sc.shown(name) && parent && parent->GetId() == "n7", "кнопка на экране лежит в «Рамке Б»");
+                // In B at 100, 100 (B at 1000, 200), 240 by 80: its middle at 1220, 340 of the page.
+                before = presses();
+                const Rml::String got = press(1220, 340);
+                check(got == "n4" || got == "n5", "под мышью на новом месте кнопка: " + got);
+            }
+            if (f == 3) {
+                check(presses() == before + 1, "кнопка на новом месте делает прежнее: demo.presses " + std::to_string(presses()));
+                // Where it was in A (A at 160, 200, the button at 60, 80): its middle at 340, 320 is A's empty fill now.
+                const Rml::String got = press(340, 320);
+                check(got != "n4" && got != "n5", "на старом месте кнопки нет: " + got);
+            }
+            if (f == 4) check(presses() == before + 1, "старое место не нажимает: demo.presses " + std::to_string(presses()));
+            if (f < 5) return false;
+            sc.remove(name);
+            s.vars().set("demo.presses", 0);
+            return true;
+        }});
         // A page drawn bigger than the window, scaled down to it: every button up to the window's right and
         // bottom edges takes the click where it shows, the pointer over it finds it, and the empty bars beside a
         // fitted page take none. (RmlUi checked the clipping of a
