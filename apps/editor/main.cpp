@@ -3230,6 +3230,17 @@ private:
         e->ScrollIntoView(Rml::ScrollAlignment::Nearest);
         return ue_open(id);
     }
+    // A key as the window gives it, through the editor's own way in.
+    void ue_sd_key(SDL_Keycode k, bool down, bool repeat = false, SDL_Keymod mod = SDL_KMOD_NONE) {
+        SDL_Event e{};
+        e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        e.key.key = k;
+        e.key.mod = mod;
+        e.key.down = down;
+        e.key.repeat = repeat;
+        ed_.handle_event(e);
+    }
+    f64 ue_sd_var(const char* name) { return ue().check_vars().get(name).number(); }
     // Only what plays on the check's music bus, as the device would hear it.
     f32 ue_sd_music_peak() {
         audio::Mixer& m = ue().check_mixer();
@@ -6504,6 +6515,115 @@ private:
                 return true;
             case 21:
                 check(snd.music_name().empty() && mixer.voices(audio::Bus::Music) == 0, "out of «Проверить»: silence");
+                // The keyboard in «Проверить», as in the game: on the menu, through the editor's way in.
+                check(ue().open("звук_меню") && click("ue-check") && ue().checking(), "«Проверить» on the menu again");
+                for (const char* v : {"demo.presses", "demo.rings", "demo.quiet"}) ue().check_vars().set(v, 0);
+                return true;
+            case 22:
+                if (wait(snd.music_name() == "мелодия меню.wav", "the menu's music")) return true;
+                if (const auto b = ue().layer_box(ue_named("Нажми"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            case 23:
+                check(ue_sd_var("demo.presses") == 1, "the mouse presses «Нажми» and gives it the focus");
+                ue_sd_clicks_ = snd.clicks();
+                ue_sd_key(SDLK_RETURN, true);
+                ue_sd_key(SDLK_RETURN, false);
+                return true;
+            case 24:
+                check(ue_sd_var("demo.presses") == 2 && snd.clicks() == ue_sd_clicks_ + 1 && snd.last_click() == "щелчок.wav",
+                      "Enter presses the focused button once, with its sound: " + std::to_string(ue_sd_var("demo.presses")) + " " +
+                          std::to_string(snd.clicks() - ue_sd_clicks_));
+                // Held: the repeats and the key going up press nothing more.
+                ue_sd_key(SDLK_RETURN, true);
+                ue_sd_key(SDLK_RETURN, true, true);
+                ue_sd_key(SDLK_RETURN, true, true);
+                ue_sd_key(SDLK_RETURN, false);
+                return true;
+            case 25:
+                check(ue_sd_var("demo.presses") == 3 && snd.clicks() == ue_sd_clicks_ + 2,
+                      "Enter held: once, not with its repeats nor going up: " + std::to_string(ue_sd_var("demo.presses")));
+                ue_sd_key(SDLK_SPACE, true);
+                ue_sd_key(SDLK_SPACE, false);
+                return true;
+            case 26:
+                check(ue_sd_var("demo.presses") == 4 && snd.clicks() == ue_sd_clicks_ + 3, "Space presses once, with its sound");
+                ue_sd_key(SDLK_KP_ENTER, true);
+                ue_sd_key(SDLK_KP_ENTER, false);
+                return true;
+            case 27:
+                check(ue_sd_var("demo.presses") == 5 && snd.clicks() == ue_sd_clicks_ + 4, "keypad Enter presses once, with its sound");
+                // With Ctrl it is the editor's key, not the button's.
+                ue_sd_key(SDLK_RETURN, true, false, SDL_KMOD_LCTRL);
+                ue_sd_key(SDLK_RETURN, false, false, SDL_KMOD_LCTRL);
+                // Tab: the next button has the focus.
+                ue_sd_key(SDLK_TAB, true);
+                ue_sd_key(SDLK_TAB, false);
+                return true;
+            case 28:
+                check(ue_sd_var("demo.presses") == 5 && snd.clicks() == ue_sd_clicks_ + 4, "Ctrl+Enter does not press");
+                ue_sd_key(SDLK_RETURN, true);
+                ue_sd_key(SDLK_RETURN, false);
+                return true;
+            case 29:
+                check(ue_sd_var("demo.rings") == 1 && ue_sd_var("demo.presses") == 5 && snd.last_click() == "звон.wav",
+                      "Tab gives «Звон» the focus, Enter rings it: " + std::to_string(ue_sd_var("demo.rings")));
+                // Another tab: the hidden check is silent, its keys go nowhere.
+                ue_sd_starts_ = snd.music_starts();
+                ue_sd_clicks_ = snd.clicks();
+                check(click_tab(0) && ed_.tab() == "level", "the Level tab");
+                return true;
+            case 30:
+                if (wait(snd.music_name().empty(), "on another tab the check's music stops")) return true;
+                check(mixer.voices(audio::Bus::Music) == 0, "no music voice on another tab");
+                check(ue_sd_music_peak() < 1e-4f, "and nothing is heard: " + std::to_string(ue_sd_music_peak()));
+                ue_sd_key(SDLK_RETURN, true);
+                ue_sd_key(SDLK_RETURN, false);
+                check(ue_sd_var("demo.rings") == 1 && snd.clicks() == ue_sd_clicks_, "Enter on another tab presses nothing");
+                check(click_tab(8) && ed_.tab() == "ui" && ue().checking(), "back on «Интерфейс», still in «Проверить»");
+                return true;
+            case 31:
+                if (wait(mixer.voices(audio::Bus::Music) == 1, "the music comes back")) return true;
+                check(snd.music_name() == "мелодия меню.wav" && snd.music_starts() == ue_sd_starts_ + 1 && ue_sd_music_peak() > 0.05f,
+                      "back: the menu's music, one, heard");
+                // Again: away and back.
+                check(click_tab(0), "away again");
+                return true;
+            case 32:
+                check(mixer.voices(audio::Bus::Music) == 0 && ue_sd_music_peak() < 1e-4f, "away again: silent");
+                check(click_tab(8), "back again");
+                return true;
+            case 33:
+                if (wait(mixer.voices(audio::Bus::Music) == 1, "the music comes back again")) return true;
+                check(snd.music_starts() == ue_sd_starts_ + 2 && mixer.voices(audio::Bus::Music) == 1, "back again: one music, not two");
+                check(click("ue-check") && !ue().checking(), "out of «Проверить» with its button");
+                return true;
+            case 34:
+                check(mixer.voices(audio::Bus::Music) == 0 && snd.music_name().empty(), "out of «Проверить»: the music stops");
+                ue_sd_clicks_ = snd.clicks();
+                ue_sd_key(SDLK_RETURN, true);
+                ue_sd_key(SDLK_RETURN, false);
+                check(ue_sd_var("demo.rings") == 1 && ue_sd_var("demo.presses") == 5 && snd.clicks() == ue_sd_clicks_,
+                      "out of «Проверить»: Enter does not press the page's button");
+                // Over the game no button takes the keys: Space and Enter stay the game's.
+                check(ue().open("звук_игра") && click("ue-check") && ue().checking(), "«Проверить» on the screen over the game");
+                return true;
+            case 35:
+                if (const auto b = ue().layer_box(ue_named("Окно"))) {
+                    // The mouse over the button without pressing it, then the keys.
+                    SDL_Event e{};
+                    e.type = SDL_EVENT_MOUSE_MOTION;
+                    e.motion.x = ue_wx(b->cx());
+                    e.motion.y = ue_wy(b->cy());
+                    ed_.handle_event(e);
+                }
+                for (SDL_Keycode k : {SDLK_SPACE, SDLK_RETURN, SDLK_KP_ENTER}) {
+                    ue_sd_key(k, true);
+                    ue_sd_key(k, false);
+                }
+                return true;
+            case 36:
+                check(ue().opened() == "звук_игра" && snd.clicks() == ue_sd_clicks_, "over the game Space and Enter press no button");
+                ue().set_checking(false);
                 ue().list_sounds = ue_sd_list_;
                 check(ue().open("main_menu"), "back to the menu");
                 break;

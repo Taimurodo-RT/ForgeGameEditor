@@ -247,6 +247,7 @@ public:
     Rml::ElementDocument* page() const { return page_; }
     // Mouse on the screen's own pixels, as the check passes it to the page.
     void check_mouse(f32 x, f32 y, int button_down, int button_up);
+    bool check_key(const SDL_KeyboardEvent& k); // the game's keys for its buttons, in «Проверить»
 
     // The design panel's tab: "design" (how the layer looks), "game" (what
     // it does in the game: clicks, a bar, when it shows) or "motion" (how it

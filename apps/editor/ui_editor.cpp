@@ -548,6 +548,9 @@ std::string UiEditor::status() const {
 void UiEditor::set_shown(bool shown) {
     if (shown == shown_) return;
     if (!shown) close_picker(true);
+    // A hidden tab is not updated: its check is silent until the tab is back, where the screen's music comes
+    // again (once: the screens ask for it anew).
+    if (!shown && check_) check_->stop_music();
     shown_ = shown;
     if (ui_ && page_context_) ui_->set_active(page_context_, shown);
     if (shown) {
@@ -3526,6 +3529,8 @@ bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* conte
             }
         }
     }
+    if (e.type == SDL_EVENT_KEY_UP && e.key.key == SDLK_SPACE) space_down_ = false;
+    if (e.type == SDL_EVENT_KEY_UP && check_key(e.key)) return true;
     switch (e.type) {
     case SDL_EVENT_KEY_UP:
         if (e.key.key == SDLK_SPACE) space_down_ = false;
@@ -4105,8 +4110,9 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if (checking_) {
-        // Keys do not edit while checking; Esc ends it.
+        // Keys do not edit while checking; Esc ends it. The game's keys for its buttons go to the page.
         if (k.key == SDLK_ESCAPE) set_checking(false);
+        if (check_key(k)) return true;
         return k.key == SDLK_ESCAPE || k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE;
     }
     const bool ctrl = k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI);
@@ -4943,6 +4949,23 @@ bool UiEditor::picker_live(bool on) {
     switch_checking(on);
     picker_dropper(on);
     refresh_picker();
+    return true;
+}
+
+// Tab, Enter, Space and keypad Enter in «Проверить», as in the game: Tab and the mouse give a button of a menu or a
+// pausing window the focus, Enter and Space press it once (a held key does not press again, as `game::Shell`
+// keeps it). Over a screen on top of the game no button takes the focus, so Space stays the game's. With Ctrl,
+// Alt or Gui they are the editor's.
+bool UiEditor::check_key(const SDL_KeyboardEvent& k) {
+    if (!checking_ || !ui_ || !page_context_ || !page_from_check_) return false;
+    if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) return false;
+    const bool press = k.key == SDLK_RETURN || k.key == SDLK_KP_ENTER || k.key == SDLK_SPACE;
+    if (!press && k.key != SDLK_TAB) return false;
+    if (k.type == SDL_EVENT_KEY_DOWN && k.repeat && press && check_ && check_->has_focus(page_context_)) return true;
+    SDL_Event e{};
+    e.key = k;
+    e.type = k.type;
+    ui_->handle_event(page_context_, e);
     return true;
 }
 
