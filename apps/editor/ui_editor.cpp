@@ -5010,6 +5010,23 @@ void UiEditor::refresh_check() {
     dirty("ue_check_log");
 }
 
+// The screen the game shows as its menu: «main_menu», or the first set to show as the menu.
+std::string UiEditor::menu_screen() const {
+    std::string first;
+    for (const std::string& name : screens()) {
+        std::vector<u8> bytes;
+        d::Screen s;
+        if (name == name_) s = screen_;
+        else if (!read_file(json_path(name), bytes) ||
+                 !d::load_screen(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), s))
+            continue;
+        if (s.library || s.show != d::ScreenShow::Menu) continue;
+        if (name == "main_menu") return name;
+        if (first.empty()) first = name;
+    }
+    return first;
+}
+
 void UiEditor::check_action(const game::ScreenAction& a) {
     const std::string& t = a.target;
     std::string said;
@@ -5044,6 +5061,11 @@ void UiEditor::check_action(const game::ScreenAction& a) {
             e.run(check_vars_);
             said = "Данные: " + t;
         }
+    } else if (a.what == "menu" && name_ != menu_screen() && !menu_screen().empty()) {
+        // As in the game: the windows close, the game's menu comes back.
+        check_back_.clear();
+        open(menu_screen());
+        said = "Кнопка: В главное меню";
     } else if (a.what == "message") said = "Сообщение «Логике»: " + t;
     else if (a.what == "talk") said = "Разговор «" + t + "»";
     else {

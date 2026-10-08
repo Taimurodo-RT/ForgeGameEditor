@@ -6624,6 +6624,20 @@ private:
             case 36:
                 check(ue().opened() == "звук_игра" && snd.clicks() == ue_sd_clicks_, "over the game Space and Enter press no button");
                 ue().set_checking(false);
+                // «В главное меню» on a window in «Проверить»: the game's menu comes back, as in the game.
+                check(ue().open("звук_окно"), "the window");
+                ue().select({ue_named("Закрыть")});
+                check(ue().set_property("click.0.kind", "menu") && ue().set_property("click_sound", "none"), "«Закрыть» goes to the main menu");
+                ue().select({});
+                check(click("ue-check") && ue().checking(), "«Проверить» on the window");
+                return true;
+            case 37:
+                if (const auto b = ue().layer_box(ue_named("Закрыть"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            case 38:
+                if (wait(ue().opened() == "main_menu", "«В главное меню» opens the main menu")) return true;
+                check(ue().checking(), "still in «Проверить», now on the menu");
+                ue().set_checking(false);
                 ue().list_sounds = ue_sd_list_;
                 check(ue().open("main_menu"), "back to the menu");
                 break;
