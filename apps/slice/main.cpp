@@ -283,38 +283,49 @@ private:
             }
             if (f == 6) {
                 check(num("demo.quiet") == 1 && snd.clicks() == clicks + 2, "«Тихо»: действие есть, звука нет");
-                press_page(s, 200, 950); // the background: nothing to press
+                // The mouse leaves the keyboard's focus on the button it pressed (not on its label).
+                check(s.context()->GetFocusElement() == titled(sc.document("звук_меню"), "Тихо") && sc.has_focus(s.context()),
+                      "нажатая мышью кнопка берёт фокус клавиатуры");
+                key(s, SDLK_SPACE, true);
+                key(s, SDLK_SPACE, false);
             }
             if (f == 7) {
-                check(snd.clicks() == clicks + 2 && num("demo.presses") == 1, "пустое место не звучит и не нажимает");
-                // The keyboard: the menu's buttons take Tab, Enter and Space.
-                Rml::Element* b = titled(sc.document("звук_меню"), "Нажми");
-                check(b && b->Focus(), "кнопка меню берёт фокус клавиатуры");
-                key(s, SDLK_RETURN, true);
+                check(num("demo.quiet") == 2 && snd.clicks() == clicks + 2, "пробел после мыши нажимает ту же кнопку, без звука");
+                press_page(s, 200, 950); // the background: nothing to press
             }
             if (f == 8) {
+                check(snd.clicks() == clicks + 2 && num("demo.presses") == 1 && num("demo.quiet") == 2, "пустое место не звучит и не нажимает");
+                // Tab: the first of the menu's buttons takes the keyboard.
+                key(s, SDLK_TAB, true);
+                key(s, SDLK_TAB, false);
+                check(s.context()->GetFocusElement() == titled(sc.document("звук_меню"), "Нажми"), "Tab даёт фокус первой кнопке меню");
+                key(s, SDLK_RETURN, true);
+                key(s, SDLK_RETURN, false);
+            }
+            if (f == 9) {
                 check(num("demo.presses") == 2 && snd.clicks() == clicks + 3, "Enter нажимает кнопку один раз, со звуком");
+                key(s, SDLK_RETURN, true);
                 key(s, SDLK_RETURN, true, true); // held: repeats
                 key(s, SDLK_RETURN, true, true);
                 key(s, SDLK_RETURN, false);
             }
-            if (f == 9) {
-                check(num("demo.presses") == 2 && snd.clicks() == clicks + 3, "удержание и отпускание Enter не нажимают снова");
+            if (f == 10) {
+                check(num("demo.presses") == 3 && snd.clicks() == clicks + 4, "удержание и отпускание Enter не нажимают снова");
                 key(s, SDLK_SPACE, true);
                 key(s, SDLK_SPACE, false);
             }
-            if (f == 10) {
-                check(num("demo.presses") == 3 && snd.clicks() == clicks + 4, "пробел нажимает один раз");
+            if (f == 11) {
+                check(num("demo.presses") == 4 && snd.clicks() == clicks + 5, "пробел нажимает один раз");
                 // Loaded again (saved in the editor while the game runs): the music goes on, not twice.
                 for (const SimplePage& p : kSoundPages)
                     if (std::string(p.name) == "звук_меню") sc.load_page(s.context(), p.name, p.html, "test/ui/звук_меню.html");
             }
-            if (f == 13) {
+            if (f == 14) {
                 check(snd.music_starts() == starts + 1 && g.sounds().mixer().voices(audio::Bus::Music) == 1,
                       "страница загружена снова: музыка та же, не вторая");
                 for (const SimplePage& p : kSoundPages) sc.remove(p.name);
             }
-            if (f == 15) {
+            if (f == 16) {
                 check(sc.music().empty() && !snd.music_playing() && g.sounds().mixer().voices(audio::Bus::Music) == 0,
                       "меню примера ушло: его музыка остановлена");
                 snd.attach(&g.sounds().mixer(), kept);
@@ -1105,8 +1116,11 @@ private:
                           mixer.voices(audio::Bus::Music) == 1,
                       "окно со своей музыкой: музыка игры остановлена, играет музыка окна");
                 check(sc.pauses(), "окно остановило мир");
+                // Tab in the window that has just opened: its first button takes the keyboard.
+                key(s, SDLK_TAB, true);
+                key(s, SDLK_TAB, false);
                 Rml::Element* ring = titled(sc.document("звук_окно"), "Звон");
-                check(ring && ring->Focus(), "кнопка окна берёт фокус клавиатуры");
+                check(ring && s.context()->GetFocusElement() == ring, "Tab даёт фокус первой кнопке окна");
                 key(s, SDLK_RETURN, true);
                 key(s, SDLK_RETURN, true, true);
                 key(s, SDLK_RETURN, false);

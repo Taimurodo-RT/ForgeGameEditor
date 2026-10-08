@@ -769,7 +769,10 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
             const bool moves = !p.appear.empty() && p.root;
             if (visible) {
                 if (!p.doc->IsVisible()) {
-                    p.doc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+                    // A menu or a window that stops the game takes the keyboard (Tab goes to its buttons); a
+                    // screen over the running game leaves it to the game.
+                    const bool keys = p.role == ScreenRole::Menu || (p.role == ScreenRole::Command && p.pauses);
+                    p.doc->Show(Rml::ModalFlag::None, keys ? Rml::FocusFlag::Document : Rml::FocusFlag::None);
                     restacked = true;
                 }
                 // Comes in (from wherever it was going away).
@@ -893,6 +896,11 @@ bool GameScreens::click(Rml::Element* element) {
         if (!e->HasAttribute("forge-click")) continue;
         for (Rml::Element* up = e; up; up = up->GetParentNode())
             if (up->HasAttribute("forge-disabled")) return true; // off: no actions, no sound
+        // The mouse leaves the focus on what it pressed, often a label inside: the button itself takes it, so
+        // Enter and Space press it again (only a button the keyboard may press, `tab-index: auto`).
+        if (e->GetComputedValues().tab_index() == Rml::Style::TabIndex::Auto && e->GetContext() &&
+            e->GetContext()->GetFocusElement() != e)
+            e->Focus();
         Page* p = impl_->of(e->GetOwnerDocument());
         const std::string page = p ? p->name : std::string();
         // Its sound once, as it does what it does.
