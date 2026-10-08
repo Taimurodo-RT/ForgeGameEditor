@@ -2898,7 +2898,11 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
     const d::Node* target = d::find(screen_.root, parent);
     const bool flow = target->layout.mode != d::LayoutMode::None;
     const std::string label = parent == screen_.root.id ? std::string("Перенесено на экран") : "Перенесено в «" + target->name + "»";
-    const d::Rect pbox = layer_box(parent).value_or(d::Rect{0, 0, target->w, target->h});
+    // The frame's own size, kept as numbers: the move below takes layers out of vectors, and a pointer into the
+    // tree (target) may then name another layer.
+    const f32 own_w = target->w, own_h = target->h;
+    target = nullptr;
+    const d::Rect pbox = layer_box(parent).value_or(d::Rect{0, 0, own_w, own_h});
     std::string squeezed; // anchored «Растянуть» in a frame stretched more than it is long
     if (!d::move_layers(screen_, ids, parent, index)) return false;
     page_dirty_ = true;
@@ -2918,7 +2922,7 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
                 n->h = std::round(w->second.h);
             }
             // In a free frame each keeps its place on the screen, counted from the new frame through its anchoring.
-            if (!d::place_at(*n, w->second, target->w, target->h, pbox)) squeezed = n->name;
+            if (!d::place_at(*n, w->second, own_w, own_h, pbox)) squeezed = n->name;
         }
     }
     if (!flow && page_) {
@@ -2937,9 +2941,9 @@ bool UiEditor::move_to(const std::vector<u32>& ids, u32 parent, usize index, con
             // Where the frame shows otherwise than before the move, the anchoring's answer for it; else what the
             // page made of it is off (its rounding, a size it keeps): the wanted box moved by that much.
             const f32 x0 = n->x, y0 = n->y, w0 = n->w, h0 = n->h;
-            if (!d::place_at(*n, w->second, target->w, target->h, shown_parent)) squeezed = n->name;
+            if (!d::place_at(*n, w->second, own_w, own_h, shown_parent)) squeezed = n->name;
             if (squeezed.empty() && n->x == x0 && n->y == y0 && n->w == w0 && n->h == h0)
-                d::place_at(*n, {w->second.x + off.x, w->second.y + off.y, w->second.w + off.w, w->second.h + off.h}, target->w, target->h,
+                d::place_at(*n, {w->second.x + off.x, w->second.y + off.y, w->second.w + off.w, w->second.h + off.h}, own_w, own_h,
                             shown_parent);
             page_dirty_ = true;
         }

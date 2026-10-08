@@ -3228,6 +3228,11 @@ private:
     usize ue_mv_fill_cursor_ = 0;
     u32 ue_mv_inst_ = 0;
     int ue_mv_variant_ = 0; // 0: the frame stretched by a row, 1: by a column
+    int ue_mv_variant2_ = 0; // neighbours: 0 one frame, 1 two layers, 2 inside a frame
+    std::vector<u32> ue_mv_sources_;
+    u32 ue_mv_target_ = 0;
+    std::vector<std::pair<u32, editor::design::Rect>> ue_mv_boxes_;
+    std::string ue_mv_kids_;
     // A point in a layer's row of the layers' list: frac 0 its top, 1 its bottom (window pixels).
     bool ue_mv_row(u32 id, f32 frac, f32& x, f32& y) {
         Rml::Element* e = ed_.find_element(("ue-layer-" + std::to_string(id)).c_str());
@@ -5951,7 +5956,91 @@ private:
                 }
                 return true;
             }
-            case 25:
+            case 25: {
+                // Frames anchored «Пропорционально» carried into a frame with another layer of another size after it
+                // among the same children: taking the carried out of their list moves what follows, and the frame
+                // must still be the one they go into. 0: «Рамка А» into «Рамка Б» (on the screen «Окошко» after Б);
+                // 1: the title and «Рамка А» together; 2: inside «Рамка Б», «Подпись» into «Ряд» (made free) with
+                // «Окошко» after it.
+                ue_mv_sources_.clear();
+                if (ue_mv_variant2_ <= 1) {
+                    check(ue().move_into({12}, 1, 3) && ue_mv_kids(1) == "2 3 7 12", "«Окошко» onto the screen after «Рамка Б»");
+                    ue_mv_sources_ = ue_mv_variant2_ == 0 ? std::vector<u32>{3} : std::vector<u32>{2, 3};
+                    ue_mv_target_ = 7;
+                } else {
+                    ue().select({9});
+                    check(ue().set_property("layout.mode", "none"), "«Ряд» a free frame");
+                    ue_mv_sources_ = {8};
+                    ue_mv_target_ = 9;
+                }
+                for (u32 id : ue_mv_sources_) {
+                    ue().select({id});
+                    check(ue().set_property("horizontal", "scale") && ue().set_property("vertical", "scale"), "anchored «Пропорционально» both ways");
+                }
+                ue().select(ue_mv_sources_);
+                ue_mv_fill_json_ = d::save_screen(ue().screen());
+                ue_mv_fill_cursor_ = ue().history().cursor();
+                return true;
+            }
+            case 26: {
+                ue_mv_boxes_.clear();
+                for (u32 id : ue_mv_sources_) {
+                    ue_mv_boxes_.emplace_back(id, ue().layer_box(id).value_or(d::Rect{}));
+                    if (const d::Node* n = ue_node(id))
+                        for (const d::Node& c : n->children) ue_mv_boxes_.emplace_back(c.id, ue().layer_box(c.id).value_or(d::Rect{}));
+                }
+                ue_mv_kids_ = ue_mv_kids(ue_mv_sources_.back());
+                check(ue_mv_carry(ue_mv_sources_.back(), ue_mv_target_, kHalf), "carried into the frame");
+                bool in = true;
+                for (u32 id : ue_mv_sources_) in = in && ue_mv_parent(id) == ue_mv_target_;
+                check(in && ue().history().cursor() == ue_mv_fill_cursor_ + 1, "all in, one step: " + ue_mv_kids(ue_mv_target_));
+                return true;
+            }
+            case 27:
+            case 28:
+            case 29: {
+                const int at = ue_mv_stage_ - 1;
+                std::string off;
+                for (const auto& [id, was] : ue_mv_boxes_) {
+                    const auto b = ue().layer_box(id);
+                    if (!b || !ue_mv_near(b, was.x, was.y) || std::fabs(b->w - was.w) > 0.6f || std::fabs(b->h - was.h) > 0.6f)
+                        off += " " + std::to_string(id) + (b ? " at " + std::to_string(b->x) + " " + std::to_string(b->y) + " " + std::to_string(b->w) +
+                                                                   " " + std::to_string(b->h)
+                                                             : std::string(" none"));
+                }
+                bool kept = ue_mv_kids(ue_mv_sources_.back()) == ue_mv_kids_;
+                for (u32 id : ue_mv_sources_)
+                    if (const d::Node* n = ue_node(id))
+                        kept = kept && n->horizontal == d::Constraint::Scale && n->vertical == d::Constraint::Scale && n->w > 0 && n->h > 0;
+                    else
+                        kept = false;
+                check(off.empty() && kept, std::string(at == 27 ? "carried" : at == 28 ? "after Ctrl+Y" : "opened again") +
+                                               ": where and as big as before, with its layers and anchoring" + off);
+                if (at == 27) {
+                    key(SDLK_Z, SDL_KMOD_CTRL);
+                    check(d::save_screen(ue().screen()) == ue_mv_fill_json_ && ue().history().cursor() == ue_mv_fill_cursor_, "Ctrl+Z: as before");
+                    key(SDLK_Y, SDL_KMOD_CTRL);
+                    check(ue_mv_parent(ue_mv_sources_.back()) == ue_mv_target_, "Ctrl+Y: in again");
+                } else if (at == 28) {
+                    const std::string moved = d::save_screen(ue().screen());
+                    check(ue().open("main_menu") && ue().open("перенос_пример") && d::save_screen(ue().screen()) == moved, "saved, opened again: the same");
+                } else {
+                    const std::filesystem::path from = utf8_path(FORGE_EXAMPLES_DIR) / "layer-move";
+                    std::error_code ec;
+                    for (const char* ext : {".json", ".html"})
+                        std::filesystem::copy_file(from / utf8_path(std::string("перенос_пример") + ext),
+                                                   ed_.ui_game_dir / "ui" / utf8_path(std::string("перенос_пример") + ext),
+                                                   std::filesystem::copy_options::overwrite_existing, ec);
+                    check(!ec && ue().open("main_menu") && ue().open("перенос_пример") && d::save_screen(ue().screen()) == ue_mv_orig_,
+                          "the example as it came");
+                    ue_mv_cursor_ = ue().history().cursor();
+                    ue().select({});
+                    if (++ue_mv_variant2_ <= 2) ue_mv_stage_ = 25;
+                    else ue_mv_variant2_ = 0;
+                }
+                return true;
+            }
+            case 30:
                 // Two picked: both go, both stay picked.
                 ue().select({4, 6});
                 check(ue_mv_carry(4, 7, kHalf) && ue_mv_parent(4) == 7 && ue_mv_parent(6) == 7 && ue_mv_kids(7) == "8 9 12 4 6" &&
@@ -5973,7 +6062,7 @@ private:
                 mouse(SDL_EVENT_MOUSE_MOTION, ue_wx(900), ue_wy(900));
                 ue_wheel(-1);
                 return true;
-            case 26:
+            case 31:
                 check(std::fabs(ue().zoom() - 0.62f) < 1e-4f, "zoomed to 62 %");
                 // Passing over frames without resting: it only moves. Over «Рамка Б» for a frame or two (the editor's
                 // update runs between), shorter than the rest that takes it in.
@@ -5981,8 +6070,8 @@ private:
                 check(ue_mv_take(4, 1300, 300), "the button taken on the canvas, over «Рамка Б»");
                 ue_mv_t_ = time_now_ns();
                 return true;
-            case 27: return true;
-            case 28: {
+            case 32: return true;
+            case 33: {
                 const f64 passed = ns_to_ms(time_now_ns() - ue_mv_t_) / 1000.0;
                 if (passed < 0.45)
                     check(ue().drop_parent() == 0 && !shown("ue-drop"),
@@ -5998,16 +6087,16 @@ private:
                 check(ue_mv_same(), "Ctrl+Z");
                 return true;
             }
-            case 29:
+            case 34:
                 // Rested over «Окошко» (inside «Рамка Б»): it would go there.
                 ue().select({3}); // a click in «Рамка А» picks what is in it
                 check(ue_mv_take(4, 1500, 380), "taken to «Окошко»");
                 return true;
-            case 30:
+            case 35:
                 if (wait(ue().drop_parent() == 12, "resting over «Окошко»: it would go in")) return true;
                 check(ue().canvas_moving() && ue().history().cursor() == ue_mv_cursor_, "held: nothing in the history");
                 return true;
-            case 31: {
+            case 36: {
                 Rml::Element* label = ed_.find_element("ue-drop-label");
                 check(shown("ue-drop") && label && label->GetInnerRML() == "В рамку «Окошко»",
                       "«Окошко» outlined and named: " + (label ? label->GetInnerRML() : std::string("нет")));
@@ -6019,7 +6108,7 @@ private:
                 check(b && b->x == ue_mv_box_.x - 1420 && b->y == ue_mv_box_.y - 300, "its place counted from «Окошко» (in «Рамка Б»)");
                 return true;
             }
-            case 32:
+            case 37:
                 check(ue_mv_near(ue().layer_box(4), ue_mv_box_.x, ue_mv_box_.y), "where it was let go, no jump");
                 key(SDLK_Z, SDL_KMOD_CTRL);
                 check(ue_mv_same(), "Ctrl+Z: back in «Рамка А», where it was");
@@ -6028,23 +6117,23 @@ private:
                 key(SDLK_Z, SDL_KMOD_CTRL);
                 check(ue_mv_same(), "Ctrl+Z");
                 return true;
-            case 33:
+            case 38:
                 ue().select({3}); // a click in «Рамка А» picks what is in it
                 check(ue_mv_take(4, 1500, 380), "taken to «Окошко» again");
                 return true;
-            case 34:
+            case 39:
                 if (wait(ue().drop_parent() == 12, "resting over «Окошко» again")) return true;
                 key(SDLK_ESCAPE, SDL_KMOD_NONE);
                 check(!ue().canvas_moving() && ue_mv_same(), "Esc: all of it back, no step");
                 mouse(SDL_EVENT_MOUSE_BUTTON_UP, ue_mv_x_, ue_mv_y_);
                 check(ue_mv_same(), "letting go after Esc: nothing");
                 return true;
-            case 35:
+            case 40:
                 // A layer of a list stays in it: resting over another frame does not offer it, it only moves.
                 check(ue().make_list(6, d::ListSource::Items), "the picture made a list");
                 ue_mv_listed_ = d::save_screen(ue().screen());
                 return true;
-            case 36: {
+            case 41: {
                 const d::Node* list = ue_node(ue_mv_parent(6));
                 const u32 empty = list && list->children.size() == 2 ? list->children[1].id : 0;
                 ue().select({list ? list->id : 0});
@@ -6053,7 +6142,7 @@ private:
                 ue_mv_t_ = time_now_ns();
                 return true;
             }
-            case 37:
+            case 42:
                 if (ns_to_ms(time_now_ns() - ue_mv_t_) < 1000.0 * (UiEditor::drop_wait_seconds() + 0.3)) {
                     --ue_mv_stage_;
                     return true;
@@ -6065,12 +6154,12 @@ private:
                 key(SDLK_Z, SDL_KMOD_CTRL);
                 check(ue_mv_same(), "Ctrl+Z: no list");
                 return true;
-            case 38:
+            case 43:
                 // Into the row, between its cells.
                 ue().select({3});
                 check(ue_mv_take(6, 1200, 670), "the picture taken between the row's cells");
                 return true;
-            case 39:
+            case 44:
                 if (wait(ue().drop_parent() == 9, "resting over «Ряд»")) return true;
                 check(ue().drop_index() == 1, "it would go between the cells: " + std::to_string(ue().drop_index()));
                 mouse(SDL_EVENT_MOUSE_BUTTON_UP, ue_mv_x_, ue_mv_y_);
@@ -6078,18 +6167,18 @@ private:
                 key(SDLK_Z, SDL_KMOD_CTRL);
                 check(ue_mv_same(), "Ctrl+Z");
                 return true;
-            case 40:
+            case 45:
                 // What a frame hides is not a place: «Ряд» lower, sticking out of «Рамка Б» below.
                 ue().select({9});
                 check(ue().set_property("y", "560"), "«Ряд» lower, past «Рамка Б»'s edge");
                 ue_mv_json_ = d::save_screen(ue().screen());
                 ue_mv_cursor_ = ue().history().cursor();
                 return true;
-            case 41:
+            case 46:
                 ue().select({3}); // a click in «Рамка А» picks what is in it
                 check(ue_mv_take(4, 1300, 900), "the button taken to the hidden part of «Ряд»");
                 return true;
-            case 42: {
+            case 47: {
                 if (wait(ue().drop_parent() != 0, "resting there")) return true;
                 check(ue().drop_parent() == 1, "there it would go onto the screen, not into «Ряд»: " + std::to_string(ue().drop_parent()));
                 key(SDLK_ESCAPE, SDL_KMOD_NONE);
@@ -6106,17 +6195,17 @@ private:
                 ue_mv_cursor_ = ue().history().cursor();
                 return true;
             }
-            case 43:
+            case 48:
                 // At last: the button into «Рамка Б» on the canvas, kept.
                 ue().select({3}); // a click in «Рамка А» picks what is in it
                 check(ue_mv_take(4, 1200, 320), "the button taken into «Рамка Б»");
                 return true;
-            case 44:
+            case 49:
                 if (wait(ue().drop_parent() == 7, "resting over «Рамка Б»")) return true;
                 mouse(SDL_EVENT_MOUSE_BUTTON_UP, ue_mv_x_, ue_mv_y_);
                 check(ue_mv_parent(4) == 7, "in «Рамка Б»");
                 return true;
-            case 45: {
+            case 50: {
                 ue_mv_box_ = ue().layer_box(4).value_or(d::Rect{});
                 ue_mv_json_ = d::save_screen(ue().screen());
                 check(ue().open("main_menu") && ue().open("перенос_пример") && d::save_screen(ue().screen()) == ue_mv_json_ &&
@@ -6126,43 +6215,43 @@ private:
                 check(click("ue-mode-simple") && ue().simple() && d::save_screen(ue().screen()) == ue_mv_json_, "«Простой»: nothing changes");
                 return true;
             }
-            case 46:
+            case 51:
                 check(shown("ue-layer-4") && ue_mv_parent(4) == 7, "in «Простой» the button is in «Рамка Б» too");
                 check(click("ue-mode-full") && !ue().simple() && d::save_screen(ue().screen()) == ue_mv_json_, "«Полный» again");
                 check(click("ue-check") && ue().checking(), "«Проверить»");
                 return true;
-            case 47:
+            case 52:
                 ue_mv_presses_ = ue().check_vars().get("demo.presses").number();
                 left_click(ue_wx(ue_mv_box_.cx()), ue_wy(ue_mv_box_.cy()));
                 return true;
-            case 48:
+            case 53:
                 check(ue().check_vars().get("demo.presses").number() == ue_mv_presses_ + 1, "the button pressed where it is now");
                 left_click(ue_wx(220 + 120), ue_wy(280 + 40));
                 return true;
-            case 49:
+            case 54:
                 check(ue().check_vars().get("demo.presses").number() == ue_mv_presses_ + 1, "nothing at its old place");
                 ue().set_checking(false);
                 ue().set_view(5);
                 check(click("ue-check") && ue().checking() && ue().view() == 5, "«Проверить» on 4:3");
                 return true;
-            case 50: {
+            case 55: {
                 const auto b = ue().layer_box(4);
                 check(b.has_value(), "the button on 4:3");
                 if (b) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
                 return true;
             }
-            case 51:
+            case 56:
                 check(ue().check_vars().get("demo.presses").number() == ue_mv_presses_ + 2, "pressed on 4:3");
                 ue().set_checking(false);
                 ue().set_view(4);
                 check(click("ue-check") && ue().checking() && ue().view() == 4, "«Проверить» on 21:9");
                 return true;
-            case 52: {
+            case 57: {
                 const auto b = ue().layer_box(4);
                 if (b) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
                 return true;
             }
-            case 53:
+            case 58:
                 check(ue().check_vars().get("demo.presses").number() == ue_mv_presses_ + 3, "pressed on 21:9");
                 ue().set_checking(false);
                 ue().set_view(4);
