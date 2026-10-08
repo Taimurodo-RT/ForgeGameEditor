@@ -1530,8 +1530,17 @@ u32 UiEditor::add_block(d::Block b) {
     return id;
 }
 
-// What the simple panel shows in a drop-down now.
+// What the simple panel shows in a field or drop-down now (as last refreshed).
 std::string UiEditor::simple_shown(const std::string& field) const {
+    if (field == "name") return m_s_shown_.name;
+    if (field == "text") return m_s_shown_.text;
+    if (field == "size") return m_s_shown_.size;
+    if (field == "color") return m_s_shown_.hex;
+    if (field == "text_color") return m_s_shown_.text_hex;
+    if (field == "x") return m_s_shown_.x;
+    if (field == "y") return m_s_shown_.y;
+    if (field == "w") return m_s_shown_.w;
+    if (field == "h") return m_s_shown_.h;
     if (field == "action") return m_s_shown_.action;
     if (field == "target") return m_s_shown_.target;
     if (field == "picture") return m_s_shown_.image;
@@ -4035,11 +4044,16 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         ev.StopPropagation();
         if (simple_) set_simple_property(arg_str(a, 0), arg_str(a, 1));
     });
+    // A field keeps what was typed on Enter and on leaving it. Leaving it (or Enter) with what it shows
+    // writes nothing: the shown value may be worked out (a game colour's HEX, an inherited size), and
+    // writing it back would cut the link to the game's colour or text style.
     on("ue_stext", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
-        if (simple_ && a.size() > 2 && a[2].Get<bool>()) set_simple_property(arg_str(a, 0), arg_str(a, 1));
+        if (simple_ && a.size() > 2 && a[2].Get<bool>() && arg_str(a, 1) != simple_shown(arg_str(a, 0)))
+            set_simple_property(arg_str(a, 0), arg_str(a, 1));
     });
     on("ue_scommit", [this, arg_str, input_value](Rml::Event& ev, const Rml::VariantList& a) {
-        if (simple_) set_simple_property(arg_str(a, 0), input_value(ev));
+        const std::string value = input_value(ev);
+        if (simple_ && value != simple_shown(arg_str(a, 0))) set_simple_property(arg_str(a, 0), value);
     });
     on("ue_spick", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
         auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement());

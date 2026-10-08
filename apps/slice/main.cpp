@@ -743,8 +743,8 @@ private:
             return true;
         }});
         // A page drawn bigger than the window, scaled down to it: every button up to the window's right and
-        // bottom edges takes the click where it shows, the pointer over it finds it, and the bars outside a
-        // page (and the part of a layer that sticks out of it) take none. (RmlUi checked the clipping of a
+        // bottom edges takes the click where it shows, the pointer over it finds it, and the empty bars beside a
+        // fitted page take none. (RmlUi checked the clipping of a
         // scaled page in the window's coordinates against the page's, and lost the right and bottom.)
         steps_.push_back({"нажатия у краёв уменьшенной страницы", 12, [&s, this](u32 f) {
             GameScreens& sc = s.screens();
@@ -839,15 +839,76 @@ private:
                 const f64 before = total();
                 // Inside the page: the half of the layer that shows.
                 check(half && press(bars, 280, fh - 10) == "t-half" && count("probe.half") == 1, "видимая половина слоя нажимается");
-                // In the bars: below the page where the layer's other half is, and above the page.
-                press(bars, 280, fh + 10);
+                // In the bars, where nothing is drawn: above the page, and below it away from the layer. (The layer's
+                // outer half shows in the bar below, as RmlUi draws a placed layer sticking out of an unscrolled page.)
                 press(bars, 280, -10);
                 press(bars, 10, -bars.top / bars.sy * 0.5f);
+                press(bars, fw - 20, fh + 10);
+                press(bars, fw * 0.5f, fh + bars.top / bars.sy * 0.5f);
                 check(total() == before + 1, "щелчки по полосам вне страницы ничего не делают: " + std::to_string(total() - before - 1));
             }
             if (f < 7) return false;
             sc.remove("тест_края");
             sc.remove("тест_полосы");
+            return true;
+        }});
+        // Clipping in hit testing, as RmlUi draws it: a layer under «clip: none» leaves the clipping of the
+        // layers around it (as a drop-down's list does), «clip: N» leaves N of them, and without either a layer
+        // outside a clipping parent takes no pointer.
+        steps_.push_back({"отсечение и нажатия", 6, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            struct Probe {
+                const char* id;   // the layer looked for under the pointer
+                f32 x, y;         // the point (window pixels)
+                bool found;       // whether it is found there
+                const char* what;
+            };
+            // Boxes at 100 px steps down the window; the buttons stick out to the right of their 100 × 100 parent.
+            static const Probe probes[] = {
+                {"c-none", 160, 140, true, "clip: none на предке выводит из отсечения внешнего"},
+                {"c-plain", 160, 240, false, "без clip: none слой за краем отсекающего родителя не нажимается"},
+                {"c-plain", 60, 240, true, "та же кнопка внутри родителя нажимается"},
+                {"c-one", 160, 340, false, "clip: 1 пропускает одну область, внешний родитель всё равно отсекает"},
+                {"c-two", 160, 440, true, "clip: 2 пропускает обе области"},
+                {"c-auto", 160, 540, false, "clip: auto во вложенных отсекающих слоях"},
+            };
+            if (f == 0) {
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y); // scale 1
+                auto box = [](int top, const std::string& inner_style, const std::string& id, const std::string& button_style) {
+                    // The inner layer is in the flow, so the outer one's content overflows it and it clips (RmlUi,
+                    // as it draws, clips only what makes a layer scroll: absolutely placed layers do not).
+                    return "<div style=\"position: absolute; left: 0px; top: " + std::to_string(top) +
+                           "px; width: 100px; height: 100px; overflow: hidden;\">"
+                           "<div style=\"position: relative; width: 300px; height: 100px; " + inner_style + "\">"
+                           "<div id=\"" + id + "\" style=\"position: absolute; left: 40px; top: 20px; width: 140px; height: 40px; "
+                           "background: #f00; " + button_style + "\"></div></div></div>";
+                };
+                const std::string page =
+                    "<html><head><style>html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }"
+                    " .root { position: relative; width: 100%; height: 100%; } body, .root { pointer-events: none; }"
+                    " .root div { pointer-events: auto; }</style></head><body><div class=\"root\" forge-screen=\"command\" forge-size=\"" +
+                    dims + "\">" +
+                    box(100, "clip: none;", "c-none", "") + box(200, "", "c-plain", "") +
+                    box(300, "overflow: hidden;", "c-one", "clip: 1;") + box(400, "overflow: hidden;", "c-two", "clip: 2;") +
+                    box(500, "overflow: hidden;", "c-auto", "") + "</div></body></html>";
+                check(sc.load_page(s.context(), "тест_отсечение", page, "test/ui/тест_отсечение.html"), "страница отсечения строится");
+                sc.show("тест_отсечение", true);
+            }
+            if (f == 3) {
+                for (const Probe& p : probes) {
+                    SDL_Event ev{};
+                    ev.type = SDL_EVENT_MOUSE_MOTION;
+                    ev.motion.x = p.x;
+                    ev.motion.y = p.y;
+                    s.handle_event(ev);
+                    Rml::Element* hover = s.context()->GetHoverElement();
+                    const std::string id = hover ? hover->GetId() : std::string();
+                    check((id == p.id) == p.found, std::string(p.what) + " (под указателем «" + id + "»)");
+                }
+            }
+            if (f < 4) return false;
+            sc.remove("тест_отсечение");
             return true;
         }});
         // Lists on a screen: the hero's things and the journal, a cell per

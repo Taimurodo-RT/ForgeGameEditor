@@ -3175,6 +3175,9 @@ private:
     std::string ue_disk_, ue_json2_, ue_simple_screen_;
     usize ue_cursor_ = 0, ue_entries_ = 0;
     u32 ue_simple_btn_ = 0;
+    std::string ue_style_; // the new button's game colour
+    Rml::Element* ue_panel_ = nullptr; // the simple panel's scrolling part
+    bool ue_option_outside_ = false, ue_option_hovered_ = false; // the last option clicked: outside its panel, under the pointer
     std::vector<u32> ue_blocks_;
     // Typed into a field as from the keyboard: focus, End and Backspace over the old text, the text, Enter, then away.
     // (Ctrl+A is not used: RmlUi reads the modifiers from the real keyboard, not from the event.)
@@ -3209,6 +3212,18 @@ private:
             if (!o || o->GetAttribute<Rml::String>("value", "") != value) continue;
             if (!o->IsVisible(true)) return false;
             const Rml::Vector2f p = o->GetAbsoluteOffset(Rml::BoxArea::Border) + o->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+            // Whether the option shows outside the scrolling panel the drop-down is in (its list leaves the panel's clipping).
+            ue_option_outside_ = false;
+            for (Rml::Element* a = select->GetParentNode(); a; a = a->GetParentNode()) {
+                const auto& c = a->GetComputedValues();
+                if (c.overflow_y() != Rml::Style::Overflow::Auto && c.overflow_y() != Rml::Style::Overflow::Scroll) continue;
+                const Rml::Vector2f at = a->GetAbsoluteOffset(Rml::BoxArea::Padding), sz = a->GetBox().GetSize(Rml::BoxArea::Padding);
+                ue_option_outside_ = p.y < at.y || p.y > at.y + sz.y || p.x < at.x || p.x > at.x + sz.x;
+                break;
+            }
+            mouse(SDL_EVENT_MOUSE_MOTION, p.x, p.y);
+            Rml::Element* hover = ed_.context() ? ed_.context()->GetHoverElement() : nullptr;
+            ue_option_hovered_ = hover == o || (hover && hover->GetParentNode() == o);
             left_click(p.x, p.y);
             return select->GetValue() == value;
         }
@@ -4213,19 +4228,84 @@ private:
             break;
         }
         case 52: {
+            // Looking is no change: fields focused and left (and Enter) with what they show write nothing. The
+            // colour shows the game colour's HEX and the size the label's: written back, they would cut the links.
+            const d::Node* button = ue_node(ue_blocks_[0]);
+            ue_json_ = d::save_screen(ue().screen());
+            ue_cursor_ = ue().history().cursor();
+            ue_style_ = button && !button->fills.empty() ? button->fills[0].style : std::string();
+            check(!ue_style_.empty(), "the new button wears the game colour " + ue_style_);
+            for (const char* id : {"ue-s-color", "ue-s-size", "ue-s-text-color", "ue-s-text", "ue-s-name", "ue-s-x", "ue-s-w", "ue-s-h"}) {
+                Rml::Element* e = ed_.find_element(id);
+                check(e && shown(id), std::string("the field is shown: ") + id);
+                if (!e) continue;
+                e->Focus();
+                e->Blur();
+                e->Focus();
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                e->Blur();
+                check(d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_,
+                      std::string("focused and left, Enter on it: nothing written, no step: ") + id);
+            }
+            // The mode switched with the mouse while the colour field has the keyboard.
+            if (Rml::Element* e = ed_.find_element("ue-s-color")) e->Focus();
+            f32 x = 0, y = 0;
+            check(element_center("ue-mode-full", x, y), "«Полный» is on the toolbar");
+            left_click(x, y);
+            break;
+        }
+        case 53: {
+            const d::Node* button = ue_node(ue_blocks_[0]);
+            check(!ue().simple() && d::save_screen(ue().screen()) == ue_json_ && ue().history().cursor() == ue_cursor_ && button &&
+                      button->fills[0].style == ue_style_,
+                  "switched with a field focused: the screen, its link to the game colour and the history as they were");
+            check(click("ue-mode-simple") && ue().simple(), "«Простой» again");
+            // The link still works: the game colour changed, the button follows.
+            check(ue().open_library(), "the library");
+            ue().select({});
+            check(ue().set_property("color.0.color", "#225588"), "the game colour changes");
+            check(ue().open(ue_simple_screen_), "back to the new screen");
+            button = ue_node(ue_blocks_[0]);
+            check(button && button->fills[0].style == ue_style_ && button->fills[0].color == d::Color{0x22, 0x55, 0x88, 255},
+                  "the looked-at button follows the game colour");
+            ue().select({ue_blocks_[0]});
+            break;
+        }
+        case 54: {
             Rml::Element* word = ed_.find_element("ue-s-block");
             check(word && std::string(word->GetInnerRML()) == "Кнопка" && shown("ue-s-action") && !shown("ue-s-hidden"),
                   "the new button: its action, nothing hidden");
             ue_cursor_ = ue().history().cursor();
+            const std::string untyped = d::save_screen(ue().screen());
             check(ue_type("ue-s-text", "Настройки"), "its label typed");
             check(ue().history().cursor() == ue_cursor_ + 1, "Enter keeps it: one step");
+            ue().undo();
+            check(d::save_screen(ue().screen()) == untyped && d::block_label(*ue_node(ue_blocks_[0]))->text == "Кнопка",
+                  "one Ctrl+Z takes the whole typed label back");
+            ue().redo();
+            check(d::block_label(*ue_node(ue_blocks_[0]))->text == "Настройки" && ue().history().cursor() == ue_cursor_ + 1,
+                  "Ctrl+Y brings it again");
             check(ue_open("ue-s-action"), "a click opens the action's list");
             break;
         }
-        case 53:
-            check(ue_option("ue-s-action", "settings"), "a click on «Настройки» in it");
+        case 55:
+            check(ue_option("ue-s-action", "settings") && ue_option_hovered_, "a click on «Настройки» in it, the pointer finds it");
+            // The panel cut short right under «Держится» (a test-only height): the drop-down's list then opens past
+            // the panel's bottom, where the panel clips its own content but not the list.
+            ue_panel_ = nullptr;
+            if (Rml::Element* sel = ed_.find_element("ue-s-anchor-h"))
+                for (Rml::Element* a = sel->GetParentNode(); a; a = a->GetParentNode()) {
+                    const auto o = a->GetComputedValues().overflow_y();
+                    if (o != Rml::Style::Overflow::Auto && o != Rml::Style::Overflow::Scroll) continue;
+                    const f32 bottom = sel->GetAbsoluteOffset(Rml::BoxArea::Border).y + sel->GetBox().GetSize(Rml::BoxArea::Border).y;
+                    const f32 top = a->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+                    a->SetProperty("max-height", std::to_string(static_cast<int>(bottom - top + a->GetScrollTop() + 4)) + "px");
+                    ue_panel_ = a;
+                    break;
+                }
+            check(ue_panel_ != nullptr, "the panel scrolls");
             break;
-        case 54: {
+        case 56: {
             const d::Node* button = ue_node(ue_blocks_[0]);
             check(button && button->on_click.size() == 1 && button->on_click[0].kind == d::ActionKind::Settings &&
                       button->on_click[0].target.empty() && d::block_label(*button)->text == "Настройки",
@@ -4236,10 +4316,31 @@ private:
             check(ue_open("ue-s-anchor-h"), "a click opens where it keeps");
             break;
         }
-        case 55:
-            check(ue_option("ue-s-anchor-h", "end"), "a click on «Справа»");
+        case 57:
+            check(ue_option("ue-s-anchor-h", "end") && ue_option_hovered_, "a click on «Справа», the pointer finds it");
+            check(ue_option_outside_, "and «Справа» shows outside the scrolling panel it opened from");
+            // Now cut short above «Место и размер»: the X field under the panel's bottom is clipped.
+            if (Rml::Element* x = ed_.find_element("ue-s-x"); x && ue_panel_) {
+                const f32 top = ue_panel_->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+                const f32 field = x->GetAbsoluteOffset(Rml::BoxArea::Border).y;
+                ue_panel_->SetProperty("max-height", std::to_string(static_cast<int>(field - top + ue_panel_->GetScrollTop() - 8)) + "px");
+            }
             break;
-        case 56: {
+        case 58: {
+            // What the panel clips takes no pointer.
+            if (Rml::Element* x = ed_.find_element("ue-s-x"); x && ue_panel_) {
+                const Rml::Vector2f p = x->GetAbsoluteOffset(Rml::BoxArea::Border) + x->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+                const f32 bottom = ue_panel_->GetAbsoluteOffset(Rml::BoxArea::Border).y + ue_panel_->GetBox().GetSize(Rml::BoxArea::Border).y;
+                mouse(SDL_EVENT_MOUSE_MOTION, p.x, p.y);
+                Rml::Element* hover = ed_.context() ? ed_.context()->GetHoverElement() : nullptr;
+                bool on_x = false;
+                for (Rml::Element* e = hover; e; e = e->GetParentNode()) on_x = on_x || e == x;
+                check(p.y > bottom && !on_x, "the X field, cut off under the panel's bottom, takes no pointer");
+            } else check(false, "the X field and the panel are there");
+            if (ue_panel_) ue_panel_->RemoveProperty("max-height");
+            break;
+        }
+        case 59: {
             check(ue_node(ue_blocks_[0])->horizontal == d::Constraint::End && ue().history().cursor() == ue_cursor_ + 3,
                   "it keeps to the right edge: one more step");
             check(ue_type("ue-s-color", "#3366cc") && ue_node(ue_blocks_[0])->fills[0].color == d::Color{0x33, 0x66, 0xcc, 255} &&
@@ -4248,7 +4349,7 @@ private:
             ue().select({ue_blocks_[1]});
             break;
         }
-        case 57: {
+        case 60: {
             check(ue_type("ue-s-text", "Монеты: {inv.coins}") && ue_node(ue_blocks_[1])->text == "Монеты: {inv.coins}",
                   "the text shows the coins");
             // Everything kept, on the page the game reads.
@@ -4267,7 +4368,7 @@ private:
             check(click("ue-check"), "«Проверить»");
             break;
         }
-        case 58: {
+        case 61: {
             check(ue().checking(), "the beginner's screen comes alive");
             Rml::ElementDocument* page = ue().page();
             Rml::Element* list = page ? page->GetElementById("n" + std::to_string(ue_blocks_[3])) : nullptr;
@@ -4283,7 +4384,7 @@ private:
             if (box) left_click(ue_wx(box->cx()), ue_wy(box->cy()));
             break;
         }
-        case 59: {
+        case 62: {
             const std::vector<std::string>& log = ue().check_log();
             check(log.size() == ue_log_size_ + 1 && log.back() == "Кнопка: Настройки",
                   ("the button pressed does what was picked: " + ue_log_since(ue_log_size_)).c_str());
@@ -4633,6 +4734,7 @@ private:
         for (usize i = std::min(from, log.size()); i < log.size(); ++i) out += " [" + log[i] + "]";
         return out;
     }
+    bool check(bool ok, const std::string& what) { return check(ok, what.c_str()); }
     bool check(bool ok, const char* what) {
         if (ok) {
             FORGE_INFO("self-test: %s", what);
