@@ -4399,11 +4399,16 @@ bool UiEditor::restack_selection(bool up, bool to_end) {
         }
     }
     const std::string before = d::save_screen(screen_);
-    // Each frame's selected children move together, keeping their order among themselves.
-    std::vector<d::Node*> parents;
+    // Each frame's selected children move together, keeping their order among themselves. Frames are kept by id and
+    // found again: reordering one frame's children moves whole layers, so a pointer kept from before can name a
+    // neighbour (a frame and its own layer selected together).
+    std::vector<u32> parents;
     for (u32 id : selection_)
-        if (d::Node* p = d::parent_of(screen_.root, id); p && std::find(parents.begin(), parents.end(), p) == parents.end()) parents.push_back(p);
-    for (d::Node* parent : parents) {
+        if (const d::Node* p = d::parent_of(screen_.root, id); p && std::find(parents.begin(), parents.end(), p->id) == parents.end())
+            parents.push_back(p->id);
+    for (u32 parent_id : parents) {
+        d::Node* parent = d::find(screen_.root, parent_id);
+        if (!parent) continue;
         auto& kids = parent->children;
         auto chosen = [&](const d::Node& c) { return std::find(selection_.begin(), selection_.end(), c.id) != selection_.end(); };
         if (to_end) {

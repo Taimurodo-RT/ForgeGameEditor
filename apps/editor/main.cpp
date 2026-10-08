@@ -3375,6 +3375,38 @@ private:
     // The panel and the rest of the editor (13.10): the screen, the sound picked, the copy of the component, what
     // «Проверить» had played and said.
     std::string ue_fl_screen_, ue_fl_sound_;
+    // A frame restacked together with one of its own layers (Codex's review on PR #70, in PR #69's restacking).
+    int ue_rs_stage_ = 0;
+    u32 ue_rs_a_ = 0, ue_rs_b_ = 0, ue_rs_c_ = 0, ue_rs_d_ = 0, ue_rs_e_ = 0, ue_rs_f_ = 0, ue_rs_g_ = 0;
+    std::string ue_rs_screen_, ue_rs_json_, ue_rs_others_;
+    usize ue_rs_cursor_ = 0;
+    // A click on a layer's row in the list, Shift held or not; dx aside (two clicks on one spot are a double click).
+    // The point is checked to be on the row (the list scrolls under the components): ue_rs_show a frame before.
+    bool ue_rs_row(u32 id, bool shift, f32 dx) {
+        Rml::Element* row = ed_.find_element(("ue-layer-" + std::to_string(id)).c_str());
+        if (!row) return false;
+        f32 x = 0, y = 0;
+        if (!ue_mv_row(id, 0.5f, x, y)) return false;
+        Rml::Element* under = ed_.context() ? ed_.context()->GetElementAtPoint({x + dx, y}) : nullptr;
+        while (under && under != row) under = under->GetParentNode();
+        if (!under) return false;
+        SDL_SetModState(shift ? SDL_KMOD_LSHIFT : SDL_KMOD_NONE);
+        left_click(x + dx, y);
+        SDL_SetModState(SDL_KMOD_NONE);
+        return true;
+    }
+    void ue_rs_show(u32 id) {
+        if (Rml::Element* row = ed_.find_element(("ue-layer-" + std::to_string(id)).c_str())) row->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+    }
+    // A layer with all its own: ids, places and sizes.
+    std::string ue_rs_branch(u32 id) {
+        const editor::design::Node* n = ue_node(id);
+        if (!n) return "?";
+        std::string out = std::to_string(n->id) + ":" + std::to_string(n->x) + "," + std::to_string(n->y) + "," + std::to_string(n->w) +
+                          "," + std::to_string(n->h) + "[";
+        for (const editor::design::Node& c : n->children) out += ue_rs_branch(c.id) + " ";
+        return out + "]";
+    }
     u32 ue_fl_inst_ = 0, ue_fl_clicks_ = 0;
     usize ue_fl_log_ = 0;
     // A layer of a screen as written on disk.
@@ -7785,6 +7817,139 @@ private:
             default: break;
             }
             ue_fl_stage_ = 0;
+            break;
+        }
+        case 150: {
+            // A frame and one of its own layers restacked together (PR #69; Codex's review on PR #70): each moves among
+            // its own neighbours whichever was selected first, by keys and by the layer's menu; one step each, undone
+            // and redone whole (order, ids, selection); the other branches untouched; the order kept on disk.
+            // The screen: A (C, D, E), B (G), F; A and B are frames.
+            namespace d = editor::design;
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_rs_stage_;
+                return true;
+            };
+            const d::Node& root = ue().screen().root;
+            auto steps = [&] { return ue().history().cursor(); };
+            auto ids = [](std::initializer_list<u32> list) {
+                std::string out;
+                for (u32 id : list) out += (out.empty() ? "" : " ") + std::to_string(id);
+                return out;
+            };
+            const u32 a = ue_rs_a_, b = ue_rs_b_, c = ue_rs_c_, dd = ue_rs_d_, e = ue_rs_e_, f = ue_rs_f_;
+            auto order = [&](std::initializer_list<u32> top, std::initializer_list<u32> in_a) {
+                return ue_mv_kids(root.id) == ids(top) && ue_mv_kids(a) == ids(in_a);
+            };
+            auto others = [&] { return ue_rs_branch(b) + ue_rs_branch(f); };
+            auto picked = [&] {
+                std::string out;
+                for (u32 id : ue().selection()) out += (out.empty() ? "" : " ") + std::to_string(id);
+                return "selected " + out + "; layers " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a) + "; last step " + ue().history().undo_label();
+            };
+            const auto top_both = static_cast<SDL_Keymod>(SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT);
+            switch (ue_rs_stage_++) {
+            case 0: {
+                ue().set_simple(false);
+                ue().set_view(0);
+                ue_rs_screen_ = ue().new_screen();
+                ue_rs_c_ = ue().create("rectangle");
+                ue_rs_d_ = ue().create("rectangle");
+                ue_rs_e_ = ue().create("rectangle");
+                ue().select({ue_rs_c_, ue_rs_d_, ue_rs_e_});
+                ue_cm_key(SDLK_G);
+                ue_rs_a_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+                ue_rs_g_ = ue().create("rectangle");
+                ue().select({ue_rs_g_});
+                ue_cm_key(SDLK_G);
+                ue_rs_b_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+                ue_rs_f_ = ue().create("ellipse");
+                const d::Node* fa = ue_node(ue_rs_a_);
+                const d::Node* fb = ue_node(ue_rs_b_);
+                check(fa && fb && fa->type == d::NodeType::Frame && fb->type == d::NodeType::Frame &&
+                          ue_mv_kids(root.id) == ids({ue_rs_a_, ue_rs_b_, ue_rs_f_}) && ue_mv_kids(ue_rs_a_) == ids({ue_rs_c_, ue_rs_d_, ue_rs_e_}) &&
+                          ue_mv_kids(ue_rs_b_) == ids({ue_rs_g_}),
+                      "a new screen: frame A with C, D, E, frame B with G, then F");
+                ue().select({});
+                return true;
+            }
+            case 1:
+                ue_rs_show(a);
+                return true;
+            case 2: {
+                ue_rs_json_ = d::save_screen(ue().screen());
+                ue_rs_others_ = others();
+                ue_rs_cursor_ = steps();
+                const bool clicked = ue_rs_row(a, false, -20);
+                check(clicked && ue().selection() == std::vector<u32>{a}, "a click on A's row in the list: " + picked());
+                ue_rs_show(c);
+                return true;
+            }
+            case 3: {
+                {
+                    const bool clicked = ue_rs_row(c, true, 20);
+                    check(clicked && ue().selection() == std::vector<u32>{a, c}, "Shift and a click on C's row, inside A: A, then C, selected: " + picked());
+                }
+                ue_cm_key(SDLK_RIGHTBRACKET);
+                check(order({b, a, f}, {dd, c, e}) && steps() == ue_rs_cursor_ + 1 && ue().history().undo_label() == "Выше" &&
+                          ue().selection() == std::vector<u32>{a, c},
+                      "Ctrl+]: A one higher among the screen's layers and C among A's, one step: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                check(others() == ue_rs_others_, "B with G and F untouched");
+                const std::string up = d::save_screen(ue().screen());
+                ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_rs_json_ && steps() == ue_rs_cursor_ && ue().selection() == std::vector<u32>{a, c},
+                      "Ctrl+Z: the order, ids and selection as before");
+                ue_cm_key(SDLK_Y);
+                check(d::save_screen(ue().screen()) == up && steps() == ue_rs_cursor_ + 1 && ue().selection() == std::vector<u32>{a, c},
+                      "Ctrl+Y: as moved, both still selected");
+                ue_cm_key(SDLK_RIGHTBRACKET, top_both);
+                check(order({b, f, a}, {dd, e, c}) && ue().history().undo_label() == "На самый верх",
+                      "Ctrl+Shift+]: both on top of their own neighbours: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                ue_cm_key(SDLK_LEFTBRACKET);
+                check(order({b, a, f}, {dd, c, e}) && ue().history().undo_label() == "Ниже",
+                      "Ctrl+[: both one lower: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                ue_cm_key(SDLK_LEFTBRACKET, top_both);
+                check(order({a, b, f}, {c, dd, e}) && ue().history().undo_label() == "В самый низ" && steps() == ue_rs_cursor_ + 4,
+                      "Ctrl+Shift+[: both the lowest, four steps in all: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                check(others() == ue_rs_others_, "B with G and F still untouched");
+                for (int i = 0; i < 4; ++i) ue_cm_key(SDLK_Z);
+                check(d::save_screen(ue().screen()) == ue_rs_json_ && steps() == ue_rs_cursor_ && ue().selection() == std::vector<u32>{a, c},
+                      "four Ctrl+Z: as it was, both selected");
+                ue().select({});
+                ue_rs_show(c);
+                return true;
+            }
+            case 4: {
+                // The other way round: the layer first, then its frame.
+                const bool clicked = ue_rs_row(c, false, -20);
+                check(clicked && ue().selection() == std::vector<u32>{c}, "a click on C's row: " + picked());
+                ue_rs_show(a);
+                return true;
+            }
+            case 5: {
+                const bool clicked = ue_rs_row(a, true, 20);
+                check(clicked && ue().selection() == std::vector<u32>{c, a}, "Shift and a click on A's row: C, then A, selected: " + picked());
+                check(ue_cm_right_row(a), "the right button on A's row");
+                return true;
+            }
+            case 6:
+                if (wait(shown("ue-ctx-up"), "the layer's menu is laid out")) return true;
+                check(ue().selection() == std::vector<u32>{c, a}, "the menu keeps both selected");
+                check(ue_cm_press("ue-ctx-up"), "«Выше»");
+                return true;
+            case 7: {
+                check(order({b, a, f}, {dd, c, e}) && steps() == ue_rs_cursor_ + 1 && ue().history().undo_label() == "Выше" && ue().menu().empty(),
+                      "«Выше» from the menu: the same order, whichever was selected first: " + ue_mv_kids(root.id) + " / " + ue_mv_kids(a));
+                check(others() == ue_rs_others_, "B with G and F untouched");
+                const std::string up = d::save_screen(ue().screen());
+                check(ue().open("main_menu") && ue().open(ue_rs_screen_), "the screen closed and opened again");
+                check(order({b, a, f}, {dd, c, e}) && d::save_screen(ue().screen()) == up, "from disk: the order as left");
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            }
+            default: break;
+            }
+            ue_rs_stage_ = 0;
             break;
         }
         default:

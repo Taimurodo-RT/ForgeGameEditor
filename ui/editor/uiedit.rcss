@@ -107,7 +107,8 @@
 .ue-row.add icon { color: var(--primary); }
 .ue-row .count { font-size: 11px; font-family: var(--font-mono); color: var(--on-surface-variant); }
 .ue-row .name, .ue-layer .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ue-layers { min-height: 0px; }
+/* The list scrolls in its own place: else its lower rows, past its height, lie under the components and cannot be clicked. */
+.ue-layers { min-height: 0px; overflow-y: auto; }
 .ue-layer { min-height: 28px; padding-right: var(--space-1); font-size: 13px; }
 .ue-layer.selected { background-color: #2f7bf540; }
 .ue-layer.drop-above { border-top: 2px #2f7bf5; }
