@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Палитра: пример</title>
+<!-- Made by Forge «Интерфейс» from Палитра: пример.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: 560px;
+  width: 800px;
+  top: 240px;
+  height: 600px;
+  box-sizing: border-box;
+  background-color: rgba(27, 33, 39, 0.6);
+  border-radius: 16px 16px 16px 16px;
+  box-shadow: 0px 8px 24px 0px rgba(0, 0, 0, 0.502);
+}
+#n3 {
+  position: absolute;
+  left: 660px;
+  width: 600px;
+  top: 300px;
+  height: 60px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 48px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: pre-wrap;
+}
+#n4 {
+  position: absolute;
+  left: 660px;
+  width: 600px;
+  top: 420px;
+  height: 40px;
+  box-sizing: border-box;
+  background-image: linear-gradient(90deg, #e8b04a 0%, rgba(232, 176, 74, 0) 100%);
+  background-size: auto;
+  background-repeat: no-repeat;
+  background-position: 0% 0%;
+}
+#n5 {
+  position: absolute;
+  left: 760px;
+  width: 400px;
+  top: 700px;
+  height: 96px;
+  box-sizing: border-box;
+  background-color: #e8b04a;
+  outline: 2px solid rgba(255, 255, 255, 0.502);
+  outline-offset: -2px;
+}
+body, #n1 {
+  pointer-events: none;
+}
+#n2, #n3, #n4, #n5 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Палитра: пример" forge-screen="command" forge-fit="expand" forge-size="1920 1080">
+  <div id="n2" class="rectangle" title="Панель"></div>
+  <div id="n3" class="text" title="Заголовок">Палитра цвета</div>
+  <div id="n4" class="rectangle" title="Полоса"></div>
+  <div id="n5" class="rectangle" title="Кнопка"></div>
+</div>
+</body>
+</html>

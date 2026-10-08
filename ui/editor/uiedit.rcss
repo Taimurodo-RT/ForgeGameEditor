@@ -357,6 +357,47 @@ input.text.ue-field:placeholder-shown { color: var(--outline); }
     border-radius: 3px;
     border: 1px #ffffff30;
 }
+.ue-swatch.ue-checker { cursor: pointer; }
+.ue-swatch.ue-checker:hover { border-color: #2f7bf5; }
+/* Under a colour: grey and white squares show where it is see-through. */
+.ue-checker { decorator: image(/memory/ue-checker repeat left top); }
+.ue-swatch-fill { width: 100%; height: 100%; border-radius: 2px; }
+.ue-s-chip .ue-swatch-fill { border-radius: 9px; }
+
+/* The colour picker. */
+.ue-cp-cover { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; z-index: 90; }
+.ue-cp-cover.dropper { cursor: crosshair; }
+.ue-picker {
+    position: absolute; z-index: 91; width: 264px; gap: 8px; padding: 10px; border-radius: 8px;
+    background-color: var(--surface-container-high); border: 1px var(--outline-variant);
+    box-shadow: 0px 8px 28px #00000080; overflow-y: auto; font-size: 12.5px; color: var(--on-surface);
+    visibility: hidden; /* until it stands beside its swatch */
+}
+.ue-picker.dropper { border-color: #2f7bf5; }
+.ue-cp-head { align-items: center; gap: 6px; height: 22px; font-weight: 600; }
+.ue-picker .ue-mini.selected { background-color: #2f7bf5; color: #ffffff; }
+.ue-cp-sv { position: relative; height: 150px; border-radius: 4px; cursor: crosshair; }
+.ue-cp-white { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; border-radius: 4px;
+    decorator: linear-gradient(90deg, #ffffffff 0%, #ffffff00 100%); }
+.ue-cp-black { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; border-radius: 4px;
+    decorator: linear-gradient(180deg, #00000000 0%, #000000ff 100%); }
+.ue-cp-dot { position: absolute; width: 12px; height: 12px; margin: -6px 0px 0px -6px; border-radius: 6px;
+    border: 2px #ffffff; box-shadow: 0px 0px 2px #000000c0; }
+.ue-cp-bar { position: relative; height: 12px; border-radius: 6px; cursor: pointer; }
+.ue-cp-hue { decorator: linear-gradient(90deg, #ff0000 0%, #ffff00 16.67%, #00ff00 33.33%, #00ffff 50%, #0000ff 66.67%, #ff00ff 83.33%, #ff0000 100%); }
+.ue-cp-fill { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; border-radius: 6px; }
+.ue-cp-knob { position: absolute; top: -2px; width: 8px; height: 16px; margin-left: -4px; border-radius: 3px;
+    border: 2px #ffffff; box-shadow: 0px 0px 2px #000000c0; }
+.ue-cp-fields { align-items: center; gap: 4px; }
+.ue-cp-compare { width: 34px; height: 22px; border-radius: 4px; border: 1px #ffffff30; }
+.ue-cp-compare div { height: 100%; }
+#ue-cp-old { border-radius: 3px 0px 0px 3px; }
+#ue-cp-new { border-radius: 0px 3px 3px 0px; }
+#ue-cp-hex { font-family: var(--font-mono); }
+.ue-cp-hint { color: #7aaeff; }
+.ue-cp-buttons { gap: 6px; }
+.ue-btn.ue-btn-primary { background-color: #2f7bf5; color: #ffffff; }
+.ue-btn.ue-btn-primary:hover { background-color: #4b8ff7; }
 .ue-swatch.grad { border: 0px; color: var(--on-surface-variant); }
 .ue-pct { flex: 0 0 44px; width: 44px; text-align: right; }
 

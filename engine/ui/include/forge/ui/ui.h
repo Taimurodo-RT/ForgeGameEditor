@@ -72,6 +72,11 @@ public:
     // view of a game screen). An empty image name draws it over the window
     // again. Offscreen contexts are drawn before the others.
     void set_offscreen(Rml::Context* context, const std::string& image);
+    // One pixel of what an offscreen context drew last (RGBA, alpha
+    // premultiplied as drawn); false without such a picture or outside it.
+    // Waits for the GPU: for a click (the colour picker's eyedropper), not
+    // for every frame.
+    bool read_pixel(Rml::Context* context, u32 x, u32 y, u8 rgba[4]);
     // A context that is not active is neither updated nor drawn.
     void set_active(Rml::Context* context, bool active);
     // Removes a context made by create_context with its documents.

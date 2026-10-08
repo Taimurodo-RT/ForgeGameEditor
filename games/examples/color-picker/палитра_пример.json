@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "title": "Палитра: пример",
+  "next_id": 6,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Палитра: пример",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Панель",
+        "type": "rectangle",
+        "x": 560.0,
+        "y": 240.0,
+        "w": 800.0,
+        "h": 600.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b212799"
+          }
+        ],
+        "radius": [
+          16.0,
+          16.0,
+          16.0,
+          16.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 8.0,
+            "spread": 0.0,
+            "blur": 24.0
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Заголовок",
+        "type": "text",
+        "x": 660.0,
+        "y": 300.0,
+        "w": 600.0,
+        "h": 60.0,
+        "text": "Палитра цвета",
+        "style": {
+          "family": "Onest",
+          "size": 48.0,
+          "weight": 400,
+          "align": "left",
+          "color": "#ffffffcc"
+        }
+      },
+      {
+        "id": 4,
+        "name": "Полоса",
+        "type": "rectangle",
+        "x": 660.0,
+        "y": 420.0,
+        "w": 600.0,
+        "h": 40.0,
+        "fills": [
+          {
+            "kind": "linear",
+            "angle": 90.0,
+            "stops": [
+              {
+                "color": "#e8b04a",
+                "at": 0.0
+              },
+              {
+                "color": "#e8b04a00",
+                "at": 1.0
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "name": "Кнопка",
+        "type": "rectangle",
+        "x": 760.0,
+        "y": 700.0,
+        "w": 400.0,
+        "h": 96.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#ffffff80",
+            "width": 2.0,
+            "align": "inside"
+          }
+        ]
+      }
+    ]
+  }
+}
