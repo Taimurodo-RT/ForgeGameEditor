@@ -58,8 +58,9 @@ bool encode_wav(const Clip& clip, std::vector<u8>& out);
 bool readable(const std::filesystem::path& file);
 
 // Sounds go through one of the buses; each has its own volume (the game's
-// settings) and the sound bus pauses with the game.
-enum class Bus : u8 { Sound, Music };
+// settings) and the sound bus pauses with the game. Ui: the screens' buttons,
+// at the sounds' volume, heard in the pause menu too.
+enum class Bus : u8 { Sound, Music, Ui };
 
 struct Play {
     f32 volume = 1;
@@ -136,8 +137,9 @@ public:
     void mix(f32* out, u32 frames);
     // Without a device, time still moves: sounds end as if heard.
     void advance(f64 seconds);
-    // Sounds playing now.
+    // Sounds playing now (on one bus).
     u32 voices() const;
+    u32 voices(Bus bus) const;
     // How many sounds were ever started (for tests).
     u64 started() const { return started_; }
 
@@ -167,8 +169,8 @@ private:
     f32 master_ = 1;
     f64 listener_x_ = 0, listener_y_ = 0;
     u32 random_ = 0x9E3779B9u;
-    f32 bus_volume_[2] = {1, 1};
-    bool bus_paused_[2] = {false, false};
+    f32 bus_volume_[3] = {1, 1, 1};
+    bool bus_paused_[3] = {false, false, false};
     SDL_AudioStream* stream_ = nullptr;
     std::vector<f32> scratch_;
 };

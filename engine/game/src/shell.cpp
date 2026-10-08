@@ -422,6 +422,11 @@ bool Shell::handle_event(const SDL_Event& e) {
         quit_ = true;
         return true;
     }
+    // A held Enter or Space presses a screen's button once, not again with every repeat.
+    if (e.type == SDL_EVENT_KEY_DOWN && e.key.repeat &&
+        (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER || e.key.key == SDLK_SPACE) && screens_ &&
+        screens_->has_focus(context_))
+        return true;
     if (ui_->handle_event(context_, e)) {
         // Documents fill the screen; the mouse over a bare document body is
         // over the world, so the game gets the click or the wheel.

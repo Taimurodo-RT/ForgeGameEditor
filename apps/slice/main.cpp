@@ -25,6 +25,7 @@
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/core/time.h"
+#include "forge/audio/screen_sounds.h"
 #include "forge/game/runner.h"
 #include "forge/ui/ui.h"
 
@@ -119,6 +120,88 @@ private:
         }
         return true;
     }
+    // --- the screens' sound (games/examples/screen-sound) ---
+    // The example's sounds, made here and written as files with their Russian names (the package has no
+    // example folder); the screens' sound reads them from that folder for the step.
+    std::filesystem::path sound_files() {
+        const std::filesystem::path dir = std::filesystem::temp_directory_path() / utf8_path("forge_slice_звуки_экранов");
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        auto tune = [](std::initializer_list<f32> notes, f32 step) {
+            std::vector<audio::Tone> tones;
+            f32 at = 0;
+            for (f32 hz : notes) {
+                tones.push_back({audio::Wave::Triangle, hz, hz, step * 0.95f, 0.01f, 3, 0.35f, at});
+                at += step;
+            }
+            return audio::synth(tones);
+        };
+        const audio::Tone click[] = {{audio::Wave::Square, 1200, 900, 0.05f, 0.001f, 40, 0.3f}};
+        const audio::Tone ring[] = {{audio::Wave::Sine, 1320, 1320, 0.35f, 0.002f, 9, 0.4f}};
+        const std::pair<const char*, audio::ClipPtr> files[] = {{"мелодия меню.wav", tune({392, 494, 587, 494}, 0.2f)},
+                                                                {"мелодия игры.wav", tune({262, 330, 392, 330}, 0.2f)},
+                                                                {"мелодия окна.wav", tune({523, 440, 349, 440}, 0.3f)},
+                                                                {"щелчок.wav", audio::synth(click)},
+                                                                {"звон.wav", audio::synth(ring)}};
+        for (const auto& [name, clip] : files) {
+            std::vector<u8> wav;
+            check(clip && audio::encode_wav(*clip, wav) && write_file_atomic(dir / utf8_path(name), wav), std::string("звук записан: ") + name);
+        }
+        return dir;
+    }
+    // A press of the mouse at a point of a 1920x1080 page, where its fit shows it.
+    void press_page(Shell& s, f32 x, f32 y) {
+        const Rml::Vector2i size = s.context()->GetDimensions();
+        const game::ScreenFit fit = game::fit_screen("expand", 1920, 1080, static_cast<f32>(size.x), static_cast<f32>(size.y));
+        press_window(s, game::fit_to_view_x(fit, x), game::fit_to_view_y(fit, y));
+    }
+    void press_window(Shell& s, f32 x, f32 y) {
+        SDL_Event ev{};
+        ev.type = SDL_EVENT_MOUSE_MOTION;
+        ev.motion.x = x;
+        ev.motion.y = y;
+        s.handle_event(ev);
+        for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+            ev = {};
+            ev.type = t;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            ev.button.x = x;
+            ev.button.y = y;
+            s.handle_event(ev);
+        }
+    }
+    void key(Shell& s, SDL_Keycode k, bool down, bool repeat = false) {
+        SDL_Event ev{};
+        ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        ev.key.key = k;
+        ev.key.down = down;
+        ev.key.repeat = repeat;
+        s.handle_event(ev);
+    }
+    // The button with that layer name on a page.
+    static Rml::Element* titled(Rml::Element* e, const char* title) {
+        if (!e) return nullptr;
+        if (e->HasAttribute("forge-click") && e->GetAttribute<Rml::String>("title", "") == title) return e;
+        for (int i = 0; i < e->GetNumChildren(); ++i)
+            if (Rml::Element* found = titled(e->GetChild(i), title)) return found;
+        return nullptr;
+    }
+    // Only what plays on the music bus is heard (the world's and the buttons' sounds are muted for one block).
+    static f32 music_peak(audio::Mixer& m) {
+        m.set_volume(audio::Bus::Sound, 0);
+        m.set_volume(audio::Bus::Ui, 0);
+        std::vector<f32> buf(4096);
+        f32 p = 0;
+        for (int i = 0; i < 2; ++i) { // the gains ramp across the first block
+            m.mix(buf.data(), 2048);
+            p = 0;
+            for (f32 v : buf) p = std::max(p, std::fabs(v));
+        }
+        return p;
+    }
+
     // Goes to the village, then next to a villager; true once there.
     bool near_npc(SliceGame& g, u8 who, u32 f) {
         const f64 v = g.generator().village_y();
@@ -161,6 +244,85 @@ private:
         };
         DialogueRunner& talk = s.dialogue_runner();
 
+        // The main menu of games/examples/screen-sound: its music starts once, its buttons sound as set (the
+        // screen's click, a ring of its own, none) once per press, by mouse and by keyboard; an empty place
+        // makes no sound. Then the page goes and its music stops.
+        steps_.push_back({"музыка и звук кнопок главного меню", 40, [&s, &g, this](u32 f) {
+            GameScreens& sc = s.screens();
+            audio::ScreenSounds& snd = g.sounds().screens();
+            static std::filesystem::path kept;
+            static u32 starts = 0, clicks = 0;
+            auto num = [&](const char* name) { return s.vars().get(name).number(); };
+            if (f == 0) {
+                check(std::size(kSoundPages) == 3, "в игру встроены экраны примера звука");
+                kept = snd.folder();
+                snd.attach(&g.sounds().mixer(), sound_files());
+                for (const SimplePage& p : kSoundPages)
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                          std::string("экран примера строится: ") + p.name);
+                for (const char* v : {"demo.presses", "demo.rings", "demo.quiet"}) s.vars().set(v, 0);
+                starts = snd.music_starts();
+                clicks = snd.clicks();
+            }
+            if (f == 3) {
+                check(s.screen() == Screen::Main && sc.shown("звук_меню"), "меню примера вместо меню игры");
+                check(sc.music() == "мелодия меню.wav" && snd.music_name() == "мелодия меню.wav", "играет музыка меню: " + snd.music_name());
+                check(snd.music_starts() == starts + 1 && snd.music_playing(), "музыка меню начата один раз");
+                check(g.sounds().mixer().voices(audio::Bus::Music) == 1, "на шине музыки один голос");
+                check(music_peak(g.sounds().mixer()) > 0.05f, "музыку меню слышно: в смеси есть звук");
+                press_page(s, 960, 345); // «Нажми»: the screen's click
+            }
+            if (f == 4) {
+                check(num("demo.presses") == 1 && snd.clicks() == clicks + 1 && snd.last_click() == "щелчок.wav",
+                      "«Нажми»: действие один раз и щелчок экрана");
+                press_page(s, 960, 465); // «Звон»: its own
+            }
+            if (f == 5) {
+                check(num("demo.rings") == 1 && snd.clicks() == clicks + 2 && snd.last_click() == "звон.wav", "«Звон»: свой звук");
+                press_page(s, 960, 585); // «Тихо»: none
+            }
+            if (f == 6) {
+                check(num("demo.quiet") == 1 && snd.clicks() == clicks + 2, "«Тихо»: действие есть, звука нет");
+                press_page(s, 200, 950); // the background: nothing to press
+            }
+            if (f == 7) {
+                check(snd.clicks() == clicks + 2 && num("demo.presses") == 1, "пустое место не звучит и не нажимает");
+                // The keyboard: the menu's buttons take Tab, Enter and Space.
+                Rml::Element* b = titled(sc.document("звук_меню"), "Нажми");
+                check(b && b->Focus(), "кнопка меню берёт фокус клавиатуры");
+                key(s, SDLK_RETURN, true);
+            }
+            if (f == 8) {
+                check(num("demo.presses") == 2 && snd.clicks() == clicks + 3, "Enter нажимает кнопку один раз, со звуком");
+                key(s, SDLK_RETURN, true, true); // held: repeats
+                key(s, SDLK_RETURN, true, true);
+                key(s, SDLK_RETURN, false);
+            }
+            if (f == 9) {
+                check(num("demo.presses") == 2 && snd.clicks() == clicks + 3, "удержание и отпускание Enter не нажимают снова");
+                key(s, SDLK_SPACE, true);
+                key(s, SDLK_SPACE, false);
+            }
+            if (f == 10) {
+                check(num("demo.presses") == 3 && snd.clicks() == clicks + 4, "пробел нажимает один раз");
+                // Loaded again (saved in the editor while the game runs): the music goes on, not twice.
+                for (const SimplePage& p : kSoundPages)
+                    if (std::string(p.name) == "звук_меню") sc.load_page(s.context(), p.name, p.html, "test/ui/звук_меню.html");
+            }
+            if (f == 13) {
+                check(snd.music_starts() == starts + 1 && g.sounds().mixer().voices(audio::Bus::Music) == 1,
+                      "страница загружена снова: музыка та же, не вторая");
+                for (const SimplePage& p : kSoundPages) sc.remove(p.name);
+            }
+            if (f == 15) {
+                check(sc.music().empty() && !snd.music_playing() && g.sounds().mixer().voices(audio::Bus::Music) == 0,
+                      "меню примера ушло: его музыка остановлена");
+                snd.attach(&g.sounds().mixer(), kept);
+                for (const char* v : {"demo.presses", "demo.rings", "demo.quiet"}) s.vars().set(v, 0);
+                return true;
+            }
+            return false;
+        }});
         steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
             if (f < 5) return false;
             if (f == 5) {
@@ -887,6 +1049,145 @@ private:
             sc.remove(name);
             s.vars().set("demo.presses", 0);
             return true;
+        }});
+        // The example's screens in the game: the music of the screen up, one at a time; a window over the
+        // game with its own music, and back; a button's sound once per press by mouse and keys; the keys stay
+        // the game's over a running game; the volume from the settings; a button that is off, a click in the
+        // clipped part, missing files.
+        steps_.push_back({"музыка и звук кнопок экранов в игре", 60, [&s, &g, this](u32 f) {
+            GameScreens& sc = s.screens();
+            audio::ScreenSounds& snd = g.sounds().screens();
+            audio::Mixer& mixer = g.sounds().mixer();
+            static std::filesystem::path kept;
+            static u32 starts = 0, clicks = 0;
+            static audio::Voice first;
+            static Settings settings;
+            static usize problems = 0;
+            auto num = [&](const char* name) { return s.vars().get(name).number(); };
+            const SimplePage* hud = nullptr;
+            for (const SimplePage& p : kSoundPages)
+                if (std::string(p.name) == "звук_игра") hud = &p;
+            if (f == 0) {
+                check(s.screen() == Screen::Playing, "идёт игра");
+                kept = snd.folder();
+                snd.attach(&mixer, sound_files());
+                for (const SimplePage& p : kSoundPages)
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                          std::string("экран примера строится: ") + p.name);
+                s.vars().set("demo.rings", 0);
+                starts = snd.music_starts();
+                clicks = snd.clicks();
+            }
+            if (f == 3) {
+                check(!sc.shown("звук_меню") && sc.shown("звук_игра"), "в игре виден экран поверх игры, меню нет");
+                check(snd.music_name() == "мелодия игры.wav" && snd.music_starts() == starts + 1, "играет музыка игры, начата один раз");
+                check(mixer.voices(audio::Bus::Music) == 1 && music_peak(mixer) > 0.05f, "музыку игры слышно, один голос");
+                first = snd.music_voice();
+                sc.load_page(s.context(), hud->name, hud->html, "test/ui/звук_игра.html"); // saved again in the editor
+            }
+            if (f == 5) {
+                check(snd.music_starts() == starts + 1 && snd.music_voice() == first && mixer.playing(first) &&
+                          mixer.voices(audio::Bus::Music) == 1,
+                      "страница загружена снова: музыка не начинается заново и не двоится");
+                // Over a running game Enter is the game's: a focused button over the world is not pressed by it.
+                Rml::Element* open = titled(sc.document("звук_игра"), "Окно");
+                if (open) open->Focus();
+                key(s, SDLK_RETURN, true);
+                key(s, SDLK_RETURN, false);
+            }
+            if (f == 6) {
+                check(!sc.shown("звук_окно") && snd.clicks() == clicks, "Enter над идущей игрой не нажимает кнопку экрана");
+                press_page(s, 160, 85); // «Окно» with the mouse
+            }
+            if (f == 7) check(sc.shown("звук_окно") && snd.clicks() == clicks + 1 && snd.last_click() == "щелчок.wav", "«Окно» открыло окно, щелчок один");
+            if (f == 9) {
+                check(snd.music_name() == "мелодия окна.wav" && snd.music_starts() == starts + 2 && !mixer.playing(first) &&
+                          mixer.voices(audio::Bus::Music) == 1,
+                      "окно со своей музыкой: музыка игры остановлена, играет музыка окна");
+                check(sc.pauses(), "окно остановило мир");
+                Rml::Element* ring = titled(sc.document("звук_окно"), "Звон");
+                check(ring && ring->Focus(), "кнопка окна берёт фокус клавиатуры");
+                key(s, SDLK_RETURN, true);
+                key(s, SDLK_RETURN, true, true);
+                key(s, SDLK_RETURN, false);
+            }
+            if (f == 10) {
+                check(num("demo.rings") == 1 && snd.clicks() == clicks + 2 && snd.last_click() == "звон.wav",
+                      "Enter на «Звон»: одно действие и один звон, без повторов");
+                press_page(s, 960, 505); // «Звон» with the mouse
+            }
+            if (f == 11) {
+                check(num("demo.rings") == 2 && snd.clicks() == clicks + 3, "мышь на «Звон»: одно действие и один звон");
+                press_page(s, 960, 645); // «Закрыть»: as the screen's buttons, which have none
+            }
+            if (f == 12) check(!sc.shown("звук_окно") && snd.clicks() == clicks + 3, "«Закрыть» закрыло окно без звука");
+            if (f == 14) {
+                check(snd.music_name() == "мелодия игры.wav" && snd.music_starts() == starts + 3 && mixer.voices(audio::Bus::Music) == 1,
+                      "окно закрыто: снова музыка игры, одна");
+                // The settings: music at 0.
+                settings = s.settings();
+                Settings quiet = settings;
+                quiet.music_volume = 0;
+                s.apply_settings(quiet);
+            }
+            if (f == 16) {
+                check(snd.music_playing() && music_peak(mixer) == 0, "громкость музыки 0 в настройках: музыку не слышно");
+                s.apply_settings(settings);
+            }
+            if (f == 18) {
+                check(music_peak(mixer) > 0.05f, "громкость вернули: музыку снова слышно");
+                for (const SimplePage& p : kSoundPages) sc.remove(p.name);
+                // A button that is off, a click in what a frame clips, files that are not there.
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const std::string page =
+                    "<html><head><style>html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }"
+                    " .root { position: relative; width: 100%; height: 100%; } body, .root { pointer-events: none; }"
+                    " .root div { pointer-events: auto; position: absolute; height: 60px; background: #c63; }</style></head><body>"
+                    "<div class=\"root\" forge-screen=\"command\" forge-size=\"" + std::to_string(size.x) + " " + std::to_string(size.y) +
+                    "\" forge-music=\"нет такой.ogg\" forge-button-sound=\"щелчок.wav\">"
+                    "<div id=\"t-off\" style=\"left: 100px; top: 100px; width: 200px;\" forge-disabled=\"1\""
+                    " forge-click=\"[[&quot;change&quot;,&quot;probe.off += 1&quot;]]\"></div>"
+                    "<div id=\"t-clip\" style=\"left: 400px; top: 100px; width: 100px; overflow: hidden; clip: always; border-radius: 12px;\">"
+                    "<div id=\"t-clipped\" style=\"left: 0px; top: 0px; width: 300px;\""
+                    " forge-click=\"[[&quot;change&quot;,&quot;probe.clip += 1&quot;]]\"></div></div>"
+                    "<div id=\"t-missing\" style=\"left: 700px; top: 100px; width: 200px;\" forge-click-sound=\"нет звука.wav\""
+                    " forge-click=\"[[&quot;change&quot;,&quot;probe.missing += 1&quot;]]\"></div>"
+                    "</div></body></html>";
+                check(sc.load_page(s.context(), "звук_проверка", page, "test/ui/звук_проверка.html"), "страница проверки строится");
+                sc.show("звук_проверка", true);
+                for (const char* v : {"probe.off", "probe.clip", "probe.missing"}) s.vars().set(v, 0);
+            }
+            if (f == 21) {
+                check(snd.music_name() == "нет такой.ogg" && !snd.music_playing() && mixer.voices(audio::Bus::Music) == 0,
+                      "музыки нет в папке: тишина, игра идёт");
+                problems = snd.problems().size();
+                const u32 before = snd.clicks();
+                press_window(s, 200, 130); // off
+                press_window(s, 600, 130); // the clipped part of a button
+                check(num("probe.off") == 0 && num("probe.clip") == 0 && snd.clicks() == before,
+                      "выключенная кнопка и обрезанная часть не нажимаются и не звучат: " + std::to_string(num("probe.off")) + " " +
+                          std::to_string(num("probe.clip")) + " " + std::to_string(snd.clicks() - before));
+                press_window(s, 450, 130); // its part in sight
+                check(num("probe.clip") == 1 && snd.clicks() == before + 1,
+                      "видимая часть кнопки нажимается со звуком экрана: " + std::to_string(num("probe.clip")) + " " + std::to_string(snd.clicks() - before));
+                press_window(s, 800, 130);
+                press_window(s, 800, 130);
+                check(num("probe.missing") == 2 && snd.clicks() == before + 1, "звука кнопки нет в папке: действие есть, звука нет");
+            }
+            if (f == 40) {
+                check(std::count(snd.problems().begin(), snd.problems().end(), "нет звука.wav") == 1 &&
+                          std::count(snd.problems().begin(), snd.problems().end(), "нет такой.ogg") == 1 &&
+                          snd.problems().size() == problems + 1,
+                      "о каждом недостающем файле сказано один раз, файлы не читаются каждый кадр");
+                sc.remove("звук_проверка");
+            }
+            if (f == 42) {
+                check(sc.music().empty() && snd.music_name().empty() && mixer.voices(audio::Bus::Music) == 0, "экраны ушли: тишина");
+                snd.attach(&mixer, kept);
+                for (const char* v : {"probe.off", "probe.clip", "probe.missing", "demo.rings"}) s.vars().set(v, 0);
+                return true;
+            }
+            return false;
         }});
         // A page drawn bigger than the window, scaled down to it: every button up to the window's right and
         // bottom edges takes the click where it shows, the pointer over it finds it, and the empty bars beside a

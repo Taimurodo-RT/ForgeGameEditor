@@ -117,6 +117,7 @@ public:
     u32 particles() const { return particles_.stats().slots_used; }
     f64 sim_ms() const { return sim_ms_; }
     const SliceSounds& sounds() const { return sounds_; }
+    SliceSounds& sounds() { return sounds_; }
     const forge::sim::SimStats* sim_stats() const;
     // Links («Ключ открывает Дверь»): the last hint said to the hero, the
     // hero's hearts, the door nearest to a point (NaN-free: false when none).

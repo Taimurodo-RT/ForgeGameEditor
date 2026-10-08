@@ -66,9 +66,11 @@ void SliceSounds::init(const std::filesystem::path& folder, bool silent) {
     silent_ = silent;
     for (usize i = 0; i < cues_.size(); ++i) cues_[i] = make(static_cast<Cue>(i));
     if (!silent && !mixer_.open()) FORGE_WARN("Звука нет: не открылось устройство вывода");
+    screens_.attach(&mixer_, folder);
 }
 
 void SliceSounds::shutdown() {
+    screens_.detach(); // the music stops with the game
     stop_objects();
     mixer_.close();
 }
@@ -77,6 +79,7 @@ void SliceSounds::set_volumes(f32 master, f32 sound, f32 music) {
     mixer_.set_master(master);
     mixer_.set_volume(audio::Bus::Sound, sound);
     mixer_.set_volume(audio::Bus::Music, music);
+    mixer_.set_volume(audio::Bus::Ui, sound); // the screens' buttons
 }
 
 void SliceSounds::pause(bool on) { mixer_.pause(audio::Bus::Sound, on); }

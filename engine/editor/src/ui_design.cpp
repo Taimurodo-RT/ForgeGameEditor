@@ -282,6 +282,7 @@ yyjson_mut_val* write_node(yyjson_mut_doc* doc, const Node& n) {
         }
         yyjson_mut_obj_add_val(doc, o, "on_click", a);
     }
+    if (!n.click_sound.empty()) yyjson_mut_obj_add_strcpy(doc, o, "click_sound", n.click_sound.c_str());
     if (n.motion.kind != MotionKind::None) {
         const Motion& m = n.motion;
         yyjson_mut_val* mo = yyjson_mut_obj(doc);
@@ -497,6 +498,7 @@ bool read_node(yyjson_val* o, Node& n, int depth) {
             if (kind) n.on_click.push_back({*kind, str(v, "target")});
         }
     }
+    n.click_sound = str(o, "click_sound");
     if (yyjson_val* mo = yyjson_obj_get(o, "motion"); yyjson_is_obj(mo)) {
         Motion& m = n.motion;
         m.kind = enum_of(mo, "kind", kMotions, MotionKind::None);
@@ -684,6 +686,8 @@ std::string save_screen(const Screen& screen) {
                 yyjson_mut_obj_add_str(doc, so, "appear", word(screen.appear, kAppears));
                 put_num(doc, so, "appear_time", screen.appear_time);
             }
+            if (!screen.music.empty()) yyjson_mut_obj_add_strcpy(doc, so, "music", screen.music.c_str());
+            if (!screen.button_sound.empty()) yyjson_mut_obj_add_strcpy(doc, so, "button_sound", screen.button_sound.c_str());
         }
         yyjson_mut_obj_add_val(doc, root, "settings", so);
     }
@@ -751,6 +755,8 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         s.esc_closes = flag(so, "esc_closes", true);
         s.appear = enum_of(so, "appear", kAppears, Appear::None);
         s.appear_time = std::clamp(num(so, "appear_time", 0.25f), 0.05f, 10.0f);
+        s.music = str(so, "music");
+        s.button_sound = str(so, "button_sound");
     }
     if (yyjson_val* a = yyjson_obj_get(root, "colors"); yyjson_is_arr(a)) {
         usize i, n;
@@ -919,6 +925,7 @@ void keep_override(Node& to, const Node& from, std::string_view field) {
         to.show_if = from.show_if;
         to.bar = from.bar;
         to.on_click = from.on_click;
+        to.click_sound = from.click_sound;
         to.picture_from = from.picture_from;
         to.list = from.list;
         to.list_gap = from.list_gap;
@@ -1698,7 +1705,13 @@ std::string node_css(const Node& n, const Node* parent, f32 pw, f32 ph, std::str
     if (n.list != ListSource::None) {
         add(css, "overflow-x", "hidden");
         add(css, "overflow-y", "auto");
-    } else if (n.clip) add(css, "overflow", "hidden");
+    } else if (n.clip) {
+        add(css, "overflow", "hidden");
+        // RmlUi clips only content that overflows the layout, and freely placed layers do not: «always» clips
+        // them as the canvas shows, for the eye and for the pointer alike (a rounded frame hid them from the
+        // eye only, and its hidden part still took clicks).
+        if (parent) add(css, "clip", "always");
+    }
     if (!n.picture_from.empty()) {
         add(css, "background-size", "contain");
         add(css, "background-repeat", "no-repeat");
@@ -1867,7 +1880,18 @@ void write_game_attributes(const Node& n, std::string& html) {
             list += "[" + json_string(action_word(a.kind)) + "," + json_string(a.target) + "]";
         }
         attr("forge-click", list + "]");
+        if (!n.click_sound.empty()) attr("forge-click-sound", n.click_sound);
     }
+}
+
+// Copies of a component shown in its «Выключена» look: buttons that are off.
+void off_buttons(const Node& n, const std::vector<Component>& list, const Screen& library, std::vector<u32>& out) {
+    if (!n.component.empty() && n.master) {
+        const Component* component = find_component(list, n.component);
+        const std::string property = component ? state_property(*component, library) : std::string();
+        if (!property.empty() && state_selector(variant_value(n.variant, property)) == ".disabled") out.push_back(n.id);
+    }
+    for (const Node& c : n.children) off_buttons(c, list, library, out);
 }
 
 // Layers that show something (or do something when clicked) take the mouse in
@@ -1890,7 +1914,7 @@ void mouse_layers(const Node& n, std::string& list) {
     for (const Node& c : n.children) mouse_layers(c, list);
 }
 
-void write_elements(const Node& n, std::string& html, int depth, const Screen* screen = nullptr) {
+void write_elements(const Node& n, std::string& html, int depth, const std::vector<u32>& off, const Screen* screen = nullptr) {
     html.append(static_cast<usize>(depth) * 2, ' ');
     html += "<div id=\"n" + std::to_string(n.id) + "\" class=\"" + node_type_name(n.type) + "\" title=\"" +
             escape_html(n.name) + "\"";
@@ -1905,14 +1929,17 @@ void write_elements(const Node& n, std::string& html, int depth, const Screen* s
         if (screen->appear != Appear::None)
             html += std::string(" forge-appear=\"") + word(screen->appear, kAppears) + "\" forge-appear-time=\"" +
                     fmt(screen->appear_time) + "\"";
+        if (!screen->music.empty()) html += " forge-music=\"" + escape_html(screen->music) + "\"";
+        if (!screen->button_sound.empty()) html += " forge-button-sound=\"" + escape_html(screen->button_sound) + "\"";
     }
     write_game_attributes(n, html);
+    if (std::find(off.begin(), off.end(), n.id) != off.end()) html += " forge-disabled=\"1\"";
     html += ">";
     if (n.type == NodeType::Text) {
         html += escape_html(n.text);
     } else if (!n.children.empty()) {
         html += "\n";
-        for (const Node& c : n.children) write_elements(c, html, depth + 1);
+        for (const Node& c : n.children) write_elements(c, html, depth + 1, off);
         html.append(static_cast<usize>(depth) * 2, ' ');
     }
     html += "</div>\n";
@@ -1942,9 +1969,23 @@ std::string screen_html(const Screen& screen, const HtmlOptions& options) {
         for (const Node& c : screen.root.children) mouse_layers(c, list);
         html += "body, #n" + std::to_string(screen.root.id) + " {\n  pointer-events: none;\n}\n";
         if (!list.empty()) html += list + " {\n  pointer-events: auto;\n}\n";
+        // Buttons take the keyboard (Tab, then Enter or Space) where the world
+        // does not: the main menu and windows that stop the game. Over a
+        // running game Space and Enter stay the game's.
+        if (screen.show == ScreenShow::Menu || (screen.show == ScreenShow::Command && screen.pauses)) {
+            std::string keys;
+            auto visit = [&](auto&& self, const Node& n) -> void {
+                if (!n.on_click.empty()) keys += (keys.empty() ? "#n" : ", #n") + std::to_string(n.id);
+                for (const Node& c : n.children) self(self, c);
+            };
+            for (const Node& c : screen.root.children) visit(visit, c);
+            if (!keys.empty()) html += keys + " {\n  tab-index: auto;\n}\n";
+        }
     }
     html += "</style>\n</head>\n<body>\n";
-    write_elements(screen.root, html, 0, screen.library ? nullptr : &screen);
+    std::vector<u32> off;
+    if (options.library && !screen.library) off_buttons(screen.root, components(*options.library), *options.library, off);
+    write_elements(screen.root, html, 0, off, screen.library ? nullptr : &screen);
     html += "</body>\n</html>\n";
     return html;
 }

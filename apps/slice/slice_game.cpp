@@ -517,6 +517,9 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     // The drawn frames and the templates' own pictures under them.
     pictures_.update(library_, make_sheet(), sheet_);
     sounds_.init(library_.sounds_folder(), options_.silent);
+    // The game's screens: the music of the one up, a button's sound when pressed.
+    shell.screens().on_music = [this](const std::string& name) { sounds_.screens().music(name); };
+    shell.screens().on_sound = [this](const std::string& name) { sounds_.screens().click(name); };
     logic_ = std::make_unique<SliceLogic>(*this);
     bridge_ = std::make_unique<ShellBridge>(shell);
     // A button's «Сообщение логике» goes to every scheme listening nearby.

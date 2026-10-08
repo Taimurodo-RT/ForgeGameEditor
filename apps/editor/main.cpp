@@ -29,6 +29,7 @@
 
 #include "forge/assets/image.h"
 #include "forge/audio/audio.h"
+#include "forge/audio/screen_sounds.h"
 #include "forge/core/file.h"
 #include "forge/core/jobs.h"
 #include "forge/core/log.h"
@@ -354,6 +355,7 @@ public:
         objects_tab.init(ui_);
         objects_tab.list_images = [this] { return assets.images(); };
         objects_tab.list_sounds = [this] { return assets.sounds(); };
+        ui_tab.list_sounds = [this] { return assets.sounds(); };
         objects_tab.on_place = [this](u64 key) {
             open_tab("level");
             level.arm_template(key);
@@ -3214,6 +3216,34 @@ private:
     usize ue_tl_cursor_ = 0;
     f64 ue_tl_t_ = 0;
     int ue_tl_stage_ = 0;
+    // The screen's sound (13.7): the stage, the screen and history before, the sound's counts then, a file of «Ресурсы».
+    int ue_sd_stage_ = 0;
+    std::string ue_sd_json_;
+    usize ue_sd_cursor_ = 0;
+    u32 ue_sd_starts_ = 0, ue_sd_clicks_ = 0;
+    std::filesystem::path ue_sd_extra_;
+    std::function<std::vector<std::filesystem::path>()> ue_sd_list_;
+    // A drop-down of the panel brought into sight and opened with the mouse.
+    bool ue_sd_open(const char* id) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e) return false;
+        e->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+        return ue_open(id);
+    }
+    // Only what plays on the check's music bus, as the device would hear it.
+    f32 ue_sd_music_peak() {
+        audio::Mixer& m = ue().check_mixer();
+        m.set_volume(audio::Bus::Ui, 0);
+        std::vector<f32> buf(4096);
+        f32 p = 0;
+        for (int i = 0; i < 2; ++i) {
+            m.mix(buf.data(), 2048);
+            p = 0;
+            for (f32 v : buf) p = std::max(p, std::fabs(v));
+        }
+        m.set_volume(audio::Bus::Ui, 1);
+        return p;
+    }
     // Moving layers between frames (13.6): the example screen, as it was, its history.
     int ue_mv_stage_ = 0;
     std::string ue_mv_json_, ue_mv_orig_;
@@ -4561,8 +4591,11 @@ private:
         }
         case 55:
             check(ue_option("ue-s-action", "settings") && ue_option_hovered_, "a click on «Настройки» in it, the pointer finds it");
-            // The panel cut short right under «Держится» (a test-only height): the drop-down's list then opens past
-            // the panel's bottom, where the panel clips its own content but not the list.
+            break;
+        case 56: {
+            // The panel cut short right under «Держится» (a test-only height), measured once the panel shows what the
+            // action brought (its «Звук»): the drop-down's list then opens past the panel's bottom, where the panel
+            // clips its own content but not the list.
             ue_panel_ = nullptr;
             if (Rml::Element* sel = ed_.find_element("ue-s-anchor-h"))
                 for (Rml::Element* a = sel->GetParentNode(); a; a = a->GetParentNode()) {
@@ -4575,8 +4608,6 @@ private:
                     break;
                 }
             check(ue_panel_ != nullptr, "the panel scrolls");
-            break;
-        case 56: {
             const d::Node* button = ue_node(ue_blocks_[0]);
             check(button && button->on_click.size() == 1 && button->on_click[0].kind == d::ActionKind::Settings &&
                       button->on_click[0].target.empty() && d::block_label(*button)->text == "Настройки",
@@ -6267,6 +6298,220 @@ private:
             ue_mv_stage_ = 0;
             break;
         }
+        case 146: {
+            // The screen's sound (13.7) on games/examples/screen-sound, as the author does it: a music and the buttons'
+            // sound picked in the panel («Полный» and «Простой»), a file of «Ресурсы» copied into the game's sounds,
+            // Ctrl+Z and Ctrl+Y, the page written; in «Проверить» the music plays once and stops when left, a button
+            // sounds once per press; selecting and dragging on the canvas sound nothing.
+            namespace d = editor::design;
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_sd_stage_;
+                return true;
+            };
+            auto choices = [&](const std::string& value) {
+                for (const auto& [v, name] : ue().sound_choices())
+                    if (v == value) return name;
+                return std::string("<none>");
+            };
+            const audio::ScreenSounds& snd = ue().check_sound();
+            audio::Mixer& mixer = ue().check_mixer();
+            switch (ue_sd_stage_++) {
+            case 0: {
+                const std::filesystem::path from = utf8_path(FORGE_EXAMPLES_DIR) / "screen-sound";
+                std::error_code ec;
+                for (const char* name : {"звук_меню", "звук_игра", "звук_окно"})
+                    for (const char* ext : {".json", ".html"})
+                        std::filesystem::copy_file(from / utf8_path(std::string(name) + ext), ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext),
+                                                   std::filesystem::copy_options::overwrite_existing, ec);
+                std::filesystem::create_directories(ue().sounds_folder(), ec);
+                for (const char* name : {"мелодия меню.wav", "мелодия игры.wav", "мелодия окна.wav", "щелчок.wav", "звон.wav"})
+                    std::filesystem::copy_file(from / "sounds" / utf8_path(name), ue().sounds_folder() / utf8_path(name),
+                                               std::filesystem::copy_options::overwrite_existing, ec);
+                // A sound of «Ресурсы», not yet the game's.
+                ue_sd_extra_ = std::filesystem::temp_directory_path() / utf8_path("forge_editor_ресурсы") / utf8_path("колокол.wav");
+                std::filesystem::create_directories(ue_sd_extra_.parent_path(), ec);
+                std::filesystem::copy_file(from / "sounds" / utf8_path("звон.wav"), ue_sd_extra_, std::filesystem::copy_options::overwrite_existing, ec);
+                std::filesystem::remove(ue().sounds_folder() / utf8_path("колокол.wav"), ec);
+                ue_sd_list_ = ue().list_sounds;
+                const std::filesystem::path extra = ue_sd_extra_;
+                ue().list_sounds = [extra] { return std::vector<std::filesystem::path>{extra}; };
+                check(!ec && ue().open("звук_меню"), "the example's menu opens");
+                check(ue().view() == 0 && !ue().simple() && !ue().checking(), "in «Макет», «Полный»");
+                check(ue().screen().music == "мелодия меню.wav" && ue().screen().button_sound == "щелчок.wav", "its music and buttons' sound");
+                check(choices("мелодия окна.wav") == "мелодия окна" && choices("звон.wav") == "звон" &&
+                          choices("add:" + path_to_utf8(ue_sd_extra_)) == "колокол — из «Ресурсов»",
+                      "the drop-downs offer the game's sounds and those of «Ресурсы»");
+                ue().select({});
+                check(click("ue-tab-game"), "the screen's «В игре»");
+                ue_sd_json_ = d::save_screen(ue().screen());
+                ue_sd_cursor_ = ue().history().cursor();
+                ue_sd_starts_ = snd.music_starts();
+                ue_sd_clicks_ = snd.clicks();
+                return true;
+            }
+            case 1:
+                if (wait(ue_field("ue-screen-music") == "мелодия меню.wav", "the panel's drop-downs filled")) return true;
+                check(ue_field("ue-screen-music") == "мелодия меню.wav" && ue_field("ue-screen-button-sound") == "щелчок.wav",
+                      "the panel shows the music and the buttons' sound: " + ue_field("ue-screen-music") + " / " + ue_field("ue-screen-button-sound"));
+                check(ue_sd_open("ue-screen-music"), "a click opens «Музыка»");
+                return true;
+            case 2:
+                check(ue_option("ue-screen-music", "мелодия окна.wav") && ue().screen().music == "мелодия окна.wav", "another music picked");
+                check(ue().history().cursor() == ue_sd_cursor_ + 1 && ue().history().undo_label() == "Изменено: Музыка экрана",
+                      "one step: " + ue().history().undo_label());
+                check(ue_file(".html", "звук_меню").find("forge-music=\"мелодия окна.wav\"") != std::string::npos, "the page says it");
+                ue().undo();
+                check(d::save_screen(ue().screen()) == ue_sd_json_, "Ctrl+Z: the music as it was");
+                ue().redo();
+                check(ue().screen().music == "мелодия окна.wav", "Ctrl+Y: picked again");
+                ue().undo();
+                return true;
+            case 3: {
+                const u32 quiet = ue_named("Тихо");
+                ue().select({quiet});
+                check(ue_node(quiet) && ue_node(quiet)->click_sound == "none", "«Тихо» has no sound");
+                return true;
+            }
+            case 4:
+                check(ue_field("ue-click-sound") == "none", "its «Звук»: «Без звука»");
+                check(ue_sd_open("ue-click-sound"), "a click opens its «Звук»");
+                return true;
+            case 5: {
+                const u32 quiet = ue_named("Тихо");
+                check(ue_option("ue-click-sound", "add:" + path_to_utf8(ue_sd_extra_)), "a sound of «Ресурсы» picked");
+                std::error_code ec;
+                check(ue_node(quiet)->click_sound == "колокол.wav" && std::filesystem::exists(ue().sounds_folder() / utf8_path("колокол.wav"), ec),
+                      "copied into the game's sounds under its Russian name, the button's now");
+                check(ue().history().cursor() == ue_sd_cursor_ + 1 && ue().history().undo_label() == "Изменено: Звук нажатия",
+                      "one step: " + ue().history().undo_label());
+                check(choices("колокол.wav") == "колокол" && choices("add:" + path_to_utf8(ue_sd_extra_)) == "<none>",
+                      "the list has it as the game's own now");
+                ue().undo();
+                check(ue_node(quiet)->click_sound == "none" && d::save_screen(ue().screen()) == ue_sd_json_, "Ctrl+Z: no sound again");
+                ue().redo();
+                check(ue_node(quiet)->click_sound == "колокол.wav", "Ctrl+Y: the bell");
+                // Taken off: «Как у экрана».
+                check(ue().set_property("click_sound", "") && ue_node(quiet)->click_sound.empty(), "back to the screen's sound");
+                ue().undo();
+                ue().undo();
+                check(d::save_screen(ue().screen()) == ue_sd_json_ && ue().history().cursor() == ue_sd_cursor_, "all taken back");
+                // What the game does not read is not taken.
+                check(!ue().set_property("click_sound", "песня.mp3") && !ue().set_property("click_sound", "../звон.wav") &&
+                          d::save_screen(ue().screen()) == ue_sd_json_,
+                      "an MP3 or a path out of the sounds folder is not taken");
+                ue().set_simple(true);
+                return true;
+            }
+            case 6: {
+                // «Простой»: the same fields, in plain words.
+                check(ue().simple() && d::save_screen(ue().screen()) == ue_sd_json_, "«Простой»: nothing changed");
+                ue().select({ue_named("Звон")});
+                return true;
+            }
+            case 7:
+                check(ue_field("ue-s-click-sound") == "звон.wav", "«Звон»'s own sound shown in «Простой»");
+                ue().select({});
+                return true;
+            case 8:
+                check(ue_field("ue-s-music") == "мелодия меню.wav" && ue_field("ue-s-button-sound") == "щелчок.wav",
+                      "the screen's music and buttons' sound in «Простой»");
+                check(ue_sd_open("ue-s-button-sound"), "a click opens «Кнопки»");
+                return true;
+            case 9:
+                check(ue_option("ue-s-button-sound", "звон.wav") && ue().screen().button_sound == "звон.wav", "picked in «Простой»");
+                check(ue().history().cursor() == ue_sd_cursor_ + 1, "one step");
+                ue().undo();
+                check(d::save_screen(ue().screen()) == ue_sd_json_, "Ctrl+Z");
+                ue().set_simple(false);
+                check(d::save_screen(ue().screen()) == ue_sd_json_, "back in «Полный»: everything kept");
+                // Saved and opened again: the same.
+                check(ue().open("main_menu") && ue().open("звук_меню") && d::save_screen(ue().screen()) == ue_sd_json_ &&
+                          ue_file(".json", "звук_меню").find("\"click_sound\": \"none\"") != std::string::npos,
+                      "opened again: the music and sounds as saved");
+                return true;
+            case 10: {
+                // Selecting and dragging a button on the canvas: no sound.
+                const u32 button = ue_named("Нажми");
+                const auto b = ue().layer_box(button);
+                check(b.has_value(), "the button on the canvas");
+                if (b) {
+                    left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                    ue_drag(ue_wx(b->cx()), ue_wy(b->cy()), ue_wx(b->cx() + 40), ue_wy(b->cy() + 20));
+                }
+                return true;
+            }
+            case 11:
+                check(ue().selection().size() == 1 && ue().history().cursor() == ue_sd_cursor_ + 1,
+                      "picked and dragged on the canvas: one step: " + std::to_string(ue().history().cursor() - ue_sd_cursor_) + " " +
+                          std::to_string(ue().selection().size()));
+                check(snd.clicks() == ue_sd_clicks_ && snd.music_starts() == ue_sd_starts_ && mixer.voices() == 0,
+                      "no sound while editing");
+                ue().undo();
+                check(d::save_screen(ue().screen()) == ue_sd_json_, "Ctrl+Z puts it back");
+                ue().select({});
+                check(click("ue-check") && ue().checking(), "«Проверить»");
+                for (const char* v : {"demo.presses", "demo.rings", "demo.quiet"}) ue().check_vars().set(v, 0);
+                return true;
+            case 12:
+                check(snd.music_name() == "мелодия меню.wav" && snd.music_starts() == ue_sd_starts_ + 1 && mixer.voices(audio::Bus::Music) == 1,
+                      "«Проверить» plays the menu's music once: " + snd.music_name());
+                check(ue_sd_music_peak() > 0.05f, "and it is heard (the mix is not silent)");
+                if (const auto b = ue().layer_box(ue_named("Нажми"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            case 13:
+                check(ue().check_vars().get("demo.presses").number() == 1 && snd.clicks() == ue_sd_clicks_ + 1 && snd.last_click() == "щелчок.wav",
+                      "«Нажми» in «Проверить»: once, with the screen's click: " + std::to_string(ue().check_vars().get("demo.presses").number()) +
+                          " " + std::to_string(snd.clicks() - ue_sd_clicks_) + " " + snd.last_click());
+                if (const auto b = ue().layer_box(ue_named("Звон"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            case 14:
+                check(ue().check_vars().get("demo.rings").number() == 1 && snd.clicks() == ue_sd_clicks_ + 2 && snd.last_click() == "звон.wav",
+                      "«Звон»: its own sound");
+                if (const auto b = ue().layer_box(ue_named("Тихо"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            case 15:
+                check(ue().check_vars().get("demo.quiet").number() == 1 && snd.clicks() == ue_sd_clicks_ + 2, "«Тихо»: no sound");
+                // The page built again (another player's screen): the music goes on, not twice.
+                ue().set_view(5);
+                return true;
+            case 16:
+                check(snd.music_starts() == ue_sd_starts_ + 1 && mixer.voices(audio::Bus::Music) == 1, "the page built again: the same music, one");
+                ue().set_view(0);
+                ue().set_checking(false);
+                return true;
+            case 17:
+                check(!ue().checking() && snd.music_name().empty() && mixer.voices(audio::Bus::Music) == 0, "out of «Проверить»: the music stops");
+                // The window over the game: its music while it is open, the game's when it closes.
+                check(ue().open("звук_игра") && click("ue-check") && ue().checking(), "«Проверить» on the screen over the game");
+                return true;
+            case 18:
+                check(snd.music_name() == "мелодия игры.wav" && snd.music_starts() == ue_sd_starts_ + 2, "the game's music");
+                if (const auto b = ue().layer_box(ue_named("Окно"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            case 19:
+                if (wait(ue().opened() == "звук_окно" && snd.music_name() == "мелодия окна.wav", "the window opens with its music")) return true;
+                check(snd.music_starts() == ue_sd_starts_ + 3 && mixer.voices(audio::Bus::Music) == 1 && snd.last_click() == "щелчок.wav",
+                      "«Окно»: a click, then the window's music instead of the game's");
+                ue_sd_clicks_ = snd.clicks();
+                if (const auto b = ue().layer_box(ue_named("Закрыть"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            case 20:
+                if (wait(ue().opened() == "звук_игра", "«Закрыть» goes back")) return true;
+                check(snd.clicks() == ue_sd_clicks_ && snd.music_name() == "мелодия игры.wav" && mixer.voices(audio::Bus::Music) == 1,
+                      "«Закрыть» without a sound, the game's music again");
+                ue().set_checking(false);
+                return true;
+            case 21:
+                check(snd.music_name().empty() && mixer.voices(audio::Bus::Music) == 0, "out of «Проверить»: silence");
+                ue().list_sounds = ue_sd_list_;
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            default: break;
+            }
+            ue_sd_stage_ = 0;
+            break;
+        }
         default:
             ue_step_ = -1;
             return true;
@@ -6732,6 +6977,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 std::filesystem::copy(editor.game_dir / "pictures", editor.pictures_folder, std::filesystem::copy_options::recursive, ec);
             editor.sounds_folder = std::filesystem::temp_directory_path() / "forge_editor_sounds";
             editor.objects_tab.silent = true;
+            editor.ui_tab.silent = true;
             std::filesystem::remove_all(editor.sounds_folder, ec);
             // Nor this computer's shared objects: an empty library of its own.
             editor.shared_folder = std::filesystem::temp_directory_path() / "forge_editor_shared";

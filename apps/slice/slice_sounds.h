@@ -9,6 +9,7 @@
 #include "slice_level.h"
 
 #include "forge/audio/audio.h"
+#include "forge/audio/screen_sounds.h"
 #include "forge/scene/scene.h"
 
 #include <array>
@@ -28,6 +29,8 @@ public:
     void init(const std::filesystem::path& folder, bool silent);
     void shutdown();
     forge::audio::Mixer& mixer() { return mixer_; }
+    // The game's screens: their music and their buttons' sounds.
+    forge::audio::ScreenSounds& screens() { return screens_; }
 
     // The game's settings (0..1) and its pause.
     void set_volumes(f32 master, f32 sound, f32 music);
@@ -63,6 +66,7 @@ private:
         bool seen = false;
     };
     forge::audio::Mixer mixer_;
+    forge::audio::ScreenSounds screens_;
     bool silent_ = false;
     std::filesystem::path folder_;
     std::array<forge::audio::SoundPtr, static_cast<usize>(Cue::Count)> cues_{};

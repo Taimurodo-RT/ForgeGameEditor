@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Звук: меню</title>
+<!-- Made by Forge «Интерфейс» from Звук: меню.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background-color: #181e26;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: 460px;
+  width: 1000px;
+  top: 120px;
+  height: 90px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 64px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+#n3 {
+  position: absolute;
+  left: 760px;
+  width: 400px;
+  top: 300px;
+  height: 90px;
+  box-sizing: border-box;
+  background-color: #e8b04a;
+  border-radius: 14px 14px 14px 14px;
+}
+#n4 {
+  position: absolute;
+  left: 0px;
+  width: 400px;
+  top: 0px;
+  height: 90px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 36px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #1b2127;
+  white-space: pre-wrap;
+}
+#n5 {
+  position: absolute;
+  left: 760px;
+  width: 400px;
+  top: 420px;
+  height: 90px;
+  box-sizing: border-box;
+  background-color: #e8b04a;
+  border-radius: 14px 14px 14px 14px;
+}
+#n6 {
+  position: absolute;
+  left: 0px;
+  width: 400px;
+  top: 0px;
+  height: 90px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 36px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #1b2127;
+  white-space: pre-wrap;
+}
+#n7 {
+  position: absolute;
+  left: 760px;
+  width: 400px;
+  top: 540px;
+  height: 90px;
+  box-sizing: border-box;
+  background-color: #e8b04a;
+  border-radius: 14px 14px 14px 14px;
+}
+#n8 {
+  position: absolute;
+  left: 0px;
+  width: 400px;
+  top: 0px;
+  height: 90px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 36px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #1b2127;
+  white-space: pre-wrap;
+}
+#n9 {
+  position: absolute;
+  left: 360px;
+  width: 1200px;
+  top: 700px;
+  height: 60px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 32px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #c8d2dc;
+  white-space: pre-wrap;
+}
+body, #n1 {
+  pointer-events: none;
+}
+#n2, #n3, #n4, #n5, #n6, #n7, #n8, #n9 {
+  pointer-events: auto;
+}
+#n3, #n5, #n7 {
+  tab-index: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Звук: меню" forge-screen="menu" forge-fit="expand" forge-size="1920 1080" forge-music="мелодия меню.wav" forge-button-sound="щелчок.wav">
+  <div id="n2" class="text" title="Заголовок">Звук экрана</div>
+  <div id="n3" class="frame" title="Нажми" forge-click="[[&quot;change&quot;,&quot;demo.presses += 1&quot;]]">
+    <div id="n4" class="text" title="Надпись">Нажми</div>
+  </div>
+  <div id="n5" class="frame" title="Звон" forge-click="[[&quot;change&quot;,&quot;demo.rings += 1&quot;]]" forge-click-sound="звон.wav">
+    <div id="n6" class="text" title="Надпись">Звон</div>
+  </div>
+  <div id="n7" class="frame" title="Тихо" forge-click="[[&quot;change&quot;,&quot;demo.quiet += 1&quot;]]" forge-click-sound="none">
+    <div id="n8" class="text" title="Надпись">Тихо</div>
+  </div>
+  <div id="n9" class="text" title="Счёт" forge-text="Нажми: {demo.presses}   Звон: {demo.rings}   Тихо: {demo.quiet}">Нажми: {demo.presses}   Звон: {demo.rings}   Тихо: {demo.quiet}</div>
+</div>
+</body>
+</html>

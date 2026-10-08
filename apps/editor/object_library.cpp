@@ -913,8 +913,6 @@ std::string ObjectLibrary::status() const {
 
 namespace forge::editor_app {
 
-namespace {
-
 // A file into the game's folder (pictures, sounds), under its own name; the
 // same file already there is used as it is, another one of that name gets a
 // number. The name it has there; empty when it cannot be copied.
@@ -943,8 +941,6 @@ std::string copy_into(const std::filesystem::path& source, const std::filesystem
     }
     return path_to_utf8(target.filename());
 }
-
-} // namespace
 
 bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
     const objects::Template* t = selected();
