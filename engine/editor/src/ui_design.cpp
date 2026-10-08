@@ -48,6 +48,7 @@ const char* const kBarFroms[] = {"left", "right", "bottom", "top"};
 const char* const kActions[] = {"show", "hide", "toggle", "close", "message", "change", "talk", "pause", "resume",
                                 "menu", "quit", "new", "continue", "load", "save", "settings"};
 const char* const kScreenShows[] = {"playing", "command", "menu"};
+const char* const kWindowOvers[] = {"any", "game", "menu"};
 const char* const kEasings[] = {"smooth", "linear", "in", "out", "back", "bounce", "elastic"};
 const char* const kMotions[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
 const char* const kAppears[] = {"none", "fade", "rise", "drop", "zoom", "left", "right"};
@@ -618,6 +619,7 @@ const char* node_type_name(NodeType t) { return word(t, kNodeTypes); }
 const char* action_word(ActionKind k) { return word(k, kActions); }
 
 const char* list_word(ListSource s) { return word(s, kLists); }
+const char* window_over_word(WindowOver o) { return word(o, kWindowOvers); }
 const char* screen_fit_word(ScreenFit f) { return word(f, kScreenFits); }
 
 std::vector<std::pair<std::string, std::string>> list_fields(ListSource s) {
@@ -682,6 +684,8 @@ std::string save_screen(const Screen& screen) {
             yyjson_mut_obj_add_str(doc, so, "show", word(screen.show, kScreenShows));
             if (screen.pauses) yyjson_mut_obj_add_bool(doc, so, "pauses", true);
             if (!screen.esc_closes) yyjson_mut_obj_add_bool(doc, so, "esc_closes", false);
+            if (screen.dim) yyjson_mut_obj_add_bool(doc, so, "dim", true);
+            if (screen.over != WindowOver::Any) yyjson_mut_obj_add_str(doc, so, "over", word(screen.over, kWindowOvers));
             if (screen.appear != Appear::None) {
                 yyjson_mut_obj_add_str(doc, so, "appear", word(screen.appear, kAppears));
                 put_num(doc, so, "appear_time", screen.appear_time);
@@ -753,6 +757,8 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         s.show = enum_of(so, "show", kScreenShows, ScreenShow::Command);
         s.pauses = flag(so, "pauses", false);
         s.esc_closes = flag(so, "esc_closes", true);
+        s.dim = flag(so, "dim", false);
+        s.over = enum_of(so, "over", kWindowOvers, WindowOver::Any);
         s.appear = enum_of(so, "appear", kAppears, Appear::None);
         s.appear_time = std::clamp(num(so, "appear_time", 0.25f), 0.05f, 10.0f);
         s.music = str(so, "music");
@@ -1929,6 +1935,9 @@ void write_elements(const Node& n, std::string& html, int depth, const std::vect
         if (screen->fit == ScreenFit::Fit) html += " forge-bars=\"" + color_hex(screen->bars) + "\"";
         if (screen->pauses) html += " forge-pauses=\"1\"";
         if (!screen->esc_closes) html += " forge-esc=\"0\"";
+        if (screen->dim && screen->show == ScreenShow::Command) html += " forge-dim=\"1\"";
+        if (screen->over != WindowOver::Any && screen->show == ScreenShow::Command)
+            html += std::string(" forge-over=\"") + word(screen->over, kWindowOvers) + "\"";
         if (screen->appear != Appear::None)
             html += std::string(" forge-appear=\"") + word(screen->appear, kAppears) + "\" forge-appear-time=\"" +
                     fmt(screen->appear_time) + "\"";
@@ -1985,7 +1994,14 @@ std::string screen_html(const Screen& screen, const HtmlOptions& options) {
             if (!keys.empty()) html += keys + " {\n  tab-index: auto;\n}\n";
         }
     }
+    // A window that darkens what is under it: a veil over the whole player's screen, under the window, that
+    // takes the clicks (what is under it gets none).
+    const bool veil = !screen.library && screen.dim && screen.show == ScreenShow::Command;
+    if (veil)
+        html += "#forge-dim {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 100%;\n  height: 100%;\n"
+                "  background-color: rgba(0, 0, 0, 0.5);\n  pointer-events: auto;\n}\n";
     html += "</style>\n</head>\n<body>\n";
+    if (veil) html += "<div id=\"forge-dim\"></div>\n";
     std::vector<u32> off;
     if (options.library && !screen.library) off_buttons(screen.root, components(*options.library), *options.library, off);
     write_elements(screen.root, html, 0, off, screen.library ? nullptr : &screen);

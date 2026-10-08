@@ -144,6 +144,8 @@ struct GameScreens::Page {
     f32 width = 1920, height = 1080;
     std::string bars;
     bool pauses = false, esc = true;
+    Rml::Element* dim = nullptr; // forge-dim: the veil under a window that darkens what is under it
+    std::string over;            // forge-over: "game" or "menu", the only place it comes up ("": anywhere)
     bool shown = false;  // a Command page that was shown
     bool visible = false; // on screen now
     u64 order = 0;        // when it was shown (Esc closes the newest)
@@ -166,6 +168,7 @@ struct GameScreens::Impl : Rml::EventListener {
     Rml::Context* context = nullptr;
     fs::path dir;
     bool watch = false;
+    bool over_menu = false; // windows come up over the main menu now (else over the game)
     u64 next_poll = 0;
     u64 shows = 0;
     std::vector<std::unique_ptr<Page>> pages;
@@ -233,6 +236,8 @@ struct GameScreens::Impl : Rml::EventListener {
             p.bars = attr("forge-bars");
             p.pauses = attr("forge-pauses") == "1";
             p.esc = attr("forge-esc") != "0";
+            if (attr("forge-dim") == "1") p.dim = e->GetOwnerDocument()->GetElementById("forge-dim");
+            p.over = attr("forge-over");
             p.appear = attr("forge-appear");
             if (p.appear == "none") p.appear.clear();
             p.appear_time = std::clamp(static_cast<f32>(std::atof(attr("forge-appear-time").c_str())), 0.0f, 10.0f);
@@ -461,6 +466,7 @@ struct GameScreens::Impl : Rml::EventListener {
         }
         p.doc->AddEventListener(Rml::EventId::Click, this);
         p.root = nullptr;
+        p.dim = nullptr;
         p.bound.clear();
         p.fit_w = p.fit_h = -1;
         p.visible = false;
@@ -490,6 +496,7 @@ struct GameScreens::Impl : Rml::EventListener {
         context->UnloadDocument(p.doc);
         p.doc = nullptr;
         p.root = nullptr;
+        p.dim = nullptr;
         p.bound.clear();
         p.lists.clear();
     }
@@ -551,6 +558,7 @@ struct GameScreens::Impl : Rml::EventListener {
         if (p.appear.empty() || t >= 1) {
             p.root->SetProperty("transform", p.fit_transform);
             p.root->RemoveProperty("opacity");
+            if (p.dim) p.dim->RemoveProperty("opacity");
             return;
         }
         t = std::clamp(t, 0.0f, 1.0f);
@@ -571,6 +579,7 @@ struct GameScreens::Impl : Rml::EventListener {
                       static_cast<double>(dy), static_cast<double>(z));
         p.root->SetProperty("transform", buf);
         p.root->SetProperty("opacity", std::to_string(e));
+        if (p.dim) p.dim->SetProperty("opacity", std::to_string(e)); // the veil comes and goes with it
     }
     f32 progress(const Page& p) const {
         if (!p.move_start) return 1;
@@ -754,6 +763,7 @@ void GameScreens::remove(std::string_view name) {
 
 void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, int height, const CallFn& call) {
     if (impl_->watch && !impl_->dir.empty()) impl_->poll();
+    impl_->over_menu = menu;
     impl_->lists_ms = 0;
     bool restacked = false;
     for (auto& page : impl_->pages) {
@@ -834,6 +844,11 @@ bool GameScreens::show(std::string_view name, bool on) {
         FORGE_WARN("нет экрана «%.*s»", static_cast<int>(name.size()), name.data());
         return false;
     }
+    if (on && !p->shown && !fits(name)) {
+        FORGE_WARN("окно «%.*s» появляется только %s: здесь его не открыли", static_cast<int>(name.size()), name.data(),
+                   p->over == "menu" ? "над главным меню" : "над игрой");
+        return false;
+    }
     if (on && !p->shown) p->order = ++impl_->shows;
     p->shown = on;
     return true;
@@ -848,6 +863,19 @@ bool GameScreens::shown(std::string_view name) const {
 
 bool GameScreens::exists(std::string_view name) const { return impl_->find(name) != nullptr; }
 
+void GameScreens::set_over_menu(bool menu) { impl_->over_menu = menu; }
+
+bool GameScreens::fits(std::string_view name) const {
+    const Page* p = impl_->find(name);
+    if (!p || p->role != ScreenRole::Command || p->over.empty()) return true;
+    return p->over == (impl_->over_menu ? "menu" : "game");
+}
+
+std::string GameScreens::over(std::string_view name) const {
+    const Page* p = impl_->find(name);
+    return p ? p->over : std::string();
+}
+
 void GameScreens::hide_commands() {
     for (auto& p : impl_->pages) p->shown = false;
 }
@@ -855,10 +883,21 @@ void GameScreens::hide_commands() {
 bool GameScreens::close_top() {
     Page* top = nullptr;
     for (auto& p : impl_->pages)
-        if (p->role == ScreenRole::Command && p->shown && p->esc && (!top || p->order > top->order)) top = p.get();
-    if (!top) return false;
+        if (p->role == ScreenRole::Command && p->shown && (!top || p->order > top->order)) top = p.get();
+    // Only the window on top: one that Esc does not close keeps Esc from the windows under it.
+    if (!top || !top->esc) return false;
     top->shown = false;
     return true;
+}
+
+std::vector<std::string> GameScreens::windows() const {
+    std::vector<const Page*> up;
+    for (auto& p : impl_->pages)
+        if (p->role == ScreenRole::Command && p->shown) up.push_back(p.get());
+    std::sort(up.begin(), up.end(), [](const Page* a, const Page* b) { return a->order < b->order; });
+    std::vector<std::string> out;
+    for (const Page* p : up) out.push_back(p->name);
+    return out;
 }
 
 bool GameScreens::pauses() const {

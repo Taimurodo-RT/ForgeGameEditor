@@ -549,6 +549,47 @@ TEST_CASE("ui design: the link to the game survives saving and goes onto the pag
     CHECK(override_of("show_if") == "game");
 }
 
+TEST_CASE("ui design: a window's place and veil survive saving and go onto the page") {
+    Screen screen = make_screen("Сундук", 1280, 720);
+    screen.show = ScreenShow::Command;
+    screen.dim = true;
+    screen.over = WindowOver::Game;
+    Screen back;
+    REQUIRE(load_screen(save_screen(screen), back));
+    CHECK(back.dim);
+    CHECK(back.over == WindowOver::Game);
+    screen.over = WindowOver::Menu;
+    REQUIRE(load_screen(save_screen(screen), back));
+    CHECK(back.over == WindowOver::Menu);
+    CHECK(std::string(window_over_word(WindowOver::Any)) == "any");
+
+    // Windows from before: no veil, anywhere; «везде» is not written.
+    Screen old;
+    REQUIRE(load_screen(R"({"title": "Старое", "settings": {"show": "command"}, "root": {"id": 1, "type": "frame"}})", old));
+    CHECK_FALSE(old.dim);
+    CHECK(old.over == WindowOver::Any);
+    CHECK_FALSE(contains(save_screen(old), "\"over\""));
+    CHECK_FALSE(contains(save_screen(old), "\"dim\""));
+
+    // On the page: the root says where it comes up, and the veil lies under the window over the whole screen.
+    const std::string html = screen_html(screen);
+    const std::string root = "<div id=\"n" + std::to_string(screen.root.id) + "\"";
+    CHECK(contains(html, "forge-dim=\"1\" forge-over=\"menu\""));
+    CHECK(contains(html, "#forge-dim {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 100%;\n  height: 100%;\n"
+                         "  background-color: rgba(0, 0, 0, 0.5);\n  pointer-events: auto;\n}"));
+    REQUIRE(contains(html, "<div id=\"forge-dim\"></div>"));
+    CHECK(html.find("<div id=\"forge-dim\"></div>") < html.find(root));
+    // Without the switch, or on a screen that is not a window, there is neither.
+    for (const auto& [show, dim] : {std::pair{ScreenShow::Command, false}, {ScreenShow::Playing, true}, {ScreenShow::Menu, true}}) {
+        Screen other = screen;
+        other.show = show;
+        other.dim = dim;
+        const std::string page = screen_html(other);
+        CHECK_FALSE(contains(page, "forge-dim"));
+        CHECK(contains(page, "forge-over") == (show == ScreenShow::Command));
+    }
+}
+
 TEST_CASE("ui design: a list of the game's survives saving and goes onto the page") {
     Screen screen = make_screen("Сумка", 1280, 720);
     Node list;

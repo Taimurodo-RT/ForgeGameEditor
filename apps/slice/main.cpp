@@ -889,6 +889,108 @@ private:
             s.on_message = nullptr;
             return true;
         }});
+        // Windows' behaviour (13.11): a window that darkens what is under it takes the clicks off the HUD and the
+        // world; Esc closes only the window on top, and one that Esc does not close keeps the ones under it (Esc
+        // opens the pause); a window set to come up only over the main menu does not open in the game.
+        steps_.push_back({"поведение окон", 40, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            auto key = [&](SDL_Keycode k) {
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_KEY_DOWN;
+                ev.key.key = k;
+                ev.key.down = true;
+                s.handle_event(ev);
+            };
+            auto hovered = [&]() {
+                Rml::Element* h = s.context()->GetHoverElement();
+                return h ? h->GetId() : Rml::String("нет");
+            };
+            if (f == 0) {
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y);
+                auto page = [&](const std::string& root, const std::string& attrs, bool veil, const std::string& inside) {
+                    return "<html><head><style>body, #" + root + " { pointer-events: none; } #" + root +
+                           " { position: relative; width: 100%; height: 100%; } #" + root + " > div { pointer-events: auto; }" +
+                           (veil ? " #forge-dim { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; "
+                                   "background-color: rgba(0, 0, 0, 0.5); pointer-events: auto; }"
+                                 : "") +
+                           "</style></head><body>" + (veil ? "<div id=\"forge-dim\"></div>" : "") + "<div id=\"" + root +
+                           "\" " + attrs + " forge-size=\"" + dims + "\">" + inside + "</div></body></html>";
+                };
+                auto button = [](const char* id, int x, int y, const char* actions, const char* label) {
+                    return std::string("<div id=\"") + id + "\" style=\"position: absolute; left: " + std::to_string(x) +
+                           "px; top: " + std::to_string(y) + "px; width: 120px; height: 40px; background: #335;\" forge-click=\"" +
+                           actions + "\">" + label + "</div>";
+                };
+                check(sc.load_page(s.context(), "тест_hud2",
+                                   page("o-hud", "forge-screen=\"playing\"", false,
+                                        button("o-open", 100, 100, "[[&quot;show&quot;,&quot;тест_затемнение&quot;]]", "Окно") +
+                                            button("o-count", 100, 500, "[[&quot;change&quot;,&quot;test.hud += 1&quot;]]", "Счёт")),
+                                   "test/ui/тест_hud2.html"),
+                      "HUD строится");
+                check(sc.load_page(s.context(), "тест_затемнение",
+                                   page("o-dim", "forge-screen=\"command\" forge-pauses=\"1\" forge-dim=\"1\" forge-appear=\"fade\" forge-appear-time=\"0.3\"", true,
+                                        button("o-more", 600, 300, "[[&quot;show&quot;,&quot;тест_без_esc&quot;]]", "Ещё")),
+                                   "test/ui/тест_затемнение.html"),
+                      "окно с затемнением строится");
+                check(sc.load_page(s.context(), "тест_без_esc",
+                                   page("o-stay", "forge-screen=\"command\" forge-esc=\"0\"", false,
+                                        button("o-close", 600, 400, "[[&quot;close&quot;,&quot;&quot;]]", "Закрыть")),
+                                   "test/ui/тест_без_esc.html"),
+                      "окно без Esc строится");
+                check(sc.load_page(s.context(), "тест_только_меню",
+                                   page("o-menu", "forge-screen=\"command\" forge-over=\"menu\"", false, ""), "test/ui/тест_только_меню.html"),
+                      "окно только для меню строится");
+                s.vars().set("test.hud", 0);
+            }
+            if (f == 2) {
+                check(sc.over("тест_только_меню") == "menu" && !sc.fits("тест_только_меню"), "окно только для меню не подходит игре");
+                check(!sc.show("тест_только_меню", true) && !sc.shown("тест_только_меню"), "в игре оно не открывается");
+                check(click(s, "o-count"), "кнопка HUD нажимается");
+            }
+            if (f == 4) {
+                check(s.vars().get("test.hud").number() == 1, "без окна щелчок доходит до HUD");
+                check(click(s, "o-open"), "кнопка открывает окно");
+            }
+            if (f == 6) {
+                check(sc.shown("тест_затемнение") && sc.pauses(), "окно открыто и ставит игру на паузу");
+                Rml::Element* veil = s.find_element("forge-dim");
+                check(veil && veil->IsVisible(true), "затемнение видно");
+                check(veil && veil->GetLocalProperty("opacity") && veil->GetProperty<float>("opacity") < 1, "затемнение проявляется вместе с окном");
+                check(click(s, "o-count"), "щелчок по кнопке HUD под затемнением");
+                check(hovered() == "forge-dim" && !s.over_world(), "мышь над затемнением, не над миром: " + hovered());
+                SDL_Delay(350);
+            }
+            if (f == 8) {
+                Rml::Element* veil = s.find_element("forge-dim");
+                check(veil && !veil->GetLocalProperty("opacity"), "окно появилось: затемнение целиком");
+                check(s.vars().get("test.hud").number() == 1, "затемнение не пропустило щелчок к HUD");
+                check(sc.shown("тест_затемнение"), "щелчок по затемнению окно не закрывает");
+                check(click(s, "o-more"), "кнопка в окне открывает второе окно");
+            }
+            if (f == 10) {
+                const std::vector<std::string> up = sc.windows();
+                check(up.size() == 2 && up.back() == "тест_без_esc", "второе окно сверху");
+                key(SDLK_ESCAPE);
+                check(sc.shown("тест_без_esc") && sc.shown("тест_затемнение"), "Esc не закрыл ни верхнее окно без Esc, ни окно под ним");
+                check(s.screen() == forge::game::Screen::Paused, "Esc открыл паузу игры");
+                key(SDLK_ESCAPE);
+                check(s.screen() == forge::game::Screen::Playing, "Esc ещё раз — обратно в игру");
+            }
+            if (f == 12) check(click(s, "o-close"), "второе окно закрывается своей кнопкой");
+            if (f == 14) {
+                check(!sc.shown("тест_без_esc") && sc.shown("тест_затемнение"), "закрылось только второе окно");
+                key(SDLK_ESCAPE);
+                check(!sc.shown("тест_затемнение") && s.screen() == forge::game::Screen::Playing, "Esc закрыл окно с затемнением");
+                check(sc.windows().empty() && !sc.pauses(), "окон нет, игра идёт");
+            }
+            if (f == 15) SDL_Delay(350); // the window and its veil fade away
+            if (f == 17) check(click(s, "o-count"), "кнопка HUD снова нажимается");
+            if (f == 19) check(s.vars().get("test.hud").number() == 2, "без окна щелчок снова доходит до HUD");
+            if (f < 20) return false;
+            for (const char* n : {"тест_hud2", "тест_затемнение", "тест_без_esc", "тест_только_меню"}) sc.remove(n);
+            return true;
+        }});
         // The example screens made of «Простой»'s blocks (games/examples/simple-mode, built in): the HUD's
         // coins, hearts and button, the bag its button opens, with a cell per thing and a button that closes it.
         steps_.push_back({"экраны из простых блоков", 30, [&s, this](u32 f) {

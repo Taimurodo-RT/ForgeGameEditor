@@ -116,6 +116,7 @@ const char* const kFitWords[] = {"fill", "fit", "tile", "stretch"};
 const char* const kArtRepeatWords[] = {"stretch", "repeat", "round", "space"};
 const char* const kScreenFitWords[] = {"expand", "fit", "stretch"};
 const char* const kScreenShowWords[] = {"playing", "command", "menu"};
+const char* const kWindowOverWords[] = {"any", "game", "menu"};
 const char* const kBarFromWords[] = {"left", "right", "bottom", "top"};
 // Movement (the file's words, design::Motion and friends).
 const char* const kMotionWords[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
@@ -389,6 +390,73 @@ std::vector<std::string> UiEditor::screens() const {
     return out;
 }
 
+// What opens this window and over what it comes up: the buttons of the other screens (copies of components
+// too) and «Логика»'s blocks «Показать экран». The game puts a window over what opened it: the main menu, the
+// game or another window; one set to come up only over the game (or the menu) does not open elsewhere.
+void UiEditor::refresh_openers() {
+    m_openers_.clear();
+    if (!screen_.library && screen_.show == d::ScreenShow::Command) {
+        const d::WindowOver mine = screen_.over;
+        const char* only = mine == d::WindowOver::Game ? "только над игрой" : "только над главным меню";
+        // A button's words: its text, or the first text inside it, or its layer's name.
+        auto words = [](const d::Node& n) {
+            std::string out;
+            auto find = [&](auto&& self, const d::Node& m) -> void {
+                if (!out.empty()) return;
+                if (m.type == d::NodeType::Text && !m.text.empty()) out = m.text;
+                for (const d::Node& c : m.children) self(self, c);
+            };
+            find(find, n);
+            if (out.empty()) out = n.name;
+            if (out.size() > 40) {
+                usize cut = 40;
+                while (cut > 0 && (static_cast<u8>(out[cut]) & 0xC0) == 0x80) --cut;
+                out = out.substr(0, cut) + "…";
+            }
+            return out;
+        };
+        // over: where it comes up from there (Any: over a window that may be either).
+        auto row = [&](std::string text, d::WindowOver over) {
+            OpenerRow r;
+            r.warn = mine != d::WindowOver::Any && over != d::WindowOver::Any && over != mine;
+            if (r.warn) text += std::string(". Не откроется: окно ") + only;
+            else if (mine != d::WindowOver::Any && over == d::WindowOver::Any)
+                text += std::string("; откроется, только если и то окно ") + (mine == d::WindowOver::Game ? "над игрой" : "над меню");
+            r.text = std::move(text);
+            m_openers_.push_back(std::move(r));
+        };
+        for (const std::string& name : screens()) {
+            if (name == name_) continue;
+            std::vector<u8> bytes;
+            d::Screen s;
+            if (!read_file(json_path(name), bytes) ||
+                !d::load_screen(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), s) || s.library)
+                continue;
+            d::sync_instances(s, library_);
+            const std::string title = s.title.empty() ? name : s.title;
+            const d::WindowOver from = s.show == d::ScreenShow::Menu      ? d::WindowOver::Menu
+                                       : s.show == d::ScreenShow::Playing ? d::WindowOver::Game
+                                                                          : s.over;
+            const std::string over = s.show == d::ScreenShow::Menu      ? "над главным меню"
+                                     : s.show == d::ScreenShow::Playing ? "над игрой"
+                                                                        : "над окном «" + title + "»";
+            auto visit = [&](auto&& self, const d::Node& n) -> void {
+                for (const d::Action& a : n.on_click)
+                    if ((a.kind == d::ActionKind::Show || a.kind == d::ActionKind::Toggle) && a.target == name_) {
+                        row("Кнопка «" + words(n) + "» на экране «" + title + "»: " + over, from);
+                        break;
+                    }
+                for (const d::Node& c : n.children) self(self, c);
+            };
+            visit(visit, s.root);
+        }
+        // «Логика» runs while the game is played.
+        if (logic_openers)
+            for (const std::string& where : logic_openers(name_)) row("«Логика», " + where + ": над игрой", d::WindowOver::Game);
+    }
+    dirty("ue_openers");
+}
+
 bool UiEditor::write(const std::string& name, const d::Screen& screen) const {
     const std::string json = d::save_screen(screen);
     const std::string html = d::screen_html(screen, html_options());
@@ -436,9 +504,9 @@ std::string UiEditor::new_screen() {
     std::string name = "screen";
     for (u32 n = 2; std::find(all.begin(), all.end(), name) != all.end(); ++n) name = "screen" + std::to_string(n);
     d::Screen s = d::make_screen("Экран " + std::to_string(all.size() + 1), 1920, 1080);
-    // A window over the game: the world shows dimmed behind it.
+    // A window over the game: what is under it darkened and out of reach of the mouse («Затемнять то, что под окном»).
     s.show = d::ScreenShow::Command;
-    s.root.fills.push_back(solid(d::Color{0x1b, 0x21, 0x27, 0xb0}));
+    s.dim = true;
     write(name, s);
     open(name);
     return name;
@@ -561,6 +629,7 @@ void UiEditor::set_shown(bool shown) {
         page_dirty_ = true;
         scan_pictures();
         scan_sounds();
+        refresh_openers(); // «Логика» may show the window now
     }
 }
 
@@ -605,6 +674,9 @@ void UiEditor::rebuild_page() {
     // The page is laid out on the player's screen (the screen's own size in «Макет»).
     const Rml::Vector2i size{static_cast<int>(std::lround(view_w())), static_cast<int>(std::lround(view_h()))};
     if (page_context_->GetDimensions() != size) page_context_->SetDimensions(size);
+    // The windows up over the screen in «Проверить», to bring back over the new page (the newest last).
+    std::vector<std::string> windows_up;
+    if (page_ && page_from_check_) windows_up = check_->windows();
     if (page_) {
         if (page_from_check_) check_->unload();
         else page_context_->UnloadDocument(page_);
@@ -616,7 +688,7 @@ void UiEditor::rebuild_page() {
         if (!check_) {
             check_ = std::make_unique<game::GameScreens>();
             check_->actions_to_caller = true;
-            check_->on_action = [this](const game::ScreenAction& a, const std::string&) { check_pending_.push_back(a); };
+            check_->on_action = [this](const game::ScreenAction& a, const std::string& page) { check_pending_.push_back({a, page}); };
             // The screen's sound, as the game plays it (not while the picker samples the page).
             check_->on_music = [this](const std::string& name) { check_sound_.music(picker_.live ? std::string() : name); };
             check_->on_sound = [this](const std::string& name) {
@@ -642,9 +714,13 @@ void UiEditor::rebuild_page() {
                               path_to_utf8(html_path(name_.empty() ? std::string("screen") : name_)))) {
             page_ = check_->document(name_);
             page_from_check_ = true;
+            check_->set_over_menu(check_over_menu());
             check_->show(name_, true);
+            // The windows opened over it stay over it (the page is built again: a size changed).
+            for (const std::string& w : windows_up)
+                if (check_window(w)) load_check_window(w);
             seed_check_vars();
-            check_->update(check_vars_, screen_.show != d::ScreenShow::Menu, screen_.show == d::ScreenShow::Menu, size.x, size.y);
+            check_->update(check_vars_, !check_over_menu(), check_over_menu(), size.x, size.y);
             page_context_->Update();
             read_boxes();
             refresh_check();
@@ -1036,6 +1112,7 @@ void UiEditor::dirty_all() {
     dirty("ue_game_colors");
     dirty("ue_game_texts");
     refresh_screens();
+    refresh_openers();
     refresh_layers();
     refresh_props();
     refresh_view();
@@ -1531,6 +1608,8 @@ void UiEditor::refresh_props() {
             p.screen_show = kScreenShowWords[static_cast<int>(screen_.show)];
             p.pauses = screen_.pauses;
             p.esc_closes = screen_.esc_closes;
+            p.dim = screen_.dim;
+            p.over = kWindowOverWords[static_cast<int>(screen_.over)];
             p.covers_game = covers_game();
             p.music = screen_.music;
             p.button_sound = screen_.button_sound;
@@ -1776,6 +1855,10 @@ void UiEditor::refresh_simple(const d::Node* n) {
         s.in_list = !m_p_.in_list.empty() && n->type == d::NodeType::Text;
         s.picture_from = n->picture_from;
         s.show = kScreenShowWords[static_cast<int>(screen_.show)];
+        s.pauses = screen_.pauses;
+        s.esc_closes = screen_.esc_closes;
+        s.dim = screen_.dim;
+        s.over = kWindowOverWords[static_cast<int>(screen_.over)];
         s.music = screen_.music;
         s.button_sound = screen_.button_sound;
         s.click_sound = n->click_sound;
@@ -1885,6 +1968,7 @@ std::string UiEditor::simple_shown(const std::string& field) const {
     if (field == "bar_max") return m_s_shown_.bar_max;
     if (field == "list") return m_s_shown_.list_source;
     if (field == "show") return m_s_shown_.show;
+    if (field == "over") return m_s_shown_.over;
     if (field == "anchor_h") return m_s_shown_.anchor_h;
     if (field == "anchor_v") return m_s_shown_.anchor_v;
     if (field == "music") return m_s_shown_.music;
@@ -1997,6 +2081,15 @@ bool UiEditor::set_simple_property(const std::string& field, const std::string& 
         if (!root) return false;
         ops.push_back({id, "screen.show", value});
         word = "Когда видно";
+    } else if (field == "over") {
+        if (!root || screen_.library || screen_.show != d::ScreenShow::Command) return false;
+        ops.push_back({id, "screen.over", value});
+        word = "Где появляется окно";
+    } else if (field == "pauses" || field == "esc" || field == "dim") {
+        // A window's behaviour, as in «Полный» (each a switch).
+        if (!root || screen_.library || screen_.show != d::ScreenShow::Command) return false;
+        ops.push_back({id, "screen." + field, ""});
+        word = field == "pauses" ? "Пауза окна" : field == "esc" ? "Закрытие по Esc" : "Затемнение фона";
     } else if (field == "music" || field == "button_sound") {
         if (!root || screen_.library) return false;
         ops.push_back({id, "screen." + field, value});
@@ -2048,7 +2141,8 @@ std::string change_label(const std::string& field) {
         {"vertical", "Прилипание"}, {"width_sizing", "Ширина"}, {"height_sizing", "Высота"}, {"absolute", "Вне раскладки"},
         {"clip", "Обрезка"}, {"show_if", "Условие показа"}, {"name", "Имя"}, {"list", "Список"}, {"list_gap", "Расстояние в списке"},
         {"picture_from", "Картинка из данных"}, {"click_sound", "Звук нажатия"}, {"screen.music", "Музыка экрана"},
-        {"screen.button_sound", "Звук кнопок экрана"}};
+        {"screen.button_sound", "Звук кнопок экрана"}, {"screen.pauses", "Пауза окна"}, {"screen.esc", "Закрытие по Esc"},
+        {"screen.dim", "Затемнение фона"}, {"screen.over", "Где появляется окно"}};
     for (const auto& [f, word] : words)
         if (field == f) return std::string("Изменено: ") + word;
     static const std::pair<const char*, const char*> groups[] = {
@@ -2505,6 +2599,15 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             const int i = index_of(value, kScreenShowWords);
             if (i < 0 || screen_.show == static_cast<d::ScreenShow>(i)) return false;
             screen_.show = static_cast<d::ScreenShow>(i);
+            refresh_openers();
+            return true;
+        }
+        if (f == "over") {
+            const int i = index_of(value, kWindowOverWords);
+            if (screen_.library || screen_.show != d::ScreenShow::Command || i < 0 || screen_.over == static_cast<d::WindowOver>(i))
+                return false;
+            screen_.over = static_cast<d::WindowOver>(i);
+            refresh_openers();
             return true;
         }
         if (f == "pauses") {
@@ -2513,6 +2616,10 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
         }
         if (f == "esc") {
             screen_.esc_closes = !screen_.esc_closes;
+            return true;
+        }
+        if (f == "dim") {
+            screen_.dim = !screen_.dim;
             return true;
         }
         if (f == "appear") {
@@ -3529,12 +3636,12 @@ void UiEditor::update(Rml::Context* context) {
     }
     if (checking_) {
         // Clicks of the last events, now that the page is done with them.
-        std::vector<game::ScreenAction> actions;
+        std::vector<CheckClick> actions;
         actions.swap(check_pending_);
-        for (const game::ScreenAction& a : actions) check_action(a);
+        for (const CheckClick& c : actions) check_action(c.action, c.page);
         if (check_ && page_from_check_) {
             const Rml::Vector2i size = page_context_->GetDimensions();
-            check_->update(check_vars_, screen_.show != d::ScreenShow::Menu, screen_.show == d::ScreenShow::Menu, size.x, size.y);
+            check_->update(check_vars_, !check_over_menu(), check_over_menu(), size.x, size.y);
             if (check_seen_ != check_vars_.version()) refresh_check();
         }
     }
@@ -4230,8 +4337,9 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if (checking_) {
-        // Keys do not edit while checking; Esc ends it. The game's keys for its buttons go to the page.
-        if (k.key == SDLK_ESCAPE) set_checking(false);
+        // Keys do not edit while checking; Esc closes the window on top as in the game, else ends it. The game's
+        // keys for its buttons go to the page.
+        if (k.key == SDLK_ESCAPE && !check_escape()) set_checking(false);
         if (check_key(k)) return true;
         return k.key == SDLK_ESCAPE || k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE;
     }
@@ -4626,6 +4734,10 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("list_source", &SimpleProps::list_source);
         s.RegisterMember("picture_from", &SimpleProps::picture_from);
         s.RegisterMember("show", &SimpleProps::show);
+        s.RegisterMember("over", &SimpleProps::over);
+        s.RegisterMember("pauses", &SimpleProps::pauses);
+        s.RegisterMember("esc_closes", &SimpleProps::esc_closes);
+        s.RegisterMember("dim", &SimpleProps::dim);
         s.RegisterMember("inside", &SimpleProps::inside);
         s.RegisterMember("hidden", &SimpleProps::hidden);
         s.RegisterMember("music", &SimpleProps::music);
@@ -4718,9 +4830,11 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("component", &Props::component);
         s.RegisterMember("text_style", &Props::text_style);
         s.RegisterMember("screen_show", &Props::screen_show);
+        s.RegisterMember("over", &Props::over);
         s.RegisterMember("covers_game", &Props::covers_game);
         s.RegisterMember("pauses", &Props::pauses);
         s.RegisterMember("esc_closes", &Props::esc_closes);
+        s.RegisterMember("dim", &Props::dim);
         s.RegisterMember("show_if", &Props::show_if);
         s.RegisterMember("list", &Props::list);
         s.RegisterMember("list_gap", &Props::list_gap);
@@ -4812,6 +4926,13 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.RegisterArray<std::vector<CheckVarRow>>();
     model.Bind("ue_check_vars", &m_check_vars_);
     model.Bind("ue_check_log", &m_check_log_);
+    model.Bind("ue_check_state", &m_check_state_);
+    if (auto s = model.RegisterStruct<OpenerRow>()) {
+        s.RegisterMember("text", &OpenerRow::text);
+        s.RegisterMember("warn", &OpenerRow::warn);
+    }
+    model.RegisterArray<std::vector<OpenerRow>>();
+    model.Bind("ue_openers", &m_openers_);
     model.Bind("ue_checking", &m_checking_);
     model.Bind("ue_values", &m_values_);
     model.Bind("ue_screen_names", &m_screen_names_);
@@ -5271,6 +5392,7 @@ void UiEditor::switch_checking(bool on) {
     checking_ = on;
     m_checking_ = on;
     check_back_.clear();
+    check_windows_.clear();
     check_log_.clear();
     check_pending_.clear();
     hover_ = 0;
@@ -5315,10 +5437,23 @@ void UiEditor::check_mouse(f32 x, f32 y, int down, int up) {
     if (up >= 0) page_context_->ProcessMouseButtonUp(up, 0);
 }
 
+// The pages up in «Проверить»: the screen, then the windows over it.
+std::vector<std::string> UiEditor::check_pages() const {
+    std::vector<std::string> out{name_};
+    if (check_)
+        for (const std::string& w : check_->windows())
+            if (w != name_) out.push_back(w);
+    return out;
+}
+
 // What a value is called in the panel: its name in the game's words when known.
 void UiEditor::seed_check_vars() {
     if (!check_) return;
-    for (const std::string& name : check_->variables(name_)) {
+    std::vector<std::string> names;
+    for (const std::string& page : check_pages())
+        for (const std::string& name : check_->variables(page))
+            if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+    for (const std::string& name : names) {
         if (check_vars_.has(name)) continue;
         // Something to look at: bars half full, a few coins, quests begun.
         const bool max = name.find("max") != std::string::npos;
@@ -5329,10 +5464,15 @@ void UiEditor::seed_check_vars() {
 void UiEditor::refresh_check() {
     m_check_vars_.clear();
     m_check_log_.clear();
+    m_check_state_.clear();
     if (checking_ && check_) {
         std::vector<std::pair<std::string, std::string>> known;
         if (game_values) known = game_values();
-        for (const std::string& name : check_->variables(name_)) {
+        std::vector<std::string> names;
+        for (const std::string& page : check_pages())
+            for (const std::string& name : check_->variables(page))
+                if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+        for (const std::string& name : names) {
             CheckVarRow row;
             row.name = name;
             row.label = name;
@@ -5342,10 +5482,35 @@ void UiEditor::refresh_check() {
             m_check_vars_.push_back(std::move(row));
         }
         for (auto it = check_log_.rbegin(); it != check_log_.rend() && m_check_log_.size() < 8; ++it) m_check_log_.push_back(*it);
+        // The windows up, as the game has them: which is on top, what Esc does, whether the game stands.
+        std::vector<const CheckWindow*> up;
+        for (const std::string& w : check_pages())
+            if (const CheckWindow* c = w != name_ ? check_window(w) : nullptr) up.push_back(c);
+        const bool menu = screen_.show == d::ScreenShow::Menu;
+        if (!up.empty()) {
+            const CheckWindow& top = *up.back();
+            m_check_state_.push_back("Сверху окно «" + top.title + "»: " +
+                                     (top.esc ? "Esc его закроет" : "по Esc не закрывается, окна под ним тоже"));
+            std::string under;
+            for (usize i = up.size() - 1; i-- > 0;) under += (under.empty() ? "«" : ", «") + up[i]->title + "»";
+            if (!under.empty()) m_check_state_.push_back("Под ним: " + under + ", ниже экран «" + screen_.title + "»");
+            for (const CheckWindow* w : up)
+                if (w->dim) m_check_state_.push_back("Окно «" + w->title + "» затемняет то, что под ним: щелчки туда не проходят");
+        }
+        if (menu) {
+            if (!up.empty()) m_check_state_.push_back("Окна над главным меню: игра ещё не идёт");
+        } else {
+            std::string stops = screen_.show == d::ScreenShow::Command && screen_.pauses ? screen_.title : std::string();
+            for (const CheckWindow* w : up)
+                if (w->pauses) stops = w->title;
+            m_check_state_.push_back(stops.empty() ? "Игра идёт: ни одно открытое окно не ставит её на паузу"
+                                                   : "Игра стоит: окно «" + stops + "» ставит её на паузу");
+        }
     }
     check_seen_ = check_vars_.version();
     dirty("ue_check_vars");
     dirty("ue_check_log");
+    dirty("ue_check_state");
 }
 
 // The screen the game shows as its menu: «main_menu», or the first set to show as the menu.
@@ -5365,10 +5530,121 @@ std::string UiEditor::menu_screen() const {
     return first;
 }
 
-void UiEditor::check_action(const game::ScreenAction& a) {
+// Windows in «Проверить» come up over the main menu when the screen is the menu (or a window only for it),
+// else over the game.
+bool UiEditor::check_over_menu() const {
+    return screen_.show == d::ScreenShow::Menu || (screen_.show == d::ScreenShow::Command && screen_.over == d::WindowOver::Menu);
+}
+
+// A window over the screen in «Проверить» (loaded once): shown as the game shows it, over what is up, not in
+// the screen's place. False when the screen is not a window, or (refused: "game" or "menu") when it comes up
+// only elsewhere.
+bool UiEditor::load_check_window(const std::string& name, std::string* refused) {
+    if (!check_ || !page_context_ || name == name_) return false;
+    if (!check_->exists(name)) {
+        std::vector<u8> bytes;
+        d::Screen s;
+        if (!read_file(json_path(name), bytes) ||
+            !d::load_screen(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), s) || s.library ||
+            s.show != d::ScreenShow::Command)
+            return false;
+        d::sync_instances(s, library_);
+        d::apply_styles(s, library_);
+        if (!check_->load_page(page_context_, name, d::screen_html(s, html_options()), path_to_utf8(html_path(name)))) return false;
+        std::erase_if(check_windows_, [&](const CheckWindow& w) { return w.name == name; });
+        check_windows_.push_back({name, s.title.empty() ? name : s.title, s.esc_closes, s.pauses, s.dim});
+    } else if (!check_window(name)) return false;
+    if (!check_->fits(name)) {
+        if (refused) *refused = check_->over(name);
+        return false;
+    }
+    check_->show(name, true);
+    return true;
+}
+
+std::vector<std::string> UiEditor::check_windows() const {
+    std::vector<std::string> out = check_pages();
+    out.erase(out.begin());
+    return out;
+}
+
+std::optional<d::Rect> UiEditor::check_box(const std::string& window, const std::string& layer) const {
+    Rml::ElementDocument* doc = check_ ? check_->document(window) : nullptr;
+    Rml::Element* found = nullptr;
+    auto find = [&](auto&& self, Rml::Element* e) -> void {
+        if (found || !e) return;
+        if (e->GetAttribute<Rml::String>("title", "") == layer) found = e;
+        for (int i = 0; !found && i < e->GetNumChildren(); ++i) self(self, e->GetChild(i));
+    };
+    find(find, doc);
+    if (!found) return std::nullopt;
+    const game::ScreenFit fit = view_fit();
+    const Rml::Vector2f at = found->GetAbsoluteOffset(Rml::BoxArea::Border);
+    const Rml::Vector2f size = found->GetBox().GetSize(Rml::BoxArea::Border);
+    return d::Rect{at.x - fit.left, at.y - fit.top, size.x, size.y};
+}
+
+std::string UiEditor::check_focus() const {
+    Rml::Element* f = page_context_ && check_ ? page_context_->GetFocusElement() : nullptr;
+    if (!f) return {};
+    for (const std::string& name : check_->names())
+        if (check_->document(name) == f->GetOwnerDocument()) return name + ":" + (f == f->GetOwnerDocument() ? std::string() : f->GetId());
+    return {};
+}
+
+const UiEditor::CheckWindow* UiEditor::check_window(const std::string& name) const {
+    for (const CheckWindow& w : check_windows_)
+        if (w.name == name) return &w;
+    return nullptr;
+}
+
+// The window on top of the screen in «Проверить» (nullptr: none over it), as the game stacks them.
+const UiEditor::CheckWindow* UiEditor::top_check_window() const {
+    if (!check_) return nullptr;
+    const std::vector<std::string> up = check_->windows();
+    for (auto it = up.rbegin(); it != up.rend(); ++it)
+        if (const CheckWindow* w = *it != name_ ? check_window(*it) : nullptr) return w;
+    return nullptr;
+}
+
+// Esc as the game has it: the window on top closes when Esc closes it; one that does not stays, and so do the
+// windows under it (Esc goes no further down; over the game it opens the game's pause). No window over the
+// screen: false (Esc ends «Проверить»).
+bool UiEditor::check_escape() {
+    const CheckWindow* top = top_check_window();
+    if (!top) return false;
+    if (top->esc) {
+        check_->show(top->name, false);
+        check_log_.push_back("Esc: закрыто окно «" + top->title + "»");
+    } else {
+        check_log_.push_back("Esc: окно «" + top->title + "» по Esc не закрывается" +
+                             (screen_.show == d::ScreenShow::Menu ? "" : "; в игре Esc откроет паузу"));
+    }
+    if (check_log_.size() > 32) check_log_.erase(check_log_.begin());
+    refresh_check();
+    return true;
+}
+
+void UiEditor::check_action(const game::ScreenAction& a, const std::string& page) {
     const std::string& t = a.target;
-    std::string said;
-    if (a.what == "show" || a.what == "toggle") {
+    std::string said, refused;
+    if ((a.what == "show" || a.what == "toggle") && t != name_ && check_ && check_->shown(t) && check_window(t)) {
+        // A window up: its toggle hides it, a show leaves it where it is (as in the game).
+        if (a.what == "toggle") check_->show(t, false);
+        said = (a.what == "toggle" ? "Скрыто окно «" : "Окно уже открыто: «") + check_window(t)->title + "»";
+    } else if ((a.what == "show" || a.what == "toggle") && t != name_ && load_check_window(t, &refused)) {
+        said = "Открыто окно «" + check_window(t)->title + "» поверх экрана";
+    } else if (!refused.empty()) {
+        // Its «Где появляется» says another place: the game does not open it here either.
+        said = "Окно «" + check_window(t)->title + "» не открылось: оно появляется только " +
+               (refused == "menu" ? "над главным меню, а здесь игра" : "над игрой, а здесь главное меню");
+    } else if ((a.what == "close" || (a.what == "hide" && (t.empty() || t == page))) && page != name_ && check_window(page)) {
+        check_->show(page, false);
+        said = "Закрыто окно «" + check_window(page)->title + "»";
+    } else if (a.what == "hide" && t != name_ && check_window(t)) {
+        check_->show(t, false);
+        said = "Скрыто окно «" + check_window(t)->title + "»";
+    } else if (a.what == "show" || a.what == "toggle") {
         if (t == name_ && a.what == "toggle") {
             said = "Скрыт экран «" + screen_.title + "»";
             if (!check_back_.empty()) {
@@ -5379,6 +5655,7 @@ void UiEditor::check_action(const game::ScreenAction& a) {
         } else if (std::find(m_screen_names_.begin(), m_screen_names_.end(), t) != m_screen_names_.end() || t == name_) {
             if (t != name_) {
                 check_back_.push_back(name_);
+                check_windows_.clear(); // a screen in its place: the windows over the old one go
                 open(t);
             }
             said = "Открыт экран «" + screen_.title + "»";
@@ -5402,6 +5679,7 @@ void UiEditor::check_action(const game::ScreenAction& a) {
     } else if (a.what == "menu" && name_ != menu_screen() && !menu_screen().empty()) {
         // As in the game: the windows close, the game's menu comes back.
         check_back_.clear();
+        check_windows_.clear();
         open(menu_screen());
         said = "Кнопка: В главное меню";
     } else if (a.what == "message") said = "Сообщение «Логике»: " + t;
