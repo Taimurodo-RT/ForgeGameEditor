@@ -493,6 +493,24 @@ struct GameScreens::Impl : Rml::EventListener {
         for (Page* p : order) p->doc->PushToBack(); // the top one first: each next goes under it
     }
 
+    // RmlUi brings a document to the front when something on it takes the keyboard (a click): a window under
+    // another, its button clicked, came over it, and its veil hid the window on top. The pages that stand over
+    // the clicked one in the game's order come back over it (all of them over the rest of the UI, as it is now).
+    void keep_order() {
+        if (!context) return;
+        std::vector<Page*> now;
+        for (int i = 0; i < context->GetNumDocuments(); ++i) // back to front
+            if (Page* p = of(context->GetDocument(i)); p && p->doc->IsVisible()) now.push_back(p);
+        std::vector<Page*> want = now;
+        auto rank = [](const Page* p) { return p->role == ScreenRole::Command ? 1 : 0; };
+        std::stable_sort(want.begin(), want.end(), [&](const Page* a, const Page* b) {
+            return rank(a) != rank(b) ? rank(a) < rank(b) : a->order < b->order;
+        });
+        usize first = 0;
+        while (first < now.size() && now[first] == want[first]) ++first;
+        for (usize i = first; i < want.size(); ++i) want[i]->doc->PullToFront();
+    }
+
     void close(Page& p) {
         if (!p.doc) return;
         p.doc->RemoveEventListener(Rml::EventId::Click, this);
@@ -820,6 +838,7 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
         }
     }
     if (restacked) impl_->restack();
+    impl_->keep_order();
     if (std::string m = impl_->wanted_music(); m != impl_->music) {
         impl_->music = std::move(m);
         if (on_music) on_music(impl_->music);
