@@ -1,6 +1,6 @@
 add_executable(forge_editor_app main.cpp asset_library.cpp components.cpp dock_view.cpp file_types.cpp level_editor.cpp level_tiled.cpp
                                 object_library.cpp logic_editor.cpp scheme_view.cpp story_editor.cpp converters.cpp
-                                project_folder.cpp ui_editor.cpp ui_editor_templates.cpp)
+                                project_folder.cpp project_window.cpp ui_editor.cpp ui_editor_templates.cpp)
 set_target_properties(forge_editor_app PROPERTIES OUTPUT_NAME forge_editor)
 target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render forge::ui forge::editor forge::assets forge::audio forge::level forge::logic
                       forge_slice_lib forge_demo_common yyjson)
@@ -11,6 +11,8 @@ target_compile_definitions(forge_editor_app PRIVATE FORGE_UI_DIR="${PROJECT_SOUR
                                                    SLICE_DATA_DIR="${PROJECT_SOURCE_DIR}/games/slice"
                                                    SLICE_LEVEL_DIR="${PROJECT_SOURCE_DIR}/games/slice/level"
                                                    FORGE_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/games/examples"
+                                                   FORGE_GAMES_DIR="${PROJECT_SOURCE_DIR}/games"
+                                                   FORGE_EDITOR_EXE_NAME="$<TARGET_FILE_NAME:forge_editor_app>"
                                                    FORGE_SLICE_EXE="$<TARGET_FILE:forge_slice>")
 add_dependencies(forge_editor_app forge_slice)
 forge_target_defaults(forge_editor_app)

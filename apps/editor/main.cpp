@@ -2,7 +2,8 @@
 // undo/redo of every action and Play/Stop. The window layout lives in
 // ui/editor/editor.rml and editor.rcss and updates while the editor runs.
 //
-//   forge_editor [--scene FILE] [--level DIR] [--assets DIR] [--ui DIR] [--theme NAME] [--objects N] [--no-vsync]
+//   forge_editor [--project GAME] [--scene FILE] [--level DIR] [--assets DIR] [--ui DIR] [--theme NAME] [--objects N]
+//                [--no-vsync]   GAME: a game's folder or its project.forge (default: the working folder)
 //   forge_editor --screenshot out.png [--frames N] [--select] [--play] [--tab N] [--theme NAME]   offscreen
 //   forge_editor --bench [--frames N]   offscreen: every object listed, the hierarchy scrolling
 //   forge_editor --bench-level [--frames N]   offscreen: flying over the level while painting
@@ -14,11 +15,17 @@
 //                file, new:FILE (a new screen from it), insert:FILE (it on the open screen), check:FILE (a new screen
 //                from it in «Проверить»), save (the form «Сохранить как шаблон» for the open screen), save:LAYER
 //                (for its layer of that name)
+//   forge_editor --screenshot X.png --window game-menu|new-game   the game's menu, the window «Новая игра из шаблона»
 //   forge_editor --self-test [--screenshot out.png]   offscreen: drives the controls, fails on a wrong result
+//   forge_editor --self-test new-game   only «Новая игра из шаблона» and «Открыть игру…»: it makes «Игра А» in
+//                <temp>/forge_editor_новые игры and starts `forge_editor --project ".../project.forge" --self-test
+//                opened-game` from another folder, which opens it and plays it with «Играть»
 //
-// The «Уровень» tab opens «Старая шахта» from games/slice/level (or --level
-// DIR); the «Сцена» tab opens scene.forge.json in the current folder (or
-// --scene FILE), or makes a sample scene of 50 000 objects when there is none.
+// The «Уровень» tab opens the game's level, game/level in its folder (or
+// --level DIR); the «Сцена» tab opens scene.forge.json in the game's folder
+// (or --scene FILE), or makes a sample scene of 50 000 objects when there is
+// none. A folder with no game yet gets a copy of «Старая шахта»; one
+// with a project.forge was made of a template of games/templates.json.
 
 #include "asset_library.h"
 #include "components.h"
@@ -26,6 +33,7 @@
 #include "level_editor.h"
 #include "logic_editor.h"
 #include "project_folder.h"
+#include "project_window.h"
 #include "story_editor.h"
 #include "ui_editor.h"
 #include "object_library.h"
@@ -59,6 +67,9 @@
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <SDL3/SDL.h>
+// On Windows the arguments as UTF-8 (from the wide command line): «--project» of a game in a folder with Cyrillic
+// letters, as the editor starts itself for another game.
+#include <SDL3/SDL_main.h>
 
 #include <algorithm>
 #include <chrono>
@@ -318,6 +329,14 @@ public:
     StoryEditor story_tab{level_module.library()};
     UiEditor ui_tab;
     AssetLibrary assets;
+    // The game that is open and the ways to another («Новая игра из шаблона…», «Открыть игру…»); set before init.
+    ProjectWindow projects;
+    ProjectConfig project_config;
+    // Closing does not save the level: «Не сохранять» when another game opens.
+    bool discarding = false;
+    // The editor closes (another game's editor has started); offscreen: only noted.
+    std::function<void()> on_quit;
+    bool quit_asked = false;
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
               const std::filesystem::path& ui_dir, const std::string& theme, u32 objects, const LevelConfig& level_config,
@@ -352,6 +371,15 @@ public:
         config.theme = theme;
         config.hot_reload = window != nullptr;
         if (!ui_.init(device, window, config)) return false;
+        projects.init(ui_, project_config);
+        projects.unsaved = [this] { return unsaved(); };
+        projects.save = [this](std::string& error) { return save_unsaved(error); };
+        projects.discard = [this] { discarding = true; };
+        projects.quit = [this] {
+            quit_asked = true;
+            if (on_quit) on_quit();
+        };
+        projects.theme = [this] { return pending_theme_.empty() ? theme_ : pending_theme_; };
         level_module.library()->set_pictures_folder(pictures_folder);
         level_module.library()->set_sounds_folder(sounds_folder);
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
@@ -385,7 +413,7 @@ public:
         };
         logic_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
         logic_tab.set_settings(level_config.settings, !level_config.offscreen);
-        if (!level_config.offscreen) logic_tab.set_fired_file(LevelEditor::fired_file());
+        if (!level_config.offscreen) logic_tab.set_fired_file(level.fired_file());
         logic_tab.init(ui_, game_dir, logic_file);
         story_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
         story_tab.window = window;
@@ -487,8 +515,8 @@ public:
     }
 
     void shutdown() {
-        // Closing never loses painted tiles: the level is saved.
-        if (level.dirty()) level.save();
+        // Closing never loses painted tiles: the level is saved (unless the author said «Не сохранять»).
+        if (level.dirty() && !discarding) level.save();
         level.shutdown();
         assets.shutdown();
         ui_tab.shutdown();
@@ -539,15 +567,44 @@ public:
             level.save();
             return;
         }
+        save_scene();
+    }
+    bool save_scene() {
         const Stopwatch timer;
         const std::string text = doc.save_json();
         if (write_file_atomic(scene_path, std::span(reinterpret_cast<const u8*>(text.data()), text.size()))) {
             history.mark_saved();
             FORGE_INFO("Сохранено: %s (%.1f МБ, %.0f мс)", path_to_utf8(scene_path).c_str(),
                        static_cast<f64>(text.size()) / (1024.0 * 1024.0), timer.elapsed_ms());
-        } else {
-            FORGE_ERROR("Не удалось сохранить %s", path_to_utf8(scene_path).c_str());
+            return true;
         }
+        FORGE_ERROR("Не удалось сохранить %s", path_to_utf8(scene_path).c_str());
+        return false;
+    }
+    // What closing would save without asking (the level) or lose (the «Сцена»), in words. A field typed into
+    // without Enter is taken first, as leaving it takes it.
+    std::vector<std::string> unsaved() {
+        if (Rml::Element* typing = context_ ? context_->GetFocusElement() : nullptr) {
+            Rml::Element* in_window = find_element("pj-window");
+            bool ours = false;
+            for (Rml::Element* e = typing; e && !ours; e = e->GetParentNode()) ours = e == in_window;
+            if (!ours) typing->Blur();
+        }
+        std::vector<std::string> out;
+        if (level.dirty()) out.push_back("Уровень: правки не сохранены (при закрытии редактор сохраняет его сам)");
+        if (history.dirty()) out.push_back("«Сцена»: правки не сохранены (при закрытии они теряются)");
+        return out;
+    }
+    bool save_unsaved(std::string& error) {
+        if (level.dirty() && !level.save()) {
+            error = "уровень не записан";
+            return false;
+        }
+        if (history.dirty() && !save_scene()) {
+            error = "«Сцена» не записана в " + path_to_utf8(scene_path);
+            return false;
+        }
+        return true;
     }
     void toggle_play() {
         const Stopwatch timer;
@@ -640,6 +697,7 @@ public:
             model_.DirtyVariable("theme");
             pending_theme_.clear();
         }
+        projects.update();
         if (m_tab_ == "level") level.update(dt, context_);
         assets.update(dt, m_tab_ == "assets" ? context_ : nullptr);
         if (m_tab_ == "objects") objects_tab.update(context_);
@@ -691,6 +749,12 @@ public:
 
     bool handle_event(const SDL_Event& e) {
         const f32 density = window_ ? SDL_GetWindowPixelDensity(window_) : 1.0f;
+        // The game menu and its windows are over everything: nothing under them gets the keyboard or the mouse.
+        if (projects.shown()) {
+            if (e.type == SDL_EVENT_KEY_DOWN && projects.handle_key(e.key)) return true;
+            ui_.handle_event(context_, e);
+            return true;
+        }
         // The template library of «Интерфейс», even from its search field: Esc closes it, Enter takes the template selected.
         if (e.type == SDL_EVENT_KEY_DOWN && m_tab_ == "ui" && ui_tab.templates_open()) {
             if (e.key.key == SDLK_ESCAPE) {
@@ -948,6 +1012,7 @@ private:
         logic_tab.bind(model);
         story_tab.bind(model);
         ui_tab.bind(model);
+        projects.bind(model);
         model_ = model.GetModelHandle();
         level.set_model(model_);
         assets.set_model(model_);
@@ -955,6 +1020,7 @@ private:
         logic_tab.set_model(model_);
         story_tab.set_model(model_);
         ui_tab.set_model(model_);
+        projects.set_model(model_);
         return true;
     }
 
@@ -1487,6 +1553,47 @@ void HierarchySource::on_row_event(u32 row, std::string_view event, int modifier
 
 // --- app ----------------------------------------------------------------------
 
+// The modules built into this editor: «Старая шахта» (its files are next to its game's data).
+std::vector<editor::project::Module> editor_modules() { return {{"slice", "Старая шахта", utf8_path(SLICE_DATA_DIR)}}; }
+
+// The game the editor opens: path is its folder or its project.forge. A described game gets its module's files from
+// the module (its own copies stay when the module is not there); a folder from before step 14, or one with no game
+// yet, goes the old way (the first start copies «Старая шахта» into it).
+struct OpenGame {
+    std::filesystem::path root, game;
+    std::string title;
+};
+bool open_game(const std::filesystem::path& path, OpenGame& out, std::string& error) {
+    namespace pj = editor::project;
+    const std::vector<pj::Module> modules = editor_modules();
+    pj::Game g;
+    const pj::Found found = pj::find(path, modules, g, &error);
+    if (found == pj::Found::Broken) return false;
+    if (found == pj::Found::Game && g.described) {
+        std::vector<std::string> refreshed;
+        std::string note;
+        pj::refresh_module_files(g.game, *pj::find_module(modules, g.description.module), refreshed, &note);
+        for (const std::string& f : refreshed) FORGE_INFO("Игра: %s обновлён из модуля", f.c_str());
+        if (!note.empty()) FORGE_WARN("Игра: %s", note.c_str());
+        out = {g.root, g.game, g.title};
+        return true;
+    }
+    if (found == pj::Found::NoGame && path.filename() == utf8_path(pj::kDescription)) return false;
+    const std::filesystem::path root = found == pj::Found::Game ? g.root : path;
+    ProjectGame pg;
+    if (!prepare_project_game(root, utf8_path(SLICE_DATA_DIR), pg, &error)) return false;
+    if (pg.created) FORGE_INFO("Проект: игра скопирована в %s", path_to_utf8(pg.dir).c_str());
+    for (const std::string& f : pg.refreshed) FORGE_INFO("Проект: %s обновлён из движка", f.c_str());
+    out = {root, pg.dir, pj::game_title(pg.dir)};
+    return true;
+}
+
+// The editor that starts for another game: this one's file.
+std::filesystem::path editor_exe() {
+    const char* base = SDL_GetBasePath();
+    return base ? utf8_path(base) / utf8_path(FORGE_EDITOR_EXE_NAME) : std::filesystem::path();
+}
+
 struct Options {
     std::filesystem::path ui_dir = utf8_path(FORGE_UI_DIR);
     std::filesystem::path scene;
@@ -1500,6 +1607,11 @@ struct Options {
     // offscreen: the «Интерфейс» tab's template library open on a section ("construction", "screen") or a template
     // (its file name); "new:FILE" a new screen from it, "insert:FILE" it on the open screen (the window closed).
     std::string templates;
+    // offscreen: --self-test PART, only that part: "new-game" (the window «Новая игра» and «Открыть игру…»; it starts
+    // the editor for the game it made with "opened-game", which plays it from there).
+    std::string self_part;
+    // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
+    std::string window;
 };
 
 class EditorApp final : public App {
@@ -1509,25 +1621,30 @@ public:
     bool on_init() override {
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window(), &w, &h);
-        if (!options.scene.empty()) editor_.scene_path = options.scene;
-        // The author's work lives in the project folder, apart from the engine.
-        const std::filesystem::path project = options.project.empty() ? std::filesystem::current_path() : options.project;
-        ProjectGame pg;
-        if (std::string error; !prepare_project_game(project, utf8_path(SLICE_DATA_DIR), pg, &error)) {
-            FORGE_ERROR("Проект: %s", error.c_str());
+        // The author's work lives in the game's folder, apart from the engine: --project, else the working folder.
+        const std::filesystem::path given = options.project.empty() ? std::filesystem::current_path() : options.project;
+        OpenGame open;
+        if (std::string error; !open_game(given, open, error)) {
+            FORGE_ERROR("Игра не открылась: %s", error.c_str());
+            const std::string text = "Игра не открылась: " + error;
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Forge — редактор", text.c_str(), window());
             return false;
         }
-        if (pg.created) FORGE_INFO("Проект: игра скопирована в %s", path_to_utf8(pg.dir).c_str());
-        for (const std::string& f : pg.refreshed) FORGE_INFO("Проект: %s обновлён из движка", f.c_str());
-        editor_.use_game_dir(pg.dir);
+        const std::filesystem::path project = open.root;
+        editor_.scene_path = options.scene.empty() ? project / "scene.forge.json" : options.scene;
+        editor_.use_game_dir(open.game);
         LevelConfig lc;
-        lc.folder = options.level_given ? options.level : pg.dir / "level";
-        lc.game_data = pg.dir;
+        lc.folder = options.level_given ? options.level : open.game / "level";
+        lc.game_data = open.game;
         lc.game_exe = utf8_path(FORGE_SLICE_EXE);
+        lc.play_dir = play_folder(project);
         if (char* pref = SDL_GetPrefPath("Forge", "Editor")) {
             lc.settings = utf8_path(pref);
             SDL_free(pref);
         }
+        editor_.project_config = {project,     open.title, utf8_path(FORGE_GAMES_DIR) / "templates.json", editor_modules(),
+                                  lc.settings, editor_exe(), window()};
+        editor_.on_quit = [this] { request_quit(); };
         AssetsConfig ac;
         ac.folder = options.assets.empty() ? project / "assets" : options.assets;
         ac.library = ac.folder.parent_path() / ".forge" / "library";
@@ -1654,6 +1771,8 @@ public:
 
     // Called before each frame's update; false when the test is over.
     bool step(u32 frame) {
+        if (part == "new-game") return frame < 3 || new_game_step();
+        if (part == "opened-game") return frame < 3 || opened_game_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -1745,6 +1864,8 @@ public:
         return true;
     }
     bool passed() const { return failures_ == 0; }
+    // offscreen --self-test PART: only that part ("new-game", "opened-game").
+    std::string part;
 
 private:
     // --- the level tab ---
@@ -4838,7 +4959,12 @@ private:
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
     }
     bool objects_step() {
-        if (ol_step_ >= 37) return lg_step_ >= 0 ? logic_step() : st_step_ >= 0 ? story_step() : ue_step_ >= 0 ? ui_step() : asset_step();
+        if (ol_step_ >= 37)
+            return lg_step_ >= 0   ? logic_step()
+                   : st_step_ >= 0 ? story_step()
+                   : ue_step_ >= 0 ? ui_step()
+                   : ng_step_ >= 0 ? new_game_step()
+                                   : asset_step();
         objects::Library& lib = ol().library();
         f32 x = 0, y = 0;
         switch (ol_step_) {
@@ -12359,6 +12485,406 @@ private:
         return true;
     }
 
+    // --- «Новая игра из шаблона» and «Открыть игру…» (step 14.1) ---------------------------------------------
+    // Done with the mouse and the keyboard on the window as a person does; the folder windows of the system are
+    // not there offscreen, so a folder picked in one is given as its answer would be (open_game).
+    ProjectWindow& pjw() { return ed_.projects; }
+    bool pj_click(const char* id) {
+        f32 x = 0, y = 0;
+        if (!element_center(id, x, y)) return false;
+        left_click(x, y);
+        return true;
+    }
+    // A click on the field, End, Backspace over its text, the text (no Enter).
+    bool pj_type(const char* id, const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+        if (!e || !pj_click(id) || ed_.context()->GetFocusElement() != e) return false;
+        key(SDLK_END, SDL_KMOD_NONE);
+        const Rml::String old = e->GetValue();
+        const usize letters = static_cast<usize>(std::count_if(old.begin(), old.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+        for (usize i = 0; i < letters; ++i) key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+        SDL_Event t{};
+        t.type = SDL_EVENT_TEXT_INPUT;
+        t.text.text = text.c_str();
+        ed_.handle_event(t);
+        return e->GetValue() == text;
+    }
+    bool pj_has(const std::string& text, const char* bit) { return text.find(bit) != std::string::npos; }
+    bool pj_class(const char* id, const char* name) {
+        Rml::Element* e = ed_.find_element(id);
+        return e && e->IsClassSet(name);
+    }
+    // Every file under a folder with its bytes, by its path there.
+    static std::map<std::string, std::vector<u8>> pj_tree(const std::filesystem::path& dir) {
+        std::map<std::string, std::vector<u8>> out;
+        std::error_code ec;
+        for (std::filesystem::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+            if (it->is_regular_file(ec)) read_file(it->path(), out[path_to_utf8(it->path().lexically_relative(dir))]);
+        return out;
+    }
+    // What a folder has, by name, sorted.
+    static std::vector<std::string> pj_names(const std::filesystem::path& dir) {
+        std::vector<std::string> out;
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+            out.push_back(path_to_utf8(it->path().filename()));
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    // A program run to its end; its exit code (-1: it did not start).
+    static int pj_run(const std::vector<std::string>& args, const std::filesystem::path& cwd) {
+        std::vector<const char*> argv;
+        for (const std::string& a : args) argv.push_back(a.c_str());
+        argv.push_back(nullptr);
+        const std::string at = path_to_utf8(cwd);
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argv.data());
+        SDL_SetStringProperty(props, SDL_PROP_PROCESS_CREATE_WORKING_DIRECTORY_STRING, at.c_str());
+        SDL_Process* p = SDL_CreateProcessWithProperties(props);
+        SDL_DestroyProperties(props);
+        if (!p) {
+            FORGE_ERROR("self-test: %s did not start: %s", args[0].c_str(), SDL_GetError());
+            return -1;
+        }
+        int code = -1;
+        if (!SDL_WaitProcess(p, true, &code)) code = -1;
+        SDL_DestroyProcess(p);
+        return code;
+    }
+
+    std::filesystem::path ng_root_, ng_scene_;
+    std::map<std::string, std::vector<u8>> ng_template_;
+    std::vector<std::string> ng_launched_;
+    ProjectConfig ng_config_;
+    int ng_step_ = 0, ng_writes_ = 0, og_step_ = 0;
+
+    std::filesystem::path ng_mine() const { return ng_root_ / utf8_path("Мои игры"); }
+    std::filesystem::path ng_game(const char* title) const { return ng_mine() / utf8_path(title); }
+
+    bool new_game_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = ng_game("Игра А"), b = ng_game("Игра Б");
+        switch (ng_step_) {
+        case 0: {
+            ng_root_ = fs::temp_directory_path() / utf8_path("forge_editor_новые игры");
+            fs::remove_all(ng_root_, ec);
+            fs::create_directories(ng_mine() / utf8_path("Занятая"), ec);
+            const std::string theirs = "не моё";
+            write_file_atomic(ng_mine() / utf8_path("Занятая") / utf8_path("чужое.txt"), {reinterpret_cast<const u8*>(theirs.data()), theirs.size()});
+            ng_template_ = pj_tree(utf8_path(SLICE_DATA_DIR));
+            ng_config_ = pjw().config();
+            // Nothing unsaved to begin with: the scene goes to a file of the test.
+            ng_scene_ = ed_.scene_path;
+            ed_.scene_path = ng_root_ / utf8_path("сцена.json");
+            std::string error;
+            check(ed_.save_unsaved(error) && ed_.unsaved().empty(), "new game: nothing unsaved to begin with");
+            check(!ng_template_.empty() && ng_template_.count("game.json") == 1, "new game: the template «Старая шахта» is there");
+            check(shown("pj-game") && !shown("pj-menu") && !pjw().shown(), "the top bar has the game's button, its menu closed");
+            check(pj_click("pj-game"), "a click on the game's button");
+            break;
+        }
+        case 1:
+            check(pjw().shown() && shown("pj-menu") && shown("pj-new") && shown("pj-open"),
+                  "its menu: «Новая игра из шаблона…», «Открыть игру…»");
+            check(pj_click("pj-new"), "a click on «Новая игра из шаблона…»");
+            break;
+        case 2: {
+            check(pjw().view() == "new" && shown("pj-window") && !shown("pj-menu"), "the window «Новая игра» opens, the menu closes");
+            const auto& all = pjw().templates();
+            check(!all.empty() && pjw().chosen() >= 0 && all[static_cast<usize>(pjw().chosen())].id == "old-mine" &&
+                      shown("pj-template-0") && pj_class("pj-template-0", "selected"),
+                  "the catalog's «Старая шахта» is shown and chosen");
+            Rml::ElementList pics;
+            if (Rml::Element* card = ed_.find_element("pj-template-0")) card->GetElementsByTagName(pics, "img");
+            check(pics.size() == 1 && pics[0]->GetAttribute<Rml::String>("src", "") == "/memory/pj_template_0" &&
+                      pics[0]->IsVisible(true),
+                  "its card has its picture");
+            check(pj_type("pj-title-input", "Игра А"), "typed the title «Игра А»");
+            check(pj_type("pj-where-input", "Мои игры"), "typed a folder that is no full path");
+            break;
+        }
+        case 3:
+            check(shown("pj-problem") && pj_has(pjw().problem(), "нужен полный путь") && !pjw().can_create() &&
+                      pj_class("pj-create", "disabled"),
+                  "«Создать нельзя: нужен полный путь…», «Создать и открыть» is off");
+            check(pj_click("pj-create") && pjw().view() == "new" && pjw().made().empty() &&
+                      pj_names(ng_mine()) == std::vector<std::string>{"Занятая"} &&
+                      !fs::exists(fs::current_path() / utf8_path("Мои игры"), ec),
+                  "a click on it then makes nothing");
+            check(pj_type("pj-where-input", path_to_utf8(ng_mine())), "typed the full path of «Мои игры»");
+            break;
+        case 4:
+            check(pjw().can_create() && pjw().problem().empty() && utf8_path(pjw().folder()) == a && shown("pj-folder") &&
+                      !shown("pj-problem") && !pj_class("pj-create", "disabled"),
+                  "«Будет создана папка: …/Мои игры/Игра А», it can be made");
+            check(pj_type("pj-title-input", "Занятая"), "typed the title of a folder there with a file");
+            break;
+        case 5: {
+            check(!pjw().can_create() && pj_has(pjw().problem(), "папка «Занятая» уже есть, и в ней есть файлы") &&
+                      shown("pj-problem"),
+                  "an occupied folder: «Создать нельзя: папка «Занятая» уже есть…»");
+            std::vector<u8> theirs;
+            check(pj_click("pj-create") && pjw().view() == "new" && pjw().launched().empty() &&
+                      pj_names(ng_mine() / utf8_path("Занятая")) == std::vector<std::string>{"чужое.txt"} &&
+                      read_file(ng_mine() / utf8_path("Занятая") / utf8_path("чужое.txt"), theirs) &&
+                      std::string(theirs.begin(), theirs.end()) == "не моё",
+                  "a click makes nothing, the file there stays as it was");
+            check(pj_type("pj-title-input", "Игра А"), "typed «Игра А» again");
+            break;
+        }
+        case 6: {
+            check(pjw().can_create(), "«Игра А» can be made");
+            check(pj_click("pj-create"), "a click on «Создать и открыть»");
+            check(pjw().made() == a && fs::is_regular_file(a / "project.forge", ec) && pj::game_title(a / "game") == "Игра А" &&
+                      fs::is_directory(a / "assets", ec),
+                  "«Игра А» is made: project.forge, game/ titled «Игра А», assets/");
+            pj::Description d;
+            std::vector<u8> bytes;
+            check(read_file(a / "project.forge", bytes) && pj::read_description({reinterpret_cast<const char*>(bytes.data()), bytes.size()}, d) &&
+                      d.module == "slice" && d.from == "old-mine",
+                  "its description names the module «slice» and the template");
+            const auto copy = pj_tree(a / "game");
+            bool same = copy.size() == ng_template_.size();
+            for (const auto& [file, data] : ng_template_)
+                same = same && copy.count(file) && (file == "game.json" || copy.at(file) == data);
+            check(same, "game/ is the template's every file, game.json retitled");
+            const std::vector<std::string>& run = pjw().launched();
+            check(run.size() >= 3 && run[0] == path_to_utf8(editor_exe()) && run[1] == "--project" && utf8_path(run[2]) == a &&
+                      std::find(run.begin(), run.end(), "--theme") != run.end(),
+                  "nothing unsaved: the editor for «Игра А» starts (--project, the theme)");
+            check(ed_.quit_asked && pjw().view().empty(), "and this one closes");
+            check(pj_tree(utf8_path(SLICE_DATA_DIR)) == ng_template_, "the template has not changed by a byte");
+            check(pj_names(ng_mine()) == std::vector<std::string>{"Занятая", "Игра А"}, "nothing else in «Мои игры» (no side folder)");
+            ed_.quit_asked = false;
+            ng_launched_ = run;
+            // The scene changed and not saved: «Игра Б» will ask.
+            fs::remove(ed_.scene_path, ec);
+            ed_.add_object();
+            check(ed_.history.dirty() && !ed_.unsaved().empty(), "a new object in «Сцена», not saved");
+            break;
+        }
+        case 7: // a frame later: the closed window is gone from under the mouse
+            check(pj_click("pj-game"), "the game's menu again");
+            break;
+        case 8:
+            check(pj_click("pj-new"), "«Новая игра из шаблона…» again");
+            break;
+        case 9:
+            check(pjw().view() == "new" && ue_field("pj-where-input") == path_to_utf8(ng_mine()),
+                  "the window keeps where the last game was made");
+            check(pj_type("pj-title-input", "Игра Б"), "typed «Игра Б»");
+            break;
+        case 10: {
+            check(pj_click("pj-create") && fs::is_regular_file(b / "project.forge", ec), "«Игра Б» is made");
+            const std::vector<std::string>& list = pjw().unsaved_list();
+            check(pjw().view() == "unsaved" && list.size() == 1 && pj_has(list[0], "«Сцена»") && pjw().launched() == ng_launched_,
+                  "«Сцена» is not saved: the editor asks first, nothing is started yet");
+            break;
+        }
+        case 11:
+            check(shown("pj-unsaved") && shown("pj-save") && shown("pj-discard") && shown("pj-stay"),
+                  "«Сохранить», «Не сохранять», «Отмена»");
+            check(pj_click("pj-stay"), "a click on «Отмена»");
+            check(pjw().view() == "message" && pj_has(pjw().note(), "создана") && pj_has(pjw().note(), "не открыта") &&
+                      ed_.history.dirty() && pjw().launched() == ng_launched_ && !ed_.quit_asked,
+                  "«Игра Б» is made but not opened; this game stays, its changes kept");
+            break;
+        case 12:
+            check(shown("pj-message") && shown("pj-ok"), "the note says so");
+            key(SDLK_RETURN, SDL_KMOD_NONE);
+            check(pjw().view().empty(), "Enter closes it");
+            // «Открыть игру…»: the folder the system's window would answer.
+            pjw().open_game(b);
+            check(pjw().view() == "unsaved" && pjw().launched() == ng_launched_, "«Открыть игру…» «Игра Б»: the same question");
+            break;
+        case 13:
+            check(shown("pj-unsaved"), "it is shown");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(pjw().view().empty() && ed_.history.dirty() && !ed_.quit_asked && pjw().launched() == ng_launched_,
+                  "Esc: this game stays open, its changes kept");
+            pjw().open_game(b / "project.forge");
+            check(pjw().view() == "unsaved", "«Игра Б» by its project.forge: the question again");
+            break;
+        case 14: {
+            check(pj_click("pj-discard"), "a click on «Не сохранять»");
+            const std::vector<std::string>& run = pjw().launched();
+            check(run.size() >= 3 && utf8_path(run[2]) == b && ed_.discarding && ed_.quit_asked && !fs::exists(ed_.scene_path, ec),
+                  "the editor for «Игра Б» starts, this one closes without saving «Сцена»");
+            ed_.discarding = false;
+            ed_.quit_asked = false;
+            pjw().open_game(b);
+            break;
+        }
+        case 15:
+            check(pjw().view() == "unsaved" && pj_click("pj-save"), "a click on «Сохранить»");
+            check(!ed_.history.dirty() && fs::is_regular_file(ed_.scene_path, ec) && !ed_.discarding && ed_.quit_asked &&
+                      pjw().launched().size() >= 3 && utf8_path(pjw().launched()[2]) == b,
+                  "«Сцена» is saved, then the editor for «Игра Б» starts");
+            ed_.quit_asked = false;
+            ng_launched_ = pjw().launched();
+            break;
+        case 16: {
+            // Games that cannot be opened.
+            pjw().open_game(ng_mine());
+            check(pjw().view() == "message" && pj_has(pjw().note(), "нет игры Forge") && pjw().launched() == ng_launched_,
+                  "a folder with no game: «Игра не открыта: в папке … нет игры Forge»");
+            const fs::path alien = ng_root_ / utf8_path("Платформер");
+            const std::string desc = R"({"forge_project": 1, "module": "platformer"})", game = R"({"title": "Прыжки"})";
+            write_file_atomic(alien / "project.forge", {reinterpret_cast<const u8*>(desc.data()), desc.size()});
+            write_file_atomic(alien / "game" / "game.json", {reinterpret_cast<const u8*>(game.data()), game.size()});
+            break;
+        }
+        case 17:
+            check(shown("pj-message-text") && pj_click("pj-ok") && pjw().view().empty(), "«Понятно» closes the note");
+            pjw().open_game(ng_root_ / utf8_path("Платформер") / "project.forge");
+            check(pjw().view() == "message" && pj_has(pjw().note(), "нужен модуль «platformer»") && pjw().launched() == ng_launched_,
+                  "a game of a module this editor does not have: the note names it");
+            break;
+        case 18: {
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            // The editor with «Игра А» open: «Игра А» again is the same game.
+            ProjectConfig c = ng_config_;
+            c.root = a;
+            c.title = "Игра А";
+            pjw().configure(c);
+            pjw().open_game(a);
+            check(pjw().view() == "message" && pj_has(pjw().note(), "«Игра А» уже открыта") && pjw().launched() == ng_launched_,
+                  "the game that is open: «Игра «Игра А» уже открыта»");
+            break;
+        }
+        case 19: {
+            Rml::Element* button = ed_.find_element("pj-game");
+            check(button && pj_has(button->GetInnerRML(), "Игра А"), "the top bar shows «Игра А»");
+            check(pj_click("pj-ok"), "«Понятно»");
+            // A catalog of three: one to use, one with a picture that is not there, one of another module.
+            const fs::path cat = ng_root_ / utf8_path("каталог");
+            fs::create_directories(cat, ec);
+            fs::copy(utf8_path(SLICE_DATA_DIR), cat / utf8_path("шахта"), fs::copy_options::recursive, ec);
+            fs::copy(utf8_path(SLICE_DATA_DIR), cat / utf8_path("сломанная"), fs::copy_options::recursive, ec);
+            const std::string crate = R"({"id": "crate", "name": "Ящик", "kind": "crate", "picture": "нет.png"})";
+            write_file_atomic(cat / utf8_path("сломанная") / "objects" / utf8_path("Ящик.object.json"), {reinterpret_cast<const u8*>(crate.data()), crate.size()});
+            const std::string list =
+                R"({"templates": [{"id": "mine", "name": "Шахта", "module": "slice", "game": "шахта"},)"
+                R"({"id": "broken", "name": "Сломанная", "module": "slice", "game": "сломанная"},)"
+                R"({"id": "jumps", "name": "Чужая", "module": "platformer", "game": "шахта"}]})";
+            write_file_atomic(cat / "templates.json", {reinterpret_cast<const u8*>(list.data()), list.size()});
+            ProjectConfig c = ng_config_;
+            c.root = a;
+            c.title = "Игра А";
+            c.catalog = cat / "templates.json";
+            pjw().configure(c);
+            break;
+        }
+        case 20: // a frame later, as above
+            check(pj_click("pj-game"), "the game's menu");
+            break;
+        case 21:
+            check(pj_click("pj-new"), "«Новая игра из шаблона…» of a catalog of three");
+            break;
+        case 22:
+            check(pjw().view() == "new" && pjw().templates().size() == 3 && pjw().chosen() == 0 && shown("pj-template-2"),
+                  "three cards, the first chosen");
+            check(pj_click("pj-template-2"), "a click on the card «Чужая»");
+            break;
+        case 23:
+            check(pjw().chosen() == 2 && !pjw().can_create() && pj_has(pjw().problem(), "нужен модуль «platformer», его нет в этой сборке Forge") &&
+                      pj_class("pj-template-2", "blocked") && pj_class("pj-template-2", "selected") && shown("pj-problem"),
+                  "«Создать нельзя: … нужен модуль «platformer»…»");
+            check(pj_click("pj-template-1"), "a click on the card «Сломанная»");
+            break;
+        case 24:
+            check(pjw().chosen() == 1 && !pjw().can_create() && pj_has(pjw().problem(), "объект «Ящик»: нет картинки pictures/нет.png") &&
+                      pj_class("pj-template-1", "blocked"),
+                  "«Создать нельзя: … объект «Ящик»: нет картинки pictures/нет.png»");
+            check(pj_click("pj-template-0") && pjw().chosen() == 0 && !pj_class("pj-template-0", "blocked"), "a click on the card «Шахта»");
+            check(pj_type("pj-where-input", path_to_utf8(ng_mine())) && pj_type("pj-title-input", "Игра В"), "«Игра В» in «Мои игры»");
+            break;
+        case 25: {
+            check(pjw().can_create(), "«Игра В» can be made");
+            // The disk refuses the third file.
+            ng_writes_ = 0;
+            pjw().create_hooks.write = [this](const fs::path&) { return ++ng_writes_ != 3; };
+            check(pj_click("pj-create"), "«Создать и открыть», the disk refusing a file");
+            pjw().create_hooks = {};
+            check(pjw().view() == "new" && pj_has(pjw().note(), "Игра не создана: не записался файл game/") &&
+                      pjw().launched() == ng_launched_,
+                  "«Игра не создана: не записался файл game/…», nothing started");
+            check(pj_names(ng_mine()) == std::vector<std::string>{"Занятая", "Игра А", "Игра Б"},
+                  "nothing of «Игра В» is left, not even its side folder");
+            break;
+        }
+        case 26:
+            check(shown("pj-note"), "the window says why");
+            check(pj_click("pj-cancel") && pjw().view().empty() && !pjw().shown(), "«Отмена» closes it");
+            check(pj_names(ng_mine()) == std::vector<std::string>{"Занятая", "Игра А", "Игра Б"}, "and makes nothing");
+            check(pj_tree(utf8_path(SLICE_DATA_DIR)) == ng_template_, "the template still has not changed");
+            break;
+        case 27: {
+            // «Игра А» in an editor of its own, by its project.forge, from another working folder: «Играть» there.
+            const fs::path other = ng_root_ / utf8_path("другая папка");
+            fs::create_directories(other, ec);
+            const std::vector<std::string> args = {path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"),
+                                                   "--self-test", "opened-game"};
+            FORGE_INFO("self-test: %s --project \"%s\" --self-test opened-game (in %s)", args[0].c_str(), args[2].c_str(),
+                       path_to_utf8(other).c_str());
+            const int code = pj_run(args, other);
+            check(code == 0, "«Игра А» opens in an editor of its own and plays there (opened-game: exit " + std::to_string(code) + ")");
+            pjw().configure(ng_config_);
+            ed_.scene_path = ng_scene_;
+            check(!pjw().shown() && pjw().config().root == ng_config_.root, "the window as it was");
+            ng_step_ = -1;
+            return part.empty();
+        }
+        default: break;
+        }
+        ++ng_step_;
+        return true;
+    }
+    // In the editor started for «Игра А» (forge_editor --project ".../Игра А/project.forge" --self-test opened-game).
+    bool opened_game_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game";
+        switch (og_step_) {
+        case 0: {
+            check(fs::is_regular_file(a / "project.forge", ec) && pjw().config().title == "Игра А", "the editor has «Игра А» open");
+            check(ed_.game_dir == game && ed_.objects_folder == game / "objects" && ed_.pictures_folder == game / "pictures" &&
+                      ed_.sounds_folder == game / "sounds" && ed_.logic_file == game / "logic.json" && ed_.story_dir == game &&
+                      ed_.ui_game_dir == game && ed_.scene_path == a / "scene.forge.json",
+                  "its objects, pictures, sounds, links, conversations, screens and scene are the game's");
+            Rml::Element* button = ed_.find_element("pj-game");
+            check(button && pj_has(button->GetInnerRML(), "Игра А"), "the top bar shows «Игра А»");
+            check(!fs::equivalent(fs::current_path(), a, ec) && !fs::equivalent(fs::current_path(), utf8_path(SLICE_DATA_DIR), ec),
+                  "the working folder is neither the game's nor the template's");
+            check(click_tab(0), "a click on the tab «Уровень»");
+            break;
+        }
+        case 1:
+            check(ed_.tab() == "level" && pj_click("play"), "a click on «Играть»");
+            break;
+        case 2: {
+            const std::vector<std::string>& run = lv().last_play();
+            auto after = [&](const char* flag) {
+                const auto it = std::find(run.begin(), run.end(), flag);
+                return it != run.end() && it + 1 != run.end() ? utf8_path(*(it + 1)) : fs::path();
+            };
+            check(!run.empty() && after("--data") == game && after("--level") == game / "level" &&
+                      after("--user") == play_folder(a) && fs::is_directory(game / "level", ec),
+                  "«Играть» starts the game of «Игра А»: its data, its level (saved first), its own player's folder");
+            std::vector<std::string> args = run;
+            for (const char* more : {"--test", "--scene", "project"}) args.push_back(more);
+            const int code = pj_run(args, fs::current_path());
+            check(code == 0, "the game plays «Игра А» from where the editor said (scene project: exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++og_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -12846,11 +13372,29 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
     int result = 1;
     {
         Editor editor;
+        // --self-test opened-game: the game given, opened as the editor opens it (the self-test made it).
+        const bool opened = options.self_part == "opened-game";
+        OpenGame game;
+        bool ready = true;
+        if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
+            FORGE_ERROR("self-test FAILED: the game did not open: %s", error.c_str());
+            ready = false;
+        }
+        if (opened) editor.use_game_dir(game.game);
         // Never touch a scene file from an offscreen run.
-        editor.scene_path = options.scene.empty() ? std::filesystem::path("__offscreen_no_scene__.json") : options.scene;
-        // Nor the game's templates: a copy of them.
-        editor.objects_folder = std::filesystem::temp_directory_path() / "forge_editor_objects";
+        editor.scene_path = opened ? game.root / "scene.forge.json"
+                            : options.scene.empty() ? std::filesystem::path("__offscreen_no_scene__.json") : options.scene;
+        editor.objects_tab.silent = true;
+        editor.ui_tab.silent = true;
+        // Nor this computer's shared objects: an empty library of its own.
+        editor.shared_folder = std::filesystem::temp_directory_path() / "forge_editor_shared";
         {
+            std::error_code ec;
+            std::filesystem::remove_all(editor.shared_folder, ec);
+        }
+        // Nor the game's templates: a copy of them.
+        if (!opened) {
+            editor.objects_folder = std::filesystem::temp_directory_path() / "forge_editor_objects";
             std::error_code ec;
             std::filesystem::remove_all(editor.objects_folder, ec);
             std::filesystem::copy(editor.game_dir / "objects", editor.objects_folder, std::filesystem::copy_options::recursive, ec);
@@ -12859,12 +13403,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             if (std::filesystem::exists(editor.game_dir / "pictures", ec))
                 std::filesystem::copy(editor.game_dir / "pictures", editor.pictures_folder, std::filesystem::copy_options::recursive, ec);
             editor.sounds_folder = std::filesystem::temp_directory_path() / "forge_editor_sounds";
-            editor.objects_tab.silent = true;
-            editor.ui_tab.silent = true;
             std::filesystem::remove_all(editor.sounds_folder, ec);
-            // Nor this computer's shared objects: an empty library of its own.
-            editor.shared_folder = std::filesystem::temp_directory_path() / "forge_editor_shared";
-            std::filesystem::remove_all(editor.shared_folder, ec);
             // Nor the game's links: a copy of them.
             editor.logic_file = std::filesystem::temp_directory_path() / "forge_editor_logic.json";
             std::filesystem::remove(editor.logic_file, ec);
@@ -12886,8 +13425,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         LevelConfig lc;
         lc.offscreen = true;
         lc.game_data = editor.game_dir;
-        lc.folder = options.level_given ? options.level : std::filesystem::temp_directory_path() / "forge_editor_level";
-        if (!options.level_given) {
+        lc.folder = opened ? game.game / "level"
+                    : options.level_given ? options.level : std::filesystem::temp_directory_path() / "forge_editor_level";
+        if (!options.level_given && !opened) {
             std::error_code ec;
             std::filesystem::remove_all(lc.folder, ec);
         }
@@ -12895,10 +13435,23 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         AssetsConfig ac;
         ac.offscreen = true;
         const std::filesystem::path sample = std::filesystem::temp_directory_path() / "forge_editor_assets";
-        ac.folder = options.assets.empty() ? sample / "assets" : options.assets;
-        ac.library = options.assets.empty() ? sample / "library" : ac.folder.parent_path() / ".forge" / "library";
-        if (options.assets.empty()) make_sample_assets(sample, bench_assets);
-        if (target && editor.init(device, nullptr, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h, options.ui_dir,
+        ac.folder = opened ? game.root / "assets" : options.assets.empty() ? sample / "assets" : options.assets;
+        ac.library = options.assets.empty() && !opened ? sample / "library" : ac.folder.parent_path() / ".forge" / "library";
+        if (options.assets.empty() && !opened) make_sample_assets(sample, bench_assets);
+        // The game the editor has open: for opened-game the one given; otherwise a folder that is no game (the menu
+        // and the window are used, and the games they make go where the self-test says).
+        if (opened) {
+            lc.game_exe = utf8_path(FORGE_SLICE_EXE);
+            lc.play_dir = play_folder(game.root);
+        }
+        editor.project_config = {opened ? game.root : std::filesystem::temp_directory_path() / "forge_editor_offscreen_game",
+                                 opened ? game.title : std::string("Старая шахта"),
+                                 utf8_path(FORGE_GAMES_DIR) / "templates.json",
+                                 editor_modules(),
+                                 {},
+                                 editor_exe(),
+                                 nullptr};
+        if (ready && target && editor.init(device, nullptr, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h, options.ui_dir,
                                   options.theme, options.objects, lc, ac)) {
             f64 update_ms = 0, render_ms = 0, worst_ms = 0;
             u32 measured = 0;
@@ -12907,9 +13460,10 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 editor.hierarchy.expand_all(true);
             }
             SelfTest test(editor);
+            test.part = options.self_part;
             if (self_test) {
                 frames = 100'000; // until the steps end (some wait for background work)
-                editor.open_tab("world"); // the scene part first, then the level, then the resources
+                if (test.part.empty()) editor.open_tab("world"); // the scene part first, then the level, then the resources
             }
             bool testing = self_test;
             if (bench_level) {
@@ -13145,6 +13699,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                     if (!root.children.empty() && !root.children.back().children.empty())
                         editor.ui_tab.select({root.children.back().children.front().id});
                 }
+                if (f == 1 && options.window == "game-menu") editor.projects.set_menu(true);
+                if (f == 1 && options.window == "new-game") editor.projects.show_new();
                 if (f == 1 && !options.talk.empty()) {
                     editor.open_tab("story");
                     const std::string& t = options.talk;
@@ -13225,7 +13781,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                        bench ? ", hierarchy scrolling" : "", update_ms / measured, render_ms / measured, worst_ms);
             result = screenshot ? (render::save_png(device, target, w, h, screenshot) ? 0 : 1) : 0;
             if (self_test) {
-                const bool passed = test.passed() && check_project_folder() == 0;
+                const bool passed = test.passed() && (!test.part.empty() || check_project_folder() == 0);
                 FORGE_INFO("self-test %s", passed ? "passed" : "FAILED");
                 if (!passed) result = 1;
             }
@@ -13282,8 +13838,16 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--bench-story") == 0) bench_story = true;
         else if (std::strcmp(argv[i], "--talk") == 0 && has_value) app.options.talk = argv[++i];
         else if (std::strcmp(argv[i], "--templates") == 0 && has_value) app.options.templates = argv[++i];
-        else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
+        else if (std::strcmp(argv[i], "--self-test") == 0) {
+            self_test = true;
+            if (has_value && argv[i + 1][0] != '-') app.options.self_part = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--window") == 0 && has_value) app.options.window = argv[++i];
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
+    }
+    if (!app.options.self_part.empty() && app.options.self_part != "new-game" && app.options.self_part != "opened-game") {
+        FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game)", app.options.self_part.c_str());
+        return 2;
     }
     if (screenshot || bench || self_test || bench_level || bench_assets || bench_scheme || bench_story)
         return run_offscreen(app.options, screenshot, frames, select, play, bench, self_test, tab, bench_level, bench_assets,

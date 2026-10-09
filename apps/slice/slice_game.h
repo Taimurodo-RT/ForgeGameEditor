@@ -192,6 +192,8 @@ public:
     // changed the links).
     bool reload_links(std::string* error = nullptr);
     const forge::logic::Logic& links() const { return links_; }
+    // The links' file the game plays by: Options::links_file, else the game's logic.json.
+    std::filesystem::path links_path() const;
     // «Связи» over the game (F2).
     LinkOverlay& overlay() { return overlay_; }
 
@@ -229,7 +231,6 @@ private:
     // A link happened: into Options::fired_file (each link at most twice a
     // second, so «always» links do not flood it).
     void note_fired(u32 link);
-    std::filesystem::path links_path() const;
     // Writes the links and plays by them at once (from «Связи» over the game).
     void change_links(const forge::logic::Logic& after, const std::string& said);
     // Takes in what the editor changed in the links' file meanwhile.

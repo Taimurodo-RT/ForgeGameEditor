@@ -26,6 +26,64 @@ body {
 .dirty-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background-color: var(--warning); margin-left: var(--space-1); }
 #topbar .hint { margin-left: var(--space-3); font-size: 12px; white-space: nowrap; }
 
+/* The game that is open, its menu, and the windows «Новая игра из шаблона», unsaved changes and notes. */
+.pj-game.selected { background-color: var(--state-hover-layer); }
+.as-menu.pj-menu { top: 40px; width: 320px; z-index: 90; }
+.pj-backdrop { z-index: 85; }
+.pj-where { padding: var(--space-1) var(--space-2); font-size: 12px; color: var(--on-surface-variant); }
+.pj-scrim {
+    position: absolute;
+    left: 0px; top: 0px; right: 0px; bottom: 0px;
+    z-index: 90;
+    background-color: rgba(0, 0, 0, 0.45);
+}
+.pj-window {
+    position: absolute;
+    left: 12%;
+    right: 12%;
+    top: 64px;
+    bottom: 64px;
+    z-index: 95;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: 10px;
+    background-color: var(--surface-container-high);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+}
+.pj-window.pj-small { left: 30%; right: 30%; top: 30%; bottom: auto; }
+.pj-head { align-items: center; gap: var(--space-2); }
+.pj-title { font-size: 16px; font-weight: bold; }
+.pj-lead { font-size: 13px; color: var(--on-surface-variant); }
+.pj-body { gap: var(--space-4); min-height: 0px; align-items: stretch; }
+.pj-list { flex: 3 1 0px; min-width: 0px; gap: var(--space-2); overflow-y: auto; padding-right: 6px; justify-content: flex-start; }
+.pj-form { flex: 2 1 0px; min-width: 0px; gap: var(--space-1); justify-content: flex-start; }
+.pj-card {
+    gap: var(--space-3);
+    padding: var(--space-2);
+    border-radius: 8px;
+    cursor: pointer;
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+    background-color: var(--surface-container);
+}
+.pj-card:hover { background-color: var(--state-hover-layer); }
+.pj-card.selected { border-color: var(--primary); background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.pj-pic { width: 160px; height: 90px; flex: 0 0 160px; border-radius: 6px; overflow: hidden; background-color: var(--surface-container-low); }
+.pj-pic img { width: 160px; height: 90px; }
+.pj-text { gap: 3px; min-width: 0px; }
+.pj-name { font-size: 15px; font-weight: bold; }
+.pj-about { font-size: 13px; }
+.pj-module { font-size: 12px; color: var(--on-surface-variant); }
+.pj-blocked { font-size: 12px; color: var(--error); }
+.pj-where-row { gap: var(--space-2); align-items: center; }
+.pj-folder { font-size: 13px; padding: 4px 0px; color: var(--on-surface-variant); }
+.pj-folder.ok { color: var(--on-surface); }
+.pj-problem { font-size: 13px; padding: 6px var(--space-2); border-radius: 6px; background-color: var(--error-container); color: var(--on-error-container); }
+.pj-unsaved-line { font-size: 13px; padding-left: var(--space-3); }
+.pj-foot { gap: var(--space-2); align-items: center; }
+#pj-create.disabled { opacity: 0.4; cursor: default; }
+
 #editor-tabs {
     height: 40px;
     padding: 0px var(--space-2);

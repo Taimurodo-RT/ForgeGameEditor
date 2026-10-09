@@ -20,6 +20,17 @@
 <body data-model="editor">
     <div id="topbar" class="row gap-1">
         <div class="brand row gap-2"><icon name="hardware"/><span>Forge</span></div>
+        <!-- The game that is open; its menu makes a new game of a template or opens another
+             (C++: ProjectWindow, apps/editor/project_window.cpp). -->
+        <div class="menu-anchor">
+            <div id="pj-game" class="command pj-game" data-attr-title="'Игра в редакторе: ' + pj_root" data-class-selected="pj_menu" data-event-click="pj_menu"><icon name="sports_esports"/><span>{{ pj_game }}</span><icon class="s" name="expand_more"/></div>
+            <div id="pj-menu" class="as-menu menu-list pj-menu" data-if="pj_menu">
+                <div id="pj-new" class="menu-item" data-event-click="pj_new"><icon name="add_circle"/><span class="label">Новая игра из шаблона…</span></div>
+                <div id="pj-open" class="menu-item" data-event-click="pj_open"><icon name="folder_open"/><span class="label">Открыть игру…</span></div>
+                <div class="divider"/>
+                <div class="pj-where">Папка игры: {{ pj_root }}</div>
+            </div>
+        </div>
         <div class="divider vertical"/>
         <div class="icon-button" data-class-disabled="!can_undo" data-event-click="undo"><icon name="undo"/></div>
         <div class="icon-button" data-class-disabled="!can_redo" data-event-click="redo"><icon name="redo"/></div>
@@ -28,7 +39,7 @@
         <span class="hint muted" data-if="can_undo">Ctrl+Z: {{ undo_label }}</span>
         <div class="grow"/>
         <div class="play row gap-2">
-            <div class="button filled small" data-if="!playing" data-event-click="play"><icon name="play_arrow"/>Играть</div>
+            <div id="play" class="button filled small" data-if="!playing" data-event-click="play"><icon name="play_arrow"/>Играть</div>
             <div class="button danger small" data-if="playing" data-event-click="stop"><icon name="stop"/>Стоп</div>
             <div class="icon-button" data-class-selected="paused" data-class-disabled="!playing" data-event-click="pause"><icon name="pause"/></div>
         </div>
@@ -2742,6 +2753,68 @@
         <div class="ue-cp-buttons row">
             <div id="ue-cp-cancel" class="ue-btn grow" title="Esc: всё как было" data-event-click="ue_cp_close(false)">Отмена</div>
             <div id="ue-cp-done" class="ue-btn ue-btn-primary grow" title="Enter или щелчок мимо палитры" data-event-click="ue_cp_close(true)">Готово</div>
+        </div>
+    </div>
+
+    <!-- «Новая игра из шаблона»: a copy of a template in a folder of its own; nothing is written until
+         «Создать и открыть». Then, or for «Открыть игру…», the editor asks about unsaved changes and opens the
+         game in a new editor of its own. -->
+    <div class="as-backdrop pj-backdrop" data-if="pj_menu" data-event-mousedown="pj_menu_close"/>
+    <div class="pj-scrim" data-if="pj_view != ''"/>
+    <div id="pj-window" class="pj-window column" data-if="pj_view == 'new'">
+        <div class="row pj-head">
+            <icon name="add_circle"/>
+            <span class="pj-title grow">Новая игра из шаблона</span>
+            <div id="pj-close" class="icon-button" title="Отмена (Esc)" data-event-click="pj_cancel"><icon name="close"/></div>
+        </div>
+        <div class="pj-lead">Шаблон копируется в новую папку целиком: игра будет своей, шаблон и открытая игра не меняются. Пока вы не нажмёте «Создать и открыть», ничего не записывается.</div>
+        <div class="row pj-body grow">
+            <div class="column pj-list">
+                <div data-for="t : pj_templates" class="pj-card row" data-attr-id="'pj-template-' + it_index" data-class-selected="t.selected" data-class-blocked="t.problem != ''" data-event-click="pj_pick(it_index)">
+                    <div class="pj-pic"><img data-if="t.picture != ''" data-attr-src="t.picture"/></div>
+                    <div class="column pj-text">
+                        <span class="pj-name">{{ t.name }}</span>
+                        <span class="pj-about">{{ t.about }}</span>
+                        <span class="pj-module">Модуль: {{ t.module }}</span>
+                        <span class="pj-blocked" data-if="t.problem != ''">Нельзя создать: {{ t.problem }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="column pj-form">
+                <div class="section-title">Название</div>
+                <input id="pj-title-input" type="text" class="text" data-attr-value="pj_title" data-event-change="pj_title"/>
+                <div class="section-title">Где создать</div>
+                <div class="row pj-where-row">
+                    <input id="pj-where-input" type="text" class="text grow" data-attr-value="pj_where" data-event-change="pj_where"/>
+                    <div id="pj-browse" class="command" title="Выбрать папку" data-event-click="pj_browse"><icon name="folder_open"/><span>Выбрать…</span></div>
+                </div>
+                <div id="pj-folder" class="pj-folder" data-class-ok="pj_can" data-if="pj_folder != ''">Будет создана папка: {{ pj_folder }}</div>
+                <div id="pj-problem" class="pj-problem" data-if="pj_problem != ''">Создать нельзя: {{ pj_problem }}</div>
+                <div id="pj-note" class="pj-problem" data-if="pj_note != ''">{{ pj_note }}</div>
+            </div>
+        </div>
+        <div class="row pj-foot">
+            <div class="grow"/>
+            <div id="pj-cancel" class="command" data-event-click="pj_cancel"><span>Отмена</span></div>
+            <div id="pj-create" class="button filled small" data-class-disabled="!pj_can" data-event-click="pj_create"><icon name="add_circle"/>Создать и открыть</div>
+        </div>
+    </div>
+    <div id="pj-unsaved" class="pj-window pj-small column" data-if="pj_view == 'unsaved'">
+        <div class="row pj-head"><icon name="save"/><span class="pj-title grow">Открыть игру «{{ pj_next }}»</span></div>
+        <div class="pj-lead">Игра «{{ pj_game }}» закроется. В ней есть то, что не сохранено:</div>
+        <div data-for="u : pj_unsaved" class="pj-unsaved-line">{{ u }}</div>
+        <div class="row pj-foot">
+            <div class="grow"/>
+            <div id="pj-stay" class="command" title="Esc: остаться в этой игре" data-event-click="pj_answer('stay')"><span>Отмена</span></div>
+            <div id="pj-discard" class="command" data-event-click="pj_answer('discard')"><span>Не сохранять</span></div>
+            <div id="pj-save" class="button filled small" title="Enter" data-event-click="pj_answer('save')"><icon name="save"/>Сохранить</div>
+        </div>
+    </div>
+    <div id="pj-message" class="pj-window pj-small column" data-if="pj_view == 'message'">
+        <div id="pj-message-text" class="pj-lead">{{ pj_note }}</div>
+        <div class="row pj-foot">
+            <div class="grow"/>
+            <div id="pj-ok" class="button filled small" data-event-click="pj_answer('ok')">Понятно</div>
         </div>
     </div>
 

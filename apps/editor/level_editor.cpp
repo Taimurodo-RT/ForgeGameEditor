@@ -2423,13 +2423,15 @@ bool LevelEditor::open_folder(const fs::path& folder) {
     return true;
 }
 
-std::filesystem::path LevelEditor::fired_file() { return fs::temp_directory_path() / "forge_editor_play" / "logic_fired.txt"; }
+std::filesystem::path LevelEditor::play_dir() const {
+    return config_.play_dir.empty() ? fs::temp_directory_path() / "forge_editor_play" : config_.play_dir;
+}
 
 std::vector<std::string> LevelEditor::play_command(f64 x, f64 y) const {
     char at[64];
     std::snprintf(at, sizeof(at), "%.2f,%.2f", x, y);
     std::vector<std::string> cmd = {path_to_utf8(config_.game_exe), "--play", "--level", path_to_utf8(level_->folder()),
-                                    "--at", at, "--user", path_to_utf8(fs::temp_directory_path() / "forge_editor_play"),
+                                    "--at", at, "--user", path_to_utf8(play_dir()),
                                     "--fired", path_to_utf8(fired_file())};
     if (!config_.game_data.empty()) {
         cmd.push_back("--data");
@@ -2449,6 +2451,7 @@ bool LevelEditor::play_here() {
         FORGE_WARN("Рядом с центром вида нет места для героя: сдвиньте вид");
         return false;
     }
+    last_play_ = play_command(x, y);
     if (config_.game_exe.empty() || config_.offscreen) return true;
     std::error_code ec;
     if (!fs::exists(config_.game_exe, ec)) {
