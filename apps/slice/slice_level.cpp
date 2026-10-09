@@ -3,6 +3,7 @@
 #include "slice_art.h"
 
 #include "forge/core/log.h"
+#include "forge/level/light.h"
 #include "forge/sim/cells.h"
 #include "forge/sim/simulation.h"
 
@@ -607,6 +608,8 @@ void SliceLevel::start(f64& x, f64& y) const {
     y = gen_->spawn_y() - 2;
 }
 
+std::string SliceLevel::hour_words(f64 hour) const { return slice::hour_words(hour); }
+
 bool SliceLevel::init_view(SDL_GPUDevice* device, SDL_GPUTextureFormat format) {
     device_ = device;
     format_ = format;
@@ -669,7 +672,10 @@ void SliceLevel::prepare_view(SDL_GPUCommandBuffer* cmd, level::Level& level, co
     sprites_.prepare(cmd, batch_, camera, width, height);
     game_light_ = options.game_light;
     if (game_light_) {
+        // As the game lights it (SliceGame::render), at the level's hour or the one the author looks at.
+        lights_.rules().sky_color = sky_light(options.preview_time >= 0 ? options.preview_time : level.light().time);
         for (const auto& [x, y] : torches_) lights_.add({x, y, kTorchLight.r, kTorchLight.g, kTorchLight.b});
+        level::add_light_sources(level.scene(), lights_);
         lights_.prepare(cmd, level.world(), camera, width, height);
     }
 }

@@ -88,6 +88,9 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/templates/ DESTINATION da
 # And the level made in the editor's «Физика» (step 9): `OldMine --test --scene physics` starts a new game from
 # data/examples/physics/level, as «Играть отсюда» starts one from the editor's level folder.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/physics/ DESTINATION data/examples/physics COMPONENT slice)
+# And the level made in the editor's «Свет» (step 9): `OldMine --test --scene light` plays it from
+# data/examples/light/level and draws the editor's view of the same folder to compare their light.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/light/ DESTINATION data/examples/light COMPONENT slice)
 add_custom_target(forge_slice_package
   COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/dist/OldMine
   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component slice --config $<CONFIG>

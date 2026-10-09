@@ -380,4 +380,29 @@ render::LightRules light_rules() {
     return rules;
 }
 
+std::span<const render::SkyKey> day_sky() {
+    static const std::vector<render::SkyKey> keys = [] {
+        const Color day = light_rules().sky_color; // the light the game always had
+        const Color night{0.10f, 0.12f, 0.22f, 1.0f};
+        return std::vector<render::SkyKey>{{static_cast<f32>(kNightTill), night},
+                                           {6.5f, Color{0.85f, 0.62f, 0.55f, 1.0f}},
+                                           {static_cast<f32>(kDayFrom), day},
+                                           {static_cast<f32>(kDayTill), day},
+                                           {19.0f, Color{0.95f, 0.58f, 0.38f, 1.0f}},
+                                           {static_cast<f32>(kNightFrom), night}};
+    }();
+    return keys;
+}
+
+bool is_night(f64 hour) { return hour >= kNightFrom || hour < kNightTill; }
+
+Color sky_light(f64 hour) { return render::sky_at(day_sky(), hour, light_rules().sky_color); }
+
+const char* hour_words(f64 hour) {
+    if (is_night(hour)) return "Ночь до 4:30: небо почти не светит, в глубине пещер темно, как всегда. Связи «Только ночью» срабатывают.";
+    if (hour < kDayFrom) return "Рассвет: небо светлеет, к 8:00 светит как днём. Связи «Только ночью» ждут 21:00.";
+    if (hour < kDayTill) return "День: небо светит как всегда в игре. Связи «Только ночью» ждут 21:00.";
+    return "Вечер: небо тускнеет и краснеет, с 21:00 ночь и связи «Только ночью».";
+}
+
 } // namespace slice

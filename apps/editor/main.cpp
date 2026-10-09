@@ -1760,7 +1760,7 @@ private:
     }
 
     bool level_step(u32 f) {
-        if (f >= 19) return ph_step_ <= kPhysLast ? physics_step() : objects_step();
+        if (f >= 19) return ph_step_ <= kPhysLast ? physics_step() : lt_step_ <= kLightLast ? light_step() : objects_step();
         const usize stone = tile_named("stone"), sand = tile_named("sand");
         switch (f) {
         case 0: {
@@ -2615,6 +2615,521 @@ private:
         default: break;
         }
         if (next) ++ph_step_;
+        return true;
+    }
+
+    // --- the level's light («Свет»): games/examples/light made with the mouse and the panel ---
+    static constexpr u32 kLightLast = 26;
+    // The example, as this run makes it (the folder is new each run).
+    static std::filesystem::path light_root() { return std::filesystem::temp_directory_path() / "forge_editor_light"; }
+    level::LightSource lamp(u64 id) {
+        const flecs::entity e = lv().level().find(id);
+        return e.is_valid() && e.has<level::LightSource>() ? e.get<level::LightSource>() : level::LightSource{0, 0, 0, 0, 0};
+    }
+    f64 lamp_x(u64 id) {
+        const flecs::entity e = lv().level().find(id);
+        return e.is_valid() ? e.get<scene::Position>().tile_x() : std::nan("");
+    }
+    f64 lamp_y(u64 id) {
+        const flecs::entity e = lv().level().find(id);
+        return e.is_valid() ? e.get<scene::Position>().tile_y() : std::nan("");
+    }
+    // Light sources loaded now.
+    usize lamp_count() {
+        usize n = 0;
+        lv().level().scene().ecs().each([&](const scene::Position&, const level::LightSource&) { ++n; });
+        return n;
+    }
+    // A source's values as text, to see that nothing else changed.
+    std::string lamp_text(u64 id) {
+        const level::LightSource s = lamp(id);
+        char t[160];
+        std::snprintf(t, sizeof(t), "%.2f %.2f rgb %.4f %.4f %.4f b%g r%g", lamp_x(id), lamp_y(id), s.r, s.g, s.b, s.brightness, s.radius);
+        return t;
+    }
+    // A level's light sources, to compare: centre, colour, brightness, radius, whether it has an id of its own.
+    static std::vector<std::string> lamps_of(level::Level& lvl) {
+        std::vector<std::string> out;
+        lvl.scene().ecs().each([&](flecs::entity e, const scene::Position& p, const level::LightSource& s) {
+            char t[160];
+            std::snprintf(t, sizeof(t), "%.2f %.2f rgb %.4f %.4f %.4f b%g r%g id%d", p.tile_x(), p.tile_y(), s.r, s.g, s.b,
+                          s.brightness, s.radius, e.has<level::LevelId>());
+            out.push_back(t);
+        });
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    std::string joined(const std::vector<std::string>& all) {
+        std::string out;
+        for (const std::string& t : all) out += t + "; ";
+        return out;
+    }
+    // The cells of the example around its room (x 28…83, y v…v+25), all three layers.
+    world::Rect light_rect() { return {28, vy(), 84, vy() + 26}; }
+    std::vector<world::TileId> light_area(level::Level& lvl) {
+        const world::Rect r = light_rect();
+        std::vector<world::TileId> out;
+        for (i32 y = r.y0; y < r.y1; ++y)
+            for (i32 x = r.x0; x < r.x1; ++x)
+                for (u32 l = 0; l < 3; ++l) out.push_back(lvl.tile(l, x, y));
+        return out;
+    }
+    // Typed into a shown field of the panel as from the keyboard: its text replaced, Enter, then away.
+    bool lt_type(const char* id, const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(visible(id));
+        if (!e || !e->IsVisible(true)) return false;
+        e->Focus();
+        key(SDLK_END, SDL_KMOD_NONE);
+        const Rml::String old = e->GetValue();
+        const usize letters = static_cast<usize>(std::count_if(old.begin(), old.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+        for (usize i = 0; i < letters; ++i) key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+        SDL_Event t{};
+        t.type = SDL_EVENT_TEXT_INPUT;
+        t.text.text = text.c_str();
+        ed_.handle_event(t);
+        const bool typed = e->GetValue() == text;
+        key(SDLK_RETURN, SDL_KMOD_NONE);
+        e->Blur();
+        return typed;
+    }
+    // A slider dragged with the mouse from one point of its track to another (fractions of its width).
+    bool lt_slide(const char* id, f32 from, f32 to) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || !e->IsVisible(true)) return false;
+        e->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
+        ed_.context()->Update();
+        return ue_slide(id, from, 0.5f, to, 0.5f);
+    }
+    static bool near(f32 a, f32 b) { return std::fabs(a - b) < 1e-5f; }
+
+    bool light_step() {
+        const i32 v = vy();
+        const std::filesystem::path example = light_root() / "level";
+        // The room: the eraser (radius 4) along row v + 13 from x 40 to 68, deep in the ground under the village.
+        // A: warm, in the west of the room; B: blue, placed at 58.5 and carried over the chunk border x = 64.
+        const i32 row = v + 13;
+        const f64 ax = 42.5, ay = v + 12.5, by = v + 14.5;
+        const usize undo_all = 8; // the room, A, its colour and brightness, B, its colour and move, the time
+        switch (lt_step_) {
+        case 0: {
+            // The level of the steps above stays as it was; the example is a level of its own.
+            key(SDLK_S, SDL_KMOD_CTRL);
+            lt_main_ = lv().level().folder();
+            lt_view_ = lv().camera();
+            std::error_code ec;
+            std::filesystem::remove_all(light_root(), ec);
+            std::filesystem::create_directories(example, ec);
+            check(lv().open_folder(example), "a new level opens for the light example");
+            check(lv().history().cursor() == 0 && !lv().dirty() && lv().level().light() == level::LevelLight{} &&
+                      lv().level().light().time == 12.0f && lv().level().light_error().empty(),
+                  "with no history, at noon (no light.json)");
+            check(!std::filesystem::exists(example / "light.json"), "no light.json yet");
+            lv().camera().zoom = std::clamp(lv().view_w() / 64.0f, 6.0f, 16.0f);
+            lv().camera().x = 54;
+            lv().camera().y = v + 10;
+            key(SDLK_T, SDL_KMOD_NONE);
+            if (Rml::Element* e = ed_.find_element(("pal-" + std::to_string(tile_named("stone"))).c_str())) e->Click();
+            key(SDLK_E, SDL_KMOD_NONE);
+            lv().set_brush_radius(4);
+            break;
+        }
+        case 1: {
+            if (wait(3)) return true;
+            check(lv().mode() == Mode::Tiles && lv().tool() == Tool::Eraser && lv().layer() == 1, "the eraser on the block layer");
+            lv().level().ensure_loaded(light_rect());
+            bool ground = true;
+            for (i32 y = v + 1; y <= v + 24; ++y)
+                for (i32 x = 34; x <= 74; ++x) ground = ground && at(x, y, 1) != 0 && at(x, y, 0) != 0;
+            check(ground, "under the village: rock with walls behind it");
+            entries_ = lv().history().cursor();
+            to_cell(40, row);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            for (i32 x = 41; x <= 68; ++x) to_cell(x, row);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            u32 open = 0, walls = 0;
+            for (i32 y = row - 4; y <= row + 4; ++y)
+                for (i32 x = 40; x <= 68; ++x) {
+                    open += at(x, y, 1) == 0;
+                    walls += at(x, y, 0) != 0;
+                }
+            bool rock = true;
+            for (i32 x = 34; x <= 74; ++x) rock = rock && at(x, row - 5, 1) != 0 && at(x, row + 5, 1) != 0;
+            check(open == 9 * 29 && walls == 9 * 29 && rock,
+                  "a room in the ground, 29 × 9 and its round ends: the blocks gone, the walls stay, rock above and below");
+            check(lv().history().cursor() == entries_ + 1, "one stroke, one history entry");
+            break;
+        }
+        case 2:
+            key(SDLK_C, SDL_KMOD_NONE);
+            check(lv().mode() == Mode::Light && lv().view().game_light, "C opens «Свет», the view lit as in the game");
+            check(lv().light_tool() == LightTool::Select, "with the select tool");
+            break;
+        case 3: {
+            if (wait(3)) return true;
+            check(shown("lt-tool-select") && shown("lt-tool-source") && shown("lt-time") && shown("lt-time-slider") &&
+                      shown("lt-preview") && shown("lt-sky"),
+                  "the mode shows its tools, the time of day and the preview");
+            check(!ed_.find_element("mode-light")->IsClassSet("soon"), "«Свет» is no longer marked as coming later");
+            check(input_value("lt-time") == "12:00" && element_text("lt-sky").find("День") != std::string::npos && !shown("lt-error"),
+                  "a level without light.json: noon, as the game always had");
+            check(click_id("lt-tool-source") && lv().light_tool() == LightTool::Source, "the source tool");
+            entries_ = lv().history().cursor();
+            // Pressed at the centre's cell, dragged out to the radius.
+            drag_points(ax - 0.3, ay + 0.2, ax + 10.1, ay);
+            check(lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Поставить: Источник света",
+                  "a press and a drag make one source, one history entry");
+            lamp_a_ = lv().selection().size() == 1 ? lv().selection()[0] : 0;
+            const level::LightSource s = lamp(lamp_a_);
+            check(lamp_x(lamp_a_) == ax && lamp_y(lamp_a_) == ay && s.radius == 10 && s.brightness == 1.5f && s.r == 1 &&
+                      near(s.g, 0.82f) && near(s.b, 0.55f),
+                  "centred in its cell, the radius as dragged (10), the warm light of 1.5: " + lamp_text(lamp_a_));
+            check(lamp_count() == 1 && lv().light_note().find("радиус 10") != std::string::npos, "one source; " + lv().light_note());
+            break;
+        }
+        case 4: {
+            check(input_value("lv-field-0") == "42.50" && input_value("lv-color-2") == "#FFD18C" && input_value("lv-num-3") == "1.5" &&
+                      input_value("lv-num-4") == "10",
+                  "the panel shows its centre, colour, brightness and radius");
+            // The editor's view lights it as the game does: bright at the centre, nothing past the radius.
+            const Color c = ed_.level_module.lights().lamp_at(ax, ay), out = ed_.level_module.lights().lamp_at(ax + 10.6, ay);
+            check(c.r > 1.2f && c.g > 0.9f && c.b > 0.6f && out.r == 0 && out.g == 0 && out.b == 0,
+                  "the view: light at the centre (" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " + std::to_string(c.b) +
+                      "), none 10.6 tiles away");
+            entries_ = lv().history().cursor();
+            check(lt_type("lv-color-2", "#FF9A40"), "#FF9A40 typed into «Цвет»");
+            const level::LightSource s = lamp(lamp_a_);
+            check(s.r == 1 && near(s.g, 0x9A / 255.0f) && near(s.b, 0x40 / 255.0f) && s.brightness == 1.5f && s.radius == 10,
+                  "the colour changed; the brightness and the radius did not: " + lamp_text(lamp_a_));
+            check(lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "«Источник света»: Цвет", "one history entry");
+            break;
+        }
+        case 5: {
+            check(input_value("lv-color-2") == "#FF9A40", "the panel shows the new colour");
+            entries_ = lv().history().cursor();
+            const std::string before = lamp_text(lamp_a_);
+            for (const char* bad : {"red", "#12345", "#GG0000", "#FF9A40FF"}) lt_type("lv-color-2", bad);
+            check(lamp_text(lamp_a_) == before && lv().history().cursor() == entries_ &&
+                      lv().light_note().find("не цвет") != std::string::npos,
+                  "not colours change nothing, and it says so: " + lv().light_note());
+            check(lt_type("lv-num-3", "2"), "2 typed into «Яркость»");
+            const level::LightSource s = lamp(lamp_a_);
+            check(s.brightness == 2 && s.radius == 10 && near(s.g, 0x9A / 255.0f) && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "«Источник света»: Яркость",
+                  "brightness 2, one entry; the radius and the colour as they were: " + lamp_text(lamp_a_));
+            break;
+        }
+        case 6: {
+            check(input_value("lv-num-3") == "2", "the panel shows brightness 2");
+            entries_ = lv().history().cursor();
+            const std::string before = lamp_text(lamp_a_);
+            for (const char* bad : {"abc", "nan", "inf", "1e999"}) lt_type("lv-num-3", bad);
+            for (const char* bad : {"abc", "nan", "-inf"}) lt_type("lv-num-4", bad);
+            check(lamp_text(lamp_a_) == before && lv().history().cursor() == entries_, "not numbers change nothing");
+            lt_type("lv-num-3", "1e9");
+            check(lamp(lamp_a_).brightness == level::kMaxBrightness && lamp(lamp_a_).radius == 10, "too bright: kept at 4, the radius stays");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            lt_type("lv-num-3", "-1");
+            check(lamp(lamp_a_).brightness == 0, "below 0: kept at 0 (no light)");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            lt_type("lv-num-4", "1e9");
+            check(lamp(lamp_a_).radius == level::kMaxLightRadius && lamp(lamp_a_).brightness == 2,
+                  "too far: radius kept at 40, the brightness stays");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            lt_type("lv-num-4", "0");
+            check(lamp(lamp_a_).radius == level::kMinLightRadius, "radius 0: kept at 1");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            // The centre takes no NaN and nothing past the world's edge; a number inside the world moves it.
+            for (const char* bad : {"nan", "1e30", "-1e30"}) lt_type("lv-field-0", bad);
+            lt_type("lv-field-1", "1e30");
+            check(lamp_text(lamp_a_) == before && lv().history().cursor() == entries_, "X «nan», ±1e30 and Y 1e30: nothing changes");
+            lt_type("lv-field-1", std::to_string(v + 14));
+            check(lamp_y(lamp_a_) == v + 14 && lv().history().cursor() == entries_ + 1, "Y inside the world: moved");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lamp_text(lamp_a_) == before && lv().history().cursor() == entries_, "each taken back with Ctrl+Z: " + lamp_text(lamp_a_));
+            break;
+        }
+        case 7: {
+            // A drag taken back: Esc, then the right button; a click alone: radius 8.
+            entries_ = lv().history().cursor();
+            to_point(60.5, by);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_point(64.5, by);
+            check(lv().gesture(), "a source being dragged out");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(lamp_count() == 1 && lv().history().cursor() == entries_ && lv().light_tool() == LightTool::Source,
+                  "Esc while dragging: no source, no history, the tool stays");
+            to_point(60.5, by);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_point(63.5, by);
+            right_down();
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(lamp_count() == 1 && lv().history().cursor() == entries_, "the right button while dragging: the same");
+            to_point(58.5, by);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            const u64 click = lv().selection().size() == 1 ? lv().selection()[0] : 0;
+            check(lamp_count() == 2 && lv().history().cursor() == entries_ + 1 && lamp(click).radius == 8, "a click alone: a source of radius 8");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lamp_count() == 1 && lv().history().cursor() == entries_, "Ctrl+Z takes it away");
+            drag_points(58.5, by, 64.6, by);
+            lamp_b_ = lv().selection().size() == 1 ? lv().selection()[0] : 0;
+            check(lamp_count() == 2 && lamp_b_ != lamp_a_ && lamp_x(lamp_b_) == 58.5 && lamp_y(lamp_b_) == by && lamp(lamp_b_).radius == 6 &&
+                      lv().history().cursor() == entries_ + 1,
+                  "B: centre 58.5, radius 6 as dragged: " + lamp_text(lamp_b_));
+            break;
+        }
+        case 8: {
+            check(input_value("lv-num-4") == "6" && input_value("lv-field-0") == "58.50", "the panel shows B");
+            const std::string a = lamp_text(lamp_a_);
+            check(lt_type("lv-color-2", "#5080FF"), "#5080FF typed into B's «Цвет»");
+            const level::LightSource s = lamp(lamp_b_);
+            check(near(s.r, 0x50 / 255.0f) && near(s.g, 0x80 / 255.0f) && s.b == 1 && s.brightness == 1.5f && s.radius == 6,
+                  "B is blue, 1.5, radius 6: " + lamp_text(lamp_b_));
+            check(lamp_text(lamp_a_) == a, "A as it was");
+            break;
+        }
+        case 9: {
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(lv().light_tool() == LightTool::Select && lv().selection().size() == 1 && lv().selection()[0] == lamp_b_,
+                  "Esc with nothing dragged: the select tool, B still selected");
+            entries_ = lv().history().cursor();
+            // Grabbed at the centre and taken back with Esc: where it was.
+            to_point(58.5, by);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_point(61.5, by);
+            check(lamp_x(lamp_b_) == 61.5, "the drag moves it");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(lamp_x(lamp_b_) == 58.5 && lv().history().cursor() == entries_, "Esc: back where it was, nothing recorded");
+            // Over the border of two chunks (x = 64).
+            drag_points(58.5, by, 66.5, by);
+            check(lamp_x(lamp_b_) == 66.5 && lamp_count() == 2 && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "Передвинуть: Источник света",
+                  "a move over a chunk border: one entry, still two sources: " + lamp_text(lamp_b_));
+            check(lv().selection().size() == 1 && lv().selection()[0] == lamp_b_ && lv().level().find(lamp_b_).is_valid() &&
+                      lamp(lamp_b_).radius == 6 && near(lamp(lamp_b_).g, 0x80 / 255.0f),
+                  "the same id, the same light");
+            break;
+        }
+        case 10: {
+            check(input_value("lv-field-0") == "66.50", "the panel shows the new X");
+            entries_ = lv().history().cursor();
+            // B's circle: dragged out from 6 to 8 and taken back with the right button; then to 7, and Ctrl+Z.
+            to_point(66.5 + 6, by);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_point(66.5 + 8, by);
+            check(lamp(lamp_b_).radius == 8, "the drag of the circle changes the radius as it goes");
+            right_down();
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(lamp(lamp_b_).radius == 6 && lv().history().cursor() == entries_, "the right button: radius 6 again, nothing recorded");
+            drag_points(66.5 + 6, by, 66.5 + 7.1, by);
+            check(lamp(lamp_b_).radius == 7 && lamp_x(lamp_b_) == 66.5 && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "«Источник света»: Радиус",
+                  "a drag of the circle sets the radius (7), one entry, the centre stays");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lamp(lamp_b_).radius == 6, "Ctrl+Z: radius 6");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lamp(lamp_b_).radius == 7, "Ctrl+Y: 7");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lamp(lamp_b_).radius == 6 && lv().history().cursor() == entries_, "Ctrl+Z: 6 for the example");
+            break;
+        }
+        case 11: {
+            // The level's time of day: typed, one entry.
+            entries_ = lv().history().cursor();
+            check(lt_type("lt-time", "21:30"), "21:30 typed into the time of day");
+            check(lv().level().light().time == 21.5f && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "Время суток" && lv().dirty(),
+                  "21:30: one history entry, the level unsaved");
+            check(!std::filesystem::exists(example / "light.json"), "not in the file before Ctrl+S");
+            break;
+        }
+        case 12: {
+            check(input_value("lt-time") == "21:30" && element_text("lt-sky").find("Ночь") != std::string::npos, "the panel: 21:30, night");
+            entries_ = lv().history().cursor();
+            for (const char* bad : {"25:00", "24", "-1", "12:60", "7:5", "abc", "nan"}) lt_type("lt-time", bad);
+            check(lv().level().light().time == 21.5f && lv().history().cursor() == entries_ &&
+                      lv().light_note().find("от 0:00 до 23:59") != std::string::npos,
+                  "no such times: nothing changes, and it says so: " + lv().light_note());
+            // The slider: a drag is one entry, however many values it goes through.
+            check(lt_slide("lt-time-slider", 0.2f, 0.8f), "the time slider dragged");
+            const f32 t = lv().level().light().time;
+            check(t != 21.5f && t > 10 && t < 23 && lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Время суток",
+                  "a drag of the slider: " + level::clock_text(t) + ", one history entry");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().light().time == 21.5f && lv().history().cursor() == entries_, "Ctrl+Z: 21:30 again");
+            break;
+        }
+        case 13: {
+            // The preview: only the view.
+            entries_ = lv().history().cursor();
+            lt_edits_ = lv().level().edits();
+            check(lt_type("lt-preview", "12:00"), "12:00 typed into the preview");
+            check(lv().preview_time() == 12 && lv().level().light().time == 21.5f && lv().history().cursor() == entries_ &&
+                      lv().level().edits() == lt_edits_,
+                  "the view at noon; the level's time, its history and edits as they were");
+            break;
+        }
+        case 14: {
+            // The game's night (links «Только ночью») goes by the level's hour, not the preview's.
+            check(element_text("lt-sky").find("Ночь") != std::string::npos &&
+                      element_text("lt-sky").find("«Только ночью» срабатывают") != std::string::npos,
+                  "a preview at noon: in the game it is still night, as at 21:30: " + element_text("lt-sky"));
+            check(shown("lt-view-preview") && element_text("lt-view-preview").find("12:00") != std::string::npos &&
+                      element_text("lt-view-preview").find("21:30") != std::string::npos,
+                  "the view says it is a preview, and at what hour the level is: " + element_text("lt-view-preview"));
+            check(shown("lt-preview-off") && element_text("lt-preview-off").find("21:30") != std::string::npos, "«Как в уровне (21:30)»");
+            check(lt_slide("lt-preview-slider", 0.3f, 0.6f) && lv().preview_time() != 12 && lv().preview_time() >= 0 &&
+                      lv().history().cursor() == entries_ && lv().level().edits() == lt_edits_,
+                  "the preview's slider: the view only (" + level::clock_text(lv().preview_time()) + ")");
+            const f32 p = lv().preview_time();
+            for (const char* bad : {"30", "abc"}) lt_type("lt-preview", bad);
+            check(lv().preview_time() == p && lv().light_note().find("вид не изменился") != std::string::npos, "no such hours: " + lv().light_note());
+            check(click_id("lt-preview-off") && lv().preview_time() < 0, "«Как в уровне» ends it");
+            lt_type("lt-preview", "6:00");
+            check(lv().preview_time() == 6, "a preview at 6:00");
+            key(SDLK_Q, SDL_KMOD_NONE);
+            check(lv().mode() == Mode::Select && lv().preview_time() < 0, "leaving «Свет» ends it");
+            key(SDLK_C, SDL_KMOD_NONE);
+            check(lv().level().light().time == 21.5f && lv().history().cursor() == entries_ && lv().level().edits() == lt_edits_ &&
+                      !std::filesystem::exists(example / "light.json"),
+                  "nothing of the preview in the level, its history or its files");
+            break;
+        }
+        case 15: {
+            // All the way back and forth: nothing doubled, nothing lost.
+            lt_lamps_ = lamps_of(lv().level());
+            lt_area_ = light_area(lv().level());
+            check(lt_lamps_.size() == 2 && lv().history().cursor() == undo_all, "two sources, " + std::to_string(undo_all) +
+                                                                               " entries: " + joined(lt_lamps_) + " | " +
+                                                                               joined(history_labels()));
+            for (usize i = 0; i < undo_all; ++i) key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().history().cursor() == 0 && lamp_count() == 0 && lv().level().light().time == 12.0f && at(54, row, 1) != 0,
+                  "Ctrl+Z to the start: no sources, noon, no room");
+            for (usize i = 0; i < undo_all; ++i) key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().history().cursor() == undo_all && lamps_of(lv().level()) == lt_lamps_ && light_area(lv().level()) == lt_area_ &&
+                      lv().level().light().time == 21.5f,
+                  "Ctrl+Y to the end: the room, the same two sources, 21:30");
+            check(lv().level().find(lamp_a_).is_valid() && lv().level().find(lamp_b_).is_valid(), "with their ids");
+            break;
+        }
+        case 16: {
+            check(lv().light_tool() == LightTool::Select, "the select tool");
+            click_cell(42, v + 12);
+            check(lv().selection().size() == 1 && lv().selection()[0] == lamp_a_, "a click on A's centre selects it");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(lamp_count() == 1 && lv().history().undo_label() == "Удалить: Источник света", "Delete removes it");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lamp_count() == 2 && lamps_of(lv().level()) == lt_lamps_ && lv().level().find(lamp_a_).is_valid(), "Ctrl+Z: back, the same id");
+            click_cell(42, v + 12);
+            break;
+        }
+        case 17:
+            check(shown("lt-delete") && click_id("lt-delete") && lamp_count() == 1, "the panel's delete button removes it too");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lamp_count() == 2 && lamps_of(lv().level()) == lt_lamps_, "Ctrl+Z: back");
+            lt_cam_ = lv().camera().x;
+            // Far away and back: the sources' chunks go and come again.
+            lv().camera().x = lt_cam_ + 3000;
+            break;
+        case 18:
+            if (hold(lamp_count() == 0 && !lv().level().find(lamp_b_).is_valid(), "the sources' chunks unload far away")) return true;
+            lv().camera().x = lt_cam_;
+            break;
+        case 19:
+            if (hold(lv().level().find(lamp_a_).is_valid() && lv().level().find(lamp_b_).is_valid(), "the sources come back")) return true;
+            check(lamps_of(lv().level()) == lt_lamps_, "both as they were, no more: " + joined(lamps_of(lv().level())));
+            break;
+        case 20: {
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S saves the example");
+            level::LevelLight l;
+            bool found = false;
+            check(level::load_light(example, l, &found) && found && l.time == 21.5f, "light.json: 21:30");
+            // Closed and opened again.
+            check(lv().open_folder(example), "the example opens again");
+            check(lv().history().cursor() == 0 && lv().level().light().time == 21.5f && lv().level().light_error().empty(),
+                  "with its time of day");
+            lv().level().ensure_loaded(light_rect());
+            check(light_area(lv().level()) == lt_area_, "with its room");
+            check(lamps_of(lv().level()) == lt_lamps_ && lv().level().find(lamp_a_).is_valid() && lv().level().find(lamp_b_).is_valid(),
+                  "with both sources: the same ids and values");
+            break;
+        }
+        case 21: {
+            check(input_value("lt-time") == "21:30" && !shown("lt-error"), "the panel reads the saved 21:30");
+            // «Играть отсюда» starts the game from this folder.
+            lv().camera().x = 50.5;
+            lv().camera().y = row;
+            check(lv().play_here(), "«Играть отсюда» finds a place in the room");
+            const auto cmd = lv().play_command(50.5, row + 4);
+            check(cmd.size() >= 4 && utf8_path(cmd[3]) == example, "the game gets the example's folder");
+            // The example in the repository is this one (ids aside).
+            const std::filesystem::path repo = ed_.game_dir.parent_path() / "examples" / "light" / "level";
+            level::Level made(ed_.level_module), kept(ed_.level_module);
+            check(made.open(example) && kept.open(repo), "games/examples/light/level opens: " + path_to_utf8(repo));
+            check(kept.light() == made.light() && kept.light_error().empty(), "its time of day is the one made here");
+            made.ensure_loaded(light_rect());
+            kept.ensure_loaded(light_rect());
+            check(light_area(made) == light_area(kept), "its room is the one made here");
+            check(lamps_of(made) == lamps_of(kept), "its sources are the ones made here: " + joined(lamps_of(kept)));
+            break;
+        }
+        case 22: {
+            // A light.json that cannot be used: told, noon meanwhile, not overwritten.
+            const std::filesystem::path bad = light_root() / "bad";
+            std::error_code ec;
+            std::filesystem::create_directories(bad, ec);
+            const std::string text = "{\"time\": \"вечер\"}";
+            write_file_atomic(bad / "light.json", {reinterpret_cast<const u8*>(text.data()), text.size()});
+            check(lv().open_folder(bad), "a level with a bad light.json still opens");
+            check(lv().level().light().time == 12.0f && !lv().level().light_error().empty(),
+                  "at noon, with the reason: " + lv().level().light_error());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            std::vector<u8> bytes;
+            read_file(bad / "light.json", bytes);
+            check(std::string(bytes.begin(), bytes.end()) == text, "saving does not touch the author's file");
+            break;
+        }
+        case 23: {
+            check(shown("lt-error") && element_text("lt-error").find("light.json") != std::string::npos, "the panel says what is wrong");
+            check(lt_type("lt-time", "18:00"), "the author sets 18:00");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelLight l;
+            check(level::load_light(light_root() / "bad", l) && l.time == 18.0f && lv().level().light_error().empty(),
+                  "now the file is good: 18:00");
+            break;
+        }
+        case 24: {
+            check(!shown("lt-error"), "and the panel has nothing to say");
+            // A light.json that cannot be written: the author is told, nothing is lost, the game does not start.
+            const std::filesystem::path locked = light_root() / "locked";
+            std::error_code ec;
+            std::filesystem::create_directories(locked / "light.json", ec);
+            check(lv().open_folder(locked), "a level whose light.json is in the way");
+            check(lt_type("lt-time", "20:00"), "20:00 typed");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(lv().dirty() && lv().level().light_changed() && lv().level().light().time == 20.0f, "not saved, still 20:00, still unsaved");
+            check(!lv().play_here(), "«Играть отсюда» does not start the game from an older level");
+            std::filesystem::remove_all(locked / "light.json", ec);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelLight l;
+            check(!lv().dirty() && level::load_light(locked, l) && l.time == 20.0f, "once it can be written: saved, 20:00");
+            break;
+        }
+        case 25:
+            check(lv().open_folder(lt_main_), "the level of the steps above opens again");
+            lv().camera() = lt_view_; // where the steps after these expect the view
+            key(SDLK_Q, SDL_KMOD_NONE);
+            break;
+        case 26:
+            check(lv().mode() == Mode::Select && lv().level().light().time == 12.0f && lamp_count() == 0,
+                  "at noon, with no light sources");
+            break;
+        default: break;
+        }
+        ++lt_step_;
         return true;
     }
 
@@ -10620,6 +11135,14 @@ private:
     std::vector<world::TileId> ph_area_;
     std::vector<u8> ph_bytes_;
     std::filesystem::path ph_main_;
+    // The light example
+    u32 lt_step_ = 0;
+    u64 lamp_a_ = 0, lamp_b_ = 0, lt_edits_ = 0;
+    f64 lt_cam_ = 0;
+    std::vector<std::string> lt_lamps_;
+    std::vector<world::TileId> lt_area_;
+    std::filesystem::path lt_main_;
+    render::Camera2D lt_view_;
     int lg_step_ = 0;
     int st_step_ = 0, st_wait_ = 0;
     int ue_step_ = 0;

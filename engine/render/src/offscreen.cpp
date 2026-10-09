@@ -48,7 +48,7 @@ SDL_GPUTexture* create_render_target(SDL_GPUDevice* device, u32 width, u32 heigh
     return texture;
 }
 
-bool save_png(SDL_GPUDevice* device, SDL_GPUTexture* texture, u32 width, u32 height, const char* path) {
+bool read_pixels(SDL_GPUDevice* device, SDL_GPUTexture* texture, u32 width, u32 height, std::vector<u8>& rgba) {
     SDL_GPUTransferBufferCreateInfo tb_info{};
     tb_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
     tb_info.size = width * height * 4;
@@ -71,14 +71,30 @@ bool save_png(SDL_GPUDevice* device, SDL_GPUTexture* texture, u32 width, u32 hei
     bool ok = false;
     const auto* pixels = static_cast<const u8*>(SDL_MapGPUTransferBuffer(device, tb, false));
     if (pixels) {
-        ok = stbi_write_png(path, static_cast<int>(width), static_cast<int>(height), 4, pixels,
-                            static_cast<int>(width * 4)) != 0;
+        rgba.assign(pixels, pixels + static_cast<usize>(width) * height * 4);
+        ok = true;
         SDL_UnmapGPUTransferBuffer(device, tb);
     }
     SDL_ReleaseGPUTransferBuffer(device, tb);
+    return ok;
+}
+
+bool write_png(const char* path, u32 width, u32 height, const std::vector<u8>& rgba) {
+    const bool ok = rgba.size() >= static_cast<usize>(width) * height * 4 &&
+                    stbi_write_png(path, static_cast<int>(width), static_cast<int>(height), 4, rgba.data(),
+                                   static_cast<int>(width * 4)) != 0;
     if (ok) FORGE_INFO("saved %s", path);
     else FORGE_ERROR("could not save %s", path);
     return ok;
+}
+
+bool save_png(SDL_GPUDevice* device, SDL_GPUTexture* texture, u32 width, u32 height, const char* path) {
+    std::vector<u8> rgba;
+    if (!read_pixels(device, texture, width, height, rgba)) {
+        FORGE_ERROR("could not save %s", path);
+        return false;
+    }
+    return write_png(path, width, height, rgba);
 }
 
 } // namespace forge::render

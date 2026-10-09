@@ -79,7 +79,8 @@ const ModeInfo kModes[] = {
      ""},
     {Mode::Physics, "physics", "Физика",
      "Гравитация мира, точки гравитации, вода и песок. «Проба» пускает воду и песок прямо здесь, «Сбросить» возвращает уровень.", ""},
-    {Mode::Light, "light", "Свет", "Факелы и другие источники, время суток, вид «как в игре».", "позже, после библиотеки объектов"},
+    {Mode::Light, "light", "Свет",
+     "Источники света: цвет, яркость и радиус, свет кончается ровно на окружности. Время суток уровня. Вид — как в игре.", ""},
     {Mode::Zones, "zones", "Зоны", "Области («Деревня», «Шахта»), точка появления героя, триггеры квестов, звук и музыка мест.",
      "позже, вместе с редактором сюжета"},
 };
@@ -107,6 +108,61 @@ const PhysToolInfo& phys_info(PhysTool t) {
         if (i.tool == t) return i;
     return kPhysTools[0];
 }
+struct LightToolInfo {
+    LightTool tool;
+    const char* id;
+    const char* name;
+    const char* help;
+};
+const LightToolInfo kLightTools[] = {
+    {LightTool::Select, "select", "Выбор источника",
+     "Щёлкните по центру источника, чтобы выбрать его. Тяните центр, чтобы передвинуть; окружность выбранного — чтобы "
+     "изменить радиус. Пустое место двигает вид, Delete удаляет источник."},
+    {LightTool::Source, "source", "Источник света",
+     "Нажмите там, где будет центр, и тяните до нужного радиуса; простой щелчок даёт радиус 8. Свет кончается ровно на "
+     "окружности. Esc или правая кнопка во время перетаскивания отменяют: источника не будет."},
+};
+const LightToolInfo& light_info(LightTool t) {
+    for (const LightToolInfo& i : kLightTools)
+        if (i.tool == t) return i;
+    return kLightTools[0];
+}
+const char* const kLightName = "Источник света";
+constexpr f64 kLightNewRadius = 8;
+// The hours the time slider goes through (a quarter of an hour a step).
+constexpr f32 kLastHour = 23.75f;
+
+// A colour as the panel shows it: #RRGGBB.
+std::string hex_color(f32 r, f32 g, f32 b) {
+    auto byte = [](f32 v) { return static_cast<int>(std::lround(std::clamp(std::isfinite(v) ? v : 0.0f, 0.0f, 1.0f) * 255)); };
+    char text[16];
+    std::snprintf(text, sizeof(text), "#%02X%02X%02X", byte(r), byte(g), byte(b));
+    return text;
+}
+// "#RRGGBB" (or without #, any case) as 0..1 each; false otherwise.
+bool parse_hex(const std::string& text, f32& r, f32& g, f32& b) {
+    std::string t = text;
+    while (!t.empty() && (t.back() == ' ' || t.back() == '\t')) t.pop_back();
+    while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(t.begin());
+    if (!t.empty() && t[0] == '#') t.erase(t.begin());
+    if (t.size() != 6) return false;
+    int v[3];
+    for (int i = 0; i < 3; ++i) {
+        int n = 0;
+        for (int k = 0; k < 2; ++k) {
+            const char c = t[static_cast<usize>(i * 2 + k)];
+            const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            if (d < 0) return false;
+            n = n * 16 + d;
+        }
+        v[i] = n;
+    }
+    r = static_cast<f32>(v[0]) / 255.0f;
+    g = static_cast<f32>(v[1]) / 255.0f;
+    b = static_cast<f32>(v[2]) / 255.0f;
+    return true;
+}
+
 const char* const kPullNames[] = {"вниз", "влево", "вверх", "вправо", "нет"};
 // A gravity point: what the panel lets the author set.
 constexpr f64 kMinRadius = 1, kMaxRadius = 128, kNewRadius = 8;
@@ -151,14 +207,22 @@ const char* tool_id(Tool t) {
 
 const char* mode_id(Mode m) { return mode_info(m).id; }
 const char* phys_tool_id(PhysTool t) { return phys_info(t).id; }
+const char* light_tool_id(LightTool t) { return light_info(t).id; }
 
 void LevelEditor::set_mode(Mode m) {
     if (gesture()) return;
-    // Gravity points are picked only in «Физика», objects only outside it.
-    if ((m == Mode::Physics) != (mode_ == Mode::Physics)) {
+    // Gravity points are picked only in «Физика», light sources only in
+    // «Свет», objects only outside them.
+    auto picks = [](Mode x) { return x == Mode::Physics ? 1 : x == Mode::Light ? 2 : 0; };
+    if (picks(m) != picks(mode_)) {
         reset_trial();
         select_objects({});
     }
+    if (m == Mode::Light && mode_ != Mode::Light && !view_.game_light) {
+        view_.game_light = true; // what the light does is seen only as in the game
+        FORGE_INFO("Вид: свет как в игре");
+    }
+    if (m != Mode::Light) view_.preview_time = -1; // the preview is the mode's
     mode_ = m;
     if (m != Mode::Objects) object_ = -1;
 }
@@ -337,6 +401,17 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lv_ph_trial_text", &m_ph_trial_text_);
     model.Bind("lv_ph_can_trial", &m_ph_can_trial_);
     model.Bind("lv_ph_note", &m_ph_note_);
+    model.Bind("lv_lt_tool", &m_lt_tool_);
+    model.Bind("lv_lt_tool_name", &m_lt_tool_name_);
+    model.Bind("lv_lt_tool_help", &m_lt_tool_help_);
+    model.Bind("lv_lt_time", &m_lt_time_);
+    model.Bind("lv_lt_hours", &m_lt_hours_);
+    model.Bind("lv_lt_sky", &m_lt_sky_);
+    model.Bind("lv_lt_error", &m_lt_error_);
+    model.Bind("lv_lt_preview", &m_lt_preview_);
+    model.Bind("lv_lt_preview_hours", &m_lt_preview_hours_);
+    model.Bind("lv_lt_previewing", &m_lt_previewing_);
+    model.Bind("lv_lt_note", &m_lt_note_);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -378,6 +453,29 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
         if (trial_.running()) reset_trial();
         else start_trial();
     });
+    on("lv_lt_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string id = arg_str(a, 0);
+        set_mode(Mode::Light);
+        for (const LightToolInfo& t : kLightTools)
+            if (id == t.id) set_light_tool(t.tool);
+    });
+    on("lv_lt_time_text", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        if (a.size() > 1 && a[1].Get<bool>()) set_level_time(arg_str(a, 0), false);
+    });
+    on("lv_lt_time_commit", [this](Rml::Event& ev, const Rml::VariantList&) {
+        Rml::Element* e = ev.GetTargetElement();
+        if (e && e->GetTagName() == "input") set_level_time(static_cast<Rml::ElementFormControl*>(e)->GetValue(), false);
+    });
+    on("lv_lt_time_slide", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_level_time(arg_str(a, 0), true); });
+    on("lv_lt_preview_text", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        if (a.size() > 1 && a[1].Get<bool>()) set_preview_time(arg_str(a, 0));
+    });
+    on("lv_lt_preview_commit", [this](Rml::Event& ev, const Rml::VariantList&) {
+        Rml::Element* e = ev.GetTargetElement();
+        if (e && e->GetTagName() == "input") set_preview_time(static_cast<Rml::ElementFormControl*>(e)->GetValue());
+    });
+    on("lv_lt_preview_slide", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_preview_time(arg_str(a, 0)); });
+    on("lv_lt_preview_off", [this](Rml::Event&, const Rml::VariantList&) { set_preview_time(""); });
     on("lv_delete", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
     on("lv_field_text", [this, arg_int, arg_str](Rml::Event&, const Rml::VariantList& a) {
         if (a.size() > 2 && a[2].Get<bool>()) set_field(arg_int(a, 0, -1), arg_str(a, 1), false);
@@ -614,9 +712,10 @@ void LevelEditor::delete_selection() {
     const auto& defs = module_.objects();
     const flecs::entity first = level_->find(gone[0].id);
     const i32 kind = module_.object_kind(first);
-    label += gone.size() == 1 && kind >= 0                      ? defs[static_cast<usize>(kind)].name
-             : gone.size() == 1 && first.has<sim::GravitySource>() ? std::string(kPointName)
-                                                                  : std::to_string(gone.size()) + " объектов";
+    label += gone.size() == 1 && kind >= 0                          ? defs[static_cast<usize>(kind)].name
+             : gone.size() == 1 && first.has<sim::GravitySource>()     ? std::string(kPointName)
+             : gone.size() == 1 && first.has<level::LightSource>()     ? std::string(kLightName)
+                                                                      : std::to_string(gone.size()) + " объектов";
     history_.execute(std::make_unique<level::ObjectsCommand>(*level_, std::move(gone), false, label));
     history_.seal();
     select_objects({});
@@ -708,6 +807,8 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
     const i32 kind = e.is_valid() ? module_.object_kind(e) : -1;
     if (mode_ == Mode::Physics && e.is_valid() && e.has<sim::GravitySource>()) {
         physics_fields(e);
+    } else if (mode_ == Mode::Light && e.is_valid() && e.has<level::LightSource>()) {
+        light_fields(e);
     } else if (kind >= 0) {
         const level::ObjectDef& def = module_.objects()[static_cast<usize>(kind)];
         m_sel_name_ = def.name;
@@ -850,6 +951,51 @@ void LevelEditor::physics_fields(flecs::entity e) {
         "внутри радиуса гравитация мира не действует, другие точки действуют", type, "replace", false, 0, 0, 0);
 }
 
+void LevelEditor::light_fields(flecs::entity e) {
+    const level::LightSource& s = e.get<level::LightSource>();
+    const scene::Position& p = e.get<scene::Position>();
+    m_sel_name_ = kLightName;
+    m_sel_hint_ = s.brightness <= 0 || (s.r <= 0 && s.g <= 0 && s.b <= 0)
+                      ? "не светит: яркость или цвет 0"
+                      : "светит на " + number(s.radius) + " тайлов, в центре ярче всего";
+    m_sel_icon_.clear();
+    m_sel_kind_.clear();
+    f64 x0, y0, x1, y1;
+    place_limits(x0, y0, x1, y1);
+    const reflect::TypeInfo* type = reflect::type_of<level::LightSource>();
+    auto row = [&](const char* kind, const char* label, std::string value, const char* hint, const reflect::TypeInfo* t,
+                   const char* path, bool limited, f64 min, f64 max, f32 step) {
+        FieldView f;
+        f.kind = kind;
+        f.label = label;
+        f.value = std::move(value);
+        f.hint = hint;
+        f.min = static_cast<float>(min);
+        f.max = static_cast<float>(max);
+        f.step = step;
+        m_fields_.push_back(std::move(f));
+        FieldRef r;
+        r.type = t;
+        r.path = path;
+        r.limited = limited;
+        r.min = min;
+        r.max = max;
+        r.refuse = !t; // the centre
+        field_refs_.push_back(std::move(r));
+    };
+    char v[32];
+    std::snprintf(v, sizeof(v), "%.2f", p.tile_x());
+    row("text", "X", v, "центр, в тайлах", nullptr, "x", true, x0, x1, 0);
+    std::snprintf(v, sizeof(v), "%.2f", p.tile_y());
+    row("text", "Y", v, "центр, в тайлах", nullptr, "y", true, y0, y1, 0);
+    row("color", "Цвет", hex_color(s.r, s.g, s.b), "#RRGGBB: оттенок; яркость и радиус от него не меняются", type, "color", false,
+        0, 0, 0);
+    row("slider", "Яркость", number(s.brightness), "свет в центре: 1 — как днём, до 4; 0 — не светит; на дальность не влияет",
+        type, "brightness", true, 0, level::kMaxBrightness, 0.05f);
+    row("slider", "Радиус", number(s.radius), "тайлов: дальше окружности света нет; от 1 до 40", type, "radius", true,
+        level::kMinLightRadius, level::kMaxLightRadius, 0.5f);
+}
+
 void LevelEditor::place_limits(f64& x0, f64& y0, f64& x1, f64& y1) const {
     // Inside the world, the outer tiles' centres at most; a world without
     // edges: a million tiles each way, far past any level.
@@ -899,8 +1045,40 @@ void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
     const scene::Position& p = e.get<scene::Position>();
     const i32 kind = module_.object_kind(e);
     const bool point = e.has<sim::GravitySource>() && kind < 0;
-    const std::string name = kind >= 0 ? module_.objects()[static_cast<usize>(kind)].name : point ? kPointName : std::string();
+    const bool lamp = e.has<level::LightSource>() && kind < 0;
+    const std::string name = kind >= 0 ? module_.objects()[static_cast<usize>(kind)].name
+                             : point   ? kPointName
+                             : lamp    ? kLightName
+                                       : std::string();
     const std::string label = m_fields_[static_cast<usize>(i)].label;
+    if (lamp && ref.type == reflect::type_of<level::LightSource>()) {
+        const level::LightSource before = e.get<level::LightSource>();
+        level::LightSource after = before;
+        if (ref.path == "color") {
+            if (!parse_hex(text, after.r, after.g, after.b)) {
+                lt_note_ = label + ": «" + text + "» — не цвет; нужен вид #RRGGBB, оставлено как было";
+                FORGE_WARN("%s", lt_note_.c_str());
+                fields_built_ = 0;
+                return;
+            }
+        } else {
+            f64 v = 0;
+            if (!parse_number(ref, label, text, v)) {
+                fields_built_ = 0; // show the old value again
+                return;
+            }
+            (ref.path == "brightness" ? after.brightness : after.radius) = static_cast<f32>(v);
+        }
+        const std::string a = data::to_json(ref.type, &before, false), b = data::to_json(ref.type, &after, false);
+        if (a == b) {
+            fields_built_ = 0;
+            return;
+        }
+        history_.execute(std::make_unique<level::SetObjectComponent>(*level_, selection_[0], p.tile_x(), p.tile_y(), ref.type, a,
+                                                                     b, ref.path, "«" + name + "»: " + label));
+        if (!dragging) history_.seal();
+        return;
+    }
     if (point && ref.type == reflect::type_of<sim::GravitySource>()) {
         const sim::GravitySource before = e.get<sim::GravitySource>();
         sim::GravitySource after = before;
@@ -1064,6 +1242,52 @@ void LevelEditor::set_pull_strength(const std::string& text, bool dragging) {
     if (!dragging) history_.seal();
 }
 
+// --- light -----------------------------------------------------------------
+
+void LevelEditor::set_light_tool(LightTool t) {
+    if (gesture()) return;
+    lt_tool_ = t;
+}
+
+void LevelEditor::set_level_time(const std::string& text, bool dragging) {
+    // Bindings fill the inputs during the UI's update and fire change events then.
+    if (ui_updating_ || gesture() || text == m_lt_time_ || text == m_lt_hours_) return;
+    f64 h = 0;
+    if (!level::parse_clock(text, h) || h < 0 || h >= 24) {
+        lt_note_ = "Время суток: «" + text + "» — нужно от 0:00 до 23:59 (например 18:30); оставлено как было";
+        FORGE_WARN("%s", lt_note_.c_str());
+        m_lt_time_.clear(); // shows the old value again
+        return;
+    }
+    const level::LevelLight before = level_->light();
+    level::LevelLight after = before;
+    after.time = static_cast<f32>(h);
+    if (after == before) {
+        m_lt_time_.clear();
+        return;
+    }
+    edit_begins();
+    history_.execute(std::make_unique<level::SetLight>(*level_, before, after, "Время суток"));
+    if (!dragging) history_.seal();
+}
+
+void LevelEditor::set_preview_time(const std::string& text) {
+    if (ui_updating_) return;
+    if (text.empty()) {
+        view_.preview_time = -1;
+        return;
+    }
+    f64 h = 0;
+    if (!level::parse_clock(text, h) || h < 0 || h >= 24) {
+        lt_note_ = "Просмотр: «" + text + "» — нужно от 0:00 до 23:59; вид не изменился";
+        FORGE_WARN("%s", lt_note_.c_str());
+        m_lt_preview_.clear();
+        return;
+    }
+    view_.preview_time = static_cast<f32>(h);
+    if (!view_.game_light) view_.game_light = true;
+}
+
 bool LevelEditor::start_trial() {
     if (gesture()) return false;
     if (trial_.running()) return true;
@@ -1097,11 +1321,51 @@ bool LevelEditor::cancel_gesture() {
     ph_drag_ = PhysDrag::None;
     flecs::entity e = selection_.empty() ? flecs::entity() : level_->find(selection_[0]);
     if (d == PhysDrag::Move && e.is_valid()) e.set<scene::Position>(scene::Position::at_tile(ph_from_x_, ph_from_y_));
-    if (d == PhysDrag::Radius && e.is_valid())
-        level::set_component_json(*level_, e, reflect::type_of<sim::GravitySource>(), ph_before_);
+    if (d == PhysDrag::Radius && e.is_valid()) level::set_component_json(*level_, e, ring_type(), ph_before_);
     ++ph_preview_;
     FORGE_INFO("Отменено: уровень не изменился");
     return true;
+}
+
+bool LevelEditor::ring_of(flecs::entity e) const {
+    return e.is_valid() && (mode_ == Mode::Light ? e.has<level::LightSource>() : e.has<sim::GravitySource>());
+}
+
+f32 LevelEditor::ring_radius(flecs::entity e) const {
+    if (mode_ == Mode::Light) return e.get<level::LightSource>().radius;
+    return e.get<sim::GravitySource>().radius;
+}
+
+void LevelEditor::set_ring_radius(flecs::entity e, f32 r) {
+    if (mode_ == Mode::Light) {
+        level::LightSource s = e.get<level::LightSource>();
+        s.radius = r;
+        e.set<level::LightSource>(s);
+    } else {
+        sim::GravitySource g = e.get<sim::GravitySource>();
+        g.radius = r;
+        e.set<sim::GravitySource>(g);
+    }
+}
+
+const reflect::TypeInfo* LevelEditor::ring_type() const {
+    return mode_ == Mode::Light ? reflect::type_of<level::LightSource>() : reflect::type_of<sim::GravitySource>();
+}
+
+const char* LevelEditor::ring_name() const { return mode_ == Mode::Light ? kLightName : kPointName; }
+
+f64 LevelEditor::ring_max() const { return mode_ == Mode::Light ? level::kMaxLightRadius : kMaxRadius; }
+
+template <typename F>
+void LevelEditor::each_ring(F&& f) {
+    if (mode_ == Mode::Light)
+        level_->scene().ecs().each([&](flecs::entity e, const scene::Position& p, const level::LightSource& s) {
+            f(e, p.tile_x(), p.tile_y(), static_cast<f64>(s.radius));
+        });
+    else
+        level_->scene().ecs().each([&](flecs::entity e, const scene::Position& p, const sim::GravitySource& g) {
+            f(e, p.tile_x(), p.tile_y(), static_cast<f64>(g.radius));
+        });
 }
 
 flecs::entity LevelEditor::point_at(f64 tx, f64 ty, bool ring) {
@@ -1109,12 +1373,12 @@ flecs::entity LevelEditor::point_at(f64 tx, f64 ty, bool ring) {
     const u64 selected = selection_.empty() ? 0 : selection_[0];
     flecs::entity best;
     f64 best_d = 0;
-    level_->scene().ecs().each([&](flecs::entity e, const scene::Position& p, const sim::GravitySource& g) {
-        const f64 d = std::hypot(p.tile_x() - tx, p.tile_y() - ty);
+    each_ring([&](flecs::entity e, f64 x, f64 y, f64 radius) {
+        const f64 d = std::hypot(x - tx, y - ty);
         f64 off = d;
         if (ring) {
             if (!selected || level_->id_of(e, false) != selected) return;
-            off = std::fabs(d - g.radius);
+            off = std::fabs(d - radius);
             if (off > edge) return;
         } else if (d > grab) {
             return;
@@ -1127,44 +1391,55 @@ flecs::entity LevelEditor::point_at(f64 tx, f64 ty, bool ring) {
     return best;
 }
 
-bool LevelEditor::press_physics(f32 x, f32 y) {
-    f64 tx, ty;
-    to_tile(x, y, tx, ty);
-    history_.seal();
-    switch (ph_tool_) {
-    case PhysTool::Select: {
-        flecs::entity hit = point_at(tx, ty, false);
-        bool ring = false;
-        if (!hit.is_valid()) {
-            hit = point_at(tx, ty, true);
-            ring = hit.is_valid();
-        }
-        if (!hit.is_valid()) {
-            select_objects({});
-            return false; // the drag moves the view
-        }
-        select_objects({level_->id_of(hit, true)});
-        ph_grab_x_ = tx;
-        ph_grab_y_ = ty;
-        const scene::Position& p = hit.get<scene::Position>();
-        ph_from_x_ = p.tile_x();
-        ph_from_y_ = p.tile_y();
-        if (ring) {
-            ph_before_ = level::component_json(*level_, hit, reflect::type_of<sim::GravitySource>());
-            ph_r0_ = hit.get<sim::GravitySource>().radius;
-            ph_drag_ = PhysDrag::Radius;
-        } else {
-            ph_drag_ = PhysDrag::Move;
-        }
-        return true;
-    }
-    case PhysTool::Point:
+bool LevelEditor::press_ring(f64 tx, f64 ty, bool place) {
+    if (place) {
         // The centre of the cell: a place the author can name.
         ph_cx_ = std::floor(tx) + 0.5;
         ph_cy_ = std::floor(ty) + 0.5;
         ph_r_ = 0;
         ph_drag_ = PhysDrag::Place;
         return true;
+    }
+    flecs::entity hit = point_at(tx, ty, false);
+    bool ring = false;
+    if (!hit.is_valid()) {
+        hit = point_at(tx, ty, true);
+        ring = hit.is_valid();
+    }
+    if (!hit.is_valid()) {
+        select_objects({});
+        return false; // the drag moves the view
+    }
+    select_objects({level_->id_of(hit, true)});
+    ph_grab_x_ = tx;
+    ph_grab_y_ = ty;
+    const scene::Position& p = hit.get<scene::Position>();
+    ph_from_x_ = p.tile_x();
+    ph_from_y_ = p.tile_y();
+    if (ring) {
+        ph_before_ = level::component_json(*level_, hit, ring_type());
+        ph_r0_ = ring_radius(hit);
+        ph_drag_ = PhysDrag::Radius;
+    } else {
+        ph_drag_ = PhysDrag::Move;
+    }
+    return true;
+}
+
+bool LevelEditor::press_light(f32 x, f32 y) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    history_.seal();
+    return press_ring(tx, ty, lt_tool_ == LightTool::Source);
+}
+
+bool LevelEditor::press_physics(f32 x, f32 y) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    history_.seal();
+    switch (ph_tool_) {
+    case PhysTool::Select: return press_ring(tx, ty, false);
+    case PhysTool::Point: return press_ring(tx, ty, true);
     case PhysTool::Water:
     case PhysTool::Sand:
         cell_at(x, y, ph_ax_, ph_ay_);
@@ -1201,12 +1476,10 @@ void LevelEditor::drag_physics(f32 x, f32 y) {
         e.set<scene::Position>(scene::Position::at_tile(nx, ny));
     } else {
         const scene::Position& p = e.get<scene::Position>();
-        const f64 r = std::clamp(std::round(std::hypot(tx - p.tile_x(), ty - p.tile_y()) * 2) / 2, kMinRadius, kMaxRadius);
-        sim::GravitySource g = e.get<sim::GravitySource>();
-        if (g.radius == static_cast<f32>(r)) return;
+        const f64 r = std::clamp(std::round(std::hypot(tx - p.tile_x(), ty - p.tile_y()) * 2) / 2, kMinRadius, ring_max());
+        if (ring_radius(e) == static_cast<f32>(r)) return;
         edit_begins();
-        g.radius = static_cast<f32>(r);
-        e.set<sim::GravitySource>(g);
+        set_ring_radius(e, static_cast<f32>(r));
     }
     ++ph_preview_;
 }
@@ -1219,24 +1492,33 @@ void LevelEditor::release_physics() {
         return;
     }
     if (d == PhysDrag::Place) {
-        const f64 r = ph_r_ < 0.5 ? kNewRadius : std::clamp(std::round(ph_r_ * 2) / 2, kMinRadius, kMaxRadius);
+        const bool light = mode_ == Mode::Light;
+        const f64 r = ph_r_ < 0.5 ? (light ? kLightNewRadius : kNewRadius) : std::clamp(std::round(ph_r_ * 2) / 2, kMinRadius, ring_max());
+        std::string& note = light ? lt_note_ : ph_note_;
         edit_begins();
         flecs::entity e = level_->scene().spawn(scene::Position::at_tile(ph_cx_, ph_cy_));
         if (!e.is_valid()) {
-            FORGE_WARN("Здесь уровень ещё не загрузился: точка не поставлена");
+            note = std::string("Здесь уровень ещё не загрузился: ") + (light ? "источник" : "точка") + " не поставлен" + (light ? "" : "а");
+            FORGE_WARN("%s", note.c_str());
             return;
         }
-        sim::GravitySource g;
-        g.radius = static_cast<f32>(r);
-        e.set<sim::GravitySource>(g);
+        if (light) {
+            level::LightSource ls;
+            ls.radius = static_cast<f32>(r);
+            e.set<level::LightSource>(ls);
+        } else {
+            sim::GravitySource g;
+            g.radius = static_cast<f32>(r);
+            e.set<sim::GravitySource>(g);
+        }
         level::ObjectSnapshot snap = level::snapshot(*level_, e);
         const u64 id = snap.id;
         history_.execute(std::make_unique<level::ObjectsCommand>(*level_, std::vector<level::ObjectSnapshot>{std::move(snap)},
-                                                                 true, std::string("Поставить: ") + kPointName));
+                                                                 true, std::string("Поставить: ") + ring_name()));
         history_.seal();
         select_objects({id});
-        ph_note_ = "Точка гравитации: центр " + number(ph_cx_) + ", " + number(ph_cy_) + ", радиус " + number(r);
-        FORGE_INFO("%s", ph_note_.c_str());
+        note = std::string(ring_name()) + ": центр " + number(ph_cx_) + ", " + number(ph_cy_) + ", радиус " + number(r);
+        FORGE_INFO("%s", note.c_str());
         return;
     }
     flecs::entity e = selection_.empty() ? flecs::entity() : level_->find(selection_[0]);
@@ -1246,14 +1528,14 @@ void LevelEditor::release_physics() {
         if (p.tile_x() == ph_from_x_ && p.tile_y() == ph_from_y_) return; // a click: only selected
         history_.execute(std::make_unique<level::MoveObjects>(
             *level_, std::vector<level::MoveObjects::Move>{{selection_[0], ph_from_x_, ph_from_y_, p.tile_x(), p.tile_y()}},
-            std::string("Передвинуть: ") + kPointName));
+            std::string("Передвинуть: ") + ring_name()));
     } else {
-        const reflect::TypeInfo* type = reflect::type_of<sim::GravitySource>();
+        const reflect::TypeInfo* type = ring_type();
         const std::string after = level::component_json(*level_, e, type);
         if (after == ph_before_) return;
         history_.execute(std::make_unique<level::SetObjectComponent>(*level_, selection_[0], p.tile_x(), p.tile_y(), type,
                                                                      ph_before_, after, "radius",
-                                                                     std::string("«") + kPointName + "»: Радиус"));
+                                                                     std::string("«") + ring_name() + "»: Радиус"));
     }
     history_.seal();
 }
@@ -1359,6 +1641,7 @@ bool LevelEditor::open_folder(const fs::path& folder) {
     }
     config_.folder = folder;
     history_.clear();
+    view_.preview_time = -1;
     fields_built_ = 0;
     map_edits_ = ~0ull;
     FORGE_INFO("Уровень открыт: %s", path_to_utf8(folder).c_str());
@@ -1416,7 +1699,7 @@ void LevelEditor::reset_layout() { dock_.reset(); }
 std::string LevelEditor::status() const {
     char text[200];
     const std::string place = module_.place(camera_.x, camera_.y);
-    const char* tool = mode_ == Mode::Physics ? phys_info(ph_tool_).name : tool_name(tool_);
+    const char* tool = mode_ == Mode::Physics ? phys_info(ph_tool_).name : mode_ == Mode::Light ? light_info(lt_tool_).name : tool_name(tool_);
     if (hover_)
         std::snprintf(text, sizeof(text), "Клетка %d, %d%s%s · %s", hover_x_, hover_y_, place.empty() ? "" : " · ",
                       place.c_str(), tool);
@@ -1575,6 +1858,27 @@ void LevelEditor::sync_model() {
         set(m_ph_trial_text_, Rml::String(t), "lv_ph_trial_text");
     }
     set(m_ph_note_, Rml::String(ph_note_), "lv_ph_note");
+    const LightToolInfo& lt = light_info(lt_tool_);
+    set(m_lt_tool_, Rml::String(lt.id), "lv_lt_tool");
+    set(m_lt_tool_name_, Rml::String(lt.name), "lv_lt_tool_name");
+    set(m_lt_tool_help_, Rml::String(lt.help), "lv_lt_tool_help");
+    {
+        const f64 h = level_->light().time;
+        set(m_lt_time_, Rml::String(level::clock_text(h)), "lv_lt_time");
+        set(m_lt_hours_, Rml::String(number(std::min<f64>(h, kLastHour))), "lv_lt_hours");
+        set(m_lt_sky_, Rml::String(module_.hour_words(h)), "lv_lt_sky"); // the game's words, its night among them
+        const bool previewing = view_.preview_time >= 0;
+        const f64 ph = previewing ? view_.preview_time : h;
+        set(m_lt_previewing_, previewing, "lv_lt_previewing");
+        set(m_lt_preview_, Rml::String(level::clock_text(ph)), "lv_lt_preview");
+        set(m_lt_preview_hours_, Rml::String(number(std::min<f64>(ph, kLastHour))), "lv_lt_preview_hours");
+    }
+    set(m_lt_error_,
+        Rml::String(level_->light_error().empty() ? std::string()
+                                                  : level_->light_error() + ". Действует полдень; файл перепишется, когда вы "
+                                                                            "измените время"),
+        "lv_lt_error");
+    set(m_lt_note_, Rml::String(lt_note_), "lv_lt_note");
     if (time_ - info_time_ > 0.25) {
         info_time_ = time_;
         char coords[96];
@@ -1659,6 +1963,7 @@ void LevelEditor::push_overlay(f64 ox, f64 oy) {
         }
     }
     if (mode_ == Mode::Physics) push_physics(ox, oy, px);
+    if (mode_ == Mode::Light) push_light(ox, oy, px);
     if (hover_ && !panning_ && mode_ == Mode::Tiles) {
         // An outline around the cell under the mouse.
         const u32 c = render::pack_color(255, 255, 255, 220);
@@ -1798,6 +2103,77 @@ void LevelEditor::push_physics(f64 ox, f64 oy, f64 px) {
     }
 }
 
+void LevelEditor::push_light(f64 ox, f64 oy, f64 px) {
+    auto quad = [&](f64 x, f64 y, f64 w, f64 h, u32 color, u32 order) {
+        render::Sprite s;
+        s.x = static_cast<f32>(x + w * 0.5 - ox);
+        s.y = static_cast<f32>(y + h * 0.5 - oy);
+        s.w = static_cast<f32>(w);
+        s.h = static_cast<f32>(h);
+        s.frame = demo::kFrameSolid;
+        s.color = color;
+        s.order = order;
+        front_batch_.push(s);
+    };
+    auto line = [&](f64 x0, f64 y0, f64 x1, f64 y1, f64 t, u32 color, u32 order) {
+        const f64 dx = x1 - x0, dy = y1 - y0, len = std::hypot(dx, dy);
+        if (len <= 0) return;
+        render::Sprite s;
+        s.x = static_cast<f32>((x0 + x1) * 0.5 - ox);
+        s.y = static_cast<f32>((y0 + y1) * 0.5 - oy);
+        s.w = static_cast<f32>(len);
+        s.h = static_cast<f32>(t);
+        s.angle = static_cast<f32>(std::atan2(dy, dx));
+        s.frame = demo::kFrameSolid;
+        s.color = color;
+        s.order = order;
+        front_batch_.push(s);
+    };
+    auto circle = [&](f64 cx, f64 cy, f64 r, f64 t, u32 color, u32 order) {
+        const i32 n = std::clamp(static_cast<i32>(r / px / 6), 24, 160);
+        for (i32 i = 0; i < n; ++i) {
+            const f64 a0 = 6.283185307179586 * i / n, a1 = 6.283185307179586 * (i + 1) / n;
+            line(cx + r * std::cos(a0), cy + r * std::sin(a0), cx + r * std::cos(a1), cy + r * std::sin(a1), t, color, order);
+        }
+    };
+    auto handle = [&](f64 x, f64 y, f64 size, u32 color, u32 order) { quad(x - size * 0.5, y - size * 0.5, size, size, color, order); };
+    auto byte = [](f32 v) { return static_cast<u8>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255)); };
+    const world::Rect view = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+    const u64 selected = selection_.empty() ? 0 : selection_[0];
+    f64 hx = 0, hy = 0;
+    const bool hovering = hover_ && !panning_ && ph_drag_ == PhysDrag::None;
+    if (hovering) to_tile(mouse_x_, mouse_y_, hx, hy);
+    const flecs::entity hovered = hovering && lt_tool_ == LightTool::Select ? point_at(hx, hy, false) : flecs::entity();
+    // Each source: its circle (where its light ends) in its own colour, the
+    // centre to grab in it, and for the selected one a handle for the radius.
+    level_->scene().ecs().each([&](flecs::entity e, const scene::Position& p, const level::LightSource& s) {
+        const render::PointLight l = level::point_light(p.tile_x(), p.tile_y(), s);
+        const f64 x = l.x, y = l.y, r = l.radius;
+        if (x + r < view.x0 || x - r > view.x1 || y + r < view.y0 || y - r > view.y1) return;
+        const bool sel = selected && level_->id_of(e, false) == selected;
+        // A dark colour still shows: the ring takes its hue at full strength.
+        const f32 top = std::max({s.r, s.g, s.b, 0.0f});
+        const u32 hue = top > 0.02f ? render::pack_color(byte(s.r / top), byte(s.g / top), byte(s.b / top), 230)
+                                    : render::pack_color(160, 160, 160, 230);
+        const u32 ring = sel ? render::pack_color(255, 210, 90, 255) : hue;
+        circle(x, y, r, px * (sel ? 3 : 2), ring, 7);
+        if (sel) circle(x, y, r - px * 3, px, hue, 7);
+        const f64 size = std::max(0.3, px * 11);
+        handle(x, y, size + px * 4, render::pack_color(255, 255, 255, 230), 8);
+        handle(x, y, size, hue | 0xff000000u, 8);
+        if (e == hovered) circle(x, y, std::max(0.6, px * 9), px * 2, render::pack_color(255, 255, 255, 200), 8);
+        if (sel) handle(x + r, y, std::max(0.3, px * 9), render::pack_color(255, 255, 255, 255), 8);
+    });
+    // What the tool is about to make.
+    if (ph_drag_ == PhysDrag::Place) {
+        const f64 r = ph_r_ < 0.5 ? kLightNewRadius : std::clamp(std::round(ph_r_ * 2) / 2, kMinRadius, ring_max());
+        circle(ph_cx_, ph_cy_, r, px * 2, render::pack_color(255, 210, 90, 255), 7);
+        handle(ph_cx_, ph_cy_, std::max(0.3, px * 9), render::pack_color(255, 210, 90, 255), 8);
+    } else if (hovering && lt_tool_ == LightTool::Source) {
+        handle(std::floor(hx) + 0.5, std::floor(hy) + 0.5, std::max(0.3, px * 9), render::pack_color(255, 210, 90, 200), 8);
+    }
+}
+
 void LevelEditor::prepare(SDL_GPUCommandBuffer* cmd) {
     if (!view_ready_ || !view_shown_ || vw_ < 1 || vh_ < 1) return;
     const u32 w = static_cast<u32>(vw_), h = static_cast<u32>(vh_);
@@ -1882,11 +2258,11 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         mouse_x_ = x;
         mouse_y_ = y;
         if (dock_.busy()) return true;
-        // The right button takes back a drag of the physics tools.
+        // The right button takes back a drag of the physics and light tools.
         if (e.button.button == SDL_BUTTON_RIGHT && ph_drag_ != PhysDrag::None) return cancel_gesture();
         if (!over_view(x, y, context)) return false;
-        if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Physics) {
-            if (ph_drag_ == PhysDrag::None && !press_physics(x, y)) {
+        if (e.button.button == SDL_BUTTON_LEFT && !panning_ && (mode_ == Mode::Physics || mode_ == Mode::Light)) {
+            if (ph_drag_ == PhysDrag::None && !(mode_ == Mode::Light ? press_light(x, y) : press_physics(x, y))) {
                 panning_ = true; // empty space: the drag moves the view
                 pan_button_ = SDL_BUTTON_LEFT;
             }
@@ -1905,6 +2281,8 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
     }
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         bool used = dock_.mouse_up();
+        // A slider's drag in the panels ends with the button: the next drag is an entry of its own.
+        if (e.button.button == SDL_BUTTON_LEFT) history_.seal();
         if (e.button.button == SDL_BUTTON_LEFT && stroke_) {
             release();
             used = true;
@@ -1951,6 +2329,21 @@ bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_T) { set_mode(Mode::Tiles); return true; }
     if (k.key == SDLK_O) { set_mode(Mode::Objects); return true; }
     if (k.key == SDLK_P) { set_mode(Mode::Physics); return true; }
+    if (k.key == SDLK_C) { set_mode(Mode::Light); return true; } // С: «Свет» on a Russian keyboard
+    if (mode_ == Mode::Light) {
+        if (k.key == SDLK_ESCAPE) {
+            if (cancel_gesture()) return true;
+            if (lt_tool_ != LightTool::Select) set_light_tool(LightTool::Select);
+            else select_objects({});
+            return true;
+        }
+        if (gesture()) return false;
+        if (k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE) {
+            delete_selection();
+            return true;
+        }
+        return false;
+    }
     if (mode_ == Mode::Physics) {
         if (k.key == SDLK_ESCAPE) {
             if (cancel_gesture()) return true;

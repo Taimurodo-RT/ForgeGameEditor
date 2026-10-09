@@ -171,3 +171,13 @@
 .props .error-text { color: var(--error); margin-top: var(--space-2); }
 .props #ph-note { margin-top: var(--space-2); }
 .props .tile-card icon { font-size: 28px; }
+/* «Свет»: a source's colour next to its #RRGGBB; the hour looked at over the view. */
+.props #lt-note, .props #lt-preview-off { margin-top: var(--space-2); }
+.color-swatch {
+    width: 22px;
+    height: 22px;
+    border-width: 1px;
+    border-color: var(--outline);
+    border-radius: 4px;
+}
+#lt-view-preview { color: var(--tertiary); }
