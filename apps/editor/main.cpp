@@ -3443,6 +3443,7 @@ private:
         ue_wb_node_ = 0;
     bool ue_wb_scheme_new_ = false;
     usize ue_wb_log_ = 0;
+    int ue_we_stage_ = 0; // games/examples/window-behaviour in the editor
     // The rows of a list of notes in the panel (#ue-openers, #ue-check-state): text, and whether it warns.
     std::vector<std::pair<std::string, bool>> ue_wb_rows(const char* id) {
         std::vector<std::pair<std::string, bool>> out;
@@ -8363,6 +8364,125 @@ private:
             default: break;
             }
             ue_wb_stage_ = 0;
+            break;
+        }
+        case 152: {
+            // games/examples/window-behaviour (13.11), the files the game and its package read: opened from disk, its
+            // windows show their behaviour in the panel; a change written and taken back writes the very same files
+            // again, and opened again they are the same; «Проверить» on its screen over the game stacks its windows
+            // as the game does.
+            namespace d = editor::design;
+            const std::filesystem::path from = utf8_path(FORGE_EXAMPLES_DIR) / "window-behaviour" / "ui";
+            static const char* const kPages[] = {"окна_меню", "окна_игра", "окна_настройки", "окна_справка"};
+            auto example = [&](const char* name, const char* ext) {
+                std::vector<u8> bytes;
+                read_file(from / utf8_path(std::string(name) + ext), bytes);
+                std::string out(bytes.begin(), bytes.end());
+                std::erase(out, '\r'); // a Windows checkout may turn line ends into CRLF
+                return out;
+            };
+            auto same = [&](const char* name) { return ue_file(".json", name) == example(name, ".json") && ue_file(".html", name) == example(name, ".html"); };
+            auto said = [&]() { return ue().check_log().empty() ? std::string() : ue().check_log().back(); };
+            auto at = [&](const std::optional<d::Rect>& b) {
+                if (b) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return b.has_value();
+            };
+            const std::vector<std::string> one{"окна_настройки"}, two{"окна_настройки", "окна_справка"};
+            switch (ue_we_stage_++) {
+            case 0: {
+                std::error_code ec;
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"})
+                        std::filesystem::copy_file(from / utf8_path(std::string(name) + ext), ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext),
+                                                   std::filesystem::copy_options::overwrite_existing, ec);
+                check(!ec && ue().open("окна_справка"), "the example's help window opens from disk");
+                ue().set_simple(false);
+                ue().set_view(0);
+                ue().select({ue().screen().root.id});
+                click("ue-tab-game");
+                return true;
+            }
+            case 1: {
+                const d::Screen& s = ue().screen();
+                check(s.show == d::ScreenShow::Command && s.over == d::WindowOver::Game && !s.esc_closes && !s.dim && !s.pauses,
+                      "«Окна: справка» from disk: only over the game, no Esc, no veil, no pause");
+                const auto rows = ue_wb_rows("ue-openers");
+                check(rows.size() == 1 && !rows[0].second &&
+                          rows[0].first == "Кнопка «Справка» на экране «Окна: настройки»: над окном «Окна: настройки»; откроется, только если и то окно над игрой",
+                      "what opens it: the settings window's «Справка»: " + ue_wb_text(rows));
+                // Written and taken back: the same files as the example's.
+                check(click("ue-screen-dim") && ue().screen().dim && ue_file(".html", "окна_справка").find("forge-dim") != std::string::npos,
+                      "«Затемнять» by a click: written on the page");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(!ue().screen().dim && same("окна_справка"), "Ctrl+Z: the files are the example's again, byte for byte");
+                check(ue().open("окна_настройки"), "«Окна: настройки» opened");
+                ue().select({ue().screen().root.id});
+                return true;
+            }
+            case 2: {
+                const d::Screen& s = ue().screen();
+                check(s.show == d::ScreenShow::Command && s.over == d::WindowOver::Any && s.esc_closes && s.dim && s.pauses,
+                      "«Окна: настройки»: anywhere, closed by Esc, darkens, stops the game");
+                const auto rows = ue_wb_rows("ue-openers");
+                check(rows.size() == 2 && !rows[0].second && !rows[1].second &&
+                          ue_wb_text(rows).find("Кнопка «Настройки» на экране «Окна: меню»: над главным меню") != std::string::npos &&
+                          ue_wb_text(rows).find("Кнопка «Настройки» на экране «Окна: игра»: над игрой") != std::string::npos,
+                      "what opens it: the menu's button over the menu, the game's over the game: " + ue_wb_text(rows));
+                check(click("ue-screen-pauses") && !ue().screen().pauses, "«Пока открыто, игра стоит» off by a click");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(ue().screen().pauses, "Ctrl+Z: on again");
+                // Opened again from disk: the same, and nothing written by opening.
+                check(ue().open("окна_справка") && ue().open("окна_настройки") && ue().screen().pauses && ue().screen().dim, "opened again: as it was");
+                bool all = true;
+                for (const char* name : kPages) all = all && same(name);
+                check(all, "the four files are still the example's, which the game and its package read");
+                // «Проверить» on the screen over the game.
+                check(ue().open("окна_игра") && click("ue-check") && ue().checking(), "«Проверить» on «Окна: игра»");
+                return true;
+            }
+            case 3:
+                check(at(ue().layer_box(ue_named("Настройки"))), "«Настройки» clicked");
+                return true;
+            case 4:
+                if (hold(ue().check_windows() == one, "the settings window comes up over the game")) {
+                    --ue_we_stage_;
+                    return true;
+                }
+                check(at(ue().check_box("окна_настройки", "Справка")), "«Справка» clicked");
+                return true;
+            case 5:
+                check(ue().check_windows() == two, "the help window comes up over it (over the game it may)");
+                ue().check_vars().set("demo.volume", 0);
+                check(at(ue().check_box("окна_настройки", "Громче")), "«Громче» clicked beside the help window");
+                return true;
+            case 6:
+                check(ue_sd_var("demo.volume") == 1 && ue().check_windows() == two, "the help window does not darken: the click reached the window under it");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().check_windows() == two && said() == "Esc: окно «Окна: справка» по Esc не закрывается; в игре Esc открыл бы паузу",
+                      "Esc: the help window stays, so does the one under it: " + said());
+                check(at(ue().check_box("окна_справка", "Понятно")), "«Понятно» clicked (still on top after the click under it)");
+                return true;
+            case 7:
+                check(ue().check_windows() == one, "«Понятно» closed the help window");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().check_windows().empty() && ue().checking(), "Esc closed the settings window");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().checking(), "Esc ends the check");
+                {
+                    bool all = true;
+                    for (const char* name : kPages) all = all && same(name);
+                    check(all, "and the files are still the example's");
+                }
+                check(ue().open("main_menu"), "back to the menu");
+                {
+                    std::error_code ec;
+                    for (const char* name : kPages)
+                        for (const char* ext : {".json", ".html"}) std::filesystem::remove(ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext), ec);
+                }
+                break;
+            default: break;
+            }
+            ue_we_stage_ = 0;
             break;
         }
         default:

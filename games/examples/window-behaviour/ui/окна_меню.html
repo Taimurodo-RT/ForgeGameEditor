@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Окна: меню</title>
+<!-- Made by Forge «Интерфейс» from Окна: меню.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background-color: #181e26;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: 460px;
+  width: 1000px;
+  top: 140px;
+  height: 90px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 64px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ebf0f5;
+  white-space: pre-wrap;
+}
+#n3 {
+  position: absolute;
+  left: 760px;
+  width: 400px;
+  top: 340px;
+  height: 90px;
+  box-sizing: border-box;
+  background-color: #e8b04a;
+  border-radius: 14px 14px 14px 14px;
+}
+#n4 {
+  position: absolute;
+  left: 0px;
+  width: 400px;
+  top: 20px;
+  height: 50px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 36px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #1b2127;
+  white-space: pre-wrap;
+}
+#n5 {
+  position: absolute;
+  left: 760px;
+  width: 400px;
+  top: 460px;
+  height: 90px;
+  box-sizing: border-box;
+  background-color: #e8b04a;
+  border-radius: 14px 14px 14px 14px;
+}
+#n6 {
+  position: absolute;
+  left: 0px;
+  width: 400px;
+  top: 20px;
+  height: 50px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 36px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #1b2127;
+  white-space: pre-wrap;
+}
+#n7 {
+  position: absolute;
+  left: 560px;
+  width: 800px;
+  top: 640px;
+  height: 60px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 32px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ebf0f5;
+  white-space: pre-wrap;
+}
+html, body, #n1 {
+  pointer-events: none;
+}
+#n2, #n3, #n4, #n5, #n6, #n7 {
+  pointer-events: auto;
+}
+#n3, #n5 {
+  tab-index: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Окна: меню" forge-screen="menu" forge-fit="expand" forge-size="1920 1080">
+  <div id="n2" class="text" title="Заголовок">Поведение окон</div>
+  <div id="n3" class="frame" title="Настройки" forge-click="[[&quot;show&quot;,&quot;окна_настройки&quot;]]">
+    <div id="n4" class="text" title="Надпись">Настройки</div>
+  </div>
+  <div id="n5" class="frame" title="Играть" forge-click="[[&quot;new&quot;,&quot;&quot;]]">
+    <div id="n6" class="text" title="Надпись">Играть</div>
+  </div>
+  <div id="n7" class="text" title="Громкость" forge-text="Громкость: {demo.volume}">Громкость: {demo.volume}</div>
+</div>
+</body>
+</html>
