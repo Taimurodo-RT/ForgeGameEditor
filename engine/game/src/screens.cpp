@@ -494,21 +494,28 @@ struct GameScreens::Impl : Rml::EventListener {
     }
 
     // RmlUi brings a document to the front when something on it takes the keyboard (a click): a window under
-    // another, its button clicked, came over it, and its veil hid the window on top. The pages that stand over
-    // the clicked one in the game's order come back over it (all of them over the rest of the UI, as it is now).
+    // another, its button clicked, came over it and its veil hid the window on top; any page clicked came over
+    // the game's menus, and the pause opened under the windows. When the pages showing are out of the game's
+    // order, or one is over the rest of the UI, they go back under it in their order.
     void keep_order() {
         if (!context) return;
-        std::vector<Page*> now;
-        for (int i = 0; i < context->GetNumDocuments(); ++i) // back to front
-            if (Page* p = of(context->GetDocument(i)); p && p->doc->IsVisible()) now.push_back(p);
-        std::vector<Page*> want = now;
         auto rank = [](const Page* p) { return p->role == ScreenRole::Command ? 1 : 0; };
-        std::stable_sort(want.begin(), want.end(), [&](const Page* a, const Page* b) {
-            return rank(a) != rank(b) ? rank(a) < rank(b) : a->order < b->order;
-        });
-        usize first = 0;
-        while (first < now.size() && now[first] == want[first]) ++first;
-        for (usize i = first; i < want.size(); ++i) want[i]->doc->PullToFront();
+        const Page* under = nullptr;
+        bool ui = false;
+        for (int i = 0; i < context->GetNumDocuments(); ++i) { // back to front
+            Rml::ElementDocument* d = context->GetDocument(i);
+            if (!d->IsVisible()) continue;
+            const Page* p = of(d);
+            if (!p) {
+                ui = true;
+                continue;
+            }
+            if (ui || (under && (rank(p) != rank(under) ? rank(p) < rank(under) : p->order < under->order))) {
+                restack();
+                return;
+            }
+            under = p;
+        }
     }
 
     void close(Page& p) {

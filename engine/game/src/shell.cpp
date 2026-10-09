@@ -286,6 +286,12 @@ void Shell::toast(std::string text) {
 void Shell::show(Screen s) {
     screen_ = s;
     if (s == Screen::Main || s == Screen::Slots) model_->slots_dirty = true;
+    // Back to the game from its menus: the keyboard goes back where it was before them (a window's button, the
+    // screen over the game), not to a menu's button hidden now.
+    if (s == Screen::Playing && context_)
+        if (Rml::Element* menus = find_element("pause-menu"))
+            if (Rml::Element* f = context_->GetFocusElement(); f && f->GetOwnerDocument() == menus->GetOwnerDocument())
+                context_->UnfocusDocument(menus->GetOwnerDocument());
 }
 
 bool Shell::begin(std::string_view slot_id) {

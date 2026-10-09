@@ -3444,6 +3444,7 @@ private:
     bool ue_wb_scheme_new_ = false;
     usize ue_wb_log_ = 0;
     int ue_we_stage_ = 0; // games/examples/window-behaviour in the editor
+    std::vector<std::string> ue_we_files_; // its files in the game's folder, as they were before opening them again
     // The rows of a list of notes in the panel (#ue-openers, #ue-check-state): text, and whether it warns.
     std::vector<std::pair<std::string, bool>> ue_wb_rows(const char* id) {
         std::vector<std::pair<std::string, bool>> out;
@@ -8368,20 +8369,33 @@ private:
         }
         case 152: {
             // games/examples/window-behaviour (13.11), the files the game and its package read: opened from disk, its
-            // windows show their behaviour in the panel; a change written and taken back writes the very same files
-            // again, and opened again they are the same; «Проверить» on its screen over the game stacks its windows
-            // as the game does.
+            // windows show their behaviour in the panel; a change written and taken back writes the example's
+            // content again (line ends aside: a Windows checkout has CRLF, the editor writes LF); opening them again
+            // and «Проверить» write nothing; «Проверить» on its screen over the game stacks its windows as the game
+            // does.
             namespace d = editor::design;
             const std::filesystem::path from = utf8_path(FORGE_EXAMPLES_DIR) / "window-behaviour" / "ui";
             static const char* const kPages[] = {"окна_меню", "окна_игра", "окна_настройки", "окна_справка"};
+            auto lf = [](std::string text) {
+                std::erase(text, '\r');
+                return text;
+            };
             auto example = [&](const char* name, const char* ext) {
                 std::vector<u8> bytes;
                 read_file(from / utf8_path(std::string(name) + ext), bytes);
-                std::string out(bytes.begin(), bytes.end());
-                std::erase(out, '\r'); // a Windows checkout may turn line ends into CRLF
+                return std::string(bytes.begin(), bytes.end());
+            };
+            // The same content as the example's, whichever line ends either side has.
+            auto same = [&](const char* name) {
+                return lf(ue_file(".json", name)) == lf(example(name, ".json")) && lf(ue_file(".html", name)) == lf(example(name, ".html"));
+            };
+            // The files in the game's folder, byte for byte.
+            auto files = [&]() {
+                std::vector<std::string> out;
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"}) out.push_back(ue_file(ext, name));
                 return out;
             };
-            auto same = [&](const char* name) { return ue_file(".json", name) == example(name, ".json") && ue_file(".html", name) == example(name, ".html"); };
             auto said = [&]() { return ue().check_log().empty() ? std::string() : ue().check_log().back(); };
             auto at = [&](const std::optional<d::Rect>& b) {
                 if (b) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
@@ -8414,7 +8428,7 @@ private:
                 check(click("ue-screen-dim") && ue().screen().dim && ue_file(".html", "окна_справка").find("forge-dim") != std::string::npos,
                       "«Затемнять» by a click: written on the page");
                 key(SDLK_Z, SDL_KMOD_CTRL);
-                check(!ue().screen().dim && same("окна_справка"), "Ctrl+Z: the files are the example's again, byte for byte");
+                check(!ue().screen().dim && same("окна_справка"), "Ctrl+Z: the files say the example's again (line ends aside)");
                 check(ue().open("окна_настройки"), "«Окна: настройки» opened");
                 ue().select({ue().screen().root.id});
                 return true;
@@ -8432,10 +8446,12 @@ private:
                 key(SDLK_Z, SDL_KMOD_CTRL);
                 check(ue().screen().pauses, "Ctrl+Z: on again");
                 // Opened again from disk: the same, and nothing written by opening.
+                ue_we_files_ = files();
                 check(ue().open("окна_справка") && ue().open("окна_настройки") && ue().screen().pauses && ue().screen().dim, "opened again: as it was");
+                check(files() == ue_we_files_, "opening them again wrote nothing: the files are byte for byte as they were");
                 bool all = true;
                 for (const char* name : kPages) all = all && same(name);
-                check(all, "the four files are still the example's, which the game and its package read");
+                check(all, "the four screens still say what the example's files do, which the game and its package read (line ends aside)");
                 // «Проверить» on the screen over the game.
                 check(ue().open("окна_игра") && click("ue-check") && ue().checking(), "«Проверить» on «Окна: игра»");
                 return true;
@@ -8468,10 +8484,11 @@ private:
                 check(ue().check_windows().empty() && ue().checking(), "Esc closed the settings window");
                 key(SDLK_ESCAPE, SDL_KMOD_NONE);
                 check(!ue().checking(), "Esc ends the check");
+                check(files() == ue_we_files_, "«Проверить» wrote nothing: the files are byte for byte as they were");
                 {
                     bool all = true;
                     for (const char* name : kPages) all = all && same(name);
-                    check(all, "and the files are still the example's");
+                    check(all, "and they still say what the example's files do (line ends aside)");
                 }
                 check(ue().open("main_menu"), "back to the menu");
                 {
