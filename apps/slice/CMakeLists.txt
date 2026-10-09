@@ -94,6 +94,11 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/light/ DESTINATION data/e
 # And the level made in the editor's «Зоны» (step 9) with its links and music: `OldMine --test --scene zones` plays
 # it from data/examples/zones, its music from data/examples/zones/sounds.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/zones/ DESTINATION data/examples/zones COMPONENT slice)
+# And the level the editor imported from a map of Tiled (step 10) with what the import wrote into the game (templates,
+# pictures, music), its links and tmxrasterizer's frames of the map: `OldMine --test --scene tiled` plays it and
+# compares. The map's own folder is the author's source, not the game's: the package has none of Tiled.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/tiled/ DESTINATION data/examples/tiled COMPONENT slice
+        PATTERN "Карта Tiled" EXCLUDE)
 add_custom_target(forge_slice_package
   COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/dist/OldMine
   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component slice --config $<CONFIG>

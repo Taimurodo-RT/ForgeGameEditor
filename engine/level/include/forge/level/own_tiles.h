@@ -22,6 +22,7 @@ namespace forge::level {
 inline constexpr const char* kTilesFile = "tiles.json";
 inline constexpr const char* kTilesPicture = "tiles.png";
 inline constexpr const char* kWorldFile = "world.json";
+inline constexpr const char* kBrokenWorldFile = "world.broken.json";
 // Where tiles.json and tiles.png that could not be read are kept when the
 // level writes new ones over them.
 inline constexpr const char* kBrokenTilesFile = "tiles.broken.json";

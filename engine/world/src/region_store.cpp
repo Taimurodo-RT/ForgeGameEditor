@@ -140,6 +140,15 @@ usize RegionStore::chunk_count() const {
     return n;
 }
 
+std::vector<ChunkCoord> RegionStore::chunks() const {
+    std::vector<ChunkCoord> out;
+    for (const auto& [region, r] : regions_)
+        for (const auto& [index, e] : r.entries)
+            out.push_back({region.x * kRegionSize + static_cast<i32>(index % kRegionSize),
+                           region.y * kRegionSize + static_cast<i32>(index / kRegionSize)});
+    return out;
+}
+
 bool RegionStore::write(const std::vector<Write>& chunks, u32* regions_written, usize* bytes_written) {
     FORGE_ZONE();
     std::unordered_map<ChunkCoord, std::vector<const Write*>, ChunkCoordHash> by_region;
@@ -164,13 +173,27 @@ bool RegionStore::write(const std::vector<Write>& chunks, u32* regions_written, 
         for (const Write* w : writes) {
             const u32 index = index_in_region(w->chunk);
             replaced[index] = true;
-            items.push_back({index, w->bytes->data(), static_cast<u32>(w->bytes->size())});
+            if (w->bytes) items.push_back({index, w->bytes->data(), static_cast<u32>(w->bytes->size())});
         }
         if (existing != regions_.end() && !old.empty()) {
             for (const auto& [index, e] : existing->second.entries)
                 if (!replaced[index]) items.push_back({index, old.data() + e.offset, e.size});
         }
         std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.index < b.index; });
+        if (items.empty()) {
+            // Nothing left in it: the region goes (nothing to do when it was never written).
+            if (existing == regions_.end()) continue;
+            std::error_code ec;
+            std::filesystem::remove(existing->second.file, ec);
+            if (ec) {
+                FORGE_ERROR("world save: cannot remove %s", path_to_utf8(existing->second.file).c_str());
+                ok = false;
+                continue;
+            }
+            regions_.erase(existing);
+            ++regions;
+            continue;
+        }
 
         std::vector<u8> out;
         out.insert(out.end(), kMagic, kMagic + 4);

@@ -1,0 +1,243 @@
+{
+  "px": 16,
+  "tiles": [
+    {
+      "id": 256,
+      "name": "Небо 0",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, @Небо#0"
+    },
+    {
+      "id": 257,
+      "name": "Небо 1",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, @Небо#1"
+    },
+    {
+      "id": 258,
+      "name": "Небо 2",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, @Небо#2"
+    },
+    {
+      "id": 259,
+      "name": "Небо 1 ↔",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, @Небо#1h"
+    },
+    {
+      "id": 260,
+      "name": "Кирпичная стена",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#9"
+    },
+    {
+      "id": 261,
+      "name": "Стена пещеры + Мох",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#8 + наборы/декор.tsx#3"
+    },
+    {
+      "id": 262,
+      "name": "Лестница",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#12"
+    },
+    {
+      "id": 263,
+      "name": "Стена пещеры",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#8"
+    },
+    {
+      "id": 264,
+      "name": "Стена пещеры + Лоза ↔",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#8 + наборы/декор.tsx#2h"
+    },
+    {
+      "id": 265,
+      "name": "Стена пещеры + Лоза",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#8 + наборы/декор.tsx#2"
+    },
+    {
+      "id": 266,
+      "name": "Окно",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#10"
+    },
+    {
+      "id": 267,
+      "name": "Стрелка",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#11"
+    },
+    {
+      "id": 268,
+      "name": "Стрелка ↔",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#11h"
+    },
+    {
+      "id": 269,
+      "name": "Мухомор",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/декор.tsx#1"
+    },
+    {
+      "id": 270,
+      "name": "Цветок",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/декор.tsx#0"
+    },
+    {
+      "id": 271,
+      "name": "Цветок ↔",
+      "layer": 0,
+      "solid": false,
+      "from": "Tiled: уровень.tmx, наборы/декор.tsx#0h"
+    },
+    {
+      "id": 272,
+      "name": "Кирпич",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#4"
+    },
+    {
+      "id": 273,
+      "name": "Тёмный камень",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#3"
+    },
+    {
+      "id": 274,
+      "name": "Камень",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#2"
+    },
+    {
+      "id": 275,
+      "name": "Доски",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#5"
+    },
+    {
+      "id": 276,
+      "name": "Угол травы ↔↕",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#6hv"
+    },
+    {
+      "id": 277,
+      "name": "Угол травы ⤡",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#6d"
+    },
+    {
+      "id": 278,
+      "name": "Угол травы",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#6"
+    },
+    {
+      "id": 279,
+      "name": "Угол травы ↔",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#6h"
+    },
+    {
+      "id": 280,
+      "name": "Трава",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#0"
+    },
+    {
+      "id": 281,
+      "name": "Земля",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#1"
+    },
+    {
+      "id": 282,
+      "name": "Руда",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7"
+    },
+    {
+      "id": 283,
+      "name": "Руда ↔",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7h"
+    },
+    {
+      "id": 284,
+      "name": "Руда ↕",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7v"
+    },
+    {
+      "id": 285,
+      "name": "Руда ↔↕",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7hv"
+    },
+    {
+      "id": 286,
+      "name": "Руда ⤡",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7d"
+    },
+    {
+      "id": 287,
+      "name": "Руда ⤡↔",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7dh"
+    },
+    {
+      "id": 288,
+      "name": "Руда ⤡↕",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7dv"
+    },
+    {
+      "id": 289,
+      "name": "Руда ⤡↔↕",
+      "layer": 1,
+      "solid": true,
+      "from": "Tiled: уровень.tmx, наборы/Земля и камень.tsx#7dhv"
+    }
+  ]
+}

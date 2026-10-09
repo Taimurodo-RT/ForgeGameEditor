@@ -207,8 +207,14 @@
             <div class="icon-button" data-class-selected="lv_chunks" data-event-click="lv_toggle('chunks')"><icon name="border_outer"/></div>
             <div class="icon-button" data-event-click="dock_reset"><icon name="dashboard"/></div>
             <div class="divider vertical"/>
+            <div id="tm-pick" class="button outlined small" title="Карта .tmx из Tiled: сначала окно со всем, что изменится" data-event-click="lv_tm_pick"><icon name="map"/>Импорт из Tiled…</div>
             <div class="button outlined small" data-event-click="lv_save"><icon name="save"/>Сохранить<div class="dirty-dot" data-if="lv_dirty"/></div>
             <div id="play-here" class="button filled small" data-event-click="lv_play"><icon name="play_arrow"/>Играть отсюда</div>
+        </div>
+
+        <div id="tm-note" class="tm-note row" data-if="!lv_tm_open && lv_tm_note != ''">
+            <icon name="map" class="s"/><span class="grow">{{ lv_tm_note }}</span>
+            <div class="icon-button small" title="Скрыть" data-event-click="lv_tm_note_close"><icon name="close" class="s"/></div>
         </div>
 
         <div id="dock">
@@ -541,6 +547,58 @@
 
             <div id="dock-drop" data-if="dock_drop"
                  data-style-left="dock_drop_x + 'px'" data-style-top="dock_drop_y + 'px'" data-style-width="dock_drop_w + 'px'" data-style-height="dock_drop_h + 'px'"/>
+        </div>
+
+        <!-- «Импорт карты Tiled»: everything the import would do, before
+             anything changes. «Импортировать» puts the map into the level as
+             one step of its history; «Отмена» (Esc) changes nothing. -->
+        <div class="tm-scrim" data-if="lv_tm_open"/>
+        <div id="tm-window" class="tm-window column" data-if="lv_tm_open">
+            <div class="row tm-head">
+                <icon name="map"/>
+                <span class="tm-title grow">{{ lv_tm_title }}</span>
+                <div id="tm-close" class="icon-button" title="Отмена (Esc)" data-event-click="lv_tm_cancel"><icon name="close"/></div>
+            </div>
+            <div class="tm-lead">Пока вы не нажмёте «Импортировать», ничего не меняется. {{ lv_tm_where }}</div>
+            <div class="row tm-body grow">
+                <div class="column tm-col">
+                    <div class="section-title">Наборы тайлов</div>
+                    <div data-for="l : lv_tm_sets" class="tm-line row" data-class-warn="l.warn"><span class="grow">{{ l.text }}</span><span class="count">{{ l.count }}</span></div>
+                    <div class="section-title">Слои</div>
+                    <div data-for="l : lv_tm_layers" class="tm-layer column" data-attr-id="'tm-layer-' + l.index">
+                        <div class="row"><span class="grow name">{{ l.name }}</span><span class="count muted">{{ l.about }}</span></div>
+                        <div class="row tm-targets" data-if="l.target != ''">
+                            <div class="tm-chip" data-attr-id="'tm-layer-' + l.index + '-walls'" data-class-selected="l.target == 'walls'" data-event-click="lv_tm_target(l.index, 'walls')">Стены (фон)</div>
+                            <div class="tm-chip" data-attr-id="'tm-layer-' + l.index + '-blocks'" data-class-selected="l.target == 'blocks'" data-event-click="lv_tm_target(l.index, 'blocks')">Блоки</div>
+                            <div class="tm-chip" data-attr-id="'tm-layer-' + l.index + '-skip'" data-class-selected="l.target == 'skip'" data-event-click="lv_tm_target(l.index, 'skip')">Не переносить</div>
+                        </div>
+                    </div>
+                    <div class="section-title">Объекты карты станут</div>
+                    <div data-for="l : lv_tm_objects" class="tm-line row"><span class="grow">{{ l.text }}</span><span class="count">{{ l.count }}</span></div>
+                    <div class="muted body-small" data-if="lv_tm_objects.size == 0">В карте нет объектов, которые переносятся.</div>
+                    <div class="section-title">Вокруг карты</div>
+                    <div id="tm-around" class="row tm-switch" data-event-click="lv_tm_around">
+                        <span class="grow">Пусто: мир игры вокруг не создаётся</span>
+                        <div class="switch" data-class-on="lv_tm_around"><div class="thumb"/></div>
+                    </div>
+                </div>
+                <div class="column tm-col">
+                    <div class="section-title">Изменится в уровне: одним шагом, Ctrl+Z отменит всё сразу</div>
+                    <div data-for="l : lv_tm_changes" class="tm-line row" data-class-warn="l.warn"><span class="grow">{{ l.text }}</span><span class="count">{{ l.count }}</span></div>
+                    <div data-for="b : lv_tm_back" class="tm-line tm-back">{{ b }}</div>
+                    <div class="section-title">В игре появится (Ctrl+Z уровня это не убирает)</div>
+                    <div data-for="l : lv_tm_game" class="tm-line row"><span class="grow">{{ l.text }}</span><span class="count">{{ l.count }}</span></div>
+                    <div class="muted body-small" data-if="lv_tm_game.size == 0">Ничего: шаблоны и музыка уже есть или не нужны.</div>
+                    <div class="section-title" data-if="lv_tm_skipped.size > 0">Не переносится</div>
+                    <div data-for="l : lv_tm_skipped" class="tm-line row" data-class-warn="l.warn"><span class="grow">{{ l.text }}</span><span class="count">{{ l.count }}</span></div>
+                </div>
+            </div>
+            <div id="tm-refusal" class="tm-refusal" data-if="lv_tm_refusal != ''">Так импортировать нельзя: {{ lv_tm_refusal }}</div>
+            <div class="row tm-foot">
+                <span id="tm-window-note" class="body-small grow">{{ lv_tm_note }}</span>
+                <div id="tm-cancel" class="command" data-event-click="lv_tm_cancel"><span>Отмена</span></div>
+                <div id="tm-import" class="button filled small" data-class-disabled="!lv_tm_can" data-event-click="lv_tm_import"><icon name="download"/>Импортировать</div>
+            </div>
         </div>
     </div>
 
@@ -2519,6 +2577,7 @@
                         <div class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon class="s" name="open_in_new"/><span>В редакторе изображений</span></div>
                         <div class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon class="s" name="open_in_new"/><span>Сделать анимацию</span></div>
                         <div class="link row" data-if="as_sel_count == 1 && as_sel_audio" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'позже: обрезка и громкость', 'volume_up')"><icon class="s" name="open_in_new"/><span>В редакторе звука</span></div>
+                        <div id="as-import-map" class="link row" data-if="as_sel_count == 1 && as_sel_tmx" data-event-click="as_import_map"><icon class="s" name="map"/><span>Импортировать в уровень…</span></div>
                         <div class="link row" data-event-click="as_show"><icon class="s" name="folder_open"/><span>Показать в проводнике Windows</span></div>
                     </div>
                 </div>
@@ -2604,7 +2663,8 @@
                 <div id="ctx-open" class="menu-item strong" data-if="as_sel_count == 1 && as_sel_dir" data-event-click="as_open_selected"><icon name="folder_open"/><span class="label">Открыть</span><span class="trailing">Enter</span></div>
                 <div class="menu-item strong" data-if="as_sel_count == 1 && as_sel_wav" data-event-click="as_open_selected"><icon name="play_arrow"/><span class="label">Слушать</span></div>
                 <div class="menu-item" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon name="open_in_new"/><span class="label">Открыть в редакторе изображений</span></div>
-                <div class="divider" data-if="as_sel_count == 1 && (as_sel_dir || as_sel_wav || as_sel_image)"/>
+                <div id="ctx-import-map" class="menu-item strong" data-if="as_sel_count == 1 && as_sel_tmx" data-event-click="as_import_map"><icon name="map"/><span class="label">Импортировать в уровень…</span></div>
+                <div class="divider" data-if="as_sel_count == 1 && (as_sel_dir || as_sel_wav || as_sel_image || as_sel_tmx)"/>
                 <div id="ctx-cut" class="menu-item" data-event-click="as_cut"><icon name="content_cut"/><span class="label">Вырезать</span><span class="trailing">Ctrl+X</span></div>
                 <div id="ctx-copy" class="menu-item" data-event-click="as_copy"><icon name="content_copy"/><span class="label">Копировать</span><span class="trailing">Ctrl+C</span></div>
                 <div id="ctx-rename" class="menu-item" data-if="as_sel_count == 1" data-event-click="as_rename_start"><icon name="drive_file_rename_outline"/><span class="label">Переименовать</span><span class="trailing">F2</span></div>

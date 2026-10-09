@@ -369,7 +369,11 @@ void Scene::on_chunk_loaded(world::Chunk& chunk) {
     }
     index_dirty_ = true;
     chunks_dirty_ = true;
-    if (!visited && populate_) populate_(chunk.coord, *this);
+    if (!visited) {
+        // The populator may leave it unvisited again.
+        unvisited_.erase(chunk.coord);
+        if (populate_) populate_(chunk.coord, *this);
+    }
 }
 
 void Scene::on_chunk_unloading(world::Chunk& chunk) {
@@ -379,7 +383,7 @@ void Scene::on_chunk_unloading(world::Chunk& chunk) {
     if (it == chunk_lookup_.end()) return;
     ChunkIndex& ci = chunks_[it->second];
     std::vector<u8> bytes;
-    pack_chunk(ci, bytes, true);
+    pack_chunk(ci, bytes, !unvisited_.count(chunk.coord));
     for (u32 i = ci.begin; i < ci.end; ++i) ecs_delete(ecs_.c_ptr(), items_[i].entity);
     packed_ += ci.end - ci.begin;
     stored_bytes_ += bytes.size();
@@ -607,7 +611,7 @@ SceneSaveReport Scene::save() {
     // Loaded chunks are written even when empty: the mark that their
     // populator already ran.
     std::vector<std::vector<u8>> packed(chunks_.size());
-    for (usize c = 0; c < chunks_.size(); ++c) pack_chunk(chunks_[c], packed[c], true);
+    for (usize c = 0; c < chunks_.size(); ++c) pack_chunk(chunks_[c], packed[c], !unvisited_.count(chunks_[c].coord));
     std::vector<world::RegionStore::Write> writes;
     for (usize c = 0; c < chunks_.size(); ++c) writes.push_back({chunks_[c].coord, &packed[c]});
     for (const auto& [coord, bytes] : stored_) writes.push_back({coord, &bytes});
@@ -620,6 +624,34 @@ SceneSaveReport Scene::save() {
     }
     report.ms = ns_to_ms(time_now_ns() - start);
     return report;
+}
+
+std::vector<ChunkCoord> Scene::loaded_unvisited() const {
+    std::vector<ChunkCoord> out;
+    for (const ChunkCoord c : unvisited_)
+        if (world_.find_chunk(c)) out.push_back(c);
+    return out;
+}
+
+std::vector<ChunkCoord> Scene::unloaded_with_entities() const {
+    // [u32 magic][u8 visited][u32 entity count]
+    auto has_entities = [](const std::vector<u8>& bytes) {
+        u32 count = 0;
+        if (bytes.size() < 9) return false;
+        std::memcpy(&count, bytes.data() + 5, sizeof(count));
+        return count > 0;
+    };
+    std::vector<ChunkCoord> out;
+    for (const auto& [coord, bytes] : stored_)
+        if (has_entities(bytes)) out.push_back(coord);
+    if (store_)
+        for (const ChunkCoord c : store_->chunks()) {
+            if (stored_.count(c) || world_.find_chunk(c)) continue;
+            world::ChunkLocation loc;
+            std::vector<u8> bytes;
+            if (store_->locate(c, loc) && world::read_chunk_bytes(loc, bytes) && has_entities(bytes)) out.push_back(c);
+        }
+    return out;
 }
 
 SceneStats Scene::stats() const {

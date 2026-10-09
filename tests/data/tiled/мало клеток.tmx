@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Написан вручную: Tiled такой файл не сохранит. -->
+<map version="1.8" orientation="orthogonal" renderorder="right-down" width="4" height="3" tilewidth="16" tileheight="16" infinite="0" nextlayerid="2" nextobjectid="1">
+ <tileset firstgid="1" source="../../../games/examples/tiled/Карта Tiled/наборы/декор.tsx"/>
+ <layer id="1" name="Слой" width="4" height="3" offsetx="32" offsety="-16">
+  <data encoding="csv">
+1,0,0,2,
+0,3,0,0,
+0,0,0
+</data>
+ </layer>
+</map>

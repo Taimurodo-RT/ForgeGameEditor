@@ -1,0 +1,10 @@
+{
+  "id": "tiled_уровень_предметы_7",
+  "name": "Фонарь",
+  "kind": "picture",
+  "about": "Картинка из карты Tiled «уровень.tmx».",
+  "picture": "tiled_уровень_предметы_7_011c8f7c.png",
+  "values": {
+    "half_height": 1
+  }
+}

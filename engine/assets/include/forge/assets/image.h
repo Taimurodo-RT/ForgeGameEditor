@@ -19,6 +19,10 @@ bool can_encode_image(std::string_view extension);
 // .png, .jpg/.jpeg (quality 92), .bmp, .tga, .webp (lossless).
 bool encode_image(const CookedTexture& image, std::string_view extension, std::vector<u8>& out);
 
+// Deflate data → bytes: with zlib's two-byte header and checksum (zlib_header)
+// or without them (as in gzip). False when the data is not valid.
+bool inflate(std::span<const u8> bytes, bool zlib_header, std::vector<u8>& out);
+
 enum class ImageOp : u8 { RotateCw, RotateCcw, FlipH, FlipV, Half, Double };
 CookedTexture transform_image(const CookedTexture& image, ImageOp op);
 

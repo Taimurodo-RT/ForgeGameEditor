@@ -92,7 +92,7 @@ void World::start_load(ChunkCoord coord) {
         stored_bytes_ -= it->second.size();
         job->stored = std::move(it->second);
         stored_edits_.erase(it);
-    } else if (store_ && store_->locate(coord, job->disk)) {
+    } else if (store_ && !forgotten_.count(coord) && store_->locate(coord, job->disk)) {
         job->from_disk = true;
     }
     loading_.push_back(job);
@@ -244,13 +244,22 @@ SaveReport World::save() {
     writes.reserve(changed.size() + stored_edits_.size());
     for (usize i = 0; i < changed.size(); ++i) writes.push_back({changed[i]->coord, &encoded[i]});
     for (const auto& [coord, bytes] : stored_edits_) writes.push_back({coord, &bytes});
+    // Saved chunks nobody has changed any more go (unless changed again).
+    u32 removed = 0;
+    for (const ChunkCoord coord : forgotten_) {
+        if (stored_edits_.count(coord)) continue;
+        if (auto it = resident_.find(coord); it != resident_.end() && it->second->tiles && it->second->edited) continue;
+        writes.push_back({coord, nullptr});
+        ++removed;
+    }
 
     report.ok = store_->write(writes, &report.regions, &report.bytes);
-    report.chunks = static_cast<u32>(writes.size());
+    report.chunks = static_cast<u32>(writes.size() - removed);
     if (report.ok) {
         for (Chunk* c : changed) c->saved_revision = c->revision;
         stored_edits_.clear();
         stored_bytes_ = 0;
+        forgotten_.clear();
     }
     report.ms = ns_to_ms(time_now_ns() - start);
     return report;
@@ -291,6 +300,55 @@ bool World::set_tile(u32 layer, i32 x, i32 y, TileId id) {
         c->edited = true;
     }
     return true;
+}
+
+bool World::set_chunk_tiles(ChunkCoord coord, const TileId* tiles, bool edited) {
+    Chunk* c = find_chunk(coord);
+    if (!c) return false;
+    std::memcpy(c->tiles, tiles, static_cast<usize>(desc_.layer_count) * kChunkTiles * sizeof(TileId));
+    ++c->revision;
+    c->edited = edited;
+    if (ChunkLocation loc; !edited && store_ && store_->locate(coord, loc)) forgotten_.insert(coord);
+    return true;
+}
+
+bool World::edited(ChunkCoord coord) const {
+    if (auto it = resident_.find(coord); it != resident_.end() && it->second->tiles &&
+                                         it->second->state.load(std::memory_order_acquire) == ChunkState::Ready)
+        return it->second->edited;
+    if (stored_edits_.count(coord)) return true;
+    ChunkLocation loc;
+    return store_ && !forgotten_.count(coord) && store_->locate(coord, loc);
+}
+
+bool World::peek_chunk(ChunkCoord coord, std::vector<TileId>& out) const {
+    const usize n = static_cast<usize>(desc_.layer_count) * kChunkTiles;
+    out.assign(n, kEmptyTile);
+    if (auto it = resident_.find(coord); it != resident_.end() && it->second->tiles) {
+        if (it->second->state.load(std::memory_order_acquire) != ChunkState::Ready) return false;
+        std::memcpy(out.data(), it->second->tiles, n * sizeof(TileId));
+        return true;
+    }
+    if (auto it = stored_edits_.find(coord); it != stored_edits_.end())
+        return decode_chunk(it->second.data(), it->second.size(), out.data(), desc_.layer_count);
+    if (ChunkLocation loc; store_ && !forgotten_.count(coord) && store_->locate(coord, loc)) {
+        std::vector<u8> bytes;
+        return read_chunk_bytes(loc, bytes) && decode_chunk(bytes.data(), bytes.size(), out.data(), desc_.layer_count);
+    }
+    generator_->generate(coord, ChunkTiles{out.data(), desc_.layer_count});
+    return true;
+}
+
+void World::set_generator(std::shared_ptr<const Generator> generator) {
+    FORGE_VERIFY(generator != nullptr);
+    // Loads in flight use the old one: they finish first.
+    finish_loading();
+    generator_ = std::move(generator);
+    for (Chunk* c : resident_list_) {
+        if (!c->tiles || c->edited || c->state.load(std::memory_order_acquire) != ChunkState::Ready) continue;
+        generator_->generate(c->coord, ChunkTiles{c->tiles, desc_.layer_count});
+        ++c->revision;
+    }
 }
 
 void World::add_listener(WorldListener* listener) { listeners_.push_back(listener); }

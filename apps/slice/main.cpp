@@ -8,13 +8,18 @@
 //                                   (the level editor's «Играть отсюда»; FILE gets the links
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
-//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles]
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
+//                                                    |tiled|tiled_update]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
 //                                   new game and «Играть отсюда» start it; light also draws the editor's view of it
 //                                   to compare; own_tiles: a level with tiles of its own and nothing around it, made
-//                                   by the scene, over a copy of the game's data with a «Картинка» template)
+//                                   by the scene, over a copy of the game's data with a «Картинка» template;
+//                                   tiled: the level imported from the map of Tiled in games/examples/tiled, over a
+//                                   copy of the game's data with what the import wrote, with nothing of Tiled, its
+//                                   frame compared with tmxrasterizer's; tiled_update: the same after two pictures of
+//                                   the map changed and it was imported again, from the build only, which has the map)
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -33,11 +38,13 @@
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/core/time.h"
+#include "forge/editor/document.h"
 #include "forge/audio/screen_sounds.h"
 #include "forge/game/runner.h"
 #include "forge/game/saves.h"
 #include "forge/level/level.h"
 #include "forge/level/light.h"
+#include "forge/level/tiled_apply.h"
 #include "forge/render/offscreen.h"
 #include "forge/ui/ui.h"
 
@@ -82,6 +89,11 @@ struct Step {
 class SelfTest {
 public:
     SelfTest(SliceGame& game, std::string scene) : g_(game), scene_(std::move(scene)) {}
+
+    // --scene tiled and tiled_update: games/examples/tiled where the game has it, and the folder main() put this
+    // run's copy of the game's data (data/) and of the example's level (level/) in.
+    std::filesystem::path tiled_example, tiled_root;
+    std::string tiled_error; // what main() could not make of them
 
     bool frame(Shell& shell, int& failures) {
         if (steps_.empty()) build(shell);
@@ -261,6 +273,10 @@ private:
         }
         if (scene_ == "own_tiles") {
             build_own_tiles(s);
+            return;
+        }
+        if (scene_ == "tiled" || scene_ == "tiled_update") {
+            build_tiled(s, scene_ == "tiled_update");
             return;
         }
         SliceGame& g = g_;
@@ -4374,6 +4390,424 @@ private:
         }});
     }
 
+    // games/examples/tiled (step 10): the level the editor's «Импорт из Tiled…» made of a map saved by Tiled 1.8.2,
+    // with the «Картинка» templates, their pictures and the zone's music it wrote into the game, played with nothing
+    // of Tiled. main() puts a copy of the game's data with what the import wrote, and of the example's level, in
+    // tiled_root; tiled_update first imports the map again there, two pictures it depends on changed (the chest's
+    // and the decorations' tileset), as an author does after changing them in Tiled. The editor's view and the game
+    // are compared with the frame tmxrasterizer drew of the same map (tools/tiled_example/rasterize.py).
+    void build_tiled(Shell& s, bool updated) {
+        SliceGame& g = g_;
+        struct State {
+            std::filesystem::path level;
+            forge::level::LevelAreas areas;
+            u64 cave = 0;
+            u32 link = 0, starts = 0, walked = 0;
+            std::vector<world::TileId> cells; // the map's rectangle in the game, all layers
+            assets::CookedTexture ref;        // the frame tmxrasterizer drew
+            render::Camera2D cam;
+            Shot editor, game;
+            f64 x = 0, y = 0; // the hero when saved
+        };
+        auto st = std::make_shared<State>();
+        // tmxrasterizer's frame: the map's chunks, cells -16…48 × -16…32, a pixel of the frame a pixel of a tile.
+        constexpr u32 kW = 1024, kH = 768, kPx = 16;
+        constexpr i32 kX0 = -16, kY0 = -16, kX1 = 48, kY1 = 32;
+        // The map's pictures of tiles: the templates the import made of them, where their middles are.
+        struct Thing {
+            const char* id;
+            f64 x, y;
+        };
+        static const Thing kThings[] = {{"tiled_уровень_предметы_0", 34.5, 13.5},  // «Сундук»
+                                        {"tiled_уровень_предметы_0", 11, 13},      // «Большой сундук», stretched to 32 × 32
+                                        {"tiled_уровень_предметы_3", 18.5, 13.5},  // «Табличка»
+                                        {"tiled_уровень_предметы_3h", 23.5, 13.5}, // «Табличка назад», mirrored
+                                        {"tiled_уровень_предметы_7", 21.5, 13},    // a «Фонарь» of the template .tx
+                                        {"tiled_уровень_предметы_7", -10.5, 13}};  // «Фонарь у обрыва», at negative x
+        static const char* const kTemplates[] = {"tiled_уровень_предметы_0", "tiled_уровень_предметы_3", "tiled_уровень_предметы_3h",
+                                                 "tiled_уровень_предметы_7"};
+        auto things = [&g](std::string& wrong) {
+            u32 found = 0;
+            for (const Thing& t : kThings) {
+                bool here = false;
+                for (flecs::entity_t e : g.copies_of(t.id)) {
+                    f64 x = 0, y = 0;
+                    here = here || (g.position_of(e, x, y) && std::fabs(x - t.x) < 1e-6 && std::fabs(y - t.y) < 1e-6);
+                }
+                found += here;
+                if (!here && wrong.empty()) wrong = std::string(t.id) + " нет в " + std::to_string(t.x) + ", " + std::to_string(t.y);
+            }
+            usize all = 0;
+            for (const char* id : kTemplates) all += g.copies_of(id).size();
+            if (all != std::size(kThings) && wrong.empty()) wrong = "копий шаблонов " + std::to_string(all);
+            return found == std::size(kThings) && all == std::size(kThings);
+        };
+        // The map's rectangle in the game: every layer, row by row.
+        auto game_cells = [&g] {
+            std::vector<world::TileId> out;
+            for (u32 layer : {kWalls, kBlocks, kLiquids})
+                for (i32 y = kY0; y < kY1; ++y)
+                    for (i32 x = kX0; x < kX1; ++x) out.push_back(g.tile(layer, x, y));
+            return out;
+        };
+        auto in = [&g](u64 id) {
+            const std::vector<u64> now = g.areas_inside();
+            return std::find(now.begin(), now.end(), id) != now.end();
+        };
+        auto put = [&g](f64 feet_x, f64 feet_y) { g.teleport(feet_x, feet_y - kHeroHalfH); };
+        auto var = [&s](const char* name) { return s.vars().get(name).number(); };
+        auto hud = [&s] {
+            Rml::Element* t = s.find_element("tracker");
+            return t && t->IsVisible(true) ? std::string(t->GetInnerRML()) : std::string();
+        };
+        auto heard = [&s, &g] {
+            const f32 p = music_peak(g.sounds().mixer());
+            s.apply_settings(s.settings());
+            return p;
+        };
+        auto rgb = [](const std::vector<u8>& img, usize i) {
+            return std::to_string(img[i]) + "," + std::to_string(img[i + 1]) + "," + std::to_string(img[i + 2]);
+        };
+        // A frame kept next to the run's copies, to be looked at beside tmxrasterizer's.
+        auto keep = [this](const char* name, const std::vector<u8>& rgba) {
+            assets::CookedTexture img;
+            img.width = kW;
+            img.height = kH;
+            img.rgba8 = rgba;
+            for (usize i = 3; i < img.rgba8.size(); i += 4) img.rgba8[i] = 255;
+            std::vector<u8> png;
+            const std::filesystem::path file = tiled_root / name;
+            if (assets::encode_image(img, ".png", png) && write_file_atomic(file, png)) FORGE_INFO("кадр записан: %s", path_to_utf8(file).c_str());
+        };
+        // The editor's view of the level folder at tmxrasterizer's frame (no light: daylight, as the view shows it).
+        auto editor_shot = [&s, &g, this, st](Shot& out) {
+            SliceLevel module;
+            std::string why;
+            check(module.load_objects(s.game_dir(), &why), "шаблоны игры для вида редактора " + why);
+            check(module.init_view(g.device(), SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM), "вид редактора");
+            forge::level::Level level(module);
+            check(level.open(st->level, &why), "редактор открывает уровень " + why);
+            const render::Camera2D cam = st->cam;
+            level.ensure_loaded(cam.visible_tiles(kW, kH).expanded(render::kLightMargin));
+            return shoot(g.device(), kW, kH,
+                         [&](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) {
+                             module.prepare_view(cmd, level, cam, kW, kH, forge::level::ViewOptions{}, 0);
+                             SDL_GPUColorTargetInfo info{};
+                             info.texture = t;
+                             const Color bg = module.background();
+                             info.clear_color = SDL_FColor{bg.r, bg.g, bg.b, 1};
+                             info.load_op = SDL_GPU_LOADOP_CLEAR;
+                             info.store_op = SDL_GPU_STOREOP_STORE;
+                             SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
+                             module.draw_view(cmd, pass);
+                             SDL_EndGPURenderPass(pass);
+                         },
+                         module.lights(), out);
+        };
+
+        steps_.push_back({"пример «Tiled»: новая игра с уровня, у игры ни одного файла Tiled", 40,
+                          [&s, &g, updated, var, this, st](u32 f) {
+            if (f < 5) return false;
+            if (f == 5) {
+                check(tiled_error.empty(), "данные игры и уровень примера готовы: " + tiled_error);
+                st->level = tiled_root / "level";
+                std::error_code ec;
+                const bool packaged = std::filesystem::is_directory(exe_dir() / "data" / "game" / "objects", ec);
+                FORGE_INFO("пример «Tiled» %s (%s); игра читает данные и уровень из %s", path_to_utf8(tiled_example).c_str(),
+                           packaged ? "пакет" : "сборка", path_to_utf8(tiled_root).c_str());
+                check(std::filesystem::is_regular_file(tiled_example / "level" / "tiled.json", ec), "пример на месте");
+                const bool map = std::filesystem::exists(tiled_example / utf8_path("Карта Tiled"), ec);
+                check(packaged ? !map : map, packaged ? "в пакете папки «Карта Tiled» нет" : "в исходниках «Карта Tiled» лежит рядом с примером");
+                u32 tiled_files = 0, files = 0;
+                for (const auto& e : std::filesystem::recursive_directory_iterator(tiled_root, ec)) {
+                    if (!e.is_regular_file()) continue;
+                    ++files;
+                    const std::filesystem::path ext = e.path().extension();
+                    tiled_files += ext == ".tmx" || ext == ".tsx" || ext == ".tx";
+                }
+                check(files > 0 && tiled_files == 0, "у игры ни одного файла Tiled: из " + std::to_string(files) + " файлов " +
+                                                         std::to_string(tiled_files));
+                if (updated) {
+                    // The import again changed the chest's picture and the own tiles' picture, nothing else of the level.
+                    objects::Library shipped, now;
+                    std::string why;
+                    check(shipped.load(s.game_dir() / "kinds.json", tiled_example / "objects", &why), "шаблоны примера " + why);
+                    check(load_objects(now, s.game_dir(), &why), "шаблоны игры " + why);
+                    const objects::Template* chest = now.find("tiled_уровень_предметы_0");
+                    const objects::Template* was = shipped.find("tiled_уровень_предметы_0");
+                    const std::filesystem::path pictures = s.game_dir() / "pictures";
+                    check(chest && was && chest->picture != was->picture && std::filesystem::is_regular_file(pictures / utf8_path(chest->picture), ec) &&
+                              !std::filesystem::exists(pictures / utf8_path(was->picture), ec),
+                          "у «Сундука» новая картинка, прежней у игры нет: " + (chest ? chest->picture : std::string("шаблона нет")));
+                    for (const char* id : {"tiled_уровень_предметы_3", "tiled_уровень_предметы_3h", "tiled_уровень_предметы_7"}) {
+                        const objects::Template* a = now.find(id);
+                        const objects::Template* b = shipped.find(id);
+                        check(a && b && a->picture == b->picture, std::string("у ") + id + " картинка та же");
+                    }
+                    u32 same = 0, changed = 0, gone = 0;
+                    std::string what;
+                    for (const auto& e : std::filesystem::directory_iterator(tiled_example / "level", ec)) {
+                        std::vector<u8> before, after;
+                        read_file(e.path(), before);
+                        const bool read = read_file(st->level / e.path().filename(), after);
+                        // The .json as text, line ends aside (a Windows checkout has CRLF, the import writes LF); the
+                        // rest byte for byte.
+                        if (e.path().extension() == ".json") {
+                            std::erase(before, '\r');
+                            std::erase(after, '\r');
+                        }
+                        if (!read) ++gone;
+                        else if (before == after) ++same;
+                        else {
+                            ++changed;
+                            what += " " + path_to_utf8(e.path().filename());
+                        }
+                    }
+                    check(gone == 0 && changed == 1 && what == " tiles.png",
+                          "в папке уровня изменилась одна картинка своих тайлов:" + what + "; тех же файлов " + std::to_string(same));
+                }
+                std::string why;
+                check(forge::level::load_areas(st->level, st->areas, nullptr, &why) && st->areas.areas.size() == 1, "в уровне одна зона " + why);
+                const forge::level::Area* cave = st->areas.areas.empty() ? nullptr : &st->areas.areas[0];
+                check(cave && cave->name == "Пещера" && cave->x0 == 25 && cave->y0 == 9 && cave->x1 == 37 && cave->y1 == 14 &&
+                          cave->music == "пещера.wav",
+                      "зона «Пещера» из прямоугольника карты: x 25…37, y 9…14, музыка пещера.wav");
+                check(st->areas.spawn && st->areas.spawn_x == 3 && st->areas.spawn_y == 14, "точка появления из точки «spawn» карты: 3, 14");
+                check(std::filesystem::is_regular_file(s.game_dir() / "sounds" / utf8_path("пещера.wav"), ec), "музыка зоны в звуках игры");
+                if (cave) st->cave = cave->id;
+                // The example's links (the game's, and «Герой входит в Пещеру» once: quest.copper = 1) as the game's.
+                logic::Logic links;
+                check(links.load(tiled_example / "logic.json", &why), "связи примера читаются " + why);
+                for (const logic::Link& l : links.links)
+                    if (l.a == "hero" && l.verb == "enter" && l.b == area_thing_id(st->cave) && l.once) st->link = l.id;
+                check(st->link != 0, "в «Логике» примера связь «Герой входит в Пещеру», один раз");
+                const std::filesystem::path file = std::filesystem::temp_directory_path() / "forge_slice_test_logic.json";
+                std::filesystem::copy_file(tiled_example / "logic.json", file, std::filesystem::copy_options::overwrite_existing, ec);
+                check(!ec && g.reload_links(&why), "связи примера — связи игры " + why);
+                g.set_level(st->level);
+                check(s.new_game(), "новая игра с уровня примера");
+                return false;
+            }
+            if (f < 20) return false;
+            // The game stands the hero in the middle of the cell the point is in (Tiled's point is on the cells' corner).
+            check(g.hero_x() == std::floor(st->areas.spawn_x) + 0.5 &&
+                      g.hero_y() == scene::Position::at_tile(0, st->areas.spawn_y - kHeroHalfH).tile_y() && g.on_ground(),
+                  "герой стоит на земле у точки появления: " + std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()));
+            check(g.areas() && *g.areas() == st->areas, "в игре зона и точка появления из файла");
+            check(g.areas_inside().empty() && var("quest.copper") == 0, "герой ни в одной зоне, задание не взято");
+            check(s.screens().place_music().empty() && g.sounds().screens().music_name().empty(), "музыки места нет");
+            return true;
+        }});
+        steps_.push_back({"клетки как в папке уровня, шесть картинок на своих местах, вокруг пусто", 5,
+                          [&s, &g, things, game_cells, this, st](u32 f) {
+            if (f > 0) return true;
+            SliceLevel module;
+            std::string why;
+            check(module.load_objects(s.game_dir(), &why), "шаблоны игры " + why);
+            forge::level::Level level(module);
+            check(level.open(st->level, &why), "уровень открывается " + why);
+            const world::Rect map{kX0, kY0, kX1, kY1};
+            const world::Rect around = map.expanded(16);
+            level.ensure_loaded(around);
+            u32 chunks = 0, loaded = 0;
+            for (i32 cy = around.y0 >> world::kChunkShift; cy <= (around.y1 - 1) >> world::kChunkShift; ++cy)
+                for (i32 cx = around.x0 >> world::kChunkShift; cx <= (around.x1 - 1) >> world::kChunkShift; ++cx) {
+                    ++chunks;
+                    loaded += g.world() && g.world()->find_chunk({cx, cy}) != nullptr;
+                }
+            check(loaded == chunks, "в игре загружены карта и участок вокруг: " + std::to_string(loaded) + " из " + std::to_string(chunks));
+            st->cells = game_cells();
+            u32 same = 0, filled = 0, i = 0, outside = 0, empty = 0;
+            std::string first;
+            for (u32 layer : {kWalls, kBlocks, kLiquids})
+                for (i32 y = kY0; y < kY1; ++y)
+                    for (i32 x = kX0; x < kX1; ++x, ++i) {
+                        const world::TileId want = level.tile(layer, x, y), got = st->cells[i];
+                        same += got == want;
+                        filled += got != 0;
+                        if (got != want && first.empty())
+                            first = " слой " + std::to_string(layer) + " клетка " + std::to_string(x) + "," + std::to_string(y) + ": " +
+                                    std::to_string(got) + " вместо " + std::to_string(want);
+                    }
+            check(same == st->cells.size() && filled > 0, "в игре клетки уровня: совпало " + std::to_string(same) + " из " +
+                                                               std::to_string(st->cells.size()) + ", непустых " + std::to_string(filled) + first);
+            for (u32 layer : {kWalls, kBlocks, kLiquids})
+                for (i32 y = around.y0; y < around.y1; ++y)
+                    for (i32 x = around.x0; x < around.x1; ++x)
+                        if (!map.contains(x, y)) {
+                            ++outside;
+                            empty += g.tile(layer, x, y) == 0;
+                        }
+            check(empty == outside, "вокруг карты пусто: пустых " + std::to_string(empty) + " из " + std::to_string(outside));
+            std::string wrong;
+            check(things(wrong), "шесть «Картинок» на местах из карты " + wrong);
+            u32 items = 0;
+            for (u8 k = 0; k <= static_cast<u8>(ItemKind::Key); ++k) items += g.count_items(static_cast<ItemKind>(k));
+            check(g.count_npcs() == 0 && items == 0 && g.entities() == 1 + std::size(kThings),
+                  "кроме героя и шести картинок никого и ничего: сущностей " + std::to_string(g.entities()));
+            return true;
+        }});
+        steps_.push_back({updated ? "вид редактора — кадр tmxrasterizer с изменёнными картинками" : "вид редактора — кадр tmxrasterizer пиксель в пиксель", 5,
+                          [&g, updated, editor_shot, keep, rgb, this, st](u32 f) {
+            if (f > 0) return true;
+            const std::filesystem::path file = tiled_example / (updated ? "tmxrasterizer_changed.png" : "tmxrasterizer.png");
+            std::vector<u8> bytes;
+            std::string why;
+            if (!read_file(file, bytes) || !assets::decode_image(bytes, st->ref, &why) || st->ref.width != kW || st->ref.height != kH) {
+                check(false, "кадр tmxrasterizer 1024 × 768 читается: " + path_to_utf8(file) + " " + why);
+                st->ref = {};
+                return true;
+            }
+            st->cam = g.camera();
+            st->cam.x = (kX0 + kX1) * 0.5;
+            st->cam.y = (kY0 + kY1) * 0.5;
+            st->cam.zoom = static_cast<f32>(kPx);
+            check(editor_shot(st->editor), "кадр вида редактора");
+            keep("editor.png", st->editor.full);
+            const std::vector<u8>& img = st->editor.full;
+            const std::vector<u8>& ref = st->ref.rgba8;
+            if (img.size() != ref.size()) return true;
+            const Color bg = SliceLevel{}.background();
+            const int sky[3] = {static_cast<int>(bg.r * 255 + 0.5f), static_cast<int>(bg.g * 255 + 0.5f), static_cast<int>(bg.b * 255 + 0.5f)};
+            // Where Tiled stacks a see-through tile on another (moss over the cave's wall), the level's own tile is the
+            // two blended once, exactly; Qt blends premultiplied and rounds twice: one off at most there.
+            u32 drawn = 0, same = 0, near = 0, clear = 0, open = 0;
+            std::string first, extra;
+            for (usize i = 0; i < ref.size(); i += 4) {
+                if (ref[i + 3] == 255) {
+                    ++drawn;
+                    const bool eq = img[i] == ref[i] && img[i + 1] == ref[i + 1] && img[i + 2] == ref[i + 2];
+                    bool one = true;
+                    for (int c = 0; c < 3; ++c) one = one && std::abs(img[i + c] - ref[i + c]) <= 1;
+                    same += eq;
+                    near += one;
+                    if (!one && first.empty())
+                        first = "; пиксель " + std::to_string(i / 4 % kW) + "," + std::to_string(i / 4 / kW) + ": " + rgb(img, i) + " вместо " + rgb(ref, i);
+                } else {
+                    ++open;
+                    bool eq = true;
+                    for (int c = 0; c < 3; ++c) eq = eq && std::abs(img[i + c] - sky[c]) <= 1;
+                    clear += eq;
+                    if (!eq && extra.empty())
+                        extra = "; пиксель " + std::to_string(i / 4 % kW) + "," + std::to_string(i / 4 / kW) + ": " + rgb(img, i);
+                }
+            }
+            FORGE_INFO("вид редактора и кадр tmxrasterizer: нарисовано %u, совпало точно %u, с разницей не больше 1 — %u; пусто %u, из них небо %u",
+                       drawn, same, near, open, clear);
+            check(drawn > 80000 && near == drawn && same * 100 >= drawn * 99,
+                  "что нарисовал Tiled, вид редактора рисует так же: точно " + std::to_string(same) + ", с разницей до 1 — " + std::to_string(near) +
+                      " из " + std::to_string(drawn) + " пикселей" + first);
+            check(clear == open, "где Tiled не рисовал ничего, в редакторе небо: " + std::to_string(clear) + " из " + std::to_string(open) + extra);
+            return true;
+        }});
+        steps_.push_back({"в игре тот же кадр под светом неба", 5, [&g, keep, rgb, this, st](u32 f) {
+            if (f > 0) return true;
+            const std::vector<u8>& ref = st->ref.rgba8;
+            if (ref.empty() || st->editor.full.size() != ref.size()) return true;
+            g.set_hero_light(false);
+            const render::Camera2D kept = g.camera();
+            g.camera() = st->cam;
+            check(shoot(g.device(), kW, kH, [&g](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) { g.render(cmd, t, kW, kH); }, g.lights(),
+                        st->game),
+                  "кадр игры");
+            g.camera() = kept;
+            g.set_hero_light(true);
+            keep("game.png", st->game.full);
+            const std::vector<u8>& img = st->game.full;
+            const std::vector<u8>& light = st->game.light;
+            const std::vector<u8>& view = st->editor.full;
+            if (img.size() != ref.size() || light.size() != ref.size()) return true;
+            // The hero stands in the frame: its box is left out.
+            const f64 hx = (g.hero_x() - st->cam.x) * kPx + kW * 0.5, hy = (g.hero_y() - st->cam.y) * kPx + kH * 0.5;
+            // Under the sky (light 240 and more) the frame is nearly the view itself: a picture times a light of one.
+            u32 drawn = 0, same = 0, lit = 0;
+            std::string first;
+            for (usize i = 0; i < ref.size(); i += 4) {
+                const f64 x = static_cast<f64>(i / 4 % kW) + 0.5, y = static_cast<f64>(i / 4 / kW) + 0.5;
+                if (ref[i + 3] != 255 || (std::fabs(x - hx) < 24 && y > hy - 40 && y < hy + 24)) continue;
+                ++drawn;
+                bool eq = true, bright = true;
+                for (int c = 0; c < 3; ++c) {
+                    eq = eq && std::abs(img[i + c] - view[i + c] * light[i + c] / 255) <= 2;
+                    bright = bright && light[i + c] >= 240;
+                }
+                same += eq;
+                lit += bright;
+                if (!eq && first.empty())
+                    first = "; пиксель " + std::to_string(i / 4 % kW) + "," + std::to_string(i / 4 / kW) + ": " + rgb(img, i) + " при виде " +
+                            rgb(view, i) + " и свете " + rgb(light, i);
+            }
+            FORGE_INFO("кадр игры: нарисовано Tiled %u, как вид редактора под светом %u, из них под небом (свет от 240) %u", drawn, same, lit);
+            check(drawn > 80000 && same == drawn, "в игре нарисованное Tiled — вид редактора под светом: " + std::to_string(same) + " из " +
+                                                      std::to_string(drawn) + first);
+            check(lit * 5 > drawn, "под небом светло: пикселей со светом от 240 — " + std::to_string(lit) + " из " + std::to_string(drawn));
+            return true;
+        }});
+        steps_.push_back({"пешком в «Пещеру»: название места, задание в HUD, музыка зоны", 300,
+                          [&s, &g, in, put, var, hud, heard, this, st](u32 f) {
+            audio::ScreenSounds& snd = g.sounds().screens();
+            if (f == 0) {
+                put(22.5, 14);
+                st->walked = 0;
+                return false;
+            }
+            if (f < 10) return false;
+            if (f == 10) {
+                check(!in(st->cave) && g.area_enters(st->cave) == 0, "у таблички перед пещерой герой ещё не в ней");
+                st->starts = snd.music_starts();
+            }
+            if (!st->walked) {
+                if (g.hero_x() < 26.5 && f < 250) {
+                    Controls c;
+                    c.right = true;
+                    g.script(c);
+                    return false;
+                }
+                g.stop_script();
+                st->walked = f;
+            }
+            if (f < st->walked + 10) return false;
+            check(in(st->cave) && g.area_enters(st->cave) == 1, "герой вошёл в «Пещеру» один раз: x " + std::to_string(g.hero_x()));
+            check(g.last_hint() == "Пещера", "игра показала название места: " + g.last_hint());
+            check(var("quest.copper") == 1, "связь «Логики» задала quest.copper = 1");
+            check(hud().find("Медь для кузнеца") != std::string::npos, "в HUD задание «Медь для кузнеца»: " + hud());
+            check(s.screens().place_music() == "пещера.wav" && snd.music_name() == "пещера.wav" && snd.music_playing() &&
+                      snd.music_starts() == st->starts + 1,
+                  "играет музыка зоны пещера.wav, начата один раз: " + snd.music_name());
+            check(heard() > 0.05f, "музыку места слышно");
+            return true;
+        }});
+        steps_.push_back({"сохранение и загрузка: клетки, картинки, зона и задание те же", 60,
+                          [&s, &g, in, var, things, game_cells, this, st](u32 f) {
+            if (f == 0) {
+                st->x = g.hero_x();
+                st->y = g.hero_y();
+                check(s.save("tiled", "Tiled"), "игра сохраняется в «Пещере»");
+                std::error_code ec;
+                for (const char* file : {"areas.json", "tiles.json", "tiles.png", "world.json"})
+                    check(std::filesystem::is_regular_file(s.slots().folder("tiled") / "world" / file, ec), std::string("в сохранении ") + file);
+                check(s.load("tiled"), "сохранение загружается");
+                return false;
+            }
+            if (f < 20) return false;
+            check(std::fabs(g.hero_x() - st->x) < 0.01 && std::fabs(g.hero_y() - st->y) < 0.01, "герой где был: " + std::to_string(g.hero_x()));
+            check(in(st->cave) && g.area_enters(st->cave) == 0, "в «Пещере», загрузка — не вход");
+            check(var("quest.copper") == 1, "задание взято");
+            check(g.sounds().screens().music_name() == "пещера.wav" && g.sounds().screens().music_playing(), "музыка зоны играет");
+            check(game_cells() == st->cells, "клетки карты те же");
+            std::string wrong;
+            check(things(wrong), "шесть «Картинок» на местах " + wrong);
+            return true;
+        }});
+        steps_.push_back({"обратно в меню", 5, [&s, &g](u32 f) {
+            if (f == 0) {
+                s.to_main_menu();
+                g.set_level({});
+            }
+            return f >= 2;
+        }});
+    }
+
     SliceGame& g_;
     std::string scene_;
     std::vector<Step> steps_;
@@ -4384,6 +4818,87 @@ private:
 };
 
 } // namespace
+
+// --scene tiled and tiled_update (SelfTest::build_tiled): this run's copy of the game's data with what the import of
+// games/examples/tiled wrote into the game (its objects, pictures and sounds) and of the example's level, in root;
+// nothing of Tiled.
+static bool tiled_copy(const std::filesystem::path& game, const std::filesystem::path& example, const std::filesystem::path& root,
+                       std::string& why) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+    if (!ec) fs::copy(game, root / "data", fs::copy_options::recursive, ec);
+    for (const char* dir : {"objects", "pictures", "sounds"})
+        if (!ec) fs::copy(example / dir, root / "data" / dir, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    if (!ec) fs::copy(example / "level", root / "level", fs::copy_options::recursive, ec);
+    if (ec) why = "копия данных игры и уровня примера в " + path_to_utf8(root) + ": " + ec.message();
+    return !ec;
+}
+
+// --scene tiled_update: the author changes two pictures the map depends on (the chest's, the picture of a tile
+// object, and the decorations' tileset, the picture of an external .tsx; their colours turned over, as
+// tools/tiled_example/rasterize.py turns them for tmxrasterizer_changed.png) and imports the map again as the
+// editor's «Импорт из Tiled…» does (plan, the game's files, one step of the history, Ctrl+S), into root's copies
+// before the game reads them. The map's copy goes after: the game needs nothing of Tiled.
+static bool tiled_changed(const std::filesystem::path& example, const std::filesystem::path& root, std::string& why) {
+    namespace fs = std::filesystem;
+    namespace tl = forge::level::tiled;
+    const fs::path source = example / utf8_path("Карта Tiled"), map = root / "map";
+    std::error_code ec;
+    if (!fs::is_directory(source, ec)) {
+        why = "рядом с примером нет папки «Карта Tiled» (в пакете её нет: tiled_update идёт из сборки)";
+        return false;
+    }
+    fs::copy(source, map, fs::copy_options::recursive, ec);
+    if (ec) {
+        why = "копия карты: " + ec.message();
+        return false;
+    }
+    for (const char* name : {"картинки/сундук.png", "наборы/декор.png"}) {
+        const fs::path file = map / utf8_path(name);
+        std::vector<u8> bytes, png;
+        assets::CookedTexture img;
+        if (!read_file(file, bytes) || !assets::decode_image(bytes, img, &why)) {
+            why = std::string(name) + " не читается " + why;
+            return false;
+        }
+        for (usize i = 0; i + 3 < img.rgba8.size(); i += 4)
+            for (usize c = 0; c < 3; ++c) img.rgba8[i + c] = static_cast<u8>(255 - img.rgba8[i + c]);
+        if (!assets::encode_image(img, ".png", png) || !write_file_atomic(file, png)) {
+            why = std::string(name) + " не записан";
+            return false;
+        }
+    }
+    SliceLevel module;
+    if (!module.load_objects(root / "data", &why)) return false;
+    objects::Library& lib = *module.library();
+    forge::level::Level level(module);
+    tl::Map m;
+    tl::Plan p;
+    tl::Options o;
+    o.layer_count = static_cast<u32>(module.layer_names().size());
+    o.liquids = module.liquids_layer();
+    o.template_taken = [&lib](const tl::Picture& pic) { return tl::template_taken(lib, pic); };
+    tl::Resources made;
+    editor::Document doc;
+    editor::UndoStack history(doc);
+    if (!level.open(root / "level", &why) || !tl::read_map(map / utf8_path("уровень.tmx"), m, &why) ||
+        !tl::plan(m, o, level.own_tiles(), level.areas(), level.tiled_record(), p, &why))
+        return false;
+    level.ensure_loaded({p.x0, p.y0, p.x1, p.y1});
+    if (!tl::write_resources(p, lib, lib.sounds_folder(), made, &why) || !tl::apply(level, history, lib, p, tl::ApplyOptions{}, &why))
+        return false;
+    const forge::level::Level::SaveReport r = level.save();
+    if (!r.ok) {
+        why = "уровень не записан: " + r.error;
+        return false;
+    }
+    FORGE_INFO("карта Tiled импортирована снова: своих тайлов обновлено %u, новых %u; шаблонов «Картинка» записано %zu; шаг истории %s",
+               p.tiles_updated, p.tiles_new, made.templates.size(), history.undo_label().c_str());
+    fs::remove_all(map, ec);
+    return true;
+}
 
 int main(int argc, char** argv) {
     Options options;
@@ -4453,6 +4968,25 @@ int main(int argc, char** argv) {
         args.push_back(const_cast<char*>("--data"));
         args.push_back(data.data());
     }
+    // --scene tiled, tiled_update: the game's data and the level of games/examples/tiled as the import left them, in
+    // this run's own folder (the game's own data and the example stay as they are).
+    std::filesystem::path tiled_example, tiled_root;
+    std::string tiled_error;
+    if ((scene == "tiled" || scene == "tiled_update") && options.silent) {
+        std::error_code ec;
+        const std::filesystem::path packaged = exe_dir() / "data" / "game";
+        const std::filesystem::path from =
+            std::filesystem::is_directory(packaged / "objects", ec) ? packaged : utf8_path(SLICE_DATA_DIR);
+        tiled_example = from.parent_path() / "examples" / "tiled";
+        tiled_root = std::filesystem::temp_directory_path() / "forge_slice_tiled";
+        if (tiled_copy(from, tiled_example, tiled_root, tiled_error) && scene == "tiled_update" &&
+            !tiled_changed(tiled_example, tiled_root, tiled_error))
+            tiled_error = "карта не импортирована снова: " + tiled_error;
+        if (!tiled_error.empty()) FORGE_ERROR("%s", tiled_error.c_str());
+        data = path_to_utf8(tiled_root / "data");
+        args.push_back(const_cast<char*>("--data"));
+        args.push_back(data.data());
+    }
     if (scene == "volumes" && options.silent) {
         const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_slice_volumes";
         std::error_code ec;
@@ -4478,6 +5012,9 @@ int main(int argc, char** argv) {
     args.push_back(nullptr);
     SliceGame game(options);
     SelfTest test(game, scene);
+    test.tiled_example = tiled_example;
+    test.tiled_root = tiled_root;
+    test.tiled_error = tiled_error;
     GameMain m;
     m.dev_ui_dir = FORGE_UI_DIR;
     m.dev_game_dir = SLICE_DATA_DIR;

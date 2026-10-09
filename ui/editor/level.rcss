@@ -196,3 +196,63 @@
 }
 .zn-label.selected { background-color: #ffd25a; color: #1d1600; }
 .zn-label.spawn { margin: -24px 0px 0px -8px; background-color: #ff78c8; color: #24000f; }
+
+/* «Импорт карты Tiled»: a note after it under the bar, and its window over
+   the whole tab (everything it would do, before anything changes). */
+.tm-note {
+    gap: var(--space-2);
+    align-items: center;
+    padding: 4px var(--space-2);
+    border-radius: 6px;
+    font-size: 13px;
+    background-color: var(--secondary-container);
+    color: var(--on-secondary-container);
+}
+.tm-scrim {
+    position: absolute;
+    left: 0px; top: 0px; right: 0px; bottom: 0px;
+    z-index: 60;
+    background-color: rgba(0, 0, 0, 0.45);
+}
+.tm-window {
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    top: 56px;
+    bottom: 40px;
+    z-index: 70;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: 10px;
+    background-color: var(--surface-container-high);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+}
+.tm-head { align-items: center; gap: var(--space-2); }
+.tm-title { font-size: 16px; font-weight: bold; }
+.tm-lead { font-size: 13px; color: var(--on-surface-variant); }
+.tm-body { gap: var(--space-4); min-height: 0px; }
+.tm-col { flex: 1 1 0px; min-width: 0px; gap: 3px; overflow-y: auto; padding-right: 6px; justify-content: flex-start; }
+.tm-col .section-title { margin-top: var(--space-2); }
+.tm-line { gap: var(--space-2); font-size: 13px; padding: 1px 0px; }
+.tm-line .count { font-family: var(--font-mono); color: var(--on-surface-variant); white-space: nowrap; }
+.tm-line.warn, .tm-line.warn .count, .tm-back { color: var(--warning); }
+.tm-back { font-size: 12px; padding-left: var(--space-3); }
+.tm-layer { gap: 3px; padding: 4px 6px; border-radius: 6px; background-color: var(--surface-container); font-size: 13px; }
+.tm-layer .name { font-weight: bold; }
+.tm-layer .count { font-size: 12px; white-space: nowrap; }
+.tm-targets { gap: 4px; }
+.tm-chip {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    cursor: pointer;
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+}
+.tm-chip:hover { background-color: var(--state-hover-layer); }
+.tm-chip.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); border-color: var(--secondary-container); }
+.tm-switch { gap: var(--space-2); align-items: center; font-size: 13px; cursor: pointer; }
+.tm-refusal { font-size: 13px; padding: 6px var(--space-2); border-radius: 6px; background-color: var(--error-container); color: var(--on-error-container); }
+.tm-foot { gap: var(--space-2); align-items: center; }
+#tm-import.disabled { opacity: 0.4; cursor: default; }

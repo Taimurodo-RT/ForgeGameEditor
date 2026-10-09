@@ -66,6 +66,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <random>
 #include <span>
@@ -388,6 +389,11 @@ public:
         logic_tab.init(ui_, game_dir, logic_file);
         story_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
         story_tab.window = window;
+        level.window = window;
+        assets.on_import_map = [this](const std::filesystem::path& tmx) {
+            open_tab("level");
+            level.open_tiled(tmx);
+        };
         story_tab.init(ui_, story_dir);
         if (!assets.init(ui_, assets_config)) return false;
         context_ = ui_.create_context("editor", width, height);
@@ -1782,6 +1788,7 @@ private:
                    : lt_step_ <= kLightLast ? light_step()
                    : zn_step_ <= kZonesLast ? zones_step()
                    : ot_step_ <= kOwnLast   ? own_tiles_step()
+                   : tm_step_ <= kTiledLast ? tiled_step()
                                             : objects_step();
         const usize stone = tile_named("stone"), sand = tile_named("sand");
         switch (f) {
@@ -4126,6 +4133,611 @@ private:
         default: break;
         }
         ++ot_step_;
+        return true;
+    }
+
+    // --- «Импорт карты Tiled»: games/examples/tiled made from its map, through «Ресурсы» and the import window ---
+    static constexpr u32 kTiledLast = 34;
+    static std::filesystem::path tiled_root() { return std::filesystem::temp_directory_path() / "forge_editor_tiled"; }
+    std::filesystem::path tiled_repo() const { return ed_.game_dir.parent_path() / "examples" / "tiled"; }
+    // The level is new each run, in a folder with a space and Cyrillic in its name.
+    static std::filesystem::path tiled_level() { return tiled_root() / utf8_path("Уровень из Tiled"); }
+    static constexpr const char* kTiledFolder = "Карта Tiled";
+    static constexpr const char* kTiledMap = "Карта Tiled/уровень.tmx";
+    objects::Library& tm_lib() { return *ed_.level_module.library(); }
+    // The templates the import of the map made in the game («Картинка», ids tiled_уровень_…).
+    std::vector<const objects::Template*> tm_templates() {
+        std::vector<const objects::Template*> out;
+        for (const objects::Template& t : tm_lib().templates())
+            if (t.id.rfind("tiled_уровень_", 0) == 0) out.push_back(&t);
+        return out;
+    }
+    struct TmObject {
+        std::string tmpl;
+        f64 x = 0, y = 0;
+        bool operator==(const TmObject&) const = default;
+    };
+    // The level's objects with a LevelId: the template and the place of each.
+    std::map<u64, TmObject> tm_placed() {
+        std::map<u64, TmObject> out;
+        objects::Library& lib = tm_lib();
+        lv().level().scene().ecs().each([&](flecs::entity, const level::LevelId& id, const objects::ObjectRef& r, const scene::Position& p) {
+            const objects::Template* t = lib.find(r.key);
+            out[id.id] = {t ? t->id : "?", p.tile_x(), p.tile_y()};
+        });
+        return out;
+    }
+    // Every file under a folder (as rel → bytes), «Ресурсы»' .meta files aside.
+    static std::map<std::string, std::string> tm_files(const std::filesystem::path& dir) {
+        std::map<std::string, std::string> out;
+        std::error_code ec;
+        for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            if (!it->is_regular_file() || it->path().extension() == ".meta") continue;
+            std::string rel = path_to_utf8(std::filesystem::relative(it->path(), dir));
+            std::replace(rel.begin(), rel.end(), '\\', '/');
+            out[rel] = text_of(it->path());
+        }
+        return out;
+    }
+    // The game's templates, their pictures and sounds, as files.
+    std::map<std::string, std::string> tm_game() {
+        std::map<std::string, std::string> out;
+        for (const auto& [rel, bytes] : tm_files(tm_lib().folder())) out["objects/" + rel] = bytes;
+        for (const auto& [rel, bytes] : tm_files(tm_lib().pictures_folder())) out["pictures/" + rel] = bytes;
+        for (const auto& [rel, bytes] : tm_files(lv().sounds_folder())) out["sounds/" + rel] = bytes;
+        return out;
+    }
+    // The middle pixel of a picture of the plan, and of the palette's icon of its template.
+    static std::array<int, 3> tm_mid(const level::tiled::Picture& p) {
+        const usize i = (static_cast<usize>(p.h / 2) * p.w + p.w / 2) * 4;
+        return i + 2 < p.rgba.size() ? std::array<int, 3>{p.rgba[i], p.rgba[i + 1], p.rgba[i + 2]} : std::array<int, 3>{-1, -1, -1};
+    }
+    std::array<int, 3> tm_icon_mid(const std::string& template_id) {
+        const objects::Template* t = tm_lib().find(std::string_view(template_id));
+        std::vector<u8> icon;
+        for (const level::ObjectDef& d : ed_.level_module.objects())
+            if (t && d.key == t->key) {
+                ed_.level_module.object_icon(d, 32, icon);
+                const usize i = (16 * 32 + 16) * 4;
+                return {icon[i], icon[i + 1], icon[i + 2]};
+            }
+        return {-1, -1, -1};
+    }
+    static std::string rgb_text(const std::array<int, 3>& c) {
+        return std::to_string(c[0]) + "," + std::to_string(c[1]) + "," + std::to_string(c[2]);
+    }
+    const level::tiled::Picture* tm_picture(const char* name) {
+        for (const level::tiled::Picture& p : tm_plan_.pictures)
+            if (p.name == name) return &p;
+        return nullptr;
+    }
+    // Cells of the level unlike the plan's, in the map's rectangle (walls and blocks).
+    u64 tm_wrong_cells() {
+        u64 wrong = 0;
+        for (i32 y = tm_plan_.y0; y < tm_plan_.y1; ++y)
+            for (i32 x = tm_plan_.x0; x < tm_plan_.x1; ++x)
+                wrong += at(x, y, 0) != tm_plan_.at(0, x, y) || at(x, y, 1) != tm_plan_.at(1, x, y);
+        return wrong;
+    }
+    bool tm_has_class(const char* id, const char* cls) {
+        Rml::Element* e = visible(id);
+        return e && e->IsClassSet(cls);
+    }
+    // The map's picture of the chest in «Ресурсы», its colours turned inside out (or back).
+    bool tm_invert_chest() {
+        const std::filesystem::path file = as().abs(std::string(kTiledFolder) + "/картинки/сундук.png");
+        std::vector<u8> bytes;
+        assets::CookedTexture img;
+        if (!read_file(file, bytes) || !assets::decode_image(bytes, img)) return false;
+        for (usize i = 0; i + 3 < img.rgba8.size(); i += 4)
+            for (usize c = 0; c < 3; ++c) img.rgba8[i + c] = static_cast<u8>(255 - img.rgba8[i + c]);
+        std::vector<u8> png;
+        return assets::encode_image(img, ".png", png) && write_file_atomic(file, png);
+    }
+
+    bool tiled_step() {
+        namespace tl = level::tiled;
+        const std::filesystem::path map_dir = as().root() / utf8_path(kTiledFolder);
+        switch (tm_step_) {
+        case 0: {
+            // The level of the steps above stays as it was; the map's import is a level of its own.
+            key(SDLK_S, SDL_KMOD_CTRL);
+            tm_main_ = lv().level().folder();
+            tm_view_ = lv().camera();
+            tm_logic_text_ = logic_text();
+            tm_logic_entries_ = lg().history().cursor();
+            tm_pan_x_ = lg().scheme().pan_x();
+            tm_pan_y_ = lg().scheme().pan_y();
+            std::error_code ec;
+            std::filesystem::remove_all(tiled_root(), ec);
+            std::filesystem::create_directories(tiled_level(), ec);
+            // The map's folder as Tiled left it, put among the project's files.
+            std::filesystem::remove_all(map_dir, ec);
+            std::filesystem::copy(tiled_repo() / utf8_path(kTiledFolder), map_dir, std::filesystem::copy_options::recursive, ec);
+            tm_source_ = tm_files(tiled_repo() / utf8_path(kTiledFolder));
+            check(tm_source_.size() >= 12 && tm_files(map_dir) == tm_source_,
+                  "the map's folder (" + std::to_string(tm_source_.size()) + " files) is among the project's files");
+            tm_game_ = tm_game();
+            check(tm_templates().empty(), "the game has no templates of the map yet");
+            check(lv().open_folder(tiled_level()), "a new level for the map");
+            check(lv().history().cursor() == 0 && lv().level().own_tiles().empty() && !lv().level().around().empty_around &&
+                      lv().level().areas() == level::LevelAreas{},
+                  "with no history, no own tiles or zones, the game's world around");
+            check(click_tab(10) && ed_.tab() == "assets", "«Ресурсы»");
+            as().refresh();
+            break;
+        }
+        case 1:
+            if (hold(!as().busy() && row_of(kTiledFolder) >= 0, "«Ресурсы» list the map's folder")) return true;
+            as().open_folder(kTiledFolder);
+            break;
+        case 2: {
+            if (hold(!as().busy() && row_of(kTiledMap) >= 0, "and the map in it")) return true;
+            click_row(kTiledMap);
+            // The right-click menu of the map.
+            as().on_context(static_cast<u32>(row_of(kTiledMap)), 300, 300, 0);
+            break;
+        }
+        case 3:
+            if (wait(3)) return true;
+            check(as().selection() == std::vector<std::string>{kTiledMap}, "the map chosen");
+            check(shown("as-import-map") && element_text("as-import-map").find("Импортировать в уровень") != std::string::npos,
+                  "its details offer «Импортировать в уровень…»");
+            check(shown("ctx-import-map"), "and so does its right-click menu");
+            check(click_id("ctx-import-map"), "«Импортировать в уровень…» from the menu");
+            check(ed_.tab() == "level" && lv().tiled_open(), "the «Уровень» tab opens with the import window");
+            break;
+        case 4: {
+            if (wait(3)) return true;
+            tm_plan_ = lv().tiled_plan();
+            const tl::Preview pv = lv().tiled_preview();
+            check(shown("tm-window") && shown("tm-import") && shown("tm-cancel") && !tm_has_class("tm-import", "disabled"),
+                  "the window, «Импортировать» and «Отмена»");
+            const std::string w = element_text("tm-window");
+            for (const char* s : {"уровень.tmx", "Бесконечная карта", "Земля и камень", "наборы/декор.tsx", "предметы", "Небо", "Украшения/Декор",
+                                  "Подсказки/Скрытое", "Зона «Пещера», музыка пещера.wav", "Точка появления героя",
+                                  "Шаблон «Картинка» «Сундук»", "Шаблон «Картинка» «Фонарь»", "Музыка пещера.wav", "эллипсы", "ломаные",
+                                  "Изменится в уровне: одним шагом, Ctrl+Z отменит всё сразу", "Ctrl+Z уровня это не убирает",
+                                  "Вокруг карты станет пусто", "Пока вы не нажмёте «Импортировать», ничего не меняется"})
+                check(w.find(s) != std::string::npos, std::string("the window tells: ") + s);
+            check(tm_plan_.cells() == 64u * 48u && tm_plan_.objects.size() == 6 && tm_plan_.pictures.size() == 4 &&
+                      tm_plan_.areas.areas.size() == 1 && tm_plan_.areas.spawn,
+                  "the map: 64 × 48 cells, 6 objects of 4 pictures, a zone, the spawn point");
+            check(pv.refusal.empty() && pv.cells > 0 && pv.objects_new == 6 && pv.templates_new == 4 && pv.around,
+                  "what it would do: cells " + std::to_string(pv.cells) + ", 6 new objects, 4 new templates, nothing around");
+            tm_cells_ = pv.cells;
+            check(lv().history().cursor() == 0 && tm_templates().empty() && tm_game() == tm_game_ && tm_placed().empty(),
+                  "nothing has changed yet");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().tiled_open() && lv().history().cursor() == 0, "Ctrl+Z while it is open: nothing");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!lv().tiled_open() && lv().tiled_note().find("отменён: ничего не изменилось") != std::string::npos,
+                  "Esc is «Отмена»: " + lv().tiled_note());
+            check(lv().history().cursor() == 0 && tm_templates().empty() && tm_game() == tm_game_ && lv().level().own_tiles().empty() &&
+                      lv().level().areas() == level::LevelAreas{} && tm_placed().empty(),
+                  "and nothing changed: the level, the game's files");
+            break;
+        }
+        case 5:
+            if (wait(2)) return true;
+            check(shown("tm-note") && !shown("tm-window") && element_text("tm-note").find("отменён") != std::string::npos,
+                  "the note under the bar says so");
+            check(shown("tm-pick") && click_id("tm-pick") && !lv().tiled_open(), "«Импорт из Tiled…» (offscreen: no dialog)");
+            lv().tiled_picked(as().abs(kTiledMap)); // the file the dialog gives
+            break;
+        case 6: {
+            if (wait(3)) return true;
+            check(lv().tiled_open() && shown("tm-window"), "the map the dialog gives opens the window");
+            const auto& layers = lv().tiled_map().layers;
+            check(layers.size() > 4 && layers[1].name == "Фон" && layers[4].name == "Подсказки/Скрытое", "the layers in the map's order");
+            check(tm_has_class("tm-layer-1-walls", "selected") && tm_has_class("tm-layer-3-blocks", "selected") &&
+                      tm_has_class("tm-layer-4-skip", "selected") && !shown("tm-layer-5-walls"),
+                  "«Фон» to the walls, «Земля» (solid) to the blocks, the hidden layer nowhere; the objects' layer has no choice");
+            check(click_id("tm-layer-1-skip"), "«Не переносить» for «Фон»");
+            u64 walls = 0, blocks = 0;
+            for (usize i = 0; i < tm_plan_.walls.size() && i < lv().tiled_plan().walls.size(); ++i) {
+                walls += lv().tiled_plan().walls[i] != tm_plan_.walls[i];
+                blocks += (lv().tiled_plan().blocks[i] == 0) != (tm_plan_.blocks[i] == 0);
+            }
+            check(walls > 0 && blocks == 0, "other walls in " + std::to_string(walls) + " cells, the blocks where they were");
+            break;
+        }
+        case 7:
+            if (wait(2)) return true;
+            check(tm_has_class("tm-layer-1-skip", "selected") && !tm_has_class("tm-layer-1-walls", "selected"), "the window shows it");
+            check(click_id("tm-layer-1-walls") && lv().tiled_plan().walls == tm_plan_.walls && lv().tiled_preview().cells == tm_cells_,
+                  "back to the walls");
+            check(click_id("tm-around") && !lv().tiled_empty_around() && !lv().tiled_preview().around, "the game's world around: kept");
+            break;
+        case 8: {
+            if (wait(2)) return true;
+            check(element_text("tm-window").find("Вокруг карты станет пусто") == std::string::npos, "the window no longer says it goes");
+            check(click_id("tm-around") && lv().tiled_empty_around() && lv().tiled_preview().around, "nothing around again");
+            // A picture of the game that cannot be written (its place taken by a folder): the import is not done.
+            tm_block_ = tm_lib().pictures_folder() / utf8_path(tl::picture_file(tm_plan_.pictures.back()));
+            std::error_code ec;
+            std::filesystem::create_directories(tm_block_ / utf8_path("занято"), ec);
+            check(click_id("tm-import") && lv().tiled_open() && lv().tiled_note().find("Импорт не сделан") != std::string::npos,
+                  "a picture cannot be written: the window stays and says why: " + lv().tiled_note());
+            check(lv().history().cursor() == 0 && tm_templates().empty() && tm_game() == tm_game_ && lv().level().own_tiles().empty() &&
+                      tm_placed().empty(),
+                  "and nothing changed");
+            std::filesystem::remove_all(tm_block_, ec);
+            break;
+        }
+        case 9: {
+            if (wait(2)) return true;
+            check(shown("tm-window-note") && element_text("tm-window-note").find("Импорт не сделан") != std::string::npos, "the window shows the reason");
+            check(click_id("tm-import") && !lv().tiled_open(), "«Импортировать»: the window closes");
+            check(lv().history().cursor() == 1 && lv().history().undo_label() == "Импорт карты Tiled «уровень.tmx»",
+                  "one step of the history: " + lv().history().undo_label());
+            check(tm_wrong_cells() == 0, "every cell of the map as the plan has it");
+            check(lv().level().own_tiles() == tm_plan_.tiles && lv().level().areas() == tm_plan_.areas &&
+                      lv().level().tiled_record() == tm_plan_.record && lv().level().around().empty_around,
+                  "own tiles, the zone and spawn point, tiled.json's record; nothing around");
+            tm_first_ = tm_placed();
+            bool placed = tm_first_.size() == tm_plan_.objects.size();
+            for (const tl::PlannedObject& po : tm_plan_.objects) {
+                auto it = tm_first_.find(po.level_id);
+                placed = placed && it != tm_first_.end() && it->second.tmpl == tm_plan_.pictures[po.picture].template_id &&
+                         std::fabs(it->second.x - po.x) < 1e-6 && std::fabs(it->second.y - po.y) < 1e-6;
+            }
+            check(placed, "6 «Картинка» objects where the map has them: " + std::to_string(tm_first_.size()));
+            std::error_code ec;
+            check(tm_templates().size() == 4 && std::filesystem::is_regular_file(lv().sounds_folder() / utf8_path("пещера.wav"), ec),
+                  "4 templates and the music in the game");
+            check(lv().tiled_note().find("в уровне") != std::string::npos, lv().tiled_note());
+            view_over(tm_plan_.x0, tm_plan_.y0, tm_plan_.x1, tm_plan_.y1);
+            break;
+        }
+        case 10: {
+            if (wait(3)) return true;
+            check(shown("tm-note") && element_text("tm-note").find("Ctrl+Z отменит всё сразу") != std::string::npos, "the note says what Ctrl+Z does");
+            const tl::Picture* chest = tm_picture("Сундук");
+            check(chest && tm_icon_mid(chest->template_id) == tm_mid(*chest),
+                  "the palette draws «Сундук» with its picture: " + rgb_text(chest ? tm_icon_mid(chest->template_id) : std::array<int, 3>{}) + " and " +
+                      rgb_text(chest ? tm_mid(*chest) : std::array<int, 3>{}));
+            const usize own = lv().tiles().size() - ed_.level_module.tiles().size();
+            check(own == tm_plan_.tiles.tiles.size(), "and the map's tiles: " + std::to_string(own) + " of " + std::to_string(tm_plan_.tiles.tiles.size()));
+            // A cell painted over with the game's stone, taken back.
+            key(SDLK_T, SDL_KMOD_NONE);
+            lv().set_tool(Tool::Brush);
+            lv().select_tile(tile_named("stone"));
+            lv().set_brush_radius(0);
+            click_cell(2, 16);
+            check(at(2, 16) == ed_.level_module.tiles()[tile_named("stone")].value && lv().history().cursor() == 2,
+                  "the map's ore painted over with stone, a step of its own");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(at(2, 16) == tm_plan_.at(1, 2, 16) && lv().history().cursor() == 1, "Ctrl+Z: the ore again");
+            break;
+        }
+        case 11: {
+            // An object of the map: picked with the mouse, deleted, back.
+            key(SDLK_Q, SDL_KMOD_NONE);
+            const tl::PlannedObject* chest = nullptr;
+            for (const tl::PlannedObject& po : tm_plan_.objects)
+                if (po.tiled_id == 3) chest = &po;
+            if (!check(chest != nullptr, "the chest of the map")) break;
+            tm_chest_ = chest->level_id;
+            to_point(chest->x, chest->y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(lv().selection() == std::vector<u64>{tm_chest_}, "a click picks the map's chest");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(!tm_placed().count(tm_chest_) && lv().history().cursor() == 2, "Delete: gone, a step of its own");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(tm_placed() == tm_first_, "Ctrl+Z: back where it was");
+            key(SDLK_Z, SDL_KMOD_NONE);
+            break;
+        }
+        case 12:
+            if (wait(3)) return true;
+            tm_cave_ = tm_plan_.areas.areas.at(0).id;
+            check(lv().mode() == Mode::Zones && click_id(("zn-area-" + level::area_id_text(tm_cave_)).c_str()) && lv().selected_area() == tm_cave_,
+                  "«Зоны»: the map's «Пещера» picked in the list");
+            break;
+        case 13:
+            if (wait(2)) return true;
+            check(lt_type("zn-name", "Грот") && lv().level().areas().find(tm_cave_)->name == "Грот", "renamed «Грот» in the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().areas() == tm_plan_.areas && lv().history().cursor() == 1, "Ctrl+Z: «Пещера» again");
+            key(SDLK_Q, SDL_KMOD_NONE);
+            break;
+        case 14: {
+            if (wait(2)) return true;
+            // The whole import taken back by one Ctrl+Z; the templates stay in the game, as the window said.
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().history().cursor() == 0 && lv().level().own_tiles().empty() && lv().level().areas() == level::LevelAreas{} &&
+                      lv().level().tiled_record().empty() && !lv().level().around().empty_around && tm_placed().empty(),
+                  "Ctrl+Z: no own tiles, zone, spawn point, record or objects; the game's world around again");
+            u64 own = 0;
+            for (i32 y = tm_plan_.y0; y < tm_plan_.y1; ++y)
+                for (i32 x = tm_plan_.x0; x < tm_plan_.x1; ++x) own += at(x, y, 0) >= level::kFirstOwnTile || at(x, y, 1) >= level::kFirstOwnTile;
+            check(own == 0, "no cell has a tile of the map: " + std::to_string(own));
+            check(tm_templates().size() == 4, "the templates stay in the game");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().history().cursor() == 1 && tm_wrong_cells() == 0 && lv().level().own_tiles() == tm_plan_.tiles &&
+                      lv().level().areas() == tm_plan_.areas && tm_placed() == tm_first_ && lv().level().around().empty_around,
+                  "Ctrl+Y: all of it again, the same ids");
+            check(click_tab(6) && ed_.tab() == "logic", "«Логика»");
+            break;
+        }
+        case 15: {
+            if (wait(2)) return true;
+            const std::string cave = thing_of(tm_cave_);
+            check(shown("lg-add-" + cave) && click("lg-add-" + cave) && lg().links().spot(cave), "the map's «Пещера» onto the board");
+            break;
+        }
+        case 16:
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("hero") && thing_click(thing_of(tm_cave_)) && lg().picking(), "the hero, then «Пещера»");
+            break;
+        case 17: {
+            std::string offered;
+            i64 at_ = -1;
+            for (usize i = 0; i < lg().pick_options(); ++i) {
+                offered += " «" + lg().pick_phrase(i) + "»";
+                if (lg().pick_phrase(i).rfind("Герой входит в Пещер", 0) == 0) at_ = static_cast<i64>(i);
+            }
+            check(at_ >= 0 && lg().pick(static_cast<usize>(at_)), "«Герой входит в Пещеру» among:" + offered);
+            tm_link_ = lg().selected_link();
+            check(tm_link_ && lg().problem_of(tm_link_).empty(), "a link that works: " + lg().meaning_of(tm_link_));
+            break;
+        }
+        case 18: {
+            if (wait(2)) return true;
+            check(shown("lg-refine-once") && click("lg-refine-once") && lg().links().find(tm_link_)->once, "«Только один раз»");
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        }
+        case 19: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            check(click("sc-add-" + std::to_string(tm_link_)) && sc.palette_open(), "«+ Нода» on the link");
+            sc.set_search("переменную игры");
+            break;
+        }
+        case 20:
+            if (wait(2)) return true;
+            check(click("sc-pal-api.game.set_var") && !lg().scheme().palette_open(), "«Задать переменную игры» added");
+            break;
+        case 21: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            const script::Graph* g = sc.graph(tm_link_);
+            if (!check(g != nullptr, "the link's scheme")) break;
+            u32 set = 0, tail = 0;
+            for (const script::GraphNode& n : g->nodes) {
+                if (n.def == "api.game.set_var") set = n.uid;
+                if (n.def == "logic.act") tail = n.uid;
+            }
+            for (bool more = true; more;) {
+                more = false;
+                for (const script::GraphLink& w : g->links)
+                    if (w.from_node == tail && w.from_pin == script::kFlowNext && w.to_node != set) {
+                        tail = w.to_node;
+                        more = true;
+                        break;
+                    }
+            }
+            const std::string l = std::to_string(tm_link_), s = std::to_string(set), t = std::to_string(tail);
+            check(set && tail && click("sc-pin-" + l + "-" + t + "-o-next") && click("sc-pin-" + l + "-" + s + "-i-in"), "wired after «Сделать»");
+            // «Медь для кузнеца» shows in the HUD.
+            check(sc.set_value(tm_link_, set, "name", "quest.copper") && sc.set_value(tm_link_, set, "value", "1"), "quest.copper = 1");
+            check(lg().problem_of(tm_link_).empty() && sc.node_problem(tm_link_, set).empty(), "the scheme works");
+            lg().set_mode("links");
+            click_tab(0);
+            break;
+        }
+        case 22: {
+            if (wait(2)) return true;
+            // Saved, opened again: as imported.
+            key(SDLK_S, SDL_KMOD_CTRL);
+            std::string files;
+            u32 tiles = 0, objects = 0;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::directory_iterator(tiled_level(), ec)) {
+                const std::string n = path_to_utf8(e.path().filename());
+                tiles += n.starts_with("r.");
+                objects += n.starts_with("e.");
+                files += " " + n;
+            }
+            check(!lv().dirty() && tiles > 0 && objects > 0, "Ctrl+S writes the level:" + files);
+            for (const char* f : {"tiles.json", "tiles.png", "world.json", "areas.json", "tiled.json"})
+                check(std::filesystem::is_regular_file(tiled_level() / f, ec), std::string("with ") + f);
+            check(lv().open_folder(tiled_level()) && lv().history().cursor() == 0, "the level opened again");
+            check(lv().level().own_tiles() == tm_plan_.tiles && lv().level().areas() == tm_plan_.areas &&
+                      lv().level().tiled_record() == tm_plan_.record && lv().level().around().empty_around,
+                  "with its own tiles, the zone, the spawn point, the record, nothing around");
+            view_over(tm_plan_.x0, tm_plan_.y0, tm_plan_.x1, tm_plan_.y1);
+            break;
+        }
+        case 23:
+            if (hold(lv().level().loaded(tm_plan_.x0, tm_plan_.y0) && lv().level().loaded(tm_plan_.x1 - 1, tm_plan_.y1 - 1) &&
+                         tm_placed().size() == tm_first_.size(),
+                     "the map's chunks load"))
+                return true;
+            check(tm_wrong_cells() == 0 && tm_placed() == tm_first_, "the cells and the objects as imported");
+            check(click_tab(6), "«Логика»");
+            break;
+        case 24:
+            if (wait(2)) return true;
+            check(lg().problem_of(tm_link_).empty() && lg().phrase_of(tm_link_).rfind("Герой входит в Пещер", 0) == 0,
+                  "«Логика» finds the zone of the opened level: " + lg().phrase_of(tm_link_));
+            // The map imported again, as it is: nothing to change.
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        case 25:
+            if (wait(2)) return true;
+            click_row(kTiledMap);
+            break;
+        case 26:
+            if (wait(2)) return true;
+            check(click_id("as-import-map") && lv().tiled_open(), "«Импортировать в уровень…» again");
+            break;
+        case 27: {
+            if (wait(2)) return true;
+            const tl::Preview& pv = lv().tiled_preview();
+            const tl::Plan& p = lv().tiled_plan();
+            check(pv.cells == 0 && pv.objects_new == 0 && pv.objects_same == 6 && pv.objects_back.empty() && pv.templates_new == 0 &&
+                      pv.templates_updated == 0 && !pv.around && p.zones_new == 0 && p.zones_updated == 0 && p.tiles_new == 0,
+                  "the window: nothing would change");
+            check(element_text("tm-window").find("уже есть") != std::string::npos, "the templates: «уже есть»");
+            check(click_id("tm-import") && !lv().tiled_open() && lv().history().cursor() == 0 && tm_templates().size() == 4 &&
+                      tm_placed() == tm_first_,
+                  "«Импортировать»: no step, nothing doubled");
+            check(lv().tiled_note().find("ничего не изменилось") != std::string::npos, lv().tiled_note());
+            // The chest's picture changed in the map's folder: the template gets it, the level stays.
+            check(tm_invert_chest(), "the chest's picture changed in the map's folder");
+            lv().tiled_picked(as().abs(kTiledMap));
+            break;
+        }
+        case 28: {
+            if (wait(3)) return true;
+            std::optional<tl::Picture> chest;
+            for (const tl::Picture& p : lv().tiled_plan().pictures)
+                if (p.name == "Сундук") chest = p;
+            const tl::Preview& pv = lv().tiled_preview();
+            check(lv().tiled_open() && chest && pv.templates_updated == 1 && pv.cells == 0 && pv.objects_same == 6,
+                  "the window: one template to update, the level as it is");
+            check(element_text("tm-window").find("обновится") != std::string::npos, "«Сундук»: «обновится»");
+            const objects::Template* t = chest ? tm_lib().find(std::string_view(chest->template_id)) : nullptr;
+            tm_old_picture_ = t ? tm_lib().picture_file(*t) : std::filesystem::path();
+            check(click_id("tm-import") && !lv().tiled_open() && lv().history().cursor() == 0, "imported: the level has no new step");
+            t = chest ? tm_lib().find(std::string_view(chest->template_id)) : nullptr;
+            std::error_code ec;
+            check(t && tm_lib().picture_file(*t) != tm_old_picture_ && !std::filesystem::exists(tm_old_picture_, ec),
+                  "the template has the new picture; the old one is gone");
+            check(chest && tm_icon_mid(chest->template_id) == tm_mid(*chest) && tm_mid(*chest) != tm_mid(*tm_picture("Сундук")),
+                  "the palette shows it: " + rgb_text(chest ? tm_icon_mid(chest->template_id) : std::array<int, 3>{}));
+            check(lv().tiled_note().find("уровень не изменился, в игре записано: шаблонов «Картинка» 1") != std::string::npos, lv().tiled_note());
+            // And back as it was.
+            const std::string original = tm_source_.at("картинки/сундук.png");
+            check(write_file_atomic(as().abs(std::string(kTiledFolder) + "/картинки/сундук.png"),
+                                    {reinterpret_cast<const u8*>(original.data()), original.size()}),
+                  "the chest's picture back in the map's folder");
+            lv().tiled_picked(as().abs(kTiledMap));
+            break;
+        }
+        case 29: {
+            if (wait(3)) return true;
+            check(lv().tiled_open() && lv().tiled_preview().templates_updated == 1 && click_id("tm-import") && !lv().tiled_open(), "imported again");
+            const tl::Picture* chest = tm_picture("Сундук");
+            const objects::Template* t = chest ? tm_lib().find(std::string_view(chest->template_id)) : nullptr;
+            check(t && tm_lib().picture_file(*t).filename() == utf8_path(tl::picture_file(*chest)) && tm_icon_mid(chest->template_id) == tm_mid(*chest),
+                  "the first picture again, in the palette too");
+            check(tm_files(map_dir) == tm_source_ && tm_files(tiled_repo() / utf8_path(kTiledFolder)) == tm_source_,
+                  "the map's folder as Tiled left it (here and in the repository)");
+            // The example: the level, the templates and their pictures, the music, the links.
+            const std::filesystem::path made = tiled_root() / "example";
+            std::error_code ec;
+            std::filesystem::create_directories(made / "level", ec);
+            std::filesystem::copy(tiled_level(), made / "level", std::filesystem::copy_options::recursive, ec);
+            std::filesystem::create_directories(made / "objects", ec);
+            std::filesystem::create_directories(made / "pictures", ec);
+            std::filesystem::create_directories(made / "sounds", ec);
+            for (const objects::Template* tp : tm_templates()) {
+                std::filesystem::copy_file(tp->file, made / "objects" / tp->file.filename(), ec);
+                std::filesystem::copy_file(tm_lib().picture_file(*tp), made / "pictures" / tm_lib().picture_file(*tp).filename(), ec);
+            }
+            std::filesystem::copy_file(lv().sounds_folder() / utf8_path("пещера.wav"), made / "sounds" / utf8_path("пещера.wav"), ec);
+            std::filesystem::copy_file(ed_.logic_file, made / "logic.json", ec);
+            check(!ec, "the example made in " + path_to_utf8(made));
+            // The repository's copy is this one, byte for byte (line ends aside); it has the map's folder, README.md and
+            // tmxrasterizer's frames of the map (tools/tiled_example/rasterize.py) besides.
+            auto plain = [](const std::map<std::string, std::string>& files) {
+                std::map<std::string, std::string> out;
+                for (auto [rel, bytes] : files) {
+                    if (rel.ends_with(".json")) std::erase(bytes, '\r');
+                    out[rel] = bytes;
+                }
+                return out;
+            };
+            std::map<std::string, std::string> repo;
+            for (const auto& [rel, bytes] : tm_files(tiled_repo()))
+                if (!rel.starts_with(kTiledFolder) && rel != "README.md" && !rel.starts_with("tmxrasterizer")) repo[rel] = bytes;
+            const auto mine = plain(tm_files(made));
+            repo = plain(repo);
+            std::string differ;
+            for (const auto& [rel, bytes] : mine)
+                if (!repo.count(rel) || repo[rel] != bytes) differ += " " + rel;
+            for (const auto& [rel, bytes] : repo)
+                if (!mine.count(rel)) differ += " -" + rel;
+            check(differ.empty(), "games/examples/tiled is the example made here (" + std::to_string(mine.size()) + " files); differ:" + differ);
+            break;
+        }
+        case 30: {
+            // «Играть отсюда» from the spawn point: the level's own folder.
+            lv().camera().x = tm_plan_.areas.spawn_x;
+            lv().camera().y = tm_plan_.areas.spawn_y - 1;
+            check(lv().play_here(), "«Играть отсюда» by the spawn point");
+            const auto cmd = lv().play_command(tm_plan_.areas.spawn_x, tm_plan_.areas.spawn_y);
+            check(cmd.size() >= 4 && utf8_path(cmd[3]) == tiled_level(), "the game gets the level's folder");
+            // «Логика» back as it was before the example (its links are in the example's copy).
+            while (lg().history().cursor() > tm_logic_entries_ && lg().history().can_undo()) lg().undo();
+            logic::Logic before;
+            check(before.parse(tm_logic_text_) && before.json() == lg().links().json(), "«Логика» as before the example");
+            write_file_atomic(ed_.logic_file, {reinterpret_cast<const u8*>(tm_logic_text_.data()), tm_logic_text_.size()});
+            check(click_tab(6), "the Logic tab");
+            break;
+        }
+        case 31:
+            if (wait(2)) return true;
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        case 32: {
+            if (wait(2)) return true;
+            // The view of the schemes panned back with the mouse to where it was.
+            SchemeView& sc = lg().scheme();
+            Rml::Element* pane = ed_.find_element("lg-scheme");
+            if (!check(pane != nullptr, "the scheme pane")) break;
+            const Rml::Vector2f at0 = pane->GetAbsoluteOffset(Rml::BoxArea::Padding);
+            const f32 px = at0.x + pane->GetClientWidth() - 30, py = at0.y + pane->GetClientHeight() - 20;
+            const f32 dx = tm_pan_x_ - sc.pan_x(), dy = tm_pan_y_ - sc.pan_y();
+            mouse(SDL_EVENT_MOUSE_MOTION, px, py);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, px, py);
+            for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, px + dx * static_cast<f32>(i) / 4, py + dy * static_cast<f32>(i) / 4);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, px + dx, py + dy);
+            check(sc.pan_x() == tm_pan_x_ && sc.pan_y() == tm_pan_y_, "the schemes' view is back");
+            check(click("lg-mode-links") && lg().mode() == "links", "«Связи»");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            lg().select_link(0);
+            check(lg().selected_thing().empty() && lg().selected_link() == 0 && lg().history().cursor() == tm_logic_entries_,
+                  "nothing selected, the history where it was");
+            click_tab(0);
+            break;
+        }
+        case 33: {
+            if (wait(2)) return true;
+            // The game's files as they were: the map's templates, their pictures and the music go; «Ресурсы» without the map.
+            std::vector<std::pair<u64, std::filesystem::path>> made;
+            for (const objects::Template* t : tm_templates()) made.emplace_back(t->key, tm_lib().picture_file(*t));
+            for (const auto& [key, pic] : made) {
+                check(tm_lib().remove(key), "a template of the map taken out of the game");
+                std::error_code ec;
+                std::filesystem::remove(pic, ec);
+            }
+            std::error_code ec;
+            std::filesystem::remove(lv().sounds_folder() / utf8_path("пещера.wav"), ec);
+            check(tm_game() == tm_game_, "the game's templates, pictures and sounds as before the import");
+            std::filesystem::remove_all(map_dir, ec);
+            as().select({});
+            as().open_folder("");
+            as().refresh();
+            check(lv().open_folder(tm_main_), "the level of the steps above opens again");
+            lv().camera() = tm_view_;
+            key(SDLK_Q, SDL_KMOD_NONE);
+            break;
+        }
+        case 34:
+            if (wait(3)) return true;
+            check(lv().mode() == Mode::Select && !lv().tiled_open() && lv().level().tiled_record().empty() && !lv().level().around().empty_around,
+                  "the level of the steps above, with no import");
+            break;
+        default: break;
+        }
+        ++tm_step_;
         return true;
     }
 
@@ -12153,6 +12765,17 @@ private:
     usize ot_game_tiles_ = 0;
     u64 ot_map_ = 0;
     std::string ot_icon_, ot_tiles_json_;
+    // The import of games/examples/tiled's map
+    u32 tm_step_ = 0, tm_link_ = 0;
+    u64 tm_cells_ = 0, tm_chest_ = 0, tm_cave_ = 0;
+    std::filesystem::path tm_main_, tm_block_, tm_old_picture_;
+    render::Camera2D tm_view_;
+    std::string tm_logic_text_;
+    usize tm_logic_entries_ = 0;
+    f32 tm_pan_x_ = 0, tm_pan_y_ = 0;
+    std::map<std::string, std::string> tm_source_, tm_game_;
+    level::tiled::Plan tm_plan_;
+    std::map<u64, TmObject> tm_first_;
     level::LevelAreas zn_made_;
     f64 zn_spawn_x_ = 0, zn_spawn_y_ = 0;
     f32 zn_pan_x_ = 0, zn_pan_y_ = 0;

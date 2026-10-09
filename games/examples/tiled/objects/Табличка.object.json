@@ -1,0 +1,10 @@
+{
+  "id": "tiled_уровень_предметы_3",
+  "name": "Табличка",
+  "kind": "picture",
+  "about": "Картинка из карты Tiled «уровень.tmx».",
+  "picture": "tiled_уровень_предметы_3_789c8841.png",
+  "values": {
+    "half_height": 0.5
+  }
+}
