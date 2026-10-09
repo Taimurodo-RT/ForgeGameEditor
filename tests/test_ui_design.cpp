@@ -538,7 +538,7 @@ TEST_CASE("ui design: the link to the game survives saving and goes onto the pag
     CHECK(contains(html, "forge-text=\"Монеты: {inv.coins} &amp; &quot;всё&quot;\""));
     // Only what shows something takes clicks: the empty frame lets them through to the world.
     const std::string root = "#n" + std::to_string(screen.root.id);
-    CHECK(contains(html, "body, " + root + " {\n  pointer-events: none;"));
+    CHECK(contains(html, "html, body, " + root + " {\n  pointer-events: none;"));
     const std::string mouse = "#n" + std::to_string(buy.id) + ", #n" + std::to_string(bar.id) + ", #n" + std::to_string(label.id) + " {\n  pointer-events: auto;";
     CHECK(contains(html, mouse));
     CHECK_FALSE(contains(html, "#n" + std::to_string(empty_frame.id) + ", "));

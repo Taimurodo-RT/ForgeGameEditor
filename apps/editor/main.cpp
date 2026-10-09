@@ -8250,23 +8250,28 @@ private:
                       "Esc closes neither W2 (no Esc) nor W1 under it, nor the check");
                 check(said() == "Esc: окно «" + ue_wb_t2_ + "» по Esc не закрывается; в игре Esc откроет паузу",
                       "the panel says what Esc does: " + said());
-                check(at(ue().check_box(w2, "Закрыть2")), "W2's «Закрыть2» clicked");
+                check(at(ue().check_box(w1, "Ещё")), "W1's «Ещё» clicked beside W2's button");
                 return true;
             }
             case 18:
+                check(said() == "Окно уже открыто: «" + ue_wb_t2_ + "»" && ue().check_windows() == std::vector<std::string>{w1, w2},
+                      "W2 does not darken: the click beside its button reaches W1 under it, and W2 stays where it is: " + said());
+                check(at(ue().check_box(w2, "Закрыть2")), "W2's «Закрыть2» clicked");
+                return true;
+            case 19:
                 check(ue().check_windows() == std::vector<std::string>{w1} && said() == "Закрыто окно «" + ue_wb_t2_ + "»",
                       "«Закрыть2» closed only W2");
                 key(SDLK_ESCAPE, SDL_KMOD_NONE);
                 check(ue().checking() && ue().check_windows().empty() && said() == "Esc: закрыто окно «" + ue_wb_t1_ + "»",
                       "Esc closes W1, now on top");
                 return true;
-            case 19: {
+            case 20: {
                 const auto state = ue_wb_rows("ue-check-state");
                 check(state.size() == 1 && state[0].first == "Игра идёт: ни одно открытое окно не ставит её на паузу", "«Окна»: the game goes on: " + ue_wb_text(state));
                 check(at(ue().layer_box(ue_wb_count_)), "«Счёт» clicked again");
                 return true;
             }
-            case 20:
+            case 21:
                 check(ue_sd_var("test.count") == 2, "with W1 gone the click reaches H again");
                 key(SDLK_ESCAPE, SDL_KMOD_NONE);
                 check(!ue().checking(), "Esc ends the check");

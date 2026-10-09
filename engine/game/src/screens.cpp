@@ -464,6 +464,9 @@ struct GameScreens::Impl : Rml::EventListener {
             FORGE_ERROR("экран %s не построился", p.name.c_str());
             return false;
         }
+        // The page itself is see-through for clicks (only what shows something takes them), pages written before
+        // the editor said so too: else it caught them for the screens under it.
+        p.doc->SetProperty("pointer-events", "none");
         p.doc->AddEventListener(Rml::EventId::Click, this);
         p.root = nullptr;
         p.dim = nullptr;

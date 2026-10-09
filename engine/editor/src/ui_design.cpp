@@ -1976,10 +1976,11 @@ std::string screen_html(const Screen& screen, const HtmlOptions& options) {
     if (options.library && !screen.library) write_states(screen, *options.library, html);
     if (!screen.library) {
         // Over the world only what shows something takes the mouse (the
-        // screen itself is see-through for clicks).
+        // screen itself is see-through for clicks, the page too: else it
+        // caught them for the screens under it).
         std::string list;
         for (const Node& c : screen.root.children) mouse_layers(c, list);
-        html += "body, #n" + std::to_string(screen.root.id) + " {\n  pointer-events: none;\n}\n";
+        html += "html, body, #n" + std::to_string(screen.root.id) + " {\n  pointer-events: none;\n}\n";
         if (!list.empty()) html += list + " {\n  pointer-events: auto;\n}\n";
         // Buttons take the keyboard (Tab, then Enter or Space) where the world
         // does not: the main menu and windows that stop the game. Over a

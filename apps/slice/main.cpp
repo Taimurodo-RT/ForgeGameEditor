@@ -909,6 +909,7 @@ private:
                 const Rml::Vector2i size = s.context()->GetDimensions();
                 const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y);
                 auto page = [&](const std::string& root, const std::string& attrs, bool veil, const std::string& inside) {
+                    // As pages were written before 13.11: the page itself is not said to let clicks through.
                     return "<html><head><style>body, #" + root + " { pointer-events: none; } #" + root +
                            " { position: relative; width: 100%; height: 100%; } #" + root + " > div { pointer-events: auto; }" +
                            (veil ? " #forge-dim { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; "
@@ -986,8 +987,18 @@ private:
             }
             if (f == 15) SDL_Delay(350); // the window and its veil fade away
             if (f == 17) check(click(s, "o-count"), "кнопка HUD снова нажимается");
-            if (f == 19) check(s.vars().get("test.hud").number() == 2, "без окна щелчок снова доходит до HUD");
-            if (f < 20) return false;
+            if (f == 19) {
+                check(s.vars().get("test.hud").number() == 2, "без окна щелчок снова доходит до HUD");
+                // A window without the veil: a click beside its buttons goes to the HUD under it.
+                check(sc.show("тест_без_esc", true), "окно без затемнения открыто над HUD");
+            }
+            if (f == 21) check(click(s, "o-count"), "щелчок мимо кнопок окна без затемнения");
+            if (f == 23) {
+                check(s.vars().get("test.hud").number() == 3 && sc.shown("тест_без_esc"), "дошёл до кнопки HUD под окном, окно осталось");
+                check(click(s, "o-close"), "окно закрывается своей кнопкой");
+            }
+            if (f == 25) check(sc.windows().empty(), "окон нет");
+            if (f < 26) return false;
             for (const char* n : {"тест_hud2", "тест_затемнение", "тест_без_esc", "тест_только_меню"}) sc.remove(n);
             return true;
         }});
