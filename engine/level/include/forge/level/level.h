@@ -9,14 +9,15 @@
 // places through it, so one editor serves every game.
 //
 // Changes are kept as region files in the level folder (tiles of changed
-// chunks, objects of visited chunks) and physics.json (the world's gravity);
-// a new game starts from a copy of that folder, and the generator fills in
-// the rest.
+// chunks, objects of visited chunks), physics.json (the world's gravity) and
+// light.json (the time of day); a new game starts from a copy of that
+// folder, and the generator fills in the rest.
 
 #include "forge/core/math.h"
 #include "forge/core/types.h"
 #include "forge/objects/library.h"
 #include "forge/render/camera.h"
+#include "forge/render/lighting.h"
 #include "forge/scene/scene.h"
 #include "forge/sim/cells.h"
 #include "forge/sim/tiles.h"
@@ -82,11 +83,45 @@ bool load_physics(const std::filesystem::path& folder, LevelPhysics& out, bool* 
                   std::string* error = nullptr);
 bool save_physics(const std::filesystem::path& folder, const LevelPhysics& p, std::string* error = nullptr);
 
+// The level's light that is not its light sources: the time of day, in hours
+// (0 ≤ time < 24), which sets the sky's light. Kept in light.json in the level
+// folder; without it noon (12:00), the light the game always had. Light
+// sources are objects of the level (LightSource).
+struct LevelLight {
+    f32 time = 12;
+    friend bool operator==(const LevelLight&, const LevelLight&) = default;
+};
+// Finite and within 0 ≤ time < 24.
+bool valid_light(const LevelLight& l);
+// As load_physics, for folder/light.json.
+bool load_light(const std::filesystem::path& folder, LevelLight& out, bool* found = nullptr, std::string* error = nullptr);
+bool save_light(const std::filesystem::path& folder, const LevelLight& l, std::string* error = nullptr);
+
+// A light source placed in a level: an object of it, its scene::Position the
+// centre. Its colour, how bright it is at the centre and how far its light
+// goes are three settings that do not change each other: the light fades
+// smoothly to nothing at the radius (render::lamp_light), however bright.
+struct LightSource {
+    f32 r = 1, g = 0.82f, b = 0.55f; // colour, 0..1 each
+    f32 brightness = 1.5f;           // 0..kMaxBrightness; 0 gives no light
+    f32 radius = 8;                  // tiles, kMinLightRadius..kMaxLightRadius
+};
+inline constexpr f32 kMaxBrightness = 4;
+inline constexpr f32 kMinLightRadius = 1;
+inline constexpr f32 kMaxLightRadius = render::kMaxLampRadius;
+// The lamp a source at (x, y) gives: its colour times its brightness, its
+// radius. Values a file got wrong are kept within the limits; a number that
+// is not finite gives no light.
+render::PointLight point_light(f64 x, f64 y, const LightSource& s);
+
 // What the world view shows besides the tiles.
 struct ViewOptions {
     bool game_light = false; // the game's own light (dark caves, torches) instead of daylight
     bool grid = false;
     bool chunks = false; // chunk borders
+    // An hour to look at the level in instead of its own (LevelLight::time),
+    // only in the view: negative: the level's.
+    f32 preview_time = -1;
 };
 
 class Level;
@@ -206,13 +241,14 @@ public:
     // the view: undo of a stroke made elsewhere.
     void ensure_loaded(const world::Rect& tiles);
 
-    // Writes changed chunks and objects to the folder, and physics.json when
-    // the physics changed.
+    // Writes changed chunks and objects to the folder, physics.json when the
+    // physics changed and light.json when the time of day did.
     struct SaveReport {
         bool ok = false;
         u32 tile_chunks = 0;
         u32 object_chunks = 0;
         bool physics = false; // physics.json written
+        bool light = false;   // light.json written
         f64 ms = 0;
         std::string error; // when not ok, in the author's words
     };
@@ -226,6 +262,13 @@ public:
     // Why physics.json could not be read when the level opened (the game's
     // pull is used then); empty when it was fine or not there.
     const std::string& physics_error() const { return physics_error_; }
+
+    // The time of day (light.json, else noon).
+    const LevelLight& light() const { return light_; }
+    void set_light(const LevelLight& l);
+    bool light_changed() const { return light_ != light_saved_; }
+    // Why light.json could not be read (noon is used then).
+    const std::string& light_error() const { return light_error_; }
 
     // Bumped by every edit made through set_tile (for "unsaved" marks).
     u64 edits() const { return edits_; }
@@ -259,6 +302,8 @@ private:
     u64 object_edits_ = 0;
     LevelPhysics physics_, physics_saved_;
     std::string physics_error_;
+    LevelLight light_, light_saved_;
+    std::string light_error_;
 };
 
 // Copies a level folder into a game's world folder (a new game starts from
@@ -269,3 +314,5 @@ bool copy_level(const std::filesystem::path& level, const std::filesystem::path&
 
 FORGE_REFLECT_DECLARE(forge::level::LevelId)
 FORGE_REFLECT_DECLARE(forge::level::LevelPhysics)
+FORGE_REFLECT_DECLARE(forge::level::LevelLight)
+FORGE_REFLECT_DECLARE(forge::level::LightSource)

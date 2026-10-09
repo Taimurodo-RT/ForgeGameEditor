@@ -6,6 +6,7 @@
 #include "forge/core/log.h"
 #include "forge/core/time.h"
 #include "forge/data/json.h"
+#include "forge/level/light.h"
 #include "forge/script/host.h"
 #include "forge/ui/ui.h"
 
@@ -109,6 +110,8 @@ struct SliceGame::Level {
     std::unique_ptr<script::ScriptHost> scripts;
     std::unique_ptr<logic::Runtime> links;
     flecs::entity hero;
+    // The time of day the author gave the level (light.json came with it into the save).
+    forge::level::LevelLight light;
     // Queries belong to the ECS world: declared last, released first.
     Objects objects;
 };
@@ -140,6 +143,8 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     register_components(*L->scene);
     // The editor's ids of the level's objects stay with them in the game and its saves.
     L->scene->register_component<forge::level::LevelId>();
+    // And its light sources, placed in the «Свет» mode.
+    L->scene->register_component<forge::level::LightSource>();
     attach_objects(library_, *L->scene);
     if (!save_folder.empty() && !L->scene->open_save(save_folder, error)) return nullptr;
     L->scene->set_populator([this](ChunkCoord c, scene::Scene& s) { populate(*gen_, library_, c, s); });
@@ -156,6 +161,10 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
         if (std::string why; !forge::level::load_physics(save_folder, p, nullptr, &why))
             FORGE_WARN("slice: %s; the game's gravity is used", why.c_str());
         L->sim->set_gravity(p.gravity_x, p.gravity_y);
+        if (std::string why; !forge::level::load_light(save_folder, L->light, nullptr, &why)) {
+            FORGE_WARN("slice: %s; noon is used", why.c_str());
+            L->light = {};
+        }
     }
 
     flecs::world& ecs = L->scene->ecs();
@@ -907,6 +916,18 @@ std::vector<SliceGame::Point> SliceGame::points() const {
     return out;
 }
 
+std::vector<SliceGame::Lamp> SliceGame::light_sources() const {
+    std::vector<Lamp> out;
+    if (!level_) return out;
+    level_->scene->ecs().each([&](flecs::entity e, const Position& p, const forge::level::LightSource& s) {
+        const forge::level::LevelId* id = e.try_get<forge::level::LevelId>();
+        out.push_back({id ? id->id : 0, p.tile_x(), p.tile_y(), s});
+    });
+    return out;
+}
+
+f32 SliceGame::level_hour() const { return level_ ? level_->light.time : std::nanf(""); }
+
 flecs::entity_t SliceGame::nearest_item(f64 x, f64 y, f64 radius) const {
     if (!level_) return 0;
     flecs::entity_t best = 0;
@@ -1549,8 +1570,10 @@ void SliceGame::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 wi
     }
     tiles_.prepare(cmd, camera_, width, height);
     sprites_.prepare(cmd, batch_, camera_, width, height);
+    lights_.rules().sky_color = sky_light(level_->light.time);
     for (const auto& [x, y] : torches_) lights_.add({x, y, kTorchLight.r, kTorchLight.g, kTorchLight.b});
-    if (running_ && hero_alive()) lights_.add({hero_x_, hero_y_ - 0.5, 0.55f, 0.5f, 0.45f}); // a little light to see by
+    if (running_ && hero_alive() && hero_light_) lights_.add({hero_x_, hero_y_ - 0.5, 0.55f, 0.5f, 0.45f}); // a little light to see by
+    forge::level::add_light_sources(*level_->scene, lights_);
     lights_.prepare(cmd, *level_->world, camera_, width, height);
     particles_.simulate(cmd, static_cast<f32>(frame_dt_));
 

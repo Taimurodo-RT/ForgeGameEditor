@@ -35,6 +35,7 @@ bool Level::open(const fs::path& folder, std::string* error) {
     scene_ = std::make_unique<scene::Scene>(*world_);
     module_.setup_scene(*scene_);
     scene_->register_component<LevelId>();
+    scene_->register_component<LightSource>();
     ids_ = scene_->ecs().query<LevelId>();
     if (!folder.empty() && !scene_->open_save(folder, error)) return false;
     edits_ = 0;
@@ -46,7 +47,19 @@ bool Level::open(const fs::path& folder, std::string* error) {
     if (!folder.empty() && !load_physics(folder, physics_, nullptr, &physics_error_))
         FORGE_WARN("Физика уровня: %s; действует гравитация игры", physics_error_.c_str());
     physics_saved_ = physics_;
+    // The same for light.json: noon meanwhile.
+    light_ = {};
+    light_error_.clear();
+    if (!folder.empty() && !load_light(folder, light_, nullptr, &light_error_))
+        FORGE_WARN("Свет уровня: %s; действует полдень", light_error_.c_str());
+    light_saved_ = light_;
     return true;
+}
+
+void Level::set_light(const LevelLight& l) {
+    if (l == light_) return;
+    light_ = l;
+    ++edits_;
 }
 
 void Level::set_physics(const LevelPhysics& p) {
@@ -92,6 +105,17 @@ Level::SaveReport Level::save() {
         } else {
             r.ok = false;
             r.error = error;
+        }
+    }
+    if (light_changed()) {
+        std::string error;
+        if (save_light(folder_, light_, &error)) {
+            light_saved_ = light_;
+            light_error_.clear();
+            r.light = true;
+        } else {
+            r.ok = false;
+            r.error = r.error.empty() ? error : r.error + "; " + error;
         }
     }
     r.ms = ns_to_ms(time_now_ns() - start);

@@ -137,6 +137,21 @@ public:
         forge::sim::GravitySource source;
     };
     std::vector<Point> points() const;
+    // Light: the level's sources loaded now (with the editor's ids), the hour
+    // the level is lit at, and the frame's light (the camera it was made with,
+    // the sources with a radius at a point). The hero's own little light can
+    // be put out to compare with the editor, which has no hero.
+    struct Lamp {
+        forge::u64 id = 0;
+        f64 x = 0, y = 0;
+        forge::level::LightSource source;
+    };
+    std::vector<Lamp> light_sources() const;
+    f32 level_hour() const;
+    forge::render::LightRenderer& lights() { return lights_; }
+    forge::render::Camera2D& camera() { return camera_; }
+    void set_hero_light(bool on) { hero_light_ = on; }
+    SDL_GPUDevice* device() const { return device_; }
     // The item nearest to a point within radius (0: none), and where an
     // entity is now (false: gone).
     flecs::entity_t nearest_item(f64 x, f64 y, f64 radius) const;
@@ -246,6 +261,7 @@ private:
     f64 location_wait_ = 0;
     f64 backdrop_t_ = 0;
     std::vector<std::pair<f64, f64>> torches_;
+    bool hero_light_ = true;
     f64 frame_dt_ = 0, frame_ms_avg_ = 0, sim_ms_ = 0, stress_log_ = 0;
     std::vector<forge::world::Rect> stress_rects_;
 

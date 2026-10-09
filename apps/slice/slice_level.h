@@ -180,6 +180,8 @@ public:
     std::unique_ptr<forge::sim::CellSim> make_cells(forge::sim::CollisionRules& rules) const override;
 
     const SliceGenerator& slice_generator() const { return *gen_; }
+    // The light «как в игре» was last prepared with (for the self-test).
+    forge::render::LightRenderer& lights() { return lights_; }
 
 private:
     // A frame of the sheet fitted into size × size (rgba already cleared).

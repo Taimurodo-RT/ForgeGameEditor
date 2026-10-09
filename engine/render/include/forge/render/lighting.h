@@ -14,6 +14,7 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <span>
 #include <vector>
 
 namespace forge::render {
@@ -43,18 +44,62 @@ struct LightRules {
     std::vector<Color> glow;
 };
 
-// A lamp. Colour channels above 1 shine further (up to 4).
+// A lamp. Without a radius its colour channels above 1 shine further (up to
+// 4): the light spreads as the sky's does. With one, the colour is the light
+// at the centre and the radius how far it goes (see lamp_light).
 struct PointLight {
     f64 x = 0, y = 0; // tiles
     f32 r = 1, g = 1, b = 1;
+    f32 radius = 0; // tiles, up to kMaxLampRadius; 0: none
 };
+
+// The farthest a lamp with a radius reaches, in tiles: the grid has this much
+// world around the screen, so a lamp off screen this far still lights it.
+inline constexpr f32 kMaxLampRadius = 40;
+
+// How much of a lamp's light is left d tiles along its way (straight through
+// the air, longer around corners and through water or rock): all of it at the
+// centre, smoothly less, none at the radius and beyond.
+f32 lamp_falloff(f64 d, f64 radius);
+
+// Lamps with a radius over a grid of cells: cells (w × h, row by row, each
+// step tiles, the first at tile x0, y0) hold a LightKind in their top 2 bits,
+// as the spread has them. Light goes from the lamp's point to a cell's centre
+// as far as straight through the air; when it must go around blocks or pass
+// through water or rock, the way is longer by as much as it loses there with
+// transmit (rock 0.72 against air 0.93: one tile of rock is about 4.5 of air).
+// rgb (3 per cell) gets the brightest light per channel, up to 4; cells no
+// lamp reaches are left as they were.
+void lamp_light(const u32* cells, u32 w, u32 h, i32 x0, i32 y0, u32 step, const f32 transmit[4],
+                std::span<const PointLight> lamps, std::vector<f32>& rgb);
+
+// The sky through a day: its colour at hours of the day (0..24, in order);
+// between two it changes evenly, from the last on to the first of the next day.
+struct SkyKey {
+    f32 hour = 0;
+    Color color;
+};
+// The sky's colour at an hour (any, taken within 0..24); no keys: fallback.
+Color sky_at(std::span<const SkyKey> keys, f64 hour, const Color& fallback);
 
 struct LightStats {
     u32 cells_w = 0, cells_h = 0;
+    i32 x0 = 0, y0 = 0; // the grid's first cell, in tiles
     u32 step = 1;  // tiles per cell (grows when zoomed far out)
     u32 lights = 0;
-    f64 cpu_ms = 0; // building the grid
+    u32 lamps = 0;  // of them, with a radius
+    f64 cpu_ms = 0; // building the grid (the lamps with a radius too)
 };
+
+namespace detail {
+// One lamp's light over the cells around it (LightRenderer's scratch).
+struct LampBox {
+    i32 cx0 = 0, cy0 = 0; // the box's first cell in the grid
+    u32 bw = 0, bh = 0;
+    std::vector<f32> rgb; // 3 per cell of the box; 0: no light
+    std::vector<f64> way; // tiles along the shortest way so far
+};
+} // namespace detail
 
 class LightRenderer {
 public:
@@ -78,6 +123,9 @@ public:
     void draw(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass);
 
     const LightStats& stats() const { return stats_; }
+    // The light of the lamps with a radius at a tile point, as the last
+    // prepare() worked it out (0 outside the grid or with none).
+    Color lamp_at(f64 x, f64 y) const;
 
     static constexpr u32 kMaxCellsW = 1024;
     static constexpr u32 kMaxCellsH = 640;
@@ -88,11 +136,16 @@ private:
     SDL_GPUComputePipeline* spread_ = nullptr;
     SDL_GPUGraphicsPipeline* composite_ = nullptr;
     SDL_GPUBuffer* cells_ = nullptr;
+    SDL_GPUBuffer* lamps_ = nullptr; // the lamps with a radius, packed as cells
     SDL_GPUBuffer* light_[2] = {nullptr, nullptr};
     SDL_GPUTransferBuffer* transfer_ = nullptr;
     LightRules rules_;
     std::vector<PointLight> lights_;
     std::vector<u32> grid_;
+    std::vector<f32> lamp_rgb_; // 3 per cell; empty without lamps with a radius
+    std::vector<u32> lamp_packed_;
+    std::vector<PointLight> lamps_now_;
+    std::vector<detail::LampBox> lamp_boxes_;
     u32 result_ = 0; // which light buffer holds the answer
     struct Composite {
         f32 ambient[4];
@@ -102,6 +155,8 @@ private:
         f32 step;
         u32 width;
         u32 height;
+        u32 lamps; // 1: the lamps buffer has light
+        u32 pad[3];
     } composite_params_{};
     bool ready_ = false;
     LightStats stats_;

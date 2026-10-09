@@ -380,4 +380,20 @@ render::LightRules light_rules() {
     return rules;
 }
 
+std::span<const render::SkyKey> day_sky() {
+    static const std::vector<render::SkyKey> keys = [] {
+        const Color day = light_rules().sky_color; // the light the game always had
+        const Color night{0.10f, 0.12f, 0.22f, 1.0f};
+        return std::vector<render::SkyKey>{{4.5f, night},
+                                           {6.5f, Color{0.85f, 0.62f, 0.55f, 1.0f}},
+                                           {8.0f, day},
+                                           {17.0f, day},
+                                           {19.0f, Color{0.95f, 0.58f, 0.38f, 1.0f}},
+                                           {21.0f, night}};
+    }();
+    return keys;
+}
+
+Color sky_light(f64 hour) { return render::sky_at(day_sky(), hour, light_rules().sky_color); }
+
 } // namespace slice

@@ -101,9 +101,10 @@ jobs:
           ./build/apps/slice/forge_slice --test --scene templates --screenshot world-slice-templates.png
           ./build/apps/slice/forge_slice --test --scene volumes
           ./build/apps/slice/forge_slice --test --scene physics --screenshot world-slice-physics.png
+          ./build/apps/slice/forge_slice --test --scene light --screenshot world-slice-light.png
       - name: Package the vertical slice
         run: cmake --build build --config Release --target forge_slice_package
-      - name: Packaged game finds its data, the windows and templates examples' pages and the physics example's level in it
+      - name: Packaged game finds its data, the windows and templates examples' pages and the physics and light examples' levels in it
         if: runner.os == 'Linux'
         run: |
           ./build/dist/OldMine/OldMine --test --scene menu --screenshot world-slice-packaged.png
@@ -112,6 +113,7 @@ jobs:
           ./build/dist/OldMine/OldMine --test --scene templates --screenshot world-slice-packaged-templates.png
           ./build/dist/OldMine/OldMine --test --scene volumes
           ./build/dist/OldMine/OldMine --test --scene physics --screenshot world-slice-packaged-physics.png
+          ./build/dist/OldMine/OldMine --test --scene light --screenshot world-slice-packaged-light.png
       - uses: actions/upload-artifact@v4
         with:
           name: OldMine-${{ runner.os }}

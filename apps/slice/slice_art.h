@@ -12,6 +12,11 @@ namespace slice {
 std::vector<u8> make_atlas();
 forge::demo::SheetImage make_sheet();
 forge::render::LightRules light_rules();
+// The sky's light through a day (forge::level::LevelLight::time): night,
+// dawn, from 8 to 17 the light the game always had, dusk.
+std::span<const forge::render::SkyKey> day_sky();
+// The sky's light at an hour, by day_sky().
+forge::Color sky_light(f64 hour);
 
 // Frames past the demo sheet's (forge::demo::kFrame*). People are 1 × 2 tiles.
 enum Frame : u32 {

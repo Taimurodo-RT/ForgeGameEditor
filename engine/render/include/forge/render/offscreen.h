@@ -7,6 +7,8 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <vector>
+
 namespace forge::render {
 
 // Starts SDL video (falling back to the offscreen driver on machines without
@@ -19,5 +21,9 @@ SDL_GPUTexture* create_render_target(SDL_GPUDevice* device, u32 width, u32 heigh
 
 // Waits for the GPU, reads the texture back and writes it as a PNG.
 bool save_png(SDL_GPUDevice* device, SDL_GPUTexture* texture, u32 width, u32 height, const char* path);
+// Waits for the GPU and reads an RGBA8 texture back: width × height × 4 bytes.
+bool read_pixels(SDL_GPUDevice* device, SDL_GPUTexture* texture, u32 width, u32 height, std::vector<u8>& rgba);
+// Writes RGBA8 pixels as a PNG.
+bool write_png(const char* path, u32 width, u32 height, const std::vector<u8>& rgba);
 
 } // namespace forge::render

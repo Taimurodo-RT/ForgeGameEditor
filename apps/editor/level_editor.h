@@ -10,6 +10,7 @@
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
+#include "forge/level/light.h"
 #include "forge/level/object_edit.h"
 #include "forge/level/physics.h"
 #include "forge/level/tile_edit.h"
@@ -32,13 +33,15 @@
 namespace forge::editor_app {
 
 enum class Tool : u8 { Brush, Line, Rect, Fill, Eraser, Picker };
-// What the tab edits: the icons over the level. Light and Zones say when
-// they come.
+// What the tab edits: the icons over the level. Zones say when they come.
 enum class Mode : u8 { Select, Tiles, Objects, Physics, Light, Zones };
 // The «Физика» mode's tools: picking and dragging gravity points, placing
 // one (press at the centre, drag out the radius), pouring water or sand
 // into the free cells of a rectangle.
 enum class PhysTool : u8 { Select, Point, Water, Sand };
+// The «Свет» mode's tools: picking and dragging light sources, placing one
+// (press at the centre, drag out the radius, as a gravity point).
+enum class LightTool : u8 { Select, Source };
 // The world's pull as the panel shows it: which way (as sim::cells_down,
 // None: no pull) and how strong.
 enum class PullDir : u8 { Down, Left, Up, Right, None };
@@ -148,6 +151,19 @@ public:
     bool gesture() const { return ph_drag_ != PhysDrag::None || stroke_ || moving_; }
     // The last thing a physics tool said (poured, skipped, refused).
     const std::string& phys_note() const { return ph_note_; }
+    // Light
+    void set_light_tool(LightTool t);
+    LightTool light_tool() const { return lt_tool_; }
+    // The level's time of day from the panel: "18:30" or hours ("18.5");
+    // a slider's drag is one history entry.
+    void set_level_time(const std::string& text, bool dragging);
+    // Looking at the level at another hour: only the view (no history, no
+    // files, the game does not see it); empty text or leaving «Свет» ends it.
+    void set_preview_time(const std::string& text);
+    f32 preview_time() const { return view_.preview_time; }
+    const level::ViewOptions& view() const { return view_; }
+    // The last thing the «Свет» mode said (placed, refused).
+    const std::string& light_note() const { return lt_note_; }
 
     const std::vector<std::string>& panel_ids() const { return dock_.panel_ids(); }
 
@@ -207,10 +223,26 @@ private:
     void drag_objects(f32 x, f32 y);
     void rebuild_fields(Rml::Context* context);
     void physics_fields(flecs::entity e);
-    // Physics: the gravity point whose centre (or, ring: the selected one's
-    // circle) is under a tile point; empty when none.
+    void light_fields(flecs::entity e);
+    // The things with a centre and a radius the mode edits: gravity points
+    // in «Физика», light sources in «Свет». The same gestures make, move and
+    // size both (PhysDrag).
+    bool ring_of(flecs::entity e) const;
+    f32 ring_radius(flecs::entity e) const;
+    void set_ring_radius(flecs::entity e, f32 r);
+    const reflect::TypeInfo* ring_type() const;
+    const char* ring_name() const;
+    f64 ring_max() const;
+    // Each of the mode's things loaded now: (entity, x, y, radius).
+    template <typename F>
+    void each_ring(F&& f);
+    // The one whose centre (or, ring: the selected one's circle) is under a
+    // tile point; empty when none.
     flecs::entity point_at(f64 tx, f64 ty, bool ring);
+    bool press_ring(f64 tx, f64 ty, bool place);
     bool press_physics(f32 x, f32 y);
+    bool press_light(f32 x, f32 y);
+    void push_light(f64 ox, f64 oy, f64 px);
     void drag_physics(f32 x, f32 y);
     void release_physics();
     void pour(i32 x0, i32 y0, i32 x1, i32 y1);
@@ -301,6 +333,10 @@ private:
     std::string ph_note_;
     level::FlowTrial trial_;
 
+    // Light
+    LightTool lt_tool_ = LightTool::Select;
+    std::string lt_note_;
+
     // Model mirrors
     std::vector<PaletteGroup> m_palette_;
     std::vector<Rml::String> m_layers_;
@@ -320,6 +356,9 @@ private:
     Rml::String m_ph_tool_ = "select", m_ph_tool_name_, m_ph_tool_help_, m_ph_dir_, m_ph_world_, m_ph_error_, m_ph_trial_text_;
     Rml::String m_ph_strength_ = "40", m_ph_note_;
     bool m_ph_trial_ = false, m_ph_can_trial_ = false;
+    Rml::String m_lt_tool_ = "select", m_lt_tool_name_, m_lt_tool_help_, m_lt_time_, m_lt_hours_, m_lt_sky_, m_lt_error_;
+    Rml::String m_lt_preview_, m_lt_preview_hours_, m_lt_note_;
+    bool m_lt_previewing_ = false;
     int m_history_cursor_ = 0;
     u64 history_version_ = 0;
     f64 info_time_ = -1;
@@ -328,5 +367,6 @@ private:
 const char* tool_id(Tool t);
 const char* mode_id(Mode m);
 const char* phys_tool_id(PhysTool t);
+const char* light_tool_id(LightTool t);
 
 } // namespace forge::editor_app
