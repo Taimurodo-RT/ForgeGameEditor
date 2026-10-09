@@ -311,6 +311,12 @@ std::string UiEditor::screen_from_template(usize index) {
     // is, numbered when another screen has it.
     const std::vector<std::string> all = screens();
     const std::string name = d::free_file_name(ui_dir(), d::safe_file_name(t.info.title, "экран"), {".json", ".html"}, {kLibrary});
+    if (name.empty()) {
+        tpl_.note = "Экран «" + t.info.title + "» не создан: в папке ui игры не нашлось свободного имени файла (или папка не читается). "
+                    "Проверьте папку и нажмите «Новый экран» ещё раз.";
+        refresh_templates();
+        return {};
+    }
     std::vector<std::string> titles;
     for (const std::string& other : all) {
         std::vector<u8> bytes;

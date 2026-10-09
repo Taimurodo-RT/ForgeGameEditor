@@ -25,22 +25,45 @@ void say_once(std::vector<std::string>* list, std::string what) {
     if (list && std::find(list->begin(), list->end(), what) == list->end()) list->push_back(std::move(what));
 }
 
-// Small letters for a file name: Latin and Cyrillic (a file system may not tell «Пауза» from «пауза»).
+// Small letters for a file name, as a file system that does not tell capitals from small letters sees it
+// (Windows: «Пауза.json» is «пауза.json», «Ä.json» is «ä.json»): Latin with its accented letters, Greek, Cyrillic.
+// What it leaves as is, the disk itself is asked about (free_file_name).
+u32 lower_letter(u32 c) {
+    if (c >= 'A' && c <= 'Z') return c + 0x20;
+    if (c < 0xC0) return c;
+    if (c <= 0xDE) return c == 0xD7 ? c : c + 0x20;                                   // À–Þ, not ×
+    if ((c >= 0x100 && c <= 0x12F) || (c >= 0x132 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
+        return c % 2 == 0 ? c + 1 : c;                                                 // Ā ā … Ŷ ŷ
+    if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return c % 2 == 1 ? c + 1 : c; // Ĺ ĺ … Ž ž
+    if (c == 0x178) return 0xFF;                                                      // Ÿ
+    if (c == 0x386) return 0x3AC;                                                     // Ά
+    if (c >= 0x388 && c <= 0x38A) return c + 0x25;                                    // Έ Ή Ί
+    if (c == 0x38C) return 0x3CC;                                                     // Ό
+    if (c == 0x38E || c == 0x38F) return c + 0x3F;                                    // Ύ Ώ
+    if (c >= 0x391 && c <= 0x3AB && c != 0x3A2) return c + 0x20;                      // Α–Ϋ
+    if (c >= 0x400 && c <= 0x40F) return c + 0x50;                                    // Ѐ Ё Ђ … Џ
+    if (c >= 0x410 && c <= 0x42F) return c + 0x20;                                    // А–Я
+    if ((c >= 0x460 && c <= 0x481) || (c >= 0x48A && c <= 0x4BF) || (c >= 0x4D0 && c <= 0x52F))
+        return c % 2 == 0 ? c + 1 : c;                                                 // Ѡ ѡ … Ґ ґ … Ӑ ӑ …
+    if (c == 0x4C0) return 0x4CF;                                                     // Ӏ
+    if (c >= 0x4C1 && c <= 0x4CE) return c % 2 == 1 ? c + 1 : c;                      // Ӂ ӂ … Ӎ ӎ
+    return c;
+}
+
 std::string lower_letters(std::string_view text) {
     std::string out;
-    for (usize i = 0; i < text.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        if (c >= 'A' && c <= 'Z') {
-            out += static_cast<char>(c - 'A' + 'a');
-        } else if (c == 0xD0 && i + 1 < text.size()) {
-            const unsigned char n = static_cast<unsigned char>(text[i + 1]);
-            ++i;
-            if (n >= 0x90 && n <= 0x9F) out += {'\xD0', static_cast<char>(n + 0x20)};       // А–П
-            else if (n >= 0xA0 && n <= 0xAF) out += {'\xD1', static_cast<char>(n - 0x20)};  // Р–Я
-            else if (n == 0x81) out += {'\xD1', '\x91'};                                   // Ё
-            else out += {static_cast<char>(c), static_cast<char>(n)};
+    out.reserve(text.size());
+    for (usize i = 0; i < text.size();) {
+        const unsigned char b = static_cast<unsigned char>(text[i]);
+        // A letter of two bytes (U+0080–U+07FF: the alphabets above); anything else as it is.
+        if (b >= 0xC2 && b <= 0xDF && i + 1 < text.size() && (static_cast<unsigned char>(text[i + 1]) & 0xC0) == 0x80) {
+            const u32 c = lower_letter((static_cast<u32>(b & 0x1F) << 6) | (static_cast<unsigned char>(text[i + 1]) & 0x3F));
+            if (c < 0x80) out += static_cast<char>(c);
+            else out += {static_cast<char>(0xC0 | (c >> 6)), static_cast<char>(0x80 | (c & 0x3F))};
+            i += 2;
         } else {
-            out += static_cast<char>(c);
+            out += static_cast<char>(b < 0x80 ? lower_letter(b) : b);
+            ++i;
         }
     }
     return out;
@@ -332,12 +355,21 @@ std::string free_file_name(const std::filesystem::path& dir, const std::string& 
         const std::string low = lower_letters(n);
         for (const std::string& t : taken)
             if (lower_letters(t) == low) return true;
-        for (std::string_view ext : exts)
-            if (std::find(there.begin(), there.end(), low + std::string(ext)) != there.end()) return true;
+        for (std::string_view ext : exts) {
+            const std::string file = n + std::string(ext);
+            if (std::find(there.begin(), there.end(), lower_letters(file)) != there.end()) return true;
+            // The disk's own answer too: it may fold letters the rule above leaves as they are. One it cannot
+            // give (no access) counts as taken, never as free.
+            std::error_code e;
+            if (std::filesystem::exists(dir / utf8_path(file), e) || e) return true;
+        }
         return false;
     };
     std::string out = name;
-    for (u32 n = 2; used(out); ++n) out = name + "_" + std::to_string(n);
+    for (u32 n = 2; used(out); ++n) {
+        if (n > 999) return {}; // nothing free, or a folder the disk cannot answer for
+        out = name + "_" + std::to_string(n);
+    }
     return out;
 }
 
@@ -361,6 +393,10 @@ std::string save_own_template(const std::filesystem::path& dir, Template t, cons
         std::vector<std::string> listed;
         for (const TemplateInfo& i : list) listed.push_back(i.file);
         file = free_file_name(dir, template_file_name(t.info.title), {".json"}, listed);
+        if (file.empty()) {
+            if (error) *error = "в " + path_to_utf8(dir) + " не нашлось свободного имени файла (или папка не читается)";
+            return {};
+        }
     }
     t.info.file = file;
     t.info.own = false; // where it lies says it

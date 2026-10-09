@@ -1194,16 +1194,37 @@ TEST_CASE("ui templates: file names of own templates and of screens made from th
     CHECK(template_file_name("") == "шаблон");
 
     // Taken: by a file of the folder in any letters' size (Windows and macOS do not tell them apart), by either
-    // extension alone, or by a name asked to keep away from.
+    // extension alone, or by a name asked to keep away from. A name that is not ASCII goes to the disk as UTF-8
+    // (utf8_path), as the editor writes it, not in Windows' own code page.
     REQUIRE(write_text(dir / "Menu_2.HTML", "чужой"));
-    REQUIRE(write_text(dir / "Пауза.json", "{}"));
+    REQUIRE(write_text(dir / utf8_path("Пауза.json"), "{}"));
     CHECK(free_file_name(dir, "menu_2", {".json", ".html"}) == "menu_2_2");
     CHECK(free_file_name(dir, "menu_2", {".json"}) == "menu_2");
     CHECK(free_file_name(dir, "пауза", {".json", ".html"}) == "пауза_2");
     CHECK(free_file_name(dir, "components", {".json", ".html"}, {"components"}) == "components_2");
-    CHECK(free_file_name(dir / "нет_папки", "экран", {".json"}) == "экран");
+    CHECK(free_file_name(dir / utf8_path("нет_папки"), "экран", {".json"}) == "экран");
     REQUIRE(write_text(dir / "MENU_2_2.json", "{}"));
     CHECK(free_file_name(dir, "menu_2", {".json", ".html"}) == "menu_2_3");
+    // Letters with accents, Greek and the other Cyrillic letters: one file on Windows whatever their size.
+    CHECK(safe_file_name("Ärger Öl", "x") == "ärger_öl");
+    CHECK(safe_file_name("ΠΑΥΣΗ", "x") == "παυση");
+    CHECK(safe_file_name("Їжак Ґанок", "x") == "їжак_ґанок");
+    REQUIRE(write_text(dir / utf8_path("Ä.JSON"), "чужой"));
+    CHECK(free_file_name(dir, "ä", {".json", ".html"}) == "ä_2");
+    REQUIRE(write_text(dir / utf8_path("Ł.html"), "чужой"));
+    CHECK(free_file_name(dir, "ł", {".json", ".html"}) == "ł_2");
+    // A letter the rule leaves as it is (Armenian Ա, ա): whatever the disk says is there is taken. On Windows,
+    // which folds them, «ա» is «Ա.json» and the name is the next one; where they are two files, «ա» is free.
+    REQUIRE(write_text(dir / utf8_path("Ա.json"), "чужой"));
+    const std::string armenian = free_file_name(dir, "ա", {".json"});
+    CHECK_FALSE(armenian.empty());
+    CHECK_FALSE(std::filesystem::exists(dir / utf8_path(armenian + ".json")));
+    CHECK(read_text(dir / utf8_path("Ա.json")) == "чужой");
+    // A name the disk cannot answer for (too long for it) is not free: no name rather than one that may be taken.
+    const std::string unknown = free_file_name(dir, std::string(300, 'x'), {".json"});
+    std::error_code e;
+    const bool there = unknown.empty() || std::filesystem::exists(dir / utf8_path(unknown + ".json"), e);
+    CHECK((unknown.empty() || (!there && !e)));
 
     // An own template: the same rule and the folder's files in any letters' size; another's file never touched.
     const Screen from = make_screen("Экран", 400, 300);
@@ -1211,10 +1232,17 @@ TEST_CASE("ui templates: file names of own templates and of screens made from th
     const std::filesystem::path own = dir / "templates";
     std::string error;
     CHECK(save_own_template(own, t, "", &error) == "con_1");
-    REQUIRE(write_text(own / "Шаблон_Чужой.JSON", "чужой"));
+    REQUIRE(write_text(own / utf8_path("Шаблон_Чужой.JSON"), "чужой"));
     t.info.title = "шаблон чужой";
     CHECK(save_own_template(own, t, "", &error) == "шаблон_чужой_2");
-    CHECK(read_text(own / "Шаблон_Чужой.JSON") == "чужой");
+    CHECK(read_text(own / utf8_path("Шаблон_Чужой.JSON")) == "чужой");
+    // «ä» beside another's «Ä.JSON»: a file of its own, the other's not written over, the title as typed.
+    REQUIRE(write_text(own / utf8_path("Ä.JSON"), "чужой"));
+    t.info.title = "ä";
+    CHECK(save_own_template(own, t, "", &error) == "ä_2");
+    CHECK(read_text(own / utf8_path("Ä.JSON")) == "чужой");
+    const std::vector<Template> saved = load_templates(own);
+    CHECK(std::any_of(saved.begin(), saved.end(), [](const Template& x) { return x.info.file == "ä_2" && x.info.title == "ä"; }));
     t.info.title = "../codex_template_probe";
     CHECK(save_own_template(own, t, "", &error) == "codex_template_probe");
     CHECK(std::filesystem::exists(own / "codex_template_probe.json"));

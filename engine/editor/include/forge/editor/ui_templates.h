@@ -108,7 +108,10 @@ Template own_template(const Screen& from, const Node* layer, std::string title, 
 std::string safe_file_name(std::string_view title, std::string_view fallback);
 // The first of name, name_2, name_3… that no file of dir has with one of
 // exts, small and capital letters alike (Windows does not tell «Меню.json»
-// from «меню.json»), and that is none of taken.
+// from «меню.json»), and that is none of taken. Taken: a file of the folder
+// the same in small letters (Latin with its accents, Greek, Cyrillic), or a
+// file the disk itself says is there (it may fold more letters), or one it
+// cannot say about. "" when none is free up to name_999.
 std::string free_file_name(const std::filesystem::path& dir, const std::string& name, std::initializer_list<std::string_view> exts,
                            const std::vector<std::string>& taken = {});
 // An own template's file name for title: safe_file_name, "шаблон" when
