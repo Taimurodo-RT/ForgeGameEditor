@@ -298,17 +298,53 @@ Template own_template(const Screen& from, const Node* layer, std::string title, 
     return t;
 }
 
-std::string template_file_name(std::string_view title) {
+std::string safe_file_name(std::string_view title, std::string_view fallback) {
     std::string out;
-    for (char c : lower_letters(title)) {
-        if (c == ' ' || c == '\t') out += '_';
-        else if (static_cast<unsigned char>(c) < 0x20 || std::string_view("/\\:*?\"<>|").find(c) != std::string_view::npos) continue;
-        else out += c;
+    for (char ch : lower_letters(title)) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (c >= 0x80 || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') out += ch; // letters of any language too
+        else if ((c == ' ' || c == '\t' || c == '.' || c == '_') && !out.empty() && out.back() != '_') out += '_';
     }
-    while (!out.empty() && (out.front() == '.' || out.front() == '_')) out.erase(out.begin());
-    while (!out.empty() && (out.back() == '.' || out.back() == '_')) out.pop_back();
+    if (out.size() > 64) {
+        usize cut = 64;
+        while (cut > 0 && (static_cast<unsigned char>(out[cut]) & 0xC0) == 0x80) --cut; // not in the middle of a letter
+        out.resize(cut);
+    }
+    while (!out.empty() && (out.back() == '_' || out.back() == '-')) out.pop_back();
+    while (!out.empty() && out.front() == '-') out.erase(out.begin());
+    if (out.empty()) out = fallback;
+    // Windows' devices: «con.json» or «nul.html» is no file there, whatever the extension.
+    static constexpr std::string_view kDevices[] = {"con", "prn", "aux", "nul"};
+    const bool numbered = out.size() >= 4 && (out.starts_with("com") || out.starts_with("lpt")) &&
+                          ((out.size() == 4 && out[3] >= '0' && out[3] <= '9') || out.substr(3) == "\xC2\xB9" ||
+                           out.substr(3) == "\xC2\xB2" || out.substr(3) == "\xC2\xB3"); // COM1, LPT¹
+    if (numbered || std::find(std::begin(kDevices), std::end(kDevices), out) != std::end(kDevices)) out += "_1";
+    return out;
+}
+
+std::string free_file_name(const std::filesystem::path& dir, const std::string& name, std::initializer_list<std::string_view> exts,
+                           const std::vector<std::string>& taken) {
+    std::vector<std::string> there; // the folder's files, in small letters
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        there.push_back(lower_letters(path_to_utf8(it->path().filename())));
+    auto used = [&](const std::string& n) {
+        const std::string low = lower_letters(n);
+        for (const std::string& t : taken)
+            if (lower_letters(t) == low) return true;
+        for (std::string_view ext : exts)
+            if (std::find(there.begin(), there.end(), low + std::string(ext)) != there.end()) return true;
+        return false;
+    };
+    std::string out = name;
+    for (u32 n = 2; used(out); ++n) out = name + "_" + std::to_string(n);
+    return out;
+}
+
+std::string template_file_name(std::string_view title) {
+    std::string out = safe_file_name(title, "шаблон");
     if (out == "templates") out += "_1"; // not the index
-    return out.empty() ? std::string("шаблон") : out;
+    return out;
 }
 
 std::string save_own_template(const std::filesystem::path& dir, Template t, const std::string& replace, std::string* error) {
@@ -318,17 +354,13 @@ std::string save_own_template(const std::filesystem::path& dir, Template t, cons
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     std::string file = replace;
-    auto taken = [&](const std::string& name) {
-        const std::string low = lower_letters(name);
-        return std::any_of(list.begin(), list.end(), [&](const TemplateInfo& i) { return lower_letters(i.file) == low; }) ||
-               std::filesystem::exists(screen_file(dir, name, ".json"), ec);
-    };
     const bool replacing = !replace.empty() &&
                            std::any_of(list.begin(), list.end(), [&](const TemplateInfo& i) { return i.file == replace; });
     if (!replacing) {
-        const std::string base = template_file_name(t.info.title);
-        file = base;
-        for (u32 n = 2; taken(file); ++n) file = base + "_" + std::to_string(n);
+        // A name no other has, in the index or among the folder's files (any letters' size).
+        std::vector<std::string> listed;
+        for (const TemplateInfo& i : list) listed.push_back(i.file);
+        file = free_file_name(dir, template_file_name(t.info.title), {".json"}, listed);
     }
     t.info.file = file;
     t.info.own = false; // where it lies says it

@@ -306,12 +306,11 @@ u32 UiEditor::insert_template(usize index) {
 std::string UiEditor::screen_from_template(usize index) {
     if (index >= templates_.size() || checking_) return {};
     const d::Template& t = templates_[index];
-    // The file: the title in small letters ("главное_меню"), a number when taken; the title: a number when taken.
+    // The file: by the rule of own templates' files ("главное_меню"; «../x» or «Menu: 2» a name in ui/, never a path
+    // out of it nor a sign Windows refuses), numbered when a file of ui/ has it in any letters' size; the title as it
+    // is, numbered when another screen has it.
     const std::vector<std::string> all = screens();
-    std::string base;
-    for (char c : game::to_lower_utf8(t.info.title)) base += c == ' ' ? '_' : c;
-    std::string name = base;
-    for (u32 n = 2; std::find(all.begin(), all.end(), name) != all.end() || name == kLibrary; ++n) name = base + std::to_string(n);
+    const std::string name = d::free_file_name(ui_dir(), d::safe_file_name(t.info.title, "экран"), {".json", ".html"}, {kLibrary});
     std::vector<std::string> titles;
     for (const std::string& other : all) {
         std::vector<u8> bytes;
@@ -335,8 +334,18 @@ std::string UiEditor::screen_from_template(usize index) {
                    "» сделан окном. Чтобы он стал главным меню, выберите справа «Когда видно» → «Главное меню игры».";
         }
     }
+    if (!write(name, s)) {
+        // Nothing half made: the name was free, so what got written is this screen's alone and goes. The window stays,
+        // saying why, so the author can free the folder and press again.
+        std::error_code ec;
+        std::filesystem::remove(json_path(name), ec);
+        std::filesystem::remove(html_path(name), ec);
+        tpl_.note = "Экран «" + title + "» не создан: файлы ui/" + name + ".json и ui/" + name +
+                    ".html не записались. Проверьте, что папка ui игры не только для чтения и диск не полон, и нажмите «Новый экран» ещё раз.";
+        refresh_templates();
+        return {};
+    }
     close_templates();
-    if (!write(name, s)) return {};
     open(name); // its copies of components synced with the game's library, as any screen opened
     tpl_.note = note;
     if (!note.empty()) show_move_note(note);

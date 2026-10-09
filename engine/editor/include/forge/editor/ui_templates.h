@@ -29,6 +29,7 @@
 #include "forge/editor/ui_design.h"
 
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -97,8 +98,21 @@ Screen template_preview(const Template& t, Color background);
 // screen's font or size get them written in, so it looks the same on any
 // screen), or of the whole screen (layer nullptr). Its links stay.
 Template own_template(const Screen& from, const Node* layer, std::string title, std::string group);
-// A file name for title: small letters, spaces as _, nothing a file system
-// refuses ("/\\:*?\"<>|", dots at the ends); "шаблон" when nothing is left.
+// A file name for title, one rule for an own template and for a screen made
+// from a template: small letters; spaces, dots and _ as one _; letters,
+// digits and - kept, every other sign left out (what a file system or a path
+// takes for its own: "/\\:*?\"<>|", "..", and the like); no _ or - at the
+// ends; at most 64 bytes; not a name Windows keeps for a device with any
+// extension (CON, PRN, AUX, NUL, COM0–9, LPT0–9: "_1" after it); fallback
+// when nothing is left. A name in a folder, never a path out of it.
+std::string safe_file_name(std::string_view title, std::string_view fallback);
+// The first of name, name_2, name_3… that no file of dir has with one of
+// exts, small and capital letters alike (Windows does not tell «Меню.json»
+// from «меню.json»), and that is none of taken.
+std::string free_file_name(const std::filesystem::path& dir, const std::string& name, std::initializer_list<std::string_view> exts,
+                           const std::vector<std::string>& taken = {});
+// An own template's file name for title: safe_file_name, "шаблон" when
+// nothing is left, never "templates" (the index).
 std::string template_file_name(std::string_view title);
 // Writes t into dir: its screen in its own file and the index. replace: the
 // file of an own template it takes the place of ("": a new file, numbered

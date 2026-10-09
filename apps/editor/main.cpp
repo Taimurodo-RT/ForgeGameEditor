@@ -3475,13 +3475,19 @@ private:
     usize ue_tp_steps_ = 0;
     u32 ue_tp_menu_ = 0, ue_tp_copy_ = 0;
     editor::design::Node ue_tp_menu_node_; // «Меню» as it was saved
-    // games/examples/templates in the editor: its files as copied, the history's place, «Факел»'s card.
+    // games/examples/templates in the editor: its files byte for byte before «Проверить», the history's place, «Факел»'s card.
     int ue_te_stage_ = 0;
     std::vector<std::string> ue_te_files_;
+    std::vector<std::filesystem::file_time_type> ue_te_stamps_; // when each was last written, then
     usize ue_te_steps_ = 0;
     u32 ue_te_torch_ = 0, ue_te_clicks_ = 0;
     bool ue_te_had_click_ = false;
     std::string ue_te_made_; // the screen made from the own screen template while its pause and picture are away
+    // Screens made from own templates of any title: the case, the screens and the menu's file before, another's file.
+    int ue_fn_stage_ = 0;
+    usize ue_fn_case_ = 0;
+    std::vector<std::string> ue_fn_screens_;
+    std::string ue_fn_menu_, ue_fn_probe_;
     std::vector<std::string> ue_we_files_; // its files in the game's folder, as they were before opening them again
     // The rows of a list of notes in the panel (#ue-openers, #ue-check-state): text, and whether it warns.
     std::vector<std::pair<std::string, bool>> ue_wb_rows(const char* id) {
@@ -9200,10 +9206,15 @@ private:
             // «Продолжить» close them (with the pause's click sound), each «Взять» gives its own thing; nothing is
             // written by opening or checking. Then the screen saved as the game's own template needs nothing here,
             // but taken where its pause and a picture are not, the library and the note say so (the button stays).
+            // Two kinds of «the same files»: what only reads (opening, «Проверить») leaves them byte for byte as they
+            // were just before and writes none of them again (their times of writing kept); what the author did and
+            // took back (a copy put and Ctrl+Z, a template saved and taken out) writes them again as the editor
+            // writes, so their content is the example's but a copy checked out with CRLF line ends gets LF ones
+            // (same(): line ends aside).
             namespace d = editor::design;
             const std::filesystem::path from = utf8_path(FORGE_EXAMPLES_DIR) / "templates";
             static const char* const kPages[] = {"шаблоны_меню", "шаблоны_игра", "шаблоны_пауза", "шаблоны_настройки"};
-            static const char* const kOwn[] = {"templates/templates.json", "templates/находка.json"};
+            static const char* const kOwn[] = {"templates/находка.json", "templates/templates.json"}; // the index last
             auto lf = [](std::string text) {
                 std::erase(text, '\r');
                 return text;
@@ -9213,12 +9224,22 @@ private:
                 read_file(p, bytes);
                 return std::string(bytes.begin(), bytes.end());
             };
-            // The game's files now, byte for byte: the pages and its own template.
+            // The game's files now, byte for byte: the pages, its own template and the index of own templates.
             auto files = [&]() {
                 std::vector<std::string> out;
                 for (const char* name : kPages)
                     for (const char* ext : {".json", ".html"}) out.push_back(ue_file(ext, name));
                 for (const char* own : kOwn) out.push_back(read(ed_.ui_game_dir / "ui" / utf8_path(own)));
+                return out;
+            };
+            // When each was last written: a write of the very same bytes is a write too.
+            auto stamps = [&]() {
+                std::vector<std::filesystem::file_time_type> out;
+                std::error_code ec;
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"})
+                        out.push_back(std::filesystem::last_write_time(ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext), ec));
+                for (const char* own : kOwn) out.push_back(std::filesystem::last_write_time(ed_.ui_game_dir / "ui" / utf8_path(own), ec));
                 return out;
             };
             // The same content as the example's, whichever line ends either side has.
@@ -9262,7 +9283,8 @@ private:
                 ue_te_had_click_ = std::filesystem::exists(ed_.ui_game_dir / "sounds" / utf8_path("щелчок.wav"), ec);
                 std::filesystem::copy_file(from / "sounds" / utf8_path("щелчок.wav"), ed_.ui_game_dir / "sounds" / utf8_path("щелчок.wav"),
                                            std::filesystem::copy_options::overwrite_existing, ec);
-                ue_te_files_ = files();
+                const std::vector<std::string> copied = files();
+                const std::vector<std::filesystem::file_time_type> copied_at = stamps();
                 check(!ec && same(), "the example's pages, its own template and sound copied into the game");
                 check(ue().open("шаблоны_игра") && ue().screen().show == d::ScreenShow::Playing, "«Шаблоны: игра» opens from disk");
                 const d::Node* key = nullptr;
@@ -9274,7 +9296,7 @@ private:
                 check(key && torch && key->children.size() == torch->children.size() && key->id != torch->id,
                       "the own template's two copies on it, «Ключ» and «Факел»");
                 ue_te_torch_ = torch ? torch->id : 0;
-                check(files() == ue_te_files_, "opening wrote nothing");
+                check(files() == copied && stamps() == copied_at, "opening wrote nothing: the files byte for byte as copied, none written again");
                 ue().set_simple(false);
                 ue().select({});
                 check(click("ue-templates") && ue().templates_open(), "the library");
@@ -9296,7 +9318,9 @@ private:
                           ue().history().undo_label() == "Из шаблонов: Находка",
                       "Enter: a third copy, one step");
                 key(SDLK_Z, SDL_KMOD_CTRL);
-                check(ue().screen().root.children.size() == before && same(), "Ctrl+Z: the example's files again (line ends aside)");
+                check(ue().screen().root.children.size() == before && same(), "Ctrl+Z: the example's content again (line ends aside)");
+                ue_te_files_ = files(); // what only reads from here on leaves these bytes and writes none of them
+                ue_te_stamps_ = stamps();
                 check(click("ue-check") && ue().checking(), "«Проверить» on «Шаблоны: игра»");
                 return true;
             }
@@ -9320,6 +9344,7 @@ private:
             case 7:
                 check(ue().check_windows() == pause && said() == "Закрыто окно «Шаблоны: настройки»", "«Готово» closed the settings: " + said());
                 // At once, while the settings still fade away over it: a closed window takes no clicks.
+                check(ue().check_leaving("шаблоны_настройки"), "the settings still going away, drawn over the pause");
                 ue_te_clicks_ = ue().check_sound().clicks();
                 check(at(ue().check_box("шаблоны_пауза", "Кнопка «Продолжить»")), "«Продолжить» clicked");
                 return true;
@@ -9327,14 +9352,17 @@ private:
                 check(ue().check_windows().empty() && said() == "Закрыто окно «Шаблоны: пауза»", "«Продолжить» closed the pause: " + said());
                 check(ue().check_sound().clicks() == ue_te_clicks_ + 1 && ue().check_sound().last_click() == "щелчок.wav",
                       "with the pause's click sound: " + ue().check_sound().last_click());
+                check(ue().check_leaving("шаблоны_пауза"), "the pause still going away, drawn over the game");
                 if (const d::Node* torch = ue_node(ue_te_torch_)) at(ue().layer_box(ue_named(*torch, "Кнопка «Взять»")));
                 return true;
             case 9:
                 check(said() == "Данные: inv.torch += 1", "the second copy's «Взять» gives a torch: " + said());
                 key(SDLK_ESCAPE, SDL_KMOD_NONE);
                 check(!ue().checking(), "Esc ends the check");
-                check(files() == ue_te_files_, "«Проверить» wrote nothing: the files byte for byte as copied");
-                check(ue().open("шаблоны_меню") && ue().open("шаблоны_игра") && files() == ue_te_files_, "opened again: nothing written");
+                check(files() == ue_te_files_ && stamps() == ue_te_stamps_,
+                      "«Проверить» wrote nothing: the files byte for byte as just before it, none written again");
+                check(ue().open("шаблоны_меню") && ue().open("шаблоны_игра") && files() == ue_te_files_ && stamps() == ue_te_stamps_,
+                      "opened again: nothing written");
                 // The whole screen as the game's own template, then taken where its pause and a picture are not.
                 ue().select({});
                 check(ue().begin_save_template(0) && ue().saving_template(), "«Сохранить экран как шаблон…»");
@@ -9405,7 +9433,14 @@ private:
                 for (usize k = 0; k < ue().templates().size(); ++k)
                     if (ue().templates()[k].info.own && ue().templates()[k].info.title == "Над игрой с находками") i = static_cast<int>(k);
                 check(i >= 0 && ue().remove_template(static_cast<usize>(i)), "the own screen template taken out");
-                check(ue().open("шаблоны_игра") && files() == ue_te_files_, "the example's files byte for byte again");
+                // Saving and taking out the screen template wrote the index of own templates (twice) and nothing else.
+                auto but_index = [](auto v) {
+                    v.pop_back();
+                    return v;
+                };
+                check(ue().open("шаблоны_игра") && but_index(files()) == but_index(ue_te_files_) && but_index(stamps()) == but_index(ue_te_stamps_),
+                      "the pages and «Находка» byte for byte as before «Проверить»: the template saved and taken out wrote nothing else");
+                check(same(), "the index of own templates as the example's again (written by the editor: line ends aside)");
                 {
                     for (const char* name : kPages)
                         for (const char* ext : {".json", ".html"}) std::filesystem::remove(ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext), ec);
@@ -9418,6 +9453,139 @@ private:
             default: break;
             }
             ue_te_stage_ = 0;
+            break;
+        }
+        case 155: {
+            // Screens made from own templates whatever their titles: saved from the window («Сохранить свой…», a
+            // title, Enter) and taken as a new screen (Enter again), the template's file and the screen's are names
+            // in ui/templates and ui/ by one rule (safe_file_name). «../codex_template_probe» writes nothing over the
+            // file of that name in the game's folder above ui/; «Menu: 2» (a colon Windows refuses) and «CON» (a
+            // device there) get files of their own; a file of ui/ with the name in capitals is another's and stays;
+            // the titles stay as typed. A screen whose page cannot be written leaves no file of its own behind, the
+            // window stays and says why; the same Enter, the folder freed, makes it.
+            namespace d = editor::design;
+            struct Case {
+                const char* title;
+                const char* file;   // the own template's
+                const char* screen; // the new screen's
+            };
+            static const Case kCases[] = {
+                {"../codex_template_probe", "codex_template_probe", "codex_template_probe"},
+                {"Menu: 2", "menu_2", "menu_2"},
+                {"CON", "con_1", "con_1"},
+                {"Probe Case", "probe_case", "probe_case_2"}, // ui/Probe_Case.html is another's
+                {"Сбой записи", "сбой_записи", "сбой_записи"}, // its page cannot be written at first
+            };
+            constexpr usize kFails = 4;
+            const std::filesystem::path game = ed_.ui_game_dir, ui = game / "ui", own = ui / "templates";
+            const Case& c = kCases[std::min(ue_fn_case_, std::size(kCases) - 1)];
+            // Where the failing screen's page goes through on its way (write_file_atomic): a folder, so it is not written.
+            const std::filesystem::path blocked = ui / utf8_path(std::string(kCases[kFails].screen) + ".html.tmp");
+            auto read = [](const std::filesystem::path& p) {
+                std::vector<u8> bytes;
+                if (!read_file(p, bytes)) return std::string("<нет файла>");
+                return std::string(bytes.begin(), bytes.end());
+            };
+            auto put = [](const std::filesystem::path& p, const std::string& text) {
+                return write_file_atomic(p, {reinterpret_cast<const u8*>(text.data()), text.size()});
+            };
+            auto made = [&](const char* name, const char* ext) {
+                return std::filesystem::is_regular_file(ui / utf8_path(std::string(name) + ext));
+            };
+            auto others_kept = [&] {
+                return read(game / "codex_template_probe.json") == ue_fn_probe_ && !std::filesystem::exists(game / "codex_template_probe.html") &&
+                       read(ui / "Probe_Case.html") == "<p>чужой</p>" && ue_file(".json") == ue_fn_menu_;
+            };
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_fn_stage_;
+                return true;
+            };
+            switch (ue_fn_stage_++) {
+            case 0:
+                ue_fn_case_ = 0;
+                ue_fn_screens_ = ue().screens();
+                check(ue().open("main_menu"), "the menu");
+                ue_fn_menu_ = ue_file(".json");
+                // Another's files: one in the game's folder above ui/, one in ui/ named in capitals.
+                ue_fn_probe_ = "{\"чужой\": true}";
+                check(put(game / "codex_template_probe.json", ue_fn_probe_) && put(ui / "Probe_Case.html", "<p>чужой</p>"),
+                      "another's files beside the game's");
+                ue().set_simple(false);
+                ue().select({});
+                check(click("ue-templates") && ue().templates_open(), "the library");
+                return true;
+            case 1:
+                if (wait(shown("ue-tpl-save-open"), "the window")) return true;
+                check(click("ue-tpl-save-open") && ue().saving_template(), std::string("«Сохранить свой…» for «") + c.title + "»");
+                return true;
+            case 2:
+                if (wait(shown("ue-tpl-save-form"), "the form")) return true;
+                check(ue_fl_type_only("ue-tpl-save-title", c.title), std::string("typed «") + c.title + "»");
+                return true;
+            case 3: {
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                const int i = ue().selected_template();
+                const auto& all = ue().templates();
+                const std::string file = i >= 0 ? all[static_cast<usize>(i)].info.file : std::string("-");
+                check(i >= 0 && all[static_cast<usize>(i)].info.own && all[static_cast<usize>(i)].info.title == c.title && file == c.file &&
+                          std::filesystem::is_regular_file(own / utf8_path(file + ".json")),
+                      std::string("Enter: «") + c.title + "» saved under its title, in ui/templates/" + c.file + ".json: " + file);
+                check(others_kept(), "another's files not touched by the template");
+                if (ue_fn_case_ != kFails) return true;
+                // Its page cannot be written: nothing half made, nothing opened, no step; the window says why.
+                const usize steps = ue().history().cursor();
+                const std::vector<std::string> before = ue().screens();
+                std::error_code ec;
+                std::filesystem::create_directories(blocked, ec);
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                check(ue().templates_open() && ue().opened() == "main_menu" && ue().history().cursor() == steps && ue().screens() == before,
+                      "not made: the window stays, the menu still open, no step");
+                check(!made(c.screen, ".json") && !made(c.screen, ".html"), "no file of it left behind");
+                const std::string& note = ue().templates_note();
+                check(note.find("не создан") != std::string::npos && note.find(std::string("ui/") + c.screen + ".html") != std::string::npos &&
+                          note.find("«Новый экран» ещё раз") != std::string::npos,
+                      "the window says what was not written and what to do: " + note);
+                return true;
+            }
+            case 4: {
+                if (ue_fn_case_ == kFails) {
+                    if (wait(shown("ue-tpl-note"), "the window's note")) return true;
+                    Rml::Element* shown_note = ed_.find_element("ue-tpl-note");
+                    check(shown_note && shown_note->GetInnerRML().find("не создан") != std::string::npos, "the note in the window, in view");
+                    std::error_code ec;
+                    std::filesystem::remove(blocked, ec);
+                    check(!ec, "the folder freed");
+                }
+                key(SDLK_RETURN, SDL_KMOD_NONE); // a new screen from the template
+                const d::Screen& s = ue().screen();
+                check(ue().opened() == c.screen && s.title == c.title, std::string("Enter: a new screen «") + c.title + "», files " + c.screen +
+                                                                           ".json and .html: " + ue().opened() + ", «" + s.title + "»");
+                check(made(c.screen, ".json") && made(c.screen, ".html"), "its two files in ui/");
+                check(others_kept(), "another's files not touched by the screen");
+                if (++ue_fn_case_ < std::size(kCases)) {
+                    check(ue().open("main_menu"), "the menu again");
+                    ue().select({});
+                    check(click("ue-templates") && ue().templates_open(), "the library");
+                    ue_fn_stage_ = 1;
+                }
+                return true;
+            }
+            case 5: {
+                // Back as it was: the screens, the menu, no templates of its own, another's files gone.
+                std::error_code ec;
+                for (const std::string& name : ue().screens())
+                    if (std::find(ue_fn_screens_.begin(), ue_fn_screens_.end(), name) == ue_fn_screens_.end())
+                        for (const char* ext : {".json", ".html"}) std::filesystem::remove(ui / utf8_path(name + ext), ec);
+                std::filesystem::remove_all(own, ec);
+                std::filesystem::remove(game / "codex_template_probe.json", ec);
+                std::filesystem::remove(ui / "Probe_Case.html", ec);
+                check(ue().open("main_menu") && ue_file(".json") == ue_fn_menu_ && ue().screens() == ue_fn_screens_, "the screens and the menu as before");
+                break;
+            }
+            default: break;
+            }
+            ue_fn_stage_ = 0;
             break;
         }
         default:

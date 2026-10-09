@@ -333,6 +333,8 @@ public:
     const std::vector<std::string>& check_log() const { return check_log_; }
     // The windows up over the screen in «Проверить», the newest last.
     std::vector<std::string> check_windows() const;
+    // A window «Проверить» closed that is still drawn while it goes away (the mouse and the keys already go under it).
+    bool check_leaving(const std::string& window) const;
     // A layer (by its name) of a window up in «Проверить»: where it is on the page, as layer_box (tests).
     std::optional<editor::design::Rect> check_box(const std::string& window, const std::string& layer) const;
     // What has the keyboard in «Проверить»: "page:element id" ("" none; "page:" the page itself).

@@ -2441,6 +2441,20 @@ private:
             Rml::Element* root = doc ? doc->GetElementById("n1") : nullptr;
             return root && root->GetLocalProperty("opacity") != nullptr;
         };
+        // A window closed and still drawn while it goes away: its page shown, its veil too, marked forge-leaving (the
+        // mouse and the keyboard already go to what is under it). Not the root's opacity: when the frame that starts
+        // the going away reads a coarse clock in the same tick as the start (Windows' counts in 100 ns), the page is
+        // drawn whole there and has none, though it is still going.
+        auto leaving = [&s](const char* page) {
+            Rml::ElementDocument* doc = s.screens().document(page);
+            Rml::Element* veil = doc ? doc->GetElementById("forge-dim") : nullptr;
+            return doc && doc->IsVisible() && doc->HasAttribute("forge-leaving") && (!veil || veil->IsVisible(true));
+        };
+        // The page the mouse is over now.
+        auto hovered_in = [&s](const char* page) {
+            Rml::Element* h = s.context()->GetHoverElement();
+            return h && h->GetOwnerDocument() == s.screens().document(page);
+        };
         auto near = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-4f; };
 
         steps_.push_back({"пример шаблонов с диска", 20, [&s, &g, this](u32 f) {
@@ -2519,7 +2533,8 @@ private:
             if (f < 13) return false;
             return s.screen() == Screen::Playing && g_.running() && g_.hero_alive();
         }});
-        steps_.push_back({"шаблоны в игре: находки, пауза, настройки", 140, [&s, &g, press, key, click, num, appearing, near, this](u32 f) {
+        steps_.push_back({"шаблоны в игре: находки, пауза, настройки", 140, [&s, &g, press, key, click, num, appearing, leaving, hovered_in, near,
+                                                                          this](u32 f) {
             GameScreens& sc = s.screens();
             audio::ScreenSounds& snd = g.sounds().screens();
             auto right = [&g]() {
@@ -2583,21 +2598,25 @@ private:
                       "микшер: звуки мира и кнопок тише");
                 check(click("шаблоны_настройки", nullptr, "Кнопка «Готово»"), "«Готово»");
             }
-            if (f == 57) {
+            // Closed, a window is still drawn while it goes away; the mouse goes to what is under it at once. The click
+            // comes on the first frame after the closing one: the going away has started (in that frame's update) and,
+            // however slow the frames, has not ended (only a later update ends it).
+            if (f == 56) {
                 check(sc.windows() == pause && sc.pauses(), "«Готово» закрыл настройки, пауза осталась");
-                // Closed, a window is still drawn while it goes away; the mouse goes to what is under it at once.
-                check(appearing("шаблоны_настройки"), "настройки ещё уходят (видны)");
+                check(leaving("шаблоны_настройки"), "настройки ещё уходят: видны, с затемнением");
                 clicks = snd.clicks();
                 check(click("шаблоны_пауза", nullptr, "Кнопка «Продолжить»"), "«Продолжить» сразу, пока настройки уходят");
+                check(hovered_in("шаблоны_пауза"), "мышь над паузой, а не над уходящими настройками");
             }
-            if (f == 58) {
+            if (f == 57) {
                 check(snd.clicks() == clicks + 1 && snd.last_click() == "щелчок.wav", "кнопка паузы звучит звуком экрана: " + snd.last_click());
                 check(sc.windows().empty() && !sc.pauses() && s.screen() == Screen::Playing, "«Продолжить» закрыл паузу из шаблона");
-                check(appearing("шаблоны_пауза"), "пауза ещё уходит (видна)");
+                check(leaving("шаблоны_пауза"), "пауза ещё уходит: видна, с затемнением");
                 torches = num("inv.torch");
                 check(click("шаблоны_игра", "Карточка «Факел»", "Кнопка «Взять»"), "«Взять» сразу, пока пауза уходит");
+                check(hovered_in("шаблоны_игра"), "мышь над карточкой, а не над уходящей паузой");
             }
-            if (f == 59) {
+            if (f == 58) {
                 check(num("inv.torch") == torches + 1, "щелчок дошёл до карточки, а не до уходящей паузы");
                 SDL_Delay(350);
             }

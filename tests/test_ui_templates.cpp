@@ -1150,6 +1150,78 @@ TEST_CASE("ui templates: the author's own, saved and taken back") {
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("ui templates: file names of own templates and of screens made from them") {
+    // One rule (safe_file_name): a name in the folder whatever the title, as the title says where it can.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_template_file_names";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const std::string long_title(100, 'x');
+    const std::string long_cyrillic = "Очень длинное название экрана из шаблона, которое не влезает никуда целиком";
+    const std::pair<std::string, std::string> names[] = {
+        {"../codex_template_probe", "codex_template_probe"}, // the folder above: never
+        {"..\\..\\x", "x"},
+        {"a/../../b", "a_b"},
+        {"C:\\Windows\\win.ini", "cwindowswin_ini"},
+        {"Menu: 2", "menu_2"}, // a colon: Windows' streams («menu:2» is no file of its own there)
+        {"Пауза «Дерево»?", "пауза_«дерево»"},
+        {"  Главное   меню  ", "главное_меню"},
+        {"CON", "con_1"}, // Windows' devices, any letters' size
+        {"nul", "nul_1"},
+        {"Com1", "com1_1"},
+        {"LPT9", "lpt9_1"},
+        {"COM¹", "com¹_1"},
+        {"console", "console"}, // only the device names themselves
+        {"com10", "com10"},
+        {"", "экран"},
+        {"...", "экран"},
+        {"?*<>|\"", "экран"},
+        {"-_-", "экран"},
+    };
+    for (const auto& [title, file] : names) {
+        const std::string got = safe_file_name(title, "экран");
+        CHECK_MESSAGE(got == file, (title + " → " + got));
+        CHECK(got.find_first_of("/\\:*?\"<>|. ") == std::string::npos);
+        CHECK(screen_file(dir, got, ".json").parent_path() == dir);
+    }
+    // At most 64 bytes, a letter never cut in two.
+    CHECK(safe_file_name(long_title, "экран") == std::string(64, 'x'));
+    const std::string cut = safe_file_name(long_cyrillic, "экран");
+    CHECK(cut.size() <= 64);
+    CHECK((static_cast<unsigned char>(cut.back()) & 0xC0) != 0xC0); // ends on a whole letter: no lead byte left alone
+    CHECK(cut.starts_with("очень_длинное_название"));
+    CHECK(template_file_name("templates") == "templates_1");
+    CHECK(template_file_name("CON") == "con_1");
+    CHECK(template_file_name("") == "шаблон");
+
+    // Taken: by a file of the folder in any letters' size (Windows and macOS do not tell them apart), by either
+    // extension alone, or by a name asked to keep away from.
+    REQUIRE(write_text(dir / "Menu_2.HTML", "чужой"));
+    REQUIRE(write_text(dir / "Пауза.json", "{}"));
+    CHECK(free_file_name(dir, "menu_2", {".json", ".html"}) == "menu_2_2");
+    CHECK(free_file_name(dir, "menu_2", {".json"}) == "menu_2");
+    CHECK(free_file_name(dir, "пауза", {".json", ".html"}) == "пауза_2");
+    CHECK(free_file_name(dir, "components", {".json", ".html"}, {"components"}) == "components_2");
+    CHECK(free_file_name(dir / "нет_папки", "экран", {".json"}) == "экран");
+    REQUIRE(write_text(dir / "MENU_2_2.json", "{}"));
+    CHECK(free_file_name(dir, "menu_2", {".json", ".html"}) == "menu_2_3");
+
+    // An own template: the same rule and the folder's files in any letters' size; another's file never touched.
+    const Screen from = make_screen("Экран", 400, 300);
+    Template t = own_template(from, nullptr, "CON", kOwnGroup);
+    const std::filesystem::path own = dir / "templates";
+    std::string error;
+    CHECK(save_own_template(own, t, "", &error) == "con_1");
+    REQUIRE(write_text(own / "Шаблон_Чужой.JSON", "чужой"));
+    t.info.title = "шаблон чужой";
+    CHECK(save_own_template(own, t, "", &error) == "шаблон_чужой_2");
+    CHECK(read_text(own / "Шаблон_Чужой.JSON") == "чужой");
+    t.info.title = "../codex_template_probe";
+    CHECK(save_own_template(own, t, "", &error) == "codex_template_probe");
+    CHECK(std::filesystem::exists(own / "codex_template_probe.json"));
+    CHECK_FALSE(std::filesystem::exists(dir / "codex_template_probe.json"));
+    std::filesystem::remove_all(dir);
+}
+
 // --- games/examples/templates: a small game made of templates ---------------------------------------------------
 //
 // As the «Шаблоны» window makes it, with the same calls: the main menu, the screen over the game, the pause and

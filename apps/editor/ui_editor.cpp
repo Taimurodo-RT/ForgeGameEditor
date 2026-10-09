@@ -5621,6 +5621,11 @@ std::vector<std::string> UiEditor::check_windows() const {
     return out;
 }
 
+bool UiEditor::check_leaving(const std::string& window) const {
+    Rml::ElementDocument* doc = check_ ? check_->document(window) : nullptr;
+    return doc && doc->IsVisible() && doc->HasAttribute("forge-leaving");
+}
+
 std::optional<d::Rect> UiEditor::check_box(const std::string& window, const std::string& layer) const {
     Rml::ElementDocument* doc = check_ ? check_->document(window) : nullptr;
     Rml::Element* found = nullptr;
