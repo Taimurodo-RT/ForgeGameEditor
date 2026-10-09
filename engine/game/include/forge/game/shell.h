@@ -26,6 +26,8 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gpu.h>
 
+#include <array>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -143,6 +145,7 @@ public:
     void to_main_menu();
     const SaveSlots& slots() const { return *slots_; }
     const Settings& settings() const { return settings_; }
+    const std::filesystem::path& user_folder() const { return user_dir_; } // saves and settings.json
     void apply_settings(const Settings& s);
     const std::string& title() const { return title_; }
     // The game's data folder (game.json, level/...).
@@ -167,6 +170,10 @@ private:
     void end_dialogue();
     void start_loading(std::function<void()> work);
     void screen_action(const ScreenAction& action);
+    // The game's volumes as variables (settings.master, settings.music, settings.sound: 0 to 100), so a screen shows
+    // and changes them like any other: a change made by the game (a button's «Изменить данные», «Логика») goes to
+    // the sound and settings.json, a change of the settings shows in the variables.
+    void sync_settings_vars();
     Value call(std::string_view name, const std::vector<Value>& args);
 
     Game* game_ = nullptr;
@@ -185,6 +192,9 @@ private:
     f64 autosave_s_ = 300;
 
     Vars vars_;
+    // What sync_settings_vars wrote into the variables last (NaN: nothing since they were cleared or loaded, so a
+    // save's or a new game's values never change the settings).
+    std::array<f64, 3> settings_vars_{NAN, NAN, NAN};
     QuestBook quests_;
     std::unordered_map<std::string, std::unique_ptr<Dialogue>> dialogues_;
     std::unordered_map<std::string, CallFn> calls_;

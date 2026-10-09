@@ -83,6 +83,8 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/slice/ DESTINATION data/game COMPO
 # The example of windows' behaviour (13.11), as the editor saved it: `OldMine --test --scene windows` reads its
 # pages from data/examples/window-behaviour/ui, as the game reads its own game/ui.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/window-behaviour/ DESTINATION data/examples/window-behaviour COMPONENT slice)
+# And the game made of templates (13.12) with its pictures, sound and own template: `OldMine --test --scene templates`.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/templates/ DESTINATION data/examples/templates COMPONENT slice)
 add_custom_target(forge_slice_package
   COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/dist/OldMine
   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component slice --config $<CONFIG>

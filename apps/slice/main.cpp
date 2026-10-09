@@ -8,7 +8,7 @@
 //                                   (the level editor's «Играть отсюда»; FILE gets the links
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
-//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu]
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates]
 //                                   offscreen: plays the game through and checks it
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
@@ -226,6 +226,10 @@ private:
         }
         if (scene_ == "windows") {
             build_windows(s);
+            return;
+        }
+        if (scene_ == "templates") {
+            build_templates(s);
             return;
         }
         SliceGame& g = g_;
@@ -2349,6 +2353,266 @@ private:
                 check(g.hero_x() > x1 + 0.1, "мир снова идёт: герой идёт вправо, " + std::to_string(x1) + " → " + std::to_string(g.hero_x()));
                 g.select(0);
                 // The game's own screens again (games/slice has none).
+                sc.load(s.context(), s.game_dir(), false);
+                return true;
+            }
+            return false;
+        }});
+    }
+
+    // games/examples/templates (13.12): a game made of the library's templates, as the editor saved it, read from
+    // disk (the package carries it in data/examples). What the templates' buttons do in the game: the main menu's
+    // «Настройки» opens the author's settings over it, whose buttons change the game's volume (Settings, the
+    // mixer, settings.json); two copies of the game's own template «Находка» give their own things; the HUD's
+    // pause button opens the author's pause, which stops the world, darkens, grows in and sounds its buttons; the
+    // settings over it; «Продолжить» closes it and the world goes on; Esc is still the game's pause.
+    void build_templates(Shell& s) {
+        SliceGame& g = g_;
+        static const char* const kPages[] = {"шаблоны_меню", "шаблоны_игра", "шаблоны_пауза", "шаблоны_настройки"};
+        static f64 x0 = 0, x1 = 0, torches = 0;
+        static u32 clicks = 0;
+        static std::filesystem::path kept;
+        auto send = [&s, &g](const SDL_Event& e) {
+            if (!s.handle_event(e) && s.screen() == Screen::Playing && !s.in_dialogue()) g.handle_event(e);
+        };
+        auto key = [send](SDL_Keycode k, bool down) {
+            SDL_Event ev{};
+            ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+            ev.key.key = k;
+            ev.key.down = down;
+            send(ev);
+        };
+        auto press = [key](SDL_Keycode k) {
+            key(k, true);
+            key(k, false);
+        };
+        // The mouse at a point of a page's 1920 × 1080, where the page's fit shows it on the player's screen.
+        auto at = [&s](f32 x, f32 y) {
+            const Rml::Vector2i size = s.context()->GetDimensions();
+            const game::ScreenFit fit = game::fit_screen("expand", 1920, 1080, static_cast<f32>(size.x), static_cast<f32>(size.y));
+            return Rml::Vector2f(game::fit_to_view_x(fit, x), game::fit_to_view_y(fit, y));
+        };
+        // A button of a page (in the layer titled within, when two have its name).
+        auto button = [&s](const char* page, const char* within, const char* title) -> Rml::Element* {
+            Rml::ElementDocument* doc = s.screens().document(page);
+            Rml::Element* scope = doc;
+            if (within && doc) {
+                Rml::ElementList all;
+                doc->QuerySelectorAll(all, "[title]");
+                scope = nullptr;
+                for (Rml::Element* e : all)
+                    if (e->GetAttribute<Rml::String>("title", "") == within) scope = e;
+            }
+            return titled(scope, title);
+        };
+        // Clicked in its middle, where the page's fit shows it.
+        auto click = [&s, at, send, button](const char* page, const char* within, const char* title) {
+            Rml::ElementDocument* doc = s.screens().document(page);
+            Rml::Element* root = doc ? doc->GetElementById("n1") : nullptr;
+            Rml::Element* e = button(page, within, title);
+            if (!root || !e) return false;
+            const Rml::Vector2f c = e->GetAbsoluteOffset(Rml::BoxArea::Border) - root->GetAbsoluteOffset(Rml::BoxArea::Border) +
+                                    e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+            const Rml::Vector2f p = at(c.x, c.y);
+            SDL_Event ev{};
+            ev.type = SDL_EVENT_MOUSE_MOTION;
+            ev.motion.x = p.x;
+            ev.motion.y = p.y;
+            send(ev);
+            for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                ev = {};
+                ev.type = t;
+                ev.button.button = SDL_BUTTON_LEFT;
+                ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                ev.button.x = p.x;
+                ev.button.y = p.y;
+                send(ev);
+            }
+            return true;
+        };
+        auto focus = [&s, button](const char* page, const char* within, const char* title) {
+            Rml::Element* f = s.context()->GetFocusElement();
+            return f && f == button(page, within, title);
+        };
+        auto num = [&s](const char* name) { return s.vars().get(name).number(); };
+        // A window still growing in: its root's opacity is set while it moves (GameScreens::place).
+        auto appearing = [&s](const char* page) {
+            Rml::ElementDocument* doc = s.screens().document(page);
+            Rml::Element* root = doc ? doc->GetElementById("n1") : nullptr;
+            return root && root->GetLocalProperty("opacity") != nullptr;
+        };
+        auto near = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-4f; };
+
+        steps_.push_back({"пример шаблонов с диска", 20, [&s, &g, this](u32 f) {
+            GameScreens& sc = s.screens();
+            if (f == 0) {
+                const std::filesystem::path dir = s.game_dir().parent_path() / "examples" / "templates";
+                std::error_code ec;
+                for (const char* name : kPages)
+                    check(std::filesystem::is_regular_file(dir / "ui" / utf8_path(std::string(name) + ".html"), ec),
+                          std::string("файлы примера на диске: ") + name + " в " + path_to_utf8(dir / "ui"));
+                check(std::filesystem::is_regular_file(dir / "ui" / "templates" / utf8_path("находка.json"), ec) &&
+                          std::filesystem::is_regular_file(dir / "sounds" / utf8_path("щелчок.wav"), ec) &&
+                          std::filesystem::is_regular_file(dir / "pictures" / utf8_path("интерфейс/рамка_дерево.png"), ec),
+                      "с ними свой шаблон, звук и картинки");
+                FORGE_INFO("пример шаблонов читается из %s", path_to_utf8(dir / "ui").c_str());
+                sc.load(s.context(), dir, false);
+                const std::vector<std::string> names = sc.names();
+                for (const char* name : kPages) {
+                    Rml::ElementDocument* doc = sc.document(name);
+                    std::string url = doc ? doc->GetSourceURL() : std::string();
+                    std::replace(url.begin(), url.end(), '\\', '/');
+                    check(std::find(names.begin(), names.end(), name) != names.end() &&
+                              url.ends_with("templates/ui/" + std::string(name) + ".html"),
+                          std::string("страница прочитана из файла: ") + name + " (" + url + ")");
+                }
+                check(names.size() == std::size(kPages), "других экранов нет (свои шаблоны игры не экраны): " + std::to_string(names.size()));
+                audio::ScreenSounds& snd = g.sounds().screens();
+                kept = snd.folder();
+                snd.attach(&g.sounds().mixer(), dir / "sounds");
+            }
+            if (f < 3) return false;
+            check(s.screen() == Screen::Main && sc.shown("шаблоны_меню"), "меню из шаблона вместо меню игры");
+            check(sc.windows().empty(), "окон пока нет");
+            return true;
+        }});
+        steps_.push_back({"настройки из шаблона над главным меню", 40, [&s, press, key, click, focus, num, appearing, near, this](u32 f) {
+            GameScreens& sc = s.screens();
+            if (f == 0) {
+                check(near(s.settings().music_volume, 0.7f), "громкость музыки как у новой игры: " + std::to_string(s.settings().music_volume));
+                check(num("settings.music") == 70, "и в переменной settings.music: " + std::to_string(num("settings.music")));
+                check(click("шаблоны_меню", nullptr, "Кнопка «Настройки»"), "щелчок по «Настройки» меню");
+            }
+            if (f == 1) {
+                check(sc.windows() == std::vector<std::string>{"шаблоны_настройки"} && s.screen() == Screen::Main && sc.shown("шаблоны_меню"),
+                      "окно настроек открылось поверх главного меню, меню на месте");
+                check(appearing("шаблоны_настройки"), "окно появляется (растёт)");
+                SDL_Delay(300);
+            }
+            if (f == 3) {
+                check(!appearing("шаблоны_настройки"), "окно появилось");
+                check(click("шаблоны_настройки", "Строка «Музыка»", "Кнопка «+»"), "«+» у музыки");
+            }
+            if (f == 5) {
+                check(near(s.settings().music_volume, 0.8f) && num("settings.music") == 80, "громкость музыки 80: игра её меняет");
+                check(near(g_.sounds().mixer().volume(audio::Bus::Music), 0.8f), "микшер играет музыку тише: " +
+                                                                                      std::to_string(g_.sounds().mixer().volume(audio::Bus::Music)));
+                check(near(game::load_settings(s.user_folder()).music_volume, 0.8f), "и запоминает её (settings.json)");
+                // The button pressed with the mouse has the keyboard (13.11): Enter presses it again.
+                check(focus("шаблоны_настройки", "Строка «Музыка»", "Кнопка «+»"), "клавиатура у нажатой «+»");
+                press(SDLK_RETURN);
+            }
+            if (f == 7) {
+                check(num("settings.music") == 90 && near(s.settings().music_volume, 0.9f), "Enter: ещё +10");
+                check(click("шаблоны_настройки", "Строка «Общая»", "Кнопка «−»"), "«−» у общей");
+            }
+            if (f == 9) {
+                check(near(s.settings().master_volume, 0.9f) && near(g_.sounds().mixer().master(), 0.9f), "общая громкость 90, микшер тоже");
+                key(SDLK_ESCAPE, true);
+                key(SDLK_ESCAPE, false);
+                check(sc.windows().empty() && s.screen() == Screen::Main && sc.shown("шаблоны_меню"), "Esc закрыл окно, меню осталось");
+            }
+            if (f == 11) {
+                check(focus("шаблоны_меню", nullptr, "Кнопка «Настройки»"), "клавиатура вернулась к «Настройки» меню");
+                check(click("шаблоны_меню", nullptr, "Кнопка «Новая игра»"), "щелчок по «Новая игра»");
+            }
+            if (f < 13) return false;
+            return s.screen() == Screen::Playing && g_.running() && g_.hero_alive();
+        }});
+        steps_.push_back({"шаблоны в игре: находки, пауза, настройки", 140, [&s, &g, press, key, click, num, appearing, near, this](u32 f) {
+            GameScreens& sc = s.screens();
+            audio::ScreenSounds& snd = g.sounds().screens();
+            auto right = [&g]() {
+                Controls c;
+                c.right = true;
+                g.script(c);
+            };
+            const std::vector<std::string> pause{"шаблоны_пауза"};
+            if (f == 0) {
+                check(sc.shown("шаблоны_игра") && !sc.shown("шаблоны_меню") && sc.windows().empty(), "в игре экран из шаблона над игрой");
+                check(num("inv.key") == 0 && num("inv.torch") == 5, "новая игра: ключа нет, факелов 5");
+                torches = num("inv.torch");
+            }
+            if (f == 2) {
+                // The template's texts show the game's values from the first frame: a new game's 0 coins, not «{inv.coins}».
+                Rml::ElementDocument* doc = sc.document("шаблоны_игра");
+                Rml::Element* coins = doc ? doc->QuerySelector("[title=Сколько]") : nullptr;
+                Rml::Element* hearts = doc ? doc->QuerySelector("[title=Сердца]") : nullptr;
+                check(coins && coins->GetInnerRML() == "0", "монет над игрой: 0 (" + (coins ? coins->GetInnerRML() : std::string("нет слоя")) + ")");
+                check(hearts && hearts->GetInnerRML() == "3/3", "сердца над игрой: " + (hearts ? hearts->GetInnerRML() : std::string("нет слоя")));
+            }
+            if (f < 30 && !g.on_ground()) return false; // the hero lands first
+            if (f == 30) {
+                right();
+                x0 = g.hero_x();
+            }
+            if (f == 40) {
+                check(g.hero_x() > x0 + 0.1, "мир идёт: герой идёт вправо");
+                check(click("шаблоны_игра", "Карточка «Ключ»", "Кнопка «Взять»"), "«Взять» у первой «Находки» («Ключ»)");
+            }
+            if (f == 42) {
+                check(num("inv.key") == 1 && num("inv.torch") == torches, "она даёт ключ");
+                check(click("шаблоны_игра", "Карточка «Факел»", "Кнопка «Взять»"), "«Взять» у второй, изменённой («Факел»)");
+            }
+            if (f == 44) {
+                check(num("inv.torch") == torches + 1 && num("inv.key") == 1, "она даёт факел: копии шаблона не связаны");
+                check(click("шаблоны_игра", nullptr, "Кнопка «Пауза»"), "кнопка паузы над игрой");
+            }
+            if (f == 45) {
+                check(sc.windows() == pause && sc.pauses() && s.screen() == Screen::Playing, "открылась пауза из шаблона, игра стоит");
+                Rml::ElementDocument* doc = sc.document("шаблоны_пауза");
+                Rml::Element* veil = doc ? doc->GetElementById("forge-dim") : nullptr;
+                check(veil && veil->IsVisible(true), "затемнение видно");
+                check(appearing("шаблоны_пауза"), "окно появляется (растёт)");
+                x1 = g.hero_x();
+                SDL_Delay(300);
+            }
+            if (f == 50) {
+                check(!appearing("шаблоны_пауза"), "окно появилось");
+                check(std::fabs(g.hero_x() - x1) < 1e-9, "мир стоит, хотя «вправо» держат");
+                check(click("шаблоны_пауза", nullptr, "Кнопка «Настройки»"), "«Настройки» паузы");
+            }
+            if (f == 51) {
+                check(sc.windows() == std::vector<std::string>{"шаблоны_пауза", "шаблоны_настройки"}, "настройки открылись над паузой");
+                SDL_Delay(300);
+            }
+            if (f == 53) check(click("шаблоны_настройки", "Строка «Звуки»", "Кнопка «−»"), "«−» у звуков");
+            if (f == 55) {
+                check(near(s.settings().sound_volume, 0.9f) && num("settings.sound") == 90, "громкость звуков 90");
+                check(near(g.sounds().mixer().volume(audio::Bus::Sound), 0.9f) && near(g.sounds().mixer().volume(audio::Bus::Ui), 0.9f),
+                      "микшер: звуки мира и кнопок тише");
+                check(click("шаблоны_настройки", nullptr, "Кнопка «Готово»"), "«Готово»");
+            }
+            if (f == 57) {
+                check(sc.windows() == pause && sc.pauses(), "«Готово» закрыл настройки, пауза осталась");
+                // Closed, a window is still drawn while it goes away; the mouse goes to what is under it at once.
+                check(appearing("шаблоны_настройки"), "настройки ещё уходят (видны)");
+                clicks = snd.clicks();
+                check(click("шаблоны_пауза", nullptr, "Кнопка «Продолжить»"), "«Продолжить» сразу, пока настройки уходят");
+            }
+            if (f == 58) {
+                check(snd.clicks() == clicks + 1 && snd.last_click() == "щелчок.wav", "кнопка паузы звучит звуком экрана: " + snd.last_click());
+                check(sc.windows().empty() && !sc.pauses() && s.screen() == Screen::Playing, "«Продолжить» закрыл паузу из шаблона");
+                check(appearing("шаблоны_пауза"), "пауза ещё уходит (видна)");
+                torches = num("inv.torch");
+                check(click("шаблоны_игра", "Карточка «Факел»", "Кнопка «Взять»"), "«Взять» сразу, пока пауза уходит");
+            }
+            if (f == 59) {
+                check(num("inv.torch") == torches + 1, "щелчок дошёл до карточки, а не до уходящей паузы");
+                SDL_Delay(350);
+            }
+            if (f == 70) {
+                check(g.hero_x() > x1 + 0.1, "мир снова идёт");
+                // Esc over the game is still the game's own pause (13.11).
+                key(SDLK_ESCAPE, true);
+                key(SDLK_ESCAPE, false);
+                check(s.screen() == Screen::Paused, "Esc: пауза самой игры");
+                press(SDLK_ESCAPE);
+                check(s.screen() == Screen::Playing, "Esc ещё раз — обратно в игру");
+            }
+            if (f == 72) {
+                g.select(0);
+                snd.attach(&g.sounds().mixer(), kept);
                 sc.load(s.context(), s.game_dir(), false);
                 return true;
             }

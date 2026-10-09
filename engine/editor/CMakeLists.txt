@@ -5,6 +5,7 @@ add_library(forge_editor STATIC
   src/inspector.cpp
   src/dock.cpp
   src/ui_design.cpp
+  src/ui_templates.cpp
   src/ui_simple.cpp
   src/color_pick.cpp)
 add_library(forge::editor ALIAS forge_editor)

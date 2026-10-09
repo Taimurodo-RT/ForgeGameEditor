@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "title": "Карточка задания",
+  "next_id": 8,
+  "width": 640.0,
+  "height": 200.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Карточка задания",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 640.0,
+    "h": 200.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Карточка задания",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 640.0,
+        "h": 200.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Значок",
+            "type": "frame",
+            "x": 28.0,
+            "y": 52.0,
+            "w": 96.0,
+            "h": 96.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              48.0,
+              48.0,
+              48.0,
+              48.0
+            ],
+            "children": [
+              {
+                "id": 4,
+                "name": "Флаг",
+                "type": "text",
+                "x": 24.0,
+                "y": 24.0,
+                "w": 48.0,
+                "h": 48.0,
+                "text": "",
+                "style": {
+                  "family": "Material Symbols Rounded",
+                  "size": 48.0,
+                  "weight": 500,
+                  "align": "center",
+                  "color": "#1b2129"
+                }
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "name": "Название",
+            "type": "text",
+            "x": 148.0,
+            "y": 28.0,
+            "w": 460.0,
+            "h": 40.0,
+            "text": "Найти кирку",
+            "style": {
+              "family": "Onest",
+              "size": 30.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#f2f4f7"
+            }
+          },
+          {
+            "id": 6,
+            "name": "Текст",
+            "type": "text",
+            "x": 148.0,
+            "y": 74.0,
+            "w": 460.0,
+            "h": 64.0,
+            "text": "Старый шахтёр потерял кирку где-то в пещерах.",
+            "style": {
+              "family": "Onest",
+              "size": 24.0,
+              "weight": 400,
+              "align": "left",
+              "color": "#8a94a3"
+            }
+          },
+          {
+            "id": 7,
+            "name": "Награда",
+            "type": "text",
+            "x": 148.0,
+            "y": 146.0,
+            "w": 460.0,
+            "h": 32.0,
+            "text": "Награда: 50 монет",
+            "style": {
+              "family": "Onest",
+              "size": 24.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#e8b04a"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

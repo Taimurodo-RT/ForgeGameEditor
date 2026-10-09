@@ -26,6 +26,7 @@ add_executable(forge_tests
   test_logic.cpp
   test_ui_design.cpp
   test_ui_simple.cpp
+  test_ui_templates.cpp
   test_color_pick.cpp
   test_key_timeline.cpp
   test_layer_move.cpp

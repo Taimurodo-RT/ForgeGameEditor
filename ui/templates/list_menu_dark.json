@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "title": "Меню из кнопок",
+  "next_id": 13,
+  "width": 440.0,
+  "height": 464.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Меню из кнопок",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 440.0,
+    "h": 464.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Меню",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 440.0,
+        "h": 464.0,
+        "layout": {
+          "mode": "column",
+          "gap": 16.0,
+          "padding": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "align": 0
+        },
+        "children": [
+          {
+            "id": 3,
+            "name": "Кнопка «Новая игра»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 440.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "new"
+              }
+            ],
+            "children": [
+              {
+                "id": 4,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Новая игра",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#1b2129"
+                }
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "name": "Кнопка «Продолжить»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 96.0,
+            "w": 440.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "continue"
+              }
+            ],
+            "children": [
+              {
+                "id": 6,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Продолжить",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#1b2129"
+                }
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "name": "Кнопка «Загрузить»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 192.0,
+            "w": 440.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "load"
+              }
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Загрузить",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#1b2129"
+                }
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "name": "Кнопка «Настройки»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 288.0,
+            "w": 440.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "settings"
+              }
+            ],
+            "children": [
+              {
+                "id": 10,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Настройки",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#1b2129"
+                }
+              }
+            ]
+          },
+          {
+            "id": 11,
+            "name": "Кнопка «Выход»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 384.0,
+            "w": 440.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2c3542"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "quit"
+              }
+            ],
+            "children": [
+              {
+                "id": 12,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Выход",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#e6eaf0"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

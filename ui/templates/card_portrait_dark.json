@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "title": "Портрет с полосками",
+  "next_id": 14,
+  "width": 520.0,
+  "height": 150.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Портрет с полосками",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 520.0,
+    "h": 150.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Портрет",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 520.0,
+        "h": 150.0,
+        "clip": true,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Лицо",
+            "type": "frame",
+            "x": 15.0,
+            "y": 15.0,
+            "w": 120.0,
+            "h": 120.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              60.0,
+              60.0,
+              60.0,
+              60.0
+            ],
+            "children": [
+              {
+                "id": 4,
+                "name": "Значок",
+                "type": "text",
+                "x": 20.0,
+                "y": 20.0,
+                "w": 80.0,
+                "h": 80.0,
+                "text": "",
+                "style": {
+                  "family": "Material Symbols Rounded",
+                  "size": 80.0,
+                  "weight": 500,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "name": "Имя",
+            "type": "text",
+            "x": 152.0,
+            "y": 14.0,
+            "w": 340.0,
+            "h": 40.0,
+            "text": "Герой",
+            "style": {
+              "family": "Onest",
+              "size": 30.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#f2f4f7"
+            }
+          },
+          {
+            "id": 6,
+            "name": "Сердце",
+            "type": "text",
+            "x": 152.0,
+            "y": 60.0,
+            "w": 30.0,
+            "h": 30.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 30.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#cd3c46"
+            }
+          },
+          {
+            "id": 7,
+            "name": "Здоровье",
+            "type": "frame",
+            "x": 190.0,
+            "y": 64.0,
+            "w": 200.0,
+            "h": 22.0,
+            "clip": true,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#11161c"
+              }
+            ],
+            "radius": [
+              11.0,
+              11.0,
+              11.0,
+              11.0
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Полоска",
+                "type": "rectangle",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 200.0,
+                "h": 22.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#cd3c46"
+                  }
+                ],
+                "radius": [
+                  11.0,
+                  11.0,
+                  11.0,
+                  11.0
+                ],
+                "bar": {
+                  "value": "hero.hearts",
+                  "max": "hero.hearts_max",
+                  "from": "left"
+                }
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "name": "Сердца",
+            "type": "text",
+            "x": 400.0,
+            "y": 58.0,
+            "w": 104.0,
+            "h": 34.0,
+            "text": "{hero.hearts}/{hero.hearts_max}",
+            "style": {
+              "family": "Onest",
+              "size": 22.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#d7dce2"
+            }
+          },
+          {
+            "id": 10,
+            "name": "Звезда",
+            "type": "text",
+            "x": 152.0,
+            "y": 102.0,
+            "w": 30.0,
+            "h": 30.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 30.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#5a96e6"
+            }
+          },
+          {
+            "id": 11,
+            "name": "Опыт",
+            "type": "frame",
+            "x": 190.0,
+            "y": 108.0,
+            "w": 200.0,
+            "h": 18.0,
+            "clip": true,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#11161c"
+              }
+            ],
+            "radius": [
+              9.0,
+              9.0,
+              9.0,
+              9.0
+            ],
+            "children": [
+              {
+                "id": 12,
+                "name": "Полоска",
+                "type": "rectangle",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 200.0,
+                "h": 18.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#5a96e6"
+                  }
+                ],
+                "radius": [
+                  9.0,
+                  9.0,
+                  9.0,
+                  9.0
+                ],
+                "bar": {
+                  "value": "hero.xp",
+                  "max": "hero.xp_max",
+                  "from": "left"
+                }
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "name": "Опыт числом",
+            "type": "text",
+            "x": 400.0,
+            "y": 100.0,
+            "w": 104.0,
+            "h": 34.0,
+            "text": "{hero.xp}/{hero.xp_max}",
+            "style": {
+              "family": "Onest",
+              "size": 22.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#8a94a3"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

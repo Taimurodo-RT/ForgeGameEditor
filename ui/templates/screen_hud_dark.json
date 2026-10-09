@@ -1,0 +1,716 @@
+{
+  "version": 1,
+  "title": "Над игрой",
+  "next_id": 33,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "safe": 40.0,
+    "show": "playing"
+  },
+  "root": {
+    "id": 1,
+    "name": "Над игрой",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 21,
+        "name": "Портрет",
+        "type": "frame",
+        "x": 40.0,
+        "y": 40.0,
+        "w": 520.0,
+        "h": 150.0,
+        "clip": true,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 22,
+            "name": "Лицо",
+            "type": "frame",
+            "x": 15.0,
+            "y": 15.0,
+            "w": 120.0,
+            "h": 120.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              60.0,
+              60.0,
+              60.0,
+              60.0
+            ],
+            "children": [
+              {
+                "id": 23,
+                "name": "Значок",
+                "type": "text",
+                "x": 20.0,
+                "y": 20.0,
+                "w": 80.0,
+                "h": 80.0,
+                "text": "",
+                "style": {
+                  "family": "Material Symbols Rounded",
+                  "size": 80.0,
+                  "weight": 500,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 24,
+            "name": "Имя",
+            "type": "text",
+            "x": 152.0,
+            "y": 14.0,
+            "w": 340.0,
+            "h": 40.0,
+            "text": "Герой",
+            "style": {
+              "family": "Onest",
+              "size": 30.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#f2f4f7"
+            }
+          },
+          {
+            "id": 25,
+            "name": "Сердце",
+            "type": "text",
+            "x": 152.0,
+            "y": 60.0,
+            "w": 30.0,
+            "h": 30.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 30.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#cd3c46"
+            }
+          },
+          {
+            "id": 26,
+            "name": "Здоровье",
+            "type": "frame",
+            "x": 190.0,
+            "y": 64.0,
+            "w": 200.0,
+            "h": 22.0,
+            "clip": true,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#11161c"
+              }
+            ],
+            "radius": [
+              11.0,
+              11.0,
+              11.0,
+              11.0
+            ],
+            "children": [
+              {
+                "id": 27,
+                "name": "Полоска",
+                "type": "rectangle",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 200.0,
+                "h": 22.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#cd3c46"
+                  }
+                ],
+                "radius": [
+                  11.0,
+                  11.0,
+                  11.0,
+                  11.0
+                ],
+                "bar": {
+                  "value": "hero.hearts",
+                  "max": "hero.hearts_max",
+                  "from": "left"
+                }
+              }
+            ]
+          },
+          {
+            "id": 28,
+            "name": "Сердца",
+            "type": "text",
+            "x": 400.0,
+            "y": 58.0,
+            "w": 104.0,
+            "h": 34.0,
+            "text": "{hero.hearts}/{hero.hearts_max}",
+            "style": {
+              "family": "Onest",
+              "size": 22.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#d7dce2"
+            }
+          },
+          {
+            "id": 29,
+            "name": "Звезда",
+            "type": "text",
+            "x": 152.0,
+            "y": 102.0,
+            "w": 30.0,
+            "h": 30.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 30.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#5a96e6"
+            }
+          },
+          {
+            "id": 30,
+            "name": "Опыт",
+            "type": "frame",
+            "x": 190.0,
+            "y": 108.0,
+            "w": 200.0,
+            "h": 18.0,
+            "clip": true,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#11161c"
+              }
+            ],
+            "radius": [
+              9.0,
+              9.0,
+              9.0,
+              9.0
+            ],
+            "children": [
+              {
+                "id": 31,
+                "name": "Полоска",
+                "type": "rectangle",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 200.0,
+                "h": 18.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#5a96e6"
+                  }
+                ],
+                "radius": [
+                  9.0,
+                  9.0,
+                  9.0,
+                  9.0
+                ],
+                "bar": {
+                  "value": "hero.xp",
+                  "max": "hero.xp_max",
+                  "from": "left"
+                }
+              }
+            ]
+          },
+          {
+            "id": 32,
+            "name": "Опыт числом",
+            "type": "text",
+            "x": 400.0,
+            "y": 100.0,
+            "w": 104.0,
+            "h": 34.0,
+            "text": "{hero.xp}/{hero.xp_max}",
+            "style": {
+              "family": "Onest",
+              "size": 22.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#8a94a3"
+            }
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Монеты",
+        "type": "frame",
+        "x": 1620.0,
+        "y": 40.0,
+        "w": 260.0,
+        "h": 72.0,
+        "horizontal": "end",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Монета",
+            "type": "text",
+            "x": 16.0,
+            "y": 12.0,
+            "w": 48.0,
+            "h": 48.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 48.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#e8b04a"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Сколько",
+            "type": "text",
+            "x": 76.0,
+            "y": 14.0,
+            "w": 168.0,
+            "h": 44.0,
+            "text": "{inv.coins}",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#d7dce2"
+            }
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "name": "Кнопка «Пауза»",
+        "type": "frame",
+        "x": 1808.0,
+        "y": 140.0,
+        "w": 72.0,
+        "h": 72.0,
+        "horizontal": "end",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#2c3542"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "pause"
+          }
+        ],
+        "children": [
+          {
+            "id": 7,
+            "name": "Значок",
+            "type": "text",
+            "x": 12.0,
+            "y": 12.0,
+            "w": 48.0,
+            "h": 48.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 48.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#e6eaf0"
+            }
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Ячейки",
+        "type": "frame",
+        "x": 642.0,
+        "y": 944.0,
+        "w": 636.0,
+        "h": 96.0,
+        "horizontal": "center",
+        "vertical": "end",
+        "children": [
+          {
+            "id": 9,
+            "name": "Ячейка 1",
+            "type": "frame",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 96.0,
+            "h": 96.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 10,
+                "name": "Клавиша",
+                "type": "text",
+                "x": 8.0,
+                "y": 4.0,
+                "w": 30.0,
+                "h": 26.0,
+                "text": "1",
+                "style": {
+                  "family": "Onest",
+                  "size": 20.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 11,
+            "name": "Ячейка 2",
+            "type": "frame",
+            "x": 108.0,
+            "y": 0.0,
+            "w": 96.0,
+            "h": 96.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 12,
+                "name": "Клавиша",
+                "type": "text",
+                "x": 8.0,
+                "y": 4.0,
+                "w": 30.0,
+                "h": 26.0,
+                "text": "2",
+                "style": {
+                  "family": "Onest",
+                  "size": 20.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "name": "Ячейка 3",
+            "type": "frame",
+            "x": 216.0,
+            "y": 0.0,
+            "w": 96.0,
+            "h": 96.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 14,
+                "name": "Клавиша",
+                "type": "text",
+                "x": 8.0,
+                "y": 4.0,
+                "w": 30.0,
+                "h": 26.0,
+                "text": "3",
+                "style": {
+                  "family": "Onest",
+                  "size": 20.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 15,
+            "name": "Ячейка 4",
+            "type": "frame",
+            "x": 324.0,
+            "y": 0.0,
+            "w": 96.0,
+            "h": 96.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 16,
+                "name": "Клавиша",
+                "type": "text",
+                "x": 8.0,
+                "y": 4.0,
+                "w": 30.0,
+                "h": 26.0,
+                "text": "4",
+                "style": {
+                  "family": "Onest",
+                  "size": 20.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 17,
+            "name": "Ячейка 5",
+            "type": "frame",
+            "x": 432.0,
+            "y": 0.0,
+            "w": 96.0,
+            "h": 96.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 18,
+                "name": "Клавиша",
+                "type": "text",
+                "x": 8.0,
+                "y": 4.0,
+                "w": 30.0,
+                "h": 26.0,
+                "text": "5",
+                "style": {
+                  "family": "Onest",
+                  "size": 20.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 19,
+            "name": "Ячейка 6",
+            "type": "frame",
+            "x": 540.0,
+            "y": 0.0,
+            "w": 96.0,
+            "h": 96.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 20,
+                "name": "Клавиша",
+                "type": "text",
+                "x": 8.0,
+                "y": 4.0,
+                "w": 30.0,
+                "h": 26.0,
+                "text": "6",
+                "style": {
+                  "family": "Onest",
+                  "size": 20.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

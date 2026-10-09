@@ -807,9 +807,9 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
             p.visible = visible;
             const bool moves = !p.appear.empty() && p.root;
             if (visible) {
-                if (!p.doc->IsVisible()) {
+                if (!p.doc->IsVisible() || p.leaving) {
                     // A menu or a window that stops the game takes the keyboard (Tab goes to its buttons); a
-                    // screen over the running game leaves it to the game.
+                    // screen over the running game leaves it to the game. Back while still going away: the same.
                     const bool keys = p.role == ScreenRole::Menu || (p.role == ScreenRole::Command && p.pauses);
                     p.doc->Show(Rml::ModalFlag::None, keys ? Rml::FocusFlag::Document : Rml::FocusFlag::None);
                     restacked = true;
@@ -817,11 +817,17 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
                 // Comes in (from wherever it was going away).
                 const f32 from = p.move_start ? impl_->progress(p) : 0.0f;
                 p.leaving = false;
+                p.doc->RemoveAttribute("forge-leaving");
                 p.move_start = moves ? time_now_ns() - static_cast<u64>(from * p.appear_time * 1e9) : 0;
                 if (moves) impl_->place(p, from);
             } else if (moves) {
                 const f32 from = p.move_start ? impl_->progress(p) : 1.0f;
                 p.leaving = true;
+                // Closed: still drawn while it goes, but the mouse (Context.cpp) and the keyboard go to what is
+                // under it at once: a click or Enter right after closing does not land on a window no longer there.
+                p.doc->SetAttribute("forge-leaving", "");
+                if (Rml::Context* c = p.doc->GetContext(); c && c->GetFocusElement() && c->GetFocusElement()->GetOwnerDocument() == p.doc)
+                    c->UnfocusDocument(p.doc);
                 p.move_start = time_now_ns() - static_cast<u64>((1 - from) * p.appear_time * 1e9);
             } else {
                 p.doc->Hide();
@@ -835,6 +841,7 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
                 p.move_start = 0;
                 if (p.leaving) {
                     p.leaving = false;
+                    p.doc->RemoveAttribute("forge-leaving");
                     p.doc->Hide();
                     restacked = true;
                 }

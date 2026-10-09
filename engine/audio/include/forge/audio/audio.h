@@ -129,6 +129,8 @@ public:
 
     void set_master(f32 volume);
     void set_volume(Bus bus, f32 volume);
+    f32 master() const;
+    f32 volume(Bus bus) const;
     // A paused bus keeps its sounds where they are (the game's pause menu).
     void pause(Bus bus, bool on);
 

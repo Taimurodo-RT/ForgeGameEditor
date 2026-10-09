@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "title": "Подтверждение",
+  "next_id": 9,
+  "width": 768.0,
+  "height": 388.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Подтверждение",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 768.0,
+    "h": 388.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Подтверждение",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 768.0,
+        "h": 388.0,
+        "fills": [
+          {
+            "kind": "image",
+            "image": "pictures/интерфейс/пергамент.png",
+            "fit": "tile"
+          }
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#0000008c",
+            "x": 0.0,
+            "y": 10.0,
+            "spread": 0.0,
+            "blur": 30.0
+          }
+        ],
+        "frame": {
+          "image": "pictures/интерфейс/рамка_дерево.png",
+          "slice": [
+            32.0,
+            32.0,
+            32.0,
+            32.0
+          ],
+          "fill": false
+        },
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 24.0,
+            "y": 56.0,
+            "w": 720.0,
+            "h": 62.0,
+            "text": "Вы уверены?",
+            "style": {
+              "family": "Cormorant SC",
+              "size": 48.0,
+              "weight": 700,
+              "align": "center",
+              "color": "#3b2412"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Текст",
+            "type": "text",
+            "x": 84.0,
+            "y": 142.0,
+            "w": 600.0,
+            "h": 80.0,
+            "text": "Прогресс после последнего сохранения пропадёт.",
+            "style": {
+              "family": "Alegreya Sans",
+              "size": 28.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#6b5440"
+            }
+          },
+          {
+            "id": 5,
+            "name": "Кнопка «Да»",
+            "type": "frame",
+            "x": 84.0,
+            "y": 256.0,
+            "w": 280.0,
+            "h": 72.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "message",
+                "target": "подтвердил"
+              }
+            ],
+            "children": [
+              {
+                "id": 6,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 15.0,
+                "w": 280.0,
+                "h": 42.0,
+                "text": "Да",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "name": "Кнопка «Нет»",
+            "type": "frame",
+            "x": 404.0,
+            "y": 256.0,
+            "w": 280.0,
+            "h": 72.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#6b4a2b"
+              }
+            ],
+            "radius": [
+              10.0,
+              10.0,
+              10.0,
+              10.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 15.0,
+                "w": 280.0,
+                "h": 42.0,
+                "text": "Нет",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f5e6c8"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

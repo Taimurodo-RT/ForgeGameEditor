@@ -1,0 +1,736 @@
+{
+  "version": 1,
+  "title": "Настройки",
+  "next_id": 35,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "pauses": true,
+    "dim": true,
+    "appear": "zoom",
+    "appear_time": 0.2
+  },
+  "root": {
+    "id": 1,
+    "name": "Настройки",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 486.0,
+        "y": 136.0,
+        "w": 948.0,
+        "h": 808.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "fills": [
+          {
+            "kind": "image",
+            "image": "pictures/интерфейс/пергамент.png",
+            "fit": "tile"
+          }
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#0000008c",
+            "x": 0.0,
+            "y": 10.0,
+            "spread": 0.0,
+            "blur": 30.0
+          }
+        ],
+        "frame": {
+          "image": "pictures/интерфейс/рамка_дерево.png",
+          "slice": [
+            32.0,
+            32.0,
+            32.0,
+            32.0
+          ],
+          "fill": false
+        },
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 24.0,
+            "y": 60.0,
+            "w": 900.0,
+            "h": 73.0,
+            "text": "Настройки",
+            "style": {
+              "family": "Cormorant SC",
+              "size": 56.0,
+              "weight": 700,
+              "align": "center",
+              "color": "#3b2412"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Строка «Общая»",
+            "type": "frame",
+            "x": 114.0,
+            "y": 154.0,
+            "w": 720.0,
+            "h": 96.0,
+            "children": [
+              {
+                "id": 5,
+                "name": "Название",
+                "type": "text",
+                "x": 0.0,
+                "y": 28.0,
+                "w": 220.0,
+                "h": 40.0,
+                "text": "Общая",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 30.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#3b2a1a"
+                }
+              },
+              {
+                "id": 6,
+                "name": "Кнопка «−»",
+                "type": "frame",
+                "x": 236.0,
+                "y": 16.0,
+                "w": 64.0,
+                "h": 64.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#6b4a2b"
+                  }
+                ],
+                "radius": [
+                  10.0,
+                  10.0,
+                  10.0,
+                  10.0
+                ],
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "settings.master -= 10"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 7,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 9.0,
+                    "w": 64.0,
+                    "h": 47.0,
+                    "text": "−",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 36.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#f5e6c8"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 8,
+                "name": "Шкала",
+                "type": "frame",
+                "x": 316.0,
+                "y": 30.0,
+                "w": 300.0,
+                "h": 36.0,
+                "clip": true,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#3b2412c8"
+                  }
+                ],
+                "radius": [
+                  18.0,
+                  18.0,
+                  18.0,
+                  18.0
+                ],
+                "children": [
+                  {
+                    "id": 9,
+                    "name": "Полоска",
+                    "type": "rectangle",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 300.0,
+                    "h": 36.0,
+                    "fills": [
+                      {
+                        "kind": "solid",
+                        "color": "#b33a2e"
+                      }
+                    ],
+                    "radius": [
+                      18.0,
+                      18.0,
+                      18.0,
+                      18.0
+                    ],
+                    "bar": {
+                      "value": "settings.master",
+                      "max": "100",
+                      "from": "left"
+                    }
+                  },
+                  {
+                    "id": 10,
+                    "name": "Числа",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 4.0,
+                    "w": 300.0,
+                    "h": 29.0,
+                    "text": "{settings.master}",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 22.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#ffffff"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 11,
+                "name": "Кнопка «+»",
+                "type": "frame",
+                "x": 632.0,
+                "y": 16.0,
+                "w": 64.0,
+                "h": 64.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#6b4a2b"
+                  }
+                ],
+                "radius": [
+                  10.0,
+                  10.0,
+                  10.0,
+                  10.0
+                ],
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "settings.master += 10"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 12,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 9.0,
+                    "w": 64.0,
+                    "h": 47.0,
+                    "text": "+",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 36.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#f5e6c8"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "name": "Строка «Музыка»",
+            "type": "frame",
+            "x": 114.0,
+            "y": 260.0,
+            "w": 720.0,
+            "h": 96.0,
+            "children": [
+              {
+                "id": 14,
+                "name": "Название",
+                "type": "text",
+                "x": 0.0,
+                "y": 28.0,
+                "w": 220.0,
+                "h": 40.0,
+                "text": "Музыка",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 30.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#3b2a1a"
+                }
+              },
+              {
+                "id": 15,
+                "name": "Кнопка «−»",
+                "type": "frame",
+                "x": 236.0,
+                "y": 16.0,
+                "w": 64.0,
+                "h": 64.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#6b4a2b"
+                  }
+                ],
+                "radius": [
+                  10.0,
+                  10.0,
+                  10.0,
+                  10.0
+                ],
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "settings.music -= 10"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 16,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 9.0,
+                    "w": 64.0,
+                    "h": 47.0,
+                    "text": "−",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 36.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#f5e6c8"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 17,
+                "name": "Шкала",
+                "type": "frame",
+                "x": 316.0,
+                "y": 30.0,
+                "w": 300.0,
+                "h": 36.0,
+                "clip": true,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#3b2412c8"
+                  }
+                ],
+                "radius": [
+                  18.0,
+                  18.0,
+                  18.0,
+                  18.0
+                ],
+                "children": [
+                  {
+                    "id": 18,
+                    "name": "Полоска",
+                    "type": "rectangle",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 300.0,
+                    "h": 36.0,
+                    "fills": [
+                      {
+                        "kind": "solid",
+                        "color": "#b33a2e"
+                      }
+                    ],
+                    "radius": [
+                      18.0,
+                      18.0,
+                      18.0,
+                      18.0
+                    ],
+                    "bar": {
+                      "value": "settings.music",
+                      "max": "100",
+                      "from": "left"
+                    }
+                  },
+                  {
+                    "id": 19,
+                    "name": "Числа",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 4.0,
+                    "w": 300.0,
+                    "h": 29.0,
+                    "text": "{settings.music}",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 22.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#ffffff"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 20,
+                "name": "Кнопка «+»",
+                "type": "frame",
+                "x": 632.0,
+                "y": 16.0,
+                "w": 64.0,
+                "h": 64.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#6b4a2b"
+                  }
+                ],
+                "radius": [
+                  10.0,
+                  10.0,
+                  10.0,
+                  10.0
+                ],
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "settings.music += 10"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 21,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 9.0,
+                    "w": 64.0,
+                    "h": 47.0,
+                    "text": "+",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 36.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#f5e6c8"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 22,
+            "name": "Строка «Звуки»",
+            "type": "frame",
+            "x": 114.0,
+            "y": 366.0,
+            "w": 720.0,
+            "h": 96.0,
+            "children": [
+              {
+                "id": 23,
+                "name": "Название",
+                "type": "text",
+                "x": 0.0,
+                "y": 28.0,
+                "w": 220.0,
+                "h": 40.0,
+                "text": "Звуки",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 30.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#3b2a1a"
+                }
+              },
+              {
+                "id": 24,
+                "name": "Кнопка «−»",
+                "type": "frame",
+                "x": 236.0,
+                "y": 16.0,
+                "w": 64.0,
+                "h": 64.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#6b4a2b"
+                  }
+                ],
+                "radius": [
+                  10.0,
+                  10.0,
+                  10.0,
+                  10.0
+                ],
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "settings.sound -= 10"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 25,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 9.0,
+                    "w": 64.0,
+                    "h": 47.0,
+                    "text": "−",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 36.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#f5e6c8"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 26,
+                "name": "Шкала",
+                "type": "frame",
+                "x": 316.0,
+                "y": 30.0,
+                "w": 300.0,
+                "h": 36.0,
+                "clip": true,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#3b2412c8"
+                  }
+                ],
+                "radius": [
+                  18.0,
+                  18.0,
+                  18.0,
+                  18.0
+                ],
+                "children": [
+                  {
+                    "id": 27,
+                    "name": "Полоска",
+                    "type": "rectangle",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 300.0,
+                    "h": 36.0,
+                    "fills": [
+                      {
+                        "kind": "solid",
+                        "color": "#b33a2e"
+                      }
+                    ],
+                    "radius": [
+                      18.0,
+                      18.0,
+                      18.0,
+                      18.0
+                    ],
+                    "bar": {
+                      "value": "settings.sound",
+                      "max": "100",
+                      "from": "left"
+                    }
+                  },
+                  {
+                    "id": 28,
+                    "name": "Числа",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 4.0,
+                    "w": 300.0,
+                    "h": 29.0,
+                    "text": "{settings.sound}",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 22.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#ffffff"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 29,
+                "name": "Кнопка «+»",
+                "type": "frame",
+                "x": 632.0,
+                "y": 16.0,
+                "w": 64.0,
+                "h": 64.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#6b4a2b"
+                  }
+                ],
+                "radius": [
+                  10.0,
+                  10.0,
+                  10.0,
+                  10.0
+                ],
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "settings.sound += 10"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 30,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 9.0,
+                    "w": 64.0,
+                    "h": 47.0,
+                    "text": "+",
+                    "style": {
+                      "family": "Alegreya Sans",
+                      "size": 36.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#f5e6c8"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 31,
+            "name": "Кнопка «Экран и управление»",
+            "type": "frame",
+            "x": 254.0,
+            "y": 504.0,
+            "w": 440.0,
+            "h": 76.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#6b4a2b"
+              }
+            ],
+            "radius": [
+              10.0,
+              10.0,
+              10.0,
+              10.0
+            ],
+            "on_click": [
+              {
+                "do": "settings"
+              }
+            ],
+            "children": [
+              {
+                "id": 32,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 20.0,
+                "w": 440.0,
+                "h": 36.0,
+                "text": "Экран и управление",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 28.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f5e6c8"
+                }
+              }
+            ]
+          },
+          {
+            "id": 33,
+            "name": "Кнопка «Готово»",
+            "type": "frame",
+            "x": 254.0,
+            "y": 624.0,
+            "w": 440.0,
+            "h": 84.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 34,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 21.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Готово",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

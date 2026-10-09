@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "title": "Карточка предмета",
+  "next_id": 9,
+  "width": 400.0,
+  "height": 536.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Карточка предмета",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 400.0,
+    "h": 536.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Карточка «Меч»",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 400.0,
+        "h": 536.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Картинка",
+            "type": "frame",
+            "x": 32.0,
+            "y": 32.0,
+            "w": 336.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 4,
+                "name": "Значок",
+                "type": "text",
+                "x": 108.0,
+                "y": 40.0,
+                "w": 120.0,
+                "h": 120.0,
+                "text": "",
+                "style": {
+                  "family": "Material Symbols Rounded",
+                  "size": 120.0,
+                  "weight": 500,
+                  "align": "center",
+                  "color": "#e8b04a"
+                }
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "name": "Название",
+            "type": "text",
+            "x": 32.0,
+            "y": 256.0,
+            "w": 336.0,
+            "h": 44.0,
+            "text": "Меч",
+            "style": {
+              "family": "Onest",
+              "size": 34.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#f2f4f7"
+            }
+          },
+          {
+            "id": 6,
+            "name": "Описание",
+            "type": "text",
+            "x": 32.0,
+            "y": 306.0,
+            "w": 336.0,
+            "h": 100.0,
+            "text": "Старый, но острый. Бьёт вдвое сильнее.",
+            "style": {
+              "family": "Onest",
+              "size": 24.0,
+              "weight": 400,
+              "align": "left",
+              "color": "#8a94a3"
+            }
+          },
+          {
+            "id": 7,
+            "name": "Кнопка «Взять»",
+            "type": "frame",
+            "x": 32.0,
+            "y": 432.0,
+            "w": 336.0,
+            "h": 72.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "change",
+                "target": "inv.sword += 1"
+              }
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 15.0,
+                "w": 336.0,
+                "h": 42.0,
+                "text": "Взять",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#1b2129"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

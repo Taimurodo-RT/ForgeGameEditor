@@ -10,6 +10,10 @@
 //   forge_editor --bench-scheme [N]   offscreen: a scheme of N nodes (5 000) panned and a node dragged
 //   forge_editor --bench-story   offscreen: a big talk scrolled with the mouse wheel
 //   forge_editor --screenshot X.png --talk NAME   the «Сюжет» tab with that talk open (cast:STORY, novel:STORY)
+//   forge_editor --screenshot X.png --templates WHAT   «Интерфейс»'s template library: construction, screen, a template's
+//                file, new:FILE (a new screen from it), insert:FILE (it on the open screen), check:FILE (a new screen
+//                from it in «Проверить»), save (the form «Сохранить как шаблон» for the open screen), save:LAYER
+//                (for its layer of that name)
 //   forge_editor --self-test [--screenshot out.png]   offscreen: drives the controls, fails on a wrong result
 //
 // The «Уровень» tab opens «Старая шахта» from games/slice/level (or --level
@@ -373,7 +377,9 @@ public:
         // What screens can show: the game's values in the author's words.
         ui_tab.game_values = [this] {
             std::vector<std::pair<std::string, std::string>> out = {
-                {"hero.hearts", "Сердца героя"}, {"hero.hearts_max", "Сердец всего"}, {"inv.coins", "Монеты"}, {"inv.copper", "Медь"}};
+                {"hero.hearts", "Сердца героя"}, {"hero.hearts_max", "Сердец всего"}, {"inv.coins", "Монеты"}, {"inv.copper", "Медь"},
+                {"settings.master", "Громкость всего, 0–100"}, {"settings.music", "Громкость музыки, 0–100"},
+                {"settings.sound", "Громкость звуков, 0–100"}};
             const objects::Library& lib = *level_module.library();
             for (const objects::Template& t : lib.templates()) {
                 if (!lib.has_block(t, "pickup")) continue;
@@ -662,6 +668,17 @@ public:
 
     bool handle_event(const SDL_Event& e) {
         const f32 density = window_ ? SDL_GetWindowPixelDensity(window_) : 1.0f;
+        // The template library of «Интерфейс», even from its search field: Esc closes it, Enter takes the template selected.
+        if (e.type == SDL_EVENT_KEY_DOWN && m_tab_ == "ui" && ui_tab.templates_open()) {
+            if (e.key.key == SDLK_ESCAPE) {
+                ui_tab.close_templates();
+                return true;
+            }
+            if ((e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER) && !(e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) {
+                if (!e.key.repeat) ui_tab.templates_enter(); // the form saved, or the selected template taken
+                return true;
+            }
+        }
         // Keys first, unless a text field has the keyboard.
         if (e.type == SDL_EVENT_KEY_DOWN && !text_focus() && handle_key(e.key)) return true;
 
@@ -1457,6 +1474,9 @@ struct Options {
     std::string theme = "dark";
     u32 objects = 50'000;
     std::string talk; // offscreen: the «Сюжет» tab with this talk open ("story/name"; "cast:story", "novel:story")
+    // offscreen: the «Интерфейс» tab's template library open on a section ("construction", "screen") or a template
+    // (its file name); "new:FILE" a new screen from it, "insert:FILE" it on the open screen (the window closed).
+    std::string templates;
 };
 
 class EditorApp final : public App {
@@ -3444,6 +3464,24 @@ private:
     bool ue_wb_scheme_new_ = false;
     usize ue_wb_log_ = 0;
     int ue_we_stage_ = 0; // games/examples/window-behaviour in the editor
+    // The template library (13.12): «Главное меню» and the screens before it, the layers on it, the first copy taken.
+    int ue_tp_stage_ = 0;
+    std::string ue_tp_json_, ue_tp_disk_, ue_tp_html_;
+    std::vector<std::string> ue_tp_screens_;
+    usize ue_tp_layers_ = 0;
+    u32 ue_tp_first_ = 0;
+    // The author's own templates: the library and the menu's file before, a saved template's file, the history's place.
+    std::string ue_tp_lib_json_, ue_tp_lib_html_, ue_tp_menu_file_, ue_tp_own_;
+    usize ue_tp_steps_ = 0;
+    u32 ue_tp_menu_ = 0, ue_tp_copy_ = 0;
+    editor::design::Node ue_tp_menu_node_; // «Меню» as it was saved
+    // games/examples/templates in the editor: its files as copied, the history's place, «Факел»'s card.
+    int ue_te_stage_ = 0;
+    std::vector<std::string> ue_te_files_;
+    usize ue_te_steps_ = 0;
+    u32 ue_te_torch_ = 0, ue_te_clicks_ = 0;
+    bool ue_te_had_click_ = false;
+    std::string ue_te_made_; // the screen made from the own screen template while its pause and picture are away
     std::vector<std::string> ue_we_files_; // its files in the game's folder, as they were before opening them again
     // The rows of a list of notes in the panel (#ue-openers, #ue-check-state): text, and whether it warns.
     std::vector<std::pair<std::string, bool>> ue_wb_rows(const char* id) {
@@ -8502,6 +8540,886 @@ private:
             ue_we_stage_ = 0;
             break;
         }
+        case 153: {
+            // The template library (13.12): the window from the bar, its groups and search (in both sections, any case,
+            // every word), the templates' pictures drawn by the UI engine with the game's values; a construction taken
+            // onto the screen as one step of the history (plain layers, fresh ids, a second copy apart from the first),
+            // from the button, a double click and the empty canvas's menu; a screen template as a new screen with its
+            // settings that «Проверить» runs; a second main menu as a window; nothing taken into «Компоненты»; Esc closes
+            // the window, from its search too, and «Проверить» keeps it shut.
+            namespace d = editor::design;
+            const auto& all = ue().templates();
+            auto index_of = [&](const char* file) -> usize {
+                for (usize i = 0; i < all.size(); ++i)
+                    if (all[i].info.file == file) return i;
+                return all.size();
+            };
+            auto files_listed = [&]() {
+                std::vector<std::string> out;
+                for (usize i : ue().templates_listed()) out.push_back(all[i].info.file);
+                return out;
+            };
+            auto joined = [](const std::vector<std::string>& v) {
+                std::string out;
+                for (const std::string& x : v) out += " " + x;
+                return out;
+            };
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_tp_stage_;
+                return true;
+            };
+            const std::filesystem::path own_dir = ed_.ui_game_dir / "ui" / "templates";
+            auto own_file = [&](const std::string& file) {
+                std::vector<u8> bytes;
+                read_file(own_dir / utf8_path(file + ".json"), bytes);
+                return std::string(bytes.begin(), bytes.end());
+            };
+            auto own_index = [&]() {
+                std::vector<d::TemplateInfo> list;
+                std::vector<u8> bytes;
+                if (read_file(own_dir / "templates.json", bytes))
+                    d::load_template_index(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), list);
+                return list;
+            };
+            auto own_titled = [&](const std::string& title) -> usize {
+                for (usize i = 0; i < all.size(); ++i)
+                    if (all[i].info.own && all[i].info.title == title) return i;
+                return all.size();
+            };
+            auto input_value = [&](const char* id) {
+                auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+                return e ? std::string(e->GetValue()) : std::string("<нет поля>");
+            };
+            // A copy of the menu made from the own template: its copy of the game's component, linked as the original.
+            // On the same screen every layer has an id of its own; a new screen keeps the ids of the one it was saved from.
+            auto linked_like_menu = [&](const d::Node& copy, bool same_screen = true) {
+                const d::Node& original = ue_tp_menu_node_;
+                if (copy.children.size() != original.children.size()) return false;
+                for (usize i = 0; i < copy.children.size(); ++i) {
+                    const d::Node& a = copy.children[i];
+                    const d::Node& b = original.children[i];
+                    if (a.component != b.component || a.master != b.master || a.on_click != b.on_click || a.variant != b.variant ||
+                        (same_screen && a.id == b.id))
+                        return false;
+                }
+                return std::any_of(copy.children.begin(), copy.children.end(), [](const d::Node& c) { return !c.component.empty() && c.master; });
+            };
+            auto steps = [&] { return ue().history().cursor(); };
+            auto select_shop = [&] {
+                ue().templates_show("screen", "Магазин");
+                return ue().select_template(index_of("screen_shop_dark"));
+            };
+            // A point of a template's picture, in its screen's pixels (the picture is the screen fitted whole).
+            auto pixel = [&](const char* file, f32 x, f32 y, u8 px[4]) {
+                const usize i = index_of(file);
+                const f32 k = static_cast<f32>(UiEditor::kTemplateThumbW) / 1920.0f;
+                return i < all.size() && ue().read_template_pixel(i, static_cast<u32>(x * k), static_cast<u32>(y * k), px);
+            };
+            auto dblclick = [&](const std::string& id) {
+                f32 x = 0, y = 0;
+                if (!element_center(id, x, y)) return false;
+                left_click(x, y);
+                left_click(x, y);
+                return true;
+            };
+            // Plain layers with ids of their own on the screen, none twice.
+            auto plain = [&](const d::Node& n) {
+                bool ok = true;
+                auto visit = [&](auto&& self, const d::Node& m) -> void {
+                    ok = ok && m.component.empty() && m.master == 0 && m.text_style.style.empty();
+                    for (const d::Paint& f : m.fills) ok = ok && f.style.empty();
+                    for (const d::Node& c : m.children) self(self, c);
+                };
+                visit(visit, n);
+                return ok;
+            };
+            auto ids_unique = [&]() {
+                std::set<u32> seen;
+                bool ok = true;
+                auto visit = [&](auto&& self, const d::Node& m) -> void {
+                    ok = ok && seen.insert(m.id).second && m.id < ue().screen().next_id;
+                    for (const d::Node& c : m.children) self(self, c);
+                };
+                visit(visit, ue().screen().root);
+                return ok;
+            };
+            switch (ue_tp_stage_++) {
+            case 0:
+                check(ue().open("main_menu") && !ue().checking(), "«Главное меню» open");
+                ue_tp_disk_ = ue_file(".json");
+                ue_tp_html_ = ue_file(".html");
+                ue_tp_screens_ = ue().screens();
+                ue_tp_layers_ = ue().screen().root.children.size();
+                check(!ue().templates_open() && !shown("ue-tpl"), "the template library is closed");
+                check(click("ue-templates") && ue().templates_open(), "«Шаблоны» on the bar opens it");
+                return true;
+            case 1: {
+                check(shown("ue-tpl") && shown("ue-tpl-search") && shown("ue-tpl-sec-construction") && shown("ue-tpl-sec-screen"),
+                      "the window shows its sections and search");
+                check(all.size() == 29, "29 templates: " + std::to_string(all.size()));
+                const std::vector<usize> c = ue().templates_listed();
+                bool constructions = c.size() == 15, cards = true;
+                for (usize i : c) {
+                    constructions = constructions && all[i].info.kind == d::TemplateKind::Construction;
+                    cards = cards && shown("ue-tpl-card-" + std::to_string(i));
+                }
+                check(constructions && cards, "it opens on the 15 constructions, a card each");
+                check(!c.empty() && ue().selected_template() == static_cast<int>(c.front()) && shown("ue-tpl-insert") &&
+                          !shown("ue-tpl-new-screen"),
+                      "the first one selected; a construction is put on the screen («Вставить в экран»), not made a screen");
+                check(shown("ue-tpl-group-0") && shown("ue-tpl-group-10"), "the groups of both sections are listed");
+                check(ed_.find_element("ue-tpl-group-0")->IsClassSet("off") && ed_.find_element("ue-tpl-group-5")->IsClassSet("off"),
+                      "«Мои» first in both, empty: the game has no templates of its own yet");
+                return true;
+            }
+            case 2: {
+                // The pictures: a few made each frame, each drawn a few frames, then kept.
+                bool drawn = true;
+                for (usize i = 0; i < all.size(); ++i) drawn = drawn && ue().template_drawn(i);
+                if (hold(drawn, "every template's picture is drawn")) {
+                    --ue_tp_stage_;
+                    return true;
+                }
+                Rml::Element* img = ed_.find_element("ue-tpl-preview");
+                Rml::Element* card = ed_.find_element(("ue-tpl-card-" + std::to_string(ue().selected_template())).c_str());
+                Rml::Element* thumb = card ? card->QuerySelector("img") : nullptr;
+                check(img && thumb && img->GetAttribute<Rml::String>("src", "").rfind("/gpu/ui-tpl-", 0) == 0 &&
+                          img->GetAttribute<Rml::String>("src", "") == thumb->GetAttribute<Rml::String>("src", ""),
+                      "the selected one's picture is beside the cards");
+                u8 corner[4] = {}, middle[4] = {}, gold[4] = {}, hearts[4] = {}, hearts_left[4] = {};
+                // «Сетка предметов. Дерево»: on the editor's dark, the parchment in its middle (the game's picture).
+                const usize wood = index_of("grid_items_wood");
+                check(wood < all.size() && ue().read_template_pixel(wood, 3, 3, corner) && ue().read_template_pixel(wood, 200, 112, middle),
+                      "the wooden grid's picture is read");
+                check(corner[0] == 0x23 && corner[1] == 0x27 && corner[2] == 0x2e, "a construction stands on the editor's dark");
+                check(middle[0] > 150 && middle[1] > 120 && middle[0] > middle[2] + 30,
+                      "the parchment in its middle: the picture of the game's folder is drawn (" + std::to_string(middle[0]) + "," +
+                          std::to_string(middle[1]) + "," + std::to_string(middle[2]) + ")");
+                // «Пауза. Тёмная»: its third button, gold.
+                check(pixel("screen_pause_dark", 960, 580, gold) && gold[0] > 200 && gold[1] > 150 && gold[1] < 200 && gold[2] < 110,
+                      "the dark pause's buttons are gold in its picture");
+                // «Над игрой. Тёмная»: the hearts' bar shows the game's value, 7 of 10: red near its start, not at its end.
+                check(pixel("screen_hud_dark", 300, 115, hearts) && hearts[0] > 150 && hearts[1] < 100,
+                      "the HUD's hearts are red where the value reaches");
+                check(pixel("screen_hud_dark", 420, 115, hearts_left) && hearts_left[0] < 100,
+                      "and dark past 7 of 10: the picture has the game's values");
+                // The search: in both sections, any case, every word.
+                check(ue_fl_type_only("ue-tpl-search", "предмет"), "typed «предмет» into the search");
+                return true;
+            }
+            case 3: {
+                const std::vector<std::string> found = files_listed();
+                check(found == std::vector<std::string>{"grid_items_dark", "grid_items_wood", "card_item_dark", "card_item_wood",
+                                                        "screen_inventory_dark", "screen_inventory_wood"},
+                      "«предмет» finds grids, cards and inventories, constructions and screens:" + joined(found));
+                check(!ed_.find_element("ue-tpl-group-0")->IsClassSet("selected") && !ed_.find_element("ue-tpl-sec-construction")->IsClassSet("selected"),
+                      "while searching no group is lit");
+                check(ue_fl_type_only("ue-tpl-search", "ПАУЗА тёмная"), "typed «ПАУЗА тёмная»");
+                return true;
+            }
+            case 4: {
+                const std::vector<std::string> found = files_listed();
+                check(found == std::vector<std::string>{"screen_pause_dark"}, "any case, every word: only the dark pause:" + joined(found));
+                check(ue_fl_type_only("ue-tpl-search", "жираф"), "typed «жираф»");
+                return true;
+            }
+            case 5:
+                check(ue().templates_listed().empty() && shown("ue-tpl-empty"), "nothing found: said so, with words to try");
+                // Esc in the search field closes the window (the field has the keyboard).
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().templates_open(), "Esc from the search closes the library");
+                check(!ed_.context()->GetFocusElement() || ed_.context()->GetFocusElement()->GetId() != "ue-tpl-search",
+                      "the hidden search field gives the keyboard back (Ctrl+Z, Delete, the arrows are the screen's again)");
+                check(click("ue-templates") && ue().templates_open(), "opened again");
+                return true;
+            case 6: {
+                check(shown("ue-tpl") && ue().templates_listed().empty(), "it opens as it was left: the search kept");
+                check(click("ue-tpl-group-3"), "«Карточки» clicked");
+                return true;
+            }
+            case 7: {
+                const std::vector<std::string> found = files_listed();
+                check(found == std::vector<std::string>{"card_item_dark", "card_item_wood", "card_quest_dark", "card_portrait_dark",
+                                                        "card_portrait_wood"} &&
+                          ed_.find_element("ue-tpl-group-3")->IsClassSet("selected"),
+                      "a group shows its own, lit, the search cleared:" + joined(found));
+                const usize wood = index_of("card_item_wood");
+                check(click("ue-tpl-card-" + std::to_string(wood)) && ue().selected_template() == static_cast<int>(wood), "a click selects «Карточка предмета. Дерево»");
+                return true;
+            }
+            case 8: {
+                const usize wood = index_of("card_item_wood"), dark = index_of("card_item_dark");
+                check(shown("ue-tpl-variant-" + std::to_string(wood)) && shown("ue-tpl-variant-" + std::to_string(dark)) &&
+                          ed_.find_element(("ue-tpl-variant-" + std::to_string(wood)).c_str())->IsClassSet("selected"),
+                      "its looks beside it, «Дерево» lit");
+                check(click("ue-tpl-variant-" + std::to_string(dark)) && ue().selected_template() == static_cast<int>(dark), "«Тёмная» picked");
+                ue_tp_json_ = d::save_screen(ue().screen()); // the screen before (as the editor holds it)
+                check(click("ue-tpl-insert"), "«Вставить в экран»");
+                return true;
+            }
+            case 9: {
+                const d::Screen& s = ue().screen();
+                check(!ue().templates_open(), "taking it closes the window");
+                check(s.root.children.size() == ue_tp_layers_ + 1 && ue().selection().size() == 1 &&
+                          ue().selection()[0] == s.root.children.back().id && s.root.children.back().name == "Карточка «Меч»",
+                      "the card is on the screen, on top, selected");
+                const d::Node& card = s.root.children.back();
+                check(card.x >= 0 && card.y >= 0 && card.x + card.w <= s.width && card.y + card.h <= s.height, "inside the screen");
+                check(plain(card) && ids_unique(), "plain layers with ids of their own");
+                check(ue().history().undo_label() == "Из шаблонов: Карточка предмета", "one step of the history: " + ue().history().undo_label());
+                check(ue_file(".json").find("Карточка «Меч»") != std::string::npos && ue_file(".html").find("Карточка «Меч»") != std::string::npos,
+                      "written with the page");
+                ue_tp_first_ = card.id;
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                const std::string undone = d::save_screen(ue().screen());
+                check(undone == ue_tp_json_, "Ctrl+Z: the screen as before, all of it in one step");
+                if (undone != ue_tp_json_) {
+                    usize at = 0;
+                    while (at < undone.size() && at < ue_tp_json_.size() && undone[at] == ue_tp_json_[at]) ++at;
+                    FORGE_INFO("self-test: after Ctrl+Z «%s» / before «%s»", undone.substr(at > 80 ? at - 80 : 0, 200).c_str(),
+                               ue_tp_json_.substr(at > 80 ? at - 80 : 0, 200).c_str());
+                }
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                check(ue().screen().root.children.size() == ue_tp_layers_ + 1 && ue().screen().root.children.back().id == ue_tp_first_,
+                      "Ctrl+Y: the card back, the same layers");
+                // The empty canvas's menu: «Из шаблонов…».
+                ue().select({});
+                right_click(ue_wx(1900), ue_wy(1060));
+                return true;
+            }
+            case 10:
+                check(ue().menu() == "empty" && shown("ue-ctx-templates"), "the right button on nothing: the screen's menu has «Из шаблонов…»");
+                check(click("ue-ctx-templates") && ue().templates_open() && ue().menu().empty(), "it opens the library");
+                return true;
+            case 11: {
+                const usize i = index_of("card_item_dark");
+                check(shown("ue-tpl-card-" + std::to_string(i)) && dblclick("ue-tpl-card-" + std::to_string(i)), "a double click on the dark card");
+                return true;
+            }
+            case 12: {
+                const d::Screen& s = ue().screen();
+                check(!ue().templates_open() && s.root.children.size() == ue_tp_layers_ + 2, "a second card on the screen");
+                const d::Node& a = *d::find(s.root, ue_tp_first_);
+                const d::Node& b = s.root.children.back();
+                check(b.id != a.id && ids_unique() && (b.x != a.x || b.y != a.y), "a copy apart: its own ids, its own place");
+                // One copy changed: the other is as it was (no link between copies, nor to the template).
+                const u32 label = ue_named(b, "Надпись");
+                ue().select({label});
+                check(label != 0 && ue().set_property("text", "Купить") && ue_node(label)->text == "Купить", "the second card's button says «Купить»");
+                check(ue_named(*d::find(ue().screen().root, ue_tp_first_), "Надпись") != 0 &&
+                          ue_node(ue_named(*d::find(ue().screen().root, ue_tp_first_), "Надпись"))->text == "Взять" &&
+                          all[index_of("card_item_dark")].screen.root.children.front().children.back().children.front().text == "Взять",
+                      "the first card and the template still say «Взять»");
+                // A screen from a template: under the list of screens.
+                check(click("ue-new-screen-template") && ue().templates_open(), "«Из шаблона» opens the library");
+                return true;
+            }
+            case 13: {
+                const std::vector<usize> listed = ue().templates_listed();
+                bool screens = listed.size() == 14;
+                for (usize i : listed) screens = screens && all[i].info.kind == d::TemplateKind::Screen;
+                check(screens && ed_.find_element("ue-tpl-sec-screen")->IsClassSet("selected"), "on the screens, 14 of them");
+                check(click("ue-tpl-card-" + std::to_string(index_of("screen_pause_dark"))), "«Пауза. Тёмная» clicked");
+                return true;
+            }
+            case 14:
+                check(ue().selected_template() == static_cast<int>(index_of("screen_pause_dark")) && shown("ue-tpl-new-screen") &&
+                          shown("ue-tpl-insert") && ed_.find_element("ue-tpl-insert")->IsClassSet("strong") == false,
+                      "a screen template: «Новый экран» first, and «Вставить рамкой в экран»");
+                // Enter in the search field takes the one selected.
+                check(ue_fl_type_only("ue-tpl-search", "пауза") && ue().templates_listed().size() == 3 &&
+                          ue().selected_template() == static_cast<int>(index_of("screen_pause_dark")),
+                      "«пауза» typed: three pauses, the dark one still selected");
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                return true;
+            case 15: {
+                const d::Screen& s = ue().screen();
+                check(!ue().templates_open() && ue().opened() == "пауза" && s.title == "Пауза", "Enter: a new screen «Пауза», open");
+                check(!ed_.context()->GetFocusElement() || ed_.context()->GetFocusElement()->GetId() != "ue-tpl-search",
+                      "the keyboard is the editor's again");
+                check(s.show == d::ScreenShow::Command && s.pauses && s.dim && s.esc_closes && s.appear == d::Appear::Zoom,
+                      "with the template's settings: a window that stops the game, darkens, closes by Esc, grows in");
+                check(!ue_file(".json", "пауза").empty() && !ue_file(".html", "пауза").empty() && shown("ue-screen-пауза"),
+                      "its files written, it is in the list of screens");
+                check(plain(s.root) && ids_unique(), "plain layers with ids of their own");
+                check(click("ue-check") && ue().checking(), "«Проверить» on it");
+                return true;
+            }
+            case 16: {
+                ue_log_size_ = ue().check_log().size();
+                check(ue().layer_box(ue_named("Кнопка «Продолжить»")).has_value(), "its «Продолжить» is on the page");
+                if (auto b = ue().layer_box(ue_named("Кнопка «Продолжить»"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return true;
+            }
+            case 17:
+                check(ue().check_log().size() == ue_log_size_ + 1 && ue().check_log().back() == "Экран закрыт",
+                      "a click on it closes the pause, as in the game: " + ue_log_since(ue_log_size_));
+                // «Проверить» keeps the library shut, as «Создать».
+                check(click("ue-templates") && !ue().templates_open(), "«Шаблоны» does nothing while the screen is checked");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().checking(), "Esc ends the check");
+                // A second main menu: the game has one, so it comes as a window, and the author is told how to switch.
+                check(click("ue-templates") && ue().templates_open(), "the library again");
+                return true;
+            case 18:
+                check(click("ue-tpl-sec-screen") && ue().templates_listed().size() == 14, "«Экраны»");
+                return true;
+            case 19:
+                check(click("ue-tpl-card-" + std::to_string(index_of("screen_menu_wood"))) &&
+                          ue().selected_template() == static_cast<int>(index_of("screen_menu_wood")),
+                      "«Главное меню. Дерево»");
+                return true;
+            case 20:
+                check(click("ue-tpl-new-screen"), "«Новый экран»");
+                return true;
+            case 21: {
+                const d::Screen& s = ue().screen();
+                check(ue().opened() == "главное_меню" && s.title == "Главное меню 2", "a new screen «Главное меню 2»: " + ue().opened() + ", " + s.title);
+                check(s.show == d::ScreenShow::Command && ue().move_note().find("«Главное меню игры»") != std::string::npos,
+                      "the game has a main menu: this one is a window, and the note says how to make it the menu: " + ue().move_note());
+                // Nothing goes into «Компоненты»: no «Шаблоны» on its bar; «Из шаблона» makes a screen, puts nothing there.
+                check(ue().open_library(), "«Компоненты» open");
+                return true;
+            }
+            case 22:
+                check(!shown("ue-templates") && shown("ue-new-screen-template"), "«Компоненты»: no «Шаблоны» on the bar");
+                check(click("ue-new-screen-template") && ue().templates_open(), "«Из шаблона» from «Компоненты»");
+                return true;
+            case 23: {
+                const std::string before = d::save_screen(ue().library());
+                check(ed_.find_element("ue-tpl-insert") && ed_.find_element("ue-tpl-insert")->IsClassSet("disabled"), "«Вставить в экран» is off there");
+                const u32 put = ue().insert_template(static_cast<usize>(ue().selected_template()));
+                check(put == 0 && d::save_screen(ue().library()) == before && ue().templates_note().find("«Компоненты»") != std::string::npos,
+                      "and takes nothing, saying why: " + ue().templates_note());
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().templates_open(), "Esc closes it");
+                // Back as it was: the new screens gone, «Главное меню» as before the cards.
+                std::error_code ec;
+                for (const std::string& name : ue().screens())
+                    if (std::find(ue_tp_screens_.begin(), ue_tp_screens_.end(), name) == ue_tp_screens_.end())
+                        for (const char* ext : {".json", ".html"}) std::filesystem::remove(ed_.ui_game_dir / "ui" / utf8_path(name + ext), ec);
+                check(ue().screens() == ue_tp_screens_, "the screens made here removed");
+                for (const auto& [ext, text] : {std::pair{".json", &ue_tp_disk_}, std::pair{".html", &ue_tp_html_}})
+                    write_file_atomic(ed_.ui_game_dir / "ui" / utf8_path(std::string("main_menu") + ext),
+                                      {reinterpret_cast<const u8*>(text->data()), text->size()});
+                check(ue().open("main_menu") && ue().screen().root.children.size() == ue_tp_layers_ && ue_file(".json") == ue_tp_disk_,
+                      "«Главное меню» as before the cards");
+                return true;
+            }
+            // --- «Сохранить как шаблон»: the author's own, with a copy of the game's component inside ---
+            case 24: {
+                std::error_code ec;
+                check(!std::filesystem::exists(own_dir, ec), "the game has no templates of its own yet");
+                ue_tp_lib_json_ = ue_file(".json", "components");
+                ue_tp_lib_html_ = ue_file(".html", "components");
+                ue_tp_menu_ = ue_named("Меню");
+                auto linked = [&] {
+                    const d::Node* menu = ue_node(ue_tp_menu_);
+                    return menu && std::any_of(menu->children.begin(), menu->children.end(),
+                                               [](const d::Node& c) { return !c.component.empty() && c.master; });
+                };
+                if (!linked()) {
+                    ue().select({ue_named("Кнопка «Новая игра»")});
+                    ue().make_component();
+                }
+                check(ue_tp_menu_ && linked(), "«Меню» holds a copy of the game's component");
+                // The note about «Главное меню 2» stayed with that screen: another screen opened, it is gone.
+                check(ue().move_note().empty(), "no note about another screen over the list of layers: " + ue().move_note());
+                ue_tp_menu_node_ = *ue_node(ue_tp_menu_);
+                ue_tp_json_ = d::save_screen(ue().screen());
+                ue_tp_menu_file_ = ue_file(".json");
+                ue_tp_steps_ = steps();
+                // The full list of layers, «Меню»'s row brought into sight before the right button goes to it.
+                ue().set_simple(false);
+                ue().set_view(0);
+                if (Rml::Element* row = ed_.find_element(("ue-layer-" + std::to_string(ue_tp_menu_)).c_str()))
+                    row->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+                return true;
+            }
+            case 25:
+                if (wait(shown("ue-layer-" + std::to_string(ue_tp_menu_)), "«Меню»'s row is laid out")) return true;
+                {
+                    // The game has many screens by now: they scroll in their own place, the layers keep room.
+                    Rml::Element* list = ed_.find_element(("ue-layer-" + std::to_string(ue_tp_menu_)).c_str());
+                    list = list ? list->GetParentNode() : nullptr;
+                    Rml::Element* screens = ed_.find_element("ue-screens");
+                    check(list && list->GetClientHeight() >= 3 * 28 && screens && screens->GetOffsetHeight() <= 241,
+                          "the list of layers keeps room among " + std::to_string(ue().screens().size()) + " screens: " +
+                              std::to_string(list ? list->GetClientHeight() : -1.0f) + " px");
+                }
+                check(ue_cm_right_row(ue_tp_menu_), "the right button on «Меню»'s row");
+                return true;
+            case 26:
+                if (wait(shown("ue-ctx-save-template"), "the layer's menu is laid out")) return true;
+                check(ue().menu() == "layer" && ue().selection() == std::vector<u32>{ue_tp_menu_}, "«Меню» selected, its menu open");
+                check(click("ue-ctx-save-template") && ue().saving_template() && ue().menu().empty(), "«Сохранить как шаблон…»");
+                return true;
+            case 27:
+                if (wait(shown("ue-tpl-save-form"), "the form is laid out")) return true;
+                check(input_value("ue-tpl-save-title") == "Меню" && ed_.find_element("ue-tpl-save-group-0")->IsClassSet("selected"),
+                      "the form: the layer's name, the group «Мои»: " + input_value("ue-tpl-save-title"));
+                check(ue().templates_listed().empty() && shown("ue-tpl-empty"), "beside it the game's own constructions: none yet, and how to make one");
+                check(d::save_screen(ue().screen()) == ue_tp_json_ && steps() == ue_tp_steps_, "the form changes nothing on the screen, no step");
+                check(ue_fl_type_only("ue-tpl-save-title", "Моё меню"), "a title typed");
+                return true;
+            case 28: {
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                const std::vector<d::TemplateInfo> index = own_index();
+                check(!ue().saving_template() && ue().templates_open() && index.size() == 1 && index[0].file == "моё_меню" &&
+                          index[0].title == "Моё меню" && index[0].group == d::kOwnGroup && index[0].kind == d::TemplateKind::Construction,
+                      "Enter saves it into the game's ui/templates: its line in the index, «Мои»");
+                ue_tp_own_ = own_file("моё_меню");
+                check(!ue_tp_own_.empty() && ue_tp_own_.find("Кнопка «Настройки»") != std::string::npos, "and its file");
+                const usize mine = own_titled("Моё меню");
+                check(mine < all.size() && ue().selected_template() == static_cast<int>(mine) && ue().templates_note().find("ui/templates/моё_меню.json") != std::string::npos,
+                      "it comes up selected among the templates, the note says where it lies: " + ue().templates_note());
+                check(d::save_screen(ue().screen()) == ue_tp_json_ && ue_file(".json") == ue_tp_menu_file_ && steps() == ue_tp_steps_,
+                      "the screen and its file as they were, no step of the history");
+                return true;
+            }
+            case 29: {
+                const usize mine = own_titled("Моё меню");
+                Rml::Element* card = ed_.find_element(("ue-tpl-card-" + std::to_string(mine)).c_str());
+                Rml::Element* badge = card ? card->QuerySelector(".ue-tpl-own") : nullptr;
+                check(badge && badge->IsVisible(), "its card is marked as the game's own");
+                check(!shown("ue-tpl-needs") && ue().template_needs(mine).empty(), "it needs nothing this game lacks: " + joined(ue().template_needs(mine)));
+                // The same title again, in other letters: said, and saved beside, never over it.
+                check(click("ue-tpl-save-open") && ue().saving_template(), "«Сохранить свой…» in the window: the form again");
+                return true;
+            }
+            case 30:
+                if (wait(shown("ue-tpl-save-form"), "the form again")) return true;
+                check(ue_fl_type_only("ue-tpl-save-title", "моё МЕНЮ"), "the same title in other letters");
+                return true;
+            case 31:
+                if (wait(shown("ue-tpl-save-clash"), "the clash is said")) return true;
+                check(shown("ue-tpl-replace") && ed_.find_element("ue-tpl-save")->GetInnerRML().find("Сохранить рядом") != std::string::npos,
+                      "«Заменить» or «Сохранить рядом»");
+                check(click("ue-tpl-save") && own_index().size() == 2 && own_index()[1].title == "моё МЕНЮ 2" &&
+                          own_index()[1].file == "моё_меню_2" && own_file("моё_меню") == ue_tp_own_,
+                      "beside it: «моё МЕНЮ 2» in a file of its own, the first not touched");
+                check(click("ue-tpl-save-open"), "the form once more");
+                return true;
+            case 32:
+                if (wait(shown("ue-tpl-save-form"), "the form once more")) return true;
+                check(ue_fl_type_only("ue-tpl-save-title", "Моё меню"), "the first one's title");
+                return true;
+            case 33:
+                if (wait(shown("ue-tpl-save-group-4"), "the groups are laid out")) return true;
+                check(click("ue-tpl-save-group-4"), "group «Списки»");
+                return true;
+            case 34: {
+                if (wait(ed_.find_element("ue-tpl-save-group-4")->IsClassSet("selected") && shown("ue-tpl-replace"), "«Списки» lit, «Заменить» offered"))
+                    return true;
+                check(click("ue-tpl-replace"), "«Заменить»");
+                const std::vector<d::TemplateInfo> index = own_index();
+                check(index.size() == 2 && index[0].file == "моё_меню" && index[0].group == "Списки" && index[1].file == "моё_меню_2" &&
+                          !std::filesystem::exists(own_dir / "моё_меню_3.json"),
+                      "replaced in its place: the same file, its new group, nothing added");
+                check(d::save_screen(ue().screen()) == ue_tp_json_ && ue_file(".json") == ue_tp_menu_file_ && steps() == ue_tp_steps_,
+                      "the screen still as it was, no step");
+                // As when the project is opened again: the folder read anew.
+                std::vector<std::string> errors;
+                const std::vector<d::Template> read = d::load_templates(own_dir, &errors);
+                check(errors.empty() && read.size() == 2 && read[0].info.title == "Моё меню" && read[1].info.title == "моё МЕНЮ 2",
+                      "read from the game's folder: both");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().templates_open() && click("ue-templates") && ue().templates_open(), "closed and opened again");
+                return true;
+            }
+            case 35: {
+                if (wait(shown("ue-tpl-search"), "the window again")) return true;
+                check(ue_fl_type_only("ue-tpl-search", "моё меню"), "searched «моё меню»");
+                return true;
+            }
+            case 36: {
+                const usize a = own_titled("Моё меню"), b = own_titled("моё МЕНЮ 2");
+                const std::vector<usize> listed = ue().templates_listed();
+                check(a < all.size() && b < all.size() && listed == std::vector<usize>{a, b}, "the search finds both own, read from the folder");
+                check(click("ue-tpl-card-" + std::to_string(a)) && ue().selected_template() == static_cast<int>(a), "«Моё меню» picked");
+                ue_tp_steps_ = steps();
+                return true;
+            }
+            case 37: {
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                const d::Screen& sc = ue().screen();
+                const d::Node& copy = sc.root.children.back();
+                check(!ue().templates_open() && steps() == ue_tp_steps_ + 1 && ue().history().undo_label() == "Из шаблонов: Моё меню",
+                      "Enter puts it on the screen: one step");
+                check(linked_like_menu(copy) && ids_unique(), "the copy: ids of its own, its copy of the game's component linked as the menu's");
+                d::Screen synced = sc;
+                check(!d::sync_instances(synced, ue().library()), "and in step with the component: syncing changes nothing");
+                ue_tp_copy_ = copy.id;
+                check(click("ue-templates"), "the library again");
+                return true;
+            }
+            case 38: {
+                const usize a = own_titled("Моё меню");
+                if (wait(shown("ue-tpl-card-" + std::to_string(a)), "its card")) return true;
+                check(dblclick("ue-tpl-card-" + std::to_string(a)), "a double click: a second copy");
+                return true;
+            }
+            case 39: {
+                const d::Screen& sc = ue().screen();
+                const d::Node& second = sc.root.children.back();
+                check(steps() == ue_tp_steps_ + 2 && second.id != ue_tp_copy_ && linked_like_menu(second) && ids_unique(),
+                      "two copies, apart: every id its own, both linked to the component");
+                // One changed: the other and the template not.
+                const u32 label = ue_named(second, "Новая игра");
+                auto first_text = [&]() {
+                    const d::Node* first = d::find(ue().screen().root, ue_tp_copy_);
+                    const d::Node* t = first ? ue_node(ue_named(*first, "Новая игра")) : nullptr;
+                    return t ? t->text : std::string("?");
+                };
+                const std::string was = first_text();
+                ue().select({label});
+                check(label && ue().set_property("text", "Начать") && ue_node(label) && ue_node(label)->text == "Начать" && first_text() == was &&
+                          own_file("моё_меню").find("Начать") == std::string::npos,
+                      "the second copy's text changed: the first and the template not (" + was + ")");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(ue().screen().root.children.back().id == ue_tp_copy_ && steps() == ue_tp_steps_ + 1, "Ctrl+Z twice: the text, then the second copy");
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                check(ue().screen().root.children.back().id != ue_tp_copy_ && linked_like_menu(ue().screen().root.children.back()),
+                      "Ctrl+Y: the second copy back, whole");
+                // Left without saving: nothing written, no step.
+                ue().select({});
+                ue_tp_steps_ = steps();
+                right_click(ue_wx(1900), ue_wy(1060));
+                return true;
+            }
+            case 40:
+                if (wait(shown("ue-ctx-save-screen-template"), "the screen's menu")) return true;
+                check(click("ue-ctx-save-screen-template") && ue().saving_template(), "«Сохранить экран как шаблон…»");
+                return true;
+            case 41:
+                if (wait(shown("ue-tpl-save-form"), "the screen's form")) return true;
+                check(input_value("ue-tpl-save-title") == "Главное меню" && ed_.find_element("ue-tpl-save-what")->GetInnerRML().find("целиком") != std::string::npos,
+                      "the whole screen, under its title");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().templates_open() && own_index().size() == 2 && steps() == ue_tp_steps_, "Esc: nothing saved, no step");
+                // From the window with nothing selected: the whole screen.
+                check(click("ue-templates"), "the library");
+                return true;
+            case 42:
+                if (wait(shown("ue-tpl-save-open"), "the window")) return true;
+                check(click("ue-tpl-save-open") && ue().saving_template(), "«Сохранить свой…», nothing selected");
+                return true;
+            case 43:
+                if (wait(shown("ue-tpl-save-form"), "the screen's form")) return true;
+                check(ue_fl_type_only("ue-tpl-save-title", "Мой главный экран"), "a title");
+                return true;
+            case 44: {
+                ue_tp_menu_file_ = ue_file(".json");
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                const usize mine = own_titled("Мой главный экран");
+                check(mine < all.size() && all[mine].info.kind == d::TemplateKind::Screen && own_index().size() == 3 &&
+                          ue().selected_template() == static_cast<int>(mine) && ue_file(".json") == ue_tp_menu_file_ && steps() == ue_tp_steps_,
+                      "a screen template of its own, the screen as it was");
+                // Taken as a new screen: Enter again.
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                const d::Screen& sc = ue().screen();
+                check(ue().opened() == "мой_главный_экран" && sc.title == "Мой главный экран" && sc.show == d::ScreenShow::Command,
+                      "a new screen from it; the game has a main menu, so a window: " + ue().opened());
+                const d::Node* menu = nullptr;
+                for (const d::Node& c : sc.root.children)
+                    if (c.name == "Меню") menu = &c;
+                check(menu && linked_like_menu(*menu, false), "with the menu and its copy of the component linked");
+                check(ue().open("main_menu") && ue_file(".json") == ue_tp_menu_file_, "«Главное меню» not touched");
+                check(click("ue-templates"), "the library");
+                ue().templates_show("construction", d::kOwnGroup); // as the chips «Конструкции» › «Мои»
+                return true;
+            }
+            case 45: {
+                const usize b = own_titled("моё МЕНЮ 2");
+                if (wait(shown("ue-tpl-card-" + std::to_string(b)), "the own card")) return true;
+                check(click("ue-tpl-card-" + std::to_string(b)), "«моё МЕНЮ 2» picked");
+                return true;
+            }
+            case 46:
+                if (wait(shown("ue-tpl-remove"), "«Удалить шаблон»")) return true;
+                check(!shown("ue-tpl-confirm") && click("ue-tpl-remove"), "«Удалить шаблон»");
+                return true;
+            case 47: {
+                if (wait(shown("ue-tpl-confirm"), "the question")) return true;
+                const std::string menu = ue_file(".json");
+                check(click("ue-tpl-remove-yes"), "«Удалить»");
+                const std::vector<d::TemplateInfo> index = own_index();
+                check(index.size() == 2 && index[0].file == "моё_меню" && index[1].title == "Мой главный экран" &&
+                          !std::filesystem::exists(own_dir / utf8_path("моё_меню_2.json")) && own_titled("моё МЕНЮ 2") == all.size(),
+                      "its file and its line gone, the others kept");
+                check(ue_file(".json") == menu, "the copies on the screen not touched");
+                // What a template needs of the game: said beside it.
+                check(select_shop(), "«Магазин. Тёмная»");
+                return true;
+            }
+            case 48: {
+                if (wait(shown("ue-tpl-needs"), "what it needs")) return true;
+                const std::vector<std::string> needs = ue().template_needs(index_of("screen_shop_dark"));
+                check(!needs.empty() && needs[0].find("В игре нет вещей") != std::string::npos && needs[0].find("«sword»") != std::string::npos,
+                      "the shop: the things this game lacks, and what happens:" + joined(needs));
+                const std::vector<std::string> hud = ue().template_needs(index_of("screen_hud_dark"));
+                check(std::any_of(hud.begin(), hud.end(), [](const std::string& n) { return n.find("«hero.xp»") != std::string::npos; }),
+                      "the HUD: the values the game does not keep:" + joined(hud));
+                const std::vector<std::string> form = ue().template_needs(index_of("form_confirm_dark"));
+                check(std::any_of(form.begin(), form.end(), [](const std::string& n) { return n.find("«подтвердил»") != std::string::npos; }),
+                      "the confirmation: its messages only «Логика» answers:" + joined(form));
+                check(ue().template_needs(index_of("screen_pause_dark")).empty(), "the pause needs nothing");
+                // Taken, it says so over the canvas.
+                check(click("ue-tpl-new-screen") && ue().move_note().find("«sword»") != std::string::npos,
+                      "made a screen: the note over the canvas says it too: " + ue().move_note());
+                return true;
+            }
+            case 49: {
+                // Back as it was: the screens, the menu, the components, no templates of its own.
+                std::error_code ec;
+                for (const std::string& name : ue().screens())
+                    if (std::find(ue_tp_screens_.begin(), ue_tp_screens_.end(), name) == ue_tp_screens_.end())
+                        for (const char* ext : {".json", ".html"}) std::filesystem::remove(ed_.ui_game_dir / "ui" / utf8_path(name + ext), ec);
+                std::filesystem::remove_all(own_dir, ec);
+                for (const auto& [name, text] : {std::pair{"main_menu.json", &ue_tp_disk_}, std::pair{"main_menu.html", &ue_tp_html_},
+                                                 std::pair{"components.json", &ue_tp_lib_json_}, std::pair{"components.html", &ue_tp_lib_html_}})
+                    write_file_atomic(ed_.ui_game_dir / "ui" / utf8_path(name), {reinterpret_cast<const u8*>(text->data()), text->size()});
+                check(ue().open_library() && ue().open("main_menu") && ue_file(".json") == ue_tp_disk_ && ue().screens() == ue_tp_screens_ &&
+                          d::components(ue().library()).empty() == (ue_tp_lib_json_.find("\"component\"") == std::string::npos),
+                      "the screens, the menu and the components as before");
+                break;
+            }
+            default: break;
+            }
+            ue_tp_stage_ = 0;
+            break;
+        }
+        case 154: {
+            // games/examples/templates (13.12), the files the game and its package read: a game made of templates,
+            // with its own template «Находка» put twice. Opened from disk: the library lists the game's own template
+            // (it needs nothing the game lacks) and puts a third copy as one step, taken back to the example's
+            // files; «Проверить» on its screen over the game does what the game does: the pause button opens the
+            // author's pause, its «Настройки» the author's settings, whose buttons change the volume, «Готово» and
+            // «Продолжить» close them (with the pause's click sound), each «Взять» gives its own thing; nothing is
+            // written by opening or checking. Then the screen saved as the game's own template needs nothing here,
+            // but taken where its pause and a picture are not, the library and the note say so (the button stays).
+            namespace d = editor::design;
+            const std::filesystem::path from = utf8_path(FORGE_EXAMPLES_DIR) / "templates";
+            static const char* const kPages[] = {"шаблоны_меню", "шаблоны_игра", "шаблоны_пауза", "шаблоны_настройки"};
+            static const char* const kOwn[] = {"templates/templates.json", "templates/находка.json"};
+            auto lf = [](std::string text) {
+                std::erase(text, '\r');
+                return text;
+            };
+            auto read = [](const std::filesystem::path& p) {
+                std::vector<u8> bytes;
+                read_file(p, bytes);
+                return std::string(bytes.begin(), bytes.end());
+            };
+            // The game's files now, byte for byte: the pages and its own template.
+            auto files = [&]() {
+                std::vector<std::string> out;
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"}) out.push_back(ue_file(ext, name));
+                for (const char* own : kOwn) out.push_back(read(ed_.ui_game_dir / "ui" / utf8_path(own)));
+                return out;
+            };
+            // The same content as the example's, whichever line ends either side has.
+            auto same = [&]() {
+                bool ok = true;
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"})
+                        ok = ok && lf(ue_file(ext, name)) == lf(read(from / "ui" / utf8_path(std::string(name) + ext)));
+                for (const char* own : kOwn) ok = ok && lf(read(ed_.ui_game_dir / "ui" / utf8_path(own))) == lf(read(from / "ui" / utf8_path(own)));
+                return ok;
+            };
+            auto said = [&]() { return ue().check_log().empty() ? std::string() : ue().check_log().back(); };
+            auto at = [&](const std::optional<d::Rect>& b) {
+                if (b) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return b.has_value();
+            };
+            auto own_index = [&]() -> usize {
+                const auto& all = ue().templates();
+                for (usize i = 0; i < all.size(); ++i)
+                    if (all[i].info.own && all[i].info.title == "Находка") return i;
+                return all.size();
+            };
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_te_stage_;
+                return true;
+            };
+            const std::vector<std::string> pause{"шаблоны_пауза"}, both{"шаблоны_пауза", "шаблоны_настройки"};
+            switch (ue_te_stage_++) {
+            case 0: {
+                std::error_code ec;
+                std::filesystem::create_directories(ed_.ui_game_dir / "ui" / "templates", ec);
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"})
+                        std::filesystem::copy_file(from / "ui" / utf8_path(std::string(name) + ext), ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext),
+                                                   std::filesystem::copy_options::overwrite_existing, ec);
+                for (const char* own : kOwn)
+                    std::filesystem::copy_file(from / "ui" / utf8_path(own), ed_.ui_game_dir / "ui" / utf8_path(own),
+                                               std::filesystem::copy_options::overwrite_existing, ec);
+                std::filesystem::create_directories(ed_.ui_game_dir / "sounds", ec);
+                ue_te_had_click_ = std::filesystem::exists(ed_.ui_game_dir / "sounds" / utf8_path("щелчок.wav"), ec);
+                std::filesystem::copy_file(from / "sounds" / utf8_path("щелчок.wav"), ed_.ui_game_dir / "sounds" / utf8_path("щелчок.wav"),
+                                           std::filesystem::copy_options::overwrite_existing, ec);
+                ue_te_files_ = files();
+                check(!ec && same(), "the example's pages, its own template and sound copied into the game");
+                check(ue().open("шаблоны_игра") && ue().screen().show == d::ScreenShow::Playing, "«Шаблоны: игра» opens from disk");
+                const d::Node* key = nullptr;
+                const d::Node* torch = nullptr;
+                for (const d::Node& c : ue().screen().root.children) {
+                    if (c.name == "Карточка «Ключ»") key = &c;
+                    if (c.name == "Карточка «Факел»") torch = &c;
+                }
+                check(key && torch && key->children.size() == torch->children.size() && key->id != torch->id,
+                      "the own template's two copies on it, «Ключ» and «Факел»");
+                ue_te_torch_ = torch ? torch->id : 0;
+                check(files() == ue_te_files_, "opening wrote nothing");
+                ue().set_simple(false);
+                ue().select({});
+                check(click("ue-templates") && ue().templates_open(), "the library");
+                return true;
+            }
+            case 1:
+                if (wait(shown("ue-tpl-search"), "the library is laid out")) return true;
+                check(ue_fl_type_only("ue-tpl-search", "находка"), "searched «находка»");
+                return true;
+            case 2: {
+                const usize own = own_index();
+                check(own < ue().templates().size() && ue().templates_listed() == std::vector<usize>{own},
+                      "the game's own template is found, read from its ui/templates");
+                check(ue().template_needs(own).empty(), "it needs nothing the game lacks (the key and the torches are the game's things)");
+                ue_te_steps_ = ue().history().cursor();
+                const usize before = ue().screen().root.children.size();
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                check(ue().screen().root.children.size() == before + 1 && ue().history().cursor() == ue_te_steps_ + 1 &&
+                          ue().history().undo_label() == "Из шаблонов: Находка",
+                      "Enter: a third copy, one step");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(ue().screen().root.children.size() == before && same(), "Ctrl+Z: the example's files again (line ends aside)");
+                check(click("ue-check") && ue().checking(), "«Проверить» on «Шаблоны: игра»");
+                return true;
+            }
+            case 3:
+                check(at(ue().layer_box(ue_named("Кнопка «Пауза»"))), "the pause button clicked");
+                return true;
+            case 4:
+                if (wait(ue().check_windows() == pause, "the author's pause comes up")) return true;
+                check(said() == "Открыто окно «Шаблоны: пауза» поверх экрана", "the author's pause over the game: " + said());
+                check(at(ue().check_box("шаблоны_пауза", "Кнопка «Настройки»")), "its «Настройки» clicked");
+                return true;
+            case 5:
+                if (wait(ue().check_windows() == both, "the settings come up over the pause")) return true;
+                check(ue_sd_var("settings.master") == 100, "the volume as a new game has it: 100");
+                check(at(ue().check_box("шаблоны_настройки", "Кнопка «−»")), "«−» clicked");
+                return true;
+            case 6:
+                check(ue_sd_var("settings.master") == 90 && said() == "Данные: settings.master -= 10", "the volume 90: " + said());
+                check(at(ue().check_box("шаблоны_настройки", "Кнопка «Готово»")), "«Готово» clicked");
+                return true;
+            case 7:
+                check(ue().check_windows() == pause && said() == "Закрыто окно «Шаблоны: настройки»", "«Готово» closed the settings: " + said());
+                // At once, while the settings still fade away over it: a closed window takes no clicks.
+                ue_te_clicks_ = ue().check_sound().clicks();
+                check(at(ue().check_box("шаблоны_пауза", "Кнопка «Продолжить»")), "«Продолжить» clicked");
+                return true;
+            case 8:
+                check(ue().check_windows().empty() && said() == "Закрыто окно «Шаблоны: пауза»", "«Продолжить» closed the pause: " + said());
+                check(ue().check_sound().clicks() == ue_te_clicks_ + 1 && ue().check_sound().last_click() == "щелчок.wav",
+                      "with the pause's click sound: " + ue().check_sound().last_click());
+                if (const d::Node* torch = ue_node(ue_te_torch_)) at(ue().layer_box(ue_named(*torch, "Кнопка «Взять»")));
+                return true;
+            case 9:
+                check(said() == "Данные: inv.torch += 1", "the second copy's «Взять» gives a torch: " + said());
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().checking(), "Esc ends the check");
+                check(files() == ue_te_files_, "«Проверить» wrote nothing: the files byte for byte as copied");
+                check(ue().open("шаблоны_меню") && ue().open("шаблоны_игра") && files() == ue_te_files_, "opened again: nothing written");
+                // The whole screen as the game's own template, then taken where its pause and a picture are not.
+                ue().select({});
+                check(ue().begin_save_template(0) && ue().saving_template(), "«Сохранить экран как шаблон…»");
+                return true;
+            case 10:
+                if (wait(shown("ue-tpl-save-title"), "the form is laid out")) return true;
+                check(ue_fl_type_only("ue-tpl-save-title", "Над игрой с находками"), "a title typed");
+                return true;
+            case 11: {
+                const usize n = ue().templates().size();
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                const int i = ue().selected_template();
+                check(ue().templates().size() == n + 1 && i >= 0 && ue().templates()[static_cast<usize>(i)].info.own &&
+                          ue().templates()[static_cast<usize>(i)].info.kind == d::TemplateKind::Screen,
+                      "Enter: the screen is the game's own template");
+                check(i >= 0 && ue().template_needs(static_cast<usize>(i)).empty(),
+                      "here it needs nothing: the pause it opens, its pictures and things are the game's");
+                // Another game: no «Шаблоны: пауза», no golden button picture.
+                const std::filesystem::path away = std::filesystem::temp_directory_path() / "forge_templates_away";
+                std::error_code ec;
+                std::filesystem::remove_all(away, ec);
+                std::filesystem::create_directories(away, ec);
+                for (const char* ext : {".json", ".html"})
+                    std::filesystem::rename(ed_.ui_game_dir / "ui" / utf8_path(std::string("шаблоны_пауза") + ext),
+                                            away / utf8_path(std::string("шаблоны_пауза") + ext), ec);
+                std::filesystem::rename(ed_.ui_game_dir / "pictures" / utf8_path("интерфейс/кнопка_золото.png"), away / "button.png", ec);
+                check(!ec, "the pause and the picture taken away");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().templates_open() && click("ue-templates") && ue().templates_open(), "the library opened again");
+                return true;
+            }
+            case 12: {
+                if (wait(shown("ue-tpl-search"), "the library is laid out again")) return true;
+                int i = -1;
+                for (usize k = 0; k < ue().templates().size(); ++k)
+                    if (ue().templates()[k].info.own && ue().templates()[k].info.title == "Над игрой с находками") i = static_cast<int>(k);
+                check(i >= 0 && ue().select_template(static_cast<usize>(i)), "the own screen template picked");
+                const std::vector<std::string> needs = i >= 0 ? ue().template_needs(static_cast<usize>(i)) : std::vector<std::string>{};
+                auto said_of = [&](const char* what) {
+                    return std::any_of(needs.begin(), needs.end(), [&](const std::string& l) { return l.find(what) != std::string::npos; });
+                };
+                std::string all;
+                for (const std::string& l : needs) all += " " + l;
+                check(said_of("Нет картинок «pictures/интерфейс/кнопка_золото.png»") && said_of("Кнопки открывают экраны «шаблоны_пауза»"),
+                      "the window says what it lacks now, the picture and the pause:" + all);
+                check(needs.size() == 2, "and nothing else");
+                check(click("ue-tpl-new-screen"), "«Новый экран» from it all the same");
+                return true;
+            }
+            case 13: {
+                ue_te_made_ = ue().opened();
+                const d::Node* button = ue_node(ue_named("Кнопка «Пауза»"));
+                check(ue_te_made_ != "шаблоны_игра" && ue().screen().title == "Над игрой с находками" && button &&
+                          button->on_click == std::vector<d::Action>{{d::ActionKind::Show, "шаблоны_пауза"}},
+                      "a new screen, its pause button as it was: " + ue_te_made_);
+                check(ue().move_note().find("кнопка_золото.png") != std::string::npos && ue().move_note().find("«шаблоны_пауза»") != std::string::npos,
+                      "the note over the list says the same: " + ue().move_note());
+                // Back as it was: the pause and the picture, the own templates as in the example.
+                const std::filesystem::path away = std::filesystem::temp_directory_path() / "forge_templates_away";
+                std::error_code ec;
+                for (const char* ext : {".json", ".html"})
+                    std::filesystem::rename(away / utf8_path(std::string("шаблоны_пауза") + ext),
+                                            ed_.ui_game_dir / "ui" / utf8_path(std::string("шаблоны_пауза") + ext), ec);
+                std::filesystem::rename(away / "button.png", ed_.ui_game_dir / "pictures" / utf8_path("интерфейс/кнопка_золото.png"), ec);
+                std::filesystem::remove_all(away, ec);
+                for (const char* ext : {".json", ".html"}) std::filesystem::remove(ed_.ui_game_dir / "ui" / utf8_path(ue_te_made_ + ext), ec);
+                int i = -1;
+                for (usize k = 0; k < ue().templates().size(); ++k)
+                    if (ue().templates()[k].info.own && ue().templates()[k].info.title == "Над игрой с находками") i = static_cast<int>(k);
+                check(i >= 0 && ue().remove_template(static_cast<usize>(i)), "the own screen template taken out");
+                check(ue().open("шаблоны_игра") && files() == ue_te_files_, "the example's files byte for byte again");
+                {
+                    for (const char* name : kPages)
+                        for (const char* ext : {".json", ".html"}) std::filesystem::remove(ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext), ec);
+                    std::filesystem::remove_all(ed_.ui_game_dir / "ui" / "templates", ec);
+                    if (!ue_te_had_click_) std::filesystem::remove(ed_.ui_game_dir / "sounds" / utf8_path("щелчок.wav"), ec);
+                }
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            }
+            default: break;
+            }
+            ue_te_stage_ = 0;
+            break;
+        }
         default:
             ue_step_ = -1;
             return true;
@@ -9260,6 +10178,29 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                                                                 : editor.story_tab.open(t);
                     if (!ok) FORGE_WARN("no talk «%s»", t.c_str());
                 }
+                if (!options.templates.empty() && f == 1) editor.open_tab("ui");
+                if (!options.templates.empty() && f == 2) {
+                    const std::string& t = options.templates;
+                    const usize colon = t.find(':');
+                    const std::string file = colon == std::string::npos ? t : t.substr(colon + 1);
+                    editor.ui_tab.open_templates(t == "screen" ? "screen" : "construction");
+                    // save: the form for the whole screen; save:<layer>: for a layer at the top named so.
+                    if (t == "save" || t.rfind("save:", 0) == 0) {
+                        u32 layer = 0;
+                        for (const editor::design::Node& n : editor.ui_tab.screen().root.children)
+                            if (colon != std::string::npos && n.name == file) layer = n.id;
+                        editor.ui_tab.begin_save_template(layer);
+                    }
+                    const auto& all = editor.ui_tab.templates();
+                    for (usize i = 0; i < all.size(); ++i) {
+                        if (all[i].info.file != file) continue;
+                        editor.ui_tab.templates_show(editor::design::template_kind_word(all[i].info.kind), all[i].info.group);
+                        editor.ui_tab.select_template(i);
+                        if (t.rfind("new:", 0) == 0 || t.rfind("check:", 0) == 0) editor.ui_tab.screen_from_template(i);
+                        if (t.rfind("check:", 0) == 0) editor.ui_tab.set_checking(true);
+                        if (t.rfind("insert:", 0) == 0) editor.ui_tab.insert_template(i);
+                    }
+                }
                 if (f == 1 && tab > 0)
                     if (Rml::Element* bar = editor.find_element("editor-tabs"); bar && tab < bar->GetNumChildren())
                         bar->GetChild(tab)->Click();
@@ -9365,6 +10306,7 @@ int main(int argc, char** argv) {
         }
         else if (std::strcmp(argv[i], "--bench-story") == 0) bench_story = true;
         else if (std::strcmp(argv[i], "--talk") == 0 && has_value) app.options.talk = argv[++i];
+        else if (std::strcmp(argv[i], "--templates") == 0 && has_value) app.options.templates = argv[++i];
         else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }

@@ -1082,7 +1082,7 @@
     <!-- «Интерфейс»: the game's screens drawn like Figma frames. C++: apps/editor/ui_editor.cpp. -->
     <div id="ui-editor" class="column" data-if="tab == 'ui'">
         <div class="ue-bar row">
-            <div class="st-crumb row"><icon class="s" name="dashboard"/><span>Интерфейс</span><icon class="s" name="chevron_right"/><b>{{ ue_title }}</b></div>
+            <div class="st-crumb row"><icon class="s" name="dashboard"/><span class="ue-crumb-tab">Интерфейс</span><icon class="s ue-crumb-tab" name="chevron_right"/><b>{{ ue_title }}</b></div>
             <div id="ue-mode" class="ue-mode row" title="Простой: кнопки, тексты, картинки, полоски и списки обычными словами. Полный: все настройки. Экран от этого не меняется.">
                 <div id="ue-mode-simple" class="ue-mode-btn" data-class-selected="ue_simple" data-event-click="ue_mode('simple')">Простой</div>
                 <div id="ue-mode-full" class="ue-mode-btn" data-class-selected="!ue_simple" data-event-click="ue_mode('full')">Полный</div>
@@ -1095,6 +1095,7 @@
                 <div id="ue-block-list" class="ue-block row" title="Список вещей героя или заданий" data-event-click="ue_block('list')"><icon class="s" name="view_list"/><span>Список</span></div>
             </div>
             <div id="ue-create" class="ue-create-btn row" data-if="!ue_simple &amp;&amp; !ue_library_open" data-class-on="ue_menu == 'create'" title="Создать: кнопку, текст, картинку, полоску, список, рамку, фигуру или копию компонента" data-event-click="ue_create_menu"><icon class="s" name="add"/><span>Создать</span><icon class="s" name="expand_more"/></div>
+            <div id="ue-templates" class="ue-create-btn row" data-if="!ue_library_open" data-class-on="ue_tpl_open" data-class-off="ue_checking" title="Шаблоны: готовые сетки, формы, карточки, списки и целые экраны. Берётся копия, она ваша" data-event-click="ue_tpl_open('')"><icon class="s" name="auto_awesome_mosaic"/><span>Шаблоны</span></div>
             <div class="ue-tools row" data-if="!ue_simple">
                 <div id="ue-tool-select" class="ue-tool" data-class-selected="ue_tool == 'select'" title="Выбор и перемещение (V)" data-event-click="ue_tool('select')"><icon name="near_me"/></div>
                 <div id="ue-tool-frame" class="ue-tool" data-class-selected="ue_tool == 'frame'" title="Рамка (F): держит другие слои, умеет автораскладку" data-event-click="ue_tool('frame')"><icon name="tag"/></div>
@@ -1120,14 +1121,19 @@
             <!-- Screens and layers -->
             <div class="ue-left ue-panel column">
                 <div class="lg-nav-title">Экраны</div>
-                <div id="ue-library" class="ue-row row" data-class-selected="ue_library_open" title="Кнопки, полоски, окошки: сделаны один раз, стоят на любых экранах" data-event-click="ue_library"><icon class="s ue-comp-icon" name="widgets"/><span class="grow name">Компоненты</span><span class="count">{{ ue_components.size }}</span></div>
-                <div data-for="s : ue_screens" class="ue-row row" data-attr-id="'ue-screen-' + s.name" data-class-selected="s.selected" data-event-click="ue_screen(s.name)" data-event-dblclick="ue_rename('screen')">
-                    <icon class="s" name="web_asset"/>
-                    <span class="grow name" data-if="!(s.selected && ue_renaming == 'screen')">{{ s.title }}</span>
-                    <input type="text" class="ue-rename grow" data-if="s.selected && ue_renaming == 'screen'" data-attr-value="ue_rename_text" data-event-change="ue_rename_text(ev.value, ev.linebreak)" data-event-blur="ue_rename_done"/>
-                    <span class="count">{{ s.size }}</span>
+                <div id="ue-screens" class="ue-screens">
+                    <div id="ue-library" class="ue-row row" data-class-selected="ue_library_open" title="Кнопки, полоски, окошки: сделаны один раз, стоят на любых экранах" data-event-click="ue_library"><icon class="s ue-comp-icon" name="widgets"/><span class="grow name">Компоненты</span><span class="count">{{ ue_components.size }}</span></div>
+                    <div data-for="s : ue_screens" class="ue-row row" data-attr-id="'ue-screen-' + s.name" data-class-selected="s.selected" data-event-click="ue_screen(s.name)" data-event-dblclick="ue_rename('screen')">
+                        <icon class="s" name="web_asset"/>
+                        <span class="grow name" data-if="!(s.selected && ue_renaming == 'screen')">{{ s.title }}</span>
+                        <input type="text" class="ue-rename grow" data-if="s.selected && ue_renaming == 'screen'" data-attr-value="ue_rename_text" data-event-change="ue_rename_text(ev.value, ev.linebreak)" data-event-blur="ue_rename_done"/>
+                        <span class="count">{{ s.size }}</span>
+                    </div>
                 </div>
-                <div id="ue-new-screen" class="ue-row row add" data-event-click="ue_new_screen"><icon class="s" name="add"/><span>Новый экран</span></div>
+                <div class="row ue-new-row">
+                    <div id="ue-new-screen" class="ue-row row add grow" data-event-click="ue_new_screen"><icon class="s" name="add"/><span>Новый экран</span></div>
+                    <div id="ue-new-screen-template" class="ue-row row add" title="Новый экран из шаблона: пауза, инвентарь, магазин, настройки — готовый, его можно править" data-event-click="ue_tpl_open('screen')"><icon class="s" name="auto_awesome_mosaic"/><span>Из шаблона</span></div>
+                </div>
                 <div class="lg-nav-title">Слои</div>
                 <div class="ue-layers grow">
                     <div data-for="l : ue_layers" class="ue-layer row" data-attr-id="'ue-layer-' + l.id" data-class-selected="l.selected" data-class-drop-above="l.drop == 'above'" data-class-drop-below="l.drop == 'below'" data-class-drop-into="l.drop == 'into'" data-class-drop-no="l.drop == 'no'" data-class-comp="l.component" data-class-off="!l.visible || l.hidden_by_parent" data-style-padding-left="(6 + l.depth * 16) + 'px'" data-event-click="ue_layer(l.id)" data-event-mousedown="ue_layer_menu(l.id)" data-event-dblclick="ue_rename(l.id)">
@@ -1991,6 +1997,8 @@
         <!-- «Создать +» and the right button's menus (13.8). C++: UiEditor::open_menu, create, the ue_menu_do actions. -->
         <div class="as-backdrop" data-if="ue_menu != ''" data-event-mousedown="ue_menu_close"/>
         <div id="ue-create-menu" class="as-menu menu-list ue-menu ue-create-menu" data-if="ue_menu == 'create'" data-style-left="ue_menu_x + 'px'" data-style-top="ue_menu_y + 'px'">
+            <div id="ue-new-template" class="menu-item" title="Готовые сетки, формы, карточки и списки" data-event-click="ue_tpl_open('construction')"><icon name="auto_awesome_mosaic"/><span class="label">Из шаблонов…</span></div>
+            <div class="divider"/>
             <div class="ue-menu-group row"><icon class="s" name="interests"/><span>Элементы</span></div>
             <div id="ue-new-button" class="menu-item" title="Рамка с надписью: назначьте ей действие справа" data-event-click="ue_create('button')"><icon name="smart_button"/><span class="label">Кнопка</span></div>
             <div id="ue-new-text" class="menu-item" title="Надпись, можно с данными игры" data-event-click="ue_create('text')"><icon name="title"/><span class="label">Текст</span></div>
@@ -2023,6 +2031,7 @@
                 <div id="ue-ctx-frame" class="menu-item" data-if="!ue_simple" data-event-click="ue_menu_do('frame')"><icon name="crop_free"/><span class="label">В рамку</span><span class="trailing">Ctrl+G</span></div>
                 <div id="ue-ctx-hide" class="menu-item" data-event-click="ue_menu_do('hide')"><icon data-attr-name="ue_menu_hidden ? 'visibility' : 'visibility_off'"/><span class="label">{{ ue_menu_hidden ? 'Показать' : 'Скрыть' }}</span></div>
                 <div id="ue-ctx-lock" class="menu-item" data-event-click="ue_menu_do('lock')"><icon data-attr-name="ue_menu_locked ? 'lock_open' : 'lock'"/><span class="label">{{ ue_menu_locked ? 'Открепить' : 'Закрепить' }}</span></div>
+                <div id="ue-ctx-save-template" class="menu-item" data-if="ue_menu_one" title="Копия этого слоя попадёт в «Шаблоны» → «Мои» и будет у игры, сам слой не изменится" data-event-click="ue_menu_do('save_template')"><icon name="bookmark_add"/><span class="label">Сохранить как шаблон…</span></div>
                 <div data-if="!ue_simple &amp;&amp; (ue_menu_component || ue_menu_instance)">
                     <div class="divider"/>
                     <div id="ue-ctx-component" class="menu-item" data-if="ue_menu_component" title="Сделать один раз, ставить на любые экраны" data-event-click="ue_menu_do('component')"><icon name="widgets"/><span class="label">Сделать компонентом</span></div>
@@ -2032,8 +2041,106 @@
             </div>
             <div data-if="ue_menu == 'empty'">
                 <div id="ue-ctx-create" class="menu-item" data-if="!ue_simple &amp;&amp; !ue_library_open" data-event-click="ue_menu_do('create')"><icon name="add"/><span class="label">Создать…</span></div>
+                <div id="ue-ctx-templates" class="menu-item" data-if="!ue_library_open" data-event-click="ue_menu_do('templates')"><icon name="auto_awesome_mosaic"/><span class="label">Из шаблонов…</span></div>
+                <div id="ue-ctx-save-screen-template" class="menu-item" data-if="!ue_library_open" title="Копия всего экрана с его настройками попадёт в «Шаблоны» → «Экраны» → «Мои»" data-event-click="ue_menu_do('save_screen_template')"><icon name="bookmark_add"/><span class="label">Сохранить экран как шаблон…</span></div>
                 <div id="ue-ctx-paste-here" class="menu-item" data-class-disabled="!ue_menu_paste" title="Скопированные слои — левым верхним углом туда, где была мышь" data-event-click="ue_menu_do('paste')"><icon name="content_paste"/><span class="label">Вставить сюда</span></div>
                 <div id="ue-ctx-all" class="menu-item" data-event-click="ue_menu_do('all')"><icon name="select_all"/><span class="label">Выделить всё</span><span class="trailing">Ctrl+A</span></div>
+            </div>
+        </div>
+
+        <!-- The template library (13.12): constructions and whole screens, by groups, with a search. Taking one
+             copies it. C++: apps/editor/ui_editor_templates.cpp. -->
+        <div class="ue-tpl-scrim" data-if="ue_tpl_open" data-event-mousedown="ue_tpl_close"/>
+        <div id="ue-tpl" class="ue-tpl column" data-if="ue_tpl_open">
+            <div class="ue-tpl-head row">
+                <icon name="auto_awesome_mosaic"/>
+                <span class="ue-tpl-title">Шаблоны</span>
+                <span class="ue-tpl-sub muted body-small grow">Берётся копия: правьте её как свою, шаблон её больше не меняет.</span>
+                <div class="search-box row">
+                    <input id="ue-tpl-search" type="text" class="grow" placeholder="Поиск: пауза, кнопки, предметы…" data-attr-value="ue_tpl_search" data-event-change="ue_tpl_search(ev.value)"/>
+                    <icon class="s" name="search"/>
+                </div>
+                <div id="ue-tpl-close" class="icon-button" title="Закрыть (Esc)" data-event-click="ue_tpl_close"><icon name="close"/></div>
+            </div>
+            <div class="ue-tpl-body row grow">
+                <div class="ue-tpl-nav column">
+                    <div id="ue-tpl-sec-construction" class="ol-nav-row row" data-class-selected="ue_tpl_search == '' &amp;&amp; ue_tpl_section == 'construction' &amp;&amp; ue_tpl_group == ''" title="Части экрана: ставятся на открытый экран" data-event-click="ue_tpl_show('construction', '')">
+                        <icon name="dashboard_customize"/><span class="grow name">Конструкции</span><span class="count">{{ ue_tpl_count_c }}</span>
+                    </div>
+                    <div data-for="g : ue_tpl_groups" data-if="g.section == 'construction'" class="ol-nav-row row ue-tpl-group" data-attr-id="'ue-tpl-group-' + it_index" data-class-selected="g.selected" data-class-off="g.count == 0" data-event-click="ue_tpl_show(g.section, g.name)">
+                        <span class="grow name">{{ g.name }}</span><span class="count">{{ g.count }}</span>
+                    </div>
+                    <div id="ue-tpl-sec-screen" class="ol-nav-row row" data-class-selected="ue_tpl_search == '' &amp;&amp; ue_tpl_section == 'screen' &amp;&amp; ue_tpl_group == ''" title="Целые экраны: новым экраном или рамкой на открытый" data-event-click="ue_tpl_show('screen', '')">
+                        <icon name="web_asset"/><span class="grow name">Экраны</span><span class="count">{{ ue_tpl_count_s }}</span>
+                    </div>
+                    <div data-for="g : ue_tpl_groups" data-if="g.section == 'screen'" class="ol-nav-row row ue-tpl-group" data-attr-id="'ue-tpl-group-' + it_index" data-class-selected="g.selected" data-class-off="g.count == 0" data-event-click="ue_tpl_show(g.section, g.name)">
+                        <span class="grow name">{{ g.name }}</span><span class="count">{{ g.count }}</span>
+                    </div>
+                    <div class="grow"/>
+                    <div id="ue-tpl-save-open" class="command" data-if="!ue_library_open" title="Выделенный слой (или весь экран, если ничего не выделено) — в «Мои». Слой и экран не изменятся" data-event-click="ue_tpl_save_open"><icon name="bookmark_add"/><span>Сохранить свой…</span></div>
+                    <div class="ol-help muted body-small">Группы только помогают искать. Двойной щелчок по шаблону: конструкция встаёт на экран, экран открывается новым.</div>
+                </div>
+                <div id="ue-tpl-grid-wrap" class="ue-tpl-grid-wrap grow">
+                    <div id="ue-tpl-heading" class="ue-tpl-heading">{{ ue_tpl_heading }}</div>
+                    <div id="ue-tpl-grid" class="ue-tpl-grid">
+                        <div data-for="c : ue_tpl_cards" class="ue-tpl-card column" data-attr-id="'ue-tpl-card-' + c.index" data-class-selected="c.selected" data-event-click="ue_tpl_pick(c.index)" data-event-dblclick="ue_tpl_take(c.index)">
+                            <div class="ue-tpl-thumb"><img data-if="c.thumb != ''" data-attr-src="c.thumb"/><span class="ue-tpl-own" data-if="c.own">свой</span></div>
+                            <span class="name">{{ c.title }}</span>
+                            <span class="kind">{{ c.variant == '' ? c.group : c.variant + ' · ' + c.group }}</span>
+                        </div>
+                    </div>
+                    <div id="ue-tpl-empty" class="ue-tpl-empty column" data-if="ue_tpl_cards.size == 0">
+                        <icon class="xl" name="search_off"/>
+                        <span>{{ ue_tpl_empty }}</span>
+                    </div>
+                </div>
+                <div id="ue-tpl-side" class="ue-tpl-side column">
+                    <div id="ue-tpl-save-form" data-if="ue_tpl_save.on" class="ue-tpl-save column">
+                        <div class="ue-tpl-preview"><img id="ue-tpl-save-preview" data-if="ue_tpl_save.thumb != ''" data-attr-src="ue_tpl_save.thumb"/></div>
+                        <div class="ol-title">Сохранить как шаблон</div>
+                        <div id="ue-tpl-save-what" class="ue-tpl-about body-small">{{ ue_tpl_save.what }}</div>
+                        <span class="ue-tpl-label">Название</span>
+                        <input id="ue-tpl-save-title" type="text" class="ue-tpl-input" data-attr-value="ue_tpl_save.title" data-event-change="ue_tpl_save_title(ev.value)"/>
+                        <span class="ue-tpl-label">Группа</span>
+                        <div class="ue-tpl-variants row">
+                            <div data-for="g : ue_tpl_save_groups" class="ue-tpl-variant" data-attr-id="'ue-tpl-save-group-' + it_index" data-class-selected="g == ue_tpl_save.group" data-event-click="ue_tpl_save_group(g)">{{ g }}</div>
+                        </div>
+                        <div id="ue-tpl-save-clash" class="ue-tpl-note body-small" data-if="ue_tpl_save.clash != ''">{{ ue_tpl_save.clash }}</div>
+                        <div class="ue-tpl-actions column">
+                            <div id="ue-tpl-save" class="command strong" data-class-disabled="!ue_tpl_save.can" title="В папку игры ui/templates (Enter). Экран не меняется" data-event-click="ue_tpl_save(false)"><icon name="bookmark_add"/><span>{{ ue_tpl_save.clash != '' ? 'Сохранить рядом' : 'Сохранить' }}</span></div>
+                            <div id="ue-tpl-replace" class="command" data-if="ue_tpl_save.clash != ''" data-event-click="ue_tpl_save(true)"><icon name="bookmark_added"/><span>Заменить</span></div>
+                            <div id="ue-tpl-save-cancel" class="command" title="Ничего не сохранять (Esc)" data-event-click="ue_tpl_close"><icon name="close"/><span>Отмена</span></div>
+                        </div>
+                        <div class="ue-tpl-note body-small" data-if="ue_tpl_note != ''">{{ ue_tpl_note }}</div>
+                    </div>
+                    <div data-if="!ue_tpl_save.on &amp;&amp; !ue_tpl_sel.any" class="muted body-small">Выберите шаблон.</div>
+                    <div data-if="!ue_tpl_save.on &amp;&amp; ue_tpl_sel.any" class="column">
+                        <div class="ue-tpl-preview"><img id="ue-tpl-preview" data-if="ue_tpl_sel.thumb != ''" data-attr-src="ue_tpl_sel.thumb"/></div>
+                        <div id="ue-tpl-sel-title" class="ol-title">{{ ue_tpl_sel.title }}</div>
+                        <div class="ol-kind-line row"><icon class="s" data-attr-name="ue_tpl_sel.screen ? 'web_asset' : 'dashboard_customize'"/><span>{{ ue_tpl_sel.kind }} · {{ ue_tpl_sel.group }}</span></div>
+                        <div class="ue-tpl-variants row" data-if="ue_tpl_variants.size > 1">
+                            <div data-for="v : ue_tpl_variants" class="ue-tpl-variant" data-attr-id="'ue-tpl-variant-' + v.index" data-class-selected="v.selected" data-event-click="ue_tpl_pick(v.index)">{{ v.name }}</div>
+                        </div>
+                        <div id="ue-tpl-about" class="ue-tpl-about body-small">{{ ue_tpl_sel.about }}</div>
+                        <div id="ue-tpl-needs" class="ue-tpl-needs column" data-if="ue_tpl_needs.size > 0">
+                            <div class="ue-tpl-needs-head row"><icon class="s" name="info"/><span>Чего ему не хватает в этой игре</span></div>
+                            <div data-for="n : ue_tpl_needs" class="body-small" data-attr-id="'ue-tpl-need-' + it_index">{{ n }}</div>
+                        </div>
+                        <div class="ue-tpl-actions column">
+                            <div id="ue-tpl-new-screen" class="command strong" data-if="ue_tpl_sel.screen" title="Новый экран игры с этими слоями и настройками (Enter, двойной щелчок)" data-event-click="ue_tpl_new_screen"><icon name="note_add"/><span>Новый экран</span></div>
+                            <div id="ue-tpl-insert" class="command" data-class-strong="!ue_tpl_sel.screen" data-class-disabled="!ue_tpl_sel.can_insert" data-attr-title="ue_tpl_sel.screen ? 'Всё содержимое экрана одной рамкой на открытый экран' : 'На открытый экран, где есть место (Enter, двойной щелчок)'" data-event-click="ue_tpl_insert"><icon name="add_to_photos"/><span>{{ ue_tpl_sel.screen ? 'Вставить рамкой в экран' : 'Вставить в экран' }}</span></div>
+                            <div id="ue-tpl-remove" class="command" data-if="ue_tpl_sel.own &amp;&amp; !ue_tpl_confirm" title="Убрать из шаблонов игры. Экраны, где он стоит, не изменятся" data-event-click="ue_tpl_remove(false)"><icon name="delete"/><span>Удалить шаблон</span></div>
+                        </div>
+                        <div id="ue-tpl-confirm" class="ue-tpl-confirm column" data-if="ue_tpl_sel.own &amp;&amp; ue_tpl_confirm">
+                            <span class="body-small">Удалить «{{ ue_tpl_sel.title }}» из шаблонов игры? Экраны, где он уже стоит, не изменятся.</span>
+                            <div class="row">
+                                <div id="ue-tpl-remove-yes" class="command strong" data-event-click="ue_tpl_remove(true)"><icon name="delete_forever"/><span>Удалить</span></div>
+                                <div id="ue-tpl-remove-no" class="command" data-event-click="ue_tpl_remove(false)"><icon name="undo"/><span>Оставить</span></div>
+                            </div>
+                        </div>
+                        <div id="ue-tpl-note" class="ue-tpl-note body-small" data-if="ue_tpl_note != ''">{{ ue_tpl_note }}</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

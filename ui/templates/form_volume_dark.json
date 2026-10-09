@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "title": "Громкость со шкалой",
+  "next_id": 11,
+  "width": 720.0,
+  "height": 96.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Громкость со шкалой",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 720.0,
+    "h": 96.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Строка «Музыка»",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 720.0,
+        "h": 96.0,
+        "children": [
+          {
+            "id": 3,
+            "name": "Название",
+            "type": "text",
+            "x": 0.0,
+            "y": 28.0,
+            "w": 220.0,
+            "h": 40.0,
+            "text": "Музыка",
+            "style": {
+              "family": "Onest",
+              "size": 30.0,
+              "weight": 400,
+              "align": "left",
+              "color": "#d7dce2"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Кнопка «−»",
+            "type": "frame",
+            "x": 236.0,
+            "y": 16.0,
+            "w": 64.0,
+            "h": 64.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2c3542"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "change",
+                "target": "settings.music -= 10"
+              }
+            ],
+            "children": [
+              {
+                "id": 5,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 9.0,
+                "w": 64.0,
+                "h": 47.0,
+                "text": "−",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#e6eaf0"
+                }
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "name": "Шкала",
+            "type": "frame",
+            "x": 316.0,
+            "y": 30.0,
+            "w": 300.0,
+            "h": 36.0,
+            "clip": true,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#11161c"
+              }
+            ],
+            "radius": [
+              18.0,
+              18.0,
+              18.0,
+              18.0
+            ],
+            "children": [
+              {
+                "id": 7,
+                "name": "Полоска",
+                "type": "rectangle",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 300.0,
+                "h": 36.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#e8b04a"
+                  }
+                ],
+                "radius": [
+                  18.0,
+                  18.0,
+                  18.0,
+                  18.0
+                ],
+                "bar": {
+                  "value": "settings.music",
+                  "max": "100",
+                  "from": "left"
+                }
+              },
+              {
+                "id": 8,
+                "name": "Числа",
+                "type": "text",
+                "x": 0.0,
+                "y": 4.0,
+                "w": 300.0,
+                "h": 29.0,
+                "text": "{settings.music}",
+                "style": {
+                  "family": "Onest",
+                  "size": 22.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#ffffff"
+                }
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "name": "Кнопка «+»",
+            "type": "frame",
+            "x": 632.0,
+            "y": 16.0,
+            "w": 64.0,
+            "h": 64.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2c3542"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "change",
+                "target": "settings.music += 10"
+              }
+            ],
+            "children": [
+              {
+                "id": 10,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 9.0,
+                "w": 64.0,
+                "h": 47.0,
+                "text": "+",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#e6eaf0"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

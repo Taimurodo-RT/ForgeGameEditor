@@ -224,6 +224,7 @@ void Shell::screen_action(const ScreenAction& a) {
         const Expr e = Expr::parse_actions(t, &error);
         if (!error.empty()) FORGE_WARN("кнопка: «%s» не читается: %s", t.c_str(), error.c_str());
         else e.run(vars_, [this](std::string_view n, const std::vector<Value>& args) { return call(n, args); });
+        sync_settings_vars(); // a volume changed by the button is heard at once
     } else if (a.what == "talk") {
         if (!talk(t)) FORGE_WARN("разговор «%s» не начался", t.c_str());
     } else if (a.what == "pause") pause(true);
@@ -246,6 +247,29 @@ void Shell::screen_action(const ScreenAction& a) {
         back_ = screen_;
         show(Screen::Settings);
     } else FORGE_WARN("кнопка: неизвестное действие «%s»", a.what.c_str());
+}
+
+void Shell::sync_settings_vars() {
+    static constexpr std::pair<const char*, f32 Settings::*> kFields[] = {
+        {"settings.master", &Settings::master_volume}, {"settings.music", &Settings::music_volume}, {"settings.sound", &Settings::sound_volume}};
+    Settings s = settings_;
+    bool changed = false;
+    for (usize i = 0; i < settings_vars_.size(); ++i) {
+        const auto& [name, field] = kFields[i];
+        if (std::isnan(settings_vars_[i])) continue;
+        const f64 now = vars_.get(name).number();
+        if (now == settings_vars_[i]) continue;
+        s.*field = static_cast<f32>(std::clamp(now, 0.0, 100.0) / 100.0);
+        changed = true;
+    }
+    if (changed) apply_settings(s);
+    for (usize i = 0; i < settings_vars_.size(); ++i) {
+        const auto& [name, field] = kFields[i];
+        const f64 value = std::round(static_cast<f64>(settings_.*field) * 100.0);
+        if (settings_vars_[i] == value && vars_.get(name).number() == value) continue;
+        vars_.set(name, value);
+        settings_vars_[i] = value;
+    }
 }
 
 void Shell::define(const std::string& name, CallFn fn) { calls_[name] = std::move(fn); }
@@ -300,6 +324,7 @@ bool Shell::begin(std::string_view slot_id) {
     runner_->stop();
     screens_->hide_commands(); // the menu's windows stay with the menu
     vars_.clear();
+    settings_vars_.fill(NAN);
     playtime_ = 0;
     if (!slots_->begin_session(slot_id, &error)) {
         toast("Не удалось начать: " + error);
@@ -507,6 +532,7 @@ void Shell::update(f64 dt) {
     // A game that is not running draws its menu backdrop.
     game_->update(dt, (playing && !stopped) || !game_->running(), playing && !stopped && !in_dialogue());
     const bool in_game = game_->running() && screen_ != Screen::Main && screen_ != Screen::Loading;
+    sync_settings_vars();
     screens_->update(vars_, in_game, screen_ == Screen::Main, static_cast<int>(width_), static_cast<int>(height_),
                      [this](std::string_view n, const std::vector<Value>& args) { return call(n, args); });
     for (Toast& t : m.toast_list) t.left -= dt;

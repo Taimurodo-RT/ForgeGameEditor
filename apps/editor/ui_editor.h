@@ -50,6 +50,7 @@
 #include "forge/editor/document.h"
 #include "forge/editor/ui_design.h"
 #include "forge/editor/ui_simple.h"
+#include "forge/editor/ui_templates.h"
 #include "forge/editor/undo.h"
 #include "forge/game/screens.h"
 #include "forge/game/vars.h"
@@ -116,6 +117,66 @@ public:
     bool detach_instance();
     // Opens the library at the selected instance's variant.
     bool edit_component();
+
+    // --- the template library (13.12) ---
+    // A window over the tab: ready constructions (grids, forms, cards, lists)
+    // and whole screens (a main menu, a HUD, a pause, an inventory, a shop,
+    // saves, settings), several looks of each, by groups, with a search and a
+    // picture of each drawn by the UI engine as the game draws it (the game's
+    // things in its lists). The editor's own templates are ui/templates.
+    // Taking one copies it, as if the author drew it: a later change of the
+    // template does not change the copy (what is to stay in step everywhere
+    // becomes a component). A construction goes onto the open screen as one
+    // layer where there is room, one step of the history; a screen template
+    // makes a new screen with its settings (as «Новый экран» does), or goes
+    // onto the open screen as one frame of its size.
+    // section: "construction" or "screen" ("": as it was last).
+    void open_templates(const std::string& section = {});
+    void close_templates();
+    bool templates_open() const { return tpl_.open; }
+    const std::vector<editor::design::Template>& templates() const { return templates_; }
+    // What the window lists: a section and its group ("": all of it); a
+    // search looks through both sections (title, look, group, about, words).
+    void templates_show(const std::string& section, const std::string& group);
+    void templates_search(const std::string& text);
+    std::vector<usize> templates_listed() const;
+    bool select_template(usize index);
+    int selected_template() const { return tpl_.selected; }
+    // The template onto the open screen: its layer's id; 0 when not taken
+    // here (the components' library, «Проверить»: templates_note() says why).
+    u32 insert_template(usize index);
+    // A new screen from the template, opened: its file name ("" none). A
+    // second main menu comes as a window (the note says how to switch).
+    std::string screen_from_template(usize index);
+    // The selected template's own action: a construction inserted, a screen made.
+    bool take_template(usize index);
+    const std::string& templates_note() const { return tpl_.note; }
+    // What a template needs of the game that it lacks, a line each: components,
+    // colours and text styles let go, pictures and sounds not in the game's
+    // folders, screens its buttons open that the game has not, things and
+    // variables the game does not keep, messages only «Логика» answers.
+    std::vector<std::string> template_needs(usize index);
+
+    // «Сохранить как шаблон»: the window opens with a form for a layer of the
+    // open screen (0: the whole screen), a title and a group; the template goes
+    // into the game's ui/templates and comes up among the others («Мои»). The
+    // screen is not changed and no step of the history is made.
+    bool begin_save_template(u32 layer);
+    bool saving_template() const { return tpl_.open && tpl_.saving; }
+    void set_save_template(const std::string& title, const std::string& group);
+    // Writes it: its index in templates() (-1: not written, templates_note() says
+    // why). replace: in the place of the author's template of the same title,
+    // else beside it with a number.
+    int save_template(bool replace);
+    // An own template taken out of the game's folder (screens made from it stay).
+    bool remove_template(usize index);
+    std::filesystem::path own_templates_dir() const { return ui_dir() / "templates"; }
+    // Enter in the window: the form saved, or the selected template taken.
+    void templates_enter();
+    // Its picture was drawn (tests read it with read_template_pixel).
+    bool template_drawn(usize index) const;
+    bool read_template_pixel(usize index, u32 x, u32 y, u8 rgba[4]) const;
+    static constexpr u32 kTemplateThumbW = 400, kTemplateThumbH = 225;
 
     // «Простой / Полный»: how the tab shows the screen. Simple: blocks a
     // beginner knows (a button, a text, a picture, a bar, a list) with a few
@@ -502,6 +563,7 @@ private:
     int view_ = 0;
     f32 canvas_x_ = 0, canvas_y_ = 0, canvas_w_ = 0, canvas_h_ = 0;
     bool fit_pending_ = true;
+    bool scroll_screen_ = false; // the screen open now brought into sight in the list of screens
     f32 mouse_x_ = 0, mouse_y_ = 0; // window pixels
     bool space_down_ = false;
 
@@ -682,7 +744,8 @@ private:
     f32 m_menu_x_ = 0, m_menu_y_ = 0;
     f32 menu_sx_ = 0, menu_sy_ = 0; // the screen's point the right button was on («Вставить сюда»)
     bool menu_under_button_ = false; // «Создать» opened by its button: the menu stays under it
-    bool m_menu_paste_ = false, m_menu_hidden_ = false, m_menu_locked_ = false, m_menu_instance_ = false, m_menu_component_ = false;
+    bool m_menu_paste_ = false, m_menu_hidden_ = false, m_menu_locked_ = false, m_menu_instance_ = false, m_menu_component_ = false,
+         m_menu_one_ = false;
     std::vector<VariantRow> m_variants_; // the selected component variant's or instance's properties
     bool m_library_open_ = false;
     std::vector<GameColorRow> m_game_colors_;
@@ -850,6 +913,83 @@ private:
     Box m_safe_;
     bool m_has_safe_ = false;
     std::vector<int> m_nine_{0, 1, 2, 3, 4, 5, 6, 7, 8}; // the 3x3 align grid
+    // The template library's window.
+    struct TemplateView {
+        bool open = false;
+        std::string section = "construction", group, search, note;
+        int selected = -1;
+        bool loaded = false;
+        std::vector<forge::game::ScreenItem> items; // the game's things, for the pictures' lists
+        // «Сохранить как шаблон»: of what (a layer's id, 0: the screen), under what title and group.
+        bool saving = false;
+        u32 save_layer = 0;
+        std::string save_title, save_group;
+        bool confirm_remove = false; // «Удалить шаблон?» asked
+        int needs_for = -1;          // template_needs of this template, kept while the window is open
+        std::vector<std::string> needs;
+    };
+    TemplateView tpl_;
+    std::vector<editor::design::Template> templates_; // the editor's first (builtin_count_), then the game's own
+    std::vector<editor::design::Template> builtin_;
+    usize builtin_count_ = 0;
+    // A template's picture: its page in a context of its own drawn into /gpu/<image>, a few frames, then kept.
+    struct TemplatePicture {
+        Rml::Context* context = nullptr;
+        std::unique_ptr<forge::game::GameScreens> page;
+        std::string image;
+        int frames = 0; // still to draw
+        bool drawn = false;
+    };
+    std::vector<TemplatePicture> pictures_;
+    TemplatePicture save_picture_; // what the form saves
+    u32 picture_serial_ = 0;       // pictures' names are never used twice (the textures are kept by name)
+    void load_templates();
+    void draw_picture(TemplatePicture& p, const editor::design::Template& t);
+    void drop_picture(TemplatePicture& p);
+    void draw_template(usize index);
+    editor::design::Template template_to_save() const;
+    int own_template_titled(const std::string& title, editor::design::TemplateKind kind) const;
+    void note_needs(const std::vector<std::string>& needs, const std::string& done);
+    void update_templates();
+    void drop_template_pictures();
+    void refresh_templates();
+    bool template_matches(const editor::design::Template& t) const;
+    void bind_templates(Rml::DataModelConstructor& model);
+    struct TplCard {
+        int index = 0;
+        Rml::String title, variant, group, thumb;
+        bool selected = false, own = false;
+    };
+    struct TplGroup {
+        Rml::String section, name;
+        int count = 0;
+        bool selected = false;
+    };
+    struct TplVariant {
+        int index = 0;
+        Rml::String name;
+        bool selected = false;
+    };
+    struct TplSelected {
+        bool any = false, screen = false, can_insert = false, own = false;
+        Rml::String title, variant, group, about, thumb, kind;
+    };
+    // The form of «Сохранить как шаблон».
+    struct TplSave {
+        bool on = false, screen = false, can = false;
+        Rml::String title, group, what, clash, thumb;
+    };
+    bool m_tpl_open_ = false;
+    Rml::String m_tpl_section_ = "construction", m_tpl_group_, m_tpl_search_, m_tpl_heading_, m_tpl_note_, m_tpl_empty_;
+    int m_tpl_count_c_ = 0, m_tpl_count_s_ = 0;
+    std::vector<TplCard> m_tpl_cards_;
+    std::vector<TplGroup> m_tpl_groups_;
+    std::vector<TplVariant> m_tpl_variants_;
+    TplSelected m_tpl_sel_;
+    TplSave m_tpl_save_;
+    std::vector<Rml::String> m_tpl_needs_, m_tpl_save_groups_;
+    bool m_tpl_confirm_ = false;
+
     std::vector<u32> closed_; // frames folded in the layer list
 };
 
