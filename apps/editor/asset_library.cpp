@@ -300,6 +300,7 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("as_sel_audio", &m_sel_audio_);
     model.Bind("as_sel_wav", &m_sel_wav_);
     model.Bind("as_sel_dir", &m_sel_dir_);
+    model.Bind("as_sel_tmx", &m_sel_tmx_);
     model.Bind("as_sel_editable", &m_sel_editable_);
     model.Bind("as_sel_date", &m_sel_date_);
     model.Bind("as_sel_tint", &m_sel_tint_);
@@ -343,6 +344,7 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
         if (is_dir(selection_[0])) open_folder(selection_[0]);
         else play_sound();
     });
+    on("as_import_map", [this](Rml::Event&, const Rml::VariantList&) { import_map(); });
     on("as_layout_reset", [this](Rml::Event&, const Rml::VariantList&) { dock_.reset(); });
     on("as_sort", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { sort_by(arg_str(a, 0)); });
     on("as_sort_order", [this, arg_bool](Rml::Event&, const Rml::VariantList& a) {
@@ -1481,6 +1483,12 @@ void AssetLibrary::play_sound() {
     listen_.play(clip);
 }
 
+bool AssetLibrary::import_map() {
+    if (selection_.size() != 1 || extension_of(selection_[0]) != ".tmx" || !on_import_map) return false;
+    on_import_map(abs(selection_[0]));
+    return true;
+}
+
 void AssetLibrary::undo() {
     if (history_.undo()) FORGE_INFO("Отменено: %s", history_.redo_label().c_str());
 }
@@ -1620,7 +1628,7 @@ void AssetLibrary::sync_preview() {
     preview_version_ = 0;
     set(m_sel_count_, static_cast<int>(selection_.size()), "as_sel_count");
     Rml::String name, ext, kind, size, dims, path, tags, preview, icon, extra, date, tint;
-    bool image = false, audio = false, dir = false, editable = false, wav = false;
+    bool image = false, audio = false, dir = false, editable = false, wav = false, tmx = false;
     if (selection_.size() == 1) {
         const std::string& rel = selection_[0];
         path = rel;
@@ -1642,6 +1650,7 @@ void AssetLibrary::sync_preview() {
             tint = "ft-" + type.id;
             size = size_text(rec->size);
             tags = rec->tags;
+            tmx = ext == ".tmx";
             if (rec->type == "image") {
                 image = true;
                 editable = assets::can_encode_image(ext);
@@ -1714,6 +1723,7 @@ void AssetLibrary::sync_preview() {
     set(m_sel_audio_, audio, "as_sel_audio");
     set(m_sel_wav_, wav, "as_sel_wav");
     set(m_sel_dir_, dir, "as_sel_dir");
+    set(m_sel_tmx_, tmx, "as_sel_tmx");
     set(m_sel_editable_, editable, "as_sel_editable");
 }
 

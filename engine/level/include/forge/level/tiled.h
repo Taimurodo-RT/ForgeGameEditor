@@ -57,6 +57,7 @@ struct Tile {
     i32 x = 0, y = 0;            // the part of its picture it shows (Tiled 1.9); w = 0: all of it
     u32 w = 0, h = 0;
     bool collision = false;      // has collision shapes
+    bool collision_whole = false; // they are one rectangle over the whole tile
     bool animated = false;
     u32 first_frame = 0;         // when animated: the tile its first frame shows
     std::vector<Property> props;

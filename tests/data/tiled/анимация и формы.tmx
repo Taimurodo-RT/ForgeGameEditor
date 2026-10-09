@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="4" height="2" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="1">
+ <tileset firstgid="1" name="Живой декор" tilewidth="16" tileheight="16" tilecount="4" columns="4">
+  <image source="../../../games/examples/tiled/Карта Tiled/наборы/декор.png" width="64" height="16"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="1" duration="200"/>
+    <frame tileid="0" duration="200"/>
+   </animation>
+  </tile>
+  <tile id="2">
+   <objectgroup draworder="index">
+    <object id="1" x="0" y="8" width="16" height="8"/>
+   </objectgroup>
+  </tile>
+  <tile id="3">
+   <objectgroup draworder="index">
+    <object id="1" x="0" y="0" width="16" height="16"/>
+   </objectgroup>
+  </tile>
+ </tileset>
+ <layer id="1" name="Фон" width="4" height="2">
+  <data encoding="csv">
+1,0,4,0,
+0,0,0,0
+</data>
+ </layer>
+ <layer id="2" name="Земля" width="4" height="2">
+  <properties>
+   <property name="solid" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+0,0,0,0,
+3,4,0,0
+</data>
+ </layer>
+</map>

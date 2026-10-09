@@ -35,6 +35,7 @@
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
@@ -141,6 +142,10 @@ public:
     bool convert_image(const std::string& extension);
     bool set_tags(const std::string& tags);
     void play_sound();
+    // «Импортировать в уровень…» on a chosen .tmx: the «Уровень» tab opens
+    // its «Импорт карты Tiled» window for it (main wires on_import_map).
+    std::function<void(const std::filesystem::path&)> on_import_map;
+    bool import_map();
     // «Конвертировать…»: a window with the converters that take the chosen
     // files and their settings; the results land next to each file.
     Converters& converters() { return converters_; }
@@ -381,7 +386,7 @@ private:
     int m_sel_count_ = 0;
     Rml::String m_sel_name_, m_sel_ext_, m_sel_kind_, m_sel_size_, m_sel_dims_, m_sel_path_, m_sel_tags_, m_sel_preview_,
         m_sel_icon_, m_sel_extra_, m_sel_date_, m_sel_tint_;
-    bool m_sel_image_ = false, m_sel_audio_ = false, m_sel_dir_ = false, m_sel_editable_ = false, m_sel_wav_ = false;
+    bool m_sel_image_ = false, m_sel_audio_ = false, m_sel_dir_ = false, m_sel_editable_ = false, m_sel_wav_ = false, m_sel_tmx_ = false;
     std::vector<Rml::String> m_history_;
     int m_history_cursor_ = 0;
     u64 history_version_ = ~0ull;

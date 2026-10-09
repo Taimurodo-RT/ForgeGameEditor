@@ -2,6 +2,7 @@
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
+#include "forge/core/hash.h"
 #include "forge/core/path.h"
 
 #include <yyjson.h>
@@ -158,6 +159,7 @@ std::string tileset_key(const Tileset& ts) { return ts.source.empty() ? "@" + ts
 struct TileRef {
     const Tileset* ts = nullptr;
     u32 local = 0, flags = 0;
+    const Tile* own = nullptr; // the tile the cell names (not its first frame)
 };
 
 // Finds a tile's picture; the reason when there is none (which list it goes in: missing, or skipped).
@@ -170,7 +172,8 @@ public:
         out.flags = gid & (kFlipH | kFlipV | kFlipD);
         out.ts = tileset_of(map_, gid, out.local);
         if (!out.ts) return false;
-        if (const Tile* t = out.ts->tile(out.local); t && t->animated) out.local = t->first_frame;
+        out.own = out.ts->tile(out.local);
+        if (out.own && out.own->animated) out.local = out.own->first_frame;
         return true;
     }
     std::string key(const TileRef& r) const { return tileset_key(*r.ts) + "#" + std::to_string(r.local) + flags_text(r.flags); }
@@ -243,6 +246,16 @@ std::string template_id_for(const TileRef& r, const std::string& map_stem) {
     return out;
 }
 
+// The id of a zone or an object the map makes: the same for the same map
+// and Tiled object every time. An import taken back with Ctrl+Z and made
+// again, or made again after its tiled.json was lost, gives its zones and
+// objects their old ids: «Логика»'s links to a zone keep working, and the
+// objects already in the level are found instead of doubled.
+u64 stable_id(const std::string& map_name, std::string_view what, u32 tiled_id) {
+    const u64 id = fnv1a("tiled|" + map_name + "|" + std::string(what) + "|" + std::to_string(tiled_id));
+    return id ? id : 1;
+}
+
 template <typename K, typename V>
 const V* lookup(const std::vector<std::pair<K, V>>& list, const K& k) {
     for (const auto& [a, b] : list)
@@ -301,6 +314,7 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
     if (!before.empty() && before.map != out.map_name)
         note(out.skipped, "запись прежнего импорта карты " + q(before.map) + " заменяется (сделанное им остаётся как есть)");
 
+    if (!map.background.empty()) note(out.skipped, "цвет фона карты " + map.background + " (за уровнем Forge — небо игры)");
     Pictures pictures;
     Tiles tiles(map, pictures);
     auto target_of = [&](usize li) { return li < o.targets.size() ? o.targets[li] : default_target(map, map.layers[li]); };
@@ -447,6 +461,11 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                     continue;
                 }
                 if (r.ts->offset_x || r.ts->offset_y) note(out.skipped, "сдвиг тайлов набора (tileoffset) не переносится: " + q(r.ts->name));
+                if (r.own && r.own->animated) note(out.skipped, "анимации тайлов: стоит первый кадр — " + q(r.ts->name));
+                if (r.own && r.own->collision && to == 0)
+                    note(out.skipped, "тайлы с формой столкновений на «Фоне»: там они не твёрдые — " + q(r.ts->name));
+                else if (r.own && r.own->collision && !r.own->collision_whole)
+                    note(out.skipped, "формы столкновений не на всю клетку: в «Блоках» клетка твёрдая целиком — " + q(r.ts->name));
                 if (drawn++ == 0) pic = part;
                 else over(pic, part);
                 name += (name.empty() ? "" : " + ") + tiles.name(r);
@@ -598,7 +617,7 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                     po.level_id = *id;
                     po.known = true;
                 } else {
-                    po.level_id = Level::new_id();
+                    po.level_id = stable_id(out.map_name, "object", obj.id);
                 }
                 out.record.objects.emplace_back(obj.id, po.level_id);
                 out.objects.push_back(std::move(po));
@@ -652,7 +671,9 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                 }
                 const u64* known = lookup(prev.zones, obj.id);
                 Area* old = known ? out.areas.find(*known) : nullptr;
-                a.id = old ? old->id : Level::new_id();
+                // Not in the record (taken back, the record lost): the zone an earlier import made has its id.
+                if (!old) old = out.areas.find(stable_id(out.map_name, "zone", obj.id));
+                a.id = old ? old->id : stable_id(out.map_name, "zone", obj.id);
                 // Names are told apart: the first free of "Имя", "Имя (2)", …
                 if (name.empty()) name = "Зона " + std::to_string(obj.id);
                 const std::string base = name;

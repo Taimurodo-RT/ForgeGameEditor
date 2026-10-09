@@ -659,3 +659,93 @@ TEST_CASE("Tiled import: the game's files are written all or nothing; a map past
     }
     fs::remove_all(pr.root);
 }
+
+TEST_CASE("Tiled import made again after Ctrl+Z, or with tiled.json lost: the same zone and objects, nothing doubled") {
+    PoolScope pool;
+    Project pr("forge_test_tiled_ids");
+    editor::Document doc;
+    editor::UndoStack history(doc);
+    auto level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    load_view(*level);
+    auto imported = [](Level& l) {
+        std::map<u64, std::pair<f64, f64>> out;
+        l.scene().ecs().each([&](flecs::entity, const LevelId& id, const scene::Position& p) { out[id.id] = {p.tile_x(), p.tile_y()}; });
+        return out;
+    };
+    tl::Plan plan = pr.plan_for(*level);
+    REQUIRE(plan.areas.areas.size() == 1);
+    const u64 cave = plan.areas.areas[0].id;
+    std::vector<u64> ids;
+    for (const tl::PlannedObject& o : plan.objects) ids.push_back(o.level_id);
+    std::sort(ids.begin(), ids.end());
+    REQUIRE(std::unique(ids.begin(), ids.end()) == ids.end());
+    // Another plan of the same map, before anything: the same ids (they come from the map and its objects).
+    {
+        const tl::Plan again = pr.plan_for(*level);
+        CHECK(again.areas.areas[0].id == cave);
+        for (usize i = 0; i < again.objects.size(); ++i) CHECK(again.objects[i].level_id == plan.objects[i].level_id);
+    }
+    tl::Resources made;
+    std::string why;
+    REQUIRE_MESSAGE(tl::write_resources(plan, pr.lib, pr.sounds(), made, &why), why);
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, plan, {}, &why), why);
+    const auto first = imported(*level);
+    CHECK(first.size() == 6);
+    REQUIRE(level->areas().find(cave));
+
+    SUBCASE("taken back with Ctrl+Z and imported again: the zone and the objects have their ids again") {
+        REQUIRE(history.undo());
+        CHECK(imported(*level).empty());
+        CHECK_FALSE(level->areas().find(cave));
+        CHECK(level->tiled_record().empty());
+        tl::Plan again = pr.plan_for(*level);
+        REQUIRE(again.areas.areas.size() == 1);
+        CHECK(again.areas.areas[0].id == cave);
+        CHECK(again.zones_new == 1);
+        const tl::Preview pv = tl::preview(*level, pr.lib, again, {});
+        CHECK(pv.objects_new == 6);
+        REQUIRE_MESSAGE(tl::write_resources(again, pr.lib, pr.sounds(), made, &why), why);
+        CHECK(made.templates.empty()); // the templates of the first import are taken
+        REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, again, {}, &why), why);
+        CHECK(imported(*level) == first);
+        CHECK(level->areas().find(cave));
+        CHECK(history.size() == 1); // the undone step is replaced
+    }
+    SUBCASE("saved, tiled.json lost, opened and imported again: found, not doubled") {
+        REQUIRE(level->save().ok);
+        REQUIRE(fs::remove(pr.level / "tiled.json"));
+        // The author moved the chest meanwhile.
+        const tl::PlannedObject* chest = planned(plan, 3);
+        REQUIRE(chest);
+        level = std::make_unique<Level>(pr.module);
+        REQUIRE(level->open(pr.level));
+        load_view(*level);
+        CHECK(level->tiled_record().empty());
+        CHECK(imported(*level) == first);
+        flecs::entity c = level->find(chest->level_id);
+        REQUIRE(c.is_valid());
+        c.set<scene::Position>(scene::Position::at_tile(chest->x + 3, chest->y));
+        level->touch_objects();
+        tl::Plan again = pr.plan_for(*level);
+        CHECK(again.areas.areas.size() == 1);
+        CHECK(again.areas.areas[0].id == cave);
+        CHECK(again.zones_new == 0);
+        CHECK(again.zones_updated == 0);
+        const tl::Preview pv = tl::preview(*level, pr.lib, again, {});
+        CHECK(pv.objects_new == 0);
+        CHECK(pv.objects_same == 5);
+        REQUIRE(pv.objects_back.size() == 1);
+        CHECK(pv.objects_back[0] == "Сундук (3): сдвинут");
+        history.clear();
+        REQUIRE_MESSAGE(tl::write_resources(again, pr.lib, pr.sounds(), made, &why), why);
+        REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, again, {}, &why), why);
+        CHECK(imported(*level) == first); // the chest back where the map has it, nothing doubled
+        CHECK(level->areas().areas.size() == 1);
+        CHECK(level->tiled_record() == again.record);
+        REQUIRE(history.undo());
+        CHECK(imported(*level).at(chest->level_id).first == chest->x + 3);
+        CHECK(imported(*level).size() == 6);
+    }
+    fs::remove_all(pr.root);
+}

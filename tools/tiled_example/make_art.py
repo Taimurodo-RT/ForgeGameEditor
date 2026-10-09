@@ -205,8 +205,9 @@ def chest(x, y):
 
 
 def sign(x, y):
-    if 2 <= y <= 9 and 1 <= x <= 14:
-        if y in (4, 7) and 3 <= x <= 12:
+    # A board pointing right (to the cave), so the mirrored one in the map points left and a lost mirror shows.
+    if 2 <= y <= 9 and (1 <= x <= 12 or (x == 13 and 3 <= y <= 8) or (x == 14 and 4 <= y <= 7) or (x == 15 and 5 <= y <= 6)):
+        if y in (4, 7) and 3 <= x <= 10:
             return (70, 44, 24, 255)
         return (196, 150, 90, 255)
     if y > 9 and 7 <= x <= 8:

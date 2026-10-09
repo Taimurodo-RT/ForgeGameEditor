@@ -49,17 +49,6 @@ void need(Level& level, const std::vector<world::Rect>& rects) {
         }
 }
 
-// The picture of a template as a file: named after the template and what it shows, so a picture that changes is
-// a new file (icons and the game see it at once) and the same picture is the same file.
-std::string picture_file(const Picture& p) {
-    u64 h = fnv1a(std::string_view(reinterpret_cast<const char*>(p.rgba.data()), p.rgba.size()));
-    h = fnv1a_u64(p.w, h);
-    h = fnv1a_u64(p.h, h);
-    char b[20];
-    std::snprintf(b, sizeof b, "%08x", static_cast<u32>(h ^ (h >> 32)));
-    return p.template_id + "_" + b + ".png";
-}
-
 bool made_by_import(const objects::Template& t) {
     return t.kind == kPictureKind && t.picture.size() > t.id.size() + 1 && t.picture.compare(0, t.id.size() + 1, t.id + "_") == 0;
 }
@@ -204,6 +193,15 @@ std::string object_name(const PlannedObject& po, const Plan& p) {
 
 } // namespace
 
+std::string picture_file(const Picture& p) {
+    u64 h = fnv1a(std::string_view(reinterpret_cast<const char*>(p.rgba.data()), p.rgba.size()));
+    h = fnv1a_u64(p.w, h);
+    h = fnv1a_u64(p.h, h);
+    char b[20];
+    std::snprintf(b, sizeof b, "%08x", static_cast<u32>(h ^ (h >> 32)));
+    return p.template_id + "_" + b + ".png";
+}
+
 bool template_taken(const objects::Library& library, const std::string& id) {
     const objects::Template* t = library.find(std::string_view(id));
     return t && !made_by_import(*t);
@@ -243,8 +241,9 @@ Preview preview(Level& level, const objects::Library& library, const Plan& plan,
     out.game_objects = static_cast<u32>(game.size());
     const auto by_id = objects_by_id(level);
     for (const PlannedObject& po : plan.objects) {
-        auto it = po.known ? by_id.find(po.level_id) : by_id.end();
-        if (!po.known) ++out.objects_new;
+        // Not in the record but in the level (an import made again after its tiled.json was lost): the same object.
+        auto it = by_id.find(po.level_id);
+        if (it == by_id.end() && !po.known) ++out.objects_new;
         else if (it == by_id.end()) out.objects_back.push_back(object_name(po, plan) + ": удалён, вернётся");
         else if (const std::string d = difference(level, library, plan, po, it->second); !d.empty())
             out.objects_back.push_back(object_name(po, plan) + ": " + d);
@@ -443,7 +442,7 @@ bool apply(Level& level, editor::UndoStack& history, const objects::Library& lib
     const auto by_id = objects_by_id(level);
     std::vector<ObjectSnapshot> gone, made;
     for (const PlannedObject& po : plan.objects) {
-        auto it = po.known ? by_id.find(po.level_id) : by_id.end();
+        auto it = by_id.find(po.level_id);
         if (it != by_id.end()) {
             if (difference(level, library, plan, po, it->second).empty()) continue;
             gone.push_back(snapshot(level, it->second));

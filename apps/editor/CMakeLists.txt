@@ -1,4 +1,4 @@
-add_executable(forge_editor_app main.cpp asset_library.cpp components.cpp dock_view.cpp file_types.cpp level_editor.cpp
+add_executable(forge_editor_app main.cpp asset_library.cpp components.cpp dock_view.cpp file_types.cpp level_editor.cpp level_tiled.cpp
                                 object_library.cpp logic_editor.cpp scheme_view.cpp story_editor.cpp converters.cpp
                                 project_folder.cpp ui_editor.cpp ui_editor_templates.cpp)
 set_target_properties(forge_editor_app PROPERTIES OUTPUT_NAME forge_editor)

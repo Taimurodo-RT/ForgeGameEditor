@@ -15,6 +15,7 @@
 #include "forge/level/object_edit.h"
 #include "forge/level/physics.h"
 #include "forge/level/tile_edit.h"
+#include "forge/level/tiled_apply.h"
 #include "forge/render/camera.h"
 #include "forge/render/sprite_batch.h"
 #include "forge/render/sprite_renderer.h"
@@ -29,6 +30,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -206,6 +208,35 @@ public:
     // The music drop-down's choices: (value, shown).
     std::vector<std::pair<std::string, std::string>> music_choices() const;
 
+    // «Импорт карты Tiled» (forge/level/tiled_apply.h): a map is read and the
+    // window shows everything it would do before anything changes; a map that
+    // cannot be read or imported opens nothing and is told in words
+    // (tiled_note). «Импортировать» writes the game's files (templates, their
+    // pictures, music: Ctrl+Z of the level does not take them back, the
+    // window says so) and puts the rest into the level as one step of its
+    // history; «Отмена» changes nothing.
+    bool open_tiled(const std::filesystem::path& tmx);
+    // «Импорт из Tiled…»: the system's dialog for a .tmx (not offscreen); what
+    // it picks arrives through tiled_picked (from the dialog's thread) and the
+    // window opens on the next frame.
+    void pick_tiled();
+    void tiled_picked(const std::filesystem::path& tmx);
+    bool tiled_open() const { return tm_open_; }
+    // Where a tile layer of the map goes (its index in the map's layers).
+    void set_tiled_target(usize layer, level::tiled::Target t);
+    // Nothing around the map (the default), or the game's world.
+    void set_tiled_around(bool empty);
+    bool tiled_empty_around() const { return tm_options_.empty_around; }
+    void cancel_tiled();
+    bool import_tiled();
+    const level::tiled::Map& tiled_map() const { return tm_map_; }
+    const level::tiled::Plan& tiled_plan() const { return tm_plan_; }
+    const level::tiled::Preview& tiled_preview() const { return tm_preview_; }
+    // The last thing the import said (refused, imported, cancelled).
+    const std::string& tiled_note() const { return tm_note_; }
+    // For the file dialog.
+    SDL_Window* window = nullptr;
+
     const std::vector<std::string>& panel_ids() const { return dock_.panel_ids(); }
 
 private:
@@ -228,6 +259,18 @@ private:
     struct SoundRow {
         Rml::String value, name;
         bool operator==(const SoundRow&) const = default;
+    };
+    // A line of the import window: what, and how many (may be empty).
+    struct TmLine {
+        Rml::String text, count;
+        bool warn = false;
+        bool operator==(const TmLine&) const = default;
+    };
+    // A layer of the map in the import window; target: walls, blocks, skip, "" (not a tile layer).
+    struct TmLayer {
+        int index = 0;
+        Rml::String name, about, target;
+        bool operator==(const TmLayer&) const = default;
     };
     struct AreaRow {
         Rml::String id, name, about;
@@ -328,6 +371,11 @@ private:
     u8 edges_at(f64 tx, f64 ty) const;
     bool spawn_at(f64 tx, f64 ty) const;
     void change_areas(const level::LevelAreas& after, std::string label);
+    // The import window: the plan and what it would change, worked out again
+    // (a layer's target or what is around changed), and its rows.
+    void refigure_tiled();
+    void sync_tiled();
+    void bind_tiled(Rml::DataModelConstructor& model);
     void scan_sounds();
     void sync_areas(Rml::Context* context);
     // An edit is about to happen: a running trial goes back first.
@@ -442,7 +490,24 @@ private:
     bool zn_spawn_ok_ = false;
     f64 zn_spawn_x_ = 0, zn_spawn_y_ = 0;
 
+    // «Импорт карты Tiled»
+    bool tm_open_ = false;
+    level::tiled::Map tm_map_;
+    std::vector<level::tiled::Target> tm_targets_;
+    level::tiled::Plan tm_plan_;
+    level::tiled::Preview tm_preview_;
+    level::tiled::ApplyOptions tm_options_;
+    std::string tm_note_, tm_refusal_;
+    std::mutex tm_mutex_;
+    std::vector<std::filesystem::path> tm_picked_; // from the dialog's thread
+    u64 tm_serial_ = 0, tm_synced_ = ~0ull;
+
     // Model mirrors
+    bool m_tm_open_ = false, m_tm_around_ = true, m_tm_can_ = false;
+    Rml::String m_tm_title_, m_tm_where_, m_tm_refusal_, m_tm_note_;
+    std::vector<TmLine> m_tm_sets_, m_tm_objects_, m_tm_game_, m_tm_skipped_, m_tm_changes_;
+    std::vector<Rml::String> m_tm_back_;
+    std::vector<TmLayer> m_tm_layers_;
     std::vector<PaletteGroup> m_palette_;
     std::vector<Rml::String> m_layers_;
     Rml::String m_tool_ = "brush", m_tool_name_, m_tool_help_;

@@ -546,8 +546,22 @@ bool read_tileset_body(const Node& n, const fs::path& base, Tileset& ts, std::st
             if (!read_image(*img, base, tile.image_source, tile.image, tile.image_w, tile.image_h, nullptr, nullptr, error,
                             where + ", тайл " + std::to_string(tile.id)))
                 return false;
-        if (const Node* og = child(t, "objectgroup"))
-            tile.collision = std::any_of(og->children.begin(), og->children.end(), [](const Node& o) { return o.name == "object"; });
+        if (const Node* og = child(t, "objectgroup")) {
+            u32 shapes = 0;
+            const Node* first = nullptr;
+            for (const Node& o : og->children)
+                if (o.name == "object" && !shapes++) first = &o;
+            tile.collision = shapes > 0;
+            if (shapes == 1 && first->children.empty()) {
+                // A rectangle (no ellipse, polygon, … inside) from the corner over the whole tile.
+                f64 x = 0, y = 0, w = 0, h = 0;
+                Attrs oa{*first, error, where + ", форма тайла " + std::to_string(tile.id)};
+                if (!oa.f("x", x) || !oa.f("y", y) || !oa.f("width", w) || !oa.f("height", h)) return false;
+                const u32 tw = tile.image.empty() ? ts.tile_w : (tile.w ? tile.w : tile.image_w);
+                const u32 th = tile.image.empty() ? ts.tile_h : (tile.h ? tile.h : tile.image_h);
+                tile.collision_whole = x == 0 && y == 0 && w == tw && h == th;
+            }
+        }
         if (const Node* an = child(t, "animation"))
             for (const Node& f : an->children)
                 if (f.name == "frame" && !tile.animated) {

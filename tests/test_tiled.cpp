@@ -350,6 +350,39 @@ TEST_CASE("Tiled: a finite map, a layer moved by whole cells, a mirrored tile") 
     CHECK(p.missing.empty());
 }
 
+TEST_CASE("Tiled: an animated tile and collision shapes are told before the import") {
+    Map m;
+    std::string why;
+    REQUIRE_MESSAGE(read_map(test_map("анимация и формы.tmx"), m, &why), why);
+    REQUIRE(m.tilesets.size() == 1);
+    const Tileset& ts = m.tilesets[0];
+    REQUIRE(ts.tile(0));
+    CHECK(ts.tile(0)->animated);
+    CHECK(ts.tile(0)->first_frame == 1);
+    REQUIRE(ts.tile(2));
+    CHECK(ts.tile(2)->collision);
+    CHECK_FALSE(ts.tile(2)->collision_whole); // half a tile
+    REQUIRE(ts.tile(3));
+    CHECK(ts.tile(3)->collision);
+    CHECK(ts.tile(3)->collision_whole);
+    const Plan p = plan_of(m);
+    CAPTURE(notes_text(p.skipped));
+    // The animated cell shows its first frame, the next tile of the picture.
+    const OwnTile* first = p.tiles.find(p.at(0, 0, 0));
+    REQUIRE(first);
+    CHECK(first->name == "Живой декор 1");
+    CHECK(has_note(p.skipped, "анимации тайлов: стоит первый кадр — «Живой декор»"));
+    // The whole-tile shape on the background is not solid there; half a tile on the blocks is a whole solid cell.
+    CHECK(p.at(0, 2, 0) != 0);
+    CHECK(has_note(p.skipped, "тайлы с формой столкновений на «Фоне»: там они не твёрдые — «Живой декор»"));
+    CHECK(p.at(1, 0, 1) != 0);
+    CHECK(has_note(p.skipped, "формы столкновений не на всю клетку: в «Блоках» клетка твёрдая целиком — «Живой декор»"));
+    // The whole-tile shape on the blocks is what Forge has: nothing to tell.
+    CHECK(p.at(1, 1, 1) != 0);
+    CHECK(p.skipped.size() == 3);
+    CHECK(p.missing.empty());
+}
+
 TEST_CASE("Tiled: what the import makes of the example map") {
     Map m;
     std::string why;
@@ -638,4 +671,23 @@ TEST_CASE("tiled.json: written and read back the same; a broken one is told") {
     CHECK_FALSE(found);
     CHECK(back.empty());
     fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Tiled: a layer the author leaves out changes what comes over") {
+    Map m;
+    std::string why;
+    REQUIRE(read_map(example_map(), m, &why));
+    const Plan all = plan_of(m);
+    Options o;
+    for (const Layer& l : m.layers) o.targets.push_back(default_target(m, l));
+    const usize fon = static_cast<usize>(layer_named(m, "Фон") - m.layers.data());
+    o.targets[fon] = Target::Skip;
+    Plan p;
+    REQUIRE(plan(m, o, {}, {}, {}, p, &why));
+    CHECK(p.walls != all.walls);
+    // The blocks: the same tiles (their ids may come in another order).
+    u64 same = 0;
+    for (usize i = 0; i < p.blocks.size(); ++i) same += (p.blocks[i] == 0) == (all.blocks[i] == 0);
+    CHECK(same == p.blocks.size());
+    CHECK(has_note(p.skipped, "слои тайлов, которые не переносятся: «Фон»"));
 }

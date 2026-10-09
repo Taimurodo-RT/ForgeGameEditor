@@ -1,0 +1,10 @@
+{
+  "id": "tiled_уровень_предметы_0",
+  "name": "Сундук",
+  "kind": "picture",
+  "about": "Картинка из карты Tiled «уровень.tmx».",
+  "picture": "tiled_уровень_предметы_0_86038009.png",
+  "values": {
+    "half_height": 0.5
+  }
+}

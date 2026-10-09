@@ -106,9 +106,11 @@ jobs:
           ./build/apps/slice/forge_slice --test --scene zones --screenshot world-slice-zones.png
           ./build/apps/slice/forge_slice --test --scene own_tiles --screenshot world-slice-own-tiles.png
           ./build/apps/slice/forge_slice --test --scene own_tiles --size 1920x1080 --screenshot world-slice-own-tiles-1080p.png
+          ./build/apps/slice/forge_slice --test --scene tiled --screenshot world-slice-tiled.png
+          ./build/apps/slice/forge_slice --test --scene tiled_update --screenshot world-slice-tiled-update.png
       - name: Package the vertical slice
         run: cmake --build build --config Release --target forge_slice_package
-      - name: Packaged game finds its data, the windows and templates examples' pages, the physics, light and zones examples' levels in it and plays a level of its own tiles
+      - name: Packaged game finds its data, the windows and templates examples' pages, the physics, light, zones and Tiled examples' levels in it and plays a level of its own tiles
         if: runner.os == 'Linux'
         run: |
           ./build/dist/OldMine/OldMine --test --scene menu --screenshot world-slice-packaged.png
@@ -121,6 +123,7 @@ jobs:
           ./build/dist/OldMine/OldMine --test --scene light --size 1920x1080 --screenshot world-slice-packaged-light-1080p.png
           ./build/dist/OldMine/OldMine --test --scene zones --screenshot world-slice-packaged-zones.png
           ./build/dist/OldMine/OldMine --test --scene own_tiles --screenshot world-slice-packaged-own-tiles.png
+          ./build/dist/OldMine/OldMine --test --scene tiled --screenshot world-slice-packaged-tiled.png
       - uses: actions/upload-artifact@v4
         with:
           name: OldMine-${{ runner.os }}

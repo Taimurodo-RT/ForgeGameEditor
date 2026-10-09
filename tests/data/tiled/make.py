@@ -110,6 +110,47 @@ HEX = '''<?xml version="1.0" encoding="UTF-8"?>
 
 NOT_SQUARE = FINITE.replace('tileheight="16" infinite', 'tileheight="8" infinite')
 
+# A tileset in the map with an animated tile (its first frame another tile), a collision shape over half a tile and
+# one over the whole tile; each on the background and on a solid layer.
+SHAPES = '''<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" orientation="orthogonal" renderorder="right-down" width="4" height="2" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="1">
+ <tileset firstgid="1" name="Живой декор" tilewidth="16" tileheight="16" tilecount="4" columns="4">
+  <image source="''' + REL + '''наборы/декор.png" width="64" height="16"/>
+  <tile id="0">
+   <animation>
+    <frame tileid="1" duration="200"/>
+    <frame tileid="0" duration="200"/>
+   </animation>
+  </tile>
+  <tile id="2">
+   <objectgroup draworder="index">
+    <object id="1" x="0" y="8" width="16" height="8"/>
+   </objectgroup>
+  </tile>
+  <tile id="3">
+   <objectgroup draworder="index">
+    <object id="1" x="0" y="0" width="16" height="16"/>
+   </objectgroup>
+  </tile>
+ </tileset>
+ <layer id="1" name="Фон" width="4" height="2">
+  <data encoding="csv">
+1,0,4,0,
+0,0,0,0
+</data>
+ </layer>
+ <layer id="2" name="Земля" width="4" height="2">
+  <properties>
+   <property name="solid" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+0,0,0,0,
+3,4,0,0
+</data>
+ </layer>
+</map>
+'''
+
 BROKEN = {
     "zstd.tmx": FINITE.replace('<data encoding="csv">\n1,0,0,2,\n0,3,0,0,\n0,0,0,2147483652\n</data>',
                                '<data encoding="base64" compression="zstd">KLUv/SAwAQAA</data>'),
@@ -158,7 +199,7 @@ def main():
     for name, enc, comp in [("формат base64.tmx", "base64", None), ("формат zlib.tmx", "base64", "zlib"),
                             ("формат gzip.tmx", "base64", "gzip"), ("формат XML.tmx", "xml", None)]:
         tiled(write(encode(example(), enc, comp), name))
-    for name, text in [("конечная.tmx", FINITE), ("гексы.tmx", HEX), ("клетки 16x8.tmx", NOT_SQUARE)]:
+    for name, text in [("конечная.tmx", FINITE), ("гексы.tmx", HEX), ("клетки 16x8.tmx", NOT_SQUARE), ("анимация и формы.tmx", SHAPES)]:
         path = os.path.join(HERE, name)
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)

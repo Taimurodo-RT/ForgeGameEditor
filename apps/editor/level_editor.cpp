@@ -745,6 +745,7 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
         camera_.x = map_cx_ + (std::clamp(fx, 0.0f, 1.0f) - 0.5) * span;
         camera_.y = map_cy_ + (std::clamp(fy, 0.0f, 1.0f) - 0.5) * span;
     });
+    bind_tiled(model);
 }
 
 // --- tools -------------------------------------------------------------------
@@ -2364,14 +2365,14 @@ void LevelEditor::push_areas(f64 ox, f64 oy, f64 px) {
 // --- actions -----------------------------------------------------------------
 
 void LevelEditor::undo() {
-    if (gesture()) return;
+    if (gesture() || tm_open_) return; // the import window shows the level as it is
     if (!history_.can_undo()) return;
     edit_begins();
     if (history_.undo()) FORGE_INFO("Отменено");
 }
 
 void LevelEditor::redo() {
-    if (gesture()) return;
+    if (gesture() || tm_open_) return;
     if (!history_.can_redo()) return;
     edit_begins();
     if (history_.redo()) FORGE_INFO("Повторено");
@@ -2394,6 +2395,7 @@ bool LevelEditor::save() {
 }
 
 bool LevelEditor::open_folder(const fs::path& folder) {
+    cancel_tiled(); // it was worked out for the level that goes
     if (stroke_) release();
     cancel_gesture();
     reset_trial();
@@ -2519,6 +2521,7 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
     rebuild_fields(context);
     sync_model();
     sync_areas(context);
+    sync_tiled();
 }
 
 void LevelEditor::update_minimap() {
@@ -3122,6 +3125,11 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
 }
 
 bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
+    // The import window holds the keys: Esc is its «Отмена».
+    if (tm_open_) {
+        if (k.key == SDLK_ESCAPE) cancel_tiled();
+        return true;
+    }
     const bool ctrl = (k.mod & SDL_KMOD_CTRL) != 0;
     if (ctrl) return false;
     if (k.key == SDLK_F5) {

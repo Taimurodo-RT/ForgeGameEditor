@@ -33,6 +33,11 @@ struct ApplyOptions {
     u32 walls = 0, blocks = 1; // the game's layers the plan's cells go to; every other layer is emptied in the map's rectangle
 };
 
+// The file a template's picture is kept in: named after the template and
+// what it shows ("<id>_<8 hex>.png"), so a picture that changes is a new file
+// (icons and the game see it at once) and the same picture the same file.
+std::string picture_file(const Picture& p);
+
 // Whether a template id is taken by something an import did not make (for
 // Options::template_taken): a template of that id that is not a «Картинка»
 // with a picture named after it.
