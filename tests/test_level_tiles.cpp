@@ -7,6 +7,7 @@
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
 #include "forge/core/jobs.h"
+#include "forge/core/path.h"
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
@@ -16,6 +17,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -340,7 +342,7 @@ TEST_CASE("tiles.json: a write error is told, nothing is lost, the save is not c
     const LevelTiles t = some_tiles(2, 16);
     for (const char* in_the_way : {kTilesPicture, kTilesFile}) {
         CAPTURE(in_the_way);
-        fs::create_directories(folder / in_the_way / "в пути"); // something in the way
+        fs::create_directories(folder / in_the_way / utf8_path("в пути")); // something in the way
         REQUIRE(level.set_own_tiles(t));
         const Level::SaveReport r = level.save();
         CHECK_FALSE(r.ok);
@@ -356,6 +358,74 @@ TEST_CASE("tiles.json: a write error is told, nothing is lost, the save is not c
         REQUIRE(level.set_own_tiles({}));
         REQUIRE(level.save().ok);
     }
+    fs::remove_all(folder);
+}
+
+namespace {
+
+std::vector<u8> bytes_of(const fs::path& file) {
+    std::vector<u8> bytes;
+    CHECK(read_file(file, bytes));
+    return bytes;
+}
+
+std::vector<std::string> names_in(const fs::path& folder) {
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const fs::directory_entry& e : fs::directory_iterator(folder, ec)) names.push_back(path_to_utf8(e.path().filename()));
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+} // namespace
+
+TEST_CASE("tiles.json and tiles.png go as a pair: when either cannot be written or moved, the pair that was there stays") {
+    const fs::path folder = temp_folder("forge_test_level_tiles_pair");
+    const LevelTiles before = some_tiles(2, 16), after = some_tiles(3, 32);
+    REQUIRE(save_tiles(folder, before));
+    const std::vector<u8> json = bytes_of(folder / kTilesFile), png = bytes_of(folder / kTilesPicture);
+    // The first is how it was found: the second write (tiles.json) failed after tiles.png was already replaced.
+    for (const char* in_the_way : {"tiles.json.tmp", "tiles.png.tmp", "tiles.json.old", "tiles.png.old"}) {
+        CAPTURE(in_the_way);
+        fs::create_directories(folder / in_the_way / utf8_path("в пути"));
+        std::string why;
+        CHECK_FALSE(save_tiles(folder, after, &why));
+        CHECK_FALSE(why.empty());
+        CHECK(bytes_of(folder / kTilesFile) == json);
+        CHECK(bytes_of(folder / kTilesPicture) == png);
+        std::vector<std::string> expected{in_the_way, kTilesFile, kTilesPicture};
+        std::sort(expected.begin(), expected.end());
+        CHECK(names_in(folder) == expected); // and nothing half written left
+        LevelTiles back;
+        REQUIRE(load_tiles(folder, back, 3, 2));
+        CHECK(back == before);
+        fs::remove_all(folder / in_the_way);
+    }
+    // Nothing in the way: the new pair, nothing left beside it.
+    REQUIRE(save_tiles(folder, after));
+    CHECK(names_in(folder) == std::vector<std::string>{kTilesFile, kTilesPicture});
+    LevelTiles back;
+    REQUIRE(load_tiles(folder, back, 3, 2));
+    CHECK(back == after);
+    fs::remove_all(folder);
+}
+
+TEST_CASE("tiles.json and tiles.png: none to save, tiles.png cannot be removed: told, tiles.json stays") {
+    const fs::path folder = temp_folder("forge_test_level_tiles_remove");
+    REQUIRE(save_tiles(folder, some_tiles(2, 16)));
+    const std::vector<u8> json = bytes_of(folder / kTilesFile);
+    fs::remove(folder / kTilesPicture);
+    fs::create_directories(folder / kTilesPicture / utf8_path("в пути"));
+    std::string why;
+    CHECK_FALSE(save_tiles(folder, {}, &why));
+    CHECK(why.find(kTilesPicture) != std::string::npos);
+    CHECK(bytes_of(folder / kTilesFile) == json);
+    CHECK(names_in(folder) == std::vector<std::string>{kTilesFile, kTilesPicture});
+    // Once it can be, both go.
+    fs::remove_all(folder / kTilesPicture);
+    REQUIRE(save_tiles(folder, some_tiles(2, 16)));
+    CHECK(save_tiles(folder, {}));
+    CHECK(names_in(folder).empty());
     fs::remove_all(folder);
 }
 

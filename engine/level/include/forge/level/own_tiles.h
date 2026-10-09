@@ -73,7 +73,10 @@ std::string tiles_problem(const LevelTiles& t, u32 layer_count, i32 liquids_laye
 // the author's words.
 bool load_tiles(const std::filesystem::path& folder, LevelTiles& out, u32 layer_count, i32 liquids_layer = -1,
                 bool* found = nullptr, std::string* error = nullptr);
-// Writes tiles.png, then tiles.json (each atomically); none: removes both.
+// Writes tiles.png and tiles.json as a pair: both are written aside first
+// (*.tmp), the old pair moved aside (*.old), the new one put in its place.
+// None: removes both, tiles.json first. Whatever fails, false with the reason
+// and the pair that was there stays as it was.
 bool save_tiles(const std::filesystem::path& folder, const LevelTiles& t, std::string* error = nullptr);
 // tiles.json as written.
 std::string tiles_json(const LevelTiles& t);

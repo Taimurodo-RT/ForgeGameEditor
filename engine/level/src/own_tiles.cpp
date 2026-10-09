@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <span>
 
 namespace forge::level {
 
@@ -208,19 +210,38 @@ bool load_tiles(const fs::path& folder, LevelTiles& out, u32 layer_count, i32 li
 
 bool save_tiles(const fs::path& folder, const LevelTiles& t, std::string* error) {
     std::error_code ec;
+    const fs::path json = folder / kTilesFile, png = folder / kTilesPicture;
+    fs::path png_new = png, json_new = json, png_old = png, json_old = json;
+    png_new += ".tmp";
+    json_new += ".tmp";
+    png_old += ".old";
+    json_old += ".old";
+    auto fail = [&](const std::string& why) {
+        if (error) *error = why;
+        return false;
+    };
     if (t.tiles.empty()) {
-        fs::remove(folder / kTilesFile, ec);
-        if (ec) {
-            if (error) *error = "не удалось убрать " + path_to_utf8(folder / kTilesFile);
-            return false;
+        // tiles.json goes aside first (without it the level has no own tiles), then tiles.png goes; when it cannot,
+        // tiles.json comes back and the pair stays as it was.
+        if (!fs::exists(json, ec)) {
+            fs::remove(png, ec);
+            if (ec) return fail("не удалось убрать " + path_to_utf8(png));
+            return true;
         }
-        fs::remove(folder / kTilesPicture, ec);
+        fs::rename(json, json_old, ec);
+        if (ec) return fail("не удалось убрать " + path_to_utf8(json));
+        fs::remove(png, ec);
+        if (ec) {
+            std::error_code e;
+            fs::rename(json_old, json, e);
+            return fail("не удалось убрать " + path_to_utf8(png) + (e ? "; прежний список остался в " + path_to_utf8(json_old) : std::string()));
+        }
+        fs::remove(json_old, ec);
+        if (ec) return fail("не удалось убрать " + path_to_utf8(json_old) + " (своих тайлов у уровня уже нет)");
         return true;
     }
-    if (t.px == 0 || t.rgba.size() != t.tiles.size() * t.px * t.px * 4) {
-        if (error) *error = std::string(kTilesFile) + " не записан: картинок не столько, сколько тайлов";
-        return false;
-    }
+    if (t.px == 0 || t.rgba.size() != t.tiles.size() * t.px * t.px * 4)
+        return fail(std::string(kTilesFile) + " не записан: картинок не столько, сколько тайлов");
     const usize count = t.tiles.size();
     assets::CookedTexture img;
     img.width = static_cast<u32>(std::min<usize>(count, kOwnTileColumns)) * t.px;
@@ -232,16 +253,84 @@ bool save_tiles(const fs::path& folder, const LevelTiles& t, std::string* error)
             std::memcpy(&img.rgba8[(static_cast<usize>(y0 + y) * img.width + x0) * 4], t.picture(k) + static_cast<usize>(y) * t.px * 4,
                         static_cast<usize>(t.px) * 4);
     }
-    std::vector<u8> png;
-    if (!folder.empty()) fs::create_directories(folder, ec);
-    if (folder.empty() || !assets::encode_image(img, ".png", png) || !write_file_atomic(folder / kTilesPicture, png)) {
-        if (error) *error = "не удалось записать " + path_to_utf8(folder / kTilesPicture);
-        return false;
+    std::vector<u8> picture;
+    const std::string text = tiles_json(t);
+    if (folder.empty() || !assets::encode_image(img, ".png", picture) || text.empty()) return fail("не удалось записать " + path_to_utf8(png));
+    fs::create_directories(folder, ec);
+
+    // The two files go together: both are written aside first, then the old pair is moved aside, the new one put
+    // in its place and the old one removed. Whatever fails, the pair that was there stays (and reads as before).
+    bool wrote_png = false, wrote_json = false;
+    auto clean = [&]() {
+        std::error_code e;
+        if (wrote_png) fs::remove(png_new, e);
+        if (wrote_json) fs::remove(json_new, e);
+    };
+    auto write_new = [](const fs::path& file, std::span<const u8> bytes) {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        out.close();
+        return !out.fail();
+    };
+    wrote_png = write_new(png_new, picture);
+    if (!wrote_png) {
+        clean();
+        return fail("не удалось записать " + path_to_utf8(png_new));
     }
-    if (!write_text(folder / kTilesFile, tiles_json(t))) {
-        if (error) *error = "не удалось записать " + path_to_utf8(folder / kTilesFile);
-        return false;
+    wrote_json = write_new(json_new, {reinterpret_cast<const u8*>(text.data()), text.size()});
+    if (!wrote_json) {
+        // A file that is half there is not left behind either.
+        std::error_code e;
+        if (fs::is_regular_file(json_new, e)) wrote_json = true;
+        clean();
+        return fail("не удалось записать " + path_to_utf8(json_new));
     }
+    const bool had_json = fs::exists(json, ec), had_png = fs::exists(png, ec);
+    // Something else under the name (a folder) is not ours to move.
+    for (const fs::path& file : {json, png})
+        if (fs::exists(file, ec) && !fs::is_regular_file(file, ec)) {
+            clean();
+            return fail("не удалось записать " + path_to_utf8(file) + ": на его месте не файл");
+        }
+    bool json_aside = false, png_aside = false;
+    // Puts the old pair back; what could not be is told.
+    auto restore = [&](std::string why) {
+        std::error_code e;
+        if (png_aside) {
+            fs::rename(png_old, png, e);
+            if (e) why += "; прежняя картинка осталась в " + path_to_utf8(png_old);
+        }
+        if (json_aside) {
+            fs::rename(json_old, json, e);
+            if (e) why += "; прежний список остался в " + path_to_utf8(json_old);
+        }
+        clean();
+        return fail(why);
+    };
+    if (had_json) {
+        fs::rename(json, json_old, ec);
+        if (ec) return restore("не удалось отложить прежний " + path_to_utf8(json) + " в " + path_to_utf8(json_old));
+        json_aside = true;
+    }
+    if (had_png) {
+        fs::rename(png, png_old, ec);
+        if (ec) return restore("не удалось отложить прежний " + path_to_utf8(png) + " в " + path_to_utf8(png_old));
+        png_aside = true;
+    }
+    fs::rename(png_new, png, ec);
+    if (ec) return restore("не удалось записать " + path_to_utf8(png));
+    wrote_png = false;
+    fs::rename(json_new, json, ec);
+    if (ec) {
+        std::error_code e;
+        fs::remove(png, e);
+        return restore("не удалось записать " + path_to_utf8(json));
+    }
+    wrote_json = false;
+    // The old pair is no longer needed; one left behind is harmless (the next save replaces it).
+    if (json_aside) fs::remove(json_old, ec);
+    if (png_aside) fs::remove(png_old, ec);
     return true;
 }
 

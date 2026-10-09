@@ -4446,8 +4446,8 @@ int main(int argc, char** argv) {
                 img.rgba8.insert(img.rgba8.end(), px, px + 4);
             }
         std::vector<u8> png;
-        if (ec || !assets::encode_image(img, ".png", png) || !write_file_atomic(dir / "pictures" / "табличка.png", png) ||
-            !write_file_atomic(dir / "objects" / "Табличка.object.json", {reinterpret_cast<const u8*>(sign.data()), sign.size()}))
+        if (ec || !assets::encode_image(img, ".png", png) || !write_file_atomic(dir / "pictures" / utf8_path("табличка.png"), png) ||
+            !write_file_atomic(dir / "objects" / utf8_path("Табличка.object.json"), {reinterpret_cast<const u8*>(sign.data()), sign.size()}))
             FORGE_ERROR("не сделана копия данных игры с «Табличкой» в %s", path_to_utf8(dir).c_str());
         data = path_to_utf8(dir);
         args.push_back(const_cast<char*>("--data"));
