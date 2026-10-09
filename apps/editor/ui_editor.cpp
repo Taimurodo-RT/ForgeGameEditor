@@ -4283,8 +4283,8 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_ESCAPE) {
         // A held Esc acts once in «Проверить», as in the game: its repeats close no more windows, do not end the
         // check, and once it ended the check do not go on to the editor.
+        if (k.repeat && (checking_ || esc_in_check_)) return true;
         if (!k.repeat) esc_in_check_ = checking_;
-        else if (esc_in_check_) return true;
     }
     const bool modifier = k.key == SDLK_LCTRL || k.key == SDLK_RCTRL || k.key == SDLK_LSHIFT || k.key == SDLK_RSHIFT ||
                           k.key == SDLK_LALT || k.key == SDLK_RALT || k.key == SDLK_LGUI || k.key == SDLK_RGUI;
@@ -4345,7 +4345,7 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (checking_) {
         // Keys do not edit while checking; Esc closes the window on top as in the game, else ends it. The game's
         // keys for its buttons go to the page.
-        if (k.key == SDLK_ESCAPE && !k.repeat && !check_escape()) set_checking(false);
+        if (k.key == SDLK_ESCAPE && !check_escape()) set_checking(false);
         if (check_key(k)) return true;
         return k.key == SDLK_ESCAPE || k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE;
     }
