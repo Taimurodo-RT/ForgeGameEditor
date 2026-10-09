@@ -2316,13 +2316,27 @@ private:
                     check(sc.windows() == std::vector<std::string>{"окна_настройки"}, "«Понятно» закрыл только справку: " + up);
                 }
                 check(std::fabs(g.hero_x() - x1) < 1e-9, "окно с паузой открыто: мир по-прежнему стоит");
+                // The only window clicked: the pages stay in order, and it is still under the game's menus.
+                check(click("окна_настройки", "Громче"), "щелчок по «Громче» единственного окна");
+            }
+            if (f == 78) {
+                check(num("demo.volume") == 4, "«Громче» нажалось");
+                press(SDLK_J);
+            }
+            if (f == 80) {
+                Rml::Element* close = shell_close("journal");
+                check(s.screen() == Screen::Journal && close && close->IsVisible(true), "J: журнал открылся над щёлкнутым окном");
+                if (close) mouse(middle(close), false);
+                check(close && under_mouse(close), "мышь на кнопке журнала, а не на щёлкнутом окне под ним: " + hovered());
+                press(SDLK_J);
+                check(s.screen() == Screen::Playing && sc.windows() == std::vector<std::string>{"окна_настройки"}, "J ещё раз: обратно в игру, окно на месте");
                 key(SDLK_ESCAPE, true);
                 key(SDLK_ESCAPE, true, true);
                 key(SDLK_ESCAPE, false);
                 check(sc.windows().empty() && !sc.pauses() && s.screen() == Screen::Playing, "Esc закрыл окно, игра идёт");
             }
-            if (f == 77) SDL_Delay(350); // the window and its veil fade away
-            if (f == 79) {
+            if (f == 81) SDL_Delay(350); // the window and its veil fade away
+            if (f == 83) {
                 check(hud_focus && s.context()->GetFocusElement() == hud_focus, "фокус вернулся туда, где был до окна: на «Настройки» над игрой");
                 check(click("окна_игра", "Монета"), "щелчок по «Монета» снова");
                 press(SDLK_2);
@@ -2330,7 +2344,7 @@ private:
                 mouse(at(1000, 500), false);
                 check(s.over_world(), "мышь на пустом месте снова над миром");
             }
-            if (f == 89) {
+            if (f == 93) {
                 check(num("demo.coins") == 2, "щелчок снова доходит до кнопки над игрой");
                 check(g.hero_x() > x1 + 0.1, "мир снова идёт: герой идёт вправо, " + std::to_string(x1) + " → " + std::to_string(g.hero_x()));
                 g.select(0);
