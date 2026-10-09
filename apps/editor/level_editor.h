@@ -9,6 +9,7 @@
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
+#include "forge/level/areas.h"
 #include "forge/level/level.h"
 #include "forge/level/light.h"
 #include "forge/level/object_edit.h"
@@ -26,6 +27,7 @@
 #include <SDL3/SDL.h>
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,7 +35,7 @@
 namespace forge::editor_app {
 
 enum class Tool : u8 { Brush, Line, Rect, Fill, Eraser, Picker };
-// What the tab edits: the icons over the level. Zones say when they come.
+// What the tab edits: the icons over the level.
 enum class Mode : u8 { Select, Tiles, Objects, Physics, Light, Zones };
 // The «Физика» mode's tools: picking and dragging gravity points, placing
 // one (press at the centre, drag out the radius), pouring water or sand
@@ -42,6 +44,10 @@ enum class PhysTool : u8 { Select, Point, Water, Sand };
 // The «Свет» mode's tools: picking and dragging light sources, placing one
 // (press at the centre, drag out the radius, as a gravity point).
 enum class LightTool : u8 { Select, Source };
+// The «Зоны» mode's tools: picking an area (or the spawn point) to move it
+// and drag its edges, drawing a new area (a rectangle dragged any way),
+// putting the hero's spawn point.
+enum class AreaTool : u8 { Select, Draw, Spawn };
 // The world's pull as the panel shows it: which way (as sim::cells_down,
 // None: no pull) and how strong.
 enum class PullDir : u8 { Down, Left, Up, Right, None };
@@ -148,7 +154,7 @@ public:
     const level::FlowTrial& trial() const { return trial_; }
     // Ends a drag in the view as if it never began (Esc, the right button).
     bool cancel_gesture();
-    bool gesture() const { return ph_drag_ != PhysDrag::None || stroke_ || moving_; }
+    bool gesture() const { return ph_drag_ != PhysDrag::None || zn_drag_ != AreaDrag::None || stroke_ || moving_; }
     // The last thing a physics tool said (poured, skipped, refused).
     const std::string& phys_note() const { return ph_note_; }
     // Light
@@ -164,6 +170,37 @@ public:
     const level::ViewOptions& view() const { return view_; }
     // The last thing the «Свет» mode said (placed, refused).
     const std::string& light_note() const { return lt_note_; }
+    // Zones
+    void set_area_tool(AreaTool t);
+    AreaTool area_tool() const { return zn_tool_; }
+    // The selected area (0: none) or the spawn point.
+    u64 selected_area() const { return zn_area_; }
+    bool spawn_selected() const { return zn_spawn_; }
+    void select_area(u64 id);
+    void select_spawn();
+    // The selected area's name and music from the panel, one history entry
+    // each; false (and a note) when refused. Music: "" none, a file of the
+    // game's sounds, "add:<path>" a sound of «Ресурсы» (copied there first).
+    bool set_area_name(const std::string& text);
+    bool set_area_music(const std::string& value);
+    // Deletes the selected area or the spawn point. An area «Логика» links to
+    // is deleted only with confirm; without it the panel asks.
+    bool delete_area(bool confirm = false);
+    u64 asking_delete() const { return zn_ask_; }
+    // The last thing the «Зоны» mode said (drawn, refused, where the hero stands).
+    const std::string& area_note() const { return zn_note_; }
+    // Where a new game puts the hero for the level's spawn point; false: it
+    // cannot (outside the world, no ground near), the game starts at its start.
+    bool spawn_ground(f64& x, f64& y);
+    // The links of «Логика» to an area, as phrases (the editor sets this).
+    std::function<std::vector<std::string>(u64 area)> area_links;
+    // The sounds of «Ресурсы», offered for a place's music.
+    std::function<std::vector<std::filesystem::path>()> list_sounds;
+    // The game's sounds (game/sounds): a place's music is one of them.
+    void set_sounds_folder(std::filesystem::path folder) { sounds_folder_ = std::move(folder); }
+    const std::filesystem::path& sounds_folder() const { return sounds_folder_; }
+    // The music drop-down's choices: (value, shown).
+    std::vector<std::pair<std::string, std::string>> music_choices() const;
 
     const std::vector<std::string>& panel_ids() const { return dock_.panel_ids(); }
 
@@ -184,6 +221,22 @@ private:
         bool own = false;      // a property this copy sets its own way (not the template's)
         bool advanced = false; // under «Подробно»
     };
+    struct SoundRow {
+        Rml::String value, name;
+        bool operator==(const SoundRow&) const = default;
+    };
+    struct AreaRow {
+        Rml::String id, name, about;
+        bool selected = false;
+        bool operator==(const AreaRow&) const = default;
+    };
+    // A name over the view where an area (or the spawn point) is.
+    struct AreaLabel {
+        Rml::String id, name;
+        float x = 0, y = 0;
+        bool selected = false, spawn = false;
+        bool operator==(const AreaLabel&) const = default;
+    };
     struct FieldRef {
         const reflect::TypeInfo* type = nullptr; // nullptr: the position ("x" or "y") or a property
         std::string path;
@@ -195,6 +248,7 @@ private:
         bool refuse = false;                    // past min..max: refused, not moved to the edge (a place)
     };
     enum class PhysDrag : u8 { None, Place, Move, Radius, Area };
+    enum class AreaDrag : u8 { None, Draw, Move, Edges, Spawn };
     void build_objects();
 
     template <typename T>
@@ -247,6 +301,22 @@ private:
     void release_physics();
     void pour(i32 x0, i32 y0, i32 x1, i32 y1);
     void push_physics(f64 ox, f64 oy, f64 px);
+    // «Зоны»: press, drag, let go, as the physics tools; the level changes
+    // only when the gesture ends (one history entry).
+    bool press_areas(f32 x, f32 y);
+    void drag_areas(f32 x, f32 y);
+    void release_areas();
+    void push_areas(f64 ox, f64 oy, f64 px);
+    // The areas as drawn now: the gesture's when one is under way.
+    const level::LevelAreas& shown_areas() const { return zn_drag_ != AreaDrag::None ? zn_preview_ : level_->areas(); }
+    // The smallest area at a point (of equal ones, the later), 0 none.
+    u64 area_at(const level::LevelAreas& a, f64 tx, f64 ty) const;
+    // The edges of the selected area near a point: 1 left, 2 top, 4 right, 8 bottom.
+    u8 edges_at(f64 tx, f64 ty) const;
+    bool spawn_at(f64 tx, f64 ty) const;
+    void change_areas(const level::LevelAreas& after, std::string label);
+    void scan_sounds();
+    void sync_areas(Rml::Context* context);
     // An edit is about to happen: a running trial goes back first.
     void edit_begins();
     // Sets a physics field from text; false when the text is not a valid value.
@@ -337,6 +407,22 @@ private:
     LightTool lt_tool_ = LightTool::Select;
     std::string lt_note_;
 
+    // Zones
+    AreaTool zn_tool_ = AreaTool::Select;
+    AreaDrag zn_drag_ = AreaDrag::None;
+    u64 zn_area_ = 0;      // the selected area
+    bool zn_spawn_ = false; // the spawn point selected
+    u64 zn_ask_ = 0;       // the area whose deletion waits for «Удалить всё равно»
+    level::LevelAreas zn_preview_;               // the areas as the gesture has them
+    i32 zn_ax_ = 0, zn_ay_ = 0, zn_bx_ = 0, zn_by_ = 0; // Draw: the corner cells
+    f64 zn_grab_x_ = 0, zn_grab_y_ = 0;          // Move, Edges: where the drag started
+    u8 zn_edges_ = 0;                            // Edges: which
+    std::string zn_note_;
+    std::filesystem::path sounds_folder_;
+    u64 zn_spawn_key_ = ~0ull;                   // what the spawn's ground was found for
+    bool zn_spawn_ok_ = false;
+    f64 zn_spawn_x_ = 0, zn_spawn_y_ = 0;
+
     // Model mirrors
     std::vector<PaletteGroup> m_palette_;
     std::vector<Rml::String> m_layers_;
@@ -359,6 +445,13 @@ private:
     Rml::String m_lt_tool_ = "select", m_lt_tool_name_, m_lt_tool_help_, m_lt_time_, m_lt_hours_, m_lt_sky_, m_lt_error_;
     Rml::String m_lt_preview_, m_lt_preview_hours_, m_lt_note_;
     bool m_lt_previewing_ = false;
+    Rml::String m_zn_tool_ = "select", m_zn_tool_name_, m_zn_tool_help_, m_zn_name_, m_zn_bounds_, m_zn_music_, m_zn_music_note_;
+    Rml::String m_zn_spawn_, m_zn_spawn_note_, m_zn_error_, m_zn_note_, m_zn_ask_text_;
+    bool m_zn_has_area_ = false, m_zn_has_spawn_ = false, m_zn_spawn_sel_ = false, m_zn_asking_ = false, m_zn_spawn_bad_ = false;
+    std::vector<Rml::String> m_zn_links_;
+    std::vector<AreaRow> m_zn_areas_;
+    std::vector<AreaLabel> m_zn_labels_;
+    std::vector<SoundRow> m_zn_sounds_;
     int m_history_cursor_ = 0;
     u64 history_version_ = 0;
     f64 info_time_ = -1;
@@ -368,5 +461,6 @@ const char* tool_id(Tool t);
 const char* mode_id(Mode m);
 const char* phys_tool_id(PhysTool t);
 const char* light_tool_id(LightTool t);
+const char* area_tool_id(AreaTool t);
 
 } // namespace forge::editor_app

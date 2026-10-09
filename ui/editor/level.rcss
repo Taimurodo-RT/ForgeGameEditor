@@ -181,3 +181,18 @@
     border-radius: 4px;
 }
 #lt-view-preview { color: var(--tertiary); }
+
+/* «Зоны»: the areas' names over the world view (the frames are drawn under them) */
+.zn-label {
+    position: absolute;
+    margin: 4px 0px 0px 4px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background-color: var(--inverse-surface);
+    color: var(--inverse-on-surface);
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
+}
+.zn-label.selected { background-color: #ffd25a; color: #1d1600; }
+.zn-label.spawn { margin: -24px 0px 0px -8px; background-color: #ff78c8; color: #24000f; }

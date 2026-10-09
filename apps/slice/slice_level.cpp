@@ -531,14 +531,12 @@ u32 SliceLevel::map_color(u32 layer, TileId value) const {
     return render::pack_color(dim(0), dim(8), dim(16), 255);
 }
 
-bool SliceLevel::play_spot(level::Level& level, f64 x, f64 y, f64& out_x, f64& out_y) const {
+bool hero_ground(const World& w, f64 x, f64 y, i32 reach, f64& out_x, f64& out_y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return false;
     const i32 tx = static_cast<i32>(std::floor(x)), ty = static_cast<i32>(std::floor(y));
-    constexpr i32 kReach = 96;
-    level.ensure_loaded({tx - 1, ty - kReach - 3, tx + 2, ty + kReach + 1});
-    const World& w = level.world();
     auto free = [&](i32 cy) { return !is_solid(w.tile(kBlocks, tx, cy)); };
     // Ground under two free cells, nearest to y first.
-    for (i32 d = 0; d <= kReach; ++d)
+    for (i32 d = 0; d <= reach; ++d)
         for (const i32 cy : {ty + d, ty - d})
             if (!free(cy) && free(cy - 1) && free(cy - 2)) {
                 out_x = tx + 0.5;
@@ -546,6 +544,19 @@ bool SliceLevel::play_spot(level::Level& level, f64 x, f64 y, f64& out_x, f64& o
                 return true;
             }
     return false;
+}
+
+bool in_world(f64 x, f64 y) {
+    const Rect b = world_desc().bounds;
+    const f64 n = kChunkSize;
+    return std::isfinite(x) && std::isfinite(y) && x >= b.x0 * n && x < b.x1 * n && y >= b.y0 * n && y < b.y1 * n;
+}
+
+bool SliceLevel::play_spot(level::Level& level, f64 x, f64 y, f64& out_x, f64& out_y) const {
+    if (!in_world(x, y)) return false;
+    const i32 tx = static_cast<i32>(std::floor(x)), ty = static_cast<i32>(std::floor(y));
+    level.ensure_loaded({tx - 1, ty - kGroundReach - 3, tx + 2, ty + kGroundReach + 1});
+    return hero_ground(level.world(), x, y, kGroundReach, out_x, out_y);
 }
 
 SliceLevel::~SliceLevel() { shutdown_view(); }

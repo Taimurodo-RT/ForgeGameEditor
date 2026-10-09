@@ -23,6 +23,7 @@ add_executable(forge_tests
   test_level.cpp
   test_level_physics.cpp
   test_level_light.cpp
+  test_level_areas.cpp
   test_objects.cpp
   test_audio.cpp
   test_logic.cpp

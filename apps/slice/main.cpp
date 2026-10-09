@@ -8,11 +8,12 @@
 //                                   (the level editor's «Играть отсюда»; FILE gets the links
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
-//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light]
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
-//                                   physics, light: the level of games/examples/physics or light as «Играть отсюда»
-//                                   starts it; light also draws the editor's view of it to compare)
+//                                   physics, light, zones: the level of games/examples/physics, light or zones as a
+//                                   new game and «Играть отсюда» start it; light also draws the editor's view of it
+//                                   to compare)
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -249,6 +250,10 @@ private:
         }
         if (scene_ == "light") {
             build_light(s);
+            return;
+        }
+        if (scene_ == "zones") {
+            build_zones(s);
             return;
         }
         SliceGame& g = g_;
@@ -3026,6 +3031,511 @@ private:
                 check(files_of(st->dir) == st->files, "файлы примера как были");
                 std::error_code ec;
                 std::filesystem::remove_all(st->left, ec);
+            }
+            return f >= 2;
+        }});
+    }
+
+    // The level editor's «Зоны» as the game plays them: games/examples/zones, made in the editor with the mouse, the
+    // panel and «Логика» (its self-test makes it again and compares), read from the files the way a new game and
+    // «Играть отсюда» start it (in a package from the package's own data/examples). An old level has no areas. The
+    // example's spawn point puts the hero east of the mine's entrance. Walking in, the hero comes into «Шахта» once,
+    // at its right edge x = -149 (the edge is not in it): the link «Герой входит в Шахту» («Только один раз») shows the
+    // place's name and starts «Потерянная кирка» in the HUD. Staying in it, a chunk border, the chamber «Дальний зал»
+    // inside it say nothing more of «Шахта»; leaving and coming back does not run the once link again, nor after a
+    // save is loaded (a load is not a coming in); «Играть отсюда» inside it comes in at the first step. The place's
+    // music: шахта.wav from the example's sounds/, started once, kept in the chamber, stopped outside, under a
+    // window's music and over a screen's over the game, through a pause; at master or music 0 not heard; a file that
+    // is not there said once. A spawn point in rock or out of the world, a broken areas.json; the example's files
+    // stay as they were.
+    void build_zones(Shell& s) {
+        SliceGame& g = g_;
+        struct State {
+            std::filesystem::path dir, level, copy, sounds;
+            std::vector<std::pair<std::string, std::vector<u8>>> files;
+            forge::level::LevelAreas areas;
+            u64 mine = 0, hall = 0;
+            u32 mine_link = 0, hall_link = 0;
+            std::filesystem::path kept; // the screens' sounds folder of the game
+            u32 starts = 0, frames = 0, exact = 0;
+            f64 quest = 0; // quest.pickaxe when saved
+            audio::Voice voice;
+            Settings settings;
+            f64 x = 0, y = 0;  // the hero after the last frame
+            bool border = false; // a chunk border crossed inside «Шахта»
+        };
+        auto st = std::make_shared<State>();
+        const SliceGenerator& gen = g.generator();
+        const i32 sy = gen.mine_y(), gy = gen.gallery_y(), mx = gen.mine_x();
+        // On the stairs (their floor at x is the row sy + (mx - x) + 1), in the gallery, in the chamber, east of the
+        // entrance on the ground: tile points under the hero's feet.
+        const f64 stairs_x = mx - 40.5, stairs_y = sy + 41 + 1;
+        const f64 gallery_x = gen.gallery_x1() + 25.5, room_x = gen.gallery_x1() - 6.5, floor_y = gy + 1;
+        const f64 east_x = mx + 9.5;
+        // Every file of a folder and under it with its bytes, by its path in it.
+        auto files_of = [](const std::filesystem::path& dir) {
+            std::vector<std::pair<std::string, std::vector<u8>>> out;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::recursive_directory_iterator(dir, ec)) {
+                if (!e.is_regular_file()) continue;
+                std::vector<u8> bytes;
+                read_file(e.path(), bytes);
+                out.emplace_back(path_to_utf8(std::filesystem::relative(e.path(), dir)), std::move(bytes));
+            }
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        auto in = [&g](u64 id) {
+            const std::vector<u64> now = g.areas_inside();
+            return std::find(now.begin(), now.end(), id) != now.end();
+        };
+        // Where the hero is, and where it stands: the centre over the feet.
+        auto put = [&g](f64 feet_x, f64 feet_y) { g.teleport(feet_x, feet_y - kHeroHalfH); };
+        auto var = [&s](const char* name) { return s.vars().get(name).number(); };
+        auto hud = [&s] {
+            Rml::Element* t = s.find_element("tracker");
+            return t && t->IsVisible(true) ? std::string(t->GetInnerRML()) : std::string();
+        };
+        // The place's music heard: its peak on the music bus (the other buses back as the settings say).
+        auto heard = [&s, &g] {
+            const f32 p = music_peak(g.sounds().mixer());
+            s.apply_settings(s.settings());
+            return p;
+        };
+
+        steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
+            if (f < 5) return false;
+            g.set_level({});
+            check(s.new_game(), "новая игра со своего уровня игры");
+            return true;
+        }});
+        steps_.push_back({"старый уровень: зон нет", 10, [&s, &g, &gen, this](u32 f) {
+            if (f < 3) return false;
+            std::error_code ec;
+            check(!std::filesystem::exists(s.game_dir() / "level" / "areas.json", ec), "у уровня игры нет areas.json");
+            check(g.areas() && g.areas()->areas.empty() && !g.areas()->spawn && g.areas_inside().empty(), "зон и точки появления нет");
+            check(g.hero_x() == gen.spawn_x(), "герой на старте игры: x " + std::to_string(g.hero_x()));
+            check(s.screens().place_music().empty() && g.sounds().screens().music_name().empty(), "музыки места нет");
+            return true;
+        }});
+        steps_.push_back({"пример «Зоны» из файлов: новая игра у точки появления", 20,
+                          [&s, &g, &gen, sy, gy, mx, files_of, in, var, this, st](u32 f) {
+            if (f == 0) {
+                st->dir = s.game_dir().parent_path() / "examples" / "zones";
+                st->level = st->dir / "level";
+                std::error_code ec;
+                FORGE_INFO("пример «Зоны» читается из %s", path_to_utf8(st->dir).c_str());
+                check(std::filesystem::is_regular_file(st->level / "areas.json", ec), "areas.json примера на диске: " + path_to_utf8(st->level));
+                st->files = files_of(st->dir);
+                check(st->files.size() == 4, "в примере 4 файла (README, logic.json, areas.json, музыка): " + std::to_string(st->files.size()));
+                std::string why;
+                check(forge::level::load_areas(st->level, st->areas, nullptr, &why) && st->areas.areas.size() == 2,
+                      "в файле две зоны " + why);
+                for (const forge::level::Area& a : st->areas.areas) {
+                    if (a.name == "Шахта") st->mine = a.id;
+                    if (a.name == "Дальний зал") st->hall = a.id;
+                }
+                const forge::level::Area* mine = st->areas.find(st->mine);
+                const forge::level::Area* hall = st->areas.find(st->hall);
+                check(mine && mine->x0 == mx - 153 && mine->x1 == mx + 1 && mine->y0 == sy - 5 && mine->y1 == gy + 3 &&
+                          mine->music == "шахта.wav",
+                      "«Шахта»: x -303…-149, от входа до пола штольни, музыка шахта.wav");
+                check(hall && hall->x0 == mx - 153 && hall->x1 == gen.gallery_x1() + 2 && hall->y0 == gy - 8 && hall->y1 == gy + 2 &&
+                          hall->music.empty() && st->hall != st->mine,
+                      "«Дальний зал» внутри неё, без своей музыки, со своим id");
+                check(st->areas.spawn && st->areas.spawn_x == mx + 9.5 && st->areas.spawn_y == sy + 3,
+                      "точка появления на земле в 9 клетках к востоку от входа: " + std::to_string(st->areas.spawn_y));
+                // The example's links: the game's, and the two of its areas.
+                logic::Logic links;
+                check(links.load(st->dir / "logic.json", &why), "связи примера читаются " + why);
+                for (const logic::Link& l : links.links) {
+                    if (l.a == "hero" && l.verb == "enter" && l.b == area_thing_id(st->mine)) st->mine_link = l.once ? l.id : 0;
+                    if (l.a == "hero" && l.verb == "enter" && l.b == area_thing_id(st->hall)) st->hall_link = l.once ? 0 : l.id;
+                }
+                check(st->mine_link && st->hall_link, "«Герой входит в Шахту» (один раз) и «Герой входит в Дальний зал»");
+                // The game reads them as its links (the run's links file), and the screens' sounds from the example.
+                const std::filesystem::path file = std::filesystem::temp_directory_path() / "forge_slice_test_logic.json";
+                std::filesystem::copy_file(st->dir / "logic.json", file, std::filesystem::copy_options::overwrite_existing, ec);
+                check(!ec && g.reload_links(&why), "связи примера — связи игры " + why);
+                audio::ScreenSounds& snd = g.sounds().screens();
+                st->kept = snd.folder();
+                snd.attach(&g.sounds().mixer(), st->dir / "sounds");
+                // A new game from the level folder: the hero at its spawn point.
+                g.set_level(st->level);
+                check(s.new_game(), "новая игра с уровня примера");
+                check(g.hero_x() == st->areas.spawn_x && g.hero_y() == scene::Position::at_tile(0, st->areas.spawn_y - kHeroHalfH).tile_y(),
+                      "герой в точке появления: " + std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()));
+                check(g.areas() && *g.areas() == st->areas, "в игре зоны из файла");
+                check(var("quest.pickaxe") == 0, "задание ещё не взято");
+            }
+            if (f < 10) return false;
+            check(g.areas_inside().empty() && g.area_enters(st->mine) == 0 && !in(st->mine), "у входа герой ни в одной зоне");
+            check(s.screens().place_music().empty() && g.sounds().screens().music_name().empty(), "музыки места нет");
+            st->starts = g.sounds().screens().music_starts();
+            return true;
+        }});
+        // Walking west into the mine and down the stairs: each frame of one tick, the hero is in «Шахта» as the
+        // point where the frame before left it says (the areas look at the hero before it moves in a tick).
+        steps_.push_back({"пешком в «Шахту»: вход один раз, на краю x = -149", 900, [&s, &g, mx, sy, gy, in, var, hud, heard, this, st](u32 f) {
+            const forge::level::Area* mine = st->areas.find(st->mine);
+            if (!mine) return true;
+            if (f == 0) {
+                st->x = g.hero_x();
+                st->y = g.hero_y();
+                st->frames = st->exact = 0;
+            } else {
+                const forge::sim::SimStats* stats = g.sim_stats();
+                const bool one = stats && stats->ticks == 1;
+                ++st->frames;
+                if (one) {
+                    ++st->exact;
+                    check(in(st->mine) == mine->contains(st->x, st->y),
+                          "в «Шахте» ровно тогда, когда в ней точка героя: x " + std::to_string(st->x) + ", y " + std::to_string(st->y));
+                }
+                if (std::floor(st->x / 64) != std::floor(g.hero_x() / 64) && in(st->mine) && mine->contains(st->x, st->y))
+                    st->border = true;
+                st->x = g.hero_x();
+                st->y = g.hero_y();
+            }
+            check(g.area_enters(st->mine) <= 1 && g.area_leaves(st->mine) == 0, "в «Шахту» входят один раз и не выходят");
+            if (g.hero_x() > mx - 60.0) {
+                Controls c;
+                c.left = true;
+                g.script(c);
+                return false;
+            }
+            g.stop_script();
+            FORGE_INFO("пешком от %.1f до %.1f: кадров %u, из них с одним шагом мира (проверены точно) %u", mx + 9.5, g.hero_x(), st->frames,
+                       st->exact);
+            check(st->exact * 10 >= st->frames * 9, "почти все кадры с одним шагом мира");
+            check(in(st->mine) && !in(st->hall) && g.area_enters(st->mine) == 1, "герой на лестнице в «Шахте», вошёл один раз");
+            check(st->border, "граница участков x = -192 пройдена внутри «Шахты» без выхода и входа");
+            check(g.last_hint() == "Шахта", "игра показала название места: " + g.last_hint());
+            check(var("quest.pickaxe") == 1, "связь задала quest.pickaxe = 1");
+            check(hud().find("Потерянная кирка") != std::string::npos, "в HUD задание «Потерянная кирка»: " + hud());
+            audio::ScreenSounds& snd = g.sounds().screens();
+            check(s.screens().place_music() == "шахта.wav" && snd.music_name() == "шахта.wav" && snd.music_playing() &&
+                      snd.music_starts() == st->starts + 1 && g.sounds().mixer().voices(audio::Bus::Music) == 1,
+                  "играет шахта.wav из папки примера, начата один раз: " + snd.music_name());
+            check(heard() > 0.05f, "музыку места слышно: в смеси есть звук");
+            st->voice = snd.music_voice();
+            (void)sy;
+            (void)gy;
+            return true;
+        }});
+        steps_.push_back({"край зоны: x = -149 не в ней, левее — в ней; повторный вход не повторяет «один раз»", 40,
+                          [&s, &g, mx, sy, in, put, var, this, st](u32 f) {
+            // Standing still on the ground over the entrance: the hero's point stays where it was put.
+            if (f == 0) put(mx + 1.0, sy);
+            if (f == 10) {
+                check(g.hero_x() == mx + 1.0 && !in(st->mine) && g.area_leaves(st->mine) == 1,
+                      "в x = -149 (правый край) герой уже не в «Шахте»: x " + std::to_string(g.hero_x()));
+                check(s.screens().place_music().empty() && g.sounds().screens().music_name().empty() &&
+                          g.sounds().mixer().voices(audio::Bus::Music) == 0,
+                      "вне зоны музыка места остановлена");
+                s.vars().set("quest.pickaxe", 0); // so a second run of the once link would show
+                put(mx + 0.75, sy);
+            }
+            if (f < 20) return false;
+            check(g.hero_x() == mx + 0.75 && in(st->mine) && g.area_enters(st->mine) == 2, "в x = -149.25 герой снова в «Шахте»: вход второй");
+            check(var("quest.pickaxe") == 0, "связь «Только один раз» второй раз не сработала");
+            check(g.sounds().screens().music_name() == "шахта.wav" && g.sounds().screens().music_starts() == st->starts + 2,
+                  "музыка места начата снова, один раз");
+            s.vars().set("quest.pickaxe", 1);
+            return true;
+        }});
+        steps_.push_back({"«Дальний зал» внутри «Шахты»: свой вход, музыка шахты не начинается заново", 40,
+                          [&s, &g, room_x, gallery_x, floor_y, in, put, this, st](u32 f) {
+            audio::ScreenSounds& snd = g.sounds().screens();
+            if (f == 0) {
+                st->voice = snd.music_voice();
+                put(room_x, floor_y);
+            }
+            if (f == 10) {
+                const std::vector<u64> now = g.areas_inside();
+                check(now == std::vector<u64>{st->mine, st->hall}, "герой в обеих зонах, по порядку списка");
+                check(g.area_enters(st->hall) == 1 && g.area_enters(st->mine) == 2 && g.area_leaves(st->mine) == 1,
+                      "вход только в «Дальний зал»: из «Шахты» герой не выходил");
+                check(g.last_hint() == "Дальний зал", "игра показала «Дальний зал»: " + g.last_hint());
+                check(snd.music_name() == "шахта.wav" && snd.music_voice() == st->voice && snd.music_playing() &&
+                          snd.music_starts() == st->starts + 2,
+                      "у зала своей музыки нет: играет та же музыка шахты, не заново");
+                put(gallery_x, floor_y);
+            }
+            if (f < 20) return false;
+            check(in(st->mine) && !in(st->hall) && g.area_leaves(st->hall) == 1 && g.area_enters(st->mine) == 2,
+                  "из зала в штольню: выход из «Дальнего зала», «Шахта» та же");
+            check(snd.music_voice() == st->voice && snd.music_starts() == st->starts + 2, "музыка та же");
+            return true;
+        }});
+        steps_.push_back({"по штольне через границу участков x = -256", 200, [&g, in, this, st](u32 f) {
+            if (f == 0) st->x = g.hero_x();
+            if (g.hero_x() < -253.0 && f < 190) {
+                Controls c;
+                c.right = true;
+                g.script(c);
+                return false;
+            }
+            g.stop_script();
+            check(st->x < -256 && g.hero_x() > -256 && in(st->mine), "граница пройдена: x " + std::to_string(st->x) + " → " + std::to_string(g.hero_x()));
+            check(g.area_enters(st->mine) == 2 && g.area_leaves(st->mine) == 1 && g.area_enters(st->hall) == 1, "ни входа, ни выхода");
+            check(g.sounds().screens().music_starts() == st->starts + 2, "музыка не начиналась заново");
+            return true;
+        }});
+        steps_.push_back({"далеко и обратно: участки шахты выгружены, зоны те же", 60, [&g, mx, sy, stairs_x, stairs_y, in, put, this, st](u32 f) {
+            if (f == 0) put(3000.5, g.generator().surface(3000));
+            if (f == 20) {
+                check(g.world() && g.world()->find_chunk(world::chunk_of(static_cast<i32>(stairs_x), static_cast<i32>(stairs_y))) == nullptr,
+                      "участки шахты выгружены");
+                check(g.areas() && *g.areas() == st->areas && g.areas_inside().empty() && g.area_leaves(st->mine) == 2,
+                      "зоны те же, герой вышел из «Шахты»");
+                put(stairs_x, stairs_y);
+            }
+            if (f < 30) return false;
+            check(in(st->mine) && g.area_enters(st->mine) == 3 && g.areas() && *g.areas() == st->areas, "обратно на лестницу: снова в «Шахте»");
+            (void)mx;
+            (void)sy;
+            return true;
+        }});
+        steps_.push_back({"сохранение и загрузка: загрузка — не вход, «один раз» помнится", 60,
+                          [&s, &g, mx, sy, in, put, var, files_of, this, st](u32 f) {
+            if (f == 0) {
+                // The chamber's pickaxe was picked up on the way (quest.pickaxe 2, «несёт кирку»): the game's own quest.
+                st->quest = var("quest.pickaxe");
+                check(st->quest >= 1 && s.save("zones", "Зоны"), "игра сохраняется в «Шахте», задание взято");
+                std::vector<u8> mine, author;
+                read_file(s.slots().folder("zones") / "world" / "areas.json", mine);
+                read_file(st->level / "areas.json", author);
+                check(!mine.empty() && mine == author, "в сохранении areas.json автора");
+                check(files_of(st->dir) == st->files, "файлы примера как были");
+                check(s.load("zones"), "сохранение загружается");
+            }
+            if (f == 10) {
+                check(in(st->mine) && g.area_enters(st->mine) == 0 && g.area_leaves(st->mine) == 0,
+                      "загруженная игра: герой в «Шахте», входа не было");
+                check(var("quest.pickaxe") == st->quest, "задание как при сохранении: quest.pickaxe = " + std::to_string(var("quest.pickaxe")));
+                check(g.sounds().screens().music_name() == "шахта.wav" && g.sounds().screens().music_playing(), "музыка места играет");
+                put(mx + 9.5, sy);
+            }
+            if (f == 20) {
+                check(!in(st->mine) && g.area_leaves(st->mine) == 1, "вышел");
+                s.vars().set("quest.pickaxe", 0);
+                put(mx + 0.75, sy);
+            }
+            if (f < 30) return false;
+            check(in(st->mine) && g.area_enters(st->mine) == 1 && var("quest.pickaxe") == 0,
+                  "вошёл снова: связь «Только один раз» после загрузки не сработала");
+            s.vars().set("quest.pickaxe", st->quest);
+            return true;
+        }});
+        steps_.push_back({"«Играть отсюда» в «Шахте»: вход в первом шаге", 20, [&s, &g, stairs_x, stairs_y, in, var, hud, this, st](u32 f) {
+            if (f == 0) {
+                g.set_level(st->level, true, stairs_x, stairs_y);
+                check(s.new_game(), "новая игра с уровня примера, герой на лестнице");
+                check(g.hero_x() == stairs_x && var("quest.pickaxe") == 0, "герой там, задание не взято");
+            }
+            if (f < 5) return false;
+            check(in(st->mine) && g.area_enters(st->mine) == 1, "новая игра в зоне — это вход");
+            check(var("quest.pickaxe") == 1 && g.last_hint() == "Шахта", "связь сработала: «Шахта», quest.pickaxe = 1");
+            check(hud().find("Потерянная кирка") != std::string::npos, "в HUD задание: " + hud());
+            check(g.sounds().screens().music_name() == "шахта.wav" && g.sounds().screens().music_playing(), "играет музыка места");
+            return true;
+        }});
+        // The order of the musics: a window's (by a button) over the place's, the place's over a screen's over the
+        // game; a pause keeps it. The screens are those of games/examples/screen-sound, their sounds made here.
+        steps_.push_back({"музыка места среди музыки экранов", 60, [&s, &g, east_x, stairs_x, stairs_y, sy, put, heard, this, st](u32 f) {
+            GameScreens& sc = s.screens();
+            audio::ScreenSounds& snd = g.sounds().screens();
+            audio::Mixer& mixer = g.sounds().mixer();
+            if (f == 0) {
+                st->sounds = sound_files();
+                std::error_code ec;
+                std::filesystem::copy_file(st->dir / "sounds" / utf8_path("шахта.wav"), st->sounds / utf8_path("шахта.wav"), ec);
+                check(!ec, "шахта.wav рядом со звуками экранов");
+                snd.attach(&mixer, st->sounds);
+                for (const SimplePage& p : kSoundPages)
+                    if (std::string(p.name) != "звук_меню")
+                        check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                              std::string("экран примера звука строится: ") + p.name);
+                st->starts = snd.music_starts();
+            }
+            if (f == 3) {
+                check(sc.shown("звук_игра") && sc.music() == "шахта.wav" && snd.music_name() == "шахта.wav" && snd.music_playing() &&
+                          mixer.voices(audio::Bus::Music) == 1,
+                      "в «Шахте» музыка места главнее музыки экрана поверх игры: " + sc.music());
+                st->voice = snd.music_voice();
+                put(east_x, sy);
+            }
+            if (f == 8)
+                check(snd.music_name() == "мелодия игры.wav" && mixer.voices(audio::Bus::Music) == 1, "вне зоны — музыка экрана: " + snd.music_name());
+            if (f == 9) put(stairs_x, stairs_y);
+            if (f == 14) {
+                check(snd.music_name() == "шахта.wav" && mixer.voices(audio::Bus::Music) == 1, "снова в зоне — снова музыка места");
+                st->starts = snd.music_starts();
+                press_page(s, 160, 85); // «Окно»
+            }
+            if (f == 18) {
+                check(sc.shown("звук_окно") && snd.music_name() == "мелодия окна.wav" && snd.music_starts() == st->starts + 1 &&
+                          mixer.voices(audio::Bus::Music) == 1,
+                      "окно со своей музыкой главнее музыки места: " + snd.music_name());
+                press_page(s, 960, 645); // «Закрыть»
+            }
+            if (f == 22) {
+                check(!sc.shown("звук_окно") && snd.music_name() == "шахта.wav" && snd.music_starts() == st->starts + 2 &&
+                          mixer.voices(audio::Bus::Music) == 1,
+                      "окно закрыто: снова музыка места, одна");
+                st->voice = snd.music_voice();
+                s.pause(true);
+            }
+            if (f == 26) {
+                check(s.screen() == Screen::Paused && snd.music_voice() == st->voice && snd.music_playing() &&
+                          snd.music_starts() == st->starts + 2,
+                      "пауза: музыка места играет дальше, не заново");
+                s.pause(false);
+            }
+            if (f == 30) {
+                check(snd.music_voice() == st->voice && snd.music_starts() == st->starts + 2, "после паузы та же");
+                // The volumes: music at 0, then all at 0 — playing, not heard; back — heard.
+                st->settings = s.settings();
+                Settings quiet = st->settings;
+                quiet.music_volume = 0;
+                s.apply_settings(quiet);
+            }
+            if (f == 33) {
+                check(snd.music_playing() && music_peak(mixer) == 0, "«Музыка» 0: музыку места не слышно");
+                Settings quiet = st->settings;
+                quiet.master_volume = 0;
+                s.apply_settings(quiet);
+            }
+            if (f == 36) {
+                check(snd.music_playing() && music_peak(mixer) == 0, "общая громкость 0: не слышно");
+                s.apply_settings(st->settings);
+            }
+            if (f == 39) {
+                check(heard() > 0.05f && snd.music_starts() == st->starts + 2, "громкость вернули: слышно, музыка та же");
+                for (const SimplePage& p : kSoundPages) sc.remove(p.name);
+            }
+            if (f < 42) return false;
+            check(snd.music_name() == "шахта.wav", "экраны ушли: музыка места");
+            return true;
+        }});
+        // A copy where «Дальний зал» has music of its own, the same file: from one place to the other it plays on.
+        steps_.push_back({"две зоны с одной музыкой: из одной в другую она не начинается заново", 40,
+                          [&s, &g, room_x, gallery_x, floor_y, in, put, this, st](u32 f) {
+            audio::ScreenSounds& snd = g.sounds().screens();
+            if (f == 0) {
+                snd.attach(&g.sounds().mixer(), st->dir / "sounds");
+                st->copy = std::filesystem::temp_directory_path() / "forge_slice_zones_copy";
+                std::error_code ec;
+                std::filesystem::remove_all(st->copy, ec);
+                forge::level::LevelAreas a = st->areas;
+                a.find(st->hall)->music = "шахта.wav";
+                std::string why;
+                check(forge::level::copy_level(st->level, st->copy, &why) && forge::level::save_areas(st->copy, a, &why),
+                      "копия примера: у «Дальнего зала» музыка шахта.wav " + why);
+                g.set_level(st->copy, true, gallery_x, floor_y);
+                check(s.new_game(), "новая игра с копии, герой в штольне");
+            }
+            if (f == 10) {
+                check(in(st->mine) && !in(st->hall) && snd.music_name() == "шахта.wav" && snd.music_playing(), "в штольне музыка «Шахты»");
+                st->voice = snd.music_voice();
+                st->starts = snd.music_starts();
+                put(room_x, floor_y);
+            }
+            if (f == 20) {
+                check(in(st->hall) && g.area_enters(st->hall) == 1 && s.screens().place_music() == "шахта.wav", "герой в «Дальнем зале», его музыка");
+                check(snd.music_voice() == st->voice && snd.music_playing() && snd.music_starts() == st->starts,
+                      "тот же файл: музыка играет дальше, не заново");
+                put(gallery_x, floor_y);
+            }
+            if (f < 30) return false;
+            check(!in(st->hall) && g.area_leaves(st->hall) == 1 && snd.music_voice() == st->voice && snd.music_starts() == st->starts,
+                  "обратно в штольню: та же музыка");
+            return true;
+        }});
+        steps_.push_back({"нет файла музыки: сказано один раз, игра идёт", 50, [&s, &g, stairs_x, stairs_y, this, st](u32 f) {
+            audio::ScreenSounds& snd = g.sounds().screens();
+            static usize problems = 0;
+            if (f == 0) {
+                st->copy = std::filesystem::temp_directory_path() / "forge_slice_zones_copy";
+                std::error_code ec;
+                std::filesystem::remove_all(st->copy, ec);
+                forge::level::LevelAreas a = st->areas;
+                a.find(st->mine)->music = "нет такой.wav";
+                std::string why;
+                check(forge::level::copy_level(st->level, st->copy, &why) && forge::level::save_areas(st->copy, a, &why),
+                      "копия примера с музыкой, которой нет " + why);
+                problems = snd.problems().size();
+                st->starts = snd.music_starts();
+                g.set_level(st->copy, true, stairs_x, stairs_y);
+                check(s.new_game(), "новая игра с копии");
+            }
+            if (f == 10) {
+                check(s.screens().place_music() == "нет такой.wav" && snd.music_name() == "нет такой.wav" && !snd.music_playing() &&
+                          g.sounds().mixer().voices(audio::Bus::Music) == 0,
+                      "музыки нет в папке: тишина");
+                check(snd.problems().size() == problems + 1 && snd.problems().back() == "нет такой.wav", "о файле сказано");
+            }
+            if (f < 45) return false;
+            check(snd.problems().size() == problems + 1 && snd.music_starts() == st->starts, "один раз: файл не читается каждый кадр");
+            check(g.hero_alive() && s.screen() == Screen::Playing, "игра идёт");
+            return true;
+        }});
+        steps_.push_back({"точка появления в камне, вне мира; испорченный areas.json", 30, [&s, &g, &gen, mx, sy, var, this, st](u32 f) {
+            static f64 ex = 0, ey = 0;
+            const std::filesystem::path rock = std::filesystem::temp_directory_path() / "forge_slice_zones_rock";
+            if (f == 0) {
+                std::error_code ec;
+                std::filesystem::remove_all(rock, ec);
+                forge::level::LevelAreas a = st->areas;
+                a.spawn_y = sy + 6; // six rows down into the ground east of the entrance
+                std::string why;
+                check(forge::level::copy_level(st->level, rock, &why) && forge::level::save_areas(rock, a, &why), "копия с точкой в камне " + why);
+                g.set_level(rock);
+                check(s.new_game(), "новая игра");
+                check(g.world() && hero_ground(*g.world(), a.spawn_x, a.spawn_y, kGroundReach, ex, ey),
+                      "у точки есть пол с местом для героя");
+                check(g.hero_x() == ex && g.hero_y() == scene::Position::at_tile(0, ey - kHeroHalfH).tile_y() && ey != a.spawn_y,
+                      "герой не в камне, а на ближайшем полу: " + std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()) +
+                          " (пол " + std::to_string(ey) + ")");
+            }
+            if (f == 5) {
+                check(g.hero_alive() && g.hero_x() == ex, "стоит там");
+                forge::level::LevelAreas a = st->areas;
+                a.spawn_y = -1e6; // over the world's top
+                std::string why;
+                check(forge::level::save_areas(rock, a, &why), "точка над миром " + why);
+                g.set_level(rock);
+                check(s.new_game() && g.hero_x() == gen.spawn_x(), "вне мира: герой на старте игры");
+            }
+            if (f == 10) {
+                const std::string text = "{\"areas\": [{\"id\": 5}]}";
+                check(write_file_atomic(rock / "areas.json", {reinterpret_cast<const u8*>(text.data()), text.size()}), "areas.json испорчен");
+                g.set_level(rock);
+                check(s.new_game(), "уровень с испорченным areas.json играется");
+                check(g.areas() && g.areas()->areas.empty() && !g.areas()->spawn && g.hero_x() == gen.spawn_x(),
+                      "зон нет, герой на старте игры");
+                std::vector<u8> bytes;
+                read_file(rock / "areas.json", bytes);
+                check(std::string(bytes.begin(), bytes.end()) == text, "файл автора не тронут");
+            }
+            if (f < 15) return false;
+            check(g.areas_inside().empty() && var("quest.pickaxe") == 0, "входов нет");
+            (void)mx;
+            return true;
+        }});
+        steps_.push_back({"обратно в меню", 5, [&s, &g, files_of, this, st](u32 f) {
+            if (f == 0) {
+                s.to_main_menu();
+                g.set_level({});
+                check(s.screens().place_music().empty() && g.sounds().screens().music_name().empty() &&
+                          g.sounds().mixer().voices(audio::Bus::Music) == 0,
+                      "в главном меню музыки места нет");
+                g.sounds().screens().attach(&g.sounds().mixer(), st->kept);
+                check(files_of(st->dir) == st->files, "файлы примера как были");
+                std::error_code ec;
+                std::filesystem::remove_all(st->copy, ec);
+                std::filesystem::remove_all(std::filesystem::temp_directory_path() / "forge_slice_zones_rock", ec);
             }
             return f >= 2;
         }});

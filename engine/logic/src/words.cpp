@@ -232,6 +232,18 @@ Thing hero_thing() {
     return t;
 }
 
+bool is_area(std::string_view thing) { return thing.starts_with(kAreaPrefix); }
+
+Thing area_thing(std::string_view id, std::string_view name) {
+    Thing t;
+    t.id = std::string(id);
+    t.name = std::string(name);
+    t.area = true;
+    t.plural = looks_plural(name);
+    t.forms = decline(name, false);
+    return t;
+}
+
 Thing thing_of(const objects::Library& library, const objects::Template& t) {
     Thing th;
     th.id = t.id;
@@ -295,7 +307,8 @@ namespace {
 
 bool side_fits(std::string_view rule, const std::vector<std::string>& has, const Thing& t) {
     if (rule == "hero" && t.id != kHero) return false;
-    if (rule == "thing" && t.id == kHero) return false;
+    if (rule == "thing" && (t.id == kHero || t.area)) return false;
+    if (rule == "area" && !t.area) return false;
     if (has.empty()) return true;
     for (const std::string& b : has)
         if (std::find(t.blocks.begin(), t.blocks.end(), b) != t.blocks.end()) return true;
@@ -316,7 +329,7 @@ std::vector<Refine> refinements(const Link& link, const VerbDef& verb, const Thi
     std::vector<Refine> out;
     if (!link.code.empty() || own_scheme(link, verb, a, b)) return out; // its own code or scheme decides everything
     out.push_back({"night", "Только ночью", "связь срабатывает, только когда в игре ночь", link.night});
-    out.push_back({"once", "Только один раз", "у каждой копии вещи — один раз за игру", link.once});
+    out.push_back({"once", "Только один раз", a.area || b.area ? "один раз за игру" : "у каждой копии вещи — один раз за игру", link.once});
     if (!verb.sound.empty()) out.push_back({"sound", "Со звуком", "обычный звук игры для этого действия", link.sound});
     if (!verb.fail.empty() && (!verb.needs.empty() || link.night))
         out.push_back({"hint", "Подсказка, если не вышло", "«" + fill(verb.fail, a, b) + "»", link.hint});
@@ -329,7 +342,8 @@ std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, c
         out.push_back({"when", "all_inclusive", "Всё время, пока " + quoted(a) + " есть на уровне", ""});
     } else {
         const Thing& touched = verb.touch == Side::A ? (a.id == kHero ? b : a) : (b.id == kHero ? a : b);
-        out.push_back({"when", "bolt", "Когда герой касается " + touched.forms.get("gen"), ""});
+        if (touched.area) out.push_back({"when", "login", "Когда герой входит в " + touched.forms.get("acc"), ""});
+        else out.push_back({"when", "bolt", "Когда герой касается " + touched.forms.get("gen"), ""});
     }
     if (!link.code.empty()) {
         const usize n = code_lines(link.code);

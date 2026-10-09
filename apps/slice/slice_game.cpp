@@ -6,6 +6,7 @@
 #include "forge/core/log.h"
 #include "forge/core/time.h"
 #include "forge/data/json.h"
+#include "forge/level/areas.h"
 #include "forge/level/light.h"
 #include "forge/script/host.h"
 #include "forge/ui/ui.h"
@@ -112,6 +113,10 @@ struct SliceGame::Level {
     flecs::entity hero;
     // The time of day the author gave the level (light.json came with it into the save).
     forge::level::LevelLight light;
+    // Its areas and spawn point (areas.json, the same way), and which areas
+    // the hero is in.
+    forge::level::LevelAreas areas;
+    forge::level::AreaWatch watch;
     // Queries belong to the ECS world: declared last, released first.
     Objects objects;
 };
@@ -164,6 +169,10 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
         if (std::string why; !forge::level::load_light(save_folder, L->light, nullptr, &why)) {
             FORGE_WARN("slice: %s; noon is used", why.c_str());
             L->light = {};
+        }
+        if (std::string why; !forge::level::load_areas(save_folder, L->areas, nullptr, &why)) {
+            FORGE_WARN("slice: %s; the level has no areas", why.c_str());
+            L->areas = {};
         }
     }
 
@@ -250,9 +259,14 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
             b.vx = want * c.speed;
         });
     });
+    // Which areas the hero came into or left: their links run with this tick's scripts.
+    L->sim->add_system([this](const TickContext& ctx) { areas_tick(ctx); });
     L->scripts = std::make_unique<script::ScriptHost>(*L->sim, *L->scene);
     L->scripts->set_user(script::kGameBridge, bridge_.get());
     L->links = std::make_unique<logic::Runtime>(*L->scripts, library_, *logic_);
+    std::vector<logic::Thing> areas;
+    for (const forge::level::Area& a : L->areas.areas) areas.push_back(logic::area_thing(area_thing_id(a.id), a.name));
+    L->links->set_areas(std::move(areas));
     L->links->load(links_, verbs_);
     L->links->attach(*L->scene);
     return L;
@@ -280,7 +294,7 @@ public:
     }
     bool act(std::string_view action, flecs::entity_t target, std::string_view thing, flecs::entity_t other,
              flecs::entity_t) override {
-        static constexpr std::string_view known[] = {"collect", "open", "close", "toggle", "hurt", "heal", "coin", "talk", "follow", "flee"};
+        static constexpr std::string_view known[] = {"collect", "open", "close", "toggle", "hurt", "heal", "coin", "talk", "follow", "flee", "arrive"};
         if (std::find(std::begin(known), std::end(known), action) == std::end(known)) return false;
         g_.deeds_.push_back({std::string(action), std::string(thing), target, other});
         return true;
@@ -352,6 +366,13 @@ void SliceGame::do_deeds() {
         }
         if (d.action == "coin") {
             give("coins", 1, true);
+            continue;
+        }
+        if (d.action == "arrive") { // the hero came into an area: its name
+            if (const forge::level::Area* a = area_of(d.thing)) {
+                shell_->toast(a->name);
+                last_hint_ = a->name;
+            }
             continue;
         }
         if (!alive(d.target)) continue;
@@ -663,9 +684,21 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     hs.x = gen_->spawn_x();
     hs.y = gen_->spawn_y() - kHeroHalfH;
     hs.zoom = kZoom;
+    // Where a new game puts the hero: «Играть отсюда», else the level's spawn
+    // point, else the game's start.
     if (new_game && options_.at) {
         hs.x = options_.at_x;
         hs.y = options_.at_y - kHeroHalfH;
+    } else if (new_game && level_->areas.spawn) {
+        f64 x = 0, y = 0;
+        std::string why;
+        if (spawn_spot(level_->areas.spawn_x, level_->areas.spawn_y, x, y, &why)) {
+            hs.x = x;
+            hs.y = y - kHeroHalfH;
+        } else {
+            FORGE_WARN("slice: точка появления уровня %.2f, %.2f: %s; герой начинает со старта игры", level_->areas.spawn_x,
+                       level_->areas.spawn_y, why.c_str());
+        }
     }
     shell_->vars().set("hero.hearts_max", kHearts); // for a screen's bar of hearts
     // The things the hero may carry count 0 until found (a save keeps what it had): a screen's «{inv.coins}»
@@ -712,6 +745,12 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     running_ = true;
     hero_x_ = hero_x();
     hero_y_ = hero_y();
+    // A new game in an area comes into it at the first step; a loaded save
+    // was in its areas already.
+    if (new_game) level_->watch.clear();
+    else level_->watch.settle(level_->areas, hero_x_, hero_y_);
+    area_enters_.clear();
+    area_leaves_.clear();
     location_ = gen_->location(hero_x_, hero_y_);
     dig_progress_ = 0;
     talking_ = 0;
@@ -744,6 +783,7 @@ bool SliceGame::save(const fs::path& session, std::string& location, std::string
 void SliceGame::end() {
     if (!running_) return;
     running_ = false;
+    shell_->screens().set_place_music({});
     sounds_.stop_objects();
     tiles_.shutdown();
     tiles_world_ = nullptr;
@@ -977,6 +1017,74 @@ void SliceGame::teleport(f64 x, f64 y) {
     hero_x_ = x;
     hero_y_ = y;
     load_around(x, y);
+}
+
+// --- areas -------------------------------------------------------------------
+
+std::string area_thing_id(u64 id) { return std::string(logic::kAreaPrefix) + forge::level::area_id_text(id); }
+
+const forge::level::Area* SliceGame::area_of(std::string_view thing) const {
+    u64 id = 0;
+    if (!level_ || !thing.starts_with(logic::kAreaPrefix) || !forge::level::parse_area_id(thing.substr(logic::kAreaPrefix.size()), id))
+        return nullptr;
+    return level_->areas.find(id);
+}
+
+// Once a tick, before the scripts: the hero's centre against the areas.
+void SliceGame::areas_tick(const TickContext& ctx) {
+    if (!level_ || ctx.rewinding || !level_->hero.is_alive()) return;
+    const Position* p = level_->hero.try_get<Position>();
+    if (!p) return;
+    std::vector<forge::level::AreaEvent> events;
+    level_->watch.step(level_->areas, p->tile_x(), p->tile_y(), events);
+    for (const forge::level::AreaEvent& e : events) {
+        if (e.entered) ++area_enters_[e.area];
+        else ++area_leaves_[e.area];
+        level_->links->area_event(area_thing_id(e.area), level_->hero.id(), e.entered);
+    }
+}
+
+bool SliceGame::spawn_spot(f64 x, f64 y, f64& out_x, f64& out_y, std::string* why) {
+    if (!in_world(x, y)) {
+        if (why) *why = "вне мира";
+        return false;
+    }
+    // The column around it loaded, up and down as far as the ground is looked for.
+    std::vector<Rect> rects = focus();
+    const i32 tx = static_cast<i32>(std::floor(x)), ty = static_cast<i32>(std::floor(y));
+    rects.push_back({tx - 1, ty - kGroundReach - 3, tx + 2, ty + kGroundReach + 1});
+    for (u32 last = ~0u, rounds = 0; rounds < 64; ++rounds) {
+        level_->sim->update(0, rects);
+        level_->world->finish_loading();
+        const u32 now = level_->world->stats().resident;
+        if (now == last) break;
+        last = now;
+    }
+    if (!hero_ground(*level_->world, x, y, kGroundReach, out_x, out_y)) {
+        if (why) *why = "рядом нет пола с местом для героя";
+        return false;
+    }
+    if (out_x != tx + 0.5 || out_y != std::floor(y))
+        FORGE_INFO("slice: точка появления %.2f, %.2f в стене или в воздухе: герой встаёт на пол в %.1f, %.0f", x, y, out_x, out_y);
+    return true;
+}
+
+const forge::level::LevelAreas* SliceGame::areas() const { return level_ ? &level_->areas : nullptr; }
+
+std::vector<u64> SliceGame::areas_inside() const { return level_ ? level_->watch.inside() : std::vector<u64>{}; }
+
+u32 SliceGame::area_enters(u64 id) const {
+    const auto it = area_enters_.find(id);
+    return it == area_enters_.end() ? 0 : it->second;
+}
+
+u32 SliceGame::area_leaves(u64 id) const {
+    const auto it = area_leaves_.find(id);
+    return it == area_leaves_.end() ? 0 : it->second;
+}
+
+flecs::entity_t SliceGame::area_entity(u64 id) const {
+    return level_ && level_->links ? level_->links->area_entity(area_thing_id(id)) : 0;
 }
 
 // --- inventory ---------------------------------------------------------------
@@ -1339,6 +1447,9 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
 
     sounds_.pause(!playing);
     sounds_.set_listener(hero_x_, hero_y_);
+    // The music of the place the hero is in: the screens decide over it.
+    const forge::level::Area* place = hero_alive() ? forge::level::music_area(level_->areas, hero_x_, hero_y_) : nullptr;
+    shell_->screens().set_place_music(place ? place->music : std::string());
     if (playing) {
         hero_sounds(dt);
         sounds_.update_objects(*level_->scene, hero_x_, hero_y_, dt);

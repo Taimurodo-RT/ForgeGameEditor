@@ -1,5 +1,6 @@
 #include "level_editor.h"
 
+#include "forge/audio/audio.h"
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
@@ -7,7 +8,10 @@
 #include "forge/editor/inspector.h"
 #include "forge/sim/gravity.h"
 
+#include "object_library.h"
+
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 
 #include <algorithm>
 #include <cmath>
@@ -81,8 +85,10 @@ const ModeInfo kModes[] = {
      "Гравитация мира, точки гравитации, вода и песок. «Проба» пускает воду и песок прямо здесь, «Сбросить» возвращает уровень.", ""},
     {Mode::Light, "light", "Свет",
      "Источники света: цвет, яркость и радиус, свет кончается ровно на окружности. Время суток уровня. Вид — как в игре.", ""},
-    {Mode::Zones, "zones", "Зоны", "Области («Деревня», «Шахта»), точка появления героя, триггеры квестов, звук и музыка мест.",
-     "позже, вместе с редактором сюжета"},
+    {Mode::Zones, "zones", "Зоны",
+     "Именованные области уровня («Шахта», «Деревня»), их музыка и точка появления героя. Вход героя в зону — событие "
+     "«Логики»: «Герой входит в Шахту».",
+     ""},
 };
 
 struct PhysToolInfo {
@@ -127,6 +133,31 @@ const LightToolInfo& light_info(LightTool t) {
         if (i.tool == t) return i;
     return kLightTools[0];
 }
+struct AreaToolInfo {
+    AreaTool tool;
+    const char* id;
+    const char* name;
+    const char* help;
+};
+const AreaToolInfo kAreaTools[] = {
+    {AreaTool::Select, "select", "Выбор зоны",
+     "Щёлкните зону или точку появления, чтобы выбрать. Тяните зону, чтобы передвинуть; край или угол выбранной — чтобы "
+     "изменить границы. Пустое место двигает вид, Delete удаляет."},
+    {AreaTool::Draw, "draw", "Новая зона",
+     "Протяните прямоугольник от угла до угла в любую сторону: клетки обоих углов войдут в зону. Esc или правая кнопка во "
+     "время протяжки отменяют: зоны не будет."},
+    {AreaTool::Spawn, "spawn", "Точка появления",
+     "Щёлкните клетку, где новая игра поставит героя (ноги на нижнем краю клетки), и тяните, чтобы уточнить. Точка одна на "
+     "уровень; «Играть отсюда» важнее её."},
+};
+const AreaToolInfo& area_info(AreaTool t) {
+    for (const AreaToolInfo& i : kAreaTools)
+        if (i.tool == t) return i;
+    return kAreaTools[0];
+}
+// The colours areas are drawn in (by id, so an area keeps its colour).
+const u8 kAreaHues[][3] = {{90, 200, 255}, {130, 230, 120}, {255, 150, 90}, {220, 130, 255}, {255, 220, 90}, {90, 230, 210}};
+
 const char* const kLightName = "Источник света";
 constexpr f64 kLightNewRadius = 8;
 // The hours the time slider goes through (a quarter of an hour a step).
@@ -208,16 +239,19 @@ const char* tool_id(Tool t) {
 const char* mode_id(Mode m) { return mode_info(m).id; }
 const char* phys_tool_id(PhysTool t) { return phys_info(t).id; }
 const char* light_tool_id(LightTool t) { return light_info(t).id; }
+const char* area_tool_id(AreaTool t) { return area_info(t).id; }
 
 void LevelEditor::set_mode(Mode m) {
     if (gesture()) return;
     // Gravity points are picked only in «Физика», light sources only in
     // «Свет», objects only outside them.
-    auto picks = [](Mode x) { return x == Mode::Physics ? 1 : x == Mode::Light ? 2 : 0; };
+    auto picks = [](Mode x) { return x == Mode::Physics ? 1 : x == Mode::Light ? 2 : x == Mode::Zones ? 3 : 0; };
     if (picks(m) != picks(mode_)) {
         reset_trial();
         select_objects({});
     }
+    if (m == Mode::Zones && mode_ != Mode::Zones) scan_sounds();
+    if (m != Mode::Zones) zn_ask_ = 0;
     if (m == Mode::Light && mode_ != Mode::Light && !view_.game_light) {
         view_.game_light = true; // what the light does is seen only as in the game
         FORGE_INFO("Вид: свет как в игре");
@@ -355,6 +389,28 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("advanced", &FieldView::advanced);
     }
     model.RegisterArray<std::vector<FieldView>>();
+    if (auto s = model.RegisterStruct<SoundRow>()) {
+        s.RegisterMember("value", &SoundRow::value);
+        s.RegisterMember("name", &SoundRow::name);
+    }
+    model.RegisterArray<std::vector<SoundRow>>();
+    if (auto s = model.RegisterStruct<AreaRow>()) {
+        s.RegisterMember("id", &AreaRow::id);
+        s.RegisterMember("name", &AreaRow::name);
+        s.RegisterMember("about", &AreaRow::about);
+        s.RegisterMember("selected", &AreaRow::selected);
+    }
+    model.RegisterArray<std::vector<AreaRow>>();
+    if (auto s = model.RegisterStruct<AreaLabel>()) {
+        s.RegisterMember("id", &AreaLabel::id);
+        s.RegisterMember("name", &AreaLabel::name);
+        s.RegisterMember("x", &AreaLabel::x);
+        s.RegisterMember("y", &AreaLabel::y);
+        s.RegisterMember("selected", &AreaLabel::selected);
+        s.RegisterMember("spawn", &AreaLabel::spawn);
+    }
+    model.RegisterArray<std::vector<AreaLabel>>();
+    model.RegisterArray<std::vector<Rml::String>>();
     model.Bind("lv_objects", &m_objects_);
     model.Bind("lv_object", &m_object_);
     model.Bind("lv_sel_count", &m_sel_count_);
@@ -412,6 +468,26 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lv_lt_preview_hours", &m_lt_preview_hours_);
     model.Bind("lv_lt_previewing", &m_lt_previewing_);
     model.Bind("lv_lt_note", &m_lt_note_);
+    model.Bind("lv_zn_tool", &m_zn_tool_);
+    model.Bind("lv_zn_tool_name", &m_zn_tool_name_);
+    model.Bind("lv_zn_tool_help", &m_zn_tool_help_);
+    model.Bind("lv_zn_has_area", &m_zn_has_area_);
+    model.Bind("lv_zn_name", &m_zn_name_);
+    model.Bind("lv_zn_bounds", &m_zn_bounds_);
+    model.Bind("lv_zn_music_note", &m_zn_music_note_);
+    model.Bind("lv_zn_links", &m_zn_links_);
+    model.Bind("lv_zn_asking", &m_zn_asking_);
+    model.Bind("lv_zn_ask_text", &m_zn_ask_text_);
+    model.Bind("lv_zn_has_spawn", &m_zn_has_spawn_);
+    model.Bind("lv_zn_spawn_sel", &m_zn_spawn_sel_);
+    model.Bind("lv_zn_spawn", &m_zn_spawn_);
+    model.Bind("lv_zn_spawn_note", &m_zn_spawn_note_);
+    model.Bind("lv_zn_spawn_bad", &m_zn_spawn_bad_);
+    model.Bind("lv_zn_error", &m_zn_error_);
+    model.Bind("lv_zn_note", &m_zn_note_);
+    model.Bind("lv_zn_areas", &m_zn_areas_);
+    model.Bind("lv_zn_labels", &m_zn_labels_);
+    model.Bind("lv_zn_sounds", &m_zn_sounds_);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -476,6 +552,49 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     });
     on("lv_lt_preview_slide", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_preview_time(arg_str(a, 0)); });
     on("lv_lt_preview_off", [this](Rml::Event&, const Rml::VariantList&) { set_preview_time(""); });
+    on("lv_zn_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string id = arg_str(a, 0);
+        set_mode(Mode::Zones);
+        for (const AreaToolInfo& t : kAreaTools)
+            if (id == t.id) set_area_tool(t.tool);
+    });
+    on("lv_zn_pick", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        // A row of the areas' list: selected, and the view goes to it.
+        u64 id = 0;
+        if (!level::parse_area_id(arg_str(a, 0), id) || gesture()) return;
+        select_area(id);
+        if (const level::Area* z = level_->areas().find(id)) {
+            camera_.x = (z->x0 + z->x1) * 0.5;
+            camera_.y = (z->y0 + z->y1) * 0.5;
+        }
+    });
+    on("lv_zn_pick_spawn", [this](Rml::Event&, const Rml::VariantList&) {
+        if (gesture() || !level_->areas().spawn) return;
+        select_spawn();
+        camera_.x = level_->areas().spawn_x;
+        camera_.y = level_->areas().spawn_y - 1;
+    });
+    on("lv_zn_name_text", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        if (a.size() > 1 && a[1].Get<bool>() && !ui_updating_) set_area_name(arg_str(a, 0));
+    });
+    on("lv_zn_name_commit", [this](Rml::Event& ev, const Rml::VariantList&) {
+        Rml::Element* e = ev.GetTargetElement();
+        if (e && e->GetTagName() == "input" && !ui_updating_) set_area_name(static_cast<Rml::ElementFormControl*>(e)->GetValue());
+    });
+    on("lv_zn_music", [this](Rml::Event& ev, const Rml::VariantList&) {
+        // Only the author's pick counts: the panel filling the drop-down fires
+        // changes too, and those never have the focus.
+        auto* input = rmlui_dynamic_cast<Rml::ElementFormControl*>(ev.GetTargetElement());
+        if (ui_updating_ || !input || !input->IsPseudoClassSet("focus")) return;
+        set_area_music(input->GetValue());
+        input->Blur(); // the drop-down then shows what the area has
+    });
+    on("lv_zn_delete", [this](Rml::Event&, const Rml::VariantList&) { delete_area(false); });
+    on("lv_zn_delete_confirm", [this](Rml::Event&, const Rml::VariantList&) { delete_area(true); });
+    on("lv_zn_delete_cancel", [this](Rml::Event&, const Rml::VariantList&) {
+        zn_ask_ = 0;
+        zn_note_ = "Зона осталась";
+    });
     on("lv_delete", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
     on("lv_field_text", [this, arg_int, arg_str](Rml::Event&, const Rml::VariantList& a) {
         if (a.size() > 2 && a[2].Get<bool>()) set_field(arg_int(a, 0, -1), arg_str(a, 1), false);
@@ -1316,6 +1435,13 @@ void LevelEditor::reset_trial() {
 void LevelEditor::edit_begins() { reset_trial(); }
 
 bool LevelEditor::cancel_gesture() {
+    if (zn_drag_ != AreaDrag::None) {
+        // The level never changed during the drag: only the preview goes.
+        zn_drag_ = AreaDrag::None;
+        zn_note_ = "Отменено: зоны и точка появления не изменились";
+        FORGE_INFO("Отменено: уровень не изменился");
+        return true;
+    }
     const PhysDrag d = ph_drag_;
     if (d == PhysDrag::None) return false;
     ph_drag_ = PhysDrag::None;
@@ -1594,6 +1720,569 @@ void LevelEditor::pour(i32 x0, i32 y0, i32 x1, i32 y1) {
     FORGE_INFO("%s", ph_note_.c_str());
 }
 
+// --- zones -------------------------------------------------------------------
+
+namespace {
+
+std::string area_bounds(const level::Area& z) {
+    return "x " + std::to_string(z.x0) + "…" + std::to_string(z.x1 - 1) + ", y " + std::to_string(z.y0) + "…" + std::to_string(z.y1 - 1) +
+           " · " + std::to_string(z.x1 - z.x0) + " × " + std::to_string(z.y1 - z.y0) + " клеток";
+}
+
+std::string in_quotes(const std::string& s) { return "«" + s + "»"; }
+
+} // namespace
+
+void LevelEditor::set_area_tool(AreaTool t) {
+    if (gesture()) return;
+    zn_tool_ = t;
+    zn_ask_ = 0;
+}
+
+void LevelEditor::select_area(u64 id) {
+    zn_area_ = level_->areas().find(id) ? id : 0;
+    zn_spawn_ = false;
+    if (zn_ask_ != zn_area_) zn_ask_ = 0;
+}
+
+void LevelEditor::select_spawn() {
+    zn_area_ = 0;
+    zn_spawn_ = level_->areas().spawn || zn_drag_ == AreaDrag::Spawn;
+    zn_ask_ = 0;
+}
+
+u64 LevelEditor::area_at(const level::LevelAreas& a, f64 tx, f64 ty) const {
+    const level::Area* best = nullptr;
+    for (const level::Area& z : a.areas)
+        if (z.contains(tx, ty) && (!best || z.size() <= best->size())) best = &z;
+    return best ? best->id : 0;
+}
+
+u8 LevelEditor::edges_at(f64 tx, f64 ty) const {
+    const level::Area* z = level_->areas().find(zn_area_);
+    if (!z) return 0;
+    // Near an edge: a few pixels, but never more than a quarter of the area
+    // (a thin one is still moved by its middle).
+    const f64 e = std::max(0.3, 7.0 / camera_.zoom);
+    const f64 ex = std::min(e, (z->x1 - z->x0) * 0.25), ey = std::min(e, (z->y1 - z->y0) * 0.25);
+    if (tx < z->x0 - ex || tx > z->x1 + ex || ty < z->y0 - ey || ty > z->y1 + ey) return 0;
+    const f64 l = std::fabs(tx - z->x0), r = std::fabs(tx - z->x1), t = std::fabs(ty - z->y0), b = std::fabs(ty - z->y1);
+    u8 out = 0;
+    if (std::min(l, r) <= ex) out |= l <= r ? 1 : 4;
+    if (std::min(t, b) <= ey) out |= t <= b ? 2 : 8;
+    return out;
+}
+
+bool LevelEditor::spawn_at(f64 tx, f64 ty) const {
+    const level::LevelAreas& a = level_->areas();
+    if (!a.spawn) return false;
+    // The hero standing there: a cell wide, two high, feet on the point.
+    const f64 t = std::max(0.2, 4.0 / camera_.zoom);
+    return tx >= a.spawn_x - 0.5 - t && tx <= a.spawn_x + 0.5 + t && ty >= a.spawn_y - 2 - t && ty <= a.spawn_y + t;
+}
+
+void LevelEditor::change_areas(const level::LevelAreas& after, std::string label) {
+    if (after == level_->areas()) return;
+    edit_begins();
+    history_.seal();
+    history_.execute(std::make_unique<level::SetAreas>(*level_, level_->areas(), after, std::move(label)));
+    history_.seal();
+}
+
+bool LevelEditor::press_areas(f32 x, f32 y) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    history_.seal();
+    zn_ask_ = 0;
+    const level::LevelAreas& a = level_->areas();
+    zn_preview_ = a;
+    zn_grab_x_ = tx;
+    zn_grab_y_ = ty;
+    switch (zn_tool_) {
+    case AreaTool::Draw:
+        cell_at(x, y, zn_ax_, zn_ay_);
+        zn_bx_ = zn_ax_;
+        zn_by_ = zn_ay_;
+        zn_drag_ = AreaDrag::Draw;
+        return true;
+    case AreaTool::Spawn:
+        // Feet on the bottom of the cell pressed.
+        zn_preview_.spawn = true;
+        zn_preview_.spawn_x = std::floor(tx) + 0.5;
+        zn_preview_.spawn_y = std::floor(ty) + 1;
+        zn_drag_ = AreaDrag::Spawn;
+        select_spawn();
+        return true;
+    case AreaTool::Select: break;
+    }
+    if (spawn_at(tx, ty)) {
+        zn_drag_ = AreaDrag::Spawn;
+        select_spawn();
+        return true;
+    }
+    if (const u8 e = edges_at(tx, ty)) {
+        zn_edges_ = e;
+        zn_drag_ = AreaDrag::Edges;
+        return true;
+    }
+    if (const u64 id = area_at(a, tx, ty)) {
+        select_area(id);
+        zn_drag_ = AreaDrag::Move;
+        return true;
+    }
+    select_area(0);
+    return false; // the drag moves the view
+}
+
+void LevelEditor::drag_areas(f32 x, f32 y) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    const level::LevelAreas& a = level_->areas();
+    // Whole cells: an area's edges are on the grid lines, the spawn point keeps its place in its cell.
+    const i64 dx = std::clamp<i64>(std::llround(tx - zn_grab_x_), -(1 << 24), 1 << 24);
+    const i64 dy = std::clamp<i64>(std::llround(ty - zn_grab_y_), -(1 << 24), 1 << 24);
+    switch (zn_drag_) {
+    case AreaDrag::None: return;
+    case AreaDrag::Draw: cell_at(x, y, zn_bx_, zn_by_); return;
+    case AreaDrag::Spawn:
+        if (zn_tool_ == AreaTool::Spawn) {
+            zn_preview_.spawn_x = std::floor(tx) + 0.5;
+            zn_preview_.spawn_y = std::floor(ty) + 1;
+        } else {
+            zn_preview_.spawn_x = a.spawn_x + static_cast<f64>(dx);
+            zn_preview_.spawn_y = a.spawn_y + static_cast<f64>(dy);
+        }
+        return;
+    case AreaDrag::Move:
+    case AreaDrag::Edges: break;
+    }
+    const level::Area* from = a.find(zn_area_);
+    level::Area* to = zn_preview_.find(zn_area_);
+    if (!from || !to) {
+        zn_drag_ = AreaDrag::None;
+        return;
+    }
+    if (zn_drag_ == AreaDrag::Move) {
+        to->x0 = static_cast<i32>(from->x0 + dx);
+        to->x1 = static_cast<i32>(from->x1 + dx);
+        to->y0 = static_cast<i32>(from->y0 + dy);
+        to->y1 = static_cast<i32>(from->y1 + dy);
+        return;
+    }
+    // An edge goes to the grid line nearest the mouse; the area stays at least a cell and at most kMaxAreaSide.
+    const i32 gx = static_cast<i32>(std::clamp<f64>(std::round(tx), -1e7, 1e7));
+    const i32 gy = static_cast<i32>(std::clamp<f64>(std::round(ty), -1e7, 1e7));
+    *to = *from;
+    if (zn_edges_ & 1) to->x0 = std::clamp(gx, from->x1 - level::kMaxAreaSide, from->x1 - 1);
+    if (zn_edges_ & 4) to->x1 = std::clamp(gx, from->x0 + 1, from->x0 + level::kMaxAreaSide);
+    if (zn_edges_ & 2) to->y0 = std::clamp(gy, from->y1 - level::kMaxAreaSide, from->y1 - 1);
+    if (zn_edges_ & 8) to->y1 = std::clamp(gy, from->y0 + 1, from->y0 + level::kMaxAreaSide);
+}
+
+void LevelEditor::release_areas() {
+    const AreaDrag d = zn_drag_;
+    zn_drag_ = AreaDrag::None;
+    const level::LevelAreas& a = level_->areas();
+    if (d == AreaDrag::Draw) {
+        if (zn_ax_ == zn_bx_ && zn_ay_ == zn_by_) {
+            zn_note_ = "Зона не нарисована: протяните прямоугольник от угла до угла";
+            return;
+        }
+        if (a.areas.size() >= level::kMaxAreas) {
+            zn_note_ = "Зон уже " + std::to_string(level::kMaxAreas) + ": больше уровень не держит, новая не нарисована";
+            FORGE_WARN("%s", zn_note_.c_str());
+            return;
+        }
+        level::Area z;
+        do z.id = level::Level::new_id();
+        while (a.find(z.id));
+        // From the corner pressed, at most kMaxAreaSide cells either way.
+        const i32 bx = std::clamp(zn_bx_, zn_ax_ - level::kMaxAreaSide + 1, zn_ax_ + level::kMaxAreaSide - 1);
+        const i32 by = std::clamp(zn_by_, zn_ay_ - level::kMaxAreaSide + 1, zn_ay_ + level::kMaxAreaSide - 1);
+        z.x0 = std::min(zn_ax_, bx);
+        z.x1 = std::max(zn_ax_, bx) + 1;
+        z.y0 = std::min(zn_ay_, by);
+        z.y1 = std::max(zn_ay_, by) + 1;
+        for (usize n = 1;; ++n) {
+            z.name = "Зона " + std::to_string(n);
+            if (std::none_of(a.areas.begin(), a.areas.end(), [&](const level::Area& o) { return o.name == z.name; })) break;
+        }
+        level::LevelAreas after = a;
+        after.areas.push_back(z);
+        change_areas(after, "Нарисовать зону " + in_quotes(z.name));
+        select_area(z.id);
+        zn_note_ = "Нарисована зона " + in_quotes(z.name) + ": " + area_bounds(z) + ". Имя и музыка — в панели справа.";
+        FORGE_INFO("%s", zn_note_.c_str());
+        return;
+    }
+    if (d == AreaDrag::None || zn_preview_ == a) return; // a click: only selected
+    std::string label;
+    if (d == AreaDrag::Spawn) {
+        label = a.spawn ? "Передвинуть точку появления" : "Точка появления";
+    } else {
+        const level::Area* z = zn_preview_.find(zn_area_);
+        if (!z) return;
+        label = (d == AreaDrag::Move ? "Передвинуть зону " : "Границы зоны ") + in_quotes(z->name);
+        zn_note_ = "Зона " + in_quotes(z->name) + ": " + area_bounds(*z);
+    }
+    change_areas(zn_preview_, label);
+    if (d == AreaDrag::Spawn) {
+        f64 gx = 0, gy = 0;
+        const level::LevelAreas& now = level_->areas();
+        char at[64];
+        std::snprintf(at, sizeof(at), "%.1f, %.0f", now.spawn_x, now.spawn_y);
+        zn_note_ = std::string("Точка появления: ") + at;
+        if (!spawn_ground(gx, gy)) zn_note_ += ". Рядом нет пола с местом для героя: новая игра начнётся со старта игры";
+        else if (gx != now.spawn_x || gy != now.spawn_y) {
+            std::snprintf(at, sizeof(at), "%.1f, %.0f", gx, gy);
+            zn_note_ += std::string(". Там нет пола под двумя свободными клетками: герой встанет на ближайший, в ") + at;
+        }
+        FORGE_INFO("%s", zn_note_.c_str());
+    }
+}
+
+bool LevelEditor::spawn_ground(f64& x, f64& y) {
+    const level::LevelAreas& a = level_->areas();
+    if (!a.spawn) return false;
+    // Found again only when the spawn point or the level changed.
+    const u64 key = level_->areas_version() * 1000003ull + level_->edits();
+    if (key != zn_spawn_key_) {
+        zn_spawn_key_ = key;
+        zn_spawn_ok_ = module_.play_spot(*level_, a.spawn_x, a.spawn_y, zn_spawn_x_, zn_spawn_y_);
+    }
+    x = zn_spawn_x_;
+    y = zn_spawn_y_;
+    return zn_spawn_ok_;
+}
+
+bool LevelEditor::set_area_name(const std::string& text) {
+    if (gesture()) return false;
+    const level::LevelAreas& a = level_->areas();
+    const level::Area* z = a.find(zn_area_);
+    if (!z) return false;
+    const std::string name = level::clean_area_name(text);
+    if (name == z->name) {
+        m_zn_name_.clear(); // shows it as it is
+        return true;
+    }
+    level::Area test = *z;
+    test.name = name;
+    std::string problem = name.empty() ? "имя не может быть пустым" : level::area_problem(test);
+    for (const level::Area& o : a.areas)
+        if (problem.empty() && o.id != z->id && o.name == name) problem = "так уже зовут другую зону, в «Логике» их было бы не различить";
+    if (!problem.empty()) {
+        zn_note_ = "Имя зоны " + in_quotes(text) + ": " + problem + "; осталось " + in_quotes(z->name);
+        FORGE_WARN("%s", zn_note_.c_str());
+        m_zn_name_.clear();
+        return false;
+    }
+    const std::string old = z->name;
+    level::LevelAreas after = a;
+    after.find(zn_area_)->name = name;
+    change_areas(after, "Имя зоны: " + in_quotes(name));
+    zn_note_ = "Зона " + in_quotes(old) + " теперь " + in_quotes(name) + ": связи «Логики» с ней остались, у них новые слова";
+    return true;
+}
+
+bool LevelEditor::set_area_music(const std::string& value) {
+    if (gesture()) return false;
+    const level::Area* z = level_->areas().find(zn_area_);
+    if (!z) return false;
+    std::string name = value;
+    if (value.rfind("add:", 0) == 0) {
+        // A sound of «Ресурсы»: into the game's sounds first, as the screens' music.
+        const fs::path source = utf8_path(value.substr(4));
+        const std::string shown = path_to_utf8(source.filename());
+        std::string error;
+        if (!audio::readable(source)) zn_note_ = in_quotes(shown) + ": игра читает WAV и OGG. Переведите его в «Ресурсах»: «Конвертировать…» → OGG.";
+        else if (!audio::load(source, &error)) zn_note_ = in_quotes(shown) + " не звучит: " + error;
+        else if ((name = copy_into(source, sounds_folder_, "звук")).empty())
+            zn_note_ = in_quotes(shown) + " не скопировался в звуки игры (" + path_to_utf8(sounds_folder_) + ")";
+        if (name.empty() || name == value) {
+            FORGE_WARN("%s", zn_note_.c_str());
+            return false;
+        }
+        scan_sounds();
+    }
+    if (!name.empty() && !level::valid_music_name(name)) {
+        zn_note_ = "Музыка " + in_quotes(name) + " — не имя файла из звуков игры";
+        FORGE_WARN("%s", zn_note_.c_str());
+        return false;
+    }
+    if (name == z->music) return true;
+    const std::string area = z->name;
+    level::LevelAreas after = level_->areas();
+    after.find(zn_area_)->music = name;
+    change_areas(after, name.empty() ? "Без музыки: " + in_quotes(area) : "Музыка зоны " + in_quotes(area) + ": " + in_quotes(name));
+    std::error_code ec;
+    if (name.empty()) zn_note_ = "В зоне " + in_quotes(area) + " своей музыки нет: там играет музыка экранов поверх игры или тишина";
+    else if (!fs::is_regular_file(sounds_folder_ / utf8_path(name), ec)) zn_note_ = "Музыка " + in_quotes(name) + ": нет файла в звуках игры";
+    else zn_note_ = "В зоне " + in_quotes(area) + " играет " + in_quotes(name);
+    return true;
+}
+
+bool LevelEditor::delete_area(bool confirm) {
+    if (gesture()) return false;
+    const level::LevelAreas& a = level_->areas();
+    if (zn_spawn_ && a.spawn) {
+        level::LevelAreas after = a;
+        after.spawn = false;
+        after.spawn_x = after.spawn_y = 0;
+        change_areas(after, "Убрать точку появления");
+        zn_spawn_ = false;
+        zn_note_ = "Точки появления нет: новая игра начнётся со старта игры";
+        return true;
+    }
+    const level::Area* z = a.find(zn_area_);
+    if (!z) return false;
+    const std::vector<std::string> links = area_links ? area_links(z->id) : std::vector<std::string>{};
+    const std::string name = z->name;
+    if (!links.empty() && !confirm) {
+        zn_ask_ = z->id;
+        zn_note_ = "Зона " + in_quotes(name) + " есть в связях «Логики» (" + std::to_string(links.size()) + "). Удалить её всё равно?";
+        return false;
+    }
+    level::LevelAreas after = a;
+    std::erase_if(after.areas, [&](const level::Area& o) { return o.id == zn_area_; });
+    change_areas(after, "Удалить зону " + in_quotes(name));
+    zn_ask_ = 0;
+    zn_area_ = 0;
+    zn_note_ = links.empty() ? "Зона " + in_quotes(name) + " удалена"
+                             : "Зона " + in_quotes(name) + " удалена. Её связи (" + std::to_string(links.size()) +
+                                   ") остались в «Логике» с пометкой «нет такой зоны» и не работают; Ctrl+Z вернёт зону с ними";
+    FORGE_INFO("%s", zn_note_.c_str());
+    return true;
+}
+
+// The game's sounds (WAV and OGG), the areas' music the folder lacks («нет
+// файла»), then the sounds of «Ресурсы» not there yet.
+void LevelEditor::scan_sounds() {
+    std::vector<SoundRow> rows;
+    std::error_code ec;
+    for (const fs::directory_entry& e : fs::directory_iterator(sounds_folder_, ec)) {
+        if (!e.is_regular_file(ec) || !audio::readable(e.path())) continue;
+        rows.push_back({path_to_utf8(e.path().filename()), path_to_utf8(e.path().stem())});
+        if (rows.size() >= 1000) break;
+    }
+    std::sort(rows.begin(), rows.end(), [](const SoundRow& a, const SoundRow& b) { return a.value < b.value; });
+    auto listed = [&](const std::string& name) {
+        return std::any_of(rows.begin(), rows.end(), [&](const SoundRow& r) { return r.value == name; });
+    };
+    for (const level::Area& z : level_->areas().areas)
+        if (!z.music.empty() && !listed(z.music)) rows.push_back({z.music, z.music + " (нет файла)"});
+    if (list_sounds) {
+        usize added = 0;
+        for (const fs::path& file : list_sounds()) {
+            if (!audio::readable(file) || listed(path_to_utf8(file.filename()))) continue;
+            rows.push_back({"add:" + path_to_utf8(file), path_to_utf8(file.stem()) + " — из «Ресурсов»"});
+            if (++added >= 300) break;
+        }
+    }
+    if (rows == m_zn_sounds_) return;
+    m_zn_sounds_ = std::move(rows);
+    if (model_) model_.DirtyVariable("lv_zn_sounds");
+}
+
+std::vector<std::pair<std::string, std::string>> LevelEditor::music_choices() const {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const SoundRow& r : m_zn_sounds_) out.emplace_back(r.value, r.name);
+    return out;
+}
+
+void LevelEditor::sync_areas(Rml::Context* context) {
+    const AreaToolInfo& t = area_info(zn_tool_);
+    set(m_zn_tool_, Rml::String(t.id), "lv_zn_tool");
+    set(m_zn_tool_name_, Rml::String(t.name), "lv_zn_tool_name");
+    set(m_zn_tool_help_, Rml::String(t.help), "lv_zn_tool_help");
+    const level::LevelAreas& saved = level_->areas();
+    // An area undone away is no longer selected.
+    if (zn_drag_ == AreaDrag::None && zn_area_ && !saved.find(zn_area_)) zn_area_ = 0;
+    if (zn_drag_ == AreaDrag::None && zn_spawn_ && !saved.spawn) zn_spawn_ = false;
+    if (zn_ask_ && zn_ask_ != zn_area_) zn_ask_ = 0;
+    if (mode_ != Mode::Zones) return;
+    const level::LevelAreas& a = shown_areas();
+    const level::Area* z = a.find(zn_area_);
+    set(m_zn_has_area_, z != nullptr, "lv_zn_has_area");
+    set(m_zn_name_, Rml::String(z ? z->name : std::string()), "lv_zn_name");
+    set(m_zn_bounds_, Rml::String(z ? area_bounds(*z) : std::string()), "lv_zn_bounds");
+    {
+        std::string note;
+        std::error_code ec;
+        if (z && !z->music.empty() && !fs::is_regular_file(sounds_folder_ / utf8_path(z->music), ec))
+            note = "Нет файла " + in_quotes(z->music) + " в звуках игры: в игре здесь будет тихо, и журнал игры скажет об этом.";
+        set(m_zn_music_note_, Rml::String(note), "lv_zn_music_note");
+    }
+    {
+        std::vector<Rml::String> links;
+        if (z && area_links)
+            for (const std::string& l : area_links(z->id)) links.push_back(l);
+        if (links != m_zn_links_) {
+            m_zn_links_ = std::move(links);
+            model_.DirtyVariable("lv_zn_links");
+        }
+    }
+    set(m_zn_asking_, zn_ask_ != 0 && z != nullptr, "lv_zn_asking");
+    set(m_zn_ask_text_,
+        Rml::String(z ? "Связи останутся в «Логике» с пометкой «нет такой зоны» и не будут работать, пока зону не вернут (Ctrl+Z)."
+                      : ""),
+        "lv_zn_ask_text");
+    set(m_zn_has_spawn_, a.spawn, "lv_zn_has_spawn");
+    set(m_zn_spawn_sel_, zn_spawn_, "lv_zn_spawn_sel");
+    {
+        std::string text = "нет: новая игра начинается со старта игры", note;
+        bool bad = false;
+        if (a.spawn) {
+            char at[96];
+            std::snprintf(at, sizeof(at), "x %.1f, y %.0f", a.spawn_x, a.spawn_y);
+            text = at;
+            f64 gx = 0, gy = 0;
+            if (zn_drag_ == AreaDrag::Spawn) {
+                note = "Отпустите кнопку, чтобы поставить точку здесь.";
+            } else if (!spawn_ground(gx, gy)) {
+                note = "Вне мира или рядом нет пола с местом для героя (96 клеток вверх и вниз): новая игра начнётся со старта игры.";
+                bad = true;
+            } else if (gx != a.spawn_x || gy != a.spawn_y) {
+                std::snprintf(at, sizeof(at), "x %.1f, y %.0f", gx, gy);
+                note = std::string("Здесь нет пола под двумя свободными клетками: герой встанет на ближайший, в ") + at + ".";
+                bad = true;
+            } else {
+                note = "Новая игра поставит героя сюда. «Играть отсюда» важнее: оно ставит героя в центр вида.";
+            }
+        }
+        set(m_zn_spawn_, Rml::String(text), "lv_zn_spawn");
+        set(m_zn_spawn_note_, Rml::String(note), "lv_zn_spawn_note");
+        set(m_zn_spawn_bad_, bad, "lv_zn_spawn_bad");
+    }
+    set(m_zn_error_,
+        Rml::String(level_->areas_error().empty()
+                        ? std::string()
+                        : level_->areas_error() + ". Зон нет, файл не тронут; когда вы их измените, он сохранится как areas.broken.json"),
+        "lv_zn_error");
+    set(m_zn_note_, Rml::String(zn_note_), "lv_zn_note");
+    // The list of areas, as drawn.
+    std::vector<AreaRow> rows;
+    for (const level::Area& r : a.areas) {
+        std::string about = std::to_string(r.x1 - r.x0) + " × " + std::to_string(r.y1 - r.y0);
+        if (!r.music.empty()) about += " · ♪ " + r.music;
+        rows.push_back({level::area_id_text(r.id), r.name, about, r.id == zn_area_});
+    }
+    if (rows != m_zn_areas_) {
+        m_zn_areas_ = std::move(rows);
+        model_.DirtyVariable("lv_zn_areas");
+    }
+    // Names over the view: at each area's top left corner, the spawn point's over the hero.
+    std::vector<AreaLabel> labels;
+    auto label = [&](const std::string& id, const std::string& name, f64 tx, f64 ty, bool sel, bool spawn) {
+        f32 sx = 0, sy = 0;
+        screen_of(tx, ty, sx, sy);
+        const f32 lx = sx - vx_, ly = sy - vy_;
+        if (lx < -200 || ly < -40 || lx > vw_ || ly > vh_) return;
+        labels.push_back({id, name, std::round(lx), std::round(ly), sel, spawn});
+    };
+    if (view_shown_ && vw_ > 0) {
+        const world::Rect view = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+        for (const level::Area& r : a.areas)
+            if (r.x1 >= view.x0 && r.x0 <= view.x1 && r.y1 >= view.y0 && r.y0 <= view.y1)
+                label(level::area_id_text(r.id), r.name, std::max<f64>(r.x0, camera_.x - vw_ / camera_.zoom * 0.5), r.y0, r.id == zn_area_, false);
+        if (a.spawn) label("spawn", "Старт героя", a.spawn_x - 0.5, a.spawn_y - 2, zn_spawn_, true);
+    }
+    if (labels != m_zn_labels_) {
+        m_zn_labels_ = std::move(labels);
+        model_.DirtyVariable("lv_zn_labels");
+    }
+    // The music drop-down is not bound: its options come from a list, and a
+    // select whose value is not (yet) among them picks another, which a
+    // binding would write over the area. It is set from here, not while its
+    // list is open.
+    const Rml::String music = z ? Rml::String(z->music) : Rml::String();
+    if (m_zn_music_ != music) m_zn_music_ = music;
+    for (int i = 0; context && i < context->GetNumDocuments(); ++i)
+        if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(context->GetDocument(i)->GetElementById("zn-music"))) {
+            if (!select->IsSelectBoxVisible() && select->GetValue() != m_zn_music_) {
+                const bool was = ui_updating_;
+                ui_updating_ = true; // not the author's pick
+                select->SetValue(m_zn_music_);
+                ui_updating_ = was;
+            }
+            break;
+        }
+}
+
+void LevelEditor::push_areas(f64 ox, f64 oy, f64 px) {
+    auto quad = [&](f64 x, f64 y, f64 w, f64 h, u32 color, u32 order) {
+        render::Sprite s;
+        s.x = static_cast<f32>(x + w * 0.5 - ox);
+        s.y = static_cast<f32>(y + h * 0.5 - oy);
+        s.w = static_cast<f32>(w);
+        s.h = static_cast<f32>(h);
+        s.frame = demo::kFrameSolid;
+        s.color = color;
+        s.order = order;
+        front_batch_.push(s);
+    };
+    auto frame = [&](f64 x0, f64 y0, f64 x1, f64 y1, f64 t, u32 color, u32 order) {
+        quad(x0, y0, x1 - x0, t, color, order);
+        quad(x0, y1 - t, x1 - x0, t, color, order);
+        quad(x0, y0, t, y1 - y0, color, order);
+        quad(x1 - t, y0, t, y1 - y0, color, order);
+    };
+    auto handle = [&](f64 x, f64 y, f64 size, u32 color, u32 order) { quad(x - size * 0.5, y - size * 0.5, size, size, color, order); };
+    const world::Rect view = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+    const u32 gold = render::pack_color(255, 210, 90, 255), white = render::pack_color(255, 255, 255, 230);
+    const level::LevelAreas& a = shown_areas();
+    f64 hx = 0, hy = 0;
+    const bool hovering = hover_ && !panning_ && zn_drag_ == AreaDrag::None;
+    if (hovering) to_tile(mouse_x_, mouse_y_, hx, hy);
+    const u64 hovered = hovering && zn_tool_ == AreaTool::Select ? area_at(a, hx, hy) : 0;
+    // Each area: a light fill in its own colour and its outline; the selected
+    // one in gold, with handles on its corners and edges.
+    for (const level::Area& z : a.areas) {
+        if (z.x1 < view.x0 || z.x0 > view.x1 || z.y1 < view.y0 || z.y0 > view.y1) continue;
+        const u8* c = kAreaHues[z.id % std::size(kAreaHues)];
+        const bool sel = z.id == zn_area_;
+        // Only what is in view is drawn: an area can be thousands of cells.
+        const f64 x0 = std::max<f64>(z.x0, view.x0 - 1), y0 = std::max<f64>(z.y0, view.y0 - 1);
+        const f64 x1 = std::min<f64>(z.x1, view.x1 + 1), y1 = std::min<f64>(z.y1, view.y1 + 1);
+        quad(x0, y0, x1 - x0, y1 - y0, render::pack_color(c[0], c[1], c[2], sel ? 56 : 36), 6);
+        const u32 line = sel ? gold : render::pack_color(c[0], c[1], c[2], z.id == hovered ? 255 : 200);
+        frame(z.x0, z.y0, z.x1, z.y1, px * (sel || z.id == hovered ? 3 : 2), line, 7);
+        if (sel) {
+            const f64 size = std::max(0.25, px * 9);
+            const f64 mx = (z.x0 + z.x1) * 0.5, my = (z.y0 + z.y1) * 0.5;
+            for (const auto& [x, y] : {std::pair<f64, f64>{z.x0, z.y0}, {z.x1, z.y0}, {z.x0, z.y1}, {z.x1, z.y1}, {mx, z.y0}, {mx, z.y1},
+                                       {z.x0, my}, {z.x1, my}}) {
+                handle(x, y, size + px * 4, gold, 8);
+                handle(x, y, size, white, 8);
+            }
+        }
+    }
+    // What the tool is about to make.
+    if (zn_drag_ == AreaDrag::Draw) {
+        const f64 x0 = std::min(zn_ax_, zn_bx_), x1 = std::max(zn_ax_, zn_bx_) + 1;
+        const f64 y0 = std::min(zn_ay_, zn_by_), y1 = std::max(zn_ay_, zn_by_) + 1;
+        quad(x0, y0, x1 - x0, y1 - y0, render::pack_color(255, 210, 90, 50), 6);
+        frame(x0, y0, x1, y1, px * 2, gold, 7);
+    } else if (hovering && zn_tool_ == AreaTool::Draw) {
+        frame(std::floor(hx), std::floor(hy), std::floor(hx) + 1, std::floor(hy) + 1, px * 2, render::pack_color(255, 210, 90, 200), 7);
+    }
+    // The spawn point: the hero standing there (a cell wide, two high), its
+    // feet on the point; where it would really stand, if elsewhere, faintly.
+    auto hero = [&](f64 x, f64 y, u32 fill, u32 line, f64 t) {
+        quad(x - 0.5, y - 2, 1, 2, fill, 9);
+        frame(x - 0.5, y - 2, x + 0.5, y, t, line, 9);
+        quad(x - 0.8, y - t, 1.6, t * 2, line, 9);
+    };
+    if (a.spawn) {
+        hero(a.spawn_x, a.spawn_y, render::pack_color(255, 120, 200, 110), zn_spawn_ ? gold : render::pack_color(255, 120, 200, 255),
+             px * (zn_spawn_ ? 3 : 2));
+        f64 gx = 0, gy = 0;
+        if (zn_drag_ != AreaDrag::Spawn && spawn_ground(gx, gy) && (gx != a.spawn_x || gy != a.spawn_y))
+            hero(gx, gy, render::pack_color(255, 120, 200, 40), render::pack_color(255, 120, 200, 140), px);
+    }
+    if (hovering && zn_tool_ == AreaTool::Spawn)
+        hero(std::floor(hx) + 0.5, std::floor(hy) + 1, render::pack_color(255, 120, 200, 50), render::pack_color(255, 120, 200, 160), px);
+}
+
 // --- actions -----------------------------------------------------------------
 
 void LevelEditor::undo() {
@@ -1621,8 +2310,8 @@ bool LevelEditor::save() {
         return false;
     }
     history_.mark_saved();
-    FORGE_INFO("Уровень сохранён: участков с плитками %u, с объектами %u%s (%.0f мс)", r.tile_chunks, r.object_chunks,
-               r.physics ? ", гравитация мира в physics.json" : "", r.ms);
+    FORGE_INFO("Уровень сохранён: участков с плитками %u, с объектами %u%s%s (%.0f мс)", r.tile_chunks, r.object_chunks,
+               r.physics ? ", гравитация мира в physics.json" : "", r.areas ? ", зоны в areas.json" : "", r.ms);
     return true;
 }
 
@@ -1641,6 +2330,11 @@ bool LevelEditor::open_folder(const fs::path& folder) {
     }
     config_.folder = folder;
     history_.clear();
+    zn_area_ = zn_ask_ = 0;
+    zn_spawn_ = false;
+    zn_spawn_key_ = ~0ull;
+    zn_note_.clear();
+    if (mode_ == Mode::Zones) scan_sounds();
     view_.preview_time = -1;
     fields_built_ = 0;
     map_edits_ = ~0ull;
@@ -1699,7 +2393,10 @@ void LevelEditor::reset_layout() { dock_.reset(); }
 std::string LevelEditor::status() const {
     char text[200];
     const std::string place = module_.place(camera_.x, camera_.y);
-    const char* tool = mode_ == Mode::Physics ? phys_info(ph_tool_).name : mode_ == Mode::Light ? light_info(lt_tool_).name : tool_name(tool_);
+    const char* tool = mode_ == Mode::Physics ? phys_info(ph_tool_).name
+                       : mode_ == Mode::Light ? light_info(lt_tool_).name
+                       : mode_ == Mode::Zones ? area_info(zn_tool_).name
+                                              : tool_name(tool_);
     if (hover_)
         std::snprintf(text, sizeof(text), "Клетка %d, %d%s%s · %s", hover_x_, hover_y_, place.empty() ? "" : " · ",
                       place.c_str(), tool);
@@ -1741,6 +2438,7 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
     }
     rebuild_fields(context);
     sync_model();
+    sync_areas(context);
 }
 
 void LevelEditor::update_minimap() {
@@ -1964,6 +2662,7 @@ void LevelEditor::push_overlay(f64 ox, f64 oy) {
     }
     if (mode_ == Mode::Physics) push_physics(ox, oy, px);
     if (mode_ == Mode::Light) push_light(ox, oy, px);
+    if (mode_ == Mode::Zones) push_areas(ox, oy, px);
     if (hover_ && !panning_ && mode_ == Mode::Tiles) {
         // An outline around the cell under the mouse.
         const u32 c = render::pack_color(255, 255, 255, 220);
@@ -2246,11 +2945,12 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         mouse_x_ = x;
         mouse_y_ = y;
         if (dock_.mouse_move(x, y)) return true;
-        hover_ = over_view(x, y, context) || stroke_ != nullptr || moving_ || ph_drag_ != PhysDrag::None;
+        hover_ = over_view(x, y, context) || stroke_ != nullptr || moving_ || ph_drag_ != PhysDrag::None || zn_drag_ != AreaDrag::None;
         if (hover_) cell_at(x, y, hover_x_, hover_y_);
         if (stroke_) drag(x, y);
         if (moving_) drag_objects(x, y);
         if (ph_drag_ != PhysDrag::None) drag_physics(x, y);
+        if (zn_drag_ != AreaDrag::None) drag_areas(x, y);
         return hover_;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -2258,10 +2958,15 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         mouse_x_ = x;
         mouse_y_ = y;
         if (dock_.busy()) return true;
-        // The right button takes back a drag of the physics and light tools.
-        if (e.button.button == SDL_BUTTON_RIGHT && ph_drag_ != PhysDrag::None) return cancel_gesture();
+        // The right button takes back a drag of the physics, light and zones tools.
+        if (e.button.button == SDL_BUTTON_RIGHT && (ph_drag_ != PhysDrag::None || zn_drag_ != AreaDrag::None)) return cancel_gesture();
         if (!over_view(x, y, context)) return false;
-        if (e.button.button == SDL_BUTTON_LEFT && !panning_ && (mode_ == Mode::Physics || mode_ == Mode::Light)) {
+        if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Zones) {
+            if (zn_drag_ == AreaDrag::None && !press_areas(x, y)) {
+                panning_ = true; // empty space: the drag moves the view
+                pan_button_ = SDL_BUTTON_LEFT;
+            }
+        } else if (e.button.button == SDL_BUTTON_LEFT && !panning_ && (mode_ == Mode::Physics || mode_ == Mode::Light)) {
             if (ph_drag_ == PhysDrag::None && !(mode_ == Mode::Light ? press_light(x, y) : press_physics(x, y))) {
                 panning_ = true; // empty space: the drag moves the view
                 pan_button_ = SDL_BUTTON_LEFT;
@@ -2294,6 +2999,10 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         }
         if (e.button.button == SDL_BUTTON_LEFT && ph_drag_ != PhysDrag::None) {
             release_physics();
+            used = true;
+        }
+        if (e.button.button == SDL_BUTTON_LEFT && zn_drag_ != AreaDrag::None) {
+            release_areas();
             used = true;
         }
         if (panning_ && e.button.button == pan_button_) {
@@ -2330,6 +3039,27 @@ bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_O) { set_mode(Mode::Objects); return true; }
     if (k.key == SDLK_P) { set_mode(Mode::Physics); return true; }
     if (k.key == SDLK_C) { set_mode(Mode::Light); return true; } // С: «Свет» on a Russian keyboard
+    if (k.key == SDLK_Z) { set_mode(Mode::Zones); return true; }
+    if (mode_ == Mode::Zones) {
+        if (k.key == SDLK_ESCAPE) {
+            if (cancel_gesture()) return true;
+            if (zn_ask_) {
+                zn_ask_ = 0;
+                zn_note_ = "Зона осталась";
+            } else if (zn_tool_ != AreaTool::Select) {
+                set_area_tool(AreaTool::Select);
+            } else {
+                select_area(0);
+            }
+            return true;
+        }
+        if (gesture()) return false;
+        if (k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE) {
+            delete_area(false);
+            return true;
+        }
+        return false;
+    }
     if (mode_ == Mode::Light) {
         if (k.key == SDLK_ESCAPE) {
             if (cancel_gesture()) return true;

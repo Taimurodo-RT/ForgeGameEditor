@@ -45,7 +45,7 @@ ClipPtr ScreenSounds::clip(const std::string& name) {
     else
         c = load(folder_ / utf8_path(name), &error);
     if (!c) {
-        FORGE_WARN("Звук экрана «%s» не играет: %s", name.c_str(), error.c_str());
+        FORGE_WARN("Звук «%s» не играет: %s", name.c_str(), error.c_str()); // a screen's or a place's
         problems_.push_back(name);
     }
     clips_[name] = c; // a missing one too: said once, not read again

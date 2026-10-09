@@ -711,3 +711,173 @@ TEST_CASE("a thing's own scheme runs by itself") {
     CHECK_FALSE(cart.has<sim::Trigger>()); // nothing to touch
     CHECK(scripts.errors().empty());
 }
+
+namespace {
+
+const char* kAreaVerbs = R"({
+  "verbs": [
+    { "id": "enter", "name": "входит в", "plural": "входят в", "icon": "login", "case": "acc",
+      "when": "touch", "touch": "b", "do": "arrive", "target": "b", "a": "hero", "b": "area",
+      "step": "Показать герою название места: «{b}»",
+      "about": "Когда {a} входит в {b:acc}, игра показывает название места." },
+    { "id": "hurt", "name": "ранит", "plural": "ранят", "case": "acc", "when": "touch", "touch": "a",
+      "do": "hurt", "target": "b", "a": "thing", "b": "hero", "about": "Герой теряет сердце." }
+  ]
+})";
+
+constexpr const char* kMine = "area:9f2c41d07a5be318";
+
+} // namespace
+
+TEST_CASE("an area is a thing the hero comes into") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kAreaVerbs));
+    Words w;
+    w.things.push_back(area_thing(kMine, "Шахта"));
+    const Thing& mine = w.things.back();
+    CHECK(is_area(kMine));
+    CHECK_FALSE(is_area("key"));
+    CHECK(mine.area);
+    CHECK(mine.forms.acc == "Шахту");
+    const VerbDef& enter = *verbs.find("enter");
+    const VerbDef& hurt = *verbs.find("hurt");
+    CHECK(suits(enter, w.things[0], mine));
+    CHECK_FALSE(suits(enter, w.things[0], *w.find("key"))); // a template is not an area
+    CHECK_FALSE(suits(hurt, mine, w.things[0]));            // an area is not a template
+    CHECK(suits(hurt, *w.find("spikes"), w.things[0]));
+    Link l{0, std::string(kHero), "enter", kMine};
+    CHECK(phrase(l, enter, w.things[0], mine) == "Герой входит в Шахту");
+    std::vector<Step> st = steps(l, enter, w.things[0], mine);
+    REQUIRE(st.size() == 2);
+    CHECK(st[0].text == "Когда герой входит в Шахту");
+    CHECK(st[1].text == "Показать герою название места: «Шахта»");
+    l.once = true;
+    st = steps(l, enter, w.things[0], mine);
+    REQUIRE(st.size() == 3);
+    CHECK(st[1].refine == "once");
+
+    // The area's module: its links when the hero comes in.
+    Logic logic;
+    logic.add(l);
+    Compiled c = compile(logic, verbs, w.find);
+    CHECK(c.problems.empty());
+    REQUIRE(c.modules.size() == 1);
+    CHECK(c.modules[0].thing == kMine);
+    CHECK(c.modules[0].name == std::string("logic:") + kMine);
+    CHECK(c.modules[0].source.find("function S.on_enter(self, other)") != std::string::npos);
+    CHECK(c.modules[0].source.find("logic.first(self, 1)") != std::string::npos);
+    CHECK(c.modules[0].source.find("logic.act(\"arrive\", target, \"" + std::string(kMine) + "\", hero, hero)") != std::string::npos);
+
+    // Renamed: the same link, new words.
+    w.things.back() = area_thing(kMine, "Старая штольня");
+    CHECK(phrase(logic.links[0], enter, w.things[0], w.things.back()) == "Герой входит в Старую штольню");
+    // Gone (deleted, or of another level): the link stays and is told about.
+    w.things.pop_back();
+    c = compile(logic, verbs, w.find);
+    CHECK(c.modules.empty());
+    REQUIRE(c.problems.size() == 1);
+    CHECK(c.problems[0].text.find("нет такой зоны") != std::string::npos);
+}
+
+TEST_CASE("coming into an area runs its links; once is kept by the hero; areas are in no chunk") {
+    PoolScope pool;
+    const auto dir = temp_folder("forge_logic_areas");
+    write_text(dir / "kinds.json", R"({"kinds": [{"id": "thing", "name": "Вещь", "group": "Разное", "icon": "box", "foot": 0.5}]})");
+    objects::Library library;
+    REQUIRE(library.load(dir / "kinds.json", dir / "objects"));
+
+    world::World world(world::WorldDesc{}, std::make_shared<EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    library.attach(scene);
+    NoteGame game;
+    Runtime runtime(scripts, library, game);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    run(1);
+
+    Verbs verbs;
+    REQUIRE(verbs.parse(kAreaVerbs));
+    Logic logic;
+    const u32 plain = logic.add({0, std::string(kHero), "enter", kMine});
+    runtime.set_areas({area_thing(kMine, "Шахта"), area_thing("area:0000000000000002", "Двор")});
+    std::vector<Problem> problems;
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    runtime.attach(scene);
+    const flecs::entity_t mine = runtime.area_entity(kMine);
+    REQUIRE(mine != 0);
+    CHECK(runtime.is_area_entity(mine));
+    CHECK(runtime.area_entity("area:0000000000000002") == 0); // no link listens to the yard
+    CHECK_FALSE(scene.ecs().entity(mine).has<scene::Position>());
+
+    flecs::entity hero = scene.spawn(scene::Position::at_tile(20, 5.5));
+    game.hero_e = hero.id();
+    run(2);
+    CHECK(game.acts.empty());
+    runtime.area_event(kMine, hero.id(), true);
+    run(1);
+    REQUIRE(game.acts.size() == 1);
+    CHECK(game.acts[0] == std::string("arrive ") + kMine);
+    CHECK(game.last_target == mine);
+    CHECK(game.fired_links == std::vector<u32>{plain});
+    run(5); // staying in: nothing again
+    CHECK(game.acts.size() == 1);
+    runtime.area_event(kMine, hero.id(), false); // leaving: no link for it
+    run(1);
+    CHECK(game.acts.size() == 1);
+    runtime.area_event(kMine, hero.id(), true); // in again: again
+    run(1);
+    CHECK(game.acts.size() == 2);
+
+    // Only once: the hero keeps it (saved with him), the area's entity keeps nothing.
+    logic.find(plain)->once = true;
+    REQUIRE(runtime.load(logic, verbs));
+    CHECK(runtime.area_entity(kMine) == mine); // the same entity: no second one
+    game.acts.clear();
+    for (int i = 0; i < 3; ++i) {
+        runtime.area_event(kMine, hero.id(), true);
+        run(1);
+        runtime.area_event(kMine, hero.id(), false);
+        run(1);
+    }
+    CHECK(game.acts.size() == 1);
+    const script::ScriptVars* vars = hero.try_get<script::ScriptVars>();
+    REQUIRE(vars);
+    CHECK(vars->find("связь " + std::to_string(plain)) != nullptr);
+    CHECK_FALSE(scene.ecs().entity(mine).has<script::ScriptVars>());
+
+    // Its own code that waits: an area is in no chunk, it waits in the world's time.
+    logic.find(plain)->once = false;
+    logic.find(plain)->code = "forge.wait(0.1)\nlogic.hint(hero, \"после\")";
+    REQUIRE(runtime.load(logic, verbs));
+    runtime.area_event(kMine, hero.id(), true);
+    run(2);
+    CHECK(game.hints.empty());
+    run(10);
+    CHECK(game.hints == std::vector<std::string>{"после"});
+    CHECK(scripts.errors().empty());
+
+    // The area goes: its entity goes, its link is told about and does nothing.
+    runtime.set_areas({area_thing("area:0000000000000002", "Двор")});
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    REQUIRE(problems.size() == 1);
+    CHECK(problems[0].text.find("нет такой зоны") != std::string::npos);
+    CHECK(runtime.area_entity(kMine) == 0);
+    CHECK_FALSE(scene.ecs().is_alive(mine));
+    runtime.area_event(kMine, hero.id(), true);
+    run(1);
+    CHECK(game.hints.size() == 1);
+    // Back (an undo in the editor): it works again.
+    runtime.set_areas({area_thing(kMine, "Шахта")});
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    runtime.area_event(kMine, hero.id(), true);
+    run(12);
+    CHECK(game.hints.size() == 2);
+}

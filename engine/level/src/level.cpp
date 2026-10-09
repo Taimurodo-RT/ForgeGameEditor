@@ -53,7 +53,22 @@ bool Level::open(const fs::path& folder, std::string* error) {
     if (!folder.empty() && !load_light(folder, light_, nullptr, &light_error_))
         FORGE_WARN("Свет уровня: %s; действует полдень", light_error_.c_str());
     light_saved_ = light_;
+    // And for areas.json: no areas meanwhile, nothing written over it until
+    // the areas change.
+    areas_ = {};
+    areas_error_.clear();
+    if (!folder.empty() && !load_areas(folder, areas_, nullptr, &areas_error_))
+        FORGE_WARN("Зоны уровня: %s; зон нет, файл не тронут", areas_error_.c_str());
+    areas_saved_ = areas_;
+    ++areas_version_;
     return true;
+}
+
+void Level::set_areas(const LevelAreas& a) {
+    if (a == areas_) return;
+    areas_ = a;
+    ++areas_version_;
+    ++edits_;
 }
 
 void Level::set_light(const LevelLight& l) {
@@ -113,6 +128,23 @@ Level::SaveReport Level::save() {
             light_saved_ = light_;
             light_error_.clear();
             r.light = true;
+        } else {
+            r.ok = false;
+            r.error = r.error.empty() ? error : r.error + "; " + error;
+        }
+    }
+    if (areas_changed()) {
+        std::string error;
+        // A file that could not be read is kept aside, not lost.
+        std::error_code ec;
+        if (!areas_error_.empty() && fs::exists(folder_ / kAreasFile, ec)) {
+            fs::rename(folder_ / kAreasFile, folder_ / kBrokenAreasFile, ec);
+            if (ec) error = "не удалось отложить испорченный " + std::string(kAreasFile) + " в " + kBrokenAreasFile;
+        }
+        if (error.empty() && save_areas(folder_, areas_, &error)) {
+            areas_saved_ = areas_;
+            areas_error_.clear();
+            r.areas = true;
         } else {
             r.ok = false;
             r.error = r.error.empty() ? error : r.error + "; " + error;

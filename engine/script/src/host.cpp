@@ -362,6 +362,10 @@ bool ScriptHost::run(std::string_view source, std::string* error) {
     return good;
 }
 
+void ScriptHost::enter(flecs::entity_t area, flecs::entity_t other, bool entered) {
+    impl_->areas.push_back({area, other, entered});
+}
+
 void ScriptHost::send(flecs::entity_t to, std::string_view message, f64 value, flecs::entity_t from) {
     impl_->outbox.push_back({to, from, std::string(message), value});
 }
@@ -520,13 +524,17 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
             });
     }
 
-    // Triggers (who came in and went out) and rigid bodies that hit something.
-    for (const sim::TriggerEvent& ev : ctx.events.triggers)
-        if (const Impl::Module* m = module_of(ev.trigger))
-            c.call(*m, ev.entered ? OnEnter : OnLeave, ev.trigger, [&](lua_State* T) {
-                push_entity(T, ev.other);
-                return 1;
-            });
+    // Triggers (who came in and went out), then the areas the game checks
+    // itself, and rigid bodies that hit something.
+    std::vector<sim::TriggerEvent> areas;
+    areas.swap(im.areas);
+    for (const std::vector<sim::TriggerEvent>* list : {&ctx.events.triggers, static_cast<const std::vector<sim::TriggerEvent>*>(&areas)})
+        for (const sim::TriggerEvent& ev : *list)
+            if (const Impl::Module* m = module_of(ev.trigger))
+                c.call(*m, ev.entered ? OnEnter : OnLeave, ev.trigger, [&](lua_State* T) {
+                    push_entity(T, ev.other);
+                    return 1;
+                });
     for (const sim::RigidContact& ev : ctx.events.rigid) {
         if (const Impl::Module* m = module_of(ev.a))
             c.call(*m, OnHit, ev.a, [&](lua_State* T) {
@@ -584,7 +592,10 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
         else if (w.entity == 0) dt = static_cast<f64>(ctx.dt) * ctx.time_scale;
         else {
             auto d = std::lower_bound(im.due.begin(), im.due.end(), std::pair<flecs::entity_t, f32>{w.entity, -1e30f});
-            dt = d != im.due.end() && d->first == w.entity ? d->second : 0;
+            if (d != im.due.end() && d->first == w.entity) dt = d->second;
+            // An entity in no chunk (an area's): the world's time.
+            else if (!ecs.entity(w.entity).has<scene::Position>()) dt = static_cast<f64>(ctx.dt) * ctx.time_scale;
+            else dt = 0;
         }
         w.remaining -= dt;
         if (w.remaining > 0) {

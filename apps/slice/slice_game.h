@@ -26,6 +26,9 @@
 
 namespace slice {
 
+// An area of the level as the links name it: "area:" and its id.
+std::string area_thing_id(forge::u64 id);
+
 // The hero's place and choices, next to the world in the save.
 struct HeroSave {
     f64 x = 0, y = 0;
@@ -173,6 +176,14 @@ public:
     const std::string& last_hint() const { return last_hint_; }
     f64 hearts() const;
     bool door_open(f64 x, f64 y, bool& open) const;
+    // Areas («Зоны»): the level's (areas.json as it came into the game), the
+    // ones the hero is in now, how often it came into and left each since the
+    // game began or was loaded, and the entity an area's links run on.
+    const forge::level::LevelAreas* areas() const;
+    std::vector<forge::u64> areas_inside() const;
+    u32 area_enters(forge::u64 id) const;
+    u32 area_leaves(forge::u64 id) const;
+    flecs::entity_t area_entity(forge::u64 id) const;
     // Reads verbs.json and logic.json again and applies them (the editor
     // changed the links).
     bool reload_links(std::string* error = nullptr);
@@ -221,6 +232,11 @@ private:
     void watch_links();
     std::vector<Seen> seen_things() const;
     void hurt_hero(f64 n);
+    // Areas: who came in and went out this tick; the area a link names; where
+    // a spawn point puts the hero (false: why, then the game's start).
+    void areas_tick(const forge::sim::TickContext& ctx);
+    const forge::level::Area* area_of(std::string_view thing) const;
+    bool spawn_spot(f64 x, f64 y, f64& out_x, f64& out_y, std::string* why);
 
     Options options_;
     forge::game::Shell* shell_ = nullptr;
@@ -293,6 +309,7 @@ private:
     std::vector<forge::logic::Thing> things_;
     LinkOverlay overlay_;
     std::unordered_map<u32, u64> lit_;
+    std::unordered_map<forge::u64, u32> area_enters_, area_leaves_;
     std::filesystem::file_time_type links_time_{};
     u64 links_checked_ = 0;
 };

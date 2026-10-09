@@ -11,6 +11,7 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 
@@ -79,10 +80,12 @@ struct Api {
         return 0;
     }
     // True the first time for this copy and link (then remembered in its
-    // ScriptVars, so it lasts through saves).
+    // ScriptVars, so it lasts through saves). An area's entity is saved with
+    // nothing: the hero remembers for it (link ids are the game's, one each).
     static int first(lua_State* L) {
         Runtime& r = rt(L);
-        const flecs::entity_t e = entity_arg(L, 1);
+        flecs::entity_t e = entity_arg(L, 1);
+        if (r.is_area_entity(e)) e = r.game_.hero();
         const std::string key = "связь " + std::to_string(static_cast<u32>(lua_tonumber(L, 2)));
         flecs::world& ecs = r.host_.scene().ecs();
         if (!e || !ecs.is_alive(e)) {
@@ -158,9 +161,10 @@ Runtime::~Runtime() {
 
 bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>* problems) {
     std::vector<Thing> things;
-    things.reserve(library_.templates().size() + 1);
+    things.reserve(library_.templates().size() + 1 + areas_.size());
     things.push_back(hero_thing());
     for (const objects::Template& t : library_.templates()) things.push_back(thing_of(library_, t));
+    things.insert(things.end(), areas_.begin(), areas_.end());
     const FindThing find = [&](std::string_view id) -> const Thing* {
         for (const Thing& t : things)
             if (t.id == id) return &t;
@@ -186,12 +190,52 @@ bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>*
             touch_[t->key] = m.touch;
         }
     }
-    // Copies already in the scene follow the new links.
+    // Copies already in the scene follow the new links, and so do areas.
     if (scene_) scene_->ecs().each([&](flecs::entity e, const objects::ObjectRef&) { attach_one(e); });
+    sync_areas();
     return ok;
 }
 
+void Runtime::set_areas(std::vector<Thing> areas) { areas_ = std::move(areas); }
+
+void Runtime::sync_areas() {
+    if (!scene_) return;
+    flecs::world& ecs = scene_->ecs();
+    std::unordered_map<std::string, flecs::entity_t> keep;
+    for (const Module& m : compiled_.modules) {
+        if (!is_area(m.thing)) continue;
+        if (std::none_of(areas_.begin(), areas_.end(), [&](const Thing& t) { return t.id == m.thing; })) continue;
+        flecs::entity_t id = 0;
+        if (const auto it = area_entities_.find(m.thing); it != area_entities_.end() && ecs.is_alive(it->second)) id = it->second;
+        flecs::entity e = id ? ecs.entity(id) : ecs.entity();
+        const script::Script* has = e.try_get<script::Script>();
+        if (!has || has->name != m.name) e.set<script::Script>({m.name, false, false});
+        keep[m.thing] = e.id();
+    }
+    for (const auto& [area, id] : area_entities_)
+        if (!keep.contains(area) && ecs.is_alive(id)) ecs.entity(id).destruct();
+    area_entities_ = std::move(keep);
+}
+
+void Runtime::area_event(std::string_view area, flecs::entity_t hero, bool entered) {
+    const flecs::entity_t e = area_entity(area);
+    if (e) host_.enter(e, hero, entered);
+}
+
+flecs::entity_t Runtime::area_entity(std::string_view area) const {
+    const auto it = area_entities_.find(std::string(area));
+    return it == area_entities_.end() ? 0 : it->second;
+}
+
+bool Runtime::is_area_entity(flecs::entity_t e) const {
+    if (!e) return false;
+    for (const auto& [area, id] : area_entities_)
+        if (id == e) return true;
+    return false;
+}
+
 void Runtime::attach(scene::Scene& scene) {
+    if (scene_ != &scene) area_entities_.clear();
     scene_ = &scene;
     flecs::world& ecs = scene.ecs();
     if (observer_) observer_.destruct();
@@ -199,6 +243,7 @@ void Runtime::attach(scene::Scene& scene) {
         attach_one(e);
     });
     ecs.each([&](flecs::entity e, const objects::ObjectRef&) { attach_one(e); });
+    sync_areas();
 }
 
 void Runtime::attach_one(flecs::entity e) {

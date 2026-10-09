@@ -3,8 +3,9 @@ add_library(forge_level STATIC
   src/tile_edit.cpp
   src/object_edit.cpp
   src/physics.cpp
-  src/light.cpp)
+  src/light.cpp
+  src/areas.cpp)
 add_library(forge::level ALIAS forge_level)
 target_include_directories(forge_level PUBLIC include)
-target_link_libraries(forge_level PUBLIC forge::core forge::world forge::scene forge::objects forge::editor forge::render forge::data forge::sim)
+target_link_libraries(forge_level PUBLIC forge::core forge::world forge::scene forge::objects forge::editor forge::render forge::data forge::sim PRIVATE yyjson)
 forge_target_defaults(forge_level)

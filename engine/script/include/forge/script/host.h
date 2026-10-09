@@ -154,6 +154,12 @@ public:
     // Runs a piece of code once, outside any entity (console, tests).
     bool run(std::string_view source, std::string* error = nullptr);
 
+    // An area the game checks itself, not a Trigger (a named place of the
+    // level the hero came into or left): its on_enter / on_leave, run with
+    // the triggers of the tick under way (else the next one). It need not
+    // have a Position: an entity in no chunk waits in the world's time.
+    void enter(flecs::entity_t area, flecs::entity_t other, bool entered);
+
     // A message for an entity's on_message, delivered at the next tick.
     // to = 0: to every scripted entity running then (a button's «Сообщение
     // логике»).

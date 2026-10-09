@@ -57,7 +57,8 @@ struct Plan {
 
 bool fits(std::string_view rule, const Thing& t) {
     if (rule == "hero") return t.id == kHero;
-    if (rule == "thing") return t.id != kHero;
+    if (rule == "thing") return t.id != kHero && !t.area;
+    if (rule == "area") return t.area;
     return true;
 }
 
@@ -73,14 +74,15 @@ bool plan(const Link& l, usize index, const Verbs& verbs, const FindThing& thing
     p.a = things(l.a);
     p.b = things(l.b);
     if (!p.a || !p.b) {
-        problem = "нет такой вещи: «" + (p.a ? l.b : l.a) + "»";
+        const std::string& missing = p.a ? l.b : l.a;
+        problem = is_area(missing) ? "нет такой зоны на уровне: её удалили или она с другого уровня" : "нет такой вещи: «" + missing + "»";
         return false;
     }
     if (!fits(p.verb->a_is, *p.a) || !fits(p.verb->b_is, *p.b)) {
         const bool a_wrong = !fits(p.verb->a_is, *p.a);
         const std::string& rule = a_wrong ? p.verb->a_is : p.verb->b_is;
         problem = "«" + p.verb->name + "»: " + (a_wrong ? "первой" : "второй") + " вещью может быть только " +
-                  (rule == "hero" ? "герой" : "вещь, а не герой");
+                  (rule == "hero" ? "герой" : rule == "area" ? "зона уровня" : "вещь, а не герой и не зона");
         return false;
     }
     if (l.a == kHero && l.b == kHero) {
