@@ -81,11 +81,16 @@ struct Sounds {
 
 // The hero's size, for spawning people.
 inline constexpr f32 kHeroHalfW = 0.38f, kHeroHalfH = 0.92f;
+// The world's pull of a level without physics.json, tiles / s² down.
+inline constexpr f32 kGravity = 40;
 // The light of a torch.
 inline constexpr forge::Color kTorchLight{1.5f, 1.05f, 0.55f, 1.0f};
 
 forge::world::WorldDesc world_desc();
 void register_components(forge::scene::Scene& scene);
+// The game's solid tiles, its water and falling sand: for its simulation and
+// for the editor's flow trial, so both move them the same way.
+void setup_cells(forge::sim::CollisionRules& rules, forge::sim::CellSim& cells);
 // The game's object kinds and templates: kinds.json and objects/ in its data
 // folder.
 bool load_objects(forge::objects::Library& library, const std::filesystem::path& game_dir, std::string* error = nullptr);
@@ -170,6 +175,9 @@ public:
     bool object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const override;
     void object_moved(flecs::entity e) override;
     bool object_component_shown(const forge::reflect::TypeInfo* type) const override;
+    forge::level::LevelPhysics default_physics() const override { return {0, kGravity}; }
+    std::vector<std::string> physics_fills() const override { return {"water", "sand"}; }
+    std::unique_ptr<forge::sim::CellSim> make_cells(forge::sim::CollisionRules& rules) const override;
 
     const SliceGenerator& slice_generator() const { return *gen_; }
 

@@ -8,9 +8,10 @@
 //                                   (the level editor's «Играть отсюда»; FILE gets the links
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
-//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes]
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics]
 //                                   offscreen: plays the game through and checks it
-//                                   (volumes: over a settings.json of music and sounds at 0)
+//                                   (volumes: over a settings.json of music and sounds at 0;
+//                                   physics: the level of games/examples/physics as «Играть отсюда» starts it)
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -45,6 +46,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -231,6 +233,10 @@ private:
         }
         if (scene_ == "templates" || scene_ == "volumes") {
             build_templates(s);
+            return;
+        }
+        if (scene_ == "physics") {
+            build_physics(s);
             return;
         }
         SliceGame& g = g_;
@@ -2782,6 +2788,234 @@ private:
                 return true;
             }
             return false;
+        }});
+    }
+
+    // The level editor's «Физика» as the game plays it: games/examples/physics/level, made in the editor with the
+    // mouse (its self-test makes it again and compares), read from the files the way «Играть отсюда» starts it
+    // (in a package from the package's own data/examples). An old level keeps the game's pull; the example's
+    // world pull, gravity point, water and sand are the author's; a body is pulled by the point, the water and
+    // the sand fall along the world's pull (also when it goes left, in a copy); the example's files stay as they were.
+    void build_physics(Shell& s) {
+        SliceGame& g = g_;
+        struct State {
+            std::filesystem::path dir, left;
+            std::vector<std::pair<std::string, std::vector<u8>>> files;
+            flecs::entity_t inside = 0, outside = 0, coins = 0, far = 0;
+            f64 coins_x = 0, water_x = 0, water_y = 0, sand_x = 0, sand_y = 0;
+            u64 id = 0;
+        };
+        auto st = std::make_shared<State>();
+        const i32 v = g.generator().village_y();
+        const f64 cx = 68.5, cy = v - 12.5; // the example's point: radius 10, strength 60
+        // Every file of a folder with its bytes, by name.
+        auto files_of = [](const std::filesystem::path& dir) {
+            std::vector<std::pair<std::string, std::vector<u8>>> out;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+                if (!e.is_regular_file()) continue;
+                std::vector<u8> bytes;
+                read_file(e.path(), bytes);
+                out.emplace_back(path_to_utf8(e.path().filename()), std::move(bytes));
+            }
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        // Water (in full cells) or sand in a rectangle of tiles (both ends in), and where it is on average.
+        auto water = [&g](i32 x0, i32 y0, i32 x1, i32 y1, f64* mx = nullptr, f64* my = nullptr) {
+            f64 n = 0, sx = 0, sy = 0;
+            for (i32 y = y0; y <= y1; ++y)
+                for (i32 x = x0; x <= x1; ++x) {
+                    const world::TileId t = g.tile(kLiquids, x, y);
+                    if (forge::sim::liquid_kind(t) != kWater) continue;
+                    const f64 a = forge::sim::liquid_amount(t) / static_cast<f64>(forge::sim::kFull);
+                    n += a;
+                    sx += a * x;
+                    sy += a * y;
+                }
+            if (mx) *mx = n > 0 ? sx / n : std::nan("");
+            if (my) *my = n > 0 ? sy / n : std::nan("");
+            return n;
+        };
+        auto sand = [&g](i32 x0, i32 y0, i32 x1, i32 y1, f64* mx = nullptr, f64* my = nullptr) {
+            u32 n = 0;
+            f64 sx = 0, sy = 0;
+            for (i32 y = y0; y <= y1; ++y)
+                for (i32 x = x0; x <= x1; ++x)
+                    if (g.tile(kBlocks, x, y) == world::TileSand) {
+                        ++n;
+                        sx += x;
+                        sy += y;
+                    }
+            if (mx) *mx = n ? sx / n : std::nan("");
+            if (my) *my = n ? sy / n : std::nan("");
+            return n;
+        };
+        auto pull = [&g](f64 x, f64 y, f32 ex, f32 ey) {
+            f32 gx = 0, gy = 0;
+            g.pull_at(x, y, gx, gy);
+            return std::fabs(gx - ex) < 1e-4f && std::fabs(gy - ey) < 1e-4f;
+        };
+        // The pull a probe felt in its last tick, near (ex, ey) (it moves meanwhile, and the way to a centre turns
+        // with it); what it felt goes into what.
+        auto felt = [&g](flecs::entity_t e, f32 ex, f32 ey, f32 near, std::string& what) {
+            f64 x = 0, y = 0;
+            f32 gx = 0, gy = 0;
+            const bool ok = g.probe(e, x, y, gx, gy);
+            char t[96];
+            std::snprintf(t, sizeof(t), "%.2f, %.2f у тела в %.2f, %.2f", static_cast<f64>(gx), static_cast<f64>(gy), x, y);
+            what = t;
+            return ok && std::fabs(gx - ex) <= near && std::fabs(gy - ey) <= near;
+        };
+
+        steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
+            if (f < 5) return false;
+            g.set_level({});
+            check(s.new_game(), "новая игра со своего уровня игры");
+            return true;
+        }});
+        steps_.push_back({"старый уровень: тянет вниз, как в игре", 20, [&s, &g, felt, this, st](u32 f) {
+            if (f == 0) {
+                std::error_code ec;
+                check(!std::filesystem::exists(s.game_dir() / "level" / "physics.json", ec), "у уровня игры нет physics.json");
+                f32 gx = 0, gy = 0;
+                g.world_gravity(gx, gy);
+                check(gx == 0 && gy == kGravity, "гравитация мира 0, 40: " + std::to_string(gx) + ", " + std::to_string(gy));
+                st->far = g.spawn_probe(g.hero_x(), g.hero_y() - 6);
+                check(st->far != 0, "тело-проба в воздухе");
+            }
+            if (f < 5) return false;
+            std::string what;
+            const bool ok = felt(st->far, 0, kGravity, 0, what);
+            check(ok, "тело чувствует только мировую: " + what);
+            check(g.gravity_sources() == 0 && g.points().empty(), "точек гравитации нет");
+            return true;
+        }});
+        steps_.push_back({"пример «Физика» из файлов", 140, [&s, &g, cx, cy, v, files_of, water, sand, pull, felt, this, st](u32 f) {
+            if (f == 0) {
+                st->dir = s.game_dir().parent_path() / "examples" / "physics" / "level";
+                std::error_code ec;
+                FORGE_INFO("пример «Физика» читается из %s", path_to_utf8(st->dir).c_str());
+                check(std::filesystem::is_regular_file(st->dir / "physics.json", ec), "physics.json примера на диске: " + path_to_utf8(st->dir));
+                st->files = files_of(st->dir);
+                check(st->files.size() > 2, "с ним файлы участков: " + std::to_string(st->files.size()));
+                forge::level::LevelPhysics p{0, kGravity};
+                check(forge::level::load_physics(st->dir, p) && p == forge::level::LevelPhysics{0, 30}, "в файле: вниз 30");
+                // «Играть отсюда»: a new game from the level folder, the hero where the author asked.
+                g.set_level(st->dir, true, 58.5, v);
+                check(s.new_game(), "новая игра с уровня примера");
+                f32 gx = 0, gy = 0;
+                g.world_gravity(gx, gy);
+                check(gx == 0 && gy == 30, "игра тянет вниз с силой 30: " + std::to_string(gx) + ", " + std::to_string(gy));
+                const std::vector<SliceGame::Point> pts = g.points();
+                check(pts.size() == 1, "одна точка гравитации: " + std::to_string(pts.size()));
+                if (!pts.empty()) {
+                    const SliceGame::Point& pt = pts[0];
+                    st->id = pt.id;
+                    check(pt.id != 0 && pt.x == cx && pt.y == cy && pt.source.radius == 10 && pt.source.strength == 60 &&
+                              pt.source.toward_center && !pt.source.fade && !pt.source.replace,
+                          "точка автора: свой id, центр 68.5, v-12.5, радиус 10, сила 60");
+                }
+                check(water(40, v - 9, 46, v - 6) == 28 && water(48, v - 1, 50, v - 1) == 3, "вода автора в воздухе (28) и у земли (3)");
+                check(sand(52, v - 12, 55, v - 10) == 12, "песок автора в воздухе (12)");
+                st->coins = g.nearest_item(64.5, cy, 1.5);
+                f64 y = 0;
+                check(st->coins != 0 && g.position_of(st->coins, st->coins_x, y), "монеты автора у точки");
+                st->inside = g.spawn_probe(cx + 4, cy);
+                st->outside = g.spawn_probe(cx + 12, cy);
+            }
+            if (f == 3) {
+                check(g.gravity_sources() == 1, "симуляция нашла точку");
+                // GravityField's rules: in the centre only the world's pull, inside (the circle too) the point's
+                // strength toward the centre added to it, outside only the world's.
+                check(pull(cx, cy, 0, 30), "в самом центре: только мировая");
+                check(pull(cx + 6, cy, -60, 30) && pull(cx, cy - 6, 0, 30 + 60), "внутри: 60 к центру плюс мировая");
+                check(pull(cx + 10, cy, -60, 30), "на окружности ещё действует");
+                check(pull(cx + 10.25, cy, 0, 30), "за ней только мировая");
+                std::string what;
+                bool ok = felt(st->inside, -60, 30, 1, what);
+                check(ok, "тело внутри: 60 к центру плюс мировая: " + what);
+                ok = felt(st->outside, 0, 30, 0, what);
+                check(ok, "тело снаружи: только мировая: " + what);
+            }
+            if (f == 30) {
+                f64 x = 0, y = 0, xc = 0, yc = 0;
+                const bool probe = g.position_of(st->inside, x, y), coins = g.position_of(st->coins, xc, yc);
+                check(probe && x < cx + 3.5, "тело внутри летит к центру: x " + std::to_string(x));
+                check(coins && xc > st->coins_x + 0.3, "монеты тянет к центру: x " + std::to_string(st->coins_x) + " → " + std::to_string(xc));
+            }
+            if (f < 130) return false;
+            f64 wy = 0;
+            const f64 all = water(-64, v - 30, 127, v + 8, nullptr, &wy), below = water(-64, v - 4, 127, v + 8);
+            // A thin film on a floor dries up as the water spreads (CellSim): most of the 31 cells stay.
+            check(water(40, v - 9, 46, v - 6) < 0.5 && all > 25 && below > all - 0.5,
+                  "вода упала на землю: из " + std::to_string(all) + " у земли " + std::to_string(below) + ", в среднем y " +
+                      std::to_string(wy));
+            check(sand(52, v - 12, 55, v - 10) == 0 && sand(44, v - 4, 62, v - 1) == 12, "песок упал, весь");
+            return true;
+        }});
+        steps_.push_back({"сохранение игры: файлы примера не тронуты", 10, [&s, &g, files_of, this, st](u32 f) {
+            if (f == 0) {
+                check(s.save("physics", "Физика"), "игра сохраняется");
+                std::vector<u8> mine, author;
+                read_file(s.slots().folder("physics") / "world" / "physics.json", mine);
+                read_file(st->dir / "physics.json", author);
+                check(!mine.empty() && mine == author, "в сохранении physics.json автора");
+                check(files_of(st->dir) == st->files, "файлы примера как были");
+                check(s.load("physics"), "сохранение загружается");
+            }
+            if (f < 3) return false;
+            f32 gx = 0, gy = 0;
+            g.world_gravity(gx, gy);
+            const std::vector<SliceGame::Point> pts = g.points();
+            check(gx == 0 && gy == 30 && pts.size() == 1 && pts[0].id == st->id, "загруженная игра: вниз 30 и та же точка");
+            return true;
+        }});
+        steps_.push_back({"сила мира влево: вода и песок туда же", 80, [&s, &g, v, water, sand, felt, this, st](u32 f) {
+            if (f == 0) {
+                st->left = std::filesystem::temp_directory_path() / "forge_slice_physics_left";
+                std::error_code ec;
+                std::filesystem::remove_all(st->left, ec);
+                std::string why;
+                check(forge::level::copy_level(st->dir, st->left, &why) &&
+                          forge::level::save_physics(st->left, {-30, 0}, &why),
+                      "копия примера с силой мира влево " + path_to_utf8(st->left) + why);
+                g.set_level(st->left, true, 58.5, v);
+                check(s.new_game(), "новая игра с копии");
+                f32 gx = 0, gy = 0;
+                g.world_gravity(gx, gy);
+                check(gx == -30 && gy == 0, "игра тянет влево: " + std::to_string(gx) + ", " + std::to_string(gy));
+                water(-128, v - 30, 127, v + 8, &st->water_x, &st->water_y);
+                sand(-128, v - 30, 127, v + 8, &st->sand_x, &st->sand_y);
+                st->far = g.spawn_probe(30.5, v - 20);
+            }
+            if (f == 3) {
+                std::string what;
+                const bool ok = felt(st->far, -30, 0, 0, what);
+                check(ok, "тело чувствует мировую влево: " + what);
+            }
+            if (f < 60) return false;
+            f64 wx = 0, wy = 0, sx = 0, sy = 0;
+            water(-128, v - 30, 127, v + 8, &wx, &wy);
+            const u32 n = sand(-128, v - 30, 127, v + 8, &sx, &sy);
+            check(n == 12, "песок весь на месте: " + std::to_string(n));
+            check(wx < st->water_x - 2 && std::fabs(wy - st->water_y) < 2,
+                  "вода течёт влево, а не вниз: x " + std::to_string(st->water_x) + " → " + std::to_string(wx) + ", y " +
+                      std::to_string(st->water_y) + " → " + std::to_string(wy));
+            check(sx < st->sand_x - 2 && std::fabs(sy - st->sand_y) < 2,
+                  "песок сыплется влево, а не вниз: x " + std::to_string(st->sand_x) + " → " + std::to_string(sx) + ", y " +
+                      std::to_string(st->sand_y) + " → " + std::to_string(sy));
+            return true;
+        }});
+        steps_.push_back({"обратно в меню", 5, [&s, &g, files_of, this, st](u32 f) {
+            if (f == 0) {
+                s.to_main_menu();
+                g.set_level({});
+                check(files_of(st->dir) == st->files, "файлы примера как были");
+                std::error_code ec;
+                std::filesystem::remove_all(st->left, ec);
+            }
+            return f >= 2;
         }});
     }
 

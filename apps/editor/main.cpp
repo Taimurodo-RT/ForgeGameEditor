@@ -1760,7 +1760,7 @@ private:
     }
 
     bool level_step(u32 f) {
-        if (f >= 19) return objects_step();
+        if (f >= 19) return ph_step_ <= kPhysLast ? physics_step() : objects_step();
         const usize stone = tile_named("stone"), sand = tile_named("sand");
         switch (f) {
         case 0: {
@@ -1978,6 +1978,646 @@ private:
         }
         return true;
     }
+    // --- the level's physics («Физика»): games/examples/physics made with the mouse ---
+    static constexpr u32 kPhysLast = 32;
+    // The example, as this run makes it (the folder is new each run).
+    static std::filesystem::path phys_root() { return std::filesystem::temp_directory_path() / "forge_editor_physics"; }
+    i32 vy() { return ed_.level_module.slice_generator().village_y(); }
+    flecs::entity point_entity() { return lv().level().find(point_); }
+    sim::GravitySource point_source() {
+        const flecs::entity e = point_entity();
+        return e.is_valid() ? e.get<sim::GravitySource>() : sim::GravitySource{0, 0};
+    }
+    f64 point_x() {
+        const flecs::entity e = point_entity();
+        return e.is_valid() ? e.get<scene::Position>().tile_x() : std::nan("");
+    }
+    // Gravity points loaded now.
+    usize point_count() {
+        usize n = 0;
+        lv().level().scene().ecs().each([&](const scene::Position&, const sim::GravitySource&) { ++n; });
+        return n;
+    }
+    // Blocks and liquids of a rectangle of cells, to compare.
+    std::vector<world::TileId> area(i32 x0, i32 y0, i32 x1, i32 y1) {
+        std::vector<world::TileId> out;
+        for (i32 y = y0; y <= y1; ++y)
+            for (i32 x = x0; x <= x1; ++x) {
+                out.push_back(at(x, y, 1));
+                out.push_back(at(x, y, 2));
+            }
+        return out;
+    }
+    u32 count_tiles(u32 layer, world::TileId value, i32 x0, i32 y0, i32 x1, i32 y1) {
+        u32 n = 0;
+        for (i32 y = y0; y <= y1; ++y)
+            for (i32 x = x0; x <= x1; ++x) n += at(x, y, layer) == value;
+        return n;
+    }
+    // Liquid in a rectangle, in full cells.
+    f64 water_in(i32 x0, i32 y0, i32 x1, i32 y1) {
+        f64 n = 0;
+        for (i32 y = y0; y <= y1; ++y)
+            for (i32 x = x0; x <= x1; ++x) n += sim::liquid_amount(at(x, y, 2)) / static_cast<f64>(sim::kFull);
+        return n;
+    }
+    // A drag in the view with the left button from one tile point to another.
+    void drag_points(f64 x0, f64 y0, f64 x1, f64 y1) {
+        to_point(x0, y0);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+        for (int i = 1; i <= 4; ++i) to_point(x0 + (x1 - x0) * i / 4, y0 + (y1 - y0) * i / 4);
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+    }
+    void right_down() {
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+        e.button.x = x_;
+        e.button.y = y_;
+        e.button.button = SDL_BUTTON_RIGHT;
+        e.button.down = true;
+        ed_.handle_event(e);
+        e.type = SDL_EVENT_MOUSE_BUTTON_UP;
+        e.button.down = false;
+        ed_.handle_event(e);
+    }
+    // The shown element of an id (the field rows are in two sections of the panel), else the first.
+    Rml::Element* visible(const char* id) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || e->IsVisible(true) || !e->GetOwnerDocument()) return e;
+        Rml::ElementList all;
+        e->GetOwnerDocument()->QuerySelectorAll(all, std::string("#") + id);
+        for (Rml::Element* x : all)
+            if (x->IsVisible(true)) return x;
+        return e;
+    }
+    bool click_id(const char* id) {
+        Rml::Element* e = visible(id);
+        if (e) e->Click();
+        return e != nullptr;
+    }
+    std::string input_value(const char* id) {
+        Rml::Element* e = visible(id);
+        return e ? e->GetAttribute<Rml::String>("value", "") : std::string("?");
+    }
+    std::string element_text(const char* id) {
+        Rml::Element* e = visible(id);
+        return e ? e->GetInnerRML() : std::string("?");
+    }
+    // Every label in the history that is applied, oldest first.
+    std::vector<std::string> history_labels() {
+        std::vector<std::string> out;
+        for (usize i = 0; i < lv().history().cursor(); ++i) out.push_back(lv().history().label_at(i));
+        return out;
+    }
+    bool has_label(const std::string& label) {
+        const auto all = history_labels();
+        return std::find(all.begin(), all.end(), label) != all.end();
+    }
+    // Waits n frames in this step; true while waiting.
+    bool wait(u32 n) {
+        if (++ph_wait_ < n) return true;
+        ph_wait_ = 0;
+        return false;
+    }
+
+    bool physics_step() {
+        const i32 v = vy();
+        const std::filesystem::path example = phys_root() / "level";
+        bool next = true;
+        switch (ph_step_) {
+        case 0: {
+            // The level of the steps above stays as it was; the example is a level of its own.
+            key(SDLK_S, SDL_KMOD_CTRL);
+            ph_main_ = lv().level().folder();
+            std::error_code ec;
+            std::filesystem::remove_all(phys_root(), ec);
+            std::filesystem::create_directories(example, ec);
+            check(lv().open_folder(example), "a new level opens for the physics example");
+            check(lv().history().cursor() == 0 && !lv().dirty(), "with no history of its own");
+            check(!std::filesystem::exists(example / "physics.json"), "and no physics.json yet");
+            key(SDLK_P, SDL_KMOD_NONE);
+            check(lv().mode() == Mode::Physics, "P opens «Физика»");
+            const f32 zoom = std::clamp(lv().view_w() / 64.0f, 6.0f, 16.0f);
+            lv().camera().zoom = zoom;
+            lv().camera().x = 56;
+            lv().camera().y = v - 10;
+            break;
+        }
+        case 1:
+            if (wait(3)) return true;
+            check(shown("ph-tool-point") && shown("ph-trial") && shown("ph-dir") && shown("ph-strength"),
+                  "the mode shows its tools, the trial and the world's pull");
+            check(!shown("mode-physics") || ed_.find_element("mode-physics")->IsClassSet("soon") == false,
+                  "«Физика» is no longer marked as coming later");
+            check(lv().pull_dir() == PullDir::Down && lv().pull_strength() == 40.0f && element_text("ph-dir") == "вниз" &&
+                      input_value("ph-strength") == "40",
+                  "a level without physics.json: the game's pull, down 40");
+            check(!shown("ph-error"), "no error about it");
+            entries_ = lv().history().cursor();
+            for (const char* bad : {"abc", "nan", "inf", ""}) lv().set_pull_strength(bad, false);
+            check(lv().history().cursor() == entries_ && lv().pull_strength() == 40.0f, "not numbers change nothing");
+            lv().set_pull_strength("1e9", false);
+            check(lv().pull_strength() == 200.0f && lv().history().cursor() == entries_ + 1, "too strong: kept at 200 and said so");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().pull_strength() == 40.0f, "Ctrl+Z gives 40 back");
+            lv().set_pull_strength("30", false);
+            check(lv().level().physics() == level::LevelPhysics{0, 30} && lv().history().undo_label() == "Гравитация мира: сила" &&
+                      lv().dirty(),
+                  "the strength set to 30: one history entry, the level unsaved");
+            break;
+        case 2:
+            check(input_value("ph-strength") == "30", "the panel shows 30");
+            check(click_id("ph-dir-next"), "a click on «>» of the direction");
+            check(lv().level().physics() == level::LevelPhysics{-30, 0} && lv().pull_dir() == PullDir::Left,
+                  "the pull goes left, as strong");
+            check(click_id("ph-dir-prev"), "a click on «<»");
+            check(lv().level().physics() == level::LevelPhysics{0, 30}, "and down again");
+            lv().set_pull_dir(PullDir::None);
+            check(lv().level().physics() == level::LevelPhysics{0, 0} && lv().pull_dir() == PullDir::None, "«нет»: no pull at all");
+            lv().set_pull_dir(PullDir::Down);
+            check(lv().level().physics() == level::LevelPhysics{0, 30}, "down again keeps the strength 30");
+            break;
+        case 3: {
+            check(element_text("ph-dir") == "вниз" && !shown("ph-error"), "the panel follows");
+            check(click_id("ph-tool-point") && lv().phys_tool() == PhysTool::Point, "the point tool");
+            entries_ = lv().history().cursor();
+            // Pressed at the centre's cell, dragged out to the radius.
+            drag_points(60.3, v - 12.7, 66.5, v - 12.5);
+            check(lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Поставить: Точка гравитации",
+                  "a press and a drag make one point, one history entry");
+            check(lv().selection().size() == 1, "the new point is selected");
+            point_ = lv().selection().empty() ? 0 : lv().selection()[0];
+            const sim::GravitySource g = point_source();
+            check(point_entity().is_valid() && point_x() == 60.5 && g.radius == 6 && g.strength == 40 && g.toward_center,
+                  "centred in its cell, radius as dragged (6), strength 40");
+            check(point_count() == 1, "one point in the level");
+            break;
+        }
+        case 4: {
+            check(input_value("lv-field-0") == "60.50" && input_value("lv-num-3") == "6", "the panel shows its centre and radius");
+            // A drag taken back: Esc, then the right button; a click alone: radius 8.
+            entries_ = lv().history().cursor();
+            to_point(30.5, v - 12.5);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_point(35.5, v - 12.5);
+            check(lv().gesture(), "a point being dragged out");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(point_count() == 1 && lv().history().cursor() == entries_ && lv().phys_tool() == PhysTool::Point,
+                  "Esc while dragging: no point, no history, the tool stays");
+            to_point(30.5, v - 12.5);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_point(33.5, v - 12.5);
+            right_down();
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(point_count() == 1 && lv().history().cursor() == entries_, "the right button while dragging: the same");
+            to_point(30.5, v - 12.5);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(point_count() == 2 && lv().history().cursor() == entries_ + 1, "a click alone places a point");
+            const flecs::entity e = lv().selection().empty() ? flecs::entity() : lv().level().find(lv().selection()[0]);
+            check(e.is_valid() && e.get<sim::GravitySource>().radius == 8, "of radius 8");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(point_count() == 1 && lv().history().cursor() == entries_, "Ctrl+Z takes it away");
+            break;
+        }
+        case 5: {
+            check(click_id("ph-tool-select") && lv().phys_tool() == PhysTool::Select, "the select tool");
+            entries_ = lv().history().cursor();
+            // Grabbed at the centre and taken back with Esc: where it was.
+            to_point(60.5, v - 12.5);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            check(lv().selection().size() == 1 && lv().selection()[0] == point_, "a press on the centre selects the point");
+            to_point(63.5, v - 12.5);
+            check(point_x() == 63.5, "the drag moves it");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(point_x() == 60.5 && lv().history().cursor() == entries_, "Esc: back where it was, nothing recorded");
+            // Over the border of two chunks (x = 64).
+            drag_points(60.5, v - 12.5, 68.5, v - 12.5);
+            check(point_x() == 68.5 && point_count() == 1 && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "Передвинуть: Точка гравитации",
+                  "a move over a chunk border: one entry, still one point (x " + std::to_string(point_x()) + ", points " +
+                      std::to_string(point_count()) + ", entries +" + std::to_string(lv().history().cursor() - entries_) + ", " +
+                      lv().history().undo_label() + ")");
+            check(lv().selection().size() == 1 && lv().selection()[0] == point_ && point_entity().is_valid(), "the same id");
+            break;
+        }
+        case 6: {
+            check(input_value("lv-field-0") == "68.50", "the panel shows the new X");
+            entries_ = lv().history().cursor();
+            // The selected point's circle: dragged out from 6 to 10.
+            drag_points(68.5 + 6, v - 12.5, 68.5 + 10.1, v - 12.5);
+            check(point_source().radius == 10 && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "«Точка гравитации»: Радиус",
+                  "a drag of the circle sets the radius (10), one entry");
+            check(point_x() == 68.5, "and does not move the point");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(point_source().radius == 6, "Ctrl+Z: radius 6 again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(point_source().radius == 10, "Ctrl+Y: 10");
+            break;
+        }
+        case 7: {
+            check(input_value("lv-num-3") == "10", "the panel shows radius 10");
+            entries_ = lv().history().cursor();
+            lv().set_field(2, "60", false);
+            check(point_source().strength == 60 && lv().history().cursor() == entries_ + 1, "«Сила» 60 from the panel");
+            for (const char* bad : {"abc", "", "nan", "1e999"}) lv().set_field(2, bad, false);
+            check(point_source().strength == 60 && lv().history().cursor() == entries_ + 1, "not numbers change nothing");
+            lv().set_field(2, "-500", false);
+            check(point_source().strength == -200, "too strong a push: kept at -200");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            lv().set_field(3, "1e9", false);
+            check(point_source().radius == 128, "too large a radius: kept at 128");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            lv().set_field(3, "0", false);
+            check(point_source().radius == 1, "radius 0: kept at 1");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            // The centre takes no NaN and nothing past the world's edge (a typo does not send it there); a number
+            // inside the world moves it, Ctrl+Z brings it back.
+            auto point_y = [this]() {
+                const flecs::entity e = point_entity();
+                return e.is_valid() ? e.get<scene::Position>().tile_y() : std::nan("");
+            };
+            entries_ = lv().history().cursor();
+            for (const char* bad : {"nan", "1e30", "-1e30"}) lv().set_field(0, bad, false);
+            lv().set_field(1, "1e30", false);
+            check(point_x() == 68.5 && std::fabs(point_y() - (v - 12.5)) < 1e-9 && lv().history().cursor() == entries_,
+                  "X «nan», ±1e30 and Y 1e30: nothing changes");
+            lv().set_field(1, std::to_string(v - 14), false);
+            check(std::fabs(point_y() - (v - 14)) < 1e-9 && lv().history().cursor() == entries_ + 1, "Y inside the world: moved");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(point_x() == 68.5 && std::fabs(point_y() - (v - 12.5)) < 1e-9, "Ctrl+Z: back at 68.5, v - 12.5");
+            const sim::GravitySource g = point_source();
+            check(g.strength == 60 && g.radius == 10 && !g.fade && !g.replace, "strength 60, radius 10 as set");
+            break;
+        }
+        case 8: {
+            check(input_value("lv-num-2") == "60" && input_value("lv-num-3") == "10" && input_value("lv-field-0") == "68.50",
+                  "the panel and the point agree");
+            check(click_id("lv-bool-4"), "a click on «Слабеет к краю»");
+            check(point_source().fade, "it fades now");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!point_source().fade, "Ctrl+Z: it does not");
+            // Water: a pool in the air.
+            check(click_id("ph-tool-water") && lv().phys_tool() == PhysTool::Water, "the water tool");
+            entries_ = lv().history().cursor();
+            to_cell(30, v - 9);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(34, v - 6);
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(water_in(28, v - 12, 36, v - 4) == 0 && lv().history().cursor() == entries_, "Esc while dragging: no water");
+            to_cell(40, v - 9);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(43, v - 7);
+            to_cell(46, v - 6);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(water_in(40, v - 9, 46, v - 6) == 28 && water_in(39, v - 10, 47, v - 5) == 28,
+                  "the rectangle 7 × 4 is full of water, nothing around it");
+            check(lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Вода: 7 × 4", "one history entry");
+            check(lv().phys_note().find("залито 28") != std::string::npos && lv().phys_note().find("не тронуты: 0") != std::string::npos,
+                  "the note says how much: " + lv().phys_note());
+            break;
+        }
+        case 9: {
+            check(click_id("ph-tool-sand"), "the sand tool");
+            entries_ = lv().history().cursor();
+            to_cell(52, v - 12);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(55, v - 10);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(count_tiles(1, world::TileSand, 52, v - 12, 55, v - 10) == 12 && lv().history().undo_label() == "Песок: 4 × 3",
+                  "a heap of sand 4 × 3 in the air");
+            // Water over the ground: only the free row gets it, the ground stays.
+            check(click_id("ph-tool-water"), "water again");
+            const std::vector<world::TileId> ground = area(48, v, 50, v + 1);
+            to_cell(48, v - 1);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(50, v + 1);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(water_in(48, v - 1, 50, v - 1) == 3 && area(48, v, 50, v + 1) == ground,
+                  "over the ground: the 3 free cells get water, the 6 of the ground stay as they were");
+            check(lv().phys_note().find("залито 3") != std::string::npos && lv().phys_note().find("не тронуты: 6") != std::string::npos,
+                  "and the note says so: " + lv().phys_note());
+            check(lv().history().cursor() == entries_ + 2, "one entry each");
+            // All ground: nothing at all.
+            to_cell(48, v + 2);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(50, v + 3);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(lv().history().cursor() == entries_ + 2 && lv().phys_note().find("свободных клеток нет") != std::string::npos,
+                  "a rectangle of ground only: no entry, and it says why");
+            break;
+        }
+        case 10: {
+            // Coins inside the point: a body for the game to pull. The history is one for all modes.
+            const usize before = lv().history().cursor();
+            key(SDLK_O, SDL_KMOD_NONE);
+            check(lv().mode() == Mode::Objects && lv().history().cursor() == before, "O: the objects mode, the history as it was");
+            const i32 coins = coins_index();
+            if (Rml::Element* e = ed_.find_element(("obj-" + std::to_string(coins)).c_str())) e->Click();
+            click_cell(64, v - 13);
+            check(lv().history().cursor() == before + 1 && lv().history().undo_label() == "Поставить: Монеты", "coins placed");
+            coins_ = lv().selection().empty() ? 0 : lv().selection()[0];
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            key(SDLK_P, SDL_KMOD_NONE);
+            check(lv().mode() == Mode::Physics && lv().selection().empty(), "P: back to «Физика», the coins are not its selection");
+            check(has_label("Гравитация мира: сила") && has_label("Поставить: Точка гравитации") && has_label("Вода: 7 × 4") &&
+                      has_label("Песок: 4 × 3") && has_label("Поставить: Монеты"),
+                  "the history keeps the pull, the point, the water, the sand and the coins");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lv().level().find(coins_).is_valid(), "Ctrl+Z in «Физика» takes the coins back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().find(coins_).is_valid(), "Ctrl+Y puts them again");
+            break;
+        }
+        case 11: {
+            // The trial: started, running, put back; history and «unsaved» untouched.
+            ph_area_ = area(28, v - 30, 92, v + 2);
+            entries_ = lv().history().cursor();
+            ph_dirty_ = lv().dirty();
+            ph_edits_ = lv().level().edits();
+            check(click_id("ph-trial") && lv().trial_running(), "«Проба» starts the trial");
+            break;
+        }
+        case 12:
+            if (wait(100)) return true;
+            check(lv().trial_running() && lv().trial().ticks() >= 90, "the trial runs");
+            check(water_in(40, v - 9, 46, v - 6) < 1 && water_in(30, v - 2, 60, v - 1) > 20,
+                  "the water fell from the air to the ground: " + std::to_string(water_in(30, v - 2, 60, v - 1)));
+            check(count_tiles(1, world::TileSand, 52, v - 12, 55, v - 10) == 0 && count_tiles(1, world::TileSand, 48, v - 3, 59, v - 1) == 12,
+                  "the sand fell, all 12");
+            check(lv().history().cursor() == entries_ && lv().dirty() == ph_dirty_ && lv().level().edits() == ph_edits_,
+                  "nothing of it is in the history or an edit of the level");
+            check(element_text("ph-trial").find("Сбросить") != std::string::npos, "the button says «Сбросить»");
+            check(click_id("ph-trial") && !lv().trial_running(), "«Сбросить» ends it");
+            check(area(28, v - 30, 92, v + 2) == ph_area_, "the water and the sand are back as the author left them");
+            break;
+        case 13:
+            // An edit during the trial puts the level back first; the view may go far meanwhile.
+            check(click_id("ph-trial") && lv().trial_running(), "the trial again");
+            ph_cam_ = lv().camera().x;
+            break;
+        case 14:
+            // 20 frames here, 20 with the view 900 tiles away, then back.
+            if (++ph_wait_ == 20) lv().camera().x += 900;
+            if (ph_wait_ < 40) return true;
+            ph_wait_ = 0;
+            lv().camera().x = ph_cam_;
+            check(lv().trial_running() && lv().trial().ticks() > 30, "the trial goes on while the view is far");
+            break;
+        case 15:
+            if (wait(5)) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lv().trial_running() && !lv().level().find(coins_).is_valid(), "Ctrl+Z during the trial: the trial ends, then the undo");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(area(28, v - 30, 92, v + 2) == ph_area_ && lv().level().find(coins_).is_valid(), "the level is as before the trial");
+            break;
+        case 16:
+            // Water poured while the trial runs goes by the author's level, not the trial's: the trial is put back
+            // first. A rectangle over the author's sand, which the trial has let fall: nothing to pour.
+            check(click_id("ph-trial") && lv().trial_running(), "the trial for pouring");
+            break;
+        case 17: {
+            if (wait(60)) return true;
+            check(count_tiles(1, world::TileSand, 52, v - 12, 55, v - 10) == 0 && at(53, v - 11, 1) == 0,
+                  "in the trial the sand has fallen: its cells are empty there");
+            check(click_id("ph-tool-water"), "the water tool during the trial");
+            entries_ = lv().history().cursor();
+            to_cell(52, v - 12);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(55, v - 10);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(!lv().trial_running() && at(53, v - 11, 1) == world::TileSand && water_in(52, v - 12, 55, v - 10) == 0,
+                  "the author's sand: the trial is put back, no water over the sand");
+            check(lv().history().cursor() == entries_ && lv().phys_note().find("свободных клеток нет") != std::string::npos,
+                  "no history entry, and the note says so: " + lv().phys_note());
+            check(area(28, v - 30, 92, v + 2) == ph_area_, "the level is the author's");
+            break;
+        }
+        case 18:
+            check(click_id("ph-trial") && lv().trial_running(), "the trial again");
+            break;
+        case 19: {
+            // A rectangle of both: the author's sand (taken, though the trial emptied it) and cells free for the
+            // author that the trial's fallen sand fills now (free: they get water).
+            if (wait(60)) return true;
+            u32 filled = 0; // free for the author, taken in the trial
+            for (i32 y = v - 9; y <= v - 1; ++y)
+                for (i32 x = 52; x <= 53; ++x) filled += at(x, y, 1) != 0 || at(x, y, 2) != 0;
+            check(filled > 0, "in the trial the fallen sand and water fill free cells: " + std::to_string(filled));
+            entries_ = lv().history().cursor();
+            to_cell(52, v - 12);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(53, v - 1);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(!lv().trial_running() && lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Вода: 2 × 12",
+                  "one history entry, the trial put back first");
+            check(water_in(52, v - 9, 53, v - 1) == 18 && count_tiles(1, 0, 52, v - 9, 53, v - 1) == 18,
+                  "the 18 cells free for the author get water, the trial's sand is gone from them");
+            check(count_tiles(1, world::TileSand, 52, v - 12, 53, v - 10) == 6 && water_in(52, v - 12, 53, v - 10) == 0,
+                  "the author's 6 cells of sand stay sand");
+            check(lv().phys_note().find("залито 18") != std::string::npos && lv().phys_note().find("не тронуты: 6") != std::string::npos,
+                  "the note: " + lv().phys_note());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(28, v - 30, 92, v + 2) == ph_area_, "Ctrl+Z: the author's level");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(water_in(52, v - 9, 53, v - 1) == 18, "Ctrl+Y: the water again");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(28, v - 30, 92, v + 2) == ph_area_ && lv().history().cursor() == entries_, "Ctrl+Z: one step back");
+            break;
+        }
+        case 20:
+            // Far away and back: the point's chunk goes and comes again.
+            lv().camera().x = ph_cam_ + 3000;
+            break;
+        case 21:
+            if (hold(!point_entity().is_valid() && point_count() == 0, "the point's chunk unloads far away")) return true;
+            lv().camera().x = ph_cam_;
+            break;
+        case 22: {
+            if (hold(point_entity().is_valid() && lv().level().find(coins_).is_valid(), "the point comes back")) return true;
+            const sim::GravitySource g = point_source();
+            check(point_count() == 1 && point_x() == 68.5 && g.radius == 10 && g.strength == 60, "one point, as it was");
+            // Deleted and back.
+            check(click_id("ph-tool-select"), "the select tool");
+            click_cell(68, v - 13);
+            check(lv().selection().size() == 1 && lv().selection()[0] == point_, "a click on its centre selects it");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(point_count() == 0 && lv().history().undo_label() == "Удалить: Точка гравитации", "Delete removes it");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(point_count() == 1 && point_entity().is_valid() && point_source().strength == 60, "Ctrl+Z: back, the same id");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(point_count() == 0, "Ctrl+Y: gone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(point_count() == 1, "Ctrl+Z: back");
+            break;
+        }
+        case 23: {
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S saves the example");
+            level::LevelPhysics p;
+            check(level::load_physics(example, p) && p == level::LevelPhysics{0, 30}, "physics.json: down 30");
+            // Closed and opened again.
+            check(lv().open_folder(example), "the example opens again");
+            check(lv().history().cursor() == 0 && lv().level().physics() == level::LevelPhysics{0, 30}, "with its pull");
+            lv().level().ensure_loaded({28, v - 30, 92, v + 2});
+            check(area(28, v - 30, 92, v + 2) == ph_area_, "with its water and sand");
+            const sim::GravitySource g = point_source();
+            check(point_count() == 1 && point_x() == 68.5 && g.radius == 10 && g.strength == 60 && !g.fade && !g.replace,
+                  "with its point: the same id and values");
+            check(lv().level().find(coins_).is_valid(), "and its coins");
+            break;
+        }
+        case 24: {
+            check(element_text("ph-dir") == "вниз" && input_value("ph-strength") == "30", "the panel reads the saved pull");
+            // Deleted after loading, then back with Ctrl+Z.
+            click_cell(68, v - 13);
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(point_count() == 0, "a point loaded from the file is deleted");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(point_count() == 1 && point_entity().is_valid(), "and comes back with its id");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            // «Играть отсюда» starts the game from this folder.
+            lv().camera().x = 20.5;
+            lv().camera().y = v - 1;
+            check(lv().play_here(), "«Играть отсюда» finds a place");
+            const auto cmd = lv().play_command(20.5, v);
+            check(cmd.size() >= 4 && utf8_path(cmd[3]) == example, "the game gets the example's folder");
+            // The example in the repository is this one (ids aside).
+            const std::filesystem::path repo = ed_.game_dir.parent_path() / "examples" / "physics" / "level";
+            level::Level made(ed_.level_module), kept(ed_.level_module);
+            check(made.open(example) && kept.open(repo), "games/examples/physics/level opens: " + path_to_utf8(repo));
+            check(kept.physics() == made.physics(), "its pull is the one made here");
+            const world::Rect r{28, v - 30, 92, v + 2};
+            made.ensure_loaded(r);
+            kept.ensure_loaded(r);
+            bool same = true;
+            for (i32 y = r.y0; y < r.y1; ++y)
+                for (i32 x = r.x0; x < r.x1; ++x)
+                    for (u32 l = 0; l < 3; ++l) same = same && made.tile(l, x, y) == kept.tile(l, x, y);
+            check(same, "its tiles are the ones made here");
+            auto summary = [](level::Level& lvl) {
+                std::vector<std::string> out;
+                lvl.scene().ecs().each([&](flecs::entity e, const scene::Position& p, const sim::GravitySource& g) {
+                    char t[160];
+                    std::snprintf(t, sizeof(t), "point %.2f %.2f r%g s%g f%d r%d id%d", p.tile_x(), p.tile_y(), g.radius, g.strength,
+                                  g.fade, g.replace, e.has<level::LevelId>());
+                    out.push_back(t);
+                });
+                lvl.scene().ecs().each([&](const scene::Position& p, const slice::Item& i) {
+                    char t[96];
+                    std::snprintf(t, sizeof(t), "item %d %.2f %.2f", i.kind, p.tile_x(), p.tile_y());
+                    out.push_back(t);
+                });
+                std::sort(out.begin(), out.end());
+                return out;
+            };
+            const auto a = summary(made), b = summary(kept);
+            std::string list;
+            for (const std::string& t : b) list += t + "; ";
+            check(a == b, "its point and coins are the ones made here: " + list);
+            break;
+        }
+        case 25: {
+            // A physics.json that cannot be used: told, the game's pull meanwhile, not overwritten.
+            const std::filesystem::path bad = phys_root() / "bad";
+            std::error_code ec;
+            std::filesystem::create_directories(bad, ec);
+            const std::string text = "{\"gravity_y\": \"вниз\"}";
+            write_file_atomic(bad / "physics.json", {reinterpret_cast<const u8*>(text.data()), text.size()});
+            check(lv().open_folder(bad), "a level with a bad physics.json still opens");
+            check(lv().level().physics() == level::LevelPhysics{0, 40} && !lv().level().physics_error().empty(),
+                  "with the game's pull, and the reason: " + lv().level().physics_error());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            std::vector<u8> bytes;
+            read_file(bad / "physics.json", bytes);
+            check(std::string(bytes.begin(), bytes.end()) == text, "saving does not touch the author's file");
+            break;
+        }
+        case 26: {
+            check(shown("ph-error") && element_text("ph-error").find("physics.json") != std::string::npos, "the panel says what is wrong");
+            check(click_id("ph-dir-next"), "the author sets the pull");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelPhysics p;
+            check(level::load_physics(phys_root() / "bad", p) && p == level::LevelPhysics{-40, 0} &&
+                      lv().level().physics_error().empty(),
+                  "now the file is good: left 40");
+            break;
+        }
+        case 27: {
+            check(!shown("ph-error"), "and the panel has nothing to say");
+            // A file that cannot be written: the author is told, nothing is lost, the game does not start.
+            const std::filesystem::path locked = phys_root() / "locked";
+            std::error_code ec;
+            std::filesystem::create_directories(locked / "physics.json", ec);
+            check(lv().open_folder(locked), "a level whose physics.json is in the way");
+            lv().set_pull_strength("25", false);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(lv().dirty() && lv().level().physics_changed() && lv().pull_strength() == 25.0f, "not saved, still 25, still unsaved");
+            check(!lv().play_here(), "«Играть отсюда» does not start the game from an older level");
+            std::filesystem::remove_all(locked / "physics.json", ec);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "once it can be written: saved");
+            break;
+        }
+        case 28: {
+            // A slanted pull in physics.json (each part within 200, 282.84 long): opened and saved untouched; the
+            // direction button gives a pull that can be saved (200 the new way), one step of history.
+            const std::filesystem::path slant = phys_root() / "slant";
+            std::error_code ec;
+            std::filesystem::create_directories(slant, ec);
+            check(level::save_physics(slant, {200, 200}), "physics.json 200, 200");
+            read_file(slant / "physics.json", ph_bytes_);
+            check(lv().open_folder(slant), "a level with a slanted pull opens");
+            break;
+        }
+        case 29: {
+            if (wait(3)) return true; // the panel shows it a few frames
+            const std::filesystem::path slant = phys_root() / "slant";
+            check(lv().level().physics() == level::LevelPhysics{200, 200} && !lv().dirty() && lv().level().physics_error().empty(),
+                  "its pull as written, nothing changed by the panel");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            std::vector<u8> bytes;
+            read_file(slant / "physics.json", bytes);
+            check(!lv().dirty() && bytes == ph_bytes_, "Ctrl+S leaves the file as it was");
+            entries_ = lv().history().cursor();
+            check(element_text("ph-dir") == "вниз" && click_id("ph-dir-next"), "«>» of the direction");
+            const level::LevelPhysics left{-200, 0};
+            check(lv().level().physics() == left && level::valid_physics(lv().level().physics()) &&
+                      lv().history().cursor() == entries_ + 1,
+                  "left 200, a pull that can be saved, one entry");
+            check(lv().phys_note().find("больше 200") != std::string::npos, "the note says why 200: " + lv().phys_note());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().physics() == level::LevelPhysics{200, 200}, "Ctrl+Z: 200, 200 again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().physics() == left, "Ctrl+Y: left 200");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelPhysics p;
+            check(!lv().dirty() && level::load_physics(slant, p) && p == left, "saved: physics.json left 200");
+            check(lv().open_folder(slant), "opened again");
+            break;
+        }
+        case 30:
+            check(lv().level().physics() == level::LevelPhysics{-200, 0} && element_text("ph-dir") == "влево" &&
+                      input_value("ph-strength") == "200",
+                  "left 200 in the level and in the panel");
+            break;
+        case 31:
+            check(lv().open_folder(ph_main_), "the level of the steps above opens again");
+            key(SDLK_Q, SDL_KMOD_NONE);
+            break;
+        case 32:
+            check(lv().mode() == Mode::Select && lv().level().physics() == level::LevelPhysics{0, 40}, "with the game's pull");
+            break;
+        default: break;
+        }
+        if (next) ++ph_step_;
+        return true;
+    }
+
     // The palette's coins (the game's "coins" template).
     i32 coins_index() const {
         const auto& defs = ed_.level_module.objects();
@@ -9972,6 +10612,14 @@ private:
     i32 cx_ = 0, cy_ = 0;
     u64 object_ = 0;
     u32 as_step_ = 0, ol_step_ = 0, waited_ = 0, conv_wait_ = 0;
+    // The physics example
+    u32 ph_step_ = 0, ph_wait_ = 0;
+    u64 point_ = 0, coins_ = 0, ph_edits_ = 0;
+    bool ph_dirty_ = false;
+    f64 ph_cam_ = 0;
+    std::vector<world::TileId> ph_area_;
+    std::vector<u8> ph_bytes_;
+    std::filesystem::path ph_main_;
     int lg_step_ = 0;
     int st_step_ = 0, st_wait_ = 0;
     int ue_step_ = 0;

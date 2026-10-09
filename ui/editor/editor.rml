@@ -156,7 +156,7 @@
                 <div class="mode" data-class-selected="lv_mode == 'select'" data-event-click="lv_mode('select')"><icon name="near_me"/><span>Выбор</span></div>
                 <div class="mode" data-class-selected="lv_mode == 'tiles'" data-event-click="lv_mode('tiles')"><icon name="grid_on"/><span>Тайлы</span></div>
                 <div class="mode" data-class-selected="lv_mode == 'objects'" data-event-click="lv_mode('objects')"><icon name="deployed_code"/><span>Объекты</span></div>
-                <div class="mode soon" data-class-selected="lv_mode == 'physics'" data-event-click="lv_mode('physics')"><icon name="water_drop"/><span>Физика</span></div>
+                <div id="mode-physics" class="mode" data-class-selected="lv_mode == 'physics'" data-event-click="lv_mode('physics')"><icon name="water_drop"/><span>Физика</span></div>
                 <div class="mode soon" data-class-selected="lv_mode == 'light'" data-event-click="lv_mode('light')"><icon name="lightbulb"/><span>Свет</span></div>
                 <div class="mode soon" data-class-selected="lv_mode == 'zones'" data-event-click="lv_mode('zones')"><icon name="flag"/><span>Зоны</span></div>
             </div>
@@ -177,7 +177,19 @@
                 <span class="size">{{ lv_radius }}</span>
                 <div class="icon-button small" data-event-click="lv_radius(1)"><icon name="add" class="s"/></div>
             </div>
-            <span class="muted mode-hint" data-if="lv_mode != 'tiles'">{{ lv_mode_help }}</span>
+            <div class="tools row" data-if="lv_mode == 'physics'">
+                <div id="ph-tool-select" class="icon-button" data-class-selected="lv_ph_tool == 'select'" data-event-click="lv_ph_tool('select')"><icon name="near_me"/></div>
+                <div id="ph-tool-point" class="icon-button" data-class-selected="lv_ph_tool == 'point'" data-event-click="lv_ph_tool('point')"><icon name="adjust"/></div>
+                <div id="ph-tool-water" class="icon-button" data-class-selected="lv_ph_tool == 'water'" data-event-click="lv_ph_tool('water')"><icon name="water_drop"/></div>
+                <div id="ph-tool-sand" class="icon-button" data-class-selected="lv_ph_tool == 'sand'" data-event-click="lv_ph_tool('sand')"><icon name="grain"/></div>
+                <div class="divider vertical"/>
+                <div id="ph-trial" class="button outlined small" data-if="lv_ph_can_trial" data-class-selected="lv_ph_trial" data-event-click="lv_ph_trial">
+                    <icon name="play_arrow" data-if="!lv_ph_trial"/><span data-if="!lv_ph_trial">Проба</span>
+                    <icon name="restart_alt" data-if="lv_ph_trial"/><span data-if="lv_ph_trial">Сбросить</span>
+                </div>
+            </div>
+            <span class="muted mode-hint" data-if="lv_mode != 'tiles' && lv_mode != 'physics'">{{ lv_mode_help }}</span>
+            <span class="muted mode-hint" data-if="lv_mode == 'physics'">{{ lv_ph_tool_help }}</span>
             <div class="grow"/>
             <div class="icon-button" data-class-selected="lv_light" data-event-click="lv_toggle('light')"><icon name="dark_mode"/></div>
             <div class="icon-button" data-class-selected="lv_grid" data-event-click="lv_toggle('grid')"><icon name="grid_4x4"/></div>
@@ -215,7 +227,16 @@
                         </div>
                     </div>
                 </div>
-                <div class="pane-scroll" data-if="lv_mode != 'objects' && lv_mode != 'select'">
+                <div class="pane-scroll" data-if="lv_mode == 'physics'">
+                    <div class="pal-group">
+                        <div class="label-small muted pal-title">Физика уровня</div>
+                        <div id="ph-pal-select" class="pal-tile row" data-class-selected="lv_ph_tool == 'select'" data-event-click="lv_ph_tool('select')"><icon name="near_me"/><span class="name">Выбор точки</span></div>
+                        <div id="ph-pal-point" class="pal-tile row" data-class-selected="lv_ph_tool == 'point'" data-event-click="lv_ph_tool('point')"><icon name="adjust"/><span class="name">Точка гравитации</span></div>
+                        <div id="ph-pal-water" class="pal-tile row" data-class-selected="lv_ph_tool == 'water'" data-event-click="lv_ph_tool('water')"><icon name="water_drop"/><span class="name">Вода</span></div>
+                        <div id="ph-pal-sand" class="pal-tile row" data-class-selected="lv_ph_tool == 'sand'" data-event-click="lv_ph_tool('sand')"><icon name="grain"/><span class="name">Песок</span></div>
+                    </div>
+                </div>
+                <div class="pane-scroll" data-if="lv_mode != 'objects' && lv_mode != 'select' && lv_mode != 'physics'">
                     <div data-for="g : lv_palette" class="pal-group">
                         <div class="label-small muted pal-title">{{ g.name }}</div>
                         <div data-for="t : g.tiles" class="pal-tile row" data-class-selected="t.index == lv_tile"
@@ -260,6 +281,54 @@
                             <span class="prop-label">Только контур</span>
                             <div class="switch" data-class-on="lv_outline" data-event-click="lv_toggle('outline')"><div class="thumb"/></div>
                         </div>
+                    </div>
+                    <div data-if="lv_mode == 'physics'">
+                        <div class="section-title">Гравитация мира</div>
+                        <div class="prop row gap-2">
+                            <span class="prop-label">Направление</span>
+                            <div class="prop-value row gap-2">
+                                <div class="cycler grow">
+                                    <div id="ph-dir-prev" class="icon-button small" data-event-click="lv_ph_dir(-1)"><icon name="chevron_left"/></div>
+                                    <span id="ph-dir" class="value">{{ lv_ph_dir }}</span>
+                                    <div id="ph-dir-next" class="icon-button small" data-event-click="lv_ph_dir(1)"><icon name="chevron_right"/></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="prop row gap-2" data-if="lv_ph_dir != 'нет'" title="тайлов/с², от 1 до 200">
+                            <span class="prop-label">Сила</span>
+                            <div class="prop-value row gap-2">
+                                <input type="range" class="grow" min="1" max="200" step="1" data-attr-value="lv_ph_strength" data-event-change="lv_ph_strength_slide(ev.value)"/>
+                                <input id="ph-strength" type="text" class="small number" data-attr-value="lv_ph_strength" data-event-change="lv_ph_strength_text(ev.value, ev.linebreak)" data-event-blur="lv_ph_strength_commit"/>
+                            </div>
+                        </div>
+                        <div class="muted body-small">{{ lv_ph_world }}</div>
+                        <div id="ph-error" class="body-small error-text" data-if="lv_ph_error != ''">{{ lv_ph_error }}</div>
+                        <div class="section-title">{{ lv_ph_tool_name }}</div>
+                        <div class="muted body-small">{{ lv_ph_tool_help }}</div>
+                        <div id="ph-note" class="body-small" data-if="lv_ph_note != ''">{{ lv_ph_note }}</div>
+                        <div class="section-title">Точка гравитации</div>
+                        <div class="muted body-small" data-if="lv_sel_count == 0">Ничего не выбрано: щёлкните по центру точки инструментом «Выбор точки».</div>
+                        <div data-if="lv_sel_count > 0 && lv_sel_name != ''">
+                            <div class="tile-card row gap-3">
+                                <icon name="adjust"/>
+                                <div class="column grow">
+                                    <span>{{ lv_sel_name }}</span>
+                                    <span class="muted body-small">{{ lv_sel_hint }}</span>
+                                </div>
+                                <div id="ph-delete" class="icon-button small" data-event-click="lv_delete"><icon name="delete" class="s"/></div>
+                            </div>
+                            <div data-for="f : lv_fields"><div class="prop row gap-2" data-attr-title="f.hint">
+                                <span class="prop-label">{{ f.label }}</span>
+                                <div class="prop-value row gap-2">
+                                    <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'lv-field-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="lv_field_slide(it_index, ev.value)"/>
+                                    <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'lv-num-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
+                                    <div data-if="f.kind == 'bool'" class="switch" data-attr-id="'lv-bool-' + it_index" data-class-on="f.value == 'true'" data-event-click="lv_field_toggle(it_index)"><div class="thumb"/></div>
+                                </div>
+                            </div></div>
+                        </div>
+                        <div class="section-title" data-if="lv_ph_can_trial">Проба</div>
+                        <div class="muted body-small" data-if="lv_ph_can_trial">{{ lv_ph_trial_text }}</div>
                     </div>
                     <div data-if="lv_mode == 'objects' || lv_mode == 'select'">
                         <div class="muted body-small" data-if="lv_sel_count == 0">Ничего не выбрано.</div>

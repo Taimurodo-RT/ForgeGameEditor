@@ -36,7 +36,6 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr u64 kSeed = 1;
-constexpr f32 kGravity = 40;
 constexpr f32 kWalk = 8.5f;
 constexpr f32 kJump = 15.5f;
 constexpr f32 kReach = 5.5f;     // tiles from the hero's centre to dig or build
@@ -139,6 +138,8 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     if (!save_folder.empty() && !L->world->open_save(save_folder, error)) return nullptr;
     L->scene = std::make_unique<scene::Scene>(*L->world);
     register_components(*L->scene);
+    // The editor's ids of the level's objects stay with them in the game and its saves.
+    L->scene->register_component<forge::level::LevelId>();
     attach_objects(library_, *L->scene);
     if (!save_folder.empty() && !L->scene->open_save(save_folder, error)) return nullptr;
     L->scene->set_populator([this](ChunkCoord c, scene::Scene& s) { populate(*gen_, library_, c, s); });
@@ -147,14 +148,15 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     sd.gravity_y = kGravity;
     sd.liquid_layer = kLiquids;
     L->sim = std::make_unique<Simulation>(*L->world, *L->scene, sd);
-    for (TileId t = 1; t < TileSliceCount; ++t)
-        if (is_solid(t)) L->sim->collision().set(t, TileShape::Solid);
-    CellSim& cells = *L->sim->cells();
-    LiquidKind water;
-    const u8 w = cells.add_liquid(water);
-    FORGE_ASSERT(w == kWater);
-    (void)w;
-    cells.set_falling(TileSand, true);
+    setup_cells(L->sim->collision(), *L->sim->cells());
+    // The level's world pull, as the author set it in the editor (physics.json
+    // came with the level into the save); without it the game's own.
+    if (!save_folder.empty()) {
+        forge::level::LevelPhysics p{0, kGravity};
+        if (std::string why; !forge::level::load_physics(save_folder, p, nullptr, &why))
+            FORGE_WARN("slice: %s; the game's gravity is used", why.c_str());
+        L->sim->set_gravity(p.gravity_x, p.gravity_y);
+    }
 
     flecs::world& ecs = L->scene->ecs();
     L->objects.init(ecs);
@@ -855,6 +857,78 @@ f64 SliceGame::critter_x(flecs::entity_t id) const {
     const flecs::entity e(level_->scene->ecs(), id);
     const Position* p = e.is_alive() ? e.try_get<Position>() : nullptr;
     return p ? p->tile_x() : std::nan("");
+}
+
+flecs::entity_t SliceGame::spawn_probe(f64 x, f64 y) {
+    if (!level_) return 0;
+    flecs::entity e = level_->scene->spawn(Position::at_tile(x, y));
+    if (!e.is_valid()) return 0;
+    Body b;
+    b.half_w = b.half_h = 0.25f;
+    e.set<Body>(b);
+    return e.id();
+}
+
+bool SliceGame::probe(flecs::entity_t id, f64& x, f64& y, f32& gx, f32& gy) const {
+    if (!level_ || !id) return false;
+    const flecs::entity e(level_->scene->ecs(), id);
+    if (!e.is_alive()) return false;
+    const Position* p = e.try_get<Position>();
+    const Body* b = e.try_get<Body>();
+    if (!p || !b) return false;
+    x = p->tile_x();
+    y = p->tile_y();
+    gx = b->gx;
+    gy = b->gy;
+    return true;
+}
+
+void SliceGame::world_gravity(f32& x, f32& y) const {
+    x = y = std::nanf("");
+    if (!level_) return;
+    x = level_->sim->gravity().world_x();
+    y = level_->sim->gravity().world_y();
+}
+
+void SliceGame::pull_at(f64 x, f64 y, f32& gx, f32& gy) const {
+    gx = gy = std::nanf("");
+    if (level_) level_->sim->gravity().at(x, y, gx, gy);
+}
+
+u32 SliceGame::gravity_sources() const { return level_ ? static_cast<u32>(level_->sim->gravity().source_count()) : 0; }
+
+std::vector<SliceGame::Point> SliceGame::points() const {
+    std::vector<Point> out;
+    if (!level_) return out;
+    level_->scene->ecs().each([&](flecs::entity e, const Position& p, const GravitySource& g) {
+        const forge::level::LevelId* id = e.try_get<forge::level::LevelId>();
+        out.push_back({id ? id->id : 0, p.tile_x(), p.tile_y(), g});
+    });
+    return out;
+}
+
+flecs::entity_t SliceGame::nearest_item(f64 x, f64 y, f64 radius) const {
+    if (!level_) return 0;
+    flecs::entity_t best = 0;
+    f64 best_d = radius;
+    level_->scene->ecs().each([&](flecs::entity e, const Position& p, const Item&) {
+        const f64 d = std::hypot(p.tile_x() - x, p.tile_y() - y);
+        if (d <= best_d) {
+            best = e.id();
+            best_d = d;
+        }
+    });
+    return best;
+}
+
+bool SliceGame::position_of(flecs::entity_t id, f64& x, f64& y) const {
+    if (!level_ || !id) return false;
+    const flecs::entity e(level_->scene->ecs(), id);
+    const Position* p = e.is_alive() ? e.try_get<Position>() : nullptr;
+    if (!p) return false;
+    x = p->tile_x();
+    y = p->tile_y();
+    return true;
 }
 
 bool SliceGame::set_sounds(flecs::entity_t id, const Sounds& sounds) {

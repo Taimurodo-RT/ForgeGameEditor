@@ -21,6 +21,7 @@ add_executable(forge_tests
   test_editor.cpp
   test_game.cpp
   test_level.cpp
+  test_level_physics.cpp
   test_objects.cpp
   test_audio.cpp
   test_logic.cpp

@@ -11,6 +11,7 @@
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
 #include "forge/level/object_edit.h"
+#include "forge/level/physics.h"
 #include "forge/level/tile_edit.h"
 #include "forge/render/camera.h"
 #include "forge/render/sprite_batch.h"
@@ -31,9 +32,16 @@
 namespace forge::editor_app {
 
 enum class Tool : u8 { Brush, Line, Rect, Fill, Eraser, Picker };
-// What the tab edits: the icons over the level. Only Select and Tiles work
-// yet; the others say when they come.
+// What the tab edits: the icons over the level. Light and Zones say when
+// they come.
 enum class Mode : u8 { Select, Tiles, Objects, Physics, Light, Zones };
+// The «Физика» mode's tools: picking and dragging gravity points, placing
+// one (press at the centre, drag out the radius), pouring water or sand
+// into the free cells of a rectangle.
+enum class PhysTool : u8 { Select, Point, Water, Sand };
+// The world's pull as the panel shows it: which way (as sim::cells_down,
+// None: no pull) and how strong.
+enum class PullDir : u8 { Down, Left, Up, Right, None };
 
 struct LevelConfig {
     std::filesystem::path folder;   // the level's files
@@ -73,7 +81,8 @@ public:
     editor::UndoStack& history() { return history_; }
     void undo();
     void redo();
-    void save();
+    // False when something was not written (the author is told what).
+    bool save();
     // Saves and starts the game with the hero at the view's centre.
     bool play_here();
     // The command line play_here() runs (for the self-test).
@@ -84,6 +93,9 @@ public:
     std::string title() const { return module_.title(); }
     std::string status() const;
     bool dirty() const { return history_.dirty(); }
+    // Opens another level folder in place of this one (its history goes;
+    // unsaved changes are lost, so save first).
+    bool open_folder(const std::filesystem::path& folder);
 
     // --- for the self-test and benchmarks ---
     level::Level& level() { return *level_; }
@@ -118,6 +130,24 @@ public:
     // A field of the properties panel (row i) set from text, as the user types it.
     void set_field(int i, const std::string& text, bool dragging);
     u64 minimap_updates() const { return minimap_updates_; }
+    // Physics
+    void set_phys_tool(PhysTool t);
+    PhysTool phys_tool() const { return ph_tool_; }
+    // The world's pull from the panel: a direction, a strength as typed (0..200).
+    void set_pull_dir(PullDir d);
+    PullDir pull_dir() const;
+    void set_pull_strength(const std::string& text, bool dragging);
+    f32 pull_strength() const;
+    // The flow trial: water and sand run here and now, then go back.
+    bool start_trial();
+    void reset_trial();
+    bool trial_running() const { return trial_.running(); }
+    const level::FlowTrial& trial() const { return trial_; }
+    // Ends a drag in the view as if it never began (Esc, the right button).
+    bool cancel_gesture();
+    bool gesture() const { return ph_drag_ != PhysDrag::None || stroke_ || moving_; }
+    // The last thing a physics tool said (poured, skipped, refused).
+    const std::string& phys_note() const { return ph_note_; }
 
     const std::vector<std::string>& panel_ids() const { return dock_.panel_ids(); }
 
@@ -144,7 +174,11 @@ private:
         std::vector<std::string> options;
         const objects::PropDef* prop = nullptr; // a property of the template's copy
         std::string template_value;             // the template's value of it, as shown
+        bool limited = false;                   // a number kept within min..max
+        f64 min = 0, max = 0;
+        bool refuse = false;                    // past min..max: refused, not moved to the edge (a place)
     };
+    enum class PhysDrag : u8 { None, Place, Move, Radius, Area };
     void build_objects();
 
     template <typename T>
@@ -172,6 +206,22 @@ private:
     void press_objects(f32 x, f32 y, bool add);
     void drag_objects(f32 x, f32 y);
     void rebuild_fields(Rml::Context* context);
+    void physics_fields(flecs::entity e);
+    // Physics: the gravity point whose centre (or, ring: the selected one's
+    // circle) is under a tile point; empty when none.
+    flecs::entity point_at(f64 tx, f64 ty, bool ring);
+    bool press_physics(f32 x, f32 y);
+    void drag_physics(f32 x, f32 y);
+    void release_physics();
+    void pour(i32 x0, i32 y0, i32 x1, i32 y1);
+    void push_physics(f64 ox, f64 oy, f64 px);
+    // An edit is about to happen: a running trial goes back first.
+    void edit_begins();
+    // Sets a physics field from text; false when the text is not a valid value.
+    bool parse_number(const FieldRef& ref, const std::string& label, const std::string& text, f64& out) const;
+    // Where a centre may be put (X and Y in the panel): inside the world; a
+    // number past it is refused (a typo must not send the object to the edge).
+    void place_limits(f64& x0, f64& y0, f64& x1, f64& y1) const;
 
     level::LevelModule& module_;
     std::unique_ptr<level::Level> level_;
@@ -237,6 +287,20 @@ private:
     bool ui_updating_ = false;
     std::vector<FieldRef> field_refs_;
 
+    // Physics
+    PhysTool ph_tool_ = PhysTool::Select;
+    PhysDrag ph_drag_ = PhysDrag::None;
+    f64 ph_cx_ = 0, ph_cy_ = 0, ph_r_ = 0;           // Place: the centre and radius so far
+    f64 ph_grab_x_ = 0, ph_grab_y_ = 0;              // Move: where the drag started
+    f64 ph_from_x_ = 0, ph_from_y_ = 0;              // Move: the point's centre before
+    std::string ph_before_;                          // Radius: the source before (JSON)
+    f32 ph_r0_ = 0;
+    i32 ph_ax_ = 0, ph_ay_ = 0, ph_bx_ = 0, ph_by_ = 0; // Area: the corner cells
+    u64 ph_preview_ = 0;                             // bumped while a drag changes a point
+    f32 ph_strength_ = 40;                           // the pull's strength when it comes back from «нет»
+    std::string ph_note_;
+    level::FlowTrial trial_;
+
     // Model mirrors
     std::vector<PaletteGroup> m_palette_;
     std::vector<Rml::String> m_layers_;
@@ -253,6 +317,9 @@ private:
     Rml::String m_sel_name_, m_sel_hint_, m_sel_icon_, m_sel_kind_;
     bool m_details_ = false; // «Подробно» open
     std::vector<FieldView> m_fields_;
+    Rml::String m_ph_tool_ = "select", m_ph_tool_name_, m_ph_tool_help_, m_ph_dir_, m_ph_world_, m_ph_error_, m_ph_trial_text_;
+    Rml::String m_ph_strength_ = "40", m_ph_note_;
+    bool m_ph_trial_ = false, m_ph_can_trial_ = false;
     int m_history_cursor_ = 0;
     u64 history_version_ = 0;
     f64 info_time_ = -1;
@@ -260,5 +327,6 @@ private:
 
 const char* tool_id(Tool t);
 const char* mode_id(Mode m);
+const char* phys_tool_id(PhysTool t);
 
 } // namespace forge::editor_app

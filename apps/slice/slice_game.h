@@ -89,6 +89,14 @@ public:
         script_ = c;
     }
     void stop_script() { scripted_ = false; }
+    // The level the next new game starts from, and where the hero stands
+    // then (the self-test's own example levels).
+    void set_level(const std::filesystem::path& dir, bool at = false, f64 x = 0, f64 y = 0) {
+        options_.level_dir = dir;
+        options_.at = at;
+        options_.at_x = x;
+        options_.at_y = y;
+    }
     bool hero_alive() const;
     f64 hero_x() const;
     f64 hero_y() const;
@@ -112,6 +120,27 @@ public:
     // A «Зверёк» copy moving by a scheme, and where it is now (NaN: gone).
     flecs::entity_t spawn_critter(f64 x, f64 feet_y, Scheme scheme);
     f64 critter_x(flecs::entity_t e) const;
+    // Physics: a small body that falls and is pulled like anything else (a
+    // probe), and what an entity felt in its last tick: where it is and the
+    // pull on it (false when it is gone).
+    flecs::entity_t spawn_probe(f64 x, f64 y);
+    bool probe(flecs::entity_t e, f64& x, f64& y, f32& gx, f32& gy) const;
+    // The world's pull this game runs with, the pull at a point now (world
+    // and sources, as bodies feel it) and the gravity sources it found.
+    void world_gravity(f32& x, f32& y) const;
+    void pull_at(f64 x, f64 y, f32& gx, f32& gy) const;
+    u32 gravity_sources() const;
+    // The gravity points loaded now, with the editor's ids (0: none).
+    struct Point {
+        forge::u64 id = 0;
+        f64 x = 0, y = 0;
+        forge::sim::GravitySource source;
+    };
+    std::vector<Point> points() const;
+    // The item nearest to a point within radius (0: none), and where an
+    // entity is now (false: gone).
+    flecs::entity_t nearest_item(f64 x, f64 y, f64 radius) const;
+    bool position_of(flecs::entity_t e, f64& x, f64& y) const;
     // Gives an object a «Звук» block.
     bool set_sounds(flecs::entity_t e, const Sounds& sounds);
     f64 inventory(const char* item) const;

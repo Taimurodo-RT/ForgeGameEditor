@@ -165,3 +165,9 @@
 }
 .details-toggle:hover { color: var(--on-surface); }
 .details-toggle icon.open { transform: rotate(90deg); }
+
+/* «Физика»: the palette's tools are icons, the author's mistakes are red. */
+.pal-tile icon { width: 32px; font-size: 24px; text-align: center; }
+.props .error-text { color: var(--error); margin-top: var(--space-2); }
+.props #ph-note { margin-top: var(--space-2); }
+.props .tile-card icon { font-size: 28px; }
