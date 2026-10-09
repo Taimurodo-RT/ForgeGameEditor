@@ -38,10 +38,13 @@ struct ApplyOptions {
 // (icons and the game see it at once) and the same picture the same file.
 std::string picture_file(const Picture& p);
 
-// Whether a template id is taken by something an import did not make (for
-// Options::template_taken): a template of that id that is not a «Картинка»
-// with a picture named after it.
-bool template_taken(const objects::Library& library, const std::string& id);
+// Whether the picture's template_id is taken by something else (for
+// Options::template_taken): a template of that id that an import did not make
+// (not a «Картинка» with a picture named after it), or one an import made of
+// another picture (a map of the same file name elsewhere, imported into
+// another level of the game). An import's template of this very picture is
+// not taken: an import made again after its tiled.json was lost finds it.
+bool template_taken(const objects::Library& library, const Picture& p);
 
 // What applying would change, for the window. Nothing changes; the map's
 // rectangle and the objects are loaded to be found (as the view loads them).
@@ -72,7 +75,8 @@ struct Resources {
 // in all together, then the zones' music into sounds and the templates
 // (library.put). Anything fails: false, the file in words, and what it wrote
 // is taken back (the game's files as before). A music file whose name another
-// sound has gets a name of its own, and the plan's zones take it. Pictures
+// sound has gets a name of its own («пещера (2).wav»), and the import's zones
+// that play that file take it; the author's zones keep what they play. Pictures
 // that templates of an import no longer show are removed.
 bool write_resources(Plan& plan, objects::Library& library, const std::filesystem::path& sounds, Resources& made,
                      std::string* error = nullptr);

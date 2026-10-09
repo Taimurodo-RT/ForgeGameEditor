@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace forge::level::tiled {
 
@@ -234,6 +236,8 @@ private:
     Pictures& pictures_;
 };
 
+// The id a new template of a tile's picture has when nothing else has it: the map, the tileset's file name (or its
+// name in the map), the tile and its flips. Tilesets of one file name in other folders give the same.
 std::string template_id_for(const TileRef& r, const std::string& map_stem) {
     std::string base = "tiled_" + map_stem + "_" + (r.ts->source.empty() ? r.ts->name : path_to_utf8(utf8_path(r.ts->source).stem())) +
                        "_" + std::to_string(r.local) + flags_text(r.flags);
@@ -244,6 +248,14 @@ std::string template_id_for(const TileRef& r, const std::string& map_stem) {
         out += u >= 0x80 || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' ? c : '_';
     }
     return out;
+}
+
+// That id told apart by the picture's whole key (the tileset's path as the map writes it): the same every time.
+std::string template_id_with_key(const std::string& base, const std::string& key) {
+    const u64 h = fnv1a(key);
+    char b[20];
+    std::snprintf(b, sizeof b, "%08x", static_cast<u32>(h ^ (h >> 32)));
+    return base + "_" + b;
 }
 
 // The id of a zone or an object the map makes: the same for the same map
@@ -261,6 +273,28 @@ const V* lookup(const std::vector<std::pair<K, V>>& list, const K& k) {
     for (const auto& [a, b] : list)
         if (a == k) return &b;
     return nullptr;
+}
+
+// "пещера (2).wav" of "пещера" and ".wav".
+bool numbered(const std::string& name, const std::string& stem, const std::string& ext) {
+    const std::string head = stem + " (", tail = ")" + ext;
+    if (name.size() <= head.size() + tail.size() || name.compare(0, head.size(), head) != 0 ||
+        name.compare(name.size() - tail.size(), tail.size(), tail) != 0)
+        return false;
+    const std::string_view n(name.data() + head.size(), name.size() - head.size() - tail.size());
+    return std::all_of(n.begin(), n.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+// The name a music file of the map has among the plan's: its file name, or "пещера (2).wav", … when another file of
+// the plan has that. The name an earlier import's zone plays it by (write_resources gave it that one because the
+// game has another sound of the file's name) stays, so the window shows what will be.
+std::string music_name(const fs::path& file, const std::string& earlier, const std::vector<Music>& music) {
+    auto free = [&](const std::string& n) { return std::none_of(music.begin(), music.end(), [&](const Music& x) { return x.name == n; }); };
+    const std::string base = path_to_utf8(file.filename()), stem = path_to_utf8(file.stem()), ext = path_to_utf8(file.extension());
+    if (!earlier.empty() && (earlier == base || numbered(earlier, stem, ext)) && free(earlier)) return earlier;
+    std::string name = base;
+    for (int n = 2; !free(name); ++n) name = stem + " (" + std::to_string(n) + ")" + ext;
+    return name;
 }
 
 } // namespace
@@ -528,6 +562,7 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
     std::vector<u64> keep_zones;
     bool spawn_set = false;
     std::unordered_map<std::string, usize> picture_index;
+    std::vector<std::string> base_ids; // by picture: the id a new template would have ("" when an earlier import's)
     for (usize li = 0; li < map.layers.size(); ++li) {
         const Layer& l = map.layers[li];
         if (l.kind != Layer::Kind::Objects) continue;
@@ -580,15 +615,11 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                     if (const std::string* id = lookup(prev.templates, key)) {
                         p.template_id = *id;
                         p.known = true;
-                    } else {
-                        std::string made = template_id_for(r, map_stem);
-                        const std::string base = made;
-                        for (int n = 2; o.template_taken && o.template_taken(made); ++n) made = base + "_" + std::to_string(n);
-                        p.template_id = made;
                     }
                     pi = out.pictures.size();
                     picture_index.emplace(key, pi);
                     out.pictures.push_back(std::move(p));
+                    base_ids.push_back(out.pictures.back().known ? std::string() : template_id_for(r, map_stem));
                 }
                 const Picture& p = out.pictures[pi];
                 f64 w = obj.w, h = obj.h;
@@ -657,23 +688,27 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                 }
                 std::string name = obj.name.empty() ? obj.type : obj.name;
                 name = cut(without_control(name), kMaxAreaName);
-                if (const Property* m = find_property(obj.props, "music"); m && !m->value.empty()) {
-                    fs::path file;
-                    const fs::path p = utf8_path(m->value);
-                    file = (p.is_absolute() ? p : map.file.parent_path() / p).lexically_normal();
-                    std::error_code ec;
-                    if (!fs::is_regular_file(file, ec)) note(out.missing, "музыка " + q(m->value) + " (" + who + "): нет файла");
-                    else {
-                        a.music = path_to_utf8(file.filename());
-                        if (std::none_of(out.music.begin(), out.music.end(), [&](const auto& x) { return x.first == file; }))
-                            out.music.emplace_back(file, a.music);
-                    }
-                }
                 const u64* known = lookup(prev.zones, obj.id);
                 Area* old = known ? out.areas.find(*known) : nullptr;
                 // Not in the record (taken back, the record lost): the zone an earlier import made has its id.
                 if (!old) old = out.areas.find(stable_id(out.map_name, "zone", obj.id));
                 a.id = old ? old->id : stable_id(out.map_name, "zone", obj.id);
+                // Its music: a file of the map, by a name of its own among the plan's files (write_resources gives the
+                // name it has in the game's sounds to this file's zones only).
+                fs::path music_file;
+                usize music_at = out.music.size();
+                if (const Property* m = find_property(obj.props, "music"); m && !m->value.empty()) {
+                    const fs::path p = utf8_path(m->value);
+                    const fs::path file = (p.is_absolute() ? p : map.file.parent_path() / p).lexically_normal();
+                    std::error_code ec;
+                    if (!fs::is_regular_file(file, ec)) note(out.missing, "музыка " + q(m->value) + " (" + who + "): нет файла");
+                    else {
+                        music_file = file;
+                        for (usize k = 0; k < out.music.size(); ++k)
+                            if (out.music[k].file == file) music_at = k;
+                        a.music = music_at < out.music.size() ? out.music[music_at].name : music_name(file, old ? old->music : "", out.music);
+                    }
+                }
                 // Names are told apart: the first free of "Имя", "Имя (2)", …
                 if (name.empty()) name = "Зона " + std::to_string(obj.id);
                 const std::string base = name;
@@ -693,6 +728,10 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                     }
                     out.areas.areas.push_back(a);
                     ++out.zones_new;
+                }
+                if (!music_file.empty()) {
+                    if (music_at == out.music.size()) out.music.push_back({music_file, a.music, {}});
+                    out.music[music_at].zones.push_back(a.id);
                 }
                 keep_zones.push_back(a.id);
                 out.record.zones.emplace_back(obj.id, a.id);
@@ -718,6 +757,33 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
     // The spawn point an earlier import set, when the map has none now, goes too.
     if (!spawn_set && prev.spawn != 0) out.areas.spawn = false;
 
+    // The new templates' ids, unique in the plan: those two pictures would share (tilesets of one file name in
+    // other folders, names that are one once made file names), one an earlier import gave another tile, or one the
+    // game has for something else, are told apart by the picture's whole key. The same for the same map every time,
+    // so an import made again after its tiled.json was lost finds its templates.
+    {
+        std::unordered_map<std::string, u32> shared;
+        for (usize i = 0; i < out.pictures.size(); ++i)
+            if (!out.pictures[i].known) ++shared[base_ids[i]];
+        std::unordered_set<std::string> ids;
+        for (const auto& [key, id] : prev.templates) ids.insert(id);
+        for (usize i = 0; i < out.pictures.size(); ++i) {
+            Picture& p = out.pictures[i];
+            if (p.known) continue;
+            auto taken = [&](const std::string& id) {
+                p.template_id = id;
+                return ids.count(id) > 0 || (o.template_taken && o.template_taken(p));
+            };
+            std::string id = base_ids[i];
+            if (shared[id] > 1 || taken(id)) {
+                const std::string keyed = template_id_with_key(base_ids[i], p.key);
+                id = keyed;
+                for (int n = 2; taken(id); ++n) id = keyed + "_" + std::to_string(n);
+            }
+            p.template_id = id;
+            ids.insert(id);
+        }
+    }
     for (const Picture& p : out.pictures) out.record.templates.emplace_back(p.key, p.template_id);
     // Earlier templates stay remembered (their objects may come back).
     for (const auto& [key, id] : prev.templates)

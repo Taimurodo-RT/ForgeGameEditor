@@ -1,8 +1,9 @@
 """Maps for tests/test_tiled.cpp, written by Tiled itself.
 
 The example's map (games/examples/tiled/Карта Tiled/уровень.tmx) with its layer data in other encodings, a finite
-map, maps Forge does not take and broken ones. Each good one is written here as text and then re-saved by Tiled
-(1.8.2, `tiled --export-map`), so the test reads what Tiled writes:
+map, a map of three tilesets of one name, maps Forge does not take and broken ones. Each good one is written here as
+text and then re-saved by Tiled (1.8.2, `tiled --export-map`, its tilesets `--export-tileset`), so the test reads
+what Tiled writes:
     QT_QPA_PLATFORM=offscreen python tests/data/tiled/make.py
 The broken ones (which Tiled would not save) are written by hand and say so in their first comment.
 """
@@ -78,9 +79,9 @@ def write(tree, name):
     return path
 
 
-def tiled(path):
+def tiled(path, what="--export-map"):
     env = dict(os.environ, QT_QPA_PLATFORM=os.environ.get("QT_QPA_PLATFORM", "offscreen"))
-    subprocess.run(["tiled", "--export-map", "tmx", path, path], check=True, env=env)
+    subprocess.run(["tiled", what, "tsx" if what == "--export-tileset" else "tmx", path, path], check=True, env=env)
 
 
 FINITE = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -151,6 +152,45 @@ SHAPES = '''<?xml version="1.0" encoding="UTF-8"?>
 </map>
 '''
 
+# Three tilesets of one name, «предметы»: two external ones of one file name in other folders and one in the map,
+# each tile 0 another picture of the example; a tile object of each.
+SAME_NAME_DIR = "одноимённые наборы"
+REL2 = "../../" + REL  # from SAME_NAME_DIR/<folder>/
+
+
+def same_name_tileset(picture, h):
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<tileset version="1.8" name="предметы" tilewidth="16" tileheight="{h}" tilecount="1" columns="1">
+ <image source="{REL2}картинки/{picture}" width="16" height="{h}"/>
+</tileset>
+'''
+
+
+SAME_NAME_TILESETS = {"лес/предметы.tsx": same_name_tileset("сундук.png", 16),
+                      "пещера/предметы.tsx": same_name_tileset("табличка.png", 16)}
+
+SAME_NAME = '''<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" orientation="orthogonal" renderorder="right-down" width="6" height="3" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="4">
+ <tileset firstgid="1" source="''' + SAME_NAME_DIR + '''/лес/предметы.tsx"/>
+ <tileset firstgid="2" source="''' + SAME_NAME_DIR + '''/пещера/предметы.tsx"/>
+ <tileset firstgid="3" name="предметы" tilewidth="16" tileheight="32" tilecount="1" columns="1">
+  <image source="''' + REL + '''картинки/фонарь.png" width="16" height="32"/>
+ </tileset>
+ <layer id="1" name="Фон" width="6" height="3">
+  <data encoding="csv">
+0,0,0,0,0,0,
+0,0,0,0,0,0,
+0,0,0,0,0,0
+</data>
+ </layer>
+ <objectgroup id="2" name="Объекты">
+  <object id="1" name="Лесной" gid="1" x="16" y="32" width="16" height="16"/>
+  <object id="2" name="Пещерный" gid="2" x="48" y="32" width="16" height="16"/>
+  <object id="3" name="Из карты" gid="3" x="80" y="32" width="16" height="32"/>
+ </objectgroup>
+</map>
+'''
+
 BROKEN = {
     "zstd.tmx": FINITE.replace('<data encoding="csv">\n1,0,0,2,\n0,3,0,0,\n0,0,0,2147483652\n</data>',
                                '<data encoding="base64" compression="zstd">KLUv/SAwAQAA</data>'),
@@ -199,7 +239,14 @@ def main():
     for name, enc, comp in [("формат base64.tmx", "base64", None), ("формат zlib.tmx", "base64", "zlib"),
                             ("формат gzip.tmx", "base64", "gzip"), ("формат XML.tmx", "xml", None)]:
         tiled(write(encode(example(), enc, comp), name))
-    for name, text in [("конечная.tmx", FINITE), ("гексы.tmx", HEX), ("клетки 16x8.tmx", NOT_SQUARE), ("анимация и формы.tmx", SHAPES)]:
+    for name, text in SAME_NAME_TILESETS.items():
+        path = os.path.join(HERE, SAME_NAME_DIR, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        tiled(path, "--export-tileset")
+    for name, text in [("конечная.tmx", FINITE), ("гексы.tmx", HEX), ("клетки 16x8.tmx", NOT_SQUARE), ("анимация и формы.tmx", SHAPES),
+                       (SAME_NAME_DIR + ".tmx", SAME_NAME)]:
         path = os.path.join(HERE, name)
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)

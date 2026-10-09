@@ -154,7 +154,7 @@ void LevelEditor::refigure_tiled() {
     o.layer_count = static_cast<u32>(module_.layer_names().size());
     o.liquids = module_.liquids_layer();
     objects::Library* lib = module_.library();
-    o.template_taken = [lib](const std::string& id) { return lib && tl::template_taken(*lib, id); };
+    o.template_taken = [lib](const tl::Picture& pic) { return lib && tl::template_taken(*lib, pic); };
     std::string why;
     tm_refusal_.clear();
     tm_preview_ = {};
@@ -327,10 +327,10 @@ void LevelEditor::sync_tiled() {
             const char* state = !t ? "новый" : t->picture != tl::picture_file(pic) ? "обновится" : "уже есть";
             m_tm_game_.push_back({"Шаблон «Картинка» " + q(t ? t->name : pic.name), state, false});
         }
-        for (const auto& [file, name] : p.music) {
-            const fs::path there = (sounds_folder_.empty() && lib ? lib->sounds_folder() : sounds_folder_) / utf8_path(name);
+        for (const tl::Music& mu : p.music) {
+            const fs::path there = (sounds_folder_.empty() && lib ? lib->sounds_folder() : sounds_folder_) / utf8_path(mu.name);
             std::error_code ec;
-            m_tm_game_.push_back({"Музыка " + name + " → звуки игры", fs::exists(there, ec) ? "есть с таким именем" : "новая", false});
+            m_tm_game_.push_back({"Музыка " + mu.name + " → звуки игры", fs::exists(there, ec) ? "есть с таким именем" : "новая", false});
         }
         for (const tl::Note& n : p.missing) m_tm_skipped_.push_back({n.what, n.count > 1 ? digits(n.count) : "", true});
         for (const tl::Note& n : p.skipped) m_tm_skipped_.push_back({n.what, n.count > 1 ? digits(n.count) : "", false});

@@ -5,7 +5,10 @@
 // saved again, opened again; imported again unchanged (nothing new) and
 // changed (what the author moved goes back, what the map lost goes, nothing
 // doubled, the author's things stay); the game's files written all or
-// nothing; a map past the edge of the world refused.
+// nothing; a map past the edge of the world refused. Music named anew for
+// another sound of its name is taken by the import's zones that play it, not
+// the author's; tilesets of one name, and maps of one name in two levels of a
+// game, give each picture its own template, as the game loads it.
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -29,6 +32,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -185,7 +189,7 @@ struct Project {
         std::string why;
         REQUIRE_MESSAGE(tl::read_map(map, m, &why), why);
         tl::Options o;
-        o.template_taken = [this](const std::string& id) { return tl::template_taken(lib, id); };
+        o.template_taken = [this](const tl::Picture& pic) { return tl::template_taken(lib, pic); };
         tl::Plan p;
         const bool ok = tl::plan(m, o, l.own_tiles(), l.areas(), l.tiled_record(), p, &why);
         if (refusal) *refusal = why;
@@ -198,6 +202,42 @@ const tl::PlannedObject* planned(const tl::Plan& p, u32 tiled_id) {
     for (const tl::PlannedObject& o : p.objects)
         if (o.tiled_id == tiled_id) return &o;
     return nullptr;
+}
+
+const Area& zone_named(const LevelAreas& areas, std::string_view name) {
+    for (const Area& a : areas.areas)
+        if (a.name == name) return a;
+    FAIL("no zone " << name);
+    static const Area none;
+    return none;
+}
+
+// A PNG's pixels.
+std::vector<u8> pixels(const fs::path& file) {
+    std::vector<u8> bytes;
+    REQUIRE(read_file(file, bytes));
+    assets::CookedTexture img;
+    REQUIRE(assets::decode_image(bytes, img));
+    return img.rgba8;
+}
+
+// The names of the files in a folder, sorted.
+std::vector<std::string> names_in(const fs::path& dir) {
+    std::vector<std::string> out;
+    for (const auto& [name, bytes] : files_of(dir)) out.push_back(name);
+    return out;
+}
+
+// A dot on a picture of the map: it is another picture now.
+void dot_on(const fs::path& png) {
+    std::vector<u8> bytes;
+    REQUIRE(read_file(png, bytes));
+    assets::CookedTexture img;
+    REQUIRE(assets::decode_image(bytes, img));
+    img.rgba8[(8 * img.width + 8) * 4 + 0] = 1;
+    img.rgba8[(8 * img.width + 8) * 4 + 3] = 255;
+    REQUIRE(assets::encode_image(img, ".png", bytes));
+    REQUIRE(write_file_atomic(png, bytes));
 }
 
 } // namespace
@@ -747,5 +787,310 @@ TEST_CASE("Tiled import made again after Ctrl+Z, or with tiled.json lost: the sa
         CHECK(imported(*level).at(chest->level_id).first == chest->x + 3);
         CHECK(imported(*level).size() == 6);
     }
+    fs::remove_all(pr.root);
+}
+
+TEST_CASE("Tiled import: the map's music named anew for another sound of its name; the author's zone that plays that sound keeps it") {
+    PoolScope pool;
+    Project pr("forge_test_tiled_music_author");
+    editor::Document doc;
+    editor::UndoStack history(doc);
+    auto level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    load_view(*level);
+    // The game has another sound «пещера.wav», and a zone of the author's plays it.
+    write_text(pr.sounds() / utf8_path("пещера.wav"), "другой звук");
+    LevelAreas areas = level->areas();
+    Area mine;
+    mine.id = 987654;
+    mine.name = "Моя пещера";
+    mine.x0 = 50, mine.y0 = 0, mine.x1 = 60, mine.y1 = 5;
+    mine.music = "пещера.wav";
+    areas.areas.push_back(mine);
+    history.execute(std::make_unique<SetAreas>(*level, level->areas(), areas, "Зона"));
+    history.seal();
+    REQUIRE(level->save().ok);
+    const LevelAreas before = level->areas();
+    const std::string cave_wav = read_text(pr.map_dir / utf8_path("музыка/пещера.wav"));
+
+    tl::Plan plan = pr.plan_for(*level);
+    REQUIRE(plan.music.size() == 1);
+    REQUIRE(plan.music[0].zones.size() == 1);
+    const u64 cave = plan.music[0].zones[0];
+    CHECK(cave != mine.id);
+    tl::Resources made;
+    std::string why;
+    REQUIRE_MESSAGE(tl::write_resources(plan, pr.lib, pr.sounds(), made, &why), why);
+    CHECK(made.sounds == std::vector<std::string>{"пещера (2).wav"});
+    CHECK(read_text(pr.sounds() / utf8_path("пещера (2).wav")) == cave_wav);
+    CHECK(read_text(pr.sounds() / utf8_path("пещера.wav")) == "другой звук");
+    REQUIRE(plan.areas.find(mine.id));
+    CHECK(*plan.areas.find(mine.id) == mine);
+    CHECK(plan.areas.find(cave)->music == "пещера (2).wav");
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, plan, {}, &why), why);
+    auto check_imported = [&](Level& l) {
+        REQUIRE(l.areas().find(mine.id));
+        CHECK(*l.areas().find(mine.id) == mine);
+        REQUIRE(l.areas().find(cave));
+        CHECK(l.areas().find(cave)->music == "пещера (2).wav");
+    };
+    check_imported(*level);
+    // One Ctrl+Z: the zones as before; Ctrl+Y.
+    REQUIRE(history.undo());
+    CHECK(level->areas() == before);
+    REQUIRE(history.redo());
+    check_imported(*level);
+    // Saved and opened again.
+    REQUIRE(level->save().ok);
+    level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    check_imported(*level);
+    // Imported again: the same names (the window shows them), nothing to update, no new sound, no step of the history.
+    history.clear();
+    tl::Plan again = pr.plan_for(*level);
+    CHECK(again.zones_updated == 0);
+    REQUIRE(again.music.size() == 1);
+    CHECK(again.music[0].name == "пещера (2).wav");
+    CHECK(again.areas == level->areas());
+    REQUIRE_MESSAGE(tl::write_resources(again, pr.lib, pr.sounds(), made, &why), why);
+    CHECK(made.sounds.empty());
+    CHECK(again.areas == level->areas());
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, again, {}, &why), why);
+    CHECK(history.size() == 0);
+    check_imported(*level);
+    CHECK(names_in(pr.sounds()) == std::vector<std::string>{"пещера (2).wav", "пещера.wav"});
+    fs::remove_all(pr.root);
+}
+
+TEST_CASE("Tiled import: two music files of one name, each zone plays its own; again, undone, saved, opened") {
+    PoolScope pool;
+    Project pr("forge_test_tiled_music_two");
+    // «Шахта» plays another file of that name, «Грот» the cave's again.
+    std::string text = read_text(pr.map);
+    const usize end = text.find(" </objectgroup>");
+    REQUIRE(end != std::string::npos);
+    text.insert(end, "  <object id=\"11\" name=\"Шахта\" x=\"0\" y=\"0\" width=\"64\" height=\"32\">\n"
+                     "   <properties>\n    <property name=\"music\" type=\"file\" value=\"другая/пещера.wav\"/>\n   </properties>\n"
+                     "  </object>\n"
+                     "  <object id=\"12\" name=\"Грот\" x=\"96\" y=\"0\" width=\"32\" height=\"32\">\n"
+                     "   <properties>\n    <property name=\"music\" type=\"file\" value=\"музыка/пещера.wav\"/>\n   </properties>\n"
+                     "  </object>\n");
+    write_text(pr.map, text);
+    write_text(pr.map_dir / utf8_path("другая/пещера.wav"), "другая музыка");
+    const std::string cave_wav = read_text(pr.map_dir / utf8_path("музыка/пещера.wav"));
+    editor::Document doc;
+    editor::UndoStack history(doc);
+    auto level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    load_view(*level);
+    std::string cave_name = "пещера.wav", other_name = "пещера (2).wav";
+    std::vector<std::string> sounds{"пещера (2).wav", "пещера.wav"};
+    std::optional<Area> mine;
+    SUBCASE("the game has no sound of that name") {}
+    SUBCASE("the game has another sound of that name, a zone of the author's plays it") {
+        write_text(pr.sounds() / utf8_path("пещера.wav"), "другой звук");
+        LevelAreas areas = level->areas();
+        mine = Area{};
+        mine->id = 987654;
+        mine->name = "Моя пещера";
+        mine->x0 = 50, mine->y0 = 0, mine->x1 = 60, mine->y1 = 5;
+        mine->music = "пещера.wav";
+        areas.areas.push_back(*mine);
+        history.execute(std::make_unique<SetAreas>(*level, level->areas(), areas, "Зона"));
+        history.seal();
+        cave_name = "пещера (2).wav";
+        other_name = "пещера (3).wav";
+        sounds = {"пещера (2).wav", "пещера (3).wav", "пещера.wav"};
+    }
+    REQUIRE(level->save().ok);
+    const LevelAreas before = level->areas();
+    const usize steps = history.size();
+    auto check_imported = [&](const LevelAreas& a) {
+        CHECK(zone_named(a, "Пещера").music == cave_name);
+        CHECK(zone_named(a, "Грот").music == cave_name);
+        CHECK(zone_named(a, "Шахта").music == other_name);
+        if (mine) {
+            REQUIRE(a.find(mine->id));
+            CHECK(*a.find(mine->id) == *mine);
+        }
+    };
+    tl::Plan plan = pr.plan_for(*level);
+    REQUIRE(plan.music.size() == 2);
+    tl::Resources made;
+    std::string why;
+    REQUIRE_MESSAGE(tl::write_resources(plan, pr.lib, pr.sounds(), made, &why), why);
+    CHECK(made.sounds == std::vector<std::string>{cave_name, other_name});
+    CHECK(read_text(pr.sounds() / utf8_path(cave_name)) == cave_wav);
+    CHECK(read_text(pr.sounds() / utf8_path(other_name)) == "другая музыка");
+    check_imported(plan.areas);
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, plan, {}, &why), why);
+    CHECK(history.size() == steps + 1);
+    check_imported(level->areas());
+    REQUIRE(history.undo());
+    CHECK(level->areas() == before);
+    REQUIRE(history.redo());
+    check_imported(level->areas());
+    REQUIRE(level->save().ok);
+    level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    check_imported(level->areas());
+    // Again: nothing to update, no new sound, no step.
+    history.clear();
+    tl::Plan again = pr.plan_for(*level);
+    CHECK(again.zones_updated == 0);
+    REQUIRE_MESSAGE(tl::write_resources(again, pr.lib, pr.sounds(), made, &why), why);
+    CHECK(made.sounds.empty());
+    CHECK(again.areas == level->areas());
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, again, {}, &why), why);
+    CHECK(history.size() == 0);
+    CHECK(names_in(pr.sounds()) == sounds);
+    fs::remove_all(pr.root);
+}
+
+TEST_CASE("Tiled import: tilesets of one name in other folders, each picture its own template in the game; again, and with tiled.json lost") {
+    PoolScope pool;
+    Project pr("forge_test_tiled_same_names");
+    pr.map = source_dir() / "tests" / "data" / "tiled" / utf8_path("одноимённые наборы.tmx");
+    const fs::path art = example_dir() / utf8_path("картинки");
+    const std::vector<u8> want[3] = {pixels(art / utf8_path("сундук.png")), pixels(art / utf8_path("табличка.png")),
+                                     pixels(art / utf8_path("фонарь.png"))};
+    REQUIRE(want[0] != want[1]);
+    editor::Document doc;
+    editor::UndoStack history(doc);
+    auto level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    load_view(*level);
+    const tl::Plan plan = pr.plan_for(*level);
+    REQUIRE(plan.pictures.size() == 3);
+    REQUIRE(plan.objects.size() == 3);
+    tl::Plan p = plan;
+    tl::Resources made;
+    std::string why;
+    REQUIRE_MESSAGE(tl::write_resources(p, pr.lib, pr.sounds(), made, &why), why);
+    CHECK(made.templates.size() == 3);
+    CHECK(made.pictures.size() == 3);
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, p, {}, &why), why);
+    REQUIRE(level->save().ok);
+    // As the game sees it, from the game's files: each object its own picture.
+    auto check_game = [&](Level& l) {
+        objects::Library game;
+        REQUIRE(game.load(pr.game / "kinds.json", pr.game / "objects"));
+        CHECK(game.templates().size() == 3);
+        load_view(l);
+        l.load_objects();
+        for (const tl::PlannedObject& po : plan.objects) {
+            CAPTURE(po.name);
+            const flecs::entity e = l.find(po.level_id);
+            REQUIRE(e.is_valid());
+            const objects::Template* t = game.find(e.get<objects::ObjectRef>().key);
+            REQUIRE(t);
+            CHECK(t->id == plan.pictures[po.picture].template_id);
+            CHECK(pixels(game.picture_file(*t)) == want[po.picture]);
+        }
+    };
+    level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    check_game(*level);
+    // Again: the same templates, nothing new, no step.
+    history.clear();
+    p = pr.plan_for(*level);
+    for (usize i = 0; i < 3; ++i) {
+        CHECK(p.pictures[i].known);
+        CHECK(p.pictures[i].template_id == plan.pictures[i].template_id);
+    }
+    REQUIRE_MESSAGE(tl::write_resources(p, pr.lib, pr.sounds(), made, &why), why);
+    CHECK(made.templates.empty());
+    CHECK(made.pictures.empty());
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, p, {}, &why), why);
+    CHECK(history.size() == 0);
+    // tiled.json lost: the same ids, the templates found, nothing doubled.
+    REQUIRE(fs::remove(pr.level / "tiled.json"));
+    level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    load_view(*level);
+    p = pr.plan_for(*level);
+    for (usize i = 0; i < 3; ++i) {
+        CHECK_FALSE(p.pictures[i].known);
+        CHECK(p.pictures[i].template_id == plan.pictures[i].template_id);
+    }
+    const tl::Preview pv = tl::preview(*level, pr.lib, p, {});
+    CHECK(pv.objects_new == 0);
+    CHECK(pv.objects_same == 3);
+    CHECK(pv.templates_new == 0);
+    CHECK(pv.templates_updated == 0);
+    REQUIRE_MESSAGE(tl::write_resources(p, pr.lib, pr.sounds(), made, &why), why);
+    CHECK(made.templates.empty());
+    REQUIRE_MESSAGE(tl::apply(*level, history, pr.lib, p, {}, &why), why);
+    REQUIRE(level->save().ok);
+    level = std::make_unique<Level>(pr.module);
+    REQUIRE(level->open(pr.level));
+    check_game(*level);
+    CHECK(pr.lib.templates().size() == 3);
+    fs::remove_all(pr.root);
+}
+
+TEST_CASE("Tiled import: a map of the same file name elsewhere into another level of the game; its own template where its picture differs") {
+    PoolScope pool;
+    Project pr("forge_test_tiled_two_maps");
+    // The second map: a copy of the example in another folder, its chest drawn anew.
+    const fs::path other = pr.root / utf8_path("Другая карта");
+    std::error_code ec;
+    fs::copy(example_dir(), other, fs::copy_options::recursive, ec);
+    REQUIRE_MESSAGE(!ec, ec.message());
+    dot_on(other / utf8_path("картинки/сундук.png"));
+    const fs::path level2 = pr.root / utf8_path("уровень 2");
+    fs::create_directories(level2);
+    editor::Document doc;
+    editor::UndoStack history(doc);
+    tl::Resources made;
+    std::string why;
+    auto import = [&](const fs::path& folder, const fs::path& map, bool known) {
+        auto l = std::make_unique<Level>(pr.module);
+        REQUIRE(l->open(folder));
+        load_view(*l);
+        pr.map = map;
+        tl::Plan p = pr.plan_for(*l);
+        for (const tl::Picture& pic : p.pictures) CHECK(pic.known == known);
+        REQUIRE_MESSAGE(tl::write_resources(p, pr.lib, pr.sounds(), made, &why), why);
+        history.clear();
+        REQUIRE_MESSAGE(tl::apply(*l, history, pr.lib, p, {}, &why), why);
+        REQUIRE(l->save().ok);
+        return p;
+    };
+    const fs::path map_a = pr.map;
+    const tl::Plan a = import(pr.level, map_a, false);
+    const std::string chest_a = a.pictures[0].template_id;
+    REQUIRE(a.pictures[0].name == "Сундук");
+    const std::string chest_a_picture = pr.lib.find(std::string_view(chest_a))->picture;
+    const tl::Plan b = import(level2, other / utf8_path("уровень.tmx"), false);
+    // The chest: another picture, another template; the signs and the lantern: the same pictures, the same templates.
+    CHECK(made.templates == std::vector<std::string>{b.pictures[0].template_id});
+    CHECK(b.pictures[0].template_id != chest_a);
+    CHECK(b.pictures[0].template_id.starts_with(chest_a + "_"));
+    for (usize i = 1; i < 4; ++i) CHECK(b.pictures[i].template_id == a.pictures[i].template_id);
+    CHECK(pr.lib.find(std::string_view(chest_a))->picture == chest_a_picture);
+    // Each level's chest shows its map's picture, as the game loads them.
+    auto chest_shows = [&](const fs::path& folder, const tl::Plan& p) {
+        objects::Library game;
+        REQUIRE(game.load(pr.game / "kinds.json", pr.game / "objects"));
+        Level l(pr.module);
+        REQUIRE(l.open(folder));
+        load_view(l);
+        l.load_objects();
+        const flecs::entity e = l.find(planned(p, 3)->level_id);
+        REQUIRE(e.is_valid());
+        const objects::Template* t = game.find(e.get<objects::ObjectRef>().key);
+        REQUIRE(t);
+        CHECK(t->id == p.pictures[0].template_id);
+        return pixels(game.picture_file(*t));
+    };
+    CHECK(chest_shows(pr.level, a) == pixels(example_dir() / utf8_path("картинки/сундук.png")));
+    CHECK(chest_shows(level2, b) == pixels(other / utf8_path("картинки/сундук.png")));
+    // Each imported again: its own templates, nothing written.
+    import(pr.level, map_a, true);
+    CHECK(made.templates.empty());
+    import(level2, other / utf8_path("уровень.tmx"), true);
+    CHECK(made.templates.empty());
+    CHECK(chest_shows(pr.level, a) == pixels(example_dir() / utf8_path("картинки/сундук.png")));
     fs::remove_all(pr.root);
 }

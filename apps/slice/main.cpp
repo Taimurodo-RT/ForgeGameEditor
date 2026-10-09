@@ -4549,7 +4549,14 @@ private:
                     for (const auto& e : std::filesystem::directory_iterator(tiled_example / "level", ec)) {
                         std::vector<u8> before, after;
                         read_file(e.path(), before);
-                        if (!read_file(st->level / e.path().filename(), after)) ++gone;
+                        const bool read = read_file(st->level / e.path().filename(), after);
+                        // The .json as text, line ends aside (a Windows checkout has CRLF, the import writes LF); the
+                        // rest byte for byte.
+                        if (e.path().extension() == ".json") {
+                            std::erase(before, '\r');
+                            std::erase(after, '\r');
+                        }
+                        if (!read) ++gone;
                         else if (before == after) ++same;
                         else {
                             ++changed;
@@ -4872,7 +4879,7 @@ static bool tiled_changed(const std::filesystem::path& example, const std::files
     tl::Options o;
     o.layer_count = static_cast<u32>(module.layer_names().size());
     o.liquids = module.liquids_layer();
-    o.template_taken = [&lib](const std::string& id) { return tl::template_taken(lib, id); };
+    o.template_taken = [&lib](const tl::Picture& pic) { return tl::template_taken(lib, pic); };
     tl::Resources made;
     editor::Document doc;
     editor::UndoStack history(doc);

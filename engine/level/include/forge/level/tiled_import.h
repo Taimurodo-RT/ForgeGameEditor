@@ -61,6 +61,13 @@ struct Picture {
     std::vector<u8> rgba;
 };
 
+// A music file of the map's zones, copied into the game's sounds.
+struct Music {
+    std::filesystem::path file; // the map's
+    std::string name;           // its name in the game's sounds, another than the other files' of the plan
+    std::vector<u64> zones;     // the import's zones that play it (ids): only they take another name it gets
+};
+
 struct PlannedObject {
     u32 tiled_id = 0;
     std::string name;  // Tiled's, for the window
@@ -80,7 +87,7 @@ struct Plan {
     u32 tiles_new = 0, tiles_updated = 0;
     LevelAreas areas;                        // the level's zones and spawn point after
     u32 zones_new = 0, zones_updated = 0, zones_removed = 0;
-    std::vector<std::pair<std::filesystem::path, std::string>> music; // a file → its name in the game's sounds
+    std::vector<Music> music;
     std::vector<Picture> pictures;
     std::vector<PlannedObject> objects;
     std::vector<u64> remove_objects;         // an earlier import's objects the map no longer has
@@ -96,9 +103,10 @@ struct Options {
     u32 walls = 0, blocks = 1;   // the game's layers
     u32 layer_count = 3;
     i32 liquids = 2;
-    // Whether the game already has a template with this id (made by
-    // something else): a new one then gets another.
-    std::function<bool(const std::string&)> template_taken;
+    // Whether the game already has a template of the picture's template_id
+    // that is not this picture's (made by something else, or showing another
+    // picture): a new one then gets another id.
+    std::function<bool(const Picture&)> template_taken;
 };
 
 // Against the level as it is (its own tiles and zones, an earlier import's

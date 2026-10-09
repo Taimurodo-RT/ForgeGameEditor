@@ -1,7 +1,9 @@
 // Maps of Tiled: read as Tiled reads them (its own reading of the example map,
 // exported by Tiled, is compared cell for cell and object for object), the
 // same map in every layer format Tiled writes, maps that are refused and why,
-// what the import makes of the example, and a second import of the same map.
+// what the import makes of the example, and a second import of the same map;
+// tilesets and music files of one name. Tiled's own reading is read with
+// either end of line (git may check it out with CRLF on Windows).
 // The maps are in games/examples/tiled and tests/data/tiled (made by
 // tests/data/tiled/make.py and re-saved by Tiled 1.8.2).
 
@@ -148,6 +150,33 @@ Plan plan_of(const Map& m, const LevelTiles& own = {}, const LevelAreas& areas =
     return p;
 }
 
+// Tiled's own reading of a map as tests/data/tiled/make.py writes it, a line each: "layer <name>|<visible>|<x y w
+// h>|<gids>" and "object <id>|<name>|<shape>|<x y w h>|<gid>", split into their fields (the word before the first
+// space left out). A line ends in "\n" or "\r\n": git may give text files CRLF on Windows.
+struct Reading {
+    std::vector<std::vector<std::string>> layers, objects;
+    bool operator==(const Reading&) const = default;
+};
+
+Reading reading_of(const std::string& text) {
+    Reading out;
+    std::istringstream lines(text);
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::vector<std::string> f;
+        const std::string rest = line.substr(line.find(' ') + 1);
+        for (usize at = 0;;) {
+            const usize bar = rest.find('|', at);
+            f.push_back(rest.substr(at, bar == std::string::npos ? std::string::npos : bar - at));
+            if (bar == std::string::npos) break;
+            at = bar + 1;
+        }
+        (line.starts_with("layer ") ? out.layers : out.objects).push_back(std::move(f));
+    }
+    return out;
+}
+
 fs::path copy_of_example(const char* name) {
     const fs::path dir = fs::temp_directory_path() / name;
     std::error_code ec;
@@ -169,48 +198,50 @@ TEST_CASE("Tiled: the example map reads as Tiled itself reads it, cell for cell 
     CHECK(m.tile_h == 16);
     CHECK(m.background == "#78aee6");
 
-    // Tiled's own reading (its JSON export, templates detached), line by line.
-    std::istringstream lines(read_text(test_map("уровень как его читает Tiled.txt")));
-    std::string line;
-    usize layers_seen = 0, objects_seen = 0;
+    // Tiled's own reading (its JSON export, templates detached), line by line: the same with either end of line.
+    const std::string text = read_text(test_map("уровень как его читает Tiled.txt"));
+    std::string lf, crlf;
+    for (const char c : text)
+        if (c != '\r') lf += c;
+    for (const char c : lf) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
+    REQUIRE(lf.find('\n') != std::string::npos);
+    const Reading reading = reading_of(text);
+    CHECK(reading_of(lf) == reading);
+    CHECK(reading_of(crlf) == reading);
+    for (const auto* lines : {&reading.layers, &reading.objects})
+        for (const std::vector<std::string>& f : *lines)
+            for (const std::string& field : f) CHECK(field.find('\r') == std::string::npos);
     std::map<std::string, std::map<std::pair<i32, i32>, u32>> tiled_cells;
-    while (std::getline(lines, line)) {
-        CAPTURE(line.substr(0, 80));
-        std::vector<std::string> f;
-        std::string rest = line.substr(line.find(' ') + 1);
-        for (usize at = 0;;) {
-            const usize bar = rest.find('|', at);
-            f.push_back(rest.substr(at, bar == std::string::npos ? std::string::npos : bar - at));
-            if (bar == std::string::npos) break;
-            at = bar + 1;
-        }
-        if (line.starts_with("layer ")) {
-            ++layers_seen;
-            REQUIRE(f.size() == 4);
-            const Layer* l = layer_named(m, f[0]);
-            REQUIRE(l);
-            CHECK(l->kind == Layer::Kind::Tiles);
-            CHECK(l->visible == (f[1] == "1"));
-            std::istringstream box(f[2]), gids(f[3]);
-            i32 x, y;
-            u32 w, h;
-            box >> x >> y >> w >> h;
-            u32 g;
-            for (u32 i = 0; gids >> g; ++i)
-                if (g) tiled_cells[f[0]][{x + static_cast<i32>(i % w), y + static_cast<i32>(i / w)}] = g;
-        } else {
-            ++objects_seen;
-            REQUIRE(f.size() == 5);
-            const Object* o = object_with(m, static_cast<u32>(std::stoul(f[0])));
-            REQUIRE(o);
-            CHECK(o->name == f[1]);
-            CHECK(shape_word(o->shape) == f[2]);
-            CHECK(number(o->x) + " " + number(o->y) + " " + number(o->w) + " " + number(o->h) == f[3]);
-            CHECK(std::to_string(o->gid) == f[4]);
-        }
+    for (const std::vector<std::string>& f : reading.layers) {
+        CAPTURE(f[0]);
+        REQUIRE(f.size() == 4);
+        const Layer* l = layer_named(m, f[0]);
+        REQUIRE(l);
+        CHECK(l->kind == Layer::Kind::Tiles);
+        CHECK(l->visible == (f[1] == "1"));
+        std::istringstream box(f[2]), gids(f[3]);
+        i32 x, y;
+        u32 w, h;
+        box >> x >> y >> w >> h;
+        u32 g;
+        u32 i = 0;
+        for (; gids >> g; ++i)
+            if (g) tiled_cells[f[0]][{x + static_cast<i32>(i % w), y + static_cast<i32>(i / w)}] = g;
+        CHECK(gids.eof()); // every number read, none left over
+        CHECK(i == w * h);
     }
-    CHECK(layers_seen >= 15);
-    CHECK(objects_seen == 10);
+    for (const std::vector<std::string>& f : reading.objects) {
+        CAPTURE(f[0]);
+        REQUIRE(f.size() == 5);
+        const Object* o = object_with(m, static_cast<u32>(std::stoul(f[0])));
+        REQUIRE(o);
+        CHECK(o->name == f[1]);
+        CHECK(shape_word(o->shape) == f[2]);
+        CHECK(number(o->x) + " " + number(o->y) + " " + number(o->w) + " " + number(o->h) == f[3]);
+        CHECK(std::to_string(o->gid) == f[4]);
+    }
+    CHECK(reading.layers.size() >= 15);
+    CHECK(reading.objects.size() == 10);
     for (const auto& [name, cells] : tiled_cells) {
         CAPTURE(name);
         CHECK(cells_of(*layer_named(m, name)) == cells);
@@ -459,7 +490,9 @@ TEST_CASE("Tiled: what the import makes of the example map") {
     CHECK(cave.y1 == 14);
     CHECK(cave.music == "пещера.wav");
     REQUIRE(p.music.size() == 1);
-    CHECK(fs::equivalent(p.music[0].first, example_dir() / utf8_path("музыка/пещера.wav")));
+    CHECK(fs::equivalent(p.music[0].file, example_dir() / utf8_path("музыка/пещера.wav")));
+    CHECK(p.music[0].name == "пещера.wav");
+    CHECK(p.music[0].zones == std::vector<u64>{cave.id});
     CHECK(p.zones_new == 1);
     CHECK(p.areas.spawn);
     CHECK(p.areas.spawn_x == 3);
@@ -468,13 +501,16 @@ TEST_CASE("Tiled: what the import makes of the example map") {
 
     // Pictures: the chest (twice, one picture), the sign and the sign mirrored, the lantern (from the template).
     REQUIRE(p.pictures.size() == 4);
-    std::vector<std::string> pictures;
+    std::vector<std::string> pictures, ids;
     for (const Picture& pic : p.pictures) pictures.push_back(pic.name + " " + std::to_string(pic.w) + "×" + std::to_string(pic.h));
     CHECK(pictures == std::vector<std::string>{"Сундук 16×16", "Табличка 16×16", "Табличка ↔ 16×16", "Фонарь 16×32"});
     for (const Picture& pic : p.pictures) {
         CHECK_FALSE(pic.known);
-        CHECK(pic.template_id.starts_with("tiled_уровень_предметы_"));
+        ids.push_back(pic.template_id);
     }
+    // One tileset of that name: the ids are its name, the tile, the flips.
+    CHECK(ids == std::vector<std::string>{"tiled_уровень_предметы_0", "tiled_уровень_предметы_3", "tiled_уровень_предметы_3h",
+                                          "tiled_уровень_предметы_7"});
     REQUIRE(p.objects.size() == 6);
     auto obj = [&](u32 id) -> const PlannedObject& {
         for (const PlannedObject& o : p.objects)
@@ -507,6 +543,109 @@ TEST_CASE("Tiled: what the import makes of the example map") {
     CHECK(n == 1);
     CHECK(has_note(p.skipped, "скрытые слои тайлов не переносятся: «Подсказки/Скрытое»"));
     CHECK_FALSE(has_note(p.skipped, "фон над блоками"));
+}
+
+TEST_CASE("Tiled: tilesets of one name, in other folders and in the map, give templates of their own ids") {
+    Map m;
+    std::string why;
+    REQUIRE_MESSAGE(read_map(test_map("одноимённые наборы.tmx"), m, &why), why);
+    REQUIRE(m.tilesets.size() == 3);
+    CHECK(m.tilesets[0].source == "одноимённые наборы/лес/предметы.tsx");
+    CHECK(m.tilesets[1].source == "одноимённые наборы/пещера/предметы.tsx");
+    CHECK(m.tilesets[2].name == "предметы");
+    const Plan p = plan_of(m);
+    CAPTURE(notes_text(p.missing));
+    CHECK(p.missing.empty());
+    REQUIRE(p.pictures.size() == 3);
+    REQUIRE(p.objects.size() == 3);
+    // Three pictures (the chest, the sign, the lantern), each of its object.
+    for (usize i = 0; i < 3; ++i) CHECK(p.objects[i].picture == i);
+    CHECK(p.pictures[0].rgba != p.pictures[1].rgba);
+    CHECK(p.pictures[2].h == 32);
+    // The name, the tile and the hash of the whole key: never one id for two pictures.
+    std::vector<std::string> ids;
+    for (const Picture& pic : p.pictures) {
+        CAPTURE(pic.key);
+        CHECK_FALSE(pic.known);
+        CHECK(pic.template_id.starts_with("tiled_одноимённые_наборы_предметы_0_"));
+        ids.push_back(pic.template_id);
+    }
+    std::vector<std::string> sorted = ids;
+    std::sort(sorted.begin(), sorted.end());
+    CHECK(std::unique(sorted.begin(), sorted.end()) == sorted.end());
+    REQUIRE(p.record.templates.size() == 3);
+    // The same ids every time: planned again with nothing before (tiled.json lost), and with the record.
+    const Plan lost = plan_of(m);
+    const Plan known = plan_of(m, p.tiles, p.areas, p.record);
+    for (usize i = 0; i < 3; ++i) {
+        CHECK(lost.pictures[i].template_id == ids[i]);
+        CHECK(known.pictures[i].known);
+        CHECK(known.pictures[i].template_id == ids[i]);
+    }
+    // The game has a template of one of those ids that is not this picture's: that one gets another, the rest keep theirs.
+    Options o;
+    o.template_taken = [&](const Picture& pic) { return pic.template_id == ids[1]; };
+    Plan taken;
+    REQUIRE(plan(m, o, {}, {}, {}, taken, &why));
+    CHECK(taken.pictures[0].template_id == ids[0]);
+    CHECK(taken.pictures[1].template_id == ids[1] + "_2");
+    CHECK(taken.pictures[2].template_id == ids[2]);
+    // An earlier import of the map that had only the forest's: it keeps the plain id, the others are told apart.
+    Record before = p.record;
+    before.templates = {{p.pictures[0].key, "tiled_одноимённые_наборы_предметы_0"}};
+    const Plan later = plan_of(m, {}, {}, before);
+    CHECK(later.pictures[0].known);
+    CHECK(later.pictures[0].template_id == "tiled_одноимённые_наборы_предметы_0");
+    CHECK(later.pictures[1].template_id == ids[1]);
+    CHECK(later.pictures[2].template_id == ids[2]);
+}
+
+TEST_CASE("Tiled: zones' music files of one name in other folders get names of their own; a file played twice, one") {
+    const fs::path dir = copy_of_example("forge_test_tiled_music_names");
+    const fs::path tmx = dir / utf8_path("уровень.tmx");
+    std::string text = read_text(tmx);
+    const usize end = text.find(" </objectgroup>");
+    REQUIRE(end != std::string::npos);
+    text.insert(end, "  <object id=\"11\" name=\"Шахта\" x=\"0\" y=\"0\" width=\"64\" height=\"32\">\n"
+                     "   <properties>\n    <property name=\"music\" type=\"file\" value=\"другая/пещера.wav\"/>\n   </properties>\n"
+                     "  </object>\n"
+                     "  <object id=\"12\" name=\"Грот\" x=\"96\" y=\"0\" width=\"32\" height=\"32\">\n"
+                     "   <properties>\n    <property name=\"music\" type=\"file\" value=\"музыка/пещера.wav\"/>\n   </properties>\n"
+                     "  </object>\n");
+    write_text(tmx, text);
+    fs::create_directories(dir / utf8_path("другая"));
+    write_text(dir / utf8_path("другая/пещера.wav"), "другая музыка");
+    Map m;
+    std::string why;
+    REQUIRE_MESSAGE(read_map(tmx, m, &why), why);
+    const Plan p = plan_of(m);
+    REQUIRE(p.areas.areas.size() == 3);
+    auto zone = [&](const Plan& plan, std::string_view name) -> const Area& {
+        for (const Area& a : plan.areas.areas)
+            if (a.name == name) return a;
+        FAIL("no zone " << name);
+        return plan.areas.areas[0];
+    };
+    CHECK(zone(p, "Пещера").music == "пещера.wav");
+    CHECK(zone(p, "Грот").music == "пещера.wav");
+    CHECK(zone(p, "Шахта").music == "пещера (2).wav");
+    REQUIRE(p.music.size() == 2);
+    CHECK(p.music[0].name == "пещера.wav");
+    CHECK(p.music[0].zones == std::vector<u64>{zone(p, "Пещера").id, zone(p, "Грот").id});
+    CHECK(p.music[1].name == "пещера (2).wav");
+    CHECK(fs::equivalent(p.music[1].file, dir / utf8_path("другая/пещера.wav")));
+    CHECK(p.music[1].zones == std::vector<u64>{zone(p, "Шахта").id});
+    // Again over what that import made, its zones playing the names it got in the game («(2)», «(3)» when the game had
+    // another «пещера.wav»): those names stay, the window shows them, nothing to update.
+    LevelAreas made = p.areas;
+    for (Area& a : made.areas) a.music = a.name == "Шахта" ? "пещера (3).wav" : "пещера (2).wav";
+    const Plan again = plan_of(m, p.tiles, made, p.record);
+    CHECK(again.zones_updated == 0);
+    CHECK(again.areas == made);
+    REQUIRE(again.music.size() == 2);
+    CHECK(again.music[0].name == "пещера (2).wav");
+    CHECK(again.music[1].name == "пещера (3).wav");
+    fs::remove_all(dir);
 }
 
 TEST_CASE("Tiled: what is missing is told and its cells stay empty; the rest comes over") {

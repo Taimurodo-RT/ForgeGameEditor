@@ -202,9 +202,9 @@ std::string picture_file(const Picture& p) {
     return p.template_id + "_" + b + ".png";
 }
 
-bool template_taken(const objects::Library& library, const std::string& id) {
-    const objects::Template* t = library.find(std::string_view(id));
-    return t && !made_by_import(*t);
+bool template_taken(const objects::Library& library, const Picture& p) {
+    const objects::Template* t = library.find(std::string_view(p.template_id));
+    return t && (!made_by_import(*t) || t->picture != picture_file(p));
 }
 
 void game_objects(Level& level, const world::Rect& rect, bool outside, std::vector<flecs::entity>& out) {
@@ -334,25 +334,26 @@ bool write_resources(Plan& plan, objects::Library& library, const fs::path& soun
     }
 
     // --- the zones' music into the game's sounds ---
-    for (auto& [file, name] : plan.music) {
+    for (Music& m : plan.music) {
         std::vector<u8> bytes;
-        if (!read_file(file, bytes)) {
+        if (!read_file(m.file, bytes)) {
             undo();
-            return fail("не читается музыка " + path_to_utf8(file) + "; ничего не изменилось");
+            return fail("не читается музыка " + path_to_utf8(m.file) + "; ничего не изменилось");
         }
-        // The same sound there already, or a name nobody has.
-        std::string to_name = name;
-        const fs::path stem = utf8_path(name).stem(), ext = utf8_path(name).extension();
+        // The same sound there already, or a name nobody has: the plan's first, else the file's own, «имя (2)», …
+        // (files written just now are there too, so two files of one name get two).
         bool there = false;
-        for (int n = 2;; ++n) {
-            const fs::path to = sounds / utf8_path(to_name);
-            if (!fs::exists(to, ec)) break;
+        auto fits = [&](const std::string& n) {
+            const fs::path to = sounds / utf8_path(n);
             std::vector<u8> old;
-            if (read_file(to, old) && old == bytes) {
-                there = true;
-                break;
-            }
-            to_name = path_to_utf8(stem) + " (" + std::to_string(n) + ")" + path_to_utf8(ext);
+            there = fs::exists(to, ec) && read_file(to, old) && old == bytes;
+            return there || !fs::exists(to, ec);
+        };
+        const std::string stem = path_to_utf8(m.file.stem()), ext = path_to_utf8(m.file.extension());
+        std::string to_name = m.name;
+        if (to_name.empty() || !fits(to_name)) {
+            to_name = path_to_utf8(m.file.filename());
+            for (int n = 2; !fits(to_name); ++n) to_name = stem + " (" + std::to_string(n) + ")" + ext;
         }
         if (!there) {
             fs::create_directories(sounds, ec);
@@ -364,10 +365,12 @@ bool write_resources(Plan& plan, objects::Library& library, const fs::path& soun
             created.push_back(to);
             made.sounds.push_back(to_name);
         }
-        if (to_name != name) {
-            for (Area& a : plan.areas.areas)
-                if (a.music == name) a.music = to_name;
-            name = to_name;
+        // Only this file's zones of the import take its name: the author's zones, and the import's that play
+        // another file of the same name, keep theirs.
+        if (to_name != m.name) {
+            for (const u64 id : m.zones)
+                if (Area* a = plan.areas.find(id)) a->music = to_name;
+            m.name = to_name;
         }
     }
 
