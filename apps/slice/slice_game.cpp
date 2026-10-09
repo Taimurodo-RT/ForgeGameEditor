@@ -287,7 +287,8 @@ public:
     }
     void hint(flecs::entity_t, std::string_view text) override { g_.hints_.emplace_back(text); }
     void sound(flecs::entity_t at, std::string_view cue) override { g_.cues_.emplace_back(at, std::string(cue)); }
-    bool night() override { return false; } // no nights in the slice yet
+    // The level's hour (light.json; it does not run in the game), never the editor's «Просмотр».
+    bool night() override { return g_.level_ && is_night(g_.level_->light.time); }
     void fired(u32 link) override { g_.note_fired(link); }
 
 private:
@@ -927,6 +928,7 @@ std::vector<SliceGame::Lamp> SliceGame::light_sources() const {
 }
 
 f32 SliceGame::level_hour() const { return level_ ? level_->light.time : std::nanf(""); }
+const world::World* SliceGame::world() const { return level_ ? level_->world.get() : nullptr; }
 
 flecs::entity_t SliceGame::nearest_item(f64 x, f64 y, f64 radius) const {
     if (!level_) return 0;
@@ -1548,6 +1550,9 @@ void SliceGame::update_hud(bool playing) {
 }
 
 void SliceGame::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) {
+    // The torches drawn and lit are the ones in view (build_sprites, in update): a window of another size since
+    // then gets them for this frame's view, not the last one's.
+    const bool resized = width != width_ || height != height_;
     width_ = width;
     height_ = height;
     SDL_GPUColorTargetInfo info{};
@@ -1568,6 +1573,7 @@ void SliceGame::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 wi
         }
         tiles_world_ = level_->world.get();
     }
+    if (resized) build_sprites();
     tiles_.prepare(cmd, camera_, width, height);
     sprites_.prepare(cmd, batch_, camera_, width, height);
     lights_.rules().sky_color = sky_light(level_->light.time);

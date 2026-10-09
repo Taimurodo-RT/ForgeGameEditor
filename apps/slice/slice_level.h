@@ -154,6 +154,7 @@ public:
     std::string place(f64 x, f64 y) const override { return gen_->location(x, y); }
     u32 map_color(u32 layer, TileId value) const override;
     forge::Color background() const override { return {0.47f, 0.68f, 0.90f, 1.0f}; }
+    std::string hour_words(f64 hour) const override;
     bool play_spot(forge::level::Level& level, f64 x, f64 y, f64& out_x, f64& out_y) const override;
 
     bool init_view(SDL_GPUDevice* device, SDL_GPUTextureFormat format) override;

@@ -52,6 +52,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -3034,9 +3035,11 @@ private:
     // and the panel (its self-test makes it again and compares), read from the files the way «Играть отсюда» starts
     // it (in a package from the package's own data/examples). An old level keeps the light it always had; the
     // example's hour (21:30) and its two sources are the author's. The game's frame and the editor's view «как в
-    // игре» are made with the same camera, the hero's own light put out: their light alone is compared pixel by
-    // pixel, and the sources' light where it reaches (nothing past the radius). A copy at noon has a brighter sky and
-    // the same lamps; a save keeps light.json; the example's files stay as they were.
+    // игре» are made with the same camera, size (the game's, --size) and world under the light's grid, the hero's
+    // own light put out: their light alone is compared pixel by pixel, again in a window of another size, and the
+    // sources' light where it reaches (nothing past the radius). A copy at noon has a brighter sky and the same
+    // lamps; a save keeps light.json; links «Только ночью» go by the level's hour; the example's files stay as they
+    // were.
     struct Shot {
         std::vector<u8> full, light; // the frame, and its light alone (white under it)
     };
@@ -3071,11 +3074,12 @@ private:
             std::vector<std::pair<std::string, std::vector<u8>>> files;
             std::vector<SliceGame::Lamp> lamps;
             render::Camera2D cam;
-            Shot game, editor, hero, at_noon;
+            u32 w = 0, h = 0; // the game's frame
+            u32 link = 0;     // «Ключ открывает Дверь»
+            Shot game, editor, hero, at_noon, resized_game, resized_editor, preview;
         };
         auto st = std::make_shared<State>();
         const i32 v = g.generator().village_y();
-        const u32 w = 1600, h = 900;
         const f32 zoom = 22;
         // The example's sources (games/examples/light/README.md) and the hero's place in the room, between them.
         const f64 ax = 42.5, ay = v + 12.5, bx = 66.5, by = v + 14.5, hx = 56.5;
@@ -3092,7 +3096,8 @@ private:
             return out;
         };
         // A pixel of an image at a tile point (as every renderer places it around the snapped camera).
-        auto pixel = [w, h](const std::vector<u8>& rgba, const render::Camera2D& c, f64 tx, f64 ty) {
+        auto pixel = [st](const std::vector<u8>& rgba, const render::Camera2D& c, f64 tx, f64 ty) {
+            const u32 w = st->w, h = st->h;
             const i32 px = static_cast<i32>(std::floor((tx - c.snapped_x()) * c.zoom + w * 0.5));
             const i32 py = static_cast<i32>(std::floor((ty - c.snapped_y()) * c.zoom + h * 0.5));
             std::array<int, 3> out{-1, -1, -1};
@@ -3169,18 +3174,27 @@ private:
             }
             return f >= 15; // the camera settles on the hero
         }});
-        steps_.push_back({"игра и редактор светят одинаково", 5, [&s, &g, v, w, h, ax, ay, bx, by, hx, pixel, rgb, differ, lit, this,
-                                                                 st](u32 f) {
+        steps_.push_back({"игра и редактор светят одинаково", 5, [&s, &g, v, ax, ay, bx, by, hx, pixel, rgb, differ, lit, this, st](u32 f) {
             if (f > 0) return true;
+            // The size the game is drawn at (--size), and another, as when its window is made bigger or smaller.
+            const u32 w = g.frame_width(), h = g.frame_height();
+            const bool full_hd = w == 1920 && h == 1080;
+            const u32 w2 = full_hd ? 1600 : 1920, h2 = full_hd ? 900 : 1080;
+            st->w = w;
+            st->h = h;
+            FORGE_INFO("кадр игры %ux%u; окно другого размера — %ux%u", w, h, w2, h2);
             st->cam = g.camera();
             check(std::fabs(st->cam.x - hx) < 1 && st->cam.zoom == 22, "камера у героя: " + std::to_string(st->cam.x) + ", " +
                                                                            std::to_string(st->cam.y));
             // The game's frame with the hero's own light put out, as the editor has no hero.
+            auto game_shot = [&g](u32 sw, u32 sh, Shot& out) {
+                return shoot(g.device(), sw, sh, [&g, sw, sh](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) { g.render(cmd, t, sw, sh); },
+                             g.lights(), out);
+            };
             g.set_hero_light(false);
-            check(shoot(g.device(), w, h, [&g, w, h](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) { g.render(cmd, t, w, h); }, g.lights(),
-                        st->game),
-                  "кадр игры без света героя");
-            // The editor's view «как в игре» of the same folder, the same camera and size.
+            check(game_shot(w, h, st->game), "кадр игры без света героя");
+            // The editor's view «как в игре» of the same folder: the same camera and size, the same world under the
+            // light's grid (the view and kLightMargin tiles around it; the game loads chunks farther than that).
             SliceLevel module;
             std::string why;
             check(module.load_objects(s.game_dir(), &why), "шаблоны игры для редактора " + why);
@@ -3188,27 +3202,40 @@ private:
             {
                 forge::level::Level level(module);
                 check(level.open(st->dir), "редактор открывает пример");
-                const world::Rect view = st->cam.visible_tiles(w, h);
-                level.ensure_loaded({view.x0 - 48, view.y0 - 48, view.x1 + 48, view.y1 + 48});
                 check(level.light().time == 21.5f, "в редакторе тоже 21:30");
+                const render::Camera2D cam = st->cam;
+                auto editor_shot = [&](u32 sw, u32 sh, const forge::level::ViewOptions& options, Shot& out) {
+                    const world::Rect grid = cam.visible_tiles(sw, sh).expanded(render::kLightMargin);
+                    level.ensure_loaded(grid);
+                    u32 chunks = 0, in_game = 0, in_editor = 0;
+                    for (i32 cy = grid.y0 >> world::kChunkShift; cy <= (grid.y1 - 1) >> world::kChunkShift; ++cy)
+                        for (i32 cx = grid.x0 >> world::kChunkShift; cx <= (grid.x1 - 1) >> world::kChunkShift; ++cx) {
+                            ++chunks;
+                            in_game += g.world() && g.world()->find_chunk({cx, cy}) != nullptr;
+                            in_editor += level.world().find_chunk({cx, cy}) != nullptr;
+                        }
+                    FORGE_INFO("под сеткой света %ux%u участков %u: загружены в игре %u, в редакторе %u", sw, sh, chunks, in_game, in_editor);
+                    check(in_game == chunks && in_editor == chunks, "под сеткой света " + std::to_string(sw) + "x" + std::to_string(sh) +
+                                                                        " участков " + std::to_string(chunks) + ": в игре загружено " +
+                                                                        std::to_string(in_game) + ", в редакторе " + std::to_string(in_editor));
+                    return shoot(g.device(), sw, sh,
+                                 [&](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) {
+                                     module.prepare_view(cmd, level, cam, sw, sh, options, 0);
+                                     SDL_GPUColorTargetInfo info{};
+                                     info.texture = t;
+                                     const Color bg = module.background();
+                                     info.clear_color = SDL_FColor{bg.r, bg.g, bg.b, 1};
+                                     info.load_op = SDL_GPU_LOADOP_CLEAR;
+                                     info.store_op = SDL_GPU_STOREOP_STORE;
+                                     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
+                                     module.draw_view(cmd, pass);
+                                     SDL_EndGPURenderPass(pass);
+                                 },
+                                 module.lights(), out);
+                };
                 forge::level::ViewOptions options;
                 options.game_light = true;
-                const render::Camera2D cam = st->cam;
-                check(shoot(g.device(), w, h,
-                            [&](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) {
-                                module.prepare_view(cmd, level, cam, w, h, options, 0);
-                                SDL_GPUColorTargetInfo info{};
-                                info.texture = t;
-                                const Color bg = module.background();
-                                info.clear_color = SDL_FColor{bg.r, bg.g, bg.b, 1};
-                                info.load_op = SDL_GPU_LOADOP_CLEAR;
-                                info.store_op = SDL_GPU_STOREOP_STORE;
-                                SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
-                                module.draw_view(cmd, pass);
-                                SDL_EndGPURenderPass(pass);
-                            },
-                            module.lights(), st->editor),
-                      "вид редактора «как в игре»");
+                check(editor_shot(w, h, options, st->editor), "вид редактора «как в игре»");
                 // The light in numbers: the sources' own light where it reaches, in the game and the editor.
                 render::LightRenderer& gl = g.lights();
                 render::LightRenderer& el = module.lights();
@@ -3231,13 +3258,25 @@ private:
                 const Color ca = gl.lamp_at(ax, ay), cb = gl.lamp_at(bx, by);
                 check(ca.r > ca.g && ca.g > ca.b && ca.r > 1.5f, "в центре тёплого: тёплый свет 2 × #FF9A40");
                 check(cb.b > cb.g && cb.g > cb.r && cb.b > 1.2f, "в центре синего: синий свет 1.5 × #5080FF");
+                // The window of another size: the game draws its next frame at it (the torches in view are picked again),
+                // the editor its view of the same size; the light is the same again.
+                check(game_shot(w2, h2, st->resized_game), "кадр игры в окне " + std::to_string(w2) + "x" + std::to_string(h2));
+                check(editor_shot(w2, h2, options, st->resized_editor), "вид редактора того же размера");
+                // «Просмотр» of another hour in the editor: its view only, the level's hour (the game's night) as it was.
+                options.preview_time = 12;
+                check(editor_shot(w, h, options, st->preview), "вид редактора с просмотром 12:00");
+                check(level.light().time == 21.5f && g.level_hour() == 21.5f, "после просмотра в уровне и в игре 21:30");
                 module.level_closing(level);
             }
             module.shutdown_view();
             int most = 0;
-            const usize n = differ(st->game.light, st->editor.light, most);
-            FORGE_INFO("свет кадра: игра и редактор различаются в %zu пикселях из %u, не больше чем на %d", n, w * h, most);
+            usize n = differ(st->game.light, st->editor.light, most);
+            FORGE_INFO("свет кадра %ux%u: игра и редактор различаются в %zu пикселях из %u, не больше чем на %d", w, h, n, w * h, most);
             check(n == 0, "свет игры и вида редактора совпадает попиксельно: разных " + std::to_string(n) + ", до " + std::to_string(most));
+            n = differ(st->resized_game.light, st->resized_editor.light, most);
+            FORGE_INFO("свет кадра %ux%u: игра и редактор различаются в %zu пикселях из %u, не больше чем на %d", w2, h2, n, w2 * h2, most);
+            check(n == 0, "в окне " + std::to_string(w2) + "x" + std::to_string(h2) + " тоже попиксельно: разных " + std::to_string(n) +
+                              ", до " + std::to_string(most));
             const auto pa = pixel(st->game.light, st->cam, ax, ay), pb = pixel(st->game.light, st->cam, bx, by);
             const auto mid = pixel(st->game.light, st->cam, hx, by), sky = pixel(st->game.light, st->cam, hx, v - 3);
             FORGE_INFO("свет в пикселях: тёплый %s, синий %s, между ними %s, небо %s", rgb(pa).c_str(), rgb(pb).c_str(), rgb(mid).c_str(),
@@ -3246,19 +3285,25 @@ private:
             check(pb[2] == 255 && pb[2] > pb[1] && pb[1] > pb[0], "синий в кадре: " + rgb(pb));
             check(mid[0] < 40 && mid[1] < 40 && mid[2] < 40, "между ними, вне обоих кругов, темно: " + rgb(mid));
             check(sky[2] > sky[0] + 20 && sky[2] < 100, "ночное небо тёмно-синее: " + rgb(sky));
+            const auto noon_sky = pixel(st->preview.light, st->cam, hx, v - 3);
+            check(noon_sky[0] > sky[0] + 150, "просмотр 12:00 светлее в виде редактора: " + rgb(sky) + " → " + rgb(noon_sky));
             // The hero's own light again: brighter around him, the same elsewhere.
             g.set_hero_light(true);
-            check(shoot(g.device(), w, h, [&g, w, h](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) { g.render(cmd, t, w, h); }, g.lights(),
-                        st->hero),
-                  "кадр игры со светом героя");
+            check(game_shot(w, h, st->hero), "кадр игры со светом героя");
             const auto lit_hero = pixel(st->hero.light, st->cam, hx, by), at_a = pixel(st->hero.light, st->cam, ax, ay);
             check(lit_hero[0] > mid[0] + 40, "у героя светлее, чем без его света: " + rgb(mid) + " → " + rgb(lit_hero));
             check(at_a == pa, "у тёплого источника так же: " + rgb(at_a));
-            for (const auto& [name, shot] : {std::pair<const char*, const Shot*>{"game", &st->game}, {"editor", &st->editor}, {"hero", &st->hero}}) {
+            for (const auto& [name, shot] : {std::pair<const char*, const Shot*>{"game", &st->game}, {"editor", &st->editor}, {"hero", &st->hero},
+                                             {"preview", &st->preview}}) {
                 render::write_png(path_to_utf8(st->out / (std::string(name) + ".png")).c_str(), w, h, shot->full);
                 render::write_png(path_to_utf8(st->out / (std::string(name) + "-light.png")).c_str(), w, h, shot->light);
             }
-            FORGE_INFO("картинки: %s (game, editor, hero и их -light)", path_to_utf8(st->out).c_str());
+            for (const auto& [name, shot] : {std::pair<const char*, const Shot*>{"resized-game", &st->resized_game},
+                                             {"resized-editor", &st->resized_editor}}) {
+                render::write_png(path_to_utf8(st->out / (std::string(name) + ".png")).c_str(), w2, h2, shot->full);
+                render::write_png(path_to_utf8(st->out / (std::string(name) + "-light.png")).c_str(), w2, h2, shot->light);
+            }
+            FORGE_INFO("картинки: %s (game, editor, hero, preview, resized-game, resized-editor и их -light)", path_to_utf8(st->out).c_str());
             return true;
         }});
         steps_.push_back({"сохранение игры: файлы примера не тронуты", 10, [&s, &g, files_of, this, st](u32 f) {
@@ -3279,8 +3324,7 @@ private:
                   "загруженная игра: 21:30 и те же источники");
             return true;
         }});
-        steps_.push_back({"копия в полдень: небо светлее, источники те же", 20, [&s, &g, v, w, h, zoom, ax, ay, hx, pixel, rgb, this,
-                                                                               st](u32 f) {
+        steps_.push_back({"копия в полдень: небо светлее, источники те же", 20, [&s, &g, v, zoom, ax, ay, hx, pixel, rgb, this, st](u32 f) {
             if (f == 0) {
                 st->noon = std::filesystem::temp_directory_path() / "forge_slice_light_noon";
                 std::error_code ec;
@@ -3294,6 +3338,8 @@ private:
                 check(g.level_hour() == 12.0f, "игра светит в полдень");
             }
             if (f < 15) return false;
+            const u32 w = st->w, h = st->h;
+            check(g.frame_width() == w && g.frame_height() == h, "кадр того же размера");
             g.set_hero_light(false);
             check(shoot(g.device(), w, h, [&g, w, h](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) { g.render(cmd, t, w, h); }, g.lights(),
                         st->at_noon),
@@ -3307,6 +3353,93 @@ private:
             render::write_png(path_to_utf8(st->out / "noon.png").c_str(), w, h, st->at_noon.full);
             return true;
         }});
+        // «Только ночью» goes by the level's hour (light.json), night from 21:00 till 4:30 (slice::is_night). The
+        // game's own link «Ключ открывает Дверь» (its logic.json; in a package, the package's) is made night-only the
+        // way «Логика» makes it and written to this run's file of links; the game reads it from there. The door at the
+        // end of the gallery opens to the hero with the key at night and holds by day: the example at 21:30 and copies
+        // of it at the hours around 21:00, 4:30 and midnight, in a new game and in a game loaded from a save.
+        steps_.push_back({"связь «Только ночью» из файла связей", 5, [&s, &g, this, st](u32 f) {
+            if (f > 0) return true;
+            logic::Logic links;
+            std::string why;
+            check(links.load(s.game_dir() / "logic.json", &why), "связи игры читаются " + why);
+            logic::Link* door = nullptr;
+            for (logic::Link& l : links.links)
+                if (l.a == "key" && l.verb == "open" && l.b == "door") door = &l;
+            check(door && !door->night, "в игре связь «Ключ открывает Дверь», без «Только ночью»");
+            if (!door) return true;
+            st->link = door->id;
+            door->night = true; // the switch «Только ночью» in «Логика»
+            const std::filesystem::path file = std::filesystem::temp_directory_path() / "forge_slice_test_logic.json";
+            check(links.save(file, &why) && g.reload_links(&why), "связь записана в файл связей прогона, игра его перечитала " + why);
+            std::vector<u8> bytes;
+            read_file(file, bytes);
+            const std::string text(bytes.begin(), bytes.end());
+            check(text.find("\"night\"") != std::string::npos, "в файле связей: night");
+            bool night = false;
+            for (const logic::Link& l : g.links().links) night = night || (l.id == st->link && l.night);
+            check(night, "в игре связь «Ключ открывает Дверь» — только ночью");
+            return true;
+        }});
+        struct Hour {
+            f32 time;
+            bool night, from_save;
+        };
+        for (const Hour& at : {Hour{21.5f, true, false}, Hour{12.0f, false, false}, Hour{20.0f + 59.0f / 60.0f, false, true},
+                               Hour{21.0f, true, true}, Hour{0.0f, true, false}, Hour{4.0f + 29.0f / 60.0f, true, true},
+                               Hour{4.5f, false, false}}) {
+            const std::string& name = names_.emplace_back(std::string("«Только ночью» в ") + forge::level::clock_text(at.time) +
+                                                          (at.from_save ? ", игра из сохранения" : ", новая игра"));
+            steps_.push_back({name.c_str(), 140, [&s, &g, at, this, st](u32 f) {
+                const i32 dx = g.generator().gallery_x1();
+                const f64 gy = g.generator().gallery_y();
+                const std::string when = forge::level::clock_text(at.time);
+                if (f == 0) {
+                    std::filesystem::path dir = st->dir; // 21:30: the example itself
+                    if (at.time != 21.5f) {
+                        dir = std::filesystem::temp_directory_path() / "forge_slice_light_hour";
+                        std::error_code ec;
+                        std::filesystem::remove_all(dir, ec);
+                        std::string why;
+                        check(forge::level::copy_level(st->dir, dir, &why) && forge::level::save_light(dir, {at.time}, &why),
+                              "копия примера в " + when + " " + why);
+                    }
+                    // The hero by the door, with the key.
+                    g.set_level(dir, true, dx + 2.5, gy + 1);
+                    check(s.new_game(), "новая игра в " + when);
+                    s.vars().set("inv.key", 1);
+                    g.script(Controls{});
+                    return false;
+                }
+                if (at.from_save && f == 3) {
+                    check(s.save("night", "Ночь"), "игра сохраняется");
+                    s.vars().set("inv.key", 0);
+                }
+                if (at.from_save && f == 6) check(s.load("night"), "сохранение загружается");
+                if (f == 9) {
+                    check(g.level_hour() == at.time && g.inventory("key") == 1,
+                          "в игре " + forge::level::clock_text(g.level_hour()) + ", ключ у героя");
+                    check(is_night(g.level_hour()) == at.night, when + (at.night ? " — ночь" : " — не ночь"));
+                }
+                if (f < 12) return false;
+                if (f < 110) {
+                    Controls left;
+                    left.left = true;
+                    g.script(left);
+                    return false;
+                }
+                g.script(Controls{});
+                bool open = !at.night;
+                check(g.door_open(dx + 0.5, gy + 0.5, open), "дверь в конце штольни");
+                if (at.night) {
+                    check(open && g.hero_x() < dx + 0.5, "в " + when + " ключ открыл дверь, герой прошёл");
+                } else {
+                    check(!open && g.hero_x() > dx + 1.0, "в " + when + " дверь закрыта и с ключом, герой у двери");
+                    FORGE_INFO("подсказка у закрытой двери: «%s»", g.last_hint().c_str());
+                }
+                return true;
+            }});
+        }
         steps_.push_back({"обратно в меню", 5, [&s, &g, files_of, this, st](u32 f) {
             if (f == 0) {
                 s.to_main_menu();
@@ -3314,6 +3447,7 @@ private:
                 check(files_of(st->dir) == st->files, "файлы примера как были");
                 std::error_code ec;
                 std::filesystem::remove_all(st->noon, ec);
+                std::filesystem::remove_all(std::filesystem::temp_directory_path() / "forge_slice_light_hour", ec);
             }
             return f >= 2;
         }});
@@ -3322,6 +3456,7 @@ private:
     SliceGame& g_;
     std::string scene_;
     std::vector<Step> steps_;
+    std::deque<std::string> names_; // of the steps named as they are made
     usize index_ = 0;
     u32 frames_ = 0;
     int* failures_ = nullptr;

@@ -12,11 +12,18 @@ namespace slice {
 std::vector<u8> make_atlas();
 forge::demo::SheetImage make_sheet();
 forge::render::LightRules light_rules();
-// The sky's light through a day (forge::level::LevelLight::time): night,
-// dawn, from 8 to 17 the light the game always had, dusk.
+// The game's hours (forge::level::LevelLight::time; they do not run in the
+// game). Night from 21:00 till 4:30: the sky stays at its night light and
+// links «Только ночью» happen (SliceLogic::night). Dawn till 8:00, from 8 to
+// 17 the light the game always had, dusk till 21:00.
+inline constexpr f64 kNightFrom = 21.0, kNightTill = 4.5, kDayFrom = 8.0, kDayTill = 17.0;
+bool is_night(f64 hour);
+// The sky's light through a day, by those hours.
 std::span<const forge::render::SkyKey> day_sky();
 // The sky's light at an hour, by day_sky().
 forge::Color sky_light(f64 hour);
+// What an hour means in the game, for the editor's «Свет».
+const char* hour_words(f64 hour);
 
 // Frames past the demo sheet's (forge::demo::kFrame*). People are 1 × 2 tiles.
 enum Frame : u32 {

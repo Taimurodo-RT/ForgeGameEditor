@@ -162,14 +162,6 @@ bool parse_hex(const std::string& text, f32& r, f32& g, f32& b) {
     b = static_cast<f32>(v[2]) / 255.0f;
     return true;
 }
-// What the sky does at an hour (day_sky of the game: night till 4:30 and from
-// 21, the day's light from 8 to 17).
-const char* sky_words(f64 h) {
-    if (h < 4.5 || h >= 21) return "Ночь: небо почти не светит; в глубине пещер темно, как всегда.";
-    if (h < 8) return "Рассвет: небо светлеет, к 8:00 светит как днём.";
-    if (h < 17) return "День: небо светит как всегда в игре.";
-    return "Вечер: небо тускнеет и краснеет, с 21:00 ночь.";
-}
 
 const char* const kPullNames[] = {"вниз", "влево", "вверх", "вправо", "нет"};
 // A gravity point: what the panel lets the author set.
@@ -1874,7 +1866,7 @@ void LevelEditor::sync_model() {
         const f64 h = level_->light().time;
         set(m_lt_time_, Rml::String(level::clock_text(h)), "lv_lt_time");
         set(m_lt_hours_, Rml::String(number(std::min<f64>(h, kLastHour))), "lv_lt_hours");
-        set(m_lt_sky_, Rml::String(sky_words(h)), "lv_lt_sky");
+        set(m_lt_sky_, Rml::String(module_.hour_words(h)), "lv_lt_sky"); // the game's words, its night among them
         const bool previewing = view_.preview_time >= 0;
         const f64 ph = previewing ? view_.preview_time : h;
         set(m_lt_previewing_, previewing, "lv_lt_previewing");

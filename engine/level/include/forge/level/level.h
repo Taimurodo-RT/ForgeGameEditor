@@ -149,6 +149,9 @@ public:
     virtual u32 map_color(u32 layer, world::TileId value) const { (void)layer; (void)value; return 0; }
     // What is behind every layer (the sky).
     virtual Color background() const { return {0.47f, 0.68f, 0.90f, 1.0f}; }
+    // What the level's hour (LevelLight::time) means in the game, for «Свет»:
+    // the game's own words, its night among them.
+    virtual std::string hour_words(f64 hour) const { (void)hour; return {}; }
     // Where a game started near (x, y) puts its player (the point under its
     // feet); false when there is no room near. For «Играть отсюда».
     virtual bool play_spot(Level& level, f64 x, f64 y, f64& out_x, f64& out_y) const {

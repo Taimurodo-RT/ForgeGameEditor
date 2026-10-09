@@ -25,7 +25,7 @@ using world::kChunkSize;
 namespace {
 
 constexpr u32 kGroup = 16;   // compute group is 16 × 16, as in the shader
-constexpr i32 kMargin = 40;  // tiles of world outside the screen that still cast light onto it
+constexpr i32 kMargin = kLightMargin; // tiles of world outside the screen that still cast light onto it
 
 struct SpreadParams {
     f32 transmit[4];

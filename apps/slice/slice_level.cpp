@@ -608,6 +608,8 @@ void SliceLevel::start(f64& x, f64& y) const {
     y = gen_->spawn_y() - 2;
 }
 
+std::string SliceLevel::hour_words(f64 hour) const { return slice::hour_words(hour); }
+
 bool SliceLevel::init_view(SDL_GPUDevice* device, SDL_GPUTextureFormat format) {
     device_ = device;
     format_ = format;

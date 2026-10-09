@@ -2972,6 +2972,10 @@ private:
             break;
         }
         case 14: {
+            // The game's night (links «Только ночью») goes by the level's hour, not the preview's.
+            check(element_text("lt-sky").find("Ночь") != std::string::npos &&
+                      element_text("lt-sky").find("«Только ночью» срабатывают") != std::string::npos,
+                  "a preview at noon: in the game it is still night, as at 21:30: " + element_text("lt-sky"));
             check(shown("lt-view-preview") && element_text("lt-view-preview").find("12:00") != std::string::npos &&
                       element_text("lt-view-preview").find("21:30") != std::string::npos,
                   "the view says it is a preview, and at what hour the level is: " + element_text("lt-view-preview"));

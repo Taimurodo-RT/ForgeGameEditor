@@ -53,9 +53,12 @@ struct PointLight {
     f32 radius = 0; // tiles, up to kMaxLampRadius; 0: none
 };
 
+// How much world around the screen the light grid has, in tiles: what is
+// there still lights the screen (and unloaded chunks there are dark).
+inline constexpr i32 kLightMargin = 40;
 // The farthest a lamp with a radius reaches, in tiles: the grid has this much
 // world around the screen, so a lamp off screen this far still lights it.
-inline constexpr f32 kMaxLampRadius = 40;
+inline constexpr f32 kMaxLampRadius = kLightMargin;
 
 // How much of a lamp's light is left d tiles along its way (straight through
 // the air, longer around corners and through water or rock): all of it at the

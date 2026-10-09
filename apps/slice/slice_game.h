@@ -152,6 +152,10 @@ public:
     forge::render::Camera2D& camera() { return camera_; }
     void set_hero_light(bool on) { hero_light_ = on; }
     SDL_GPUDevice* device() const { return device_; }
+    // The size of the last frame drawn, and the world as loaded now.
+    u32 frame_width() const { return width_; }
+    u32 frame_height() const { return height_; }
+    const forge::world::World* world() const;
     // The item nearest to a point within radius (0: none), and where an
     // entity is now (false: gone).
     flecs::entity_t nearest_item(f64 x, f64 y, f64 radius) const;
