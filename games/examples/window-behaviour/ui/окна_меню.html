@@ -2,8 +2,8 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>Звук: окно</title>
-<!-- Made by Forge «Интерфейс» from Звук: окно.json; changes here are overwritten. -->
+<title>Окна: меню</title>
+<!-- Made by Forge «Интерфейс» from Окна: меню.json; changes here are overwritten. -->
 <style>
 html, body {
   margin: 0;
@@ -21,50 +21,40 @@ body {
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  background-color: rgba(0, 0, 0, 0.471);
+  background-color: #181e26;
   overflow: hidden;
 }
 #n2 {
   position: absolute;
-  left: 560px;
-  width: 800px;
-  top: 240px;
-  height: 600px;
+  left: 460px;
+  width: 1000px;
+  top: 140px;
+  height: 90px;
   box-sizing: border-box;
-  background-color: #24303f;
-  border-radius: 14px 14px 14px 14px;
+  font-family: "Onest";
+  font-size: 64px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ebf0f5;
+  white-space: pre-wrap;
 }
 #n3 {
   position: absolute;
-  left: 0px;
-  width: 800px;
-  top: 40px;
-  height: 70px;
+  left: 760px;
+  width: 400px;
+  top: 340px;
+  height: 90px;
   box-sizing: border-box;
-  font-family: "Onest";
-  font-size: 44px;
-  font-weight: 400;
-  line-height: normal;
-  text-align: center;
-  color: #ffffff;
-  white-space: pre-wrap;
+  background-color: #e8b04a;
+  border-radius: 14px 14px 14px 14px;
 }
 #n4 {
   position: absolute;
-  left: 200px;
-  width: 400px;
-  top: 220px;
-  height: 90px;
-  box-sizing: border-box;
-  background-color: #e8b04a;
-  border-radius: 14px 14px 14px 14px;
-}
-#n5 {
-  position: absolute;
   left: 0px;
   width: 400px;
-  top: 0px;
-  height: 90px;
+  top: 20px;
+  height: 50px;
   box-sizing: border-box;
   font-family: "Onest";
   font-size: 36px;
@@ -74,22 +64,22 @@ body {
   color: #1b2127;
   white-space: pre-wrap;
 }
-#n6 {
+#n5 {
   position: absolute;
-  left: 200px;
+  left: 760px;
   width: 400px;
-  top: 360px;
+  top: 460px;
   height: 90px;
   box-sizing: border-box;
   background-color: #e8b04a;
   border-radius: 14px 14px 14px 14px;
 }
-#n7 {
+#n6 {
   position: absolute;
   left: 0px;
   width: 400px;
-  top: 0px;
-  height: 90px;
+  top: 20px;
+  height: 50px;
   box-sizing: border-box;
   font-family: "Onest";
   font-size: 36px;
@@ -97,6 +87,21 @@ body {
   line-height: normal;
   text-align: center;
   color: #1b2127;
+  white-space: pre-wrap;
+}
+#n7 {
+  position: absolute;
+  left: 560px;
+  width: 800px;
+  top: 640px;
+  height: 60px;
+  box-sizing: border-box;
+  font-family: "Onest";
+  font-size: 32px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: center;
+  color: #ebf0f5;
   white-space: pre-wrap;
 }
 html, body, #n1 {
@@ -105,22 +110,21 @@ html, body, #n1 {
 #n2, #n3, #n4, #n5, #n6, #n7 {
   pointer-events: auto;
 }
-#n4, #n6 {
+#n3, #n5 {
   tab-index: auto;
 }
 </style>
 </head>
 <body>
-<div id="n1" class="frame" title="Звук: окно" forge-screen="command" forge-fit="expand" forge-size="1920 1080" forge-pauses="1" forge-music="мелодия окна.wav">
-  <div id="n2" class="frame" title="Окно">
-    <div id="n3" class="text" title="Заголовок">Окно со своей музыкой</div>
-    <div id="n4" class="frame" title="Звон" forge-click="[[&quot;change&quot;,&quot;demo.rings += 1&quot;]]" forge-click-sound="звон.wav">
-      <div id="n5" class="text" title="Надпись">Звон</div>
-    </div>
-    <div id="n6" class="frame" title="Закрыть" forge-click="[[&quot;close&quot;,&quot;&quot;]]">
-      <div id="n7" class="text" title="Надпись">Закрыть</div>
-    </div>
+<div id="n1" class="frame" title="Окна: меню" forge-screen="menu" forge-fit="expand" forge-size="1920 1080">
+  <div id="n2" class="text" title="Заголовок">Поведение окон</div>
+  <div id="n3" class="frame" title="Настройки" forge-click="[[&quot;show&quot;,&quot;окна_настройки&quot;]]">
+    <div id="n4" class="text" title="Надпись">Настройки</div>
   </div>
+  <div id="n5" class="frame" title="Играть" forge-click="[[&quot;new&quot;,&quot;&quot;]]">
+    <div id="n6" class="text" title="Надпись">Играть</div>
+  </div>
+  <div id="n7" class="text" title="Громкость" forge-text="Громкость: {demo.volume}">Громкость: {demo.volume}</div>
 </div>
 </body>
 </html>

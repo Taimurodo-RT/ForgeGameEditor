@@ -135,8 +135,19 @@ public:
     bool shown(std::string_view name) const;
     bool exists(std::string_view name) const;
     void hide_commands(); // back to the main menu: windows opened in the game close
-    // Esc: hides the newest shown page that Esc closes; false when none.
+    // Where windows come up now: over the main menu (true) or over the game.
+    // update() keeps it; the editor's «Проверить» says it for its screen.
+    void set_over_menu(bool menu);
+    // A window set to come up only over the game (or only over the main
+    // menu) fits only there: show() does not open it elsewhere.
+    bool fits(std::string_view name) const;
+    // Its «Где появляется»: "game", "menu" or "" (anywhere).
+    std::string over(std::string_view name) const;
+    // Esc: hides the newest shown window when Esc closes it; false when no
+    // window is up or the newest one stays (the ones under it stay too).
     bool close_top();
+    // The windows up now (Command pages shown), the newest last.
+    std::vector<std::string> windows() const;
     // A shown page stops the world.
     bool pauses() const;
     // The game's own main menu is there (the shell's is not shown).

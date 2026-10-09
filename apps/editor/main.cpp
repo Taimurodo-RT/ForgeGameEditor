@@ -46,6 +46,7 @@
 #include "forge/render/offscreen.h"
 #include "forge/render/sprite_batch.h"
 #include "forge/render/sprite_renderer.h"
+#include "forge/script/graph.h"
 #include "forge/ui/tokens.h"
 #include "forge/ui/ui.h"
 #include "forge/ui/virtual_list.h"
@@ -389,6 +390,34 @@ public:
                 if (std::none_of(unique.begin(), unique.end(), [&](const auto& u) { return u.first == name; }))
                     unique.emplace_back(name, label + " · " + name);
             return unique;
+        };
+        // Where «Логика» shows a screen: blocks «Показать экран» (or «Показать или скрыть») with its name written in.
+        ui_tab.logic_openers = [this](const std::string& screen) {
+            std::vector<std::string> out;
+            auto shows = [&](const std::string& json) {
+                script::Graph g;
+                if (json.empty() || !g.from_json(json)) return false;
+                for (const script::GraphNode& n : g.nodes) {
+                    if (n.def != "api.ui.show" && n.def != "api.ui.toggle") continue;
+                    // A wire into «Экран» wins over the name written in.
+                    const bool wired = std::any_of(g.links.begin(), g.links.end(), [&](const script::GraphLink& l) {
+                        return l.to_node == n.uid && l.to_pin == "name";
+                    });
+                    const std::string* name = n.value("name");
+                    if (!wired && name && *name == screen) return true;
+                }
+                return false;
+            };
+            const logic::Logic& game = logic_tab.links();
+            for (const logic::Link& l : game.links)
+                if (shows(l.graph)) out.push_back("связь «" + logic_tab.phrase_of(l.id) + "»");
+            const objects::Library& lib = *level_module.library();
+            for (const logic::ThingScheme& t : game.schemes)
+                if (shows(t.graph)) {
+                    const objects::Template* of = lib.find(std::string_view(t.thing));
+                    out.push_back("схема «" + (of ? of->name : t.thing) + "»");
+                }
+            return out;
         };
         ui_tab.game_items = [this] {
             std::vector<game::ScreenItem> out;
@@ -3407,6 +3436,30 @@ private:
         for (const editor::design::Node& c : n->children) out += ue_rs_branch(c.id) + " ";
         return out + "]";
     }
+    // A window's behaviour (13.11): its place, pause, Esc and veil in both panels, what opens it, «Проверить».
+    int ue_wb_stage_ = 0;
+    std::string ue_wb_w1_, ue_wb_w2_, ue_wb_w3_, ue_wb_menu_, ue_wb_hud_, ue_wb_t1_, ue_wb_t2_, ue_wb_t3_, ue_wb_tm_, ue_wb_th_;
+    u32 ue_wb_more_ = 0, ue_wb_close_ = 0, ue_wb_third_ = 0, ue_wb_settings_ = 0, ue_wb_open_ = 0, ue_wb_count_ = 0, ue_wb_scheme_ = 0,
+        ue_wb_node_ = 0;
+    bool ue_wb_scheme_new_ = false;
+    usize ue_wb_log_ = 0;
+    int ue_we_stage_ = 0; // games/examples/window-behaviour in the editor
+    std::vector<std::string> ue_we_files_; // its files in the game's folder, as they were before opening them again
+    // The rows of a list of notes in the panel (#ue-openers, #ue-check-state): text, and whether it warns.
+    std::vector<std::pair<std::string, bool>> ue_wb_rows(const char* id) {
+        std::vector<std::pair<std::string, bool>> out;
+        Rml::Element* box = ed_.find_element(id);
+        for (int i = 0; box && i < box->GetNumChildren(); ++i) {
+            Rml::Element* c = box->GetChild(i);
+            if (c->IsClassSet("ue-note") && c->IsVisible(true)) out.emplace_back(c->GetInnerRML(), c->IsClassSet("ue-warn"));
+        }
+        return out;
+    }
+    std::string ue_wb_text(const std::vector<std::pair<std::string, bool>>& rows) {
+        std::string out;
+        for (const auto& [t, warn] : rows) out += (out.empty() ? "" : " | ") + std::string(warn ? "! " : "") + t;
+        return out;
+    }
     u32 ue_fl_inst_ = 0, ue_fl_clicks_ = 0;
     usize ue_fl_log_ = 0;
     // A layer of a screen as written on disk.
@@ -3977,8 +4030,10 @@ private:
             ue_other_ = ue().new_screen();
             ue().select({});
             check(ue().screen().show == d::ScreenShow::Command, "a new screen is a window: it never covers the game by surprise");
-            check(ue().set_property("screen.show", "playing") && !ue().covers_game(), "its dimmed background lets the game show");
-            check(ue().set_property("fill.0.color", "#1B2127") && ue().covers_game(), "a solid screen over the game is pointed out");
+            check(ue().screen().dim && ue().screen().root.fills.empty(), "a new window darkens what is under it by its switch, not by a fill");
+            check(ue().set_property("screen.show", "playing") && !ue().covers_game(), "over the game it lets the game show");
+            check(ue().set_property("fill.add", "") && ue().set_property("fill.0.color", "#1B2127") && ue().covers_game(),
+                  "a solid screen over the game is pointed out");
             check(ue().set_property("screen.show", "command") && ue().set_property("screen.pauses", "") &&
                       ue().screen().show == d::ScreenShow::Command && ue().screen().pauses,
                   "a screen becomes a window that stops the game");
@@ -4036,10 +4091,13 @@ private:
         }
         case 21: {
             check(ue().check_vars().get("inv.coins").number() == 10, "the click changed the coins");
-            check(ue().opened() == ue_other_, "and opened the window on the canvas");
+            check(ue().opened() == "main_menu" && ue().check_windows() == std::vector<std::string>{ue_other_},
+                  "and opened the window over the menu, as the game does");
             check(ue().check_log().size() == 2, "the panel lists what the button did");
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
-            check(!ue().checking(), "Esc ends the check");
+            check(ue().checking() && ue().check_windows().empty(), "Esc closes the window first");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!ue().checking(), "Esc again ends the check");
             check(ue().open("main_menu"), "back to the menu");
             // Movement: the title floats, the button eases into its looks, the window rises.
             ue().select({ue_named("Название игры")});
@@ -6669,14 +6727,16 @@ private:
                 if (const auto b = ue().layer_box(ue_named("Окно"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
                 return true;
             case 19:
-                if (wait(ue().opened() == "звук_окно" && snd.music_name() == "мелодия окна.wav", "the window opens with its music")) return true;
+                if (wait(ue().check_windows() == std::vector<std::string>{"звук_окно"} && snd.music_name() == "мелодия окна.wav",
+                         "the window opens over the game with its music"))
+                    return true;
                 check(snd.music_starts() == ue_sd_starts_ + 3 && mixer.voices(audio::Bus::Music) == 1 && snd.last_click() == "щелчок.wav",
                       "«Окно»: a click, then the window's music instead of the game's");
                 ue_sd_clicks_ = snd.clicks();
-                if (const auto b = ue().layer_box(ue_named("Закрыть"))) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                if (const auto b = ue().check_box("звук_окно", "Закрыть")) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
                 return true;
             case 20:
-                if (wait(ue().opened() == "звук_игра", "«Закрыть» goes back")) return true;
+                if (wait(ue().opened() == "звук_игра" && ue().check_windows().empty(), "«Закрыть» closes the window")) return true;
                 check(snd.clicks() == ue_sd_clicks_ && snd.music_name() == "мелодия игры.wav" && mixer.voices(audio::Bus::Music) == 1,
                       "«Закрыть» without a sound, the game's music again");
                 ue().set_checking(false);
@@ -7950,6 +8010,496 @@ private:
             default: break;
             }
             ue_rs_stage_ = 0;
+            break;
+        }
+        case 151: {
+            // A window's behaviour shown and changed in the screen's panel (13.11): where it comes up (anywhere, only
+            // over the game, only over the main menu; elsewhere it does not open), its pause, Esc and veil, what
+            // opens it and from where; in «Проверить» windows come up over the screen as in the game: the veil keeps
+            // clicks off what is under it, Esc closes only the window on top (once while held), the keyboard comes back
+            // to the menu; a window only for the menu checked by itself is checked as over the menu.
+            namespace d = editor::design;
+            auto wait = [&](bool ready, const char* what) {
+                if (!hold(ready, what)) return false;
+                --ue_wb_stage_;
+                return true;
+            };
+            auto rect = [&](f32 x, f32 y, const char* name) {
+                const u32 id = ue().add_layer(d::NodeType::Rectangle, x, y, 200, 80);
+                ue().select({id});
+                ue().set_property("name", name);
+                return id;
+            };
+            // One action on the selected layer (a new action shows some screen: kind and target as wanted).
+            auto act = [&](const char* kind, const std::string& target) {
+                ue().set_property("click.add", "");
+                ue().set_property("click.0.kind", kind);
+                if (!target.empty()) ue().set_property("click.0.target", target);
+                const d::Node* n = ue().selection().size() == 1 ? ue_node(ue().selection()[0]) : nullptr;
+                return n && n->on_click.size() == 1 && std::string(d::action_word(n->on_click[0].kind)) == kind &&
+                       (target.empty() || n->on_click[0].target == target);
+            };
+            auto said = [&]() { return ue().check_log().empty() ? std::string() : ue().check_log().back(); };
+            auto has = [&](const std::vector<std::pair<std::string, bool>>& rows, const std::string& text, bool warn) {
+                return std::any_of(rows.begin(), rows.end(), [&](const auto& r) { return r.first == text && r.second == warn; });
+            };
+            auto press = [&](SDL_Keycode k) {
+                ue_sd_key(k, true);
+                ue_sd_key(k, false);
+            };
+            // Esc held: what it does when it goes down, then the repeats the keyboard sends, which do nothing more.
+            auto esc_held = [&]() {
+                ue_sd_key(SDLK_ESCAPE, true);
+                const auto windows = ue().check_windows();
+                const bool on = ue().checking();
+                const usize lines = ue().check_log().size();
+                const std::vector<u32> sel = ue().selection();
+                bool same = true;
+                for (int i = 0; i < 3; ++i) {
+                    ue_sd_key(SDLK_ESCAPE, true, true);
+                    same = same && ue().check_windows() == windows && ue().checking() == on && ue().check_log().size() == lines &&
+                           ue().selection() == sel;
+                }
+                ue_sd_key(SDLK_ESCAPE, false);
+                return same;
+            };
+            auto at = [&](const std::optional<d::Rect>& b) {
+                if (b) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return b.has_value();
+            };
+            const std::string w1 = ue_wb_w1_, w2 = ue_wb_w2_, w3 = ue_wb_w3_;
+            const std::string over_menu_w1 = "Кнопка «Настройки» на экране «" + ue_wb_tm_ + "»: над главным меню";
+            const std::string over_game_w1 = "Кнопка «Окно» на экране «" + ue_wb_th_ + "»: над игрой";
+            switch (ue_wb_stage_++) {
+            case 0: {
+                ue().set_simple(false);
+                ue().set_view(0);
+                // W2: a window Esc does not close, without a veil, only over the game; W1 opens it.
+                ue_wb_w2_ = ue().new_screen();
+                ue_wb_t2_ = ue().screen().title;
+                rect(1200, 300, "Закрыть2");
+                check(act("close", ""), "W2: «Закрыть2» closes it");
+                ue().select({});
+                check(ue().set_property("screen.esc", "") && ue().set_property("screen.dim", "") && ue().set_property("screen.over", "game") &&
+                          !ue().screen().esc_closes && !ue().screen().dim && ue().screen().over == d::WindowOver::Game,
+                      "W2: no Esc, no veil, only over the game");
+                // W3: a window as made, closed by Esc; W1 opens it too.
+                ue_wb_w3_ = ue().new_screen();
+                ue_wb_t3_ = ue().screen().title;
+                rect(1200, 600, "Закрыть3");
+                check(act("close", ""), "W3: «Закрыть3» closes it");
+                // W1: a new window (a veil by its switch), a button that opens W2 and one that closes it.
+                ue_wb_w1_ = ue().new_screen();
+                ue_wb_t1_ = ue().screen().title;
+                check(ue().screen().dim && ue().screen().esc_closes && !ue().screen().pauses && ue().screen().over == d::WindowOver::Any,
+                      "W1: a new window darkens what is under it, closes by Esc, comes up anywhere");
+                ue_wb_more_ = rect(800, 300, "Ещё");
+                check(act("show", ue_wb_w2_), "W1: «Ещё» opens W2");
+                ue_wb_close_ = rect(800, 450, "Закрыть");
+                check(act("close", ""), "W1: «Закрыть» closes it");
+                ue_wb_third_ = rect(800, 600, "Третье");
+                check(act("show", ue_wb_w3_), "W1: «Третье» opens W3");
+                // A main menu and a screen over the game, each with a button that opens W1.
+                ue_wb_menu_ = ue().new_screen();
+                ue_wb_tm_ = ue().screen().title;
+                ue().select({});
+                check(ue().set_property("screen.show", "menu"), "M: the main menu");
+                ue_wb_settings_ = rect(100, 100, "Настройки");
+                check(act("show", ue_wb_w1_), "M: «Настройки» opens W1");
+                ue_wb_hud_ = ue().new_screen();
+                ue_wb_th_ = ue().screen().title;
+                ue().select({});
+                check(ue().set_property("screen.show", "playing"), "H: over the game");
+                ue_wb_open_ = rect(100, 100, "Окно");
+                check(act("show", ue_wb_w1_), "H: «Окно» opens W1");
+                ue_wb_count_ = rect(100, 600, "Счёт");
+                check(act("change", "test.count += 1"), "H: «Счёт» counts");
+                check(ue_file(".html", ue_wb_w1_).find("<div id=\"forge-dim\"></div>") != std::string::npos &&
+                          ue_file(".html", ue_wb_w2_).find("forge-esc=\"0\" forge-over=\"game\"") != std::string::npos,
+                      "the windows' pages: W1's veil, W2 without Esc only over the game");
+                check(ue().open(ue_wb_w1_), "W1 opened");
+                ue().select({ue().screen().root.id});
+                click("ue-tab-game");
+                return true;
+            }
+            case 1: {
+                check(shown("ue-screen-over") && shown("ue-screen-pauses") && shown("ue-screen-esc") && shown("ue-screen-dim") &&
+                          shown("ue-window-notes") && shown("ue-openers"),
+                      "«В игре» of a window: where it comes up, the switches, what they do, what opens it");
+                const auto rows = ue_wb_rows("ue-openers");
+                check(rows.size() == 2 && has(rows, over_menu_w1, false) && has(rows, over_game_w1, false),
+                      "what opens W1: the menu's button over the menu, the game's over the game: " + ue_wb_text(rows));
+                const auto notes = ue_wb_rows("ue-window-notes");
+                check(notes.size() == 3 && notes[0].first.find("Игра идёт под окном") == 0 && notes[2].first.find("щелчки туда не проходят") != std::string::npos,
+                      "the notes say the game goes on and the veil stops clicks: " + ue_wb_text(notes));
+                check(click("ue-screen-pauses") && ue().screen().pauses && ue().history().undo_label().find("Пауза окна") != std::string::npos,
+                      "a click on «Пока открыто, игра стоит»: one step «Пауза окна»: " + ue().history().undo_label());
+                return true;
+            }
+            case 2: {
+                const auto notes = ue_wb_rows("ue-window-notes");
+                check(!notes.empty() && notes[0].first.find("Игра стоит") == 0, "the note now says the game stands: " + ue_wb_text(notes));
+                check(ue_open("ue-screen-over"), "the drop-down «Где появляется» opens");
+                return true;
+            }
+            case 3:
+                check(ue_option("ue-screen-over", "game") && ue().screen().over == d::WindowOver::Game, "«Только над игрой» picked with the mouse");
+                return true;
+            case 4: {
+                const auto rows = ue_wb_rows("ue-openers");
+                check(has(rows, over_menu_w1 + ". Не откроется: окно только над игрой", true) && has(rows, over_game_w1, false),
+                      "the menu's button is pointed out: W1 does not open there: " + ue_wb_text(rows));
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(ue().screen().over == d::WindowOver::Any, "Ctrl+Z: anywhere again");
+                return true;
+            }
+            case 5: {
+                const auto rows = ue_wb_rows("ue-openers");
+                check(has(rows, over_menu_w1, false) && has(rows, over_game_w1, false), "and nothing is pointed out: " + ue_wb_text(rows));
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                check(ue().screen().over == d::WindowOver::Game, "Ctrl+Y: only over the game");
+                check(ue().set_property("screen.over", "menu") && ue().screen().over == d::WindowOver::Menu, "only over the main menu");
+                // «Логика» shows W1 too: a block «Показать экран» in the door's own scheme.
+                for (const logic::ThingScheme& t : lg().links().schemes)
+                    if (t.thing == "door") ue_wb_scheme_ = t.id;
+                ue_wb_scheme_new_ = ue_wb_scheme_ == 0;
+                if (!ue_wb_scheme_) ue_wb_scheme_ = lg().thing_scheme("door");
+                ue_wb_node_ = ue_wb_scheme_ ? lg().scheme().add_node(ue_wb_scheme_, "api.ui.show", 400, 400) : 0;
+                check(ue_wb_node_ && lg().scheme().set_value(ue_wb_scheme_, ue_wb_node_, "name", ue_wb_w1_),
+                      "«Логика»: the door's scheme shows W1");
+                // The screen closed and opened again: from disk, with «Логика» read anew.
+                check(ue().open(ue_wb_hud_) && ue().open(ue_wb_w1_), "W1 closed and opened again");
+                ue().select({ue().screen().root.id});
+                return true;
+            }
+            case 6: {
+                check(ue().screen().over == d::WindowOver::Menu && ue().screen().pauses && ue().screen().dim && ue().screen().esc_closes,
+                      "from disk: only over the menu, stops the game, darkens, closes by Esc");
+                check(ue_file(".html", ue_wb_w1_).find("forge-pauses=\"1\" forge-dim=\"1\" forge-over=\"menu\"") != std::string::npos,
+                      "and its page says so");
+                const auto rows = ue_wb_rows("ue-openers");
+                const std::string logic_row = "«Логика», схема «Дверь»: над игрой. Не откроется: окно только над главным меню";
+                check(rows.size() == 3 && has(rows, over_menu_w1, false) &&
+                          has(rows, over_game_w1 + ". Не откроется: окно только над главным меню", true) && has(rows, logic_row, true),
+                      "now the game's button and «Логика»'s block are pointed out: " + ue_wb_text(rows));
+                // «Логика» as it was.
+                check(lg().scheme().remove_node(ue_wb_scheme_, ue_wb_node_) && (!ue_wb_scheme_new_ || lg().remove_thing_scheme(ue_wb_scheme_)),
+                      "the block taken away again");
+                // «Простой»: the same choice for the screen (W1 opened again: the list is read anew, as when the tab comes back).
+                check(ue().open(ue_wb_hud_) && ue().open(ue_wb_w1_), "W1 opened again");
+                ue().set_simple(true);
+                ue().select({ue().screen().root.id});
+                return true;
+            }
+            case 7:
+                check(shown("ue-s-over") && shown("ue-s-pauses") && shown("ue-s-esc") && shown("ue-s-dim") && shown("ue-s-openers"),
+                      "«Простой» shows where the window comes up, its switches and what opens it");
+                check(ue_wb_rows("ue-s-openers").size() == 2, "«Логика»'s block is gone from the list: " + ue_wb_text(ue_wb_rows("ue-s-openers")));
+                check(ue_open("ue-s-over"), "its drop-down opens");
+                return true;
+            case 8:
+                check(ue_option("ue-s-over", "any") && ue().screen().over == d::WindowOver::Any &&
+                          ue().history().undo_label().find("Где появляется окно") != std::string::npos,
+                      "«Везде» picked in «Простой»: one step «Где появляется окно»: " + ue().history().undo_label());
+                ue().set_simple(false);
+                // «Проверить» on the menu: W1 over it, W2 (only over the game) not; the keyboard comes back to the menu.
+                check(ue().open(ue_wb_menu_) && click("ue-check") && ue().checking(), "«Проверить» on the menu");
+                return true;
+            case 9:
+                press(SDLK_TAB);
+                check(ue().check_focus() == ue_wb_menu_ + ":n" + std::to_string(ue_wb_settings_), "Tab: «Настройки» has the keyboard: " + ue().check_focus());
+                press(SDLK_RETURN);
+                return true;
+            case 10: {
+                check(ue().check_windows() == std::vector<std::string>{w1} && ue().opened() == ue_wb_menu_,
+                      "Enter: W1 comes up over the menu, the menu stays");
+                const std::string focus = ue().check_focus();
+                check(focus.rfind(w1 + ":", 0) == 0, "the window that stops the game takes the keyboard: " + focus);
+                check(said() == "Открыто окно «" + ue_wb_t1_ + "» поверх экрана", "the panel says so: " + said());
+                const auto state = ue_wb_rows("ue-check-state");
+                check(has(state, "Сверху окно «" + ue_wb_t1_ + "»: Esc его закроет", false) &&
+                          has(state, "Как над главным меню: игра ещё не идёт, пауза окна ничего не останавливает", false),
+                      "«Окна» in the check: W1 on top, over the menu: " + ue_wb_text(state));
+                press(SDLK_TAB);
+                check(ue().check_focus() == w1 + ":n" + std::to_string(ue_wb_more_), "Tab: «Ещё»: " + ue().check_focus());
+                press(SDLK_RETURN);
+                return true;
+            }
+            case 11:
+                check(ue().check_windows() == std::vector<std::string>{w1} &&
+                          said() == "Окно «" + ue_wb_t2_ + "» не открылось: оно появляется только над игрой, а проверка идёт как над главным меню",
+                      "W2 only over the game does not come up over the menu, and the panel says why: " + said());
+                press(SDLK_TAB);
+                check(ue().check_focus() == w1 + ":n" + std::to_string(ue_wb_close_), "Tab: «Закрыть»: " + ue().check_focus());
+                press(SDLK_RETURN);
+                return true;
+            case 12:
+                check(ue().check_windows().empty(), "Enter: W1 closed");
+                check(ue().check_focus() == ue_wb_menu_ + ":n" + std::to_string(ue_wb_settings_),
+                      "the keyboard is back on «Настройки», the button that opened it: " + ue().check_focus());
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().checking(), "no window up: Esc ends the check");
+                // «Проверить» on the screen over the game.
+                check(ue().open(ue_wb_hud_) && click("ue-check") && ue().checking(), "«Проверить» on H");
+                ue().check_vars().set("test.count", 0);
+                return true;
+            case 13:
+                check(at(ue().layer_box(ue_wb_count_)), "«Счёт» clicked");
+                return true;
+            case 14:
+                check(ue_sd_var("test.count") == 1, "with no window the click reaches H");
+                check(at(ue().layer_box(ue_wb_open_)), "«Окно» clicked");
+                return true;
+            case 15: {
+                if (wait(ue().check_windows() == std::vector<std::string>{w1}, "W1 comes up over H")) return true;
+                const auto state = ue_wb_rows("ue-check-state");
+                check(has(state, "Сверху окно «" + ue_wb_t1_ + "»: Esc его закроет", false) &&
+                          has(state, "Окно «" + ue_wb_t1_ + "» затемняет то, что под ним: щелчки туда не проходят", false) &&
+                          has(state, "Как в игре: мир и герой ждали бы, окно «" + ue_wb_t1_ + "» ставит игру на паузу", false),
+                      "«Окна»: W1 on top, darkens, stops the game: " + ue_wb_text(state));
+                check(ue().check_focus().rfind(w1 + ":", 0) == 0, "W1 has the keyboard: " + ue().check_focus());
+                ue_wb_log_ = ue().check_log().size();
+                check(at(ue().layer_box(ue_wb_count_)), "«Счёт» clicked under the veil");
+                return true;
+            }
+            case 16:
+                check(ue_sd_var("test.count") == 1 && ue().check_log().size() == ue_wb_log_, "the veil keeps the click off «Счёт»");
+                check(ue().check_windows() == std::vector<std::string>{w1}, "and a click on the veil does not close W1");
+                check(at(ue().check_box(w1, "Ещё")), "W1's «Ещё» clicked");
+                return true;
+            case 17: {
+                check(ue().check_windows() == std::vector<std::string>{w1, w2}, "W2 comes up over W1 (over the game it may)");
+                const auto state = ue_wb_rows("ue-check-state");
+                check(has(state, "Сверху окно «" + ue_wb_t2_ + "»: по Esc не закрывается, окна под ним тоже", false) &&
+                          has(state, "Под ним: «" + ue_wb_t1_ + "», ниже экран «" + ue_wb_th_ + "»", false),
+                      "«Окна»: W2 on top, W1 under it: " + ue_wb_text(state));
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().checking() && ue().check_windows() == std::vector<std::string>{w1, w2},
+                      "Esc closes neither W2 (no Esc) nor W1 under it, nor the check");
+                check(said() == "Esc: окно «" + ue_wb_t2_ + "» по Esc не закрывается; в игре Esc открыл бы паузу",
+                      "the panel says what Esc does: " + said());
+                check(esc_held() && ue().checking() && ue().check_windows() == std::vector<std::string>{w1, w2},
+                      "Esc held over W2: its repeats close neither window nor end the check");
+                check(at(ue().check_box(w1, "Ещё")), "W1's «Ещё» clicked beside W2's button");
+                return true;
+            }
+            case 18:
+                check(said() == "Окно уже открыто: «" + ue_wb_t2_ + "»" && ue().check_windows() == std::vector<std::string>{w1, w2},
+                      "W2 does not darken: the click beside its button reaches W1 under it, and W2 stays where it is: " + said());
+                check(at(ue().check_box(w2, "Закрыть2")), "W2's «Закрыть2» clicked");
+                return true;
+            case 19:
+                check(ue().check_windows() == std::vector<std::string>{w1} && said() == "Закрыто окно «" + ue_wb_t2_ + "»",
+                      "«Закрыть2» closed only W2");
+                check(at(ue().check_box(w1, "Третье")), "W1's «Третье» clicked");
+                return true;
+            case 20: {
+                if (wait(ue().check_windows() == std::vector<std::string>{w1, w3}, "W3 comes up over W1")) return true;
+                const auto state = ue_wb_rows("ue-check-state");
+                check(has(state, "Сверху окно «" + ue_wb_t3_ + "»: Esc его закроет", false) &&
+                          has(state, "Под ним: «" + ue_wb_t1_ + "», ниже экран «" + ue_wb_th_ + "»", false),
+                      "«Окна»: W3 on top, closed by Esc, W1 under it: " + ue_wb_text(state));
+                // Two windows Esc closes, Esc held: one goes with the press, the repeats leave the other; a new press
+                // closes it, and held again the check goes on.
+                check(esc_held() && ue().check_windows() == std::vector<std::string>{w1} && said() == "Esc: закрыто окно «" + ue_wb_t3_ + "»",
+                      "Esc held: W3 closed when it went down, W1 stays through the repeats and the key going up");
+                check(esc_held() && ue().checking() && ue().check_windows().empty() && said() == "Esc: закрыто окно «" + ue_wb_t1_ + "»",
+                      "a new press closes W1, and held its repeats do not end the check");
+                return true;
+            }
+            case 21: {
+                const auto state = ue_wb_rows("ue-check-state");
+                check(state.size() == 1 && state[0].first == "Как в игре: мир шёл бы, ни одно открытое окно не ставит игру на паузу",
+                      "«Окна»: in the game the world would go on: " + ue_wb_text(state));
+                check(at(ue().layer_box(ue_wb_count_)), "«Счёт» clicked again");
+                return true;
+            }
+            case 22:
+                check(ue_sd_var("test.count") == 2, "with W1 gone the click reaches H again");
+                ue_sd_key(SDLK_ESCAPE, true);
+                check(!ue().checking(), "a new press of Esc ends the check");
+                // Still held: the repeats do not go on to the editor (Esc there takes the selection up a level).
+                ue().select({ue_wb_count_});
+                for (int i = 0; i < 3; ++i) ue_sd_key(SDLK_ESCAPE, true, true);
+                ue_sd_key(SDLK_ESCAPE, false);
+                check(ue().selection() == std::vector<u32>{ue_wb_count_}, "the Esc that ended the check, held, does nothing in the editor");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().selection().empty(), "a new Esc in the editor works as before: the selection goes up a level");
+                // A window only for the main menu checked by itself: checked as over the menu, whatever its pause.
+                check(ue().open(ue_wb_w3_) && ue().set_property("screen.esc", "") && !ue().screen().esc_closes, "W3 no longer closed by Esc");
+                check(ue().open(ue_wb_w1_) && ue().set_property("screen.over", "menu") && ue().screen().pauses, "W1 only over the main menu");
+                check(click("ue-check") && ue().checking(), "«Проверить» on W1 itself");
+                return true;
+            case 23: {
+                const auto state = ue_wb_rows("ue-check-state");
+                check(state.size() == 1 && state[0].first == "Как над главным меню: игра ещё не идёт, пауза окна ничего не останавливает",
+                      "«Окна»: checked as over the main menu, not as in the game: " + ue_wb_text(state));
+                check(at(ue().layer_box(ue_wb_more_)), "«Ещё» clicked");
+                return true;
+            }
+            case 24:
+                check(ue().check_windows().empty() &&
+                          said() == "Окно «" + ue_wb_t2_ + "» не открылось: оно появляется только над игрой, а проверка идёт как над главным меню",
+                      "W2 only over the game does not come up, and the panel says why: " + said());
+                check(at(ue().layer_box(ue_wb_third_)), "«Третье» clicked");
+                return true;
+            case 25: {
+                if (wait(ue().check_windows() == std::vector<std::string>{w3}, "W3 comes up over W1")) return true;
+                const auto state = ue_wb_rows("ue-check-state");
+                check(state.size() == 3 && has(state, "Сверху окно «" + ue_wb_t3_ + "»: по Esc не закрывается, окна под ним тоже", false) &&
+                          has(state, "Как над главным меню: игра ещё не идёт, пауза окна ничего не останавливает", false),
+                      "«Окна»: W3 on top without Esc, over the main menu: " + ue_wb_text(state));
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().checking() && ue().check_windows() == std::vector<std::string>{w3} &&
+                          said() == "Esc: окно «" + ue_wb_t3_ + "» по Esc не закрывается; над главным меню Esc больше ничего не делает",
+                      "Esc: W3 stays, and the panel says what Esc does over the main menu: " + said());
+                check(at(ue().check_box(w3, "Закрыть3")), "W3's «Закрыть3» clicked");
+                return true;
+            }
+            case 26:
+                check(ue().check_windows().empty() && said() == "Закрыто окно «" + ue_wb_t3_ + "»", "«Закрыть3» closed W3");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().checking(), "no window up: Esc ends the check");
+                check(ue().open("main_menu"), "back to the menu");
+                break;
+            default: break;
+            }
+            ue_wb_stage_ = 0;
+            break;
+        }
+        case 152: {
+            // games/examples/window-behaviour (13.11), the files the game and its package read: opened from disk, its
+            // windows show their behaviour in the panel; a change written and taken back writes the example's
+            // content again (line ends aside: a Windows checkout has CRLF, the editor writes LF); opening them again
+            // and «Проверить» write nothing; «Проверить» on its screen over the game stacks its windows as the game
+            // does.
+            namespace d = editor::design;
+            const std::filesystem::path from = utf8_path(FORGE_EXAMPLES_DIR) / "window-behaviour" / "ui";
+            static const char* const kPages[] = {"окна_меню", "окна_игра", "окна_настройки", "окна_справка"};
+            auto lf = [](std::string text) {
+                std::erase(text, '\r');
+                return text;
+            };
+            auto example = [&](const char* name, const char* ext) {
+                std::vector<u8> bytes;
+                read_file(from / utf8_path(std::string(name) + ext), bytes);
+                return std::string(bytes.begin(), bytes.end());
+            };
+            // The same content as the example's, whichever line ends either side has.
+            auto same = [&](const char* name) {
+                return lf(ue_file(".json", name)) == lf(example(name, ".json")) && lf(ue_file(".html", name)) == lf(example(name, ".html"));
+            };
+            // The files in the game's folder, byte for byte.
+            auto files = [&]() {
+                std::vector<std::string> out;
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"}) out.push_back(ue_file(ext, name));
+                return out;
+            };
+            auto said = [&]() { return ue().check_log().empty() ? std::string() : ue().check_log().back(); };
+            auto at = [&](const std::optional<d::Rect>& b) {
+                if (b) left_click(ue_wx(b->cx()), ue_wy(b->cy()));
+                return b.has_value();
+            };
+            const std::vector<std::string> one{"окна_настройки"}, two{"окна_настройки", "окна_справка"};
+            switch (ue_we_stage_++) {
+            case 0: {
+                std::error_code ec;
+                for (const char* name : kPages)
+                    for (const char* ext : {".json", ".html"})
+                        std::filesystem::copy_file(from / utf8_path(std::string(name) + ext), ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext),
+                                                   std::filesystem::copy_options::overwrite_existing, ec);
+                check(!ec && ue().open("окна_справка"), "the example's help window opens from disk");
+                ue().set_simple(false);
+                ue().set_view(0);
+                ue().select({ue().screen().root.id});
+                click("ue-tab-game");
+                return true;
+            }
+            case 1: {
+                const d::Screen& s = ue().screen();
+                check(s.show == d::ScreenShow::Command && s.over == d::WindowOver::Game && !s.esc_closes && !s.dim && !s.pauses,
+                      "«Окна: справка» from disk: only over the game, no Esc, no veil, no pause");
+                const auto rows = ue_wb_rows("ue-openers");
+                check(rows.size() == 1 && !rows[0].second &&
+                          rows[0].first == "Кнопка «Справка» на экране «Окна: настройки»: над окном «Окна: настройки»; откроется, только если и то окно над игрой",
+                      "what opens it: the settings window's «Справка»: " + ue_wb_text(rows));
+                // Written and taken back: the same files as the example's.
+                check(click("ue-screen-dim") && ue().screen().dim && ue_file(".html", "окна_справка").find("forge-dim") != std::string::npos,
+                      "«Затемнять» by a click: written on the page");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(!ue().screen().dim && same("окна_справка"), "Ctrl+Z: the files say the example's again (line ends aside)");
+                check(ue().open("окна_настройки"), "«Окна: настройки» opened");
+                ue().select({ue().screen().root.id});
+                return true;
+            }
+            case 2: {
+                const d::Screen& s = ue().screen();
+                check(s.show == d::ScreenShow::Command && s.over == d::WindowOver::Any && s.esc_closes && s.dim && s.pauses,
+                      "«Окна: настройки»: anywhere, closed by Esc, darkens, stops the game");
+                const auto rows = ue_wb_rows("ue-openers");
+                check(rows.size() == 2 && !rows[0].second && !rows[1].second &&
+                          ue_wb_text(rows).find("Кнопка «Настройки» на экране «Окна: меню»: над главным меню") != std::string::npos &&
+                          ue_wb_text(rows).find("Кнопка «Настройки» на экране «Окна: игра»: над игрой") != std::string::npos,
+                      "what opens it: the menu's button over the menu, the game's over the game: " + ue_wb_text(rows));
+                check(click("ue-screen-pauses") && !ue().screen().pauses, "«Пока открыто, игра стоит» off by a click");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(ue().screen().pauses, "Ctrl+Z: on again");
+                // Opened again from disk: the same, and nothing written by opening.
+                ue_we_files_ = files();
+                check(ue().open("окна_справка") && ue().open("окна_настройки") && ue().screen().pauses && ue().screen().dim, "opened again: as it was");
+                check(files() == ue_we_files_, "opening them again wrote nothing: the files are byte for byte as they were");
+                bool all = true;
+                for (const char* name : kPages) all = all && same(name);
+                check(all, "the four screens still say what the example's files do, which the game and its package read (line ends aside)");
+                // «Проверить» on the screen over the game.
+                check(ue().open("окна_игра") && click("ue-check") && ue().checking(), "«Проверить» on «Окна: игра»");
+                return true;
+            }
+            case 3:
+                check(at(ue().layer_box(ue_named("Настройки"))), "«Настройки» clicked");
+                return true;
+            case 4:
+                if (hold(ue().check_windows() == one, "the settings window comes up over the game")) {
+                    --ue_we_stage_;
+                    return true;
+                }
+                check(at(ue().check_box("окна_настройки", "Справка")), "«Справка» clicked");
+                return true;
+            case 5:
+                check(ue().check_windows() == two, "the help window comes up over it (over the game it may)");
+                ue().check_vars().set("demo.volume", 0);
+                check(at(ue().check_box("окна_настройки", "Громче")), "«Громче» clicked beside the help window");
+                return true;
+            case 6:
+                check(ue_sd_var("demo.volume") == 1 && ue().check_windows() == two, "the help window does not darken: the click reached the window under it");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().check_windows() == two && said() == "Esc: окно «Окна: справка» по Esc не закрывается; в игре Esc открыл бы паузу",
+                      "Esc: the help window stays, so does the one under it: " + said());
+                check(at(ue().check_box("окна_справка", "Понятно")), "«Понятно» clicked (still on top after the click under it)");
+                return true;
+            case 7:
+                check(ue().check_windows() == one, "«Понятно» closed the help window");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(ue().check_windows().empty() && ue().checking(), "Esc closed the settings window");
+                key(SDLK_ESCAPE, SDL_KMOD_NONE);
+                check(!ue().checking(), "Esc ends the check");
+                check(files() == ue_we_files_, "«Проверить» wrote nothing: the files are byte for byte as they were");
+                {
+                    bool all = true;
+                    for (const char* name : kPages) all = all && same(name);
+                    check(all, "and they still say what the example's files do (line ends aside)");
+                }
+                check(ue().open("main_menu"), "back to the menu");
+                {
+                    std::error_code ec;
+                    for (const char* name : kPages)
+                        for (const char* ext : {".json", ".html"}) std::filesystem::remove(ed_.ui_game_dir / "ui" / utf8_path(std::string(name) + ext), ec);
+                }
+                break;
+            default: break;
+            }
+            ue_we_stage_ = 0;
             break;
         }
         default:

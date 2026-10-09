@@ -234,6 +234,14 @@ enum class ScreenShow : u8 {
     Menu,    // the main menu, in place of the game's usual one
 };
 
+// Where a window may come up: over what opened it, or only over one of them.
+enum class WindowOver : u8 {
+    Any,  // over the main menu and over the game
+    Game, // only over the game: a button of the main menu does not open it
+    Menu, // only over the main menu: in the game it does not open
+};
+const char* window_over_word(WindowOver o); // "any", "game", "menu"
+
 // Movement («Анимация»). How a change speeds up and slows down.
 enum class Easing : u8 {
     Smooth,  // starts and ends gently (CSS ease)
@@ -406,6 +414,8 @@ struct Screen {
     ScreenShow show = ScreenShow::Command; // a window until told otherwise: it never covers the game by surprise
     bool pauses = false;     // the world stops while it is shown (Command screens)
     bool esc_closes = true;  // Esc hides it (Command screens)
+    bool dim = false;        // what is under it (the world, other screens, the menu) darkened, its clicks stopped (Command screens)
+    WindowOver over = WindowOver::Any; // where it may come up (Command screens)
     Appear appear = Appear::None; // how it comes and goes (Command and Menu screens)
     f32 appear_time = 0.25f;      // seconds
     // Its sound: the music while it is up and its buttons' sound when

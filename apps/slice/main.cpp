@@ -44,6 +44,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -121,8 +122,8 @@ private:
         return true;
     }
     // --- the screens' sound (games/examples/screen-sound) ---
-    // The example's sounds, made here and written as files with their Russian names (the package has no
-    // example folder); the screens' sound reads them from that folder for the step.
+    // The example's sounds, made here and written as files with their Russian names (the package does not carry
+    // them); the screens' sound reads them from that folder for the step.
     std::filesystem::path sound_files() {
         const std::filesystem::path dir = std::filesystem::temp_directory_path() / utf8_path("forge_slice_звуки_экранов");
         std::error_code ec;
@@ -221,6 +222,10 @@ private:
         }
         if (scene_ == "inventory") {
             build_inventory(s);
+            return;
+        }
+        if (scene_ == "windows") {
+            build_windows(s);
             return;
         }
         SliceGame& g = g_;
@@ -887,6 +892,119 @@ private:
             sc.remove("тест_hud");
             sc.remove("тест_окно");
             s.on_message = nullptr;
+            return true;
+        }});
+        // Windows' behaviour (13.11): a window that darkens what is under it takes the clicks off the HUD and the
+        // world; Esc closes only the window on top, and one that Esc does not close keeps the ones under it (Esc
+        // opens the pause); a window set to come up only over the main menu does not open in the game.
+        steps_.push_back({"поведение окон", 40, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            auto key = [&](SDL_Keycode k) {
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_KEY_DOWN;
+                ev.key.key = k;
+                ev.key.down = true;
+                s.handle_event(ev);
+            };
+            auto hovered = [&]() {
+                Rml::Element* h = s.context()->GetHoverElement();
+                return h ? h->GetId() : Rml::String("нет");
+            };
+            if (f == 0) {
+                const Rml::Vector2i size = s.context()->GetDimensions();
+                const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y);
+                auto page = [&](const std::string& root, const std::string& attrs, bool veil, const std::string& inside) {
+                    // As pages were written before 13.11: the page itself is not said to let clicks through.
+                    return "<html><head><style>body, #" + root + " { pointer-events: none; } #" + root +
+                           " { position: relative; width: 100%; height: 100%; } #" + root + " > div { pointer-events: auto; }" +
+                           (veil ? " #forge-dim { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; "
+                                   "background-color: rgba(0, 0, 0, 0.5); pointer-events: auto; }"
+                                 : "") +
+                           "</style></head><body>" + (veil ? "<div id=\"forge-dim\"></div>" : "") + "<div id=\"" + root +
+                           "\" " + attrs + " forge-size=\"" + dims + "\">" + inside + "</div></body></html>";
+                };
+                auto button = [](const char* id, int x, int y, const char* actions, const char* label) {
+                    return std::string("<div id=\"") + id + "\" style=\"position: absolute; left: " + std::to_string(x) +
+                           "px; top: " + std::to_string(y) + "px; width: 120px; height: 40px; background: #335;\" forge-click=\"" +
+                           actions + "\">" + label + "</div>";
+                };
+                check(sc.load_page(s.context(), "тест_hud2",
+                                   page("o-hud", "forge-screen=\"playing\"", false,
+                                        button("o-open", 100, 100, "[[&quot;show&quot;,&quot;тест_затемнение&quot;]]", "Окно") +
+                                            button("o-count", 100, 500, "[[&quot;change&quot;,&quot;test.hud += 1&quot;]]", "Счёт")),
+                                   "test/ui/тест_hud2.html"),
+                      "HUD строится");
+                check(sc.load_page(s.context(), "тест_затемнение",
+                                   page("o-dim", "forge-screen=\"command\" forge-pauses=\"1\" forge-dim=\"1\" forge-appear=\"fade\" forge-appear-time=\"0.3\"", true,
+                                        button("o-more", 600, 300, "[[&quot;show&quot;,&quot;тест_без_esc&quot;]]", "Ещё")),
+                                   "test/ui/тест_затемнение.html"),
+                      "окно с затемнением строится");
+                check(sc.load_page(s.context(), "тест_без_esc",
+                                   page("o-stay", "forge-screen=\"command\" forge-esc=\"0\"", false,
+                                        button("o-close", 600, 400, "[[&quot;close&quot;,&quot;&quot;]]", "Закрыть")),
+                                   "test/ui/тест_без_esc.html"),
+                      "окно без Esc строится");
+                check(sc.load_page(s.context(), "тест_только_меню",
+                                   page("o-menu", "forge-screen=\"command\" forge-over=\"menu\"", false, ""), "test/ui/тест_только_меню.html"),
+                      "окно только для меню строится");
+                s.vars().set("test.hud", 0);
+            }
+            if (f == 2) {
+                check(sc.over("тест_только_меню") == "menu" && !sc.fits("тест_только_меню"), "окно только для меню не подходит игре");
+                check(!sc.show("тест_только_меню", true) && !sc.shown("тест_только_меню"), "в игре оно не открывается");
+                check(click(s, "o-count"), "кнопка HUD нажимается");
+            }
+            if (f == 4) {
+                check(s.vars().get("test.hud").number() == 1, "без окна щелчок доходит до HUD");
+                check(click(s, "o-open"), "кнопка открывает окно");
+            }
+            if (f == 6) {
+                check(sc.shown("тест_затемнение") && sc.pauses(), "окно открыто и ставит игру на паузу");
+                Rml::Element* veil = s.find_element("forge-dim");
+                check(veil && veil->IsVisible(true), "затемнение видно");
+                check(veil && veil->GetLocalProperty("opacity") && veil->GetProperty<float>("opacity") < 1, "затемнение проявляется вместе с окном");
+                check(click(s, "o-count"), "щелчок по кнопке HUD под затемнением");
+                check(hovered() == "forge-dim" && !s.over_world(), "мышь над затемнением, не над миром: " + hovered());
+                SDL_Delay(350);
+            }
+            if (f == 8) {
+                Rml::Element* veil = s.find_element("forge-dim");
+                check(veil && !veil->GetLocalProperty("opacity"), "окно появилось: затемнение целиком");
+                check(s.vars().get("test.hud").number() == 1, "затемнение не пропустило щелчок к HUD");
+                check(sc.shown("тест_затемнение"), "щелчок по затемнению окно не закрывает");
+                check(click(s, "o-more"), "кнопка в окне открывает второе окно");
+            }
+            if (f == 10) {
+                const std::vector<std::string> up = sc.windows();
+                check(up.size() == 2 && up.back() == "тест_без_esc", "второе окно сверху");
+                key(SDLK_ESCAPE);
+                check(sc.shown("тест_без_esc") && sc.shown("тест_затемнение"), "Esc не закрыл ни верхнее окно без Esc, ни окно под ним");
+                check(s.screen() == forge::game::Screen::Paused, "Esc открыл паузу игры");
+                key(SDLK_ESCAPE);
+                check(s.screen() == forge::game::Screen::Playing, "Esc ещё раз — обратно в игру");
+            }
+            if (f == 12) check(click(s, "o-close"), "второе окно закрывается своей кнопкой");
+            if (f == 14) {
+                check(!sc.shown("тест_без_esc") && sc.shown("тест_затемнение"), "закрылось только второе окно");
+                key(SDLK_ESCAPE);
+                check(!sc.shown("тест_затемнение") && s.screen() == forge::game::Screen::Playing, "Esc закрыл окно с затемнением");
+                check(sc.windows().empty() && !sc.pauses(), "окон нет, игра идёт");
+            }
+            if (f == 15) SDL_Delay(350); // the window and its veil fade away
+            if (f == 17) check(click(s, "o-count"), "кнопка HUD снова нажимается");
+            if (f == 19) {
+                check(s.vars().get("test.hud").number() == 2, "без окна щелчок снова доходит до HUD");
+                // A window without the veil: a click beside its buttons goes to the HUD under it.
+                check(sc.show("тест_без_esc", true), "окно без затемнения открыто над HUD");
+            }
+            if (f == 21) check(click(s, "o-count"), "щелчок мимо кнопок окна без затемнения");
+            if (f == 23) {
+                check(s.vars().get("test.hud").number() == 3 && sc.shown("тест_без_esc"), "дошёл до кнопки HUD под окном, окно осталось");
+                check(click(s, "o-close"), "окно закрывается своей кнопкой");
+            }
+            if (f == 25) check(sc.windows().empty(), "окон нет");
+            if (f < 26) return false;
+            for (const char* n : {"тест_hud2", "тест_затемнение", "тест_без_esc", "тест_только_меню"}) sc.remove(n);
             return true;
         }});
         // The example screens made of «Простой»'s blocks (games/examples/simple-mode, built in): the HUD's
@@ -1880,6 +1998,363 @@ private:
         }});
     }
     static constexpr int kInventoryItems = 10000;
+
+    // games/examples/window-behaviour (13.11), the pages as the editor saved them, read from disk by the game's own
+    // GameScreens::load (the package carries the folder in data/examples): a main menu, a screen over the game and
+    // two windows. With the player's mouse and keys, as the game's window gives them: where a window may come up,
+    // the veil and clicks under a window, the world standing while a window's buttons work, Esc and the keyboard's
+    // focus, and the game getting its input back.
+    void build_windows(Shell& s) {
+        SliceGame& g = g_;
+        static const char* const kPages[] = {"окна_меню", "окна_игра", "окна_настройки", "окна_справка"};
+        static f64 x0 = 0, x1 = 0;
+        static Rml::Element* hud_focus = nullptr;
+        // An event as the game's window passes it: to the screens and the shell, then what they leave to the world.
+        auto send = [&s, &g](const SDL_Event& e) {
+            if (!s.handle_event(e) && s.screen() == Screen::Playing && !s.in_dialogue()) g.handle_event(e);
+        };
+        auto key = [send](SDL_Keycode k, bool down, bool repeat = false) {
+            SDL_Event ev{};
+            ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+            ev.key.key = k;
+            ev.key.down = down;
+            ev.key.repeat = repeat;
+            send(ev);
+        };
+        auto press = [key](SDL_Keycode k) {
+            key(k, true);
+            key(k, false);
+        };
+        // The mouse at a point of a page's 1920 × 1080, where the page's fit shows it on the player's screen.
+        auto at = [&s](f32 x, f32 y) {
+            const Rml::Vector2i size = s.context()->GetDimensions();
+            const game::ScreenFit fit = game::fit_screen("expand", 1920, 1080, static_cast<f32>(size.x), static_cast<f32>(size.y));
+            return Rml::Vector2f(game::fit_to_view_x(fit, x), game::fit_to_view_y(fit, y));
+        };
+        auto mouse = [send](Rml::Vector2f p, bool click) {
+            SDL_Event ev{};
+            ev.type = SDL_EVENT_MOUSE_MOTION;
+            ev.motion.x = p.x;
+            ev.motion.y = p.y;
+            send(ev);
+            for (const SDL_EventType t : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                if (!click) break;
+                ev = {};
+                ev.type = t;
+                ev.button.button = SDL_BUTTON_LEFT;
+                ev.button.down = t == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                ev.button.x = p.x;
+                ev.button.y = p.y;
+                send(ev);
+            }
+        };
+        // The middle of a button of a page, on the player's screen.
+        auto spot = [&s, at](const char* page, const char* title) -> std::optional<Rml::Vector2f> {
+            Rml::ElementDocument* doc = s.screens().document(page);
+            Rml::Element* root = doc ? doc->GetElementById("n1") : nullptr;
+            Rml::Element* e = titled(doc, title);
+            if (!root || !e) return std::nullopt;
+            const Rml::Vector2f c = e->GetAbsoluteOffset(Rml::BoxArea::Border) - root->GetAbsoluteOffset(Rml::BoxArea::Border) +
+                                    e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+            return at(c.x, c.y);
+        };
+        auto click = [spot, mouse](const char* page, const char* title) {
+            const auto p = spot(page, title);
+            if (p) mouse(*p, true);
+            return p.has_value();
+        };
+        auto focus = [&s](const char* page, const char* title) {
+            Rml::Element* f = s.context()->GetFocusElement();
+            return f && f == titled(s.screens().document(page), title);
+        };
+        auto num = [&s](const char* name) { return s.vars().get(name).number(); };
+        // The game's own menus (game/shell.rml): the middle of an element on the screen, what the mouse is over,
+        // a button of a part by its label, where a document stands among the context's (back to front).
+        auto middle = [](Rml::Element* e) { return e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f; };
+        auto under_mouse = [&s](Rml::Element* e) {
+            for (Rml::Element* h = s.context()->GetHoverElement(); h; h = h->GetParentNode())
+                if (h == e) return true;
+            return false;
+        };
+        auto hovered = [&s]() -> std::string {
+            Rml::Element* h = s.context()->GetHoverElement();
+            if (!h) return "ничего";
+            Rml::ElementDocument* d = h->GetOwnerDocument();
+            return "«" + h->GetTagName() + "#" + h->GetId() + "» в «" + (d ? d->GetTitle() : std::string()) + "»";
+        };
+        auto shell_item = [&s](const char* part, const char* label) -> Rml::Element* {
+            Rml::Element* box = s.find_element(part);
+            Rml::ElementList labels;
+            if (box) box->GetElementsByClassName(labels, "label");
+            for (Rml::Element* e : labels)
+                if (e->GetInnerRML() == label) return e->GetParentNode();
+            return nullptr;
+        };
+        auto shell_close = [&s](const char* part) -> Rml::Element* {
+            Rml::Element* box = s.find_element(part);
+            Rml::ElementList buttons;
+            if (box) box->GetElementsByClassName(buttons, "icon-button");
+            return buttons.empty() ? nullptr : buttons.front();
+        };
+        auto depth = [&s](const Rml::ElementDocument* d) {
+            for (int i = 0; i < s.context()->GetNumDocuments(); ++i)
+                if (s.context()->GetDocument(i) == d) return i;
+            return -1;
+        };
+
+        steps_.push_back({"пример поведения окон с диска", 20, [&s, this](u32 f) {
+            GameScreens& sc = s.screens();
+            if (f == 0) {
+                const std::filesystem::path dir = s.game_dir().parent_path() / "examples" / "window-behaviour";
+                std::error_code ec;
+                for (const char* name : kPages)
+                    check(std::filesystem::is_regular_file(dir / "ui" / utf8_path(std::string(name) + ".html"), ec) &&
+                              std::filesystem::is_regular_file(dir / "ui" / utf8_path(std::string(name) + ".json"), ec),
+                          std::string("файлы примера на диске: ") + name + " в " + path_to_utf8(dir / "ui"));
+                // As the game reads its own game/ui when it starts.
+                FORGE_INFO("пример окон читается из %s", path_to_utf8(dir / "ui").c_str());
+                sc.load(s.context(), dir, false);
+                const std::vector<std::string> names = sc.names();
+                for (const char* name : kPages) {
+                    Rml::ElementDocument* doc = sc.document(name);
+                    std::string url = doc ? doc->GetSourceURL() : std::string();
+                    std::replace(url.begin(), url.end(), '\\', '/');
+                    check(std::find(names.begin(), names.end(), name) != names.end() &&
+                              url.ends_with("window-behaviour/ui/" + std::string(name) + ".html"),
+                          std::string("страница прочитана из файла: ") + name + " (" + url + ")");
+                }
+                check(names.size() == std::size(kPages), "других экранов нет: " + std::to_string(names.size()));
+                check(sc.over("окна_справка") == "game" && sc.over("окна_настройки").empty(), "где появляются окна: справка только над игрой");
+                for (const char* v : {"demo.volume", "demo.coins"}) s.vars().set(v, 0);
+            }
+            if (f < 3) return false;
+            check(s.screen() == Screen::Main && sc.shown("окна_меню"), "меню примера вместо меню игры");
+            check(sc.windows().empty(), "окон пока нет");
+            return true;
+        }});
+        steps_.push_back({"окна над главным меню", 40, [&s, press, key, focus, num, this](u32 f) {
+            GameScreens& sc = s.screens();
+            const std::vector<std::string> settings{"окна_настройки"};
+            if (f == 0) {
+                press(SDLK_TAB);
+                check(focus("окна_меню", "Настройки"), "Tab: клавиатура у «Настройки» меню");
+                press(SDLK_RETURN);
+            }
+            if (f == 2) {
+                check(sc.windows() == settings && s.screen() == Screen::Main && sc.shown("окна_меню"),
+                      "Enter: окно открылось поверх главного меню, меню на месте");
+                Rml::Element* fe = s.context()->GetFocusElement();
+                check(fe && fe->GetOwnerDocument() == sc.document("окна_настройки"), "окно с паузой взяло клавиатуру");
+                press(SDLK_TAB);
+                check(focus("окна_настройки", "Громче"), "Tab: «Громче» в окне");
+                press(SDLK_RETURN);
+            }
+            if (f == 4) {
+                check(num("demo.volume") == 1, "Enter нажал кнопку окна");
+                press(SDLK_TAB);
+                check(focus("окна_настройки", "Справка"), "Tab: «Справка»");
+                press(SDLK_RETURN);
+            }
+            if (f == 6) {
+                check(sc.windows() == settings && !sc.shown("окна_справка"), "справка только над игрой: над меню не открылась");
+                // Esc held: it closes the window once; its repeats do nothing more.
+                key(SDLK_ESCAPE, true);
+                key(SDLK_ESCAPE, true, true);
+                key(SDLK_ESCAPE, true, true);
+                key(SDLK_ESCAPE, false);
+                check(sc.windows().empty() && s.screen() == Screen::Main && sc.shown("окна_меню"), "Esc закрыл окно, меню осталось");
+            }
+            if (f == 8) {
+                check(focus("окна_меню", "Настройки"), "клавиатура вернулась к кнопке, открывшей окно");
+                press(SDLK_TAB);
+                check(focus("окна_меню", "Играть"), "Tab: «Играть»");
+                press(SDLK_RETURN);
+            }
+            if (f < 10) return false;
+            return s.screen() == Screen::Playing && g_.running() && g_.hero_alive();
+        }});
+        steps_.push_back({"окна в игре", 140, [&s, &g, press, key, at, mouse, click, spot, focus, num, middle, under_mouse, hovered,
+                                                shell_item, shell_close, depth, this](u32 f) {
+            GameScreens& sc = s.screens();
+            auto right = [&g]() {
+                Controls c;
+                c.right = true;
+                g.script(c);
+            };
+            if (f == 0) {
+                check(sc.shown("окна_игра") && !sc.shown("окна_меню") && sc.windows().empty(), "в игре экран примера над игрой");
+                for (const char* v : {"demo.volume", "demo.coins"}) s.vars().set(v, 0);
+            }
+            if (f < 30 && !g.on_ground()) return false; // the hero lands first
+            if (f == 30) {
+                right();
+                x0 = g.hero_x();
+            }
+            if (f == 40) {
+                check(g.hero_x() > x0 + 0.1, "мир идёт: герой идёт вправо, " + std::to_string(x0) + " → " + std::to_string(g.hero_x()));
+                mouse(at(1000, 500), false);
+                check(s.over_world(), "мышь на пустом месте над миром (мимо кнопок экрана)");
+                check(click("окна_игра", "Монета"), "щелчок по «Монета»");
+            }
+            if (f == 42) {
+                check(num("demo.coins") == 1, "без окна щелчок доходит до кнопки над игрой");
+                check(click("окна_игра", "Настройки"), "щелчок по «Настройки» над игрой");
+                // Over the running game the keyboard is the game's: the click leaves the focus where it pressed.
+                hud_focus = s.context()->GetFocusElement();
+                check(hud_focus && hud_focus->GetOwnerDocument() == sc.document("окна_игра"), "фокус на экране над игрой");
+            }
+            if (f == 44) {
+                check(sc.windows() == std::vector<std::string>{"окна_настройки"} && sc.pauses(), "окно открылось над игрой и ставит её на паузу");
+                Rml::ElementDocument* doc = sc.document("окна_настройки");
+                Rml::Element* veil = doc ? doc->GetElementById("forge-dim") : nullptr;
+                check(veil && veil->IsVisible(true), "затемнение видно");
+                x1 = g.hero_x();
+                // Under the veil: the button over the game does not get the click, nor does the world.
+                const auto coin = spot("окна_игра", "Монета");
+                if (coin) mouse(*coin, true);
+                Rml::Element* h = s.context()->GetHoverElement();
+                check(h && h->GetId() == "forge-dim" && !s.over_world(), "мышь над затемнением, а не над миром и кнопками");
+                // A key of the world's while the window stops the game: the slot stays.
+                press(SDLK_2);
+                check(g.slot() == 0, "клавиша игры при окне с паузой до мира не дошла: ячейка " + std::to_string(g.slot()));
+            }
+            if (f == 50) {
+                check(std::fabs(g.hero_x() - x1) < 1e-9, "мир стоит: герой не сдвинулся, хотя «вправо» держат");
+                check(num("demo.coins") == 1 && sc.shown("окна_настройки"), "затемнение не пропустило щелчок; окно не закрылось");
+                check(click("окна_настройки", "Громче"), "щелчок по «Громче» в окне");
+            }
+            if (f == 52) {
+                check(num("demo.volume") == 1, "кнопки окна работают, пока мир стоит");
+                // The keyboard is the window's: the button pressed with the mouse has it, Space presses it again and
+                // the hero does not jump.
+                check(focus("окна_настройки", "Громче"), "клавиатура у «Громче», нажатой мышью");
+                press(SDLK_SPACE);
+            }
+            if (f == 54) {
+                check(num("demo.volume") == 2 && std::fabs(g.hero_x() - x1) < 1e-9, "пробел нажал «Громче», мир всё ещё стоит");
+                check(click("окна_настройки", "Справка"), "щелчок по «Справка»");
+            }
+            if (f == 56) {
+                check(sc.windows() == std::vector<std::string>{"окна_настройки", "окна_справка"}, "справка открылась над окном (над игрой можно)");
+                check(click("окна_настройки", "Громче"), "щелчок по «Громче» рядом со справкой");
+            }
+            if (f == 58) {
+                check(num("demo.volume") == 3 && sc.shown("окна_справка"), "справка без затемнения: щелчок рядом с ней дошёл до окна под ней");
+                key(SDLK_ESCAPE, true);
+                check(sc.windows().size() == 2 && s.screen() == Screen::Paused, "Esc: справка без Esc и окно под ней остались, открылась пауза");
+                key(SDLK_ESCAPE, true, true);
+                key(SDLK_ESCAPE, false);
+                check(s.screen() == Screen::Paused, "удержанный Esc паузу не закрыл");
+            }
+            // The pause, drawn a frame later, is over both windows (the lower one was clicked last): the player
+            // sees it, the mouse is on it, and what is under it does not get the click.
+            const std::vector<std::string> both{"окна_настройки", "окна_справка"};
+            if (f == 60) {
+                Rml::Element* resume = s.find_element("pause-resume");
+                check(resume && resume->IsVisible(true), "пауза видна");
+                if (resume) mouse(middle(resume), false);
+                check(resume && under_mouse(resume), "мышь на «Продолжить» паузы, а не на окне под ней: " + hovered());
+                // «Понятно» stands beside the pause's panel, under its veil.
+                if (const auto ok = spot("окна_справка", "Понятно")) mouse(*ok, true);
+                check(under_mouse(s.find_element("pause-menu")) && sc.windows() == both && s.screen() == Screen::Paused,
+                      "под паузой кнопка окна не срабатывает: мышь " + hovered());
+                Rml::Element* journal = shell_item("pause-menu", "Журнал");
+                check(journal != nullptr, "«Журнал» в паузе");
+                if (journal) mouse(middle(journal), true);
+            }
+            if (f == 62) {
+                Rml::Element* close = shell_close("journal");
+                check(s.screen() == Screen::Journal && close && close->IsVisible(true), "«Журнал» паузы открыл журнал над окнами");
+                if (close) mouse(middle(close), false);
+                check(close && under_mouse(close), "мышь на кнопке журнала, а не на окне под ним: " + hovered());
+                if (close) mouse(middle(close), true);
+            }
+            if (f == 64) {
+                check(s.screen() == Screen::Paused, "журнал закрылся, снова пауза");
+                Rml::Element* settings = shell_item("pause-menu", "Настройки");
+                check(settings != nullptr, "«Настройки» в паузе");
+                if (settings) mouse(middle(settings), true);
+            }
+            if (f == 66) {
+                Rml::Element* full = s.find_element("set-fullscreen");
+                check(s.screen() == Screen::Settings && full && full->IsVisible(true), "«Настройки» паузы открыли настройки игры над окнами");
+                if (full) mouse(middle(full), false);
+                check(full && under_mouse(full), "мышь на переключателе настроек игры, а не на окне: " + hovered());
+                press(SDLK_ESCAPE);
+                check(s.screen() == Screen::Paused, "Esc: из настроек обратно в паузу");
+            }
+            if (f == 68) {
+                Rml::Element* resume = s.find_element("pause-resume");
+                if (resume) mouse(middle(resume), true);
+                check(s.screen() == Screen::Playing, "щелчок по «Продолжить» вернул в игру");
+                check(sc.windows() == both && num("demo.volume") == 3, "оба окна на месте, их кнопки под паузой не нажимались");
+            }
+            if (f == 70) {
+                const int w1 = depth(sc.document("окна_настройки")), w2 = depth(sc.document("окна_справка"));
+                Rml::Element* pause = s.find_element("pause-menu");
+                const int menus = pause ? depth(pause->GetOwnerDocument()) : -1;
+                check(w1 >= 0 && w1 < w2 && w2 < menus, "порядок: справка над окном, меню игры над обоими (" + std::to_string(w1) + ", " +
+                                                            std::to_string(w2) + ", " + std::to_string(menus) + ")");
+                check(focus("окна_настройки", "Громче"), "клавиатура вернулась к окну, к «Громче», а не к скрытой кнопке паузы");
+                press(SDLK_J);
+            }
+            if (f == 72) {
+                Rml::Element* close = shell_close("journal");
+                check(s.screen() == Screen::Journal && close && close->IsVisible(true), "J: журнал открылся над окнами");
+                if (close) mouse(middle(close), false);
+                check(close && under_mouse(close), "мышь на кнопке журнала, открытого клавишей: " + hovered());
+                press(SDLK_J);
+                check(s.screen() == Screen::Playing && sc.windows() == both, "J ещё раз: обратно в игру, окна на месте");
+            }
+            if (f == 74) {
+                check(click("окна_справка", "Понятно"), "щелчок по «Понятно»");
+            }
+            if (f == 76) {
+                {
+                    std::string up;
+                    for (const std::string& w : sc.windows()) up += w + " ";
+                    check(sc.windows() == std::vector<std::string>{"окна_настройки"}, "«Понятно» закрыл только справку: " + up);
+                }
+                check(std::fabs(g.hero_x() - x1) < 1e-9, "окно с паузой открыто: мир по-прежнему стоит");
+                // The only window clicked: the pages stay in order, and it is still under the game's menus.
+                check(click("окна_настройки", "Громче"), "щелчок по «Громче» единственного окна");
+            }
+            if (f == 78) {
+                check(num("demo.volume") == 4, "«Громче» нажалось");
+                press(SDLK_J);
+            }
+            if (f == 80) {
+                Rml::Element* close = shell_close("journal");
+                check(s.screen() == Screen::Journal && close && close->IsVisible(true), "J: журнал открылся над щёлкнутым окном");
+                if (close) mouse(middle(close), false);
+                check(close && under_mouse(close), "мышь на кнопке журнала, а не на щёлкнутом окне под ним: " + hovered());
+                press(SDLK_J);
+                check(s.screen() == Screen::Playing && sc.windows() == std::vector<std::string>{"окна_настройки"}, "J ещё раз: обратно в игру, окно на месте");
+                key(SDLK_ESCAPE, true);
+                key(SDLK_ESCAPE, true, true);
+                key(SDLK_ESCAPE, false);
+                check(sc.windows().empty() && !sc.pauses() && s.screen() == Screen::Playing, "Esc закрыл окно, игра идёт");
+            }
+            if (f == 81) SDL_Delay(350); // the window and its veil fade away
+            if (f == 83) {
+                check(hud_focus && s.context()->GetFocusElement() == hud_focus, "фокус вернулся туда, где был до окна: на «Настройки» над игрой");
+                check(click("окна_игра", "Монета"), "щелчок по «Монета» снова");
+                press(SDLK_2);
+                check(g.slot() == 1, "клавиша игры снова доходит до мира: ячейка " + std::to_string(g.slot()));
+                mouse(at(1000, 500), false);
+                check(s.over_world(), "мышь на пустом месте снова над миром");
+            }
+            if (f == 93) {
+                check(num("demo.coins") == 2, "щелчок снова доходит до кнопки над игрой");
+                check(g.hero_x() > x1 + 0.1, "мир снова идёт: герой идёт вправо, " + std::to_string(x1) + " → " + std::to_string(g.hero_x()));
+                g.select(0);
+                // The game's own screens again (games/slice has none).
+                sc.load(s.context(), s.game_dir(), false);
+                return true;
+            }
+            return false;
+        }});
+    }
 
     SliceGame& g_;
     std::string scene_;

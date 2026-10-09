@@ -270,6 +270,12 @@ public:
     bool covers_game() const;
     forge::game::Vars& check_vars() { return check_vars_; }
     const std::vector<std::string>& check_log() const { return check_log_; }
+    // The windows up over the screen in «Проверить», the newest last.
+    std::vector<std::string> check_windows() const;
+    // A layer (by its name) of a window up in «Проверить»: where it is on the page, as layer_box (tests).
+    std::optional<editor::design::Rect> check_box(const std::string& window, const std::string& layer) const;
+    // What has the keyboard in «Проверить»: "page:element id" ("" none; "page:" the page itself).
+    std::string check_focus() const;
     // The page on the canvas (for tests: its elements).
     Rml::ElementDocument* page() const { return page_; }
     // Mouse on the screen's own pixels, as the check passes it to the page.
@@ -349,6 +355,8 @@ public:
     std::function<std::vector<std::pair<std::string, std::string>>()> game_values;
     // What lists show in «Проверить»: the game's things (inv.<id>) and its quests.
     std::function<std::vector<game::ScreenItem>()> game_items;
+    // Where «Логика» shows a screen (blocks «Показать экран» with its name), in the author's words.
+    std::function<std::vector<std::string>(const std::string& screen)> logic_openers;
     std::function<const game::QuestBook*()> game_quests;
     // Sounds of «Ресурсы» the author can pick for a screen's music and its
     // buttons besides the game's own (a pick is copied into game/sounds).
@@ -411,6 +419,7 @@ private:
     void refresh_overlay();
     void refresh_layers();
     void refresh_screens();
+    void refresh_openers();
     void refresh_props();
     void dirty(const char* name);
     void dirty_all();
@@ -422,10 +431,12 @@ private:
     void release();
 
     // «Проверить».
-    void check_action(const forge::game::ScreenAction& a);
+    void check_action(const forge::game::ScreenAction& a, const std::string& page);
+    bool check_escape(); // Esc in «Проверить»: the top window, as the game does; false: none is up
     std::string menu_screen() const; // the screen the game shows as its menu
     void refresh_check();
     void seed_check_vars();
+    std::vector<std::string> check_pages() const;
 
     // Field edits.
     bool set_on(editor::design::Node& n, const std::string& field, const std::string& value);
@@ -616,7 +627,8 @@ private:
         Rml::String text_style; // the game's text style the text follows ("": its own)
         // The link to the game.
         Rml::String screen_show; // "playing", "command", "menu"
-        bool pauses = false, esc_closes = true;
+        Rml::String over;        // a window's «Где появляется»: "any", "game", "menu"
+        bool pauses = false, esc_closes = true, dim = false;
         bool covers_game = false; // shown while playing with a solid background: the world can't be seen
         Rml::String show_if;
         // Lists: the frame's own (list: "none", "items", "quests"), and the
@@ -722,6 +734,7 @@ private:
     f32 timeline_time_at(f32 mx) const;
     bool timeline_wanted() const;
     bool checking_ = false;
+    bool esc_in_check_ = false; // the Esc held now was pressed in «Проверить»: its repeats do nothing
     std::unique_ptr<forge::game::GameScreens> check_;
     // «Проверить»'s sound: the screen's music and its buttons.
     forge::audio::Mixer check_mixer_;
@@ -742,8 +755,29 @@ private:
     bool page_from_check_ = false;
     forge::game::Vars check_vars_;
     u64 check_seen_ = ~0ull;
-    std::vector<forge::game::ScreenAction> check_pending_; // clicks wait for the end of the page's event
+    struct CheckClick {
+        forge::game::ScreenAction action;
+        std::string page; // the page it was on
+    };
+    std::vector<CheckClick> check_pending_; // clicks wait for the end of the page's event
     std::vector<std::string> check_back_; // screens opened by clicks, to go back to
+    // The windows «Проверить» opened over the screen (loaded pages; which are up and in what order: check_).
+    struct CheckWindow {
+        std::string name, title;
+        bool esc = true, pauses = false, dim = false;
+    };
+    std::vector<CheckWindow> check_windows_;
+    bool load_check_window(const std::string& name, std::string* refused = nullptr);
+    bool check_over_menu() const;
+    const CheckWindow* check_window(const std::string& name) const;
+    const CheckWindow* top_check_window() const; // the newest one up over the screen
+    // What opens the window and over what it comes up; warn: it does not open there (its «Где появляется»).
+    struct OpenerRow {
+        Rml::String text;
+        bool warn = false;
+    };
+    std::vector<OpenerRow> m_openers_;
+    std::vector<Rml::String> m_check_state_; // the windows up and what they do to the game («Проверить»)
     std::vector<std::string> check_log_;
     struct CheckVarRow {
         Rml::String name, label, value;
@@ -798,9 +832,10 @@ private:
             text_swatch = "transparent";
         Rml::String x, y, w, h, anchor_h, anchor_v;
         Rml::String action = "none", target, needs;
-        Rml::String image, bar_value, bar_max, list_source, picture_from, show, inside;
+        Rml::String image, bar_value, bar_max, list_source, picture_from, show, over, inside;
         Rml::String hidden;
         Rml::String music, button_sound, click_sound;
+        bool pauses = false, esc_closes = true, dim = false; // a window's: the game stops, Esc closes it, what is under is darkened
     };
     SimpleProps m_s_;
     SimpleProps m_s_shown_; // as last shown: the drop-downs write into m_s_ before their change arrives

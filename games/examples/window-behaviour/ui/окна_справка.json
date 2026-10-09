@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "title": "Окна: справка",
+  "next_id": 6,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "esc_closes": false,
+    "over": "game"
+  },
+  "root": {
+    "id": 1,
+    "name": "Окна: справка",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 1400.0,
+        "y": 240.0,
+        "w": 480.0,
+        "h": 400.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#24303f"
+          }
+        ],
+        "radius": [
+          16.0,
+          16.0,
+          16.0,
+          16.0
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Текст",
+            "type": "text",
+            "x": 20.0,
+            "y": 30.0,
+            "w": 440.0,
+            "h": 160.0,
+            "text": "Справка только над игрой. Esc её не закрывает.",
+            "style": {
+              "family": "Onest",
+              "size": 32.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#ebf0f5"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Понятно",
+            "type": "frame",
+            "x": 40.0,
+            "y": 270.0,
+            "w": 400.0,
+            "h": 90.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 5,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 20.0,
+                "w": 400.0,
+                "h": 50.0,
+                "text": "Понятно",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#1b2127"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

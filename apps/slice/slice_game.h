@@ -98,6 +98,7 @@ public:
     // Talks to the villager within reach; false when nobody is near.
     bool talk_nearest();
     void select(u32 slot) { slot_ = slot < kSlots ? slot : 0; }
+    u32 slot() const { return slot_; }
     const SliceGenerator& generator() const { return *gen_; }
     forge::world::TileId tile(u32 layer, i32 x, i32 y) const;
     std::string location() const;

@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "title": "Окна: настройки",
+  "next_id": 11,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "pauses": true,
+    "dim": true
+  },
+  "root": {
+    "id": 1,
+    "name": "Окна: настройки",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 560.0,
+        "y": 240.0,
+        "w": 800.0,
+        "h": 600.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#24303f"
+          }
+        ],
+        "radius": [
+          16.0,
+          16.0,
+          16.0,
+          16.0
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 0.0,
+            "y": 30.0,
+            "w": 800.0,
+            "h": 70.0,
+            "text": "Настройки",
+            "style": {
+              "family": "Onest",
+              "size": 48.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#ebf0f5"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Громкость",
+            "type": "text",
+            "x": 0.0,
+            "y": 110.0,
+            "w": 800.0,
+            "h": 50.0,
+            "text": "Громкость: {demo.volume}",
+            "style": {
+              "family": "Onest",
+              "size": 32.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#ebf0f5"
+            }
+          },
+          {
+            "id": 5,
+            "name": "Громче",
+            "type": "frame",
+            "x": 200.0,
+            "y": 190.0,
+            "w": 400.0,
+            "h": 90.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "change",
+                "target": "demo.volume += 1"
+              }
+            ],
+            "children": [
+              {
+                "id": 6,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 20.0,
+                "w": 400.0,
+                "h": 50.0,
+                "text": "Громче",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#1b2127"
+                }
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "name": "Справка",
+            "type": "frame",
+            "x": 200.0,
+            "y": 310.0,
+            "w": 400.0,
+            "h": 90.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "show",
+                "target": "окна_справка"
+              }
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 20.0,
+                "w": 400.0,
+                "h": 50.0,
+                "text": "Справка",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#1b2127"
+                }
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "name": "Закрыть",
+            "type": "frame",
+            "x": 200.0,
+            "y": 430.0,
+            "w": 400.0,
+            "h": 90.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 10,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 20.0,
+                "w": 400.0,
+                "h": 50.0,
+                "text": "Закрыть",
+                "style": {
+                  "family": "Onest",
+                  "size": 36.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#1b2127"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

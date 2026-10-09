@@ -286,6 +286,12 @@ void Shell::toast(std::string text) {
 void Shell::show(Screen s) {
     screen_ = s;
     if (s == Screen::Main || s == Screen::Slots) model_->slots_dirty = true;
+    // Back to the game from its menus: the keyboard goes back where it was before them (a window's button, the
+    // screen over the game), not to a menu's button hidden now.
+    if (s == Screen::Playing && context_)
+        if (Rml::Element* menus = find_element("pause-menu"))
+            if (Rml::Element* f = context_->GetFocusElement(); f && f->GetOwnerDocument() == menus->GetOwnerDocument())
+                context_->UnfocusDocument(menus->GetOwnerDocument());
 }
 
 bool Shell::begin(std::string_view slot_id) {
@@ -467,7 +473,7 @@ bool Shell::handle_event(const SDL_Event& e) {
         else if (k == SDLK_F9) {
             if (!slot_.empty()) load(std::string(slot_));
             else continue_game();
-        } else return false;
+        } else return screens_->pauses(); // a window that stops the game keeps the game's keys from the world
         return true;
     case Screen::Paused:
         if (k == SDLK_ESCAPE) pause(false);
@@ -523,7 +529,8 @@ void Shell::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width,
 
 bool Shell::over_world() const {
     Rml::Element* hover = context_ ? context_->GetHoverElement() : nullptr;
-    return !hover || hover == hover->GetOwnerDocument();
+    // A bare document, or none at all (the context's root: the game's pages let the mouse through).
+    return !hover || hover == hover->GetOwnerDocument() || hover == context_->GetRootElement();
 }
 
 Rml::Element* Shell::find_element(const char* id) {

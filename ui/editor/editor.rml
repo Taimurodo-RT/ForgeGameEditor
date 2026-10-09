@@ -1242,7 +1242,11 @@
             <div id="ue-design" class="ue-right ue-panel column">
                 <div class="ue-props column" data-if="ue_checking">
                     <div class="ue-head row"><icon class="s" name="play_circle"/><span class="grow name">Проверка</span><span class="muted">{{ ue_title }}</span></div>
-                    <div class="ue-sec"><div class="ue-note">Наводите мышь и нажимайте кнопки на холсте, как в игре: кнопка, которая открывает экран, откроет его здесь. Esc — закончить.</div></div>
+                    <div class="ue-sec"><div class="ue-note">Наводите мышь и нажимайте кнопки на холсте, как в игре: кнопка, которая открывает экран, откроет его здесь, а окно встанет поверх. Esc закрывает верхнее окно, без окон — заканчивает проверку. Мир игры здесь не запущен: блок «Окна» говорит, что было бы в игре.</div></div>
+                    <div id="ue-check-state" class="ue-sec" data-if="ue_check_state.size > 0">
+                        <div class="ue-sec-title">Окна</div>
+                        <div data-for="l : ue_check_state" class="ue-note">{{ l }}</div>
+                    </div>
                     <div class="ue-sec">
                         <div class="ue-sec-title">Данные игры <span class="muted">меняйте и смотрите</span></div>
                         <div data-for="v : ue_check_vars" class="ue-line row" data-attr-title="v.name">
@@ -1288,6 +1292,21 @@
                         <select id="ue-s-show" class="ue-select" data-value="ue_s.show" data-event-change="ue_spick('show')">
                             <option value="playing">Всегда, поверх игры</option><option value="command">Окно: открывает кнопка</option><option value="menu">Главное меню игры</option>
                         </select>
+                        <div data-if="ue_s.show == 'command'" class="column">
+                            <div class="ue-line row"><span class="ue-key">Где появляется</span>
+                                <select id="ue-s-over" class="ue-select grow" data-value="ue_s.over" data-event-change="ue_spick('over')">
+                                    <option value="any">Везде: над меню и игрой</option><option value="game">Только над игрой</option><option value="menu">Только над главным меню</option>
+                                </select>
+                            </div>
+                            <div id="ue-s-pauses" class="ue-check row" data-event-click="ue_sset('pauses', '')"><icon class="xs" data-attr-name="ue_s.pauses ? 'check_box' : 'check_box_outline_blank'"/><span>Пока открыто, игра стоит</span></div>
+                            <div id="ue-s-esc" class="ue-check row" data-event-click="ue_sset('esc', '')"><icon class="xs" data-attr-name="ue_s.esc_closes ? 'check_box' : 'check_box_outline_blank'"/><span>Закрывается по Esc</span></div>
+                            <div id="ue-s-dim" class="ue-check row" data-event-click="ue_sset('dim', '')"><icon class="xs" data-attr-name="ue_s.dim ? 'check_box' : 'check_box_outline_blank'"/><span>Затемнять то, что под окном</span></div>
+                            <div id="ue-s-openers" class="column">
+                                <div class="ue-key">Что его открывает</div>
+                                <div data-for="o : ue_openers" class="ue-note" data-class-ue-warn="o.warn">{{ o.text }}</div>
+                                <div class="ue-note ue-warn" data-if="ue_openers.size == 0">Пока его ничто не открывает: дайте кнопке действие «Открыть экран» с этим экраном.</div>
+                            </div>
+                        </div>
                     </div>
                     <div class="ue-sec" data-if="ue_s.root">
                         <div class="ue-sec-title">Звук <span class="muted">из папки звуков игры</span></div>
@@ -1385,12 +1404,27 @@
                             </select>
                         </div>
                         <div data-if="ue_p.screen_show == 'command'" class="column">
+                            <div class="ue-line row"><span class="ue-key">Где появляется</span>
+                                <select id="ue-screen-over" class="ue-select grow" data-value="ue_p.over" data-event-change="ue_pick('screen.over')">
+                                    <option value="any">Везде: над меню и игрой</option><option value="game">Только над игрой</option><option value="menu">Только над главным меню</option>
+                                </select>
+                            </div>
                             <div id="ue-screen-pauses" class="ue-check row" data-event-click="ue_set('screen.pauses', '')"><icon class="xs" data-attr-name="ue_p.pauses ? 'check_box' : 'check_box_outline_blank'"/><span>Пока открыто, игра стоит</span></div>
                             <div id="ue-screen-esc" class="ue-check row" data-event-click="ue_set('screen.esc', '')"><icon class="xs" data-attr-name="ue_p.esc_closes ? 'check_box' : 'check_box_outline_blank'"/><span>Закрывается по Esc</span></div>
+                            <div id="ue-screen-dim" class="ue-check row" data-event-click="ue_set('screen.dim', '')"><icon class="xs" data-attr-name="ue_p.dim ? 'check_box' : 'check_box_outline_blank'"/><span>Затемнять то, что под окном</span></div>
+                            <div id="ue-window-notes" class="column">
+                                <div class="ue-note">{{ ue_p.pauses ? 'Игра стоит: мир и герой ждут, музыка играет. Tab, Enter и пробел нажимают кнопки окна.' : 'Игра идёт под окном. Клавиатура остаётся игре, кнопки окна нажимают мышью.' }}</div>
+                                <div class="ue-note">{{ ue_p.esc_closes ? 'Esc закрывает верхнее окно, это или открытое поверх него.' : 'Esc его не закроет, и окна под ним тоже. В игре Esc откроет паузу.' }}</div>
+                                <div class="ue-note">{{ ue_p.dim ? 'Под окном всё темнее наполовину, щелчки туда не проходят.' : 'Щелчок мимо кнопок окна уходит к тому, что под ним.' }}</div>
+                            </div>
+                            <div id="ue-openers" class="column">
+                                <div class="ue-key">Что его открывает</div>
+                                <div data-for="o : ue_openers" class="ue-note" data-class-ue-warn="o.warn">{{ o.text }}</div>
+                                <div class="ue-note ue-warn" data-if="ue_openers.size == 0">Пока его ничто не открывает: в игре оно не появится. Дайте кнопке действие «Показать экран» с этим экраном или поставьте в «Логике» блок «Показать экран».</div>
+                            </div>
                         </div>
                         <div id="ue-covers-game" class="ue-note ue-warn" data-if="ue_p.covers_game">Фон экрана сплошной и закроет весь мир. Сделайте его прозрачнее на вкладке «Дизайн» или выберите «Окно».</div>
                         <div class="ue-note" data-if="ue_p.screen_show == 'playing'">Как полоска здоровья и монеты: виден, пока игрок играет. Пустые места пропускают щелчки в мир.</div>
-                        <div class="ue-note" data-if="ue_p.screen_show == 'command'">Откройте его кнопкой с действием «Показать экран» или блоком «Показать экран» в «Логике».</div>
                         <div class="ue-note" data-if="ue_p.screen_show == 'menu'">Игра покажет этот экран вместо своего главного меню. Кнопкам дайте действия «Новая игра», «Продолжить», «Загрузить», «Настройки», «Выйти».</div>
                     </div>
                     <div class="ue-sec ue-game" data-if="ue_p.root">

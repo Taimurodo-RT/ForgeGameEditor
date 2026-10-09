@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "title": "Окна: игра",
+  "next_id": 7,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "playing"
+  },
+  "root": {
+    "id": 1,
+    "name": "Окна: игра",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Настройки",
+        "type": "frame",
+        "x": 40.0,
+        "y": 40.0,
+        "w": 300.0,
+        "h": 90.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "show",
+            "target": "окна_настройки"
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 20.0,
+            "w": 300.0,
+            "h": 50.0,
+            "text": "Настройки",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#1b2127"
+            }
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Монета",
+        "type": "frame",
+        "x": 40.0,
+        "y": 160.0,
+        "w": 300.0,
+        "h": 90.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#e8b04a"
+          }
+        ],
+        "radius": [
+          14.0,
+          14.0,
+          14.0,
+          14.0
+        ],
+        "on_click": [
+          {
+            "do": "change",
+            "target": "demo.coins += 1"
+          }
+        ],
+        "children": [
+          {
+            "id": 5,
+            "name": "Надпись",
+            "type": "text",
+            "x": 0.0,
+            "y": 20.0,
+            "w": 300.0,
+            "h": 50.0,
+            "text": "Монета",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#1b2127"
+            }
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "Монеты",
+        "type": "text",
+        "x": 40.0,
+        "y": 270.0,
+        "w": 300.0,
+        "h": 50.0,
+        "text": "Монеты: {demo.coins}",
+        "style": {
+          "family": "Onest",
+          "size": 32.0,
+          "weight": 400,
+          "align": "center",
+          "color": "#ebf0f5"
+        }
+      }
+    ]
+  }
+}

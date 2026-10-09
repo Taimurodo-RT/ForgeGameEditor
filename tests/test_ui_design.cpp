@@ -538,7 +538,7 @@ TEST_CASE("ui design: the link to the game survives saving and goes onto the pag
     CHECK(contains(html, "forge-text=\"Монеты: {inv.coins} &amp; &quot;всё&quot;\""));
     // Only what shows something takes clicks: the empty frame lets them through to the world.
     const std::string root = "#n" + std::to_string(screen.root.id);
-    CHECK(contains(html, "body, " + root + " {\n  pointer-events: none;"));
+    CHECK(contains(html, "html, body, " + root + " {\n  pointer-events: none;"));
     const std::string mouse = "#n" + std::to_string(buy.id) + ", #n" + std::to_string(bar.id) + ", #n" + std::to_string(label.id) + " {\n  pointer-events: auto;";
     CHECK(contains(html, mouse));
     CHECK_FALSE(contains(html, "#n" + std::to_string(empty_frame.id) + ", "));
@@ -547,6 +547,47 @@ TEST_CASE("ui design: the link to the game survives saving and goes onto the pag
     CHECK(override_of("click.0.kind") == "game");
     CHECK(override_of("bar.value") == "game");
     CHECK(override_of("show_if") == "game");
+}
+
+TEST_CASE("ui design: a window's place and veil survive saving and go onto the page") {
+    Screen screen = make_screen("Сундук", 1280, 720);
+    screen.show = ScreenShow::Command;
+    screen.dim = true;
+    screen.over = WindowOver::Game;
+    Screen back;
+    REQUIRE(load_screen(save_screen(screen), back));
+    CHECK(back.dim);
+    CHECK(back.over == WindowOver::Game);
+    screen.over = WindowOver::Menu;
+    REQUIRE(load_screen(save_screen(screen), back));
+    CHECK(back.over == WindowOver::Menu);
+    CHECK(std::string(window_over_word(WindowOver::Any)) == "any");
+
+    // Windows from before: no veil, anywhere; «везде» is not written.
+    Screen old;
+    REQUIRE(load_screen(R"({"title": "Старое", "settings": {"show": "command"}, "root": {"id": 1, "type": "frame"}})", old));
+    CHECK_FALSE(old.dim);
+    CHECK(old.over == WindowOver::Any);
+    CHECK_FALSE(contains(save_screen(old), "\"over\""));
+    CHECK_FALSE(contains(save_screen(old), "\"dim\""));
+
+    // On the page: the root says where it comes up, and the veil lies under the window over the whole screen.
+    const std::string html = screen_html(screen);
+    const std::string root = "<div id=\"n" + std::to_string(screen.root.id) + "\"";
+    CHECK(contains(html, "forge-dim=\"1\" forge-over=\"menu\""));
+    CHECK(contains(html, "#forge-dim {\n  position: absolute;\n  left: 0px;\n  top: 0px;\n  width: 100%;\n  height: 100%;\n"
+                         "  background-color: rgba(0, 0, 0, 0.5);\n  pointer-events: auto;\n}"));
+    REQUIRE(contains(html, "<div id=\"forge-dim\"></div>"));
+    CHECK(html.find("<div id=\"forge-dim\"></div>") < html.find(root));
+    // Without the switch, or on a screen that is not a window, there is neither.
+    for (const auto& [show, dim] : {std::pair{ScreenShow::Command, false}, {ScreenShow::Playing, true}, {ScreenShow::Menu, true}}) {
+        Screen other = screen;
+        other.show = show;
+        other.dim = dim;
+        const std::string page = screen_html(other);
+        CHECK_FALSE(contains(page, "forge-dim"));
+        CHECK(contains(page, "forge-over") == (show == ScreenShow::Command));
+    }
 }
 
 TEST_CASE("ui design: a list of the game's survives saving and goes onto the page") {
@@ -803,4 +844,105 @@ TEST_CASE("ui design: the screens for checking screen sizes are as the editor wr
     CHECK(contains(screen_html(hud), "forge-click=\"[[&quot;show&quot;,&quot;проверка_сумка&quot;]]\""));
     CHECK(contains(screen_html(bag), "forge-fit=\"fit\""));
     CHECK(contains(screen_html(bag), "forge-picture=\"item.icon\""));
+}
+
+// The example of windows' behaviour (13.11): games/examples/window-behaviour/ui, a main menu, a screen over the game
+// and two windows, as the editor writes them. The game's self-test (forge_slice --test --scene windows) reads these
+// files from disk, in the build and in the package; FORGE_WRITE_EXAMPLES=1 writes them again.
+namespace {
+
+Node example_button(Screen& s, const char* name, f32 x, f32 y, f32 w, std::vector<Action> actions) {
+    Node b = rect_node(s.next_id++, x, y, w, 90);
+    b.name = name;
+    b.type = NodeType::Frame;
+    b.fills = {solid({232, 176, 74, 255})};
+    b.radius = {14, 14, 14, 14};
+    b.on_click = std::move(actions);
+    Node label = text_node(s.next_id++, "Надпись", 0, 20, w, 50, name, 36, TextAlign::Center);
+    label.text_style.color = {27, 33, 39, 255};
+    b.children = {label};
+    return b;
+}
+
+Node example_panel(Screen& s, const char* name, f32 x, f32 y, f32 w, f32 h) {
+    Node p = rect_node(s.next_id++, x, y, w, h);
+    p.name = name;
+    p.type = NodeType::Frame;
+    p.fills = {solid({36, 48, 63, 255})};
+    p.radius = {16, 16, 16, 16};
+    return p;
+}
+
+Node example_text(Screen& s, const char* name, f32 x, f32 y, f32 w, f32 h, const char* words, f32 size) {
+    Node t = text_node(s.next_id++, name, x, y, w, h, words, size, TextAlign::Center);
+    t.text_style.color = {235, 240, 245, 255};
+    return t;
+}
+
+std::vector<std::pair<const char*, Screen>> window_example_screens() {
+    // The main menu: «Настройки» opens the window over the menu, «Играть» starts the game.
+    Screen menu = make_screen("Окна: меню", 1920, 1080);
+    menu.show = ScreenShow::Menu;
+    menu.root.fills = {solid({24, 30, 38, 255})};
+    menu.root.children = {example_text(menu, "Заголовок", 460, 140, 1000, 90, "Поведение окон", 64),
+                          example_button(menu, "Настройки", 760, 340, 400, {{ActionKind::Show, "окна_настройки"}}),
+                          example_button(menu, "Играть", 760, 460, 400, {{ActionKind::NewGame, ""}}),
+                          example_text(menu, "Громкость", 560, 640, 800, 60, "Громкость: {demo.volume}", 32)};
+    // Over the game: the same window, and a button of the game's own to see whether clicks reach it.
+    Screen hud = make_screen("Окна: игра", 1920, 1080);
+    hud.show = ScreenShow::Playing;
+    hud.root.children = {example_button(hud, "Настройки", 40, 40, 300, {{ActionKind::Show, "окна_настройки"}}),
+                         example_button(hud, "Монета", 40, 160, 300, {{ActionKind::Change, "demo.coins += 1"}}),
+                         example_text(hud, "Монеты", 40, 270, 300, 50, "Монеты: {demo.coins}", 32)};
+    // A window as a new one is made (anywhere, closed by Esc, darkening what is under it) that stops the game.
+    Screen settings = make_screen("Окна: настройки", 1920, 1080);
+    settings.show = ScreenShow::Command;
+    settings.pauses = true;
+    settings.dim = true;
+    Node panel = example_panel(settings, "Окно", 560, 240, 800, 600);
+    panel.children = {example_text(settings, "Заголовок", 0, 30, 800, 70, "Настройки", 48),
+                      example_text(settings, "Громкость", 0, 110, 800, 50, "Громкость: {demo.volume}", 32),
+                      example_button(settings, "Громче", 200, 190, 400, {{ActionKind::Change, "demo.volume += 1"}}),
+                      example_button(settings, "Справка", 200, 310, 400, {{ActionKind::Show, "окна_справка"}}),
+                      example_button(settings, "Закрыть", 200, 430, 400, {{ActionKind::Close, ""}})};
+    settings.root.children = {panel};
+    // A second window, only over the game, that Esc does not close and that does not darken: beside it the
+    // first window's buttons are still pressed.
+    Screen help = make_screen("Окна: справка", 1920, 1080);
+    help.show = ScreenShow::Command;
+    help.esc_closes = false;
+    help.over = WindowOver::Game;
+    Node note = example_panel(help, "Окно", 1400, 240, 480, 400);
+    note.children = {example_text(help, "Текст", 20, 30, 440, 160, "Справка только над игрой. Esc её не закрывает.", 32),
+                     example_button(help, "Понятно", 40, 270, 400, {{ActionKind::Close, ""}})};
+    help.root.children = {note};
+    return {{"окна_меню", menu}, {"окна_игра", hud}, {"окна_настройки", settings}, {"окна_справка", help}};
+}
+
+} // namespace
+
+TEST_CASE("ui design: the example of windows' behaviour is as the editor writes it") {
+    const std::filesystem::path dir = std::filesystem::path(FORGE_SOURCE_DIR) / "games" / "examples" / "window-behaviour" / "ui";
+    const bool write = std::getenv("FORGE_WRITE_EXAMPLES") != nullptr;
+    const auto screens = window_example_screens();
+    for (const auto& [name, screen] : screens) {
+        CAPTURE(name);
+        const std::string json = save_screen(screen), html = screen_html(screen);
+        const std::filesystem::path json_file = dir / utf8_path(std::string(name) + ".json"), html_file = dir / utf8_path(std::string(name) + ".html");
+        if (write) {
+            std::filesystem::create_directories(dir);
+            REQUIRE(write_file_atomic(json_file, std::span(reinterpret_cast<const u8*>(json.data()), json.size())));
+            REQUIRE(write_file_atomic(html_file, std::span(reinterpret_cast<const u8*>(html.data()), html.size())));
+        }
+        Screen back;
+        REQUIRE(load_screen(read_text(json_file), back));
+        CHECK(save_screen(back) == json);
+        CHECK(read_text(html_file) == html);
+    }
+    // What the game's check needs on the pages: the window's pause, Esc, veil and place.
+    CHECK(contains(screen_html(screens[2].second), "forge-screen=\"command\""));
+    CHECK(contains(screen_html(screens[2].second), "forge-pauses=\"1\" forge-dim=\"1\""));
+    CHECK(contains(screen_html(screens[2].second), "<div id=\"forge-dim\"></div>"));
+    CHECK(contains(screen_html(screens[3].second), "forge-esc=\"0\" forge-over=\"game\""));
+    CHECK_FALSE(contains(screen_html(screens[3].second), "forge-dim"));
 }
