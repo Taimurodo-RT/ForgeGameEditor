@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "title": "Подтверждение",
+  "next_id": 9,
+  "width": 720.0,
+  "height": 340.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Подтверждение",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 720.0,
+    "h": 340.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Подтверждение",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 720.0,
+        "h": 340.0,
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 0.0,
+            "y": 32.0,
+            "w": 720.0,
+            "h": 62.0,
+            "text": "Вы уверены?",
+            "style": {
+              "family": "Onest",
+              "size": 48.0,
+              "weight": 700,
+              "align": "center",
+              "color": "#f2f4f7"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Текст",
+            "type": "text",
+            "x": 60.0,
+            "y": 118.0,
+            "w": 600.0,
+            "h": 80.0,
+            "text": "Прогресс после последнего сохранения пропадёт.",
+            "style": {
+              "family": "Onest",
+              "size": 28.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#8a94a3"
+            }
+          },
+          {
+            "id": 5,
+            "name": "Кнопка «Да»",
+            "type": "frame",
+            "x": 60.0,
+            "y": 232.0,
+            "w": 280.0,
+            "h": 72.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#e8b04a"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "message",
+                "target": "подтвердил"
+              }
+            ],
+            "children": [
+              {
+                "id": 6,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 15.0,
+                "w": 280.0,
+                "h": 42.0,
+                "text": "Да",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#1b2129"
+                }
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "name": "Кнопка «Нет»",
+            "type": "frame",
+            "x": 380.0,
+            "y": 232.0,
+            "w": 280.0,
+            "h": 72.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2c3542"
+              }
+            ],
+            "radius": [
+              14.0,
+              14.0,
+              14.0,
+              14.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 15.0,
+                "w": 280.0,
+                "h": 42.0,
+                "text": "Нет",
+                "style": {
+                  "family": "Onest",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#e6eaf0"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

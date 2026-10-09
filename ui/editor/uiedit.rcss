@@ -104,9 +104,17 @@
 .ue-row:hover, .ue-layer:hover { background-color: var(--state-hover-layer); }
 .ue-row.selected { background-color: var(--surface-container-highest); font-weight: 600; }
 .ue-row.add { color: var(--primary); font-weight: 600; }
+.ue-new-row { gap: 2px; }
+/* A narrow window: the bar gives up the tab's name (the tab above says it), not the screen's or a button's. */
+@media (max-width: 1700px) {
+    .ue-crumb-tab { display: none; }
+}
+.ue-new-row .ue-row { white-space: nowrap; }
 .ue-row.add icon { color: var(--primary); }
 .ue-row .count { font-size: 11px; font-family: var(--font-mono); color: var(--on-surface-variant); }
 .ue-row .name, .ue-layer .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The screens scroll in their own place too: a game of many screens keeps room for its layers. */
+.ue-screens { max-height: 240px; overflow-y: auto; flex-shrink: 0; }
 /* The list scrolls in its own place: else its lower rows, past its height, lie under the components and cannot be clicked. */
 .ue-layers { min-height: 0px; overflow-y: auto; }
 .ue-layer { min-height: 28px; padding-right: var(--space-1); font-size: 13px; }
@@ -498,3 +506,136 @@ input.text.ue-hex.ue-sans { font-family: var(--font-sans); }
 .ue-float .ue-swatch-fill { border-radius: 5px; }
 .ue-f-icon { width: 20px; flex: 0 0 20px; color: var(--on-surface-variant); }
 .ue-f-note { font-size: 12px; color: var(--on-surface-variant); }
+
+/* The template library (13.12): a window over the tab; groups on the left, the templates' pictures in the
+   middle, the selected one on the right with what taking it does. */
+.ue-tpl-scrim { position: absolute; left: 0px; top: 0px; right: 0px; bottom: 0px; z-index: 65; background-color: rgba(0, 0, 0, 0.45); }
+.ue-tpl {
+    position: absolute;
+    left: 6%;
+    right: 6%;
+    top: 48px;
+    bottom: 32px;
+    z-index: 70;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: 12px;
+    background-color: var(--surface-container-high);
+    border-width: var(--border-hairline);
+    border-color: var(--outline-variant);
+    box-shadow: var(--elevation-2);
+}
+.ue-tpl-head { align-items: center; gap: var(--space-2); height: 36px; }
+.ue-tpl-head > icon { color: var(--primary); }
+.ue-tpl-title { font-size: 18px; font-weight: 600; }
+.ue-tpl-sub { margin-left: var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ue-tpl-head .search-box { width: 300px; background-color: var(--surface-container-highest); }
+.ue-tpl-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
+.ue-tpl-nav {
+    width: 210px;
+    padding: var(--space-1);
+    overflow-y: auto;
+    border-radius: 8px;
+    background-color: var(--surface-container-low);
+}
+.ue-tpl-nav > .ol-nav-row { font-weight: 600; margin-top: var(--space-2); }
+.ue-tpl-nav > .ol-nav-row:first-child { margin-top: 0px; }
+.ue-tpl-group { padding-left: 34px; }
+.ue-tpl-group.off { color: var(--on-surface-variant); }
+.ue-tpl-grid-wrap {
+    flex: 1 1 0px;
+    min-width: 0px;
+    position: relative;
+    overflow-y: auto;
+    border-radius: 8px;
+    background-color: var(--surface-container);
+}
+.ue-tpl-heading { padding: var(--space-3) var(--space-3) 0px var(--space-3); font-size: 14px; font-weight: 600; color: var(--on-surface-variant); }
+.ue-tpl-grid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2);
+}
+.ue-tpl-card {
+    box-sizing: border-box;
+    width: 216px;
+    gap: 2px;
+    padding: 8px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+.ue-tpl-card:hover { background-color: var(--state-hover-layer); }
+.ue-tpl-card.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.ue-tpl-thumb {
+    position: relative;
+    width: 200px;
+    height: 113px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: #23272e;
+}
+.ue-tpl-card.selected .ue-tpl-thumb { outline: 2px var(--primary); }
+.ue-tpl-thumb img { width: 200px; height: 113px; }
+.ue-tpl-card .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ue-tpl-card .kind { font-size: 11.5px; color: var(--on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ue-tpl-card.selected .kind { color: var(--on-secondary-container); }
+.ue-tpl-empty {
+    position: absolute;
+    top: 120px;
+    left: 40px;
+    right: 40px;
+    align-items: center;
+    gap: var(--space-2);
+    text-align: center;
+    color: var(--on-surface-variant);
+}
+.ue-tpl-side {
+    width: 360px;
+    padding: var(--space-3);
+    overflow-y: auto;
+    border-radius: 8px;
+    background-color: var(--surface-container-low);
+}
+.ue-tpl-preview {
+    width: 334px;
+    height: 188px;
+    margin-bottom: var(--space-3);
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: #23272e;
+}
+.ue-tpl-preview img { width: 334px; height: 188px; }
+.ue-tpl-variants { flex-wrap: wrap; gap: 6px; margin: var(--space-2) 0px var(--space-1) 0px; }
+.ue-tpl-variant {
+    height: 28px;
+    padding: 0px 12px;
+    line-height: 28px;
+    border-radius: 14px;
+    font-size: 13px;
+    background-color: var(--surface-container-highest);
+    cursor: pointer;
+}
+.ue-tpl-variant:hover { background-color: var(--state-hover-layer); }
+.ue-tpl-variant.selected { background-color: var(--primary); color: var(--on-primary); font-weight: 600; }
+.ue-tpl-about { margin: var(--space-2) 0px var(--space-3) 0px; line-height: 1.45; color: var(--on-surface-variant); }
+.ue-tpl-actions { gap: 4px; }
+.ue-tpl-actions .command.strong { color: var(--primary); font-weight: 600; }
+.ue-tpl-actions .command.strong icon { color: var(--primary); }
+.ue-tpl-actions .command.disabled { opacity: 0.4; cursor: default; }
+.ue-tpl-note { margin-top: var(--space-2); line-height: 1.4; color: #ffb4a8; }
+.ue-tpl-own {
+    position: absolute; right: 6px; top: 6px; padding: 1px 7px; border-radius: 9px;
+    font-size: 11px; font-weight: 600; background-color: var(--primary); color: var(--on-primary);
+}
+.ue-tpl-needs { gap: 4px; margin: 0px 0px var(--space-3) 0px; padding: var(--space-2); border-radius: 8px; background-color: var(--surface-container-highest); line-height: 1.4; }
+.ue-tpl-needs-head { gap: 6px; align-items: center; font-weight: 600; font-size: 12.5px; color: var(--primary); }
+.ue-tpl-nav > .command { margin-top: var(--space-2); }
+.ue-tpl-save .ue-tpl-actions { margin-top: var(--space-2); }
+.ue-tpl-label { margin-top: var(--space-2); font-size: 12px; color: var(--on-surface-variant); }
+.ue-tpl-input { margin: 4px 0px; height: 30px; padding: 0px 8px; border-radius: 6px; background-color: var(--surface-container-highest); }
+.ue-tpl-confirm { gap: 6px; margin-top: var(--space-2); padding: var(--space-2); border-radius: 8px; background-color: var(--surface-container-highest); }
+.ue-tpl-confirm .row { gap: 6px; }
+.ue-create-btn.off { opacity: 0.4; cursor: default; }

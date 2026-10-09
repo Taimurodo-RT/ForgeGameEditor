@@ -209,6 +209,8 @@ Settings load_settings(const fs::path& dir) {
         if (!data::from_json(s, text, report)) FORGE_WARN("settings: %s", report.error.c_str());
     }
     s.ui_scale = std::clamp(s.ui_scale, 0.5f, 3.0f);
+    // A volume from 0 (the player's silence, kept as it is) to 1: a file edited by hand to 1.5 or -1 is brought in.
+    for (f32* v : {&s.master_volume, &s.music_volume, &s.sound_volume}) *v = std::clamp(*v, 0.0f, 1.0f);
     return s;
 }
 

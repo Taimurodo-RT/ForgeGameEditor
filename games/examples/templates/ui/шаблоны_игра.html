@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Шаблоны: игра</title>
+<!-- Made by Forge «Интерфейс» from Шаблоны: игра.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n21 {
+  position: absolute;
+  left: 40px;
+  width: 568px;
+  top: 40px;
+  height: 198px;
+  box-sizing: border-box;
+  background-image: url("../pictures/интерфейс/пергамент.png");
+  background-size: auto;
+  background-repeat: repeat;
+  background-position: 0px 0px;
+  border-image-source: url("../pictures/интерфейс/рамка_дерево.png");
+  border-image-slice: 32 32 32 32;
+  border-image-width: 32px 32px 32px 32px;
+  border-image-repeat: stretch;
+  box-shadow: 0px 10px 30px 0px rgba(0, 0, 0, 0.549);
+  overflow: hidden;
+  clip: always;
+}
+#n22 {
+  position: absolute;
+  left: 39px;
+  width: 120px;
+  top: 39px;
+  height: 120px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 60px 60px 60px 60px;
+}
+#n23 {
+  position: absolute;
+  left: 20px;
+  width: 80px;
+  top: 20px;
+  height: 80px;
+  box-sizing: border-box;
+  font-family: "Material Symbols Rounded";
+  font-size: 80px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: center;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n24 {
+  position: absolute;
+  left: 176px;
+  width: 340px;
+  top: 38px;
+  height: 40px;
+  box-sizing: border-box;
+  font-family: "Cormorant SC";
+  font-size: 30px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #3b2412;
+  white-space: pre-wrap;
+}
+#n25 {
+  position: absolute;
+  left: 176px;
+  width: 30px;
+  top: 84px;
+  height: 30px;
+  box-sizing: border-box;
+  font-family: "Material Symbols Rounded";
+  font-size: 30px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: center;
+  color: #cd3c46;
+  white-space: pre-wrap;
+}
+#n26 {
+  position: absolute;
+  left: 214px;
+  width: 200px;
+  top: 88px;
+  height: 22px;
+  box-sizing: border-box;
+  background-color: rgba(59, 36, 18, 0.784);
+  border-radius: 11px 11px 11px 11px;
+  overflow: hidden;
+  clip: always;
+}
+#n27 {
+  position: absolute;
+  left: 0px;
+  width: 200px;
+  top: 0px;
+  height: 22px;
+  box-sizing: border-box;
+  background-color: #cd3c46;
+  border-radius: 11px 11px 11px 11px;
+}
+#n28 {
+  position: absolute;
+  left: 424px;
+  width: 104px;
+  top: 82px;
+  height: 34px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 22px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #3b2a1a;
+  white-space: pre-wrap;
+}
+#n2 {
+  position: absolute;
+  right: 40px;
+  width: 308px;
+  top: 40px;
+  height: 120px;
+  box-sizing: border-box;
+  background-image: url("../pictures/интерфейс/пергамент.png");
+  background-size: auto;
+  background-repeat: repeat;
+  background-position: 0px 0px;
+  border-image-source: url("../pictures/интерфейс/рамка_дерево.png");
+  border-image-slice: 32 32 32 32;
+  border-image-width: 32px 32px 32px 32px;
+  border-image-repeat: stretch;
+  box-shadow: 0px 10px 30px 0px rgba(0, 0, 0, 0.549);
+}
+#n3 {
+  position: absolute;
+  left: 40px;
+  width: 48px;
+  top: 36px;
+  height: 48px;
+  box-sizing: border-box;
+  font-family: "Material Symbols Rounded";
+  font-size: 48px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: center;
+  color: #b33a2e;
+  white-space: pre-wrap;
+}
+#n4 {
+  position: absolute;
+  left: 100px;
+  width: 168px;
+  top: 38px;
+  height: 44px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 36px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #3b2a1a;
+  white-space: pre-wrap;
+}
+#n5 {
+  position: absolute;
+  right: 40px;
+  width: 72px;
+  top: 188px;
+  height: 72px;
+  box-sizing: border-box;
+  background-color: #6b4a2b;
+  border-radius: 10px 10px 10px 10px;
+}
+#n7 {
+  position: absolute;
+  left: 12px;
+  width: 48px;
+  top: 12px;
+  height: 48px;
+  box-sizing: border-box;
+  font-family: "Material Symbols Rounded";
+  font-size: 48px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: center;
+  color: #f5e6c8;
+  white-space: pre-wrap;
+}
+#n8 {
+  position: absolute;
+  left: calc(50% + -318px);
+  width: 636px;
+  bottom: 40px;
+  height: 96px;
+  box-sizing: border-box;
+}
+#n9 {
+  position: absolute;
+  left: 0px;
+  width: 96px;
+  top: 0px;
+  height: 96px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n10 {
+  position: absolute;
+  left: 8px;
+  width: 30px;
+  top: 4px;
+  height: 26px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 20px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n11 {
+  position: absolute;
+  left: 108px;
+  width: 96px;
+  top: 0px;
+  height: 96px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n12 {
+  position: absolute;
+  left: 8px;
+  width: 30px;
+  top: 4px;
+  height: 26px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 20px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n13 {
+  position: absolute;
+  left: 216px;
+  width: 96px;
+  top: 0px;
+  height: 96px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n14 {
+  position: absolute;
+  left: 8px;
+  width: 30px;
+  top: 4px;
+  height: 26px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 20px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n15 {
+  position: absolute;
+  left: 324px;
+  width: 96px;
+  top: 0px;
+  height: 96px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n16 {
+  position: absolute;
+  left: 8px;
+  width: 30px;
+  top: 4px;
+  height: 26px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 20px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n17 {
+  position: absolute;
+  left: 432px;
+  width: 96px;
+  top: 0px;
+  height: 96px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n18 {
+  position: absolute;
+  left: 8px;
+  width: 30px;
+  top: 4px;
+  height: 26px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 20px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n19 {
+  position: absolute;
+  left: 540px;
+  width: 96px;
+  top: 0px;
+  height: 96px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n20 {
+  position: absolute;
+  left: 8px;
+  width: 30px;
+  top: 4px;
+  height: 26px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 20px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n40 {
+  position: absolute;
+  left: 496px;
+  width: 448px;
+  top: 248px;
+  height: 584px;
+  box-sizing: border-box;
+  background-image: url("../pictures/интерфейс/пергамент.png");
+  background-size: auto;
+  background-repeat: repeat;
+  background-position: 0px 0px;
+  border-image-source: url("../pictures/интерфейс/рамка_дерево.png");
+  border-image-slice: 32 32 32 32;
+  border-image-width: 32px 32px 32px 32px;
+  border-image-repeat: stretch;
+  box-shadow: 0px 10px 30px 0px rgba(0, 0, 0, 0.549);
+}
+#n41 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 56px;
+  height: 200px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n42 {
+  position: absolute;
+  left: 108px;
+  width: 120px;
+  top: 40px;
+  height: 120px;
+  box-sizing: border-box;
+  font-family: "Material Symbols Rounded";
+  font-size: 120px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: center;
+  color: #b33a2e;
+  white-space: pre-wrap;
+}
+#n43 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 280px;
+  height: 44px;
+  box-sizing: border-box;
+  font-family: "Cormorant SC";
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #3b2412;
+  white-space: pre-wrap;
+}
+#n44 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 330px;
+  height: 100px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 24px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n45 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 456px;
+  height: 72px;
+  box-sizing: border-box;
+  border-image-source: url("../pictures/интерфейс/кнопка_золото.png");
+  border-image-slice: 16 16 16 16 fill;
+  border-image-width: 24px 24px 24px 24px;
+  border-image-repeat: stretch;
+}
+#n46 {
+  position: absolute;
+  left: 0px;
+  width: 336px;
+  top: 15px;
+  height: 42px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 32px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: center;
+  color: #3b2412;
+  white-space: pre-wrap;
+}
+#n47 {
+  position: absolute;
+  left: 976px;
+  width: 448px;
+  top: 248px;
+  height: 584px;
+  box-sizing: border-box;
+  background-image: url("../pictures/интерфейс/пергамент.png");
+  background-size: auto;
+  background-repeat: repeat;
+  background-position: 0px 0px;
+  border-image-source: url("../pictures/интерфейс/рамка_дерево.png");
+  border-image-slice: 32 32 32 32;
+  border-image-width: 32px 32px 32px 32px;
+  border-image-repeat: stretch;
+  box-shadow: 0px 10px 30px 0px rgba(0, 0, 0, 0.549);
+}
+#n48 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 56px;
+  height: 200px;
+  box-sizing: border-box;
+  background-color: rgba(139, 106, 68, 0.275);
+  outline: 2px solid #6b4a2b;
+  outline-offset: -2px;
+  border-radius: 8px 8px 8px 8px;
+}
+#n49 {
+  position: absolute;
+  left: 108px;
+  width: 120px;
+  top: 40px;
+  height: 120px;
+  box-sizing: border-box;
+  font-family: "Material Symbols Rounded";
+  font-size: 120px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: center;
+  color: #b33a2e;
+  white-space: pre-wrap;
+}
+#n50 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 280px;
+  height: 44px;
+  box-sizing: border-box;
+  font-family: "Cormorant SC";
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #3b2412;
+  white-space: pre-wrap;
+}
+#n51 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 330px;
+  height: 100px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 24px;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  color: #6b5440;
+  white-space: pre-wrap;
+}
+#n52 {
+  position: absolute;
+  left: 56px;
+  width: 336px;
+  top: 456px;
+  height: 72px;
+  box-sizing: border-box;
+  border-image-source: url("../pictures/интерфейс/кнопка_золото.png");
+  border-image-slice: 16 16 16 16 fill;
+  border-image-width: 24px 24px 24px 24px;
+  border-image-repeat: stretch;
+}
+#n53 {
+  position: absolute;
+  left: 0px;
+  width: 336px;
+  top: 15px;
+  height: 42px;
+  box-sizing: border-box;
+  font-family: "Alegreya Sans";
+  font-size: 32px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: center;
+  color: #3b2412;
+  white-space: pre-wrap;
+}
+html, body, #n1 {
+  pointer-events: none;
+}
+#n21, #n22, #n23, #n24, #n25, #n26, #n27, #n28, #n2, #n3, #n4, #n5, #n7, #n9, #n10, #n11, #n12, #n13, #n14, #n15, #n16, #n17, #n18, #n19, #n20, #n40, #n41, #n42, #n43, #n44, #n45, #n46, #n47, #n48, #n49, #n50, #n51, #n52, #n53 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="Шаблоны: игра" forge-screen="playing" forge-fit="expand" forge-size="1920 1080">
+  <div id="n21" class="frame" title="Портрет">
+    <div id="n22" class="frame" title="Лицо">
+      <div id="n23" class="text" title="Значок"></div>
+    </div>
+    <div id="n24" class="text" title="Имя">Герой</div>
+    <div id="n25" class="text" title="Сердце"></div>
+    <div id="n26" class="frame" title="Здоровье">
+      <div id="n27" class="rectangle" title="Полоска" forge-bar-value="hero.hearts" forge-bar-max="hero.hearts_max" forge-bar-from="left"></div>
+    </div>
+    <div id="n28" class="text" title="Сердца" forge-text="{hero.hearts}/{hero.hearts_max}">{hero.hearts}/{hero.hearts_max}</div>
+  </div>
+  <div id="n2" class="frame" title="Монеты">
+    <div id="n3" class="text" title="Монета"></div>
+    <div id="n4" class="text" title="Сколько" forge-text="{inv.coins}">{inv.coins}</div>
+  </div>
+  <div id="n5" class="frame" title="Кнопка «Пауза»" forge-click="[[&quot;show&quot;,&quot;шаблоны_пауза&quot;]]">
+    <div id="n7" class="text" title="Значок"></div>
+  </div>
+  <div id="n8" class="frame" title="Ячейки">
+    <div id="n9" class="frame" title="Ячейка 1">
+      <div id="n10" class="text" title="Клавиша">1</div>
+    </div>
+    <div id="n11" class="frame" title="Ячейка 2">
+      <div id="n12" class="text" title="Клавиша">2</div>
+    </div>
+    <div id="n13" class="frame" title="Ячейка 3">
+      <div id="n14" class="text" title="Клавиша">3</div>
+    </div>
+    <div id="n15" class="frame" title="Ячейка 4">
+      <div id="n16" class="text" title="Клавиша">4</div>
+    </div>
+    <div id="n17" class="frame" title="Ячейка 5">
+      <div id="n18" class="text" title="Клавиша">5</div>
+    </div>
+    <div id="n19" class="frame" title="Ячейка 6">
+      <div id="n20" class="text" title="Клавиша">6</div>
+    </div>
+  </div>
+  <div id="n40" class="frame" title="Карточка «Ключ»">
+    <div id="n41" class="frame" title="Картинка">
+      <div id="n42" class="text" title="Значок"></div>
+    </div>
+    <div id="n43" class="text" title="Название">Ключ</div>
+    <div id="n44" class="text" title="Описание">Открывает старые двери в шахте.</div>
+    <div id="n45" class="frame" title="Кнопка «Взять»" forge-click="[[&quot;change&quot;,&quot;inv.key += 1&quot;]]">
+      <div id="n46" class="text" title="Надпись">Взять</div>
+    </div>
+  </div>
+  <div id="n47" class="frame" title="Карточка «Факел»">
+    <div id="n48" class="frame" title="Картинка">
+      <div id="n49" class="text" title="Значок"></div>
+    </div>
+    <div id="n50" class="text" title="Название">Факел</div>
+    <div id="n51" class="text" title="Описание">Светит в тёмной галерее.</div>
+    <div id="n52" class="frame" title="Кнопка «Взять»" forge-click="[[&quot;change&quot;,&quot;inv.torch += 1&quot;]]">
+      <div id="n53" class="text" title="Надпись">Взять</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

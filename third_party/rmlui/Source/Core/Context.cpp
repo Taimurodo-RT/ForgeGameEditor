@@ -1410,6 +1410,9 @@ Element* Context::GetElementAtPoint(Vector2f point, const Element* ignore_elemen
 		for (int i = (int)element->stacking_context.size() - 1; i >= 0; --i)
 		{
 			Element* stacking_child = element->stacking_context[i];
+			// Forge: a page going away (its closing movement still drawn) takes no clicks: they go to what is under it.
+			if (element == root.get() && stacking_child->HasAttribute("forge-leaving"))
+				continue;
 			if (ignore_element)
 			{
 				// Check if the element is a descendant of the element we're ignoring.

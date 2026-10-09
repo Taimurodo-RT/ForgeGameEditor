@@ -292,6 +292,16 @@ void Mixer::set_volume(Bus bus, f32 volume) {
     bus_volume_[static_cast<int>(bus)] = std::clamp(volume, 0.0f, 2.0f);
 }
 
+f32 Mixer::master() const {
+    std::lock_guard lock(mutex_);
+    return master_;
+}
+
+f32 Mixer::volume(Bus bus) const {
+    std::lock_guard lock(mutex_);
+    return bus_volume_[static_cast<int>(bus)];
+}
+
 void Mixer::pause(Bus bus, bool on) {
     std::lock_guard lock(mutex_);
     bus_paused_[static_cast<int>(bus)] = on;

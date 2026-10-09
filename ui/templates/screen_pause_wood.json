@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "title": "Пауза",
+  "next_id": 14,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "pauses": true,
+    "dim": true,
+    "appear": "zoom",
+    "appear_time": 0.2
+  },
+  "root": {
+    "id": 1,
+    "name": "Пауза",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 656.0,
+        "y": 166.0,
+        "w": 608.0,
+        "h": 748.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "fills": [
+          {
+            "kind": "image",
+            "image": "pictures/интерфейс/пергамент.png",
+            "fit": "tile"
+          }
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#0000008c",
+            "x": 0.0,
+            "y": 10.0,
+            "spread": 0.0,
+            "blur": 30.0
+          }
+        ],
+        "frame": {
+          "image": "pictures/интерфейс/рамка_дерево.png",
+          "slice": [
+            32.0,
+            32.0,
+            32.0,
+            32.0
+          ],
+          "fill": false
+        },
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 24.0,
+            "y": 64.0,
+            "w": 560.0,
+            "h": 73.0,
+            "text": "Пауза",
+            "style": {
+              "family": "Cormorant SC",
+              "size": 56.0,
+              "weight": 700,
+              "align": "center",
+              "color": "#3b2412"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Кнопка «Продолжить»",
+            "type": "frame",
+            "x": 104.0,
+            "y": 174.0,
+            "w": 400.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 5,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 400.0,
+                "h": 42.0,
+                "text": "Продолжить",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "name": "Кнопка «Сохранить»",
+            "type": "frame",
+            "x": 104.0,
+            "y": 274.0,
+            "w": 400.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "save"
+              }
+            ],
+            "children": [
+              {
+                "id": 7,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 400.0,
+                "h": 42.0,
+                "text": "Сохранить",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "name": "Кнопка «Загрузить»",
+            "type": "frame",
+            "x": 104.0,
+            "y": 374.0,
+            "w": 400.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "load"
+              }
+            ],
+            "children": [
+              {
+                "id": 9,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 400.0,
+                "h": 42.0,
+                "text": "Загрузить",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 10,
+            "name": "Кнопка «Настройки»",
+            "type": "frame",
+            "x": 104.0,
+            "y": 474.0,
+            "w": 400.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "settings"
+              }
+            ],
+            "children": [
+              {
+                "id": 11,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 400.0,
+                "h": 42.0,
+                "text": "Настройки",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "name": "Кнопка «В главное меню»",
+            "type": "frame",
+            "x": 104.0,
+            "y": 574.0,
+            "w": 400.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#6b4a2b"
+              }
+            ],
+            "radius": [
+              10.0,
+              10.0,
+              10.0,
+              10.0
+            ],
+            "on_click": [
+              {
+                "do": "menu"
+              }
+            ],
+            "children": [
+              {
+                "id": 13,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 400.0,
+                "h": 42.0,
+                "text": "В главное меню",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f5e6c8"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

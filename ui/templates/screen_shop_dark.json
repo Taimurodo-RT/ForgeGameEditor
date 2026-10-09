@@ -1,0 +1,690 @@
+{
+  "version": 1,
+  "title": "Магазин",
+  "next_id": 35,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "pauses": true,
+    "dim": true,
+    "appear": "zoom",
+    "appear_time": 0.2
+  },
+  "root": {
+    "id": 1,
+    "name": "Магазин",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 300.0,
+        "y": 140.0,
+        "w": 1320.0,
+        "h": 800.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 48.0,
+            "y": 36.0,
+            "w": 600.0,
+            "h": 73.0,
+            "text": "Лавка",
+            "style": {
+              "family": "Onest",
+              "size": 56.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#f2f4f7"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Монета",
+            "type": "text",
+            "x": 960.0,
+            "y": 48.0,
+            "w": 44.0,
+            "h": 44.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 44.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#e8b04a"
+            }
+          },
+          {
+            "id": 5,
+            "name": "Монеты",
+            "type": "text",
+            "x": 1012.0,
+            "y": 46.0,
+            "w": 200.0,
+            "h": 48.0,
+            "text": "{inv.coins}",
+            "style": {
+              "family": "Onest",
+              "size": 36.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#d7dce2"
+            }
+          },
+          {
+            "id": 6,
+            "name": "Закрыть",
+            "type": "frame",
+            "x": 1232.0,
+            "y": 30.0,
+            "w": 64.0,
+            "h": 64.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2c3542"
+              }
+            ],
+            "radius": [
+              32.0,
+              32.0,
+              32.0,
+              32.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 7,
+                "name": "Крестик",
+                "type": "text",
+                "x": 12.0,
+                "y": 12.0,
+                "w": 40.0,
+                "h": 40.0,
+                "text": "",
+                "style": {
+                  "family": "Material Symbols Rounded",
+                  "size": 40.0,
+                  "weight": 500,
+                  "align": "center",
+                  "color": "#e6eaf0"
+                }
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "name": "Товар «Зелье лечения»",
+            "type": "frame",
+            "x": 48.0,
+            "y": 140.0,
+            "w": 384.0,
+            "h": 600.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 9,
+                "name": "Картинка",
+                "type": "frame",
+                "x": 32.0,
+                "y": 32.0,
+                "w": 320.0,
+                "h": 200.0,
+                "children": [
+                  {
+                    "id": 10,
+                    "name": "Значок",
+                    "type": "text",
+                    "x": 100.0,
+                    "y": 40.0,
+                    "w": 120.0,
+                    "h": 120.0,
+                    "text": "",
+                    "style": {
+                      "family": "Material Symbols Rounded",
+                      "size": 120.0,
+                      "weight": 500,
+                      "align": "center",
+                      "color": "#e8b04a"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 14,
+                "name": "Название",
+                "type": "text",
+                "x": 32.0,
+                "y": 252.0,
+                "w": 320.0,
+                "h": 44.0,
+                "text": "Зелье лечения",
+                "style": {
+                  "family": "Onest",
+                  "size": 34.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 15,
+                "name": "Описание",
+                "type": "text",
+                "x": 32.0,
+                "y": 302.0,
+                "w": 320.0,
+                "h": 70.0,
+                "text": "Возвращает три сердца.",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              },
+              {
+                "id": 16,
+                "name": "Цена",
+                "type": "text",
+                "x": 32.0,
+                "y": 400.0,
+                "w": 140.0,
+                "h": 40.0,
+                "text": "Цена: 5",
+                "style": {
+                  "family": "Onest",
+                  "size": 28.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#e8b04a"
+                }
+              },
+              {
+                "id": 13,
+                "name": "Не хватает монет",
+                "type": "text",
+                "x": 152.0,
+                "y": 404.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "не хватает монет",
+                "style": {
+                  "family": "Onest",
+                  "size": 22.0,
+                  "weight": 400,
+                  "align": "right",
+                  "color": "#8a94a3"
+                },
+                "show_if": "inv.coins < 5"
+              },
+              {
+                "id": 11,
+                "name": "Кнопка «Купить за 5»",
+                "type": "frame",
+                "x": 32.0,
+                "y": 500.0,
+                "w": 320.0,
+                "h": 72.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#e8b04a"
+                  }
+                ],
+                "radius": [
+                  14.0,
+                  14.0,
+                  14.0,
+                  14.0
+                ],
+                "show_if": "inv.coins >= 5",
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "inv.coins -= 5; inv.potion += 1"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 12,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 15.0,
+                    "w": 320.0,
+                    "h": 42.0,
+                    "text": "Купить за 5",
+                    "style": {
+                      "family": "Onest",
+                      "size": 32.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#1b2129"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 17,
+            "name": "Товар «Ключ»",
+            "type": "frame",
+            "x": 468.0,
+            "y": 140.0,
+            "w": 384.0,
+            "h": 600.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 18,
+                "name": "Картинка",
+                "type": "frame",
+                "x": 32.0,
+                "y": 32.0,
+                "w": 320.0,
+                "h": 200.0,
+                "children": [
+                  {
+                    "id": 19,
+                    "name": "Значок",
+                    "type": "text",
+                    "x": 100.0,
+                    "y": 40.0,
+                    "w": 120.0,
+                    "h": 120.0,
+                    "text": "",
+                    "style": {
+                      "family": "Material Symbols Rounded",
+                      "size": 120.0,
+                      "weight": 500,
+                      "align": "center",
+                      "color": "#e8b04a"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 23,
+                "name": "Название",
+                "type": "text",
+                "x": 32.0,
+                "y": 252.0,
+                "w": 320.0,
+                "h": 44.0,
+                "text": "Ключ",
+                "style": {
+                  "family": "Onest",
+                  "size": 34.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 24,
+                "name": "Описание",
+                "type": "text",
+                "x": 32.0,
+                "y": 302.0,
+                "w": 320.0,
+                "h": 70.0,
+                "text": "Открывает запертую дверь.",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              },
+              {
+                "id": 25,
+                "name": "Цена",
+                "type": "text",
+                "x": 32.0,
+                "y": 400.0,
+                "w": 140.0,
+                "h": 40.0,
+                "text": "Цена: 10",
+                "style": {
+                  "family": "Onest",
+                  "size": 28.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#e8b04a"
+                }
+              },
+              {
+                "id": 22,
+                "name": "Не хватает монет",
+                "type": "text",
+                "x": 152.0,
+                "y": 404.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "не хватает монет",
+                "style": {
+                  "family": "Onest",
+                  "size": 22.0,
+                  "weight": 400,
+                  "align": "right",
+                  "color": "#8a94a3"
+                },
+                "show_if": "inv.coins < 10"
+              },
+              {
+                "id": 20,
+                "name": "Кнопка «Купить за 10»",
+                "type": "frame",
+                "x": 32.0,
+                "y": 500.0,
+                "w": 320.0,
+                "h": 72.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#e8b04a"
+                  }
+                ],
+                "radius": [
+                  14.0,
+                  14.0,
+                  14.0,
+                  14.0
+                ],
+                "show_if": "inv.coins >= 10",
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "inv.coins -= 10; inv.key += 1"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 21,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 15.0,
+                    "w": 320.0,
+                    "h": 42.0,
+                    "text": "Купить за 10",
+                    "style": {
+                      "family": "Onest",
+                      "size": 32.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#1b2129"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": 26,
+            "name": "Товар «Меч»",
+            "type": "frame",
+            "x": 888.0,
+            "y": 140.0,
+            "w": 384.0,
+            "h": 600.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "children": [
+              {
+                "id": 27,
+                "name": "Картинка",
+                "type": "frame",
+                "x": 32.0,
+                "y": 32.0,
+                "w": 320.0,
+                "h": 200.0,
+                "children": [
+                  {
+                    "id": 28,
+                    "name": "Значок",
+                    "type": "text",
+                    "x": 100.0,
+                    "y": 40.0,
+                    "w": 120.0,
+                    "h": 120.0,
+                    "text": "",
+                    "style": {
+                      "family": "Material Symbols Rounded",
+                      "size": 120.0,
+                      "weight": 500,
+                      "align": "center",
+                      "color": "#e8b04a"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 32,
+                "name": "Название",
+                "type": "text",
+                "x": 32.0,
+                "y": 252.0,
+                "w": 320.0,
+                "h": 44.0,
+                "text": "Меч",
+                "style": {
+                  "family": "Onest",
+                  "size": 34.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 33,
+                "name": "Описание",
+                "type": "text",
+                "x": 32.0,
+                "y": 302.0,
+                "w": 320.0,
+                "h": 70.0,
+                "text": "Бьёт вдвое сильнее.",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "left",
+                  "color": "#8a94a3"
+                }
+              },
+              {
+                "id": 34,
+                "name": "Цена",
+                "type": "text",
+                "x": 32.0,
+                "y": 400.0,
+                "w": 140.0,
+                "h": 40.0,
+                "text": "Цена: 25",
+                "style": {
+                  "family": "Onest",
+                  "size": 28.0,
+                  "weight": 700,
+                  "align": "left",
+                  "color": "#e8b04a"
+                }
+              },
+              {
+                "id": 31,
+                "name": "Не хватает монет",
+                "type": "text",
+                "x": 152.0,
+                "y": 404.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "не хватает монет",
+                "style": {
+                  "family": "Onest",
+                  "size": 22.0,
+                  "weight": 400,
+                  "align": "right",
+                  "color": "#8a94a3"
+                },
+                "show_if": "inv.coins < 25"
+              },
+              {
+                "id": 29,
+                "name": "Кнопка «Купить за 25»",
+                "type": "frame",
+                "x": 32.0,
+                "y": 500.0,
+                "w": 320.0,
+                "h": 72.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#e8b04a"
+                  }
+                ],
+                "radius": [
+                  14.0,
+                  14.0,
+                  14.0,
+                  14.0
+                ],
+                "show_if": "inv.coins >= 25",
+                "on_click": [
+                  {
+                    "do": "change",
+                    "target": "inv.coins -= 25; inv.sword += 1"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 30,
+                    "name": "Надпись",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 15.0,
+                    "w": 320.0,
+                    "h": 42.0,
+                    "text": "Купить за 25",
+                    "style": {
+                      "family": "Onest",
+                      "size": 32.0,
+                      "weight": 700,
+                      "align": "center",
+                      "color": "#1b2129"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

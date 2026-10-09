@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "title": "Инвентарь",
+  "next_id": 14,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "pauses": true,
+    "dim": true,
+    "appear": "zoom",
+    "appear_time": 0.2
+  },
+  "root": {
+    "id": 1,
+    "name": "Инвентарь",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 580.0,
+        "y": 160.0,
+        "w": 760.0,
+        "h": 760.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1b2129fa"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#2c3542",
+            "width": 1.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#00000080",
+            "x": 0.0,
+            "y": 12.0,
+            "spread": 0.0,
+            "blur": 40.0
+          }
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 50.0,
+            "y": 36.0,
+            "w": 340.0,
+            "h": 68.0,
+            "text": "Инвентарь",
+            "style": {
+              "family": "Onest",
+              "size": 52.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#f2f4f7"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Монета",
+            "type": "text",
+            "x": 412.0,
+            "y": 48.0,
+            "w": 40.0,
+            "h": 40.0,
+            "text": "",
+            "style": {
+              "family": "Material Symbols Rounded",
+              "size": 40.0,
+              "weight": 500,
+              "align": "center",
+              "color": "#e8b04a"
+            }
+          },
+          {
+            "id": 5,
+            "name": "Монеты",
+            "type": "text",
+            "x": 458.0,
+            "y": 46.0,
+            "w": 196.0,
+            "h": 44.0,
+            "text": "{inv.coins}",
+            "style": {
+              "family": "Onest",
+              "size": 32.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#d7dce2"
+            }
+          },
+          {
+            "id": 6,
+            "name": "Закрыть",
+            "type": "frame",
+            "x": 672.0,
+            "y": 30.0,
+            "w": 64.0,
+            "h": 64.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#2c3542"
+              }
+            ],
+            "radius": [
+              32.0,
+              32.0,
+              32.0,
+              32.0
+            ],
+            "on_click": [
+              {
+                "do": "close"
+              }
+            ],
+            "children": [
+              {
+                "id": 7,
+                "name": "Крестик",
+                "type": "text",
+                "x": 12.0,
+                "y": 12.0,
+                "w": 40.0,
+                "h": 40.0,
+                "text": "",
+                "style": {
+                  "family": "Material Symbols Rounded",
+                  "size": 40.0,
+                  "weight": 500,
+                  "align": "center",
+                  "color": "#e6eaf0"
+                }
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "name": "Вещи героя",
+            "type": "frame",
+            "x": 50.0,
+            "y": 130.0,
+            "w": 660.0,
+            "h": 492.0,
+            "list": "items",
+            "list_gap": 12.0,
+            "children": [
+              {
+                "id": 9,
+                "name": "Ячейка",
+                "type": "frame",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 156.0,
+                "h": 156.0,
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#252d37"
+                  }
+                ],
+                "strokes": [
+                  {
+                    "color": "#323c49",
+                    "width": 1.0,
+                    "align": "inside"
+                  }
+                ],
+                "radius": [
+                  12.0,
+                  12.0,
+                  12.0,
+                  12.0
+                ],
+                "on_click": [
+                  {
+                    "do": "message",
+                    "target": "предмет {item.id}"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 10,
+                    "name": "Картинка предмета",
+                    "type": "rectangle",
+                    "x": 22.0,
+                    "y": 16.0,
+                    "w": 112.0,
+                    "h": 112.0,
+                    "picture_from": "item.icon"
+                  },
+                  {
+                    "id": 11,
+                    "name": "Сколько",
+                    "type": "text",
+                    "x": 8.0,
+                    "y": 118.0,
+                    "w": 138.0,
+                    "h": 32.0,
+                    "text": "{item.count}",
+                    "style": {
+                      "family": "Onest",
+                      "size": 24.0,
+                      "weight": 700,
+                      "align": "right",
+                      "color": "#d7dce2"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 12,
+                "name": "Пусто",
+                "type": "text",
+                "x": 0.0,
+                "y": 226.0,
+                "w": 660.0,
+                "h": 40.0,
+                "text": "Пусто",
+                "style": {
+                  "family": "Onest",
+                  "size": 28.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "name": "Подсказка",
+            "type": "text",
+            "x": 50.0,
+            "y": 660.0,
+            "w": 660.0,
+            "h": 40.0,
+            "text": "Нажмите на предмет, чтобы использовать его",
+            "style": {
+              "family": "Onest",
+              "size": 24.0,
+              "weight": 400,
+              "align": "center",
+              "color": "#8a94a3"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

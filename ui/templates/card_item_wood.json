@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "title": "Карточка предмета",
+  "next_id": 9,
+  "width": 448.0,
+  "height": 584.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Карточка предмета",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 448.0,
+    "h": 584.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Карточка «Меч»",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 448.0,
+        "h": 584.0,
+        "fills": [
+          {
+            "kind": "image",
+            "image": "pictures/интерфейс/пергамент.png",
+            "fit": "tile"
+          }
+        ],
+        "effects": [
+          {
+            "kind": "drop-shadow",
+            "color": "#0000008c",
+            "x": 0.0,
+            "y": 10.0,
+            "spread": 0.0,
+            "blur": 30.0
+          }
+        ],
+        "frame": {
+          "image": "pictures/интерфейс/рамка_дерево.png",
+          "slice": [
+            32.0,
+            32.0,
+            32.0,
+            32.0
+          ],
+          "fill": false
+        },
+        "children": [
+          {
+            "id": 3,
+            "name": "Картинка",
+            "type": "frame",
+            "x": 56.0,
+            "y": 56.0,
+            "w": 336.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#8b6a4446"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#6b4a2b",
+                "width": 2.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              8.0,
+              8.0,
+              8.0,
+              8.0
+            ],
+            "children": [
+              {
+                "id": 4,
+                "name": "Значок",
+                "type": "text",
+                "x": 108.0,
+                "y": 40.0,
+                "w": 120.0,
+                "h": 120.0,
+                "text": "",
+                "style": {
+                  "family": "Material Symbols Rounded",
+                  "size": 120.0,
+                  "weight": 500,
+                  "align": "center",
+                  "color": "#b33a2e"
+                }
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "name": "Название",
+            "type": "text",
+            "x": 56.0,
+            "y": 280.0,
+            "w": 336.0,
+            "h": 44.0,
+            "text": "Меч",
+            "style": {
+              "family": "Cormorant SC",
+              "size": 34.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#3b2412"
+            }
+          },
+          {
+            "id": 6,
+            "name": "Описание",
+            "type": "text",
+            "x": 56.0,
+            "y": 330.0,
+            "w": 336.0,
+            "h": 100.0,
+            "text": "Старый, но острый. Бьёт вдвое сильнее.",
+            "style": {
+              "family": "Alegreya Sans",
+              "size": 24.0,
+              "weight": 400,
+              "align": "left",
+              "color": "#6b5440"
+            }
+          },
+          {
+            "id": 7,
+            "name": "Кнопка «Взять»",
+            "type": "frame",
+            "x": 56.0,
+            "y": 456.0,
+            "w": 336.0,
+            "h": 72.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "change",
+                "target": "inv.sword += 1"
+              }
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 15.0,
+                "w": 336.0,
+                "h": 42.0,
+                "text": "Взять",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

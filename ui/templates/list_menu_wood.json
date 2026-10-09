@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "title": "Меню из кнопок",
+  "next_id": 13,
+  "width": 440.0,
+  "height": 464.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Меню из кнопок",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 440.0,
+    "h": 464.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Меню",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 440.0,
+        "h": 464.0,
+        "layout": {
+          "mode": "column",
+          "gap": 16.0,
+          "padding": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "align": 0
+        },
+        "children": [
+          {
+            "id": 3,
+            "name": "Кнопка «Новая игра»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 440.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "new"
+              }
+            ],
+            "children": [
+              {
+                "id": 4,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Новая игра",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "name": "Кнопка «Продолжить»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 96.0,
+            "w": 440.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "continue"
+              }
+            ],
+            "children": [
+              {
+                "id": 6,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Продолжить",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "name": "Кнопка «Загрузить»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 192.0,
+            "w": 440.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "load"
+              }
+            ],
+            "children": [
+              {
+                "id": 8,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Загрузить",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "name": "Кнопка «Настройки»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 288.0,
+            "w": 440.0,
+            "h": 80.0,
+            "frame": {
+              "image": "pictures/интерфейс/кнопка_золото.png",
+              "slice": [
+                16.0,
+                16.0,
+                16.0,
+                16.0
+              ],
+              "scale": 1.5
+            },
+            "on_click": [
+              {
+                "do": "settings"
+              }
+            ],
+            "children": [
+              {
+                "id": 10,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Настройки",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#3b2412"
+                }
+              }
+            ]
+          },
+          {
+            "id": 11,
+            "name": "Кнопка «Выход»",
+            "type": "frame",
+            "x": 0.0,
+            "y": 384.0,
+            "w": 440.0,
+            "h": 80.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#6b4a2b"
+              }
+            ],
+            "radius": [
+              10.0,
+              10.0,
+              10.0,
+              10.0
+            ],
+            "on_click": [
+              {
+                "do": "quit"
+              }
+            ],
+            "children": [
+              {
+                "id": 12,
+                "name": "Надпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 19.0,
+                "w": 440.0,
+                "h": 42.0,
+                "text": "Выход",
+                "style": {
+                  "family": "Alegreya Sans",
+                  "size": 32.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f5e6c8"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -366,6 +366,8 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
 }
 
 void UiEditor::shutdown() {
+    // The templates' pictures live in contexts of the UI: gone while it still is.
+    drop_template_pictures();
     // The check's pages live in the UI's contexts: let them go while those still exist.
     checking_ = false;
     if (page_from_check_) page_ = nullptr;
@@ -488,6 +490,8 @@ bool UiEditor::open(const std::string& name) {
     if (name != name_) {
         fit_pending_ = true;
         closed_.clear();
+        if (!m_move_note_.empty()) show_move_note({}); // what it said was about the screen open before
+        scroll_screen_ = true;
     }
     name_ = name;
     screen_ = std::move(s);
@@ -620,6 +624,7 @@ void UiEditor::set_shown(bool shown) {
     if (shown == shown_) return;
     if (!shown) close_picker(true);
     if (!shown && !menu_.empty()) open_menu("", 0, 0);
+    if (!shown) close_templates();
     // A hidden tab is not updated: its check is silent until the tab is back, where the screen's music comes
     // again (once: the screens ask for it anew).
     if (!shown && check_) check_->stop_music();
@@ -3650,6 +3655,17 @@ void UiEditor::update(Rml::Context* context) {
         refresh_overlay();
         refresh_props();
     }
+    update_templates();
+    if (scroll_screen_ && context) {
+        // The screen open now in sight among many (a new one comes last); its row is there once the list is laid out.
+        Rml::Element* tab = nullptr;
+        for (int i = 0; !tab && i < context->GetNumDocuments(); ++i) tab = context->GetDocument(i)->GetElementById("ui-editor");
+        Rml::Element* row = tab ? tab->GetElementById(name_ == kLibrary ? Rml::String("ue-library") : "ue-screen-" + name_) : nullptr;
+        if (row && row->IsVisible(true)) {
+            row->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+            scroll_screen_ = false;
+        }
+    }
     if (!menu_.empty() && context) {
         // An open menu stays whole in the tab, going up once its height is known; «Создать»'s stays under its button.
         Rml::Element* tab = nullptr;
@@ -3676,6 +3692,10 @@ void UiEditor::update(Rml::Context* context) {
 
 bool UiEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* context) {
     context_ = context;
+    // The template library is over the tab: the mouse is its (the canvas under it neither hovers nor scrolls).
+    if (tpl_.open && (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                      e.type == SDL_EVENT_MOUSE_BUTTON_UP || e.type == SDL_EVENT_MOUSE_WHEEL))
+        return false;
     if (picker_event(e, density, context)) return true;
     if (timeline_event(e, density, context)) return true;
     if (tree_event(e, density, context)) return true;
@@ -4293,6 +4313,13 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
         open_menu("", 0, 0);
         if (k.key == SDLK_ESCAPE) return true;
     }
+    if (tpl_.open) {
+        // The template library has the keys: Esc closes it, Enter takes the selected template; the screen under
+        // it is not changed by keys meant for the window.
+        if (k.key == SDLK_ESCAPE) close_templates();
+        else if ((k.key == SDLK_RETURN || k.key == SDLK_KP_ENTER) && tpl_.selected >= 0) take_template(static_cast<usize>(tpl_.selected));
+        return !modifier;
+    }
     if (picker_.open) {
         // The picker has the keys: Esc puts the eyedropper away, then cancels; Enter keeps the colour.
         if (k.key == SDLK_ESCAPE) {
@@ -4606,9 +4633,10 @@ void UiEditor::open_menu(const std::string& menu, f32 x, f32 y) {
         }
     m_menu_instance_ = one && !one->component.empty() && !screen_.library;
     m_menu_component_ = one && one->id != screen_.root.id && one->component.empty() && !d::instance_of(screen_.root, one->id);
+    m_menu_one_ = one && one->id != screen_.root.id && !screen_.library;
     m_menu_ = menu_;
     for (const char* v : {"ue_menu", "ue_menu_x", "ue_menu_y", "ue_menu_paste", "ue_menu_hidden", "ue_menu_locked", "ue_menu_instance",
-                          "ue_menu_component"})
+                          "ue_menu_component", "ue_menu_one"})
         dirty(v);
 }
 
@@ -5057,6 +5085,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_menu_locked", &m_menu_locked_);
     model.Bind("ue_menu_instance", &m_menu_instance_);
     model.Bind("ue_menu_component", &m_menu_component_);
+    model.Bind("ue_menu_one", &m_menu_one_);
     model.Bind("ue_variants", &m_variants_);
     model.Bind("ue_library_open", &m_library_open_);
 
@@ -5072,6 +5101,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         return {};
     };
 
+    bind_templates(model);
     on("ue_screen", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { open(arg_str(a, 0)); });
     on("ue_new_screen", [this](Rml::Event&, const Rml::VariantList&) { new_screen(); });
     on("ue_library", [this](Rml::Event&, const Rml::VariantList&) { open_library(); });
@@ -5120,6 +5150,12 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
             for (const d::Node& c : screen_.root.children)
                 if (c.visible && !c.locked) all.push_back(c.id);
             select(all);
+        } else if (what == "templates") {
+            open_templates("construction");
+        } else if (what == "save_template") {
+            if (selection_.size() == 1) begin_save_template(selection_[0]);
+        } else if (what == "save_screen_template") {
+            begin_save_template(0);
         } else if (what == "create") {
             // The create menu where this one was (the tab's pixels back to the window's).
             Rml::Element* tab = nullptr;
@@ -5461,6 +5497,13 @@ void UiEditor::seed_check_vars() {
             if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
     for (const std::string& name : names) {
         if (check_vars_.has(name)) continue;
+        // The game's volumes as a new game's settings have them (game::Settings).
+        const game::Settings defaults;
+        if (name == "settings.master" || name == "settings.music" || name == "settings.sound") {
+            const f32 v = name == "settings.master" ? defaults.master_volume : name == "settings.music" ? defaults.music_volume : defaults.sound_volume;
+            check_vars_.set(name, std::round(static_cast<f64>(v) * 100.0));
+            continue;
+        }
         // Something to look at: bars half full, a few coins, quests begun.
         const bool max = name.find("max") != std::string::npos;
         check_vars_.set(name, max ? 10.0 : name.rfind("quest.", 0) == 0 ? 1.0 : 5.0);
@@ -5568,6 +5611,7 @@ bool UiEditor::load_check_window(const std::string& name, std::string* refused) 
         return false;
     }
     check_->show(name, true);
+    seed_check_vars(); // its values as the screen's: the volumes as a new game has them, not «{settings.master}»
     return true;
 }
 
@@ -5575,6 +5619,11 @@ std::vector<std::string> UiEditor::check_windows() const {
     std::vector<std::string> out = check_pages();
     out.erase(out.begin());
     return out;
+}
+
+bool UiEditor::check_leaving(const std::string& window) const {
+    Rml::ElementDocument* doc = check_ ? check_->document(window) : nullptr;
+    return doc && doc->IsVisible() && doc->HasAttribute("forge-leaving");
 }
 
 std::optional<d::Rect> UiEditor::check_box(const std::string& window, const std::string& layer) const {
@@ -5683,6 +5732,9 @@ void UiEditor::check_action(const game::ScreenAction& a, const std::string& page
         if (!error.empty()) said = "Не читается: " + t;
         else {
             e.run(check_vars_);
+            // As the game keeps its volumes (Shell::sync_settings_vars): 0 to 100.
+            for (const char* v : {"settings.master", "settings.music", "settings.sound"})
+                if (check_vars_.has(v)) check_vars_.set(v, std::clamp(check_vars_.get(v).number(), 0.0, 100.0));
             said = "Данные: " + t;
         }
     } else if (a.what == "menu" && name_ != menu_screen() && !menu_screen().empty()) {

@@ -656,6 +656,10 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
         hs.y = options_.at_y - kHeroHalfH;
     }
     shell_->vars().set("hero.hearts_max", kHearts); // for a screen's bar of hearts
+    // The things the hero may carry count 0 until found (a save keeps what it had): a screen's «{inv.coins}»
+    // shows 0 in a new game, not its braces.
+    for (const game::ScreenItem& it : screen_items_)
+        if (!shell_->vars().has("inv." + it.id)) shell_->vars().set("inv." + it.id, 0);
     if (new_game) {
         shell_->vars().set("hero.hearts", kHearts);
         shell_->vars().set("inv.torch", 5);

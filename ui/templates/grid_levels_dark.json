@@ -1,0 +1,468 @@
+{
+  "version": 1,
+  "title": "Выбор уровня",
+  "next_id": 21,
+  "width": 648.0,
+  "height": 424.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command"
+  },
+  "root": {
+    "id": 1,
+    "name": "Выбор уровня",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 648.0,
+    "h": 424.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Выбор уровня",
+        "type": "frame",
+        "x": 0.0,
+        "y": 0.0,
+        "w": 648.0,
+        "h": 424.0,
+        "layout": {
+          "mode": "wrap",
+          "gap": 24.0,
+          "padding": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "align": 0
+        },
+        "children": [
+          {
+            "id": 3,
+            "name": "Уровень 1",
+            "type": "frame",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 200.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "on_click": [
+              {
+                "do": "message",
+                "target": "уровень 1"
+              }
+            ],
+            "children": [
+              {
+                "id": 4,
+                "name": "Номер",
+                "type": "text",
+                "x": 0.0,
+                "y": 36.0,
+                "w": 200.0,
+                "h": 96.0,
+                "text": "1",
+                "style": {
+                  "family": "Onest",
+                  "size": 80.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 5,
+                "name": "Подпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 132.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "Уровень",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "name": "Уровень 2",
+            "type": "frame",
+            "x": 224.0,
+            "y": 0.0,
+            "w": 200.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "on_click": [
+              {
+                "do": "message",
+                "target": "уровень 2"
+              }
+            ],
+            "children": [
+              {
+                "id": 7,
+                "name": "Номер",
+                "type": "text",
+                "x": 0.0,
+                "y": 36.0,
+                "w": 200.0,
+                "h": 96.0,
+                "text": "2",
+                "style": {
+                  "family": "Onest",
+                  "size": 80.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 8,
+                "name": "Подпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 132.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "Уровень",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "name": "Уровень 3",
+            "type": "frame",
+            "x": 448.0,
+            "y": 0.0,
+            "w": 200.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "on_click": [
+              {
+                "do": "message",
+                "target": "уровень 3"
+              }
+            ],
+            "children": [
+              {
+                "id": 10,
+                "name": "Номер",
+                "type": "text",
+                "x": 0.0,
+                "y": 36.0,
+                "w": 200.0,
+                "h": 96.0,
+                "text": "3",
+                "style": {
+                  "family": "Onest",
+                  "size": 80.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 11,
+                "name": "Подпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 132.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "Уровень",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "name": "Уровень 4",
+            "type": "frame",
+            "x": 0.0,
+            "y": 224.0,
+            "w": 200.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "on_click": [
+              {
+                "do": "message",
+                "target": "уровень 4"
+              }
+            ],
+            "children": [
+              {
+                "id": 13,
+                "name": "Номер",
+                "type": "text",
+                "x": 0.0,
+                "y": 36.0,
+                "w": 200.0,
+                "h": 96.0,
+                "text": "4",
+                "style": {
+                  "family": "Onest",
+                  "size": 80.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 14,
+                "name": "Подпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 132.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "Уровень",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 15,
+            "name": "Уровень 5",
+            "type": "frame",
+            "x": 224.0,
+            "y": 224.0,
+            "w": 200.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "on_click": [
+              {
+                "do": "message",
+                "target": "уровень 5"
+              }
+            ],
+            "children": [
+              {
+                "id": 16,
+                "name": "Номер",
+                "type": "text",
+                "x": 0.0,
+                "y": 36.0,
+                "w": 200.0,
+                "h": 96.0,
+                "text": "5",
+                "style": {
+                  "family": "Onest",
+                  "size": 80.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 17,
+                "name": "Подпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 132.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "Уровень",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          },
+          {
+            "id": 18,
+            "name": "Уровень 6",
+            "type": "frame",
+            "x": 448.0,
+            "y": 224.0,
+            "w": 200.0,
+            "h": 200.0,
+            "fills": [
+              {
+                "kind": "solid",
+                "color": "#252d37"
+              }
+            ],
+            "strokes": [
+              {
+                "color": "#323c49",
+                "width": 1.0,
+                "align": "inside"
+              }
+            ],
+            "radius": [
+              12.0,
+              12.0,
+              12.0,
+              12.0
+            ],
+            "on_click": [
+              {
+                "do": "message",
+                "target": "уровень 6"
+              }
+            ],
+            "children": [
+              {
+                "id": 19,
+                "name": "Номер",
+                "type": "text",
+                "x": 0.0,
+                "y": 36.0,
+                "w": 200.0,
+                "h": 96.0,
+                "text": "6",
+                "style": {
+                  "family": "Onest",
+                  "size": 80.0,
+                  "weight": 700,
+                  "align": "center",
+                  "color": "#f2f4f7"
+                }
+              },
+              {
+                "id": 20,
+                "name": "Подпись",
+                "type": "text",
+                "x": 0.0,
+                "y": 132.0,
+                "w": 200.0,
+                "h": 36.0,
+                "text": "Уровень",
+                "style": {
+                  "family": "Onest",
+                  "size": 24.0,
+                  "weight": 400,
+                  "align": "center",
+                  "color": "#8a94a3"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
