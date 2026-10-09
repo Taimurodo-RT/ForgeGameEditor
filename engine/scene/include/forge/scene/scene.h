@@ -30,6 +30,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace forge::scene {
@@ -97,6 +98,17 @@ public:
     flecs::entity spawn(const Position& at);
 
     void set_populator(PopulateFn fn) { populate_ = std::move(fn); }
+    const PopulateFn& populator() const { return populate_; }
+    // Said by a populator that leaves a chunk as it is for now: the chunk is
+    // not marked visited (it is saved so), and the populator is asked again
+    // when it next loads. visit() marks it again (and forgets it here).
+    void leave_unvisited(world::ChunkCoord chunk) { unvisited_.insert(chunk); }
+    void visit(world::ChunkCoord chunk) { unvisited_.erase(chunk); }
+    // The chunks left so that are loaded now.
+    std::vector<world::ChunkCoord> loaded_unvisited() const;
+    // Chunks with entities that are not loaded: kept in memory or in the
+    // save folder (entities counted from the chunks' headers).
+    std::vector<world::ChunkCoord> unloaded_with_entities() const;
     // Called for every entity recreated from bytes (a chunk coming back,
     // unpack()), after all its components are set.
     void set_unpacked(std::function<void(flecs::entity)> fn) { unpacked_fn_ = std::move(fn); }
@@ -181,6 +193,7 @@ private:
 
     // Unloaded chunks: packed entities not yet saved to disk.
     std::unordered_map<world::ChunkCoord, std::vector<u8>, world::ChunkCoordHash> stored_;
+    std::unordered_set<world::ChunkCoord, world::ChunkCoordHash> unvisited_;
     usize stored_bytes_ = 0;
     std::unique_ptr<world::RegionStore> store_;
 

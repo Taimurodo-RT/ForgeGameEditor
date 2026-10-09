@@ -157,6 +157,19 @@ bool decode_image(std::span<const u8> bytes, CookedTexture& out, std::string* er
     return true;
 }
 
+bool inflate(std::span<const u8> bytes, bool zlib_header, std::vector<u8>& out) {
+    out.clear();
+    if (bytes.size() > static_cast<usize>(INT32_MAX)) return false;
+    int len = 0;
+    char* data = stbi_zlib_decode_malloc_guesssize_headerflag(reinterpret_cast<const char*>(bytes.data()), static_cast<int>(bytes.size()),
+                                                              static_cast<int>(std::min<usize>(bytes.size() * 4 + 64, 1u << 20)), &len,
+                                                              zlib_header ? 1 : 0);
+    if (!data) return false;
+    out.assign(reinterpret_cast<const u8*>(data), reinterpret_cast<const u8*>(data) + len);
+    STBI_FREE(data);
+    return true;
+}
+
 bool can_encode_image(std::string_view ext) {
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".webp";
 }

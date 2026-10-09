@@ -25,6 +25,7 @@
 #include <string>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace forge::world {
@@ -143,6 +144,27 @@ public:
     // False when the chunk is not ready (nothing is changed).
     bool set_tile(u32 layer, i32 x, i32 y, TileId id);
 
+    // All of a ready chunk's tiles at once (layer after layer, as Chunk keeps
+    // them); the chunk is then changed. edited false: they are what the
+    // generator makes (an undo puts back a chunk nobody had changed), so the
+    // chunk is not kept, and a copy in the save folder goes at the next
+    // save(). False when it is not ready.
+    bool set_chunk_tiles(ChunkCoord coord, const TileId* tiles, bool edited = true);
+    // Whether the chunk differs from what the generator makes: changed in
+    // memory (loaded or not) or kept in the save folder.
+    bool edited(ChunkCoord coord) const;
+    // A chunk's tiles as they are now (layer after layer), without loading
+    // it: in memory, kept changed, saved, or made by the generator. False
+    // while it is loading (finish_loading() first) or a saved one cannot be
+    // read.
+    bool peek_chunk(ChunkCoord coord, std::vector<TileId>& out) const;
+
+    // Makes chunks with another generator from now on. Loaded chunks nobody
+    // changed are made again with it at once (their revision moves on, so
+    // whatever mirrors them copies them again); changed ones stay as they are.
+    void set_generator(std::shared_ptr<const Generator> generator);
+    const Generator& generator() const { return *generator_; }
+
     // Ready chunks, in no particular order (not the ones being unloaded).
     template <typename Fn>
     void for_each_ready(Fn&& fn) {
@@ -183,6 +205,9 @@ private:
 
     // Changed chunks that were unloaded before being saved: compressed tiles.
     std::unordered_map<ChunkCoord, std::vector<u8>, ChunkCoordHash> stored_edits_;
+    // Chunks in the save folder that are no longer changed (set_chunk_tiles
+    // with edited false): not read from there, removed by the next save().
+    std::unordered_set<ChunkCoord, ChunkCoordHash> forgotten_;
     usize stored_bytes_ = 0;
 
     std::vector<Rect> last_keep_;

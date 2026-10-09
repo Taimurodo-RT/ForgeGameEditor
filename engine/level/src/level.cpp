@@ -37,14 +37,21 @@ bool Level::open(const fs::path& folder, std::string* error) {
     around_error_.clear();
     if (!folder.empty() && !load_world(folder, around_, nullptr, &around_error_))
         FORGE_WARN("Мир вокруг уровня: %s; вокруг мир игры, файл не тронут", around_error_.c_str());
+    around_saved_ = around_;
     std::shared_ptr<const world::Generator> generator = module_.generator();
     if (around_.empty_around) generator = std::make_shared<world::EmptyGenerator>();
     world_ = std::make_unique<world::World>(module_.world_desc(), std::move(generator));
     if (!folder.empty() && !world_->open_save(folder, error)) return false;
     scene_ = std::make_unique<scene::Scene>(*world_);
     module_.setup_scene(*scene_);
-    // Nothing around: nobody comes to live there either.
-    if (around_.empty_around) scene_->set_populator({});
+    // Nothing around: nobody comes to live there either; such chunks are
+    // peopled if the game's world comes back.
+    populate_ = scene_->populator();
+    if (populate_)
+        scene_->set_populator([this](world::ChunkCoord c, scene::Scene& s) {
+            if (around_.empty_around) s.leave_unvisited(c);
+            else populate_(c, s);
+        });
     scene_->register_component<LevelId>();
     scene_->register_component<LightSource>();
     ids_ = scene_->ecs().query<LevelId>();
@@ -81,7 +88,54 @@ bool Level::open(const fs::path& folder, std::string* error) {
         FORGE_WARN("Тайлы уровня: %s; своих тайлов нет, файл не тронут", own_tiles_error_.c_str());
     own_tiles_saved_ = own_tiles_;
     ++own_tiles_version_;
+    // And for tiled.json: no record meanwhile.
+    tiled_ = {};
+    tiled_error_.clear();
+    if (!folder.empty() && !tiled::load_record(folder, tiled_, nullptr, &tiled_error_))
+        FORGE_WARN("Запись импорта Tiled: %s; новый импорт карты сделает всё заново, файл не тронут", tiled_error_.c_str());
+    tiled_saved_ = tiled_;
     return true;
+}
+
+void Level::set_around(const LevelWorld& w) {
+    if (w == around_) return;
+    const bool was_empty = around_.empty_around;
+    around_ = w;
+    ++edits_;
+    if (w.empty_around == was_empty) return;
+    world_->set_generator(w.empty_around ? std::shared_ptr<const world::Generator>(std::make_shared<world::EmptyGenerator>())
+                                         : module_.generator());
+    if (!w.empty_around && populate_)
+        for (const world::ChunkCoord c : scene_->loaded_unvisited()) {
+            scene_->visit(c);
+            populate_(c, *scene_);
+        }
+}
+
+void Level::generate(world::ChunkCoord chunk, const LevelWorld& around, std::vector<world::TileId>& out) const {
+    out.assign(static_cast<usize>(world_->layer_count()) * world::kChunkTiles, 0);
+    if (around.empty_around) return;
+    module_.generator()->generate(chunk, world::ChunkTiles{out.data(), world_->layer_count()});
+}
+
+bool Level::chunk_tiles(world::ChunkCoord chunk, std::vector<world::TileId>& out) const {
+    const world::Chunk* c = world_->find_chunk(chunk);
+    if (!c) return false;
+    out.assign(c->tiles, c->tiles + static_cast<usize>(world_->layer_count()) * world::kChunkTiles);
+    return true;
+}
+
+bool Level::set_chunk_tiles(world::ChunkCoord chunk, std::span<const world::TileId> tiles, bool edited) {
+    if (tiles.size() != static_cast<usize>(world_->layer_count()) * world::kChunkTiles) return false;
+    if (!world_->set_chunk_tiles(chunk, tiles.data(), edited)) return false;
+    ++edits_;
+    return true;
+}
+
+void Level::set_tiled_record(const tiled::Record& r) {
+    if (r == tiled_) return;
+    tiled_ = r;
+    ++edits_;
 }
 
 bool Level::set_own_tiles(const LevelTiles& t) {
@@ -118,9 +172,21 @@ void Level::update(std::span<const world::Rect> focus) {
     world_->update(focus_);
 }
 
-void Level::ensure_loaded(const world::Rect& tiles) {
+void Level::ensure_loaded(const world::Rect& tiles) { ensure_loaded(std::span<const world::Rect>(&tiles, 1)); }
+
+void Level::load_objects() {
+    std::vector<world::Rect> rects;
+    for (const world::ChunkCoord c : scene_->unloaded_with_entities())
+        rects.push_back({c.x * world::kChunkSize, c.y * world::kChunkSize, (c.x + 1) * world::kChunkSize, (c.y + 1) * world::kChunkSize});
+    if (!rects.empty()) ensure_loaded(rects);
+}
+
+void Level::ensure_loaded(std::span<const world::Rect> tiles) {
     std::vector<world::Rect> rects = focus_;
-    rects.push_back(tiles);
+    rects.insert(rects.end(), tiles.begin(), tiles.end());
+    // Entities edits made or took away are put in their chunks first: a
+    // chunk that leaves memory now packs the ones it has.
+    scene_->update();
     // Loads finish on job threads; the next update() hands them to the
     // scene and the renderers, so the area is whole after the second one.
     for (int round = 0; round < 2; ++round) {
@@ -192,6 +258,38 @@ Level::SaveReport Level::save() {
             own_tiles_saved_ = own_tiles_;
             own_tiles_error_.clear();
             r.own_tiles = true;
+        } else {
+            r.ok = false;
+            r.error = r.error.empty() ? error : r.error + "; " + error;
+        }
+    }
+    if (around_changed()) {
+        std::string error;
+        std::error_code ec;
+        if (!around_error_.empty() && fs::exists(folder_ / kWorldFile, ec)) {
+            fs::rename(folder_ / kWorldFile, folder_ / kBrokenWorldFile, ec);
+            if (ec) error = "не удалось отложить испорченный " + std::string(kWorldFile) + " в " + kBrokenWorldFile;
+        }
+        if (error.empty() && save_world(folder_, around_, &error)) {
+            around_saved_ = around_;
+            around_error_.clear();
+            r.around = true;
+        } else {
+            r.ok = false;
+            r.error = r.error.empty() ? error : r.error + "; " + error;
+        }
+    }
+    if (tiled_record_changed()) {
+        std::string error;
+        std::error_code ec;
+        if (!tiled_error_.empty() && fs::exists(folder_ / tiled::kRecordFile, ec)) {
+            fs::rename(folder_ / tiled::kRecordFile, folder_ / tiled::kBrokenRecordFile, ec);
+            if (ec) error = "не удалось отложить испорченный " + std::string(tiled::kRecordFile) + " в " + tiled::kBrokenRecordFile;
+        }
+        if (error.empty() && tiled::save_record(folder_, tiled_, &error)) {
+            tiled_saved_ = tiled_;
+            tiled_error_.clear();
+            r.tiled = true;
         } else {
             r.ok = false;
             r.error = r.error.empty() ? error : r.error + "; " + error;

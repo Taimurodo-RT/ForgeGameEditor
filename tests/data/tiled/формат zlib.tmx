@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.8" tiledversion="1.8.2" orientation="orthogonal" renderorder="right-down" width="40" height="18" tilewidth="16" tileheight="16" infinite="1" backgroundcolor="#78aee6" nextlayerid="10" nextobjectid="11">
+ <tileset firstgid="1" source="../../../games/examples/tiled/Карта Tiled/наборы/Земля и камень.tsx"/>
+ <tileset firstgid="17" name="Небо" tilewidth="16" tileheight="16" tilecount="4" columns="4">
+  <image source="../../../games/examples/tiled/Карта Tiled/небо.png" trans="ff00ff" width="64" height="16"/>
+ </tileset>
+ <tileset firstgid="21" source="../../../games/examples/tiled/Карта Tiled/наборы/декор.tsx"/>
+ <tileset firstgid="25" source="../../../games/examples/tiled/Карта Tiled/наборы/предметы.tsx"/>
+ <layer id="1" name="Небо" width="64" height="48">
+  <data encoding="base64" compression="zlib">
+   <chunk x="-16" y="-16" width="16" height="16">
+   eJxjYBgFo2AU0BIIArHQQDsCBwAAGQwAJA==
+  </chunk>
+   <chunk x="0" y="0" width="16" height="16">
+   eJxjYBh8QBCIhehkzygYBSMZAACuwAA1
+  </chunk>
+   <chunk x="16" y="0" width="16" height="16">
+   eJxjYBgYIEwlc4SoZA4WcxtoZPQoGAWDBgAAKIYAuA==
+  </chunk>
+  </data>
+ </layer>
+ <layer id="2" name="Фон" width="64" height="48">
+  <data encoding="base64" compression="zlib">
+   <chunk x="0" y="0" width="16" height="16">
+   eJxjYBgFo4D6gAsPprd+7gG2nxz99AIAiXMBYA==
+  </chunk>
+   <chunk x="16" y="0" width="16" height="16">
+   eJxjYBgFo4C2gBML5oXSQ0U/zwDaT0sAAGnnAVM=
+  </chunk>
+   <chunk x="32" y="0" width="16" height="16">
+   eJxjYBgFo4B8wIkFD1X9PAwMDfS2f6ABAJGjAWU=
+  </chunk>
+  </data>
+ </layer>
+ <group id="3" name="Украшения">
+  <layer id="4" name="Декор" width="64" height="48">
+   <data encoding="base64" compression="zlib">
+    <chunk x="-16" y="0" width="16" height="16">
+   eJxjYBgFo2AU0AuIDbQD0AAAEGAAFw==
+  </chunk>
+    <chunk x="0" y="0" width="16" height="16">
+   eJxjYBgFo2AUUApE0eihAgAhiAAr
+  </chunk>
+    <chunk x="16" y="0" width="16" height="16">
+   eJxjYBgFo4C2QAILJheIU+gWSvXjA2JALMrA0EBDK6gOAGx3AVI=
+  </chunk>
+    <chunk x="32" y="0" width="16" height="16">
+   eJxjYBgFo4AyIM7A0DCU9Y9kAACgCgHG
+  </chunk>
+   </data>
+  </layer>
+ </group>
+ <layer id="5" name="Земля" width="64" height="48">
+  <properties>
+   <property name="solid" type="bool" value="true"/>
+  </properties>
+  <data encoding="base64" compression="zlib">
+   <chunk x="-16" y="0" width="16" height="16">
+   eJxjYBgFo2BwAjYseLgDdiBmJAGjAyYSMQA2EABJ
+  </chunk>
+   <chunk x="0" y="0" width="16" height="16">
+   eJxjYBgFowATsOLBgwWwMzAcoEAvAxv1nEI2YKQQM1GIAVZvASg=
+  </chunk>
+   <chunk x="16" y="0" width="16" height="16">
+   eJxjYBgFowA3YAFiZjyYGP34ADsDgwIl+tkgZjQQ4ZRBCRgpxEwUYgAuwwEG
+  </chunk>
+   <chunk x="32" y="0" width="16" height="16">
+   eJxjYBgFIxkwY8EsFJo5qp94wEgAEwJMBDAhAABHWABA
+  </chunk>
+   <chunk x="-16" y="16" width="16" height="16">
+   eJxjYEAFTCRidMBMIh4Fo2AUDBwAAOIYAD0=
+  </chunk>
+   <chunk x="0" y="16" width="16" height="16">
+   eJxjYmBgYAJiDghuAGIHID4AxApAvACIE4D4ARNUHTpmphCPglEwCgYOAACH4QQB
+  </chunk>
+   <chunk x="16" y="16" width="16" height="16">
+   eJxjYmBgYKIAM1OIR8EoGAUDBwAurwBR
+  </chunk>
+   <chunk x="32" y="16" width="16" height="16">
+   eJxjYmBgYMKDCQFmAngUjIJRMHgBAJvQACk=
+  </chunk>
+  </data>
+ </layer>
+ <group id="6" name="Подсказки" visible="0">
+  <layer id="7" name="Скрытое" width="64" height="48">
+   <data encoding="base64" compression="zlib">
+    <chunk x="0" y="0" width="16" height="16">
+   eJxjYBgF9AA8A+2AUTAKsAAAIyAADQ==
+  </chunk>
+   </data>
+  </layer>
+ </group>
+ <objectgroup id="8" name="Объекты">
+  <object id="1" name="spawn" x="48" y="224">
+   <point/>
+  </object>
+  <object id="2" name="Пещера" x="400" y="144" width="192" height="80">
+   <properties>
+    <property name="music" type="file" value="../../../games/examples/tiled/Карта Tiled/музыка/пещера.wav"/>
+   </properties>
+  </object>
+  <object id="3" name="Сундук" gid="25" x="544" y="224" width="16" height="16"/>
+  <object id="4" name="Табличка" gid="28" x="288" y="224" width="16" height="16"/>
+  <object id="5" name="Табличка назад" gid="2147483676" x="368" y="224" width="16" height="16"/>
+  <object id="6" template="../../../games/examples/tiled/Карта Tiled/шаблоны/фонарь.tx" x="336" y="224"/>
+  <object id="7" name="Большой сундук" gid="25" x="160" y="224" width="32" height="32"/>
+  <object id="8" template="../../../games/examples/tiled/Карта Tiled/шаблоны/фонарь.tx" name="Фонарь у обрыва" x="-176" y="224"/>
+  <object id="9" name="Облако" x="96" y="-24" width="48" height="24">
+   <ellipse/>
+  </object>
+  <object id="10" name="Тропа" x="64" y="200">
+   <polyline points="0,0 64,-16 128,0"/>
+  </object>
+ </objectgroup>
+</map>

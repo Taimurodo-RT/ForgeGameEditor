@@ -18,6 +18,7 @@
 #include "forge/core/math.h"
 #include "forge/core/types.h"
 #include "forge/level/own_tiles.h"
+#include "forge/level/tiled_record.h"
 #include "forge/objects/library.h"
 #include "forge/render/camera.h"
 #include "forge/render/lighting.h"
@@ -315,6 +316,10 @@ public:
     // Loads an area now (with the current focus kept), for edits far from
     // the view: undo of a stroke made elsewhere.
     void ensure_loaded(const world::Rect& tiles);
+    void ensure_loaded(std::span<const world::Rect> tiles);
+    // Loads every chunk that has objects (kept in memory or in the folder),
+    // for edits that look for objects anywhere.
+    void load_objects();
 
     // Writes changed chunks and objects to the folder, physics.json when the
     // physics changed, light.json when the time of day did, areas.json when
@@ -327,6 +332,8 @@ public:
         bool light = false;   // light.json written
         bool areas = false;   // areas.json written
         bool own_tiles = false; // tiles.json and tiles.png written
+        bool around = false;    // world.json written (or removed)
+        bool tiled = false;     // tiled.json written (or removed)
         f64 ms = 0;
         std::string error; // when not ok, in the author's words
     };
@@ -371,11 +378,32 @@ public:
     u64 own_tiles_version() const { return own_tiles_version_; }
 
     // What is around the level's chunks (world.json, else the game's world).
-    // It is what the world was made with, so it changes only by writing
-    // world.json and opening the level again.
     const LevelWorld& around() const { return around_; }
-    // Why world.json could not be read (the game's world is around then).
+    // Changes it now: chunks nobody changed are made again by the game's
+    // generator or come empty, and chunks are peopled when first visited only
+    // while the game's world is around (chunks first loaded with nothing
+    // around are peopled when it comes back). Objects already there stay
+    // (SetAround takes the game's own away with it).
+    void set_around(const LevelWorld& w);
+    bool around_changed() const { return around_ != around_saved_; }
+    // Why world.json could not be read (the game's world is around then; the
+    // file stays, and goes aside as world.broken.json when saved anew).
     const std::string& around_error() const { return around_error_; }
+    // The tiles a chunk nobody changed has with this around.
+    void generate(world::ChunkCoord chunk, const LevelWorld& around, std::vector<world::TileId>& out) const;
+    // A loaded chunk's tiles, all layers (false when it is not loaded), and
+    // all of them at once (an edit, as set_tile; edited false: back as the
+    // generator made it, world::World::set_chunk_tiles).
+    bool chunk_tiles(world::ChunkCoord chunk, std::vector<world::TileId>& out) const;
+    bool set_chunk_tiles(world::ChunkCoord chunk, std::span<const world::TileId> tiles, bool edited = true);
+
+    // What an import of a Tiled map made (tiled.json, else empty).
+    const tiled::Record& tiled_record() const { return tiled_; }
+    void set_tiled_record(const tiled::Record& r);
+    bool tiled_record_changed() const { return tiled_ != tiled_saved_; }
+    // Why tiled.json could not be read (no record then: a new import of the
+    // map makes everything anew; the file goes aside as tiled.broken.json).
+    const std::string& tiled_record_error() const { return tiled_error_; }
 
     // Bumped by every edit made through set_tile (for "unsaved" marks).
     u64 edits() const { return edits_; }
@@ -417,8 +445,11 @@ private:
     LevelTiles own_tiles_, own_tiles_saved_;
     std::string own_tiles_error_;
     u64 own_tiles_version_ = 0;
-    LevelWorld around_;
+    LevelWorld around_, around_saved_;
     std::string around_error_;
+    scene::PopulateFn populate_; // the module's
+    tiled::Record tiled_, tiled_saved_;
+    std::string tiled_error_;
 };
 
 // Copies a level folder into a game's world folder (a new game starts from

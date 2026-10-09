@@ -50,15 +50,18 @@ public:
 
     bool locate(ChunkCoord chunk, ChunkLocation& out) const;
     usize chunk_count() const;
+    // Every chunk saved here.
+    std::vector<ChunkCoord> chunks() const;
     usize region_count() const { return regions_.size(); }
 
     struct Write {
         ChunkCoord chunk;
-        const std::vector<u8>* bytes;
+        const std::vector<u8>* bytes; // null: the chunk is removed
     };
     // Writes these chunks, keeping every other chunk already saved in the
-    // same regions. Each region file is replaced atomically. No chunk may be
-    // read from this store while it runs.
+    // same regions. Each region file is replaced atomically; a region left
+    // with no chunks is removed. No chunk may be read from this store while
+    // it runs.
     bool write(const std::vector<Write>& chunks, u32* regions_written = nullptr, usize* bytes_written = nullptr);
 
 private:
