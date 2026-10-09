@@ -173,6 +173,7 @@ struct GameScreens::Impl : Rml::EventListener {
     u64 shows = 0;
     std::vector<std::unique_ptr<Page>> pages;
     std::string music; // what on_music was told last
+    std::string place_music; // the game's place's (set_place_music)
     // The lists' data.
     std::vector<ScreenItem> items;
     std::unordered_map<std::string, usize> item_index;
@@ -672,8 +673,9 @@ struct GameScreens::Impl : Rml::EventListener {
     }
 
     // The music of the screens up now: the newest window shown by command
-    // that has music, else a menu's, else a screen's over the world (by name,
-    // so it does not depend on the order the files were read in).
+    // that has music, else a menu's, else the place's the game set, else a
+    // screen's over the world (by name, so it does not depend on the order
+    // the files were read in).
     std::string wanted_music() const {
         const Page* top = nullptr;
         auto rank = [](const Page& p) { return p.role == ScreenRole::Command ? 2 : p.role == ScreenRole::Menu ? 1 : 0; };
@@ -684,6 +686,8 @@ struct GameScreens::Impl : Rml::EventListener {
                 (rank(p) == rank(*top) && (p.role == ScreenRole::Command ? p.order > top->order : p.name < top->name)))
                 top = &p;
         }
+        if (top && rank(*top) > 0) return top->music;
+        if (!place_music.empty()) return place_music;
         return top ? top->music : std::string();
     }
 
@@ -860,6 +864,10 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
 }
 
 const std::string& GameScreens::music() const { return impl_->music; }
+
+void GameScreens::set_place_music(std::string name) { impl_->place_music = std::move(name); }
+
+const std::string& GameScreens::place_music() const { return impl_->place_music; }
 
 void GameScreens::stop_music() {
     impl_->music.clear();

@@ -91,6 +91,9 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/physics/ DESTINATION data
 # And the level made in the editor's «Свет» (step 9): `OldMine --test --scene light` plays it from
 # data/examples/light/level and draws the editor's view of the same folder to compare their light.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/light/ DESTINATION data/examples/light COMPONENT slice)
+# And the level made in the editor's «Зоны» (step 9) with its links and music: `OldMine --test --scene zones` plays
+# it from data/examples/zones, its music from data/examples/zones/sounds.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/zones/ DESTINATION data/examples/zones COMPONENT slice)
 add_custom_target(forge_slice_package
   COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/dist/OldMine
   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component slice --config $<CONFIG>

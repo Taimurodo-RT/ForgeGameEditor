@@ -66,6 +66,34 @@ bool LogicEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir, const 
     module_.hero_icon(kHeroIconPx, rgba);
     ui.set_image("logic_hero", rgba.data(), kHeroIconPx, kHeroIconPx);
     hero_icon_ = "/memory/logic_hero";
+    // An area of the level: a framed patch of ground with a flag.
+    {
+        const u32 n = kHeroIconPx;
+        std::vector<u8> area(static_cast<usize>(n) * n * 4, 0);
+        auto put = [&](u32 x, u32 y, u8 r, u8 g, u8 b, u8 a) {
+            if (x >= n || y >= n) return;
+            u8* p = &area[(static_cast<usize>(y) * n + x) * 4];
+            p[0] = r, p[1] = g, p[2] = b, p[3] = a;
+        };
+        const u32 m = n / 8, t = std::max(1u, n / 24);
+        for (u32 y = m; y < n - m; ++y)
+            for (u32 x = m; x < n - m; ++x) {
+                const bool edge = x < m + t || y < m + t || x >= n - m - t || y >= n - m - t;
+                // Dashes along the frame, a light fill inside.
+                if (edge) {
+                    if (((x + y) / (n / 8)) % 2 == 0) put(x, y, 90, 200, 255, 255);
+                } else {
+                    put(x, y, 90, 200, 255, 60);
+                }
+            }
+        const u32 px = n * 3 / 8, top = n / 4, bottom = n * 3 / 4;
+        for (u32 y = top; y < bottom; ++y)
+            for (u32 x = px; x < px + t + 1; ++x) put(x, y, 230, 230, 230, 255);
+        for (u32 y = top; y < top + n / 6; ++y)
+            for (u32 x = px + t + 1; x < px + t + 1 + n / 4 - (y - top) * 3 / 4; ++x) put(x, y, 255, 120, 90, 255);
+        ui.set_image("logic_area", area.data(), n, n);
+        area_icon_ = "/memory/logic_area";
+    }
     if (remember_) {
         std::vector<u8> bytes;
         if (read_file(settings_ / "logic_mode.txt", bytes)) {
@@ -271,6 +299,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_sel_code", &m_sel_code_);
     model.Bind("lg_sel_scheme", &m_sel_scheme_);
     model.Bind("lg_sel_own", &m_sel_own_);
+    model.Bind("lg_sel_area", &m_sel_area_);
     model.Bind("lg_editing", &m_editing_);
     model.Bind("lg_edit_text", &m_edit_text_);
     model.Bind("lg_edit_title", &m_edit_title_);
@@ -445,6 +474,7 @@ const logic::Thing* LogicEditor::thing(std::string_view id) const {
 
 std::string LogicEditor::icon_of(const std::string& id) {
     if (id == logic::kHero) return hero_icon_;
+    if (logic::is_area(id)) return area_icon_;
     const objects::Template* t = module_.library() ? module_.library()->find(id) : nullptr;
     return t && template_icon ? template_icon(*t) : std::string();
 }
@@ -477,6 +507,9 @@ void LogicEditor::rebuild() {
     things_.push_back(logic::hero_thing());
     if (lib)
         for (const objects::Template& t : lib->templates()) things_.push_back(logic::thing_of(*lib, t));
+    built_areas_ = areas_version ? areas_version() : 0;
+    if (level_areas)
+        for (logic::Thing& t : level_areas()) things_.push_back(std::move(t));
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
     problems_.clear();
     if (!keep_compiled_) compiled_ = logic::compile(logic_, verbs_, find, &scheme_.nodes()).problems;
@@ -573,7 +606,8 @@ void LogicEditor::rebuild() {
     m_add_rows_.clear();
     for (const logic::Thing& t : things_) {
         NavRow r{t.id, t.name, icon_of(t.id), {}, counts[t.id], t.id == sel_thing_};
-        if (t.id != logic::kHero)
+        if (t.area) r.about = "Зона уровня: её границы, имя и музыка — во вкладке «Уровень», режим «Зоны»";
+        else if (t.id != logic::kHero)
             if (const objects::Template* tpl = lib ? lib->find(t.id) : nullptr) r.about = tpl->about;
         (logic_.spot(t.id) ? m_board_rows_ : m_add_rows_).push_back(r);
     }
@@ -613,6 +647,7 @@ void LogicEditor::rebuild_side() {
     m_sel_name_ = m_sel_icon_ = "";
     m_sel_links_ = 0;
     m_sel_own_ = m_has_thing_ && logic_.scheme_for(sel_thing_) != nullptr;
+    m_sel_area_ = m_has_thing_ && logic::is_area(sel_thing_);
     if (m_has_thing_) {
         const logic::Thing* t = thing(sel_thing_);
         m_sel_name_ = t ? t->name : sel_thing_;
@@ -627,7 +662,7 @@ void LogicEditor::rebuild_side() {
     for (const logic::Link& k : logic_.links)
         m_words_.push_back({static_cast<int>(k.id), phrase_of(k.id), meaning_of(k.id), problem_of(k.id), k.id == sel_link_, lit(k.id)});
     if (model_)
-        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code", "lg_sel_scheme", "lg_sel_own",
+        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code", "lg_sel_scheme", "lg_sel_own", "lg_sel_area",
                                  "lg_thing_links", "lg_sel_name", "lg_sel_icon", "lg_sel_links", "lg_words"})
             model_.DirtyVariable(name);
 }
@@ -681,6 +716,7 @@ void LogicEditor::update(Rml::Context* context) {
     watch_file();
     const objects::Library* lib = module_.library();
     if (lib && lib->version() != built_lib_) dirty_ = true;
+    if (areas_version && areas_version() != built_areas_) dirty_ = true; // drawn, renamed or deleted in «Зоны»
     if (dirty_) rebuild();
 }
 
@@ -804,7 +840,9 @@ void LogicEditor::change_thing_scheme(u32 id, const script::Graph& graph, std::s
 }
 
 u32 LogicEditor::thing_scheme(const std::string& id) {
-    if (id.empty() || id == logic::kHero || !thing(id)) return 0;
+    // The hero and the level's areas have no scheme of their own: an area's
+    // links happen when the hero comes into it.
+    if (id.empty() || id == logic::kHero || logic::is_area(id) || !thing(id)) return 0;
     u32 sid = 0;
     if (const logic::ThingScheme* had = logic_.scheme_for(id)) {
         sid = had->id;

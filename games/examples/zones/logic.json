@@ -1,0 +1,167 @@
+{
+  "links": [
+    {
+      "id": 1,
+      "a": "key",
+      "verb": "open",
+      "b": "door",
+      "sound": true,
+      "hint": true
+    },
+    {
+      "id": 2,
+      "a": "hero",
+      "verb": "enter",
+      "b": "area:fe0c44e44100fa35",
+      "once": true,
+      "graph": {
+        "$type": "forge::script::Graph",
+        "kind": "script",
+        "name": "link 2",
+        "variables": [],
+        "inputs": [],
+        "outputs": [],
+        "as_node": {
+          "enabled": false,
+          "id": "",
+          "kind": "action",
+          "category": "",
+          "icon": "",
+          "title": {
+            "ru": "",
+            "en": ""
+          },
+          "help": {
+            "ru": "",
+            "en": ""
+          }
+        },
+        "nodes": [
+          {
+            "uid": 1,
+            "def": "logic.when",
+            "version": 1,
+            "x": 0.0,
+            "y": 0.0,
+            "values": [],
+            "slots": [],
+            "comment": "",
+            "collapsed": false
+          },
+          {
+            "uid": 2,
+            "def": "logic.once",
+            "version": 1,
+            "x": 384.0,
+            "y": 0.0,
+            "values": [],
+            "slots": [],
+            "comment": "",
+            "collapsed": false
+          },
+          {
+            "uid": 3,
+            "def": "logic.act",
+            "version": 1,
+            "x": 720.0,
+            "y": 0.0,
+            "values": [
+              {
+                "pin": "action",
+                "value": "arrive"
+              },
+              {
+                "pin": "thing",
+                "value": "area:fe0c44e44100fa35"
+              }
+            ],
+            "slots": [],
+            "comment": "",
+            "collapsed": false
+          },
+          {
+            "uid": 4,
+            "def": "api.game.set_var",
+            "version": 1,
+            "x": 976.0,
+            "y": 0.0,
+            "values": [
+              {
+                "pin": "name",
+                "value": "quest.pickaxe"
+              },
+              {
+                "pin": "value",
+                "value": "1"
+              }
+            ],
+            "slots": [],
+            "comment": "",
+            "collapsed": false
+          }
+        ],
+        "links": [
+          {
+            "from_node": 1,
+            "from_pin": "next",
+            "to_node": 2,
+            "to_pin": "in"
+          },
+          {
+            "from_node": 1,
+            "from_pin": "b",
+            "to_node": 3,
+            "to_pin": "target"
+          },
+          {
+            "from_node": 1,
+            "from_pin": "a",
+            "to_node": 3,
+            "to_pin": "other"
+          },
+          {
+            "from_node": 2,
+            "from_pin": "first",
+            "to_node": 3,
+            "to_pin": "in"
+          },
+          {
+            "from_node": 3,
+            "from_pin": "next",
+            "to_node": 4,
+            "to_pin": "in"
+          }
+        ],
+        "next_uid": 5
+      }
+    },
+    {
+      "id": 3,
+      "a": "hero",
+      "verb": "enter",
+      "b": "area:af1932b121dac0dd"
+    }
+  ],
+  "board": {
+    "hero": [
+      80.0,
+      220.0
+    ],
+    "key": [
+      380.0,
+      80.0
+    ],
+    "door": [
+      700.0,
+      220.0
+    ],
+    "area:fe0c44e44100fa35": [
+      60.0,
+      60.0
+    ],
+    "area:af1932b121dac0dd": [
+      756.0,
+      60.0
+    ]
+  }
+}

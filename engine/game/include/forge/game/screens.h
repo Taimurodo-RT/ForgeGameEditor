@@ -46,8 +46,10 @@
 //
 // Sound (forge::audio::ScreenSounds plays it): one music at a time, the
 // music of the topmost screen up that has one: the newest window shown by
-// command, else the menu, else the screens over the world. A screen without
-// music lets the one under it play; none up with music: silence. on_music
+// command, else the menu, else the music of the place the hero is in (the
+// game says it: set_place_music), else the screens over the world. A screen
+// without music lets the one under it play; none up with music and no
+// place's: silence. on_music
 // says when that changes (a page loaded again with the same music changes
 // nothing). A button's sound goes to on_sound once per press, with its
 // actions: a click or Enter / Space on a button with the keyboard's focus.
@@ -172,6 +174,11 @@ public:
 
     // The music of the screens up now ("": none), as update() last saw it.
     const std::string& music() const;
+    // The music of the place the hero is in ("": none), from the game: under
+    // a window's or a menu's, over the screens' over the world. update()
+    // takes it in.
+    void set_place_music(std::string name);
+    const std::string& place_music() const;
     // Says the music changed (update(); "" when none is wanted).
     std::function<void(const std::string& name)> on_music;
     // Leaving (the editor's «Проверить», the game): on_music(""), and the

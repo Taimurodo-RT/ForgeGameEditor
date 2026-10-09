@@ -133,6 +133,14 @@ void push_objects(forge::render::SpriteBatch& batch, Objects& objects, const Sli
 // Flames over the torches in view; their places go to torches (for lights).
 void push_torches(forge::render::SpriteBatch& batch, const forge::world::World& world, const forge::world::Rect& view,
                   f64 cam_x, f64 cam_y, u64 tick, std::vector<std::pair<f64, f64>>& torches);
+// Where a hero put near (x, y) stands: the point under its feet on the ground
+// nearest in height with two free cells over it, in the column of x, within
+// reach tiles up or down; false when there is none. Those places must be
+// loaded. «Играть отсюда» and a level's spawn point both go by it.
+inline constexpr forge::i32 kGroundReach = 96;
+bool hero_ground(const forge::world::World& world, f64 x, f64 y, forge::i32 reach, f64& out_x, f64& out_y);
+// The tiles a hero may stand in (the world's edges, from world_desc()).
+bool in_world(f64 x, f64 y);
 // Binds the tile renderer to a world, with the water and wall looks.
 bool init_tiles(forge::render::TilemapRenderer& tiles, SDL_GPUDevice* device, SDL_GPUTextureFormat format,
                 forge::world::World& world, const std::vector<u8>& atlas);

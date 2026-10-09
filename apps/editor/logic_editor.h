@@ -75,6 +75,10 @@ public:
     }
     // A template's picture as the UI shows it (the object library's).
     std::function<std::string(const objects::Template&)> template_icon;
+    // The open level's areas as things of the board («Зоны»), and a number
+    // that changes whenever they do (the board is rebuilt then).
+    std::function<std::vector<logic::Thing>()> level_areas;
+    std::function<u64()> areas_version;
 
     // Each frame while the tab is open.
     void update(Rml::Context* context);
@@ -300,9 +304,9 @@ private:
     std::map<u32, std::string> problems_;
     std::vector<logic::Problem> compiled_; // every problem the logic has (the scheme marks nodes with them)
     bool keep_compiled_ = false;           // the next rebuild only moved nodes: the code is the same
-    u64 built_lib_ = ~0ull;
+    u64 built_lib_ = ~0ull, built_areas_ = ~0ull;
     bool dirty_ = true;
-    std::string hero_icon_;
+    std::string hero_icon_, area_icon_;
 
     std::string sel_thing_;
     u32 sel_link_ = 0;
@@ -332,7 +336,7 @@ private:
     Rml::String m_mode_ = "links";
     Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_;
     float m_pick_x_ = 0, m_pick_y_ = 0;
-    bool m_editing_ = false, m_sel_code_ = false, m_sel_scheme_ = false, m_sel_own_ = false;
+    bool m_editing_ = false, m_sel_code_ = false, m_sel_scheme_ = false, m_sel_own_ = false, m_sel_area_ = false;
     Rml::String m_edit_text_, m_edit_title_, m_edit_error_;
     bool m_picking_ = false, m_has_link_ = false, m_has_thing_ = false, m_hint_ = false;
     int m_sel_links_ = 0;

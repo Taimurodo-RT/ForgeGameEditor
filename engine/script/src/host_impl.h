@@ -65,6 +65,7 @@ struct ScriptHost::Impl {
     std::unordered_map<lua_State*, int> refs;   // every thread we made -> its registry ref
     std::vector<Wait> waits;
     std::vector<Message> outbox, inbox;
+    std::vector<sim::TriggerEvent> areas; // ScriptHost::enter, for the next dispatch of triggers
     std::vector<std::pair<flecs::entity_t, f32>> due; // entities that run this tick and their dt, sorted when waits need it
     flecs::query<scene::Position, Script> scripted;
     flecs::entity_t script_id = 0, vars_id = 0, body_id = 0;

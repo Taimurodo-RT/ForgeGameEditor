@@ -361,6 +361,23 @@ public:
         objects_tab.list_images = [this] { return assets.images(); };
         objects_tab.list_sounds = [this] { return assets.sounds(); };
         ui_tab.list_sounds = [this] { return assets.sounds(); };
+        // «Зоны»: a place's music is one of the game's sounds; «Логика» links to the level's areas.
+        level.list_sounds = [this] { return assets.sounds(); };
+        level.set_sounds_folder(sounds_folder);
+        logic_tab.level_areas = [this] {
+            std::vector<logic::Thing> out;
+            for (const level::Area& a : level.level().areas().areas)
+                out.push_back(logic::area_thing(std::string(logic::kAreaPrefix) + level::area_id_text(a.id), a.name));
+            return out;
+        };
+        logic_tab.areas_version = [this] { return level.level().areas_version(); };
+        level.area_links = [this](u64 id) {
+            std::vector<std::string> out;
+            const std::string thing = std::string(logic::kAreaPrefix) + level::area_id_text(id);
+            for (const logic::Link& l : logic_tab.links().links)
+                if (l.a == thing || l.b == thing) out.push_back("«" + logic_tab.phrase_of(l.id) + "»");
+            return out;
+        };
         objects_tab.on_place = [this](u64 key) {
             open_tab("level");
             level.arm_template(key);
@@ -1760,7 +1777,11 @@ private:
     }
 
     bool level_step(u32 f) {
-        if (f >= 19) return ph_step_ <= kPhysLast ? physics_step() : lt_step_ <= kLightLast ? light_step() : objects_step();
+        if (f >= 19)
+            return ph_step_ <= kPhysLast    ? physics_step()
+                   : lt_step_ <= kLightLast ? light_step()
+                   : zn_step_ <= kZonesLast ? zones_step()
+                                            : objects_step();
         const usize stone = tile_named("stone"), sand = tile_named("sand");
         switch (f) {
         case 0: {
@@ -3130,6 +3151,737 @@ private:
         default: break;
         }
         ++lt_step_;
+        return true;
+    }
+
+    // --- the level's zones («Зоны»): games/examples/zones made with the mouse, the panel and «Логика» ---
+    static constexpr u32 kZonesLast = 46;
+    // The example, as this run makes it (the folder is new each run).
+    static std::filesystem::path zones_root() { return std::filesystem::temp_directory_path() / "forge_editor_zones"; }
+    const slice::SliceGenerator& gen() { return ed_.level_module.slice_generator(); }
+    const level::Area* area(u64 id) { return lv().level().areas().find(id); }
+    std::string area_text(u64 id) {
+        const level::Area* a = area(id);
+        if (!a) return "нет";
+        return a->name + " " + std::to_string(a->x0) + "," + std::to_string(a->y0) + "…" + std::to_string(a->x1) + "," + std::to_string(a->y1) +
+               (a->music.empty() ? "" : " ♪" + a->music);
+    }
+    std::string thing_of(u64 id) { return std::string(logic::kAreaPrefix) + level::area_id_text(id); }
+    // The music of the example: a tune made of whole numbers only (the same bytes on every computer), 22 kHz
+    // mono, two seconds: a low walk down and up, as in a mine.
+    static std::vector<u8> mine_tune() {
+        const u32 rate = 22050, note = rate / 4;
+        const u32 hz[] = {196, 175, 165, 147, 131, 147, 165, 175};
+        const u32 n = note * static_cast<u32>(std::size(hz));
+        std::vector<u8> wav(44 + n * 2);
+        auto put32 = [&](usize at, u32 v) { for (int i = 0; i < 4; ++i) wav[at + i] = static_cast<u8>(v >> (8 * i)); };
+        auto put16 = [&](usize at, u32 v) { for (int i = 0; i < 2; ++i) wav[at + i] = static_cast<u8>(v >> (8 * i)); };
+        std::memcpy(wav.data(), "RIFF", 4);
+        put32(4, 36 + n * 2);
+        std::memcpy(wav.data() + 8, "WAVEfmt ", 8);
+        put32(16, 16);
+        put16(20, 1);
+        put16(22, 1);
+        put32(24, rate);
+        put32(28, rate * 2);
+        put16(32, 2);
+        put16(34, 16);
+        std::memcpy(wav.data() + 36, "data", 4);
+        put32(40, n * 2);
+        for (u32 i = 0; i < n; ++i) {
+            const u32 k = i / note, t = i % note;
+            // A triangle wave: the phase in 1/65536 of a period.
+            const u32 phase = static_cast<u32>((static_cast<u64>(t) * hz[k] * 65536 / rate) & 0xFFFF);
+            const i32 tri = phase < 32768 ? static_cast<i32>(phase) * 2 - 32768 : 98304 - static_cast<i32>(phase) * 2;
+            // Up in 1/50 of the note, down over its last third.
+            const i32 up = static_cast<i32>(std::min<u32>(t, note / 50)), down = static_cast<i32>(std::min<u32>(note - t, note / 3));
+            const i32 env = std::min(up * 1000 / static_cast<i32>(note / 50), down * 1000 / static_cast<i32>(note / 3));
+            const i32 v = tri / 4 * env / 1000;
+            put16(44 + static_cast<usize>(i) * 2, static_cast<u16>(static_cast<i16>(v)));
+        }
+        return wav;
+    }
+    static std::string text_of(const std::filesystem::path& file) {
+        std::vector<u8> bytes;
+        if (!read_file(file, bytes)) return "<нет файла>";
+        return {bytes.begin(), bytes.end()};
+    }
+    // A drag in the level view that is taken back before the button is let go: Esc, else the right button.
+    void cancelled_drag(f64 x0, f64 y0, f64 x1, f64 y1, bool esc) {
+        to_point(x0, y0);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+        to_point((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+        to_point(x1, y1);
+        if (esc) key(SDLK_ESCAPE, SDL_KMOD_NONE);
+        else right_down();
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+    }
+    // The view over a rectangle of tiles, all of it in sight.
+    void view_over(f64 x0, f64 y0, f64 x1, f64 y1) {
+        lv().camera().x = (x0 + x1) * 0.5;
+        lv().camera().y = (y0 + y1) * 0.5;
+        lv().camera().zoom = std::clamp(std::min(lv().view_w() / static_cast<f32>(x1 - x0 + 12), lv().view_h() / static_cast<f32>(y1 - y0 + 12)), 1.0f, 16.0f);
+    }
+    // The example's logic.json with the areas' ids of this run written as the repository's (by name), to compare.
+    static std::string with_ids(std::string text, const level::LevelAreas& from, const level::LevelAreas& to) {
+        for (const level::Area& a : from.areas)
+            for (const level::Area& b : to.areas)
+                if (a.name == b.name)
+                    for (usize at = 0; (at = text.find(level::area_id_text(a.id), at)) != std::string::npos;)
+                        text.replace(at, 16, level::area_id_text(b.id));
+        return text;
+    }
+
+    bool zones_step() {
+        const i32 sy = gen().mine_y(), gy = gen().gallery_y(), mx = gen().mine_x();
+        // «Шахта»: the whole mine, from the entrance column (mx) west past the far chamber, from over the entrance down
+        // under the gallery's floor. «Дальний зал»: the chamber at the gallery's west end, inside «Шахта».
+        const i32 m0 = mx - 153, m1 = mx + 1, n0 = sy - 5, n1 = gy + 3;
+        const i32 h0 = mx - 153, h1 = gen().gallery_x1() + 2, k0 = gy - 8, k1 = gy + 2;
+        const std::filesystem::path example = zones_root() / "level";
+        const std::filesystem::path tune = zones_root() / utf8_path("Ресурсы") / utf8_path("шахта.wav");
+        const std::filesystem::path broken = zones_root() / utf8_path("Ресурсы") / utf8_path("сломан.wav");
+        switch (zn_step_) {
+        case 0: {
+            // The level of the steps above stays as it was; the example is a level of its own.
+            key(SDLK_S, SDL_KMOD_CTRL);
+            zn_main_ = lv().level().folder();
+            zn_view_ = lv().camera();
+            zn_logic_text_ = logic_text();
+            zn_logic_entries_ = lg().history().cursor();
+            zn_pan_x_ = lg().scheme().pan_x();
+            zn_pan_y_ = lg().scheme().pan_y();
+            std::error_code ec;
+            std::filesystem::remove_all(zones_root(), ec);
+            std::filesystem::create_directories(example, ec);
+            std::filesystem::create_directories(tune.parent_path(), ec);
+            const std::vector<u8> wav = mine_tune();
+            check(write_file_atomic(tune, wav) && audio::load(tune) != nullptr, "the mine's tune is a sound the game reads");
+            const std::string junk = "не звук";
+            write_file_atomic(broken, {reinterpret_cast<const u8*>(junk.data()), junk.size()});
+            // «Ресурсы» offer these two (the sample library has no music).
+            zn_sounds_ = lv().list_sounds;
+            lv().list_sounds = [tune, broken] { return std::vector<std::filesystem::path>{tune, broken}; };
+            std::filesystem::remove(ed_.sounds_folder / utf8_path("шахта.wav"), ec);
+            check(lv().open_folder(example), "a new level opens for the zones example");
+            check(lv().history().cursor() == 0 && lv().level().areas() == level::LevelAreas{} && lv().level().areas_error().empty(),
+                  "with no history, no areas and no spawn point (no areas.json)");
+            view_over(m0, n0, m1, n1);
+            key(SDLK_Z, SDL_KMOD_NONE);
+            break;
+        }
+        case 1: {
+            if (wait(3)) return true;
+            check(lv().mode() == Mode::Zones && lv().area_tool() == AreaTool::Select, "Z opens «Зоны» with the select tool");
+            check(!ed_.find_element("mode-zones")->IsClassSet("soon"), "«Зоны» is no longer marked as coming later");
+            check(shown("zn-tool-select") && shown("zn-tool-draw") && shown("zn-tool-spawn") && shown("zn-pal-draw") && shown("zn-spawn"),
+                  "the mode shows its tools, the list and the spawn point");
+            check(element_text("zn-spawn").find("нет") != std::string::npos && !shown("zn-error") && !shown("zn-name"),
+                  "no spawn point, nothing wrong, nothing selected");
+            check(click_id("zn-tool-draw") && lv().area_tool() == AreaTool::Draw, "the tool «Новая зона»");
+            // «Шахта» dragged from its top right corner to its bottom left one (the other way round from usual).
+            entries_ = lv().history().cursor();
+            to_cell(m1 - 1, n0);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            for (int i = 1; i <= 4; ++i) to_cell(m1 - 1 + (m0 - m1 + 1) * i / 4, n0 + (n1 - 1 - n0) * i / 4);
+            check(lv().gesture() && lv().level().areas().areas.empty(), "while it is dragged the level has no area yet");
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            const auto& all = lv().level().areas().areas;
+            mine_ = all.size() == 1 ? all[0].id : 0;
+            const level::Area* a = area(mine_);
+            check(a && a->x0 == m0 && a->x1 == m1 && a->y0 == n0 && a->y1 == n1 && a->name == "Зона 1" && a->music.empty(),
+                  "one area over both corner cells, named «Зона 1»: " + area_text(mine_));
+            check(lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Нарисовать зону «Зона 1»",
+                  "one drag, one history entry");
+            check(lv().selected_area() == mine_ && lv().area_note().find("154 × 87") != std::string::npos, "selected; " + lv().area_note());
+            break;
+        }
+        case 2: {
+            check(input_value("zn-name") == "Зона 1" && shown("zn-label-" + level::area_id_text(mine_)) &&
+                      shown("zn-area-" + level::area_id_text(mine_)),
+                  "the panel, the view and the list show it");
+            entries_ = lv().history().cursor();
+            check(lt_type("zn-name", "Шахта"), "«Шахта» typed into its name");
+            check(area(mine_) && area(mine_)->name == "Шахта" && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "Имя зоны: «Шахта»",
+                  "renamed, one history entry");
+            // Names that cannot be: nothing changes, and the panel says why.
+            std::string sixty_one;
+            for (int i = 0; i < 61; ++i) sixty_one += "ш";
+            for (const std::string& bad : {std::string(""), std::string("   "), sixty_one}) lt_type("zn-name", bad);
+            check(area(mine_)->name == "Шахта" && lv().history().cursor() == entries_ + 1 && lv().area_note().find("осталось «Шахта»") != std::string::npos,
+                  "an empty name, spaces, 61 letters: refused; " + lv().area_note());
+            break;
+        }
+        case 3: {
+            check(input_value("zn-name") == "Шахта", "the field shows the name it has");
+            // «Дальний зал» from its bottom right corner up to its top left one.
+            check(click_id("zn-tool-draw"), "«Новая зона» again");
+            entries_ = lv().history().cursor();
+            to_cell(h1 - 1, k1 - 1);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            for (int i = 1; i <= 4; ++i) to_cell(h1 - 1 + (h0 - h1 + 1) * i / 4, k1 - 1 + (k0 - k1 + 1) * i / 4);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            const auto& all = lv().level().areas().areas;
+            hall_ = all.size() == 2 ? all[1].id : 0;
+            const level::Area* a = area(hall_);
+            check(a && a->x0 == h0 && a->x1 == h1 && a->y0 == k0 && a->y1 == k1 && a->name == "Зона 1" && hall_ != mine_,
+                  "a second area, inside the first, with an id of its own: " + area_text(hall_));
+            check(lv().history().cursor() == entries_ + 1, "one entry");
+            lt_type("zn-name", "Шахта");
+            check(area(hall_)->name == "Зона 1" && lv().area_note().find("другую зону") != std::string::npos,
+                  "the name of another area is refused: " + lv().area_note());
+            check(lt_type("zn-name", "Дальний зал") && area(hall_)->name == "Дальний зал", "named «Дальний зал»");
+            break;
+        }
+        case 4: {
+            // Drags taken back (Esc, the right button) and a click without a drag leave nothing.
+            entries_ = lv().history().cursor();
+            const level::LevelAreas before = lv().level().areas();
+            check(click_id("zn-tool-draw"), "«Новая зона»");
+            cancelled_drag(m1 + 3.5, n0 + 0.5, m1 + 12.5, n0 + 6.5, true);
+            check(lv().level().areas() == before && lv().history().cursor() == entries_ && !lv().gesture() &&
+                      lv().area_tool() == AreaTool::Draw,
+                  "Esc during the drag: no area, no entry, the tool stays");
+            cancelled_drag(m1 + 3.5, n0 + 0.5, m1 + 12.5, n0 + 6.5, false);
+            check(lv().level().areas() == before && lv().history().cursor() == entries_ && !lv().gesture(), "the right button: the same");
+            click_cell(m1 + 5, n0 + 2);
+            check(lv().level().areas() == before && lv().history().cursor() == entries_ && lv().area_note().find("протяните") != std::string::npos,
+                  "a click without a drag draws nothing and says why");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(lv().area_tool() == AreaTool::Select, "Esc goes back to the select tool");
+            break;
+        }
+        case 5: {
+            // Picking: inside both, the smaller is picked; in the mine only, the mine.
+            entries_ = lv().history().cursor();
+            click_cell(h0 + 7, k0 + 5);
+            check(lv().selected_area() == hall_ && lv().history().cursor() == entries_, "a click in the chamber picks «Дальний зал», nothing changes");
+            click_cell(mx - 40, sy + 38);
+            check(lv().selected_area() == mine_ && lv().history().cursor() == entries_, "a click on the stairs picks «Шахта»");
+            click_cell(m1 + 3, n0 - 3);
+            check(lv().selected_area() == 0, "a click outside any area picks none");
+            // «Дальний зал» moved by its middle 3 cells right, 2 down: one entry.
+            click_cell(h0 + 7, k0 + 5);
+            drag_points(h0 + 7.5, k0 + 5.5, h0 + 10.6, k0 + 7.4);
+            const level::Area* a = area(hall_);
+            check(a && a->x0 == h0 + 3 && a->x1 == h1 + 3 && a->y0 == k0 + 2 && a->y1 == k1 + 2 && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "Передвинуть зону «Дальний зал»",
+                  "moved by whole cells, one entry: " + area_text(hall_));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(hall_)->x0 == h0 && area(hall_)->y0 == k0 && lv().history().cursor() == entries_, "Ctrl+Z puts it back");
+            // Its right edge 2 cells out, then its top left corner: one entry each.
+            drag_points(h1 - 0.1, k0 + 5.5, h1 + 2.1, k0 + 5.5);
+            a = area(hall_);
+            check(a && a->x0 == h0 && a->x1 == h1 + 2 && a->y0 == k0 && a->y1 == k1 && lv().history().undo_label() == "Границы зоны «Дальний зал»",
+                  "the right edge dragged: only it moved: " + area_text(hall_));
+            drag_points(h0 + 0.1, k0 + 0.1, h0 - 2.2, k0 - 1.9);
+            a = area(hall_);
+            check(a && a->x0 == h0 - 2 && a->y0 == k0 - 2 && a->x1 == h1 + 2 && a->y1 == k1 && lv().history().cursor() == entries_ + 2,
+                  "the corner dragged: two edges moved: " + area_text(hall_));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(hall_)->x0 == h0 && area(hall_)->x1 == h1 && area(hall_)->y0 == k0 && lv().history().cursor() == entries_, "both taken back");
+            break;
+        }
+        case 6: {
+            // A move and an edge drag taken back halfway: nothing changes.
+            entries_ = lv().history().cursor();
+            const level::LevelAreas before = lv().level().areas();
+            cancelled_drag(h0 + 7.5, k0 + 5.5, h0 + 20.5, k0 + 9.5, true);
+            check(lv().level().areas() == before && lv().history().cursor() == entries_ && !lv().gesture(), "a move with Esc: nothing");
+            cancelled_drag(h1 - 0.1, k0 + 5.5, h1 + 9.1, k0 + 5.5, false);
+            check(lv().level().areas() == before && lv().history().cursor() == entries_ && !lv().gesture(), "an edge with the right button: nothing");
+            // An edge never passes the one across: the area stays a cell wide at least.
+            drag_points(h1 - 0.1, k0 + 5.5, h0 - 30.0, k0 + 5.5);
+            check(area(hall_)->x1 == h0 + 1 && area(hall_)->x0 == h0, "dragged past the left edge, the right one stops a cell from it");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().areas() == before, "and back");
+            // The list on the left picks «Шахта» and brings the view to it.
+            click_id(("zn-area-" + level::area_id_text(mine_)).c_str());
+            check(lv().selected_area() == mine_, "a click in the list picks «Шахта»");
+            check(ue_open("zn-music"), "its music drop-down opens");
+            break;
+        }
+        case 7: {
+            if (wait(2)) return true;
+            entries_ = lv().history().cursor();
+            const auto choices = lv().music_choices();
+            check(choices.size() == 2 && choices[0].second == "шахта — из «Ресурсов»" && choices[1].second == "сломан — из «Ресурсов»",
+                  "the game has no sounds yet; «Ресурсы» offer two");
+            check(ue_option("zn-music", "add:" + path_to_utf8(broken)), "the broken one picked");
+            check(area(mine_)->music.empty() && lv().history().cursor() == entries_ && lv().area_note().find("не звучит") != std::string::npos,
+                  "a file that does not sound is refused: " + lv().area_note());
+            break;
+        }
+        case 8: {
+            if (wait(2)) return true;
+            check(ue_open("zn-music"), "the drop-down opens again");
+            break;
+        }
+        case 9: {
+            if (wait(2)) return true;
+            entries_ = lv().history().cursor();
+            check(ue_option("zn-music", "add:" + path_to_utf8(tune)), "«шахта — из «Ресурсов»» picked");
+            std::vector<u8> copied, made;
+            read_file(ed_.sounds_folder / utf8_path("шахта.wav"), copied);
+            read_file(tune, made);
+            check(!copied.empty() && copied == made, "copied into the game's sounds");
+            check(area(mine_)->music == "шахта.wav" && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "Музыка зоны «Шахта»: «шахта.wav»",
+                  "the area's music, one entry");
+            break;
+        }
+        case 10: {
+            if (wait(2)) return true;
+            auto* select = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element("zn-music"));
+            check(select && select->GetValue() == "шахта.wav" && !shown("zn-music-note"),
+                  "the drop-down shows the game's own file now: " + (select ? std::string(select->GetValue()) : std::string("?")));
+            const auto choices = lv().music_choices();
+            check(choices.size() == 2 && choices[0].first == "шахта.wav" && choices[1].second == "сломан — из «Ресурсов»",
+                  "and lists it among the game's sounds");
+            // Without the file the panel says so.
+            std::error_code ec;
+            std::filesystem::rename(ed_.sounds_folder / utf8_path("шахта.wav"), ed_.sounds_folder / "away.wav", ec);
+            break;
+        }
+        case 11: {
+            if (wait(2)) return true;
+            check(shown("zn-music-note") && element_text("zn-music-note").find("Нет файла «шахта.wav»") != std::string::npos,
+                  "a missing file: «нет файла» in the panel");
+            std::error_code ec;
+            std::filesystem::rename(ed_.sounds_folder / "away.wav", ed_.sounds_folder / utf8_path("шахта.wav"), ec);
+            // Without music, then Ctrl+Z.
+            check(ue_open("zn-music"), "the drop-down opens");
+            break;
+        }
+        case 12: {
+            if (wait(2)) return true;
+            check(!shown("zn-music-note"), "the file is back: nothing to say");
+            entries_ = lv().history().cursor();
+            check(ue_option("zn-music", "") && area(mine_)->music.empty() && lv().history().undo_label() == "Без музыки: «Шахта»",
+                  "«Без музыки»");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(mine_)->music == "шахта.wav" && lv().history().cursor() == entries_, "Ctrl+Z gives the music back");
+            // The spawn point: east of the entrance, on the ground.
+            f64 gx = 0, gyy = 0;
+            check(ed_.level_module.play_spot(lv().level(), mx + 9.5, sy, gx, gyy), "there is ground east of the mine's entrance");
+            zn_spawn_x_ = gx;
+            zn_spawn_y_ = gyy;
+            check(click_id("zn-tool-spawn") && lv().area_tool() == AreaTool::Spawn, "the tool «Точка появления»");
+            cancelled_drag(gx, gyy - 0.5, gx + 3, gyy - 0.5, true);
+            check(!lv().level().areas().spawn && lv().history().cursor() == entries_, "Esc while putting it: no spawn point");
+            click_cell(static_cast<i32>(std::floor(gx)), static_cast<i32>(gyy) - 1);
+            const level::LevelAreas& a = lv().level().areas();
+            check(a.spawn && a.spawn_x == gx && a.spawn_y == gyy && lv().history().cursor() == entries_ + 1 &&
+                      lv().history().undo_label() == "Точка появления",
+                  "a click puts it, feet on the cell's bottom, one entry");
+            check(lv().spawn_selected() && lv().area_note().find("Точка появления") != std::string::npos, lv().area_note());
+            break;
+        }
+        case 13: {
+            char at[64];
+            std::snprintf(at, sizeof(at), "x %.1f, y %.0f", zn_spawn_x_, zn_spawn_y_);
+            check(shown("zn-label-spawn") && shown("zn-area-spawn") && element_text("zn-spawn") == at,
+                  "the view, the list and the panel show it: " + element_text("zn-spawn"));
+            check(element_text("zn-spawn-note").find("Новая игра поставит героя сюда") != std::string::npos, "on the ground: " + element_text("zn-spawn-note"));
+            // Into the rock: the panel says where the hero will stand instead.
+            entries_ = lv().history().cursor();
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            drag_points(zn_spawn_x_, zn_spawn_y_ - 1, zn_spawn_x_, zn_spawn_y_ + 5);
+            check(lv().level().areas().spawn_y == zn_spawn_y_ + 6 && lv().history().undo_label() == "Передвинуть точку появления",
+                  "the marker dragged 6 cells down into the ground");
+            break;
+        }
+        case 14: {
+            if (wait(2)) return true;
+            check(element_text("zn-spawn-note").find("ближайший") != std::string::npos, "in the ground: " + element_text("zn-spawn-note"));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            // Over the top of the world: the game would start at its start.
+            zn_cam_ = lv().camera();
+            lv().camera().x = 0.5;
+            lv().camera().y = -8300;
+            check(click_id("zn-tool-spawn"), "«Точка появления»");
+            break;
+        }
+        case 15: {
+            if (wait(2)) return true;
+            entries_ = lv().history().cursor();
+            click_cell(0, -8300);
+            check(lv().level().areas().spawn_y == -8299 && lv().history().cursor() == entries_ + 1, "a spawn point over the world");
+            break;
+        }
+        case 16: {
+            if (wait(2)) return true;
+            check(element_text("zn-spawn-note").find("Вне мира") != std::string::npos, "the panel says the game starts at its start: " +
+                                                                                         element_text("zn-spawn-note"));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            const level::LevelAreas& a = lv().level().areas();
+            check(a.spawn && a.spawn_x == zn_spawn_x_ && a.spawn_y == zn_spawn_y_, "Ctrl+Z: back east of the entrance");
+            lv().camera() = zn_cam_;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            // Every edit taken back, then each again: the same areas, the same ids.
+            zn_made_ = lv().level().areas();
+            zn_entries_ = lv().history().cursor();
+            while (lv().history().can_undo()) key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().areas() == level::LevelAreas{} && lv().history().cursor() == 0, "all of it taken back: no areas, no spawn point");
+            while (lv().history().cursor() < zn_entries_ && lv().history().can_redo()) key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().areas() == zn_made_ && lv().history().cursor() == zn_entries_ && lv().level().areas().areas.size() == 2,
+                  "and redone: the same two areas with their ids, the same spawn point, no doubles: " + level::areas_json(lv().level().areas()));
+            // The view far away, chunks unloaded, and back: the areas are not in chunks.
+            lv().camera().x = 3000;
+            break;
+        }
+        case 17: {
+            if (hold(!lv().level().loaded(mx - 40, sy + 38), "the mine's chunks unload far away")) return true;
+            check(lv().level().areas() == zn_made_,
+                  "far away the mine's chunks are gone, the areas stay: one each, as they were: " + level::areas_json(lv().level().areas()));
+            lv().camera() = zn_cam_;
+            // «Логика»: the areas are things of the board.
+            check(click_tab(6) && ed_.tab() == "logic", "the Logic tab");
+            break;
+        }
+        case 18: {
+            if (wait(2)) return true;
+            const std::string mine = thing_of(mine_), hall = thing_of(hall_);
+            check(shown("lg-add-" + mine) && shown("lg-add-" + hall), "the left column offers «Шахта» and «Дальний зал»");
+            check(click("lg-add-" + mine) && lg().links().spot(mine), "«Шахта» onto the board");
+            break;
+        }
+        case 19: {
+            if (wait(2)) return true;
+            const std::string mine = thing_of(mine_), hall = thing_of(hall_);
+            check(click("lg-add-" + hall) && lg().links().spot(hall), "«Дальний зал» onto the board");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(shown("lg-thing-" + mine) && lg().thing_scheme(mine) == 0 && lg().mode() == "links",
+                  "«Шахта» is on the board; an area has no scheme of its own");
+            check(thing_click("hero") && thing_click(mine) && lg().picking(), "the hero, then «Шахта»: what does the hero do with it");
+            break;
+        }
+        case 20: {
+            check(option_of("Герой входит в Шахту") >= 0, "the picker offers «Герой входит в Шахту»");
+            check(lg().pick(static_cast<usize>(std::max<i64>(0, option_of("Герой входит в Шахту")))), "picked");
+            mine_link_ = lg().selected_link();
+            check(mine_link_ && lg().phrase_of(mine_link_) == "Герой входит в Шахту" && lg().problem_of(mine_link_).empty(),
+                  "a link that works: " + lg().meaning_of(mine_link_));
+            check(logic_text().find("\"" + thing_of(mine_) + "\"") != std::string::npos, "written to logic.json with the area's id");
+            break;
+        }
+        case 21: {
+            check(shown("lg-refine-once") && click("lg-refine-once") && lg().links().find(mine_link_)->once, "«Только один раз»");
+            // «Схема»: entering the mine starts «Потерянная кирка».
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        }
+        case 22: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            const std::string l = std::to_string(mine_link_);
+            check(click("sc-add-" + l) && sc.palette_open(), "«+ Нода» on the link");
+            sc.set_search("переменную игры");
+            break;
+        }
+        case 23: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            check(click("sc-pal-api.game.set_var") && !sc.palette_open(), "«Задать переменную игры» added");
+            break;
+        }
+        case 24: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            const script::Graph* g = sc.graph(mine_link_);
+            if (!check(g != nullptr, "the link's scheme")) break;
+            u32 set = 0, tail = 0;
+            for (const script::GraphNode& n : g->nodes) {
+                if (n.def == "api.game.set_var") set = n.uid;
+                if (n.def == "logic.act") tail = n.uid;
+            }
+            for (bool more = true; more;) {
+                more = false;
+                for (const script::GraphLink& w : g->links)
+                    if (w.from_node == tail && w.from_pin == script::kFlowNext && w.to_node != set) {
+                        tail = w.to_node;
+                        more = true;
+                        break;
+                    }
+            }
+            const std::string l = std::to_string(mine_link_), s = std::to_string(set), t = std::to_string(tail);
+            check(set && tail && click("sc-pin-" + l + "-" + t + "-o-next") && click("sc-pin-" + l + "-" + s + "-i-in"), "wired after «Сделать»");
+            check(sc.set_value(mine_link_, set, "name", "quest.pickaxe") && sc.set_value(mine_link_, set, "value", "1"), "quest.pickaxe = 1");
+            check(lg().problem_of(mine_link_).empty() && sc.node_problem(mine_link_, set).empty(), "the scheme works");
+            zn_set_ = set;
+            lg().set_mode("links");
+            break;
+        }
+        case 25: {
+            if (wait(2)) return true;
+            // «Герой входит в Дальний зал»: as it comes (the place's name to the hero).
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("hero") && thing_click(thing_of(hall_)) && lg().picking(), "the hero, then «Дальний зал»");
+            break;
+        }
+        case 26: {
+            std::string offered;
+            for (usize i = 0; i < lg().pick_options(); ++i) offered += " «" + lg().pick_phrase(i) + "»";
+            const i64 at = option_of("Герой входит в Дальний зал");
+            check(at >= 0 && lg().pick(static_cast<usize>(at)), "«Герой входит в Дальний зал» among:" + offered);
+            hall_link_ = lg().selected_link();
+            check(hall_link_ && lg().problem_of(hall_link_).empty(), "works: " + lg().meaning_of(hall_link_));
+            // Ctrl+Z, Ctrl+Y in «Логика»: the same link back.
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lg().links().find(hall_link_), "Ctrl+Z takes the link away");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lg().links().find(hall_link_) && lg().phrase_of(hall_link_) == "Герой входит в Дальний зал", "Ctrl+Y brings it back");
+            click_tab(0);
+            break;
+        }
+        case 27: {
+            if (wait(2)) return true;
+            // A new name in «Зоны»: the link keeps working, with the new words; then back.
+            check(click_id(("zn-area-" + level::area_id_text(mine_)).c_str()) && lv().selected_area() == mine_, "«Шахта» picked in the list");
+            break;
+        }
+        case 28: {
+            if (wait(2)) return true;
+            check(shown("zn-link-0") && element_text("zn-link-0") == "«Герой входит в Шахту»",
+                  "the panel lists the link to «Шахта»: " + element_text("zn-link-0"));
+            check(lt_type("zn-name", "Штольня") && area(mine_)->name == "Штольня", "«Шахта» renamed «Штольня»");
+            click_tab(6);
+            break;
+        }
+        case 29: {
+            if (wait(2)) return true;
+            check(lg().phrase_of(mine_link_) == "Герой входит в Штольню" && lg().problem_of(mine_link_).empty(),
+                  "«Логика» says «Герой входит в Штольню», and it works");
+            click_tab(0);
+            break;
+        }
+        case 30: {
+            if (wait(2)) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(mine_)->name == "Шахта", "Ctrl+Z: «Шахта» again");
+            // Deleting it asks first: links depend on it.
+            entries_ = lv().history().cursor();
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(area(mine_) && lv().asking_delete() == mine_ && lv().history().cursor() == entries_, "Delete asks, deletes nothing");
+            break;
+        }
+        case 31: {
+            if (wait(2)) return true;
+            check(shown("zn-ask") && shown("zn-delete-confirm") && click_id("zn-delete-cancel") && area(mine_) && lv().asking_delete() == 0,
+                  "«Оставить»: it stays");
+            check(click_id("zn-delete") && lv().asking_delete() == mine_, "the bin asks again");
+            break;
+        }
+        case 32: {
+            if (wait(2)) return true;
+            check(click_id("zn-delete-confirm") && !area(mine_) && lv().history().undo_label() == "Удалить зону «Шахта»" &&
+                      lv().history().cursor() == entries_ + 1,
+                  "«Удалить всё равно»: deleted, one entry");
+            check(lv().area_note().find("нет такой зоны") != std::string::npos, lv().area_note());
+            click_tab(6);
+            break;
+        }
+        case 33: {
+            if (wait(2)) return true;
+            check(lg().links().find(mine_link_) && lg().problem_of(mine_link_).find("нет такой зоны") != std::string::npos,
+                  "the link stays, marked: " + lg().problem_of(mine_link_));
+            click_tab(0);
+            break;
+        }
+        case 34: {
+            if (wait(2)) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(mine_) && area(mine_)->name == "Шахта" && lv().level().areas() == zn_made_, "Ctrl+Z: «Шахта» back with its id");
+            click_tab(6);
+            break;
+        }
+        case 35: {
+            if (wait(2)) return true;
+            check(lg().problem_of(mine_link_).empty() && lg().phrase_of(mine_link_) == "Герой входит в Шахту", "and its link works again");
+            click_tab(0);
+            break;
+        }
+        case 36: {
+            if (wait(2)) return true;
+            // Saved, opened again: the same areas with their ids, the same spawn point; «Логика» still finds them.
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty() && std::filesystem::exists(example / "areas.json"), "Ctrl+S writes areas.json");
+            level::LevelAreas read;
+            check(level::load_areas(example, read) && read == zn_made_, "it reads back as made");
+            check(lv().open_folder(example) && lv().level().areas() == zn_made_ && lv().level().areas_error().empty() && lv().history().cursor() == 0,
+                  "the level opened again has them, with their ids");
+            click_tab(6);
+            break;
+        }
+        case 37: {
+            if (wait(2)) return true;
+            check(lg().problem_of(mine_link_).empty() && lg().problem_of(hall_link_).empty() &&
+                      lg().phrase_of(hall_link_) == "Герой входит в Дальний зал",
+                  "«Логика» finds both areas of the opened level");
+            const script::Graph* g = lg().scheme().graph(mine_link_);
+            const script::GraphNode* n = g ? g->find(zn_set_) : nullptr;
+            check(n && n->value("name") && *n->value("name") == "quest.pickaxe" && n->value("value") && *n->value("value") == "1",
+                  "the link's scheme sets quest.pickaxe to 1");
+            click_tab(0);
+            break;
+        }
+        case 38: {
+            if (wait(2)) return true;
+            // «Играть отсюда»: from the view's centre, the level's own folder.
+            lv().camera().x = zn_spawn_x_;
+            lv().camera().y = zn_spawn_y_ - 1;
+            check(lv().play_here(), "«Играть отсюда» finds a place by the entrance");
+            const auto cmd = lv().play_command(zn_spawn_x_, zn_spawn_y_);
+            check(cmd.size() >= 4 && utf8_path(cmd[3]) == example, "the game gets the example's folder");
+            lv().camera().x = mx - 40;
+            lv().camera().y = sy + 38;
+            check(lv().play_here(), "and from the stairs, inside «Шахта»");
+            // The example: the level, the game's links, the music. The repository's copy is this one (ids aside).
+            const std::filesystem::path made = zones_root() / "example";
+            std::error_code ec;
+            std::filesystem::create_directories(made / "level", ec);
+            std::filesystem::create_directories(made / "sounds", ec);
+            std::filesystem::copy_file(example / "areas.json", made / "level" / "areas.json", std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::copy_file(ed_.logic_file, made / "logic.json", std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::copy_file(ed_.sounds_folder / utf8_path("шахта.wav"), made / "sounds" / utf8_path("шахта.wav"),
+                                       std::filesystem::copy_options::overwrite_existing, ec);
+            // The level folder: areas.json and the objects of the chunks that were loaded (e.*.fwr, the generator's own,
+            // as every level saved by the editor has them); no tiles were painted (no r.*.fwr). The example keeps
+            // areas.json alone: without the other files the game makes the same world.
+            std::string tiles;
+            for (const auto& e : std::filesystem::directory_iterator(example, ec))
+                if (path_to_utf8(e.path().filename()).starts_with("r.")) tiles += " " + path_to_utf8(e.path().filename());
+            check(std::filesystem::is_regular_file(example / "areas.json") && tiles.empty(), "areas.json, no painted tiles:" + tiles);
+            const std::filesystem::path repo = ed_.game_dir.parent_path() / "examples" / "zones";
+            level::LevelAreas kept;
+            std::string error;
+            check(level::load_areas(repo / "level", kept, nullptr, &error) && error.empty(), "games/examples/zones/level/areas.json reads: " + error);
+            bool same = kept.areas.size() == zn_made_.areas.size() && kept.spawn == zn_made_.spawn && kept.spawn_x == zn_made_.spawn_x &&
+                        kept.spawn_y == zn_made_.spawn_y;
+            for (usize i = 0; same && i < kept.areas.size(); ++i) {
+                level::Area a = kept.areas[i];
+                a.id = zn_made_.areas[i].id;
+                same = a == zn_made_.areas[i];
+            }
+            check(same, "its areas and spawn point are the ones made here (ids aside): " + level::areas_json(kept));
+            std::string links = text_of(repo / "logic.json");
+            std::erase(links, '\r'); // a checkout on Windows may end its lines so
+            check(with_ids(text_of(made / "logic.json"), zn_made_, kept) == links, "its logic.json is the one made here, with its areas' ids");
+            check(text_of(made / "sounds" / utf8_path("шахта.wav")) == text_of(repo / "sounds" / utf8_path("шахта.wav")), "its music, byte for byte");
+            break;
+        }
+        case 39: {
+            // An areas.json that cannot be used: told, no areas meanwhile, not overwritten until the areas change.
+            const std::filesystem::path bad = zones_root() / "bad";
+            std::error_code ec;
+            std::filesystem::create_directories(bad, ec);
+            const std::string text = "{\"areas\": [{\"id\": \"0000000000000001\", \"name\": \"Шахта\", \"x0\": 5, \"y0\": 0, \"x1\": 2, \"y1\": 3}]}";
+            write_file_atomic(bad / "areas.json", {reinterpret_cast<const u8*>(text.data()), text.size()});
+            check(lv().open_folder(bad), "a level with a bad areas.json still opens");
+            check(lv().level().areas().areas.empty() && !lv().level().areas_error().empty(), "with no areas, and the reason: " + lv().level().areas_error());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(text_of(bad / "areas.json") == text, "saving without a change does not touch the author's file");
+            zn_bad_ = text;
+            break;
+        }
+        case 40: {
+            if (wait(2)) return true;
+            const std::filesystem::path bad = zones_root() / "bad";
+            check(shown("zn-error") && element_text("zn-error").find("areas.json") != std::string::npos &&
+                      element_text("zn-error").find("areas.broken.json") != std::string::npos,
+                  "the panel says what is wrong and what saving will do");
+            check(click_id("zn-tool-draw"), "«Новая зона»");
+            view_over(-30, vy() - 12, 0, vy() + 2);
+            drag_points(-20.5, vy() - 6.5, -10.5, vy() - 2.5);
+            check(lv().level().areas().areas.size() == 1, "an area drawn there");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelAreas read;
+            check(!lv().dirty() && text_of(bad / "areas.broken.json") == zn_bad_ && level::load_areas(bad, read) && read == lv().level().areas() &&
+                      lv().level().areas_error().empty(),
+                  "saved: the old file kept as areas.broken.json, areas.json the new one");
+            break;
+        }
+        case 41: {
+            if (wait(2)) return true;
+            check(!shown("zn-error"), "and the panel has nothing to say");
+            // An areas.json that cannot be written: the author is told, nothing is lost, the game does not start.
+            const std::filesystem::path locked = zones_root() / "locked";
+            std::error_code ec;
+            // A folder where the file is written first (areas.json.tmp, then renamed): the write fails as on a full
+            // disk or a locked folder; an areas.json in the way would only be put aside as a broken one.
+            std::filesystem::create_directories(locked / "areas.json.tmp" / utf8_path("в пути"), ec);
+            check(lv().open_folder(locked), "a level whose areas.json cannot be written");
+            check(click_id("zn-tool-draw"), "«Новая зона»");
+            view_over(-30, vy() - 12, 0, vy() + 2);
+            drag_points(-20.5, vy() - 6.5, -10.5, vy() - 2.5);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(lv().dirty() && lv().level().areas_changed() && lv().level().areas().areas.size() == 1, "not saved, the area still there, unsaved");
+            check(!lv().play_here(), "«Играть отсюда» does not start the game from an older level");
+            check(!std::filesystem::exists(locked / "areas.json"), "and no areas.json written");
+            std::filesystem::remove_all(locked / "areas.json.tmp", ec);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelAreas read;
+            check(!lv().dirty() && level::load_areas(locked, read) && read == lv().level().areas(), "once it can be written: saved");
+            break;
+        }
+        case 42: {
+            // The steps after these see the game's links, sounds and «Ресурсы» as they were: «Логика» taken back to
+            // where it was (the editor writes the file its own way; the content is compared), the file as it was.
+            while (lg().history().cursor() > zn_logic_entries_ && lg().history().can_undo()) lg().undo();
+            logic::Logic before;
+            check(before.parse(zn_logic_text_) && before.json() == lg().links().json(),
+                  "«Логика» is as before the example (its links are in the example's copy)");
+            write_file_atomic(ed_.logic_file, {reinterpret_cast<const u8*>(zn_logic_text_.data()), zn_logic_text_.size()});
+            check(click_tab(6), "the Logic tab");
+            break;
+        }
+        case 43: {
+            if (wait(2)) return true;
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        }
+        case 44: {
+            if (wait(2)) return true;
+            // The view of the schemes panned back with the mouse to where it was (a node added to the example's
+            // link brought it down to that link).
+            SchemeView& sc = lg().scheme();
+            Rml::Element* pane = ed_.find_element("lg-scheme");
+            if (!check(pane != nullptr, "the scheme pane")) break;
+            const Rml::Vector2f at = pane->GetAbsoluteOffset(Rml::BoxArea::Padding);
+            const f32 px = at.x + pane->GetClientWidth() - 30, py = at.y + pane->GetClientHeight() - 20;
+            const f32 dx = zn_pan_x_ - sc.pan_x(), dy = zn_pan_y_ - sc.pan_y();
+            mouse(SDL_EVENT_MOUSE_MOTION, px, py);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, px, py);
+            for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, px + dx * static_cast<f32>(i) / 4, py + dy * static_cast<f32>(i) / 4);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, px + dx, py + dy);
+            check(sc.pan_x() == zn_pan_x_ && sc.pan_y() == zn_pan_y_,
+                  "the schemes' view is back: " + std::to_string(sc.pan_x()) + ", " + std::to_string(sc.pan_y()));
+            check(click("lg-mode-links") && lg().mode() == "links", "«Связи»");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            lg().select_link(0);
+            check(lg().selected_thing().empty() && lg().selected_link() == 0 && lg().history().cursor() == zn_logic_entries_,
+                  "nothing selected, the history where it was");
+            click_tab(0);
+            break;
+        }
+        case 45: {
+            if (wait(2)) return true;
+            lv().list_sounds = zn_sounds_;
+            std::error_code ec;
+            std::filesystem::remove(ed_.sounds_folder / utf8_path("шахта.wav"), ec);
+            check(lv().open_folder(zn_main_), "the level of the steps above opens again");
+            lv().camera() = zn_view_;
+            key(SDLK_Q, SDL_KMOD_NONE);
+            break;
+        }
+        case 46:
+            check(lv().mode() == Mode::Select && lv().level().areas() == level::LevelAreas{}, "with no areas");
+            break;
+        default: break;
+        }
+        ++zn_step_;
         return true;
     }
 
@@ -11143,6 +11895,17 @@ private:
     std::vector<world::TileId> lt_area_;
     std::filesystem::path lt_main_;
     render::Camera2D lt_view_;
+    // The zones example
+    u32 zn_step_ = 0, mine_link_ = 0, hall_link_ = 0, zn_set_ = 0;
+    u64 mine_ = 0, hall_ = 0;
+    usize zn_logic_entries_ = 0, zn_entries_ = 0;
+    std::string zn_logic_text_, zn_bad_;
+    std::filesystem::path zn_main_;
+    render::Camera2D zn_view_, zn_cam_;
+    std::function<std::vector<std::filesystem::path>()> zn_sounds_;
+    level::LevelAreas zn_made_;
+    f64 zn_spawn_x_ = 0, zn_spawn_y_ = 0;
+    f32 zn_pan_x_ = 0, zn_pan_y_ = 0;
     int lg_step_ = 0;
     int st_step_ = 0, st_wait_ = 0;
     int ue_step_ = 0;

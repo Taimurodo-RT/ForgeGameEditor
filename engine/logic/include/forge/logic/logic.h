@@ -4,8 +4,9 @@
 //
 // An author puts the game's things on a board and draws arrows between them,
 // each with a verb: «Ключ открывает Дверь», «Шипы ранят героя», «Герой
-// собирает Монеты». A thing is an object template (every copy of it on every
-// level) or the hero. A link may be refined: only at night, only once, with
+// собирает Монеты», «Герой входит в Шахту». A thing is an object template
+// (every copy of it on every level), the hero, or an area of the level (a
+// named rectangle of the «Зоны» mode, which the hero comes into). A link may be refined: only at night, only once, with
 // a sound, with a hint when it cannot happen.
 //
 // Verbs are data (the game's verbs.json), so a game adds its own: a verb says
@@ -49,6 +50,10 @@ namespace forge::logic {
 
 // The hero: a thing every game has.
 inline constexpr std::string_view kHero = "hero";
+// An area of the level is the thing "area:" and its id (16 hex digits): a
+// renamed area keeps its links.
+inline constexpr std::string_view kAreaPrefix = "area:";
+bool is_area(std::string_view thing);
 
 // --- verbs ---------------------------------------------------------------
 
@@ -64,8 +69,9 @@ struct VerbDef {
     // героя).
     std::string object_case = "acc";
     // "touch": it happens when the hero touches one of the two things (the
-    // touched side; the hero's own side means the other one). "always": from
-    // the start, as long as the first thing is there.
+    // touched side; the hero's own side means the other one); an area is
+    // touched when the hero comes into it. "always": from the start, as long
+    // as the first thing is there.
     bool always = false;
     Side touch = Side::B;
     // The hero must carry a copy of this side's thing ("" none).
@@ -80,7 +86,8 @@ struct VerbDef {
     // What happens, in plain words for the editor; {a} {b} names, {a:gen}…
     // their forms.
     std::string about;
-    // Which things fit each side: "hero", "thing" (not the hero) or "" any.
+    // Which things fit each side: "hero", "thing" (a template: not the hero,
+    // not an area), "area" or "" any.
     std::string a_is, b_is;
     // A thing on that side must have one of these blocks («Подбирается»:
     // "pickup», «Дверь»: "door"); empty: any. Only for offering verbs: a
@@ -211,8 +218,9 @@ struct Thing {
     std::string name;     // as the author wrote it: «Ключ от кузницы»
     bool animate = false; // a person or an animal: «вижу героя», not «вижу герой»
     bool plural = false;  // «Шипы», «Монеты»
+    bool area = false;    // an area of the level («Шахта»), not a template
     Forms forms;
-    std::vector<std::string> blocks; // the template's blocks (none for the hero)
+    std::vector<std::string> blocks; // the template's blocks (none for the hero or an area)
 };
 
 // The forms of a name, guessed from its endings: the first word (and the
@@ -224,6 +232,8 @@ bool looks_plural(std::string_view name);
 Thing hero_thing();
 // A template as a thing (animate when it is a villager, critter or player).
 Thing thing_of(const objects::Library& library, const objects::Template& t);
+// An area of the level as a thing: id is "area:" and its id, name its name.
+Thing area_thing(std::string_view id, std::string_view name);
 
 using FindThing = std::function<const Thing*(std::string_view id)>;
 
@@ -366,6 +376,17 @@ public:
     // Copies of listening templates get their script and a touch trigger,
     // now and whenever one appears (a chunk loads, a copy is made).
     void attach(scene::Scene& scene);
+    // The level's areas: things links may name besides the templates (load()
+    // compiles their links). Each one a link listens to gets an entity of its
+    // own running its module, with no Position: it is no chunk's, so it is
+    // never unloaded, doubled or saved with one.
+    void set_areas(std::vector<Thing> areas);
+    // The hero came into an area or left it: the area's links run with this
+    // tick's triggers (ScriptHost::enter). The game checks where the hero is.
+    void area_event(std::string_view area, flecs::entity_t hero, bool entered);
+    // The entity standing for an area; 0 when no link listens to it.
+    flecs::entity_t area_entity(std::string_view area) const;
+    bool is_area_entity(flecs::entity_t e) const;
     // The link of a line in a module (for errors): index into the links
     // loaded, or -1.
     i32 link_at(std::string_view module, i32 line) const;
@@ -378,6 +399,7 @@ public:
 
 private:
     void attach_one(flecs::entity e);
+    void sync_areas();
 
     script::ScriptHost& host_;
     const objects::Library& library_;
@@ -389,6 +411,8 @@ private:
     std::unordered_map<u64, bool> touch_;            // template key -> needs a trigger
     scene::Scene* scene_ = nullptr;
     flecs::observer observer_;
+    std::vector<Thing> areas_;
+    std::unordered_map<std::string, flecs::entity_t> area_entities_; // area -> its entity
 };
 
 } // namespace forge::logic

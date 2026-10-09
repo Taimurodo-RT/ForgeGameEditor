@@ -158,7 +158,7 @@
                 <div class="mode" data-class-selected="lv_mode == 'objects'" data-event-click="lv_mode('objects')"><icon name="deployed_code"/><span>Объекты</span></div>
                 <div id="mode-physics" class="mode" data-class-selected="lv_mode == 'physics'" data-event-click="lv_mode('physics')"><icon name="water_drop"/><span>Физика</span></div>
                 <div id="mode-light" class="mode" data-class-selected="lv_mode == 'light'" data-event-click="lv_mode('light')"><icon name="lightbulb"/><span>Свет</span></div>
-                <div class="mode soon" data-class-selected="lv_mode == 'zones'" data-event-click="lv_mode('zones')"><icon name="flag"/><span>Зоны</span></div>
+                <div id="mode-zones" class="mode" data-class-selected="lv_mode == 'zones'" data-event-click="lv_mode('zones')"><icon name="flag"/><span>Зоны</span></div>
             </div>
             <div class="divider vertical"/>
             <div class="tools row" data-if="lv_mode == 'tiles'">
@@ -192,7 +192,13 @@
                 <div id="lt-tool-select" class="icon-button" data-class-selected="lv_lt_tool == 'select'" data-event-click="lv_lt_tool('select')"><icon name="near_me"/></div>
                 <div id="lt-tool-source" class="icon-button" data-class-selected="lv_lt_tool == 'source'" data-event-click="lv_lt_tool('source')"><icon name="lightbulb"/></div>
             </div>
-            <span class="muted mode-hint" data-if="lv_mode != 'tiles' && lv_mode != 'physics' && lv_mode != 'light'">{{ lv_mode_help }}</span>
+            <div class="tools row" data-if="lv_mode == 'zones'">
+                <div id="zn-tool-select" class="icon-button" data-class-selected="lv_zn_tool == 'select'" data-event-click="lv_zn_tool('select')"><icon name="near_me"/></div>
+                <div id="zn-tool-draw" class="icon-button" data-class-selected="lv_zn_tool == 'draw'" data-event-click="lv_zn_tool('draw')"><icon name="highlight_alt"/></div>
+                <div id="zn-tool-spawn" class="icon-button" data-class-selected="lv_zn_tool == 'spawn'" data-event-click="lv_zn_tool('spawn')"><icon name="person_pin_circle"/></div>
+            </div>
+            <span class="muted mode-hint" data-if="lv_mode != 'tiles' && lv_mode != 'physics' && lv_mode != 'light' && lv_mode != 'zones'">{{ lv_mode_help }}</span>
+            <span class="muted mode-hint" data-if="lv_mode == 'zones'">{{ lv_zn_tool_help }}</span>
             <span class="muted mode-hint" data-if="lv_mode == 'physics'">{{ lv_ph_tool_help }}</span>
             <span class="muted mode-hint" data-if="lv_mode == 'light'">{{ lv_lt_tool_help }}</span>
             <div class="grow"/>
@@ -219,6 +225,10 @@
 
             <div id="level-view" class="dock-pane">
                 <div class="viewport-label row gap-2"><icon name="landscape" class="s"/><span>{{ lv_mode_name }} · {{ lv_place }}</span><span id="lt-view-preview" data-if="lv_lt_previewing">· просмотр {{ lv_lt_preview }}, в уровне {{ lv_lt_time }}</span></div>
+                <div data-if="lv_mode == 'zones'">
+                    <div data-for="l : lv_zn_labels" class="zn-label" data-class-selected="l.selected" data-class-spawn="l.spawn" data-attr-id="'zn-label-' + l.id"
+                         data-style-left="l.x + 'px'" data-style-top="l.y + 'px'">{{ l.name }}</div>
+                </div>
             </div>
 
             <div id="pane-palette" class="dock-pane column">
@@ -248,7 +258,23 @@
                         <div id="lt-pal-source" class="pal-tile row" data-class-selected="lv_lt_tool == 'source'" data-event-click="lv_lt_tool('source')"><icon name="lightbulb"/><span class="name">Источник света</span></div>
                     </div>
                 </div>
-                <div class="pane-scroll" data-if="lv_mode != 'objects' && lv_mode != 'select' && lv_mode != 'physics' && lv_mode != 'light'">
+                <div class="pane-scroll" data-if="lv_mode == 'zones'">
+                    <div class="pal-group">
+                        <div class="label-small muted pal-title">Зоны уровня</div>
+                        <div id="zn-pal-select" class="pal-tile row" data-class-selected="lv_zn_tool == 'select'" data-event-click="lv_zn_tool('select')"><icon name="near_me"/><span class="name">Выбор зоны</span></div>
+                        <div id="zn-pal-draw" class="pal-tile row" data-class-selected="lv_zn_tool == 'draw'" data-event-click="lv_zn_tool('draw')"><icon name="highlight_alt"/><span class="name">Новая зона</span></div>
+                        <div id="zn-pal-spawn" class="pal-tile row" data-class-selected="lv_zn_tool == 'spawn'" data-event-click="lv_zn_tool('spawn')"><icon name="person_pin_circle"/><span class="name">Точка появления</span></div>
+                    </div>
+                    <div class="pal-group">
+                        <div class="label-small muted pal-title">На уровне</div>
+                        <div data-for="r : lv_zn_areas" class="pal-tile row" data-class-selected="r.selected" data-attr-id="'zn-area-' + r.id" data-attr-title="r.about" data-event-click="lv_zn_pick(r.id)">
+                            <icon name="flag"/><span class="name">{{ r.name }}</span><span class="muted body-small">{{ r.about }}</span>
+                        </div>
+                        <div id="zn-area-spawn" class="pal-tile row" data-if="lv_zn_has_spawn" data-class-selected="lv_zn_spawn_sel" data-event-click="lv_zn_pick_spawn"><icon name="person_pin_circle"/><span class="name">Старт героя</span></div>
+                        <div class="muted body-small pal-title" data-if="lv_zn_areas.size == 0">Зон нет: нарисуйте первую инструментом «Новая зона».</div>
+                    </div>
+                </div>
+                <div class="pane-scroll" data-if="lv_mode != 'objects' && lv_mode != 'select' && lv_mode != 'physics' && lv_mode != 'light' && lv_mode != 'zones'">
                     <div data-for="g : lv_palette" class="pal-group">
                         <div class="label-small muted pal-title">{{ g.name }}</div>
                         <div data-for="t : g.tiles" class="pal-tile row" data-class-selected="t.index == lv_tile"
@@ -390,6 +416,51 @@
                             </div></div>
                         </div>
                         <div class="muted body-small">В игре вокруг героя есть ещё его собственный слабый свет, как раньше; в редакторе героя нет.</div>
+                    </div>
+                    <div data-if="lv_mode == 'zones'">
+                        <div id="zn-error" class="body-small error-text" data-if="lv_zn_error != ''">{{ lv_zn_error }}</div>
+                        <div class="section-title">{{ lv_zn_tool_name }}</div>
+                        <div class="muted body-small">{{ lv_zn_tool_help }}</div>
+                        <div id="zn-note" class="body-small" data-if="lv_zn_note != ''">{{ lv_zn_note }}</div>
+                        <div class="section-title">Зона</div>
+                        <div class="muted body-small" data-if="!lv_zn_has_area">Ничего не выбрано: щёлкните зону инструментом «Выбор зоны» или в списке слева.</div>
+                        <div data-if="lv_zn_has_area">
+                            <div class="prop row gap-2" title="до 60 знаков; Enter — готово">
+                                <span class="prop-label">Имя</span>
+                                <div class="prop-value row gap-2">
+                                    <input id="zn-name" type="text" class="small grow" data-attr-value="lv_zn_name" data-event-change="lv_zn_name_text(ev.value, ev.linebreak)" data-event-blur="lv_zn_name_commit"/>
+                                    <div id="zn-delete" class="icon-button small" title="Удалить зону (Delete)" data-event-click="lv_zn_delete"><icon name="delete" class="s"/></div>
+                                </div>
+                            </div>
+                            <div id="zn-bounds" class="muted body-small">{{ lv_zn_bounds }}</div>
+                            <div class="prop row gap-2" title="звуки игры (game/sounds), WAV и OGG; звук из «Ресурсов» копируется туда">
+                                <span class="prop-label">Музыка</span>
+                                <div class="prop-value row gap-2">
+                                    <select id="zn-music" class="ue-select grow" data-event-change="lv_zn_music">
+                                        <option value="">Без музыки</option><option data-for="snd : lv_zn_sounds" data-attr-value="snd.value">{{ snd.name }}</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="zn-music-note" class="body-small error-text" data-if="lv_zn_music_note != ''">{{ lv_zn_music_note }}</div>
+                            <div class="muted body-small">Пока герой в зоне, играет её музыка. Окно или меню со своей музыкой важнее её; музыка экранов поверх игры играет, где музыки места нет.</div>
+                            <div id="zn-ask" class="column" data-if="lv_zn_asking">
+                                <div class="body-small error-text">Эта зона есть в связях «Логики». {{ lv_zn_ask_text }}</div>
+                                <div class="row gap-2">
+                                    <div id="zn-delete-confirm" class="button outlined small" data-event-click="lv_zn_delete_confirm"><icon name="delete"/>Удалить всё равно</div>
+                                    <div id="zn-delete-cancel" class="button filled small" data-event-click="lv_zn_delete_cancel">Оставить</div>
+                                </div>
+                            </div>
+                            <div class="section-title">В «Логике»</div>
+                            <div class="muted body-small" data-if="lv_zn_links.size == 0">Связей нет. Во вкладке «Логика» зона — вещь доски: «Герой входит в …».</div>
+                            <div data-for="l : lv_zn_links" class="body-small" data-attr-id="'zn-link-' + it_index">{{ l }}</div>
+                        </div>
+                        <div class="section-title">Точка появления</div>
+                        <div class="row gap-2">
+                            <span id="zn-spawn" class="body-small grow">{{ lv_zn_spawn }}</span>
+                            <div id="zn-spawn-delete" class="icon-button small" title="Убрать точку появления (Delete)" data-if="lv_zn_spawn_sel" data-event-click="lv_zn_delete"><icon name="delete" class="s"/></div>
+                        </div>
+                        <div id="zn-spawn-note" class="body-small" data-class-error-text="lv_zn_spawn_bad" data-if="lv_zn_spawn_note != ''">{{ lv_zn_spawn_note }}</div>
+                        <div class="muted body-small">Зоны и точка появления — данные уровня: попадают в историю и сохраняются (Ctrl+S) в areas.json рядом с участками.</div>
                     </div>
                     <div data-if="lv_mode == 'objects' || lv_mode == 'select'">
                         <div class="muted body-small" data-if="lv_sel_count == 0">Ничего не выбрано.</div>
@@ -958,7 +1029,8 @@
                         <span class="phrase">{{ w.phrase }}</span>
                         <span class="problem" data-if="w.problem != ''">{{ w.problem }}</span>
                     </div>
-                    <div id="lg-thing-scheme" class="command" data-attr-title="'Что вещь делает сама по себе, без связей: при старте, каждый шаг, при ударе…'" data-event-click="lg_thing_scheme"><icon name="category"/><span>{{ lg_sel_own ? 'Открыть её свою схему' : 'Своя схема вещи…' }}</span></div>
+                    <div id="lg-area-note" class="muted body-small" data-if="lg_sel_area">Зона уровня. Её границы, имя и музыка правятся во вкладке «Уровень», режим «Зоны»; здесь — что бывает, когда герой в неё входит.</div>
+                    <div id="lg-thing-scheme" class="command" data-if="!lg_sel_area" data-attr-title="'Что вещь делает сама по себе, без связей: при старте, каждый шаг, при ударе…'" data-event-click="lg_thing_scheme"><icon name="category"/><span>{{ lg_sel_own ? 'Открыть её свою схему' : 'Своя схема вещи…' }}</span></div>
                     <div id="lg-remove-thing" class="command" data-event-click="lg_remove_thing"><icon name="remove_circle_outline"/><span>{{ lg_sel_links > 0 ? 'Убрать с доски вместе со связями' : 'Убрать с доски' }}</span></div>
                 </div>
                 <div data-if="!lg_has_link && !lg_has_thing" class="column">

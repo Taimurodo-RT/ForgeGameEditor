@@ -9,9 +9,10 @@
 // places through it, so one editor serves every game.
 //
 // Changes are kept as region files in the level folder (tiles of changed
-// chunks, objects of visited chunks), physics.json (the world's gravity) and
-// light.json (the time of day); a new game starts from a copy of that
-// folder, and the generator fills in the rest.
+// chunks, objects of visited chunks), physics.json (the world's gravity),
+// light.json (the time of day) and areas.json (named areas, the spawn point);
+// a new game starts from a copy of that folder, and the generator fills in
+// the rest.
 
 #include "forge/core/math.h"
 #include "forge/core/types.h"
@@ -29,6 +30,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace forge::level {
@@ -113,6 +115,69 @@ inline constexpr f32 kMaxLightRadius = render::kMaxLampRadius;
 // radius. Values a file got wrong are kept within the limits; a number that
 // is not finite gives no light.
 render::PointLight point_light(f64 x, f64 y, const LightSource& s);
+
+// The «Зоны» mode's data: named rectangles of the level (areas) and where a
+// new game puts its hero (the spawn point), kept in areas.json in the level
+// folder, not in its chunks (forge/level/areas.h has the rest). In code they
+// are areas: sim::Zones are how awake the simulation is.
+//
+//   {"areas": [{"id": "9f2c41d07a5be318", "name": "Шахта", "x0": 10, "y0": 20, "x1": 40, "y1": 35,
+//               "music": "шахта.wav"}],
+//    "spawn": {"x": 12.5, "y": 34}}
+//
+// An area has an id of its own (random, as LevelId): links name it by that
+// ("area:" and the id), so renaming it keeps them. Its rectangle is in whole
+// tiles, [x0, x1) × [y0, y1): a point on its left or top edge is in it, on
+// its right or bottom edge is not, and chunk borders mean nothing to it. Its
+// music is a file of the game's sounds. Without areas.json a level has no
+// areas and no spawn point: a new game starts where the game always did.
+struct Area {
+    u64 id = 0;
+    std::string name;
+    i32 x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    std::string music; // a file of the game's sounds folder; "" none
+    bool contains(f64 x, f64 y) const { return x >= x0 && x < x1 && y >= y0 && y < y1; }
+    i64 size() const { return static_cast<i64>(x1 - x0) * static_cast<i64>(y1 - y0); }
+    friend bool operator==(const Area&, const Area&) = default;
+};
+
+struct LevelAreas {
+    std::vector<Area> areas; // in the order drawn
+    bool spawn = false;      // the level has a spawn point
+    f64 spawn_x = 0, spawn_y = 0; // the point under the hero's feet, in tiles
+    const Area* find(u64 id) const;
+    Area* find(u64 id);
+    friend bool operator==(const LevelAreas&, const LevelAreas&) = default;
+};
+
+inline constexpr usize kMaxAreas = 1024;
+inline constexpr usize kMaxAreaName = 60;  // characters
+inline constexpr i32 kMaxAreaSide = 4096;  // tiles
+inline constexpr f64 kMaxSpawn = 1e7;      // tiles from the origin, each way
+
+// "9f2c41d07a5be318": 16 hex digits, as areas.json and links keep it.
+std::string area_id_text(u64 id);
+// 1..16 hex digits, not 0.
+bool parse_area_id(std::string_view text, u64& id);
+// A name as typed: spaces around it go; "" when nothing is left.
+std::string clean_area_name(std::string_view text);
+// A plain file name ("шахта.wav"): no folders, not "." or "..".
+bool valid_music_name(std::string_view name);
+// What is wrong with an area, in the author's words; "" when nothing.
+std::string area_problem(const Area& a);
+
+// Reads folder/areas.json. No file: true, out unchanged, *found false. A file
+// that cannot be used (not JSON, a field of the wrong kind, an area with no
+// id, the same id twice, a rectangle that is empty or too big, a spawn point
+// that is not a number): false, out unchanged, *error in the author's words.
+bool load_areas(const std::filesystem::path& folder, LevelAreas& out, bool* found = nullptr, std::string* error = nullptr);
+// Writes folder/areas.json (refuses areas with problems).
+bool save_areas(const std::filesystem::path& folder, const LevelAreas& a, std::string* error = nullptr);
+std::string areas_json(const LevelAreas& a);
+inline constexpr const char* kAreasFile = "areas.json";
+// Where an areas.json that could not be read is kept when the level writes a
+// new one over it.
+inline constexpr const char* kBrokenAreasFile = "areas.broken.json";
 
 // What the world view shows besides the tiles.
 struct ViewOptions {
@@ -245,13 +310,15 @@ public:
     void ensure_loaded(const world::Rect& tiles);
 
     // Writes changed chunks and objects to the folder, physics.json when the
-    // physics changed and light.json when the time of day did.
+    // physics changed, light.json when the time of day did and areas.json
+    // when the areas did.
     struct SaveReport {
         bool ok = false;
         u32 tile_chunks = 0;
         u32 object_chunks = 0;
         bool physics = false; // physics.json written
         bool light = false;   // light.json written
+        bool areas = false;   // areas.json written
         f64 ms = 0;
         std::string error; // when not ok, in the author's words
     };
@@ -272,6 +339,16 @@ public:
     bool light_changed() const { return light_ != light_saved_; }
     // Why light.json could not be read (noon is used then).
     const std::string& light_error() const { return light_error_; }
+
+    // The areas and the spawn point (areas.json, else none).
+    const LevelAreas& areas() const { return areas_; }
+    void set_areas(const LevelAreas& a);
+    bool areas_changed() const { return areas_ != areas_saved_; }
+    // Why areas.json could not be read (no areas then; the file stays as it
+    // is, and is kept as areas.broken.json when the areas are saved anew).
+    const std::string& areas_error() const { return areas_error_; }
+    // Bumped by every change of the areas (for panels that show them).
+    u64 areas_version() const { return areas_version_; }
 
     // Bumped by every edit made through set_tile (for "unsaved" marks).
     u64 edits() const { return edits_; }
@@ -307,6 +384,9 @@ private:
     std::string physics_error_;
     LevelLight light_, light_saved_;
     std::string light_error_;
+    LevelAreas areas_, areas_saved_;
+    std::string areas_error_;
+    u64 areas_version_ = 0;
 };
 
 // Copies a level folder into a game's world folder (a new game starts from
