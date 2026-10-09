@@ -1005,6 +1005,14 @@ void LevelEditor::set_pull_dir(PullDir d) {
     if (gesture()) return;
     const level::LevelPhysics before = level_->physics();
     f32 s = pull_strength();
+    if (s > level::kMaxGravity) {
+        // A slanted pull from physics.json (each part up to 200) is longer
+        // than any one way may be.
+        ph_note_ = "Сила гравитации мира " + number(s) + " больше " + number(level::kMaxGravity) + ": в новом направлении " +
+                   number(level::kMaxGravity);
+        FORGE_WARN("%s", ph_note_.c_str());
+        s = level::kMaxGravity;
+    }
     if (s > 0) ph_strength_ = s;
     else s = ph_strength_;
     level::LevelPhysics after;
@@ -1272,6 +1280,9 @@ void LevelEditor::pour(i32 x0, i32 y0, i32 x1, i32 y1) {
         FORGE_WARN("%s", ph_note_.c_str());
         return;
     }
+    // The author's level, not the trial's: a cell the trial emptied is still
+    // taken, one it filled is free.
+    edit_begins();
     std::vector<level::Cell> rect, free;
     level::rect_cells(x0, y0, x1, y1, true, rect);
     usize taken = 0, away = 0;
@@ -1291,7 +1302,6 @@ void LevelEditor::pour(i32 x0, i32 y0, i32 x1, i32 y1) {
         FORGE_INFO("%s", ph_note_.c_str());
         return;
     }
-    edit_begins();
     auto stroke = std::make_unique<level::TileStroke>(*level_, fill->name + ": " + size);
     stroke->paint(fill->layer, free, fill->value);
     history_.execute(std::move(stroke));

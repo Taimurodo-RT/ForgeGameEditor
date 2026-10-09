@@ -1979,7 +1979,7 @@ private:
         return true;
     }
     // --- the level's physics («Физика»): games/examples/physics made with the mouse ---
-    static constexpr u32 kPhysLast = 25;
+    static constexpr u32 kPhysLast = 32;
     // The example, as this run makes it (the folder is new each run).
     static std::filesystem::path phys_root() { return std::filesystem::temp_directory_path() / "forge_editor_physics"; }
     i32 vy() { return ed_.level_module.slice_generator().village_y(); }
@@ -2376,14 +2376,68 @@ private:
             check(area(28, v - 30, 92, v + 2) == ph_area_ && lv().level().find(coins_).is_valid(), "the level is as before the trial");
             break;
         case 16:
+            // Water poured while the trial runs goes by the author's level, not the trial's: the trial is put back
+            // first. A rectangle over the author's sand, which the trial has let fall: nothing to pour.
+            check(click_id("ph-trial") && lv().trial_running(), "the trial for pouring");
+            break;
+        case 17: {
+            if (wait(60)) return true;
+            check(count_tiles(1, world::TileSand, 52, v - 12, 55, v - 10) == 0 && at(53, v - 11, 1) == 0,
+                  "in the trial the sand has fallen: its cells are empty there");
+            check(click_id("ph-tool-water"), "the water tool during the trial");
+            entries_ = lv().history().cursor();
+            to_cell(52, v - 12);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(55, v - 10);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(!lv().trial_running() && at(53, v - 11, 1) == world::TileSand && water_in(52, v - 12, 55, v - 10) == 0,
+                  "the author's sand: the trial is put back, no water over the sand");
+            check(lv().history().cursor() == entries_ && lv().phys_note().find("свободных клеток нет") != std::string::npos,
+                  "no history entry, and the note says so: " + lv().phys_note());
+            check(area(28, v - 30, 92, v + 2) == ph_area_, "the level is the author's");
+            break;
+        }
+        case 18:
+            check(click_id("ph-trial") && lv().trial_running(), "the trial again");
+            break;
+        case 19: {
+            // A rectangle of both: the author's sand (taken, though the trial emptied it) and cells free for the
+            // author that the trial's fallen sand fills now (free: they get water).
+            if (wait(60)) return true;
+            u32 filled = 0; // free for the author, taken in the trial
+            for (i32 y = v - 9; y <= v - 1; ++y)
+                for (i32 x = 52; x <= 53; ++x) filled += at(x, y, 1) != 0 || at(x, y, 2) != 0;
+            check(filled > 0, "in the trial the fallen sand and water fill free cells: " + std::to_string(filled));
+            entries_ = lv().history().cursor();
+            to_cell(52, v - 12);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(53, v - 1);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(!lv().trial_running() && lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Вода: 2 × 12",
+                  "one history entry, the trial put back first");
+            check(water_in(52, v - 9, 53, v - 1) == 18 && count_tiles(1, 0, 52, v - 9, 53, v - 1) == 18,
+                  "the 18 cells free for the author get water, the trial's sand is gone from them");
+            check(count_tiles(1, world::TileSand, 52, v - 12, 53, v - 10) == 6 && water_in(52, v - 12, 53, v - 10) == 0,
+                  "the author's 6 cells of sand stay sand");
+            check(lv().phys_note().find("залито 18") != std::string::npos && lv().phys_note().find("не тронуты: 6") != std::string::npos,
+                  "the note: " + lv().phys_note());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(28, v - 30, 92, v + 2) == ph_area_, "Ctrl+Z: the author's level");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(water_in(52, v - 9, 53, v - 1) == 18, "Ctrl+Y: the water again");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(area(28, v - 30, 92, v + 2) == ph_area_ && lv().history().cursor() == entries_, "Ctrl+Z: one step back");
+            break;
+        }
+        case 20:
             // Far away and back: the point's chunk goes and comes again.
             lv().camera().x = ph_cam_ + 3000;
             break;
-        case 17:
+        case 21:
             if (hold(!point_entity().is_valid() && point_count() == 0, "the point's chunk unloads far away")) return true;
             lv().camera().x = ph_cam_;
             break;
-        case 18: {
+        case 22: {
             if (hold(point_entity().is_valid() && lv().level().find(coins_).is_valid(), "the point comes back")) return true;
             const sim::GravitySource g = point_source();
             check(point_count() == 1 && point_x() == 68.5 && g.radius == 10 && g.strength == 60, "one point, as it was");
@@ -2401,7 +2455,7 @@ private:
             check(point_count() == 1, "Ctrl+Z: back");
             break;
         }
-        case 19: {
+        case 23: {
             key(SDLK_S, SDL_KMOD_CTRL);
             check(!lv().dirty(), "Ctrl+S saves the example");
             level::LevelPhysics p;
@@ -2417,7 +2471,7 @@ private:
             check(lv().level().find(coins_).is_valid(), "and its coins");
             break;
         }
-        case 20: {
+        case 24: {
             check(element_text("ph-dir") == "вниз" && input_value("ph-strength") == "30", "the panel reads the saved pull");
             // Deleted after loading, then back with Ctrl+Z.
             click_cell(68, v - 13);
@@ -2467,7 +2521,7 @@ private:
             check(a == b, "its point and coins are the ones made here: " + list);
             break;
         }
-        case 21: {
+        case 25: {
             // A physics.json that cannot be used: told, the game's pull meanwhile, not overwritten.
             const std::filesystem::path bad = phys_root() / "bad";
             std::error_code ec;
@@ -2483,7 +2537,7 @@ private:
             check(std::string(bytes.begin(), bytes.end()) == text, "saving does not touch the author's file");
             break;
         }
-        case 22: {
+        case 26: {
             check(shown("ph-error") && element_text("ph-error").find("physics.json") != std::string::npos, "the panel says what is wrong");
             check(click_id("ph-dir-next"), "the author sets the pull");
             key(SDLK_S, SDL_KMOD_CTRL);
@@ -2493,7 +2547,7 @@ private:
                   "now the file is good: left 40");
             break;
         }
-        case 23: {
+        case 27: {
             check(!shown("ph-error"), "and the panel has nothing to say");
             // A file that cannot be written: the author is told, nothing is lost, the game does not start.
             const std::filesystem::path locked = phys_root() / "locked";
@@ -2509,11 +2563,53 @@ private:
             check(!lv().dirty(), "once it can be written: saved");
             break;
         }
-        case 24:
+        case 28: {
+            // A slanted pull in physics.json (each part within 200, 282.84 long): opened and saved untouched; the
+            // direction button gives a pull that can be saved (200 the new way), one step of history.
+            const std::filesystem::path slant = phys_root() / "slant";
+            std::error_code ec;
+            std::filesystem::create_directories(slant, ec);
+            check(level::save_physics(slant, {200, 200}), "physics.json 200, 200");
+            read_file(slant / "physics.json", ph_bytes_);
+            check(lv().open_folder(slant), "a level with a slanted pull opens");
+            break;
+        }
+        case 29: {
+            if (wait(3)) return true; // the panel shows it a few frames
+            const std::filesystem::path slant = phys_root() / "slant";
+            check(lv().level().physics() == level::LevelPhysics{200, 200} && !lv().dirty() && lv().level().physics_error().empty(),
+                  "its pull as written, nothing changed by the panel");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            std::vector<u8> bytes;
+            read_file(slant / "physics.json", bytes);
+            check(!lv().dirty() && bytes == ph_bytes_, "Ctrl+S leaves the file as it was");
+            entries_ = lv().history().cursor();
+            check(element_text("ph-dir") == "вниз" && click_id("ph-dir-next"), "«>» of the direction");
+            const level::LevelPhysics left{-200, 0};
+            check(lv().level().physics() == left && level::valid_physics(lv().level().physics()) &&
+                      lv().history().cursor() == entries_ + 1,
+                  "left 200, a pull that can be saved, one entry");
+            check(lv().phys_note().find("больше 200") != std::string::npos, "the note says why 200: " + lv().phys_note());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().physics() == level::LevelPhysics{200, 200}, "Ctrl+Z: 200, 200 again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().physics() == left, "Ctrl+Y: left 200");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelPhysics p;
+            check(!lv().dirty() && level::load_physics(slant, p) && p == left, "saved: physics.json left 200");
+            check(lv().open_folder(slant), "opened again");
+            break;
+        }
+        case 30:
+            check(lv().level().physics() == level::LevelPhysics{-200, 0} && element_text("ph-dir") == "влево" &&
+                      input_value("ph-strength") == "200",
+                  "left 200 in the level and in the panel");
+            break;
+        case 31:
             check(lv().open_folder(ph_main_), "the level of the steps above opens again");
             key(SDLK_Q, SDL_KMOD_NONE);
             break;
-        case 25:
+        case 32:
             check(lv().mode() == Mode::Select && lv().level().physics() == level::LevelPhysics{0, 40}, "with the game's pull");
             break;
         default: break;
@@ -10522,6 +10618,7 @@ private:
     bool ph_dirty_ = false;
     f64 ph_cam_ = 0;
     std::vector<world::TileId> ph_area_;
+    std::vector<u8> ph_bytes_;
     std::filesystem::path ph_main_;
     int lg_step_ = 0;
     int st_step_ = 0, st_wait_ = 0;
