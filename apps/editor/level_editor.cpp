@@ -5,12 +5,14 @@
 #include "forge/core/path.h"
 #include "forge/data/json.h"
 #include "forge/editor/inspector.h"
+#include "forge/sim/gravity.h"
 
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 
 namespace forge::editor_app {
 
@@ -75,12 +77,48 @@ const ModeInfo kModes[] = {
     {Mode::Tiles, "tiles", "Тайлы", "Рисуйте мир плитками по слоям: стены, блоки, жидкости.", ""},
     {Mode::Objects, "objects", "Объекты", "Выберите объект слева и щёлкайте по миру, чтобы ставить. Правая кнопка или Esc: снова выбор, Delete удаляет.",
      ""},
-    {Mode::Physics, "physics", "Физика", "Гравитация мира и её точки, зоны воды и песка, проба течения воды прямо в редакторе.",
-     "позже, после библиотеки объектов"},
+    {Mode::Physics, "physics", "Физика",
+     "Гравитация мира, точки гравитации, вода и песок. «Проба» пускает воду и песок прямо здесь, «Сбросить» возвращает уровень.", ""},
     {Mode::Light, "light", "Свет", "Факелы и другие источники, время суток, вид «как в игре».", "позже, после библиотеки объектов"},
     {Mode::Zones, "zones", "Зоны", "Области («Деревня», «Шахта»), точка появления героя, триггеры квестов, звук и музыка мест.",
      "позже, вместе с редактором сюжета"},
 };
+
+struct PhysToolInfo {
+    PhysTool tool;
+    const char* id;
+    const char* name;
+    const char* help;
+};
+const PhysToolInfo kPhysTools[] = {
+    {PhysTool::Select, "select", "Выбор точки",
+     "Щёлкните по центру точки, чтобы выбрать её. Тяните центр, чтобы передвинуть; окружность выбранной точки — чтобы изменить "
+     "радиус. Пустое место двигает вид, Delete удаляет точку."},
+    {PhysTool::Point, "point", "Точка гравитации",
+     "Нажмите там, где будет центр, и тяните до нужного радиуса; простой щелчок даёт радиус 8. Esc или правая кнопка во время "
+     "перетаскивания отменяют: точки не будет."},
+    {PhysTool::Water, "water", "Вода",
+     "Протяните прямоугольник: вода нальётся только в пустые клетки (без блока и без жидкости), занятые останутся как были."},
+    {PhysTool::Sand, "sand", "Песок",
+     "Протяните прямоугольник: песок ляжет только в пустые клетки (без блока и без жидкости), занятые останутся как были."},
+};
+const PhysToolInfo& phys_info(PhysTool t) {
+    for (const PhysToolInfo& i : kPhysTools)
+        if (i.tool == t) return i;
+    return kPhysTools[0];
+}
+const char* const kPullNames[] = {"вниз", "влево", "вверх", "вправо", "нет"};
+// A gravity point: what the panel lets the author set.
+constexpr f64 kMinRadius = 1, kMaxRadius = 128, kNewRadius = 8;
+constexpr f64 kMaxStrength = level::kMaxGravity;
+const char* const kPointName = "Точка гравитации";
+
+// Numbers as the panel shows them: no trailing zeros.
+std::string number(f64 v) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%g", v);
+    return text;
+}
 
 const ModeInfo& mode_info(Mode m) {
     for (const ModeInfo& i : kModes)
@@ -112,9 +150,15 @@ const char* tool_id(Tool t) {
 }
 
 const char* mode_id(Mode m) { return mode_info(m).id; }
+const char* phys_tool_id(PhysTool t) { return phys_info(t).id; }
 
 void LevelEditor::set_mode(Mode m) {
-    if (stroke_ || moving_) return;
+    if (gesture()) return;
+    // Gravity points are picked only in «Физика», objects only outside it.
+    if ((m == Mode::Physics) != (mode_ == Mode::Physics)) {
+        reset_trial();
+        select_objects({});
+    }
     mode_ = m;
     if (m != Mode::Objects) object_ = -1;
 }
@@ -159,6 +203,7 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
         g->tiles.push_back({static_cast<int>(i), t.name, "/memory/tile_" + t.id, t.key, static_cast<int>(t.layer)});
     }
     for (const std::string& name : module_.layer_names()) m_layers_.push_back(name);
+    m_ph_can_trial_ = !module_.physics_fills().empty();
     build_objects();
     if (!tiles.empty()) select_tile(0);
 
@@ -208,6 +253,7 @@ void LevelEditor::shutdown() {
         SDL_DestroyProcess(game_); // the game keeps running on its own
         game_ = nullptr;
     }
+    reset_trial();
     if (view_ready_) {
         front_.shutdown();
         back_.shutdown();
@@ -280,6 +326,17 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lv_info", &m_info_);
     model.Bind("lv_history", &m_history_);
     model.Bind("lv_history_cursor", &m_history_cursor_);
+    model.Bind("lv_ph_tool", &m_ph_tool_);
+    model.Bind("lv_ph_tool_name", &m_ph_tool_name_);
+    model.Bind("lv_ph_tool_help", &m_ph_tool_help_);
+    model.Bind("lv_ph_dir", &m_ph_dir_);
+    model.Bind("lv_ph_strength", &m_ph_strength_);
+    model.Bind("lv_ph_world", &m_ph_world_);
+    model.Bind("lv_ph_error", &m_ph_error_);
+    model.Bind("lv_ph_trial", &m_ph_trial_);
+    model.Bind("lv_ph_trial_text", &m_ph_trial_text_);
+    model.Bind("lv_ph_can_trial", &m_ph_can_trial_);
+    model.Bind("lv_ph_note", &m_ph_note_);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -299,6 +356,28 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
             if (id == m.id) set_mode(m.mode);
     });
     on("lv_object", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { arm_object(arg_int(a, 0, -1)); });
+    on("lv_ph_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string id = arg_str(a, 0);
+        set_mode(Mode::Physics);
+        for (const PhysToolInfo& t : kPhysTools)
+            if (id == t.id) set_phys_tool(t.tool);
+    });
+    on("lv_ph_dir", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        const int n = static_cast<int>(std::size(kPullNames));
+        set_pull_dir(static_cast<PullDir>(((static_cast<int>(pull_dir()) + arg_int(a, 0, 1)) % n + n) % n));
+    });
+    on("lv_ph_strength_text", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        if (a.size() > 1 && a[1].Get<bool>()) set_pull_strength(arg_str(a, 0), false);
+    });
+    on("lv_ph_strength_commit", [this](Rml::Event& ev, const Rml::VariantList&) {
+        Rml::Element* e = ev.GetTargetElement();
+        if (e && e->GetTagName() == "input") set_pull_strength(static_cast<Rml::ElementFormControl*>(e)->GetValue(), false);
+    });
+    on("lv_ph_strength_slide", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_pull_strength(arg_str(a, 0), true); });
+    on("lv_ph_trial", [this](Rml::Event&, const Rml::VariantList&) {
+        if (trial_.running()) reset_trial();
+        else start_trial();
+    });
     on("lv_delete", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
     on("lv_field_text", [this, arg_int, arg_str](Rml::Event&, const Rml::VariantList& a) {
         if (a.size() > 2 && a[2].Get<bool>()) set_field(arg_int(a, 0, -1), arg_str(a, 1), false);
@@ -530,10 +609,14 @@ void LevelEditor::delete_selection() {
         if (e.is_valid()) gone.push_back(level::snapshot(*level_, e));
     }
     if (gone.empty()) return;
+    edit_begins();
     std::string label = "Удалить: ";
     const auto& defs = module_.objects();
-    const i32 kind = module_.object_kind(level_->find(gone[0].id));
-    label += gone.size() == 1 && kind >= 0 ? defs[static_cast<usize>(kind)].name : std::to_string(gone.size()) + " объектов";
+    const flecs::entity first = level_->find(gone[0].id);
+    const i32 kind = module_.object_kind(first);
+    label += gone.size() == 1 && kind >= 0                      ? defs[static_cast<usize>(kind)].name
+             : gone.size() == 1 && first.has<sim::GravitySource>() ? std::string(kPointName)
+                                                                  : std::to_string(gone.size()) + " объектов";
     history_.execute(std::make_unique<level::ObjectsCommand>(*level_, std::move(gone), false, label));
     history_.seal();
     select_objects({});
@@ -611,7 +694,7 @@ void LevelEditor::drag_objects(f32 x, f32 y) {
 }
 
 void LevelEditor::rebuild_fields(Rml::Context* context) {
-    const u64 version = level_->object_edits() * 1'000'003ull + selection_version_;
+    const u64 version = (level_->object_edits() + ph_preview_) * 1'000'003ull + selection_version_;
     if (version == fields_built_) return;
     // Do not rewrite a field while the user types in it.
     const Rml::Element* focus = context ? context->GetFocusElement() : nullptr;
@@ -623,20 +706,24 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
     field_refs_.clear();
     flecs::entity e = selection_.empty() ? flecs::entity() : level_->find(selection_[0]);
     const i32 kind = e.is_valid() ? module_.object_kind(e) : -1;
-    if (kind >= 0) {
+    if (mode_ == Mode::Physics && e.is_valid() && e.has<sim::GravitySource>()) {
+        physics_fields(e);
+    } else if (kind >= 0) {
         const level::ObjectDef& def = module_.objects()[static_cast<usize>(kind)];
         m_sel_name_ = def.name;
         m_sel_hint_ = def.hint;
         const objects::Template* st = module_.library() ? module_.library()->find(def.key) : nullptr;
         m_sel_icon_ = "/memory/obj_" + def.id + "_" + std::to_string(st ? st->look() : 0);
         const scene::Position& p = e.get<scene::Position>();
+        f64 x0, y0, x1, y1;
+        place_limits(x0, y0, x1, y1);
         char v[32];
         std::snprintf(v, sizeof(v), "%.2f", p.tile_x());
         m_fields_.push_back({"text", "X", v, "", 0, 0, 0});
-        field_refs_.push_back({nullptr, "x", {}});
+        field_refs_.push_back({nullptr, "x", {}, nullptr, {}, true, x0, x1, true});
         std::snprintf(v, sizeof(v), "%.2f", p.tile_y());
         m_fields_.push_back({"text", "Y", v, "", 0, 0, 0});
-        field_refs_.push_back({nullptr, "y", {}});
+        field_refs_.push_back({nullptr, "y", {}, nullptr, {}, true, y0, y1, true});
         // The template's properties in plain words; what the copy sets its
         // own way is marked and can go back to the template's.
         objects::Library* lib = module_.library();
@@ -716,6 +803,92 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
     model_.DirtyVariable("lv_sel_icon");
 }
 
+void LevelEditor::physics_fields(flecs::entity e) {
+    const sim::GravitySource& g = e.get<sim::GravitySource>();
+    const scene::Position& p = e.get<scene::Position>();
+    m_sel_name_ = kPointName;
+    m_sel_hint_ = !g.toward_center ? "тянет в одну сторону (так задано не в редакторе)"
+                  : g.strength > 0 ? "притягивает тела к центру"
+                  : g.strength < 0 ? "отталкивает тела от центра"
+                                   : "сила 0: не действует";
+    m_sel_icon_.clear();
+    m_sel_kind_.clear();
+    f64 x0, y0, x1, y1;
+    place_limits(x0, y0, x1, y1);
+    auto row = [&](const char* kind, const char* label, std::string value, const char* hint, const reflect::TypeInfo* type,
+                   const char* path, bool limited, f64 min, f64 max, f32 step) {
+        FieldView f;
+        f.kind = kind;
+        f.label = label;
+        f.value = std::move(value);
+        f.hint = hint;
+        f.min = static_cast<float>(min);
+        f.max = static_cast<float>(max);
+        f.step = step;
+        m_fields_.push_back(std::move(f));
+        FieldRef r;
+        r.type = type;
+        r.path = path;
+        r.limited = limited;
+        r.min = min;
+        r.max = max;
+        r.refuse = !type; // the centre
+        field_refs_.push_back(std::move(r));
+    };
+    char v[32];
+    std::snprintf(v, sizeof(v), "%.2f", p.tile_x());
+    row("text", "X", v, "центр, в тайлах", nullptr, "x", true, x0, x1, 0);
+    std::snprintf(v, sizeof(v), "%.2f", p.tile_y());
+    row("text", "Y", v, "центр, в тайлах", nullptr, "y", true, y0, y1, 0);
+    const reflect::TypeInfo* type = reflect::type_of<sim::GravitySource>();
+    row("slider", "Сила", number(g.strength), "тайлов/с²; отрицательная отталкивает", type, "strength", true, -kMaxStrength,
+        kMaxStrength, 1);
+    row("slider", "Радиус", number(g.radius), "тайлов; на самой окружности ещё действует", type, "radius", true, kMinRadius,
+        kMaxRadius, 0.5f);
+    row("bool", "Слабеет к краю", g.fade ? "true" : "false", "в центре полная сила, у края ноль", type, "fade", false, 0, 0, 0);
+    row("bool", "Выключает мировую", g.replace ? "true" : "false",
+        "внутри радиуса гравитация мира не действует, другие точки действуют", type, "replace", false, 0, 0, 0);
+}
+
+void LevelEditor::place_limits(f64& x0, f64& y0, f64& x1, f64& y1) const {
+    // Inside the world, the outer tiles' centres at most; a world without
+    // edges: a million tiles each way, far past any level.
+    const world::Rect b = module_.world_desc().bounds;
+    const bool edges = b.x1 > b.x0 && b.y1 > b.y0;
+    const f64 n = world::kChunkSize;
+    x0 = edges ? b.x0 * n + 0.5 : -1e6;
+    x1 = edges ? b.x1 * n - 0.5 : 1e6;
+    y0 = edges ? b.y0 * n + 0.5 : -1e6;
+    y1 = edges ? b.y1 * n - 0.5 : 1e6;
+}
+
+bool LevelEditor::parse_number(const FieldRef& ref, const std::string& label, const std::string& text, f64& out) const {
+    // A comma as in Russian decimals.
+    std::string t = text;
+    std::replace(t.begin(), t.end(), ',', '.');
+    const char* start = t.c_str();
+    char* end = nullptr;
+    f64 v = std::strtod(start, &end);
+    while (end && (*end == ' ' || *end == '\t')) ++end;
+    if (end == start || !end || *end != 0 || !std::isfinite(v)) {
+        FORGE_WARN("%s: «%s» — не число; оставлено как было", label.c_str(), text.c_str());
+        return false;
+    }
+    if (ref.limited && ref.refuse && (v < ref.min || v > ref.max)) {
+        FORGE_WARN("%s: %s — за краем мира (можно от %s до %s); оставлено как было", label.c_str(), text.c_str(),
+                   number(ref.min).c_str(), number(ref.max).c_str());
+        return false;
+    }
+    if (ref.limited && (v < ref.min || v > ref.max)) {
+        const f64 kept = std::clamp(v, ref.min, ref.max);
+        FORGE_WARN("%s: можно от %s до %s; поставлено %s", label.c_str(), number(ref.min).c_str(), number(ref.max).c_str(),
+                   number(kept).c_str());
+        v = kept;
+    }
+    out = v;
+    return true;
+}
+
 void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
     // Bindings fill the inputs during the UI's update and fire change events then.
     if (ui_updating_ || i < 0 || i >= static_cast<int>(field_refs_.size()) || selection_.empty()) return;
@@ -725,7 +898,33 @@ void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
     const FieldRef& ref = field_refs_[static_cast<usize>(i)];
     const scene::Position& p = e.get<scene::Position>();
     const i32 kind = module_.object_kind(e);
-    const std::string name = kind >= 0 ? module_.objects()[static_cast<usize>(kind)].name : std::string();
+    const bool point = e.has<sim::GravitySource>() && kind < 0;
+    const std::string name = kind >= 0 ? module_.objects()[static_cast<usize>(kind)].name : point ? kPointName : std::string();
+    const std::string label = m_fields_[static_cast<usize>(i)].label;
+    if (point && ref.type == reflect::type_of<sim::GravitySource>()) {
+        const sim::GravitySource before = e.get<sim::GravitySource>();
+        sim::GravitySource after = before;
+        if (ref.path == "fade" || ref.path == "replace") {
+            (ref.path == "fade" ? after.fade : after.replace) = text == "true";
+        } else {
+            f64 v = 0;
+            if (!parse_number(ref, label, text, v)) {
+                fields_built_ = 0; // show the old value again
+                return;
+            }
+            (ref.path == "strength" ? after.strength : after.radius) = static_cast<f32>(v);
+        }
+        const std::string a = data::to_json(ref.type, &before, false), b = data::to_json(ref.type, &after, false);
+        if (a == b) {
+            fields_built_ = 0;
+            return;
+        }
+        edit_begins();
+        history_.execute(std::make_unique<level::SetObjectComponent>(*level_, selection_[0], p.tile_x(), p.tile_y(), ref.type, a,
+                                                                     b, ref.path, "«" + name + "»: " + label));
+        if (!dragging) history_.seal();
+        return;
+    }
     if (ref.prop) {
         objects::Library* lib = module_.library();
         const std::optional<std::string> json = lib ? objects::Library::parse(*ref.prop, text) : std::nullopt;
@@ -744,14 +943,18 @@ void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
         return;
     }
     if (!ref.type) {
-        char* end = nullptr;
-        const f64 v = std::strtod(text.c_str(), &end);
-        if (end == text.c_str()) {
+        f64 v = 0;
+        if (!parse_number(ref, label, text, v)) {
             fields_built_ = 0; // show the old value again
             return;
         }
         level::MoveObjects::Move m{selection_[0], p.tile_x(), p.tile_y(), p.tile_x(), p.tile_y()};
         (ref.path == "x" ? m.to_x : m.to_y) = v;
+        if (m.to_x == m.from_x && m.to_y == m.from_y) {
+            fields_built_ = 0;
+            return;
+        }
+        edit_begins();
         history_.execute(std::make_unique<level::MoveObjects>(*level_, std::vector<level::MoveObjects::Move>{m},
                                                               "Передвинуть: " + name));
         history_.seal();
@@ -780,27 +983,376 @@ void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
     if (!dragging) history_.seal();
 }
 
+// --- physics ---------------------------------------------------------------
+
+void LevelEditor::set_phys_tool(PhysTool t) {
+    if (gesture()) return;
+    ph_tool_ = t;
+}
+
+PullDir LevelEditor::pull_dir() const {
+    const level::LevelPhysics& p = level_->physics();
+    const u32 down = sim::cells_down(p.gravity_x, p.gravity_y);
+    return down == ~0u ? PullDir::None : static_cast<PullDir>(down);
+}
+
+f32 LevelEditor::pull_strength() const {
+    const level::LevelPhysics& p = level_->physics();
+    return std::hypot(p.gravity_x, p.gravity_y);
+}
+
+void LevelEditor::set_pull_dir(PullDir d) {
+    if (gesture()) return;
+    const level::LevelPhysics before = level_->physics();
+    f32 s = pull_strength();
+    if (s > 0) ph_strength_ = s;
+    else s = ph_strength_;
+    level::LevelPhysics after;
+    switch (d) {
+    case PullDir::Down: after.gravity_y = s; break;
+    case PullDir::Up: after.gravity_y = -s; break;
+    case PullDir::Left: after.gravity_x = -s; break;
+    case PullDir::Right: after.gravity_x = s; break;
+    case PullDir::None: break;
+    }
+    if (after == before) return;
+    edit_begins();
+    history_.seal();
+    history_.execute(std::make_unique<level::SetPhysics>(*level_, before, after, "Гравитация мира: направление"));
+    history_.seal();
+}
+
+void LevelEditor::set_pull_strength(const std::string& text, bool dragging) {
+    // Bindings fill the inputs during the UI's update and fire change events then.
+    if (ui_updating_ || gesture() || text == m_ph_strength_) return;
+    const PullDir d = pull_dir();
+    if (d == PullDir::None) return; // no pull: set a direction first
+    FieldRef range;
+    range.limited = true;
+    range.min = 1;
+    range.max = level::kMaxGravity;
+    f64 v = 0;
+    if (!parse_number(range, "Сила гравитации мира", text, v)) {
+        m_ph_strength_.clear(); // shows the old value again
+        return;
+    }
+    const level::LevelPhysics before = level_->physics();
+    const f32 s = static_cast<f32>(v);
+    level::LevelPhysics after;
+    switch (d) {
+    case PullDir::Down: after.gravity_y = s; break;
+    case PullDir::Up: after.gravity_y = -s; break;
+    case PullDir::Left: after.gravity_x = -s; break;
+    case PullDir::Right: after.gravity_x = s; break;
+    case PullDir::None: break;
+    }
+    ph_strength_ = s;
+    if (after == before) {
+        m_ph_strength_.clear();
+        return;
+    }
+    edit_begins();
+    history_.execute(std::make_unique<level::SetPhysics>(*level_, before, after, "Гравитация мира: сила"));
+    if (!dragging) history_.seal();
+}
+
+bool LevelEditor::start_trial() {
+    if (gesture()) return false;
+    if (trial_.running()) return true;
+    if (vw_ < 1 || vh_ < 1) return false;
+    history_.seal();
+    std::string error;
+    const world::Rect view = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+    if (!trial_.start(*level_, view, &error)) {
+        FORGE_WARN("Проба не началась: %s", error.c_str());
+        return false;
+    }
+    if (trial_.still()) FORGE_INFO("Проба: гравитации мира нет, вода и песок стоят на месте");
+    else
+        FORGE_INFO("Проба: вода и песок текут %s по гравитации мира; точки гравитации на них не действуют. «Сбросить» вернёт уровень",
+                   kPullNames[trial_.down()]);
+    return true;
+}
+
+void LevelEditor::reset_trial() {
+    if (!trial_.running()) return;
+    trial_.reset();
+    map_edits_ = ~0ull;
+    FORGE_INFO("Проба сброшена: вода и песок снова как в уровне");
+}
+
+void LevelEditor::edit_begins() { reset_trial(); }
+
+bool LevelEditor::cancel_gesture() {
+    const PhysDrag d = ph_drag_;
+    if (d == PhysDrag::None) return false;
+    ph_drag_ = PhysDrag::None;
+    flecs::entity e = selection_.empty() ? flecs::entity() : level_->find(selection_[0]);
+    if (d == PhysDrag::Move && e.is_valid()) e.set<scene::Position>(scene::Position::at_tile(ph_from_x_, ph_from_y_));
+    if (d == PhysDrag::Radius && e.is_valid())
+        level::set_component_json(*level_, e, reflect::type_of<sim::GravitySource>(), ph_before_);
+    ++ph_preview_;
+    FORGE_INFO("Отменено: уровень не изменился");
+    return true;
+}
+
+flecs::entity LevelEditor::point_at(f64 tx, f64 ty, bool ring) {
+    const f64 grab = std::max(0.6, 9.0 / camera_.zoom), edge = std::max(0.4, 7.0 / camera_.zoom);
+    const u64 selected = selection_.empty() ? 0 : selection_[0];
+    flecs::entity best;
+    f64 best_d = 0;
+    level_->scene().ecs().each([&](flecs::entity e, const scene::Position& p, const sim::GravitySource& g) {
+        const f64 d = std::hypot(p.tile_x() - tx, p.tile_y() - ty);
+        f64 off = d;
+        if (ring) {
+            if (!selected || level_->id_of(e, false) != selected) return;
+            off = std::fabs(d - g.radius);
+            if (off > edge) return;
+        } else if (d > grab) {
+            return;
+        }
+        if (!best.is_valid() || off < best_d) {
+            best = e;
+            best_d = off;
+        }
+    });
+    return best;
+}
+
+bool LevelEditor::press_physics(f32 x, f32 y) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    history_.seal();
+    switch (ph_tool_) {
+    case PhysTool::Select: {
+        flecs::entity hit = point_at(tx, ty, false);
+        bool ring = false;
+        if (!hit.is_valid()) {
+            hit = point_at(tx, ty, true);
+            ring = hit.is_valid();
+        }
+        if (!hit.is_valid()) {
+            select_objects({});
+            return false; // the drag moves the view
+        }
+        select_objects({level_->id_of(hit, true)});
+        ph_grab_x_ = tx;
+        ph_grab_y_ = ty;
+        const scene::Position& p = hit.get<scene::Position>();
+        ph_from_x_ = p.tile_x();
+        ph_from_y_ = p.tile_y();
+        if (ring) {
+            ph_before_ = level::component_json(*level_, hit, reflect::type_of<sim::GravitySource>());
+            ph_r0_ = hit.get<sim::GravitySource>().radius;
+            ph_drag_ = PhysDrag::Radius;
+        } else {
+            ph_drag_ = PhysDrag::Move;
+        }
+        return true;
+    }
+    case PhysTool::Point:
+        // The centre of the cell: a place the author can name.
+        ph_cx_ = std::floor(tx) + 0.5;
+        ph_cy_ = std::floor(ty) + 0.5;
+        ph_r_ = 0;
+        ph_drag_ = PhysDrag::Place;
+        return true;
+    case PhysTool::Water:
+    case PhysTool::Sand:
+        cell_at(x, y, ph_ax_, ph_ay_);
+        ph_bx_ = ph_ax_;
+        ph_by_ = ph_ay_;
+        ph_drag_ = PhysDrag::Area;
+        return true;
+    }
+    return false;
+}
+
+void LevelEditor::drag_physics(f32 x, f32 y) {
+    f64 tx, ty;
+    to_tile(x, y, tx, ty);
+    switch (ph_drag_) {
+    case PhysDrag::None: return;
+    case PhysDrag::Place: ph_r_ = std::hypot(tx - ph_cx_, ty - ph_cy_); return;
+    case PhysDrag::Area: cell_at(x, y, ph_bx_, ph_by_); return;
+    case PhysDrag::Move:
+    case PhysDrag::Radius: break;
+    }
+    flecs::entity e = selection_.empty() ? flecs::entity() : level_->find(selection_[0]);
+    if (!e.is_valid()) {
+        ph_drag_ = PhysDrag::None;
+        return;
+    }
+    if (ph_drag_ == PhysDrag::Move) {
+        // Whole tiles: the centre stays where it was in its cell.
+        const f64 nx = ph_from_x_ + std::round(tx - ph_grab_x_), ny = ph_from_y_ + std::round(ty - ph_grab_y_);
+        const scene::Position& p = e.get<scene::Position>();
+        if (p.tile_x() == nx && p.tile_y() == ny) return;
+        if (!level_->loaded(static_cast<i32>(std::floor(nx)), static_cast<i32>(std::floor(ny)))) return;
+        edit_begins();
+        e.set<scene::Position>(scene::Position::at_tile(nx, ny));
+    } else {
+        const scene::Position& p = e.get<scene::Position>();
+        const f64 r = std::clamp(std::round(std::hypot(tx - p.tile_x(), ty - p.tile_y()) * 2) / 2, kMinRadius, kMaxRadius);
+        sim::GravitySource g = e.get<sim::GravitySource>();
+        if (g.radius == static_cast<f32>(r)) return;
+        edit_begins();
+        g.radius = static_cast<f32>(r);
+        e.set<sim::GravitySource>(g);
+    }
+    ++ph_preview_;
+}
+
+void LevelEditor::release_physics() {
+    const PhysDrag d = ph_drag_;
+    ph_drag_ = PhysDrag::None;
+    if (d == PhysDrag::Area) {
+        pour(ph_ax_, ph_ay_, ph_bx_, ph_by_);
+        return;
+    }
+    if (d == PhysDrag::Place) {
+        const f64 r = ph_r_ < 0.5 ? kNewRadius : std::clamp(std::round(ph_r_ * 2) / 2, kMinRadius, kMaxRadius);
+        edit_begins();
+        flecs::entity e = level_->scene().spawn(scene::Position::at_tile(ph_cx_, ph_cy_));
+        if (!e.is_valid()) {
+            FORGE_WARN("Здесь уровень ещё не загрузился: точка не поставлена");
+            return;
+        }
+        sim::GravitySource g;
+        g.radius = static_cast<f32>(r);
+        e.set<sim::GravitySource>(g);
+        level::ObjectSnapshot snap = level::snapshot(*level_, e);
+        const u64 id = snap.id;
+        history_.execute(std::make_unique<level::ObjectsCommand>(*level_, std::vector<level::ObjectSnapshot>{std::move(snap)},
+                                                                 true, std::string("Поставить: ") + kPointName));
+        history_.seal();
+        select_objects({id});
+        ph_note_ = "Точка гравитации: центр " + number(ph_cx_) + ", " + number(ph_cy_) + ", радиус " + number(r);
+        FORGE_INFO("%s", ph_note_.c_str());
+        return;
+    }
+    flecs::entity e = selection_.empty() ? flecs::entity() : level_->find(selection_[0]);
+    if (!e.is_valid() || (d != PhysDrag::Move && d != PhysDrag::Radius)) return;
+    const scene::Position& p = e.get<scene::Position>();
+    if (d == PhysDrag::Move) {
+        if (p.tile_x() == ph_from_x_ && p.tile_y() == ph_from_y_) return; // a click: only selected
+        history_.execute(std::make_unique<level::MoveObjects>(
+            *level_, std::vector<level::MoveObjects::Move>{{selection_[0], ph_from_x_, ph_from_y_, p.tile_x(), p.tile_y()}},
+            std::string("Передвинуть: ") + kPointName));
+    } else {
+        const reflect::TypeInfo* type = reflect::type_of<sim::GravitySource>();
+        const std::string after = level::component_json(*level_, e, type);
+        if (after == ph_before_) return;
+        history_.execute(std::make_unique<level::SetObjectComponent>(*level_, selection_[0], p.tile_x(), p.tile_y(), type,
+                                                                     ph_before_, after, "radius",
+                                                                     std::string("«") + kPointName + "»: Радиус"));
+    }
+    history_.seal();
+}
+
+void LevelEditor::pour(i32 x0, i32 y0, i32 x1, i32 y1) {
+    const char* id = ph_tool_ == PhysTool::Water ? "water" : "sand";
+    const auto& tiles = module_.tiles();
+    const level::TileDef* fill = nullptr;
+    std::vector<u32> layers; // a cell is free when all of these are empty there
+    for (const std::string& f : module_.physics_fills())
+        for (const level::TileDef& t : tiles)
+            if (t.id == f) {
+                if (f == id) fill = &t;
+                if (std::find(layers.begin(), layers.end(), t.layer) == layers.end()) layers.push_back(t.layer);
+            }
+    if (!fill) {
+        FORGE_WARN("В этой игре нет плитки «%s»", id);
+        return;
+    }
+    const i64 w = std::abs(static_cast<i64>(x1) - x0) + 1, h = std::abs(static_cast<i64>(y1) - y0) + 1;
+    if (w * h > static_cast<i64>(kFillLimit)) {
+        ph_note_ = fill->name + ": область " + std::to_string(w) + " × " + std::to_string(h) + " больше " +
+                   group_digits(kFillLimit) + " клеток, ничего не налито";
+        FORGE_WARN("%s", ph_note_.c_str());
+        return;
+    }
+    std::vector<level::Cell> rect, free;
+    level::rect_cells(x0, y0, x1, y1, true, rect);
+    usize taken = 0, away = 0;
+    for (const level::Cell& c : rect) {
+        if (!level_->loaded(c.x, c.y)) {
+            ++away;
+            continue;
+        }
+        bool empty = true;
+        for (u32 l : layers) empty = empty && level_->tile(l, c.x, c.y) == 0;
+        if (empty) free.push_back(c);
+        else ++taken;
+    }
+    const std::string size = std::to_string(w) + " × " + std::to_string(h);
+    if (free.empty()) {
+        ph_note_ = fill->name + " " + size + ": свободных клеток нет, ничего не налито (занято " + std::to_string(taken) + ")";
+        FORGE_INFO("%s", ph_note_.c_str());
+        return;
+    }
+    edit_begins();
+    auto stroke = std::make_unique<level::TileStroke>(*level_, fill->name + ": " + size);
+    stroke->paint(fill->layer, free, fill->value);
+    history_.execute(std::move(stroke));
+    history_.seal();
+    ph_note_ = fill->name + " " + size + ": клеток залито " + std::to_string(free.size()) + ", занятые не тронуты: " +
+               std::to_string(taken);
+    if (away) ph_note_ += ", не загружено: " + std::to_string(away);
+    FORGE_INFO("%s", ph_note_.c_str());
+}
+
 // --- actions -----------------------------------------------------------------
 
 void LevelEditor::undo() {
-    if (stroke_ || moving_) return;
+    if (gesture()) return;
+    if (!history_.can_undo()) return;
+    edit_begins();
     if (history_.undo()) FORGE_INFO("Отменено");
 }
 
 void LevelEditor::redo() {
-    if (stroke_ || moving_) return;
+    if (gesture()) return;
+    if (!history_.can_redo()) return;
+    edit_begins();
     if (history_.redo()) FORGE_INFO("Повторено");
 }
 
-void LevelEditor::save() {
+bool LevelEditor::save() {
     if (stroke_) release();
+    cancel_gesture();
+    // What the trial poured is not the author's level.
+    edit_begins();
     const level::Level::SaveReport r = level_->save();
     if (!r.ok) {
-        FORGE_ERROR("Уровень не сохранился в %s", path_to_utf8(level_->folder()).c_str());
-        return;
+        FORGE_ERROR("Уровень не сохранился: %s. Изменения остались в редакторе, попробуйте ещё раз", r.error.c_str());
+        return false;
     }
     history_.mark_saved();
-    FORGE_INFO("Уровень сохранён: участков с плитками %u, с объектами %u (%.0f мс)", r.tile_chunks, r.object_chunks, r.ms);
+    FORGE_INFO("Уровень сохранён: участков с плитками %u, с объектами %u%s (%.0f мс)", r.tile_chunks, r.object_chunks,
+               r.physics ? ", гравитация мира в physics.json" : "", r.ms);
+    return true;
+}
+
+bool LevelEditor::open_folder(const fs::path& folder) {
+    if (stroke_) release();
+    cancel_gesture();
+    reset_trial();
+    moving_ = false;
+    select_objects({});
+    const fs::path before = level_->folder();
+    std::string error;
+    if (!level_->open(folder, &error)) {
+        FORGE_ERROR("Уровень %s не открылся: %s", path_to_utf8(folder).c_str(), error.c_str());
+        level_->open(before, nullptr);
+        return false;
+    }
+    config_.folder = folder;
+    history_.clear();
+    fields_built_ = 0;
+    map_edits_ = ~0ull;
+    FORGE_INFO("Уровень открыт: %s", path_to_utf8(folder).c_str());
+    return true;
 }
 
 std::filesystem::path LevelEditor::fired_file() { return fs::temp_directory_path() / "forge_editor_play" / "logic_fired.txt"; }
@@ -820,7 +1372,10 @@ std::vector<std::string> LevelEditor::play_command(f64 x, f64 y) const {
 
 bool LevelEditor::play_here() {
     if (stroke_) release();
-    save();
+    if (!save()) {
+        FORGE_ERROR("Игра не запущена: уровень не сохранился, а игра начинает с сохранённого");
+        return false;
+    }
     f64 x = 0, y = 0;
     if (!module_.play_spot(*level_, camera_.x, camera_.y, x, y)) {
         FORGE_WARN("Рядом с центром вида нет места для героя: сдвиньте вид");
@@ -851,12 +1406,13 @@ void LevelEditor::reset_layout() { dock_.reset(); }
 std::string LevelEditor::status() const {
     char text[200];
     const std::string place = module_.place(camera_.x, camera_.y);
+    const char* tool = mode_ == Mode::Physics ? phys_info(ph_tool_).name : tool_name(tool_);
     if (hover_)
         std::snprintf(text, sizeof(text), "Клетка %d, %d%s%s · %s", hover_x_, hover_y_, place.empty() ? "" : " · ",
-                      place.c_str(), tool_name(tool_));
+                      place.c_str(), tool);
     else
         std::snprintf(text, sizeof(text), "Центр %.0f, %.0f%s%s · %s", camera_.x, camera_.y, place.empty() ? "" : " · ",
-                      place.c_str(), tool_name(tool_));
+                      place.c_str(), tool);
     return text;
 }
 
@@ -871,7 +1427,15 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
     vh_ = view_shown_ ? dock_.view_h() : 0;
     if (view_shown_ && vw_ > 0 && vh_ > 0) {
         const world::Rect focus = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
-        level_->update({&focus, 1});
+        if (trial_.running()) {
+            // What the trial remembered stays loaded, wherever the view goes.
+            const world::Rect both[2] = {focus, trial_.keep()};
+            level_->update({both, 2});
+            trial_.update(dt);
+            map_edits_ = ~0ull; // the water moves on the minimap too
+        } else {
+            level_->update({&focus, 1});
+        }
         update_minimap();
     }
     if (module_.objects_version() != objects_version_) {
@@ -966,6 +1530,41 @@ void LevelEditor::sync_model() {
     set(m_chunks_, view_.chunks, "lv_chunks");
     set(m_outline_, rect_outline_, "lv_outline");
     set(m_dirty_, history_.dirty(), "lv_dirty");
+    const PhysToolInfo& pt = phys_info(ph_tool_);
+    set(m_ph_tool_, Rml::String(pt.id), "lv_ph_tool");
+    set(m_ph_tool_name_, Rml::String(pt.name), "lv_ph_tool_name");
+    set(m_ph_tool_help_, Rml::String(pt.help), "lv_ph_tool_help");
+    const PullDir pull = pull_dir();
+    set(m_ph_dir_, Rml::String(kPullNames[static_cast<int>(pull)]), "lv_ph_dir");
+    set(m_ph_strength_, Rml::String(number(pull_strength())), "lv_ph_strength");
+    {
+        const level::LevelPhysics& p = level_->physics();
+        const std::string world =
+            pull == PullDir::None
+                ? "Гравитации мира нет: тела парят, вода и песок стоят на месте. Точки гравитации тянут только тела."
+                : "Тела: " + number(p.gravity_x) + ", " + number(p.gravity_y) + " тайлов/с². Вода и песок падают " +
+                      kPullNames[static_cast<int>(pull)] +
+                      " — по главной оси гравитации мира; точки гравитации на них не действуют, только на тела (героя, "
+                      "предметы, ящики, зверьков).";
+        set(m_ph_world_, Rml::String(world), "lv_ph_world");
+    }
+    set(m_ph_error_,
+        Rml::String(level_->physics_error().empty() ? std::string()
+                                                    : level_->physics_error() + ". Действует гравитация игры; файл "
+                                                                                "перепишется, когда вы её измените"),
+        "lv_ph_error");
+    set(m_ph_trial_, trial_.running(), "lv_ph_trial");
+    {
+        std::string t;
+        if (trial_.running())
+            t = trial_.still() ? "Идёт проба: гравитации мира нет, ничего не течёт."
+                               : "Идёт проба: " + std::to_string(trial_.ticks()) + " тиков, клеток сдвинулось за тик: " +
+                                     std::to_string(trial_.moved()) + ". «Сбросить» вернёт уровень как был.";
+        else
+            t = "Вода и песок поплывут прямо здесь, по гравитации мира. История и сохранённый уровень не меняются.";
+        set(m_ph_trial_text_, Rml::String(t), "lv_ph_trial_text");
+    }
+    set(m_ph_note_, Rml::String(ph_note_), "lv_ph_note");
     if (time_ - info_time_ > 0.25) {
         info_time_ = time_;
         char coords[96];
@@ -1049,6 +1648,7 @@ void LevelEditor::push_overlay(f64 ox, f64 oy) {
             quad(hover_x_ + 0.5 - px, hover_y_, px * 2, 1, render::pack_color(255, 210, 90, 160), 5);
         }
     }
+    if (mode_ == Mode::Physics) push_physics(ox, oy, px);
     if (hover_ && !panning_ && mode_ == Mode::Tiles) {
         // An outline around the cell under the mouse.
         const u32 c = render::pack_color(255, 255, 255, 220);
@@ -1057,6 +1657,134 @@ void LevelEditor::push_overlay(f64 ox, f64 oy) {
         quad(hover_x_, hover_y_ + 1 - t, 1, t, c, 4);
         quad(hover_x_, hover_y_, t, 1, c, 4);
         quad(hover_x_ + 1 - t, hover_y_, t, 1, c, 4);
+    }
+}
+
+void LevelEditor::push_physics(f64 ox, f64 oy, f64 px) {
+    auto quad = [&](f64 x, f64 y, f64 w, f64 h, u32 color, u32 order) {
+        render::Sprite s;
+        s.x = static_cast<f32>(x + w * 0.5 - ox);
+        s.y = static_cast<f32>(y + h * 0.5 - oy);
+        s.w = static_cast<f32>(w);
+        s.h = static_cast<f32>(h);
+        s.frame = demo::kFrameSolid;
+        s.color = color;
+        s.order = order;
+        front_batch_.push(s);
+    };
+    auto line = [&](f64 x0, f64 y0, f64 x1, f64 y1, f64 t, u32 color, u32 order) {
+        const f64 dx = x1 - x0, dy = y1 - y0, len = std::hypot(dx, dy);
+        if (len <= 0) return;
+        render::Sprite s;
+        s.x = static_cast<f32>((x0 + x1) * 0.5 - ox);
+        s.y = static_cast<f32>((y0 + y1) * 0.5 - oy);
+        s.w = static_cast<f32>(len);
+        s.h = static_cast<f32>(t);
+        s.angle = static_cast<f32>(std::atan2(dy, dx));
+        s.frame = demo::kFrameSolid;
+        s.color = color;
+        s.order = order;
+        front_batch_.push(s);
+    };
+    auto circle = [&](f64 cx, f64 cy, f64 r, f64 t, u32 color, u32 order) {
+        const i32 n = std::clamp(static_cast<i32>(r / px / 6), 24, 160);
+        for (i32 i = 0; i < n; ++i) {
+            const f64 a0 = 6.283185307179586 * i / n, a1 = 6.283185307179586 * (i + 1) / n;
+            line(cx + r * std::cos(a0), cy + r * std::sin(a0), cx + r * std::cos(a1), cy + r * std::sin(a1), t, color, order);
+        }
+    };
+    auto handle = [&](f64 x, f64 y, f64 size, u32 color, u32 order) { quad(x - size * 0.5, y - size * 0.5, size, size, color, order); };
+    const world::Rect view = camera_.visible_tiles(static_cast<u32>(vw_), static_cast<u32>(vh_));
+    const u64 selected = selection_.empty() ? 0 : selection_[0];
+
+    // The points: a circle where they act, the centre to grab, and for the
+    // selected one a handle on the circle for the radius.
+    std::vector<sim::GravityField::Placed> placed;
+    f64 hx = 0, hy = 0;
+    const bool hovering = hover_ && !panning_ && ph_drag_ == PhysDrag::None;
+    if (hovering) to_tile(mouse_x_, mouse_y_, hx, hy);
+    const flecs::entity hovered = hovering && ph_tool_ == PhysTool::Select ? point_at(hx, hy, false) : flecs::entity();
+    level_->scene().ecs().each([&](flecs::entity e, const scene::Position& p, const sim::GravitySource& g) {
+        const f64 x = p.tile_x(), y = p.tile_y(), r = g.radius;
+        placed.push_back({x, y, g});
+        if (x + r < view.x0 || x - r > view.x1 || y + r < view.y0 || y - r > view.y1) return;
+        const bool sel = selected && level_->id_of(e, false) == selected;
+        const u32 ring = sel ? render::pack_color(255, 210, 90, 255)
+                         : g.strength < 0 ? render::pack_color(255, 140, 70, 220)
+                                          : render::pack_color(90, 220, 255, 220);
+        if (g.replace) {
+            // The world's pull is off inside: the area is tinted.
+            const u32 tint = render::pack_color(90, 220, 255, 40);
+            for (f64 yy = -r; yy < r; yy += 0.5) {
+                const f64 half = std::sqrt(std::max(0.0, r * r - (yy + 0.25) * (yy + 0.25)));
+                quad(x - half, y + yy, half * 2, 0.5, tint, 6);
+            }
+        }
+        circle(x, y, r, px * (sel ? 3 : 2), ring, 7);
+        if (g.fade) circle(x, y, r * 0.5, px, render::pack_color(255, 255, 255, 70), 7);
+        handle(x, y, std::max(0.3, px * 9), ring, 8);
+        if (e == hovered) circle(x, y, std::max(0.6, px * 9), px * 2, render::pack_color(255, 255, 255, 200), 8);
+        if (sel) handle(x + r, y, std::max(0.3, px * 9), render::pack_color(255, 255, 255, 255), 8);
+    });
+
+    // What a body feels inside the points: the world's pull and theirs, as
+    // GravityField adds them (the same field the game builds).
+    if (!placed.empty()) {
+        sim::GravityField field;
+        const level::LevelPhysics& lp = level_->physics();
+        field.set_world(lp.gravity_x, lp.gravity_y);
+        field.build(placed);
+        const f64 step = std::max(1.0, std::ceil(30.0 * px));
+        const f64 x0 = std::floor(view.x0 / step) * step, y0 = std::floor(view.y0 / step) * step;
+        u32 drawn = 0;
+        for (f64 y = y0; y <= view.y1 && drawn < 3000; y += step)
+            for (f64 x = x0; x <= view.x1 && drawn < 3000; x += step) {
+                const f64 cx = x + 0.5, cy = y + 0.5;
+                bool inside = false;
+                for (const auto& s : placed) inside = inside || std::hypot(s.x - cx, s.y - cy) <= s.source.radius;
+                if (!inside) continue;
+                f32 gx = 0, gy = 0;
+                field.at(cx, cy, gx, gy);
+                const f64 g = std::hypot(gx, gy);
+                if (g < 1e-3) {
+                    handle(cx, cy, px * 3, render::pack_color(255, 255, 255, 120), 9); // no pull here
+                    ++drawn;
+                    continue;
+                }
+                const f64 len = step * 0.85 * std::min(1.0, 0.25 + g / level::kMaxGravity);
+                const f64 ux = gx / g, uy = gy / g;
+                const f64 ex = cx + ux * len, ey = cy + uy * len;
+                const u32 c = render::pack_color(255, 255, 255, 170);
+                line(cx, cy, ex, ey, px * 1.5, c, 9);
+                const f64 head = std::min(len * 0.4, px * 8);
+                line(ex, ey, ex - (ux * 0.87 - uy * 0.5) * head, ey - (uy * 0.87 + ux * 0.5) * head, px * 1.5, c, 9);
+                line(ex, ey, ex - (ux * 0.87 + uy * 0.5) * head, ey - (uy * 0.87 - ux * 0.5) * head, px * 1.5, c, 9);
+                ++drawn;
+            }
+    }
+
+    // What the tool is about to make.
+    if (ph_drag_ == PhysDrag::Place) {
+        const f64 r = ph_r_ < 0.5 ? kNewRadius : std::clamp(std::round(ph_r_ * 2) / 2, kMinRadius, kMaxRadius);
+        circle(ph_cx_, ph_cy_, r, px * 2, render::pack_color(255, 210, 90, 255), 7);
+        handle(ph_cx_, ph_cy_, std::max(0.3, px * 9), render::pack_color(255, 210, 90, 255), 8);
+    } else if (hovering && ph_tool_ == PhysTool::Point) {
+        handle(std::floor(hx) + 0.5, std::floor(hy) + 0.5, std::max(0.3, px * 9), render::pack_color(255, 210, 90, 200), 8);
+    }
+    if (ph_drag_ == PhysDrag::Area || (hovering && (ph_tool_ == PhysTool::Water || ph_tool_ == PhysTool::Sand))) {
+        const i32 ax = ph_drag_ == PhysDrag::Area ? std::min(ph_ax_, ph_bx_) : hover_x_;
+        const i32 ay = ph_drag_ == PhysDrag::Area ? std::min(ph_ay_, ph_by_) : hover_y_;
+        const i32 bx = ph_drag_ == PhysDrag::Area ? std::max(ph_ax_, ph_bx_) : hover_x_;
+        const i32 by = ph_drag_ == PhysDrag::Area ? std::max(ph_ay_, ph_by_) : hover_y_;
+        const bool water = ph_tool_ == PhysTool::Water;
+        const u32 fill = water ? render::pack_color(60, 130, 255, 90) : render::pack_color(230, 200, 110, 100);
+        const u32 edge = water ? render::pack_color(120, 180, 255, 230) : render::pack_color(255, 220, 140, 230);
+        const f64 w = bx - ax + 1, h = by - ay + 1, t = px * 2;
+        quad(ax, ay, w, h, fill, 6);
+        quad(ax, ay, w, t, edge, 7);
+        quad(ax, ay + h - t, w, t, edge, 7);
+        quad(ax, ay, t, h, edge, 7);
+        quad(ax + w - t, ay, t, h, edge, 7);
     }
 }
 
@@ -1132,10 +1860,11 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         mouse_x_ = x;
         mouse_y_ = y;
         if (dock_.mouse_move(x, y)) return true;
-        hover_ = over_view(x, y, context) || stroke_ != nullptr || moving_;
+        hover_ = over_view(x, y, context) || stroke_ != nullptr || moving_ || ph_drag_ != PhysDrag::None;
         if (hover_) cell_at(x, y, hover_x_, hover_y_);
         if (stroke_) drag(x, y);
         if (moving_) drag_objects(x, y);
+        if (ph_drag_ != PhysDrag::None) drag_physics(x, y);
         return hover_;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -1143,8 +1872,15 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         mouse_x_ = x;
         mouse_y_ = y;
         if (dock_.busy()) return true;
+        // The right button takes back a drag of the physics tools.
+        if (e.button.button == SDL_BUTTON_RIGHT && ph_drag_ != PhysDrag::None) return cancel_gesture();
         if (!over_view(x, y, context)) return false;
-        if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Tiles) {
+        if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Physics) {
+            if (ph_drag_ == PhysDrag::None && !press_physics(x, y)) {
+                panning_ = true; // empty space: the drag moves the view
+                pan_button_ = SDL_BUTTON_LEFT;
+            }
+        } else if (e.button.button == SDL_BUTTON_LEFT && !panning_ && mode_ == Mode::Tiles) {
             history_.seal();
             press(x, y);
         } else if (e.button.button == SDL_BUTTON_LEFT && !panning_ && objects_mode()) {
@@ -1166,6 +1902,10 @@ bool LevelEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
         if (e.button.button == SDL_BUTTON_LEFT && moving_) {
             moving_ = false;
             history_.seal();
+            used = true;
+        }
+        if (e.button.button == SDL_BUTTON_LEFT && ph_drag_ != PhysDrag::None) {
+            release_physics();
             used = true;
         }
         if (panning_ && e.button.button == pan_button_) {
@@ -1200,6 +1940,21 @@ bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_Q) { set_mode(Mode::Select); return true; }
     if (k.key == SDLK_T) { set_mode(Mode::Tiles); return true; }
     if (k.key == SDLK_O) { set_mode(Mode::Objects); return true; }
+    if (k.key == SDLK_P) { set_mode(Mode::Physics); return true; }
+    if (mode_ == Mode::Physics) {
+        if (k.key == SDLK_ESCAPE) {
+            if (cancel_gesture()) return true;
+            if (ph_tool_ != PhysTool::Select) set_phys_tool(PhysTool::Select);
+            else select_objects({});
+            return true;
+        }
+        if (gesture()) return false;
+        if (k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE) {
+            delete_selection();
+            return true;
+        }
+        return false;
+    }
     if (objects_mode()) {
         if (k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE) {
             delete_selection();

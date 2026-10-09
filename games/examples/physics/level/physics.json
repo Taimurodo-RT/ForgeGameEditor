@@ -1,0 +1,6 @@
+{
+  "$type": "forge::level::LevelPhysics",
+  "gravity_x": 0.0,
+  "gravity_y": 30.0
+}
+

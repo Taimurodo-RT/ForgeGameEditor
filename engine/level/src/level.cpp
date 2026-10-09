@@ -39,7 +39,20 @@ bool Level::open(const fs::path& folder, std::string* error) {
     if (!folder.empty() && !scene_->open_save(folder, error)) return false;
     edits_ = 0;
     object_edits_ = 0;
+    // A physics.json that cannot be used leaves the game's pull; the author
+    // is told, and the file stays as it is until the pull is changed.
+    physics_ = module_.default_physics();
+    physics_error_.clear();
+    if (!folder.empty() && !load_physics(folder, physics_, nullptr, &physics_error_))
+        FORGE_WARN("Физика уровня: %s; действует гравитация игры", physics_error_.c_str());
+    physics_saved_ = physics_;
     return true;
+}
+
+void Level::set_physics(const LevelPhysics& p) {
+    if (p == physics_) return;
+    physics_ = p;
+    ++edits_;
 }
 
 void Level::update(std::span<const world::Rect> focus) {
@@ -67,8 +80,20 @@ Level::SaveReport Level::save() {
     const world::SaveReport w = world_->save();
     const scene::SceneSaveReport s = scene_->save();
     r.ok = w.ok && s.ok;
+    if (!r.ok) r.error = "не записались файлы участков в " + path_to_utf8(folder_);
     r.tile_chunks = w.chunks;
     r.object_chunks = s.chunks;
+    if (physics_changed()) {
+        std::string error;
+        if (save_physics(folder_, physics_, &error)) {
+            physics_saved_ = physics_;
+            physics_error_.clear();
+            r.physics = true;
+        } else {
+            r.ok = false;
+            r.error = error;
+        }
+    }
     r.ms = ns_to_ms(time_now_ns() - start);
     return r;
 }

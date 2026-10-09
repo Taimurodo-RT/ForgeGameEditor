@@ -25,6 +25,7 @@
 #include "forge/world/world.h"
 
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -39,6 +40,15 @@ inline u8 liquid_kind(u16 cell) { return static_cast<u8>(cell >> 12); }
 inline u16 liquid_amount(u16 cell) { return static_cast<u16>(cell & 0x0fff); }
 inline u16 make_liquid(u8 kind, u16 amount) {
     return amount == 0 || kind == 0 ? u16{0} : static_cast<u16>((kind << 12) | (amount > kMaxAmount ? kMaxAmount : amount));
+}
+
+// Which way liquids and falling tiles go under the world's pull (gx, gy), for
+// CellSim::step: the axis the pull points along most (a tie goes to up or
+// down); ~0u when there is no pull, and then they stay where they are.
+// Local gravity sources do not count: they move bodies only.
+inline u32 cells_down(f32 gx, f32 gy) {
+    if (gx == 0 && gy == 0) return ~0u;
+    return std::fabs(gy) >= std::fabs(gx) ? (gy > 0 ? 0u : 2u) : (gx < 0 ? 1u : 3u);
 }
 
 struct LiquidKind {

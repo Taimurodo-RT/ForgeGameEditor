@@ -9,14 +9,17 @@
 // places through it, so one editor serves every game.
 //
 // Changes are kept as region files in the level folder (tiles of changed
-// chunks, objects of visited chunks); a new game starts from a copy of that
-// folder, and the generator fills in the rest.
+// chunks, objects of visited chunks) and physics.json (the world's gravity);
+// a new game starts from a copy of that folder, and the generator fills in
+// the rest.
 
 #include "forge/core/math.h"
 #include "forge/core/types.h"
 #include "forge/objects/library.h"
 #include "forge/render/camera.h"
 #include "forge/scene/scene.h"
+#include "forge/sim/cells.h"
+#include "forge/sim/tiles.h"
 #include "forge/world/world.h"
 
 #include <SDL3/SDL_gpu.h>
@@ -57,6 +60,27 @@ struct ObjectDef {
 struct LevelId {
     u64 id = 0;
 };
+
+// The level's physics that is not tiles or objects: the world's pull, in
+// tiles / s² (side view: 0, 40). Kept in physics.json in the level folder;
+// without it a level has its game's (LevelModule::default_physics). Gravity
+// points are objects of the level (sim::GravitySource), water and sand its
+// tiles.
+struct LevelPhysics {
+    f32 gravity_x = 0, gravity_y = 0;
+    friend bool operator==(const LevelPhysics&, const LevelPhysics&) = default;
+};
+// The strongest pull a level may have, each way.
+inline constexpr f32 kMaxGravity = 200;
+// Finite and within ±kMaxGravity.
+bool valid_physics(const LevelPhysics& p);
+// Reads folder/physics.json over out (fields it lacks keep out's values).
+// No file: true, out unchanged, *found false. A file that cannot be used
+// (not JSON, a field of the wrong type, a value out of range): false, out
+// unchanged, *error in the author's words.
+bool load_physics(const std::filesystem::path& folder, LevelPhysics& out, bool* found = nullptr,
+                  std::string* error = nullptr);
+bool save_physics(const std::filesystem::path& folder, const LevelPhysics& p, std::string* error = nullptr);
 
 // What the world view shows besides the tiles.
 struct ViewOptions {
@@ -145,6 +169,19 @@ public:
     virtual void object_moved(flecs::entity e) { (void)e; }
     // Whether the properties panel shows this saved component's fields.
     virtual bool object_component_shown(const reflect::TypeInfo* type) const { (void)type; return true; }
+
+    // --- physics ---
+    // The game's own pull: what a level without physics.json has.
+    virtual LevelPhysics default_physics() const { return {}; }
+    // Palette tiles (TileDef::id) the «Физика» mode pours into free cells:
+    // "water", "sand". Empty: the mode has no areas.
+    virtual std::vector<std::string> physics_fills() const { return {}; }
+    // The game's liquids and falling tiles, and its solid tiles in rules, as
+    // its simulation has them: for the flow trial in the editor. Null: none.
+    virtual std::unique_ptr<sim::CellSim> make_cells(sim::CollisionRules& rules) const {
+        (void)rules;
+        return nullptr;
+    }
 };
 
 class Level {
@@ -169,14 +206,26 @@ public:
     // the view: undo of a stroke made elsewhere.
     void ensure_loaded(const world::Rect& tiles);
 
-    // Writes changed chunks and objects to the folder.
+    // Writes changed chunks and objects to the folder, and physics.json when
+    // the physics changed.
     struct SaveReport {
         bool ok = false;
         u32 tile_chunks = 0;
         u32 object_chunks = 0;
+        bool physics = false; // physics.json written
         f64 ms = 0;
+        std::string error; // when not ok, in the author's words
     };
     SaveReport save();
+
+    // The world's pull (physics.json, else the game's).
+    const LevelPhysics& physics() const { return physics_; }
+    void set_physics(const LevelPhysics& p);
+    // Not saved yet.
+    bool physics_changed() const { return physics_ != physics_saved_; }
+    // Why physics.json could not be read when the level opened (the game's
+    // pull is used then); empty when it was fine or not there.
+    const std::string& physics_error() const { return physics_error_; }
 
     // Bumped by every edit made through set_tile (for "unsaved" marks).
     u64 edits() const { return edits_; }
@@ -208,6 +257,8 @@ private:
     flecs::query<LevelId> ids_;
     u64 edits_ = 0;
     u64 object_edits_ = 0;
+    LevelPhysics physics_, physics_saved_;
+    std::string physics_error_;
 };
 
 // Copies a level folder into a game's world folder (a new game starts from
@@ -217,3 +268,4 @@ bool copy_level(const std::filesystem::path& level, const std::filesystem::path&
 } // namespace forge::level
 
 FORGE_REFLECT_DECLARE(forge::level::LevelId)
+FORGE_REFLECT_DECLARE(forge::level::LevelPhysics)

@@ -114,6 +114,16 @@ void register_components(scene::Scene& scene) {
     scene.register_component<Door>();
 }
 
+void setup_cells(sim::CollisionRules& rules, sim::CellSim& cells) {
+    for (TileId t = 1; t < TileSliceCount; ++t)
+        if (is_solid(t)) rules.set(t, sim::TileShape::Solid);
+    sim::LiquidKind water;
+    const u8 w = cells.add_liquid(water);
+    FORGE_ASSERT(w == kWater);
+    (void)w;
+    cells.set_falling(TileSand, true);
+}
+
 bool load_objects(objects::Library& library, const std::filesystem::path& game_dir, std::string* error) {
     const bool ok = library.load(game_dir / "kinds.json", game_dir / "objects", error);
     if (ok) FORGE_INFO("Объекты: видов %zu, шаблонов %zu", library.kinds().size(), library.templates().size());
@@ -489,6 +499,12 @@ bool SliceLevel::object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1)
     y0 = p->tile_y() - hh;
     y1 = p->tile_y() + hh;
     return true;
+}
+
+std::unique_ptr<sim::CellSim> SliceLevel::make_cells(sim::CollisionRules& rules) const {
+    auto cells = std::make_unique<sim::CellSim>(kBlocks, kLiquids);
+    setup_cells(rules, *cells);
+    return cells;
 }
 
 void SliceLevel::object_moved(flecs::entity e) {

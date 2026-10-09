@@ -121,9 +121,8 @@ void Simulation::tick() {
     const u64 tc = time_now_ns();
     // Liquids and sand move a whole step at a time: in slow motion they step
     // less often, faster than real time more often.
-    const f32 wx = gravity_.world_x(), wy = gravity_.world_y();
-    if (cells_ && (wx != 0 || wy != 0) && scale > 0) {
-        const u32 down = std::fabs(wy) >= std::fabs(wx) ? (wy > 0 ? 0u : 2u) : (wx < 0 ? 1u : 3u);
+    const u32 down = cells_down(gravity_.world_x(), gravity_.world_y());
+    if (cells_ && down != ~0u && scale > 0) {
         cells_due_ = std::min(cells_due_ + scale, 4.0f);
         while (cells_due_ >= 1.0f) {
             cells_->step(zones_, ctx.tick, down);

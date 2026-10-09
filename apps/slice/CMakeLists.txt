@@ -85,6 +85,9 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/slice/ DESTINATION data/game COMPO
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/window-behaviour/ DESTINATION data/examples/window-behaviour COMPONENT slice)
 # And the game made of templates (13.12) with its pictures, sound and own template: `OldMine --test --scene templates`.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/templates/ DESTINATION data/examples/templates COMPONENT slice)
+# And the level made in the editor's «Физика» (step 9): `OldMine --test --scene physics` starts a new game from
+# data/examples/physics/level, as «Играть отсюда» starts one from the editor's level folder.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/physics/ DESTINATION data/examples/physics COMPONENT slice)
 add_custom_target(forge_slice_package
   COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/dist/OldMine
   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component slice --config $<CONFIG>
