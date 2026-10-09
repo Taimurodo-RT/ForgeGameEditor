@@ -43,6 +43,13 @@ private:
     i32 surface_y_;
 };
 
+// Nothing at all: every tile of every layer empty. A level made only of its
+// own chunks (a map imported from Tiled) has this around it.
+class EmptyGenerator final : public Generator {
+public:
+    void generate(ChunkCoord coord, const ChunkTiles& out) const override;
+};
+
 // Top down, like Factorio or an RPG overworld. Layer 0: ground (biomes,
 // lakes), layer 1: objects on it (trees, rocks).
 class TopDownGenerator final : public Generator {

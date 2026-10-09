@@ -8,12 +8,13 @@
 //                                   (the level editor's «Играть отсюда»; FILE gets the links
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
-//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones]
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
 //                                   new game and «Играть отсюда» start it; light also draws the editor's view of it
-//                                   to compare)
+//                                   to compare; own_tiles: a level with tiles of its own and nothing around it, made
+//                                   by the scene, over a copy of the game's data with a «Картинка» template)
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -27,12 +28,14 @@
 #include "slice_game.h"
 #include "slice_level.h"
 
+#include "forge/assets/image.h"
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/core/time.h"
 #include "forge/audio/screen_sounds.h"
 #include "forge/game/runner.h"
+#include "forge/game/saves.h"
 #include "forge/level/level.h"
 #include "forge/level/light.h"
 #include "forge/render/offscreen.h"
@@ -254,6 +257,10 @@ private:
         }
         if (scene_ == "zones") {
             build_zones(s);
+            return;
+        }
+        if (scene_ == "own_tiles") {
+            build_own_tiles(s);
             return;
         }
         SliceGame& g = g_;
@@ -3963,6 +3970,410 @@ private:
         }});
     }
 
+    // A level with tiles of its own (tiles.json and tiles.png, 32 px) and nothing around it (world.json), made here
+    // as an import makes one: the hero stands on them, a wall of them stops him and nothing digs them; the sky shines
+    // through the background ones; nobody comes to live around and no tiles are there; the editor draws them pixel
+    // for pixel, the game's tiles enlarged without smoothing and still tinted on the walls; a «Картинка» stays where
+    // it was put and the hero passes it; all of it through a save and a load, and the hero wakes at the spawn point.
+    // The «Картинка» template (Табличка) is in this run's copy of the game's data (main).
+    void build_own_tiles(Shell& s) {
+        SliceGame& g = g_;
+        struct State {
+            std::filesystem::path dir;
+            forge::level::LevelTiles own;
+            render::Camera2D cam;
+            u32 w = 0, h = 0;
+            f64 sign_x = 0, sign_y = 0, saved_x = 0;
+            u32 deep = 0; // cells of the game's world under the village with something in them
+            Shot editor, game;
+        };
+        auto st = std::make_shared<State>();
+        const i32 v = g.generator().village_y();
+        constexpr u32 kPx = 32;
+        using Rgba = std::array<u8, 4>;
+        // The pictures: rock with seams, a sky that gets lighter downwards, a bush with air around it, brick.
+        auto picture = [](u32 i, u32 x, u32 y) -> Rgba {
+            switch (i) {
+            case 0: return x % 8 == 0 || y % 8 == 0 ? Rgba{90, 50, 30, 255} : Rgba{static_cast<u8>(150 + (x * 3) % 20), 90, 50, 255};
+            case 1: return Rgba{static_cast<u8>(80 + y), static_cast<u8>(140 + y), 230, 255};
+            case 2: {
+                const f64 dx = x + 0.5 - 16, dy = y + 0.5 - 20;
+                return dx * dx + dy * dy < 121 ? Rgba{40, static_cast<u8>(140 + (x + y) % 30), 50, 255} : Rgba{0, 0, 0, 0};
+            }
+            default: return y % 8 == 7 || (x + (y / 8) % 2 * 8) % 16 == 15 ? Rgba{200, 195, 180, 255} : Rgba{170, 60, 55, 255};
+            }
+        };
+        {
+            forge::level::LevelTiles& t = st->own;
+            t.px = kPx;
+            const char* names[] = {"Скала", "Небо", "Куст", "Кирпич"};
+            const u32 layers[] = {kBlocks, kWalls, kWalls, kBlocks};
+            for (u32 i = 0; i < 4; ++i) {
+                t.tiles.push_back({static_cast<world::TileId>(forge::level::kFirstOwnTile + i), names[i], layers[i], layers[i] == kBlocks,
+                                   "сцена own_tiles"});
+                for (u32 y = 0; y < kPx; ++y)
+                    for (u32 x = 0; x < kPx; ++x) {
+                        const Rgba c = picture(i, x, y);
+                        t.rgba.insert(t.rgba.end(), c.begin(), c.end());
+                    }
+            }
+        }
+        // A pixel of an image at a tile point, as the renderers place it around the snapped camera.
+        auto pixel = [st](const std::vector<u8>& rgba, f64 tx, f64 ty) {
+            const render::Camera2D& c = st->cam;
+            const i32 px = static_cast<i32>(std::floor((tx - c.snapped_x()) * c.zoom + st->w * 0.5));
+            const i32 py = static_cast<i32>(std::floor((ty - c.snapped_y()) * c.zoom + st->h * 0.5));
+            std::array<int, 3> out{-1, -1, -1};
+            if (px < 0 || py < 0 || px >= static_cast<i32>(st->w) || py >= static_cast<i32>(st->h) || rgba.size() < st->w * st->h * 4)
+                return out;
+            const usize i = (static_cast<usize>(py) * st->w + static_cast<usize>(px)) * 4;
+            return std::array<int, 3>{rgba[i], rgba[i + 1], rgba[i + 2]};
+        };
+        // Pixel (x, y) of the cell at (tx, ty): one screen pixel per picture pixel at the zoom of 32.
+        auto at = [pixel](const std::vector<u8>& rgba, i32 tx, i32 ty, u32 x, u32 y) {
+            return pixel(rgba, tx + (x + 0.5) / kPx, ty + (y + 0.5) / kPx);
+        };
+        auto rgb = [](const std::array<int, 3>& p) {
+            return std::to_string(p[0]) + "," + std::to_string(p[1]) + "," + std::to_string(p[2]);
+        };
+        auto near = [](const std::array<int, 3>& a, const std::array<int, 3>& b, int most) {
+            for (int c = 0; c < 3; ++c)
+                if (std::abs(a[c] - b[c]) > most) return false;
+            return true;
+        };
+        // Under the level's floor, where the game's world has its ground: the cells loaded, and of them those with
+        // anything on any layer.
+        auto below = [&g, v](u32& filled) {
+            u32 cells = 0;
+            filled = 0;
+            for (i32 y = v + 6; y < v + 40; ++y)
+                for (i32 x = -24; x < 24; ++x) {
+                    if (!g.world() || !g.world()->find_chunk(world::chunk_of(x, y))) continue;
+                    ++cells;
+                    filled += g.tile(kWalls, x, y) != 0 || g.tile(kBlocks, x, y) != 0 || g.tile(kLiquids, x, y) != 0;
+                }
+            return cells;
+        };
+        auto empty_below = [below]() {
+            u32 filled = 0;
+            return below(filled) > 0 && filled == 0;
+        };
+        // Far from the level's cells, in chunks it never saved: what the world around makes there. The hero goes
+        // there for a moment (it loads the place) and comes back.
+        auto far_away = [&g, v](u32& filled, u32& entities) {
+            const f64 x = g.hero_x(), y = g.hero_y();
+            g.teleport(200.5, v - static_cast<f64>(kHeroHalfH));
+            entities = g.entities();
+            u32 cells = 0;
+            filled = 0;
+            for (i32 ty = v + 6; ty < v + 40; ++ty)
+                for (i32 tx = 160; tx < 240; ++tx) {
+                    if (!g.world() || !g.world()->find_chunk(world::chunk_of(tx, ty))) continue;
+                    ++cells;
+                    filled += g.tile(kWalls, tx, ty) != 0 || g.tile(kBlocks, tx, ty) != 0 || g.tile(kLiquids, tx, ty) != 0;
+                }
+            g.teleport(x, y);
+            return cells;
+        };
+
+        steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
+            if (f < 5) return false;
+            g.set_level({});
+            check(s.new_game(), "новая игра со своего уровня игры");
+            return true;
+        }});
+        steps_.push_back({"мир игры: под деревней земля, в деревне жители", 20, [&g, below, far_away, this, st](u32 f) {
+            if (f < 10) return false;
+            u32 filled = 0;
+            const u32 cells = below(filled);
+            st->deep = filled;
+            check(cells > 0 && filled > cells / 2, "под деревней в мире игры земля: клеток " + std::to_string(filled) + " из " +
+                                                       std::to_string(cells));
+            const u32 here = g.entities();
+            u32 there = 0;
+            const u32 far = far_away(filled, there);
+            check(far > 0 && filled > 0, "и вдали под землёй земля: клеток " + std::to_string(filled) + " из " + std::to_string(far));
+            check(there > here, "и там игра заселяет участки: сущностей " + std::to_string(here) + ", там " + std::to_string(there));
+            check(g.count_npcs() > 0, "жители игры на месте");
+            check(!g.location().empty(), "у мест игры есть имена: " + g.location());
+            return true;
+        }});
+        steps_.push_back({"уровень со своими тайлами, вокруг пусто", 20, [&s, &g, v, this, st](u32 f) {
+            if (f > 0) return f >= 2;
+            st->dir = std::filesystem::temp_directory_path() / "forge_slice_own_tiles" / "level";
+            std::error_code ec;
+            std::filesystem::remove_all(st->dir.parent_path(), ec);
+            std::filesystem::create_directories(st->dir, ec);
+            std::string why;
+            check(forge::level::save_world(st->dir, forge::level::LevelWorld{true}, &why), "world.json: вокруг пусто " + why);
+            // As the editor (an import) makes it: the level module, its tiles, cells, the spawn point and a «Картинка».
+            SliceLevel module;
+            check(module.load_objects(s.game_dir(), &why), "шаблоны игры и «Табличка» из копии данных " + why);
+            forge::level::Level level(module);
+            check(level.open(st->dir, &why) && level.around().empty_around, "уровень открывается, вокруг пусто " + why);
+            check(level.set_own_tiles(st->own), "четыре своих тайла ложатся в уровень");
+            level.ensure_loaded({-30, v - 30, 30, v + 12});
+            u32 painted = 0;
+            auto put = [&](u32 layer, i32 x, i32 y, world::TileId t) { painted += level.set_tile(layer, x, y, t); };
+            for (i32 x = -24; x < 24; ++x) {
+                for (i32 y = v - 16; y < v; ++y) put(kWalls, x, y, 257);
+                for (i32 y = v; y < v + 6; ++y) put(kBlocks, x, y, 256);
+            }
+            for (i32 y = v - 4; y < v; ++y) put(kBlocks, 10, y, 259), put(kBlocks, 11, y, 259);
+            for (i32 x = -6; x <= -4; ++x) put(kWalls, x, v - 1, 258);
+            put(kBlocks, -10, v - 1, world::TileStone);
+            put(kWalls, -12, v - 1, world::TileStoneWall);
+            check(painted == 48 * 22 + 8 + 3 + 2, "клетки нарисованы: " + std::to_string(painted));
+            forge::level::LevelAreas a;
+            a.spawn = true;
+            a.spawn_x = 0.5;
+            a.spawn_y = v;
+            level.set_areas(a);
+            const auto& defs = module.objects();
+            usize sign = defs.size();
+            for (usize i = 0; i < defs.size(); ++i)
+                if (defs[i].id == "sign") sign = i;
+            check(sign < defs.size(), "«Табличка» вида «Картинка» в палитре объектов");
+            flecs::entity e = sign < defs.size() ? module.place_object(level, sign, 4.5, v - 0.5) : flecs::entity();
+            check(e.is_valid() && e.has<sim::Body>() && e.get<sim::Body>().gravity == 0 && !e.get<sim::Body>().collide &&
+                      e.get<sim::Body>().half_h == 1.0f,
+                  "«Табличка» поставлена: не падает, ни во что не упирается, высотой 2 клетки");
+            if (e.is_valid()) {
+                st->sign_x = e.get<scene::Position>().tile_x();
+                st->sign_y = e.get<scene::Position>().tile_y();
+                level.touch_objects();
+            }
+            const forge::level::Level::SaveReport r = level.save();
+            check(r.ok && r.own_tiles && r.areas && r.tile_chunks > 0, "уровень записан: " + r.error);
+            for (const char* file : {"tiles.json", "tiles.png", "world.json", "areas.json"})
+                check(std::filesystem::is_regular_file(st->dir / file, ec), std::string("в папке уровня ") + file);
+            g.set_level(st->dir);
+            check(s.new_game(), "новая игра с этого уровня");
+            return false;
+        }});
+        steps_.push_back({"герой на своём полу у точки появления, вокруг никого и ничего", 40, [&g, v, empty_below, far_away, this, st](u32 f) {
+            if (f < 30) return false;
+            check(g.hero_x() == 0.5 && std::fabs(g.hero_y() - (v - static_cast<f64>(kHeroHalfH))) < 0.01 && g.on_ground(),
+                  "герой стоит на «Скале» у точки появления: " + std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()));
+            check(g.tile(kBlocks, 0, v) == 256 && g.tile(kWalls, 0, v - 5) == 257 && g.tile(kBlocks, 10, v - 2) == 259 &&
+                      g.tile(kWalls, -5, v - 1) == 258 && g.tile(kBlocks, -10, v - 1) == world::TileStone,
+                  "в игре клетки уровня");
+            check(empty_below() && st->deep != 0, "где в мире игры земля, здесь пусто: под полом всё загруженное пусто");
+            check(g.count_npcs() == 0, "жителей нет: " + std::to_string(g.count_npcs()));
+            u32 items = 0;
+            for (u8 k = 0; k <= static_cast<u8>(ItemKind::Key); ++k) items += g.count_items(static_cast<ItemKind>(k));
+            check(items == 0, "предметов игры нет: " + std::to_string(items));
+            check(g.copies_of("sign").size() == 1, "«Табличка» одна");
+            check(g.entities() == 2, "в игре только герой и «Табличка»: сущностей " + std::to_string(g.entities()));
+            check(g.location().empty(), "имени места игры нет: «" + g.location() + "»");
+            u32 filled = 0, there = 0;
+            const u32 far = far_away(filled, there);
+            check(far > 0 && filled == 0, "и вдали, где уровень ничего не записал, пусто: клеток " + std::to_string(filled) + " из " +
+                                              std::to_string(far));
+            check(there == 2, "и там никого не заселили: сущностей " + std::to_string(there));
+            check(g.hero_x() == 0.5, "герой вернулся к точке появления");
+            return true;
+        }});
+        steps_.push_back({"стена из своих тайлов держит, «Табличку» герой проходит", 150, [&g, v, this, st](u32 f) {
+            if (f < 120) {
+                Controls right;
+                right.right = true;
+                g.script(right);
+                return false;
+            }
+            g.script(Controls{});
+            if (f < 130) return false;
+            check(g.hero_x() > 9 && g.hero_x() < 10 - kHeroHalfW + 0.01 && g.on_ground(),
+                  "герой у «Кирпича», дальше не прошёл: x " + std::to_string(g.hero_x()));
+            check(g.hero_x() > st->sign_x + 1, "«Табличку» прошёл насквозь");
+            return true;
+        }});
+        steps_.push_back({"свои тайлы не копаются", 100, [&g, v, this](u32 f) {
+            if (f < 90) {
+                Controls c;
+                c.use = true;
+                c.aim_x = f < 45 ? 10.5 : 9.5;
+                c.aim_y = f < 45 ? v - 1.5 : v + 0.5;
+                g.script(c);
+                return false;
+            }
+            g.script(Controls{});
+            check(g.tile(kBlocks, 10, v - 2) == 259 && g.tile(kBlocks, 9, v) == 256, "«Кирпич» и «Скала» на месте");
+            return true;
+        }});
+        steps_.push_back({"«Табличка» стоит, где поставили", 2, [&g, this, st](u32 f) {
+            if (f > 0) return true;
+            const std::vector<flecs::entity_t> signs = g.copies_of("sign");
+            f64 x = 0, y = 0;
+            check(signs.size() == 1 && g.position_of(signs[0], x, y) && x == st->sign_x && y == st->sign_y,
+                  "«Табличка» на месте: " + std::to_string(x) + ", " + std::to_string(y));
+            return true;
+        }});
+        steps_.push_back({"редактор рисует свои тайлы пиксель в пиксель", 5, [&s, &g, v, picture, pixel, at, rgb, near, this, st](u32 f) {
+            if (f > 0) return true;
+            st->w = g.frame_width();
+            st->h = g.frame_height();
+            st->cam = g.camera();
+            st->cam.x = -2;
+            st->cam.y = v - 4;
+            st->cam.zoom = static_cast<f32>(kPx);
+            SliceLevel module;
+            std::string why;
+            check(module.load_objects(s.game_dir(), &why), "шаблоны для редактора " + why);
+            check(module.init_view(g.device(), SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM), "вид редактора");
+            forge::level::Level level(module);
+            check(level.open(st->dir, &why), "редактор открывает уровень " + why);
+            const render::Camera2D cam = st->cam;
+            level.ensure_loaded(cam.visible_tiles(st->w, st->h).expanded(render::kLightMargin));
+            const u32 w = st->w, h = st->h;
+            check(shoot(g.device(), w, h,
+                        [&](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) {
+                            module.prepare_view(cmd, level, cam, w, h, forge::level::ViewOptions{}, 0);
+                            SDL_GPUColorTargetInfo info{};
+                            info.texture = t;
+                            const Color bg = module.background();
+                            info.clear_color = SDL_FColor{bg.r, bg.g, bg.b, 1};
+                            info.load_op = SDL_GPU_LOADOP_CLEAR;
+                            info.store_op = SDL_GPU_STOREOP_STORE;
+                            SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &info, 1, nullptr);
+                            module.draw_view(cmd, pass);
+                            SDL_EndGPURenderPass(pass);
+                        },
+                        module.lights(), st->editor),
+                  "кадр вида редактора");
+            const std::vector<u8>& img = st->editor.full;
+            // Own tiles: every pixel as in its picture, on the walls too (not tinted).
+            struct Cell {
+                u32 tile;
+                i32 x, y;
+            };
+            u32 checked = 0, same = 0;
+            std::string first;
+            for (const Cell c : {Cell{0, -20, v + 1}, Cell{1, -20, v - 10}, Cell{3, 10, v - 2}, Cell{2, -5, v - 1}})
+                for (u32 y = 0; y < kPx; ++y)
+                    for (u32 x = 0; x < kPx; ++x) {
+                        const Rgba p = picture(c.tile, x, y);
+                        if (p[3] == 0) continue;
+                        ++checked;
+                        const std::array<int, 3> want{p[0], p[1], p[2]}, got = at(img, c.x, c.y, x, y);
+                        if (got == want) ++same;
+                        else if (first.empty())
+                            first = "тайл " + std::to_string(256 + c.tile) + " пиксель " + std::to_string(x) + "," + std::to_string(y) +
+                                    ": " + rgb(got) + " вместо " + rgb(want);
+            }
+            check(checked > 3 * kPx * kPx && same == checked,
+                  "свои тайлы как их картинки: " + std::to_string(same) + " из " + std::to_string(checked) + " пикселей " + first);
+            // Where the bush has none, the sky behind the level shows.
+            const Color bg = module.background();
+            check(near(at(img, -5, v - 1, 0, 0), {static_cast<int>(bg.r * 255 + 0.5f), static_cast<int>(bg.g * 255 + 0.5f),
+                                                  static_cast<int>(bg.b * 255 + 0.5f)}, 1),
+                  "сквозь прозрачное у «Куста» видно небо: " + rgb(at(img, -5, v - 1, 0, 0)));
+            // The game's tiles: twice as big, each pixel of theirs two by two, the walls still tinted.
+            const std::vector<u8> atlas = make_atlas();
+            const u32 row = demo::kTileCellPx * demo::kTileCells;
+            auto game_px = [&](world::TileId t, u32 x, u32 y) {
+                const usize i = (static_cast<usize>((t / demo::kTileCells) * demo::kTileCellPx + y / 2) * row + (t % demo::kTileCells) * demo::kTileCellPx + x / 2) * 4;
+                return std::array<int, 3>{atlas[i], atlas[i + 1], atlas[i + 2]};
+            };
+            u32 stone = 0, wall = 0;
+            for (u32 y = 0; y < kPx; ++y)
+                for (u32 x = 0; x < kPx; ++x) {
+                    stone += at(img, -10, v - 1, x, y) == game_px(world::TileStone, x, y);
+                    const std::array<int, 3> a = game_px(world::TileStoneWall, x, y);
+                    const std::array<int, 3> tinted{static_cast<int>(a[0] * 0.58 + 0.5), static_cast<int>(a[1] * 0.58 + 0.5),
+                                                    static_cast<int>(a[2] * 0.64 + 0.5)};
+                    wall += near(at(img, -12, v - 1, x, y), tinted, 1);
+                }
+            check(stone == kPx * kPx, "«Камень» игры увеличен без сглаживания: " + std::to_string(stone) + " из 1024");
+            check(wall == kPx * kPx, "«Стена камня» игры по-прежнему темнее: " + std::to_string(wall) + " из 1024");
+            // The «Картинка»: its board, two cells tall over its feet.
+            check(near(pixel(img, st->sign_x, st->sign_y - 0.75), {150, 105, 60}, 1),
+                  "«Табличка» нарисована своей картинкой: " + rgb(pixel(img, st->sign_x, st->sign_y - 0.75)));
+            return true;
+        }});
+        steps_.push_back({"в игре небо светит сквозь свой фон, в толще «Скалы» темно", 5, [&g, v, picture, pixel, at, rgb, near, this, st](u32 f) {
+            if (f > 0) return true;
+            g.set_hero_light(false);
+            g.camera() = st->cam;
+            const u32 w = st->w, h = st->h;
+            check(shoot(g.device(), w, h, [&g, w, h](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) { g.render(cmd, t, w, h); }, g.lights(),
+                        st->game),
+                  "кадр игры");
+            g.set_hero_light(true);
+            const std::array<int, 3> back = pixel(st->game.light, -20.5, v - 10.5), open = pixel(st->game.light, -20.5, v - 17.5),
+                                     deep = pixel(st->game.light, -20.5, v + 3.5);
+            FORGE_INFO("свет: на своём фоне %s, в пустоте над картой %s, в толще «Скалы» %s", rgb(back).c_str(), rgb(open).c_str(),
+                       rgb(deep).c_str());
+            check(back[0] > 200 && near(back, open, 2), "свой фон освещён небом, как пустая клетка: " + rgb(back) + " и " + rgb(open));
+            check(deep[0] < back[0] - 60, "в толще «Скалы» темнее: " + rgb(deep));
+            // The frame: the picture times the light.
+            const Rgba p = picture(1, 9, 9);
+            const std::array<int, 3> got = at(st->game.full, -20, v - 10, 9, 9);
+            const std::array<int, 3> want{p[0] * back[0] / 255, p[1] * back[1] / 255, p[2] * back[2] / 255};
+            check(near(got, want, 2), "в кадре игры свой фон — его картинка под светом неба: " + rgb(got) + " и " + rgb(want));
+            return true;
+        }});
+        steps_.push_back({"сохранение и загрузка", 40, [&s, &g, v, empty_below, this, st](u32 f) {
+            if (f == 0) {
+                st->saved_x = g.hero_x();
+                check(s.save("own_tiles", "Свои тайлы"), "игра сохраняется");
+                std::error_code ec;
+                for (const char* file : {"tiles.json", "tiles.png", "world.json"})
+                    check(std::filesystem::is_regular_file(s.slots().folder("own_tiles") / "world" / file, ec),
+                          std::string("в сохранении ") + file);
+                check(s.load("own_tiles"), "сохранение загружается");
+                return false;
+            }
+            if (f < 30) return false;
+            check(std::fabs(g.hero_x() - st->saved_x) < 0.01, "герой где был: " + std::to_string(g.hero_x()));
+            check(g.tile(kBlocks, 0, v) == 256 && g.tile(kWalls, -5, v - 1) == 258 && g.tile(kBlocks, -10, v - 1) == world::TileStone,
+                  "свои тайлы на месте");
+            check(empty_below(), "вокруг по-прежнему пусто");
+            check(g.count_npcs() == 0 && g.location().empty(), "жителей и имён мест нет");
+            const std::vector<flecs::entity_t> signs = g.copies_of("sign");
+            f64 x = 0, y = 0;
+            check(signs.size() == 1 && g.position_of(signs[0], x, y) && x == st->sign_x && y == st->sign_y, "«Табличка» на месте");
+            return true;
+        }});
+        steps_.push_back({"после загрузки свои тайлы видны как прежде", 5, [&g, v, at, this, st](u32 f) {
+            if (f > 0) return true;
+            g.set_hero_light(false);
+            g.camera() = st->cam;
+            const u32 w = st->w, h = st->h;
+            Shot again;
+            check(shoot(g.device(), w, h, [&g, w, h](SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* t) { g.render(cmd, t, w, h); }, g.lights(),
+                        again),
+                  "кадр игры после загрузки");
+            g.set_hero_light(true);
+            u32 same = 0;
+            for (u32 y = 0; y < kPx; ++y)
+                for (u32 x = 0; x < kPx; ++x) same += at(again.full, -20, v + 1, x, y) == at(st->game.full, -20, v + 1, x, y);
+            check(same == kPx * kPx, "«Скала» в кадре та же, что до сохранения: " + std::to_string(same) + " из 1024");
+            return true;
+        }});
+        steps_.push_back({"без сердец герой очнулся у точки появления", 20, [&g, v, this](u32 f) {
+            if (f == 0) {
+                g.teleport(-20.5, v - static_cast<f64>(kHeroHalfH));
+                g.hurt(100);
+                return false;
+            }
+            if (f < 10) return false;
+            check(g.hero_x() == 0.5 && std::fabs(g.hero_y() - (v - static_cast<f64>(kHeroHalfH))) < 0.01, "герой у точки появления: " +
+                                                                                         std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()));
+            check(g.hearts() > 0, "сердца вернулись");
+            return true;
+        }});
+        steps_.push_back({"обратно в меню", 5, [&s, &g, this, st](u32 f) {
+            if (f == 0) {
+                s.to_main_menu();
+                g.set_level({});
+                std::error_code ec;
+                std::filesystem::remove_all(st->dir.parent_path(), ec);
+            }
+            return f >= 2;
+        }});
+    }
+
     SliceGame& g_;
     std::string scene_;
     std::vector<Step> steps_;
@@ -4003,7 +4414,45 @@ int main(int argc, char** argv) {
     // --scene volumes: the game starts over the settings.json a player left, in this run's own folder: music and
     // sounds at 0, all at 100, as the game writes it.
     std::vector<char*> args(argv, argv + argc);
-    std::string user;
+    std::string user, data;
+    // --scene own_tiles: the game's data with a «Картинка» template (Табличка, its picture 16 × 24) in this run's
+    // own folder; the game's own data stays as it is.
+    if (scene == "own_tiles" && options.silent) {
+        std::error_code ec;
+        const std::filesystem::path packaged = exe_dir() / "data" / "game";
+        const std::filesystem::path from =
+            std::filesystem::is_directory(packaged / "objects", ec) ? packaged : utf8_path(SLICE_DATA_DIR);
+        const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_slice_own_tiles_data";
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::copy(from, dir, std::filesystem::copy_options::recursive, ec);
+        std::filesystem::create_directories(dir / "pictures", ec);
+        const std::string_view sign = R"({
+  "id": "sign",
+  "name": "Табличка",
+  "kind": "picture",
+  "values": {"half_height": 1},
+  "picture": "табличка.png"
+}
+)";
+        assets::CookedTexture img;
+        img.width = 16;
+        img.height = 24;
+        for (u32 y = 0; y < img.height; ++y)
+            for (u32 x = 0; x < img.width; ++x) {
+                // A board on a post, air around the post.
+                const bool board = y < 12, post = x >= 6 && x < 10;
+                const u8 px[4] = {static_cast<u8>(board ? 150 : 90), static_cast<u8>(board ? 105 : 60), static_cast<u8>(board ? 60 : 30),
+                                  static_cast<u8>(board || post ? 255 : 0)};
+                img.rgba8.insert(img.rgba8.end(), px, px + 4);
+            }
+        std::vector<u8> png;
+        if (ec || !assets::encode_image(img, ".png", png) || !write_file_atomic(dir / "pictures" / utf8_path("табличка.png"), png) ||
+            !write_file_atomic(dir / "objects" / utf8_path("Табличка.object.json"), {reinterpret_cast<const u8*>(sign.data()), sign.size()}))
+            FORGE_ERROR("не сделана копия данных игры с «Табличкой» в %s", path_to_utf8(dir).c_str());
+        data = path_to_utf8(dir);
+        args.push_back(const_cast<char*>("--data"));
+        args.push_back(data.data());
+    }
     if (scene == "volumes" && options.silent) {
         const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_slice_volumes";
         std::error_code ec;

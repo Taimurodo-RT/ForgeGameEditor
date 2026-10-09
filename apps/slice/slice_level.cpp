@@ -118,6 +118,8 @@ void register_components(scene::Scene& scene) {
 void setup_cells(sim::CollisionRules& rules, sim::CellSim& cells) {
     for (TileId t = 1; t < TileSliceCount; ++t)
         if (is_solid(t)) rules.set(t, sim::TileShape::Solid);
+    for (u32 t = level::kFirstOwnTile; t < level::kFirstOwnTile + level::kMaxOwnTiles; ++t)
+        if (is_solid(static_cast<TileId>(t))) rules.set(static_cast<TileId>(t), sim::TileShape::Solid);
     sim::LiquidKind water;
     const u8 w = cells.add_liquid(water);
     FORGE_ASSERT(w == kWater);
@@ -216,7 +218,7 @@ void Objects::init(flecs::world& ecs) {
     bodies = ecs.query_builder<Position, Body>().without<Npc>().without<Critter>().without<Item>().without<Hero>().build();
 }
 
-void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGenerator& gen, f64 cam_x, f64 cam_y,
+void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGenerator* gen, f64 cam_x, f64 cam_y,
                   f32 alpha, u64 tick, const Pictures* pictures) {
     const u32 phase = static_cast<u32>(tick / 8);
     auto at = [&](f64 x, f64 y, f32 w, f32 h, u32 frame, u32 order, u32 color = 0xffffffffu, f32 angle = 0) {
@@ -309,8 +311,9 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
             at(x + (d.open ? 0.15 : 0.5), y + 0.5, d.open ? 0.3f : 1.0f, 1.0f, FrameDoor, 1);
     });
     // The smith's anvil by his door.
-    const House h = gen.smith_house();
-    at(h.x1 - 3.5, gen.village_y() - 0.5, 1.4f, 1.0f, FrameAnvil, 1);
+    if (!gen) return;
+    const House h = gen->smith_house();
+    at(h.x1 - 3.5, gen->village_y() - 0.5, 1.4f, 1.0f, FrameAnvil, 1);
 }
 
 void push_torches(render::SpriteBatch& batch, const World& world, const Rect& view, f64 cam_x, f64 cam_y, u64 tick,
@@ -333,11 +336,13 @@ void push_torches(render::SpriteBatch& batch, const World& world, const Rect& vi
 }
 
 bool init_tiles(render::TilemapRenderer& tiles, SDL_GPUDevice* device, SDL_GPUTextureFormat format, World& world,
-                const std::vector<u8>& atlas) {
-    if (!tiles.init(device, format, world, {atlas.data(), demo::kTileCellPx, demo::kTileCells})) return false;
+                const TileArt& art) {
+    if (!tiles.init(device, format, world, art.atlas())) return false;
     const Color liquid_colors[2] = {{}, {0.20f, 0.45f, 0.95f, 0.72f}};
     tiles.set_layer_liquid(kLiquids, liquid_colors, 2, sim::kFull);
     tiles.set_layer_tint(kWalls, {0.58f, 0.58f, 0.64f, 1.0f});
+    // The level's own tiles look as their pictures do, on walls too.
+    tiles.set_plain_from(level::kFirstOwnTile);
     return true;
 }
 
@@ -491,6 +496,12 @@ bool SliceLevel::object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1)
         hw = std::max(0.4, static_cast<f64>(b->half_w));
         hh = std::max(0.4, static_cast<f64>(b->half_h));
         if (e.has<Npc>()) hw = 0.5, hh = 1.0; // drawn 1 × 2
+        // A body of nothing else with its template's picture is drawn as wide as the picture says.
+        const objects::ObjectRef* ref = e.try_get<objects::ObjectRef>();
+        if (ref && !e.has<Npc>() && !e.has<Critter>() && !e.has<Item>() && !e.has<Hero>()) {
+            refresh_pictures();
+            if (const Pictures::Picture* pic = pictures_.of(ref->key)) hw = std::max(0.4, static_cast<f64>(b->half_h) * pic->aspect);
+        }
     } else if (const RigidBody* rb = e.try_get<RigidBody>()) {
         hw = rb->half_w;
         hh = rb->half_h;
@@ -567,6 +578,8 @@ WorldDesc SliceLevel::world_desc() const {
     wd.load_margin = 3;
     return wd;
 }
+
+i32 SliceLevel::liquids_layer() const { return static_cast<i32>(kLiquids); }
 
 void SliceLevel::setup_scene(scene::Scene& scene) {
     // The game's bodies too: villagers and crates keep them in the saved level.
@@ -653,15 +666,26 @@ void SliceLevel::level_closing(level::Level& level) {
         tilemap_.shutdown();
         tilemap_world_ = nullptr;
     }
+    if (art_level_ == &level) art_level_ = nullptr;
 }
 
 void SliceLevel::prepare_view(SDL_GPUCommandBuffer* cmd, level::Level& level, const render::Camera2D& camera, u32 width,
                               u32 height, const level::ViewOptions& options, f64 time) {
     if (!view_ready_) return;
+    // The level's own tiles: the atlas, what is solid, the light.
+    if (art_level_ != &level || art_version_ != level.own_tiles_version() || tilemap_world_ != &level.world()) {
+        art_ = make_tile_art(level.own_tiles());
+        set_own_solid(level.own_tiles());
+        lights_.set_rules(light_rules());
+        art_level_ = &level;
+        art_version_ = level.own_tiles_version();
+        tilemap_.shutdown();
+        tilemap_world_ = nullptr;
+    }
     if (tilemap_world_ != &level.world()) {
         tilemap_.shutdown();
         tilemap_world_ = nullptr;
-        if (!init_tiles(tilemap_, device_, format_, level.world(), atlas_)) {
+        if (!init_tiles(tilemap_, device_, format_, level.world(), art_)) {
             FORGE_ERROR("slice: the tile renderer did not start");
             return;
         }
@@ -676,7 +700,8 @@ void SliceLevel::prepare_view(SDL_GPUCommandBuffer* cmd, level::Level& level, co
     if (sheet_changed_ && sprites_.set_sheet(sheet_.sheet())) sheet_changed_ = false;
     const u64 tick = static_cast<u64>(time * 60.0);
     batch_.begin(camera.snapped_x(), camera.snapped_y(), sprites_.max_sprites());
-    push_objects(batch_, objects_, *gen_, batch_.origin_x(), batch_.origin_y(), 1.0f, tick, &pictures_);
+    push_objects(batch_, objects_, level.around().empty_around ? nullptr : gen_.get(), batch_.origin_x(), batch_.origin_y(),
+                 1.0f, tick, &pictures_);
     push_torches(batch_, level.world(), camera.visible_tiles(width, height), batch_.origin_x(), batch_.origin_y(), tick,
                  torches_);
     tilemap_.prepare(cmd, camera, width, height);

@@ -3,6 +3,7 @@
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/core/time.h"
+#include "forge/world/generators.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,10 +31,20 @@ bool Level::open(const fs::path& folder, std::string* error) {
     scene_.reset();
     world_.reset();
     folder_ = folder;
-    world_ = std::make_unique<world::World>(module_.world_desc(), module_.generator());
+    // What is around comes first: the world is made with it. A world.json
+    // that cannot be used leaves the game's world around (the file stays).
+    around_ = {};
+    around_error_.clear();
+    if (!folder.empty() && !load_world(folder, around_, nullptr, &around_error_))
+        FORGE_WARN("Мир вокруг уровня: %s; вокруг мир игры, файл не тронут", around_error_.c_str());
+    std::shared_ptr<const world::Generator> generator = module_.generator();
+    if (around_.empty_around) generator = std::make_shared<world::EmptyGenerator>();
+    world_ = std::make_unique<world::World>(module_.world_desc(), std::move(generator));
     if (!folder.empty() && !world_->open_save(folder, error)) return false;
     scene_ = std::make_unique<scene::Scene>(*world_);
     module_.setup_scene(*scene_);
+    // Nothing around: nobody comes to live there either.
+    if (around_.empty_around) scene_->set_populator({});
     scene_->register_component<LevelId>();
     scene_->register_component<LightSource>();
     ids_ = scene_->ecs().query<LevelId>();
@@ -61,6 +72,24 @@ bool Level::open(const fs::path& folder, std::string* error) {
         FORGE_WARN("Зоны уровня: %s; зон нет, файл не тронут", areas_error_.c_str());
     areas_saved_ = areas_;
     ++areas_version_;
+    // And for tiles.json: no own tiles meanwhile (their cells show nothing
+    // and keep their values), the files untouched until the tiles change.
+    own_tiles_ = {};
+    own_tiles_error_.clear();
+    const u32 layers = static_cast<u32>(module_.layer_names().size());
+    if (!folder.empty() && !load_tiles(folder, own_tiles_, layers, module_.liquids_layer(), nullptr, &own_tiles_error_))
+        FORGE_WARN("Тайлы уровня: %s; своих тайлов нет, файл не тронут", own_tiles_error_.c_str());
+    own_tiles_saved_ = own_tiles_;
+    ++own_tiles_version_;
+    return true;
+}
+
+bool Level::set_own_tiles(const LevelTiles& t) {
+    if (!tiles_problem(t, static_cast<u32>(module_.layer_names().size()), module_.liquids_layer()).empty()) return false;
+    if (t == own_tiles_) return true;
+    own_tiles_ = t;
+    ++own_tiles_version_;
+    ++edits_;
     return true;
 }
 
@@ -145,6 +174,24 @@ Level::SaveReport Level::save() {
             areas_saved_ = areas_;
             areas_error_.clear();
             r.areas = true;
+        } else {
+            r.ok = false;
+            r.error = r.error.empty() ? error : r.error + "; " + error;
+        }
+    }
+    if (own_tiles_changed()) {
+        std::string error;
+        // Files that could not be read are kept aside, not lost.
+        std::error_code ec;
+        if (!own_tiles_error_.empty()) {
+            if (fs::exists(folder_ / kTilesFile, ec)) fs::rename(folder_ / kTilesFile, folder_ / kBrokenTilesFile, ec);
+            if (!ec && fs::exists(folder_ / kTilesPicture, ec)) fs::rename(folder_ / kTilesPicture, folder_ / kBrokenTilesPicture, ec);
+            if (ec) error = "не удалось отложить испорченные " + std::string(kTilesFile) + " и " + kTilesPicture;
+        }
+        if (error.empty() && save_tiles(folder_, own_tiles_, &error)) {
+            own_tiles_saved_ = own_tiles_;
+            own_tiles_error_.clear();
+            r.own_tiles = true;
         } else {
             r.ok = false;
             r.error = r.error.empty() ? error : r.error + "; " + error;

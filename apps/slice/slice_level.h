@@ -5,6 +5,7 @@
 // drawn, and the level module the editor uses to paint «Старая шахта».
 
 #include "demo_art.h"
+#include "slice_art.h"
 #include "slice_pictures.h"
 #include "slice_world.h"
 
@@ -88,8 +89,9 @@ inline constexpr forge::Color kTorchLight{1.5f, 1.05f, 0.55f, 1.0f};
 
 forge::world::WorldDesc world_desc();
 void register_components(forge::scene::Scene& scene);
-// The game's solid tiles, its water and falling sand: for its simulation and
-// for the editor's flow trial, so both move them the same way.
+// The game's solid tiles (and the level's own, set_own_solid), its water and
+// falling sand: for its simulation and for the editor's flow trial, so both
+// move them the same way.
 void setup_cells(forge::sim::CollisionRules& rules, forge::sim::CellSim& cells);
 // The game's object kinds and templates: kinds.json and objects/ in its data
 // folder.
@@ -126,9 +128,10 @@ struct Objects {
 
 // Sprites of the villagers, critters, items, crates and the anvil, around
 // the camera (cam_x, cam_y). alpha: how far between ticks (1 when nothing
-// moves); tick: the animation clock.
+// moves); tick: the animation clock. gen: the game's world, whose village
+// has the anvil; null: nothing around the level, no anvil.
 // Copies of a template with its own picture are drawn with it.
-void push_objects(forge::render::SpriteBatch& batch, Objects& objects, const SliceGenerator& gen, f64 cam_x,
+void push_objects(forge::render::SpriteBatch& batch, Objects& objects, const SliceGenerator* gen, f64 cam_x,
                   f64 cam_y, f32 alpha, u64 tick, const Pictures* pictures = nullptr);
 // Flames over the torches in view; their places go to torches (for lights).
 void push_torches(forge::render::SpriteBatch& batch, const forge::world::World& world, const forge::world::Rect& view,
@@ -143,7 +146,7 @@ bool hero_ground(const forge::world::World& world, f64 x, f64 y, forge::i32 reac
 bool in_world(f64 x, f64 y);
 // Binds the tile renderer to a world, with the water and wall looks.
 bool init_tiles(forge::render::TilemapRenderer& tiles, SDL_GPUDevice* device, SDL_GPUTextureFormat format,
-                forge::world::World& world, const std::vector<u8>& atlas);
+                forge::world::World& world, const TileArt& art);
 
 // «Старая шахта» for the level editor.
 class SliceLevel final : public forge::level::LevelModule {
@@ -156,6 +159,7 @@ public:
     std::shared_ptr<const forge::world::Generator> generator() const override { return gen_; }
     void setup_scene(forge::scene::Scene& scene) override;
     const std::vector<std::string>& layer_names() const override { return layers_; }
+    forge::i32 liquids_layer() const override;
     const std::vector<forge::level::TileDef>& tiles() const override { return tiles_; }
     void tile_icon(const forge::level::TileDef& tile, u32 size, std::vector<u8>& rgba) const override;
     void start(f64& x, f64& y) const override;
@@ -202,8 +206,11 @@ private:
     forge::objects::Library library_;
     mutable std::vector<forge::level::ObjectDef> object_defs_; // the library's templates
     mutable u64 defs_version_ = 0;
-    std::vector<u8> atlas_;
+    std::vector<u8> atlas_;       // the game's tiles (make_atlas)
     std::vector<u32> map_colors_; // per tile id: the atlas cell's average
+    TileArt art_;                 // and the shown level's own: what the view draws
+    const forge::level::Level* art_level_ = nullptr;
+    forge::u64 art_version_ = 0;  // its own_tiles_version()
 
     SDL_GPUDevice* device_ = nullptr;
     SDL_GPUTextureFormat format_{};

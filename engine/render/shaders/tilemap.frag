@@ -20,7 +20,7 @@ layout(set = 3, binding = 0) uniform Layer {
     uint liquid;       // 1: this layer holds liquids (kind << 12 | amount), not tile ids
     uint full;         // amount of a full liquid tile
     uint down;         // where liquids settle: 0 +y, 1 -x, 2 -y, 3 +x
-    uint pad;
+    uint plain_from;   // ids from here on keep their own colours, untinted (0: none do)
     vec4 liquid_colors[16];
 } layer;
 
@@ -63,7 +63,8 @@ void main() {
         draw_liquid(t, id);
         return;
     }
-    if (id == 0u) discard;
+    // An id the atlas has no cell for shows nothing.
+    if (id == 0u || id >= layer.atlas_cells * layer.atlas_cells) discard;
 
     // Stay half a texel inside the cell so neighbours never bleed in.
     float cells = float(layer.atlas_cells);
@@ -71,5 +72,6 @@ void main() {
     float inset = 0.5 / texels;
     vec2 inside = clamp(fract(in_local), vec2(inset), vec2(1.0 - inset));
     vec2 cell = vec2(float(id % layer.atlas_cells), float(id / layer.atlas_cells));
-    out_color = textureLod(atlas, (cell + inside) / cells, layer.atlas_lod) * layer.tint;
+    vec4 tint = layer.plain_from != 0u && id >= layer.plain_from ? vec4(1.0) : layer.tint;
+    out_color = textureLod(atlas, (cell + inside) / cells, layer.atlas_lod) * tint;
 }

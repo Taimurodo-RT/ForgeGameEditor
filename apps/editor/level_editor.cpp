@@ -6,6 +6,7 @@
 #include "forge/core/path.h"
 #include "forge/data/json.h"
 #include "forge/editor/inspector.h"
+#include "forge/render/sprite_batch.h"
 #include "forge/sim/gravity.h"
 
 #include "object_library.h"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <iterator>
 
 namespace forge::editor_app {
@@ -43,6 +45,8 @@ const char* kDefaultLayout =
     R"({"row":0.17,"a":{"panels":["palette"]},"b":{"row":0.77,"a":{"column":0.76,"a":{"view":true},"b":{"panels":["log","history"]}},"b":{"column":0.42,"a":{"panels":["minimap"]},"b":{"panels":["props"]}}}})";
 constexpr usize kFillLimit = 100'000;
 constexpr u32 kIconPx = 32;
+// The palette's group of the level's own tiles (forge/level/own_tiles.h).
+constexpr const char* kOwnTilesGroup = "Тайлы уровня";
 
 const char* tool_name(Tool t) {
     switch (t) {
@@ -277,6 +281,7 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
         return false;
     }
     module_.start(camera_.x, camera_.y);
+    look_around_level();
     camera_.zoom = 16;
     history_.clear();
 
@@ -286,24 +291,11 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
     if (!front_.init(device, format, art_.sheet(), 1u << 15)) return false;
     view_ready_ = true;
 
-    // Palette: icons as pictures the documents can show, grouped.
-    const auto& tiles = module_.tiles();
-    std::vector<u8> icon;
-    for (usize i = 0; i < tiles.size(); ++i) {
-        const level::TileDef& t = tiles[i];
-        module_.tile_icon(t, kIconPx, icon);
-        ui.set_image("tile_" + t.id, icon.data(), kIconPx, kIconPx);
-        auto g = std::find_if(m_palette_.begin(), m_palette_.end(), [&](const PaletteGroup& pg) { return pg.name == t.group; });
-        if (g == m_palette_.end()) {
-            m_palette_.push_back({t.group, {}});
-            g = m_palette_.end() - 1;
-        }
-        g->tiles.push_back({static_cast<int>(i), t.name, "/memory/tile_" + t.id, t.key, static_cast<int>(t.layer)});
-    }
+    build_tiles();
     for (const std::string& name : module_.layer_names()) m_layers_.push_back(name);
     m_ph_can_trial_ = !module_.physics_fills().empty();
     build_objects();
-    if (!tiles.empty()) select_tile(0);
+    if (!tiles_.empty()) select_tile(0);
 
     // The panel layout: the user's, else the default.
     DockConfig dc;
@@ -317,6 +309,92 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
     map_rgba_.assign(static_cast<usize>(kMapPx) * kMapPx * 4, 0);
     FORGE_INFO("Уровень «%s» открыт: %s", module_.title().c_str(), path_to_utf8(config.folder).c_str());
     return true;
+}
+
+void LevelEditor::build_tiles() {
+    own_tiles_version_ = level_->own_tiles_version();
+    // The tile in hand stays in hand if it is still there.
+    const std::string held = tile_ < tiles_.size() ? tiles_[tile_].id : std::string();
+    const std::vector<std::string> old_images = own_images_;
+    own_images_.clear();
+    tiles_ = module_.tiles();
+    // The level's own tiles after the game's: ids "own_256"..., their pictures
+    // named anew each time (a picture may change under the same id).
+    const level::LevelTiles& own = level_->own_tiles();
+    const std::string serial = std::to_string(++own_serial_);
+    own_colors_.clear();
+    std::vector<std::string> images(tiles_.size());
+    std::vector<u8> icon;
+    for (usize i = 0; i < own.tiles.size(); ++i) {
+        const level::OwnTile& o = own.tiles[i];
+        std::string hint = o.solid ? "твёрдый; " : "";
+        hint += o.from.empty() ? "тайл этого уровня" : o.from;
+        tiles_.push_back({"own_" + std::to_string(o.id), o.name, kOwnTilesGroup, hint, o.layer, o.id, ""});
+        // The icon: the picture, each pixel the nearest; the minimap: its average.
+        icon.assign(static_cast<usize>(kIconPx) * kIconPx * 4, 0);
+        const u8* pic = own.picture(i);
+        for (u32 y = 0; y < kIconPx; ++y)
+            for (u32 x = 0; x < kIconPx; ++x)
+                std::memcpy(&icon[(static_cast<usize>(y) * kIconPx + x) * 4],
+                            pic + (static_cast<usize>(y * own.px / kIconPx) * own.px + x * own.px / kIconPx) * 4, 4);
+        u64 sum[4] = {};
+        for (u32 k = 0; k < own.px * own.px; ++k)
+            for (u32 c = 0; c < 4; ++c) sum[c] += pic[static_cast<usize>(k) * 4 + c];
+        const u64 n = static_cast<u64>(own.px) * own.px;
+        const usize slot = o.id - level::kFirstOwnTile;
+        if (own_colors_.size() <= slot) own_colors_.resize(slot + 1, 0);
+        // Mostly see-through: the layer below shows on the minimap.
+        if (sum[3] >= n * 128)
+            own_colors_[slot] = render::pack_color(static_cast<u8>(sum[0] / n), static_cast<u8>(sum[1] / n), static_cast<u8>(sum[2] / n), 255);
+        const std::string image = "tile_own" + serial + "_" + std::to_string(o.id);
+        ui_->set_image(image, icon.data(), kIconPx, kIconPx);
+        own_images_.push_back(image);
+        images.push_back(image);
+    }
+    // Palette: icons as pictures the documents can show, grouped.
+    m_palette_.clear();
+    for (usize i = 0; i < tiles_.size(); ++i) {
+        const level::TileDef& t = tiles_[i];
+        if (images[i].empty()) {
+            images[i] = "tile_" + t.id;
+            module_.tile_icon(t, kIconPx, icon);
+            ui_->set_image(images[i], icon.data(), kIconPx, kIconPx);
+        }
+        auto g = std::find_if(m_palette_.begin(), m_palette_.end(), [&](const PaletteGroup& pg) { return pg.name == t.group; });
+        if (g == m_palette_.end()) {
+            m_palette_.push_back({t.group, {}});
+            g = m_palette_.end() - 1;
+        }
+        g->tiles.push_back({static_cast<int>(i), t.name, "/memory/" + images[i], t.key, static_cast<int>(t.layer)});
+    }
+    tile_images_ = std::move(images);
+    if (model_) model_.DirtyVariable("lv_palette");
+    tile_ = 0;
+    for (usize i = 0; i < tiles_.size(); ++i)
+        if (tiles_[i].id == held) tile_ = i;
+    if (tile_ < tiles_.size()) layer_ = tiles_[tile_].layer;
+    map_edits_ = ~0ull; // the minimap shows them too
+    // The old pictures go after the palette shows the new ones.
+    for (const std::string& image : old_images) ui_->drop_image(image);
+}
+
+void LevelEditor::look_around_level() {
+    // Nothing around the level: the game's start is nothing to look at; its
+    // spawn point is, else the corner where a map put into it begins.
+    if (!level_->around().empty_around) return;
+    const level::LevelAreas& a = level_->areas();
+    camera_.x = a.spawn ? a.spawn_x : 0;
+    camera_.y = a.spawn ? a.spawn_y - 2 : 0;
+}
+
+u32 LevelEditor::own_color(world::TileId value) const {
+    const usize slot = value - level::kFirstOwnTile;
+    return value >= level::kFirstOwnTile && slot < own_colors_.size() ? own_colors_[slot] : 0;
+}
+
+std::string LevelEditor::place_name(f64 x, f64 y) const {
+    // The game's places are where its generator made them.
+    return level_->around().empty_around ? std::string() : module_.place(x, y);
 }
 
 void LevelEditor::build_objects() {
@@ -677,7 +755,7 @@ void LevelEditor::set_tool(Tool t) {
 }
 
 void LevelEditor::select_tile(usize index) {
-    const auto& tiles = module_.tiles();
+    const auto& tiles = tiles_;
     if (index >= tiles.size()) return;
     tile_ = index;
     layer_ = tiles[index].layer;
@@ -687,12 +765,12 @@ void LevelEditor::set_brush_radius(i32 r) { radius_ = std::clamp(r, 0, 16); }
 
 world::TileId LevelEditor::paint_value() const {
     if (tool_ == Tool::Eraser) return 0;
-    const auto& tiles = module_.tiles();
+    const auto& tiles = tiles_;
     return tile_ < tiles.size() ? tiles[tile_].value : 0;
 }
 
 std::string LevelEditor::stroke_label() const {
-    const auto& tiles = module_.tiles();
+    const auto& tiles = tiles_;
     const std::string tile = tile_ < tiles.size() ? tiles[tile_].name : std::string();
     if (tool_ == Tool::Eraser) {
         const auto& layers = module_.layer_names();
@@ -717,7 +795,7 @@ void LevelEditor::press(f32 x, f32 y) {
     case Tool::Fill: {
         std::vector<level::Cell> cells;
         bool capped = false;
-        const u32 layer = tile_ < module_.tiles().size() ? module_.tiles()[tile_].layer : layer_;
+        const u32 layer = tile_ < tiles_.size() ? tiles_[tile_].layer : layer_;
         level::fill_cells(*level_, layer, cx, cy, kFillLimit, cells, &capped);
         auto stroke = std::make_unique<level::TileStroke>(*level_, stroke_label() + " (" + group_digits(cells.size()) + ")");
         if (stroke->paint(layer, cells, paint_value()) == 0) return;
@@ -770,7 +848,7 @@ void LevelEditor::release() {
 }
 
 void LevelEditor::pick(i32 x, i32 y) {
-    const auto& tiles = module_.tiles();
+    const auto& tiles = tiles_;
     // The topmost layer with something there.
     for (i32 layer = static_cast<i32>(module_.layer_names().size()) - 1; layer >= 0; --layer) {
         const world::TileId v = level_->tile(static_cast<u32>(layer), x, y);
@@ -2329,6 +2407,7 @@ bool LevelEditor::open_folder(const fs::path& folder) {
         return false;
     }
     config_.folder = folder;
+    look_around_level();
     history_.clear();
     zn_area_ = zn_ask_ = 0;
     zn_spawn_ = false;
@@ -2392,7 +2471,7 @@ void LevelEditor::reset_layout() { dock_.reset(); }
 
 std::string LevelEditor::status() const {
     char text[200];
-    const std::string place = module_.place(camera_.x, camera_.y);
+    const std::string place = place_name(camera_.x, camera_.y);
     const char* tool = mode_ == Mode::Physics ? phys_info(ph_tool_).name
                        : mode_ == Mode::Light ? light_info(lt_tool_).name
                        : mode_ == Mode::Zones ? area_info(zn_tool_).name
@@ -2428,6 +2507,7 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
         }
         update_minimap();
     }
+    if (level_->own_tiles_version() != own_tiles_version_) build_tiles();
     if (module_.objects_version() != objects_version_) {
         // Templates changed in the library: the palette, and the copies here.
         build_objects();
@@ -2468,7 +2548,10 @@ void LevelEditor::update_minimap() {
             u32 c = 0;
             const bool loaded = level_->loaded(tx, ty);
             if (loaded)
-                for (u32 l = layers; l-- > 0 && c == 0;) c = module_.map_color(l, w.tile(l, tx, ty));
+                for (u32 l = layers; l-- > 0 && c == 0;) {
+                    const world::TileId v = w.tile(l, tx, ty);
+                    c = v >= level::kFirstOwnTile && static_cast<i32>(l) != module_.liquids_layer() ? own_color(v) : module_.map_color(l, v);
+                }
             if (c) {
                 p[0] = static_cast<u8>(c), p[1] = static_cast<u8>(c >> 8), p[2] = static_cast<u8>(c >> 16);
             } else if (loaded) {
@@ -2493,6 +2576,17 @@ void LevelEditor::update_minimap() {
     ++minimap_updates_;
 }
 
+bool LevelEditor::minimap_at(i32 x, i32 y, u8 rgb[3]) const {
+    if (minimap_updates_ == 0) return false;
+    const i32 half = static_cast<i32>(kMapPx / 2) * kMapTilesPerPx;
+    const i32 dx = x - (static_cast<i32>(map_cx_) - half), dy = y - (static_cast<i32>(map_cy_) - half);
+    if (dx < 0 || dy < 0 || dx % kMapTilesPerPx != 0 || dy % kMapTilesPerPx != 0) return false;
+    const u32 px = static_cast<u32>(dx / kMapTilesPerPx), py = static_cast<u32>(dy / kMapTilesPerPx);
+    if (px >= kMapPx || py >= kMapPx) return false;
+    std::memcpy(rgb, &map_rgba_[(static_cast<usize>(py) * kMapPx + px) * 4], 3);
+    return true;
+}
+
 void LevelEditor::sync_model() {
     const ModeInfo& mode = mode_info(mode_);
     set(m_mode_, Rml::String(mode.id), "lv_mode");
@@ -2505,12 +2599,12 @@ void LevelEditor::sync_model() {
     set(m_tile_, static_cast<int>(tile_), "lv_tile");
     set(m_layer_, static_cast<int>(layer_), "lv_layer");
     set(m_radius_, radius_ + 1, "lv_radius");
-    const auto& tiles = module_.tiles();
+    const auto& tiles = tiles_;
     if (tile_ < tiles.size()) {
         const level::TileDef& t = tiles[tile_];
         set(m_tile_name_, Rml::String(t.name), "lv_tile_name");
         set(m_tile_hint_, Rml::String(t.hint), "lv_tile_hint");
-        set(m_tile_icon_, Rml::String("/memory/tile_" + t.id), "lv_tile_icon");
+        set(m_tile_icon_, Rml::String("/memory/" + (tile_ < tile_images_.size() ? tile_images_[tile_] : "tile_" + t.id)), "lv_tile_icon");
         const auto& layers = module_.layer_names();
         set(m_tile_layer_, Rml::String(t.layer < layers.size() ? layers[t.layer] : std::string()), "lv_tile_layer");
     }
@@ -2581,7 +2675,7 @@ void LevelEditor::sync_model() {
         info_time_ = time_;
         char coords[96];
         std::snprintf(coords, sizeof(coords), "%.0f, %.0f", camera_.x, camera_.y);
-        const std::string place = module_.place(camera_.x, camera_.y);
+        const std::string place = place_name(camera_.x, camera_.y);
         set(m_place_, Rml::String(place.empty() ? coords : place + " · " + coords), "lv_place");
         char info[160];
         std::snprintf(info, sizeof(info), "Изменений: %s · участков загружено: %u",
@@ -3115,7 +3209,7 @@ bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
     // Palette shortcuts: "1".."9".
     if (k.key >= SDLK_1 && k.key <= SDLK_9) {
         const std::string key(1, static_cast<char>('1' + (k.key - SDLK_1)));
-        const auto& tiles = module_.tiles();
+        const auto& tiles = tiles_;
         for (usize i = 0; i < tiles.size(); ++i)
             if (tiles[i].key == key) {
                 select_tile(i);

@@ -318,7 +318,11 @@ void LightRenderer::prepare(SDL_GPUCommandBuffer* cmd, const world::World& world
                 }
                 if (rules.sky) {
                     bool open = true;
-                    for (u32 l = 0; l < layers && open; ++l) open = chunk->layer(l)[index] == 0;
+                    for (u32 l = 0; l < layers && open; ++l) {
+                        const world::TileId id = chunk->layer(l)[index];
+                        open = id == 0 || (((rules.sky_through_layers >> l) & 1u) != 0 && id < rules.sky_through.size() &&
+                                           rules.sky_through[id] != 0);
+                    }
                     if (open) {
                         r = std::max(r, rules.sky_color.r);
                         g = std::max(g, rules.sky_color.g);

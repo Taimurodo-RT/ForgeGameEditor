@@ -117,6 +117,10 @@ struct SliceGame::Level {
     // the hero is in.
     forge::level::LevelAreas areas;
     forge::level::AreaWatch watch;
+    // What is around it (world.json) and its own tiles (tiles.json and
+    // tiles.png), the same way.
+    forge::level::LevelWorld around;
+    forge::level::LevelTiles own;
     // Queries belong to the ECS world: declared last, released first.
     Objects objects;
 };
@@ -142,7 +146,20 @@ SliceGame::~SliceGame() {
 
 std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_folder, std::string* error) {
     auto L = std::make_unique<Level>();
-    L->world = std::make_unique<World>(world_desc(), gen_);
+    if (!save_folder.empty()) {
+        if (std::string why; !forge::level::load_world(save_folder, L->around, nullptr, &why)) {
+            FORGE_WARN("slice: %s; the game's world is around the level", why.c_str());
+            L->around = {};
+        }
+        if (std::string why; !forge::level::load_tiles(save_folder, L->own, world_desc().layer_count, kLiquids, nullptr, &why)) {
+            FORGE_WARN("slice: %s; the level has no tiles of its own", why.c_str());
+            L->own = {};
+        }
+    }
+    // Nothing around: the empty world, and nobody comes to live in it.
+    std::shared_ptr<const Generator> around = gen_;
+    if (L->around.empty_around) around = std::make_shared<EmptyGenerator>();
+    L->world = std::make_unique<World>(world_desc(), std::move(around));
     if (!save_folder.empty() && !L->world->open_save(save_folder, error)) return nullptr;
     L->scene = std::make_unique<scene::Scene>(*L->world);
     register_components(*L->scene);
@@ -152,7 +169,12 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     L->scene->register_component<forge::level::LightSource>();
     attach_objects(library_, *L->scene);
     if (!save_folder.empty() && !L->scene->open_save(save_folder, error)) return nullptr;
-    L->scene->set_populator([this](ChunkCoord c, scene::Scene& s) { populate(*gen_, library_, c, s); });
+    if (!L->around.empty_around)
+        L->scene->set_populator([this](ChunkCoord c, scene::Scene& s) { populate(*gen_, library_, c, s); });
+    // The level's own tiles: which stop the hero and light, how they look.
+    set_own_solid(L->own);
+    atlas_ = make_tile_art(L->own);
+    lights_.set_rules(light_rules());
 
     SimDesc sd;
     sd.gravity_y = kGravity;
@@ -431,8 +453,21 @@ void SliceGame::hurt_hero(f64 n) {
         return;
     }
     shell_->vars().set("hero.hearts", kHearts);
+    if (level_ && level_->around.empty_around) {
+        // No village around: the level's spawn point, if there is one to stand on.
+        f64 x = 0, y = 0;
+        shell_->toast("Герой очнулся");
+        if (level_->areas.spawn && spawn_spot(level_->areas.spawn_x, level_->areas.spawn_y, x, y, nullptr))
+            teleport(x, y - kHeroHalfH);
+        return;
+    }
     shell_->toast("Герой очнулся в деревне");
     teleport(gen_->spawn_x(), gen_->spawn_y() - kHeroHalfH);
+}
+
+std::string SliceGame::place_name(f64 x, f64 y) const {
+    // The game's places are where its generator made them.
+    return level_ && level_->around.empty_around ? std::string() : gen_->location(x, y);
 }
 
 bool SliceGame::door_open(f64 x, f64 y, bool& open) const {
@@ -546,7 +581,7 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     if (std::string error; !load_objects(library_, shell.game_dir(), &error)) FORGE_ERROR("%s", error.c_str());
     device_ = device;
     format_ = format;
-    atlas_ = make_atlas();
+    atlas_ = make_tile_art({});
     // The drawn frames and the templates' own pictures under them.
     pictures_.update(library_, make_sheet(), sheet_);
     sounds_.init(library_.sounds_folder(), options_.silent);
@@ -751,7 +786,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     else level_->watch.settle(level_->areas, hero_x_, hero_y_);
     area_enters_.clear();
     area_leaves_.clear();
-    location_ = gen_->location(hero_x_, hero_y_);
+    location_ = place_name(hero_x_, hero_y_);
     dig_progress_ = 0;
     talking_ = 0;
     return true;
@@ -775,7 +810,7 @@ bool SliceGame::save(const fs::path& session, std::string& location, std::string
         if (error) *error = "hero.json";
         return false;
     }
-    location = gen_->location(hs.x, hs.y);
+    location = place_name(hs.x, hs.y);
     FORGE_INFO("slice: saved %u chunks of tiles and %u of objects in %.1f ms", w.chunks, s.chunks, w.ms + s.ms);
     return true;
 }
@@ -870,7 +905,7 @@ f64 SliceGame::hero_x() const { return hero_alive() ? level_->hero.get<Position>
 f64 SliceGame::hero_y() const { return hero_alive() ? level_->hero.get<Position>().tile_y() : 0; }
 bool SliceGame::on_ground() const { return hero_alive() && (level_->hero.get<Body>().contacts & OnGround); }
 TileId SliceGame::tile(u32 layer, i32 x, i32 y) const { return level_ ? level_->world->tile(layer, x, y) : kEmptyTile; }
-std::string SliceGame::location() const { return hero_alive() ? gen_->location(hero_x(), hero_y()) : ""; }
+std::string SliceGame::location() const { return hero_alive() ? place_name(hero_x(), hero_y()) : ""; }
 u32 SliceGame::entities() const { return level_ ? level_->scene->stats().entities : 0; }
 f64 SliceGame::inventory(const char* item) const { return inv(item); }
 const SimStats* SliceGame::sim_stats() const { return level_ ? &level_->sim->stats() : nullptr; }
@@ -907,6 +942,16 @@ f64 SliceGame::critter_x(flecs::entity_t id) const {
     const flecs::entity e(level_->scene->ecs(), id);
     const Position* p = e.is_alive() ? e.try_get<Position>() : nullptr;
     return p ? p->tile_x() : std::nan("");
+}
+
+std::vector<flecs::entity_t> SliceGame::copies_of(std::string_view template_id) const {
+    std::vector<flecs::entity_t> out;
+    const objects::Template* t = library_.find(template_id);
+    if (!level_ || !t) return out;
+    level_->scene->ecs().each([&](flecs::entity e, const objects::ObjectRef& ref) {
+        if (ref.key == t->key) out.push_back(e.id());
+    });
+    return out;
 }
 
 flecs::entity_t SliceGame::spawn_probe(f64 x, f64 y) {
@@ -1458,10 +1503,10 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
         location_wait_ -= dt;
         if (location_wait_ <= 0) {
             location_wait_ = 0.5;
-            const std::string here = gen_->location(hero_x_, hero_y_);
+            const std::string here = place_name(hero_x_, hero_y_);
             if (here != location_) {
                 location_ = here;
-                shell_->toast(here);
+                if (!here.empty()) shell_->toast(here);
             }
         }
     }
@@ -1570,7 +1615,8 @@ void SliceGame::build_sprites() {
         batch_.push(s);
     };
 
-    push_objects(batch_, level_->objects, *gen_, camera_.x, camera_.y, alpha, sim.clock().tick(), &pictures_);
+    push_objects(batch_, level_->objects, level_->around.empty_around ? nullptr : gen_.get(), camera_.x, camera_.y, alpha,
+                 sim.clock().tick(), &pictures_);
     if (running_ && level_->hero.is_alive()) {
         const Position& p = level_->hero.get<Position>();
         const Body& b = level_->hero.get<Body>();

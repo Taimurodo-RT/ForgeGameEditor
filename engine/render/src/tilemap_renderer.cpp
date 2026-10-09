@@ -43,7 +43,7 @@ struct LayerUniforms {
     u32 liquid;
     u32 full;
     u32 down;
-    u32 pad;
+    u32 plain_from;
     f32 liquid_colors[16][4];
 };
 
@@ -361,6 +361,7 @@ void TilemapRenderer::draw_layers(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* 
         u.liquid = liquid_layers_[layer];
         u.full = liquid_full_;
         u.down = liquid_down_;
+        u.plain_from = plain_from_;
         for (u32 i = 0; i < 16; ++i) {
             const Color& c = liquid_colors_[i];
             const f32 rgba[4] = {c.r, c.g, c.b, c.a};
