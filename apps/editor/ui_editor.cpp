@@ -4280,6 +4280,12 @@ void UiEditor::release() {
 }
 
 bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
+    if (k.key == SDLK_ESCAPE) {
+        // A held Esc acts once in «Проверить», as in the game: its repeats close no more windows, do not end the
+        // check, and once it ended the check do not go on to the editor.
+        if (!k.repeat) esc_in_check_ = checking_;
+        else if (esc_in_check_) return true;
+    }
     const bool modifier = k.key == SDLK_LCTRL || k.key == SDLK_RCTRL || k.key == SDLK_LSHIFT || k.key == SDLK_RSHIFT ||
                           k.key == SDLK_LALT || k.key == SDLK_RALT || k.key == SDLK_LGUI || k.key == SDLK_RGUI;
     if (!menu_.empty() && !modifier) {
@@ -4339,7 +4345,7 @@ bool UiEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (checking_) {
         // Keys do not edit while checking; Esc closes the window on top as in the game, else ends it. The game's
         // keys for its buttons go to the page.
-        if (k.key == SDLK_ESCAPE && !check_escape()) set_checking(false);
+        if (k.key == SDLK_ESCAPE && !k.repeat && !check_escape()) set_checking(false);
         if (check_key(k)) return true;
         return k.key == SDLK_ESCAPE || k.key == SDLK_DELETE || k.key == SDLK_BACKSPACE;
     }
@@ -5482,11 +5488,13 @@ void UiEditor::refresh_check() {
             m_check_vars_.push_back(std::move(row));
         }
         for (auto it = check_log_.rbegin(); it != check_log_.rend() && m_check_log_.size() < 8; ++it) m_check_log_.push_back(*it);
-        // The windows up, as the game has them: which is on top, what Esc does, whether the game stands.
+        // The windows up, as the game has them: which is on top, what Esc does, whether the game would stand.
+        // The world does not run in «Проверить», so the last line says what the game would do, over the main menu
+        // or over the game as check_over_menu() has it (a window only for the menu checked by itself: the menu).
         std::vector<const CheckWindow*> up;
         for (const std::string& w : check_pages())
             if (const CheckWindow* c = w != name_ ? check_window(w) : nullptr) up.push_back(c);
-        const bool menu = screen_.show == d::ScreenShow::Menu;
+        const bool menu = check_over_menu();
         if (!up.empty()) {
             const CheckWindow& top = *up.back();
             m_check_state_.push_back("Сверху окно «" + top.title + "»: " +
@@ -5498,13 +5506,14 @@ void UiEditor::refresh_check() {
                 if (w->dim) m_check_state_.push_back("Окно «" + w->title + "» затемняет то, что под ним: щелчки туда не проходят");
         }
         if (menu) {
-            if (!up.empty()) m_check_state_.push_back("Окна над главным меню: игра ещё не идёт");
+            if (!up.empty() || screen_.show == d::ScreenShow::Command)
+                m_check_state_.push_back("Как над главным меню: игра ещё не идёт, пауза окна ничего не останавливает");
         } else {
             std::string stops = screen_.show == d::ScreenShow::Command && screen_.pauses ? screen_.title : std::string();
             for (const CheckWindow* w : up)
                 if (w->pauses) stops = w->title;
-            m_check_state_.push_back(stops.empty() ? "Игра идёт: ни одно открытое окно не ставит её на паузу"
-                                                   : "Игра стоит: окно «" + stops + "» ставит её на паузу");
+            m_check_state_.push_back(stops.empty() ? "Как в игре: мир шёл бы, ни одно открытое окно не ставит игру на паузу"
+                                                   : "Как в игре: мир и герой ждали бы, окно «" + stops + "» ставит игру на паузу");
         }
     }
     check_seen_ = check_vars_.version();
@@ -5618,7 +5627,7 @@ bool UiEditor::check_escape() {
         check_log_.push_back("Esc: закрыто окно «" + top->title + "»");
     } else {
         check_log_.push_back("Esc: окно «" + top->title + "» по Esc не закрывается" +
-                             (screen_.show == d::ScreenShow::Menu ? "" : "; в игре Esc откроет паузу"));
+                             (check_over_menu() ? "; над главным меню Esc больше ничего не делает" : "; в игре Esc открыл бы паузу"));
     }
     if (check_log_.size() > 32) check_log_.erase(check_log_.begin());
     refresh_check();
@@ -5637,7 +5646,7 @@ void UiEditor::check_action(const game::ScreenAction& a, const std::string& page
     } else if (!refused.empty()) {
         // Its «Где появляется» says another place: the game does not open it here either.
         said = "Окно «" + check_window(t)->title + "» не открылось: оно появляется только " +
-               (refused == "menu" ? "над главным меню, а здесь игра" : "над игрой, а здесь главное меню");
+               (refused == "menu" ? "над главным меню, а проверка идёт как над игрой" : "над игрой, а проверка идёт как над главным меню");
     } else if ((a.what == "close" || (a.what == "hide" && (t.empty() || t == page))) && page != name_ && check_window(page)) {
         check_->show(page, false);
         said = "Закрыто окно «" + check_window(page)->title + "»";

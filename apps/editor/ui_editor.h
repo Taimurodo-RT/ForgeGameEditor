@@ -734,6 +734,7 @@ private:
     f32 timeline_time_at(f32 mx) const;
     bool timeline_wanted() const;
     bool checking_ = false;
+    bool esc_in_check_ = false; // the Esc held now was pressed in «Проверить»: its repeats do nothing
     std::unique_ptr<forge::game::GameScreens> check_;
     // «Проверить»'s sound: the screen's music and its buttons.
     forge::audio::Mixer check_mixer_;

@@ -1242,7 +1242,7 @@
             <div id="ue-design" class="ue-right ue-panel column">
                 <div class="ue-props column" data-if="ue_checking">
                     <div class="ue-head row"><icon class="s" name="play_circle"/><span class="grow name">Проверка</span><span class="muted">{{ ue_title }}</span></div>
-                    <div class="ue-sec"><div class="ue-note">Наводите мышь и нажимайте кнопки на холсте, как в игре: кнопка, которая открывает экран, откроет его здесь, а окно встанет поверх. Esc закрывает верхнее окно, без окон — заканчивает проверку.</div></div>
+                    <div class="ue-sec"><div class="ue-note">Наводите мышь и нажимайте кнопки на холсте, как в игре: кнопка, которая открывает экран, откроет его здесь, а окно встанет поверх. Esc закрывает верхнее окно, без окон — заканчивает проверку. Мир игры здесь не запущен: блок «Окна» говорит, что было бы в игре.</div></div>
                     <div id="ue-check-state" class="ue-sec" data-if="ue_check_state.size > 0">
                         <div class="ue-sec-title">Окна</div>
                         <div data-for="l : ue_check_state" class="ue-note">{{ l }}</div>
