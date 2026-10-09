@@ -249,27 +249,40 @@ void Shell::screen_action(const ScreenAction& a) {
     } else FORGE_WARN("кнопка: неизвестное действие «%s»", a.what.c_str());
 }
 
-void Shell::sync_settings_vars() {
-    static constexpr std::pair<const char*, f32 Settings::*> kFields[] = {
-        {"settings.master", &Settings::master_volume}, {"settings.music", &Settings::music_volume}, {"settings.sound", &Settings::sound_volume}};
-    Settings s = settings_;
+namespace {
+constexpr std::pair<const char*, f32 Settings::*> kVolumes[] = {
+    {"settings.master", &Settings::master_volume}, {"settings.music", &Settings::music_volume}, {"settings.sound", &Settings::sound_volume}};
+}
+
+bool VolumeVars::read(const Vars& vars, Settings& s) const {
     bool changed = false;
-    for (usize i = 0; i < settings_vars_.size(); ++i) {
-        const auto& [name, field] = kFields[i];
-        if (std::isnan(settings_vars_[i])) continue;
-        const f64 now = vars_.get(name).number();
-        if (now == settings_vars_[i]) continue;
-        s.*field = static_cast<f32>(std::clamp(now, 0.0, 100.0) / 100.0);
+    for (usize i = 0; i < written.size(); ++i) {
+        const auto& [name, field] = kVolumes[i];
+        if (std::isnan(written[i])) continue;
+        const f64 now = vars.get(name).number();
+        if (now == written[i] || std::isnan(now)) continue;
+        const f32 volume = static_cast<f32>(std::clamp(now, 0.0, 100.0) / 100.0);
+        if (volume == s.*field) continue; // −10 at 0: write shows 0 again
+        s.*field = volume;
         changed = true;
     }
-    if (changed) apply_settings(s);
-    for (usize i = 0; i < settings_vars_.size(); ++i) {
-        const auto& [name, field] = kFields[i];
-        const f64 value = std::round(static_cast<f64>(settings_.*field) * 100.0);
-        if (settings_vars_[i] == value && vars_.get(name).number() == value) continue;
-        vars_.set(name, value);
-        settings_vars_[i] = value;
+    return changed;
+}
+
+void VolumeVars::write(const Settings& s, Vars& vars) {
+    for (usize i = 0; i < written.size(); ++i) {
+        const auto& [name, field] = kVolumes[i];
+        const f64 value = std::round(static_cast<f64>(s.*field) * 100.0);
+        if (written[i] == value && vars.get(name).number() == value) continue;
+        vars.set(name, value);
+        written[i] = value;
     }
+}
+
+void Shell::sync_settings_vars() {
+    Settings s = settings_;
+    if (volume_vars_.read(vars_, s)) apply_settings(s);
+    volume_vars_.write(settings_, vars_);
 }
 
 void Shell::define(const std::string& name, CallFn fn) { calls_[name] = std::move(fn); }
@@ -324,7 +337,7 @@ bool Shell::begin(std::string_view slot_id) {
     runner_->stop();
     screens_->hide_commands(); // the menu's windows stay with the menu
     vars_.clear();
-    settings_vars_.fill(NAN);
+    volume_vars_ = {};
     playtime_ = 0;
     if (!slots_->begin_session(slot_id, &error)) {
         toast("Не удалось начать: " + error);
@@ -433,6 +446,8 @@ void Shell::to_main_menu() {
 void Shell::apply_settings(const Settings& s) {
     settings_ = s;
     settings_.ui_scale = std::clamp(settings_.ui_scale, 0.5f, 3.0f);
+    for (f32 Settings::*v : {&Settings::master_volume, &Settings::music_volume, &Settings::sound_volume})
+        settings_.*v = std::clamp(settings_.*v, 0.0f, 1.0f);
     if (window_) {
         SDL_SetWindowFullscreen(window_, settings_.fullscreen);
         SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;

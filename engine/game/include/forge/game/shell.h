@@ -99,6 +99,21 @@ struct ShellConfig {
 
 enum class Screen : u8 { Main, Playing, Paused, Slots, Settings, Journal, Loading };
 
+// The game's volumes as its variables settings.master, settings.music and settings.sound (whole numbers, 0 to 100),
+// both ways, so a screen shows and changes them like any other variable: what a button's «Изменить данные» or
+// «Логика» sets goes to the sound and settings.json, a change of the settings shows in the variables (Shell, every
+// frame and after a button). 0 is a volume like any other: the player's silence, kept.
+struct VolumeVars {
+    // What write put into the variables last (NaN: nothing since they were cleared or loaded, so what a save or a new
+    // game has in them never changes the settings).
+    std::array<f64, 3> written{NAN, NAN, NAN};
+    // What the variables were set to since write, into s: 0 to 1 of a volume, whatever number it was (-10 is 0, 250
+    // is 1); what is not a number leaves the volume as it was. Whether a volume changed.
+    bool read(const Vars& vars, Settings& s) const;
+    // The volumes of s into the variables, as whole numbers, where they are not that already.
+    void write(const Settings& s, Vars& vars);
+};
+
 class Shell {
 public:
     Shell();
@@ -170,9 +185,7 @@ private:
     void end_dialogue();
     void start_loading(std::function<void()> work);
     void screen_action(const ScreenAction& action);
-    // The game's volumes as variables (settings.master, settings.music, settings.sound: 0 to 100), so a screen shows
-    // and changes them like any other: a change made by the game (a button's «Изменить данные», «Логика») goes to
-    // the sound and settings.json, a change of the settings shows in the variables.
+    // The game's volumes as variables (VolumeVars), both ways.
     void sync_settings_vars();
     Value call(std::string_view name, const std::vector<Value>& args);
 
@@ -192,9 +205,7 @@ private:
     f64 autosave_s_ = 300;
 
     Vars vars_;
-    // What sync_settings_vars wrote into the variables last (NaN: nothing since they were cleared or loaded, so a
-    // save's or a new game's values never change the settings).
-    std::array<f64, 3> settings_vars_{NAN, NAN, NAN};
+    VolumeVars volume_vars_;
     QuestBook quests_;
     std::unordered_map<std::string, std::unique_ptr<Dialogue>> dialogues_;
     std::unordered_map<std::string, CallFn> calls_;

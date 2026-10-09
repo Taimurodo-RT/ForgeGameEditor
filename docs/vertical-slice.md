@@ -63,6 +63,7 @@ forge_slice --test --screenshot slice.png               # проходит иг�
 forge_slice --test --scene mine --screenshot mine.png   # то же, кадр в штольне
 forge_slice --test --scene menu --screenshot menu.png   # то же, кадр в главном меню
 forge_slice --stress --test --scene stress --screenshot stress.png
+forge_slice --test --scene volumes                      # запуск над settings.json с музыкой и звуками 0
 ```
 
 Самопроверка: меню → новая игра → ходьба → разговор с Борисом и вопрос словами → копать руками и строить →

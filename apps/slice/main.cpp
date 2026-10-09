@@ -8,8 +8,9 @@
 //                                   (the level editor's «Играть отсюда»; FILE gets the links
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
-//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates]
+//   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes]
 //                                   offscreen: plays the game through and checks it
+//                                   (volumes: over a settings.json of music and sounds at 0)
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -228,7 +229,7 @@ private:
             build_windows(s);
             return;
         }
-        if (scene_ == "templates") {
+        if (scene_ == "templates" || scene_ == "volumes") {
             build_templates(s);
             return;
         }
@@ -2360,12 +2361,153 @@ private:
         }});
     }
 
+    // The volumes a player saved, in the game made of templates (--scene volumes): music and sounds at 0, all at
+    // 100, as settings.json had them when the game started (main writes it into this run's own folder). A saved 0
+    // is the player's silence, kept: not «no value», not a new player's 70; the template's −10 and +10 stop at 0 and
+    // 100; what is heard is what settings.json keeps; a save made at another volume does not change it when loaded.
+    template <typename Click, typename Num, typename Near>
+    void build_volumes(Shell& s, Click click, Num num, Near near) {
+        static f64 music_in_save = -1;
+        auto three = [](f64 a, f64 b, f64 c) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "%g, %g, %g", a, b, c);
+            return std::string(buf);
+        };
+        // The whole, the music, the sounds: in the settings, in the variables, in the mixer, in settings.json.
+        auto at = [&s, num, near, three, this](f64 master, f64 music, f64 sound, const std::string& what) {
+            const Settings& v = s.settings();
+            const audio::Mixer& m = g_.sounds().mixer();
+            const Settings file = game::load_settings(s.user_folder());
+            check(near(v.master_volume, static_cast<f32>(master / 100)) && near(v.music_volume, static_cast<f32>(music / 100)) &&
+                      near(v.sound_volume, static_cast<f32>(sound / 100)),
+                  what + ": настройки " + three(v.master_volume * 100.0, v.music_volume * 100.0, v.sound_volume * 100.0));
+            check(num("settings.master") == master && num("settings.music") == music && num("settings.sound") == sound,
+                  what + ": переменные " + three(num("settings.master"), num("settings.music"), num("settings.sound")));
+            check(near(m.master(), static_cast<f32>(master / 100)) && near(m.volume(audio::Bus::Music), static_cast<f32>(music / 100)) &&
+                      near(m.volume(audio::Bus::Sound), static_cast<f32>(sound / 100)) && near(m.volume(audio::Bus::Ui), static_cast<f32>(sound / 100)),
+                  what + ": микшер " + three(m.master() * 100.0, m.volume(audio::Bus::Music) * 100.0, m.volume(audio::Bus::Sound) * 100.0));
+            check(near(file.master_volume, static_cast<f32>(master / 100)) && near(file.music_volume, static_cast<f32>(music / 100)) &&
+                      near(file.sound_volume, static_cast<f32>(sound / 100)),
+                  what + ": settings.json " + three(file.master_volume * 100.0, file.music_volume * 100.0, file.sound_volume * 100.0));
+        };
+        // What the music's scale writes under it.
+        auto numbers = [&s]() {
+            Rml::ElementDocument* doc = s.screens().document("шаблоны_настройки");
+            Rml::Element* row = nullptr;
+            Rml::ElementList all;
+            if (doc) doc->QuerySelectorAll(all, "[title]");
+            for (Rml::Element* e : all)
+                if (e->GetAttribute<Rml::String>("title", "") == "Строка «Музыка»") row = e;
+            Rml::Element* text = row ? row->QuerySelector("[title=Числа]") : nullptr;
+            return text ? text->GetInnerRML() : std::string("нет слоя");
+        };
+        steps_.push_back({"громкость, сохранённая игроком: 0 и 100", 40, [&s, at, click, numbers, this](u32 f) {
+            GameScreens& sc = s.screens();
+            if (f == 0) {
+                at(100, 0, 0, "игра снова запущена: музыка и звуки 0, как игрок их оставил, а не 70 и 100 новой игры");
+                check(s.settings().vsync && s.settings().ui_scale == 1.0f, "остальное как было");
+                check(click("шаблоны_меню", nullptr, "Кнопка «Настройки»"), "щелчок по «Настройки» меню");
+            }
+            if (f == 1) {
+                check(sc.windows() == std::vector<std::string>{"шаблоны_настройки"}, "окно настроек открылось");
+                SDL_Delay(300);
+            }
+            if (f == 3) {
+                check(numbers() == "0", "шкала музыки пишет 0: " + numbers());
+                check(click("шаблоны_настройки", "Строка «Музыка»", "Кнопка «−»"), "«−» у музыки при 0");
+            }
+            if (f == 5) {
+                at(100, 0, 0, "«−» при 0: музыка 0, а не −10");
+                check(numbers() == "0", "шкала музыки пишет 0: " + numbers());
+                check(click("шаблоны_настройки", "Строка «Общая»", "Кнопка «+»"), "«+» у общей при 100");
+            }
+            if (f == 7) {
+                at(100, 0, 0, "«+» при 100: общая 100, а не 110");
+                check(click("шаблоны_настройки", "Строка «Музыка»", "Кнопка «+»"), "«+» у музыки");
+            }
+            if (f == 9) {
+                at(100, 10, 0, "«+»: музыка 10, слышна и записана");
+                check(numbers() == "10", "шкала музыки пишет 10: " + numbers());
+                check(click("шаблоны_настройки", "Строка «Музыка»", "Кнопка «−»"), "«−» у музыки");
+            }
+            if (f == 11) {
+                at(100, 0, 0, "«−»: снова 0, и это записано");
+                // What «Логика» or a button's «Изменить данные» may set: past the ends, brought in. The game's
+                // mixer takes the settings in its own update, which comes before the variables' in a frame: heard
+                // from the next one.
+                s.vars().set("settings.sound", 250);
+            }
+            if (f == 13) {
+                at(100, 0, 100, "settings.sound = 250: звуки 100");
+                s.vars().set("settings.sound", -40);
+            }
+            if (f == 15) {
+                at(100, 0, 0, "settings.sound = −40: звуки 0");
+                // What the game's code may ask of the settings: past the ends, brought in.
+                Settings loud = s.settings();
+                loud.music_volume = 1.5f;
+                s.apply_settings(loud);
+            }
+            if (f == 17) {
+                at(100, 100, 0, "игра просит громкость музыки 1,5: 100");
+                Settings quiet = s.settings();
+                quiet.music_volume = 0;
+                s.apply_settings(quiet);
+            }
+            if (f == 19) {
+                at(100, 0, 0, "и снова 0");
+                for (const bool down : {true, false}) {
+                    SDL_Event ev{};
+                    ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                    ev.key.key = SDLK_ESCAPE;
+                    ev.key.down = down;
+                    s.handle_event(ev);
+                }
+                check(sc.windows().empty() && s.screen() == Screen::Main, "Esc закрыл окно настроек");
+            }
+            if (f == 21) check(click("шаблоны_меню", nullptr, "Кнопка «Новая игра»"), "щелчок по «Новая игра»");
+            if (f < 22) return false;
+            return s.screen() == Screen::Playing && g_.running();
+        }});
+        steps_.push_back({"сохранение игры не меняет громкость", 40, [&s, at, num, this](u32 f) {
+            if (f == 0) {
+                at(100, 0, 0, "новая игра: громкость та же");
+                check(s.save("volumes", "Громкость"), "игра сохраняется при музыке 0");
+                std::vector<u8> bytes;
+                read_file(s.slots().folder("volumes") / "state.json", bytes);
+                Vars in_save;
+                const std::string text(bytes.begin(), bytes.end());
+                const usize from = text.find("\"vars\"");
+                const usize open = from == std::string::npos ? from : text.find('{', from);
+                const usize close = open == std::string::npos ? open : text.find('}', open);
+                if (close != std::string::npos) in_save.from_json(std::string_view(text).substr(open, close - open + 1));
+                music_in_save = in_save.get("settings.music").number();
+                check(in_save.has("settings.music") && music_in_save == 0, "в сохранении settings.music 0");
+                // «Логика» turns the music up after the save.
+                s.vars().set("settings.music", 50);
+            }
+            if (f == 2) {
+                at(100, 50, 0, "«Логика» прибавила музыку до 50 после сохранения");
+                check(s.load("volumes"), "сохранение загружается");
+            }
+            if (f == 4) {
+                check(s.screen() == Screen::Playing && g_.running(), "игра идёт после загрузки");
+                at(100, 50, 0, "загружено сохранение с settings.music " + std::to_string(static_cast<int>(music_in_save)) +
+                                   ": громкость игрока 50 осталась");
+                check(num("settings.music") == 50, "переменная показывает громкость игрока, а не сохранения");
+            }
+            return f >= 6;
+        }});
+    }
+
     // games/examples/templates (13.12): a game made of the library's templates, as the editor saved it, read from
     // disk (the package carries it in data/examples). What the templates' buttons do in the game: the main menu's
     // «Настройки» opens the author's settings over it, whose buttons change the game's volume (Settings, the
     // mixer, settings.json); two copies of the game's own template «Находка» give their own things; the HUD's
     // pause button opens the author's pause, which stops the world, darkens, grows in and sounds its buttons; the
     // settings over it; «Продолжить» closes it and the world goes on; Esc is still the game's pause.
+    // --scene volumes: the same game started again over the volumes a player saved (main writes them): music and
+    // sounds at 0, all at 100.
     void build_templates(Shell& s) {
         SliceGame& g = g_;
         static const char* const kPages[] = {"шаблоны_меню", "шаблоны_игра", "шаблоны_пауза", "шаблоны_настройки"};
@@ -2490,6 +2632,10 @@ private:
             check(sc.windows().empty(), "окон пока нет");
             return true;
         }});
+        if (scene_ == "volumes") {
+            build_volumes(s, click, num, near);
+            return;
+        }
         steps_.push_back({"настройки из шаблона над главным меню", 40, [&s, press, key, click, focus, num, appearing, near, this](u32 f) {
             GameScreens& sc = s.screens();
             if (f == 0) {
@@ -2675,11 +2821,38 @@ int main(int argc, char** argv) {
             options.at = std::sscanf(argv[++i], "%lf,%lf", &options.at_x, &options.at_y) == 2;
         }
     }
+    // --scene volumes: the game starts over the settings.json a player left, in this run's own folder: music and
+    // sounds at 0, all at 100, as the game writes it.
+    std::vector<char*> args(argv, argv + argc);
+    std::string user;
+    if (scene == "volumes" && options.silent) {
+        const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_slice_volumes";
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        const std::string_view text = R"({
+  "$type": "forge::game::Settings",
+  "fullscreen": false,
+  "vsync": true,
+  "ui_scale": 1.0,
+  "master_volume": 1.0,
+  "music_volume": 0.0,
+  "sound_volume": 0.0,
+  "theme": "",
+  "show_fps": false
+})";
+        if (!write_file_atomic(dir / "settings.json", {reinterpret_cast<const u8*>(text.data()), text.size()}))
+            FORGE_ERROR("не записался %s", path_to_utf8(dir / "settings.json").c_str());
+        user = path_to_utf8(dir);
+        args.push_back(const_cast<char*>("--user"));
+        args.push_back(user.data());
+    }
+    args.push_back(nullptr);
     SliceGame game(options);
     SelfTest test(game, scene);
     GameMain m;
     m.dev_ui_dir = FORGE_UI_DIR;
     m.dev_game_dir = SLICE_DATA_DIR;
     m.test = [&](Shell& shell, u32, int& failures) { return test.frame(shell, failures); };
-    return run_game(game, m, argc, argv);
+    return run_game(game, m, static_cast<int>(args.size()) - 1, args.data());
 }

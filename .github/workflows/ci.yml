@@ -99,6 +99,7 @@ jobs:
           ./build/apps/slice/forge_slice --stress --test --scene stress --screenshot world-slice-stress.png
           ./build/apps/slice/forge_slice --test --scene windows --screenshot world-slice-windows.png
           ./build/apps/slice/forge_slice --test --scene templates --screenshot world-slice-templates.png
+          ./build/apps/slice/forge_slice --test --scene volumes
       - name: Package the vertical slice
         run: cmake --build build --config Release --target forge_slice_package
       - name: Packaged game finds its data, and the windows and templates examples' pages in it
@@ -108,6 +109,7 @@ jobs:
           ./build/dist/OldMine/OldMine --test --scene menu --size 1440x1080 --screenshot world-slice-packaged-4x3.png
           ./build/dist/OldMine/OldMine --test --scene windows --screenshot world-slice-packaged-windows.png
           ./build/dist/OldMine/OldMine --test --scene templates --screenshot world-slice-packaged-templates.png
+          ./build/dist/OldMine/OldMine --test --scene volumes
       - uses: actions/upload-artifact@v4
         with:
           name: OldMine-${{ runner.os }}

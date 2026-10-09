@@ -3,12 +3,15 @@
 #include "forge/game/quests.h"
 #include "forge/game/saves.h"
 #include "forge/game/screens.h"
+#include "forge/game/shell.h"
 #include "forge/game/vars.h"
 
 #include "forge/core/file.h"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <string>
 
@@ -474,6 +477,118 @@ TEST_CASE("game: settings load with defaults and clamp what is off") {
 
     CHECK(format_playtime(125) == "2 мин");
     CHECK(format_playtime(3900) == "1 ч 05 мин");
+}
+
+// The game's volumes as its variables (VolumeVars, what Shell does every frame and after a button): a volume the
+// player saved at 0 is kept 0 when the game starts again, a button's −10 and +10 stop at 0 and 100, and what
+// settings.json keeps is what the variables show after the next start.
+TEST_CASE("game: volumes as variables: a saved 0 kept, 0 to 100, the same after settings.json and a new start") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "forge_test_volumes";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    auto volumes = [](const Settings& s) { return std::array<f32, 3>{s.master_volume, s.music_volume, s.sound_volume}; };
+    auto shown = [](const Vars& v) {
+        return std::array<f64, 3>{v.get("settings.master").number(), v.get("settings.music").number(), v.get("settings.sound").number()};
+    };
+    auto file = [&](std::string_view text) {
+        REQUIRE(write_file_atomic(dir / "settings.json", {reinterpret_cast<const u8*>(text.data()), text.size()}));
+    };
+    // As the game starts: its settings from settings.json, the variables of a save or a new game (here a save made
+    // when the music was at 80 and all at 5), the first frame's two ways.
+    auto start = [&](Vars& vars, VolumeVars& bridge) {
+        Settings s = load_settings(dir);
+        vars.set("settings.music", 80);
+        vars.set("settings.master", 5);
+        const auto loaded = volumes(s);
+        CHECK_FALSE(bridge.read(vars, s)); // a save's values never change the settings
+        CHECK(volumes(s) == loaded);
+        bridge.write(s, vars);
+        return s;
+    };
+    // A button's «Изменить данные», then the frame's two ways: changed settings are kept (Shell::apply_settings).
+    auto press = [&](const char* action, Vars& vars, VolumeVars& bridge, Settings& s) {
+        std::string error;
+        Expr::parse_actions(action, &error).run(vars);
+        REQUIRE(error.empty());
+        const bool changed = bridge.read(vars, s);
+        if (changed) REQUIRE(save_settings(dir, s));
+        bridge.write(s, vars);
+        return changed;
+    };
+
+    // The player had left the music and the sounds at 0 and the whole at 100, as the game writes settings.json.
+    file(R"({
+  "$type": "forge::game::Settings",
+  "fullscreen": false,
+  "vsync": true,
+  "ui_scale": 1.0,
+  "master_volume": 1.0,
+  "music_volume": 0.0,
+  "sound_volume": 0.0,
+  "theme": "",
+  "show_fps": false
+})");
+    {
+        Vars vars;
+        VolumeVars bridge;
+        Settings s = start(vars, bridge);
+        CHECK(volumes(s) == std::array<f32, 3>{1.0f, 0.0f, 0.0f}); // 0 is the player's silence, not "no value": not 0.7
+        CHECK(shown(vars) == std::array<f64, 3>{100, 0, 0});
+        const u64 version = vars.version();
+        CHECK_FALSE(bridge.read(vars, s));
+        bridge.write(s, vars);
+        CHECK(vars.version() == version); // the next frame changes nothing
+
+        // −10 at 0 and +10 at 100: the volume stays, the variable shows it again.
+        CHECK_FALSE(press("settings.music -= 10", vars, bridge, s));
+        CHECK(shown(vars) == std::array<f64, 3>{100, 0, 0});
+        CHECK_FALSE(press("settings.master += 10", vars, bridge, s));
+        CHECK(shown(vars) == std::array<f64, 3>{100, 0, 0});
+        CHECK(volumes(load_settings(dir)) == std::array<f32, 3>{1.0f, 0.0f, 0.0f});
+
+        // The music up from 0 to 100 and down again by the button: every step heard, kept in settings.json and shown
+        // the same after a new start; past the ends it stays.
+        for (int step = 1; step <= 21; ++step) {
+            const int want = step <= 10 ? step * 10 : step == 11 ? 100 : std::max(0, 100 - (step - 11) * 10);
+            CAPTURE(step);
+            press(step <= 11 ? "settings.music += 10" : "settings.music -= 10", vars, bridge, s);
+            CHECK(vars.get("settings.music").number() == want);
+            CHECK(s.music_volume == doctest::Approx(want / 100.0));
+            const Settings back = load_settings(dir);
+            CHECK(volumes(back) == volumes(s));
+            Vars again;
+            VolumeVars bridge2;
+            start(again, bridge2);
+            CHECK(shown(again) == shown(vars));
+        }
+        CHECK_FALSE(press("settings.music -= 10", vars, bridge, s));
+        CHECK(vars.get("settings.music").number() == 0);
+
+        // Set to anything: brought into 0 to 100; what is not a number leaves the volume as it was.
+        CHECK(press("settings.sound = 250", vars, bridge, s));
+        CHECK((s.sound_volume == 1.0f && vars.get("settings.sound").number() == 100));
+        CHECK(press("settings.sound = -40", vars, bridge, s));
+        CHECK((s.sound_volume == 0.0f && vars.get("settings.sound").number() == 0));
+        CHECK(press("settings.sound = 30", vars, bridge, s));
+        vars.set("settings.sound", "nan");
+        CHECK_FALSE(bridge.read(vars, s));
+        bridge.write(s, vars);
+        CHECK((s.sound_volume == doctest::Approx(0.3) && vars.get("settings.sound").number() == 30));
+        CHECK(volumes(load_settings(dir)) == std::array<f32, 3>{1.0f, 0.0f, s.sound_volume});
+    }
+
+    // A file edited by hand past the ends: brought into 0 to 100 when read.
+    file(R"({"$type": "forge::game::Settings", "master_volume": 1.5, "music_volume": -0.25, "sound_volume": 0.0})");
+    {
+        Vars vars;
+        VolumeVars bridge;
+        const Settings s = start(vars, bridge);
+        CHECK(volumes(s) == std::array<f32, 3>{1.0f, 0.0f, 0.0f});
+        CHECK(shown(vars) == std::array<f64, 3>{100, 0, 0});
+        CHECK(s.vsync); // the rest as a new player's
+    }
+    fs::remove_all(dir);
 }
 
 TEST_CASE("vars: an element of a list reads through to the game's") {
