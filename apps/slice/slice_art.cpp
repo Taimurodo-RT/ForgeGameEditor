@@ -91,7 +91,31 @@ void person(const Canvas& c, const Look& l, u32 step) {
 
 } // namespace
 
+namespace {
+// By id - kFirstOwnTile: 1 where the level's own tile is solid.
+std::vector<u8>& own_solid() {
+    static std::vector<u8> solid;
+    return solid;
+}
+} // namespace
+
+void set_own_solid(const level::LevelTiles& own) {
+    std::vector<u8>& solid = own_solid();
+    solid.clear();
+    for (const level::OwnTile& t : own.tiles) {
+        if (t.id < level::kFirstOwnTile) continue;
+        const usize i = t.id - level::kFirstOwnTile;
+        if (solid.size() <= i) solid.resize(i + 1, 0);
+        solid[i] = t.solid ? 1 : 0;
+    }
+}
+
 bool is_solid(TileId t) {
+    if (t >= level::kFirstOwnTile) {
+        const std::vector<u8>& solid = own_solid();
+        const usize i = t - level::kFirstOwnTile;
+        return i < solid.size() && solid[i] != 0;
+    }
     switch (t) {
     case TileGrass: case TileDirt: case TileStone: case TileSand: case TileCopper: case TileIron: case TileGold:
     case TilePlanks: case TileRoof: case TileBrick: case TileDoor: return true;
@@ -212,6 +236,39 @@ std::vector<u8> make_atlas() {
     }
     // TileDoor stays empty: the door object draws itself over its column.
     return px;
+}
+
+const u8* TileArt::cell(TileId id) const {
+    if (cells == 0 || id >= cells * cells) return nullptr;
+    return &rgba[(static_cast<usize>(id / cells) * cell_px * cells + static_cast<usize>(id % cells)) * cell_px * 4];
+}
+
+TileArt make_tile_art(const level::LevelTiles& own) {
+    TileArt art;
+    art.cell_px = std::max<u32>(demo::kTileCellPx, own.px);
+    TileId last = 0;
+    for (const level::OwnTile& t : own.tiles) last = std::max(last, t.id);
+    art.cells = demo::kTileCells;
+    while (art.cells * art.cells <= last) ++art.cells;
+    art.rgba.assign(art.row_bytes() * art.cell_px * art.cells, 0);
+    // A square picture of side n (rows of row bytes) into a cell, each pixel
+    // the nearest one.
+    auto put = [&](TileId id, const u8* from, u32 n, usize row) {
+        u8* to = const_cast<u8*>(art.cell(id));
+        if (!to) return;
+        for (u32 y = 0; y < art.cell_px; ++y)
+            for (u32 x = 0; x < art.cell_px; ++x)
+                std::memcpy(to + y * art.row_bytes() + static_cast<usize>(x) * 4,
+                            from + static_cast<usize>(y * n / art.cell_px) * row + static_cast<usize>(x * n / art.cell_px) * 4, 4);
+    };
+    const std::vector<u8> game = make_atlas();
+    const u32 n = demo::kTileCellPx;
+    const usize game_row = static_cast<usize>(n) * demo::kTileCells * 4;
+    for (TileId id = 1; id < demo::kTileCells * demo::kTileCells; ++id)
+        put(id, &game[static_cast<usize>(id / demo::kTileCells) * n * game_row + static_cast<usize>(id % demo::kTileCells) * n * 4], n,
+            game_row);
+    for (usize i = 0; i < own.tiles.size(); ++i) put(own.tiles[i].id, own.picture(i), own.px, static_cast<usize>(own.px) * 4);
+    return art;
 }
 
 demo::SheetImage make_sheet() {
@@ -377,6 +434,19 @@ render::LightRules light_rules() {
     rules.kinds[TileWater] = render::LightKind::Dense;
     rules.kinds[TileDeepWater] = render::LightKind::Dense;
     rules.ambient = {0.05f, 0.05f, 0.07f, 1.0f};
+    // The level's own tiles: a picture of a background has the sky in it, so
+    // the sky shines through it as through an empty cell.
+    const std::vector<u8>& solid = own_solid();
+    if (!solid.empty()) {
+        const usize end = level::kFirstOwnTile + solid.size();
+        rules.kinds.resize(end, render::LightKind::Open);
+        rules.sky_through.assign(end, 0);
+        rules.sky_through_layers = (1u << kWalls) | (1u << kBlocks);
+        for (usize i = 0; i < solid.size(); ++i) {
+            rules.kinds[level::kFirstOwnTile + i] = solid[i] ? render::LightKind::Solid : render::LightKind::Open;
+            rules.sky_through[level::kFirstOwnTile + i] = solid[i] ? 0 : 1;
+        }
+    }
     return rules;
 }
 

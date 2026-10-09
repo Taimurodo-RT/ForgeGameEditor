@@ -165,6 +165,10 @@ public:
     bool position_of(flecs::entity_t e, f64& x, f64& y) const;
     // Gives an object a «Звук» block.
     bool set_sounds(flecs::entity_t e, const Sounds& sounds);
+    // The loaded copies of a template (by its id).
+    std::vector<flecs::entity_t> copies_of(std::string_view template_id) const;
+    // Hurts the hero by n hearts (n < 0 heals), as a link does.
+    void hurt(f64 n) { hurt_hero(n); }
     f64 inventory(const char* item) const;
     u32 particles() const { return particles_.stats().slots_used; }
     f64 sim_ms() const { return sim_ms_; }
@@ -237,6 +241,9 @@ private:
     void areas_tick(const forge::sim::TickContext& ctx);
     const forge::level::Area* area_of(std::string_view thing) const;
     bool spawn_spot(f64 x, f64 y, f64& out_x, f64& out_y, std::string* why);
+    // The game's name of the place at (x, y) ("Деревня"); "" where the level
+    // has nothing around it.
+    std::string place_name(f64 x, f64 y) const;
 
     Options options_;
     forge::game::Shell* shell_ = nullptr;
@@ -251,7 +258,7 @@ private:
     bool running_ = false;
     std::filesystem::path session_;
 
-    std::vector<u8> atlas_;
+    TileArt atlas_; // the game's tiles and the level's own
     forge::demo::SheetImage sheet_;
     Pictures pictures_;
     SliceSounds sounds_;

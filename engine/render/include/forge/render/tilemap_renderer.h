@@ -19,7 +19,7 @@
 namespace forge::render {
 
 // Square texture of cells_per_row × cells_per_row tiles, each cell_px pixels,
-// RGBA8. Tile id N is cell N, row by row.
+// RGBA8. Tile id N is cell N, row by row; ids past the last cell show nothing.
 struct TileAtlas {
     const u8* rgba = nullptr;
     u32 cell_px = 16;
@@ -56,6 +56,10 @@ public:
     void draw_layers(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass, u32 first, u32 count);
 
     void set_layer_tint(u32 layer, Color tint);
+    // Tiles with ids from here on are drawn in their own colours on every
+    // layer, the layer's tint left out (pictures that came with a level, say);
+    // 0: every tile takes its layer's tint.
+    void set_plain_from(world::TileId id) { plain_from_ = id; }
     // Draws a layer as liquids (see forge/sim/cells.h): colors[kind] for kinds
     // 1..15, cells filled from the side gravity points to (down: 0 +y, 1 -x,
     // 2 -y, 3 +x).
@@ -104,6 +108,7 @@ private:
     Color liquid_colors_[16] = {};
     u32 liquid_full_ = 1024;
     u32 liquid_down_ = 0;
+    u32 plain_from_ = 0;
     std::vector<Instance> frame_instances_;
     std::vector<world::Chunk*> frame_uploads_;
     u32 draw_count_ = 0;

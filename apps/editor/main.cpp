@@ -1781,6 +1781,7 @@ private:
             return ph_step_ <= kPhysLast    ? physics_step()
                    : lt_step_ <= kLightLast ? light_step()
                    : zn_step_ <= kZonesLast ? zones_step()
+                   : ot_step_ <= kOwnLast   ? own_tiles_step()
                                             : objects_step();
         const usize stone = tile_named("stone"), sand = tile_named("sand");
         switch (f) {
@@ -3882,6 +3883,249 @@ private:
         default: break;
         }
         ++zn_step_;
+        return true;
+    }
+
+    // --- the level's own tiles («Тайлы уровня»): a level with tiles of its own pictures and nothing around ---
+    static constexpr u32 kOwnLast = 9;
+    static std::filesystem::path own_root() { return std::filesystem::temp_directory_path() / "forge_editor_own_tiles"; }
+    // The palette's index of a tile (by id), tiles().size() when it has none.
+    usize palette_index(const std::string& id) {
+        const auto& tiles = lv().tiles();
+        for (usize i = 0; i < tiles.size(); ++i)
+            if (tiles[i].id == id) return i;
+        return tiles.size();
+    }
+    // The picture of the palette's tile i, as its element shows it.
+    std::string palette_icon(usize i) {
+        Rml::Element* e = visible(("pal-" + std::to_string(i)).c_str());
+        Rml::Element* img = e && e->GetNumChildren() > 0 ? e->GetChild(0) : nullptr;
+        return img ? img->GetAttribute<Rml::String>("src", "") : std::string();
+    }
+    // The minimap's colours over a rectangle of tiles (those it draws), as "r,g,b" each once.
+    std::vector<std::string> minimap_colors(i32 x0, i32 y0, i32 x1, i32 y1) {
+        std::vector<std::string> out;
+        for (i32 y = y0; y <= y1; ++y)
+            for (i32 x = x0; x <= x1; ++x)
+                if (u8 c[3]; lv().minimap_at(x, y, c)) {
+                    const std::string t = std::to_string(c[0]) + "," + std::to_string(c[1]) + "," + std::to_string(c[2]);
+                    if (std::find(out.begin(), out.end(), t) == out.end()) out.push_back(t);
+                }
+        return out;
+    }
+    static std::string joined_list(const std::vector<std::string>& v) {
+        std::string out;
+        for (const std::string& t : v) out += (out.empty() ? "" : " ") + t;
+        return out;
+    }
+    // Two pictures of 16 px: «Гранит», a block all of one colour, and «Обои», a wall seen through below its middle.
+    static level::LevelTiles own_tiles_example(u8 r, u8 g, u8 b, const char* granite) {
+        level::LevelTiles t;
+        t.px = 16;
+        t.tiles.push_back({level::kFirstOwnTile, granite, 1, true, "самопроверка редактора"});
+        t.tiles.push_back({static_cast<world::TileId>(level::kFirstOwnTile + 1), "Обои", 0, false, ""});
+        for (u32 i = 0; i < 16 * 16; ++i) t.rgba.insert(t.rgba.end(), {r, g, b, 255});
+        for (u32 i = 0; i < 16 * 16; ++i) {
+            if (i < 16 * 8) t.rgba.insert(t.rgba.end(), {60, 90, 200, 255});
+            else t.rgba.insert(t.rgba.end(), {0, 0, 0, 0});
+        }
+        return t;
+    }
+
+    bool own_tiles_step() {
+        const std::filesystem::path example = own_root() / utf8_path("Мой уровень");
+        // The cells: «Гранит» in two rows of four from (2, 9), «Обои» in six by three over them.
+        const i32 gx = 2, gy = 9;
+        switch (ot_step_) {
+        case 0: {
+            // The level of the steps above stays as it was; the example is a level of its own, in a folder with a
+            // space and Cyrillic in its name.
+            key(SDLK_S, SDL_KMOD_CTRL);
+            ot_main_ = lv().level().folder();
+            ot_view_ = lv().camera();
+            ot_game_tiles_ = lv().tiles().size();
+            std::error_code ec;
+            std::filesystem::remove_all(own_root(), ec);
+            std::filesystem::create_directories(example, ec);
+            std::string why;
+            check(level::save_tiles(example, own_tiles_example(180, 70, 40, "Гранит"), &why), "tiles.json and tiles.png written " + why);
+            check(level::save_world(example, level::LevelWorld{true}, &why), "world.json: nothing around " + why);
+            level::LevelAreas a;
+            a.spawn = true;
+            a.spawn_x = 4.5;
+            a.spawn_y = 10;
+            check(level::save_areas(example, a, &why), "areas.json: the spawn point " + why);
+            ot_tiles_json_ = text_of(example / "tiles.json");
+            check(lv().open_folder(example), "the level with its own tiles opens");
+            const level::Level& l = lv().level();
+            check(l.own_tiles().tiles.size() == 2 && l.own_tiles_error().empty() && l.around().empty_around && lv().history().cursor() == 0,
+                  "with two tiles of its own, nothing around, no history: " + l.own_tiles_error());
+            check(lv().camera().x == 4.5 && lv().camera().y == 8, "the view goes to its spawn point (nothing else to see around)");
+            view_over(gx - 4, gy - 6, gx + 8, gy + 4);
+            key(SDLK_T, SDL_KMOD_NONE);
+            break;
+        }
+        case 1: {
+            // The palette is made anew and the cells load in the frames after the level opens.
+            const bool ready = lv().tiles().size() == ot_game_tiles_ + 2 && lv().level().loaded(gx - 1, gy - 3) &&
+                               lv().level().loaded(gx + 4, gy + 1);
+            // Three frames once ready (the palette's elements are made from the data in the frames after).
+            if (ready ? ++ot_wait_ < 3 : ++ot_late_ < 300) return true;
+            ot_wait_ = ot_late_ = 0;
+            const usize g = palette_index("own_256"), w = palette_index("own_257");
+            check(lv().tiles().size() == ot_game_tiles_ + 2 && g == ot_game_tiles_ && w == g + 1,
+                  "the palette: the game's tiles, then the level's own two");
+            check(g < lv().tiles().size() && lv().tiles()[g].group == "Тайлы уровня" && lv().tiles()[g].name == "Гранит" &&
+                      lv().tiles()[g].layer == 1 && lv().tiles()[g].hint == "твёрдый; самопроверка редактора",
+                  "«Гранит» in the group «Тайлы уровня», on the block layer, solid");
+            check(w < lv().tiles().size() && lv().tiles()[w].name == "Обои" && lv().tiles()[w].layer == 0 &&
+                      lv().tiles()[w].hint == "тайл этого уровня",
+                  "«Обои» on the wall layer");
+            // Nothing in the cells yet, all of them loaded.
+            u32 empty = 0;
+            for (i32 y = gy - 3; y <= gy + 1; ++y)
+                for (i32 x = gx - 1; x <= gx + 4; ++x) empty += at(x, y, 0) == 0 && at(x, y, 1) == 0 && lv().level().loaded(x, y);
+            check(empty == 30, "the cells are loaded and empty: " + std::to_string(empty) + " of 30");
+            check(lv().mode() == Mode::Tiles && shown("pane-palette"), "T: the tiles mode and its palette");
+            check(element_text("pane-palette").find("Тайлы уровня") != std::string::npos, "the palette has the group «Тайлы уровня»");
+            check(shown("pal-" + std::to_string(g)) && shown("pal-" + std::to_string(w)), "and shows both tiles");
+            ot_icon_ = palette_icon(g);
+            check(ot_icon_.rfind("/memory/tile_own", 0) == 0 && palette_icon(w).rfind("/memory/tile_own", 0) == 0 && ot_icon_ != palette_icon(w),
+                  "each with a picture of its own: " + ot_icon_);
+            if (Rml::Element* e = ed_.find_element(("pal-" + std::to_string(g)).c_str())) e->Click();
+            check(lv().tile_index() == g && lv().layer() == 1, "a click on «Гранит» takes it, on the block layer");
+            key(SDLK_B, SDL_KMOD_NONE);
+            lv().set_brush_radius(0);
+            entries_ = lv().history().cursor();
+            // One stroke along a row of four and back along the row under it.
+            to_cell(gx, gy);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            for (i32 i = 1; i <= 3; ++i) to_cell(gx + i, gy);
+            for (i32 i = 3; i >= 0; --i) to_cell(gx + i, gy + 1);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            u32 n = 0, other = 0;
+            for (i32 y = gy - 3; y <= gy + 2; ++y)
+                for (i32 x = gx - 1; x <= gx + 4; ++x) {
+                    const bool in = x >= gx && x <= gx + 3 && y >= gy && y <= gy + 1;
+                    n += in && at(x, y) == level::kFirstOwnTile;
+                    other += !in && (at(x, y) != 0 || at(x, y, 0) != 0);
+                }
+            check(n == 8 && other == 0, "the brush paints «Гранит» where it went, no more: " + std::to_string(n) + ", " + std::to_string(other));
+            check(lv().history().cursor() == entries_ + 1 && lv().history().undo_label() == "Кисть: Гранит", "one history entry");
+            check(lv().dirty(), "the level is marked unsaved");
+            break;
+        }
+        case 2: {
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(at(gx, gy) == 0 && at(gx + 3, gy + 1) == 0, "Ctrl+Z takes the stroke back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(at(gx, gy) == level::kFirstOwnTile && at(gx + 3, gy + 1) == level::kFirstOwnTile, "Ctrl+Y paints it again");
+            const usize w = palette_index("own_257");
+            if (Rml::Element* e = ed_.find_element(("pal-" + std::to_string(w)).c_str())) e->Click();
+            check(lv().tile_index() == w && lv().layer() == 0, "«Обои» taken, on the wall layer");
+            key(SDLK_R, SDL_KMOD_NONE);
+            to_cell(gx - 1, gy - 3);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(gx + 2, gy - 2);
+            to_cell(gx + 4, gy - 1);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            u32 n = 0;
+            for (i32 y = gy - 4; y <= gy; ++y)
+                for (i32 x = gx - 2; x <= gx + 5; ++x) n += at(x, y, 0) == level::kFirstOwnTile + 1;
+            check(n == 18 && lv().history().undo_label() == "Прямоугольник: Обои", "the rectangle of «Обои», 6 × 3: " + std::to_string(n) +
+                                                                                        " " + lv().history().undo_label());
+            ot_map_ = lv().minimap_updates();
+            break;
+        }
+        case 3: {
+            // The minimap: «Гранит» its colour, «Обои» mostly seen through (the sky behind, as on empty cells).
+            if (lv().minimap_updates() == ot_map_ && wait(120)) return true;
+            ph_wait_ = 0;
+            const std::vector<std::string> granite = minimap_colors(gx, gy, gx + 3, gy + 1);
+            const std::vector<std::string> walls = minimap_colors(gx - 1, gy - 3, gx + 4, gy - 1);
+            const std::vector<std::string> sky = minimap_colors(gx - 1, gy - 8, gx + 4, gy - 6);
+            check(granite.size() == 1 && granite[0] == "180,70,40", "the minimap shows «Гранит» in its colour: " + joined_list(granite));
+            check(walls.size() == 1 && walls == sky, "and «Обои» as the empty sky: " + joined_list(walls) + " / " + joined_list(sky));
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S saves the level");
+            check(text_of(example / "tiles.json") == ot_tiles_json_, "tiles.json not rewritten (the tiles did not change)");
+            level::Level copy(ed_.level_module);
+            check(copy.open(example) && copy.around().empty_around && copy.own_tiles() == lv().level().own_tiles(),
+                  "the saved level opens again: nothing around, the same tiles");
+            copy.ensure_loaded({gx - 4, gy - 6, gx + 8, gy + 4});
+            u32 g = 0, w = 0;
+            for (i32 y = gy - 4; y <= gy + 2; ++y)
+                for (i32 x = gx - 2; x <= gx + 5; ++x) {
+                    g += copy.tile(1, x, y) == level::kFirstOwnTile;
+                    w += copy.tile(0, x, y) == level::kFirstOwnTile + 1;
+                }
+            check(g == 8 && w == 18, "with the painted cells: " + std::to_string(g) + " and " + std::to_string(w));
+            break;
+        }
+        case 4:
+            // Opened again in the editor, as after a restart: another level first.
+            check(lv().open_folder(ot_main_), "another level opens");
+            break;
+        case 5:
+            if (wait(3)) return true;
+            check(lv().tiles().size() == ot_game_tiles_ && palette_index("own_256") == lv().tiles().size(),
+                  "its palette has the game's tiles only");
+            check(lv().open_folder(example), "the level with its own tiles opens again");
+            break;
+        case 6: {
+            if (wait(3)) return true;
+            const usize g = palette_index("own_256"), w = palette_index("own_257");
+            check(g == ot_game_tiles_ && lv().tiles()[g].name == "Гранит" && shown("pal-" + std::to_string(g)) &&
+                      at(gx, gy) == level::kFirstOwnTile && at(gx, gy - 1, 0) == level::kFirstOwnTile + 1 && !lv().dirty() &&
+                      lv().history().cursor() == 0,
+                  "its tiles in the palette again, its cells in the world, nothing unsaved");
+            view_over(gx - 4, gy - 6, gx + 8, gy + 4);
+            if (Rml::Element* e = ed_.find_element(("pal-" + std::to_string(w)).c_str())) e->Click();
+            check(lv().tile_index() == w, "«Обои» in hand");
+            // The tiles themselves changed (as a new import of their pictures does): «Гранит» becomes green «Мох».
+            ot_map_ = lv().minimap_updates();
+            ot_icon_ = palette_icon(g);
+            const level::LevelTiles before = lv().level().own_tiles();
+            lv().history().execute(std::make_unique<level::SetOwnTiles>(lv().level(), before, own_tiles_example(70, 150, 60, "Мох"),
+                                                                        "Тайлы уровня: Мох"));
+            break;
+        }
+        case 7: {
+            if (wait(3)) return true;
+            const usize g = palette_index("own_256");
+            check(g < lv().tiles().size() && lv().tiles()[g].name == "Мох" && lv().tile_index() == palette_index("own_257"),
+                  "the palette shows «Мох», «Обои» still in hand");
+            check(palette_icon(g).rfind("/memory/tile_own", 0) == 0 && palette_icon(g) != ot_icon_, "with its new picture: " + palette_icon(g));
+            check(at(gx, gy) == level::kFirstOwnTile && lv().dirty(), "the cells keep their tile; the level unsaved");
+            break;
+        }
+        case 8: {
+            if (lv().minimap_updates() == ot_map_ && wait(120)) return true;
+            ph_wait_ = 0;
+            const std::vector<std::string> moss = minimap_colors(gx, gy, gx + 3, gy + 1);
+            check(moss.size() == 1 && moss[0] == "70,150,60", "the minimap: «Мох» green: " + joined_list(moss));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().own_tiles() == own_tiles_example(180, 70, 40, "Гранит"), "Ctrl+Z: «Гранит» again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().own_tiles() == own_tiles_example(70, 150, 60, "Мох"), "Ctrl+Y: «Мох» again");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            level::LevelTiles read;
+            check(!lv().dirty() && level::load_tiles(example, read, 3, 2) && read == own_tiles_example(70, 150, 60, "Мох"),
+                  "Ctrl+S writes the new tiles");
+            check(lv().open_folder(ot_main_), "the level of the steps above opens again");
+            lv().camera() = ot_view_;
+            key(SDLK_Q, SDL_KMOD_NONE);
+            break;
+        }
+        case 9:
+            if (wait(3)) return true;
+            check(lv().mode() == Mode::Select && lv().tiles().size() == ot_game_tiles_ && lv().level().own_tiles().empty() &&
+                      !lv().level().around().empty_around,
+                  "with the game's tiles only and the game's world around");
+            break;
+        default: break;
+        }
+        ++ot_step_;
         return true;
     }
 
@@ -11903,6 +12147,12 @@ private:
     std::filesystem::path zn_main_;
     render::Camera2D zn_view_, zn_cam_;
     std::function<std::vector<std::filesystem::path>()> zn_sounds_;
+    u32 ot_step_ = 0, ot_wait_ = 0, ot_late_ = 0;
+    std::filesystem::path ot_main_;
+    render::Camera2D ot_view_;
+    usize ot_game_tiles_ = 0;
+    u64 ot_map_ = 0;
+    std::string ot_icon_, ot_tiles_json_;
     level::LevelAreas zn_made_;
     f64 zn_spawn_x_ = 0, zn_spawn_y_ = 0;
     f32 zn_pan_x_ = 0, zn_pan_y_ = 0;

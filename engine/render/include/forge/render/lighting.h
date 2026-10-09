@@ -37,6 +37,12 @@ struct LightRules {
     f32 transmit[4] = {0.93f, 0.82f, 0.72f, 0.0f};
     // Sky light (side view): cells where every layer is empty glow with this.
     bool sky = false;
+    // Tiles the sky shines through as if the cell were empty (by id,
+    // non-zero: yes; ids past the end: no), on the layers of the mask (bit
+    // per layer; not one that holds liquids, whose values are not ids): a
+    // level's own pictures of a background, which the sky is part of.
+    std::vector<u8> sky_through;
+    u32 sky_through_layers = 0;
     Color sky_color{1.0f, 1.0f, 1.0f, 1.0f};
     // Added everywhere after spreading (top down: daylight; night: low).
     Color ambient{0.0f, 0.0f, 0.0f, 1.0f};

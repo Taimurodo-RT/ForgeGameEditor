@@ -10,12 +10,14 @@
 //
 // Changes are kept as region files in the level folder (tiles of changed
 // chunks, objects of visited chunks), physics.json (the world's gravity),
-// light.json (the time of day) and areas.json (named areas, the spawn point);
-// a new game starts from a copy of that folder, and the generator fills in
-// the rest.
+// light.json (the time of day), areas.json (named areas, the spawn point),
+// tiles.json with tiles.png (the level's own tiles) and world.json (what is
+// around: the game's world or nothing; forge/level/own_tiles.h); a new game
+// starts from a copy of that folder, and the generator fills in the rest.
 
 #include "forge/core/math.h"
 #include "forge/core/types.h"
+#include "forge/level/own_tiles.h"
 #include "forge/objects/library.h"
 #include "forge/render/camera.h"
 #include "forge/render/lighting.h"
@@ -202,6 +204,9 @@ public:
     virtual void setup_scene(scene::Scene& scene) = 0;
 
     virtual const std::vector<std::string>& layer_names() const = 0; // "Стены", "Блоки", "Жидкости"
+    // The layer that holds liquids (no tile of the level's own goes there);
+    // -1: none.
+    virtual i32 liquids_layer() const { return -1; }
     virtual const std::vector<TileDef>& tiles() const = 0;
     // A palette picture of a tile: size × size RGBA pixels.
     virtual void tile_icon(const TileDef& tile, u32 size, std::vector<u8>& rgba) const = 0;
@@ -295,7 +300,9 @@ public:
     Level& operator=(const Level&) = delete;
 
     // Opens (or starts) the level kept in folder. An empty folder is a level
-    // nobody changed yet: everything comes from the generator.
+    // nobody changed yet: everything comes from the generator. A level with
+    // nothing around (world.json) has the empty world instead, and its
+    // chunks are not peopled when first visited.
     bool open(const std::filesystem::path& folder, std::string* error = nullptr);
 
     LevelModule& module() { return module_; }
@@ -310,8 +317,8 @@ public:
     void ensure_loaded(const world::Rect& tiles);
 
     // Writes changed chunks and objects to the folder, physics.json when the
-    // physics changed, light.json when the time of day did and areas.json
-    // when the areas did.
+    // physics changed, light.json when the time of day did, areas.json when
+    // the areas did and tiles.json with tiles.png when the own tiles did.
     struct SaveReport {
         bool ok = false;
         u32 tile_chunks = 0;
@@ -319,6 +326,7 @@ public:
         bool physics = false; // physics.json written
         bool light = false;   // light.json written
         bool areas = false;   // areas.json written
+        bool own_tiles = false; // tiles.json and tiles.png written
         f64 ms = 0;
         std::string error; // when not ok, in the author's words
     };
@@ -349,6 +357,25 @@ public:
     const std::string& areas_error() const { return areas_error_; }
     // Bumped by every change of the areas (for panels that show them).
     u64 areas_version() const { return areas_version_; }
+
+    // The level's own tiles (tiles.json and tiles.png, else none).
+    const LevelTiles& own_tiles() const { return own_tiles_; }
+    // false (nothing changes) when they have a problem (tiles_problem).
+    bool set_own_tiles(const LevelTiles& t);
+    bool own_tiles_changed() const { return own_tiles_ != own_tiles_saved_; }
+    // Why tiles.json could not be read (no own tiles then: their cells show
+    // nothing; the files stay as they are, and go aside as tiles.broken.json
+    // and tiles.broken.png when the own tiles are saved anew).
+    const std::string& own_tiles_error() const { return own_tiles_error_; }
+    // Bumped by every change of the own tiles (the palette, the atlas).
+    u64 own_tiles_version() const { return own_tiles_version_; }
+
+    // What is around the level's chunks (world.json, else the game's world).
+    // It is what the world was made with, so it changes only by writing
+    // world.json and opening the level again.
+    const LevelWorld& around() const { return around_; }
+    // Why world.json could not be read (the game's world is around then).
+    const std::string& around_error() const { return around_error_; }
 
     // Bumped by every edit made through set_tile (for "unsaved" marks).
     u64 edits() const { return edits_; }
@@ -387,6 +414,11 @@ private:
     LevelAreas areas_, areas_saved_;
     std::string areas_error_;
     u64 areas_version_ = 0;
+    LevelTiles own_tiles_, own_tiles_saved_;
+    std::string own_tiles_error_;
+    u64 own_tiles_version_ = 0;
+    LevelWorld around_;
+    std::string around_error_;
 };
 
 // Copies a level folder into a game's world folder (a new game starts from

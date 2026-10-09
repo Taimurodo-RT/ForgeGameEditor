@@ -145,6 +145,11 @@ void SideViewGenerator::generate(ChunkCoord coord, const ChunkTiles& out) const 
 
 // --- top down --------------------------------------------------------------
 
+void EmptyGenerator::generate(ChunkCoord coord, const ChunkTiles& out) const {
+    (void)coord;
+    std::fill(out.data, out.data + static_cast<usize>(out.layer_count) * kChunkTiles, kEmptyTile);
+}
+
 void TopDownGenerator::generate(ChunkCoord coord, const ChunkTiles& out) const {
     FORGE_ZONE_N("Generate top down");
     TileId* ground = out.layer(0);

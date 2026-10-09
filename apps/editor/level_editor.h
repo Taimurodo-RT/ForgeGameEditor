@@ -116,6 +116,8 @@ public:
     void set_tool(Tool t);
     void select_tile(usize index);
     usize tile_index() const { return tile_; }
+    // The palette's tiles: the game's, then the level's own (ids "own_256"...).
+    const std::vector<level::TileDef>& tiles() const { return tiles_; }
     u32 layer() const { return layer_; }
     i32 brush_radius() const { return radius_; }
     void set_brush_radius(i32 r);
@@ -139,6 +141,8 @@ public:
     // A field of the properties panel (row i) set from text, as the user types it.
     void set_field(int i, const std::string& text, bool dragging);
     u64 minimap_updates() const { return minimap_updates_; }
+    // The minimap's colour of tile (x, y), false when the map does not draw that tile (it draws every other one).
+    bool minimap_at(i32 x, i32 y, u8 rgb[3]) const;
     // Physics
     void set_phys_tool(PhysTool t);
     PhysTool phys_tool() const { return ph_tool_; }
@@ -250,6 +254,15 @@ private:
     enum class PhysDrag : u8 { None, Place, Move, Radius, Area };
     enum class AreaDrag : u8 { None, Draw, Move, Edges, Spawn };
     void build_objects();
+    // The palette's tiles, their icons and the minimap's colours of the own
+    // ones, for the level's own tiles as they are now.
+    void build_tiles();
+    // The minimap colour of an own tile (0: none, or mostly see-through).
+    u32 own_color(world::TileId value) const;
+    // The game's name of the place, "" where the level has nothing around.
+    std::string place_name(f64 x, f64 y) const;
+    // With nothing around the level, the view goes to its spawn point.
+    void look_around_level();
 
     template <typename T>
     void set(T& member, const T& value, const char* name) {
@@ -347,6 +360,12 @@ private:
     Mode mode_ = Mode::Tiles;
     Tool tool_ = Tool::Brush;
     usize tile_ = 0;
+    std::vector<level::TileDef> tiles_;     // build_tiles()
+    std::vector<std::string> tile_images_;  // their icons' picture names
+    std::vector<std::string> own_images_;   // of those, the own tiles'
+    std::vector<u32> own_colors_;           // by id - kFirstOwnTile
+    u64 own_tiles_version_ = ~0ull;         // the level's own tiles they are for
+    u64 own_serial_ = 0;
     u32 layer_ = 0;
     i32 radius_ = 1;
     bool rect_outline_ = false;

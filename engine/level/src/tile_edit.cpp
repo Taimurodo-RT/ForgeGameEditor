@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <utility>
 
 namespace forge::level {
 
@@ -122,5 +123,11 @@ void TileStroke::set_all(bool after) {
 
 void TileStroke::apply(editor::Document&) { set_all(true); }
 void TileStroke::revert(editor::Document&) { set_all(false); }
+
+SetOwnTiles::SetOwnTiles(Level& level, LevelTiles before, LevelTiles after, std::string label)
+    : level_(level), before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
+
+void SetOwnTiles::apply(editor::Document&) { level_.set_own_tiles(after_); }
+void SetOwnTiles::revert(editor::Document&) { level_.set_own_tiles(before_); }
 
 } // namespace forge::level

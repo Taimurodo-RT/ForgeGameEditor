@@ -83,4 +83,20 @@ private:
     std::vector<Cell> scratch_;
 };
 
+// Sets the level's own tiles (forge/level/own_tiles.h), so kinds that came
+// with an import go with its Ctrl+Z, together with the cells painted with
+// them (one group in the history).
+class SetOwnTiles final : public editor::Command {
+public:
+    SetOwnTiles(Level& level, LevelTiles before, LevelTiles after, std::string label);
+    void apply(editor::Document& doc) override;
+    void revert(editor::Document& doc) override;
+    std::string label() const override { return label_; }
+
+private:
+    Level& level_;
+    LevelTiles before_, after_;
+    std::string label_;
+};
+
 } // namespace forge::level
