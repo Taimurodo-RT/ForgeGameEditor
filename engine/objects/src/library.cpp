@@ -355,7 +355,7 @@ u32 template_rev(const Template& t) {
 
 u32 Template::look() const {
     if (picture.empty()) return rev;
-    return (rev ^ static_cast<u32>(fnv1a(picture) >> 7)) | 1u;
+    return (rev ^ static_cast<u32>(fnv1a(picture) >> 7) ^ (picture_stamp * 0x9E3779B1u)) | 1u;
 }
 
 // --- the library ------------------------------------------------------------
@@ -497,9 +497,20 @@ void Library::reload_templates() {
                 if (std::find(b.was.begin(), b.was.end(), id) != b.was.end()) id = b.id;
         }
         t->rev = template_rev(*t);
+        auto stamp = picture_stamps_.find(t->picture);
+        t->picture_stamp = stamp == picture_stamps_.end() ? 0 : stamp->second;
         templates_.push_back(std::move(*t));
     }
     sort_templates();
+}
+
+void Library::picture_changed(std::string_view name) {
+    if (name.empty()) return;
+    const u32 stamp = ++stamps_;
+    picture_stamps_[std::string(name)] = stamp;
+    for (Template& t : templates_)
+        if (t.picture == name) t.picture_stamp = stamp;
+    ++version_;
 }
 
 void Library::sort_templates() {
@@ -673,6 +684,8 @@ bool Library::write(const Template& t, std::string* error) const {
 bool Library::put(Template t, std::string* error) {
     t.key = fnv1a(t.id);
     t.rev = template_rev(t);
+    auto stamp = picture_stamps_.find(t.picture);
+    t.picture_stamp = stamp == picture_stamps_.end() ? 0 : stamp->second;
     if (t.file.empty()) t.file = folder_ / utf8_path(file_stem(t.name) + std::string(kExtension));
     if (!write(t, error)) return false;
     auto it = std::find_if(templates_.begin(), templates_.end(), [&](const Template& o) { return o.key == t.key; });

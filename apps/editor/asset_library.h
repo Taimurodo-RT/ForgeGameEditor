@@ -172,6 +172,15 @@ public:
     std::vector<std::filesystem::path> images() const;
     // The project's sounds, the newest first (absolute paths).
     std::vector<std::filesystem::path> sounds() const;
+    // The asset a file of the project is (null: not one of its files, or not looked at yet).
+    const assets::AssetRecord* record_of(const std::filesystem::path& file) const;
+    // The asset with that Guid, wherever it is now (null: gone).
+    const assets::AssetRecord* find_id(const Guid& id) const;
+    // Called each time the index has been looked at again (a refresh, a command): what the game copied from
+    // «Ресурсы» is compared with it then (main).
+    std::function<void()> on_index;
+    // A line after the status (what that comparison did last).
+    std::string note;
     usize row_count() const { return rows_.size(); }
     std::string row_rel(usize i) const { return i < rows_.size() ? rows_[i].rel : std::string(); }
     std::string row_field(usize i, std::string_view name) const { return field(static_cast<u32>(i), name); }

@@ -2075,7 +2075,7 @@ bool LevelEditor::set_area_music(const std::string& value) {
         std::string error;
         if (!audio::readable(source)) zn_note_ = in_quotes(shown) + ": игра читает WAV и OGG. Переведите его в «Ресурсах»: «Конвертировать…» → OGG.";
         else if (!audio::load(source, &error)) zn_note_ = in_quotes(shown) + " не звучит: " + error;
-        else if ((name = copy_into(source, sounds_folder_, "звук")).empty())
+        else if ((name = copy_into(source, sounds_folder_, "звук", copy_in)).empty())
             zn_note_ = in_quotes(shown) + " не скопировался в звуки игры (" + path_to_utf8(sounds_folder_) + ")";
         if (name.empty() || name == value) {
             FORGE_WARN("%s", zn_note_.c_str());

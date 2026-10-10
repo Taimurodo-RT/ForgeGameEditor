@@ -41,6 +41,7 @@
 #include "story_editor.h"
 #include "ui_editor.h"
 #include "object_library.h"
+#include "slice_edits.h"
 #include "slice_level.h"
 
 #include "forge/assets/image.h"
@@ -55,6 +56,7 @@
 #include "forge/editor/commands.h"
 #include "forge/editor/document.h"
 #include "forge/editor/inspector.h"
+#include "forge/editor/sources.h"
 #include "forge/editor/undo.h"
 #include "forge/platform/app.h"
 #include "forge/render/camera.h"
@@ -336,6 +338,15 @@ public:
     // The game that is open and the ways to another («Новая игра из шаблона…», «Открыть игру…»); set before init.
     ProjectWindow projects;
     ProjectConfig project_config;
+    // Where the game's pictures and sounds picked in «Ресурсы» came from (game/sources.json).
+    editor::sources::Sources sources;
+    // What the log panel shows (the last 300 lines).
+    const std::vector<LogLine>& log_lines() const { return m_log_; }
+    // Every line the log panel was given so far, those it no longer keeps too (drained first).
+    usize log_total() {
+        drain_log();
+        return log_total_;
+    }
     // Closing does not save the level: «Не сохранять» when another game opens.
     bool discarding = false;
     // The editor closes (another game's editor has started); offscreen: only noted.
@@ -428,6 +439,18 @@ public:
         };
         story_tab.init(ui_, story_dir);
         if (!assets.init(ui_, assets_config)) return false;
+        // A picture or a sound picked in «Ресурсы» goes into the game as a copy that remembers its asset; each look
+        // at «Ресурсы» brings the copies up to date.
+        std::string sources_error;
+        sources_ok_ = sources.load(game_dir, &sources_error);
+        if (!sources_error.empty()) FORGE_WARN("Игра: %s", sources_error.c_str());
+        auto copy_in = [this](const std::filesystem::path& source, const std::filesystem::path& folder) {
+            return copy_from_assets(source, folder);
+        };
+        objects_tab.copy_in = copy_in;
+        ui_tab.copy_in = copy_in;
+        level.copy_in = copy_in;
+        assets.on_index = [this] { sync_sources(); };
         context_ = ui_.create_context("editor", width, height);
         // What screens can show: the game's values in the author's words.
         ui_tab.game_values = [this] {
@@ -516,6 +539,87 @@ public:
             }
         camera_.zoom = 24.0f;
         return true;
+    }
+
+    // An asset of «Ресурсы» into a folder of the game (pictures, sounds) as the game's sources keep it; nullopt for
+    // any other file or folder (copied the plain way).
+    std::optional<std::string> copy_from_assets(const std::filesystem::path& source, const std::filesystem::path& folder) {
+        namespace fs = std::filesystem;
+        if (!sources_ok_) return std::nullopt;
+        const assets::AssetRecord* r = assets.record_of(source);
+        std::error_code ec;
+        const fs::path rel = fs::weakly_canonical(folder, ec).lexically_relative(fs::weakly_canonical(game_dir, ec));
+        if (!r || rel.empty() || *rel.begin() == ".." || rel.has_parent_path()) return std::nullopt;
+        std::string error;
+        const std::string name = sources.copy_in({r->id, r->path, source, r->source_hash.to_hex()}, path_to_utf8(rel), &error);
+        if (name.empty()) FORGE_WARN("Ресурс «%s» не скопировался в игру: %s", r->path.c_str(), error.c_str());
+        return name;
+    }
+
+    // After «Ресурсы» looked at its files: a changed asset gives its copy in the game the new content (the same
+    // name, so every object, screen and button that uses it shows or plays the new one), a missing copy comes
+    // back; a missing asset, or one whose file is broken, is said once.
+    void sync_sources() {
+        if (!sources_ok_) return;
+        const editor::sources::Report r = sources.sync([this](const Guid& id) -> std::optional<editor::sources::Asset> {
+            const assets::AssetRecord* a = assets.find_id(id);
+            if (!a) return std::nullopt;
+            return editor::sources::Asset{a->id, a->path, assets.abs(a->path), a->source_hash.to_hex()};
+        });
+        auto list = [](const std::vector<editor::sources::Entry>& entries) {
+            std::string out;
+            for (const editor::sources::Entry& e : entries) out += (out.empty() ? "" : ", ") + e.file + " (из «" + e.from + "»)";
+            return out;
+        };
+        std::string note;
+        if (r.changed()) {
+            for (const auto* entries : {&r.updated, &r.restored})
+                for (const editor::sources::Entry& e : *entries)
+                    if (e.file.rfind("pictures/", 0) == 0) level_module.library()->picture_changed(e.file.substr(9));
+            objects_tab.files_changed();
+            ui_tab.files_changed();
+            if (!r.updated.empty())
+                FORGE_INFO("Из «Ресурсов» обновлено в игре: %s. Запущенная игра увидит это после перезапуска («Играть»).",
+                           list(r.updated).c_str());
+            if (!r.restored.empty()) FORGE_INFO("Файлы игры сделаны снова из «Ресурсов»: %s.", list(r.restored).c_str());
+            note = "обновлено в игре: " + std::to_string(r.updated.size() + r.restored.size());
+        }
+        for (const std::string& e : r.errors) FORGE_WARN("Игра: %s", e.c_str());
+        // What is missing, said when it changes (each look at «Ресурсы» finds it again).
+        std::string missing;
+        for (const editor::sources::Entry& e : r.gone) missing += "g" + e.file + ";";
+        for (const editor::sources::Entry& e : r.lost) missing += "l" + e.file + ";";
+        for (const editor::sources::Refusal& e : r.refused) missing += "r" + e.entry.file + e.entry.from + e.why + ";";
+        if (missing != sources_missing_) {
+            sources_missing_ = missing;
+            for (const editor::sources::Refusal& e : r.refused)
+                if (e.missing)
+                    FORGE_ERROR("Нет файла игры %s, и «%s» в «Ресурсах» его не заменит: %s. Исправьте файл и нажмите «Обновить» (F5).",
+                                e.entry.file.c_str(), e.entry.from.c_str(), e.why.c_str());
+                else
+                    FORGE_WARN("«%s» в «Ресурсах» не перенесён в игру: %s. В игре остался прежний %s; исправьте файл и нажмите «Обновить» (F5).",
+                               e.entry.from.c_str(), e.why.c_str(), e.entry.file.c_str());
+            for (const editor::sources::Entry& e : r.gone)
+                FORGE_WARN("Ресурса «%s» больше нет в «Ресурсах»: в игре остался %s, как был; обновлять его не из чего.", e.from.c_str(),
+                           e.file.c_str());
+            if (!r.lost.empty()) {
+                const std::vector<std::string> problems = editor::project::game_problems(game_dir, nullptr);
+                for (const editor::sources::Entry& e : r.lost) {
+                    std::string users;
+                    for (const std::string& p : problems)
+                        if (p.find(e.file) != std::string::npos) users += (users.empty() ? "" : "; ") + p;
+                    FORGE_ERROR("Нет файла игры %s и его ресурса «%s» в «Ресурсах»%s. Верните ресурс (Ctrl+Z в «Ресурсах») — файл "
+                                "вернётся сам, — или выберите другой.",
+                                e.file.c_str(), e.from.c_str(), users.empty() ? "" : (": " + users).c_str());
+                }
+            }
+        }
+        std::vector<editor::sources::Entry> refused;
+        for (const editor::sources::Refusal& e : r.refused) refused.push_back(e.entry);
+        if (!r.lost.empty()) note = "нет файлов игры: " + list(r.lost);
+        else if (!refused.empty()) note = "не перенесено в игру: " + list(refused);
+        else if (!r.gone.empty() && note.empty()) note = "нет ресурсов для файлов игры: " + list(r.gone);
+        assets.note = note;
     }
 
     // Closing never loses painted tiles: the level is saved (unless the author said «Не сохранять»). Nothing else is
@@ -1221,6 +1325,7 @@ private:
             lines.swap(g_log.pending);
         }
         if (lines.empty()) return;
+        log_total_ += lines.size();
         for (auto& [kind, text] : lines) m_log_.push_back({std::move(text), kind});
         if (m_log_.size() > 300) m_log_.erase(m_log_.begin(), m_log_.end() - 300);
         model_.DirtyVariable("log");
@@ -1437,6 +1542,8 @@ private:
     ui::Ui ui_;
     Rml::Context* context_ = nullptr;
     Rml::DataModelHandle model_;
+    bool sources_ok_ = false;     // game/sources.json read (else picks are plain copies and nothing is compared)
+    std::string sources_missing_; // what sync_sources last said is missing
     demo::SheetImage art_;
     render::SpriteRenderer sprites_;
     render::SpriteBatch batch_;
@@ -1466,6 +1573,7 @@ private:
     std::vector<Rml::String> m_addable_;
     std::vector<const reflect::TypeInfo*> addable_types_;
     std::vector<LogLine> m_log_;
+    usize log_total_ = 0;
     std::vector<Rml::String> m_history_;
     u64 fields_doc_version_ = 0, fields_selection_version_ = 0, history_version_ = 0;
     bool fields_dirty_ = true;
@@ -1618,7 +1726,8 @@ struct Options {
     // (its file name); "new:FILE" a new screen from it, "insert:FILE" it on the open screen (the window closed).
     std::string templates;
     // offscreen: --self-test PART, only that part: "new-game" (the window «Новая игра» and «Открыть игру…»; it starts
-    // the editor for the game it made with "opened-game", which plays it from there).
+    // the editor for the game it made with "opened-game", which plays it from there); "two-games" (two games of one
+    // template: A made through the tabs by "two-games-a", opened again by "two-games-a-again", B by "two-games-b").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -1802,6 +1911,10 @@ public:
         if (part == "new-game") return frame < 3 || new_game_step();
         if (part == "opened-game") return frame < 3 || opened_game_step();
         if (part == "ready") return frame < 3 || ready_step();
+        if (part == "two-games") return frame < 3 || two_games_step();
+        if (part == "two-games-a") return frame < 3 || two_games_a_step();
+        if (part == "two-games-a-again") return frame < 3 || two_games_again_step();
+        if (part == "two-games-b") return frame < 3 || two_games_b_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -5100,7 +5213,7 @@ private:
             break;
         }
         case 12:
-            check(shown("ol-rename"), "the card shows a name field");
+            check(shown("ol-name-field"), "the card shows a name field");
             check(ol().rename("Золотая монетка") && !ol().renaming() && lib.find(new_template_)->name == "Золотая монетка" &&
                       path_to_utf8(lib.find(new_template_)->file.filename()) == "Золотая монетка.object.json",
                   "renaming renames the file too");
@@ -13094,6 +13207,1176 @@ private:
         return true;
     }
 
+    // --- «Две игры из одного шаблона» (step 14.1b, «Находка») ------------------------------------------------
+    // --self-test two-games makes «Игра Б» and «Игра А» of «Старая шахта» with the window «Новая игра». «Игра А»
+    // opens in an editor of its own (two-games-a) that makes «Находка» through the tabs, with the mouse and the
+    // keys: a picture and a sound dropped into «Ресурсы»; an own object of that picture on the level; a window with
+    // the value, the same picture moving by its keys and a button with the sound; a link that adds to the value and
+    // shows the window, once. Then A again by its project.forge from another working folder (two-games-a-again):
+    // the same ids, played; its picture and sound changed in «Ресурсы» and brought into the game, gone and back.
+    // Then B (two-games-b): none of it, a player's folder of its own. The template and B: the same bytes before and
+    // after, their files' SHA-256 written next to the games («снимки»).
+    static constexpr u8 kTgTeal[3] = {40, 170, 160}, kTgOrange[3] = {230, 120, 40};
+    static constexpr u32 kTgShort = 5512, kTgLong = 11025; // the sound's frames at 22 050 Hz: a quarter, a half second
+    int tg_step_ = 0;
+    std::map<std::string, std::vector<u8>> tg_tmpl_, tg_b_tree_;
+    std::map<std::string, std::string> tg_rec_; // the ids two-games-a made (a file of the test, outside the games)
+    Guid tg_pic_, tg_snd_;
+    std::string tg_obj_, tg_screen_;
+    u64 tg_placed_ = 0;
+    u32 tg_link_ = 0, tg_add_ = 0, tg_show_ = 0, tg_text_ = 0, tg_picl_ = 0, tg_btn_ = 0;
+    usize tg_n_ = 0, tg_said_ = 0; // tg_said_: a tg_mark()
+    std::vector<std::string> tg_pictures_, tg_sounds_; // the game's pictures and sounds before an update
+    std::string tg_sources_;                            // and its sources.json: each copy's asset and where it was
+    std::vector<u8> tg_good_pic_, tg_good_snd_;         // the assets' content before they were broken
+
+    static std::filesystem::path tg_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_две игры"); }
+    static std::filesystem::path tg_mine(const char* title) { return tg_root() / utf8_path("Мои игры") / utf8_path(title); }
+    static std::string tg_sha256(const std::vector<u8>& data) {
+        static const u32 k[64] = {
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
+            0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
+            0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
+            0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+            0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
+            0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
+        u32 h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+        std::vector<u8> m(data);
+        const u64 bits = static_cast<u64>(data.size()) * 8;
+        m.push_back(0x80);
+        while (m.size() % 64 != 56) m.push_back(0);
+        for (int i = 7; i >= 0; --i) m.push_back(static_cast<u8>(bits >> (i * 8)));
+        auto rotr = [](u32 x, int n) { return (x >> n) | (x << (32 - n)); };
+        for (usize at = 0; at < m.size(); at += 64) {
+            u32 w[64];
+            for (usize i = 0; i < 16; ++i)
+                w[i] = u32(m[at + 4 * i]) << 24 | u32(m[at + 4 * i + 1]) << 16 | u32(m[at + 4 * i + 2]) << 8 | u32(m[at + 4 * i + 3]);
+            for (usize i = 16; i < 64; ++i)
+                w[i] = w[i - 16] + (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3)) + w[i - 7] +
+                       (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10));
+            u32 v[8];
+            std::copy(h, h + 8, v);
+            for (usize i = 0; i < 64; ++i) {
+                const u32 t1 = v[7] + (rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25)) + ((v[4] & v[5]) ^ (~v[4] & v[6])) + k[i] + w[i];
+                const u32 t2 = (rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22)) + ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+                std::copy_backward(v, v + 7, v + 8);
+                v[4] += t1;
+                v[0] = t1 + t2;
+            }
+            for (usize i = 0; i < 8; ++i) h[i] += v[i];
+        }
+        char out[65];
+        for (usize i = 0; i < 8; ++i) std::snprintf(out + i * 8, 9, "%08x", h[i]);
+        return std::string(out, 64);
+    }
+    // A tree's files, one line each: SHA-256, size, path; sorted by path.
+    static std::string tg_manifest(const std::map<std::string, std::vector<u8>>& tree) {
+        std::string out;
+        for (const auto& [path, bytes] : tree) out += tg_sha256(bytes) + "  " + std::to_string(bytes.size()) + "  " + path + "\n";
+        return out;
+    }
+    static std::string tg_digest(const std::map<std::string, std::vector<u8>>& tree) {
+        const std::string text = tg_manifest(tree);
+        return tg_sha256(std::vector<u8>(text.begin(), text.end()));
+    }
+    // Written next to the games (снимки/NAME.txt); the SHA-256 of that list, for the log.
+    static std::string tg_snap(const std::string& name, const std::map<std::string, std::vector<u8>>& tree) {
+        const std::string text = tg_manifest(tree);
+        const std::filesystem::path file = tg_root() / utf8_path("снимки") / utf8_path(name + ".txt");
+        std::error_code ec;
+        std::filesystem::create_directories(file.parent_path(), ec);
+        write_file_atomic(file, std::span(reinterpret_cast<const u8*>(text.data()), text.size()));
+        const std::string digest = tg_digest(tree);
+        FORGE_INFO("self-test: снимок «%s»: %zu файлов, SHA-256 списка %s", name.c_str(), tree.size(), digest.c_str());
+        return digest;
+    }
+    // «Старая шахта» as the window takes it: games/slice, the catalog and its picture.
+    static std::map<std::string, std::vector<u8>> tg_template() {
+        std::map<std::string, std::vector<u8>> out;
+        for (auto& [path, bytes] : pj_tree(utf8_path(SLICE_DATA_DIR))) out["games/slice/" + path] = std::move(bytes);
+        const std::filesystem::path games = utf8_path(FORGE_GAMES_DIR);
+        read_file(games / "templates.json", out["games/templates.json"]);
+        for (auto& [path, bytes] : pj_tree(games / "templates")) out["games/templates/" + path] = std::move(bytes);
+        return out;
+    }
+    // A picture of one colour, 32 × 32.
+    static std::vector<u8> tg_png(const u8 (&c)[3]) {
+        assets::CookedTexture t;
+        t.width = t.height = 32;
+        t.rgba8.resize(32 * 32 * 4);
+        for (usize i = 0; i < t.rgba8.size(); i += 4) {
+            t.rgba8[i] = c[0];
+            t.rgba8[i + 1] = c[1];
+            t.rgba8[i + 2] = c[2];
+            t.rgba8[i + 3] = 255;
+        }
+        std::vector<u8> png;
+        assets::encode_image(t, ".png", png);
+        return png;
+    }
+    // A tone of frames at 22 050 Hz, 16-bit mono WAV.
+    static std::vector<u8> tg_wav(u32 frames, f64 hz) {
+        const u32 rate = 22050;
+        std::vector<u8> wav(44 + frames * 2);
+        auto put32 = [&](usize at, u32 v) { for (int i = 0; i < 4; ++i) wav[at + i] = static_cast<u8>(v >> (8 * i)); };
+        auto put16 = [&](usize at, u32 v) { for (int i = 0; i < 2; ++i) wav[at + i] = static_cast<u8>(v >> (8 * i)); };
+        std::memcpy(wav.data(), "RIFF", 4);
+        put32(4, 36 + frames * 2);
+        std::memcpy(wav.data() + 8, "WAVEfmt ", 8);
+        put32(16, 16);
+        put16(20, 1);
+        put16(22, 1);
+        put32(24, rate);
+        put32(28, rate * 2);
+        put16(32, 2);
+        put16(34, 16);
+        std::memcpy(wav.data() + 36, "data", 4);
+        put32(40, frames * 2);
+        for (u32 i = 0; i < frames; ++i)
+            put16(44 + i * 2, static_cast<u16>(static_cast<i16>(8000 * std::sin(i * 2 * 3.14159265 * hz / rate))));
+        return wav;
+    }
+    static std::vector<u8> tg_bytes(const std::filesystem::path& file) {
+        std::vector<u8> out;
+        read_file(file, out);
+        return out;
+    }
+    // key=value lines.
+    static bool tg_put(const std::filesystem::path& file, const std::map<std::string, std::string>& values) {
+        std::string text;
+        for (const auto& [k, v] : values) text += k + "=" + v + "\n";
+        return write_file_atomic(file, std::span(reinterpret_cast<const u8*>(text.data()), text.size()));
+    }
+    static std::map<std::string, std::string> tg_get(const std::filesystem::path& file) {
+        std::map<std::string, std::string> out;
+        const std::vector<u8> bytes = tg_bytes(file);
+        std::string line;
+        for (usize i = 0; i <= bytes.size(); ++i) {
+            if (i == bytes.size() || bytes[i] == '\n') {
+                if (const usize eq = line.find('='); eq != std::string::npos) out[line.substr(0, eq)] = line.substr(eq + 1);
+                line.clear();
+            } else {
+                line += static_cast<char>(bytes[i]);
+            }
+        }
+        return out;
+    }
+    u32 tg_u32(const char* key) { return static_cast<u32>(std::strtoul(tg_rec_[key].c_str(), nullptr, 10)); }
+    // Where the log is now: tg_said counts from there.
+    usize tg_mark() { return ed_.log_total(); }
+    // How many lines of the log have this in them since tg_said_ (a tg_mark()); the panel keeps the last 300.
+    usize tg_said(const std::string& bit) {
+        const usize total = ed_.log_total();
+        const auto& lines = ed_.log_lines();
+        usize n = 0;
+        for (usize i = 0; i < lines.size(); ++i)
+            n += total - lines.size() + i >= tg_said_ && std::string(lines[i].text).find(bit) != std::string::npos;
+        return n;
+    }
+    // A colour within a few steps of another.
+    static bool tg_near(const u8* p, const u8 (&c)[3], int most = 8) {
+        return std::abs(p[0] - c[0]) <= most && std::abs(p[1] - c[1]) <= most && std::abs(p[2] - c[2]) <= most;
+    }
+    static std::string tg_rgb(const u8* p) { return std::to_string(p[0]) + "," + std::to_string(p[1]) + "," + std::to_string(p[2]); }
+    // The files of a folder whose names start so.
+    static std::vector<std::string> tg_named(const std::filesystem::path& dir, const std::string& start) {
+        std::vector<std::string> out;
+        for (const std::string& n : pj_names(dir))
+            if (n.rfind(start, 0) == 0) out.push_back(n);
+        return out;
+    }
+    // The game as «Играть» started it, the scene project, and what it must find (or must not) written to a file
+    // outside the games; its exit code.
+    int tg_play(const slice::ProjectEdits* edits, const std::string& file_name) {
+        std::vector<std::string> args = lv().last_play();
+        if (args.empty()) return -1;
+        for (const char* more : {"--test", "--scene", "project"}) args.push_back(more);
+        if (edits) {
+            const std::filesystem::path file = tg_root() / utf8_path(file_name);
+            if (!slice::write_edits(file, *edits)) return -1;
+            args.push_back("--edits");
+            args.push_back(path_to_utf8(file));
+        }
+        std::string line;
+        for (const std::string& a : args) line += (a.find(' ') != std::string::npos ? " \"" + a + "\"" : " " + a);
+        FORGE_INFO("self-test:%s", line.c_str());
+        return pj_run(args, std::filesystem::current_path());
+    }
+    // What «Находка» is in the game, as the editor's tabs have it now: for the game to find it.
+    slice::ProjectEdits tg_edits(const u8 (&color)[3]) {
+        slice::ProjectEdits e;
+        e.object = tg_rec_["object"];
+        e.object_name = "Находка";
+        e.x = std::strtod(tg_rec_["x"].c_str(), nullptr);
+        e.y = std::strtod(tg_rec_["y"].c_str(), nullptr);
+        e.color = {color[0], color[1], color[2]};
+        e.var = "находки";
+        e.value = 1;
+        e.screen = tg_rec_["screen"];
+        e.text = "Найдено: 1";
+        e.text_node = tg_u32("text");
+        e.picture_node = tg_u32("picture");
+        e.button_node = tg_u32("button");
+        e.sound = "звон.wav";
+        const audio::ClipPtr clip = audio::load(ed_.game_dir / "sounds" / utf8_path("звон.wav"));
+        e.sound_frames = clip ? clip->frames() : 0;
+        return e;
+    }
+    // A file of a game (not the editor's index of «Ресурсы») that has one of these in it: "" when none does.
+    static std::string tg_naming(const std::filesystem::path& game_root, const std::vector<std::string>& bits) {
+        for (const auto& [path, bytes] : pj_tree(game_root)) {
+            if (path.rfind(".forge", 0) == 0) continue;
+            const std::string text(bytes.begin(), bytes.end());
+            for (const std::string& bit : bits)
+                if (!bit.empty() && text.find(bit) != std::string::npos) return path + " называет «" + bit + "»";
+        }
+        return {};
+    }
+
+    // --self-test two-games: the games made with the window, each opened in an editor of its own; the template and B
+    // compared byte for byte.
+    bool two_games_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path a = tg_mine("Игра А"), b = tg_mine("Игра Б");
+        if (ng_await_) {
+            if (pj_wait(!pjw().opening(), "the editor for the game answers")) return true;
+            ng_await_ = false;
+        }
+        // The window «Новая игра»: «Старая шахта», the title typed, «Мои игры» typed, «Создать и открыть».
+        auto make = [&](int at, const char* title, const fs::path& folder) {
+            switch (at) {
+            case 0: check(pj_click("pj-game"), "the game's button"); break;
+            case 1: check(pj_click("pj-new"), "«Новая игра из шаблона…»"); break;
+            case 2: {
+                const auto& all = pjw().templates();
+                check(pjw().view() == "new" && pjw().chosen() >= 0 && all[static_cast<usize>(pjw().chosen())].id == "old-mine",
+                      "the window «Новая игра», «Старая шахта» chosen");
+                check(pj_type("pj-title-input", title) && pj_type("pj-where-input", path_to_utf8(tg_root() / utf8_path("Мои игры"))),
+                      std::string("«") + title + "» in «Мои игры» typed");
+                break;
+            }
+            case 3:
+                check(pjw().can_create() && utf8_path(pjw().folder()) == folder, "it can be made: " + pjw().folder());
+                check(pj_click("pj-create") && pjw().opening(), std::string("«Создать и открыть»: «") + title + "» made, its editor starts");
+                ng_await_ = true;
+                break;
+            default: break;
+            }
+        };
+        switch (tg_step_) {
+        case 0: {
+            check(tg_sha256({'a', 'b', 'c'}) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                  "SHA-256 of «abc» as the standard has it");
+            fs::remove_all(tg_root(), ec);
+            fs::create_directories(tg_root() / utf8_path("Мои игры"), ec);
+            // The author's own files, apart from both games and the template.
+            const fs::path src = tg_root() / utf8_path("исходники А");
+            fs::create_directories(src, ec);
+            check(write_file_atomic(src / utf8_path("кристалл.png"), tg_png(kTgTeal)) &&
+                      write_file_atomic(src / utf8_path("звон.wav"), tg_wav(kTgShort, 880)),
+                  "the author's picture and sound, in «исходники А»");
+            // Each game's player's folder as new.
+            fs::remove_all(play_folder(a), ec);
+            fs::remove_all(play_folder(b), ec);
+            check(play_folder(a) != play_folder(b), "each game has a player's folder of its own");
+            tg_tmpl_ = tg_template();
+            check(tg_tmpl_.count("games/slice/game.json") && tg_tmpl_.count("games/templates.json") && tg_tmpl_.count("games/templates/old-mine.png"),
+                  "the template: games/slice, the catalog and its picture (" + std::to_string(tg_tmpl_.size()) + " files)");
+            tg_snap("шаблон до", tg_tmpl_);
+            ng_config_ = pjw().config();
+            ng_scene_ = ed_.scene_path;
+            ed_.scene_path = tg_root() / utf8_path("сцена.json");
+            std::string error;
+            check(ed_.save_unsaved(error) && ed_.unsaved().empty(), "nothing unsaved to begin with");
+            // «Игра Б» first: its editor opens it, says so and closes.
+            pjw().configure(ng_launching());
+            make(0, "Игра Б", b);
+            break;
+        }
+        case 1: case 2: case 3:
+            make(tg_step_, "Игра Б", b);
+            break;
+        case 4: {
+            check(!pjw().opening() && ed_.quit_asked, "the editor for «Игра Б» is ready");
+            const int code = pjw().wait_opened();
+            check(code == 0, "it opened «Игра Б» (exit " + std::to_string(code) + ")");
+            ed_.quit_asked = false;
+            tg_b_tree_ = pj_tree(b);
+            check(fs::is_regular_file(b / "project.forge", ec) && tg_b_tree_.count("game/game.json") == 1, "«Игра Б» is a game of the template");
+            tg_snap("Игра Б до", tg_b_tree_);
+            // «Игра А»: its editor makes «Находка» through the tabs, saves and closes.
+            pjw().configure(ng_launching({"--self-test", "two-games-a"}));
+            make(0, "Игра А", a);
+            break;
+        }
+        case 5: case 6: case 7:
+            make(tg_step_ - 4, "Игра А", a);
+            break;
+        case 8: {
+            check(!pjw().opening() && ed_.quit_asked, "the editor for «Игра А» is ready");
+            int code = pjw().wait_opened();
+            check(code == 0, "«Находка» made in «Игра А» through its editor's tabs (two-games-a: exit " + std::to_string(code) + ")");
+            ed_.quit_asked = false;
+            // Opened again by its project.forge, from a working folder of neither game.
+            const fs::path other = tg_root() / utf8_path("посторонняя папка");
+            fs::create_directories(other, ec);
+            const std::string exe = path_to_utf8(editor_exe());
+            code = pj_run({exe, "--project", path_to_utf8(a / "project.forge"), "--self-test", "two-games-a-again"}, other);
+            check(code == 0, "«Игра А» opened again elsewhere: the same, played, its picture and sound brought up to date, gone and back "
+                             "(two-games-a-again: exit " + std::to_string(code) + ")");
+            // The template and B: not a byte changed by anything done in A.
+            const auto tmpl = tg_template(), btree = pj_tree(b);
+            const std::string t0 = tg_digest(tg_tmpl_), b0 = tg_digest(tg_b_tree_);
+            check(tg_snap("шаблон после А", tmpl) == t0 && tmpl == tg_tmpl_, "the template byte for byte as before: " + t0);
+            check(tg_snap("Игра Б после А", btree) == b0 && btree == tg_b_tree_, "«Игра Б» byte for byte as before: " + b0);
+            // B in an editor of its own, played: none of A.
+            code = pj_run({exe, "--project", path_to_utf8(b / "project.forge"), "--self-test", "two-games-b"}, other);
+            check(code == 0, "«Игра Б» opened and played: nothing of «Игра А» (two-games-b: exit " + std::to_string(code) + ")");
+            const auto opened = pj_tree(b);
+            std::string own;
+            for (const auto& [path, bytes] : opened) {
+                const auto was = tg_b_tree_.find(path);
+                if (was == tg_b_tree_.end()) own += " +" + path;
+                else if (was->second != bytes) own += " ~" + path;
+            }
+            for (const auto& [path, bytes] : tg_b_tree_)
+                if (!opened.count(path)) own += " -" + path;
+            FORGE_INFO("self-test: «Игра Б» после своего открытия и игры:%s", own.empty() ? " без изменений" : own.c_str());
+            tg_snap("Игра Б после своего открытия", opened);
+            check(tg_template() == tg_tmpl_, "the template still the same after «Игра Б» was opened and played");
+            pjw().configure(ng_config_);
+            ed_.scene_path = ng_scene_;
+            tg_step_ = -1;
+            return false;
+        }
+        default: break;
+        }
+        ++tg_step_;
+        return true;
+    }
+
+    // In the editor started for «Игра А» by the window (--self-test two-games-a): «Находка» made through the tabs.
+    bool two_games_a_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game", src = tg_root() / utf8_path("исходники А");
+        objects::Library& lib = ol().library();
+        const bool idle = !as().busy();
+        auto record = [&](const char* rel) { return as().record_of(as().abs(rel)); };
+        auto picked = [&](const std::string& name) {
+            for (usize i = 0; i < ol().picture_choices(); ++i)
+                if (ol().picture_choice(i) == name) return static_cast<i64>(i);
+            return i64(-1);
+        };
+        auto renaming_field = [&](const std::string& row) -> Rml::Element* {
+            Rml::ElementList fields;
+            if (Rml::Element* e = ed_.find_element(row.c_str())) e->GetElementsByClassName(fields, "ue-rename");
+            return fields.size() == 1 ? fields[0] : nullptr;
+        };
+        auto image_of = [&](u32 id) {
+            const d::Node* n = ue_node(id);
+            if (n)
+                for (const d::Paint& p : n->fills)
+                    if (p.kind == d::PaintKind::Image) return p.image;
+            return std::string();
+        };
+        switch (tg_step_) {
+        case 0:
+            check(pjw().config().title == "Игра А" && ed_.game_dir == game && fs::is_directory(tg_mine("Игра Б"), ec),
+                  "the editor has «Игра А» open, «Игра Б» next to it");
+            check(!fs::exists(game / "sources.json", ec) && !lib.find(std::string_view("находка")), "nothing of «Находка» yet");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        // «Ресурсы»: the picture and the sound dropped on the window, from the author's folder.
+        case 1:
+            if (hold(idle && ed_.tab() == "assets", "«Ресурсы» look at the game's assets")) return true;
+            check(as().root() == a / "assets", "«Ресурсы» of «Игра А» are its folder assets/");
+            as().open_folder("");
+            drop(src / utf8_path("кристалл.png"));
+            break;
+        case 2:
+            if (hold(idle && record("кристалл.png"), "the picture is imported")) return true;
+            check(as().history().undo_label() == "Импорт: кристалл.png", "dropped on the window: imported into «Ресурсы», one step");
+            tg_pic_ = record("кристалл.png")->id;
+            drop(src / utf8_path("звон.wav"));
+            break;
+        case 3:
+            if (hold(idle && record("звон.wav"), "the sound is imported")) return true;
+            tg_snd_ = record("звон.wav")->id;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!exists("звон.wav") && exists("кристалл.png"), "Ctrl+Z takes the sound's import back");
+            break;
+        case 4:
+            if (hold(idle, "the undo is indexed")) return true;
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(exists("звон.wav"), "Ctrl+Y imports it again");
+            break;
+        case 5:
+            if (hold(idle && record("звон.wav"), "the sound is indexed again")) return true;
+            check(record("звон.wav")->id == tg_snd_ && record("кристалл.png")->id == tg_pic_ && as().record_count() == 2,
+                  "the same two assets with the same ids: " + tg_pic_.to_string() + ", " + tg_snd_.to_string());
+            check(click_tab(2) && click("ol-new"), "«Объекты», «Создать»");
+            break;
+        // «Объекты»: a picture object, named by typing, its picture from «Ресурсы».
+        case 6:
+            if (hold(shown("ol-new-picture-0"), "the kinds are laid out")) return true;
+            tg_n_ = lib.templates().size();
+            check(click("ol-new-picture-0"), "«Картинка» (висит на месте, рисуется своей картинкой)");
+            break;
+        case 7: {
+            const objects::Template* t = ol().selected();
+            check(t && t->kind == "picture" && lib.templates().size() == tg_n_ + 1 && t->file.parent_path() == game / "objects",
+                  "a new picture object, its file in the game's objects");
+            if (!t) return false;
+            tg_obj_ = t->id;
+            const u64 made = t->key;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lib.find(made), "Ctrl+Z takes it away");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lib.find(made) && lib.find(made)->id == tg_obj_, "Ctrl+Y brings it back, the same id " + tg_obj_);
+            ol().select(made);
+            key(SDLK_F2, SDL_KMOD_NONE);
+            check(ol().renaming(), "F2: its name to type");
+            break;
+        }
+        case 8: {
+            Rml::Element* focus = ed_.context()->GetFocusElement();
+            if (hold(shown("ol-name-field") && focus && focus->GetId() == "ol-name-field", "the name field is laid out and focused")) return true;
+            // F2 gives the keyboard to the name field on its card: typed as from the keyboard.
+            auto* field = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.context()->GetFocusElement());
+            check(field && field->GetId() == "ol-name-field" && field->IsVisible(true) && field->GetValue() == "Картинка",
+                  "the keyboard is in the name field on its card, which shows its name: «" + (field ? std::string(field->GetValue()) : std::string()) + "»");
+            check(field && ue_type_here("Находка"), "«Находка» typed, Enter");
+            const objects::Template* t = lib.find(std::string_view(tg_obj_));
+            check(t && t->name == "Находка" && path_to_utf8(t->file.filename()) == "Находка.object.json",
+                  "renamed, its file too; its id the same");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            t = lib.find(std::string_view(tg_obj_));
+            check(t && t->name != "Находка", "Ctrl+Z: the old name");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            t = lib.find(std::string_view(tg_obj_));
+            check(t && t->name == "Находка" && ol().selected() == t, "Ctrl+Y: «Находка»");
+            ol().set_search("");
+            break;
+        }
+        case 9: {
+            f32 x = 0, y = 0;
+            check(card_at(card_named("Находка"), x, y), "its card is on screen");
+            left_click(x, y);
+            left_click(x, y);
+            break;
+        }
+        case 10:
+            check(ol().editing() && ol().selected() && ol().selected()->id == tg_obj_, "a double click opens its editor");
+            break;
+        case 11:
+            if (hold(shown("ol-picture-pick"), "its editor is laid out")) return true;
+            check(click("ol-picture-pick") && ol().pictures_open(), "«Картинка: Выбрать…»");
+            break;
+        case 12: {
+            if (hold(shown("ol-pic-0"), "the chooser is laid out")) return true;
+            std::string offered;
+            for (usize i = 0; i < ol().picture_choices(); ++i) offered += " «" + ol().picture_choice(i) + "»";
+            const i64 at = picked("кристалл");
+            check(at >= 0 && click("ol-pic-" + std::to_string(at)), "«кристалл» of «Ресурсы» picked among:" + offered);
+            const objects::Template* t = lib.find(std::string_view(tg_obj_));
+            check(t && t->picture == "кристалл.png" && tg_bytes(game / "pictures" / utf8_path("кристалл.png")) == tg_bytes(as().abs("кристалл.png")),
+                  "it is the object's picture, copied into the game's pictures");
+            const editor::sources::Entry* s = ed_.sources.of_file("pictures/кристалл.png");
+            check(s && s->asset == tg_pic_ && s->from == "кристалл.png", "game/sources.json: the copy keeps its asset's id");
+            ol().undo();
+            check(lib.find(std::string_view(tg_obj_))->picture.empty(), "Ctrl+Z: the usual picture");
+            ol().redo();
+            check(lib.find(std::string_view(tg_obj_))->picture == "кристалл.png", "Ctrl+Y: the crystal");
+            check(click("ol-picture-pick") && ol().pictures_open(), "«Выбрать…» again");
+            break;
+        }
+        case 13: {
+            if (hold(shown("ol-pic-0"), "the chooser is laid out")) return true;
+            const i64 at = picked("кристалл");
+            check(at >= 0 && click("ol-pic-" + std::to_string(at)), "the same asset picked again");
+            check(lib.find(std::string_view(tg_obj_))->picture == "кристалл.png" &&
+                      tg_named(game / "pictures", "кристалл") == std::vector<std::string>{"кристалл.png"},
+                  "its copy again: no «кристалл 2.png»");
+            check(click("ol-back"), "«К библиотеке»");
+            break;
+        }
+        case 14:
+            check(!ol().editing() && ol().selected() && ol().selected()->id == tg_obj_, "back at the cards, «Находка» chosen");
+            check(click("ol-place") && ed_.tab() == "level", "«Поставить на уровень»");
+            break;
+        case 15: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            const auto& defs = ed_.level_module.objects();
+            const i32 armed = lv().armed_object();
+            check(armed >= 0 && defs[static_cast<usize>(armed)].key == lib.find(std::string_view(tg_obj_))->key, "«Находка» in hand");
+            // Six cells on from where «Играть» puts the hero, a cell over the ground.
+            f64 gx = 0, gy = 0, sx = 0, sy = 0;
+            check(ed_.level_module.play_spot(lv().level(), lv().camera().x, lv().camera().y, gx, gy) &&
+                      ed_.level_module.play_spot(lv().level(), gx + 6, gy, sx, sy),
+                  "ground where «Играть» puts the hero and six cells on");
+            click_cell(static_cast<i32>(std::floor(sx)), static_cast<i32>(std::floor(sy)) - 1);
+            const flecs::entity e = lv().selection().empty() ? flecs::entity() : lv().level().find(lv().selection()[0]);
+            check(e.is_valid() && lib.template_of(e) == lib.find(std::string_view(tg_obj_)), "a click puts it on the level");
+            if (!e.is_valid()) return false;
+            tg_placed_ = lv().selection()[0];
+            tg_rec_["x"] = std::to_string(e.get<scene::Position>().tile_x());
+            tg_rec_["y"] = std::to_string(e.get<scene::Position>().tile_y());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lv().level().find(tg_placed_).is_valid(), "Ctrl+Z takes it off");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().find(tg_placed_).is_valid(), "Ctrl+Y puts it back, the same id");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S writes the level");
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        }
+        // «Интерфейс»: a window of its own: a text with the value, the picture moving by its keys, a button with the sound.
+        case 16:
+            if (hold(ed_.tab() == "ui" && shown("ue-new-screen"), "«Интерфейс» is laid out")) return true;
+            tg_n_ = ue().screens().size();
+            check(click("ue-new-screen"), "«Новый экран»");
+            break;
+        case 17: {
+            tg_screen_ = ue().opened();
+            check(ue().screens().size() == tg_n_ + 1 && !tg_screen_.empty() &&
+                      fs::is_regular_file(game / "ui" / utf8_path(tg_screen_ + ".json"), ec) &&
+                      fs::is_regular_file(game / "ui" / utf8_path(tg_screen_ + ".html"), ec),
+                  "a new screen «" + tg_screen_ + "», its files in the game's ui/");
+            check(ue().screen().show == d::ScreenShow::Command && ue().screen().root.children.empty(), "a window over the game, empty");
+            if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            f32 x = 0, y = 0;
+            check(element_center("ue-screen-" + tg_screen_, x, y), "its row in the list of screens");
+            left_click(x, y);
+            left_click(x, y);
+            break;
+        }
+        case 18: {
+            Rml::Element* field = renaming_field("ue-screen-" + tg_screen_);
+            check(field != nullptr, "a double click on it: its title to type");
+            if (!field) return false;
+            field->Focus();
+            check(ue_type_here("Находка") && ue().screen().title == "Находка" && ue().opened() == tg_screen_,
+                  "«Находка» typed: its title; its file the same");
+            ue().undo();
+            check(ue().screen().title != "Находка", "Ctrl+Z: the old title");
+            ue().redo();
+            check(ue().screen().title == "Находка", "Ctrl+Y: «Находка»");
+            check(click("ue-block-text"), "«Текст»");
+            tg_text_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            check(ue_node(tg_text_) && d::block_of(*ue_node(tg_text_)) == d::Block::Text, "a text layer");
+            break;
+        }
+        case 19:
+            check(ue_type("ue-s-text", "Найдено: {находки}") && ue_node(tg_text_)->text == "Найдено: {находки}",
+                  "it says the game's value «находки»");
+            check(click("ue-block-picture"), "«Картинка»");
+            tg_picl_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            check(ue_node(tg_picl_) && d::block_of(*ue_node(tg_picl_)) == d::Block::Picture, "a picture layer");
+            break;
+        case 20:
+            check(ue_open("ue-s-picture"), "a click opens its «Картинка»");
+            break;
+        case 21: {
+            check(ue_option("ue-s-picture", "pictures/кристалл.png") && image_of(tg_picl_) == "pictures/кристалл.png",
+                  "the crystal: the same file of the game as the object's");
+            f32 x = 0, y = 0;
+            check(element_center("ue-layer-" + std::to_string(tg_picl_), x, y), "its row among the layers");
+            left_click(x, y);
+            left_click(x, y);
+            break;
+        }
+        case 22: {
+            Rml::Element* field = renaming_field("ue-layer-" + std::to_string(tg_picl_));
+            check(field != nullptr, "a double click on it: its name to type");
+            if (!field) return false;
+            field->Focus();
+            check(ue_type_here("Кристалл") && ue_node(tg_picl_) && ue_node(tg_picl_)->name == "Кристалл", "the layer renamed «Кристалл»");
+            ue().undo();
+            check(ue_node(tg_picl_)->name != "Кристалл", "Ctrl+Z: the old name");
+            ue().redo();
+            check(ue_node(tg_picl_)->name == "Кристалл", "Ctrl+Y: «Кристалл», the same layer " + std::to_string(tg_picl_));
+            // Its movement by its own keys («Полный»).
+            check(click("ue-mode-full") && !ue().simple(), "«Полный»");
+            ue().select({tg_picl_});
+            check(click("ue-tab-motion"), "«Движение»");
+            break;
+        }
+        case 23:
+            check(ue_open("ue-motion-kind"), "a click opens how it moves");
+            break;
+        case 24:
+            check(ue_option("ue-motion-kind", "custom") && ue_node(tg_picl_)->motion.kind == d::MotionKind::Custom &&
+                      ue_node(tg_picl_)->motion.keys.size() == 3,
+                  "«Своё, по ключам»: three keys to change");
+            break;
+        case 25: {
+            if (hold(shown("ue-key-scale-1"), "the keys are laid out")) return true;
+            check(ue_type("ue-key-scale-1", "150") && std::abs(ue_node(tg_picl_)->motion.keys[1].scale - 1.5f) < 1e-4f,
+                  "the middle key: 150 %");
+            const std::string html = ue_file(".html", tg_screen_);
+            check(html.find("@keyframes m" + std::to_string(tg_picl_)) != std::string::npos && html.find("pictures/кристалл.png") != std::string::npos,
+                  "the game's page moves that layer by its keys");
+            ue().undo();
+            check(std::abs(ue_node(tg_picl_)->motion.keys[1].scale - 1.5f) > 1e-3f, "Ctrl+Z: the key as it was");
+            ue().redo();
+            check(std::abs(ue_node(tg_picl_)->motion.keys[1].scale - 1.5f) < 1e-4f, "Ctrl+Y: 150 %");
+            check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            check(click("ue-block-button"), "«Кнопка»");
+            tg_btn_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            check(ue_node(tg_btn_) && d::block_of(*ue_node(tg_btn_)) == d::Block::Button, "a button");
+            break;
+        }
+        case 26:
+            check(ue_type("ue-s-text", "Забрать") && d::block_label(*ue_node(tg_btn_))->text == "Забрать", "it says «Забрать»");
+            check(ue_open("ue-s-action"), "a click opens what it does");
+            break;
+        case 27: {
+            check(ue_option("ue-s-action", "close"), "«Закрыть этот экран»");
+            const d::Node* n = ue_node(tg_btn_);
+            check(n && n->on_click.size() == 1 && n->on_click[0].kind == d::ActionKind::Close, "it closes the window");
+            break;
+        }
+        case 28:
+            if (hold(shown("ue-s-click-sound"), "its «Звук» is laid out")) return true;
+            check(ue_sd_open("ue-s-click-sound"), "a click opens its «Звук»");
+            break;
+        case 29: {
+            std::string value;
+            for (const auto& [v, name] : ue().sound_choices())
+                if (v.rfind("add:", 0) == 0 && name.find("звон") != std::string::npos) value = v;
+            check(!value.empty() && utf8_path(value.substr(4)) == as().abs("звон.wav"), "«Ресурсы» offer «звон»: " + value);
+            check(ue_option("ue-s-click-sound", value) && ue_node(tg_btn_)->click_sound == "звон.wav", "«звон» picked: the button's sound");
+            check(tg_bytes(game / "sounds" / utf8_path("звон.wav")) == tg_bytes(as().abs("звон.wav")), "copied into the game's sounds");
+            const editor::sources::Entry* s = ed_.sources.of_file("sounds/звон.wav");
+            check(s && s->asset == tg_snd_, "game/sources.json: the copy keeps its asset's id");
+            ue().undo();
+            check(ue_node(tg_btn_)->click_sound != "звон.wav", "Ctrl+Z: no sound of its own");
+            ue().redo();
+            check(ue_node(tg_btn_)->click_sound == "звон.wav" && tg_named(game / "sounds", "звон") == std::vector<std::string>{"звон.wav"},
+                  "Ctrl+Y: «звон», one file of it");
+            const std::string html = ue_file(".html", tg_screen_);
+            check(html.find("{находки}") != std::string::npos && html.find("звон.wav") != std::string::npos,
+                  "the game's page has the value and the sound");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        // «Логика»: «Находка даёт монету герою», once; its scheme adds to «находки» and shows the window.
+        case 30:
+            if (wait(2)) return true;
+            check(shown("lg-add-" + tg_obj_) && click("lg-add-" + tg_obj_) && lg().links().spot(tg_obj_), "«Находка» onto the board");
+            break;
+        case 31:
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click(tg_obj_) && thing_click("hero") && lg().picking(), "«Находка», then the hero: what does it do to the hero");
+            break;
+        case 32: {
+            std::string offered;
+            for (usize i = 0; i < lg().pick_options(); ++i) offered += " «" + lg().pick_phrase(i) + "»";
+            const i64 at = option_of("Находка даёт монету герою");
+            check(at >= 0 && lg().pick(static_cast<usize>(at)), "«Находка даёт монету герою» among:" + offered);
+            tg_link_ = lg().selected_link();
+            check(tg_link_ && lg().problem_of(tg_link_).empty(), "a link that works: " + lg().meaning_of(tg_link_));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lg().links().find(tg_link_), "Ctrl+Z takes it away");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lg().links().find(tg_link_) && lg().phrase_of(tg_link_) == "Находка даёт монету герою", "Ctrl+Y brings it back, the same id");
+            break;
+        }
+        case 33:
+            if (wait(2)) return true;
+            check(pj_click(("lg-link-" + std::to_string(tg_link_)).c_str()) && lg().selected_link() == tg_link_, "a click on it on the board selects it");
+            break;
+        case 34:
+            if (wait(2)) return true;
+            check(shown("lg-refine-once") && click("lg-refine-once") && lg().links().find(tg_link_)->once, "«Только один раз»");
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        case 35:
+        case 38: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            check(click("sc-add-" + std::to_string(tg_link_)) && sc.palette_open(), "«+ Нода» on the link");
+            sc.set_search(tg_step_ == 35 ? "прибавить к переменной" : "показать экран");
+            break;
+        }
+        case 36:
+        case 39: {
+            if (wait(2)) return true;
+            const char* def = tg_step_ == 36 ? "api.game.add_var" : "api.ui.show";
+            check(click(std::string("sc-pal-") + def) && !lg().scheme().palette_open(),
+                  tg_step_ == 36 ? "«Прибавить к переменной игры» added" : "«Показать экран» added");
+            break;
+        }
+        case 37:
+        case 40: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            const script::Graph* g = sc.graph(tg_link_);
+            if (!check(g != nullptr, "the link's scheme")) return false;
+            const bool adding = tg_step_ == 37;
+            u32 node = 0, tail = 0;
+            for (const script::GraphNode& n : g->nodes) {
+                if (n.def == (adding ? "api.game.add_var" : "api.ui.show")) node = n.uid;
+                if (n.def == "logic.act") tail = n.uid;
+            }
+            // After «Сделать» and whatever follows it.
+            for (bool more = true; more;) {
+                more = false;
+                for (const script::GraphLink& w : g->links)
+                    if (w.from_node == tail && w.from_pin == script::kFlowNext && w.to_node != node) {
+                        tail = w.to_node;
+                        more = true;
+                        break;
+                    }
+            }
+            const std::string l = std::to_string(tg_link_), n = std::to_string(node), t = std::to_string(tail);
+            check(node && tail && click("sc-pin-" + l + "-" + t + "-o-next") && click("sc-pin-" + l + "-" + n + "-i-in"), "wired after the last node");
+            const std::string value = adding ? "находки" : tg_screen_;
+            check(ue_type(("sc-field-" + l + "-" + n + "-name").c_str(), value), "«" + value + "» typed into the node");
+            const script::GraphNode* typed = sc.graph(tg_link_)->find(node);
+            check(typed && typed->value("name") && *typed->value("name") == value && sc.node_problem(tg_link_, node).empty(),
+                  "kept on the node, which works");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            typed = sc.graph(tg_link_) ? sc.graph(tg_link_)->find(node) : nullptr;
+            check(typed && (!typed->value("name") || *typed->value("name") != value), "Ctrl+Z: the name not typed");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            typed = sc.graph(tg_link_) ? sc.graph(tg_link_)->find(node) : nullptr;
+            check(typed && typed->value("name") && *typed->value("name") == value, "Ctrl+Y: typed again, the same node " + n);
+            (adding ? tg_add_ : tg_show_) = node;
+            if (adding) break;
+            check(lg().problem_of(tg_link_).empty(), "the link works");
+            lg().set_mode("links");
+            const std::string text = logic_text();
+            check(text.find("\"" + tg_obj_ + "\"") != std::string::npos && text.find("находки") != std::string::npos &&
+                      text.find("\"" + tg_screen_ + "\"") != std::string::npos,
+                  "logic.json has the link with the object's id, the value and the screen");
+            const std::vector<std::string> openers = ue().logic_openers ? ue().logic_openers(tg_screen_) : std::vector<std::string>();
+            check(openers == std::vector<std::string>{"связь «Находка даёт монету герою»"}, "«Интерфейс» sees what opens the window");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        // «Ресурсы»: the picture renamed; its id and its copy in the game stay.
+        case 41:
+            if (hold(idle && ed_.tab() == "assets", "«Ресурсы»")) return true;
+            as().open_folder("");
+            click_row("кристалл.png");
+            break;
+        case 42:
+            if (hold(shown("as-name"), "its name field")) return true;
+            check(ue_type("as-name", "кристалл синий") && exists("кристалл синий.png") && !exists("кристалл.png"),
+                  "renamed «кристалл синий» in its name field");
+            break;
+        case 43:
+            if (hold(idle && record("кристалл синий.png"), "the rename is indexed")) return true;
+            check(record("кристалл синий.png")->id == tg_pic_, "the same id");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(exists("кристалл.png") && !exists("кристалл синий.png"), "Ctrl+Z: the old name");
+            break;
+        case 44:
+            if (hold(idle && record("кристалл.png"), "the undo is indexed")) return true;
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(exists("кристалл синий.png"), "Ctrl+Y: «кристалл синий»");
+            break;
+        case 45: {
+            if (hold(idle && record("кристалл синий.png") && ed_.sources.of_file("pictures/кристалл.png") &&
+                         ed_.sources.of_file("pictures/кристалл.png")->from == "кристалл синий.png",
+                     "game/sources.json follows the rename"))
+                return true;
+            check(record("кристалл синий.png")->id == tg_pic_ && as().record_count() == 2, "the same two assets, the same ids");
+            check(lib.find(std::string_view(tg_obj_))->picture == "кристалл.png" && image_of(tg_picl_) == "pictures/кристалл.png" &&
+                      tg_bytes(game / "pictures" / utf8_path("кристалл.png")) == tg_bytes(as().abs("кристалл синий.png")),
+                  "the object and the window keep the game's copy, as it was");
+            // Saved: nothing waits.
+            std::string error;
+            check(ed_.save_unsaved(error) && ed_.unsaved().empty() && !lv().dirty(), "everything is written: " + error);
+            tg_rec_["object"] = tg_obj_;
+            tg_rec_["placed"] = std::to_string(tg_placed_);
+            tg_rec_["link"] = std::to_string(tg_link_);
+            tg_rec_["add"] = std::to_string(tg_add_);
+            tg_rec_["show"] = std::to_string(tg_show_);
+            tg_rec_["screen"] = tg_screen_;
+            tg_rec_["text"] = std::to_string(tg_text_);
+            tg_rec_["picture"] = std::to_string(tg_picl_);
+            tg_rec_["button"] = std::to_string(tg_btn_);
+            tg_rec_["pic"] = tg_pic_.to_string();
+            tg_rec_["snd"] = tg_snd_.to_string();
+            check(tg_put(tg_root() / utf8_path("записи А.txt"), tg_rec_), "the ids written down for the next editor (outside the games)");
+            FORGE_INFO("self-test: «Находка»: объект %s, на уровне %s, связь %s (узлы %s, %s), экран %s (слои %s, %s, %s), ресурсы %s, %s",
+                       tg_obj_.c_str(), tg_rec_["placed"].c_str(), tg_rec_["link"].c_str(), tg_rec_["add"].c_str(), tg_rec_["show"].c_str(),
+                       tg_screen_.c_str(), tg_rec_["text"].c_str(), tg_rec_["picture"].c_str(), tg_rec_["button"].c_str(),
+                       tg_rec_["pic"].c_str(), tg_rec_["snd"].c_str());
+            return false;
+        }
+        default: break;
+        }
+        ++tg_step_;
+        return true;
+    }
+
+    // In an editor for «Игра А» started from another working folder (--self-test two-games-a-again): what was made is
+    // there by the same ids and plays; then its picture and sound change in «Ресурсы», as edited in another program.
+    // game/sources.json without the content's hashes: each copy, its asset, where the asset was.
+    static std::string tg_links(const std::filesystem::path& game) {
+        editor::sources::Sources s;
+        std::string out;
+        if (s.load(game))
+            for (const editor::sources::Entry& e : s.entries()) out += e.file + " ← " + e.asset.to_string() + " («" + e.from + "»); ";
+        return out;
+    }
+
+    bool two_games_again_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game";
+        objects::Library& lib = ol().library();
+        const bool idle = !as().busy();
+        auto record = [&](const char* rel) { return as().record_of(as().abs(rel)); };
+        const fs::path copy = game / "pictures" / utf8_path("кристалл.png"), sound = game / "sounds" / utf8_path("звон.wav");
+        const char* const blue = "кристалл синий.png";
+        // «Играть» from the level tab (its command kept by the editor offscreen).
+        auto to_play = [&] { return click_tab(0); };
+        auto play_now = [&] { return ed_.tab() == "level" && pj_click("play") && !lv().last_play().empty(); };
+        switch (tg_step_) {
+        case 0: {
+            tg_rec_ = tg_get(tg_root() / utf8_path("записи А.txt"));
+            check(tg_rec_.count("object") && tg_rec_.count("screen"), "what two-games-a made is written down");
+            check(pjw().config().title == "Игра А" && ed_.game_dir == game, "the editor has «Игра А» open");
+            check(!fs::equivalent(fs::current_path(), a, ec) && !fs::equivalent(fs::current_path(), utf8_path(SLICE_DATA_DIR), ec),
+                  "from a working folder of neither the game nor the template: " + path_to_utf8(fs::current_path()));
+            // Each thing by the id it got when it was made.
+            const objects::Template* t = lib.find(std::string_view(tg_rec_["object"]));
+            check(t && t->name == "Находка" && t->kind == "picture" && t->picture == "кристалл.png" &&
+                      path_to_utf8(t->file.filename()) == "Находка.object.json",
+                  "the object " + tg_rec_["object"] + ": «Находка», its picture кристалл.png");
+            const logic::Link* l = lg().links().find(tg_u32("link"));
+            check(l && l->a == tg_rec_["object"] && l->b == logic::kHero && l->once,
+                  "the link " + tg_rec_["link"] + ": the object " + (l ? l->a : std::string("-")) + " and the hero, once");
+            script::Graph g;
+            const bool read = l && g.from_json(l->graph);
+            const script::GraphNode* add = read ? g.find(tg_u32("add")) : nullptr;
+            const script::GraphNode* show = read ? g.find(tg_u32("show")) : nullptr;
+            bool wired = false;
+            for (const script::GraphLink& w : g.links) wired |= w.from_node == tg_u32("add") && w.to_node == tg_u32("show") && w.to_pin == script::kFlowIn;
+            check(add && add->def == "api.game.add_var" && add->value("name") && *add->value("name") == "находки" && show &&
+                      show->def == "api.ui.show" && show->value("name") && *show->value("name") == tg_rec_["screen"] && wired,
+                  "its scheme: node " + tg_rec_["add"] + " adds to «находки», then node " + tg_rec_["show"] + " shows the window");
+            check(ue().open(tg_rec_["screen"]) && ue().screen().title == "Находка", "the screen " + tg_rec_["screen"] + ": «Находка»");
+            const d::Node* text = ue_node(tg_u32("text"));
+            const d::Node* pic = ue_node(tg_u32("picture"));
+            const d::Node* btn = ue_node(tg_u32("button"));
+            bool image = false;
+            if (pic)
+                for (const d::Paint& p : pic->fills) image |= p.kind == d::PaintKind::Image && p.image == "pictures/кристалл.png";
+            check(text && text->text == "Найдено: {находки}" && pic && pic->name == "Кристалл" && image &&
+                      pic->motion.kind == d::MotionKind::Custom && pic->motion.keys.size() == 3 &&
+                      std::abs(pic->motion.keys[1].scale - 1.5f) < 1e-4f && btn && d::block_label(*btn)->text == "Забрать" &&
+                      btn->on_click.size() == 1 && btn->on_click[0].kind == d::ActionKind::Close && btn->click_sound == "звон.wav",
+                  "its layers by their ids: the text, «Кристалл» moving by its keys, «Забрать» with «звон»");
+            check(ue_file(".html", tg_rec_["screen"]).find("@keyframes m" + tg_rec_["picture"]) != std::string::npos,
+                  "the animation's target on the page is that layer");
+            check(ed_.sources.entries().size() == 2 && ed_.sources.of_file("pictures/кристалл.png") &&
+                      ed_.sources.of_file("pictures/кристалл.png")->asset.to_string() == tg_rec_["pic"] && ed_.sources.of_file("sounds/звон.wav") &&
+                      ed_.sources.of_file("sounds/звон.wav")->asset.to_string() == tg_rec_["snd"],
+                  "game/sources.json: the copies and their assets' ids");
+            const std::string outside = tg_naming(a, {path_to_utf8(tg_root()), path_to_utf8(fs::temp_directory_path()), "Игра Б", "исходники",
+                                                      path_to_utf8(utf8_path(SLICE_DATA_DIR)), path_to_utf8(utf8_path(FORGE_GAMES_DIR))});
+            check(outside.empty(), "no file of «Игра А» names a place outside it (the other game, the template, the author's folder): " + outside);
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 1: {
+            if (wait(2)) return true;
+            const std::string said = lg().phrase_of(tg_u32("link"));
+            check(said == "Находка даёт монету герою" && lg().problem_of(tg_u32("link")).empty(),
+                  "«Логика» says it as it was made: «" + said + "», it works");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        case 2:
+            if (hold(idle && record(blue) && record("звон.wav"), "«Ресурсы» are indexed")) return true;
+            check(as().record_count() == 2 && record(blue)->id.to_string() == tg_rec_["pic"] && record("звон.wav")->id.to_string() == tg_rec_["snd"],
+                  "the two assets, the same ids");
+            check(to_play(), "«Уровень»");
+            break;
+        case 3: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            const flecs::entity e = lv().level().find(std::strtoull(tg_rec_["placed"].c_str(), nullptr, 10));
+            check(e.is_valid() && lib.template_of(e) == lib.find(std::string_view(tg_rec_["object"])) &&
+                      std::to_string(e.get<scene::Position>().tile_x()) == tg_rec_["x"] && std::to_string(e.get<scene::Position>().tile_y()) == tg_rec_["y"],
+                  "«Находка» on the level, the same id and place");
+            check(play_now(), "«Играть»");
+            const slice::ProjectEdits edits = tg_edits(kTgTeal);
+            check(edits.sound_frames > 0, "its sound reads: " + std::to_string(edits.sound_frames) + " frames");
+            const int code = tg_play(&edits, "ожидания А.json");
+            check(code == 0, "the game plays «Находка» as made (exit " + std::to_string(code) + ")");
+            // Changed in another program: the same files of «Ресурсы», new content.
+            tg_pictures_ = pj_names(game / "pictures");
+            tg_sounds_ = pj_names(game / "sounds");
+            tg_sources_ = tg_links(game);
+            tg_said_ = tg_mark();
+            const auto now = fs::file_time_type::clock::now();
+            check(write_file_atomic(as().abs(blue), tg_png(kTgOrange)) && write_file_atomic(as().abs("звон.wav"), tg_wav(kTgLong, 660)),
+                  "«кристалл синий.png» orange, «звон.wav» half a second, in place");
+            fs::last_write_time(as().abs(blue), now, ec);
+            fs::last_write_time(as().abs("звон.wav"), now, ec);
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        case 4:
+            if (hold(idle && ed_.tab() == "assets", "«Ресурсы»")) return true;
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        case 5: {
+            if (hold(idle && tg_bytes(copy) == tg_bytes(as().abs(blue)) && tg_bytes(sound) == tg_bytes(as().abs("звон.wav")),
+                     "F5: the game's copies follow"))
+                return true;
+            check(as().record_count() == 2 && record(blue)->id.to_string() == tg_rec_["pic"] && record("звон.wav")->id.to_string() == tg_rec_["snd"],
+                  "the same assets, the same ids, none more");
+            check(pj_names(game / "pictures") == tg_pictures_ && pj_names(game / "sounds") == tg_sounds_,
+                  "the same files in the game: no copy more");
+            const std::string links = tg_links(game);
+            editor::sources::Sources now;
+            const bool read = now.load(game);
+            const editor::sources::Entry* pe = read ? now.of_file("pictures/кристалл.png") : nullptr;
+            const editor::sources::Entry* se = read ? now.of_file("sounds/звон.wav") : nullptr;
+            check(links == tg_sources_ && pe && pe->hash == editor::sources::hash_of(tg_bytes(copy)) && se &&
+                      se->hash == editor::sources::hash_of(tg_bytes(sound)),
+                  "game/sources.json: the same copies of the same assets, the new content's hashes: " + links);
+            const usize updated = tg_said("Из «Ресурсов» обновлено в игре"), restart = tg_said("после перезапуска («Играть»)");
+            check(updated == 1 && restart == 1,
+                  "the log says once what was brought up to date, and that a running game sees it when started again (" + std::to_string(updated) +
+                      ", " + std::to_string(restart) + ")");
+            const objects::Template* t = lib.find(std::string_view(tg_rec_["object"]));
+            check(t && t->picture == "кристалл.png", "the object keeps its picture's name");
+            std::vector<u8> rgba;
+            if (t) ed_.level_module.object_icon({t->id, "", "", "", t->key}, 32, rgba);
+            const u8* mid = rgba.size() >= 32 * 32 * 4 ? &rgba[(16 * 32 + 16) * 4] : nullptr;
+            check(mid && tg_near(mid, kTgOrange), "its icon is drawn orange now: " + (mid ? tg_rgb(mid) : std::string("-")));
+            // Broken by another program: the picture does not import, the sound imports but does not play. F5 leaves the
+            // copies as they are and says why.
+            tg_good_pic_ = tg_bytes(as().abs(blue));
+            tg_good_snd_ = tg_bytes(as().abs("звон.wav"));
+            const std::string broken = "оборвано другой программой";
+            const auto when = fs::file_time_type::clock::now();
+            check(write_file_atomic(as().abs(blue), {reinterpret_cast<const u8*>(broken.data()), broken.size()}) &&
+                      write_file_atomic(as().abs("звон.wav"), {reinterpret_cast<const u8*>(broken.data()), broken.size()}),
+                  "«кристалл синий.png» and «звон.wav» broken in place");
+            fs::last_write_time(as().abs(blue), when + std::chrono::seconds(1), ec);
+            fs::last_write_time(as().abs("звон.wav"), when + std::chrono::seconds(1), ec);
+            tg_said_ = tg_mark();
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 6: {
+            if (hold(idle && tg_said("в «Ресурсах» не перенесён в игру") == 2, "F5: the log says the broken files are not taken")) return true;
+            check(tg_bytes(copy) == tg_good_pic_ && tg_bytes(sound) == tg_good_snd_, "the game's copies are as they were, whole");
+            check(tg_said("Из «Ресурсов» обновлено в игре") == 0 && as().status().find("не перенесено в игру: pictures/кристалл.png") != std::string::npos &&
+                      as().status().find("sounds/звон.wav") != std::string::npos,
+                  "nothing said brought up to date; «Ресурсы» say what is not taken: " + as().status());
+            check(record(blue) && record(blue)->id.to_string() == tg_rec_["pic"] && record("звон.wav") &&
+                      record("звон.wav")->id.to_string() == tg_rec_["snd"],
+                  "the same assets, the same ids");
+            const objects::Template* t = lib.find(std::string_view(tg_rec_["object"]));
+            std::vector<u8> rgba;
+            if (t) ed_.level_module.object_icon({t->id, "", "", "", t->key}, 32, rgba);
+            const u8* mid = rgba.size() >= 32 * 32 * 4 ? &rgba[(16 * 32 + 16) * 4] : nullptr;
+            check(mid && tg_near(mid, kTgOrange), "the object's icon still orange: " + (mid ? tg_rgb(mid) : std::string("-")));
+            check(editor::project::game_problems(game, nullptr).empty(), "the game itself is whole");
+            // Put right in that program: nothing to bring over, nothing said missing.
+            const auto when = fs::file_time_type::clock::now();
+            check(write_file_atomic(as().abs(blue), tg_good_pic_) && write_file_atomic(as().abs("звон.wav"), tg_good_snd_),
+                  "both put right in place");
+            fs::last_write_time(as().abs(blue), when + std::chrono::seconds(2), ec);
+            fs::last_write_time(as().abs("звон.wav"), when + std::chrono::seconds(2), ec);
+            tg_said_ = tg_mark();
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 7: {
+            if (hold(idle && as().status().find("не перенесено") == std::string::npos &&
+                         record(blue)->source_hash.to_hex() == editor::sources::hash_of(tg_good_pic_),
+                     "F5: «Ресурсы» have them whole again"))
+                return true;
+            check(tg_bytes(copy) == tg_good_pic_ && tg_bytes(sound) == tg_good_snd_ && tg_said("не перенесён") == 0 &&
+                      tg_said("Из «Ресурсов» обновлено в игре") == 0,
+                  "the copies as they were, nothing more said");
+            check(click_tab(8) && ue().open(tg_rec_["screen"]), "«Интерфейс», the window");
+            break;
+        }
+        case 8: {
+            if (wait(3)) return true;
+            const d::Node* pic = ue_node(tg_u32("picture"));
+            u8 at[4] = {};
+            const bool read = pic && ue_page_pixel(static_cast<int>(pic->x + pic->w / 2), static_cast<int>(pic->y + pic->h / 2), at);
+            check(read && tg_near(at, kTgOrange), "the window's picture is orange on the canvas: " + tg_rgb(at));
+            ue().set_checking(true);
+            break;
+        }
+        case 9: {
+            if (wait(3)) return true;
+            tg_n_ = ue().check_sound().clicks();
+            check(ue().checking() && ue_page_click(tg_u32("button"), 0.5f, 0.5f), "«Проверить»: «Забрать» clicked");
+            break;
+        }
+        case 10: {
+            if (wait(2)) return true;
+            const audio::ScreenSounds& snd = ue().check_sound();
+            const audio::ClipPtr clip = snd.loaded("звон.wav");
+            const audio::ClipPtr want = audio::load(sound);
+            check(snd.clicks() == tg_n_ + 1 && snd.last_click() == "звон.wav" && clip && want && clip->frames() == want->frames(),
+                  "the editor plays the new «звон»: " + std::to_string(clip ? clip->frames() : 0) + " frames");
+            ue().set_checking(false);
+            check(to_play(), "«Уровень»");
+            break;
+        }
+        case 11: {
+            if (wait(2)) return true;
+            check(play_now(), "«Играть» again");
+            const slice::ProjectEdits edits = tg_edits(kTgOrange);
+            const int code = tg_play(&edits, "ожидания А.json");
+            check(code == 0, "the next game has the new picture and sound, the same ids (exit " + std::to_string(code) + ")");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        // Gone: the asset deleted in «Ресурсы» (the copy stays), then back by Ctrl+Z, its id the same.
+        case 12:
+            if (hold(idle && ed_.tab() == "assets", "«Ресурсы»")) return true;
+            as().open_folder("");
+            click_row(blue);
+            tg_said_ = tg_mark();
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(!exists(blue), "Delete: the asset to the trash");
+            break;
+        case 13:
+            if (hold(idle && !record(blue) && tg_said("больше нет в «Ресурсах»") == 1, "the log says the asset is gone")) return true;
+            check(tg_bytes(copy) == tg_png(kTgOrange) && as().status().find("нет ресурсов для файлов игры") != std::string::npos,
+                  "the game's copy stays as it was; «Ресурсы» say what has no asset: " + as().status());
+            check(editor::project::game_problems(game, nullptr).empty(), "the game itself is whole");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(exists(blue), "Ctrl+Z brings it back");
+            break;
+        case 14:
+            if (hold(idle && record(blue), "it is indexed again")) return true;
+            check(record(blue)->id.to_string() == tg_rec_["pic"] && as().status().find("нет ресурсов") == std::string::npos,
+                  "the same id; nothing said missing");
+            // The copy deleted in the game's folder (in the file manager): F5 makes it again.
+            tg_said_ = tg_mark();
+            fs::remove(copy, ec);
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        case 15: {
+            if (hold(idle && fs::exists(copy, ec), "the copy is made again")) return true;
+            const usize said = tg_said("Файлы игры сделаны снова");
+            check(tg_bytes(copy) == tg_bytes(as().abs(blue)) && said == 1,
+                  "F5: the copy is made again from its asset, and the log says so (" + std::to_string(said) + ")");
+            // Both gone: said, with what uses it.
+            tg_said_ = tg_mark();
+            fs::remove(copy, ec);
+            click_row(blue);
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            break;
+        }
+        case 16: {
+            if (hold(idle && !record(blue) && tg_said("Нет файла игры pictures/кристалл.png") == 1, "the log says what is missing")) return true;
+            std::string said;
+            for (const auto& line : ed_.log_lines())
+                if (std::string(line.text).find("Нет файла игры pictures/кристалл.png") != std::string::npos) said = line.text;
+            check(said.find("«кристалл синий.png»") != std::string::npos && said.find("Находка") != std::string::npos &&
+                      said.find("Ctrl+Z") != std::string::npos,
+                  "it names the file, its asset, who uses it and how to get it back: " + said);
+            check(as().status().find("нет файлов игры: pictures/кристалл.png") != std::string::npos, "«Ресурсы» say it too: " + as().status());
+            check(to_play(), "«Уровень»");
+            break;
+        }
+        case 17: {
+            if (wait(2)) return true;
+            check(play_now(), "«Играть» with the picture missing");
+            const int code = tg_play(nullptr, "");
+            check(code == 0, "the game starts and plays without it (exit " + std::to_string(code) + ")");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        case 18:
+            if (hold(idle && ed_.tab() == "assets", "«Ресурсы»")) return true;
+            tg_said_ = tg_mark();
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(exists(blue), "Ctrl+Z in «Ресурсы»: the asset back");
+            break;
+        case 19: {
+            if (hold(idle && fs::exists(copy, ec), "the copy comes back with it")) return true;
+            const usize said = tg_said("Файлы игры сделаны снова");
+            check(record(blue)->id.to_string() == tg_rec_["pic"] && tg_bytes(copy) == tg_bytes(as().abs(blue)) && said == 1,
+                  "Ctrl+Z: the asset back with its id, the copy made again from it, the log says so (" + std::to_string(said) + ")");
+            const auto problems = editor::project::game_problems(game, nullptr);
+            check(problems.empty() && as().status().find("нет файлов игры") == std::string::npos &&
+                      as().status().find("нет ресурсов для") == std::string::npos,
+                  "the project is whole again: nothing missing: " + as().status() + (problems.empty() ? "" : "; " + problems.front()));
+            check(pj_names(game / "pictures") == tg_pictures_ && pj_names(game / "sounds") == tg_sounds_ && as().record_count() == 2,
+                  "no copy or asset more than before");
+            // For the package: what A has now.
+            const slice::ProjectEdits edits = tg_edits(kTgOrange);
+            check(slice::write_edits(tg_root() / utf8_path("ожидания А.json"), edits), "what «Игра А» has now, for the package");
+            return false;
+        }
+        default: break;
+        }
+        ++tg_step_;
+        return true;
+    }
+
+    // In an editor for «Игра Б» (--self-test two-games-b): nothing of A, a player's folder of its own; played.
+    bool two_games_b_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path b = pjw().config().root, game = b / "game", a = tg_mine("Игра А");
+        objects::Library& lib = ol().library();
+        switch (tg_step_) {
+        case 0: {
+            tg_rec_ = tg_get(tg_root() / utf8_path("записи А.txt"));
+            check(tg_rec_.count("object") && pjw().config().title == "Игра Б" && ed_.game_dir == game, "the editor has «Игра Б» open");
+            bool named = false;
+            for (const objects::Template& t : lib.templates()) named |= t.name == "Находка";
+            check(!lib.find(std::string_view(tg_rec_["object"])) && !named, "no «Находка» among its objects");
+            check(!fs::exists(game / "sources.json", ec) && !fs::exists(game / "pictures" / utf8_path("кристалл.png"), ec) &&
+                      !fs::exists(game / "sounds" / utf8_path("звон.wav"), ec) && !fs::exists(game / "ui" / utf8_path(tg_rec_["screen"] + ".json"), ec),
+                  "none of A's copies, sources or window");
+            check(logic_text().find(tg_rec_["object"]) == std::string::npos, "no link of «Находка»");
+            check(pj_tree(b / "assets").empty(), "its «Ресурсы» are empty");
+            const std::string named_a = tg_naming(b, {tg_rec_["object"], "находки", "кристалл", "звон", "Игра А", "исходники", path_to_utf8(a)});
+            check(named_a.empty(), "no file of «Игра Б» has anything of «Игра А»: " + named_a);
+            check(play_folder(b) != play_folder(a) && fs::is_regular_file(play_folder(a) / "settings.json", ec) && pj_tree(play_folder(b)).empty(),
+                  "A's player's folder has its settings and save; B's is its own, empty");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 1: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            check(pj_click("play") && !lv().last_play().empty(), "«Играть»");
+            const std::vector<std::string>& run = lv().last_play();
+            const auto at = std::find(run.begin(), run.end(), std::string("--user"));
+            check(at != run.end() && at + 1 != run.end() && utf8_path(*(at + 1)) == play_folder(b), "its own player's folder");
+            slice::ProjectEdits none;
+            none.object = tg_rec_["object"];
+            none.object_name = "Находка";
+            none.var = "находки";
+            none.screen = tg_rec_["screen"];
+            none.sound = "звон.wav";
+            none.absent = true;
+            const int code = tg_play(&none, "ожидания Б.json");
+            check(code == 0, "the game of «Игра Б» has none of it; its settings and saves are its own (exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++tg_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -13581,8 +14864,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
     int result = 1;
     {
         Editor editor;
-        // --self-test opened-game, ready: the game given, opened as the editor opens it (the self-test made it).
-        const bool opened = options.self_part == "opened-game" || options.self_part == "ready";
+        // --self-test opened-game, ready, two-games-*: the game given, opened as the editor opens it (the self-test made it).
+        const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -14062,9 +15345,12 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--ready-file") == 0 && has_value) app.options.ready_file = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    if (!app.options.self_part.empty() && app.options.self_part != "new-game" && app.options.self_part != "opened-game" &&
-        app.options.self_part != "ready") {
-        FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready)", app.options.self_part.c_str());
+    static const char* const kParts[] = {"new-game", "opened-game", "ready", "two-games", "two-games-a", "two-games-a-again", "two-games-b"};
+    if (!app.options.self_part.empty() &&
+        std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
+        FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
+                    "two-games-b)",
+                    app.options.self_part.c_str());
         return 2;
     }
     if (screenshot || bench || self_test || bench_level || bench_assets || bench_scheme || bench_story)

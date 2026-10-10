@@ -36,6 +36,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace forge::scene {
@@ -142,6 +143,8 @@ struct Template {
     std::string picture;
     std::filesystem::path file;
     u32 rev = 0; // hash of the values and blocks: copies with another rev are behind
+    // Its picture file got new content under the same name (Library::picture_changed); not saved.
+    u32 picture_stamp = 0;
 
     // Changes whenever what the template looks like may change (its values
     // or its picture): names cached icons.
@@ -204,6 +207,9 @@ public:
     const Template* find(std::string_view id) const;
     // Bumped by every change of a template (palettes and lists rebuild).
     u64 version() const { return version_; }
+    // A picture of the pictures folder has new content under its name (an asset of «Ресурсы» changed): the
+    // templates that show it look different (their look() changes, their icons are drawn again).
+    void picture_changed(std::string_view name);
 
     // --- changing templates; each writes the template's file ---
     // A new template of a kind, from a preset or the kind's own values,
@@ -287,6 +293,8 @@ private:
     std::filesystem::path pictures_;
     std::filesystem::path sounds_;
     u64 version_ = 1;
+    std::unordered_map<std::string, u32> picture_stamps_; // by picture name: how many times it changed
+    u32 stamps_ = 0;
     AdoptFn adopt_;
 };
 

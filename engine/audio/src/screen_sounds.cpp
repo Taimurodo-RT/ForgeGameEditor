@@ -27,6 +27,11 @@ void ScreenSounds::forget() {
     problems_.clear();
 }
 
+ClipPtr ScreenSounds::loaded(const std::string& name) const {
+    const auto it = clips_.find(name);
+    return it != clips_.end() ? it->second : nullptr;
+}
+
 ClipPtr ScreenSounds::clip(const std::string& name) {
     if (name.empty()) return nullptr;
     auto it = clips_.find(name);

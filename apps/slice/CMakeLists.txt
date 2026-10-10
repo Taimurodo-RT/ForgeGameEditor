@@ -1,6 +1,7 @@
 # The game's code as a library: the game itself links it, and so does the
 # level editor, which paints «Старая шахта» through slice::SliceLevel.
-add_library(forge_slice_lib STATIC slice_game.cpp slice_links.cpp slice_world.cpp slice_art.cpp slice_level.cpp slice_pictures.cpp slice_sounds.cpp)
+add_library(forge_slice_lib STATIC slice_game.cpp slice_links.cpp slice_world.cpp slice_art.cpp slice_level.cpp slice_pictures.cpp slice_sounds.cpp
+                            slice_edits.cpp)
 target_include_directories(forge_slice_lib PUBLIC .)
 target_link_libraries(forge_slice_lib PUBLIC forge::game forge::sim forge::render forge::ui forge::level forge::assets forge::audio forge::logic forge_demo_common)
 forge_target_defaults(forge_slice_lib)

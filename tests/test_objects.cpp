@@ -168,6 +168,36 @@ TEST_CASE("a template's own picture is kept in its file") {
     CHECK(read->rev == t->rev); // a picture does not touch the copies' values
 }
 
+TEST_CASE("a picture with new content under its name draws its templates again") {
+    Fixture f;
+    const KindDef& k = f.lib.kinds()[0];
+    std::optional<Template> star = f.lib.make(k, &k.presets[0], "");
+    REQUIRE(star);
+    star->picture = "Звезда.png";
+    REQUIRE(f.lib.put(*star));
+    const Template* t = f.lib.find(star->id);
+    const Template* coins = f.lib.find("coins");
+    REQUIRE(t);
+    REQUIRE(coins);
+    const u32 look = t->look(), coins_look = coins->look(), rev = t->rev;
+    const u64 version = f.lib.version();
+    f.lib.picture_changed("Звезда.png"); // an asset of «Ресурсы» changed, its copy has the new content
+    t = f.lib.find(star->id);
+    CHECK(t->look() != look);                         // its icons are drawn again
+    CHECK(t->rev == rev);                             // the copies' values are as they were
+    CHECK(f.lib.find("coins")->look() == coins_look); // another picture's templates are not touched
+    CHECK(f.lib.version() > version);
+    // Read again from the files: still the new look; nothing of it is written.
+    const u32 now = t->look();
+    f.lib.reload_templates();
+    REQUIRE(f.lib.find(star->id));
+    CHECK(f.lib.find(star->id)->look() == now);
+    std::optional<Template> read = read_template(f.lib.find(star->id)->file);
+    REQUIRE(read);
+    CHECK(read->picture == "Звезда.png");
+    CHECK(read->picture_stamp == 0);
+}
+
 TEST_CASE("a pickup names its thing and its picture for the game's pages") {
     const auto dir = temp_folder("forge_objects_items_test");
     write_text(dir / "kinds.json", R"({

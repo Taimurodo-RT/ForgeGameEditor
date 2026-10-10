@@ -353,6 +353,8 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     model.BindEventCallback("ol_rename_done", [this](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) {
         if (ui_updating_ || !renaming_ || (!a.empty() && !a[0].Get<bool>())) return;
         if (!rename(input_value(ev))) rebuild();
+        // Enter ends the typing: the keys (Ctrl+Z) are the tab's again, not the hidden field's.
+        if (Rml::Element* e = ev.GetTargetElement()) e->Blur();
     });
     // The note in the editor: written when the field is left or Enter pressed.
     model.BindEventCallback("ol_about", [this](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) {
@@ -569,13 +571,17 @@ void ObjectLibrary::update(Rml::Context* context) {
                         focus->GetId() != "ol-search";
     if ((library().version() != built_ || shared_.version() != shared_built_) && !typing) rebuild();
     if (rename_focus_ && context) {
-        // The name field on the card appears with this update: focus it.
-        Rml::ElementDocument* doc = context->GetNumDocuments() > 0 ? context->GetDocument(0) : nullptr;
-        if (Rml::Element* e = doc ? doc->GetElementById("ol-rename") : nullptr) {
-            e->Focus();
-            static_cast<Rml::ElementFormControlInput*>(e)->Select();
-            rename_focus_ = false;
-        }
+        // The name field on the card appears with this update: focus it. Every card has one (data-if only hides it),
+        // the shown one is the selected card's.
+        Rml::ElementList fields;
+        for (int i = 0; i < context->GetNumDocuments(); ++i) context->GetDocument(i)->QuerySelectorAll(fields, "#ol-name-field");
+        for (Rml::Element* field : fields)
+            if (auto* e = rmlui_dynamic_cast<Rml::ElementFormControlInput*>(field); e && e->IsVisible(true)) {
+                e->Focus();
+                e->Select();
+                rename_focus_ = false;
+                break;
+            }
     }
 }
 
@@ -916,8 +922,11 @@ namespace forge::editor_app {
 // A file into the game's folder (pictures, sounds), under its own name; the
 // same file already there is used as it is, another one of that name gets a
 // number. The name it has there; empty when it cannot be copied.
-std::string copy_into(const std::filesystem::path& source, const std::filesystem::path& folder, const char* what) {
+std::string copy_into(const std::filesystem::path& source, const std::filesystem::path& folder, const char* what,
+                      const CopyIn& via) {
     namespace fs = std::filesystem;
+    if (via)
+        if (std::optional<std::string> name = via(source, folder)) return *name;
     std::error_code ec;
     fs::create_directories(folder, ec);
     std::vector<u8> bytes;
@@ -945,7 +954,7 @@ std::string copy_into(const std::filesystem::path& source, const std::filesystem
 bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
     const objects::Template* t = selected();
     if (!t || showing_shared()) return false;
-    const std::string name = copy_into(source, library().pictures_folder(), "картинка");
+    const std::string name = copy_into(source, library().pictures_folder(), "картинка", copy_in);
     if (name.empty()) return false;
     close_pictures();
     if (name == t->picture) return false;
@@ -1055,7 +1064,7 @@ bool ObjectLibrary::set_sound(int prop, const std::filesystem::path& source) {
         FORGE_WARN("«%s» не звучит: %s", path_to_utf8(source.filename()).c_str(), error.c_str());
         return false;
     }
-    const std::string name = copy_into(source, library().sounds_folder(), "звук");
+    const std::string name = copy_into(source, library().sounds_folder(), "звук", copy_in);
     if (name.empty()) return false;
     close_sounds();
     const std::string json = objects::Library::parse(p, name).value_or("\"\"");
