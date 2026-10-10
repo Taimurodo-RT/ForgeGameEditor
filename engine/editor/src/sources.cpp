@@ -43,6 +43,46 @@ std::string name_of(std::string_view file) {
     return std::string(slash == std::string_view::npos ? file : file.substr(slash + 1));
 }
 
+// A name as a file system that ignores case sees it (Windows, and macOS as a rule): the letters of the Latin
+// (with Latin-1), Greek and Cyrillic alphabets in lower case, everything else as it is. Two names with one key are
+// one file there, so a game's folder keeps them apart on every system.
+std::string key_of(std::string_view name) {
+    std::string out;
+    out.reserve(name.size());
+    for (usize i = 0; i < name.size(); ++i) {
+        const u8 c = static_cast<u8>(name[i]);
+        if (c >= 'A' && c <= 'Z') {
+            out += static_cast<char>(c + 32);
+            continue;
+        }
+        // Every letter folded here is two bytes of UTF-8, and stays two.
+        if (c >= 0xC0 && c < 0xE0 && i + 1 < name.size() && (static_cast<u8>(name[i + 1]) & 0xC0) == 0x80) {
+            u32 cp = ((c & 0x1Fu) << 6) | (static_cast<u8>(name[i + 1]) & 0x3Fu);
+            if ((cp >= 0xC0 && cp <= 0xDE && cp != 0xD7) || (cp >= 0x391 && cp <= 0x3A9 && cp != 0x3A2) || (cp >= 0x410 && cp <= 0x42F))
+                cp += 0x20;
+            else if (cp >= 0x400 && cp <= 0x40F)
+                cp += 0x50;
+            out += static_cast<char>(0xC0 | (cp >> 6));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+            ++i;
+            continue;
+        }
+        out += static_cast<char>(c);
+    }
+    return out;
+}
+
+// The file of a folder that has this name as the file system may see it (another case of it), if any: its own name.
+std::optional<std::string> on_disk(const fs::path& folder, std::string_view name) {
+    const std::string key = key_of(name);
+    std::error_code ec;
+    for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string there = path_to_utf8(it->path().filename());
+        if (key_of(there) == key) return there;
+    }
+    return std::nullopt;
+}
+
 // Whether an asset's file, as it is now, may become its copy in that folder.
 bool fits(const Asset& a, std::string_view folder, std::span<const u8> bytes, const std::string& hash, std::string* why) {
     if (!a.imported.empty() && hash != a.imported) {
@@ -138,7 +178,7 @@ bool Sources::load(const fs::path& game_dir, std::string* error) {
             refused += (refused.empty() ? "" : ", ") + e.file;
             continue;
         }
-        if (of_file(e.file)) { // one file, one asset: the first one named
+        if (of_file(e.file)) { // one file (in any case of its name), one asset: the first one named
             twice += (twice.empty() ? "" : ", ") + e.file;
             continue;
         }
@@ -156,7 +196,8 @@ bool Sources::load(const fs::path& game_dir, std::string* error) {
 }
 
 const Entry* Sources::of_file(std::string_view file) const {
-    auto it = std::find_if(entries_.begin(), entries_.end(), [&](const Entry& e) { return e.file == file; });
+    const std::string key = key_of(file);
+    auto it = std::find_if(entries_.begin(), entries_.end(), [&](const Entry& e) { return key_of(e.file) == key; });
     return it == entries_.end() ? nullptr : &*it;
 }
 
@@ -216,7 +257,7 @@ std::string Sources::copy_in(const Asset& asset, std::string_view folder, std::s
     };
     // The copy this asset already has there.
     for (Entry& e : entries_) {
-        if (e.asset != asset.id || folder_of(e.file) != folder) continue;
+        if (e.asset != asset.id || key_of(folder_of(e.file)) != key_of(folder)) continue;
         const std::string file = e.file;
         std::vector<u8> there;
         if ((!read_file(game_ / utf8_path(file), there) || there != bytes) && !write_copy(game_ / utf8_path(file), bytes, written, error))
@@ -225,19 +266,25 @@ std::string Sources::copy_in(const Asset& asset, std::string_view folder, std::s
         e.hash = hash;
         return commit(file);
     }
-    // A new one under its own name. A name another asset's copy has is not free, with its file there or not; a file
-    // of that name with the same content and no asset is taken as it is.
+    // A new one under its own name. A name another asset's copy has is not free, with its file there or not, nor is
+    // a file's of the folder, in any case of the letters (one file where case does not count); a file of that name
+    // with the same content and no asset is taken as it is.
     const fs::path name = asset.file.filename();
     const std::string stem = path_to_utf8(name.stem()), ext = path_to_utf8(name.extension());
+    const fs::path dir = game_ / utf8_path(folder);
     std::string file = std::string(folder) + "/" + path_to_utf8(name);
     for (int n = 2;; ++n) {
         if (!of_file(file)) {
-            if (!fs::exists(game_ / utf8_path(file), ec)) {
+            const std::optional<std::string> there = on_disk(dir, name_of(file));
+            if (!there) {
                 if (!write_copy(game_ / utf8_path(file), bytes, written, error)) return {};
                 break;
             }
-            std::vector<u8> there;
-            if (read_file(game_ / utf8_path(file), there) && there == bytes) break;
+            std::vector<u8> was;
+            if (read_file(dir / utf8_path(*there), was) && was == bytes) {
+                file = std::string(folder) + "/" + *there;
+                break;
+            }
         }
         file = std::string(folder) + "/" + stem + " " + std::to_string(n) + ext;
     }
