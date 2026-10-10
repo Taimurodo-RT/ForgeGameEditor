@@ -16018,22 +16018,24 @@ private:
             fs::remove_all(tp_root(), ec);
             fs::create_directories(tp_root() / utf8_path("Мои игры"), ec);
             // The template's game is what its sources make: by the function into a folder of Cyrillic name, and by the
-            // command line from another working folder; byte for byte, line ends of the text files aside (a Windows
-            // checkout has CRLF in them, the maker writes LF).
+            // command line from another working folder; byte for byte, line ends of the text files aside on both sides
+            // (a Windows checkout has CRLF in them: in games/platformer and in the module's files the maker copies,
+            // while what it writes itself ends its lines with LF). Pictures and regions are compared as they are.
             const fs::path games = utf8_path(FORGE_GAMES_DIR);
             auto same = [&](const fs::path& made, const char* how, bool built, const std::string& why) {
                 const auto ours = pj_tree(made), theirs = pj_tree(games / "platformer");
+                auto lf = [](const std::string& path, std::vector<u8> bytes) {
+                    if (path.ends_with(".json") || path.ends_with(".html")) std::erase(bytes, static_cast<u8>('\r'));
+                    return bytes;
+                };
                 std::string differ;
-                for (const auto& [path, bytes] : theirs) {
-                    std::vector<u8> lf = bytes;
-                    if (path.ends_with(".json") || path.ends_with(".html")) std::erase(lf, static_cast<u8>('\r'));
-                    if (!ours.count(path) || ours.at(path) != lf) differ += " " + path;
-                }
+                for (const auto& [path, bytes] : theirs)
+                    if (!ours.count(path) || lf(path, ours.at(path)) != lf(path, bytes)) differ += " " + path;
                 for (const auto& [path, bytes] : ours)
                     if (!theirs.count(path)) differ += " +" + path;
                 check(built && differ.empty() && ours.size() == theirs.size() && !fs::exists(made.parent_path() / utf8_path(path_to_utf8(made.filename()) + ".сборка")),
-                      std::string("games/platformer is what its sources make ") + how + ", byte for byte (" + std::to_string(ours.size()) + " files) " +
-                          why + differ);
+                      std::string("games/platformer is what its sources make ") + how + ", byte for byte, line ends of text aside (" +
+                          std::to_string(ours.size()) + " files) " + why + differ);
             };
             {
                 const fs::path made = tp_root() / utf8_path("сборка");
