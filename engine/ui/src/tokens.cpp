@@ -2,6 +2,7 @@
 
 #include "forge/core/file.h"
 #include "forge/core/log.h"
+#include "forge/core/path.h"
 
 #include <yyjson.h>
 
@@ -61,7 +62,7 @@ struct Doc {
 bool Tokens::load(const std::filesystem::path& tokens_json, std::string* error) {
     std::vector<u8> tokens, overrides;
     if (!read_file(tokens_json, tokens)) {
-        if (error) *error = "cannot read " + tokens_json.generic_string();
+        if (error) *error = "cannot read " + path_to_utf8(tokens_json);
         return false;
     }
     std::filesystem::path extra = tokens_json;

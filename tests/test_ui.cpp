@@ -1,3 +1,4 @@
+#include "forge/core/path.h"
 #include "forge/ui/tokens.h"
 
 #include <doctest/doctest.h>
@@ -103,4 +104,14 @@ TEST_CASE("ui tokens: the shipped design system loads") {
             CHECK(*value != "#ff00ff");
         }
     }
+}
+
+// A folder that is not there, of letters no Windows code page has: the error names it, nothing throws (an
+// editor started with --ui of such a folder said why it did not start instead of crashing).
+TEST_CASE("ui tokens: a design system in a folder that is not there, its name in Cyrillic") {
+    Tokens t;
+    std::string error;
+    const std::filesystem::path missing = forge::utf8_path("нет интерфейса") / "forge-ui" / "tokens.json";
+    CHECK_FALSE(t.load(missing, &error));
+    CHECK(error == "cannot read " + forge::path_to_utf8(missing));
 }

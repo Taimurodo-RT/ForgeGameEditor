@@ -7,8 +7,9 @@ add_library(forge_editor STATIC
   src/ui_design.cpp
   src/ui_templates.cpp
   src/ui_simple.cpp
-  src/color_pick.cpp)
+  src/color_pick.cpp
+  src/project.cpp)
 add_library(forge::editor ALIAS forge_editor)
 target_include_directories(forge_editor PUBLIC include)
-target_link_libraries(forge_editor PUBLIC forge::core forge::data PRIVATE yyjson)
+target_link_libraries(forge_editor PUBLIC forge::core forge::data PRIVATE forge::objects forge::game forge::logic yyjson)
 forge_target_defaults(forge_editor)

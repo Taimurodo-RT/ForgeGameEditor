@@ -9,7 +9,7 @@
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
-//                                                    |tiled|tiled_update]
+//                                                    |tiled|tiled_update|project]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
@@ -20,6 +20,9 @@
 //                                   copy of the game's data with what the import wrote, with nothing of Tiled, its
 //                                   frame compared with tmxrasterizer's; tiled_update: the same after two pictures of
 //                                   the map changed and it was imported again, from the build only, which has the map)
+//   forge_slice --test --scene project --play --data GAME [--level DIR --at X,Y --user DIR]
+//                                   a game the editor made of a template, as its «Играть» starts it: that game's data,
+//                                   title and links, the hero at X,Y, the player's files in DIR
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -39,6 +42,7 @@
 #include "forge/core/path.h"
 #include "forge/core/time.h"
 #include "forge/editor/document.h"
+#include "forge/editor/project.h"
 #include "forge/audio/screen_sounds.h"
 #include "forge/game/runner.h"
 #include "forge/game/saves.h"
@@ -94,6 +98,11 @@ public:
     // run's copy of the game's data (data/) and of the example's level (level/) in.
     std::filesystem::path tiled_example, tiled_root;
     std::string tiled_error; // what main() could not make of them
+    // --scene project: the data of the game the editor made (--data), where the editor's «Играть» put the hero
+    // (--at) and the folder of the player's files it gave (--user).
+    std::filesystem::path project_data, project_user;
+    bool project_at = false;
+    f64 project_at_x = 0, project_at_y = 0;
 
     bool frame(Shell& shell, int& failures) {
         if (steps_.empty()) build(shell);
@@ -242,7 +251,46 @@ private:
         return f >= 10;
     }
 
+    // A game the editor made of a template and started with «Играть» (step 14.1): the game plays that game's data,
+    // its title and links, with the hero where the editor said, and keeps the player's files where it was told.
+    void build_project(Shell& s) {
+        SliceGame& g = g_;
+        steps_.push_back({"игра из папки автора", 5, [&s, this](u32 f) {
+            if (f < 2) return false;
+            std::error_code ec;
+            check(!project_data.empty() && std::filesystem::equivalent(s.game_dir(), project_data, ec),
+                  "игра читает данные из " + path_to_utf8(project_data) + ", а не из " + path_to_utf8(s.game_dir()));
+            const std::string title = editor::project::game_title(project_data);
+            check(!title.empty() && s.title() == title, "название игры из её game.json: «" + s.title() + "», ждали «" + title + "»");
+            check(s.data_errors().empty(), "данные игры читаются без ошибок");
+            check(s.screen() == Screen::Playing, "«Играть» сразу начинает игру");
+            std::vector<u8> mine, links;
+            check(read_file(project_data / "logic.json", mine) && read_file(g_.links_path(), links) && mine == links,
+                  "связи «Логики» — из logic.json этой игры");
+            if (!project_user.empty())
+                check(std::filesystem::equivalent(s.user_folder(), project_user, ec),
+                      "файлы игрока — в папке, которую дал редактор: " + path_to_utf8(s.user_folder()));
+            return true;
+        }});
+        steps_.push_back({"герой там, где сказал редактор", 120, [&g, this](u32 f) {
+            if (!project_at) return true;
+            if (f < 30 && !g.on_ground()) return false;
+            check(g.hero_alive() && std::fabs(g.hero_x() - project_at_x) < 1.5 && std::fabs(g.hero_y() - project_at_y) < 3,
+                  "герой у точки «Играть»: " + std::to_string(project_at_x) + ", " + std::to_string(project_at_y));
+            return true;
+        }});
+        steps_.push_back({"игра идёт", 60, [&g, this](u32 f) {
+            if (f < 60) return false;
+            check(g.hero_alive(), "герой жив через секунду игры");
+            return true;
+        }});
+    }
+
     void build(Shell& s) {
+        if (scene_ == "project") {
+            build_project(s);
+            return;
+        }
         if (scene_ == "stress") {
             build_stress(s);
             return;
@@ -4987,6 +5035,20 @@ int main(int argc, char** argv) {
         args.push_back(const_cast<char*>("--data"));
         args.push_back(data.data());
     }
+    // --scene project: a game the editor made (its data given with --data, as «Играть» gives it): the links are
+    // that game's, not the engine's sources'.
+    std::filesystem::path project_data, project_user;
+    if (scene == "project" && options.silent) {
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (std::strcmp(argv[i], "--data") == 0) project_data = utf8_path(argv[i + 1]);
+            if (std::strcmp(argv[i], "--user") == 0) project_user = utf8_path(argv[i + 1]);
+        }
+        std::error_code ec;
+        if (project_data.empty()) FORGE_ERROR("--scene project: нужна папка данных игры (--data)");
+        else std::filesystem::copy_file(project_data / "logic.json", options.links_file,
+                                        std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) FORGE_ERROR("--scene project: не скопирован %s", path_to_utf8(project_data / "logic.json").c_str());
+    }
     if (scene == "volumes" && options.silent) {
         const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_slice_volumes";
         std::error_code ec;
@@ -5015,6 +5077,11 @@ int main(int argc, char** argv) {
     test.tiled_example = tiled_example;
     test.tiled_root = tiled_root;
     test.tiled_error = tiled_error;
+    test.project_data = project_data;
+    test.project_user = project_user;
+    test.project_at = options.at;
+    test.project_at_x = options.at_x;
+    test.project_at_y = options.at_y;
     GameMain m;
     m.dev_ui_dir = FORGE_UI_DIR;
     m.dev_game_dir = SLICE_DATA_DIR;

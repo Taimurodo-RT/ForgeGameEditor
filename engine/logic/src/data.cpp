@@ -3,6 +3,7 @@
 #include "forge/logic/logic.h"
 
 #include "forge/core/file.h"
+#include "forge/core/path.h"
 
 #include <yyjson.h>
 
@@ -61,7 +62,7 @@ Side side(std::string_view s) { return s == "a" ? Side::A : Side::B; }
 bool Verbs::load(const std::filesystem::path& file, std::string* error) {
     std::string text;
     if (!read_text(file, text)) {
-        if (error) *error = "не читается " + file.filename().string();
+        if (error) *error = "не читается " + path_to_utf8(file.filename());
         return false;
     }
     return parse(text, error);
@@ -124,7 +125,7 @@ bool Ideas::load(const std::filesystem::path& file, std::string* error) {
     }
     std::string text;
     if (!read_text(file, text)) {
-        if (error) *error = "не читается " + file.filename().string();
+        if (error) *error = "не читается " + path_to_utf8(file.filename());
         return false;
     }
     return parse(text, error);
@@ -190,7 +191,7 @@ bool Logic::load(const std::filesystem::path& file, std::string* error) {
     }
     std::string text;
     if (!read_text(file, text)) {
-        if (error) *error = "не читается " + file.filename().string();
+        if (error) *error = "не читается " + path_to_utf8(file.filename());
         return false;
     }
     return parse(text, error);
@@ -319,7 +320,7 @@ std::string Logic::json() const {
 bool Logic::save(const std::filesystem::path& file, std::string* error) const {
     const std::string text = json();
     if (!write_file_atomic(file, std::span<const u8>(reinterpret_cast<const u8*>(text.data()), text.size()))) {
-        if (error) *error = "не записывается " + file.filename().string();
+        if (error) *error = "не записывается " + path_to_utf8(file.filename());
         return false;
     }
     return true;

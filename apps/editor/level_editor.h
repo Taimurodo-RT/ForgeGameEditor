@@ -59,6 +59,9 @@ struct LevelConfig {
     std::filesystem::path settings; // where the panel layout is kept
     std::filesystem::path game_exe; // the game, for «Играть отсюда»; empty: no launching
     std::filesystem::path game_data; // the game's data for it (the project's game/); empty: the game's own
+    // Where the game «Играть» starts keeps its player's files (--user) and the links that fired (--fired): one
+    // folder per project, outside it. Empty: <temp>/forge_editor_play.
+    std::filesystem::path play_dir;
     bool offscreen = false;
 };
 
@@ -96,10 +99,12 @@ public:
     bool save();
     // Saves and starts the game with the hero at the view's centre.
     bool play_here();
-    // The command line play_here() runs (for the self-test).
+    // The command line play_here() runs (for the self-test), and the last one it ran (offscreen: would have run).
     std::vector<std::string> play_command(f64 x, f64 y) const;
-    // Where the game started from here writes the links that happen.
-    static std::filesystem::path fired_file();
+    const std::vector<std::string>& last_play() const { return last_play_; }
+    // Where the game started from here keeps its player's files, and the links that happen.
+    std::filesystem::path play_dir() const;
+    std::filesystem::path fired_file() const { return play_dir() / "logic_fired.txt"; }
 
     std::string title() const { return module_.title(); }
     std::string status() const;
@@ -442,6 +447,7 @@ private:
     f64 map_cx_ = 0, map_cy_ = 0; // the map's centre, in tiles
 
     SDL_Process* game_ = nullptr;
+    std::vector<std::string> last_play_;
 
     // Objects
     i32 object_ = -1;              // armed palette object
