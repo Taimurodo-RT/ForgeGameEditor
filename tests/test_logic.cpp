@@ -929,10 +929,13 @@ struct GoGame final : Game {
     void hint(flecs::entity_t, std::string_view) override {}
     void sound(flecs::entity_t, std::string_view) override {}
     bool night() override { return false; }
-    Runtime* drop = nullptr; // the game drops the going at once (another one of the tick won)
+    Runtime* rt = nullptr;
+    std::vector<u64> calls; // the call that asked each going (Runtime::asking)
+    bool drop = false;      // the game drops the going at once (another one of the tick won)
     bool go(flecs::entity_t hero, std::string_view level, std::string_view arrive, u32 link) override {
         gos.push_back((hero == hero_e ? "hero " : "? ") + std::string(level) + " " + std::string(arrive) + " " + std::to_string(link));
-        if (drop) drop->take_back_first(link);
+        calls.push_back(rt ? rt->asking() : 0);
+        if (drop) rt->take_back_first(calls.back(), link);
         return true;
     }
 };
@@ -1117,6 +1120,7 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     library.attach(scene);
     GoGame game;
     Runtime runtime(scripts, library, game);
+    game.rt = &runtime;
     const world::Rect view{-64, -64, 128, 64};
     auto run = [&](u32 ticks) {
         for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
@@ -1146,13 +1150,15 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     run(1);
     REQUIRE(game.gos.size() == 1);
     CHECK(game.gos[0] == "hero cave " + std::string(kEntry) + " " + std::to_string(id));
+    CHECK(game.calls[0] != 0);
+    CHECK(runtime.asking() == 0);
     // The game did not go (it refused, or another going of the tick won): the mark is taken back, the hero has
     // nothing of it, and the next time in the link asks again.
     const std::string mark = "связь " + std::to_string(id);
     CHECK((hero.try_get<script::ScriptVars>() && hero.try_get<script::ScriptVars>()->find(mark)));
-    CHECK(runtime.take_back_first(id));
+    CHECK(runtime.take_back_first(game.calls.back(), id));
     CHECK_FALSE(hero.has<script::ScriptVars>());
-    CHECK_FALSE(runtime.take_back_first(id));
+    CHECK_FALSE(runtime.take_back_first(game.calls.back(), id));
     runtime.area_event(kExit, hero.id(), false);
     run(1);
     runtime.area_event(kExit, hero.id(), true);
@@ -1161,7 +1167,8 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     // A hero with variables of its own keeps them as they were.
     hero.get_mut<script::ScriptVars>().get_or_add("ключ").x = 3;
     hero.get_mut<script::ScriptVars>().get_or_add("ключ").kind = script::VarKind::Number;
-    CHECK(runtime.take_back_first(id));
+    CHECK_FALSE(runtime.take_back_first(game.calls[0], id)); // not the mark of an earlier call
+    CHECK(runtime.take_back_first(game.calls.back(), id));
     REQUIRE(hero.try_get<script::ScriptVars>());
     CHECK_FALSE(hero.try_get<script::ScriptVars>()->find(mark));
     CHECK(hero.try_get<script::ScriptVars>()->find("ключ")->x == 3);
@@ -1170,9 +1177,9 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     runtime.area_event(kExit, hero.id(), true);
     run(1);
     REQUIRE(game.gos.size() == 3);
-    // It went: the marks of the frame stay.
+    // It went: the marks of the frame stay (the call is over).
     runtime.keep_firsts();
-    CHECK_FALSE(runtime.take_back_first(id));
+    CHECK_FALSE(runtime.take_back_first(game.calls.back(), id));
     // Only once: the hero keeps it, as for any area.
     runtime.area_event(kExit, hero.id(), false);
     run(1);
@@ -1204,12 +1211,12 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     CHECK(problems.empty());
     flecs::entity other = scene.spawn(scene::Position::at_tile(24, 5.5));
     game.hero_e = other.id();
-    game.drop = &runtime;
+    game.drop = true;
     runtime.area_event(kExit, other.id(), true);
     run(1);
     REQUIRE(game.gos.size() == 5);
     CHECK_FALSE(other.has<script::ScriptVars>());
-    game.drop = nullptr;
+    game.drop = false;
     runtime.area_event(kExit, other.id(), false);
     run(1);
     runtime.area_event(kExit, other.id(), true);
@@ -1217,6 +1224,66 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     REQUIRE(game.gos.size() == 6);
     runtime.keep_firsts();
     CHECK((other.try_get<script::ScriptVars>() && other.try_get<script::ScriptVars>()->find(mark)));
+
+    // A scheme that waits between «Только один раз» and «Перейти на уровень»: while its call waits, frame after
+    // frame, its mark stays undoable; the game refuses the going at last and the mark goes (no other's); in again,
+    // it asks again; a going not refused keeps its mark once the call is over.
+    script::Graph g;
+    g.name = "link " + std::to_string(id);
+    const u32 when = g.add("logic.when", 0, 0).uid;
+    const u32 once = g.add("logic.once", 280, 0).uid;
+    script::GraphNode& wait = g.add("api.wait", 560, 0);
+    wait.set_value("seconds", "0.3");
+    const u32 pause = wait.uid;
+    script::GraphNode& go_node = g.add("logic.go", 840, 0);
+    go_node.set_value("level", "cave");
+    go_node.set_value("arrive", kEntry);
+    const u32 going = go_node.uid;
+    g.link(when, script::kFlowNext, once);
+    g.link(once, "first", pause);
+    g.link(pause, script::kFlowNext, going);
+    g.link(when, "a", going, "who");
+    logic.find(id)->graph = g.to_json();
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    REQUIRE(runtime.compiled().modules.size() == 1);
+    CHECK(runtime.compiled().modules[0].source.find("wait(") != std::string::npos); // the scheme's own code waits
+    flecs::entity third = scene.spawn(scene::Position::at_tile(28, 5.5));
+    game.hero_e = third.id();
+    const usize asked = game.gos.size();
+    auto marked = [&](flecs::entity e) { return e.try_get<script::ScriptVars>() && e.try_get<script::ScriptVars>()->find(mark); };
+    runtime.area_event(kExit, third.id(), true);
+    for (int i = 0; i < 10; ++i) {
+        run(1);
+        runtime.keep_firsts();
+    }
+    CHECK(game.gos.size() == asked); // still waiting
+    CHECK(marked(third));
+    for (int i = 0; i < 30 && game.gos.size() == asked; ++i) {
+        run(1);
+        if (game.gos.size() == asked) runtime.keep_firsts();
+    }
+    REQUIRE(game.gos.size() == asked + 1);
+    CHECK(game.gos.back() == "hero cave " + std::string(kEntry) + " " + std::to_string(id));
+    CHECK(runtime.take_back_first(game.calls.back(), id));
+    runtime.keep_firsts();
+    CHECK_FALSE(marked(third));
+    CHECK(marked(other)); // a mark of another call, over, stays
+    runtime.area_event(kExit, third.id(), false);
+    run(1);
+    runtime.area_event(kExit, third.id(), true);
+    for (int i = 0; i < 40 && game.gos.size() == asked + 1; ++i) {
+        run(1);
+        runtime.keep_firsts();
+    }
+    REQUIRE(game.gos.size() == asked + 2);
+    CHECK_FALSE(runtime.take_back_first(game.calls.back(), id));
+    CHECK(marked(third));
+    runtime.area_event(kExit, third.id(), false);
+    run(1);
+    runtime.area_event(kExit, third.id(), true);
+    run(30);
+    CHECK(game.gos.size() == asked + 2); // only once
     CHECK(scripts.errors().empty());
 }
 

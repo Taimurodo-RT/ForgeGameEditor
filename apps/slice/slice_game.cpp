@@ -473,15 +473,16 @@ void SliceGame::do_deeds() {
 
 void SliceGame::ask_travel(std::string level, std::string arrive, u32 link) {
     if (!running_ || !level_) return;
+    const u64 call = level_->links->asking();
     if (trip_) {
         ++travels_dropped_;
         // Its «Только один раз» does not stand: it did not send the hero anywhere.
-        level_->links->take_back_first(link);
+        level_->links->take_back_first(call, link);
         FORGE_INFO("slice: переход на «%s» (связь %u) не нужен: в этом шаге герой уже уходит на «%s»", level.c_str(), link,
                    trip_->level.c_str());
         return;
     }
-    trip_ = Trip{std::move(level), std::move(arrive), link};
+    trip_ = Trip{std::move(level), std::move(arrive), link, call};
     // This tick is the level's last: the ticks left of the frame do not run in it.
     level_->sim->stop_ticks();
 }
@@ -555,7 +556,8 @@ void SliceGame::travel() {
     const std::string name = to ? to->name : trip.level;
     auto refuse = [&](const std::string& why) {
         // The link's «Только один раз» stands only if the hero went.
-        level_->links->take_back_first(trip.link);
+        level_->links->take_back_first(trip.call, trip.link);
+        ++travels_refused_;
         travel_problem_ = why;
         FORGE_WARN("slice: переход на «%s» не сделан: %s", name.c_str(), why.c_str());
         shell_->toast("Перехода не будет: " + why);
@@ -1060,7 +1062,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
         level_id_ = saved.level;
     }
     trip_.reset();
-    travels_ = travels_dropped_ = 0;
+    travels_ = travels_dropped_ = travels_refused_ = 0;
     travel_problem_.clear();
     level_screens_.clear();
     deeds_.clear();
@@ -1871,7 +1873,8 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
         travel();
         if (!level_) return; // could not go, nor put the session back: the main menu
     }
-    // The links' «Только один раз» of this frame stand: a going one of them asked for is done or refused.
+    // The links' «Только один раз» stand once their call is over and a going it asked for is done or refused; a
+    // call still waiting may yet ask to go.
     level_->links->keep_firsts();
     sync_doors(*level_->scene);
     if (!level_->hero.is_alive()) find_hero();

@@ -425,11 +425,15 @@ public:
     // tick's triggers (ScriptHost::enter). The game checks where the hero is.
     void area_event(std::string_view area, flecs::entity_t hero, bool entered);
     // «Только один раз» of a link that sends the hero elsewhere stands only if the game went: the game takes back
-    // the mark of a going it refused or dropped (another link of the tick went first). take_back_first: the latest
-    // mark of the link made since keep_firsts, undone (the entity's variables as before it); false when there is
-    // none. keep_firsts: the marks made so far stay (the game calls it after each frame's goings).
-    bool take_back_first(u32 link);
-    void keep_firsts() { fresh_.clear(); }
+    // the mark of a going it refused or dropped (another link of the tick went first), however long the link's code
+    // waited between the mark and the going. asking: the handler call (ScriptHost::running_call) asking to go now,
+    // inside Game::go (0 elsewhere): the game keeps it with the going. take_back_first: the marks that call made
+    // for the link, undone (the entity's variables as before them); false when there are none. keep_firsts: the
+    // marks of calls that are over stand (the game calls it after each frame's goings); a call that still waits
+    // keeps its marks undoable until it ends.
+    u64 asking() const { return asking_; }
+    bool take_back_first(u64 call, u32 link);
+    void keep_firsts();
     // The entity standing for an area; 0 when no link listens to it.
     flecs::entity_t area_entity(std::string_view area) const;
     bool is_area_entity(flecs::entity_t e) const;
@@ -461,14 +465,16 @@ private:
     std::vector<Thing> other_areas_;
     std::vector<Thing> levels_;
     std::unordered_map<std::string, flecs::entity_t> area_entities_; // area -> its entity
-    // Marks first() made since keep_firsts, oldest first, with what the entity had before.
+    // Marks first() made by calls not over at the last keep_firsts, oldest first, with what the entity had before.
     struct Mark {
         flecs::entity_t entity = 0;
         u32 link = 0;
+        u64 call = 0; // the handler call that made it
         bool had_vars = false, had_var = false;
         script::ScriptVar was;
     };
     std::vector<Mark> fresh_;
+    u64 asking_ = 0;
 };
 
 } // namespace forge::logic

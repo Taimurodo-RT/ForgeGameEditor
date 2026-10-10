@@ -67,7 +67,10 @@ struct Api {
     static int go(lua_State* L) {
         Runtime& r = rt(L);
         const u32 link = static_cast<u32>(lua_isnumber(L, 4) ? lua_tonumber(L, 4) : 0);
-        if (!r.game_.go(entity_arg(L, 1), string_arg(L, 2), string_arg(L, 3), link)) {
+        r.asking_ = r.host_.running_call();
+        const bool can = r.game_.go(entity_arg(L, 1), string_arg(L, 2), string_arg(L, 3), link);
+        r.asking_ = 0;
+        if (!can) {
             static bool said = false;
             if (!said) FORGE_WARN("Связи: игра не умеет переходить на другой уровень");
             said = true;
@@ -109,7 +112,7 @@ struct Api {
             lua_pushboolean(L, false);
             return 1;
         }
-        Runtime::Mark m{e, static_cast<u32>(lua_tonumber(L, 2)), before != nullptr, false, {}};
+        Runtime::Mark m{e, static_cast<u32>(lua_tonumber(L, 2)), r.host_.running_call(), before != nullptr, false, {}};
         if (const script::ScriptVar* had = before ? before->find(key) : nullptr) m.had_var = true, m.was = *had;
         r.fresh_.push_back(std::move(m));
         script::ScriptVars& vars = ecs.entity(e).ensure<script::ScriptVars>();
@@ -251,28 +254,36 @@ flecs::entity_t Runtime::area_entity(std::string_view area) const {
     return it == area_entities_.end() ? 0 : it->second;
 }
 
-bool Runtime::take_back_first(u32 link) {
-    auto it = std::find_if(fresh_.rbegin(), fresh_.rend(), [&](const Mark& m) { return m.link == link; });
-    if (it == fresh_.rend()) return false;
-    const Mark m = std::move(*it);
-    fresh_.erase(std::next(it).base());
+bool Runtime::take_back_first(u64 call, u32 link) {
+    bool any = false;
     flecs::world& ecs = host_.scene().ecs();
-    if (!m.entity || !ecs.is_alive(m.entity)) return true;
-    flecs::entity e = ecs.entity(m.entity);
-    script::ScriptVars* vars = e.try_get_mut<script::ScriptVars>();
-    if (!vars) return true;
     const std::string key = "связь " + std::to_string(link);
-    if (m.had_var) {
-        vars->get_or_add(key) = m.was;
-    } else {
-        std::erase_if(vars->vars, [&](const script::ScriptVar& v) { return v.name == key; });
-        if (!m.had_vars && vars->vars.empty()) {
-            e.remove<script::ScriptVars>();
-            return true;
+    // Newest first: an entity's variables go back to what they were before the oldest.
+    for (usize i = fresh_.size(); i-- > 0;) {
+        if (fresh_[i].call != call || fresh_[i].link != link) continue;
+        const Mark m = std::move(fresh_[i]);
+        fresh_.erase(fresh_.begin() + static_cast<std::ptrdiff_t>(i));
+        any = true;
+        if (!m.entity || !ecs.is_alive(m.entity)) continue;
+        flecs::entity e = ecs.entity(m.entity);
+        script::ScriptVars* vars = e.try_get_mut<script::ScriptVars>();
+        if (!vars) continue;
+        if (m.had_var) {
+            vars->get_or_add(key) = m.was;
+        } else {
+            std::erase_if(vars->vars, [&](const script::ScriptVar& v) { return v.name == key; });
+            if (!m.had_vars && vars->vars.empty()) {
+                e.remove<script::ScriptVars>();
+                continue;
+            }
         }
+        e.modified<script::ScriptVars>();
     }
-    e.modified<script::ScriptVars>();
-    return true;
+    return any;
+}
+
+void Runtime::keep_firsts() {
+    std::erase_if(fresh_, [&](const Mark& m) { return !host_.call_waits(m.call); });
 }
 
 bool Runtime::is_area_entity(flecs::entity_t e) const {

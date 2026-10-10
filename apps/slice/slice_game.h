@@ -216,12 +216,14 @@ public:
     // Going to another level («уходит на уровень»): a link asks, the game goes after the tick
     // (14.2-платформер-модель.md, «Порядок перехода в игре»). go_to asks as a link does (link 0); the first ask
     // of a tick wins. A going not done (refused, or dropped) leaves the game and the session as they were and its
-    // link's «Только один раз» unmarked. travels: how many went since the game began or was loaded; travel_problem:
+    // link's «Только один раз» unmarked (however long its code waited before asking). travels, travels_dropped,
+    // travels_refused: how many went, were dropped, were refused since the game began or was loaded; travel_problem:
     // why the last one did not go ("" when it went).
     void go_to(std::string level, std::string arrive = {}) { ask_travel(std::move(level), std::move(arrive), 0); }
     u32 travels() const { return travels_; }
     const std::string& travel_problem() const { return travel_problem_; }
     u32 travels_dropped() const { return travels_dropped_; }
+    u32 travels_refused() const { return travels_refused_; }
     // For the self-test: the next going fails at this step as if the disk refused (Save: the left level is not
     // written; Move: the session's world does not move aside; Make: the level gone to does not open; Back: the level
     // gone to does not move into the session, nor does the session's world move back).
@@ -366,9 +368,10 @@ private:
     struct Trip {
         std::string level, arrive;
         u32 link = 0;
+        u64 call = 0; // the links' call that asked (logic::Runtime::asking)
     };
     std::optional<Trip> trip_;
-    u32 travels_ = 0, travels_dropped_ = 0;
+    u32 travels_ = 0, travels_dropped_ = 0, travels_refused_ = 0;
     std::string travel_problem_;
     TravelFault travel_fault_ = TravelFault::None;
     std::set<std::string> level_screens_; // opened by this level's links and schemes

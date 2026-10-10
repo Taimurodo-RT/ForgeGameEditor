@@ -63,6 +63,8 @@ struct ScriptHost::Impl {
     std::unordered_map<std::string, Exposed> exposed;
     std::vector<lua_State*> pool;               // idle threads, reset
     std::unordered_map<lua_State*, int> refs;   // every thread we made -> its registry ref
+    std::unordered_map<lua_State*, u64> calls;  // threads in use -> the call each runs (ScriptHost::running_call)
+    u64 last_call = 0;
     std::vector<Wait> waits;
     std::vector<Message> outbox, inbox;
     std::vector<sim::TriggerEvent> areas; // ScriptHost::enter, for the next dispatch of triggers
@@ -72,6 +74,7 @@ struct ScriptHost::Impl {
 
     // The call running now.
     flecs::entity_t current_entity = 0;
+    u64 current_call = 0;
     const Module* current_module = nullptr;
     bool in_call = false;
     u64 call_start_ns = 0; // 0 until the budget check first looks at the clock

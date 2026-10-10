@@ -70,18 +70,27 @@ void* ScriptHost::user(std::string_view key) const {
 }
 
 flecs::entity_t ScriptHost::running() const { return impl_->current_entity; }
+u64 ScriptHost::running_call() const { return impl_->current_call; }
+bool ScriptHost::call_waits(u64 call) const {
+    if (!call) return false;
+    for (const ScriptHost::Impl::Wait& w : impl_->waits)
+        if (auto it = impl_->calls.find(w.thread); it != impl_->calls.end() && it->second == call) return true;
+    return false;
+}
 
 bool ScriptHost::api_built() const { return impl_->api_ready; }
 
 lua_State* ScriptHost::Impl::acquire(lua_State* L) {
+    lua_State* t = nullptr;
     if (!pool.empty()) {
-        lua_State* t = pool.back();
+        t = pool.back();
         pool.pop_back();
-        return t;
+    } else {
+        t = lua_newthread(L);
+        refs[t] = lua_ref(L, -1);
+        lua_pop(L, 1);
     }
-    lua_State* t = lua_newthread(L);
-    refs[t] = lua_ref(L, -1);
-    lua_pop(L, 1);
+    calls[t] = ++last_call;
     return t;
 }
 
@@ -90,6 +99,7 @@ void ScriptHost::Impl::release(lua_State* thread, bool finished) {
     // failed or is dropped while waiting needs a full reset.
     if (finished) lua_settop(thread, 0);
     else lua_resetthread(thread);
+    calls.erase(thread);
     pool.push_back(thread);
 }
 
@@ -415,10 +425,13 @@ struct Caller {
     int resume(lua_State* T, int nargs, const ScriptHost::Impl::Module* m, flecs::entity_t e) {
         im.current_entity = e;
         im.current_module = m;
+        auto call = im.calls.find(T);
+        im.current_call = call == im.calls.end() ? 0 : call->second;
         im.begin_call();
         const int status = lua_resume(T, L, nargs);
         im.in_call = false;
         im.current_entity = 0;
+        im.current_call = 0;
         im.current_module = nullptr;
         ++stats.calls;
         return status;
