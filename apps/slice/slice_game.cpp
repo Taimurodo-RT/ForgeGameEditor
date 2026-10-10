@@ -824,13 +824,19 @@ void SliceGame::hurt_hero(f64 n) {
 }
 
 // With no hearts left and no window «при поражении» in the game: as before 14.2c, full hearts and the hero wakes up in
-// the village (a level with nothing around: at its spawn point).
-void SliceGame::wake_up() {
-    shell_->vars().set("hero.hearts", kHearts);
+// the village (a level with nothing around: at its spawn point). fell: the hearts went in a pit (its heart, or nowhere
+// to put the hero back from it).
+void SliceGame::wake_up(bool fell) {
     // The village's start first (or the spawn point of a level with nothing around), checked as a return is; none
-    // will do: where it is.
+    // will do: where it is, unless that is a pit, where there is nothing to stand on: then the game is lost.
     f64 x = 0, y = 0;
     const char* where = return_spot(true, x, y);
+    if (!where && fell) {
+        FORGE_WARN("slice: герою негде очнуться, а он в пропасти: поражение");
+        finish(false);
+        return;
+    }
+    shell_->vars().set("hero.hearts", kHearts);
     shell_->toast(where == kStartPlace && !level_->around.empty_around ? "Герой очнулся в деревне" : "Герой очнулся");
     if (where) teleport(x, y - kHeroHalfH);
 }
@@ -998,8 +1004,9 @@ void SliceGame::settle() {
         return;
     }
     if (out_of_hearts_) {
+        const bool fell = fell_;
         out_of_hearts_ = back_asked_ = fell_ = false;
-        hearts_out();
+        hearts_out(fell);
         return;
     }
     if (back_asked_) {
@@ -1009,14 +1016,14 @@ void SliceGame::settle() {
         // In a pit there is nothing to stand on: with nowhere to go back to, as the last heart.
         FORGE_WARN("slice: из зоны «падает в» вернуть героя некуда: как последнее сердце");
         shell_->vars().set("hero.hearts", 0.0);
-        hearts_out();
+        hearts_out(true);
     }
 }
 
-// No hearts left: the end when the game has a window «при поражении», else the old waking up.
-void SliceGame::hearts_out() {
+// No hearts left: the end when the game has a window «при поражении», else the old waking up. fell: in a pit.
+void SliceGame::hearts_out(bool fell) {
     if (!shell_->screens().endings("lose").empty()) finish(false);
-    else wake_up();
+    else wake_up(fell);
 }
 
 bool SliceGame::in_pit(f64 x, f64 y) const {
@@ -1114,7 +1121,7 @@ void SliceGame::finish(bool won) {
     controls_ = {};
     shell_->vars().set("game.result", std::string(won ? "победа" : "поражение"));
     const u32 shown = shell_->screens().show_ending(won ? "win" : "lose");
-    if (won && shown == 0) shell_->toast("Победа!");
+    if (shown == 0) shell_->toast(won ? "Победа!" : "Поражение");
     // The world stands: no object sounds, no place music (the windows may play their own).
     sounds_.stop_objects();
     shell_->screens().set_place_music({});

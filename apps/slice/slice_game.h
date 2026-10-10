@@ -328,8 +328,8 @@ private:
     void contacts_tick(const forge::sim::TickContext& ctx);
     void lose_hearts(f64 n);
     void settle();
-    void wake_up();
-    void hearts_out();
+    void wake_up(bool fell);
+    void hearts_out(bool fell);
     bool go_back();
     const char* return_spot(bool waking, f64& x, f64& y);
     bool in_pit(f64 x, f64 y) const;

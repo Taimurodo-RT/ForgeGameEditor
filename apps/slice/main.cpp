@@ -154,7 +154,8 @@ constexpr f64 kCoin2X = 8.5, kLoudX = 18.5, kSpikesX = 30.5, kWandererX = 64.5;
 // «Гудящий зверёк» (a sound near it), a «Монетка» and a «Ёж» where the game is lost, a «Монетка» in «Финиш», a «Ряд
 // шипов» over the places the hero is put back in. kGemLink: that link.
 constexpr u64 kGem = 0x142c000000000301, kHum = 0x142c000000000302, kEndCoin = 0x142c000000000303, kEndHedge = 0x142c000000000304,
-              kWinCoin = 0x142c000000000305, kWinHum = 0x142c000000000306, kOver = 0x142c000000000307;
+              kWinCoin = 0x142c000000000305, kWinHum = 0x142c000000000306, kOver = 0x142c000000000307,
+              kOverGround = 0x142c000000000308;
 constexpr u32 kGemLink = 205;
 constexpr f64 kGemX = 12.5, kOverX = 1.5; // «Ряд шипов» at kOverX: from 0 to 3
 // How far before an enemy the running hero jumps to come down onto it (a jump of 15.5 tiles / s at 8.5 tiles / s).
@@ -5726,6 +5727,97 @@ private:
                 }
                 check(g.backs() == st->backs0 + 1 && at(std::floor(st->gx) + 0.5), "вернулся туда, где стоял" + where());
                 check(!g.lost() && g.endings() == 0, "игра идёт");
+                return true;
+            }});
+            // And with the last place on the floor under spikes too: from «Яма» nowhere to go back to and nowhere to
+            // wake up in, and in a pit there is nothing to stand on: the game is lost without a window. The world
+            // stands (the keys move nothing, no ticks), saving is refused, loading goes on.
+            steps_.push_back({"без окна поражения: из «Ямы» некуда вернуть и негде очнуться — поражение, загрузка выводит", 300,
+                              [&s, &g, this, st, put, keys, where, num, ticks](u32 f) {
+                if (f == 0) {
+                    check(g.level_id() == "hill" && !g.lost(), "на «Холме», игра идёт" + where());
+                    check(g.spawn_copy("spikes_row", g.hero_x(), st->v, plat::kOverGround) != 0,
+                          "«Ряд шипов» и над местом, где герой последний раз стоял на полу");
+                    g.hurt(g.hearts() - 3);
+                    put(41.5, st->v - 2); // over «Яма»
+                    st->falls0 = g.falls();
+                    st->backs0 = g.backs();
+                    st->nowheres0 = g.nowheres();
+                    st->at = 0;
+                    return false;
+                }
+                if (!st->at) {
+                    if (!g.lost()) {
+                        if (f < 120) return false;
+                        check(false, "нет поражения: сердец " + num(g.hearts()) + where());
+                        return true;
+                    }
+                    check(g.falls() == st->falls0 + 1 && g.backs() == st->backs0, "упал в «Яму», переноса нет");
+                    check(g.nowheres() == st->nowheres0 + 2,
+                          "вернуть некуда и очнуться негде: искалось " + std::to_string(g.nowheres() - st->nowheres0) + " раза");
+                    check(g.hearts() == 0 && g.endings() == 1 && s.screens().endings("lose").empty(), "поражение без окна, сердец 0");
+                    std::string why;
+                    check(!g.can_save(&why) && why == "игра окончена", "игра сохраняться не даёт: «" + why + "»");
+                    st->x0 = g.hero_x();
+                    st->y0 = g.hero_y();
+                    st->at = f;
+                    keys(false, true, true);
+                    return false;
+                }
+                if (f < st->at + 60) {
+                    if (f > st->at + 1 && ticks() != 0) {
+                        check(false, "мир идёт: тиков в кадре " + std::to_string(ticks()));
+                        return true;
+                    }
+                    return false;
+                }
+                if (f == st->at + 60) {
+                    check(g.hero_x() == st->x0 && g.hero_y() == st->y0 && g.lost() && g.endings() == 1,
+                          "герой стоит, хоть кнопки нажаты, поражение одно" + where());
+                    g.script(Controls{});
+                    check(s.load("самоцвет"), "сохранение загружается (F9)");
+                    return false;
+                }
+                if (f < st->at + 75) return false;
+                check(g.running() && !g.lost() && g.endings() == 0 && g.can_save(nullptr), "после загрузки игра идёт, сохранять можно");
+                check(g.level_id() == "level" && g.hearts() > 0, "на «Луге», где сохранились" + where());
+                return true;
+            }});
+            // The same with the last heart taken by «Яма» itself: no hearts, no window, nowhere to wake up in.
+            steps_.push_back({"без окна поражения: последнее сердце снимает «Яма», очнуться негде — поражение", 300,
+                              [&s, &g, this, st, put, at, where, num](u32 f) {
+                if (f == 0) {
+                    g.go_to("hill", area_thing_id(plat::kEntry));
+                    return false;
+                }
+                if (f < 10) return false;
+                if (f == 10) {
+                    check(g.level_id() == "hill" && at(1.5), "на «Холме», во «Входе»" + where());
+                    g.hurt(g.hearts() - 1);
+                    st->at = 0;
+                    return false;
+                }
+                if (!st->at) {
+                    if (g.safe_time() > 0) return false;
+                    check(g.hearts() == 1 && at(1.5), "одно сердце, неуязвимости нет, во «Входе»" + where());
+                    check(g.spawn_copy("spikes_row", plat::kOverX, st->v, plat::kOver) != 0,
+                          "«Ряд шипов» под «Входом» (1,5), стартом игры (2,5) и местом, где герой стоял (1,5)");
+                    put(41.5, st->v - 2); // over «Яма»
+                    st->falls0 = g.falls();
+                    st->backs0 = g.backs();
+                    st->nowheres0 = g.nowheres();
+                    st->at = f;
+                    return false;
+                }
+                if (!g.lost()) {
+                    if (f < st->at + 120) return false;
+                    check(false, "нет поражения: сердец " + num(g.hearts()) + where());
+                    return true;
+                }
+                check(g.falls() == st->falls0 + 1 && g.backs() == st->backs0, "упал в «Яму», переноса нет");
+                check(g.nowheres() == st->nowheres0 + 1,
+                      "очнуться негде: искалось " + std::to_string(g.nowheres() - st->nowheres0) + " раз");
+                check(g.hearts() == 0 && g.endings() == 1 && s.screens().endings("lose").empty(), "поражение без окна, сердец 0");
                 return true;
             }});
             return;
