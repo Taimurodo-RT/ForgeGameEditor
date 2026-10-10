@@ -189,6 +189,9 @@ public:
     bool set_sounds(flecs::entity_t e, const Sounds& sounds);
     // The loaded copies of a template (by its id).
     std::vector<flecs::entity_t> copies_of(std::string_view template_id) const;
+    // The game's templates, and the picture the copies of one are drawn with (null: their usual frame).
+    const forge::objects::Library& library() const { return library_; }
+    const Pictures::Picture* picture_of(std::string_view template_id) const;
     // A copy of a template with a level's id of its own, as one the author put on the level (the id stays with it
     // through saves), and the copy of that id in the level now (0: none).
     flecs::entity_t spawn_copy(std::string_view template_id, f64 x, f64 feet_y, forge::u64 id);

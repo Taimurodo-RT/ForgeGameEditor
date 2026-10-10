@@ -77,6 +77,7 @@ FORGE_REFLECT(slice::ProjectEdits, 1) {
     t.field("tp_win_again", &slice::ProjectEdits::tp_win_again);
     t.field("tp_win_again_label", &slice::ProjectEdits::tp_win_again_label);
     t.field("tp_win_again_text", &slice::ProjectEdits::tp_win_again_text);
+    t.field("tp_twin", &slice::ProjectEdits::tp_twin);
 }
 
 namespace slice {

@@ -915,6 +915,7 @@ private:
             f64 score0 = 0, coins0 = 0, fastest = 0;
             std::map<flecs::entity_t, f64> was;
             std::string level0;
+            std::array<u32, 2> seen{}; // the frames of the author's «Копия» seen walking
         };
         auto st = std::make_shared<State>();
         auto put = [&g](f64 feet_x, f64 feet_y) { g.teleport(feet_x, feet_y - kHeroHalfH); };
@@ -1190,6 +1191,45 @@ private:
             f64 x = 0, y = 0;
             check(g.running() && !g.won() && g.endings() == 0 && !s.screens().shown(e.tp_win), "новая игра, окна нет" + state());
             check(g.level_id() == e.level && g.hearts() == 3 && g.score() == 0 && coin(x, y), "на «" + e.level_name + "», три сердца, монетка автора лежит" + state());
+            return true;
+        }});
+        // The author's «Копия» of «Жук»: its own template, the same strip of two frames, drawn so on the level.
+        steps_.push_back({"«Копия» «Жука» автора: те же два кадра на уровне", 200, [&s, &g, this, st](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (e.tp_twin.empty()) return true;
+            constexpr u64 kTwin = 0x142d7e57000001ull;
+            if (f == 0) {
+                const Pictures::Picture *twin = g.picture_of(e.tp_twin), *beetle = g.picture_of(e.tp_enemy);
+                check(twin && beetle && twin->frames == 2 && beetle->frames == 2 && twin->aspect == beetle->aspect,
+                      "«Копия» рисуется полосой «Жука»: кадров " + std::to_string(twin ? twin->frames : 0));
+                check(g.spawn_copy(e.tp_twin, g.hero_x() + 13, 0, kTwin) != 0, "«Копия» на «Луге»");
+                st->was.clear();
+                st->at = 0;
+                return false;
+            }
+            const flecs::entity_t c = g.copy_with_id(kTwin);
+            f64 x = 0, y = 0;
+            if (!c || !g.position_of(c, x, y)) return check_ok(false, "«Копии» на уровне нет");
+            if (f < 10) {
+                st->was[c] = x;
+                return false;
+            }
+            const bool walking = std::fabs(x - st->was[c]) > 0.01;
+            st->was[c] = x;
+            if (walking) {
+                std::vector<u8> px;
+                u32 w = 0, h = 0;
+                std::vector<u8> bytes;
+                assets::CookedTexture strip;
+                const objects::Template* t = g.library().find(e.tp_twin);
+                if (t && read_file(g.library().picture_file(*t), bytes) && assets::decode_image(bytes, strip) && frame_pixels(s, px, w, h)) {
+                    const Match m = drawn_frame(px, w, h, g.camera(), x, y, 1, 1, strip, 2, 4);
+                    if (m.score > 0.85) ++st->seen[m.frame];
+                }
+            }
+            if (f < 150 && (st->seen[0] < 3 || st->seen[1] < 3)) return false;
+            check(st->seen[0] >= 3 && st->seen[1] >= 3,
+                  "идёт: на экране оба кадра, а не вся полоса: " + std::to_string(st->seen[0]) + " и " + std::to_string(st->seen[1]));
             return true;
         }});
     }
@@ -7636,6 +7676,98 @@ private:
                     pics.update(lib, base, sheet);
                     check(pics.of(beetle_key) && pics.of(beetle_key)->frames == 1 && std::fabs(pics.of(beetle_key)->aspect - 2.0f) < 1e-6f,
                           "ширину 64 не делят 3 кадра: картинка целиком, один кадр");
+                }
+                // A hero of 3 frames (128 does not divide into them) and one of 4 frames 130 wide are no hero's, though
+                // first by id: the game draws by «a_hero» still, and hero_picture_ok (the editor's note) says the same.
+                auto strip_png = [&dir](const char* name, u32 w, u32 ht, u32 frames, auto colour) {
+                    assets::CookedTexture t;
+                    t.width = w;
+                    t.height = ht;
+                    t.rgba8.resize(static_cast<usize>(w) * ht * 4);
+                    for (u32 y = 0; y < ht; ++y)
+                        for (u32 x = 0; x < w; ++x) {
+                            const std::array<u8, 4> c = colour(x / (w / frames));
+                            std::copy(c.begin(), c.end(), &t.rgba8[(static_cast<usize>(y) * w + x) * 4]);
+                        }
+                    std::vector<u8> png;
+                    return assets::encode_image(t, ".png", png) && write_file_atomic(dir / "pictures" / utf8_path(name), png);
+                };
+                // Frame k of a test strip: a colour of its own, opaque.
+                auto colour = [](u32 k) { return std::array<u8, 4>{static_cast<u8>(20 + k * 29), static_cast<u8>(230 - k * 23), static_cast<u8>(k % 2 ? 60 : 190), 255}; };
+                check(put("a0_hero", "герой.png", 3) && strip_png("герой130.png", 130, 64, 1, colour) && put("a1_hero", "герой130.png", 4),
+                      "«Герой» на 3 кадра и «Герой» на 4 кадра шириной 130");
+                lib.reload_templates();
+                pics.update(lib, base, sheet);
+                check(pics.hero() && pics.hero() == pics.of(lib.find("a_hero")->key),
+                      "3 кадра и неделимая ширина — не герой, хоть и первые по id: рисует «a_hero»");
+                check(pics.of(lib.find("a0_hero")->key) && pics.of(lib.find("a0_hero")->key)->frames == 1, "у «a0_hero» картинка целиком");
+                std::string why0, why1;
+                check(!slice::hero_picture_ok(lib, *lib.find("a0_hero"), &why0) && !slice::hero_picture_ok(lib, *lib.find("a1_hero"), &why1) &&
+                          slice::hero_picture_ok(lib, *lib.find("a_hero")) && slice::hero_picture_ok(lib, *lib.find("hero_look")) &&
+                          !slice::hero_picture_ok(lib, *lib.find("aa_hero")),
+                      "правило героя для редактора то же: «" + why0 + "», «" + why1 + "»");
+                // Strips at the sheet's limits, each frame its own colour: 8 frames of 32 and 4 of 256 (a frame as wide as
+                // a picture may be), and 8 frames of 256 × 512 scaled down to 128 × 256; on a sheet as narrow as it gets
+                // (no drawn frames: kMaxSide + 2) and on one 512 wide. Every frame inside the sheet, apart from the
+                // others, all of its pixels its frame's colour.
+                struct Strip {
+                    const char* id;
+                    const char* file;
+                    u32 w, h, frames, fw, fh;
+                };
+                const Strip strips[] = {{"strip8", "полоса8.png", 256, 32, 8, 32, 32},
+                                        {"strip4", "полоса4.png", 1024, 64, 4, 256, 64},
+                                        {"strip8_big", "полоса8_большая.png", 2048, 512, 8, 128, 256}};
+                bool written = true;
+                for (const Strip& p : strips) {
+                    written &= strip_png(p.file, p.w, p.h, p.frames, colour);
+                    const std::string json = std::string("{\"id\": \"") + p.id + "\", \"name\": \"" + p.id + "\", \"kind\": \"picture\", \"picture\": \"" +
+                                             p.file + "\", \"frames\": " + std::to_string(p.frames) + "}\n";
+                    written &= write_file_atomic(dir / "objects" / (std::string(p.id) + ".object.json"),
+                                                 {reinterpret_cast<const u8*>(json.data()), json.size()});
+                }
+                if (!check_ok(written, "полосы записаны")) return true;
+                lib.reload_templates();
+                demo::SheetImage wide;
+                wide.width = 512;
+                wide.height = 32;
+                wide.rgba.assign(512 * 32 * 4, 255);
+                wide.frames = {{0, 0, 512, 32}};
+                for (const demo::SheetImage* under : {&base, &wide}) {
+                    Pictures fresh;
+                    demo::SheetImage out;
+                    fresh.update(lib, *under, out);
+                    const std::string size = " (лист " + std::to_string(out.width) + " × " + std::to_string(out.height) + ")";
+                    check(out.width == std::max(under->width, Pictures::kMaxSide + 2), "ширина листа" + size);
+                    bool inside = true, apart = true;
+                    for (usize i = under->frames.size(); i < out.frames.size(); ++i) {
+                        const render::SpriteRect& r = out.frames[i];
+                        inside &= r.x >= 1 && r.y >= under->height + 1 && r.x + r.w + 1 <= out.width && r.y + r.h + 1 <= out.height;
+                        for (usize j = under->frames.size(); j < i; ++j) {
+                            const render::SpriteRect& o = out.frames[j];
+                            apart &= r.x >= o.x + o.w + 1 || o.x >= r.x + r.w + 1 || r.y >= o.y + o.h + 1 || o.y >= r.y + r.h + 1;
+                        }
+                    }
+                    check(inside && apart, "все кадры в листе, с пикселем вокруг, друг на друга не заходят" + size);
+                    for (const Strip& p : strips) {
+                        const Pictures::Picture* pic = fresh.of(lib.find(p.id)->key);
+                        if (!check_ok(pic && pic->frames == p.frames && std::fabs(pic->aspect - static_cast<f32>(p.fw) / static_cast<f32>(p.fh)) < 1e-6f,
+                                      std::string(p.id) + ": " + std::to_string(p.frames) + " кадров " + std::to_string(p.fw) + " × " +
+                                          std::to_string(p.fh) + size))
+                            continue;
+                        u32 right = 0;
+                        for (u32 k = 0; k < p.frames && pic->frame + k < out.frames.size(); ++k) {
+                            const render::SpriteRect& r = out.frames[pic->frame + k];
+                            bool filled = r.w == p.fw && r.h == p.fh;
+                            const std::array<u8, 4> c = colour(k);
+                            for (u32 y = 0; filled && y < r.h; ++y)
+                                for (u32 x = 0; filled && x < r.w; ++x)
+                                    filled = std::equal(c.begin(), c.end(), &out.rgba[((static_cast<usize>(r.y) + y) * out.width + r.x + x) * 4]);
+                            right += filled;
+                        }
+                        check(right == p.frames, std::string(p.id) + ": каждый кадр в листе — свой цвет целиком: " + std::to_string(right) + " из " +
+                                                     std::to_string(p.frames) + size);
+                    }
                 }
                 fs::remove_all(dir, ec);
                 return true;

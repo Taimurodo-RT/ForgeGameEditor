@@ -1674,6 +1674,11 @@ std::vector<flecs::entity_t> SliceGame::copies_of(std::string_view template_id) 
     return out;
 }
 
+const Pictures::Picture* SliceGame::picture_of(std::string_view template_id) const {
+    const objects::Template* t = library_.find(template_id);
+    return t ? pictures_.of(t->key) : nullptr;
+}
+
 flecs::entity_t SliceGame::spawn_copy(std::string_view template_id, f64 x, f64 feet_y, u64 id) {
     const objects::Template* t = library_.find(template_id);
     if (!level_ || !t || !id) return 0;

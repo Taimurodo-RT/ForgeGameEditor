@@ -487,12 +487,10 @@ std::optional<Guid> meta_id(const fs::path& meta) {
     return out;
 }
 
-} // namespace
-
-bool make(const fs::path& games, const fs::path& out, std::string& why) {
+// The game made in out, a folder of its own (made anew).
+bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
     const fs::path module = games / "slice", from = games / "templates" / "platformer";
     std::error_code ec;
-    fs::remove_all(out, ec);
     fs::create_directories(out / "objects", ec);
     if (ec) {
         why = "не создана папка " + path_to_utf8(out) + ": " + ec.message();
@@ -513,7 +511,7 @@ bool make(const fs::path& games, const fs::path& out, std::string& why) {
     }
 
     // The pictures: copies of the template's «Ресурсы», as the editor makes them (sources.json).
-    const fs::path pictures = from / "assets" / "картинки";
+    const fs::path pictures = from / "assets" / utf8_path("картинки");
     std::vector<fs::path> files;
     for (fs::directory_iterator it(pictures, ec), end; !ec && it != end; it.increment(ec))
         if (it->path().extension() == ".png") files.push_back(it->path());
@@ -525,7 +523,9 @@ bool make(const fs::path& games, const fs::path& out, std::string& why) {
     }
     for (const fs::path& file : files) {
         std::vector<u8> bytes;
-        const std::optional<Guid> id = meta_id(file.string() + ".meta");
+        fs::path meta = file;
+        meta += ".meta";
+        const std::optional<Guid> id = meta_id(meta);
         if (!id || !read_file(file, bytes)) {
             why = "нет .meta или не читается " + path_to_utf8(file);
             return false;
@@ -610,6 +610,27 @@ bool make(const fs::path& games, const fs::path& out, std::string& why) {
     // The screens: the HUD, the windows of victory and defeat.
     return write_screen(out, "hud", hud(), why) && write_screen(out, "win", ending(true), why) &&
            write_screen(out, "lose", ending(false), why);
+}
+
+} // namespace
+
+bool make(const fs::path& games, const fs::path& out, std::string& why) {
+    // Made beside it first: what is in out stays as it was till the whole game is made.
+    const fs::path target = out.has_filename() ? out : out.parent_path();
+    const fs::path made = target.parent_path() / utf8_path(path_to_utf8(target.filename()) + ".сборка");
+    std::error_code ec;
+    fs::remove_all(made, ec);
+    if (!make_in(games, made, why)) {
+        fs::remove_all(made, ec);
+        return false;
+    }
+    fs::remove_all(target, ec);
+    if (!ec) fs::rename(made, target, ec);
+    if (ec) {
+        why = "игра собрана в " + path_to_utf8(made) + ", но не перенесена в " + path_to_utf8(target) + ": " + ec.message();
+        return false;
+    }
+    return true;
 }
 
 } // namespace platformer_template

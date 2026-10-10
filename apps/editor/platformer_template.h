@@ -18,7 +18,8 @@
 
 namespace platformer_template {
 
-// The game, made anew in out (removed first), from the games folder of the repository (games/). False: why says.
+// The game, made in out from the games folder of the repository (games/). It is made beside out first and takes its
+// place when it is whole: sources that do not make it leave out as it was. False: why says.
 bool make(const std::filesystem::path& games, const std::filesystem::path& out, std::string& why);
 
 } // namespace platformer_template

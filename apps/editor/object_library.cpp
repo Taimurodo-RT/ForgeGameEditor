@@ -1,4 +1,5 @@
 #include "object_library.h"
+#include "slice_pictures.h"
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -693,6 +694,7 @@ bool ObjectLibrary::duplicate() {
     t->values = src->values;
     t->blocks = src->blocks;
     t->picture = src->picture;
+    t->frames = src->frames;
     const u64 key = t->key;
     change(std::move(*t), "Копия: " + src->name);
     history_.seal();
@@ -1001,13 +1003,12 @@ bool ObjectLibrary::set_frames(int n) {
 std::string ObjectLibrary::hero_note(const objects::Template& t) {
     const objects::Library& lib = library();
     if (!lib.has_block(t, "hero")) return {};
-    if (t.picture.empty()) return "Без картинки: герой рисуется как прежде.";
-    if (t.frames != 1 && t.frames != 4)
-        return "Кадров в картинке " + std::to_string(t.frames) + ", а у героя их 4 (стоит, шаг, шаг, в воздухе) или 1: герой рисуется как прежде.";
+    // By the game's own rule (slice::hero_picture_ok): what this says is what the game draws.
+    if (std::string why; !slice::hero_picture_ok(lib, t, &why)) return "Герой рисуется как прежде: " + why + ".";
     const objects::Template* first = nullptr;
     usize n = 0;
     for (const objects::Template& o : lib.templates())
-        if (lib.has_block(o, "hero") && !o.picture.empty() && (o.frames == 1 || o.frames == 4)) {
+        if (slice::hero_picture_ok(lib, o)) {
             ++n;
             if (!first || o.id < first->id) first = &o;
         }

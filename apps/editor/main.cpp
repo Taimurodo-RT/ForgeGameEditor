@@ -15951,6 +15951,7 @@ private:
         e.tp_enemy = "beetle";
         e.tp_enemy_speed = std::strtod(pl_value("beetle", "speed").c_str(), nullptr);
         e.tp_enemy_damage = std::strtod(pl_value("beetle", "damage").c_str(), nullptr);
+        e.tp_twin = tp_rec_["beetle_copy"];
         e.tp_bridge = {kTpBridge0, kTpBridge1, 0};
         e.tp_exit = kTpExit;
         if (const logic::Link* l = lg().links().find(kTpExitLink)) {
@@ -16016,18 +16017,54 @@ private:
         case 0: {
             fs::remove_all(tp_root(), ec);
             fs::create_directories(tp_root() / utf8_path("Мои игры"), ec);
-            // The template's game is what its sources make.
-            const fs::path made = tp_root() / utf8_path("сборка");
+            // The template's game is what its sources make: by the function into a folder of Cyrillic name, and by the
+            // command line from another working folder; byte for byte, line ends of the text files aside (a Windows
+            // checkout has CRLF in them, the maker writes LF).
+            const fs::path games = utf8_path(FORGE_GAMES_DIR);
+            auto same = [&](const fs::path& made, const char* how, bool built, const std::string& why) {
+                const auto ours = pj_tree(made), theirs = pj_tree(games / "platformer");
+                std::string differ;
+                for (const auto& [path, bytes] : theirs) {
+                    std::vector<u8> lf = bytes;
+                    if (path.ends_with(".json") || path.ends_with(".html")) std::erase(lf, static_cast<u8>('\r'));
+                    if (!ours.count(path) || ours.at(path) != lf) differ += " " + path;
+                }
+                for (const auto& [path, bytes] : ours)
+                    if (!theirs.count(path)) differ += " +" + path;
+                check(built && differ.empty() && ours.size() == theirs.size() && !fs::exists(made.parent_path() / utf8_path(path_to_utf8(made.filename()) + ".сборка")),
+                      std::string("games/platformer is what its sources make ") + how + ", byte for byte (" + std::to_string(ours.size()) + " files) " +
+                          why + differ);
+            };
+            {
+                const fs::path made = tp_root() / utf8_path("сборка");
+                std::string why;
+                const bool built = platformer_template::make(games, made, why);
+                same(made, "(platformer_template::make)", built, why);
+            }
+            {
+                const fs::path other = tp_root() / utf8_path("другая папка"), made = tp_root() / utf8_path("сборка из командной строки");
+                fs::create_directories(other, ec);
+                const int code = pj_run({path_to_utf8(editor_exe()), "--make-template", "platformer", path_to_utf8(made)}, other);
+                same(made, "(forge_editor --make-template)", code == 0, "exit " + std::to_string(code));
+            }
+            // Sources that do not make the game (tiles.png gone) leave the folder made into as it was.
+            {
+                const fs::path broken = tp_root() / utf8_path("источники без плиток"), keep = tp_root() / utf8_path("прежняя папка");
+                fs::create_directories(broken / "slice", ec);
+                for (const char* file : editor::project::kModuleFiles) fs::copy_file(games / "slice" / file, broken / "slice" / file, ec);
+                fs::create_directories(broken / "templates", ec);
+                fs::copy(games / "templates" / "platformer", broken / "templates" / "platformer", fs::copy_options::recursive, ec);
+                fs::remove(broken / "templates" / "platformer" / "tiles.png", ec);
+                fs::create_directories(keep, ec);
+                const std::vector<u8> note = {'f', 'o', 'r', 'g', 'e'};
+                check(write_file_atomic(keep / utf8_path("записка.txt"), note), "a folder with a file of its own");
+                std::string why;
+                const bool built = platformer_template::make(broken, keep, why);
+                check(!built && why.find("tiles.png") != std::string::npos && tg_bytes(keep / utf8_path("записка.txt")) == note &&
+                          pj_tree(keep).size() == 1 && !fs::exists(tp_root() / utf8_path("прежняя папка.сборка")),
+                      "sources without tiles.png make nothing, the folder stays as it was: " + why);
+            }
             std::string why;
-            const bool built = platformer_template::make(utf8_path(FORGE_GAMES_DIR), made, why);
-            const auto ours = pj_tree(made), theirs = pj_tree(utf8_path(FORGE_GAMES_DIR) / "platformer");
-            std::string differ;
-            for (const auto& [path, bytes] : theirs)
-                if (!ours.count(path) || ours.at(path) != bytes) differ += " " + path;
-            for (const auto& [path, bytes] : ours)
-                if (!theirs.count(path)) differ += " +" + path;
-            check(built && differ.empty() && ours.size() == theirs.size(),
-                  "games/platformer is what its sources make, byte for byte (" + std::to_string(ours.size()) + " files) " + why + differ);
             // The author's own picture of the hero, apart from both games and the template.
             const fs::path src = tp_root() / utf8_path("исходники");
             fs::create_directories(src, ec);
@@ -16101,9 +16138,10 @@ private:
             check(tg_snap("Платформер Б после", btree, tp_root()) == tg_digest(tp_b_) && btree == tp_b_, "«Платформер Б» byte for byte as before");
             tp_rec_ = tg_get(tp_root() / utf8_path("записи.txt"));
             const std::string hero = tp_rec_["hero_hash"];
-            check(!hero.empty() && tg_naming(b, {hero, tp_rec_["coin_copy"]}).empty() &&
-                      tg_naming(utf8_path(FORGE_GAMES_DIR) / "platformer", {hero, tp_rec_["coin_copy"]}).empty(),
-                  "nothing of A in B or the template (the new picture's hash, the coin's id): " + tg_naming(b, {hero, tp_rec_["coin_copy"]}));
+            const std::vector<std::string> of_a = {hero, tp_rec_["coin_copy"], tp_rec_["beetle_copy"]};
+            check(!hero.empty() && !tp_rec_["beetle_copy"].empty() && tg_naming(b, of_a).empty() &&
+                      tg_naming(utf8_path(FORGE_GAMES_DIR) / "platformer", of_a).empty(),
+                  "nothing of A in B or the template (the new picture's hash, the coin's id, the copy's id): " + tg_naming(b, of_a));
             pjw().configure(ng_config_);
             ed_.scene_path = ng_scene_;
             tp_step_ = -1;
@@ -16216,6 +16254,25 @@ private:
             value("beetle", "Скорость", "speed", "1.5", "3");
             value("beetle", "Урон", "damage", "1", "2");
             check(click("ol-back"), "«К библиотеке»");
+            // «Копия» of «Жук»: its picture and its two frames go with it, undone and done again; it stays.
+            if (const objects::Template* b = lib.find(std::string_view("beetle"))) {
+                const std::string picture = b->picture;
+                ol().select(b->key);
+                pl_n_ = lib.templates().size();
+                check(click("ol-duplicate") && lib.templates().size() == pl_n_ + 1, "«Копия» of «Жук»");
+                const objects::Template* twin = ol().selected();
+                const std::string id = twin && twin->id != "beetle" ? twin->id : std::string();
+                check(!id.empty() && twin->picture == picture && twin->frames == 2 && lib.find(std::string_view("beetle"))->frames == 2,
+                      "the copy has «Жук»'s picture and «Кадров в картинке» 2");
+                tp_rec_["beetle_copy"] = id;
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(lib.templates().size() == pl_n_ && !lib.find(std::string_view(id)), "Ctrl+Z: the copy gone");
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                const objects::Template* again = lib.find(std::string_view(id));
+                const std::optional<objects::Template> file = again ? objects::read_template(again->file) : std::nullopt;
+                check(lib.templates().size() == pl_n_ + 1 && again && again->frames == 2 && again->picture == picture && file && file->frames == 2,
+                      "Ctrl+Y: the copy again, 2 frames, in its file too");
+            }
             // A second object of kind «Герой»: the editor says which of them draws the hero.
             if (const objects::Template* h = lib.find(std::string_view("hero_look"))) {
                 check(ol().hero_note(*h).empty(), "«Герой»: the game's hero is drawn with it, nothing to say");
@@ -16229,6 +16286,7 @@ private:
             const objects::Template* h = lib.find(std::string_view("hero_look"));
             const objects::Template* twin = ol().selected();
             if (h && twin && twin != h) {
+                check(twin->picture == h->picture && twin->frames == 4 && h->frames == 4, "the copy of «Герой» has its picture of 4 frames");
                 const bool mine_first = h->id < twin->id;
                 const std::string first = mine_first ? ol().hero_note(*h) : ol().hero_note(*twin);
                 const std::string other = mine_first ? ol().hero_note(*twin) : ol().hero_note(*h);
@@ -16391,8 +16449,11 @@ private:
                       s->hash == tp_rec_["hero_hash"],
                   "the hero's picture is the author's, a copy of the same asset");
             check(pl_value("coin", "score") == "25" && pl_value("beetle", "speed") == "3" && pl_value("beetle", "damage") == "2" &&
-                      lib.templates().size() == 8,
-                  "«Монетка»: «Очки» 25; «Жук»: «Скорость» 3, «Урон» 2; no object more");
+                      lib.templates().size() == 9,
+                  "«Монетка»: «Очки» 25; «Жук»: «Скорость» 3, «Урон» 2; no object more than its «Копия»");
+            const objects::Template* twin = lib.find(std::string_view(tp_rec_["beetle_copy"]));
+            check(twin && twin->kind == "enemy" && twin->picture == lib.find(std::string_view("beetle"))->picture && twin->frames == 2,
+                  "the «Копия» of «Жук» by its id: the same picture, «Кадров в картинке» 2");
             check(lv().level_id() == "level", "«Луг» opens, the level open last");
             const flecs::entity e = lv().level().find(std::strtoull(tp_rec_["coin_copy"].c_str(), nullptr, 10));
             check(e.is_valid() && lib.template_of(e) == lib.find(std::string_view("coin")) &&

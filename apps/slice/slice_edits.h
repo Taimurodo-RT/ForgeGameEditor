@@ -85,6 +85,7 @@ struct ProjectEdits {
     std::string tp_hud, tp_lose, tp_win;
     forge::u32 tp_hud_score = 0, tp_again = 0, tp_win_title = 0, tp_win_again = 0, tp_win_again_label = 0;
     std::string tp_win_text, tp_win_again_text;
+    std::string tp_twin; // the author's «Копия» of tp_enemy (its template's id)
 };
 
 // False (error says why) when the file cannot be read.
