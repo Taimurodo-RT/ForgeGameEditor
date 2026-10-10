@@ -146,6 +146,7 @@ struct GameScreens::Page {
     bool pauses = false, esc = true;
     Rml::Element* dim = nullptr; // forge-dim: the veil under a window that darkens what is under it
     std::string over;            // forge-over: "game" or "menu", the only place it comes up ("": anywhere)
+    std::string ending;          // forge-ending: "win" or "lose", a window the game shows itself when it ends so
     bool shown = false;  // a Command page that was shown
     bool visible = false; // on screen now
     u64 order = 0;        // when it was shown (Esc closes the newest)
@@ -239,6 +240,7 @@ struct GameScreens::Impl : Rml::EventListener {
             p.esc = attr("forge-esc") != "0";
             if (attr("forge-dim") == "1") p.dim = e->GetOwnerDocument()->GetElementById("forge-dim");
             p.over = attr("forge-over");
+            p.ending = p.role == ScreenRole::Command ? attr("forge-ending") : std::string();
             p.appear = attr("forge-appear");
             if (p.appear == "none") p.appear.clear();
             p.appear_time = std::clamp(static_cast<f32>(std::atof(attr("forge-appear-time").c_str())), 0.0f, 10.0f);
@@ -942,6 +944,22 @@ std::vector<std::string> GameScreens::windows() const {
     std::vector<std::string> out;
     for (const Page* p : up) out.push_back(p->name);
     return out;
+}
+
+std::vector<std::string> GameScreens::endings(std::string_view kind) const {
+    std::vector<std::string> out;
+    if (kind.empty()) return out;
+    for (auto& p : impl_->pages)
+        if (p->doc && p->ending == kind) out.push_back(p->name);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+u32 GameScreens::show_ending(std::string_view kind) {
+    u32 n = 0;
+    for (const std::string& name : endings(kind))
+        if (show(name, true)) ++n;
+    return n;
 }
 
 bool GameScreens::pauses() const {

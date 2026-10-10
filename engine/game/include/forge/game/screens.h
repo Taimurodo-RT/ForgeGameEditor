@@ -15,6 +15,8 @@
 //                     forge-esc="0"  Esc does not close it
 //                     forge-music    the music it plays while it is up (a
 //                                    file of the game's sounds folder)
+//                     forge-ending   a window the game shows itself when it
+//                                    ends: "win" (won), "lose" (lost)
 //                     forge-button-sound
 //                                    its buttons' sound when pressed
 //   on any layer:     forge-text     a text with {variables} put in
@@ -150,6 +152,10 @@ public:
     bool close_top();
     // The windows up now (Command pages shown), the newest last.
     std::vector<std::string> windows() const;
+    // The windows (Command pages) the game shows itself when it ends this way ("win", "lose": forge-ending), by
+    // name; and showing them. show_ending returns how many came up (0: the game has none for it).
+    std::vector<std::string> endings(std::string_view kind) const;
+    u32 show_ending(std::string_view kind);
     // A shown page stops the world.
     bool pauses() const;
     // The game's own main menu is there (the shell's is not shown).

@@ -27,6 +27,9 @@ FORGE_REFLECT(slice::HeroSave, 1) {
     t.field("slot", &slice::HeroSave::slot);
     t.field("zoom", &slice::HeroSave::zoom);
     t.field("level", &slice::HeroSave::level);
+    t.field("back", &slice::HeroSave::back);
+    t.field("back_x", &slice::HeroSave::back_x);
+    t.field("back_y", &slice::HeroSave::back_y);
 }
 
 namespace slice {
@@ -48,6 +51,15 @@ constexpr f32 kReach = 5.5f;     // tiles from the hero's centre to dig or build
 constexpr f32 kTalkReach = 2.6f; // to a villager
 constexpr f32 kZoom = 30;
 constexpr f64 kHearts = 3;
+// The platformer's rules (14.2-платформер-модель.md, «Касание врага»): the safe time after a heart lost, and after the
+// hero is placed (a new game, a save loaded, a level come into); how a hurting enemy pushes the hero away.
+constexpr f64 kSafe = 1.0;
+constexpr f32 kKnockX = 6, kKnockY = 6;
+// The places a hero is put back in (return_spot), as the log names them.
+constexpr const char* kEntryPlace = "точка входа на уровень";
+constexpr const char* kSpawnPlace = "точка появления уровня";
+constexpr const char* kStartPlace = "старт игры";
+constexpr const char* kGroundPlace = "место, где герой последний раз стоял на полу";
 
 struct SlotDef {
     const char* item; // also the icon's colour class in hud.rcss: tone-<item>
@@ -204,6 +216,8 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     L->objects.init(ecs);
 
     Level* level = L.get();
+    // Enemies and hazards the hero touches, from where both were before the last move: before the hero moves.
+    L->sim->add_system([this](const TickContext& ctx) { contacts_tick(ctx); });
     L->sim->add_system([this](const TickContext& ctx) { hero_tick(ctx); });
     // Villagers stroll around their homes and turn to the hero while talking.
     L->sim->add_system([this, level](const TickContext& ctx) {
@@ -339,7 +353,8 @@ public:
     }
     bool act(std::string_view action, flecs::entity_t target, std::string_view thing, flecs::entity_t other,
              flecs::entity_t) override {
-        static constexpr std::string_view known[] = {"collect", "open", "close", "toggle", "hurt", "heal", "coin", "talk", "follow", "flee", "arrive"};
+        static constexpr std::string_view known[] = {"collect", "open",   "close", "toggle", "hurt", "heal", "coin",
+                                                     "talk",    "follow", "flee",  "arrive", "fall", "win"};
         if (std::find(std::begin(known), std::end(known), action) == std::end(known)) return false;
         g_.deeds_.push_back({std::string(action), std::string(thing), target, other});
         return true;
@@ -413,8 +428,26 @@ void SliceGame::do_deeds() {
     std::vector<Deed> deeds;
     deeds.swap(deeds_);
     for (const Deed& d : deeds) {
+        // An ended game does nothing more: the links' deeds after its end are dropped.
+        if (ended_ != Ending::None) break;
         if (d.action == "hurt" || d.action == "heal") {
-            if (d.target == level_->hero.id()) hurt_hero(d.action == "hurt" ? 1 : -1);
+            if (d.target == level_->hero.id()) {
+                hurt_hero(d.action == "hurt" ? 1 : -1);
+                settle(); // the last heart: the end now, before a deed after it (a goal reached in the same step)
+            }
+            continue;
+        }
+        if (d.action == "fall") { // into a pit: a heart (not in the safe time) and back where it came into the level
+            if (d.target == level_->hero.id()) {
+                ++falls_;
+                if (safe_ <= 0) lose_hearts(1);
+                back_asked_ = fell_ = true;
+                settle();
+            }
+            continue;
+        }
+        if (d.action == "win") {
+            if (d.target == level_->hero.id()) finish(true);
             continue;
         }
         if (d.action == "coin") {
@@ -437,8 +470,12 @@ void SliceGame::do_deeds() {
                 if (door->open != was) e.modified<Door>();
             }
         } else if (d.action == "collect") {
-            if (const Item* item = e.try_get<Item>()) give(kind_item(static_cast<ItemKind>(item->kind)), item->count, true);
-            else give(d.thing, 1, true);
+            if (const Item* item = e.try_get<Item>()) {
+                give(kind_item(static_cast<ItemKind>(item->kind)), item->count, true);
+                add_score(item->score);
+            } else {
+                give(d.thing, 1, true);
+            }
             e.destruct();
         } else if (d.action == "talk") {
             if (const Npc* n = e.try_get<Npc>(); n && !shell_->in_dialogue() && shell_->talk(npc_dialogue(n->who))) {
@@ -474,6 +511,11 @@ void SliceGame::do_deeds() {
 void SliceGame::ask_travel(std::string level, std::string arrive, u32 link) {
     if (!running_ || !level_) return;
     const u64 call = level_->links->asking();
+    if (ended_ != Ending::None) { // the game is over: nobody goes anywhere
+        level_->links->take_back_first(call, link);
+        ++travels_dropped_;
+        return;
+    }
     if (trip_) {
         ++travels_dropped_;
         // Its «Только один раз» does not stand: it did not send the hero anywhere.
@@ -580,6 +622,7 @@ void SliceGame::travel() {
         } else {
             put_hero(c, x, y);
         }
+        came_in(x, y + kHeroHalfH);
         ++travels_;
         travel_problem_.clear();
         FORGE_INFO("slice: герой перешёл в другое место уровня «%s»", name.c_str());
@@ -750,6 +793,7 @@ void SliceGame::travel() {
     f64 x = 0, y = 0;
     arrival(trip.arrive, x, y);
     put_hero(hero, x, y);
+    came_in(x, y + kHeroHalfH);
     ++travels_;
     travel_problem_.clear();
     FORGE_INFO("slice: герой ушёл с уровня «%s» на уровень «%s»%s", left.c_str(), to->id.c_str(),
@@ -760,8 +804,8 @@ f64 SliceGame::hearts() const {
     return shell_->vars().has("hero.hearts") ? shell_->vars().get("hero.hearts").number() : kHearts;
 }
 
-// n > 0 hurts, n < 0 heals. With no hearts left the hero wakes up in the
-// village.
+// n > 0 hurts, n < 0 heals. With no hearts left: settle, after the ticks (from a link's deed, at once) — the end when
+// the game has a window for it, else the hero wakes up as before.
 void SliceGame::hurt_hero(f64 n) {
     const f64 now = std::clamp(hearts() - n, 0.0, kHearts);
     shell_->vars().set("hero.hearts", now);
@@ -774,17 +818,315 @@ void SliceGame::hurt_hero(f64 n) {
         sounds_.play(Cue::Land, hero_x_, hero_y_);
         return;
     }
-    shell_->vars().set("hero.hearts", kHearts);
-    if (level_ && level_->around.empty_around) {
-        // No village around: the level's spawn point, if there is one to stand on.
-        f64 x = 0, y = 0;
-        shell_->toast("Герой очнулся");
-        if (level_->areas.spawn && spawn_spot(level_->areas.spawn_x, level_->areas.spawn_y, x, y, nullptr))
-            teleport(x, y - kHeroHalfH);
+    out_of_hearts_ = true;
+    // The world stops at this tick: the ticks left of the frame do not run.
+    if (level_) level_->sim->stop_ticks();
+}
+
+// With no hearts left and no window «при поражении» in the game: as before 14.2c, full hearts and the hero wakes up in
+// the village (a level with nothing around: at its spawn point). fell: the hearts went in a pit (its heart, or nowhere
+// to put the hero back from it).
+void SliceGame::wake_up(bool fell) {
+    // The village's start first (or the spawn point of a level with nothing around), checked as a return is; none
+    // will do: where it is, unless that is a pit, where there is nothing to stand on: then the game is lost.
+    f64 x = 0, y = 0;
+    const char* where = return_spot(true, x, y);
+    if (!where && fell) {
+        FORGE_WARN("slice: герою негде очнуться, а он в пропасти: поражение");
+        finish(false);
         return;
     }
-    shell_->toast("Герой очнулся в деревне");
-    teleport(gen_->spawn_x(), gen_->spawn_y() - kHeroHalfH);
+    shell_->vars().set("hero.hearts", kHearts);
+    shell_->toast(where == kStartPlace && !level_->around.empty_around ? "Герой очнулся в деревне" : "Герой очнулся");
+    if (where) teleport(x, y - kHeroHalfH);
+}
+
+// --- the platformer's rules ----------------------------------------------------------
+// 14.2-платформер-модель.md, «Правила платформера (14.2c)»: enemies beaten from above and hurting otherwise, hazards
+// and pits that take a heart and put the hero back where it came into the level, the score, the end of the game.
+
+f64 SliceGame::score() const { return shell_->vars().get("hero.score").number(); }
+
+void SliceGame::add_score(f64 n) {
+    if (n > 0) shell_->vars().set("hero.score", score() + n);
+}
+
+bool SliceGame::back_point(f64& x, f64& y) const {
+    x = back_x_;
+    y = back_y_;
+    return has_back_;
+}
+
+bool SliceGame::can_save(std::string* why) const {
+    if (ended_ == Ending::None) return true;
+    if (why) *why = "игра окончена";
+    return false;
+}
+
+void SliceGame::came_in(f64 x, f64 feet_y) {
+    has_back_ = true;
+    back_x_ = x;
+    // Standing on a cell's top, the hero's place (in floats) has its feet a hair above it: on it.
+    back_y_ = std::fabs(feet_y - std::round(feet_y)) < 1e-3 ? std::round(feet_y) : feet_y;
+    has_ground_ = nowhere_ = false;
+    // A second the hero loses no heart where it is placed (in an enemy's box, say), not blinking.
+    if (safe_ < kSafe) {
+        safe_ = kSafe;
+        blink_ = false;
+    }
+}
+
+// Once a tick, before the hero moves: where the hero and each enemy were before their last move and are now tells
+// how they met (forge::sim::touch_side). Enemies beaten first, each once (it is gone at once), one bounce; then, only
+// if none was beaten this tick and the hero is not safe, the most hearts of the others, once a tick. Then hazards.
+void SliceGame::contacts_tick(const TickContext& ctx) {
+    if (!level_ || ctx.rewinding || ended_ != Ending::None || !level_->hero.is_alive()) return;
+    const f32 dt = ctx.dt * ctx.time_scale;
+    if (dt <= 0) return;
+    safe_ = std::max(0.0, safe_ - dt);
+    if (safe_ <= 0) blink_ = false;
+    const Position& hp = level_->hero.get<Position>();
+    const Body& hb = level_->hero.get<Body>();
+    const Box hero{hp.tile_x(), hp.tile_y(), kHeroHalfW, kHeroHalfH};
+    const Box hero_before{hero.x - hb.last_dx, hero.y - hb.last_dy, kHeroHalfW, kHeroHalfH};
+    auto apart = [&](const Box& b) {
+        return std::fabs(b.x - hero.x) >= b.half_w + hero.half_w || std::fabs(b.y - hero.y) >= b.half_h + hero.half_h;
+    };
+    struct Met {
+        flecs::entity_t e = 0;
+        Box box;
+        Enemy enemy;
+        Touch side = Touch::None;
+    };
+    std::vector<Met> met;
+    level_->objects.enemies.each([&](flecs::entity e, const Position& p, const Body& b, const Enemy& en) {
+        const Box now{p.tile_x(), p.tile_y(), b.half_w, b.half_h};
+        if (apart(now)) return;
+        const Box before{now.x - b.last_dx, now.y - b.last_dy, b.half_w, b.half_h};
+        const Touch side = touch_side(hero_before, hero, before, now);
+        if (side != Touch::None) met.push_back({e.id(), now, en, side});
+    });
+    // Spared enemies stay so while the hero is in them.
+    std::erase_if(spared_, [&](flecs::entity_t e) {
+        return std::none_of(met.begin(), met.end(), [e](const Met& m) { return m.e == e; });
+    });
+    flecs::world& ecs = level_->scene->ecs();
+    f32 bounce = 0;
+    for (const Met& m : met) {
+        if (m.side != Touch::Top || !m.enemy.stomp) continue;
+        flecs::entity e = ecs.entity(m.e);
+        if (!e.is_alive()) continue;
+        add_score(m.enemy.score);
+        const Sounds* own = e.try_get<Sounds>();
+        sounds_.play(own ? own->hit : std::string(), Cue::Crate, m.box.x, m.box.y, own ? own->volume : 1.0f,
+                     own ? own->range : 16.0f);
+        render::ParticleEmit dust;
+        dust.x = m.box.x;
+        dust.y = m.box.y;
+        dust.count = 16;
+        dust.radius = static_cast<f32>(m.box.half_w);
+        dust.speed_min = 1;
+        dust.speed_max = 5;
+        dust.life_min = 0.3f;
+        dust.life_max = 0.7f;
+        dust.size_start = 0.3f;
+        dust.size_end = 0.1f;
+        dust.color = render::pack_color(200, 190, 170);
+        dust.frame = FrameDust;
+        particles_.emit(dust);
+        e.destruct(); // gone at once: the next tick of the frame does not meet it again, nor do the saves keep it
+        bounce = std::max(bounce, m.enemy.bounce);
+        ++stomps_;
+    }
+    if (bounce > 0) {
+        level_->hero.get_mut<Body>().vy = -bounce;
+        // The others it is in now do not hurt it on its way up and out of them.
+        for (const Met& m : met)
+            if (ecs.is_alive(m.e) && std::find(spared_.begin(), spared_.end(), m.e) == spared_.end()) spared_.push_back(m.e);
+    } else if (safe_ <= 0) {
+        const Met* nearest = nullptr;
+        u8 hearts = 0;
+        for (const Met& m : met) {
+            if (m.enemy.hearts == 0 || std::find(spared_.begin(), spared_.end(), m.e) != spared_.end()) continue;
+            hearts = std::max(hearts, m.enemy.hearts);
+            if (!nearest || std::fabs(m.box.x - hero.x) < std::fabs(nearest->box.x - hero.x)) nearest = &m;
+        }
+        if (nearest) {
+            Body& b = level_->hero.get_mut<Body>();
+            b.vx = hero.x < nearest->box.x ? -kKnockX : kKnockX;
+            b.vy = -kKnockY;
+            ++enemy_hits_;
+            lose_hearts(hearts);
+        }
+    }
+    // Hazards: the boxes overlapping; back after the ticks, a heart only when not safe.
+    u8 hurts = 0;
+    bool on = false;
+    level_->objects.hazards.each([&](const Position& p, const Body& b, const Hazard& h) {
+        if (apart({p.tile_x(), p.tile_y(), b.half_w, b.half_h})) return;
+        on = true;
+        hurts = std::max(hurts, h.hearts);
+    });
+    // The contacts are of the last move, from where the hero was if it has been placed since.
+    const bool placed = std::exchange(placed_, false);
+    if (!on) {
+        nowhere_ = false; // off them: the next touch looks for a place to go back to again
+        // Standing safely on the floor: the last place to go back to, when no other will do.
+        if (!placed && (level_->hero.get<Body>().contacts & OnGround) && !in_pit(hero.x, hero.y)) {
+            const f64 feet = hero.y + kHeroHalfH;
+            has_ground_ = true;
+            ground_x_ = hero.x;
+            ground_y_ = std::fabs(feet - std::round(feet)) < 1e-3 ? std::round(feet) : feet;
+        }
+        return;
+    }
+    // With no place to go back to found for this touch the hero stays on them, the keys its own; they hurt it again
+    // once it is not safe, as a long touch of an enemy does.
+    if (!nowhere_) back_asked_ = true;
+    if (safe_ <= 0 && hurts > 0) {
+        ++hazard_hits_;
+        lose_hearts(hurts);
+    }
+    if (back_asked_) level_->sim->stop_ticks(); // back at once, after this tick
+}
+
+void SliceGame::lose_hearts(f64 n) {
+    safe_ = kSafe;
+    blink_ = true;
+    hurt_hero(n);
+}
+
+// What the ticks and the links' deeds left for after them: no hearts left (the end when the game has a window «при
+// поражении», else the old waking up), the hero put back (spikes, a pit).
+void SliceGame::settle() {
+    if (!level_ || !running_ || ended_ != Ending::None) {
+        out_of_hearts_ = back_asked_ = false;
+        return;
+    }
+    if (out_of_hearts_) {
+        const bool fell = fell_;
+        out_of_hearts_ = back_asked_ = fell_ = false;
+        hearts_out(fell);
+        return;
+    }
+    if (back_asked_) {
+        back_asked_ = false;
+        const bool fell = std::exchange(fell_, false);
+        if (go_back() || !fell) return;
+        // In a pit there is nothing to stand on: with nowhere to go back to, as the last heart.
+        FORGE_WARN("slice: из зоны «падает в» вернуть героя некуда: как последнее сердце");
+        shell_->vars().set("hero.hearts", 0.0);
+        hearts_out(true);
+    }
+}
+
+// No hearts left: the end when the game has a window «при поражении», else the old waking up. fell: in a pit.
+void SliceGame::hearts_out(bool fell) {
+    if (!shell_->screens().endings("lose").empty()) finish(false);
+    else wake_up(fell);
+}
+
+bool SliceGame::in_pit(f64 x, f64 y) const {
+    for (const forge::level::Area& a : level_->areas.areas)
+        if (a.contains(x, y) && is_pit(a.id)) return true;
+    return false;
+}
+
+bool SliceGame::is_pit(u64 area) const {
+    const std::string id = area_thing_id(area);
+    for (const logic::Link& l : links_.links)
+        if (l.verb == "fall" && l.b == id) return true;
+    return false;
+}
+
+bool SliceGame::back_spot(f64 x, f64 y, f64& out_x, f64& out_y, std::string* why) {
+    if (!spawn_spot(x, y, out_x, out_y, why)) return false;
+    const f64 cx = out_x, cy = out_y - kHeroHalfH;
+    for (const forge::level::Area& a : level_->areas.areas)
+        if (a.contains(cx, cy) && is_pit(a.id)) {
+            if (why) *why = "там зона «" + a.name + "», куда герой падает";
+            return false;
+        }
+    bool hazard = false;
+    level_->objects.hazards.each([&](const Position& p, const Body& b, const Hazard&) {
+        hazard = hazard || (std::fabs(p.tile_x() - cx) < b.half_w + kHeroHalfW && std::fabs(p.tile_y() - cy) < b.half_h + kHeroHalfH);
+    });
+    if (hazard) {
+        if (why) *why = "там опасность";
+        return false;
+    }
+    return true;
+}
+
+// The places the hero is put back in, in order, each checked the same way (back_spot): where it came into the level,
+// the level's spawn point, the game's start, where it last stood safely on the floor here. Waking up (no hearts, no
+// window «при поражении») begins where the game always woke it: the village's start, or the spawn point of a level
+// with nothing around. Returns which place it found (x, y: under its feet), nullptr when none will do.
+const char* SliceGame::return_spot(bool waking, f64& x, f64& y) {
+    struct Place {
+        const char* what;
+        bool has;
+        f64 x, y;
+    };
+    const Place entry{kEntryPlace, has_back_, back_x_, back_y_};
+    const Place spawn{kSpawnPlace, level_->areas.spawn, level_->areas.spawn_x, level_->areas.spawn_y};
+    const Place start{kStartPlace, true, gen_->spawn_x(), gen_->spawn_y()};
+    const Place ground{kGroundPlace, has_ground_, ground_x_, ground_y_};
+    const Place* order[4] = {&entry, &spawn, &start, &ground};
+    if (waking && !level_->around.empty_around) order[0] = &start, order[2] = &entry; // start, spawn, entry, ground
+    else if (waking) order[0] = &spawn, order[1] = &entry;                         // spawn, entry, start, ground
+    for (const Place* p : order) {
+        if (!p->has) continue;
+        std::string why;
+        if (back_spot(p->x, p->y, x, y, &why)) return p->what;
+        FORGE_WARN("slice: %s %.2f, %.2f не годится для возврата: %s", p->what, p->x, p->y, why.c_str());
+    }
+    FORGE_WARN("slice: вернуть героя некуда: он остаётся, где был (%.2f, %.2f)", hero_x(), hero_y() + kHeroHalfH);
+    ++nowheres_;
+    return nullptr;
+}
+
+// Back after spikes or a pit, to the first place that will do (return_spot); none will: it stays where it is, its
+// speed and the keys its own, and the hazards do not ask for it again until the hero is off them (false).
+bool SliceGame::go_back() {
+    if (!hero_alive()) return false;
+    f64 x = 0, y = 0;
+    if (!return_spot(false, x, y)) {
+        nowhere_ = true;
+        return false;
+    }
+    nowhere_ = false;
+    const f64 cy = y - kHeroHalfH;
+    teleport(x, cy);
+    // It is in the areas there already: no area there is entered now (a «Вход» would send it back).
+    level_->watch.settle(level_->areas, x, cy);
+    location_ = place_name(x, cy);
+    ++backs_;
+    if (safe_ < kSafe) safe_ = kSafe;
+    FORGE_INFO("slice: герой вернулся к точке %.2f, %.2f", x, y);
+    return true;
+}
+
+void SliceGame::finish(bool won) {
+    if (!running_ || ended_ != Ending::None) return;
+    ended_ = won ? Ending::Won : Ending::Lost;
+    ++endings_;
+    out_of_hearts_ = back_asked_ = false;
+    if (trip_) { // a going asked in the same step does not happen
+        level_->links->take_back_first(trip_->call, trip_->link);
+        ++travels_dropped_;
+        trip_.reset();
+    }
+    deeds_.clear();
+    controls_ = {};
+    shell_->vars().set("game.result", std::string(won ? "победа" : "поражение"));
+    const u32 shown = shell_->screens().show_ending(won ? "win" : "lose");
+    if (shown == 0) shell_->toast(won ? "Победа!" : "Поражение");
+    // The world stands: no object sounds, no place music (the windows may play their own).
+    sounds_.stop_objects();
+    shell_->screens().set_place_music({});
+    FORGE_INFO("slice: игра окончена: %s, очков %g, окон «%s» показано %u", won ? "победа" : "поражение", score(),
+               won ? "при победе" : "при поражении", shown);
 }
 
 std::string SliceGame::place_name(f64 x, f64 y) const {
@@ -1064,6 +1406,11 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     trip_.reset();
     travels_ = travels_dropped_ = travels_refused_ = 0;
     travel_problem_.clear();
+    ended_ = Ending::None;
+    safe_ = 0;
+    blink_ = back_asked_ = fell_ = out_of_hearts_ = has_back_ = has_ground_ = nowhere_ = false;
+    stomps_ = enemy_hits_ = hazard_hits_ = falls_ = backs_ = endings_ = nowheres_ = 0;
+    spared_.clear();
     level_screens_.clear();
     deeds_.clear();
     hints_.clear();
@@ -1096,6 +1443,8 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     // shows 0 in a new game, not its braces.
     for (const game::ScreenItem& it : screen_items_)
         if (!shell_->vars().has("inv." + it.id)) shell_->vars().set("inv." + it.id, 0);
+    // The score the same way: 0 in a new game and in a save from before it (14.2c).
+    if (!shell_->vars().has("hero.score")) shell_->vars().set("hero.score", 0);
     if (new_game) {
         shell_->vars().set("hero.hearts", kHearts);
         shell_->vars().set("inv.torch", 5);
@@ -1138,6 +1487,16 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     location_ = place_name(hero_x_, hero_y_);
     dig_progress_ = 0;
     talking_ = 0;
+    // Where the hero goes back to after spikes and pits: where a new game put it; a save's own, else (a save from
+    // before 14.2c) the level's spawn point, else where it is now.
+    f64 back_x = hero_x_, back_y = hero_y_ + kHeroHalfH;
+    if (!new_game && saved.back) {
+        back_x = saved.back_x;
+        back_y = saved.back_y;
+    } else if (!new_game && level_->areas.spawn) {
+        if (f64 x = 0, y = 0; spawn_spot(level_->areas.spawn_x, level_->areas.spawn_y, x, y, nullptr)) back_x = x, back_y = y;
+    }
+    came_in(back_x, back_y);
     return true;
 }
 
@@ -1156,6 +1515,9 @@ bool SliceGame::save(const fs::path& session, std::string& location, std::string
     hs.slot = slot_;
     hs.zoom = camera_.zoom;
     hs.level = level_id_;
+    hs.back = has_back_;
+    hs.back_x = back_x_;
+    hs.back_y = back_y_;
     const std::string json = data::to_json(hs);
     if (!write_file_atomic(session / "hero.json", {reinterpret_cast<const u8*>(json.data()), json.size()})) {
         if (error) *error = "hero.json";
@@ -1434,6 +1796,7 @@ void SliceGame::teleport(f64 x, f64 y) {
     Body& b = level_->hero.get_mut<Body>();
     b.vx = b.vy = 0;
     b.last_dx = b.last_dy = 0;
+    placed_ = true; // its contacts are from where it was
     // The hero moves to its new chunk while the old place is still loaded:
     // otherwise the old place could unload with the hero still filed there.
     load_around(x, y);
@@ -1810,6 +2173,7 @@ void SliceGame::pickups() {
         sounds_.play(own ? own->pickup : std::string(), kind == ItemKind::Coins ? Cue::Coins : Cue::Pickup, ip.tile_x(),
                      ip.tile_y(), own ? own->volume : 1.0f, own ? own->range : 16.0f);
         e.destruct();
+        add_score(item.score);
         if (kind == ItemKind::Pickaxe) {
             give("pickaxe", 1, false);
             shell_->toast("Найдена кирка Бориса");
@@ -1855,7 +2219,9 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
         return;
     }
     if (!shell_->in_dialogue()) talking_ = 0;
-    read_input(input && playing);
+    // An ended game (won or lost): the world stands and the keys lead nobody; the camera and the screens go on.
+    const bool live = playing && ended_ == Ending::None;
+    read_input(input && live);
     if (!level_->hero.is_alive()) find_hero();
     hero_x_ = hero_x();
     hero_y_ = hero_y();
@@ -1866,8 +2232,9 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     }
     const u64 t0 = time_now_ns();
     sync_doors(*level_->scene);
-    level_->sim->update(playing ? dt : 0.0, focus());
+    level_->sim->update(live ? dt : 0.0, focus());
     sim_ms_ = ns_to_ms(time_now_ns() - t0);
+    settle(); // what the ticks left: no hearts, back after spikes
     do_deeds();
     if (trip_) {
         travel();
@@ -1884,9 +2251,12 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     sounds_.pause(!playing);
     sounds_.set_listener(hero_x_, hero_y_);
     // The music of the place the hero is in: the screens decide over it.
-    const forge::level::Area* place = hero_alive() ? forge::level::music_area(level_->areas, hero_x_, hero_y_) : nullptr;
+    const forge::level::Area* place =
+        hero_alive() && ended_ == Ending::None ? forge::level::music_area(level_->areas, hero_x_, hero_y_) : nullptr;
     shell_->screens().set_place_music(place ? place->music : std::string());
-    if (playing) {
+    // The game may have ended in this frame's ticks or deeds: from then on nothing more is done, sounded or taken.
+    const bool going = live && ended_ == Ending::None;
+    if (going) {
         hero_sounds(dt);
         sounds_.update_objects(*level_->scene, hero_x_, hero_y_, dt);
         act(dt);
@@ -1902,7 +2272,7 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
         }
     }
     follow_camera(dt);
-    emit_effects(playing ? dt : 0.0);
+    emit_effects(going ? dt : 0.0);
     build_sprites();
     watch_links();
     update_hud(playing);
@@ -2017,7 +2387,9 @@ void SliceGame::build_sprites() {
         u32 frame = FrameHero;
         if (!(b.contacts & OnGround) && b.liquid == 0) frame = FrameHero + 3;
         else if (std::fabs(b.vx) > 0.5f) frame = FrameHero + 1 + (static_cast<u32>(sim.clock().tick() / 6) & 1u);
-        at(x, y, h.facing < 0 ? -1.0f : 1.0f, 2.0f, frame, 4);
+        // Blinking in the safe second after a heart lost.
+        const bool faint = blinking() && (sim.clock().tick() / 5) % 2 == 1;
+        at(x, y, h.facing < 0 ? -1.0f : 1.0f, 2.0f, frame, 4, faint ? render::pack_color(255, 255, 255, 70) : 0xffffffffu);
         // The tool in hand while digging.
         if (controls_.use && inv("pickaxe") > 0) {
             const f32 swing = std::sin(static_cast<f32>(sim.clock().tick()) * 0.5f) * 0.9f;

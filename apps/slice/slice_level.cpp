@@ -22,6 +22,7 @@ FORGE_REFLECT(slice::Npc, 1) {
 FORGE_REFLECT(slice::Item, 1) {
     t.field("kind", &slice::Item::kind).hidden();
     t.field("count", &slice::Item::count).label("Сколько").range(1, 999);
+    t.field("score", &slice::Item::score).label("Очки").range(0, 10000);
 }
 FORGE_REFLECT(slice::Critter, 1) {
     t.field("speed", &slice::Critter::speed).label("Скорость").range(0.2, 6);
@@ -37,6 +38,13 @@ FORGE_REFLECT(slice::Sounds, 1) {
     t.field("volume", &slice::Sounds::volume).label("Громкость").range(0, 2);
     t.field("range", &slice::Sounds::range).label("Слышно на").range(2, 64);
 }
+FORGE_REFLECT(slice::Enemy, 1) {
+    t.field("hearts", &slice::Enemy::hearts).label("Урон").range(0, 3);
+    t.field("score", &slice::Enemy::score).label("Очки").range(0, 10000);
+    t.field("stomp", &slice::Enemy::stomp).label("Побеждается прыжком сверху");
+    t.field("bounce", &slice::Enemy::bounce).label("Отскок").range(2, 30);
+}
+FORGE_REFLECT(slice::Hazard, 1) { t.field("hearts", &slice::Hazard::hearts).label("Урон").range(0, 3); }
 FORGE_REFLECT(slice::Door, 1) {
     t.field("open", &slice::Door::open).label("Открыта");
     t.field("height", &slice::Door::height).label("Высота").range(2, 6);
@@ -113,6 +121,8 @@ void register_components(scene::Scene& scene) {
     scene.register_component<Critter>();
     scene.register_component<Sounds>();
     scene.register_component<Door>();
+    scene.register_component<Enemy>();
+    scene.register_component<Hazard>();
 }
 
 void setup_cells(sim::CollisionRules& rules, sim::CellSim& cells) {
@@ -215,6 +225,8 @@ void Objects::init(flecs::world& ecs) {
     items = ecs.query_builder<Position, Body, Item>().without<Npc>().without<Critter>().build();
     crates = ecs.query<Position, RigidBody>();
     doors = ecs.query<Position, Door>();
+    enemies = ecs.query<Position, Body, Enemy>();
+    hazards = ecs.query<Position, Body, Hazard>();
     bodies = ecs.query_builder<Position, Body>().without<Npc>().without<Critter>().without<Item>().without<Hero>().build();
 }
 
@@ -287,13 +299,24 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         at(p.tile_x(), p.tile_y(), rb.half_w * 2.0f, rb.half_h * 2.0f, pic ? pic->frame : demo::kFrameCrate, 1,
            0xffffffffu, rb.angle);
     });
-    // Objects that only have a body: their picture, else a crate.
+    // Objects that only have a body: their picture, else a crate. «Опасность» fills its box (the box that hurts):
+    // its picture over all of it, else spikes a tile each along it.
     objects.bodies.each([&](flecs::entity e, const Position& p, const Body& b) {
         if (!e.has<objects::ObjectRef>()) return;
         f64 x, y;
         sim::draw_position(p, b, alpha, x, y);
         const Pictures::Picture* pic = picture(e);
         const f32 h = b.half_h * 2.0f;
+        if (e.has<Hazard>()) {
+            if (pic) {
+                at(x, y, b.half_w * 2.0f, h, pic->frame, 1);
+                return;
+            }
+            const i32 n = std::max(1, static_cast<i32>(std::lround(b.half_w * 2.0f)));
+            const f32 w = b.half_w * 2.0f / static_cast<f32>(n);
+            for (i32 i = 0; i < n; ++i) at(x - b.half_w + w * (static_cast<f32>(i) + 0.5f), y, w, h, FrameSpikes, 1);
+            return;
+        }
         at(x, y, pic ? h * pic->aspect : b.half_w * 2.0f, h, pic ? pic->frame : demo::kFrameCrate, 1);
     });
     // Doors: a closed one fills its column, an open one stands at its side.
@@ -430,6 +453,7 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
     if (library_.has_block(*t, "villager")) frame = choice("who") == "\"smith\"" ? FrameSmith : FrameMiner;
     else if (library_.has_block(*t, "control")) frame = 2;
     else if (library_.has_block(*t, "door")) frame = FrameDoor;
+    else if (library_.has_block(*t, "hazard")) frame = FrameSpikes;
     else if (library_.has_block(*t, "pickup")) {
         static const char* ids[] = {"\"pickaxe\"", "\"coins\"", "\"copper\"", "\"wood\"", "\"torch\"", "\"key\""};
         const std::string what = choice("what");

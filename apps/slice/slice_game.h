@@ -40,6 +40,10 @@ struct HeroSave {
     // The level the game plays: its id in the game's list (levels.json); empty for a folder that is no level of it.
     // A save made before levels has no such field: it played game/level, so that is what it reads as.
     std::string level{forge::level::kFirstLevel};
+    // Where the hero goes back to on this level after spikes or a pit (14.2c): the point under its feet where it came
+    // into the level. A save made before 14.2c has none: the level's spawn point, else where the hero is.
+    bool back = false;
+    f64 back_x = 0, back_y = 0;
 };
 
 struct Options {
@@ -86,6 +90,8 @@ public:
     bool save(const std::filesystem::path& session, std::string& location, std::string* error) override;
     void end() override;
     bool running() const override { return running_; }
+    // An ended game (won or lost) is never saved: «Продолжить» goes on from before its end.
+    bool can_save(std::string* why) const override;
     void update(f64 dt, bool playing, bool input) override;
     void render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) override;
     void handle_event(const SDL_Event& event) override;
@@ -184,7 +190,10 @@ public:
     // The hero remembers that a link of an area happened («Только один раз»).
     bool hero_marked(u32 link) const;
     // Hurts the hero by n hearts (n < 0 heals), as a link does.
-    void hurt(f64 n) { hurt_hero(n); }
+    void hurt(f64 n) {
+        hurt_hero(n);
+        settle();
+    }
     f64 inventory(const char* item) const;
     u32 particles() const { return particles_.stats().slots_used; }
     f64 sim_ms() const { return sim_ms_; }
@@ -231,6 +240,28 @@ public:
     void fail_next_travel(TravelFault f) { travel_fault_ = f; }
     // The screens the level's links and schemes opened and have not closed (a going closes them).
     const std::set<std::string>& level_screens() const { return level_screens_; }
+
+    // The platformer's rules (14.2-платформер-модель.md, «Правила платформера (14.2c)»): the game's score
+    // (hero.score), its end (won or lost: the world stands), the safe time left after a heart lost or the hero placed
+    // (blinking: after a heart lost), the point it goes back to (under its feet), and how many enemies it beat, times
+    // enemies and hazards took hearts, pits it fell into and times it went back since the game began or was loaded.
+    f64 score() const;
+    bool won() const { return ended_ == Ending::Won; }
+    bool lost() const { return ended_ == Ending::Lost; }
+    f64 safe_time() const { return safe_; }
+    bool blinking() const { return blink_ && safe_ > 0; }
+    bool back_point(f64& x, f64& y) const;
+    u32 stomps() const { return stomps_; }
+    // Enemies met in the tick of a stomp: they do not hurt while the hero stays in them.
+    u32 spared() const { return static_cast<u32>(spared_.size()); }
+    u32 enemy_hits() const { return enemy_hits_; }
+    u32 hazard_hits() const { return hazard_hits_; }
+    u32 falls() const { return falls_; }
+    u32 backs() const { return backs_; }
+    // Times a return found no place that would do (the hero stayed where it was).
+    u32 nowheres() const { return nowheres_; }
+    // How many times the game ended since it began or was loaded (at most once).
+    u32 endings() const { return endings_; }
 
 private:
     friend class SliceLogic;
@@ -289,7 +320,25 @@ private:
     // Takes in what the editor changed in the links' file meanwhile.
     void watch_links();
     std::vector<Seen> seen_things() const;
+    // n > 0 hurts, n < 0 heals; with no hearts left it asks settle for the end (or the old waking up).
     void hurt_hero(f64 n);
+    // The platformer's rules: enemies and hazards touched this tick (a system before hero_tick); hearts lost to
+    // them or a pit (the safe second after); what they leave for after the ticks (the end, or the old waking up; the
+    // hero put back); the game's end; where the hero may come back to; an area links make a pit.
+    void contacts_tick(const forge::sim::TickContext& ctx);
+    void lose_hearts(f64 n);
+    void settle();
+    void wake_up(bool fell);
+    void hearts_out(bool fell);
+    bool go_back();
+    const char* return_spot(bool waking, f64& x, f64& y);
+    bool in_pit(f64 x, f64 y) const;
+    void finish(bool won);
+    bool back_spot(f64 x, f64 y, f64& out_x, f64& out_y, std::string* why);
+    bool is_pit(forge::u64 area) const;
+    void add_score(f64 n);
+    // Where the hero came into the level (feet), and the safe time without blinking it starts there with.
+    void came_in(f64 x, f64 feet_y);
     // Areas: who came in and went out this tick; the area a link names; where
     // a spawn point puts the hero (false: why, then the game's start).
     void areas_tick(const forge::sim::TickContext& ctx);
@@ -384,6 +433,24 @@ private:
     std::unordered_map<forge::u64, u32> area_enters_, area_leaves_;
     std::filesystem::file_time_type links_time_{};
     u64 links_checked_ = 0;
+
+    // The platformer's rules (14.2c).
+    enum class Ending : u8 { None, Won, Lost };
+    Ending ended_ = Ending::None;
+    f64 safe_ = 0;      // game seconds the hero loses no heart
+    bool blink_ = false; // that time came from a heart lost (the hero blinks)
+    bool has_back_ = false;
+    f64 back_x_ = 0, back_y_ = 0; // the return point: under the hero's feet
+    bool back_asked_ = false;     // spikes or a pit: back after the ticks
+    bool fell_ = false;           // that back is from a pit (nothing to stand on there)
+    bool nowhere_ = false;        // no place to go back to for this touch of hazards: not looked for until off them
+    bool has_ground_ = false;     // where the hero last stood safely on the floor of this level (not saved)
+    f64 ground_x_ = 0, ground_y_ = 0;
+    bool placed_ = false;         // teleported since the last tick: the body's contacts are from before
+    bool out_of_hearts_ = false;  // the last heart went: the end (or the old waking up) after the ticks
+    u32 stomps_ = 0, enemy_hits_ = 0, hazard_hits_ = 0, falls_ = 0, backs_ = 0, endings_ = 0, nowheres_ = 0;
+    // Enemies the hero was in when it beat another: they do not hurt it until it is out of them.
+    std::vector<flecs::entity_t> spared_;
 };
 
 } // namespace slice

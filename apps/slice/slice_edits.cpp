@@ -33,6 +33,25 @@ FORGE_REFLECT(slice::ProjectEdits, 1) {
     t.field("go_mark_put", &slice::ProjectEdits::go_mark_put);
     t.field("go_mark_find", &slice::ProjectEdits::go_mark_find);
     t.field("go_save", &slice::ProjectEdits::go_save);
+    t.field("pl_enemy", &slice::ProjectEdits::pl_enemy);
+    t.field("pl_coin", &slice::ProjectEdits::pl_coin);
+    t.field("pl_trap", &slice::ProjectEdits::pl_trap);
+    t.field("pl_goal", &slice::ProjectEdits::pl_goal);
+    t.field("pl_at", &slice::ProjectEdits::pl_at);
+    t.field("pl_damage", &slice::ProjectEdits::pl_damage);
+    t.field("pl_enemy_score", &slice::ProjectEdits::pl_enemy_score);
+    t.field("pl_coin_score", &slice::ProjectEdits::pl_coin_score);
+    t.field("pl_trap_damage", &slice::ProjectEdits::pl_trap_damage);
+    t.field("pl_trap_half_w", &slice::ProjectEdits::pl_trap_half_w);
+    t.field("pl_pit", &slice::ProjectEdits::pl_pit);
+    t.field("pl_hud", &slice::ProjectEdits::pl_hud);
+    t.field("pl_lose", &slice::ProjectEdits::pl_lose);
+    t.field("pl_win", &slice::ProjectEdits::pl_win);
+    t.field("pl_hud_text", &slice::ProjectEdits::pl_hud_text);
+    t.field("pl_lose_text", &slice::ProjectEdits::pl_lose_text);
+    t.field("pl_lose_again", &slice::ProjectEdits::pl_lose_again);
+    t.field("pl_win_text", &slice::ProjectEdits::pl_win_text);
+    t.field("pl_goal_color", &slice::ProjectEdits::pl_goal_color);
 }
 
 namespace slice {

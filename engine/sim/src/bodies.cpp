@@ -133,4 +133,25 @@ u8 move_body(scene::Position& p, Body& body, f32 dt, f32 gx, f32 gy, f32 max_fal
     return contacts;
 }
 
+Touch touch_side(const Box& a_before, const Box& a_now, const Box& b_before, const Box& b_now, f64 eps) {
+    if (std::fabs(a_now.x - b_now.x) >= a_now.half_w + b_now.half_w || std::fabs(a_now.y - b_now.y) >= a_now.half_h + b_now.half_h)
+        return Touch::None;
+    // Before the move: how far a's bottom was over b's top, a's top under b's bottom, and the boxes apart sideways.
+    const f64 over = (b_before.y - b_before.half_h) - (a_before.y + a_before.half_h);
+    const f64 under = (a_before.y - a_before.half_h) - (b_before.y + b_before.half_h);
+    const f64 apart = std::fabs(a_before.x - b_before.x) - (a_before.half_w + b_before.half_w);
+    // How a moved down against b, and how much nearer sideways they came.
+    const f64 down = (a_now.y - a_before.y) - (b_now.y - b_before.y);
+    const f64 nearer = std::fabs(a_before.x - b_before.x) - std::fabs(a_now.x - b_now.x);
+    // Through a top or bottom face: that gap was open (or nearly) and closing, and it closed last.
+    auto through = [&](f64 gap, f64 closing) {
+        if (gap < -eps || closing <= 0) return false;
+        if (apart <= 0 || nearer <= 0) return true;
+        return std::max(gap, 0.0) / closing >= apart / nearer;
+    };
+    if (through(over, down)) return Touch::Top;
+    if (through(under, -down)) return Touch::Bottom;
+    return Touch::Side;
+}
+
 } // namespace forge::sim

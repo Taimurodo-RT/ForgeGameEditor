@@ -44,6 +44,7 @@ enum class ItemKind : u8 { Pickaxe, Coins, Copper, Wood, Torch, Key };
 struct Item {
     u8 kind = 0;
     u16 count = 1;
+    u16 score = 0; // «Очки»: added to the game's score (hero.score) when picked up
 };
 // How a critter moves: its «Управление» scheme. New schemes are added here,
 // in the game's critter system and as a choice in kinds.json.
@@ -53,6 +54,21 @@ struct Critter {
     f32 dir = 1;
     u32 seed = 0;
     u8 scheme = static_cast<u8>(Scheme::Wander);
+};
+
+// «Враг» (step 14.2c, 14.2-платформер-модель.md, «Касание врага»): touching the hero from a side or from below
+// takes hearts; the hero coming down onto its top beats it, when it can be beaten so: its score goes to the game's
+// (hero.score), the hero bounces up, the copy is gone (and so not in the saves).
+struct Enemy {
+    u8 hearts = 1;     // «Урон»
+    u16 score = 100;   // «Очки»
+    bool stomp = true; // «Побеждается прыжком сверху»
+    f32 bounce = 11;   // «Отскок»: the hero's speed up after beating it, tiles / s
+};
+// «Опасность» (spikes): the hero's box touching its box takes hearts and puts the hero back at the point it came
+// into the level by («Опасность, пропасть и точка возврата»).
+struct Hazard {
+    u8 hearts = 1; // «Урон»
 };
 
 // «Дверь»: a door, height tiles tall, standing on the cell under its
@@ -122,6 +138,8 @@ struct Objects {
     flecs::query<forge::scene::Position, forge::sim::Body, Item> items;
     flecs::query<forge::scene::Position, forge::sim::RigidBody> crates;
     flecs::query<forge::scene::Position, Door> doors;
+    flecs::query<forge::scene::Position, forge::sim::Body, Enemy> enemies;
+    flecs::query<forge::scene::Position, forge::sim::Body, Hazard> hazards;
     flecs::query<forge::scene::Position, forge::sim::Body> bodies; // a body and nothing else of the above
     void init(flecs::world& ecs);
 };
@@ -242,3 +260,5 @@ FORGE_REFLECT_DECLARE(slice::Item)
 FORGE_REFLECT_DECLARE(slice::Critter)
 FORGE_REFLECT_DECLARE(slice::Sounds)
 FORGE_REFLECT_DECLARE(slice::Door)
+FORGE_REFLECT_DECLARE(slice::Enemy)
+FORGE_REFLECT_DECLARE(slice::Hazard)

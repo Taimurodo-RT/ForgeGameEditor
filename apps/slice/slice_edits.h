@@ -11,7 +11,8 @@
 //
 // A game of several levels (step 14.2a): the level the game plays, by its id in the game's list, and cells the author
 // put into that level, which the game must have; without an object only these are checked. And going between its
-// levels (step 14.2b): the areas the hero comes into, where it must be after each.
+// levels (step 14.2b): the areas the hero comes into, where it must be after each. The platformer (step 14.2c): the
+// author's enemy, coin, trap and goal, the zone the hero falls into, the HUD and the windows the game shows at its end.
 
 #include "forge/core/types.h"
 #include "forge/data/reflect.h"
@@ -49,6 +50,19 @@ struct ProjectEdits {
     std::vector<std::string> go_through, go_level, go_arrive;
     std::string go_mark_put, go_mark_find;
     std::string go_save;
+    // The platformer (step 14.2c) as the author made it in the tabs: the templates of «Враг», «Подбираемое», «Ловушка»
+    // and the goal (an own picture object, which a link «доходит до» names) by their ids; pl_at: where their copies stand
+    // (the middles, as the editor has them): x, y of the enemy, the coin, the trap, the goal; the values the author gave
+    // them; the zone of a link «падает в» (its thing id, "area:…"); the HUD (a screen over the game) with its text
+    // layer, the windows «Показывается сам: при поражении» (its text, its button «Новая игра») and «при победе» (its
+    // text). pl_goal_color: the goal's picture, one colour all over.
+    std::string pl_enemy, pl_coin, pl_trap, pl_goal;
+    std::vector<double> pl_at;
+    double pl_damage = 0, pl_enemy_score = 0, pl_coin_score = 0, pl_trap_damage = 0, pl_trap_half_w = 0;
+    std::string pl_pit;
+    std::string pl_hud, pl_lose, pl_win;
+    forge::u32 pl_hud_text = 0, pl_lose_text = 0, pl_lose_again = 0, pl_win_text = 0;
+    std::vector<int> pl_goal_color;
 };
 
 // False (error says why) when the file cannot be read.

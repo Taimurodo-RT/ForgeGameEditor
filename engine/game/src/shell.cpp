@@ -236,6 +236,10 @@ void Shell::screen_action(const ScreenAction& a) {
         if (!slots_->list().empty()) start_loading([this] { if (!continue_game()) show(Screen::Main); });
     } else if (a.what == "load" || a.what == "save") {
         if (a.what == "save" && !game_->running()) return;
+        if (std::string why; a.what == "save" && !game_->can_save(&why)) {
+            toast("Сохранить нельзя: " + why);
+            return;
+        }
         if (a.what == "load" && slots_->list().empty()) {
             toast("Сохранений пока нет");
             return;
@@ -387,6 +391,10 @@ bool Shell::continue_game() {
 bool Shell::save(std::string_view slot_id, std::string title, bool autosave) {
     if (!game_->running()) return false;
     std::string error, location;
+    if (!game_->can_save(&error)) {
+        if (!autosave) toast("Сохранить нельзя: " + error);
+        return false;
+    }
     if (!game_->save(slots_->session(), location, &error)) {
         toast("Не удалось сохранить: " + error);
         return false;
@@ -645,6 +653,10 @@ void Shell::bind_model() {
     on("continue_game", [this, loading](Rml::Event&, const Rml::VariantList&) { loading([this] { if (!continue_game()) show(Screen::Main); }); });
     on("open_slots", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         if (screen_ == Screen::Main && slots_->list().empty()) return;
+        if (std::string why; arg_str(a, 0) == "save" && game_->running() && !game_->can_save(&why)) {
+            toast("Сохранить нельзя: " + why);
+            return;
+        }
         model_->slots_mode = arg_str(a, 0) == "save" ? "save" : "load";
         if (screen_ != Screen::Slots) back_ = screen_;
         show(Screen::Slots);

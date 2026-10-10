@@ -1333,3 +1333,65 @@ TEST_CASE("logic: verbs, ideas and links not there, their names in Cyrillic") {
     CHECK_FALSE(links.save(dir / utf8_path("занято") / utf8_path("связи.json"), &error));
     CHECK(error == "не записывается связи.json");
 }
+
+// The platformer's verbs (14.2c) as the module has them: «падает в» a pit (an area), «доходит до» a goal (a template
+// or an area); the hero does not reach itself.
+TEST_CASE("logic: the module's «падает в» and «доходит до» go on areas and templates") {
+    Verbs verbs;
+    std::string error;
+    REQUIRE_MESSAGE(verbs.load(std::filesystem::path(FORGE_SOURCE_DIR) / "games" / "slice" / "verbs.json", &error), error);
+    const VerbDef* fall = verbs.find("fall");
+    const VerbDef* win = verbs.find("win");
+    REQUIRE(fall);
+    REQUIRE(win);
+    CHECK(fall->action == "fall");
+    CHECK(win->action == "win");
+    constexpr const char* kPit = "area:00000000000000a1";
+    constexpr const char* kGoal = "area:00000000000000a2";
+    Words w;
+    w.things.push_back(thing("flag", "Флаг"));
+    w.things.push_back(area_thing(kPit, "Пропасть"));
+    w.things.push_back(area_thing(kGoal, "Финиш"));
+    const Thing& hero = *w.find(kHero);
+    const Thing& flag = *w.find("flag");
+    const Thing& pit = *w.find(kPit);
+    const Thing& goal = *w.find(kGoal);
+    CHECK(suits(*fall, hero, pit));
+    CHECK_FALSE(suits(*fall, hero, flag)); // a pit is an area
+    CHECK_FALSE(suits(*fall, flag, pit));  // only the hero falls
+    CHECK(suits(*win, hero, flag));
+    CHECK(suits(*win, hero, goal));
+    CHECK_FALSE(suits(*win, hero, hero));
+    CHECK_FALSE(suits(*win, flag, goal));
+    const Link to_pit{0, std::string(kHero), "fall", kPit};
+    const Link to_flag{0, std::string(kHero), "win", "flag"};
+    const Link to_goal{0, std::string(kHero), "win", kGoal};
+    CHECK(phrase(to_pit, *fall, hero, pit) == "Герой падает в Пропасть");
+    CHECK(phrase(to_goal, *win, hero, goal) == "Герой доходит до Финиша");
+    const std::vector<Step> st = steps(to_pit, *fall, hero, pit);
+    REQUIRE(st.size() == 2);
+    CHECK(st[1].text == "Отнять у героя сердце и вернуть его туда, где он вошёл на уровень");
+
+    // Compiled: the pit's module when the hero comes in, the flag's when it touches it; both ask the game for the
+    // verb's action on the hero.
+    Logic logic;
+    logic.add(to_pit);
+    logic.add(to_flag);
+    logic.add(to_goal);
+    const Compiled c = compile(logic, verbs, w.find);
+    for (const Problem& p : c.problems) INFO(p.text);
+    CHECK(c.problems.empty());
+    REQUIRE(c.modules.size() == 3);
+    auto module = [&](std::string_view thing) -> const std::string* {
+        for (const auto& m : c.modules)
+            if (m.thing == thing) return &m.source;
+        return nullptr;
+    };
+    REQUIRE(module(kPit));
+    REQUIRE(module("flag"));
+    REQUIRE(module(kGoal));
+    CHECK(module(kPit)->find("function S.on_enter(self, other)") != std::string::npos);
+    CHECK(module(kPit)->find("logic.act(\"fall\", target") != std::string::npos);
+    CHECK(module("flag")->find("logic.act(\"win\", target") != std::string::npos);
+    CHECK(module(kGoal)->find("logic.act(\"win\", target") != std::string::npos);
+}
