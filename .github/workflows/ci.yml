@@ -89,7 +89,7 @@ jobs:
         run: |
           ./build/apps/editor/forge_editor --self-test --screenshot world-editor.png
           ./build/apps/editor/forge_editor --bench --frames 300
-      - name: Two games of one template (editor self-test part two-games): «Находка» made in A through the tabs, A opened again elsewhere and updated, the template and B byte for byte as before
+      - name: Two games of one template (editor self-test part two-games), «Находка» made in A through the tabs, A opened again elsewhere and updated, the template and B byte for byte as before
         if: runner.os == 'Linux'
         run: ./build/apps/editor/forge_editor --self-test two-games
       - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
