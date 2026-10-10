@@ -1,14 +1,20 @@
 // A game's copies of the author's files and the assets of «Ресурсы» they were made of (step 14.1b): the same
 // asset picked again gives its copy, a changed asset updates it under the same name, a missing copy comes back,
-// a missing asset is said; sources.json names nothing outside the game.
+// a missing asset is said; a broken asset file is not taken; a copy's name stays its own while its file is missing;
+// a change that cannot be recorded leaves nothing of it; sources.json names nothing outside the game.
 
+#include "forge/assets/asset_pipeline.h"
+#include "forge/assets/image.h"
+#include "forge/audio/audio.h"
 #include "forge/core/file.h"
+#include "forge/core/jobs.h"
 #include "forge/core/path.h"
 #include "forge/editor/sources.h"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <span>
@@ -21,14 +27,38 @@ namespace fs = std::filesystem;
 
 namespace {
 
-void put(const fs::path& file, std::string_view text) {
+// Real files the game reads: a picture of one colour, a sound of some frames.
+std::vector<u8> png(u8 r, u8 g, u8 b) {
+    assets::CookedTexture t;
+    t.width = t.height = 2;
+    for (int i = 0; i < 4; ++i) t.rgba8.insert(t.rgba8.end(), {r, g, b, 255});
+    std::vector<u8> out;
+    if (!assets::encode_image(t, ".png", out)) out.clear(); // checked below: usable() takes none of an empty one
+    return out;
+}
+std::vector<u8> wav(u32 frames) {
+    audio::Clip clip;
+    clip.samples.assign(static_cast<usize>(frames) * 2, 0.25f);
+    std::vector<u8> out;
+    if (!audio::encode_wav(clip, out)) out.clear();
+    return out;
+}
+const std::vector<u8> kBlue = png(40, 90, 200), kRed = png(200, 40, 40), kGreen = png(40, 180, 60), kGray = png(128, 128, 128);
+const std::vector<u8> kRing = wav(100), kMine = wav(50), kLong = wav(300);
+
+void put(const fs::path& file, std::span<const u8> bytes) {
     std::error_code ec;
     fs::create_directories(file.parent_path(), ec);
-    REQUIRE(write_file_atomic(file, std::span(reinterpret_cast<const u8*>(text.data()), text.size())));
+    REQUIRE(write_file_atomic(file, bytes));
+}
+void put(const fs::path& file, std::string_view text) { put(file, std::span(reinterpret_cast<const u8*>(text.data()), text.size())); }
+std::vector<u8> bytes_of(const fs::path& file) {
+    std::vector<u8> bytes;
+    return read_file(file, bytes) ? bytes : std::vector<u8>();
 }
 std::string text_of(const fs::path& file) {
-    std::vector<u8> bytes;
-    return read_file(file, bytes) ? std::string(bytes.begin(), bytes.end()) : std::string("<нет>");
+    const std::vector<u8> bytes = bytes_of(file);
+    return std::string(bytes.begin(), bytes.end());
 }
 std::vector<std::string> names(const fs::path& dir) {
     std::vector<std::string> out;
@@ -36,6 +66,11 @@ std::vector<std::string> names(const fs::path& dir) {
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) out.push_back(path_to_utf8(it->path().filename()));
     std::sort(out.begin(), out.end());
     return out;
+}
+// A file changed in another program: a time «Ресурсы» sees as new.
+void touch(const fs::path& file, int seconds) {
+    std::error_code ec;
+    fs::last_write_time(file, fs::file_time_type::clock::now() + std::chrono::seconds(seconds), ec);
 }
 
 // A game's folder and «Ресурсы» next to it, with Cyrillic and spaces in the names.
@@ -48,8 +83,8 @@ struct Fixture {
         std::error_code ec;
         fs::remove_all(root, ec);
         fs::create_directories(game, ec);
-        put(assets / utf8_path("находки/кристалл.png"), "синий");
-        put(assets / utf8_path("звуки/звон.wav"), "дзынь");
+        put(assets / utf8_path("находки/кристалл.png"), kBlue);
+        put(assets / utf8_path("звуки/звон.wav"), kRing);
         where[crystal] = "находки/кристалл.png";
         where[ring] = "звуки/звон.wav";
     }
@@ -57,13 +92,19 @@ struct Fixture {
         std::error_code ec;
         fs::remove_all(root, ec);
     }
-    Asset asset(const Guid& id) { return {id, where.at(id), assets / utf8_path(where.at(id))}; }
+    fs::path copy(const char* file) const { return game / utf8_path(file); }
+    Asset asset(const Guid& id) { return {id, where.at(id), assets / utf8_path(where.at(id)), {}}; }
     std::function<std::optional<Asset>(const Guid&)> finder() {
         return [this](const Guid& id) -> std::optional<Asset> {
             if (!where.count(id) || !fs::exists(assets / utf8_path(where.at(id)))) return std::nullopt;
             return asset(id);
         };
     }
+};
+
+struct PoolScope {
+    PoolScope() { jobs::init(3); }
+    ~PoolScope() { jobs::shutdown(); }
 };
 
 } // namespace
@@ -76,7 +117,7 @@ TEST_CASE("sources: an asset picked again gives its copy, a changed one updates 
     std::string error;
     CHECK(s.copy_in(f.asset(f.crystal), "pictures", &error) == "кристалл.png");
     CHECK(error.empty());
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл.png")) == "синий");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kBlue);
     CHECK(s.copy_in(f.asset(f.ring), "sounds") == "звон.wav");
     const std::string json = text_of(f.game / "sources.json");
     CHECK(json.find("\"pictures/кристалл.png\"") != std::string::npos);
@@ -91,10 +132,10 @@ TEST_CASE("sources: an asset picked again gives its copy, a changed one updates 
     // Renamed in «Ресурсы» (its Guid kept) and changed: picked again, its copy has the new content, same name.
     fs::rename(f.assets / utf8_path("находки/кристалл.png"), f.assets / utf8_path("находки/кристалл синий.png"));
     f.where[f.crystal] = "находки/кристалл синий.png";
-    put(f.assets / utf8_path("находки/кристалл синий.png"), "красный");
+    put(f.assets / utf8_path("находки/кристалл синий.png"), kRed);
     CHECK(s.copy_in(f.asset(f.crystal), "pictures") == "кристалл.png");
     CHECK(names(f.game / "pictures") == std::vector<std::string>{"кристалл.png"});
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл.png")) == "красный");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kRed);
     CHECK(s.of_file("pictures/кристалл.png")->from == "находки/кристалл синий.png");
 
     // Read again: the same.
@@ -107,14 +148,14 @@ TEST_CASE("sources: an asset picked again gives its copy, a changed one updates 
 
 TEST_CASE("sources: another file of the name stays; the same content with no asset is taken") {
     Fixture f;
-    put(f.game / utf8_path("pictures/кристалл.png"), "чужой");
+    put(f.copy("pictures/кристалл.png"), kGray);
     Sources s;
     REQUIRE(s.load(f.game));
     CHECK(s.copy_in(f.asset(f.crystal), "pictures") == "кристалл 2.png");
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл.png")) == "чужой");
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл 2.png")) == "синий");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kGray);
+    CHECK(bytes_of(f.copy("pictures/кристалл 2.png")) == kBlue);
 
-    put(f.game / utf8_path("sounds/звон.wav"), "дзынь");
+    put(f.copy("sounds/звон.wav"), kRing);
     CHECK(s.copy_in(f.asset(f.ring), "sounds") == "звон.wav");
     CHECK(names(f.game / "sounds") == std::vector<std::string>{"звон.wav"});
     CHECK(s.of_file("sounds/звон.wav") != nullptr);
@@ -129,15 +170,14 @@ TEST_CASE("sources: sync updates changed assets' copies, brings missing copies b
 
     Report r = s.sync(f.finder());
     CHECK(!r.changed());
-    CHECK((r.gone.empty() && r.lost.empty() && r.errors.empty()));
-    const std::string json = text_of(f.game / "sources.json");
+    CHECK((r.gone.empty() && r.lost.empty() && r.refused.empty() && r.errors.empty()));
 
     // Edited in another program: its copy follows, under the same name.
-    put(f.assets / utf8_path("находки/кристалл.png"), "зелёный");
+    put(f.assets / utf8_path("находки/кристалл.png"), kGreen);
     r = s.sync(f.finder());
     REQUIRE(r.updated.size() == 1);
     CHECK(r.updated[0].file == "pictures/кристалл.png");
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл.png")) == "зелёный");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kGreen);
     CHECK(names(f.game / "pictures") == std::vector<std::string>{"кристалл.png"});
     CHECK(!s.sync(f.finder()).changed());
 
@@ -150,15 +190,15 @@ TEST_CASE("sources: sync updates changed assets' copies, brings missing copies b
     CHECK(s.of_file("sounds/звон.wav")->from == "звуки/старые/звон.wav");
 
     // A copy changed in the game's folder and not in «Ресурсы» is left as it is.
-    put(f.game / utf8_path("sounds/звон.wav"), "мой");
+    put(f.copy("sounds/звон.wav"), kMine);
     CHECK(!s.sync(f.finder()).changed());
-    CHECK(text_of(f.game / utf8_path("sounds/звон.wav")) == "мой");
+    CHECK(bytes_of(f.copy("sounds/звон.wav")) == kMine);
 
     // The copy deleted: it comes back from its asset.
-    fs::remove(f.game / utf8_path("pictures/кристалл.png"));
+    fs::remove(f.copy("pictures/кристалл.png"));
     r = s.sync(f.finder());
     REQUIRE(r.restored.size() == 1);
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл.png")) == "зелёный");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kGreen);
 
     // The asset deleted: said, its copy stays.
     fs::remove(f.assets / utf8_path("находки/кристалл.png"));
@@ -166,35 +206,261 @@ TEST_CASE("sources: sync updates changed assets' copies, brings missing copies b
     REQUIRE(r.gone.size() == 1);
     CHECK(r.gone[0].file == "pictures/кристалл.png");
     CHECK(r.gone[0].from == "находки/кристалл.png");
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл.png")) == "зелёный");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kGreen);
 
     // Neither: said as lost; the asset back (an undo in «Ресурсы»), the copy is made again.
-    fs::remove(f.game / utf8_path("pictures/кристалл.png"));
+    fs::remove(f.copy("pictures/кристалл.png"));
     r = s.sync(f.finder());
     REQUIRE(r.lost.size() == 1);
-    CHECK(!fs::exists(f.game / utf8_path("pictures/кристалл.png")));
-    put(f.assets / utf8_path("находки/кристалл.png"), "зелёный");
+    CHECK(!fs::exists(f.copy("pictures/кристалл.png")));
+    put(f.assets / utf8_path("находки/кристалл.png"), kGreen);
     r = s.sync(f.finder());
     REQUIRE(r.restored.size() == 1);
-    CHECK(text_of(f.game / utf8_path("pictures/кристалл.png")) == "зелёный");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kGreen);
 }
 
-TEST_CASE("sources: entries that name a file outside the game are left out") {
+TEST_CASE("sources: a broken asset file is not taken; its copy stays whole until the file is put right") {
+    PoolScope pool;
     Fixture f;
-    const std::string id = Guid::generate().to_string();
+    assets::AssetPipeline pipeline(f.assets, f.root / "Library");
+    REQUIRE(pipeline.open());
+    pipeline.add_default_importers();
+    CHECK(pipeline.refresh().failed == 0);
+    // «Ресурсы» as the editor gives them: the record of the last import without an error.
+    auto as_now = [&](const assets::AssetRecord& a) { return Asset{a.id, a.path, f.assets / utf8_path(a.path), a.source_hash.to_hex()}; };
+    auto find = [&](const Guid& id) -> std::optional<Asset> {
+        const std::optional<assets::AssetRecord> a = pipeline.database().find(id);
+        return a ? std::optional<Asset>(as_now(*a)) : std::nullopt;
+    };
+    auto record = [&](const char* rel) {
+        const std::optional<assets::AssetRecord> a = pipeline.database().find_by_path(rel);
+        REQUIRE(a);
+        return *a;
+    };
+    const fs::path picture = f.assets / utf8_path("находки/кристалл.png"), sound = f.assets / utf8_path("звуки/звон.wav");
+    Sources s;
+    REQUIRE(s.load(f.game));
+    REQUIRE(s.copy_in(as_now(record("находки/кристалл.png")), "pictures") == "кристалл.png");
+    REQUIRE(s.copy_in(as_now(record("звуки/звон.wav")), "sounds") == "звон.wav");
+    const Guid picture_id = record("находки/кристалл.png").id, sound_id = record("звуки/звон.wav").id;
+    const std::string json = text_of(f.game / "sources.json");
+
+    // Cut short by another program. The picture does not import (its record is the old one); the sound imports
+    // (sounds are taken as they are) but does not play.
+    put(picture, "PNG, оборванный другой программой");
+    put(sound, "WAV, оборванный другой программой");
+    touch(picture, 1);
+    touch(sound, 1);
+    CHECK(pipeline.refresh().failed == 1);
+    Report r = s.sync(find);
+    CHECK(!r.changed());
+    REQUIRE(r.refused.size() == 2);
+    for (const Refusal& no : r.refused) {
+        CHECK(!no.missing);
+        CHECK(!no.why.empty());
+    }
+    CHECK(r.errors.empty());
+    // The copies as they were, still a picture and a sound; sources.json as it was.
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kBlue);
+    CHECK(bytes_of(f.copy("sounds/звон.wav")) == kRing);
+    assets::CookedTexture read;
+    CHECK(assets::decode_image(bytes_of(f.copy("pictures/кристалл.png")), read));
+    CHECK(audio::decode(bytes_of(f.copy("sounds/звон.wav"))) != nullptr);
+    CHECK(text_of(f.game / "sources.json") == json);
+    // Picked again while broken: not taken, nothing changes.
+    std::string error;
+    CHECK(s.copy_in(as_now(record("находки/кристалл.png")), "pictures", &error).empty());
+    CHECK(error.find("«находки/кристалл.png»") != std::string::npos);
+    CHECK(s.copy_in(as_now(record("звуки/звон.wav")), "sounds", &error).empty());
+    CHECK(error.find("звук") != std::string::npos);
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kBlue);
+    CHECK(text_of(f.game / "sources.json") == json);
+    // The copy gone too: not made of the broken file; said as missing.
+    fs::remove(f.copy("pictures/кристалл.png"));
+    r = s.sync(find);
+    CHECK(r.restored.empty());
+    REQUIRE(r.refused.size() == 2);
+    const auto gone = std::find_if(r.refused.begin(), r.refused.end(), [](const Refusal& no) { return no.entry.file == "pictures/кристалл.png"; });
+    REQUIRE(gone != r.refused.end());
+    CHECK(gone->missing);
+    CHECK(!fs::exists(f.copy("pictures/кристалл.png")));
+
+    // Put right with new content: the next look takes it, under the same names, from the same assets.
+    put(picture, kRed);
+    put(sound, kLong);
+    touch(picture, 2);
+    touch(sound, 2);
+    // Not looked at by «Ресурсы» yet: their records are of the content imported before, so both wait for it.
+    r = s.sync(find);
+    CHECK(!r.changed());
+    CHECK(r.refused.size() == 2);
+    CHECK(!fs::exists(f.copy("pictures/кристалл.png")));
+    CHECK(bytes_of(f.copy("sounds/звон.wav")) == kRing);
+    CHECK(pipeline.refresh().failed == 0);
+    r = s.sync(find);
+    REQUIRE(r.restored.size() == 1);
+    CHECK(r.restored[0].file == "pictures/кристалл.png");
+    REQUIRE(r.updated.size() == 1);
+    CHECK(r.updated[0].file == "sounds/звон.wav");
+    CHECK(r.refused.empty());
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kRed);
+    CHECK(bytes_of(f.copy("sounds/звон.wav")) == kLong);
+    CHECK(audio::decode(bytes_of(f.copy("sounds/звон.wav")))->frames() == audio::decode(kLong)->frames());
+    CHECK(names(f.game / "pictures") == std::vector<std::string>{"кристалл.png"});
+    CHECK(record("находки/кристалл.png").id == picture_id);
+    CHECK(record("звуки/звон.wav").id == sound_id);
+    CHECK(s.of_file("pictures/кристалл.png")->asset == picture_id);
+    CHECK(s.of_file("sounds/звон.wav")->asset == sound_id);
+    CHECK(s.of_file("pictures/кристалл.png")->hash == hash_of(kRed));
+}
+
+TEST_CASE("sources: a copy's name stays its own while its file is missing") {
+    Fixture f;
+    const Guid other = Guid::generate(), twin = Guid::generate();
+    put(f.assets / utf8_path("другие/кристалл.png"), kRed);
+    f.where[other] = "другие/кристалл.png";
+    Sources s;
+    REQUIRE(s.load(f.game));
+    REQUIRE(s.copy_in(f.asset(f.crystal), "pictures") == "кристалл.png");
+
+    // A's asset and its copy both gone.
+    fs::remove(f.assets / utf8_path("находки/кристалл.png"));
+    fs::remove(f.copy("pictures/кристалл.png"));
+    REQUIRE(s.sync(f.finder()).lost.size() == 1);
+    // B, another asset of the same file name: a name of its own; A's name stays A's.
+    CHECK(s.copy_in(f.asset(other), "pictures") == "кристалл 2.png");
+    CHECK(!fs::exists(f.copy("pictures/кристалл.png")));
+    REQUIRE(s.entries().size() == 2);
+    CHECK(s.of_file("pictures/кристалл.png")->asset == f.crystal);
+    CHECK(s.of_file("pictures/кристалл 2.png")->asset == other);
+    const std::string json = text_of(f.game / "sources.json");
+    CHECK(json.find("\"pictures/кристалл.png\"") == json.rfind("\"pictures/кристалл.png\"")); // one key, once
+
+    // A back: its copy is A's again, B's stays B's.
+    put(f.assets / utf8_path("находки/кристалл.png"), kBlue);
+    Report r = s.sync(f.finder());
+    REQUIRE(r.restored.size() == 1);
+    CHECK(r.restored[0].file == "pictures/кристалл.png");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kBlue);
+    CHECK(bytes_of(f.copy("pictures/кристалл 2.png")) == kRed);
+    // B changed: only B's copy follows.
+    put(f.assets / utf8_path("другие/кристалл.png"), kGreen);
+    r = s.sync(f.finder());
+    REQUIRE(r.updated.size() == 1);
+    CHECK(r.updated[0].file == "pictures/кристалл 2.png");
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kBlue);
+    CHECK(bytes_of(f.copy("pictures/кристалл 2.png")) == kGreen);
+
+    // Read again: the same two.
+    Sources again;
+    REQUIRE(again.load(f.game));
+    REQUIRE(again.entries().size() == 2);
+    CHECK(again.of_file("pictures/кристалл.png")->asset == f.crystal);
+    CHECK(again.of_file("pictures/кристалл 2.png")->asset == other);
+
+    // The same content, another Guid: a copy of its own, which A's changes do not touch.
+    put(f.assets / utf8_path("близнец/кристалл.png"), kBlue);
+    f.where[twin] = "близнец/кристалл.png";
+    CHECK(s.copy_in(f.asset(twin), "pictures") == "кристалл 3.png");
+    put(f.assets / utf8_path("находки/кристалл.png"), kGray);
+    r = s.sync(f.finder());
+    REQUIRE(r.updated.size() == 1);
+    CHECK(r.updated[0].file == "pictures/кристалл.png");
+    CHECK(bytes_of(f.copy("pictures/кристалл 3.png")) == kBlue);
+
+    // Only B's copy missing: picked again, B gets its own name back.
+    fs::remove(f.copy("pictures/кристалл 2.png"));
+    CHECK(s.copy_in(f.asset(other), "pictures") == "кристалл 2.png");
+    CHECK(bytes_of(f.copy("pictures/кристалл 2.png")) == kGreen);
+    CHECK(s.entries().size() == 3);
+}
+
+TEST_CASE("sources: a change sources.json cannot record leaves nothing of it") {
+    Fixture f;
+    const Guid stone = Guid::generate();
+    put(f.assets / utf8_path("другие/камень.png"), kGray);
+    f.where[stone] = "другие/камень.png";
+    Sources s;
+    REQUIRE(s.load(f.game));
+    REQUIRE(s.copy_in(f.asset(f.crystal), "pictures") == "кристалл.png");
+    REQUIRE(s.copy_in(f.asset(f.ring), "sounds") == "звон.wav");
+    const std::string json = text_of(f.game / "sources.json");
+    const std::string picture_hash = s.of_file("pictures/кристалл.png")->hash, sound_hash = s.of_file("sounds/звон.wav")->hash;
+
+    // sources.json cannot be written: a folder where its temporary file goes.
+    fs::create_directories(f.game / "sources.json.tmp");
+    put(f.assets / utf8_path("находки/кристалл.png"), kRed);
+    put(f.assets / utf8_path("звуки/звон.wav"), kLong);
+    // The copy it has, picked again after its asset changed: as it was.
+    std::string error;
+    CHECK(s.copy_in(f.asset(f.crystal), "pictures", &error).empty());
+    CHECK(error.find("sources.json") != std::string::npos);
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kBlue);
+    CHECK(s.of_file("pictures/кристалл.png")->hash == picture_hash);
+    // A new copy: not left behind.
+    CHECK(s.copy_in(f.asset(stone), "pictures", &error).empty());
+    CHECK(!fs::exists(f.copy("pictures/камень.png")));
+    CHECK(s.entries().size() == 2);
+    // A look at several: nothing said done, every copy as it was, a missing one not made.
+    fs::remove(f.copy("pictures/кристалл.png"));
+    Report r = s.sync(f.finder());
+    CHECK(!r.changed());
+    REQUIRE(r.errors.size() == 1);
+    CHECK(r.errors[0].find("ничего не перенесено") != std::string::npos);
+    CHECK(!fs::exists(f.copy("pictures/кристалл.png")));
+    CHECK(bytes_of(f.copy("sounds/звон.wav")) == kRing);
+    CHECK(s.of_file("pictures/кристалл.png")->hash == picture_hash);
+    CHECK(s.of_file("sounds/звон.wav")->hash == sound_hash);
+    CHECK(text_of(f.game / "sources.json") == json);
+    CHECK(names(f.game / "pictures").empty());
+
+    // Unblocked: the same goes through.
+    fs::remove_all(f.game / "sources.json.tmp");
+    r = s.sync(f.finder());
+    CHECK(r.errors.empty());
+    REQUIRE(r.restored.size() == 1);
+    REQUIRE(r.updated.size() == 1);
+    CHECK(bytes_of(f.copy("pictures/кристалл.png")) == kRed);
+    CHECK(bytes_of(f.copy("sounds/звон.wav")) == kLong);
+    CHECK(s.copy_in(f.asset(stone), "pictures") == "камень.png");
+    Sources again;
+    REQUIRE(again.load(f.game));
+    REQUIRE(again.entries().size() == 3);
+    CHECK(again.of_file("pictures/кристалл.png")->hash == hash_of(kRed));
+    CHECK(again.of_file("sounds/звон.wav")->hash == hash_of(kLong));
+}
+
+TEST_CASE("sources: entries that name a file outside the game, or one named twice, are left out") {
+    Fixture f;
+    const std::string id = Guid::generate().to_string(), other = Guid::generate().to_string();
     put(f.game / "sources.json",
         "{\"files\": {\"../чужое.png\": {\"asset\": \"" + id + "\"}, \"/tmp/x.png\": {\"asset\": \"" + id +
             "\"}, \"pictures\\\\x.png\": {\"asset\": \"" + id + "\"}, \"C:x.png\": {\"asset\": \"" + id +
             "\"}, \"x.png\": {\"asset\": \"" + id + "\"}, \"pictures/ok.png\": {\"asset\": \"" + id +
-            "\"}, \"pictures/no id.png\": {\"asset\": \"нет\"}}}");
+            "\"}, \"pictures/no id.png\": {\"asset\": \"нет\"}, \"pictures/ok.png\": {\"asset\": \"" + other + "\"}}}");
     Sources s;
     std::string error;
     REQUIRE(s.load(f.game, &error));
     REQUIRE(s.entries().size() == 1);
     CHECK(s.entries()[0].file == "pictures/ok.png");
+    CHECK(s.entries()[0].asset.to_string() == id);
     CHECK(error.find("../чужое.png") != std::string::npos);
     CHECK(error.find("/tmp/x.png") != std::string::npos);
+    CHECK(error.find("назван дважды") != std::string::npos);
 
     put(f.game / "sources.json", "не json");
     CHECK(!s.load(f.game, &error));
+}
+
+TEST_CASE("sources: only a picture or a sound the game reads goes to its folder") {
+    for (const std::vector<u8>* made : {&kBlue, &kRed, &kGreen, &kGray, &kRing, &kMine, &kLong}) CHECK(!made->empty());
+    std::string why;
+    CHECK(usable("pictures", kBlue));
+    CHECK(!usable("pictures", kRing, &why));
+    CHECK(why.find("картинк") != std::string::npos);
+    CHECK(usable("sounds", kRing));
+    CHECK(!usable("sounds", kBlue, &why));
+    CHECK(why.find("звук") != std::string::npos);
+    const std::string text = "просто текст";
+    CHECK(usable("data", std::span(reinterpret_cast<const u8*>(text.data()), text.size())));
 }

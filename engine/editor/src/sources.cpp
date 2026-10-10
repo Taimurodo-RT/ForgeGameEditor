@@ -1,6 +1,8 @@
 #include "forge/editor/sources.h"
 
 #include "forge/assets/content_hash.h"
+#include "forge/assets/image.h"
+#include "forge/audio/audio.h"
 #include "forge/core/file.h"
 #include "forge/core/path.h"
 
@@ -41,9 +43,72 @@ std::string name_of(std::string_view file) {
     return std::string(slash == std::string_view::npos ? file : file.substr(slash + 1));
 }
 
+// Whether an asset's file, as it is now, may become its copy in that folder.
+bool fits(const Asset& a, std::string_view folder, std::span<const u8> bytes, const std::string& hash, std::string* why) {
+    if (!a.imported.empty() && hash != a.imported) {
+        if (why) *why = "«Ресурсы» не импортировали его в этом виде (файл повреждён или изменён после последнего «Обновить»)";
+        return false;
+    }
+    return usable(folder, bytes, why);
+}
+
+// A file one change wrote, with what it had before (none: the change made it).
+struct Written {
+    fs::path file;
+    std::optional<std::vector<u8>> was;
+};
+
+// What a change wrote, as it was before it, last first. Empty when all of it is back; else what is not.
+std::string put_back(const std::vector<Written>& written) {
+    std::string left;
+    std::error_code ec;
+    for (auto it = written.rbegin(); it != written.rend(); ++it) {
+        const bool back = it->was ? write_file_atomic(it->file, *it->was) : fs::remove(it->file, ec);
+        if (!back) left += (left.empty() ? "" : ", ") + path_to_utf8(it->file);
+    }
+    return left;
+}
+
+// Bytes into a file of the game, remembered with what it had (to be put back). False when it cannot be read or
+// written (error says why).
+bool write_copy(const fs::path& file, std::span<const u8> bytes, std::vector<Written>& written, std::string* error) {
+    std::error_code ec;
+    std::optional<std::vector<u8>> was;
+    if (fs::exists(file, ec)) {
+        std::vector<u8> old;
+        if (!read_file(file, old)) {
+            if (error) *error = "файл игры " + path_to_utf8(file) + " не читается";
+            return false;
+        }
+        was = std::move(old);
+    }
+    if (!write_file_atomic(file, bytes)) {
+        if (error) *error = "файл игры " + path_to_utf8(file) + " не записался";
+        return false;
+    }
+    written.push_back({file, std::move(was)});
+    return true;
+}
+
 } // namespace
 
-std::string hash_of(const std::vector<u8>& bytes) { return assets::hash_bytes(bytes).to_hex(); }
+std::string hash_of(std::span<const u8> bytes) { return assets::hash_bytes(bytes).to_hex(); }
+
+bool usable(std::string_view folder, std::span<const u8> bytes, std::string* why) {
+    std::string error;
+    if (folder == "pictures") {
+        assets::CookedTexture picture;
+        if (assets::decode_image(bytes, picture, &error)) return true;
+        if (why) *why = "это не картинка, которую читает игра (" + error + ")";
+        return false;
+    }
+    if (folder == "sounds") {
+        if (audio::decode(bytes, &error)) return true;
+        if (why) *why = "это не звук, который читает игра (" + error + ")";
+        return false;
+    }
+    return true;
+}
 
 bool Sources::load(const fs::path& game_dir, std::string* error) {
     game_ = game_dir;
@@ -61,7 +126,7 @@ bool Sources::load(const fs::path& game_dir, std::string* error) {
         if (error) *error = path_to_utf8(file) + ": это не JSON";
         return false;
     }
-    std::string refused;
+    std::string refused, twice;
     yyjson_val* files = yyjson_obj_get(yyjson_doc_get_root(doc), "files");
     usize i, n;
     yyjson_val *key, *val;
@@ -73,13 +138,20 @@ bool Sources::load(const fs::path& game_dir, std::string* error) {
             refused += (refused.empty() ? "" : ", ") + e.file;
             continue;
         }
+        if (of_file(e.file)) { // one file, one asset: the first one named
+            twice += (twice.empty() ? "" : ", ") + e.file;
+            continue;
+        }
         e.asset = *id;
         e.from = str(val, "from");
         e.hash = str(val, "hash");
         entries_.push_back(std::move(e));
     }
     yyjson_doc_free(doc);
-    if (!refused.empty() && error) *error = path_to_utf8(file) + ": не файл папки игры, пропущено: " + refused;
+    if (error) {
+        if (!refused.empty()) *error = path_to_utf8(file) + ": не файл папки игры, пропущено: " + refused;
+        if (!twice.empty()) *error += (error->empty() ? path_to_utf8(file) + ": " : "; ") + "файл назван дважды, взят первый: " + twice;
+    }
     return true;
 }
 
@@ -125,43 +197,60 @@ std::string Sources::copy_in(const Asset& asset, std::string_view folder, std::s
         return {};
     }
     const std::string hash = hash_of(bytes);
+    if (std::string why; !fits(asset, folder, bytes, hash, &why)) {
+        if (error) *error = "ресурс «" + asset.rel + "» не взят: " + why;
+        return {};
+    }
     std::error_code ec;
     fs::create_directories(game_ / utf8_path(folder), ec);
-    auto write = [&](const std::string& file) {
-        if (write_file_atomic(game_ / utf8_path(file), bytes)) return true;
-        if (error) *error = "файл игры " + file + " не записался";
-        return false;
+    const std::vector<Entry> before = entries_;
+    std::vector<Written> written;
+    // Recorded, or nothing of it stays.
+    auto commit = [&](const std::string& file) -> std::string {
+        std::string why;
+        if (save(&why)) return name_of(file);
+        entries_ = before;
+        const std::string left = put_back(written);
+        if (error) *error = why + (left.empty() ? "; файлы игры оставлены как были" : "; не вернулись как были: " + left);
+        return {};
     };
     // The copy this asset already has there.
     for (Entry& e : entries_) {
         if (e.asset != asset.id || folder_of(e.file) != folder) continue;
+        const std::string file = e.file;
         std::vector<u8> there;
-        if ((!read_file(game_ / utf8_path(e.file), there) || there != bytes) && !write(e.file)) return {};
+        if ((!read_file(game_ / utf8_path(file), there) || there != bytes) && !write_copy(game_ / utf8_path(file), bytes, written, error))
+            return {};
         e.from = asset.rel;
         e.hash = hash;
-        return save(error) ? name_of(e.file) : std::string();
+        return commit(file);
     }
-    // A new one under its own name; one of that name with the same content and no other asset is taken as it is.
+    // A new one under its own name. A name another asset's copy has is not free, with its file there or not; a file
+    // of that name with the same content and no asset is taken as it is.
     const fs::path name = asset.file.filename();
     const std::string stem = path_to_utf8(name.stem()), ext = path_to_utf8(name.extension());
     std::string file = std::string(folder) + "/" + path_to_utf8(name);
     for (int n = 2;; ++n) {
-        if (!fs::exists(game_ / utf8_path(file), ec)) {
-            if (!write(file)) return {};
-            break;
+        if (!of_file(file)) {
+            if (!fs::exists(game_ / utf8_path(file), ec)) {
+                if (!write_copy(game_ / utf8_path(file), bytes, written, error)) return {};
+                break;
+            }
+            std::vector<u8> there;
+            if (read_file(game_ / utf8_path(file), there) && there == bytes) break;
         }
-        std::vector<u8> there;
-        if (!of_file(file) && read_file(game_ / utf8_path(file), there) && there == bytes) break;
         file = std::string(folder) + "/" + stem + " " + std::to_string(n) + ext;
     }
     entries_.push_back({file, asset.id, asset.rel, hash});
-    return save(error) ? name_of(file) : std::string();
+    return commit(file);
 }
 
 Report Sources::sync(const std::function<std::optional<Asset>(const Guid&)>& find) {
     Report r;
     bool dirty = false;
     std::error_code ec;
+    const std::vector<Entry> before = entries_;
+    std::vector<Written> written;
     for (Entry& e : entries_) {
         const fs::path copy = game_ / utf8_path(e.file);
         const bool there = fs::is_regular_file(copy, ec);
@@ -175,22 +264,36 @@ Report Sources::sync(const std::function<std::optional<Asset>(const Guid&)>& fin
             r.errors.push_back("ресурс «" + a->rel + "» не читается: " + e.file + " остался как был");
             continue;
         }
-        const std::string hash = hash_of(bytes);
-        const bool changed = hash != e.hash;
         if (a->rel != e.from) {
             e.from = a->rel; // renamed or moved in «Ресурсы»: the same asset
             dirty = true;
         }
-        if (there && !changed) continue;
-        if (!write_file_atomic(copy, bytes)) {
-            r.errors.push_back("файл игры " + e.file + " не записался");
+        const std::string hash = hash_of(bytes);
+        if (there && hash == e.hash) continue;
+        if (std::string why; !fits(*a, folder_of(e.file), bytes, hash, &why)) {
+            r.refused.push_back({e, why, !there});
+            continue;
+        }
+        if (std::string error; !write_copy(copy, bytes, written, &error)) {
+            r.errors.push_back(error);
             continue;
         }
         e.hash = hash;
         dirty = true;
         (there ? r.updated : r.restored).push_back(e);
     }
-    if (std::string error; dirty && !save(&error)) r.errors.push_back(error);
+    if (std::string error; dirty && !save(&error)) {
+        // Nothing of it done: the copies as they were, the entries as they were, said once more at the next look.
+        entries_ = before;
+        const std::string left = put_back(written);
+        std::string files;
+        for (const auto* done : {&r.updated, &r.restored})
+            for (const Entry& e : *done) files += (files.empty() ? "" : ", ") + e.file;
+        r.errors.push_back(error + ": из «Ресурсов» ничего не перенесено" + (files.empty() ? "" : " (" + files + ")") +
+                           (left.empty() ? ", файлы игры как были" : "; не вернулись как были: " + left));
+        r.updated.clear();
+        r.restored.clear();
+    }
     return r;
 }
 

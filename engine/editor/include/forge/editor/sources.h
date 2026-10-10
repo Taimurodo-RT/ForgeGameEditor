@@ -16,7 +16,19 @@
 //     and nothing in them changes;
 //   - a copy that went missing comes back from its asset; an asset that is
 //     gone is said, its copy keeps playing as it was.
-// A copy is never taken away and no other file is touched.
+// A recorded copy is never taken away and no other file is touched.
+//
+// Only a file the game can take is copied: one «Ресурсы» imported as it is now
+// (Asset::imported) and that reads as a picture or a sound (usable). A broken
+// one leaves the copy as it was (Report::refused) until it is put right.
+//
+// A copy's name is its entry's even while the file is missing: another asset
+// of the same file name gets "name 2.ext", so what uses one copy never gets
+// the other's content.
+//
+// Each change is whole: when sources.json cannot be written, the files the
+// change wrote get back what they had (a file it made is taken away again)
+// and nothing is reported done.
 //
 //   {"files": {"pictures/кристалл.png": {"asset": "8c1e…", "from": "находки/кристалл синий.png", "hash": "…"}}}
 //
@@ -29,6 +41,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -49,14 +62,25 @@ struct Asset {
     Guid id;
     std::string rel;            // its path there ("находки/кристалл.png")
     std::filesystem::path file; // on disk
+    // hash_of the content «Ресурсы» last imported without an error; empty when not known. A file with other
+    // content (its import failed, or it is not looked at yet) is not copied.
+    std::string imported;
+};
+
+// An asset that is there, but whose file the game cannot take now.
+struct Refusal {
+    Entry entry;          // the copy, as it stays
+    std::string why;      // what is wrong with the asset's file
+    bool missing = false; // the copy is not there either
 };
 
 // What sync found, by copy.
 struct Report {
-    std::vector<Entry> updated;  // the asset changed: the copy has its new content
-    std::vector<Entry> restored; // the copy was not there: made again from its asset
-    std::vector<Entry> gone;     // no asset any more: the copy stays as it was
-    std::vector<Entry> lost;     // neither the copy nor its asset
+    std::vector<Entry> updated;    // the asset changed: the copy has its new content
+    std::vector<Entry> restored;   // the copy was not there: made again from its asset
+    std::vector<Entry> gone;       // no asset any more: the copy stays as it was
+    std::vector<Entry> lost;       // neither the copy nor its asset
+    std::vector<Refusal> refused;  // the asset's file is broken: the copy stays as it was (or missing)
     std::vector<std::string> errors;
     bool changed() const { return !updated.empty() || !restored.empty(); }
 };
@@ -65,7 +89,7 @@ class Sources {
 public:
     // The game's sources.json (none yet: no copies known). False when it is
     // there and cannot be read; entries naming a file outside the game's
-    // folder are left out (error says so).
+    // folder, or a file named twice, are left out (error says so).
     bool load(const std::filesystem::path& game_dir, std::string* error = nullptr);
     const std::filesystem::path& game_dir() const { return game_; }
     const std::vector<Entry>& entries() const { return entries_; }
@@ -73,9 +97,10 @@ public:
 
     // The copy of an asset in a folder of the game ("pictures", "sounds"):
     // the copy it has there (with the asset's content now), else a new one
-    // under the asset's file name, or "name 2.ext" when another file has that
-    // name. Recorded in sources.json. Its name in that folder; empty when it
-    // cannot be read or written (error says why).
+    // under the asset's file name, or "name 2.ext" when another file or
+    // another asset's copy has that name. Recorded in sources.json. Its name
+    // in that folder; empty when the asset's file is not one the game can
+    // take, or cannot be read or written (error says why; nothing changed).
     std::string copy_in(const Asset& asset, std::string_view folder, std::string* error = nullptr);
 
     // Each copy against its asset (find: «Ресурсы» now, by Guid).
@@ -89,6 +114,11 @@ private:
 };
 
 // The content's hash as sources.json keeps it.
-std::string hash_of(const std::vector<u8>& bytes);
+std::string hash_of(std::span<const u8> bytes);
+
+// Whether the game can take these bytes as a file of that folder: a picture of
+// "pictures" decodes, a sound of "sounds" decodes (WAV, OGG); a file of any
+// other folder is taken as it is. why: what is wrong.
+bool usable(std::string_view folder, std::span<const u8> bytes, std::string* why = nullptr);
 
 } // namespace forge::editor::sources

@@ -551,20 +551,20 @@ public:
         const fs::path rel = fs::weakly_canonical(folder, ec).lexically_relative(fs::weakly_canonical(game_dir, ec));
         if (!r || rel.empty() || *rel.begin() == ".." || rel.has_parent_path()) return std::nullopt;
         std::string error;
-        const std::string name = sources.copy_in({r->id, r->path, source}, path_to_utf8(rel), &error);
+        const std::string name = sources.copy_in({r->id, r->path, source, r->source_hash.to_hex()}, path_to_utf8(rel), &error);
         if (name.empty()) FORGE_WARN("Ресурс «%s» не скопировался в игру: %s", r->path.c_str(), error.c_str());
         return name;
     }
 
     // After «Ресурсы» looked at its files: a changed asset gives its copy in the game the new content (the same
     // name, so every object, screen and button that uses it shows or plays the new one), a missing copy comes
-    // back, a missing asset is said once.
+    // back; a missing asset, or one whose file is broken, is said once.
     void sync_sources() {
         if (!sources_ok_) return;
         const editor::sources::Report r = sources.sync([this](const Guid& id) -> std::optional<editor::sources::Asset> {
             const assets::AssetRecord* a = assets.find_id(id);
             if (!a) return std::nullopt;
-            return editor::sources::Asset{a->id, a->path, assets.abs(a->path)};
+            return editor::sources::Asset{a->id, a->path, assets.abs(a->path), a->source_hash.to_hex()};
         });
         auto list = [](const std::vector<editor::sources::Entry>& entries) {
             std::string out;
@@ -589,8 +589,16 @@ public:
         std::string missing;
         for (const editor::sources::Entry& e : r.gone) missing += "g" + e.file + ";";
         for (const editor::sources::Entry& e : r.lost) missing += "l" + e.file + ";";
+        for (const editor::sources::Refusal& e : r.refused) missing += "r" + e.entry.file + e.entry.from + e.why + ";";
         if (missing != sources_missing_) {
             sources_missing_ = missing;
+            for (const editor::sources::Refusal& e : r.refused)
+                if (e.missing)
+                    FORGE_ERROR("Нет файла игры %s, и «%s» в «Ресурсах» его не заменит: %s. Исправьте файл и нажмите «Обновить» (F5).",
+                                e.entry.file.c_str(), e.entry.from.c_str(), e.why.c_str());
+                else
+                    FORGE_WARN("«%s» в «Ресурсах» не перенесён в игру: %s. В игре остался прежний %s; исправьте файл и нажмите «Обновить» (F5).",
+                               e.entry.from.c_str(), e.why.c_str(), e.entry.file.c_str());
             for (const editor::sources::Entry& e : r.gone)
                 FORGE_WARN("Ресурса «%s» больше нет в «Ресурсах»: в игре остался %s, как был; обновлять его не из чего.", e.from.c_str(),
                            e.file.c_str());
@@ -606,7 +614,10 @@ public:
                 }
             }
         }
+        std::vector<editor::sources::Entry> refused;
+        for (const editor::sources::Refusal& e : r.refused) refused.push_back(e.entry);
         if (!r.lost.empty()) note = "нет файлов игры: " + list(r.lost);
+        else if (!refused.empty()) note = "не перенесено в игру: " + list(refused);
         else if (!r.gone.empty() && note.empty()) note = "нет ресурсов для файлов игры: " + list(r.gone);
         assets.note = note;
     }
@@ -13217,6 +13228,7 @@ private:
     usize tg_n_ = 0, tg_said_ = 0; // tg_said_: a tg_mark()
     std::vector<std::string> tg_pictures_, tg_sounds_; // the game's pictures and sounds before an update
     std::string tg_sources_;                            // and its sources.json: each copy's asset and where it was
+    std::vector<u8> tg_good_pic_, tg_good_snd_;         // the assets' content before they were broken
 
     static std::filesystem::path tg_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_две игры"); }
     static std::filesystem::path tg_mine(const char* title) { return tg_root() / utf8_path("Мои игры") / utf8_path(title); }
@@ -14145,10 +14157,58 @@ private:
             if (t) ed_.level_module.object_icon({t->id, "", "", "", t->key}, 32, rgba);
             const u8* mid = rgba.size() >= 32 * 32 * 4 ? &rgba[(16 * 32 + 16) * 4] : nullptr;
             check(mid && tg_near(mid, kTgOrange), "its icon is drawn orange now: " + (mid ? tg_rgb(mid) : std::string("-")));
-            check(click_tab(8) && ue().open(tg_rec_["screen"]), "«Интерфейс», the window");
+            // Broken by another program: the picture does not import, the sound imports but does not play. F5 leaves the
+            // copies as they are and says why.
+            tg_good_pic_ = tg_bytes(as().abs(blue));
+            tg_good_snd_ = tg_bytes(as().abs("звон.wav"));
+            const std::string broken = "оборвано другой программой";
+            const auto when = fs::file_time_type::clock::now();
+            check(write_file_atomic(as().abs(blue), {reinterpret_cast<const u8*>(broken.data()), broken.size()}) &&
+                      write_file_atomic(as().abs("звон.wav"), {reinterpret_cast<const u8*>(broken.data()), broken.size()}),
+                  "«кристалл синий.png» and «звон.wav» broken in place");
+            fs::last_write_time(as().abs(blue), when + std::chrono::seconds(1), ec);
+            fs::last_write_time(as().abs("звон.wav"), when + std::chrono::seconds(1), ec);
+            tg_said_ = tg_mark();
+            key(SDLK_F5, SDL_KMOD_NONE);
             break;
         }
         case 6: {
+            if (hold(idle && tg_said("в «Ресурсах» не перенесён в игру") == 2, "F5: the log says the broken files are not taken")) return true;
+            check(tg_bytes(copy) == tg_good_pic_ && tg_bytes(sound) == tg_good_snd_, "the game's copies are as they were, whole");
+            check(tg_said("Из «Ресурсов» обновлено в игре") == 0 && as().status().find("не перенесено в игру: pictures/кристалл.png") != std::string::npos &&
+                      as().status().find("sounds/звон.wav") != std::string::npos,
+                  "nothing said brought up to date; «Ресурсы» say what is not taken: " + as().status());
+            check(record(blue) && record(blue)->id.to_string() == tg_rec_["pic"] && record("звон.wav") &&
+                      record("звон.wav")->id.to_string() == tg_rec_["snd"],
+                  "the same assets, the same ids");
+            const objects::Template* t = lib.find(std::string_view(tg_rec_["object"]));
+            std::vector<u8> rgba;
+            if (t) ed_.level_module.object_icon({t->id, "", "", "", t->key}, 32, rgba);
+            const u8* mid = rgba.size() >= 32 * 32 * 4 ? &rgba[(16 * 32 + 16) * 4] : nullptr;
+            check(mid && tg_near(mid, kTgOrange), "the object's icon still orange: " + (mid ? tg_rgb(mid) : std::string("-")));
+            check(editor::project::game_problems(game, nullptr).empty(), "the game itself is whole");
+            // Put right in that program: nothing to bring over, nothing said missing.
+            const auto when = fs::file_time_type::clock::now();
+            check(write_file_atomic(as().abs(blue), tg_good_pic_) && write_file_atomic(as().abs("звон.wav"), tg_good_snd_),
+                  "both put right in place");
+            fs::last_write_time(as().abs(blue), when + std::chrono::seconds(2), ec);
+            fs::last_write_time(as().abs("звон.wav"), when + std::chrono::seconds(2), ec);
+            tg_said_ = tg_mark();
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 7: {
+            if (hold(idle && as().status().find("не перенесено") == std::string::npos &&
+                         record(blue)->source_hash.to_hex() == editor::sources::hash_of(tg_good_pic_),
+                     "F5: «Ресурсы» have them whole again"))
+                return true;
+            check(tg_bytes(copy) == tg_good_pic_ && tg_bytes(sound) == tg_good_snd_ && tg_said("не перенесён") == 0 &&
+                      tg_said("Из «Ресурсов» обновлено в игре") == 0,
+                  "the copies as they were, nothing more said");
+            check(click_tab(8) && ue().open(tg_rec_["screen"]), "«Интерфейс», the window");
+            break;
+        }
+        case 8: {
             if (wait(3)) return true;
             const d::Node* pic = ue_node(tg_u32("picture"));
             u8 at[4] = {};
@@ -14157,13 +14217,13 @@ private:
             ue().set_checking(true);
             break;
         }
-        case 7: {
+        case 9: {
             if (wait(3)) return true;
             tg_n_ = ue().check_sound().clicks();
             check(ue().checking() && ue_page_click(tg_u32("button"), 0.5f, 0.5f), "«Проверить»: «Забрать» clicked");
             break;
         }
-        case 8: {
+        case 10: {
             if (wait(2)) return true;
             const audio::ScreenSounds& snd = ue().check_sound();
             const audio::ClipPtr clip = snd.loaded("звон.wav");
@@ -14174,7 +14234,7 @@ private:
             check(to_play(), "«Уровень»");
             break;
         }
-        case 9: {
+        case 11: {
             if (wait(2)) return true;
             check(play_now(), "«Играть» again");
             const slice::ProjectEdits edits = tg_edits(kTgOrange);
@@ -14184,7 +14244,7 @@ private:
             break;
         }
         // Gone: the asset deleted in «Ресурсы» (the copy stays), then back by Ctrl+Z, its id the same.
-        case 10:
+        case 12:
             if (hold(idle && ed_.tab() == "assets", "«Ресурсы»")) return true;
             as().open_folder("");
             click_row(blue);
@@ -14192,7 +14252,7 @@ private:
             key(SDLK_DELETE, SDL_KMOD_NONE);
             check(!exists(blue), "Delete: the asset to the trash");
             break;
-        case 11:
+        case 13:
             if (hold(idle && !record(blue) && tg_said("больше нет в «Ресурсах»") == 1, "the log says the asset is gone")) return true;
             check(tg_bytes(copy) == tg_png(kTgOrange) && as().status().find("нет ресурсов для файлов игры") != std::string::npos,
                   "the game's copy stays as it was; «Ресурсы» say what has no asset: " + as().status());
@@ -14200,7 +14260,7 @@ private:
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(exists(blue), "Ctrl+Z brings it back");
             break;
-        case 12:
+        case 14:
             if (hold(idle && record(blue), "it is indexed again")) return true;
             check(record(blue)->id.to_string() == tg_rec_["pic"] && as().status().find("нет ресурсов") == std::string::npos,
                   "the same id; nothing said missing");
@@ -14209,7 +14269,7 @@ private:
             fs::remove(copy, ec);
             key(SDLK_F5, SDL_KMOD_NONE);
             break;
-        case 13: {
+        case 15: {
             if (hold(idle && fs::exists(copy, ec), "the copy is made again")) return true;
             const usize said = tg_said("Файлы игры сделаны снова");
             check(tg_bytes(copy) == tg_bytes(as().abs(blue)) && said == 1,
@@ -14221,7 +14281,7 @@ private:
             key(SDLK_DELETE, SDL_KMOD_NONE);
             break;
         }
-        case 14: {
+        case 16: {
             if (hold(idle && !record(blue) && tg_said("Нет файла игры pictures/кристалл.png") == 1, "the log says what is missing")) return true;
             std::string said;
             for (const auto& line : ed_.log_lines())
@@ -14233,7 +14293,7 @@ private:
             check(to_play(), "«Уровень»");
             break;
         }
-        case 15: {
+        case 17: {
             if (wait(2)) return true;
             check(play_now(), "«Играть» with the picture missing");
             const int code = tg_play(nullptr, "");
@@ -14241,13 +14301,13 @@ private:
             check(click_tab(10), "«Ресурсы»");
             break;
         }
-        case 16:
+        case 18:
             if (hold(idle && ed_.tab() == "assets", "«Ресурсы»")) return true;
             tg_said_ = tg_mark();
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(exists(blue), "Ctrl+Z in «Ресурсы»: the asset back");
             break;
-        case 17: {
+        case 19: {
             if (hold(idle && fs::exists(copy, ec), "the copy comes back with it")) return true;
             const usize said = tg_said("Файлы игры сделаны снова");
             check(record(blue)->id.to_string() == tg_rec_["pic"] && tg_bytes(copy) == tg_bytes(as().abs(blue)) && said == 1,
