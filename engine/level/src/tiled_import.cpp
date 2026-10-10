@@ -342,7 +342,9 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
     if (!own.empty() && own.px != px)
         return refuse("у уровня уже есть свои тайлы стороной " + std::to_string(own.px) + " px, а клетки карты — " + std::to_string(px) +
                       " px");
-    const std::string map_stem = path_to_utf8(map.file.stem());
+    // The level's own part of the ids (Options::level); none for «level»: its ids as before there were levels.
+    const std::string map_stem = o.level.empty() ? path_to_utf8(map.file.stem()) : o.level + "_" + path_to_utf8(map.file.stem());
+    const std::string id_map = o.level.empty() ? out.map_name : o.level + "|" + out.map_name;
     // An earlier import of another map: its record is replaced, what it made stays.
     const Record prev = before.map == out.map_name ? before : Record{};
     if (!before.empty() && before.map != out.map_name)
@@ -648,7 +650,7 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                     po.level_id = *id;
                     po.known = true;
                 } else {
-                    po.level_id = stable_id(out.map_name, "object", obj.id);
+                    po.level_id = stable_id(id_map, "object", obj.id);
                 }
                 out.record.objects.emplace_back(obj.id, po.level_id);
                 out.objects.push_back(std::move(po));
@@ -691,8 +693,8 @@ bool plan(const Map& map, const Options& o, const LevelTiles& own, const LevelAr
                 const u64* known = lookup(prev.zones, obj.id);
                 Area* old = known ? out.areas.find(*known) : nullptr;
                 // Not in the record (taken back, the record lost): the zone an earlier import made has its id.
-                if (!old) old = out.areas.find(stable_id(out.map_name, "zone", obj.id));
-                a.id = old ? old->id : stable_id(out.map_name, "zone", obj.id);
+                if (!old) old = out.areas.find(stable_id(id_map, "zone", obj.id));
+                a.id = old ? old->id : stable_id(id_map, "zone", obj.id);
                 // Its music: a file of the map, by a name of its own among the plan's files (write_resources gives the
                 // name it has in the game's sounds to this file's zones only).
                 fs::path music_file;

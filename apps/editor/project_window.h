@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -100,6 +101,11 @@ public:
     // opens ("cancel": the editor for it is stopped) or to a note ("ok").
     void answer(const std::string& what);
     void close();
+    // Another level of this game opens (the «Уровень» tab's menu): the same window about unsaved changes, for the
+    // level that goes. «Сохранить»: save_level() (a save that fails says why, and nothing opens), then go(false); «Не
+    // сохранять»: go(true); «Отмена» and Esc: nothing changes.
+    void ask_level(const std::string& from, const std::string& to, std::vector<std::string> lines,
+                   std::function<bool(std::string& error)> save_level, std::function<void(bool discarding)> go);
 
     // --- for the self-test ---
     const std::string& view() const { return m_view_; } // "", "new", "unsaved", "opening", "message"
@@ -122,6 +128,12 @@ private:
     struct TemplateView {
         Rml::String name, about, module, picture, problem;
         bool selected = false;
+    };
+    // The level switch the window asks about (ask_level); none while it asks about another game.
+    struct LevelAsk {
+        std::string from, to;
+        std::function<bool(std::string&)> save;
+        std::function<void(bool)> go;
     };
     void refresh();
     void ask_or_go(const editor::project::Game& game);
@@ -147,6 +159,7 @@ private:
     std::vector<std::vector<std::string>> problems_; // of each template
     int chosen_ = 0;
     std::string title_ = "Новая игра", where_;
+    std::optional<LevelAsk> level_ask_;
     editor::project::Game pending_; // the game to open once the editor's changes are settled
     bool pending_made_ = false;     // it was just made
     std::filesystem::path made_;
@@ -163,6 +176,7 @@ private:
     std::vector<std::pair<std::string, std::filesystem::path>> answers_;
 
     Rml::String m_game_, m_root_, m_view_, m_title_, m_where_, m_folder_, m_problem_, m_note_, m_next_;
+    Rml::String m_ask_title_, m_ask_lead_; // the window about unsaved changes: what opens, what closes
     bool m_menu_ = false, m_can_ = false;
     std::vector<TemplateView> m_templates_;
     std::vector<Rml::String> m_unsaved_;

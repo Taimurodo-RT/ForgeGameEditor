@@ -381,6 +381,37 @@ private:
             }});
             return;
         }
+        // The level: the one the author meant, with what they put into it; and so again from the game's save.
+        if (!project_edits.level.empty() || !project_edits.cells.empty())
+            steps_.push_back({"игра играет нужный уровень", 40, [&s, &g, this](u32 f) {
+                const ProjectEdits& e = project_edits;
+                auto look = [&](const std::string& when) {
+                    if (!e.level.empty())
+                        check(g.level_id() == e.level,
+                              "уровень «" + e.level_name + "» (" + e.level + "), а играет «" + g.level_id() + "»" + when);
+                    for (usize i = 0; i + 3 < e.cells.size(); i += 4) {
+                        const u32 layer = static_cast<u32>(e.cells[i]);
+                        const i32 x = e.cells[i + 1], y = e.cells[i + 2];
+                        const world::TileId want = static_cast<world::TileId>(e.cells[i + 3]), have = g.tile(layer, x, y);
+                        check(have == want, "клетка " + std::to_string(x) + ", " + std::to_string(y) + " слоя " + std::to_string(layer) +
+                                                ": " + std::to_string(have) + ", автор оставил " + std::to_string(want) + when);
+                    }
+                };
+                if (f == 2) {
+                    check(e.cells.size() % 4 == 0, "клетки уровня — по четыре числа");
+                    look("");
+                    check(s.save("levels", "Уровни"), "игра сохраняется");
+                    return false;
+                }
+                if (f == 5) {
+                    check(s.load("levels"), "сохранение загружается");
+                    return false;
+                }
+                if (f < 10) return false;
+                look(" (после загрузки сохранения)");
+                return true;
+            }});
+        if (project_edits.object.empty() && !project_edits.absent) return;
         if (project_edits.absent) {
             steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {
                 if (f < 2) return false;

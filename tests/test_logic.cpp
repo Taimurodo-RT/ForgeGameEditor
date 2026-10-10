@@ -875,6 +875,15 @@ TEST_CASE("coming into an area runs its links; once is kept by the hero; areas a
     runtime.area_event(kMine, hero.id(), true);
     run(1);
     CHECK(game.hints.size() == 1);
+    // The area is another level's of the game (step 14.2a): the link is no broken link, but nothing runs it here.
+    runtime.set_other_areas({area_thing(kMine, "Шахта (Пещера)")});
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    CHECK(runtime.area_entity(kMine) == 0);
+    runtime.area_event(kMine, hero.id(), true);
+    run(12);
+    CHECK(game.hints.size() == 1);
+    runtime.set_other_areas({});
     // Back (an undo in the editor): it works again.
     runtime.set_areas({area_thing(kMine, "Шахта")});
     REQUIRE(runtime.load(logic, verbs, &problems));

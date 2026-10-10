@@ -120,6 +120,8 @@ void ProjectWindow::bind(Rml::DataModelConstructor& model) {
     model.Bind("pj_note", &m_note_);
     model.Bind("pj_next", &m_next_);
     model.Bind("pj_unsaved", &m_unsaved_);
+    model.Bind("pj_ask_title", &m_ask_title_);
+    model.Bind("pj_ask_lead", &m_ask_lead_);
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
     };
@@ -255,12 +257,15 @@ void ProjectWindow::ask_or_go(const pj::Game& game) {
         return;
     }
     pending_ = game;
+    level_ask_.reset();
     set(m_next_, Rml::String(game.title), "pj_next");
     const std::vector<std::string> list = unsaved ? unsaved() : std::vector<std::string>();
     if (list.empty()) {
         go(false);
         return;
     }
+    set(m_ask_title_, Rml::String("Открыть игру «" + game.title + "»"), "pj_ask_title");
+    set(m_ask_lead_, Rml::String("Игра «" + m_game_ + "» закроется. В ней есть то, что не сохранено:"), "pj_ask_lead");
     m_unsaved_.assign(list.begin(), list.end());
     if (model_) model_.DirtyVariable("pj_unsaved");
     set(m_note_, Rml::String(), "pj_note");
@@ -403,6 +408,25 @@ void ProjectWindow::answer(const std::string& what) {
         close();
         return;
     }
+    if (m_view_ == "unsaved" && level_ask_) {
+        LevelAsk ask = std::move(*level_ask_);
+        level_ask_.reset();
+        if (what == "save") {
+            std::string error;
+            if (!ask.save(error)) {
+                message("Не сохранилось: " + error + ". Уровень «" + ask.from + "» остался открытым, правки на месте.");
+                return;
+            }
+            close();
+            ask.go(false);
+        } else if (what == "discard") {
+            close();
+            ask.go(true);
+        } else {
+            close();
+        }
+        return;
+    }
     if (m_view_ == "unsaved") {
         if (what == "save") {
             std::string error;
@@ -432,6 +456,18 @@ void ProjectWindow::message(std::string text) {
 void ProjectWindow::close() {
     set_menu(false);
     set_view("");
+}
+
+void ProjectWindow::ask_level(const std::string& from, const std::string& to, std::vector<std::string> lines,
+                              std::function<bool(std::string& error)> save_level, std::function<void(bool discarding)> go) {
+    set_menu(false);
+    level_ask_ = LevelAsk{from, to, std::move(save_level), std::move(go)};
+    set(m_ask_title_, Rml::String("Открыть уровень «" + to + "»"), "pj_ask_title");
+    set(m_ask_lead_, Rml::String("Уровень «" + from + "» закроется. В нём не сохранено:"), "pj_ask_lead");
+    m_unsaved_.assign(lines.begin(), lines.end());
+    if (model_) model_.DirtyVariable("pj_unsaved");
+    set(m_note_, Rml::String(), "pj_note");
+    set_view("unsaved");
 }
 
 bool ProjectWindow::handle_key(const SDL_KeyboardEvent& k) {

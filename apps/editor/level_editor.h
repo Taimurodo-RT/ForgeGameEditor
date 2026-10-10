@@ -11,6 +11,7 @@
 #include "forge/editor/undo.h"
 #include "forge/level/areas.h"
 #include "forge/level/level.h"
+#include "forge/level/levels.h"
 #include "forge/level/light.h"
 #include "forge/level/object_edit.h"
 #include "forge/level/physics.h"
@@ -63,8 +64,15 @@ struct LevelConfig {
     // Where the game «Играть» starts keeps its player's files (--user) and the links that fired (--fired): one
     // folder per project, outside it. Empty: <temp>/forge_editor_play.
     std::filesystem::path play_dir;
+    // The project's root: the level open when the editor closes is opened next time (.forge/editor.json). Empty:
+    // not remembered.
+    std::filesystem::path project_root;
     bool offscreen = false;
 };
+
+// The level folder the editor opens for a game (no --level): the level open when it was last closed
+// (<root>/.forge/editor.json), else the game's start level (game/levels.json; game/level without it).
+std::filesystem::path level_to_open(const std::filesystem::path& root, const std::filesystem::path& game);
 
 class LevelEditor {
 public:
@@ -113,6 +121,42 @@ public:
     // Opens another level folder in place of this one (its history goes;
     // unsaved changes are lost, so save first).
     bool open_folder(const std::filesystem::path& folder);
+
+    // --- the game's levels (forge/level/levels.h): the menu at the left of the level bar ---
+    // The list as read from game/levels.json; the open level's id ("" for a folder that is no level of the game).
+    const level::LevelList& levels() const { return levels_; }
+    const std::string& level_id() const { return level_id_; }
+    // The open level's name: its name in the list, else its folder's.
+    std::string level_name() const;
+    void set_levels_menu(bool open);
+    bool levels_menu() const { return levels_open_; }
+    // Opens a level of the list, asking about unsaved changes first (ask_unsaved).
+    void choose_level(const std::string& id);
+    // «Новый уровень», «Переименовать…» (the open level): the field for the name opens; finish_level_name takes
+    // what is typed (false: refused, levels_note says why; for a new level the window about unsaved changes may
+    // ask first).
+    void begin_new_level();
+    void begin_rename_level();
+    bool finish_level_name(const std::string& name);
+    void cancel_level_name();
+    const std::string& naming_level() const { return naming_; } // "", "new", "rename"
+    // «Сделать стартовым»: the open level.
+    bool make_start_level();
+    // «Играть со стартового»: the game as a player starts it (the start level, its spawn point); this level is
+    // saved first, as for «Играть отсюда».
+    bool play_start();
+    std::vector<std::string> play_start_command() const;
+    // The last thing the menu said (made, renamed, refused, a list that cannot be used).
+    const std::string& levels_note() const { return levels_note_; }
+    // Before another level opens with this one changed: the editor asks (its window about unsaved changes); save
+    // saves this one, go opens the other (discarding: without saving).
+    std::function<void(const std::string& from, const std::string& to, std::vector<std::string> unsaved,
+                       std::function<bool(std::string& error)> save, std::function<void(bool discarding)> go)>
+        ask_unsaved;
+    // Bumped whenever another level opens (its areas are other areas).
+    u64 levels_opened() const { return levels_opened_; }
+    // Why the last save() did not write (empty when it did).
+    const std::string& save_error() const { return save_error_; }
 
     // --- for the self-test and benchmarks ---
     level::Level& level() { return *level_; }
@@ -383,6 +427,19 @@ private:
     void refigure_tiled();
     void sync_tiled();
     void bind_tiled(Rml::DataModelConstructor& model);
+    // The levels' menu (level_list.cpp).
+    struct LevelRow {
+        Rml::String id, name;
+        bool current = false, start = false;
+        bool operator==(const LevelRow&) const = default;
+    };
+    void bind_levels(Rml::DataModelConstructor& model);
+    void sync_levels();
+    bool open_level(const std::string& id);
+    // Leaves this level for another: asks about unsaved changes, then then() (it may refuse: this level stays).
+    void leave_level(const std::string& to, std::function<void()> then);
+    void remember_level() const;
+    bool launch(const std::vector<std::string>& args);
     void scan_sounds();
     void sync_areas(Rml::Context* context);
     // An edit is about to happen: a running trial goes back first.
@@ -395,6 +452,14 @@ private:
 
     level::LevelModule& module_;
     std::unique_ptr<level::Level> level_;
+    level::LevelList levels_;
+    std::string level_id_;
+    std::string naming_, levels_note_, save_error_;
+    bool levels_open_ = false;
+    u64 levels_opened_ = 0, levels_serial_ = 1, levels_synced_ = 0;
+    std::vector<LevelRow> m_levels_;
+    Rml::String m_level_name_, m_levels_note_, m_level_naming_, m_level_naming_title_, m_level_name_field_;
+    bool m_levels_open_ = false, m_levels_can_ = false, m_level_listed_ = false, m_level_is_start_ = false;
     editor::Document doc_; // the undo stack wants one; tiles live in the level
     editor::UndoStack history_{doc_};
     LevelConfig config_;

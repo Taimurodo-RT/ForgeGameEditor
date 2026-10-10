@@ -34,13 +34,15 @@ struct HeroSave {
     f64 x = 0, y = 0;
     u32 slot = 0;
     f32 zoom = 0;
+    // The level the game plays: its id in the game's list (levels.json); empty for a folder that is no level of it.
+    std::string level;
 };
 
 struct Options {
     bool stress = false;          // the "all numbers at once" run
     u32 stress_critters = 200'000;
     u32 stress_particles = 1'000'000;
-    // The level a new game starts from; empty: the game's own (data/level).
+    // The level a new game starts from; empty: the game's start level (levels.json; data/level without it).
     std::filesystem::path level_dir;
     // Where a new game puts the hero (the tile point under its feet), for
     // «Играть отсюда» in the editor.
@@ -100,6 +102,8 @@ public:
         options_.at_x = x;
         options_.at_y = y;
     }
+    // The level this game plays: its id in the game's list; empty for a folder that is no level of it.
+    const std::string& level_id() const { return level_id_; }
     bool hero_alive() const;
     f64 hero_x() const;
     f64 hero_y() const;
@@ -258,6 +262,7 @@ private:
     std::unique_ptr<Level> level_;
     bool running_ = false;
     std::filesystem::path session_;
+    std::string level_id_; // HeroSave::level
 
     TileArt atlas_; // the game's tiles and the level's own
     forge::demo::SheetImage sheet_;

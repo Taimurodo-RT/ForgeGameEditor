@@ -22,6 +22,9 @@ FORGE_REFLECT(slice::ProjectEdits, 1) {
     t.field("sound", &slice::ProjectEdits::sound);
     t.field("sound_frames", &slice::ProjectEdits::sound_frames);
     t.field("absent", &slice::ProjectEdits::absent);
+    t.field("level", &slice::ProjectEdits::level);
+    t.field("level_name", &slice::ProjectEdits::level_name);
+    t.field("cells", &slice::ProjectEdits::cells);
 }
 
 namespace slice {

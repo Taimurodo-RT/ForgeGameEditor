@@ -161,10 +161,11 @@ Runtime::~Runtime() {
 
 bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>* problems) {
     std::vector<Thing> things;
-    things.reserve(library_.templates().size() + 1 + areas_.size());
+    things.reserve(library_.templates().size() + 1 + areas_.size() + other_areas_.size());
     things.push_back(hero_thing());
     for (const objects::Template& t : library_.templates()) things.push_back(thing_of(library_, t));
     things.insert(things.end(), areas_.begin(), areas_.end());
+    things.insert(things.end(), other_areas_.begin(), other_areas_.end());
     const FindThing find = [&](std::string_view id) -> const Thing* {
         for (const Thing& t : things)
             if (t.id == id) return &t;
@@ -197,6 +198,7 @@ bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>*
 }
 
 void Runtime::set_areas(std::vector<Thing> areas) { areas_ = std::move(areas); }
+void Runtime::set_other_areas(std::vector<Thing> areas) { other_areas_ = std::move(areas); }
 
 void Runtime::sync_areas() {
     if (!scene_) return;

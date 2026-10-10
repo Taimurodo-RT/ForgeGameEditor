@@ -8,6 +8,9 @@
 // adds to a value of the game and shows a screen of «Интерфейс»: a text with that value, the same picture moving
 // by its keys, a button that plays a sound and closes the window. Once only.
 // absent: another game of the same template, which must have none of it, and a player's folder of its own.
+//
+// A game of several levels (step 14.2a): the level the game plays, by its id in the game's list, and cells the author
+// put into that level, which the game must have; without an object only these are checked.
 
 #include "forge/core/types.h"
 #include "forge/data/reflect.h"
@@ -31,6 +34,9 @@ struct ProjectEdits {
     std::string sound;       // the button's sound, a file of the game's sounds
     forge::u32 sound_frames = 0; // its length
     bool absent = false;     // none of it is in this game
+    std::string level;       // the level the game plays (its id in levels.json); empty: not checked
+    std::string level_name;  // its name, for messages
+    std::vector<int> cells;  // layer, x, y, tile, layer, x, y, tile, …: cells of that level as the author left them
 };
 
 // False (error says why) when the file cannot be read.
