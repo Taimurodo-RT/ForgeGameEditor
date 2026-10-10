@@ -929,8 +929,10 @@ struct GoGame final : Game {
     void hint(flecs::entity_t, std::string_view) override {}
     void sound(flecs::entity_t, std::string_view) override {}
     bool night() override { return false; }
+    Runtime* drop = nullptr; // the game drops the going at once (another one of the tick won)
     bool go(flecs::entity_t hero, std::string_view level, std::string_view arrive, u32 link) override {
         gos.push_back((hero == hero_e ? "hero " : "? ") + std::string(level) + " " + std::string(arrive) + " " + std::to_string(link));
+        if (drop) drop->take_back_first(link);
         return true;
     }
 };
@@ -1144,12 +1146,39 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     run(1);
     REQUIRE(game.gos.size() == 1);
     CHECK(game.gos[0] == "hero cave " + std::string(kEntry) + " " + std::to_string(id));
+    // The game did not go (it refused, or another going of the tick won): the mark is taken back, the hero has
+    // nothing of it, and the next time in the link asks again.
+    const std::string mark = "связь " + std::to_string(id);
+    CHECK((hero.try_get<script::ScriptVars>() && hero.try_get<script::ScriptVars>()->find(mark)));
+    CHECK(runtime.take_back_first(id));
+    CHECK_FALSE(hero.has<script::ScriptVars>());
+    CHECK_FALSE(runtime.take_back_first(id));
+    runtime.area_event(kExit, hero.id(), false);
+    run(1);
+    runtime.area_event(kExit, hero.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 2);
+    // A hero with variables of its own keeps them as they were.
+    hero.get_mut<script::ScriptVars>().get_or_add("ключ").x = 3;
+    hero.get_mut<script::ScriptVars>().get_or_add("ключ").kind = script::VarKind::Number;
+    CHECK(runtime.take_back_first(id));
+    REQUIRE(hero.try_get<script::ScriptVars>());
+    CHECK_FALSE(hero.try_get<script::ScriptVars>()->find(mark));
+    CHECK(hero.try_get<script::ScriptVars>()->find("ключ")->x == 3);
+    runtime.area_event(kExit, hero.id(), false);
+    run(1);
+    runtime.area_event(kExit, hero.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 3);
+    // It went: the marks of the frame stay.
+    runtime.keep_firsts();
+    CHECK_FALSE(runtime.take_back_first(id));
     // Only once: the hero keeps it, as for any area.
     runtime.area_event(kExit, hero.id(), false);
     run(1);
     runtime.area_event(kExit, hero.id(), true);
     run(1);
-    CHECK(game.gos.size() == 1);
+    CHECK(game.gos.size() == 3);
     // The list without the cave (levels.json changed, or not all of it read): the link does not work.
     runtime.set_levels({level_thing("level", "Уровень 1")});
     REQUIRE(runtime.load(logic, verbs, &problems));
@@ -1164,8 +1193,30 @@ TEST_CASE("coming into an exit asks the game to go; the game decides") {
     run(1);
     runtime.area_event(kExit, hero.id(), true);
     run(1);
-    REQUIRE(game.gos.size() == 2);
-    CHECK(game.gos[1] == "hero nowhere  7");
+    REQUIRE(game.gos.size() == 4);
+    CHECK(game.gos[3] == "hero nowhere  7");
+    // A going dropped while the tick runs (another one won): the game takes the mark back in its go(); a hero that
+    // had no variables has none again, and the next time in the link asks again.
+    logic.find(id)->once = true;
+    logic.find(id)->code.clear();
+    runtime.set_levels({level_thing("level", "Уровень 1"), level_thing("cave", "Пещера")});
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    flecs::entity other = scene.spawn(scene::Position::at_tile(24, 5.5));
+    game.hero_e = other.id();
+    game.drop = &runtime;
+    runtime.area_event(kExit, other.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 5);
+    CHECK_FALSE(other.has<script::ScriptVars>());
+    game.drop = nullptr;
+    runtime.area_event(kExit, other.id(), false);
+    run(1);
+    runtime.area_event(kExit, other.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 6);
+    runtime.keep_firsts();
+    CHECK((other.try_get<script::ScriptVars>() && other.try_get<script::ScriptVars>()->find(mark)));
     CHECK(scripts.errors().empty());
 }
 

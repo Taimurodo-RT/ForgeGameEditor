@@ -137,6 +137,12 @@ public:
     // Entities are saved next to the world's tiles: "e.*.fwr" region files.
     bool open_save(const std::filesystem::path& folder, std::string* error = nullptr);
     SceneSaveReport save();
+    // The entities as they are now written into another folder that holds a copy of the save folder, leave_out
+    // (an entity, 0: none) not among them. The scene and its own folder stay as they were, nothing counts as saved
+    // (World::save_copy). Not ok when the copy cannot be written.
+    SceneSaveReport save_copy(const std::filesystem::path& folder, flecs::entity_t leave_out = 0);
+    // The save folder was moved (renamed) to folder, its files as they were: entities are read and saved there.
+    void moved_save(const std::filesystem::path& folder);
 
     SceneStats stats() const;
 
@@ -170,6 +176,8 @@ private:
                                u32* upgraded = nullptr);
     std::vector<u8>& stored_for(world::ChunkCoord coord);
     void pack_chunk(const ChunkIndex& chunk, std::vector<u8>& out, bool visited);
+    // Every loaded chunk and the unloaded ones not yet saved into a store; saved: they count as saved then.
+    SceneSaveReport write_chunks(world::RegionStore& into, bool saved);
 
     world::World& world_;
     flecs::world ecs_;
@@ -199,6 +207,7 @@ private:
 
     std::vector<std::max_align_t> unpack_scratch_;
     std::vector<u8> pack_scratch_, pack_used_;
+    flecs::entity_t pack_leave_out_ = 0; // not packed (save_copy)
     std::vector<std::vector<u8>> layouts_; // per saved component: data::append_schema, made on first use
     u32 moved_out_ = 0;
     u64 packed_ = 0;

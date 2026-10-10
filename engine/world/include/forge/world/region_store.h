@@ -63,6 +63,9 @@ public:
     // with no chunks is removed. No chunk may be read from this store while
     // it runs.
     bool write(const std::vector<Write>& chunks, u32* regions_written = nullptr, usize* bytes_written = nullptr);
+    // The folder was moved (renamed) to another place, its files as they were: they are read and written there
+    // from now on.
+    void moved(const std::filesystem::path& folder);
 
 private:
     struct Entry {

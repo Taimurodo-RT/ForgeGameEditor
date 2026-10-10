@@ -170,10 +170,13 @@ void Scene::pack_entity(flecs::entity_t e, std::vector<u8>& out, std::vector<u8>
 void Scene::pack_chunk(const ChunkIndex& chunk, std::vector<u8>& out, bool visited) {
     put<u32>(out, kMagic);
     put<u8>(out, visited ? 1 : 0);
-    put<u32>(out, chunk.end - chunk.begin);
+    u32 count = chunk.end - chunk.begin;
+    for (u32 i = chunk.begin; i < chunk.end; ++i) count -= items_[i].entity == pack_leave_out_; // no entity is 0
+    put<u32>(out, count);
     pack_scratch_.clear();
     pack_used_.assign(saved_.size(), 0);
-    for (u32 i = chunk.begin; i < chunk.end; ++i) pack_entity(items_[i].entity, pack_scratch_, &pack_used_);
+    for (u32 i = chunk.begin; i < chunk.end; ++i)
+        if (items_[i].entity != pack_leave_out_) pack_entity(items_[i].entity, pack_scratch_, &pack_used_);
     const usize size_at = out.size();
     put<u32>(out, 0);
     const usize start = out.size();
@@ -603,8 +606,31 @@ bool Scene::open_save(const std::filesystem::path& folder, std::string* error) {
 
 SceneSaveReport Scene::save() {
     FORGE_ZONE_N("Scene save");
+    if (!store_) return {};
+    return write_chunks(*store_, true);
+}
+
+SceneSaveReport Scene::save_copy(const std::filesystem::path& folder, flecs::entity_t leave_out) {
+    FORGE_ZONE_N("Scene save copy");
+    if (!store_) return {};
+    world::RegionStore copy("e");
+    std::string error;
+    if (!copy.open(folder, kSaveTag, &error)) {
+        FORGE_ERROR("scene save: %s", error.c_str());
+        return {};
+    }
+    pack_leave_out_ = leave_out;
+    const SceneSaveReport report = write_chunks(copy, false);
+    pack_leave_out_ = 0;
+    return report;
+}
+
+void Scene::moved_save(const std::filesystem::path& folder) {
+    if (store_) store_->moved(folder);
+}
+
+SceneSaveReport Scene::write_chunks(world::RegionStore& into, bool saved) {
     SceneSaveReport report;
-    if (!store_) return report;
     const u64 start = time_now_ns();
     if (index_dirty_) rebuild_index();
 
@@ -616,9 +642,9 @@ SceneSaveReport Scene::save() {
     for (usize c = 0; c < chunks_.size(); ++c) writes.push_back({chunks_[c].coord, &packed[c]});
     for (const auto& [coord, bytes] : stored_) writes.push_back({coord, &bytes});
 
-    report.ok = store_->write(writes, &report.regions, &report.bytes);
+    report.ok = into.write(writes, &report.regions, &report.bytes);
     report.chunks = static_cast<u32>(writes.size());
-    if (report.ok) {
+    if (report.ok && saved) {
         stored_.clear();
         stored_bytes_ = 0;
     }

@@ -228,4 +228,9 @@ bool RegionStore::write(const std::vector<Write>& chunks, u32* regions_written, 
     return ok;
 }
 
+void RegionStore::moved(const fs::path& folder) {
+    folder_ = folder;
+    for (auto& [coord, r] : regions_) r.file = folder_ / r.file.filename();
+}
+
 } // namespace forge::world

@@ -109,6 +109,8 @@ public:
     // The level this game plays: its id in the game's list; empty for a folder that is no level of it.
     const std::string& level_id() const { return level_id_; }
     bool hero_alive() const;
+    // The hero's entity (0: none); a going refused keeps the same one.
+    flecs::entity_t hero_entity() const;
     f64 hero_x() const;
     f64 hero_y() const;
     bool on_ground() const;
@@ -213,15 +215,16 @@ public:
 
     // Going to another level («уходит на уровень»): a link asks, the game goes after the tick
     // (14.2-платформер-модель.md, «Порядок перехода в игре»). go_to asks as a link does (link 0); the first ask
-    // of a tick wins. travels: how many went since the game began or was loaded; travel_problem: why the last one
-    // did not go ("" when it went).
+    // of a tick wins. A going not done (refused, or dropped) leaves the game and the session as they were and its
+    // link's «Только один раз» unmarked. travels: how many went since the game began or was loaded; travel_problem:
+    // why the last one did not go ("" when it went).
     void go_to(std::string level, std::string arrive = {}) { ask_travel(std::move(level), std::move(arrive), 0); }
     u32 travels() const { return travels_; }
     const std::string& travel_problem() const { return travel_problem_; }
     u32 travels_dropped() const { return travels_dropped_; }
     // For the self-test: the next going fails at this step as if the disk refused (Save: the left level is not
-    // written; Move: its folder does not move; Make: the level gone to does not open; Back: neither it nor, then,
-    // the left level opens).
+    // written; Move: the session's world does not move aside; Make: the level gone to does not open; Back: the level
+    // gone to does not move into the session, nor does the session's world move back).
     enum class TravelFault : u8 { None, Save, Move, Make, Back };
     void fail_next_travel(TravelFault f) { travel_fault_ = f; }
     // The screens the level's links and schemes opened and have not closed (a going closes them).
@@ -231,6 +234,9 @@ private:
     friend class SliceLogic;
     struct Level;
     std::unique_ptr<Level> make_level(const std::filesystem::path& save_folder, std::string* error);
+    // The level's own tiles for the whole game (which stop the hero and light, how they look): make_level sets them
+    // for the level it makes; a going that did not happen sets them back for the level played.
+    void use_tiles(const Level& level);
     void spawn_hero(f64 x, f64 y);
     void find_hero();
     void load_around(f64 x, f64 y);

@@ -103,13 +103,21 @@ struct Api {
             lua_pushboolean(L, false);
             return 1;
         }
+        const script::ScriptVars* before = ecs.entity(e).try_get<script::ScriptVars>();
+        if (const script::ScriptVar* had = before ? before->find(key) : nullptr;
+            had && had->kind == script::VarKind::Bool && had->x != 0) {
+            lua_pushboolean(L, false);
+            return 1;
+        }
+        Runtime::Mark m{e, static_cast<u32>(lua_tonumber(L, 2)), before != nullptr, false, {}};
+        if (const script::ScriptVar* had = before ? before->find(key) : nullptr) m.had_var = true, m.was = *had;
+        r.fresh_.push_back(std::move(m));
         script::ScriptVars& vars = ecs.entity(e).ensure<script::ScriptVars>();
         script::ScriptVar& v = vars.get_or_add(key);
-        const bool done = v.kind == script::VarKind::Bool && v.x != 0;
         v.kind = script::VarKind::Bool;
         v.x = 1;
         ecs.entity(e).modified<script::ScriptVars>();
-        lua_pushboolean(L, !done);
+        lua_pushboolean(L, true);
         return 1;
     }
     // The nearest copy of a template around an entity, or nil.
@@ -241,6 +249,30 @@ void Runtime::area_event(std::string_view area, flecs::entity_t hero, bool enter
 flecs::entity_t Runtime::area_entity(std::string_view area) const {
     const auto it = area_entities_.find(std::string(area));
     return it == area_entities_.end() ? 0 : it->second;
+}
+
+bool Runtime::take_back_first(u32 link) {
+    auto it = std::find_if(fresh_.rbegin(), fresh_.rend(), [&](const Mark& m) { return m.link == link; });
+    if (it == fresh_.rend()) return false;
+    const Mark m = std::move(*it);
+    fresh_.erase(std::next(it).base());
+    flecs::world& ecs = host_.scene().ecs();
+    if (!m.entity || !ecs.is_alive(m.entity)) return true;
+    flecs::entity e = ecs.entity(m.entity);
+    script::ScriptVars* vars = e.try_get_mut<script::ScriptVars>();
+    if (!vars) return true;
+    const std::string key = "связь " + std::to_string(link);
+    if (m.had_var) {
+        vars->get_or_add(key) = m.was;
+    } else {
+        std::erase_if(vars->vars, [&](const script::ScriptVar& v) { return v.name == key; });
+        if (!m.had_vars && vars->vars.empty()) {
+            e.remove<script::ScriptVars>();
+            return true;
+        }
+    }
+    e.modified<script::ScriptVars>();
+    return true;
 }
 
 bool Runtime::is_area_entity(flecs::entity_t e) const {

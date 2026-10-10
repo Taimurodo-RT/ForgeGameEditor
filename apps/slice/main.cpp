@@ -58,6 +58,7 @@
 #include "forge/level/light.h"
 #include "forge/level/tiled_apply.h"
 #include "forge/render/offscreen.h"
+#include "forge/world/region_store.h"
 #include "forge/script/graph.h"
 #include "forge/ui/ui.h"
 
@@ -99,17 +100,19 @@ namespace trip {
 inline std::filesystem::path root() { return std::filesystem::temp_directory_path() / utf8_path("forge_slice_уровни"); }
 // What the first process leaves for the second: the save it made in «Пещера» and what it saw then.
 inline std::filesystem::path notes() { return root() / utf8_path("заметки.txt"); }
-// The areas: «Двор» (its music; coming into it opens a window), «Метка» (once), «Выход» (to «Пещера», «Вход») on
-// «Деревня»; «Вход» (its music; back to «Деревня») and «Грот» on «Пещера».
+// The areas: «Двор» (its music; coming into it opens a window), «Метка» (once), «Выход» (to «Пещера», «Вход») and
+// «Калитка» (to «Пещера», once) on «Деревня»; «Вход» (its music; back to «Деревня») and «Грот» on «Пещера».
 constexpr u64 kYard = 0x14b2000000000001, kMark = 0x14b2000000000002, kExit = 0x14b2000000000003,
-              kEntry = 0x14b2000000000004, kGrotto = 0x14b2000000000005;
+              kEntry = 0x14b2000000000004, kGrotto = 0x14b2000000000005, kGate = 0x14b2000000000006;
 // The copies the scene puts on «Деревня», by their level ids: «Часы» counting seconds with a sound near them, two
 // «Зверька» (one wanders and steps with a sound, one goes by the keys), a falling «Ящик», «Родник» and «Монеты».
 constexpr u64 kTicker = 0x14b2000000000101, kCritter = 0x14b2000000000102, kCrate = 0x14b2000000000103,
-              kSpring = 0x14b2000000000104, kCoin = 0x14b2000000000105, kPlayer = 0x14b2000000000106;
+              kSpring = 0x14b2000000000104, kCoin = 0x14b2000000000105, kPlayer = 0x14b2000000000106,
+              kTicker2 = 0x14b2000000000107; // another «Часы», put while the goings are refused
+
 // The links the scene adds to the game's.
 constexpr u32 kYardLink = 101, kMarkLink = 102, kGoLink = 103, kGoTooLink = 104, kLateLink = 105, kBackLink = 106,
-              kGrottoLink = 107, kGrottoWait = 108, kTickerLink = 109, kSpringLink = 110;
+              kGrottoLink = 107, kGrottoWait = 108, kTickerLink = 109, kSpringLink = 110, kGateLink = 112;
 // «Часы» count twice: test.ticks by a link «При старте»: wait a second, +1, again (its waiting is not saved: after a
 // load or a coming back it does not go on, as «При старте» does not run again), and test.frames by their own scheme,
 // +1 «Каждый шаг».
@@ -4101,6 +4104,8 @@ private:
             u32 named = 0, travels = 0, dropped = 0, arrived = 0;
             bool said = false;
             std::map<std::string, Files> slots; // every save's files, as they were before the refusals
+            Files tree;                         // the session's files and folders just before a going refused
+            flecs::entity_t hero = 0;           // the hero then
             std::vector<std::pair<fs::path, fs::path>> aside; // region files moved away (where, from) for a write that fails
             std::map<std::string, f64> notes;   // what the first process saw
         };
@@ -4116,6 +4121,51 @@ private:
             }
             std::sort(out.begin(), out.end());
             return out;
+        };
+        // A folder's files with their bytes and its folders (a "/" after the name, no bytes).
+        auto tree_of = [files_of](const fs::path& dir) {
+            Files out = files_of(dir);
+            std::error_code ec;
+            for (const auto& e : fs::recursive_directory_iterator(dir, ec))
+                if (e.is_directory()) out.emplace_back(path_to_utf8(fs::relative(e.path(), dir)) + "/", std::vector<u8>{});
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        auto tree_diff = [](const Files& a, const Files& b) {
+            std::string out;
+            std::map<std::string, const std::vector<u8>*> was;
+            for (const auto& [name, bytes] : a) was[name] = &bytes;
+            for (const auto& [name, bytes] : b) {
+                auto it = was.find(name);
+                if (it == was.end()) out += " +" + name;
+                else if (*it->second != bytes) out += " ~" + name;
+                if (it != was.end()) was.erase(it);
+            }
+            for (const auto& [name, bytes] : was) out += " -" + name;
+            return out;
+        };
+        // A folder where a region file of the level's objects is, around a point of the session's world: a write
+        // of that region fails (the file there, if any, moved away; aside says where, to put it back).
+        auto block_region = [st](const fs::path& world, f64 x, f64 y) {
+            namespace w = forge::world;
+            const i32 rx = (static_cast<i32>(std::floor(x)) >> w::kChunkShift) >> w::kRegionShift;
+            const i32 ry = (static_cast<i32>(std::floor(y)) >> w::kChunkShift) >> w::kRegionShift;
+            const fs::path file = world / ("e." + std::to_string(rx) + "." + std::to_string(ry) + ".fwr");
+            const fs::path away = trip::root() / utf8_path("в сторону");
+            std::error_code ec;
+            fs::create_directories(away, ec);
+            st->aside.emplace_back(away / file.filename(), file);
+            if (fs::is_regular_file(file, ec)) fs::rename(file, away / file.filename(), ec);
+            fs::create_directories(file / utf8_path("занято"), ec);
+            return fs::is_directory(file, ec);
+        };
+        auto unblock = [st] {
+            std::error_code ec;
+            for (const auto& [to, from] : st->aside) {
+                fs::remove_all(from, ec);
+                if (fs::exists(to, ec)) fs::rename(to, from, ec);
+            }
+            st->aside.clear();
         };
         auto saves = [&s, files_of] {
             std::map<std::string, Files> out;
@@ -4278,7 +4328,7 @@ private:
             };
             forge::level::LevelAreas village, cave;
             village.areas = {area(trip::kYard, "Двор", -6, 8, "двор.wav"), area(trip::kMark, "Метка", 24, 27, ""),
-                             area(trip::kExit, "Выход", 40, 43, "")};
+                             area(trip::kExit, "Выход", 40, 43, ""), area(trip::kGate, "Калитка", -16, -12, "")};
             village.spawn = true;
             village.spawn_x = 2.5;
             village.spawn_y = v;
@@ -4403,8 +4453,11 @@ private:
                 check(g.hero_marked(trip::kMarkLink), "герой помнит «Метку»");
                 check(fs::is_directory(session / "levels" / "level", ec), "«Деревня» записана в session/levels/level");
                 check(same_areas(session / "world", forge::level::level_folder(s.game_dir(), "cave")), "мир игры — копия «Пещеры» автора");
-                check(!fs::exists(session / "levels" / "cave", ec) && !fs::exists(session / "levels" / ".cave.tmp", ec),
-                      "копия «Пещеры» стала миром игры, лишних папок нет");
+                std::string temps;
+                for (const auto& e : fs::directory_iterator(session / "levels", ec))
+                    if (path_to_utf8(e.path().filename()) != "level") temps += " " + path_to_utf8(e.path().filename());
+                check(!fs::exists(session / "levels" / "cave", ec) && temps.empty(),
+                      "копия «Пещеры» стала миром игры, лишних и временных папок нет:" + temps);
                 Controls c; // the keys: here, not in «Деревня»
                 c.right = true;
                 g.script(c);
@@ -4498,6 +4551,7 @@ private:
                 check(at_entry() && in(trip::kEntry), "в середину «Входа», как сказала первая связь" + where());
                 check(g.travels_dropped() == st->dropped + 1, "вторая связь того же шага («в точку появления») не нужна: " +
                                                                   std::to_string(g.travels_dropped() - st->dropped));
+                check(!g.hero_marked(trip::kGoTooLink), "её «Только один раз» не отмечен: она никуда не отправила");
             }
             if (f < st->arrived + 60) return false;
             check(g.level_id() == "cave" && g.travels() == st->travels + 1 && at_entry(), "через секунду герой там же: обратно его не отправило" + where());
@@ -4527,9 +4581,14 @@ private:
             check(g.level_id() == "level" && g.travels() == st->travels + 1, "через секунду герой там же" + where());
             return true;
         }});
-        steps_.push_back({"новая игра начинается с начала", 40, [&s, &g, this, var](u32 f) {
+        steps_.push_back({"новая игра начинается с начала; отказ — до первого шага в «Пещеру»", 70,
+                          [&s, &g, this, st, var, put, at_spawn, where, tree_of, tree_diff, block_region, unblock](u32 f) {
             std::error_code ec;
             const fs::path session = s.slots().session();
+            auto same_session = [&](const std::string& what) {
+                const std::string diff = tree_diff(st->tree, tree_of(session));
+                check(diff.empty(), what + ": session та же, файл в файл и папка в папку:" + diff);
+            };
             if (f == 0) {
                 check(s.save("перед-новой", "Перед новой"), "игра сохраняется в «Деревне»");
                 check(fs::is_directory(s.slots().folder("перед-новой") / "levels" / "cave", ec), "в сохранении и «Пещера»");
@@ -4544,23 +4603,52 @@ private:
                 // session/levels is a file: the level left cannot be kept, so the hero does not go.
                 const std::string_view text = "файл на месте папки уровней";
                 check(write_file_atomic(session / "levels", {reinterpret_cast<const u8*>(text.data()), text.size()}), "session/levels — файл");
-                g.go_to("cave");
+                st->tree = tree_of(session);
+                st->hero = g.hero_entity();
+                put(-14.5, st->v); // into «Калитка»: once, to «Пещера»
                 return false;
             }
-            if (f == 11) {
-                check(g.level_id() == "level" && g.hero_alive() && g.travel_problem().find("не создать папку уровней") != std::string::npos,
-                      "session/levels — файл: «Пещеры» не будет, «Деревня» играет: «" + g.travel_problem() + "»");
+            if (f < 14) return false;
+            if (f == 14) {
+                check(g.level_id() == "level" && g.hero_entity() == st->hero && g.travel_problem().find("не создать папку уровней") != std::string::npos,
+                      "«Калитка», а session/levels — файл: «Пещеры» не будет, «Деревня» играет, герой тот же: «" + g.travel_problem() + "»");
+                check(!g.hero_marked(trip::kGateLink), "«Только один раз» «Калитки» не отмечен: перехода не было");
+                same_session("session/levels — файл");
                 fs::remove(session / "levels", ec);
+                put(2.5, st->v);
+                return false;
+            }
+            if (f == 18) {
+                // The disk refuses for real while «Пещера» was never gone to: the left level's objects are not written.
+                check(block_region(session / "world", g.hero_x(), g.hero_y()), "на месте файла объектов «Деревни» у героя — папка");
+                st->tree = tree_of(session);
+                st->hero = g.hero_entity();
                 g.go_to("cave");
                 return false;
             }
-            if (f == 12) {
-                check(g.level_id() == "cave" && g.travel_problem().empty(), "файл убран — переход есть");
+            if (f == 19) {
+                check(g.level_id() == "level" && g.hero_entity() == st->hero && g.travel_problem().find("не записался на диск") != std::string::npos,
+                      "диск не пишет «Деревню»: «Пещеры» не будет, герой тот же: «" + g.travel_problem() + "»");
+                same_session("«Деревня» не записалась");
+                check(!fs::exists(session / "levels", ec), "ни копии «Пещеры», ни папки уровней в session");
+                unblock();
+                put(-14.5, st->v);
+                return false;
+            }
+            if (f == 25) {
+                check(g.level_id() == "cave" && g.travels() == 1 && g.travel_problem().empty(), "файл вернули: «Калитка» уводит в «Пещеру»" + where());
+                check(g.hero_marked(trip::kGateLink), "и теперь её «Только один раз» отмечен");
                 g.go_to("level");
                 return false;
             }
-            if (f < 20) return false;
-            check(g.level_id() == "level" && s.load("перед-новой"), "сохранение «перед-новой» загружается");
+            if (f == 26) {
+                check(g.level_id() == "level" && at_spawn(), "обратно в точку появления «Деревни»" + where());
+                put(-14.5, st->v);
+                return false;
+            }
+            if (f < 40) return false;
+            check(g.level_id() == "level" && g.travels() == 2, "в «Калитку» снова: она больше не уводит" + where());
+            check(s.load("перед-новой"), "сохранение «перед-новой» загружается");
             return true;
         }});
         steps_.push_back({"сохранения прежних версий: без «level» и «level»: \"\"", 30, [&s, &g, this, hero_level](u32 f) {
@@ -4609,98 +4697,118 @@ private:
             }
             return f >= 20;
         }});
-        steps_.push_back({"отказы: игра идёт, где шла, сохранения не тронуты", 30, [&s, &g, this, st, saves, same_areas](u32 f) {
+        steps_.push_back({"отказы: «Деревня» живёт, как жила, session и сохранения не тронуты", 170,
+                          [&s, &g, this, st, saves, same_areas, var, put, tree_of, tree_diff, block_region, unblock](u32 f) {
             std::error_code ec;
             const fs::path session = s.slots().session();
+            // Refused: the same level with the same hero where it stood, the window its «Двор» opened, the session as it
+            // was just before (files and folders: nothing staged is left), and the reason.
             auto refused = [&](const std::string& what, const char* says) {
-                check(g.level_id() == "level" && g.running() && g.hero_alive() && std::fabs(g.hero_x() - st->hx) < 0.01 &&
-                          g.copy_with_id(trip::kTicker) && g.travel_problem().find(says) != std::string::npos,
-                      what + ": «Деревня» играет дальше, герой на месте; почему — «" + g.travel_problem() + "»");
+                check(g.level_id() == "level" && g.running() && g.hero_entity() == st->hero && std::fabs(g.hero_x() - st->hx) < 0.01 &&
+                          g.copy_with_id(trip::kTicker) && g.copy_with_id(trip::kTicker2) && g.travel_problem().find(says) != std::string::npos,
+                      what + ": «Деревня» играет дальше, герой тот же и на месте; почему — «" + g.travel_problem() + "»");
+                check(s.screens().shown("окно_уровня") && g.level_screens().count("окно_уровня"), what + ": окно «Двора» открыто");
+                const std::string diff = tree_diff(st->tree, tree_of(session));
+                check(diff.empty(), what + ": session та же, файл в файл и папка в папку:" + diff);
             };
-            switch (f) {
-            case 0:
+            // The next going: the session and the hero as they are just before it.
+            auto go = [&](const std::string& level, const std::string& arrive = {}) {
+                st->tree = tree_of(session);
+                st->hero = g.hero_entity();
+                g.go_to(level, arrive);
+            };
+            if (f == 0) {
                 check(g.level_id() == "level" && g.copy_with_id(trip::kTicker), "«перед-новой»: «Деревня» с «Часами»");
+                // Other «Часы», put now: their «При старте» waits a second, again and again (the loaded ones' does not
+                // go on after a load). A going refused must not stop it.
+                check(g.spawn_copy("ticker", -2.5, st->v, trip::kTicker2) != 0, "ещё одни «Часы»: их ожидание идёт");
+                put(12.5, st->v); // out of «Двор», then into it: its link opens the level's window
+                return false;
+            }
+            if (f == 3) put(2.5, st->v);
+            if (f < 10) return false;
+            const u32 k = f - 10;
+            switch (k) {
+            case 0:
+                check(s.screens().shown("окно_уровня") && g.level_screens().count("окно_уровня"), "«Двор» открыл окно уровня");
                 st->slots = saves();
                 st->hx = g.hero_x();
-                g.go_to("nowhere");
+                st->ticks = var("test.ticks");
+                st->frames = var("test.frames");
+                go("nowhere");
                 break;
             case 1:
                 refused("уровня нет в списке", "нет в списке уровней");
-                g.go_to("file");
+                go("file");
                 break;
             case 2:
                 refused("папка уровня — файл", "— файл");
-                g.go_to("cave", "area:00000000000000ff");
+                go("cave", "area:00000000000000ff");
                 break;
             case 3:
                 refused("зоны, где появиться, нет", "нет зоны");
-                g.go_to("cave", "spawn");
+                go("cave", "spawn");
                 break;
             case 4:
                 refused("где появиться — не зона", "не зона");
                 g.fail_next_travel(SliceGame::TravelFault::Save);
-                g.go_to("cave");
+                go("cave");
                 break;
             case 5:
                 refused("«Деревня» не записалась", "не записался на диск");
                 g.fail_next_travel(SliceGame::TravelFault::Move);
-                g.go_to("cave");
+                go("cave");
                 break;
             case 6:
                 refused("папка «Деревни» не переместилась", "не переместилась");
                 g.fail_next_travel(SliceGame::TravelFault::Make);
-                g.go_to("cave");
+                go("cave");
                 break;
             case 7: {
                 refused("«Пещера» не открылась", "не открылся");
                 check(fs::is_directory(session / "levels" / "cave", ec) && same_areas(session / "world", forge::level::level_folder(s.game_dir(), "level")),
-                      "папки вернулись: «Деревня» — мир игры, «Пещера» — в session/levels/cave");
-                // The disk refuses for real: the files of the level's objects are folders now.
-                const fs::path away = trip::root() / utf8_path("в сторону");
-                fs::create_directories(away, ec);
-                for (const auto& e : fs::directory_iterator(session / "world", ec)) {
-                    const std::string name = path_to_utf8(e.path().filename());
-                    if (!e.is_regular_file() || !name.starts_with("e.") || !name.ends_with(".fwr")) continue;
-                    st->aside.emplace_back(away / e.path().filename(), e.path());
-                }
-                for (const auto& [to, from] : st->aside) {
-                    fs::rename(from, to, ec);
-                    fs::create_directories(from / utf8_path("занято"), ec);
-                }
-                check(!st->aside.empty(), "файлы объектов уровня заменены папками");
-                g.go_to("cave");
+                      "папки на месте: «Деревня» — мир игры, «Пещера» — в session/levels/cave");
+                // The disk refuses for real: where the file of the level's objects around the hero was, a folder.
+                check(block_region(session / "world", g.hero_x(), g.hero_y()) && fs::exists(st->aside.back().first, ec),
+                      "файл объектов уровня у героя заменён папкой");
+                go("cave");
                 break;
             }
             case 8:
                 refused("диск не пишет файлы уровня", "не записался на диск");
-                for (const auto& [to, from] : st->aside) {
-                    fs::remove_all(from, ec);
-                    fs::rename(to, from, ec);
-                }
-                st->aside.clear();
+                unblock();
+                break;
+            case 130:
+                // All that while «Деревня» went on: its waiting «Часы» counted, the scheme stepped, the window stayed.
+                check(var("test.ticks") >= st->ticks + 2, "ожидание «Часов» шло и после отказов: test.ticks " + std::to_string(var("test.ticks")) +
+                                                              " (было " + std::to_string(st->ticks) + ")");
+                check(var("test.frames") >= st->frames + 100, "схема «Часов» считала шаги: test.frames " + std::to_string(var("test.frames")));
+                check(g.level_id() == "level" && g.hero_entity() == st->hero && s.screens().shown("окно_уровня") &&
+                          g.level_screens().count("окно_уровня"),
+                      "герой тот же, окно «Двора» открыто");
                 g.go_to("cave");
                 break;
-            case 9:
+            case 131:
                 check(g.level_id() == "cave" && g.travel_problem().empty(), "файлы вернули — переход есть: «" + g.travel_problem() + "»");
                 g.go_to("level");
                 break;
-            case 10:
-                check(g.level_id() == "level" && g.copy_with_id(trip::kTicker), "и обратно: «Деревня» с «Часами»");
+            case 132:
+                check(g.level_id() == "level" && g.copy_with_id(trip::kTicker) && g.copy_with_id(trip::kTicker2), "и обратно: «Деревня» с обоими «Часами»");
                 check(saves() == st->slots, "сохранения те же, байт в байт");
                 return true;
             default: break;
             }
             return false;
         }});
-        steps_.push_back({"сбой и при возвращении: главное меню, сохранения не тронуты", 20, [&s, &g, this, st, saves](u32 f) {
+        steps_.push_back({"папки не встали на место и не вернулись: главное меню, сохранения не тронуты", 20, [&s, &g, this, st, saves](u32 f) {
             if (f == 0) {
                 g.fail_next_travel(SliceGame::TravelFault::Back);
                 g.go_to("cave");
                 return false;
             }
             if (f == 1) {
-                check(!g.running() && s.screen() == Screen::Main, "ни «Пещера», ни снова «Деревня» не открылись: игра в главном меню");
-                check(g.travel_problem().find("не открылся снова") != std::string::npos, "почему: «" + g.travel_problem() + "»");
+                check(!g.running() && s.screen() == Screen::Main, "папки сохранения не вернулись на место: игра в главном меню");
+                check(g.travel_problem().find("не вернулись на место") != std::string::npos, "почему: «" + g.travel_problem() + "»");
                 check(saves() == st->slots, "сохранения те же, байт в байт, автосохранения нет");
                 return false;
             }
@@ -6130,7 +6238,18 @@ static bool make_travel_game(const std::filesystem::path& from, std::string& why
         l.level = "cave";
         l.arrive = area_thing_id(trip::kEntry);
     }
-    link(trip::kGoTooLink, "hero", "go", area_thing_id(trip::kExit)).level = "cave";
+    {
+        // Once: a going not needed (another link of the step went) leaves no mark.
+        logic::Link& l = link(trip::kGoTooLink, "hero", "go", area_thing_id(trip::kExit));
+        l.level = "cave";
+        l.once = true;
+    }
+    {
+        // Once: a going refused leaves no mark either; one done does.
+        logic::Link& l = link(trip::kGateLink, "hero", "go", area_thing_id(trip::kGate));
+        l.level = "cave";
+        l.once = true;
+    }
     link(trip::kLateLink, "hero", "go", area_thing_id(trip::kExit)).code =
         "forge.wait(0.3)\nforge.game.add_var(\"test.after\", 1)\nlogic.go(target, \"level\", \"\", " + std::to_string(trip::kLateLink) + ")";
     link(trip::kBackLink, "hero", "go", area_thing_id(trip::kEntry)).level = "level";
