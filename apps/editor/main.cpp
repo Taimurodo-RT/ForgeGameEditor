@@ -5683,10 +5683,14 @@ private:
             for (const auto& n : sc.node_views()) of1 += n.link == 1 && !n.hidden;
             // Only the nodes near the view are in the document.
             check(of1 > 0 && of1 <= g->nodes.size() && shown("sc-frame-1"), "a frame with the scheme's nodes");
-            const std::string when = "sc-node-1-" + std::to_string(logic::when_node(*g));
-            check(shown(when) && shown("sc-pin-1-" + std::to_string(logic::when_node(*g)) + "-o-next"), "«Когда» with its flow exit");
-            check(click(when) && sc.selected_node() == logic::when_node(*g) && lg().selected_link() == 1, "a click on a node selects it");
-            check(!shown("sc-remove-1-" + std::to_string(logic::when_node(*g))), "«Когда» cannot be taken away");
+            // A click builds the view again, its schemes with it: g is gone after one, «Когда» is kept by its uid.
+            const u32 when_uid = logic::when_node(*g);
+            const std::string when = "sc-node-1-" + std::to_string(when_uid);
+            check(shown(when) && shown("sc-pin-1-" + std::to_string(when_uid) + "-o-next"), "«Когда» with its flow exit");
+            check(click(when) && sc.selected_node() == when_uid && lg().selected_link() == 1 && sc.graph(1) &&
+                      logic::when_node(*sc.graph(1)) == when_uid,
+                  "a click on a node selects it");
+            check(!shown("sc-remove-1-" + std::to_string(when_uid)), "«Когда» cannot be taken away");
             check(click("sc-add-1") && sc.palette_open(), "«+ Нода» opens the list of nodes");
             const usize all = sc.palette_items();
             sc.set_search("прибав");
