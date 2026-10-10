@@ -10,7 +10,8 @@
 //                                   over the game and draws new ones into logic.json)
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
 //                                                    |tiled|tiled_update|levels|levels_continue|platformer
-//                                                    |platformer_continue|platformer_edges|project]
+//                                                    |platformer_continue|platformer_edges|platformer_template
+//                                                    |platformer_template_continue|project]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
@@ -28,7 +29,10 @@
 //                                   the end of the game) on a game of two levels with nothing around them, played by
 //                                   the keys and saved; platformer_continue, another process: «Продолжить», a win;
 //                                   platformer_edges, a third: a link «собирает», the frame a game ends in, no place
-//                                   to put the hero back in, with the window «при поражении» and without)
+//                                   to put the hero back in, with the window «при поражении» and without;
+//                                   platformer_template: the template «Платформер» (games/platformer) played through
+//                                   «Луг» to «Холмы» by the keys, the hero's frames by the pixels, saved there, lost;
+//                                   platformer_template_continue, another process: «Продолжить» and on to the flag)
 //   forge_slice --test --scene project [--play] --data GAME [--level DIR --at X,Y --user DIR] [--edits FILE]
 //                                   a game the editor made of a template, as its «Играть» starts it: that game's data,
 //                                   title and links, the hero at X,Y, the player's files in DIR; with FILE, what the
@@ -63,6 +67,7 @@
 #include "forge/level/level.h"
 #include "forge/level/light.h"
 #include "forge/level/tiled_apply.h"
+#include "forge/sim/bodies.h"
 #include "forge/render/offscreen.h"
 #include "forge/world/region_store.h"
 #include "forge/script/graph.h"
@@ -262,6 +267,22 @@ inline bool write_levels(const std::filesystem::path& game, f64 feet, std::strin
                {{"coin", kCoin2X, kCoin2}, {"loud_beetle", kLoudX, kLoud}, {"spikes_row", kSpikesX, kSpikes}});
 }
 } // namespace plat
+
+// --scene platformer_template and platformer_template_continue (step 14.2d): the template «Платформер» (games/platformer,
+// in a package data/examples/platformer) as a player meets it, a copy of it in this run's own folder; the second
+// plays on there in another process, as a player's «Продолжить».
+namespace tpl {
+inline std::filesystem::path root() { return std::filesystem::temp_directory_path() / utf8_path("forge_slice_шаблон_платформер"); }
+inline std::filesystem::path notes() { return root() / utf8_path("заметки.txt"); }
+// The template's ids (apps/editor/platformer_template.cpp): copy n of level l («Луг» 0, «Холмы» 1, «Вершина» 2) in
+// the order the template puts them, area n of level l.
+constexpr u64 id(u64 level, u64 n) { return 0x142d000000000000ull | ((level + 1) << 16) | (n + 1); }
+constexpr u64 area(u64 level, u64 n) { return 0x142d00a000000000ull | ((level + 1) << 8) | (n + 1); }
+// A «Жук» the scene puts next to the hero, to see it walk.
+constexpr u64 kTestBeetle = 0x142d0000000f0001ull;
+// The tiles «Трава» and «Мост» of the template's tiles.png.
+constexpr world::TileId kGrass = 256, kBridge = 263;
+} // namespace tpl
 
 // The self-test: steps run one after another, each over as many frames as
 // it needs (a step returns true when it is done).
@@ -880,6 +901,298 @@ private:
             return true;
         }});
     }
+    // The template «Платформер» (step 14.2d) as the author changed it in the tabs of a game made of it, met as a player
+    // meets it in a new game: the hero drawn with the picture the author put into «Ресурсы», frame by frame (stands, a
+    // step, in the air); the cells the author made solid over a pit hold the hero; a beetle walks at its new «Скорость»;
+    // the coin the author put gives the coin's new «Очки» and a coin, its sound once, and the HUD says so; the start
+    // level's exit leads where its link now says; there three falls lose the game, and the window's «Ещё раз» plays a
+    // new one, where a beetle walked into takes its new «Урон»; through the exit again the flag wins: the window with
+    // the author's title and button, the world standing; the button plays a new game.
+    void build_template_edits(Shell& s) {
+        SliceGame& g = g_;
+        struct State {
+            u32 at = 0, cue0 = 0, falls0 = 0, hits0 = 0;
+            f64 score0 = 0, coins0 = 0, fastest = 0;
+            std::map<flecs::entity_t, f64> was;
+            std::string level0;
+        };
+        auto st = std::make_shared<State>();
+        auto put = [&g](f64 feet_x, f64 feet_y) { g.teleport(feet_x, feet_y - kHeroHalfH); };
+        auto said = [&s](const std::string& screen, u32 node) { return text_of(layer(s, screen, node)); };
+        auto raw = [&s](const std::string& screen) {
+            Rml::ElementDocument* doc = s.screens().document(screen);
+            return !doc || text_of(doc).find('{') != std::string::npos;
+        };
+        auto whole = [](f64 x) { return std::to_string(static_cast<i64>(std::llround(x))); };
+        auto state = [&g, whole] {
+            return " (уровень «" + g.level_id() + "», очки " + whole(g.score()) + ", сердца " + whole(g.hearts()) + ", монеты " +
+                   whole(g.inventory("coins")) + ", герой " + std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()) + ")";
+        };
+        auto area = [&g](const std::string& thing) -> const forge::level::Area* {
+            u64 id = 0;
+            if (!g.areas() || !thing.starts_with(logic::kAreaPrefix) ||
+                !forge::level::parse_area_id(std::string_view(thing).substr(logic::kAreaPrefix.size()), id))
+                return nullptr;
+            return g.areas()->find(id);
+        };
+        auto in = [&g](const std::string& thing) {
+            u64 id = 0;
+            if (!thing.starts_with(logic::kAreaPrefix) || !forge::level::parse_area_id(std::string_view(thing).substr(logic::kAreaPrefix.size()), id))
+                return false;
+            const std::vector<u64> now = g.areas_inside();
+            return std::find(now.begin(), now.end(), id) != now.end();
+        };
+        // The author's coin where it was put (none: false).
+        auto coin = [&g, this](f64& x, f64& y) {
+            const ProjectEdits& e = project_edits;
+            for (flecs::entity_t c : g.copies_of(e.tp_coin))
+                if (e.tp_coin_at.size() == 2 && g.position_of(c, x, y) && std::fabs(x - e.tp_coin_at[0]) < 0.05 && std::fabs(y - e.tp_coin_at[1]) < 0.1)
+                    return true;
+            return false;
+        };
+        // The middle of the hero as the screen shows it now (drawn in this frame), and the author's colour of a frame.
+        auto hero_seen = [&s, &g, this](std::array<int, 3>& at) {
+            std::vector<u8> px;
+            u32 w = 0, h = 0;
+            if (!frame_pixels(s, px, w, h)) return false;
+            const render::Camera2D& c = g.camera();
+            at = pixel_at(px, w, h, static_cast<f32>((g.hero_drawn_x() - c.snapped_x()) * c.zoom + w * 0.5),
+                          static_cast<f32>((g.hero_drawn_y() - c.snapped_y()) * c.zoom + h * 0.5));
+            return true;
+        };
+        auto colour = [this](u32 frame) {
+            const std::vector<int>& h = project_edits.tp_hero;
+            return h.size() == 12 && frame < 4 ? std::vector<int>(h.begin() + frame * 3, h.begin() + frame * 3 + 3) : std::vector<int>{};
+        };
+        auto frame_seen = [&g, hero_seen, colour](const char* what) {
+            std::array<int, 3> at{};
+            const u32 k = g.hero_frame();
+            return std::make_pair(hero_seen(at) && near_rgb(at, colour(k), 24),
+                                  std::string(what) + ": кадр " + std::to_string(k) + " новой картинки автора на экране: " + rgb_text(at));
+        };
+        steps_.push_back({"шаблон автора: новая игра, герой картинкой из «Ресурсов», HUD", 200, [&s, &g, this, said, raw, frame_seen, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (!check_ok(e.tp_hero.size() == 12, "цвета четырёх кадров героя: двенадцать чисел")) return true;
+            if (f == 0) {
+                check(s.new_game(), "новая игра");
+                return false;
+            }
+            if (f < 30 || (!g.on_ground() && f < 150)) return false;
+            check(g.level_id() == e.level && g.hearts() == 3 && g.score() == 0 && !g.won() && !g.lost(),
+                  "новая игра на «" + e.level_name + "»: три сердца, ноль очков" + state());
+            check(g.hero_pictured() && g.hero_frame() == 0, "герой нарисован своей картинкой, кадр «стоит»");
+            const auto [seen, why] = frame_seen("стоит");
+            check(seen, why);
+            check(s.screens().shown(e.tp_hud) && said(e.tp_hud, e.tp_hud_score) == "Очки: 0" && !raw(e.tp_hud),
+                  "HUD поверх игры, без сырых {…}: «" + said(e.tp_hud, e.tp_hud_score) + "»");
+            return true;
+        }});
+        steps_.push_back({"кадры новой картинки: шаг и прыжок", 200, [&g, this, st, frame_seen](u32 f) {
+            if (f < 12) {
+                Controls c;
+                c.left = true;
+                g.script(c);
+                return false;
+            }
+            if (f == 12) {
+                g.script(Controls{});
+                check(g.on_ground() && (g.hero_frame() == 1 || g.hero_frame() == 2), "идёт: кадр шага, а не " + std::to_string(g.hero_frame()));
+                const auto [seen, why] = frame_seen("шаг");
+                check(seen, why);
+                return false;
+            }
+            if (f == 50) {
+                g.teleport(g.hero_x(), g.hero_y() - 3);
+                return false;
+            }
+            if (f == 56) {
+                check(!g.on_ground() && g.hero_frame() == 3, "в воздухе: кадр «в воздухе», а не " + std::to_string(g.hero_frame()));
+                const auto [seen, why] = frame_seen("в воздухе");
+                check(seen, why);
+            }
+            return f > 56 && (g.on_ground() || f >= 190);
+        }});
+        steps_.push_back({"мостки автора над ямой держат героя", 120, [&g, this, st, put, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const std::vector<int>& b = e.tp_bridge;
+            if (!check_ok(b.size() == 3, "мостки автора: x0, x1, y")) return true;
+            if (f == 0) {
+                st->falls0 = g.falls();
+                put((b[0] + b[1] + 1) * 0.5, b[2] - 1.0);
+                return false;
+            }
+            if (f < 60) return false;
+            check(g.on_ground() && std::fabs(g.hero_y() + kHeroHalfH - b[2]) < 0.05 && g.falls() == st->falls0 && g.level_id() == e.level,
+                  "герой стоит на мостках автора над ямой, не падает" + state());
+            return true;
+        }});
+        steps_.push_back({"«Жук» автора ходит со своей «Скоростью»", 120, [&g, this, st](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                st->was.clear();
+                st->fastest = 0;
+            }
+            for (flecs::entity_t c : g.copies_of(e.tp_enemy)) {
+                f64 x = 0, y = 0;
+                if (!g.position_of(c, x, y)) continue;
+                const auto was = st->was.find(c);
+                if (was != st->was.end() && std::fabs(x - was->second) < 0.5) st->fastest = std::max(st->fastest, std::fabs(x - was->second) * 60);
+                st->was[c] = x;
+            }
+            if (f < 90) return false;
+            check(!st->was.empty() && std::fabs(st->fastest - e.tp_enemy_speed) < 0.1,
+                  "«Жук» идёт со «Скоростью» автора " + std::to_string(e.tp_enemy_speed) + " клетки в секунду: " + std::to_string(st->fastest));
+            return true;
+        }});
+        steps_.push_back({"монетка автора: новые «Очки», монета, звук, HUD", 150, [&g, this, st, put, said, whole, state, coin](u32 f) {
+            const ProjectEdits& e = project_edits;
+            f64 x = 0, y = 0;
+            if (f == 0) {
+                if (!check_ok(coin(x, y), "монетка автора там, где её поставили: " + std::to_string(g.copies_of(e.tp_coin).size()) + " монеток"))
+                    return true;
+                st->score0 = g.score();
+                st->coins0 = g.inventory("coins");
+                st->cue0 = g.sounds().played(Cue::Coins);
+                st->at = 0;
+                put(x, std::ceil(y));
+                return false;
+            }
+            if (coin(x, y)) return f >= 60 && check_ok(false, "монетка автора не подобрана" + state());
+            if (!st->at) st->at = f;
+            if (f < st->at + 30) return false; // nothing more comes of it
+            check(g.score() == st->score0 + e.tp_coin_score && g.inventory("coins") == st->coins0 + 1,
+                  "монетка дала новые " + whole(e.tp_coin_score) + " очков и одну монету" + state());
+            check(g.sounds().played(Cue::Coins) == st->cue0 + 1, "звук монеты один раз: " + std::to_string(g.sounds().played(Cue::Coins) - st->cue0));
+            check(said(e.tp_hud, e.tp_hud_score) == "Очки: " + whole(g.score()), "HUD: «" + said(e.tp_hud, e.tp_hud_score) + "»");
+            return true;
+        }});
+        // Into the start level's exit: the level and the area its link now names.
+        auto through = [&g, this, st, area, in, state](u32 f, u32 most) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                const forge::level::Area* a = area(e.tp_exit);
+                if (!check_ok(a != nullptr, "на уровне «" + g.level_id() + "» выход " + e.tp_exit)) return true;
+                st->level0 = g.level_id();
+                g.teleport((a->x0 + a->x1) * 0.5, (a->y0 + a->y1) * 0.5);
+                return false;
+            }
+            if (g.level_id() == st->level0 && f < most) return false;
+            check(g.level_id() == e.tp_exit_level && g.travel_problem().empty() && in(e.tp_exit_arrive),
+                  "через выход — на «" + e.tp_exit_level + "», в зону " + e.tp_exit_arrive + state());
+            return true;
+        };
+        steps_.push_back({"выход ведёт, куда указал автор", 200, [through](u32 f) { return through(f, 150); }});
+        steps_.push_back({"три падения в «Пропасть»: поражение, окно «при поражении»", 700, [&s, &g, this, st, area, raw, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const forge::level::Area* p = area(e.tp_pit);
+            if (!check_ok(p != nullptr, "на уровне «" + g.level_id() + "» пропасть " + e.tp_pit)) return true;
+            if (f == 0) {
+                st->falls0 = g.falls();
+                st->at = 0;
+            }
+            if (!g.lost()) {
+                g.script(Controls{});
+                if (g.safe_time() <= 0 && g.on_ground() && f >= st->at + 10) {
+                    g.teleport((p->x0 + p->x1) * 0.5, p->y0 + 1.5);
+                    st->at = f;
+                }
+                return f >= 650 && check_ok(false, "поражения нет" + state());
+            }
+            if (f < st->at + 40) return false; // the window comes up
+            check(g.falls() == st->falls0 + 3 && g.hearts() == 0 && g.endings() == 1, "три падения, сердец нет" + state());
+            check(s.screens().shown(e.tp_lose) && !raw(e.tp_lose), "окно «при поражении» без сырых {…}");
+            std::string why;
+            check(!g.can_save(&why), "оконченную игру не сохранить: " + why);
+            return true;
+        }});
+        steps_.push_back({"«Ещё раз»: новая игра на стартовом уровне", 120, [&s, &g, this, state, coin](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                const std::optional<Rml::Vector2f> at = on_screen(s, e.tp_lose, e.tp_again);
+                check(at && click_at(s, *at), "«Ещё раз» нажата мышью");
+                return false;
+            }
+            if (f < 40) return false;
+            f64 x = 0, y = 0;
+            check(g.running() && !g.lost() && g.endings() == 0 && !s.screens().shown(e.tp_lose), "новая игра, окна нет" + state());
+            check(g.level_id() == e.level && g.hearts() == 3 && g.score() == 0 && coin(x, y), "на «" + e.level_name + "», три сердца, монетка автора снова лежит" + state());
+            return true;
+        }});
+        steps_.push_back({"«Жук» автора сбоку: его новый «Урон»", 300, [&g, this, st, put, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            // The beetle ahead of the hero: the nearest one.
+            auto beetle = [&g, &e](f64& x, f64& y) {
+                bool any = false;
+                f64 best = 1e9;
+                for (flecs::entity_t c : g.copies_of(e.tp_enemy)) {
+                    f64 cx = 0, cy = 0;
+                    if (g.position_of(c, cx, cy) && std::fabs(cx - g.hero_x()) < best) {
+                        best = std::fabs(cx - g.hero_x());
+                        x = cx;
+                        y = cy;
+                        any = true;
+                    }
+                }
+                return any;
+            };
+            f64 x = 0, y = 0;
+            if (f == 0) {
+                if (!check_ok(beetle(x, y), "на уровне «" + g.level_id() + "» есть «Жук» автора")) return true;
+                st->hits0 = g.enemy_hits();
+                st->at = 0;
+                put(x - 3, std::ceil(y));
+                return false;
+            }
+            Controls c;
+            if (!st->at) {
+                if (f < 10 || g.enemy_hits() == st->hits0) {
+                    c.right = f >= 10;
+                    g.script(c);
+                    return f >= 250 && check_ok(false, "герой дошёл до «Жука» и не ранен" + state());
+                }
+                g.script(c);
+                st->at = f;
+                check(g.enemy_hits() == st->hits0 + 1 && g.hearts() == 3 - e.tp_enemy_damage && g.blinking(),
+                      "касание сбоку сняло новый «Урон» «Жука» " + std::to_string(static_cast<i64>(e.tp_enemy_damage)) + ", герой мигает" + state());
+                return false;
+            }
+            return f >= st->at + 5;
+        }});
+        steps_.push_back({"снова через выход", 200, [through](u32 f) { return through(f, 150); }});
+        steps_.push_back({"«Флаг»: победа, окно автора «при победе»", 200, [&s, &g, this, st, said, raw, put, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const std::vector<flecs::entity_t> flags = g.copies_of(e.tp_goal);
+            f64 x = 0, y = 0;
+            if (f == 0) {
+                if (!check_ok(flags.size() == 1 && g.position_of(flags[0], x, y), "на «" + g.level_id() + "» один «Флаг»")) return true;
+                put(x, std::ceil(y));
+                st->at = 0;
+                return false;
+            }
+            if (!g.won()) return f >= 100 && check_ok(false, "у «Флага» победы нет" + state());
+            if (!st->at) st->at = f;
+            if (f < st->at + 60) return false;
+            const u32 ticks = g.sim_stats() ? g.sim_stats()->ticks : 0u;
+            check(g.endings() == 1 && ticks == 0, "победа один раз, мир стоит: тиков за кадр " + std::to_string(ticks) + state());
+            check(s.screens().shown(e.tp_win) && said(e.tp_win, e.tp_win_title) == e.tp_win_text && !raw(e.tp_win),
+                  "окно «при победе» с заголовком автора: «" + said(e.tp_win, e.tp_win_title) + "»");
+            check(said(e.tp_win, e.tp_win_again_label) == e.tp_win_again_text, "и кнопкой автора: «" + said(e.tp_win, e.tp_win_again_label) + "»");
+            return true;
+        }});
+        steps_.push_back({"кнопка автора после победы: новая игра", 120, [&s, &g, this, state, coin](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                const std::optional<Rml::Vector2f> at = on_screen(s, e.tp_win, e.tp_win_again);
+                check(at && click_at(s, *at), "«" + e.tp_win_again_text + "» нажата мышью");
+                return false;
+            }
+            if (f < 40) return false;
+            f64 x = 0, y = 0;
+            check(g.running() && !g.won() && g.endings() == 0 && !s.screens().shown(e.tp_win), "новая игра, окна нет" + state());
+            check(g.level_id() == e.level && g.hearts() == 3 && g.score() == 0 && coin(x, y), "на «" + e.level_name + "», три сердца, монетка автора лежит" + state());
+            return true;
+        }});
+    }
     static bool one_of(SliceGame& g, const std::string& id, f64& x, f64& y) {
         const std::vector<flecs::entity_t> c = g.copies_of(id);
         return c.size() == 1 && g.position_of(c[0], x, y);
@@ -977,6 +1290,7 @@ private:
             }});
         if (!project_edits.go_through.empty() || project_edits.go_continue) build_going(s);
         if (!project_edits.pl_enemy.empty()) build_platform_edits(s);
+        if (!project_edits.tp_hero.empty()) build_template_edits(s);
         if (project_edits.object.empty() && !project_edits.absent) return;
         if (project_edits.absent) {
             steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {
@@ -1181,6 +1495,10 @@ private:
         }
         if (scene_ == "platformer" || scene_ == "platformer_continue" || scene_ == "platformer_edges") {
             build_platformer(s, scene_ == "platformer_continue", scene_ == "platformer_edges");
+            return;
+        }
+        if (scene_ == "platformer_template" || scene_ == "platformer_template_continue") {
+            build_template(s, scene_ == "platformer_template_continue");
             return;
         }
         if (scene_ == "own_tiles") {
@@ -6772,6 +7090,870 @@ private:
         }});
     }
 
+    // --- the template «Платформер» (step 14.2d) ---
+    // A strip of frames (a template's picture) the game draws in a box of tw × th tiles around (cx, cy): which frame
+    // the screen shows there, mirrored or not, and how well (the share of the frame's opaque pixels the screen has,
+    // each channel within `most`), the box looked for up to `slack` pixels around where it should be (a body moving
+    // is drawn between two ticks).
+    struct Match {
+        i32 frame = -1;
+        bool flip = false;
+        f64 score = 0;
+        i32 dx = 0, dy = 0;
+    };
+    static Match drawn_frame(const std::vector<u8>& screen, u32 sw, u32 sh, const render::Camera2D& c, f64 cx, f64 cy, f64 tw,
+                             f64 th, const assets::CookedTexture& strip, u32 frames, i32 slack, i32 most = 40) {
+        Match best;
+        if (!frames || strip.width % frames || screen.size() < static_cast<usize>(sw) * sh * 4) return best;
+        const u32 fw = strip.width / frames, fh = strip.height;
+        const f64 left = (cx - tw / 2 - c.snapped_x()) * c.zoom + sw * 0.5, top = (cy - th / 2 - c.snapped_y()) * c.zoom + sh * 0.5;
+        const f64 pw = tw * c.zoom, ph = th * c.zoom;
+        for (u32 k = 0; k < frames; ++k)
+            for (int flip = 0; flip < 2; ++flip)
+                for (i32 dy = -slack; dy <= slack; ++dy)
+                    for (i32 dx = -slack; dx <= slack; ++dx) {
+                        u32 opaque = 0, same = 0;
+                        for (i32 y = static_cast<i32>(std::floor(top)); y < static_cast<i32>(std::ceil(top + ph)); ++y)
+                            for (i32 x = static_cast<i32>(std::floor(left)); x < static_cast<i32>(std::ceil(left + pw)); ++x) {
+                                const f64 u = (x + 0.5 - left) / pw, v = (y + 0.5 - top) / ph;
+                                if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+                                u32 px = std::min(fw - 1, static_cast<u32>(u * fw));
+                                const u32 py = std::min(fh - 1, static_cast<u32>(v * fh));
+                                if (flip) px = fw - 1 - px;
+                                const u8* p = &strip.rgba8[(static_cast<usize>(py) * strip.width + k * fw + px) * 4];
+                                if (p[3] < 128) continue;
+                                ++opaque;
+                                const i32 X = x + dx, Y = y + dy;
+                                if (X < 0 || Y < 0 || X >= static_cast<i32>(sw) || Y >= static_cast<i32>(sh)) continue;
+                                const u8* q = &screen[(static_cast<usize>(Y) * sw + static_cast<usize>(X)) * 4];
+                                if (std::abs(q[0] - p[0]) <= most && std::abs(q[1] - p[1]) <= most && std::abs(q[2] - p[2]) <= most) ++same;
+                            }
+                        const f64 score = opaque ? static_cast<f64>(same) / opaque : 0;
+                        if (score > best.score) best = {static_cast<i32>(k), flip != 0, score, dx, dy};
+                    }
+        return best;
+    }
+    // A layer of a screen's page by its name (its title).
+    static Rml::Element* named(Rml::Element* e, const std::string& title) {
+        if (!e) return nullptr;
+        if (e->GetAttribute<Rml::String>("title", "") == title) return e;
+        for (int i = 0; i < e->GetNumChildren(); ++i)
+            if (Rml::Element* found = named(e->GetChild(i), title)) return found;
+        return nullptr;
+    }
+
+    // The template «Платформер» as a player meets it, in this run's copy of games/platformer (main): a bot plays it by
+    // the keys, looking at the level as a player does (its tiles, enemies and spikes): it runs, jumps over pits and
+    // spikes, onto beetles and over hedgehogs, through «Луг» to «Холмы», where the game is saved. The hero's frame is
+    // checked against its state all along and against the screen's pixels now and then (mirrored when it faces left),
+    // its feet on the grass and on the bridge to the pixel; a beetle walks by the two frames of its picture. Three
+    // falls lose the game: the window «при поражении», «Ещё раз» a new game, the save as it was.
+    // continued (another process, another working folder): «Продолжить» on «Холмы», nothing given twice, the bot on
+    // through «Вершина» to the flag: the window «при победе», «Ещё раз», the save still loads.
+    void build_template(Shell& s, bool continued) {
+        namespace fs = std::filesystem;
+        SliceGame& g = g_;
+        struct Thing {
+            f64 x, feet, half;
+            bool stomp;
+            f64 vx; // tiles / s, as it went the frame before
+        };
+        struct State {
+            // The bot: where the hero and the enemies were the frame before.
+            f64 bot_x = 0, bot_feet = 0, run_up = 1e9; // run_up: back to there first
+            std::map<flecs::entity_t, f64> enemy_x;
+            // The hero's frames against its state: the last frames' (on the ground, x), latest last.
+            std::deque<std::pair<bool, f64>> history;
+            u32 last_frame = 0, before_last = 0, seen[4] = {}, bad = 0, looks = 0, bad_looks = 0, flipped = 0;
+            std::string first_bad, seen_on;
+            u32 hurt = 0, at = 0, still = 0, beetle_frames[2] = {}, beetle_looks = 0;
+            f64 x0 = 0, score0 = 0, coins0 = 0;
+            assets::CookedTexture hero, beetle, tiles;
+            std::map<std::string, f64> notes;
+        };
+        auto st = std::make_shared<State>();
+        auto var = [&s](const char* name) { return s.vars().get(name).number(); };
+        auto num = [](f64 x) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%.2f", x);
+            return std::string(b);
+        };
+        auto where = [&g, num] { return " (уровень «" + g.level_id() + "», герой " + num(g.hero_x()) + ", " + num(g.hero_y()) + ")"; };
+        auto there = [&g](u64 id) { return g.copy_with_id(id) != 0; };
+        auto in = [&g](u64 id) {
+            const std::vector<u64> now = g.areas_inside();
+            return std::find(now.begin(), now.end(), id) != now.end();
+        };
+        auto picture = [](const fs::path& file, assets::CookedTexture& out) {
+            std::vector<u8> bytes;
+            return read_file(file, bytes) && assets::decode_image(bytes, out);
+        };
+        // The author's HUD and windows, as the player reads them.
+        auto said = [&s](const char* screen, const char* layer) {
+            Rml::ElementDocument* doc = s.screens().document(screen);
+            Rml::Element* e = doc ? named(doc, layer) : nullptr;
+            return e ? text_of(e) : std::string("нет");
+        };
+        auto whole = [](f64 x) { return std::to_string(static_cast<i64>(std::llround(x))); };
+        auto hud_says = [said, whole, var, &g] {
+            return said("hud", "Сердца") == whole(g.hearts()) && said("hud", "Монеты") == whole(var("inv.coins")) &&
+                   said("hud", "Очки") == "Очки: " + whole(g.score());
+        };
+        auto hud_text = [said] { return "«" + said("hud", "Сердца") + "», «" + said("hud", "Монеты") + "», «" + said("hud", "Очки") + "»"; };
+        auto press = [&s, this](const char* screen, const char* button) {
+            Rml::ElementDocument* doc = s.screens().document(screen);
+            Rml::Element* e = doc ? named(doc, button) : nullptr;
+            u32 id = 0;
+            if (e) std::sscanf(e->GetId().c_str(), "n%u", &id);
+            const std::optional<Rml::Vector2f> at = id ? on_screen(s, screen, id) : std::nullopt;
+            return at && click_at(s, *at);
+        };
+
+        // What the bot sees: the blocks, the enemies (going as they went the frame before) and the spikes now.
+        auto solid = [&g](i32 x, i32 y) { return g.tile(kBlocks, x, y) != world::TileAir; };
+        auto things = [&g, st](std::initializer_list<const char*> ids, f64 half, bool enemy) {
+            std::vector<Thing> out;
+            for (const char* id : ids)
+                for (flecs::entity_t e : g.copies_of(id)) {
+                    f64 x = 0, y = 0;
+                    if (!g.position_of(e, x, y)) continue;
+                    f64 vx = 0;
+                    if (enemy) {
+                        const auto was = st->enemy_x.find(e);
+                        if (was != st->enemy_x.end() && std::fabs(x - was->second) < 0.5) vx = (x - was->second) * 60;
+                        st->enemy_x[e] = x;
+                    }
+                    out.push_back({x, enemy ? y + 0.4 : y + 0.5, std::string_view(id) == "spikes_row" ? 1.5 : half,
+                                   enemy && std::string_view(id) == "beetle", vx});
+                }
+            return out;
+        };
+        // The bot plays as a careful player does: it plays each choice out in its head first, the hero moving as the
+        // game moves it (8.5 tiles / s, sped up by 70 on the ground and 30 in the air, a jump of 15.5, the pull of 40,
+        // a one-tile step walked up), against the blocks, the spikes and the enemies. dir(t): the keys at tick t; down:
+        // till it comes down and stops (no keys) after that, else for `ticks` (and till it is on the ground). Unsafe: an
+        // enemy met from the side, spikes, the pit, a wall it stays at, coming down next to an enemy. x: where it went
+        // wrong or ended, land: where it came down.
+        struct Plan {
+            bool safe = true, stomp = false;
+            f64 x = 0, land = -1e9;
+        };
+        auto play_out = [solid](f64 x, f64 feet, f64 vx, f64 vy, bool ground, bool jump, const std::function<i32(u32)>& dir, u32 ticks,
+                                bool down, const std::vector<Thing>& enemies, const std::vector<Thing>& spikes) {
+            Plan out;
+            constexpr f64 dt = 1.0 / 60, hw = kHeroHalfW, tall = 2 * kHeroHalfH;
+            auto cell = [](f64 v) { return static_cast<i32>(std::floor(v)); };
+            auto any_solid = [&](f64 x0, f64 x1, f64 y0, f64 y1) {
+                for (i32 cx = cell(x0 + 1e-3); cx <= cell(x1 - 1e-3); ++cx)
+                    for (i32 cy = cell(y0 + 1e-3); cy <= cell(y1 - 1e-3); ++cy)
+                        if (solid(cx, cy)) return true;
+                return false;
+            };
+            auto wrong = [&out](f64 at) {
+                out.safe = false;
+                out.x = at;
+                return out;
+            };
+            u32 stuck = 0, landed = ~0u;
+            for (u32 t = 0;; ++t) {
+                if (down ? (landed != ~0u && t >= landed + 30) || t >= 240 : (t >= ticks && ground) || t >= ticks + 120) break;
+                const i32 d = landed != ~0u ? 0 : dir(t);
+                const f64 want = d * 8.5, acc = (ground ? 70.0 : 30.0) * dt;
+                vx = vx < want ? std::min(want, vx + acc) : std::max(want, vx - acc);
+                if (jump && ground) vy = -15.5;
+                jump = false;
+                const bool was_ground = ground;
+                vy += 40 * dt;
+                f64 nx = x + vx * dt;
+                if (any_solid(nx - hw, nx + hw, feet - tall, feet)) {
+                    nx = x;
+                    vx = 0;
+                    const f64 up = x + d * 0.12;
+                    if (was_ground && d != 0 && !any_solid(up - hw, up + hw, feet - 1 - tall, feet - 1)) {
+                        nx = up;
+                        feet -= 1;
+                        stuck = 0;
+                    } else if (was_ground && d != 0 && ++stuck > 3) {
+                        return wrong(x);
+                    }
+                }
+                const f64 was_x = x;
+                x = nx;
+                const f64 before = feet, next = feet + vy * dt;
+                ground = false;
+                if (vy > 0) {
+                    for (i32 r = cell(feet + 1e-3); r <= cell(next - 1e-3) && !ground; ++r)
+                        if (r >= feet - 1e-3 && any_solid(x - hw, x + hw, r, r + 1)) {
+                            feet = r;
+                            vy = 0;
+                            ground = true;
+                        }
+                    if (!ground) feet = next;
+                } else if (any_solid(x - hw, x + hw, next - tall, feet - tall)) {
+                    vy = 0;
+                } else {
+                    feet = next;
+                }
+                if (feet > 1.5) return wrong(x); // into the pit
+                const f64 now = (t + 1) * dt;
+                for (const Thing& e : enemies) {
+                    // Met as the game meets it (forge::sim::touch_side: through its top, it is beaten); 0.1 of a tile
+                    // short of that at its side counts as met.
+                    const f64 ex = e.x + e.vx * now;
+                    const forge::sim::Box hero_now{x, feet - kHeroHalfH, hw, kHeroHalfH}, hero_was{was_x, before - kHeroHalfH, hw, kHeroHalfH},
+                        it_now{ex, e.feet - 0.4, e.half, 0.4}, it_was{ex - e.vx * dt, e.feet - 0.4, e.half, 0.4};
+                    const forge::sim::Touch side = forge::sim::touch_side(hero_was, hero_now, it_was, it_now);
+                    if (side == forge::sim::Touch::None) {
+                        if (std::fabs(ex - x) < e.half + hw + 0.1 && feet > e.feet - 0.8 && feet - tall < e.feet) return wrong(x);
+                        continue;
+                    }
+                    if (side != forge::sim::Touch::Top || !e.stomp) return wrong(x);
+                    out.stomp = true;
+                    out.x = out.land = x;
+                    return out;
+                }
+                for (const Thing& h : spikes)
+                    if (std::fabs(h.x - x) < h.half + hw + 0.05 && feet > h.feet - 1.0 && feet - tall < h.feet) return wrong(x);
+                if (ground && !was_ground && landed == ~0u) {
+                    for (const Thing& e : enemies) {
+                        const f64 ex = e.x + e.vx * now;
+                        if (std::fabs(e.feet - feet) < 1.2 && ex - x > -1.0 && ex - x < 1.5) return wrong(x); // no room to jump it
+                    }
+                    out.land = x;
+                    if (down) landed = t;
+                }
+            }
+            out.x = x;
+            return out;
+        };
+        // One frame of the bot. On the ground: a jump onto a beetle if there is one; right while that is safe a little
+        // ahead; else a jump that comes down safe past where running goes wrong (letting go of the key or turning back
+        // on the way if it takes that: a short bridge); else, if one at full speed would, a run-up (3 tiles back);
+        // else it waits, else it backs off. In the air: right, no key or left, whichever comes down safe, onto a beetle
+        // first.
+        auto drive = [&g, st, things, play_out] {
+            const f64 hx = g.hero_x(), feet = g.hero_y() + kHeroHalfH;
+            const bool near = std::fabs(hx - st->bot_x) < 1.0 && std::fabs(feet - st->bot_feet) < 1.0;
+            const f64 vx = near ? (hx - st->bot_x) * 60 : 0, vy = near && !g.on_ground() ? (feet - st->bot_feet) * 60 : 0;
+            st->bot_x = hx;
+            st->bot_feet = feet;
+            const std::vector<Thing> enemies = things({"beetle", "hedgehog"}, 0.35, true);
+            const std::vector<Thing> spikes = things({"spikes", "spikes_row"}, 0.5, false);
+            auto keys = [](i32 d) { return [d](u32) { return d; }; };
+            auto then = [](i32 d1, u32 k, i32 d2) { return [=](u32 t) { return t < k ? d1 : d2; }; };
+            Controls c;
+            if (g.on_ground()) {
+                std::vector<std::function<i32(u32)>> jumps = {keys(1)};
+                for (u32 k = 6; k <= 48; k += 6) {
+                    jumps.push_back(then(1, k, 0));
+                    jumps.push_back(then(1, k, -1));
+                }
+                auto jump_from = [&](f64 speed, f64 past) {
+                    for (const auto& d : jumps) {
+                        const Plan p = play_out(hx, feet, speed, 0, true, true, d, 0, true, enemies, spikes);
+                        if (p.safe && (p.stomp || p.land > past)) return true;
+                    }
+                    return false;
+                };
+                if (hx > st->run_up) { // taking a run-up
+                    if (play_out(hx, feet, vx, 0, true, false, keys(-1), 24, false, enemies, spikes).safe) {
+                        c.left = true;
+                        return c;
+                    }
+                }
+                st->run_up = 1e9;
+                if (jump_from(vx, 1e9)) { // onto a beetle
+                    c.right = c.jump = true;
+                    return c;
+                }
+                // A sixth of a second ahead (and on till it is down): time enough to stop or jump.
+                const Plan run = play_out(hx, feet, vx, 0, true, false, keys(1), 10, false, enemies, spikes);
+                if (run.safe) {
+                    c.right = true;
+                    return c;
+                }
+                if (jump_from(vx, run.x)) {
+                    c.right = c.jump = true;
+                    return c;
+                }
+                if (vx < 6 && jump_from(8.5, run.x)) {
+                    st->run_up = hx - 3;
+                    c.left = true;
+                    return c;
+                }
+                if (play_out(hx, feet, vx, 0, true, false, keys(0), 24, false, enemies, spikes).safe) return c; // waits
+                c.left = true; // backs off
+                return c;
+            }
+            i32 pick = 1;
+            bool found = false, stomp = false;
+            for (i32 d : {1, 0, -1}) {
+                const Plan p = play_out(hx, feet, vx, vy, false, false, keys(d), 0, true, enemies, spikes);
+                if (p.safe && (!found || (p.stomp && !stomp))) {
+                    pick = d;
+                    found = true;
+                    stomp = p.stomp;
+                }
+            }
+            c.right = pick > 0;
+            c.left = pick < 0;
+            return c;
+        };
+        // The hero's frame against its state, every frame: in the air (5 frames) 3, walking on the ground 1 or 2,
+        // standing 0, a walk starting with 1. A look at the screen every `every` frames: the frame drawn is the one
+        // the game says, as its picture's pixels.
+        auto watch = [&s, &g, st, this](u32 f, u32 every) {
+            // Another level, or the hero put elsewhere: what was seen before is not its walk.
+            if (g.level_id() != st->seen_on || (!st->history.empty() && std::fabs(st->history.back().second - g.hero_x()) > 1.0)) {
+                st->history.clear();
+                st->last_frame = st->before_last = g.hero_frame();
+                st->seen_on = g.level_id();
+            }
+            st->history.push_back({g.on_ground(), g.hero_x()});
+            if (st->history.size() > 6) st->history.pop_front();
+            if (const u32 hurt = g.enemy_hits() + g.hazard_hits(); hurt != st->hurt) {
+                if (hurt > st->hurt) FORGE_INFO("бот ранен на кадре теста %u (%s, %.2f, %.2f)", f, g.level_id().c_str(), g.hero_x(), g.hero_y());
+                for (const char* id : {"beetle", "hedgehog"})
+                    for (flecs::entity_t e : g.copies_of(id)) {
+                        f64 x = 0, y = 0;
+                        if (g.position_of(e, x, y) && std::fabs(x - g.hero_x()) < 4) FORGE_INFO("  рядом %s в %.2f, %.2f", id, x, y);
+                    }
+                st->hurt = hurt;
+            }
+            const u32 frame = g.hero_frame();
+            if (frame < 4) ++st->seen[frame];
+            const auto& h = st->history;
+            auto all_ground = [&](usize k, bool want) {
+                if (h.size() < k) return false;
+                for (usize i = h.size() - k; i < h.size(); ++i)
+                    if (h[i].first != want) return false;
+                return true;
+            };
+            // Walking: 0.05 tiles a frame and more (3 tiles / s, the frame's rule is 0.5); standing: not at all.
+            auto moved = [&](usize i) { return std::fabs(h[i].second - h[i - 1].second); };
+            std::string bad;
+            if (all_ground(5, false) && frame != 3) bad = "в воздухе кадр " + std::to_string(frame);
+            if (all_ground(3, true) && moved(h.size() - 1) > 0.05 && moved(h.size() - 2) > 0.05 && frame != 1 && frame != 2)
+                bad = "идёт, а кадр " + std::to_string(frame);
+            if (all_ground(4, true) && moved(h.size() - 1) < 1e-6 && moved(h.size() - 2) < 1e-6 && moved(h.size() - 3) < 1e-6 && frame != 0)
+                bad = "стоит, а кадр " + std::to_string(frame);
+            if ((frame == 1 || frame == 2) && st->last_frame != 1 && st->last_frame != 2 && frame != 1)
+                bad = "ходьба начата кадром " + std::to_string(frame);
+            // A frame of standing between steps is a flash (a step walked up, a bump).
+            auto walk = [](u32 k) { return k == 1 || k == 2; };
+            if (walk(frame) && st->last_frame == 0 && walk(st->before_last)) bad = "кадр «стоит» мигнул посреди ходьбы";
+            st->before_last = st->last_frame;
+            st->last_frame = frame;
+            if (!bad.empty() && !st->bad++) st->first_bad = bad + " на кадре теста " + std::to_string(f);
+            if (!bad.empty() && st->bad <= 5)
+                FORGE_WARN("кадр героя: %s на кадре теста %u (%s, %.3f, %.3f)", bad.c_str(), f, g.level_id().c_str(), g.hero_x(), g.hero_y());
+            // The look at the screen; not while the hero blinks after a heart lost.
+            if (every == 0 || f % every != 0 || g.blinking()) return;
+            std::vector<u8> px;
+            u32 w = 0, hgt = 0;
+            if (!frame_pixels(s, px, w, hgt)) return;
+            const Match m = drawn_frame(px, w, hgt, g.camera(), g.hero_drawn_x(), g.hero_drawn_y(), 1, 2, st->hero, 4, 2);
+            ++st->looks;
+            if (m.score < 0.9 || m.frame != static_cast<i32>(g.hero_frame())) {
+                if (st->bad_looks++ < 5)
+                    FORGE_WARN("кадр героя на экране %d (совпало %.2f), игра говорит %u, кадр теста %u", m.frame, m.score, g.hero_frame(), f);
+            }
+            st->flipped += m.flip;
+        };
+        auto frames_ok = [st, this](const std::string& part) {
+            check(st->bad == 0, part + ": кадр героя не по состоянию " + std::to_string(st->bad) + " раз, первый: " + st->first_bad);
+            check(st->bad_looks == 0, part + ": на экране не тот кадр героя " + std::to_string(st->bad_looks) + " раз из " +
+                                          std::to_string(st->looks));
+            FORGE_INFO("%s: кадры героя стоит %u, шаг %u и %u, в воздухе %u; снимков %u", part.c_str(), st->seen[0], st->seen[1],
+                       st->seen[2], st->seen[3], st->looks);
+        };
+        // The hero standing on the floor: frame 0 on the screen where it was drawn (mirrored when it faces left), its
+        // feet on the tile's top edge to the pixel (the brief: ±1): the screen's row 2 pixels above the edge is the
+        // picture's sole, the row 2 below it the tile's own (its row 1) with nothing of the hero.
+        auto feet_on_edge = [&s, &g, st, this, num](world::TileId tile, bool left) {
+            std::vector<u8> px;
+            u32 w = 0, h = 0;
+            if (!check_ok(frame_pixels(s, px, w, h), "кадр снят")) return;
+            const render::Camera2D& c = g.camera();
+            const f64 hx = g.hero_drawn_x(), hy = g.hero_drawn_y();
+            const Match m = drawn_frame(px, w, h, c, hx, hy, 1, 2, st->hero, 4, 2);
+            check(m.frame == 0 && m.score > 0.9 && m.flip == left && std::abs(m.dx) <= 1 && std::abs(m.dy) <= 1,
+                  std::string("герой стоит кадром 0") + (left ? ", отражён" : "") + ", где нарисован: кадр " + std::to_string(m.frame) +
+                      (m.flip ? " отражён" : "") + ", совпало " + num(m.score) + ", сдвиг " + std::to_string(m.dx) + ", " + std::to_string(m.dy));
+            const i32 row = static_cast<i32>(std::lround(g.hero_y() + kHeroHalfH));
+            check(g.on_ground() && g.tile(kBlocks, static_cast<i32>(std::floor(hx)), row) == tile,
+                  "под героем тайл " + std::to_string(tile) + ": " + std::to_string(g.tile(kBlocks, static_cast<i32>(std::floor(hx)), row)));
+            // The sole: the lowest row of frame 0 with an opaque pixel, and a column near the middle opaque in it and in
+            // the two rows above.
+            const assets::CookedTexture& pic = st->hero;
+            const u32 fw = pic.width / 4, fh = pic.height;
+            auto opaque = [&pic](i32 x, i32 y) {
+                return x >= 0 && y >= 0 && pic.rgba8[(static_cast<usize>(y) * pic.width + static_cast<usize>(x)) * 4 + 3] >= 128;
+            };
+            i32 bottom = -1, col = -1;
+            for (i32 y = 0; y < static_cast<i32>(fh); ++y)
+                for (i32 x = 0; x < static_cast<i32>(fw); ++x)
+                    if (opaque(x, y)) bottom = y;
+            for (i32 x = 0; x < static_cast<i32>(fw); ++x)
+                if (opaque(x, bottom) && opaque(x, bottom - 1) && opaque(x, bottom - 2) &&
+                    (col < 0 || std::abs(2 * x + 1 - static_cast<i32>(fw)) < std::abs(2 * col + 1 - static_cast<i32>(fw))))
+                    col = x;
+            if (!check_ok(bottom > 2 && col >= 0, "у кадра 0 героя есть подошва в три строки")) return;
+            const f64 top = (hy - 1 - c.snapped_y()) * c.zoom + h * 0.5 + m.dy, scale = 2.0 * c.zoom / fh;
+            const f64 feet_px = top + (bottom + 1) * scale, edge_px = (row - c.snapped_y()) * c.zoom + h * 0.5;
+            check(std::fabs(feet_px - edge_px) <= 1.0, "ступни героя на краю тайла: низ ступней " + num(feet_px) + ", край " + num(edge_px) +
+                                                          " (пикселей экрана, ±1)");
+            const i32 pic_col = left ? static_cast<i32>(fw) - 1 - col : col;
+            const f64 sx = (hx - 0.5 - c.snapped_x()) * c.zoom + w * 0.5 + m.dx + (pic_col + 0.5) * (static_cast<f64>(c.zoom) / fw);
+            const f64 wx = (sx - w * 0.5) / c.zoom + c.snapped_x();
+            const f64 ya = edge_px - 1.5, yb = edge_px + 1.5;
+            const i32 ra = static_cast<i32>(std::floor((ya - top) / scale)), rb = static_cast<i32>(std::floor((yb - top) / scale));
+            const world::TileId under = g.tile(kBlocks, static_cast<i32>(std::floor(wx)), row);
+            const u32 cell = (under - forge::level::kFirstOwnTile) * 32 + static_cast<u32>(std::clamp((wx - std::floor(wx)) * 32, 0.0, 31.0));
+            if (!check_ok(under >= forge::level::kFirstOwnTile && under < forge::level::kFirstOwnTile + 16 && st->tiles.width == 512,
+                          "под ступнёй тайл шаблона: " + std::to_string(under)))
+                return;
+            const u8* sole = &pic.rgba8[(static_cast<usize>(std::clamp(ra, 0, static_cast<i32>(fh) - 1)) * pic.width + static_cast<usize>(col)) * 4];
+            const u8* ground = &st->tiles.rgba8[(static_cast<usize>(st->tiles.width) + cell) * 4]; // its row 1
+            const std::array<int, 3> above = pixel_at(px, w, h, static_cast<f32>(sx), static_cast<f32>(ya)),
+                                     below = pixel_at(px, w, h, static_cast<f32>(sx), static_cast<f32>(yb));
+            check(ra >= 0 && ra <= bottom && opaque(col, ra) && near_rgb(above, {sole[0], sole[1], sole[2]}, 40),
+                  "2 пикселя над краем — подошва героя: на экране " + rgb_text(above) + ", в картинке " + rgb_text({sole[0], sole[1], sole[2]}) +
+                      " (строка " + std::to_string(ra) + ")");
+            check(rb > bottom && near_rgb(below, {ground[0], ground[1], ground[2]}, 40),
+                  "2 пикселя под краем — тайл, без героя: на экране " + rgb_text(below) + ", в тайле " +
+                      rgb_text({ground[0], ground[1], ground[2]}) + " (строка картинки героя " + std::to_string(rb) + ")");
+        };
+        // Gets the hero to stand: no keys until it is on the ground and still for a few frames.
+        auto settle = [&g, st](u32 f) {
+            g.script(Controls{});
+            // Not watched meanwhile: the frames after it start anew.
+            st->seen_on.clear();
+            if (f == 0) st->still = 0;
+            if (!g.on_ground() || std::fabs(g.hero_x() - st->x0) > 1e-6) {
+                st->x0 = g.hero_x();
+                st->still = f;
+                return false;
+            }
+            return f >= st->still + 8;
+        };
+        auto pictures = [&s, &g, st, picture, this] {
+            check(picture(s.game_dir() / "pictures" / utf8_path("герой.png"), st->hero) && st->hero.width == 128 && st->hero.height == 64,
+                  "картинка героя 128 × 64");
+            check(picture(s.game_dir() / "pictures" / utf8_path("жук.png"), st->beetle) && st->beetle.width == 64 && st->beetle.height == 32,
+                  "картинка «Жука» 64 × 32");
+            check(picture(forge::level::level_folder(s.game_dir(), g.level_id()) / "tiles.png", st->tiles) && st->tiles.width == 512 &&
+                      st->tiles.height == 32,
+                  "тайлы уровня 512 × 32");
+        };
+        auto notes_text = [st] {
+            std::string out;
+            for (const auto& [k, v] : st->notes) out += k + " " + std::to_string(v) + "\n";
+            return out;
+        };
+
+        if (!continued) {
+            steps_.push_back({"шаблон «Платформер»: копия его папки игры", 10, [&s, &g, this](u32 f) {
+                if (f < 5) return false;
+                std::error_code ec;
+                check(fs::equivalent(s.game_dir(), tpl::root() / "data", ec), "игра читает данные из " + path_to_utf8(s.game_dir()));
+                check(s.data_errors().empty(), "данные шаблона читаются без ошибок");
+                check(s.title() == "Платформер", "название из game.json: «" + s.title() + "»");
+                g.set_level({});
+                check(s.new_game(), "новая игра");
+                return true;
+            }});
+            // The templates' pictures as the game cuts them (slice::Pictures), on a copy of the template's «Герой»
+            // and «Жук» with two more of kind «Герой»: a strip of 4 is 4 frames of the sheet, pixel for pixel; of two
+            // heroes the first by id is drawn, one of 2 frames is not (a warning); a strip its frames do not divide is
+            // one frame (a warning).
+            steps_.push_back({"картинки шаблонов: полоса — кадры листа, герой — первый по id", 2, [&s, this, picture](u32) {
+                const fs::path dir = tpl::root() / utf8_path("картинки");
+                std::error_code ec;
+                fs::remove_all(dir, ec);
+                fs::create_directories(dir / "objects", ec);
+                fs::copy(s.game_dir() / "pictures", dir / "pictures", fs::copy_options::recursive, ec);
+                fs::copy_file(s.game_dir() / "kinds.json", dir / "kinds.json", ec);
+                for (const char* f : {"hero.object.json", "beetle.object.json"})
+                    if (!ec) fs::copy_file(s.game_dir() / "objects" / f, dir / "objects" / f, ec);
+                auto put = [&dir](const char* id, const char* picture_name, u32 frames) {
+                    const std::string text = std::string("{\"id\": \"") + id + "\", \"name\": \"" + id + "\", \"kind\": \"hero\", \"picture\": \"" +
+                                             picture_name + "\", \"frames\": " + std::to_string(frames) + "}\n";
+                    return write_file_atomic(dir / "objects" / (std::string(id) + ".object.json"),
+                                             {reinterpret_cast<const u8*>(text.data()), text.size()});
+                };
+                objects::Library lib;
+                std::string why;
+                if (!check_ok(!ec && lib.load(dir / "kinds.json", dir / "objects", &why), "шаблоны читаются: " + why)) return true;
+                const objects::Template* hero = lib.find("hero_look");
+                const objects::Template* beetle = lib.find("beetle");
+                if (!check_ok(hero && beetle, "«Герой» и «Жук» есть")) return true;
+                const u64 hero_key = hero->key, beetle_key = beetle->key;
+                assets::CookedTexture strip;
+                if (!check_ok(picture(dir / "pictures" / utf8_path("герой.png"), strip) && strip.width == 128 && strip.height == 64,
+                              "картинка героя 128 × 64"))
+                    return true;
+                Pictures pics;
+                demo::SheetImage base, sheet;
+                pics.update(lib, base, sheet);
+                const Pictures::Picture* h = pics.hero();
+                check(h && h == pics.of(hero_key) && h->frames == 4 && std::fabs(h->aspect - 0.5f) < 1e-6f,
+                      "герой — «Герой» шаблона, 4 кадра 32 × 64");
+                u32 same = 0;
+                for (u32 k = 0; h && k < 4 && h->frame + k < sheet.frames.size(); ++k) {
+                    const render::SpriteRect r = sheet.frames[h->frame + k];
+                    bool equal = r.w == 32 && r.h == 64;
+                    for (u32 y = 0; equal && y < 64; ++y)
+                        equal = std::equal(&strip.rgba8[(static_cast<usize>(y) * 128 + k * 32) * 4],
+                                           &strip.rgba8[(static_cast<usize>(y) * 128 + k * 32 + 32) * 4],
+                                           &sheet.rgba[((static_cast<usize>(r.y) + y) * sheet.width + r.x) * 4]);
+                    same += equal;
+                }
+                check(same == 4, "в листе 4 кадра героя, каждый — свои 32 столбца полосы: совпало " + std::to_string(same));
+                const Pictures::Picture* b = pics.of(beetle_key);
+                check(b && b->frames == 2 && std::fabs(b->aspect - 1.0f) < 1e-6f, "«Жук» — 2 кадра 32 × 32");
+                check(put("a_hero", "сердце.png", 1) && put("aa_hero", "герой.png", 2), "ещё два шаблона вида «Герой»");
+                lib.reload_templates();
+                const objects::Template* second = lib.find("a_hero");
+                if (!check_ok(second != nullptr, "второй «Герой» прочитан")) return true;
+                pics.update(lib, base, sheet);
+                check(pics.hero() && pics.hero() == pics.of(second->key) && pics.hero()->frames == 1,
+                      "из двух героев рисуется первый по id («a_hero», 1 кадр); «aa_hero» с 2 кадрами — нет");
+                check(pics.of(lib.find("aa_hero")->key) && pics.of(lib.find("aa_hero")->key)->frames == 2, "его полоса — 2 кадра");
+                std::string text;
+                {
+                    std::vector<u8> bytes;
+                    read_file(dir / "objects" / "beetle.object.json", bytes);
+                    text.assign(bytes.begin(), bytes.end());
+                }
+                const std::string two = "\"frames\": 2";
+                const usize at = text.find(two);
+                if (check_ok(at != std::string::npos, "у «Жука» 2 кадра в файле")) {
+                    text.replace(at, two.size(), "\"frames\": 3");
+                    check(write_file_atomic(dir / "objects" / "beetle.object.json", {reinterpret_cast<const u8*>(text.data()), text.size()}),
+                          "«Жуку» 3 кадра");
+                    lib.reload_templates();
+                    pics.update(lib, base, sheet);
+                    check(pics.of(beetle_key) && pics.of(beetle_key)->frames == 1 && std::fabs(pics.of(beetle_key)->aspect - 2.0f) < 1e-6f,
+                          "ширину 64 не делят 3 кадра: картинка целиком, один кадр");
+                }
+                fs::remove_all(dir, ec);
+                return true;
+            }});
+            // The hero's frame by the ticks (HeroLook, which the game draws by): a walk starts with step 1 and steps
+            // every 6 ticks; one or two slow ticks in a walk (a step walked up stops the hero for one) show no frame of
+            // standing, a third does; off the ground the walk's frame for 3 ticks, then the air's; a jump's at once.
+            steps_.push_back({"кадр героя по тикам: без мигнувшего «стоит»", 2, [this](u32) {
+                HeroLook look;
+                const int level = 0;
+                u64 tick = 100;
+                // The frames of ticks one after another: (on the ground, speed) each, a jump's push on the last.
+                auto frames = [&](std::initializer_list<std::pair<bool, f32>> ticks, bool jump = false) {
+                    std::string out;
+                    usize i = 0;
+                    for (const auto& [ground, vx] : ticks) {
+                        const u64 now = tick++;
+                        const bool last = ++i == ticks.size();
+                        out += std::to_string(look.see(&level, now, ground, vx, jump && last ? now : HeroLook::kNever));
+                    }
+                    return out;
+                };
+                std::string seq = frames({{true, 0}});
+                check(seq == "0", "стоит: " + seq);
+                seq = frames({{true, 8.5f}, {true, 8.5f}, {true, 8.5f}, {true, 8.5f}, {true, 8.5f}, {true, 8.5f}, {true, 8.5f},
+                              {true, 8.5f}, {true, 8.5f}, {true, 8.5f}, {true, 8.5f}, {true, 8.5f}, {true, 8.5f}});
+                check(seq == "1111112222221", "идёт: шаг 1 и шаг 2 по 6 тиков: " + seq);
+                seq = frames({{true, 0}, {true, 1.2f}});
+                check(seq == "11", "упёрся в ступеньку на тик и пошёл: " + seq);
+                seq = frames({{true, 0}, {true, 0}, {true, 0}});
+                check(seq == "110", "остановился: «стоит» на третьем медленном тике: " + seq);
+                seq = frames({{true, 8.5f}, {false, 8.5f}, {false, 8.5f}, {false, 8.5f}, {false, 8.5f}});
+                check(seq == "11113", "сошёл с края: 3 тика шаг, потом «в воздухе»: " + seq);
+                seq = frames({{true, 8.5f}, {false, 8.5f}}, true);
+                check(seq == "13", "прыжок: «в воздухе» сразу: " + seq);
+                return true;
+            }});
+            steps_.push_back({"новая игра: «Луг», HUD без сырых {…}, герой своей картинкой стоит на траве", 120,
+                              [&s, &g, this, st, settle, hud_says, hud_text, feet_on_edge, pictures, num, where, var](u32 f) {
+                if (!settle(f)) return f >= 110 && check_ok(false, "герой не встал" + where());
+                pictures();
+                check(g.level_id() == "level" && std::fabs(g.hero_x() - 3.5) < 0.01 && std::fabs(g.hero_y() + kHeroHalfH) < 0.05,
+                      "герой у точки появления «Луга»: " + where());
+                check(g.camera().zoom == 32, "камера шаблона: 32 пикселя на клетку, а не " + num(g.camera().zoom));
+                check(g.hearts() == 3 && g.score() == 0 && var("inv.coins") == 0 && !g.won() && !g.lost(), "три сердца, ноль очков и монет");
+                check(s.screens().shown("hud") && hud_says() && hud_text().find('{') == std::string::npos, "HUD: " + hud_text());
+                check(g.hero_pictured() && g.hero_frame() == 0, "герой нарисован картинкой шаблона «Герой», кадр «стоит»");
+                check(g.copies_of("sign").size() == 2 && g.copies_of("coin").size() == 8 && g.copies_of("beetle").size() == 2,
+                      "на «Луге» два «Указателя», восемь «Монеток» и два «Жука»");
+                feet_on_edge(tpl::kGrass, false);
+                return true;
+            }});
+            steps_.push_back({"влево: герой отражён, шагает и встаёт кадрами своей картинки", 150, [&g, this, st, settle, watch, feet_on_edge](u32 f) {
+                if (f < 12) {
+                    Controls c;
+                    c.left = true;
+                    g.script(c);
+                    watch(f, 3);
+                    return false;
+                }
+                if (!settle(f - 12)) {
+                    watch(f, 0);
+                    return f >= 140 && check_ok(false, "герой не встал");
+                }
+                check(st->seen[1] > 0 && st->looks > 0 && st->flipped > 0, "шаг влево снят, отражённым");
+                feet_on_edge(tpl::kGrass, true);
+                return true;
+            }});
+            steps_.push_back({"«Жук» шагает двумя кадрами своей картинки", 200, [&s, &g, this, st](u32 f) {
+                if (f == 0) {
+                    check(g.spawn_copy("beetle", 9.5, 0, tpl::kTestBeetle) != 0, "проверочный «Жук» у героя");
+                    return false;
+                }
+                const flecs::entity_t e = g.copy_with_id(tpl::kTestBeetle);
+                f64 x = 0, y = 0;
+                if (!e || !g.position_of(e, x, y)) return check_ok(false, "проверочного «Жука» нет");
+                if (f < 10) {
+                    st->x0 = x;
+                    return false;
+                }
+                const bool walking = std::fabs(x - st->x0) > 0.01;
+                st->x0 = x;
+                if (walking) {
+                    std::vector<u8> px;
+                    u32 w = 0, h = 0;
+                    if (frame_pixels(s, px, w, h)) {
+                        const Match m = drawn_frame(px, w, h, g.camera(), x, y, 1, 1, st->beetle, 2, 4);
+                        ++st->beetle_looks;
+                        if (m.score > 0.85) ++st->beetle_frames[m.frame];
+                    }
+                }
+                if (f < 120 && (st->beetle_frames[0] < 3 || st->beetle_frames[1] < 3)) return false;
+                check(st->beetle_frames[0] >= 3 && st->beetle_frames[1] >= 3, "идёт: на экране оба кадра «Жука»: " +
+                                                                                 std::to_string(st->beetle_frames[0]) + " и " +
+                                                                                 std::to_string(st->beetle_frames[1]) + " из " +
+                                                                                 std::to_string(st->beetle_looks));
+                return true;
+            }});
+            steps_.push_back({"Esc: пауза, мир стоит; Esc ещё раз — игра дальше", 100, [&s, &g, this, st](u32 f) {
+                const flecs::entity_t e = g.copy_with_id(tpl::kTestBeetle);
+                f64 x = 0, y = 0;
+                if (!e || !g.position_of(e, x, y)) return check_ok(false, "проверочного «Жука» нет");
+                if (f == 0 || f == 40) {
+                    key(s, SDLK_ESCAPE, true);
+                    key(s, SDLK_ESCAPE, false);
+                    return false;
+                }
+                if (f == 2) {
+                    check(s.screen() == Screen::Paused, "Esc открыл паузу игры");
+                    st->x0 = x;
+                }
+                if (f == 38) check(s.screen() == Screen::Paused && x == st->x0, "на паузе «Жук» стоит: " + std::to_string(x - st->x0));
+                if (f == 42) {
+                    check(s.screen() == Screen::Playing, "Esc ещё раз — обратно в игру");
+                    st->x0 = x;
+                }
+                if (f < 90) return false;
+                check(std::fabs(x - st->x0) > 0.1, "после паузы «Жук» идёт дальше: " + std::to_string(x - st->x0));
+                return true;
+            }});
+            steps_.push_back({"бот проходит «Луг»: ямы, «Жуки», монеты; «Выход на Холмы»", 3600, [&g, this, st, drive, watch, frames_ok,
+                                                                                                    in, there, var, where, num](u32 f) {
+                if (f == 0) {
+                    st->score0 = g.score();
+                    st->coins0 = var("inv.coins");
+                }
+                if (g.level_id() == "level") {
+                    if (g.lost() || g.won()) return check_ok(false, "игра окончилась на «Луге»" + where());
+                    g.script(drive());
+                    watch(f, 20);
+                    return false;
+                }
+                g.script(Controls{});
+                check(g.level_id() == "hills" && g.travels() == 1 && in(tpl::area(1, 0)), "на «Холмах», во «Входе»" + where());
+                frames_ok("«Луг»");
+                check(st->seen[0] > 0 && st->seen[1] > 0 && st->seen[2] > 0 && st->seen[3] > 0, "все четыре кадра героя показаны");
+                for (u32 i : {1u, 2u, 3u}) check(!there(tpl::id(0, i)), "«Монетка» " + std::to_string(i) + " «Луга» на пути собрана");
+                check(var("inv.coins") >= 3, "монеты по пути собраны: " + num(var("inv.coins")));
+                check(g.score() == 10 * var("inv.coins") + 100 * g.stomps(),
+                      "очки: 10 за монету, 100 за «Жука»: " + num(g.score()) + " при монетах " + num(var("inv.coins")) + " и победах " +
+                          std::to_string(g.stomps()));
+                check(g.hearts() >= 1, "сердца есть: " + num(g.hearts()));
+                FORGE_INFO("«Луг» пройден: очки %.0f, монеты %.0f, сердца %.0f, победы %u, ранен %u + %u, падений %u", g.score(),
+                           var("inv.coins"), g.hearts(), g.stomps(), g.enemy_hits(), g.hazard_hits(), g.falls());
+                return true;
+            }});
+            steps_.push_back({"«Холмы» до «Шипов», сохранение", 1200, [&s, &g, this, st, drive, watch, settle, frames_ok, there, var, where,
+                                                                         hud_says, hud_text, notes_text](u32 f) {
+                if (f == 0) st->at = 0;
+                if (!st->at) {
+                    if (g.hero_x() < 30.5 || !g.on_ground()) {
+                        g.script(drive());
+                        watch(f, 0);
+                        return f >= 900 && check_ok(false, "бот не дошёл до «Шипов»" + where());
+                    }
+                    st->at = f;
+                }
+                if (!settle(f - st->at)) return false;
+                frames_ok("«Холмы», до «Шипов»");
+                for (u32 i : {1u, 2u, 3u}) check(!there(tpl::id(1, i)), "«Монетка» " + std::to_string(i) + " «Холмов» собрана");
+                check(there(tpl::id(1, 6)) && there(tpl::id(1, 10)), "монетки дальше по «Холмам» лежат");
+                check(hud_says(), "HUD: " + hud_text());
+                check(s.save("холмы", "Холмы"), "сохранено на «Холмах»");
+                st->notes = {{"x", g.hero_x()}, {"y", g.hero_y()}, {"score", g.score()}, {"coins", var("inv.coins")}, {"hearts", g.hearts()}};
+                const std::string text = notes_text();
+                check(write_file_atomic(tpl::notes(), {reinterpret_cast<const u8*>(text.data()), text.size()}), "заметки для второго процесса");
+                return true;
+            }});
+            steps_.push_back({"три падения в «Пропасть»: поражение, окно «при поражении»", 600, [&s, &g, this, st, said, hud_says, hud_text,
+                                                                                                    where, num](u32 f) {
+                if (f == 0) st->at = 0;
+                if (!g.lost()) {
+                    g.script(Controls{});
+                    if (g.safe_time() <= 0 && g.on_ground() && f >= st->at + 10) {
+                        g.teleport(26.5, 6); // into the pit between the hills
+                        st->at = f;
+                    }
+                    return f >= 550 && check_ok(false, "поражения нет: сердец " + num(g.hearts()) + where());
+                }
+                if (f < st->at + 40) return false; // the window comes up
+                check(g.falls() == 3 && g.hearts() == 0 && g.endings() == 1, "три падения, сердец нет: падений " + std::to_string(g.falls()));
+                check(s.screens().shown("lose") && said("lose", "Заголовок") == "Сердца кончились",
+                      "окно «при поражении»: «" + said("lose", "Заголовок") + "»");
+                check(said("lose", "Итог") == "Очки: " + std::to_string(static_cast<i64>(g.score())) + ". Попробуйте ещё раз.",
+                      "в окне очки: «" + said("lose", "Итог") + "»");
+                check(hud_says(), "HUD: " + hud_text());
+                std::string why;
+                check(!g.can_save(&why), "оконченную игру не сохранить: " + why);
+                return true;
+            }});
+            steps_.push_back({"«Ещё раз»: новая игра на «Луге»", 80, [&s, &g, this, st, press, there, var, where](u32 f) {
+                if (f == 0) {
+                    check(press("lose", "Кнопка «Ещё раз»"), "«Ещё раз» нажата мышью");
+                    return false;
+                }
+                if (f < 40) return false;
+                check(g.running() && !g.lost() && g.endings() == 0 && !s.screens().shown("lose"), "новая игра, окна нет");
+                check(g.level_id() == "level" && std::fabs(g.hero_x() - 3.5) < 0.01, "на «Луге» у точки появления" + where());
+                check(g.hearts() == 3 && g.score() == 0 && var("inv.coins") == 0, "три сердца, ноль очков и монет");
+                check(there(tpl::id(0, 1)) && there(tpl::id(0, 2)) && there(tpl::id(0, 3)) && g.copies_of("coin").size() == 8,
+                      "монетки «Луга» снова лежат");
+                return true;
+            }});
+            steps_.push_back({"сохранение «холмы» цело", 40, [&s, &g, this, st, there, var, where](u32 f) {
+                if (f == 0) {
+                    check(s.load("холмы"), "«холмы» загружается");
+                    return false;
+                }
+                if (f < 15) return false;
+                std::map<std::string, f64>& n = st->notes;
+                check(g.level_id() == "hills" && std::fabs(g.hero_x() - n["x"]) < 0.01, "«Холмы», где сохранились" + where());
+                check(g.score() == n["score"] && var("inv.coins") == n["coins"] && g.hearts() == n["hearts"] && !there(tpl::id(1, 1)),
+                      "очки, монеты и сердца как при сохранении");
+                return true;
+            }});
+            return;
+        }
+
+        steps_.push_back({"«Продолжить» другим процессом: «Холмы», где сохранились", 40, [&s, &g, this, st, there, var, where, pictures,
+                                                                                         hud_says, hud_text](u32 f) {
+            std::error_code ec;
+            if (f < 5) return false;
+            std::map<std::string, f64>& n = st->notes;
+            if (f == 5) {
+                std::vector<u8> bytes;
+                check(read_file(tpl::notes(), bytes), "заметки первого процесса: " + path_to_utf8(tpl::notes()));
+                const std::string text(bytes.begin(), bytes.end());
+                for (usize start = 0; start < text.size();) {
+                    usize end = text.find('\n', start);
+                    if (end == std::string::npos) end = text.size();
+                    const std::string line = text.substr(start, end - start);
+                    if (const usize sp = line.find(' '); sp != std::string::npos) n[line.substr(0, sp)] = std::strtod(line.c_str() + sp + 1, nullptr);
+                    start = end + 1;
+                }
+                FORGE_INFO("рабочая папка: %s", path_to_utf8(fs::current_path(ec)).c_str());
+                check(fs::equivalent(s.user_folder(), tpl::root() / "user", ec), "файлы игрока — в " + path_to_utf8(s.user_folder()));
+                check(s.screen() == Screen::Main, "игра начинается с главного меню");
+                check(s.slots().latest() && s.slots().latest()->id == "холмы", "последнее сохранение — «холмы»");
+                check(s.continue_game(), "«Продолжить»");
+                return false;
+            }
+            if (f < 15) return false;
+            pictures();
+            check(g.level_id() == "hills" && std::fabs(g.hero_x() - n["x"]) < 0.01 && std::fabs(g.hero_y() - n["y"]) < 0.05,
+                  "герой на «Холмах», где сохранился" + where());
+            check(g.score() == n["score"] && var("inv.coins") == n["coins"] && g.hearts() == n["hearts"], "очки, монеты и сердца как при сохранении");
+            for (u32 i : {1u, 2u, 3u}) check(!there(tpl::id(1, i)), "собранной «Монетки» " + std::to_string(i) + " нет");
+            check(there(tpl::id(1, 6)) && there(tpl::id(1, 10)), "несобранные лежат");
+            check(hud_says(), "HUD: " + hud_text());
+            st->score0 = g.score();
+            st->coins0 = var("inv.coins");
+            return true;
+        }});
+        steps_.push_back({"наград второй раз нет", 70, [&g, this, st, var](u32 f) {
+            if (f < 60) return false;
+            check(g.score() == st->score0 && var("inv.coins") == st->coins0, "через секунду очки и монеты те же");
+            return true;
+        }});
+        steps_.push_back({"бот на мостках «Холмов»: ступни на краю доски", 1500, [&g, this, st, drive, watch, settle, feet_on_edge, where](u32 f) {
+            if (f == 0) st->at = 0;
+            if (!st->at) {
+                if (g.hero_x() < 54.2 || !g.on_ground()) {
+                    g.script(drive());
+                    watch(f, 25);
+                    return f >= 1200 && check_ok(false, "бот не дошёл до мостков" + where());
+                }
+                st->at = f;
+            }
+            if (!settle(f - st->at)) return false;
+            feet_on_edge(tpl::kBridge, false);
+            return true;
+        }});
+        steps_.push_back({"бот проходит «Холмы» и «Вершину» до «Флага»: победа, окно «при победе»", 4800,
+                          [&s, &g, this, st, drive, watch, frames_ok, said, var, where, num](u32 f) {
+            if (f == 0) st->at = 0;
+            if (!g.won()) {
+                if (g.lost()) return check_ok(false, "игра проиграна" + where());
+                g.script(drive());
+                watch(f, 20);
+                return f >= 4700 && check_ok(false, "до «Флага» не дошёл" + where());
+            }
+            g.script(Controls{});
+            if (!st->at) st->at = f;
+            if (f < st->at + 40) return false; // the window comes up
+            check(g.level_id() == "summit" && g.travels() == 1 && g.endings() == 1, "победа на «Вершине»" + where());
+            frames_ok("«Холмы» и «Вершина»");
+            check(st->seen[0] > 0 && st->seen[1] > 0 && st->seen[2] > 0 && st->seen[3] > 0, "все четыре кадра героя показаны");
+            const f64 coins = var("inv.coins");
+            check(g.score() == st->score0 + 10 * (coins - st->coins0) + 100 * g.stomps(),
+                  "очки: сохранённые, 10 за новую монету, 100 за «Жука»: " + num(g.score()));
+            check(s.screens().shown("win") && said("win", "Заголовок") == "Победа!", "окно «при победе»: «" + said("win", "Заголовок") + "»");
+            check(said("win", "Итог") == "Флаг взят. Очки: " + std::to_string(static_cast<i64>(g.score())) + ", монет: " +
+                                             std::to_string(static_cast<i64>(coins)) + ".",
+                  "в окне итог: «" + said("win", "Итог") + "»");
+            FORGE_INFO("победа: очки %.0f, монеты %.0f, сердца %.0f, победы %u, ранен %u + %u, падений %u", g.score(), coins, g.hearts(),
+                       g.stomps(), g.enemy_hits(), g.hazard_hits(), g.falls());
+            return true;
+        }});
+        steps_.push_back({"«Ещё раз» после победы, сохранение «холмы» цело", 120, [&s, &g, this, st, press, there, var, where](u32 f) {
+            if (f == 0) {
+                check(press("win", "Кнопка «Ещё раз»"), "«Ещё раз» нажата мышью");
+                return false;
+            }
+            if (f == 40) {
+                check(g.running() && !g.won() && g.endings() == 0 && !s.screens().shown("win"), "новая игра, окна нет");
+                check(g.level_id() == "level" && g.hearts() == 3 && g.score() == 0 && var("inv.coins") == 0 && there(tpl::id(0, 1)),
+                      "«Луг», три сердца, ноль очков, монетки лежат" + where());
+                check(s.load("холмы"), "«холмы» загружается");
+                return false;
+            }
+            if (f < 60) return false;
+            std::map<std::string, f64>& n = st->notes;
+            check(g.level_id() == "hills" && g.score() == n["score"] && var("inv.coins") == n["coins"] && !there(tpl::id(1, 1)),
+                  "«Холмы» как при сохранении" + where());
+            return true;
+        }});
+    }
+
     // A level with tiles of its own (tiles.json and tiles.png, 32 px) and nothing around it (world.json), made here
     // as an import makes one: the hero stands on them, a wall of them stops him and nothing digs them; the sky shines
     // through the background ones; nobody comes to live around and no tiles are there; the editor draws them pixel
@@ -8078,6 +9260,28 @@ int main(int argc, char** argv) {
         options.links_file.clear();
         data = path_to_utf8(plat::root() / "data");
         user = path_to_utf8(plat::root() / "user");
+        args.push_back(const_cast<char*>("--data"));
+        args.push_back(data.data());
+        args.push_back(const_cast<char*>("--user"));
+        args.push_back(user.data());
+    }
+    // --scene platformer_template, platformer_template_continue (step 14.2d): a copy of the template «Платформер» in
+    // this run's own folder, made anew by the first (from the package's data/examples/platformer, or games/platformer
+    // beside the game's sources), played on in it by the second.
+    if ((scene == "platformer_template" || scene == "platformer_template_continue") && options.silent) {
+        std::error_code ec;
+        if (scene == "platformer_template") {
+            const std::filesystem::path packaged = exe_dir() / "data" / "examples" / "platformer";
+            const std::filesystem::path from =
+                std::filesystem::is_directory(packaged, ec) ? packaged : utf8_path(SLICE_DATA_DIR).parent_path() / "platformer";
+            std::filesystem::remove_all(tpl::root(), ec);
+            std::filesystem::create_directories(tpl::root(), ec);
+            std::filesystem::copy(from, tpl::root() / "data", std::filesystem::copy_options::recursive, ec);
+            if (ec) FORGE_ERROR("--scene platformer_template: не скопирован %s: %s", path_to_utf8(from).c_str(), ec.message().c_str());
+        }
+        options.links_file.clear();
+        data = path_to_utf8(tpl::root() / "data");
+        user = path_to_utf8(tpl::root() / "user");
         args.push_back(const_cast<char*>("--data"));
         args.push_back(data.data());
         args.push_back(const_cast<char*>("--user"));

@@ -19,7 +19,11 @@ with the same player's folder, from another working folder and without
 --play, takes «Продолжить» and finds the level as the hero left it. And when
 `forge_editor --self-test platformer` has made it (step 14.2c), «Платформер А»
 with `--edits` of what the author set in the editor: its enemy, coin, spikes,
-zone «падает в», flag «доходит до», HUD and windows of the game's end. This plays
+zone «падает в», flag «доходит до», HUD and windows of the game's end. And when
+`forge_editor --self-test platformer-template` has made it (step 14.2d), «Платформер
+А» of the catalog's template «Платформер» with no --level and `--edits` of what the
+author changed: the hero's picture, the coin's «Очки», the beetle's «Скорость», a
+coin and a bridge on «Луг», the exit's link and the win window's title. This plays
 a game's own folder with a game program (OldMine of the template, or the
 build's); it is not an export of the author's game.
 """
@@ -63,6 +67,12 @@ def main() -> int:
         plays += [(platformer / "Мои игры" / "Платформер А", platformer / "ожидания платформер.json", True)]
     else:
         print(f"нет {platformer / 'ожидания платформер.json'}: платформер автора не играется (forge_editor --self-test platformer его делает)", flush=True)
+    # The game of the catalog's «Платформер» the author changed: no --level, its start level.
+    template = Path(tempfile.gettempdir()) / "forge_editor_шаблон платформер"
+    if (template / "ожидания шаблон.json").is_file():
+        plays += [(template / "Мои игры" / "Платформер А", template / "ожидания шаблон.json", False)]
+    else:
+        print(f"нет {template / 'ожидания шаблон.json'}: шаблон автора не играется (forge_editor --self-test platformer-template его делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
         print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)

@@ -100,6 +100,9 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/zones/ DESTINATION data/e
 # compares. The map's own folder is the author's source, not the game's: the package has none of Tiled.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/examples/tiled/ DESTINATION data/examples/tiled COMPONENT slice
         PATTERN "Карта Tiled" EXCLUDE)
+# And the game of the template «Платформер» (14.2d), as the catalog gives it: `OldMine --test --scene
+# platformer_template` copies data/examples/platformer and plays its three levels through, from the copy.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/games/platformer/ DESTINATION data/examples/platformer COMPONENT slice)
 add_custom_target(forge_slice_package
   COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/dist/OldMine
   COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component slice --config $<CONFIG>
