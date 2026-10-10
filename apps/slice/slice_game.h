@@ -252,6 +252,8 @@ public:
     bool blinking() const { return blink_ && safe_ > 0; }
     bool back_point(f64& x, f64& y) const;
     u32 stomps() const { return stomps_; }
+    // Enemies met in the tick of a stomp: they do not hurt while the hero stays in them.
+    u32 spared() const { return static_cast<u32>(spared_.size()); }
     u32 enemy_hits() const { return enemy_hits_; }
     u32 hazard_hits() const { return hazard_hits_; }
     u32 falls() const { return falls_; }

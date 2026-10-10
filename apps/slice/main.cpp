@@ -5550,18 +5550,63 @@ private:
             check(g.hearts() == 3 && g.enemy_hits() == 0, "урона нет");
             return true;
         }});
-        steps_.push_back({"прыжок на «Жука» рядом с «Ежом»: победа, урон не снят", 100, [&g, this, st, put, keys, there](u32 f) {
+        // The stomp's tick also met «Ёж»: it does not hurt while the hero stays in it, and hurts once the hero has left
+        // it and comes back.
+        steps_.push_back({"прыжок на «Жука» рядом с «Ежом»: победа; «Ёж» не ранит, пока герой в нём", 240, [&g, this, st, put, there](u32 f) {
             if (f == 0) {
+                g.script(Controls{});
                 st->stomps0 = g.stomps();
                 st->score0 = g.score();
+                st->hits0 = g.enemy_hits();
+                st->at = 0;
+                st->hit1 = 0;
                 put(plat::kBesideX + 0.3, st->v - 3);
                 return false;
             }
-            if (g.stomps() > st->stomps0) keys(true, false, false); // away from «Ёж»
-            if (f < 90) return false;
-            check(g.stomps() == st->stomps0 + 1 && !there(plat::kBeside) && there(plat::kSpiny), "«Жук» побеждён, «Ёж» на месте");
-            check(g.score() == st->score0 + 100, "очки: +100, всего " + std::to_string(g.score()));
-            check(g.hearts() == 3 && g.enemy_hits() == 0, "«Ёж» не ранил: тик победы и выход из него без урона");
+            if (!st->at) {
+                if (g.stomps() == st->stomps0) {
+                    if (f < 60) return false;
+                    check(false, "«Жук» не побеждён");
+                    return true;
+                }
+                st->at = f;
+                check(g.stomps() == st->stomps0 + 1 && !there(plat::kBeside) && there(plat::kSpiny), "«Жук» побеждён, «Ёж» на месте");
+                check(g.score() == st->score0 + 100, "очки: +100, всего " + std::to_string(g.score()));
+                check(g.spared() == 1, "«Ёж» коснулся героя в тике победы и не ранит: " + std::to_string(g.spared()));
+                put(plat::kSpinyX - 0.2, st->v); // stays in «Ёж»
+                return false;
+            }
+            const u32 in = f - st->at;
+            if (in < 80) {
+                if (g.enemy_hits() != st->hits0) {
+                    check(false, "«Ёж» ранил героя, который в нём с тика победы: через " + std::to_string(in) + " кадров");
+                    return true;
+                }
+                if (in == 79) {
+                    check(g.spared() == 1 && g.hearts() == 3, "80 кадров в «Еже»: урона нет, «Ёж» всё ещё не ранит");
+                    put(plat::kSpinyX - 3, st->v); // out of it
+                }
+                return false;
+            }
+            if (in == 81) {
+                check(g.spared() == 0 && g.enemy_hits() == st->hits0, "герой вышел из «Ежа»: он снова ранит");
+                put(plat::kSpinyX - 0.2, st->v); // and back in
+                return false;
+            }
+            if (!st->hit1) {
+                if (g.enemy_hits() == st->hits0 + 1) {
+                    st->hit1 = f;
+                    check(in <= 84 && g.hearts() == 2, "снова в «Еже»: минус сердце сразу, через " + std::to_string(in - 81) + " кадров");
+                    put(plat::kSpinyX - 3, st->v); // out of it again,
+                    g.hurt(-1);                    // and the next steps count from three hearts
+                } else if (in > 90) {
+                    check(false, "снова в «Еже», но урона нет");
+                    return true;
+                }
+                return false;
+            }
+            if (g.safe_time() > 0) return false; // the next step counts from no safe time
+            check(g.hearts() == 3 && g.enemy_hits() == st->hits0 + 1, "одна рана, сердце возвращено: " + std::to_string(g.hearts()));
             return true;
         }});
         steps_.push_back({"сбоку «Ёж»: минус сердце, отталкивание, секунда без урона, потом снова", 220, [&g, this, st, put, keys](u32 f) {
