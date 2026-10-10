@@ -5,6 +5,7 @@
 #include "forge/core/path.h"
 #include "forge/data/reflect.h"
 #include "forge/editor/project.h"
+#include "forge/editor/ui_design.h"
 
 #include <doctest/doctest.h>
 
@@ -52,12 +53,12 @@ fs::path fresh(const char* name) {
     return dir;
 }
 
-// A module of two kinds ("thing" with a picture, "noisy" with a sound) and a template of it with an object of each,
-// a picture, a sound, a conversation and «Ресурсы» of its own.
+// A module of two kinds ("thing" with a picture, "noisy" with a sound) and a verb, and a template of it with an
+// object of each, a picture, a sound, a conversation and «Ресурсы» of its own.
 struct Fixture {
     fs::path root = fresh("forge_tests_проект");
-    fs::path module_dir = root / "модуль";
-    fs::path catalog = root / "каталог" / "templates.json";
+    fs::path module_dir = root / utf8_path("модуль");
+    fs::path catalog = root / utf8_path("каталог") / "templates.json";
     std::vector<Module> modules{{"test", "Проба", module_dir}};
     Template t;
 
@@ -67,13 +68,14 @@ struct Fixture {
   {"id": "noisy", "name": "Шумное", "components": {"ProjTestBell": {}},
    "props": [{"id": "sound", "name": "Звук", "bind": "ProjTestBell.sound", "asset": "sound"}]}
 ]})";
+        const std::string verbs = R"({"verbs": [{"id": "open", "name": "открывает", "plural": "открывают", "case": "acc", "do": "open"}]})";
         put(module_dir / "kinds.json", kinds);
-        put(module_dir / "verbs.json", R"({"verbs": []})");
+        put(module_dir / "verbs.json", verbs);
         put(module_dir / "ideas.json", R"({"ideas": []})");
-        const fs::path game = root / "каталог" / utf8_path("Проба игры") / "game";
+        const fs::path game = root / utf8_path("каталог") / utf8_path("Проба игры") / "game";
         put(game / "game.json", "{\n  \"title\": \"Проба\",\n  \"org\": \"Forge\",\n  \"autosave_minutes\": 5\n}\n");
         put(game / "kinds.json", kinds);
-        put(game / "verbs.json", R"({"verbs": []})");
+        put(game / "verbs.json", verbs);
         put(game / "ideas.json", R"({"ideas": []})");
         put(game / "objects" / utf8_path("Сундук.object.json"),
             R"({"id": "chest", "name": "Сундук", "kind": "thing", "picture": "сундук.png"})");
@@ -81,10 +83,10 @@ struct Fixture {
             R"({"id": "bell", "name": "Колокол", "kind": "noisy", "values": {"sound": "звон.wav"}})");
         put(game / "pictures" / utf8_path("сундук.png"), "png");
         put(game / "sounds" / utf8_path("звон.wav"), "wav");
-        put(game / "dialogues" / utf8_path("кузнец.json"), R"({"lines": []})");
+        put(game / "dialogues" / utf8_path("кузнец.json"), R"({"id": "кузнец", "nodes": [{"id": "привет", "text": "Здравствуй"}]})");
         put(game / "level" / "world.json", R"({"around": "empty"})");
-        put(root / "каталог" / utf8_path("Проба игры") / "assets" / utf8_path("эскиз сундука.png"), "psd");
-        put(root / "каталог" / "проба.png", "card");
+        put(root / utf8_path("каталог") / utf8_path("Проба игры") / "assets" / utf8_path("эскиз сундука.png"), "psd");
+        put(root / utf8_path("каталог") / utf8_path("проба.png"), "card");
         put(catalog, R"({"templates": [
   {"id": "probe", "name": "Проба", "about": "для тестов", "module": "test",
    "game": "Проба игры/game", "assets": "Проба игры/assets", "picture": "проба.png"}
@@ -149,12 +151,12 @@ TEST_CASE("project: where a new game goes and why it cannot") {
     CHECK(target(root, "///").problem.find("ни одного знака") != std::string::npos);
     CHECK(target({}, "Игра").problem == "выберите, где создать игру");
     CHECK(target(utf8_path("Мои игры"), "Игра").problem.find("полный путь") != std::string::npos);
-    CHECK(target(root / "нет такой", "Игра").problem.find("нет") != std::string::npos);
-    put(root / "файл", "x");
-    CHECK(target(root / "файл", "Игра").problem.find("не папка") != std::string::npos);
+    CHECK(target(root / utf8_path("нет такой"), "Игра").problem.find("нет") != std::string::npos);
+    put(root / utf8_path("файл"), "x");
+    CHECK(target(root / utf8_path("файл"), "Игра").problem.find("не папка") != std::string::npos);
     fs::create_directories(root / utf8_path("Пустая"));
     CHECK(target(root, "Пустая").problem.empty());
-    put(root / utf8_path("Занятая") / "чужое.txt", "чужое");
+    put(root / utf8_path("Занятая") / utf8_path("чужое.txt"), "чужое");
     CHECK(target(root, "Занятая").problem.find("уже есть, и в ней есть файлы") != std::string::npos);
     CHECK(target(root, "файл").problem.find("уже есть файл") != std::string::npos);
 }
@@ -168,9 +170,9 @@ TEST_CASE("project: a game made of a template is a copy of its own; the template
 
     fs::path a, b;
     std::string error;
-    REQUIRE_MESSAGE(create(f.t, f.parent(), "Игра А", a, &error), error);
+    REQUIRE_MESSAGE(create(f.t, f.modules, f.parent(), "Игра А", a, &error), error);
     CHECK(a == f.parent() / utf8_path("Игра А"));
-    REQUIRE(create(f.t, f.parent(), "Игра Б", b, &error));
+    REQUIRE(create(f.t, f.modules, f.parent(), "Игра Б", b, &error));
     // Only the two games in the folder: no side folder left.
     std::vector<std::string> there;
     for (const auto& e : fs::directory_iterator(f.parent())) there.push_back(path_to_utf8(e.path().filename()));
@@ -199,12 +201,12 @@ TEST_CASE("project: a game made of a template is a copy of its own; the template
 
     // The same name again: the folder has files now.
     fs::path again;
-    CHECK_FALSE(create(f.t, f.parent(), "Игра А", again, &error));
+    CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра А", again, &error));
     CHECK(error.find("уже есть, и в ней есть файлы") != std::string::npos);
     CHECK(again.empty());
     // An empty folder of that name makes way.
     fs::create_directories(f.parent() / utf8_path("Игра В"));
-    CHECK(create(f.t, f.parent(), "Игра В", again, &error));
+    CHECK(create(f.t, f.modules, f.parent(), "Игра В", again, &error));
     CHECK(fs::exists(again / "project.forge"));
 }
 
@@ -220,21 +222,21 @@ TEST_CASE("project: what keeps a template from making a game") {
     t.module = "platformer";
     CHECK(problems(t).find("нужен модуль «platformer»") != std::string::npos);
     t = f.t;
-    t.game = f.root / "нет";
+    t.game = f.root / utf8_path("нет");
     CHECK(problems(t).find("нет папки игры шаблона") != std::string::npos);
     t = f.t;
-    t.picture = f.root / "нет.png";
+    t.picture = f.root / utf8_path("нет.png");
     CHECK(problems(t).find("нет картинки шаблона") != std::string::npos);
     t = f.t;
-    t.assets = f.root / "нет";
+    t.assets = f.root / utf8_path("нет");
     CHECK(problems(t).find("нет папки «Ресурсов» шаблона") != std::string::npos);
 
-    fs::rename(game / "pictures" / utf8_path("сундук.png"), f.root / "сундук.png");
+    fs::rename(game / "pictures" / utf8_path("сундук.png"), f.root / utf8_path("сундук.png"));
     CHECK(problems(f.t).find("объект «Сундук»: нет картинки pictures/сундук.png") != std::string::npos);
-    fs::rename(f.root / "сундук.png", game / "pictures" / utf8_path("сундук.png"));
-    fs::rename(game / "sounds" / utf8_path("звон.wav"), f.root / "звон.wav");
+    fs::rename(f.root / utf8_path("сундук.png"), game / "pictures" / utf8_path("сундук.png"));
+    fs::rename(game / "sounds" / utf8_path("звон.wav"), f.root / utf8_path("звон.wav"));
     CHECK_MESSAGE(problems(f.t).find("объект «Колокол»: нет звука sounds/звон.wav") != std::string::npos, problems(f.t));
-    fs::rename(f.root / "звон.wav", game / "sounds" / utf8_path("звон.wav"));
+    fs::rename(f.root / utf8_path("звон.wav"), game / "sounds" / utf8_path("звон.wav"));
     put(game / "objects" / utf8_path("Дракон.object.json"), R"({"id": "dragon", "name": "Дракон", "kind": "dragon"})");
     CHECK(problems(f.t).find("объект «Дракон»: вида «dragon» нет в модуле") != std::string::npos);
     put(game / "objects" / utf8_path("Дракон.object.json"), "{ сломан");
@@ -245,7 +247,7 @@ TEST_CASE("project: what keeps a template from making a game") {
     CHECK(problems(f.t).find("game.json шаблона не читается") != std::string::npos);
     fs::path made;
     std::string error;
-    CHECK_FALSE(create(f.t, f.parent(), "Игра", made, &error));
+    CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра", made, &error));
     CHECK(fs::is_empty(f.parent()));
     fs::remove(game / "game.json");
     CHECK(problems(f.t).find("в шаблоне нет game.json") != std::string::npos);
@@ -259,7 +261,172 @@ TEST_CASE("project: what keeps a template from making a game") {
     REQUIRE(list.size() == 2);
     CHECK(problems(list[0]).find("путь «../../etc» в каталоге ведёт из его папки") != std::string::npos);
     CHECK(problems(list[1]).find("путь «/etc/passwd» в каталоге ведёт из его папки") != std::string::npos);
-    CHECK_FALSE(read_catalog(f.root / "нет.json", list, &error));
+    CHECK_FALSE(read_catalog(f.root / utf8_path("нет.json"), list, &error));
+}
+
+TEST_CASE("project: a template whose object names a file of another place makes no game") {
+    Fixture f;
+    const fs::path game = f.t.game;
+    auto problems = [&] {
+        std::string all;
+        for (const std::string& p : template_problems(f.t, f.modules)) all += p + "; ";
+        return all;
+    };
+    const auto before = tree(f.parent());
+    auto refused = [&](const std::string& expected) {
+        const std::string all = problems();
+        CHECK_MESSAGE(all.find(expected) != std::string::npos, all);
+        fs::path made;
+        std::string error;
+        CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра", made, &error));
+        CHECK_MESSAGE(error.find("из шаблона «Проба» игру не создать: ") == 0, error);
+        CHECK_MESSAGE(error.find(expected) != std::string::npos, error);
+        CHECK(made.empty());
+        CHECK(tree(f.parent()) == before);
+    };
+    // A picture there is, by its full path: the game would need a file outside it.
+    const fs::path outside = f.root / utf8_path("чужая папка") / utf8_path("чужой сундук.png");
+    put(outside, "png");
+    const fs::path chest = game / "objects" / utf8_path("Сундук.object.json");
+    const std::string full = path_to_utf8(outside);
+    std::string json = R"({"id": "chest", "name": "Сундук", "kind": "thing", "picture": ")";
+    for (char c : full) json += c == '\\' ? std::string("\\\\") : std::string(1, c);
+    put(chest, json + "\"}");
+    refused("объект «Сундук»: картинка «" + full + "» вне папки игры (нужен файл в pictures/)");
+    // Out of pictures/ by "..", by a Windows separator or drive.
+    put(game / utf8_path("сундук.png"), "png");
+    for (const char* name : {"../сундук.png", "../../чужая папка/чужой сундук.png", "..\\\\сундук.png", "C:сундук.png"}) {
+        CAPTURE(name);
+        put(chest, std::string(R"({"id": "chest", "name": "Сундук", "kind": "thing", "picture": ")") + name + "\"}");
+        refused("объект «Сундук»: картинка «");
+        CHECK(problems().find("вне папки игры") != std::string::npos);
+    }
+    fs::remove(game / utf8_path("сундук.png"));
+    // A sound by its full path.
+    const fs::path ring = f.root / utf8_path("чужая папка") / utf8_path("звон.wav");
+    put(ring, "wav");
+    const fs::path bell = game / "objects" / utf8_path("Колокол.object.json");
+    put(chest, R"({"id": "chest", "name": "Сундук", "kind": "thing", "picture": "сундук.png"})");
+    json = R"({"id": "bell", "name": "Колокол", "kind": "noisy", "values": {"sound": ")";
+    for (char c : path_to_utf8(ring)) json += c == '\\' ? std::string("\\\\") : std::string(1, c);
+    put(bell, json + "\"}}");
+    refused("объект «Колокол»: звук «" + path_to_utf8(ring) + "» вне папки игры (нужен файл в sounds/)");
+    put(bell, R"({"id": "bell", "name": "Колокол", "kind": "noisy", "values": {"sound": "../../звон.wav"}})");
+    refused("объект «Колокол»: звук «../../звон.wav» вне папки игры");
+
+    // Letters and spaces of any kind in the game's own files are fine, and the copy has them.
+    put(game / "pictures" / utf8_path("старый сундук (1).png"), "png");
+    put(game / "sounds" / utf8_path("звон колокола.wav"), "wav");
+    put(chest, R"({"id": "chest", "name": "Сундук", "kind": "thing", "picture": "старый сундук (1).png"})");
+    put(bell, R"({"id": "bell", "name": "Колокол", "kind": "noisy", "values": {"sound": "звон колокола.wav"}})");
+    CHECK_MESSAGE(problems().empty(), problems());
+    fs::path made;
+    std::string error;
+    REQUIRE_MESSAGE(create(f.t, f.modules, f.parent(), "Игра с пробелом", made, &error), error);
+    CHECK(text_of(made / "game" / "pictures" / utf8_path("старый сундук (1).png")) == "png");
+    CHECK(text_of(made / "game" / "sounds" / utf8_path("звон колокола.wav")) == "wav");
+    CHECK(game_problems(made / "game", &f.modules[0]).empty());
+}
+
+TEST_CASE("project: a template's conversations, quests, links and screens are checked as the game reads them") {
+    Fixture f;
+    const fs::path game = f.t.game;
+    auto problems = [&] {
+        std::string all;
+        for (const std::string& p : template_problems(f.t, f.modules)) all += p + "; ";
+        return all;
+    };
+    auto has = [&](const std::string& expected) {
+        const std::string all = problems();
+        CHECK_MESSAGE(all.find(expected) != std::string::npos, all);
+        fs::path made;
+        std::string error;
+        CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра", made, &error));
+        CHECK_MESSAGE(error.find(expected) != std::string::npos, error);
+        CHECK(fs::is_empty(f.parent()));
+    };
+    REQUIRE_MESSAGE(problems().empty(), problems());
+
+    // A conversation the game cannot load: not JSON, no nodes.
+    const fs::path talk = game / "dialogues" / utf8_path("кузнец.json");
+    const std::string good_talk = text_of(talk);
+    put(talk, "{ сломан");
+    has("разговор dialogues/кузнец.json: ");
+    put(talk, R"({"id": "кузнец", "lines": []})");
+    has("разговор dialogues/кузнец.json: ");
+    put(talk, good_talk);
+
+    // Quests that cannot be read.
+    put(game / "quests.json", "{ сломан");
+    has("задания quests.json: ");
+    put(game / "quests.json", R"([{"id": "сундук", "title": "Сундук", "var": "quest.chest", "stages": [{"at": 1, "name": "ищет", "text": "Найти сундук."}]}])");
+    CHECK_MESSAGE(problems().empty(), problems());
+
+    // Links: the verb must be the module's.
+    put(game / "logic.json", R"({"links": [{"id": 1, "a": "bell", "verb": "open", "b": "chest"}]})");
+    CHECK_MESSAGE(problems().empty(), problems());
+    put(game / "logic.json", R"({"links": [{"id": 7, "a": "bell", "verb": "летает", "b": "chest"}]})");
+    has("связь №7: глагола «летает» нет в модуле");
+    put(game / "logic.json", "{ сломан");
+    has("связи logic.json не читаются");
+    fs::remove(game / "logic.json");
+
+    // A screen: its page, its pictures and sounds are the game's own.
+    editor::design::Screen screen;
+    screen.title = "Меню";
+    editor::design::Paint picture;
+    picture.kind = editor::design::PaintKind::Image;
+    picture.image = "pictures/фон меню.png";
+    screen.root.fills.push_back(picture);
+    screen.music = "музыка.ogg";
+    const fs::path ui = game / "ui";
+    put(ui / utf8_path("меню.json"), editor::design::save_screen(screen));
+    has("экран «меню»: нет страницы ui/меню.html, её показывает игра");
+    put(ui / utf8_path("меню.html"), "<rml></rml>");
+    has("экран «меню»: картинка: нет файла pictures/фон меню.png");
+    put(game / "pictures" / utf8_path("фон меню.png"), "png");
+    has("экран «меню»: звук: нет файла sounds/музыка.ogg");
+    put(game / "sounds" / utf8_path("музыка.ogg"), "ogg");
+    CHECK_MESSAGE(problems().empty(), problems());
+    screen.root.fills[0].image = "../../проба.png";
+    put(ui / utf8_path("меню.json"), editor::design::save_screen(screen));
+    has("экран «меню»: картинка «../../проба.png» вне папки игры");
+    screen.root.fills[0].image = "pictures/фон меню.png";
+    screen.music = path_to_utf8(game / "sounds" / utf8_path("музыка.ogg"));
+    put(ui / utf8_path("меню.json"), editor::design::save_screen(screen));
+    has("экран «меню»: звук «" + screen.music + "» вне папки игры (нужен файл в sounds/)");
+    put(ui / utf8_path("меню.json"), "{ сломан");
+    has("экран «меню»: ui/меню.json не читается");
+}
+
+TEST_CASE("project: the template is read again when the game is made, and the copy is checked before it gets its name") {
+    Fixture f;
+    REQUIRE(template_problems(f.t, f.modules).empty());
+    // The window checked the template; then its picture went away.
+    const fs::path picture = f.t.game / "pictures" / utf8_path("сундук.png");
+    fs::rename(picture, f.root / utf8_path("сундук.png"));
+    const auto template_before = tree(f.catalog.parent_path());
+    fs::path made;
+    std::string error;
+    CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра А", made, &error));
+    CHECK(error == "из шаблона «Проба» игру не создать: объект «Сундук»: нет картинки pictures/сундук.png");
+    CHECK(made.empty());
+    CHECK(fs::is_empty(f.parent()));
+    fs::rename(f.root / utf8_path("сундук.png"), picture);
+
+    // A file that is not in the copy (gone while the template was copied): the copy never becomes the game.
+    Hooks hooks;
+    hooks.write = [&](const fs::path& file) {
+        if (file.filename() == "project.forge") fs::remove(file.parent_path() / "game" / "pictures" / utf8_path("сундук.png"));
+        return true;
+    };
+    CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра А", made, &error, hooks));
+    CHECK(error == "в копии шаблона не всё, что нужно игре: объект «Сундук»: нет картинки pictures/сундук.png");
+    CHECK(made.empty());
+    CHECK(fs::is_empty(f.parent()));
+    CHECK(tree(f.catalog.parent_path()) != template_before); // the picture is back
+    CHECK(fs::exists(picture));
+    REQUIRE_MESSAGE(create(f.t, f.modules, f.parent(), "Игра А", made, &error), error);
 }
 
 TEST_CASE("project: a copy that fails half way, or a folder taken while it is made, leaves nothing") {
@@ -276,24 +443,24 @@ TEST_CASE("project: a copy that fails half way, or a folder taken while it is ma
         hooks.write = [&](const fs::path&) { return ++written != n; };
         fs::path made;
         std::string error;
-        CHECK_FALSE(create(f.t, f.parent(), "Игра А", made, &error, hooks));
+        CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра А", made, &error, hooks));
         CHECK(error.find("не записался файл ") == 0);
         CHECK(made.empty());
         CHECK(tree(f.parent()) == before);
     }
     // Someone puts a file into the game's folder just before the copy becomes it: theirs stays, nothing of ours.
     Hooks hooks;
-    hooks.before_rename = [&](const fs::path& folder) { put(folder / "чужое.txt", "чужое"); };
+    hooks.before_rename = [&](const fs::path& folder) { put(folder / utf8_path("чужое.txt"), "чужое"); };
     fs::path made;
     std::string error;
-    CHECK_FALSE(create(f.t, f.parent(), "Игра А", made, &error, hooks));
+    CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра А", made, &error, hooks));
     CHECK(error.find("занята") != std::string::npos);
     auto after = tree(f.parent());
     CHECK(after.size() == 2);
     CHECK(after.at("Игра А/чужое.txt") == "чужое");
     // An empty folder made meanwhile makes way.
     hooks.before_rename = [&](const fs::path& folder) { fs::create_directories(folder); };
-    CHECK(create(f.t, f.parent(), "Игра Б", made, &error, hooks));
+    CHECK(create(f.t, f.modules, f.parent(), "Игра Б", made, &error, hooks));
     CHECK(fs::exists(made / "game" / "game.json"));
     CHECK(tree(f.catalog.parent_path()) == template_before);
 }
@@ -302,7 +469,7 @@ TEST_CASE("project: a game is found by its folder or its description; a folder f
     Fixture f;
     fs::path a;
     std::string error;
-    REQUIRE(create(f.t, f.parent(), "Игра А", a, &error));
+    REQUIRE(create(f.t, f.modules, f.parent(), "Игра А", a, &error));
     Game g;
     REQUIRE(find(a, f.modules, g, &error) == Found::Game);
     CHECK(g.root == a);
@@ -315,16 +482,16 @@ TEST_CASE("project: a game is found by its folder or its description; a folder f
     CHECK(g.root == a);
 
     // From before step 14: game/game.json, no description.
-    const fs::path old = f.root / "старый проект";
+    const fs::path old = f.root / utf8_path("старый проект");
     put(old / "game" / "game.json", R"({"title": "Старая шахта"})");
     REQUIRE(find(old, f.modules, g, &error) == Found::Game);
     CHECK_FALSE(g.described);
     CHECK(g.description.module == "slice");
     CHECK(g.title == "Старая шахта");
 
-    CHECK(find(f.root / "нет", f.modules, g, &error) == Found::NoGame);
-    fs::create_directories(f.root / "пусто");
-    CHECK(find(f.root / "пусто", f.modules, g, &error) == Found::NoGame);
+    CHECK(find(f.root / utf8_path("нет"), f.modules, g, &error) == Found::NoGame);
+    fs::create_directories(f.root / utf8_path("пусто"));
+    CHECK(find(f.root / utf8_path("пусто"), f.modules, g, &error) == Found::NoGame);
     CHECK(error.find("нет игры Forge") != std::string::npos);
     CHECK(find(a / "game" / "game.json", f.modules, g, &error) == Found::Broken);
     CHECK(error.find("не описание игры Forge") != std::string::npos);
@@ -345,7 +512,7 @@ TEST_CASE("project: opening refreshes only the module's files, and keeps the gam
     Fixture f;
     fs::path a;
     std::string error;
-    REQUIRE(create(f.t, f.parent(), "Игра А", a, &error));
+    REQUIRE(create(f.t, f.modules, f.parent(), "Игра А", a, &error));
     put(f.module_dir / "verbs.json", R"({"verbs": ["новый"]})");
     put(a / "game" / "ideas.json", "мои");
     const auto before = tree(a);
@@ -388,7 +555,7 @@ TEST_CASE("project: the catalog's «Старая шахта» makes a game") {
     CHECK_MESSAGE(all.empty(), all);
     const fs::path parent = fresh("forge_tests_проект_шахта");
     fs::path made;
-    REQUIRE_MESSAGE(create(*mine, parent, "Моя шахта", made, &error), error);
+    REQUIRE_MESSAGE(create(*mine, modules, parent, "Моя шахта", made, &error), error);
     Game g;
     REQUIRE(find(made, modules, g, &error) == Found::Game);
     CHECK(g.title == "Моя шахта");

@@ -2810,6 +2810,14 @@
             <div id="pj-save" class="button filled small" title="Enter" data-event-click="pj_answer('save')"><icon name="save"/>Сохранить</div>
         </div>
     </div>
+    <div id="pj-opening" class="pj-window pj-small column" data-if="pj_view == 'opening'">
+        <div class="row pj-head"><icon name="hourglass_top"/><span class="pj-title grow">Открывается игра «{{ pj_next }}»</span></div>
+        <div id="pj-opening-text" class="pj-lead">{{ pj_note }}</div>
+        <div class="row pj-foot">
+            <div class="grow"/>
+            <div id="pj-opening-cancel" class="command" title="Esc: остаться в этой игре" data-event-click="pj_answer('cancel')"><span>Отмена</span></div>
+        </div>
+    </div>
     <div id="pj-message" class="pj-window pj-small column" data-if="pj_view == 'message'">
         <div id="pj-message-text" class="pj-lead">{{ pj_note }}</div>
         <div class="row pj-foot">

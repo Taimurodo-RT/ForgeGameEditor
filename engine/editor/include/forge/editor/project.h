@@ -65,10 +65,18 @@ struct Template {
 bool read_catalog(const std::filesystem::path& file, std::vector<Template>& out, std::string* error = nullptr);
 // What keeps a game from being made of t, in words; empty when nothing does:
 // a module this editor does not have, no game folder or game.json, no
-// picture or «Ресурсы» the catalog names, an object of a kind the module does
-// not have or with a picture or a sound the template does not have, an object
-// file that cannot be read.
+// picture or «Ресурсы» the catalog names, and what game_problems finds in its
+// game folder. Read from the files each time: nothing is kept.
 std::vector<std::string> template_problems(const Template& t, const std::vector<Module>& modules);
+// What keeps the game in game (a game/ folder) from being played as a game of
+// its own, in words; empty when nothing does. Its data as the game reads it:
+// objects (a file that cannot be read, a kind module does not have, a picture
+// or a sound not there), conversations, quests, links and their verbs,
+// screens (ui/*.json, the page of each, their pictures and sounds). Every file
+// it names must be inside it: a full path, "..", or a Windows drive or
+// separator is a file of another place, refused. module null: the game's own
+// kinds and verbs.
+std::vector<std::string> game_problems(const std::filesystem::path& game, const Module* module);
 
 // The folder a game of this title gets: the title as typed, its letters and
 // spaces kept; signs no file name on Windows may have (< > : " / \ | ? * and
@@ -92,13 +100,15 @@ struct Hooks {
     std::function<bool(const std::filesystem::path& file)> write;
     std::function<void(const std::filesystem::path& folder)> before_rename;
 };
-// Makes a game of t named title in parent. The copy is put together in a
-// side folder of parent (template's game/ and assets/, project.forge, the
-// title in game.json) and becomes the game's folder only whole; an empty
-// folder there makes way, anything else is never written over. On any error
-// nothing is left and error says what did not work. made: the game's folder.
-bool create(const Template& t, const std::filesystem::path& parent, std::string_view title, std::filesystem::path& made,
-            std::string* error = nullptr, const Hooks& hooks = {});
+// Makes a game of t named title in parent. The template is checked again
+// (template_problems: its files as they are now); the copy is put together in
+// a side folder of parent (template's game/ and assets/, project.forge, the
+// title in game.json), checked (game_problems), and becomes the game's folder
+// only whole; an empty folder there makes way, anything else is never written
+// over. On any error nothing is left and error says what did not work. made:
+// the game's folder.
+bool create(const Template& t, const std::vector<Module>& modules, const std::filesystem::path& parent, std::string_view title,
+            std::filesystem::path& made, std::string* error = nullptr, const Hooks& hooks = {});
 
 // A game to open: path is its folder or its project.forge.
 struct Game {

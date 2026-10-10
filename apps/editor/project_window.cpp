@@ -141,8 +141,19 @@ void ProjectWindow::set_view(const std::string& view) { set(m_view_, Rml::String
 
 void ProjectWindow::set_menu(bool open) { set(m_menu_, open, "pj_menu"); }
 
+// A template's files as they are now: they may have changed since the window last looked.
+void ProjectWindow::recheck(usize index) {
+    if (index >= templates_.size()) return;
+    problems_[index] = pj::template_problems(templates_[index], config_.modules);
+    const Rml::String problem = joined(problems_[index]);
+    if (m_templates_[index].problem == problem) return;
+    m_templates_[index].problem = problem;
+    if (model_) model_.DirtyVariable("pj_templates");
+}
+
 void ProjectWindow::show_new() {
     set_menu(false);
+    for (usize i = 0; i < templates_.size(); ++i) recheck(i);
     set(m_note_, Rml::String(), "pj_note");
     // The fields as the window shows them: set from here, not from what was typed last time.
     m_title_ = title_;
@@ -160,6 +171,7 @@ void ProjectWindow::choose(int index) {
     chosen_ = index;
     for (usize i = 0; i < m_templates_.size(); ++i) m_templates_[i].selected = static_cast<int>(i) == chosen_;
     if (model_) model_.DirtyVariable("pj_templates");
+    recheck(static_cast<usize>(index));
     refresh();
 }
 
@@ -190,15 +202,19 @@ void ProjectWindow::refresh() {
 }
 
 bool ProjectWindow::create() {
+    if (m_view_ != "new") return false;
+    if (!templates_.empty()) recheck(static_cast<usize>(chosen_));
     refresh();
-    if (!m_can_ || m_view_ != "new") return false;
+    if (!m_can_) return false;
     const pj::Template& t = templates_[static_cast<usize>(chosen_)];
     const fs::path parent = utf8_path(where_);
     std::string error;
     fs::path made;
-    if (!pj::create(t, parent, title_, made, &error, create_hooks)) {
+    // The template is checked again there, and the copy before it becomes the game.
+    if (!pj::create(t, config_.modules, parent, title_, made, &error, create_hooks)) {
         set(m_note_, Rml::String("Игра не создана: " + error), "pj_note");
         FORGE_WARN("Новая игра не создана: %s", error.c_str());
+        recheck(static_cast<usize>(chosen_));
         refresh();
         return false;
     }
@@ -251,16 +267,21 @@ void ProjectWindow::ask_or_go(const pj::Game& game) {
     set_view("unsaved");
 }
 
+// The editor for the game starts; this one waits for it to say it opened the game (poll_opening): «Не сохранять»
+// is done and this one closes only then.
 void ProjectWindow::go(bool discarding) {
     std::string error;
     if (!launch(pending_.root, error)) {
-        message("Игра «" + pending_.title + "» не открыта: " + error + ". Эта игра осталась открытой, ничего не потеряно.");
+        message("Игра «" + pending_.title + "» не открыта: " + error + ". Игра «" + m_game_ + "» осталась открытой, ничего не потеряно.");
         return;
     }
     FORGE_INFO("Открывается игра «%s»: %s", pending_.title.c_str(), path_to_utf8(pending_.root).c_str());
-    set_view("");
-    if (discarding && discard) discard();
-    if (quit) quit();
+    opening_discards_ = discarding;
+    set(m_note_,
+        Rml::String("Её открывает новый редактор. Игра «" + m_game_ + "» закроется, когда он скажет, что готов" +
+                    (discarding ? "; только тогда её несохранённые правки будут отброшены." : "; до тех пор в ней ничего не меняется.")),
+        "pj_note");
+    set_view("opening");
 }
 
 bool ProjectWindow::launch(const fs::path& root, std::string& error) {
@@ -270,34 +291,123 @@ bool ProjectWindow::launch(const fs::path& root, std::string& error) {
         launched_.push_back("--theme");
         launched_.push_back(look);
     }
-    if (!config_.window || config_.editor_exe.empty()) return true; // offscreen: the self-test reads launched()
+    launched_.insert(launched_.end(), config_.launch_args.begin(), config_.launch_args.end());
     std::error_code ec;
-    if (!fs::is_regular_file(config_.editor_exe, ec)) {
-        error = "нет редактора " + path_to_utf8(config_.editor_exe);
+    if (config_.editor_exe.empty() || !fs::is_regular_file(config_.editor_exe, ec)) {
+        error = config_.editor_exe.empty() ? "не найден файл редактора" : "нет редактора " + path_to_utf8(config_.editor_exe);
         return false;
     }
+    // What it says in: a file of its own each time.
+    static u32 count = 0;
+    ready_file_ = fs::temp_directory_path() / "forge_editor_ready" /
+                  (std::to_string(SDL_GetPerformanceCounter()) + "_" + std::to_string(++count) + ".txt");
+    fs::create_directories(ready_file_.parent_path(), ec);
+    fs::remove(ready_file_, ec);
+    std::vector<std::string> args = launched_;
+    args.push_back("--ready-file");
+    args.push_back(path_to_utf8(ready_file_));
     std::vector<const char*> argv;
-    for (const std::string& a : launched_) argv.push_back(a.c_str());
+    for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argv.data());
-    SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true); // it outlives this one
-    SDL_Process* process = SDL_CreateProcessWithProperties(props);
+    // Not in the background: its exit code says why it closed. It runs on when this one closes; what it prints goes
+    // where this one's does.
+    SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_NULL);
+    SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_INHERITED);
+    SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, SDL_PROCESS_STDIO_INHERITED);
+    opening_ = SDL_CreateProcessWithProperties(props);
     SDL_DestroyProperties(props);
-    if (!process) {
+    if (!opening_) {
         error = std::string("редактор не запустился: ") + SDL_GetError();
         return false;
     }
-    SDL_DestroyProcess(process); // only the handle: the editor runs on
+    opening_since_ = SDL_GetTicks();
     return true;
 }
 
+// What the editor for pending_ said (ready, failed: why), whether it closed, whether its time is up.
+void ProjectWindow::poll_opening() {
+    auto said = [&] {
+        std::vector<u8> bytes;
+        std::string text = read_file(ready_file_, bytes) ? std::string(bytes.begin(), bytes.end()) : std::string();
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+        return text;
+    };
+    std::string answer = said();
+    int code = 0;
+    const bool ended = answer.empty() && SDL_WaitProcess(opening_, false, &code);
+    if (ended) answer = said(); // it may have said it just before it closed
+    if (answer == "ready") {
+        if (opened_) SDL_DestroyProcess(opened_); // only the handle
+        opened_ = opening_;
+        opening_ = nullptr;
+        std::error_code ec;
+        fs::remove(ready_file_, ec);
+        FORGE_INFO("Игра «%s» открыта в новом редакторе", pending_.title.c_str());
+        set_view("");
+        if (opening_discards_ && discard) discard();
+        if (quit) quit();
+        return;
+    }
+    std::string why;
+    if (answer.starts_with("failed: ")) {
+        why = "Игра «" + pending_.title + "» не открылась: " + answer.substr(8) + ".";
+    } else if (ended) {
+        why = "Редактор для игры «" + pending_.title + "» закрылся, не открыв её (код выхода " + std::to_string(code) + ").";
+    } else if (static_cast<double>(SDL_GetTicks() - opening_since_) > config_.ready_seconds * 1000.0) {
+        char seconds[32];
+        std::snprintf(seconds, sizeof(seconds), "%g", config_.ready_seconds);
+        why = "Редактор для игры «" + pending_.title + "» не открыл её за " + seconds + " с и остановлен.";
+    } else {
+        return; // still opening
+    }
+    stop_opening();
+    FORGE_WARN("%s", why.c_str());
+    message(why + " Игра «" + m_game_ + "» осталась открытой, ничего не потеряно.");
+}
+
+void ProjectWindow::stop_opening() {
+    if (!opening_) return;
+    int code = 0;
+    if (!SDL_WaitProcess(opening_, false, &code)) {
+        SDL_KillProcess(opening_, true);
+        SDL_WaitProcess(opening_, true, &code);
+    }
+    SDL_DestroyProcess(opening_);
+    opening_ = nullptr;
+    std::error_code ec;
+    fs::remove(ready_file_, ec);
+}
+
+int ProjectWindow::wait_opened() {
+    if (!opened_) return -1;
+    int code = -1;
+    if (!SDL_WaitProcess(opened_, true, &code)) code = -1;
+    SDL_DestroyProcess(opened_);
+    opened_ = nullptr;
+    return code;
+}
+
+void ProjectWindow::shutdown() {
+    stop_opening();
+    if (opened_) SDL_DestroyProcess(opened_); // only the handle: that editor runs on
+    opened_ = nullptr;
+}
+
 void ProjectWindow::answer(const std::string& what) {
+    if (m_view_ == "opening") {
+        if (what != "cancel") return;
+        stop_opening();
+        FORGE_INFO("Игра «%s» не открывается: отменено", pending_.title.c_str());
+        close();
+        return;
+    }
     if (m_view_ == "unsaved") {
         if (what == "save") {
             std::string error;
             if (save && !save(error)) {
-                message("Не сохранилось: " + error + ". Игра «" + config_.title + "» осталась открытой.");
+                message("Не сохранилось: " + error + ". Игра «" + m_game_ + "» осталась открытой.");
                 return;
             }
             go(false);
@@ -338,6 +448,8 @@ bool ProjectWindow::handle_key(const SDL_KeyboardEvent& k) {
         else close();
     } else if (m_view_ == "unsaved") {
         answer(enter ? "save" : "stay");
+    } else if (m_view_ == "opening") {
+        if (!enter) answer("cancel");
     } else {
         answer("ok");
     }
@@ -390,6 +502,7 @@ void ProjectWindow::update() {
             open_game(path);
         }
     }
+    if (opening_) poll_opening();
 }
 
 } // namespace forge::editor_app

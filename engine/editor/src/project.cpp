@@ -3,6 +3,10 @@
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
+#include "forge/editor/ui_design.h"
+#include "forge/game/dialogue.h"
+#include "forge/game/quests.h"
+#include "forge/logic/logic.h"
 #include "forge/objects/library.h"
 
 #include <yyjson.h>
@@ -42,7 +46,23 @@ bool inside(std::string_view text, const fs::path& base, fs::path& out) {
     return true;
 }
 
+// A file a game's data names, from one of its folders: no full path, no "..", nothing a Windows path would
+// read as another place (\\, :). Spaces and Cyrillic are fine.
+bool inside_name(std::string_view name) {
+    if (name.empty() || name.find('\\') != std::string_view::npos || name.find(':') != std::string_view::npos) return false;
+    fs::path unused;
+    return inside(name, {}, unused);
+}
+
 std::string shown(const fs::path& p) { return path_to_utf8(p); }
+
+// Problems in one line: the first three, and how many more.
+std::string listed(const std::vector<std::string>& problems) {
+    std::string out;
+    for (usize i = 0; i < problems.size() && i < 3; ++i) out += (i ? "; " : "") + problems[i];
+    if (problems.size() > 3) out += "; и ещё " + std::to_string(problems.size() - 3);
+    return out;
+}
 
 // A file name with no letters of its own but a dot ("." and ".."), or a
 // Windows device's ("con", "COM1.txt"): the base before the first dot.
@@ -239,40 +259,141 @@ std::vector<std::string> template_problems(const Template& t, const std::vector<
     else out.push_back("game.json шаблона не читается");
     if (!t.picture.empty() && !fs::is_regular_file(t.picture, ec)) out.push_back("нет картинки шаблона");
     if (!t.assets.empty() && !fs::is_directory(t.assets, ec)) out.push_back("нет папки «Ресурсов» шаблона");
-    // Its objects as the module sees them: kinds, pictures, sounds.
-    const fs::path objects = t.game / "objects";
-    if (!fs::is_directory(objects, ec)) return out;
-    const fs::path kinds = module && fs::is_regular_file(module->files / "kinds.json", ec) ? module->files / "kinds.json"
-                                                                                           : t.game / "kinds.json";
-    objects::Library lib;
-    lib.set_pictures_folder(t.game / "pictures");
-    lib.set_sounds_folder(t.game / "sounds");
-    std::string error;
-    if (!lib.load(kinds, objects, &error)) {
-        out.push_back("виды объектов не читаются: " + error);
-        return out;
-    }
-    for (fs::directory_iterator it(objects, ec), end; !ec && it != end; it.increment(ec)) {
-        const std::string name = path_to_utf8(it->path().filename());
-        if (!it->is_regular_file(ec) || !name.ends_with(".object.json")) continue;
-        const bool read = std::any_of(lib.templates().begin(), lib.templates().end(),
-                                      [&](const objects::Template& o) { return o.file == it->path(); });
-        if (!read) out.push_back("файл объекта objects/" + name + " не читается");
-    }
-    for (const objects::Template& o : lib.templates()) {
-        if (module && !lib.kind(o.kind)) out.push_back("объект «" + o.name + "»: вида «" + o.kind + "» нет в модуле");
-        if (!o.picture.empty() && !fs::is_regular_file(lib.picture_file(o), ec))
-            out.push_back("объект «" + o.name + "»: нет картинки pictures/" + o.picture);
-        for (const objects::PropDef* p : lib.props_of(o)) {
-            const std::string* value = p->asset == "sound" ? o.value(p->id) : nullptr;
-            if (!value) continue;
-            yyjson_doc* doc = yyjson_read(value->data(), value->size(), 0);
-            const char* sound = doc ? yyjson_get_str(yyjson_doc_get_root(doc)) : nullptr;
-            const std::string name = sound ? sound : "";
-            yyjson_doc_free(doc);
-            if (!name.empty() && !fs::is_regular_file(lib.sound_file(name), ec))
-                out.push_back("объект «" + o.name + "»: нет звука sounds/" + name);
+    for (std::string& p : game_problems(t.game, module)) out.push_back(std::move(p));
+    return out;
+}
+
+std::vector<std::string> game_problems(const fs::path& game, const Module* module) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    // A file a game's data names, as the game finds it: inside the game's folder, or the game depends on a file
+    // of another place, and a copy of the game is not a game of its own.
+    auto named = [&](const std::string& what, const std::string& name, const fs::path& folder, const std::string& shown_folder) {
+        if (!inside_name(name)) {
+            out.push_back(what + " «" + name + "» вне папки игры (нужен файл в " +
+                          (shown_folder.empty() ? std::string("папке игры, например pictures/") : shown_folder) + ")");
+            return;
         }
+        if (!fs::is_regular_file(folder / utf8_path(name), ec)) out.push_back(what + ": нет файла " + shown_folder + name);
+    };
+
+    // Objects as the module sees them: kinds, pictures, sounds.
+    const fs::path objects = game / "objects";
+    if (fs::is_directory(objects, ec)) {
+        const fs::path kinds = module && fs::is_regular_file(module->files / "kinds.json", ec) ? module->files / "kinds.json"
+                                                                                               : game / "kinds.json";
+        objects::Library lib;
+        lib.set_pictures_folder(game / "pictures");
+        lib.set_sounds_folder(game / "sounds");
+        std::string error;
+        if (!lib.load(kinds, objects, &error)) {
+            out.push_back("виды объектов не читаются: " + error);
+        } else {
+            for (fs::directory_iterator it(objects, ec), end; !ec && it != end; it.increment(ec)) {
+                const std::string name = path_to_utf8(it->path().filename());
+                if (!it->is_regular_file(ec) || !name.ends_with(".object.json")) continue;
+                const bool read = std::any_of(lib.templates().begin(), lib.templates().end(),
+                                              [&](const objects::Template& o) { return o.file == it->path(); });
+                if (!read) out.push_back("файл объекта objects/" + name + " не читается");
+            }
+            for (const objects::Template& o : lib.templates()) {
+                if (module && !lib.kind(o.kind)) out.push_back("объект «" + o.name + "»: вида «" + o.kind + "» нет в модуле");
+                if (!o.picture.empty()) {
+                    if (!inside_name(o.picture))
+                        out.push_back("объект «" + o.name + "»: картинка «" + o.picture + "» вне папки игры (нужен файл в pictures/)");
+                    else if (!fs::is_regular_file(lib.picture_file(o), ec))
+                        out.push_back("объект «" + o.name + "»: нет картинки pictures/" + o.picture);
+                }
+                for (const objects::PropDef* p : lib.props_of(o)) {
+                    const std::string* value = p->asset == "sound" ? o.value(p->id) : nullptr;
+                    if (!value) continue;
+                    yyjson_doc* doc = yyjson_read(value->data(), value->size(), 0);
+                    const char* sound = doc ? yyjson_get_str(yyjson_doc_get_root(doc)) : nullptr;
+                    const std::string name = sound ? sound : "";
+                    yyjson_doc_free(doc);
+                    if (name.empty()) continue;
+                    if (!inside_name(name))
+                        out.push_back("объект «" + o.name + "»: звук «" + name + "» вне папки игры (нужен файл в sounds/)");
+                    else if (!fs::is_regular_file(lib.sound_file(name), ec))
+                        out.push_back("объект «" + o.name + "»: нет звука sounds/" + name);
+                }
+            }
+        }
+    }
+
+    // Conversations and quests, as the game reads them.
+    std::string text;
+    std::vector<fs::path> talks;
+    for (fs::directory_iterator it(game / "dialogues", ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ".json") talks.push_back(it->path());
+    std::sort(talks.begin(), talks.end());
+    for (const fs::path& file : talks) {
+        const std::string shown_as = "разговор dialogues/" + path_to_utf8(file.filename());
+        if (!read_text(file, text)) {
+            out.push_back(shown_as + " не читается");
+            continue;
+        }
+        forge::game::Dialogue talk;
+        forge::game::DialogueReport report;
+        talk.load(text, report);
+        for (const std::string& e : report.errors) out.push_back(shown_as + ": " + e);
+    }
+    if (fs::exists(game / "quests.json", ec)) {
+        std::vector<std::string> errors;
+        forge::game::QuestBook quests;
+        if (!read_text(game / "quests.json", text)) out.push_back("задания quests.json не читаются");
+        else quests.load(text, errors);
+        for (const std::string& e : errors) out.push_back("задания quests.json: " + e);
+    }
+
+    // Links («Логика») and the verbs they use: the module's (a game gets them on opening), else its own.
+    if (fs::exists(game / "logic.json", ec)) {
+        logic::Logic links;
+        logic::Verbs verbs;
+        const fs::path verbs_file = module && fs::is_regular_file(module->files / "verbs.json", ec) ? module->files / "verbs.json"
+                                                                                                   : game / "verbs.json";
+        std::string error;
+        if (!links.load(game / "logic.json", &error)) out.push_back("связи logic.json не читаются: " + error);
+        else if (!verbs.load(verbs_file, &error)) out.push_back("глаголы verbs.json не читаются: " + error);
+        else
+            for (const logic::Link& l : links.links)
+                if (!verbs.find(l.verb)) out.push_back("связь №" + std::to_string(l.id) + ": глагола «" + l.verb + "» нет в модуле");
+    }
+
+    // Screens («Интерфейс»): the game shows each one's page; its pictures and sounds are the game's.
+    std::vector<fs::path> screens;
+    for (fs::directory_iterator it(game / "ui", ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec) && it->path().extension() == ".json") screens.push_back(it->path());
+    std::sort(screens.begin(), screens.end());
+    for (const fs::path& file : screens) {
+        const std::string name = path_to_utf8(file.stem());
+        const std::string shown_as = "экран «" + name + "»";
+        design::Screen screen;
+        std::string error;
+        if (!read_text(file, text) || !design::load_screen(text, screen, &error)) {
+            out.push_back(shown_as + ": ui/" + path_to_utf8(file.filename()) + " не читается" + (error.empty() ? "" : ": " + error));
+            continue;
+        }
+        if (!screen.library && !fs::is_regular_file(design::screen_file(game / "ui", name, ".html"), ec))
+            out.push_back(shown_as + ": нет страницы ui/" + name + ".html, её показывает игра");
+        std::vector<std::string> pictures, sounds;
+        auto walk = [&](auto&& self, const design::Node& n) -> void {
+            for (const design::Paint& f : n.fills)
+                if (!f.image.empty()) pictures.push_back(f.image);
+            if (!n.frame.image.empty()) pictures.push_back(n.frame.image);
+            if (!n.mask.image.empty()) pictures.push_back(n.mask.image);
+            if (!n.click_sound.empty() && n.click_sound != "none") sounds.push_back(n.click_sound);
+            for (const design::Node& c : n.children) self(self, c);
+        };
+        walk(walk, screen.root);
+        for (const std::string* s : {&screen.music, &screen.button_sound})
+            if (!s->empty() && *s != "none") sounds.push_back(*s);
+        std::sort(pictures.begin(), pictures.end());
+        pictures.erase(std::unique(pictures.begin(), pictures.end()), pictures.end());
+        std::sort(sounds.begin(), sounds.end());
+        sounds.erase(std::unique(sounds.begin(), sounds.end()), sounds.end());
+        for (const std::string& p : pictures) named(shown_as + ": картинка", p, game, "");
+        for (const std::string& s : sounds) named(shown_as + ": звук", s, game / "sounds", "sounds/");
     }
     return out;
 }
@@ -327,8 +448,8 @@ Target target(const fs::path& parent, std::string_view title) {
     return t;
 }
 
-bool create(const Template& t, const fs::path& parent, std::string_view title, fs::path& made, std::string* error,
-            const Hooks& hooks) {
+bool create(const Template& t, const std::vector<Module>& modules, const fs::path& parent, std::string_view title, fs::path& made,
+            std::string* error, const Hooks& hooks) {
     std::error_code ec;
     made.clear();
     auto fail = [&](std::string why) {
@@ -337,7 +458,9 @@ bool create(const Template& t, const fs::path& parent, std::string_view title, f
     };
     const Target to = target(parent, title);
     if (!to.problem.empty()) return fail(to.problem);
-    if (t.game.empty() || !fs::is_regular_file(t.game / "game.json", ec)) return fail("в шаблоне нет game.json");
+    // The template as it is now, not as the window saw it: its files may have changed since.
+    const std::vector<std::string> problems = template_problems(t, modules);
+    if (!problems.empty()) return fail("из шаблона «" + t.name + "» игру не создать: " + listed(problems));
     std::string game_json;
     if (!read_text(t.game / "game.json", game_json)) return fail("game.json шаблона не читается");
     // The side folder: one no one has.
@@ -356,8 +479,14 @@ bool create(const Template& t, const fs::path& parent, std::string_view title, f
                         write_file(side / utf8_path(kDescription), description_json({kFormat, t.module, t.id}),
                                    utf8_path(kDescription), hooks, why) &&
                         write_file(side / "game" / "game.json", titled, "game/game.json", hooks, why);
-    if (copied && hooks.before_rename) hooks.before_rename(to.folder);
+    // The copy itself, before it gets its name: what the game needs is in it (a file that went away while it
+    // was copied is not).
     if (copied) {
+        const std::vector<std::string> left = game_problems(side / "game", find_module(modules, t.module));
+        if (!left.empty()) why = "в копии шаблона не всё, что нужно игре: " + listed(left);
+    }
+    if (copied && why.empty() && hooks.before_rename) hooks.before_rename(to.folder);
+    if (copied && why.empty()) {
         // An empty folder makes way (remove takes only an empty one); one with anything in it is never written over.
         const bool there = fs::exists(to.folder, ec);
         if (there && (!empty_folder(to.folder) || !fs::remove(to.folder, ec) || ec))

@@ -14,7 +14,10 @@
 // editor process for it, and this one closes. Before that the editor asks
 // about what would otherwise be saved or lost without asking (the level is
 // saved on closing; «Сцена» is not): «Сохранить», «Не сохранять», «Отмена».
-// Nothing is thrown away until the new editor has started.
+// This one closes only when the new one says it has opened the game and its
+// UI (--ready-file: "ready"); until then «Не сохранять» is not done. When the
+// new one fails, closes first or does not answer in time (it is stopped then),
+// this game stays open with its changes, and the editor says why.
 
 #include "forge/editor/project.h"
 #include "forge/ui/ui.h"
@@ -36,8 +39,12 @@ struct ProjectConfig {
     std::filesystem::path catalog; // games/templates.json
     std::vector<editor::project::Module> modules;
     std::filesystem::path settings;   // the editor's own folder: where the last game was made
-    std::filesystem::path editor_exe; // starts the editor for another game; empty: nothing is started
+    std::filesystem::path editor_exe; // starts the editor for another game; empty: none can be opened
     SDL_Window* window = nullptr;     // for the system's folder windows; null: offscreen, none
+    // Given to the editor for another game after the rest (the self-test: "--self-test", "ready").
+    std::vector<std::string> launch_args;
+    // How long the editor for another game has to say it opened it.
+    double ready_seconds = 60;
 };
 
 // Where the game «Играть» starts keeps its player's files: one folder for each game, outside it.
@@ -45,13 +52,19 @@ std::filesystem::path play_folder(const std::filesystem::path& root);
 
 class ProjectWindow {
 public:
+    ProjectWindow() = default;
+    ProjectWindow(const ProjectWindow&) = delete;
+    ProjectWindow& operator=(const ProjectWindow&) = delete;
     void init(ui::Ui& ui, ProjectConfig config);
     // Another game open or another catalog (the self-test): as init, the same UI.
     void configure(ProjectConfig config) { init(*ui_, std::move(config)); }
     void bind(Rml::DataModelConstructor& model);
     void set_model(Rml::DataModelHandle model) { model_ = model; }
-    // Each frame: what the system's folder windows answered.
+    // Each frame: what the system's folder windows answered, whether the editor for another game is ready.
     void update();
+    // The editor closes: one still opening another game is stopped (that game is not opened); one that opened it
+    // runs on.
+    void shutdown();
     // A window or the menu is over the editor: the keyboard and mouse are theirs.
     bool shown() const { return !m_view_.empty() || m_menu_; }
     // Esc and Enter of the window (true: taken).
@@ -83,12 +96,13 @@ public:
     bool create();
     // «Открыть игру…» with a folder or a project.forge picked.
     void open_game(const std::filesystem::path& path);
-    // The answer to the window about unsaved changes ("save", "discard", "stay") or to a note ("ok").
+    // The answer to the window about unsaved changes ("save", "discard", "stay"), to the one while another game
+    // opens ("cancel": the editor for it is stopped) or to a note ("ok").
     void answer(const std::string& what);
     void close();
 
     // --- for the self-test ---
-    const std::string& view() const { return m_view_; } // "", "new", "unsaved", "message"
+    const std::string& view() const { return m_view_; } // "", "new", "unsaved", "opening", "message"
     const std::string& note() const { return m_note_; }
     const std::string& problem() const { return m_problem_; }
     const std::string& folder() const { return m_folder_; }
@@ -96,8 +110,11 @@ public:
     int chosen() const { return chosen_; }
     const std::vector<editor::project::Template>& templates() const { return templates_; }
     const std::vector<std::string>& unsaved_list() const { return m_unsaved_; }
-    // The command that starts the editor for another game, the last one given (offscreen: never run).
+    // The command that started the editor for another game, the last one (without --ready-file).
     const std::vector<std::string>& launched() const { return launched_; }
+    bool opening() const { return opening_ != nullptr; }
+    // The editor that said it opened another game: waits for it to end, its exit code (-1: none).
+    int wait_opened();
     const std::filesystem::path& made() const { return made_; }
     const ProjectConfig& config() const { return config_; }
 
@@ -110,6 +127,9 @@ private:
     void ask_or_go(const editor::project::Game& game);
     void go(bool discarding);
     bool launch(const std::filesystem::path& root, std::string& error);
+    void poll_opening();
+    void stop_opening();
+    void recheck(usize index);
     void message(std::string text);
     void set_view(const std::string& view);
     std::filesystem::path last_where() const;
@@ -131,6 +151,12 @@ private:
     bool pending_made_ = false;     // it was just made
     std::filesystem::path made_;
     std::vector<std::string> launched_;
+    // The editor for pending_ until it says it is ready (or is not), what it says it in, and since when.
+    SDL_Process* opening_ = nullptr;
+    std::filesystem::path ready_file_;
+    u64 opening_since_ = 0;
+    bool opening_discards_ = false; // «Не сохранять» was chosen: done once it is ready
+    SDL_Process* opened_ = nullptr; // the editor that said it was ready
     // The system's folder windows answer on a thread of their own.
     std::mutex mutex_;
     std::string asking_; // "where", "open"
