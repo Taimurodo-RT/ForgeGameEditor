@@ -654,6 +654,224 @@ private:
         }});
     }
 
+    // The platformer the author made through the editor's tabs (step 14.2c), met as a player meets it: the copies
+    // where the editor put them, the goal drawn with the author's picture, the author's HUD. The coin gives its «Очки»;
+    // the enemy, walked into with the keys, takes its «Урон», once for a touch; a jump onto it gives its «Очки» and it is
+    // gone; the zone of «падает в» takes the last heart: the author's window «при поражении», whose «Ещё раз» plays a
+    // clean game; the trap hurts as wide as its «Полширины» and no wider and brings the hero back; the goal of «доходит
+    // до» wins: the window «при победе», the world stands.
+    void build_platform_edits(Shell& s) {
+        SliceGame& g = g_;
+        struct State {
+            f64 ex = 0, ey = 0, cx = 0, cy = 0, tx = 0, ty = 0, fx = 0, fy = 0;
+            f64 coins0 = 0, score0 = 0;
+            u32 hits0 = 0, stomps0 = 0, hazards0 = 0, falls0 = 0, endings0 = 0, cue0 = 0, at = 0;
+        };
+        auto st = std::make_shared<State>();
+        const f64 v = g.generator().village_y();
+        auto put = [&g](f64 feet_x, f64 feet_y) { g.teleport(feet_x, feet_y - kHeroHalfH); };
+        auto keys = [&g](bool left, bool right, bool jump) {
+            Controls c;
+            c.left = left;
+            c.right = right;
+            c.jump = jump;
+            g.script(c);
+        };
+        auto said = [&s](const std::string& screen, u32 node) { return text_of(layer(s, screen, node)); };
+        auto ticks = [&g] { return g.sim_stats() ? g.sim_stats()->ticks : 0u; };
+        auto state = [&g, &s, this] {
+            auto n = [](f64 x) { return std::to_string(static_cast<i64>(std::llround(x))); };
+            return " (очки " + n(g.score()) + ", сердца " + n(g.hearts()) + ", монеты " + n(g.inventory("coins")) + ", герой " +
+                   std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()) +
+                   (s.screens().shown(project_edits.pl_lose) ? ", окно поражения" : "") + (s.screens().shown(project_edits.pl_win) ? ", окно победы" : "") +
+                   ")";
+        };
+        auto score_text = [](f64 n) { return "Очки: " + std::to_string(static_cast<i64>(n)); };
+        steps_.push_back({"платформер автора: всё на месте", 150, [&s, &g, this, st, said, put, v](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (!check_ok(e.pl_at.size() == 8, "где стоят враг, монетка, ловушка и цель: восемь чисел")) return true;
+            if (f == 0) {
+                put(e.pl_at[6] - 5, v); // in view of the goal, away from all the rest
+                return false;
+            }
+            if (f < 60 || (!g.on_ground() && f < 120)) return false;
+            check(one_of(g, e.pl_enemy, st->ex, st->ey) && one_of(g, e.pl_coin, st->cx, st->cy) && one_of(g, e.pl_trap, st->tx, st->ty) &&
+                      one_of(g, e.pl_goal, st->fx, st->fy),
+                  "на уровне по одному врагу, монетке, ловушке и цели автора: " + std::to_string(g.copies_of(e.pl_enemy).size()) + ", " +
+                      std::to_string(g.copies_of(e.pl_coin).size()) + ", " + std::to_string(g.copies_of(e.pl_trap).size()) + ", " +
+                      std::to_string(g.copies_of(e.pl_goal).size()));
+            const f64 have[8] = {st->ex, st->ey, st->cx, st->cy, st->tx, st->ty, st->fx, st->fy};
+            const char* what[4] = {"враг", "монетка", "ловушка", "цель"};
+            for (usize i = 0; i < 4; ++i)
+                check(std::fabs(have[i * 2] - e.pl_at[i * 2]) < 0.05 && std::fabs(have[i * 2 + 1] - e.pl_at[i * 2 + 1]) < 0.1,
+                      std::string(what[i]) + " там, где поставил редактор: " + std::to_string(have[i * 2]) + ", " + std::to_string(have[i * 2 + 1]) +
+                          "; в редакторе " + std::to_string(e.pl_at[i * 2]) + ", " + std::to_string(e.pl_at[i * 2 + 1]));
+            check(s.screens().shown(e.pl_hud) && said(e.pl_hud, e.pl_hud_text) == "Очки: 0", "HUD автора поверх игры: «" + said(e.pl_hud, e.pl_hud_text) + "»");
+            check(g.hearts() == 3 && g.score() == 0 && !g.won() && !g.lost() && !s.screens().shown(e.pl_lose) && !s.screens().shown(e.pl_win),
+                  "новая игра: три сердца, ноль очков, окон конца нет");
+            // The goal drawn with the author's picture, from «Ресурсы».
+            std::vector<u8> px;
+            u32 w = 0, h = 0;
+            check(frame_pixels(s, px, w, h), "кадр игры снят");
+            const render::Camera2D& c = g.camera();
+            const std::array<int, 3> at = pixel_at(px, w, h, static_cast<f32>((st->fx - c.snapped_x()) * c.zoom + w * 0.5),
+                                                   static_cast<f32>((st->fy - c.snapped_y()) * c.zoom + h * 0.5));
+            check(near_rgb(at, e.pl_goal_color, 24), "цель нарисована картинкой автора: " + rgb_text(at));
+            return true;
+        }});
+        steps_.push_back({"монетка автора: её «Очки», одна монета, один звук", 120, [&g, this, st, said, put, v, state, score_text](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                st->coins0 = g.inventory("coins");
+                st->score0 = g.score();
+                st->cue0 = g.sounds().played(Cue::Coins);
+                st->at = 0;
+                put(st->cx, v);
+                return false;
+            }
+            if (!g.copies_of(e.pl_coin).empty()) return f >= 60 && check_ok(false, "монетка не подобрана" + state());
+            if (st->at == 0) st->at = f;
+            if (f < st->at + 30) return false; // nothing more comes of it
+            check(g.score() == st->score0 + e.pl_coin_score && g.inventory("coins") == st->coins0 + 1,
+                  "монетка дала свои " + std::to_string(static_cast<i64>(e.pl_coin_score)) + " очков и одну монету" + state());
+            check(g.sounds().played(Cue::Coins) == st->cue0 + 1, "звук монеты один раз: " + std::to_string(g.sounds().played(Cue::Coins) - st->cue0));
+            check(said(e.pl_hud, e.pl_hud_text) == score_text(e.pl_coin_score), "HUD: «" + said(e.pl_hud, e.pl_hud_text) + "»");
+            return true;
+        }});
+        steps_.push_back({"враг автора сбоку: его «Урон», отброс, за одно касание один урон", 300, [&g, this, st, put, keys, v, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                st->hits0 = g.enemy_hits();
+                st->at = 0;
+                put(st->ex - 3, v);
+                return false;
+            }
+            if (st->at == 0) {
+                // The keys: right, into it.
+                if (f < 10 || g.enemy_hits() == st->hits0) {
+                    keys(false, f >= 10, false);
+                    return f >= 200 && check_ok(false, "герой дошёл до врага и не ранен" + state());
+                }
+                keys(false, false, false);
+                st->at = f;
+                check(g.hearts() == 3 - e.pl_damage, "касание сбоку сняло «Урон» врага: " + std::to_string(static_cast<i64>(e.pl_damage)) + state());
+                check(g.hero_x() < st->ex && g.blinking(), "героя отбросило от врага, он мигает" + state());
+                return false;
+            }
+            // Pushed back, then standing in it again while it blinks: that touch hurts no more.
+            if (f == st->at + 10) put(st->ex - 0.5, v);
+            if (f < st->at + 45) return false;
+            check(g.enemy_hits() == st->hits0 + 1 && g.hearts() == 3 - e.pl_damage && g.blinking(), "пока герой мигает, касание не ранит" + state());
+            check(g.copies_of(e.pl_enemy).size() == 1, "враг на месте");
+            put(st->ex - 6, v);
+            return true;
+        }});
+        steps_.push_back({"прыжок сверху на врага: его «Очки», врага нет", 200, [&s, &g, this, st, said, state, score_text](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                st->stomps0 = g.stomps();
+                st->score0 = g.score();
+                return false;
+            }
+            if (f == 40) g.teleport(st->ex, st->ey - 4); // the safe time over
+            if (f <= 40 || (g.stomps() == st->stomps0 && f < 150)) return false;
+            check(g.stomps() == st->stomps0 + 1 && g.copies_of(e.pl_enemy).empty(), "прыжок сверху побеждает врага, его больше нет" + state());
+            check(g.score() == st->score0 + e.pl_enemy_score && g.hearts() == 3 - e.pl_damage,
+                  "его «Очки» в счёт: " + std::to_string(static_cast<i64>(e.pl_enemy_score)) + ", сердца те же" + state());
+            const std::string want = score_text(e.pl_coin_score + e.pl_enemy_score);
+            check(s.screens().shown(e.pl_hud) && said(e.pl_hud, e.pl_hud_text) == want, "HUD: «" + said(e.pl_hud, e.pl_hud_text) + "», ждали «" + want + "»");
+            return true;
+        }});
+        steps_.push_back({"зона «падает в»: последнее сердце, окно автора «при поражении»", 200, [&s, &g, this, st, said, put, v, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            u64 id = 0;
+            const bool named = e.pl_pit.starts_with(logic::kAreaPrefix) &&
+                               forge::level::parse_area_id(std::string_view(e.pl_pit).substr(logic::kAreaPrefix.size()), id);
+            const forge::level::Area* a = named && g.areas() ? g.areas()->find(id) : nullptr;
+            if (!check_ok(a != nullptr, "на уровне зона автора " + e.pl_pit)) return true;
+            if (f == 0) {
+                check(g.hearts() == 1, "у героя одно сердце" + state());
+                st->falls0 = g.falls();
+                st->endings0 = g.endings();
+                st->at = 0;
+                put((a->x0 + a->x1) * 0.5, v);
+                return false;
+            }
+            if (st->at == 0) {
+                if (!g.lost()) return f >= 60 && check_ok(false, "в зоне игра не проиграна" + state());
+                st->at = f;
+                check(g.falls() == st->falls0 + 1 && g.hearts() == 0 && g.endings() == st->endings0 + 1,
+                      "в зоне герой теряет последнее сердце: игра проиграна, один раз" + state());
+                return false;
+            }
+            if (f < st->at + 30) return false; // the window laid out
+            check(g.endings() == st->endings0 + 1 && s.screens().shown(e.pl_lose) && !s.screens().shown(e.pl_win) &&
+                      said(e.pl_lose, e.pl_lose_text) == "Итог: поражение",
+                  "окно автора «при поражении» показано само: «" + said(e.pl_lose, e.pl_lose_text) + "»" + state());
+            std::string why;
+            check(!g.can_save(&why) && why == "игра окончена", "игра сохраняться не даёт: «" + why + "»");
+            return true;
+        }});
+        steps_.push_back({"«Ещё раз» в окне автора: чистая новая игра", 300, [&s, &g, this, said, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                const std::optional<Rml::Vector2f> at = on_screen(s, e.pl_lose, e.pl_lose_again);
+                check(at && click_at(s, *at), "кнопка «Ещё раз» нажата мышью");
+                return false;
+            }
+            if ((g.lost() || s.screen() != Screen::Playing || !g.on_ground()) && f < 250) return false;
+            if (f < 30) return false;
+            f64 x = 0, y = 0;
+            check(!g.lost() && !g.won() && s.screen() == Screen::Playing && !s.screens().shown(e.pl_lose), "новая игра идёт, окна нет" + state());
+            check(g.hearts() == 3 && g.score() == 0 && one_of(g, e.pl_enemy, x, y) && one_of(g, e.pl_coin, x, y),
+                  "в ней три сердца, ноль очков, враг и монетка снова на месте" + state());
+            check(s.screens().shown(e.pl_hud) && said(e.pl_hud, e.pl_hud_text) == "Очки: 0", "HUD: «" + said(e.pl_hud, e.pl_hud_text) + "»");
+            return true;
+        }});
+        steps_.push_back({"ловушка автора: ранит в своих «Полширины» и не дальше, герой возвращается", 200, [&g, this, st, put, v, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const f64 outside = e.pl_trap_half_w + kHeroHalfW + 0.4, inside = e.pl_trap_half_w + kHeroHalfW - 0.3;
+            if (f == 0) {
+                st->hazards0 = g.hazard_hits();
+                put(st->tx + outside, v);
+                return false;
+            }
+            if (f < 40) return false;
+            if (f == 40) {
+                check(g.hazard_hits() == st->hazards0 && g.hearts() == 3, "в " + std::to_string(outside) + " от середины ловушки она не ранит" + state());
+                put(st->tx + inside, v);
+                return false;
+            }
+            if (g.hazard_hits() == st->hazards0 && f < 100) return false;
+            if (f < 140) return false; // back, standing
+            f64 bx = 0, by = 0;
+            check(g.hazard_hits() == st->hazards0 + 1 && g.hearts() == 3 - e.pl_trap_damage,
+                  "в " + std::to_string(inside) + " — ранит на свой «Урон» " + std::to_string(static_cast<i64>(e.pl_trap_damage)) + state());
+            check(g.back_point(bx, by) && std::fabs(g.hero_x() - bx) < 0.1 && std::fabs(g.hero_x() - st->tx) > outside,
+                  "герой вернулся к точке возвращения " + std::to_string(bx) + state());
+            return true;
+        }});
+        steps_.push_back({"цель автора («доходит до»): победа, окно автора «при победе», мир стоит", 200,
+                          [&s, &g, this, st, said, put, v, ticks, state](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                st->endings0 = g.endings();
+                put(st->fx, v);
+                return false;
+            }
+            if (!g.won()) return f >= 60 && check_ok(false, "у цели игра не выиграна" + state());
+            if (f < 120) return false;
+            check(g.endings() == st->endings0 + 1 && ticks() == 0, "цель — победа, один раз; мир стоит: тиков за кадр " + std::to_string(ticks()) + state());
+            check(s.screens().shown(e.pl_win) && !s.screens().shown(e.pl_lose) && said(e.pl_win, e.pl_win_text) == "Итог: победа",
+                  "окно автора «при победе» показано само: «" + said(e.pl_win, e.pl_win_text) + "»");
+            return true;
+        }});
+    }
+    static bool one_of(SliceGame& g, const std::string& id, f64& x, f64& y) {
+        const std::vector<flecs::entity_t> c = g.copies_of(id);
+        return c.size() == 1 && g.position_of(c[0], x, y);
+    }
+
     void build_edits(Shell& s) {
         SliceGame& g = g_;
         if (!project_edits_error.empty()) {
@@ -745,6 +963,7 @@ private:
                 return true;
             }});
         if (!project_edits.go_through.empty() || project_edits.go_continue) build_going(s);
+        if (!project_edits.pl_enemy.empty()) build_platform_edits(s);
         if (project_edits.object.empty() && !project_edits.absent) return;
         if (project_edits.absent) {
             steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {

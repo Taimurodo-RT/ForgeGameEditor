@@ -481,7 +481,8 @@ public:
         // What screens can show: the game's values in the author's words.
         ui_tab.game_values = [this] {
             std::vector<std::pair<std::string, std::string>> out = {
-                {"hero.hearts", "Сердца героя"}, {"hero.hearts_max", "Сердец всего"}, {"inv.coins", "Монеты"}, {"inv.copper", "Медь"},
+                {"hero.hearts", "Сердца героя"}, {"hero.hearts_max", "Сердец всего"}, {"hero.score", "Очки"}, {"inv.coins", "Монеты"},
+                {"inv.copper", "Медь"},
                 {"settings.master", "Громкость всего, 0–100"}, {"settings.music", "Громкость музыки, 0–100"},
                 {"settings.sound", "Громкость звуков, 0–100"}};
             const objects::Library& lib = *level_module.library();
@@ -1762,7 +1763,9 @@ struct Options {
     // template: A made through the tabs by "two-games-a", opened again by "two-games-a-again", B by "two-games-b");
     // "levels" (a game's levels: made, renamed, the start level and maps imported by "levels-a", opened again and
     // played by "levels-again"; links between them made in «Логика» by "levels-go", opened again, gone through in the
-    // game and continued in another process by "levels-go-again").
+    // game and continued in another process by "levels-go-again"); "platformer" (step 14.2c: an enemy, a coin, spikes, a
+    // flag, a zone, links and windows made and set through the tabs by "platformer-a", opened again and played as set by
+    // "platformer-a-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -1956,6 +1959,9 @@ public:
         if (part == "levels-again") return frame < 3 || levels_again_step();
         if (part == "levels-go") return frame < 3 || levels_go_step();
         if (part == "levels-go-again") return frame < 3 || levels_go_again_step();
+        if (part == "platformer") return frame < 3 || platformer_step();
+        if (part == "platformer-a") return frame < 3 || platformer_a_step();
+        if (part == "platformer-a-again") return frame < 3 || platformer_again_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -15331,6 +15337,547 @@ private:
         return true;
     }
 
+    // --- «Платформер автора» (step 14.2c) --------------------------------------------------------------------
+    // --self-test platformer makes «Платформер А» and «Платформер Б» of «Старая шахта». platformer-a, an editor for A
+    // started from another working folder, with the mouse and the keys: a picture dropped into «Ресурсы»; in «Объекты»
+    // an enemy (the preset «Страж» of «Враг») with its «Урон» and «Очки» changed, a «Монетка» with its «Очки», «Шипы» three
+    // cells wide (their «Полширины»), a «Картинка» renamed «Флаг» with that picture; each made and changed, undone and
+    // done again, then put on the village's flat ground; in «Уровень» a zone «Пропасть»; in «Логика» «Герой падает в
+    // Пропасть» and «Герой доходит до Флага»; in «Интерфейс» a HUD with the score and the windows «Показывается сам:
+    // при поражении» (the result and «Ещё раз», a new game) and «при победе» (the result); everything saved.
+    // platformer-a-again, from a third working folder: the same ids, values, links and windows; «Играть»: the game
+    // plays them as the author set them (scene project with --edits). The template and B: the same bytes before and
+    // after.
+    static constexpr u8 kPlFlag[3] = {230, 60, 160};
+    // Where the author puts them (cells of the village's flat ground: their feet on vy()); the hero starts at kPlStart.
+    static constexpr i32 kPlStart = 22, kPlCoin = 27, kPlEnemy = 33, kPlSpikes = 41, kPlPit0 = 48, kPlPit1 = 51, kPlGoal = 58;
+    struct PlMade {
+        const char* preset; // the item of «Создать»
+        const char* kind;
+        const char* name; // as the editor names it (the picture renamed)
+        i32 x;            // its cell on the level
+        const char* key;  // in the records
+    };
+    static constexpr PlMade kPlMade[4] = {{"ol-new-enemy-2", "enemy", "Страж", kPlEnemy, "enemy"},
+                                          {"ol-new-pickup-0", "pickup", "Монетка", kPlCoin, "coin"},
+                                          {"ol-new-trap-0", "trap", "Шипы", kPlSpikes, "trap"},
+                                          {"ol-new-picture-0", "picture", "Флаг", kPlGoal, "goal"}};
+    int pl_step_ = 0;
+    usize pl_k_ = 0, pl_n_ = 0;
+    std::map<std::string, std::string> pl_rec_; // what platformer-a made (a file of the test, outside the games)
+    std::string pl_screen_;
+    u32 pl_layer_ = 0;
+    std::map<std::string, std::vector<u8>> pl_tmpl_, pl_b_;
+
+    static std::filesystem::path pl_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_платформер"); }
+    static std::filesystem::path pl_mine(const char* title) { return pl_root() / utf8_path("Мои игры") / utf8_path(title); }
+    // The row of the open object's editor with this label (-1: none), and a value typed into it.
+    i64 pl_prop(const char* label) {
+        for (usize i = 0; i < ol().prop_count(); ++i)
+            if (ol().prop_label(i) == label) return static_cast<i64>(i);
+        return -1;
+    }
+    bool pl_set(const char* label, const std::string& value) {
+        const i64 i = pl_prop(label);
+        if (i < 0) return false;
+        const std::string n = std::to_string(i);
+        return ue_type(("ol-num-" + n).c_str(), value) || ue_type(("ol-field-" + n).c_str(), value);
+    }
+    // A template's value as its file has it: JSON text.
+    std::string pl_value(const std::string& id, const char* prop) { return tpl_value(id.c_str(), prop); }
+    std::string pl_area() { return std::string(logic::kAreaPrefix) + pl_rec_["pit"]; }
+    // The pick on the board whose phrase starts so.
+    bool pl_pick(const std::string& start) {
+        std::string offered;
+        i64 at = -1;
+        for (usize i = 0; i < lg().pick_options(); ++i) {
+            offered += " «" + lg().pick_phrase(i) + "»";
+            if (lg().pick_phrase(i).rfind(start, 0) == 0) at = static_cast<i64>(i);
+        }
+        return check(at >= 0 && lg().pick(static_cast<usize>(at)), "«" + start + "…» among:" + offered);
+    }
+    // What the game must find: as the records of platformer-a have it, the values as the templates have them now.
+    slice::ProjectEdits pl_edits() {
+        slice::ProjectEdits e;
+        e.pl_enemy = pl_rec_["enemy"];
+        e.pl_coin = pl_rec_["coin"];
+        e.pl_trap = pl_rec_["trap"];
+        e.pl_goal = pl_rec_["goal"];
+        for (const char* k : {"enemy", "coin", "trap", "goal"})
+            for (const char* c : {"_x", "_y"}) e.pl_at.push_back(std::strtod(pl_rec_[std::string(k) + c].c_str(), nullptr));
+        e.pl_damage = std::strtod(pl_value(e.pl_enemy, "damage").c_str(), nullptr);
+        e.pl_enemy_score = std::strtod(pl_value(e.pl_enemy, "enemy_score").c_str(), nullptr);
+        e.pl_coin_score = std::strtod(pl_value(e.pl_coin, "score").c_str(), nullptr);
+        e.pl_trap_damage = std::strtod(pl_value(e.pl_trap, "hazard_damage").c_str(), nullptr);
+        e.pl_trap_half_w = std::strtod(pl_value(e.pl_trap, "half_width").c_str(), nullptr);
+        e.pl_pit = pl_area();
+        e.pl_hud = pl_rec_["hud"];
+        e.pl_lose = pl_rec_["lose"];
+        e.pl_win = pl_rec_["win"];
+        e.pl_hud_text = static_cast<u32>(std::strtoul(pl_rec_["hud_text"].c_str(), nullptr, 10));
+        e.pl_lose_text = static_cast<u32>(std::strtoul(pl_rec_["lose_text"].c_str(), nullptr, 10));
+        e.pl_lose_again = static_cast<u32>(std::strtoul(pl_rec_["lose_again"].c_str(), nullptr, 10));
+        e.pl_win_text = static_cast<u32>(std::strtoul(pl_rec_["win_text"].c_str(), nullptr, 10));
+        e.pl_goal_color = {kPlFlag[0], kPlFlag[1], kPlFlag[2]};
+        return e;
+    }
+
+    // --self-test platformer: the games made; A in an editor of its own, then again from another working folder; the
+    // template and B compared byte for byte.
+    bool platformer_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = pl_mine("Платформер А"), b = pl_mine("Платформер Б");
+        fs::remove_all(pl_root(), ec);
+        fs::create_directories(pl_root() / utf8_path("Мои игры"), ec);
+        pl_tmpl_ = tg_template();
+        tg_snap("шаблон до", pl_tmpl_, pl_root());
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto old_mine = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "old-mine"; });
+        for (const auto& [title, folder] : {std::pair{"Платформер Б", b}, std::pair{"Платформер А", a}}) {
+            fs::path made;
+            check(old_mine != all.end() && pj::create(*old_mine, editor_modules(), pl_root() / utf8_path("Мои игры"), title, made, &error) &&
+                      lvl_same(made, folder),
+                  std::string("«") + title + "» made of «Старая шахта» " + error);
+            fs::remove_all(play_folder(folder), ec);
+        }
+        pl_b_ = pj_tree(b);
+        tg_snap("Платформер Б до", pl_b_, pl_root());
+        const fs::path src = pl_root() / utf8_path("исходники");
+        fs::create_directories(src, ec);
+        check(write_file_atomic(src / utf8_path("флаг.png"), tg_png(kPlFlag)), "the author's picture of the flag, in «исходники»");
+        const std::string exe = path_to_utf8(editor_exe()), project = path_to_utf8(a / "project.forge");
+        const fs::path one = pl_root() / utf8_path("первая папка"), two = pl_root() / utf8_path("вторая папка");
+        fs::create_directories(one, ec);
+        fs::create_directories(two, ec);
+        int code = pj_run({exe, "--project", project, "--self-test", "platformer-a"}, one);
+        check(code == 0, "an enemy, a coin, spikes and a flag made, set and put on the level, a zone, links and windows, through the editor "
+                         "(platformer-a: exit " + std::to_string(code) + ")");
+        code = pj_run({exe, "--project", project, "--self-test", "platformer-a-again"}, two);
+        check(code == 0, "opened again elsewhere: the same ids, values, links and windows; the game plays them as set "
+                         "(platformer-a-again: exit " + std::to_string(code) + ")");
+        const auto tmpl = tg_template(), btree = pj_tree(b);
+        check(tg_snap("шаблон после", tmpl, pl_root()) == tg_digest(pl_tmpl_) && tmpl == pl_tmpl_, "the template byte for byte as before");
+        check(tg_snap("Платформер Б после", btree, pl_root()) == tg_digest(pl_b_) && btree == pl_b_, "«Платформер Б» byte for byte as before");
+        pl_rec_ = tg_get(pl_root() / utf8_path("записи.txt"));
+        check(tg_naming(b, {pl_rec_["enemy"], pl_rec_["coin"], pl_rec_["trap"], pl_rec_["goal"], pl_rec_["lose"], pl_rec_["win"]}).empty() &&
+                  !pl_rec_["enemy"].empty(),
+              "nothing of A in B: " + tg_naming(b, {pl_rec_["enemy"], pl_rec_["coin"], pl_rec_["trap"], pl_rec_["goal"]}));
+        return false;
+    }
+
+    // In an editor for «Платформер А» from another working folder (--self-test platformer-a).
+    bool platformer_a_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game", src = pl_root() / utf8_path("исходники");
+        objects::Library& lib = ol().library();
+        const bool idle = !as().busy();
+        const PlMade& m = kPlMade[std::min<usize>(pl_k_, 3)];
+        const std::string what = std::string("«") + m.name + "»";
+        auto record = [&](const char* rel) { return as().record_of(as().abs(rel)); };
+        auto made = [&]() { return lib.find(std::string_view(pl_rec_[m.key])); };
+        const i32 v = vy();
+        switch (pl_step_) {
+        case 0:
+            check(pjw().config().title == "Платформер А" && lvl_same(ed_.game_dir, game) && !lvl_same(fs::current_path(), a),
+                  "the editor has «Платформер А» open, from another working folder: " + path_to_utf8(fs::current_path()));
+            check(lib.templates().size() == 11 && !fs::exists(game / "sources.json", ec), "the template's 11 objects, nothing of the author's yet");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        // «Ресурсы»: the flag's picture dropped on the window.
+        case 1:
+            if (hold(idle && ed_.tab() == "assets", "«Ресурсы» look at the game's assets")) return true;
+            as().open_folder("");
+            drop(src / utf8_path("флаг.png"));
+            break;
+        case 2:
+            if (hold(idle && record("флаг.png"), "the picture is imported")) return true;
+            pl_rec_["pic"] = record("флаг.png")->id.to_string();
+            check(click_tab(2), "«Объекты»");
+            pl_k_ = 0;
+            break;
+        // «Объекты», for each of kPlMade: «Создать», its preset; undone and done again; its editor, its values.
+        case 3:
+            if (ol().editing()) click("ol-back");
+            check(click("ol-new"), what + ": «Создать»");
+            break;
+        case 4:
+            if (hold(shown(m.preset), "the kinds are laid out")) return true;
+            pl_n_ = lib.templates().size();
+            check(click(m.preset), std::string("its preset ") + m.preset);
+            break;
+        case 5: {
+            const objects::Template* t = ol().selected();
+            check(t && t->kind == m.kind && lib.templates().size() == pl_n_ + 1 && t->file.parent_path() == game / "objects",
+                  std::string("a new object of the kind ") + m.kind + ", its file in the game's objects: " + (t ? t->name : std::string("?")));
+            if (!t) return false;
+            pl_rec_[m.key] = t->id;
+            const u64 key_of = t->key;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lib.find(key_of), "Ctrl+Z takes it away");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(made() && made()->key == key_of, "Ctrl+Y brings it back, the same id " + pl_rec_[m.key]);
+            ol().select(key_of);
+            if (std::string(m.kind) == "picture") {
+                key(SDLK_F2, SDL_KMOD_NONE);
+                check(ol().renaming(), "F2: its name to type");
+            }
+            break;
+        }
+        case 6: {
+            if (std::string(m.kind) != "picture") {
+                check(made() && made()->name == m.name, what + ": its name from the preset");
+                break;
+            }
+            Rml::Element* focus = ed_.context()->GetFocusElement();
+            if (hold(shown("ol-name-field") && focus && focus->GetId() == "ol-name-field", "the name field is laid out and focused")) return true;
+            check(ue_type_here(m.name) && made() && made()->name == m.name, std::string("«") + m.name + "» typed, Enter: renamed, its id the same");
+            break;
+        }
+        case 7:
+            check(ue_type("ol-search", m.name) && ol().cards() >= 1, what + " looked for by its name");
+            break;
+        case 8: {
+            f32 x = 0, y = 0;
+            check(card_at(card_named(m.name), x, y), what + ": its card is on screen");
+            left_click(x, y);
+            left_click(x, y);
+            break;
+        }
+        case 9: {
+            const std::string id = pl_rec_[m.key];
+            const char* row = std::string(m.kind) == "enemy" ? "Урон" : std::string(m.kind) == "pickup" ? "Очки" : "Полширины";
+            const bool ready = std::string(m.kind) == "picture" ? shown("ol-picture-pick") : pl_prop(row) >= 0 && shown("ol-num-" + std::to_string(pl_prop(row)));
+            if (hold(ol().editing() && shown("ol-editor") && ready, "its editor is laid out")) return true;
+            check(ol().editing() && ol().selected() && ol().selected()->id == id, "a double click opens its editor");
+            if (std::string(m.kind) == "enemy") {
+                check(pl_value(id, "damage") == "1" && pl_value(id, "enemy_score") == "200" && pl_value(id, "stomp") == "true",
+                      "«Страж»: «Урон» 1, «Очки» 200, «Побеждается прыжком сверху»");
+                check(pl_set("Урон", "2") && pl_value(id, "damage") == "2", "«Урон» typed: 2");
+                check(pl_set("Очки", "250") && pl_value(id, "enemy_score") == "250", "«Очки» typed: 250");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(pl_value(id, "enemy_score") == "200" && pl_value(id, "damage") == "2", "Ctrl+Z: «Очки» 200 again, «Урон» still 2");
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                check(pl_value(id, "enemy_score") == "250", "Ctrl+Y: 250");
+            } else if (std::string(m.kind) == "pickup") {
+                check(pl_value(id, "what") == "\"coins\"" && pl_value(id, "score") == "10", "«Монетка»: монеты, «Очки» 10");
+                check(pl_set("Очки", "25") && pl_value(id, "score") == "25", "«Очки» typed: 25");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(pl_value(id, "score") == "10", "Ctrl+Z: 10");
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                check(pl_value(id, "score") == "25", "Ctrl+Y: 25");
+            } else if (std::string(m.kind) == "trap") {
+                const std::string was = pl_value(id, "half_width");
+                check(pl_value(id, "hazard_damage") == "1" && was != "1.5", "«Шипы»: «Урон» 1, «Полширины» " + was);
+                check(pl_set("Полширины", "1.5") && pl_value(id, "half_width") == "1.5", "«Полширины» typed: 1.5, three cells");
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(pl_value(id, "half_width") == was, "Ctrl+Z: " + was);
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                check(pl_value(id, "half_width") == "1.5", "Ctrl+Y: 1.5");
+            } else {
+                check(shown("ol-picture-pick") && click("ol-picture-pick") && ol().pictures_open(), "«Картинка: Выбрать…»");
+            }
+            break;
+        }
+        case 10: {
+            if (std::string(m.kind) != "picture") break;
+            if (hold(shown("ol-pic-0"), "the chooser is laid out")) return true;
+            i64 at = -1;
+            for (usize i = 0; i < ol().picture_choices(); ++i)
+                if (ol().picture_choice(i) == "флаг") at = static_cast<i64>(i);
+            check(at >= 0 && click("ol-pic-" + std::to_string(at)), "«флаг» of «Ресурсы» picked");
+            check(made() && made()->picture == "флаг.png" && tg_bytes(game / "pictures" / utf8_path("флаг.png")) == tg_bytes(as().abs("флаг.png")),
+                  "it is the flag's picture, copied into the game's pictures");
+            const editor::sources::Entry* s = ed_.sources.of_file("pictures/флаг.png");
+            check(s && s->asset.to_string() == pl_rec_["pic"], "game/sources.json: the copy keeps its asset's id");
+            ol().undo();
+            check(made()->picture.empty(), "Ctrl+Z: the usual picture");
+            ol().redo();
+            check(made()->picture == "флаг.png", "Ctrl+Y: the flag's");
+            break;
+        }
+        case 11:
+            check(click("ol-back") && !ol().editing() && ol().selected() && ol().selected()->id == pl_rec_[m.key], "«К библиотеке», it chosen");
+            check(ue_type("ol-search", "") && click("ol-place") && ed_.tab() == "level", "«Поставить на уровень»");
+            break;
+        case 12: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            const auto& defs = ed_.level_module.objects();
+            const i32 armed = lv().armed_object();
+            check(armed >= 0 && made() && defs[static_cast<usize>(armed)].key == made()->key, what + " in hand");
+            // On the village's flat ground, in the middle of the view.
+            lv().camera().x = m.x + 0.5;
+            lv().camera().y = v - 2;
+            click_cell(m.x, v - 1);
+            const flecs::entity e = lv().selection().empty() ? flecs::entity() : lv().level().find(lv().selection()[0]);
+            check(e.is_valid() && lib.template_of(e) == made(), "a click puts it on the level");
+            if (!e.is_valid()) return false;
+            const u64 placed = lv().selection()[0];
+            pl_rec_[std::string(m.key) + "_copy"] = std::to_string(placed);
+            pl_rec_[std::string(m.key) + "_x"] = std::to_string(e.get<scene::Position>().tile_x());
+            pl_rec_[std::string(m.key) + "_y"] = std::to_string(e.get<scene::Position>().tile_y());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lv().level().find(placed).is_valid(), "Ctrl+Z takes it off");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().find(placed).is_valid(), "Ctrl+Y puts it back, the same id");
+            if (++pl_k_ < 4) {
+                check(click_tab(2), "«Объекты» for the next");
+                pl_step_ = 3;
+                return true;
+            }
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S writes the level");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            break;
+        }
+        // «Уровень»: the zone «Пропасть», over the ground between the spikes and the flag.
+        case 13:
+            lv().camera().x = (kPlPit0 + kPlPit1) * 0.5;
+            lv().camera().y = v - 2;
+            key(SDLK_Z, SDL_KMOD_NONE);
+            break;
+        case 14: {
+            if (wait(3)) return true;
+            check(lv().mode() == Mode::Zones && click_id("zn-tool-draw") && lv().area_tool() == AreaTool::Draw, "«Зоны», «Новая зона»");
+            pl_n_ = lv().level().areas().areas.size();
+            to_cell(kPlPit0, v - 3);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            for (int i = 1; i <= 4; ++i) to_cell(kPlPit0 + (kPlPit1 - 1 - kPlPit0) * i / 4, v - 3 + 2 * i / 4);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            const auto& all = lv().level().areas().areas;
+            const level::Area* z = all.size() == pl_n_ + 1 ? &all.back() : nullptr;
+            check(z && z->x0 == kPlPit0 && z->x1 == kPlPit1 && z->y0 == v - 3 && z->y1 == v, "a zone over three cells of the ground, three high");
+            if (!z) return false;
+            pl_rec_["pit"] = level::area_id_text(z->id);
+            break;
+        }
+        case 15: {
+            u64 id = 0;
+            level::parse_area_id(pl_rec_["pit"], id);
+            check(lt_type("zn-name", "Пропасть") && lv().level().areas().find(id) && lv().level().areas().find(id)->name == "Пропасть",
+                  "named «Пропасть»");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().level().areas().find(id) && lv().level().areas().find(id)->name != "Пропасть", "Ctrl+Z: its old name");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().areas().find(id) && lv().level().areas().find(id)->name == "Пропасть", "Ctrl+Y: «Пропасть»");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S");
+            key(SDLK_Q, SDL_KMOD_NONE);
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        // «Логика»: «Герой падает в Пропасть», «Герой доходит до Флага».
+        case 16:
+        case 19: {
+            if (wait(2)) return true;
+            const std::string thing = pl_step_ == 16 ? pl_area() : pl_rec_["goal"];
+            check(shown("lg-add-" + thing) && click("lg-add-" + thing) && lg().links().spot(thing), "«" + thing + "» onto the board");
+            break;
+        }
+        case 17:
+        case 20: {
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            const std::string thing = pl_step_ == 17 ? pl_area() : pl_rec_["goal"];
+            check(thing_click("hero") && thing_click(thing) && lg().picking(), "the hero, then «" + thing + "»");
+            break;
+        }
+        case 18:
+        case 21: {
+            const bool fall = pl_step_ == 18;
+            if (!pl_pick(fall ? "Герой падает в " : "Герой доходит до ")) break;
+            const u32 link = lg().selected_link();
+            const logic::Link* l = lg().links().find(link);
+            const std::string thing = fall ? pl_area() : pl_rec_["goal"];
+            check(l && l->a == "hero" && l->verb == (fall ? "fall" : "win") && l->b == thing && lg().problem_of(link).empty(),
+                  "a link that works: " + lg().phrase_of(link) + " " + lg().problem_of(link));
+            check(lg().phrase_of(link) == (fall ? "Герой падает в Пропасть" : "Герой доходит до Флага"), "in words: " + lg().phrase_of(link));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lg().links().find(link), "Ctrl+Z takes it away");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lg().links().find(link) && lg().links().find(link)->b == thing, "Ctrl+Y brings it back, the same id");
+            pl_rec_[fall ? "fall" : "win_link"] = std::to_string(link);
+            if (!fall) check(click_tab(8), "«Интерфейс»");
+            break;
+        }
+        // «Интерфейс»: the HUD, then the windows the game shows itself at its end.
+        case 22:
+        case 27:
+        case 34: {
+            if (hold(ed_.tab() == "ui" && shown("ue-new-screen"), "«Интерфейс» is laid out")) return true;
+            pl_n_ = ue().screens().size();
+            check(click("ue-new-screen"), "«Новый экран»");
+            break;
+        }
+        case 23:
+        case 28:
+        case 35: {
+            pl_screen_ = ue().opened();
+            pl_rec_[pl_step_ == 23 ? "hud" : pl_step_ == 28 ? "lose" : "win"] = pl_screen_;
+            check(ue().screens().size() == pl_n_ + 1 && !pl_screen_.empty() && fs::is_regular_file(game / "ui" / utf8_path(pl_screen_ + ".html"), ec),
+                  "a new screen «" + pl_screen_ + "», its files in the game's ui/");
+            check(ue().screen().show == d::ScreenShow::Command && ue().screen().ending == d::WindowEnding::None, "a window, shown by nothing yet");
+            if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            ue().select({ue().screen().root.id});
+            break;
+        }
+        case 24:
+            if (hold(shown("ue-s-show"), "«Когда видно» is laid out")) return true;
+            check(ue_open("ue-s-show"), "a click opens «Когда видно»");
+            break;
+        case 25:
+            check(ue_option("ue-s-show", "playing") && ue().screen().show == d::ScreenShow::Playing, "«Всегда, поверх игры»: a HUD");
+            ue().undo();
+            check(ue().screen().show == d::ScreenShow::Command, "Ctrl+Z: a window again");
+            ue().redo();
+            check(ue().screen().show == d::ScreenShow::Playing, "Ctrl+Y: over the game");
+            check(click("ue-block-text"), "«Текст»");
+            pl_layer_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            break;
+        case 26:
+            check(ue_node(pl_layer_) && ue_type("ue-s-text", "Очки: {hero.score}") && ue_node(pl_layer_)->text == "Очки: {hero.score}",
+                  "it says the game's score");
+            pl_rec_["hud_text"] = std::to_string(pl_layer_);
+            break;
+        case 29:
+        case 36:
+            if (hold(shown("ue-s-ending"), "«Показывается сам» is laid out")) return true;
+            check(ue_open("ue-s-ending"), "a click opens «Показывается сам»");
+            break;
+        case 30:
+        case 37: {
+            const bool lose = pl_step_ == 30;
+            const d::WindowEnding want = lose ? d::WindowEnding::Lose : d::WindowEnding::Win;
+            check(ue_option("ue-s-ending", lose ? "lose" : "win") && ue().screen().ending == want, lose ? "«При поражении»" : "«При победе»");
+            ue().undo();
+            check(ue().screen().ending == d::WindowEnding::None, "Ctrl+Z: shown by nothing");
+            ue().redo();
+            check(ue().screen().ending == want && ue_file(".html", pl_screen_).find(std::string("forge-ending=\"") + (lose ? "lose" : "win") + "\"") != std::string::npos,
+                  "Ctrl+Y: and its page says so");
+            check(click("ue-block-text"), "«Текст»");
+            pl_layer_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            break;
+        }
+        case 31:
+        case 38: {
+            const bool lose = pl_step_ == 31;
+            const std::string row = lose ? "Игра сама, при поражении: над игрой" : "Игра сама, при победе: над игрой";
+            check(element_text("ue-s-openers").find(row) != std::string::npos, "«Что его открывает»: «" + row + "»");
+            check(ue_node(pl_layer_) && ue_type("ue-s-text", "Итог: {game.result}") && ue_node(pl_layer_)->text == "Итог: {game.result}",
+                  "it says how the game ended");
+            pl_rec_[lose ? "lose_text" : "win_text"] = std::to_string(pl_layer_);
+            if (!lose) {
+                std::string error;
+                check(ed_.save_unsaved(error) && ed_.unsaved().empty() && !lv().dirty(), "everything is written: " + error);
+                check(tg_put(pl_root() / utf8_path("записи.txt"), pl_rec_), "the ids written down for the next editor (outside the games)");
+                std::string all;
+                for (const auto& [k, value] : pl_rec_) all += " " + k + "=" + value;
+                FORGE_INFO("self-test: платформер автора:%s", all.c_str());
+                return false;
+            }
+            check(click("ue-block-button"), "«Кнопка»");
+            pl_layer_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            break;
+        }
+        case 32:
+            check(ue_node(pl_layer_) && ue_type("ue-s-text", "Ещё раз") && d::block_label(*ue_node(pl_layer_))->text == "Ещё раз", "it says «Ещё раз»");
+            check(ue_open("ue-s-action"), "a click opens what it does");
+            break;
+        case 33: {
+            check(ue_option("ue-s-action", "new"), "«Новая игра»");
+            const d::Node* n = ue_node(pl_layer_);
+            check(n && n->on_click.size() == 1 && n->on_click[0].kind == d::ActionKind::NewGame, "it starts a new game");
+            pl_rec_["lose_again"] = std::to_string(pl_layer_);
+            break;
+        }
+        default: break;
+        }
+        ++pl_step_;
+        return true;
+    }
+
+    // In an editor for «Платформер А» from a third working folder (--self-test platformer-a-again).
+    bool platformer_again_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game";
+        objects::Library& lib = ol().library();
+        const i32 v = vy();
+        switch (pl_step_) {
+        case 0: {
+            pl_rec_ = tg_get(pl_root() / utf8_path("записи.txt"));
+            check(pl_rec_.count("enemy") && pl_rec_.count("win_text"), "what platformer-a made is written down");
+            check(!lvl_same(fs::current_path(), a), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            // The objects by their ids, with the author's values.
+            for (const PlMade& m : kPlMade) {
+                const objects::Template* t = lib.find(std::string_view(pl_rec_[m.key]));
+                check(t && t->kind == m.kind && t->name == m.name, std::string("«") + m.name + "» by its id " + pl_rec_[m.key]);
+                const flecs::entity e = lv().level().find(std::strtoull(pl_rec_[std::string(m.key) + "_copy"].c_str(), nullptr, 10));
+                check(e.is_valid() && t && lib.template_of(e) == t &&
+                          std::to_string(e.get<scene::Position>().tile_x()) == pl_rec_[std::string(m.key) + "_x"] &&
+                          std::to_string(e.get<scene::Position>().tile_y()) == pl_rec_[std::string(m.key) + "_y"],
+                      std::string("its copy on the level by its id, where it was put"));
+            }
+            const std::string enemy = pl_rec_["enemy"], coin = pl_rec_["coin"], trap = pl_rec_["trap"], goal = pl_rec_["goal"];
+            check(pl_value(enemy, "damage") == "2" && pl_value(enemy, "enemy_score") == "250" && pl_value(coin, "score") == "25" &&
+                      pl_value(trap, "half_width") == "1.5" && pl_value(trap, "hazard_damage") == "1",
+                  "the values as the author left them: «Урон» 2, «Очки» 250, the coin's 25, the spikes' «Полширины» 1.5");
+            const objects::Template* flag = lib.find(std::string_view(goal));
+            const editor::sources::Entry* s = ed_.sources.of_file("pictures/флаг.png");
+            check(flag && flag->picture == "флаг.png" && s && s->asset.to_string() == pl_rec_["pic"], "the flag's picture, its asset's id kept");
+            u64 pit = 0;
+            check(level::parse_area_id(pl_rec_["pit"], pit) && lv().level().areas().find(pit) && lv().level().areas().find(pit)->name == "Пропасть",
+                  "the zone «Пропасть» by its id");
+            // The screens.
+            check(ue().open(pl_rec_["hud"]) && ue().screen().show == d::ScreenShow::Playing &&
+                      ue_node(static_cast<u32>(std::atoi(pl_rec_["hud_text"].c_str()))) &&
+                      ue_node(static_cast<u32>(std::atoi(pl_rec_["hud_text"].c_str())))->text == "Очки: {hero.score}",
+                  "the HUD over the game, its score");
+            check(ue().open(pl_rec_["lose"]) && ue().screen().ending == d::WindowEnding::Lose &&
+                      ue_node(static_cast<u32>(std::atoi(pl_rec_["lose_again"].c_str()))) &&
+                      ue_node(static_cast<u32>(std::atoi(pl_rec_["lose_again"].c_str())))->on_click.size() == 1,
+                  "the window «при поражении», its «Ещё раз»");
+            check(ue().open(pl_rec_["win"]) && ue().screen().ending == d::WindowEnding::Win, "the window «при победе»");
+            check(click_tab(6) && ed_.tab() == "logic", "«Логика»");
+            break;
+        }
+        case 1: {
+            if (wait(2)) return true;
+            // The links by their ids, naming the zone and the flag by theirs.
+            const std::string goal = pl_rec_["goal"];
+            const logic::Link* fall = lg().links().find(static_cast<u32>(std::atoi(pl_rec_["fall"].c_str())));
+            const logic::Link* win = lg().links().find(static_cast<u32>(std::atoi(pl_rec_["win_link"].c_str())));
+            check(fall && fall->verb == "fall" && fall->b == pl_area() && lg().phrase_of(fall->id) == "Герой падает в Пропасть" &&
+                      lg().problem_of(fall->id).empty(),
+                  "«Герой падает в Пропасть» as it was");
+            check(win && win->verb == "win" && win->b == goal && lg().phrase_of(win->id) == "Герой доходит до Флага" && lg().problem_of(win->id).empty(),
+                  "«Герой доходит до Флага» as it was");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 2: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            lv().camera().x = kPlStart + 0.5;
+            lv().camera().y = v - 1;
+            check(pj_click("play") && !lv().last_play().empty(), "«Играть» from the village's ground");
+            const slice::ProjectEdits e = pl_edits();
+            const int code = tg_play(&e, "ожидания платформер.json", pl_root());
+            check(code == 0, "the game plays the author's enemy, coin, spikes, zone, flag and windows as set (exit " + std::to_string(code) + ")");
+            check(!fs::exists(game / "levels.json", ec), "nothing has written levels.json");
+            return false;
+        }
+        default: break;
+        }
+        ++pl_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -15820,7 +16367,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         Editor editor;
         // --self-test opened-game, ready, two-games-*: the game given, opened as the editor opens it (the self-test made it).
         const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0 ||
-                            options.self_part.rfind("levels-", 0) == 0;
+                            options.self_part.rfind("levels-", 0) == 0 || options.self_part.rfind("platformer-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -16301,12 +16848,14 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--ready-file") == 0 && has_value) app.options.ready_file = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    static const char* const kParts[] = {"new-game",    "opened-game", "ready",    "two-games",    "two-games-a", "two-games-a-again",
-                                         "two-games-b", "levels",      "levels-a", "levels-again", "levels-go",   "levels-go-again"};
+    static const char* const kParts[] = {"new-game",     "opened-game",     "ready",      "two-games",    "two-games-a",       "two-games-a-again",
+                                         "two-games-b",  "levels",          "levels-a",   "levels-again", "levels-go",         "levels-go-again",
+                                         "platformer",   "platformer-a",    "platformer-a-again"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
-                    "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again)",
+                    "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again, platformer and its parts "
+                    "platformer-a, platformer-a-again)",
                     app.options.self_part.c_str());
         return 2;
     }

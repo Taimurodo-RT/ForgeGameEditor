@@ -95,6 +95,9 @@ jobs:
       - name: A game of several levels (editor self-test part levels), a second level made, renamed and made the start level through the menu and the window about unsaved changes, one Tiled map name in two levels kept apart byte for byte, opened again elsewhere and each level played, links «уходит через» between them made in «Логика», played through, saved and continued in another process
         if: runner.os == 'Linux'
         run: ./build/apps/editor/forge_editor --self-test levels
+      - name: A platformer made by its author (editor self-test part platformer), an enemy, a coin, spikes and a flag made and set in «Объекты» with undo and redo, put on the level, a zone «Пропасть», links «падает в» and «доходит до» in «Логика», a HUD and the windows «Показывается сам» in «Интерфейс», opened again elsewhere and played as set, the template and B byte for byte as before
+        if: runner.os == 'Linux'
+        run: ./build/apps/editor/forge_editor --self-test platformer
       - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
         if: runner.os == 'Linux'
         run: |
@@ -141,17 +144,29 @@ jobs:
           trap 'mv build/slice-away games/slice' EXIT
           "./$packed" --test --scene levels
           (cd build/elsewhere && "../../$packed" --test --scene levels_continue)
-      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games and levels) play in the package and the build with games/slice moved away, the game of levels from its start level and through its links, then continued from another working folder
+      - name: The platformer's rules on two levels in the build, then in the package with games/slice moved away (slice scenes platformer, then platformer_continue from another working folder)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then built=build/apps/slice/Release/forge_slice.exe; packed=build/dist/OldMine/OldMine.exe; else built=build/apps/slice/forge_slice; packed=build/dist/OldMine/OldMine; fi
+          mkdir -p build/elsewhere
+          "./$built" --test --scene platformer
+          (cd build/elsewhere && "../../$built" --test --scene platformer_continue)
+          mv games/slice build/slice-away
+          trap 'mv build/slice-away games/slice' EXIT
+          "./$packed" --test --scene platformer
+          (cd build/elsewhere && "../../$packed" --test --scene platformer_continue)
+      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels and platformer) play in the package and the build with games/slice moved away, the game of levels from its start level and through its links, then continued from another working folder
         if: runner.os == 'Linux'
         run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/slice/forge_slice
       # Windows has no GPU here: the editor and the game draw with D3D12's software device (WARP), if SDL finds it.
-      - name: New game from a template on Windows (editor self-test parts new-game, two-games and levels with links between levels, each game in an editor of its own) and the games in the package and the build
+      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels and platformer, each game in an editor of its own) and the games in the package and the build
         if: runner.os == 'Windows'
         shell: bash
         run: |
           ./build/apps/editor/Release/forge_editor.exe --self-test new-game
           ./build/apps/editor/Release/forge_editor.exe --self-test two-games
           ./build/apps/editor/Release/forge_editor.exe --self-test levels
+          ./build/apps/editor/Release/forge_editor.exe --self-test platformer
           python tools/author_game/play.py build/dist/OldMine/OldMine.exe build/apps/slice/Release/forge_slice.exe
       - uses: actions/upload-artifact@v4
         with:

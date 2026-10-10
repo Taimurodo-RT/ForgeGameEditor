@@ -859,7 +859,8 @@ bool SliceGame::can_save(std::string* why) const {
 void SliceGame::came_in(f64 x, f64 feet_y) {
     has_back_ = true;
     back_x_ = x;
-    back_y_ = feet_y;
+    // Standing on a cell's top, the hero's place (in floats) has its feet a hair above it: on it.
+    back_y_ = std::fabs(feet_y - std::round(feet_y)) < 1e-3 ? std::round(feet_y) : feet_y;
     // A second the hero loses no heart where it is placed (in an enemy's box, say), not blinking.
     if (safe_ < kSafe) {
         safe_ = kSafe;
