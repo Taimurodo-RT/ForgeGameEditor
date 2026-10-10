@@ -54,6 +54,29 @@ FORGE_REFLECT(slice::ProjectEdits, 1) {
     t.field("pl_lose_again", &slice::ProjectEdits::pl_lose_again);
     t.field("pl_win_text", &slice::ProjectEdits::pl_win_text);
     t.field("pl_goal_color", &slice::ProjectEdits::pl_goal_color);
+    t.field("tp_hero", &slice::ProjectEdits::tp_hero);
+    t.field("tp_coin", &slice::ProjectEdits::tp_coin);
+    t.field("tp_coin_at", &slice::ProjectEdits::tp_coin_at);
+    t.field("tp_coin_score", &slice::ProjectEdits::tp_coin_score);
+    t.field("tp_enemy", &slice::ProjectEdits::tp_enemy);
+    t.field("tp_enemy_speed", &slice::ProjectEdits::tp_enemy_speed);
+    t.field("tp_enemy_damage", &slice::ProjectEdits::tp_enemy_damage);
+    t.field("tp_bridge", &slice::ProjectEdits::tp_bridge);
+    t.field("tp_exit", &slice::ProjectEdits::tp_exit);
+    t.field("tp_exit_level", &slice::ProjectEdits::tp_exit_level);
+    t.field("tp_exit_arrive", &slice::ProjectEdits::tp_exit_arrive);
+    t.field("tp_pit", &slice::ProjectEdits::tp_pit);
+    t.field("tp_goal", &slice::ProjectEdits::tp_goal);
+    t.field("tp_hud", &slice::ProjectEdits::tp_hud);
+    t.field("tp_lose", &slice::ProjectEdits::tp_lose);
+    t.field("tp_win", &slice::ProjectEdits::tp_win);
+    t.field("tp_hud_score", &slice::ProjectEdits::tp_hud_score);
+    t.field("tp_again", &slice::ProjectEdits::tp_again);
+    t.field("tp_win_title", &slice::ProjectEdits::tp_win_title);
+    t.field("tp_win_text", &slice::ProjectEdits::tp_win_text);
+    t.field("tp_win_again", &slice::ProjectEdits::tp_win_again);
+    t.field("tp_win_again_label", &slice::ProjectEdits::tp_win_again_label);
+    t.field("tp_win_again_text", &slice::ProjectEdits::tp_win_again_text);
 }
 
 namespace slice {

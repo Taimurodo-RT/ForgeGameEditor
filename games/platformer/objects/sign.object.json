@@ -1,0 +1,8 @@
+{
+  "id": "sign",
+  "name": "Указатель",
+  "kind": "picture",
+  "about": "показывает, куда идти",
+  "picture": "указатель.png",
+  "values": {}
+}

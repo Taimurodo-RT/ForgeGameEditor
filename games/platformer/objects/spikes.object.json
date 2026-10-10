@@ -1,0 +1,11 @@
+{
+  "id": "spikes",
+  "name": "Шипы",
+  "kind": "trap",
+  "genre": "Платформер",
+  "about": "шипы в одну клетку",
+  "picture": "шипы.png",
+  "values": {
+    "half_height": 0.5
+  }
+}

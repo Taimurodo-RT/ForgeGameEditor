@@ -1,6 +1,6 @@
 add_executable(forge_editor_app main.cpp asset_library.cpp components.cpp dock_view.cpp file_types.cpp level_editor.cpp level_tiled.cpp level_list.cpp
                                 object_library.cpp logic_editor.cpp scheme_view.cpp story_editor.cpp converters.cpp
-                                project_folder.cpp project_window.cpp ui_editor.cpp ui_editor_templates.cpp)
+                                project_folder.cpp project_window.cpp ui_editor.cpp ui_editor_templates.cpp platformer_template.cpp)
 set_target_properties(forge_editor_app PROPERTIES OUTPUT_NAME forge_editor)
 target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render forge::ui forge::editor forge::assets forge::audio forge::level forge::logic
                       forge_slice_lib forge_demo_common yyjson)

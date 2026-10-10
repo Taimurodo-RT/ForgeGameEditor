@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>HUD</title>
+<!-- Made by Forge «Интерфейс» from HUD.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n7 {
+  position: absolute;
+  left: 32px;
+  top: 96px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  gap: 14px;
+  padding: 10px 28px 10px 18px;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(43, 29, 46, 0.784);
+  border-radius: 20px 20px 20px 20px;
+}
+#n2 {
+  position: relative;
+  width: 48px;
+  flex-shrink: 0;
+  height: 48px;
+  box-sizing: border-box;
+  background-image: url("../pictures/сердце.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+#n3 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+#n4 {
+  position: relative;
+  width: 48px;
+  flex-shrink: 0;
+  height: 48px;
+  box-sizing: border-box;
+  background-image: url("../pictures/монета.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+#n5 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+#n6 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #ffd54a;
+  white-space: pre;
+}
+#n9 {
+  position: absolute;
+  right: 32px;
+  width: 1000px;
+  top: 32px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 10px 24px 10px 24px;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(43, 29, 46, 0.784);
+  border-radius: 16px 16px 16px 16px;
+}
+#n8 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 26px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: left;
+  color: #eee4d2;
+  white-space: pre;
+}
+html, body, #n1 {
+  pointer-events: none;
+}
+#n7, #n2, #n3, #n4, #n5, #n6, #n9, #n8 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="HUD" forge-screen="playing" forge-fit="expand" forge-size="1920 1080">
+  <div id="n7" class="frame" title="Счёт">
+    <div id="n2" class="image" title="Сердце"></div>
+    <div id="n3" class="text" title="Сердца" forge-text="{hero.hearts}">{hero.hearts}</div>
+    <div id="n4" class="image" title="Монета"></div>
+    <div id="n5" class="text" title="Монеты" forge-text="{inv.coins}">{inv.coins}</div>
+    <div id="n6" class="text" title="Очки" forge-text="Очки: {hero.score}">Очки: {hero.score}</div>
+  </div>
+  <div id="n9" class="frame" title="Подсказка">
+    <div id="n8" class="text" title="Управление">Бег: стрелки или A и D. Прыжок: пробел. Цель: флаг в конце «Вершины».</div>
+  </div>
+</div>
+</body>
+</html>

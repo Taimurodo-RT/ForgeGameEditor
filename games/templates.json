@@ -7,6 +7,15 @@
       "module": "slice",
       "game": "slice",
       "picture": "templates/old-mine.png"
+    },
+    {
+      "id": "platformer",
+      "name": "Платформер",
+      "about": "Три уровня с прыжками: луг, холмы и вершина с флагом. Герой, жуки, ежи, монеты и шипы, счёт на экране, окна победы и поражения. Всё правится во вкладках редактора.",
+      "module": "slice",
+      "game": "platformer",
+      "assets": "templates/platformer/assets",
+      "picture": "templates/platformer.png"
     }
   ]
 }

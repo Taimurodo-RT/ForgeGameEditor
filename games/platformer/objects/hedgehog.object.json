@@ -1,0 +1,13 @@
+{
+  "id": "hedgehog",
+  "name": "Ёж",
+  "kind": "enemy",
+  "genre": "Платформер",
+  "about": "колючий: прыжком не победить, только перепрыгнуть",
+  "picture": "еж.png",
+  "frames": 2,
+  "values": {
+    "stomp": false,
+    "speed": 1
+  }
+}

@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "title": "Победа",
+  "next_id": 10,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "command",
+    "pauses": true,
+    "esc_closes": false,
+    "dim": true,
+    "over": "game",
+    "ending": "win",
+    "appear": "zoom",
+    "appear_time": 0.25
+  },
+  "root": {
+    "id": 1,
+    "name": "Победа",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 2,
+        "name": "Окно",
+        "type": "frame",
+        "x": 580.0,
+        "y": 330.0,
+        "w": 760.0,
+        "h": 420.0,
+        "horizontal": "center",
+        "vertical": "center",
+        "layout": {
+          "mode": "column",
+          "gap": 22.0,
+          "padding": [
+            44.0,
+            40.0,
+            44.0,
+            40.0
+          ],
+          "align": 1
+        },
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#2b1d2e"
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#ffd54a",
+            "width": 4.0,
+            "align": "inside"
+          }
+        ],
+        "radius": [
+          28.0,
+          28.0,
+          28.0,
+          28.0
+        ],
+        "children": [
+          {
+            "id": 3,
+            "name": "Заголовок",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 302.4,
+            "h": 93.6,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "Победа!",
+            "style": {
+              "family": "",
+              "size": 72.0,
+              "weight": 800,
+              "align": "left",
+              "color": "#ffd54a"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Итог",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 652.8,
+            "h": 41.6,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "Флаг взят. Очки: {hero.score}, монет: {inv.coins}.",
+            "style": {
+              "family": "",
+              "size": 32.0,
+              "weight": 500,
+              "align": "left",
+              "color": "#eee4d2"
+            }
+          },
+          {
+            "id": 9,
+            "name": "Кнопки",
+            "type": "frame",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 100.0,
+            "h": 100.0,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "layout": {
+              "mode": "row",
+              "gap": 28.0,
+              "padding": [
+                18.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "align": 4
+            },
+            "children": [
+              {
+                "id": 6,
+                "name": "Кнопка «Ещё раз»",
+                "type": "frame",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 280.0,
+                "h": 76.0,
+                "layout": {
+                  "mode": "row",
+                  "gap": 0.0,
+                  "padding": [
+                    14.0,
+                    36.0,
+                    14.0,
+                    36.0
+                  ],
+                  "align": 4
+                },
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#f2b33d"
+                  }
+                ],
+                "radius": [
+                  18.0,
+                  18.0,
+                  18.0,
+                  18.0
+                ],
+                "on_click": [
+                  {
+                    "do": "new"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 5,
+                    "name": "Ещё раз",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 142.8,
+                    "h": 44.2,
+                    "width_sizing": "hug",
+                    "height_sizing": "hug",
+                    "text": "Ещё раз",
+                    "style": {
+                      "family": "",
+                      "size": 34.0,
+                      "weight": 700,
+                      "align": "left",
+                      "color": "#2b1d2e"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 8,
+                "name": "Кнопка «В меню»",
+                "type": "frame",
+                "x": 0.0,
+                "y": 0.0,
+                "w": 280.0,
+                "h": 76.0,
+                "layout": {
+                  "mode": "row",
+                  "gap": 0.0,
+                  "padding": [
+                    14.0,
+                    36.0,
+                    14.0,
+                    36.0
+                  ],
+                  "align": 4
+                },
+                "fills": [
+                  {
+                    "kind": "solid",
+                    "color": "#58425c"
+                  }
+                ],
+                "radius": [
+                  18.0,
+                  18.0,
+                  18.0,
+                  18.0
+                ],
+                "on_click": [
+                  {
+                    "do": "menu"
+                  }
+                ],
+                "children": [
+                  {
+                    "id": 7,
+                    "name": "В меню",
+                    "type": "text",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 122.4,
+                    "h": 44.2,
+                    "width_sizing": "hug",
+                    "height_sizing": "hug",
+                    "text": "В меню",
+                    "style": {
+                      "family": "",
+                      "size": 34.0,
+                      "weight": 700,
+                      "align": "left",
+                      "color": "#ffffff"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
