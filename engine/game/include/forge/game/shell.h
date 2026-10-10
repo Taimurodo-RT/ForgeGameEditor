@@ -89,6 +89,7 @@ struct GameInfo {
     std::string org = "Forge";
     std::string theme;
     f64 autosave_minutes = 5;
+    f64 zoom = 0;    // "zoom": pixels of the screen per tile of the world at a new game; 0: the game's own
     bool ok = false; // the file was there and readable
 };
 GameInfo read_game_info(const std::filesystem::path& game_dir);

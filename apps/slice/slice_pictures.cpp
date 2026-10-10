@@ -45,6 +45,8 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
         u64 key;
         fs::path file;
         fs::file_time_type mtime;
+        u32 frames;
+        bool hero;
     };
     std::vector<Wanted> wanted;
     std::string signature;
@@ -53,27 +55,39 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
         const fs::path file = library.picture_file(t);
         std::error_code ec;
         const fs::file_time_type mtime = fs::last_write_time(file, ec);
-        wanted.push_back({t.key, file, ec ? fs::file_time_type{} : mtime});
+        wanted.push_back({t.key, file, ec ? fs::file_time_type{} : mtime, t.frames, library.has_block(t, "hero")});
         signature += std::to_string(t.key) + "=" + path_to_utf8(file) + "@" +
-                     std::to_string(wanted.back().mtime.time_since_epoch().count()) + ";";
+                     std::to_string(wanted.back().mtime.time_since_epoch().count()) + "/" + std::to_string(t.frames) +
+                     (wanted.back().hero ? "h" : "") + ";";
     }
     if (signature == signature_ && !sheet.rgba.empty()) return false;
     signature_ = signature;
     by_key_.clear();
+    hero_key_ = 0;
 
-    // Shelves under the drawn frames, one pixel apart.
+    // Shelves under the drawn frames, one pixel apart; the frames of a strip each a place of its own.
     struct Place {
-        u64 key;
         const Decoded* image;
-        u32 x, y;
+        u32 sx, w; // its columns in the picture
+        u32 x, y;  // where in the sheet
     };
     std::vector<Place> places;
+    std::vector<std::pair<u64, Picture>> made;
     const u32 width = std::max(base.width, kMaxSide + 2);
     u32 x = 1, y = base.height + 1, shelf = 0;
+    std::string hero_id;
+    u32 heroes = 0;
     for (const Wanted& w : wanted) {
         const Decoded& d = decode(w.file, w.mtime);
         if (d.rgba.empty()) continue;
-        if (x + d.width + 1 > width) {
+        u32 frames = w.frames;
+        if (frames > 1 && d.width % frames != 0) {
+            FORGE_WARN("картинка %s: ширина %u не делится на %u кадров, она рисуется целиком", path_to_utf8(w.file).c_str(),
+                       d.width, frames);
+            frames = 1;
+        }
+        const u32 fw = d.width / frames;
+        if (x + d.width + frames > width) {
             x = 1;
             y += shelf + 1;
             shelf = 0;
@@ -82,10 +96,29 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
             FORGE_WARN("картинки объектов не помещаются в лист, %s пропущена", path_to_utf8(w.file).c_str());
             continue;
         }
-        places.push_back({w.key, &d, x, y});
-        x += d.width + 1;
+        made.push_back({w.key, {static_cast<u32>(base.frames.size() + places.size()), frames,
+                                static_cast<f32>(fw) / static_cast<f32>(d.height)}});
+        for (u32 f = 0; f < frames; ++f) {
+            places.push_back({&d, f * fw, fw, x, y});
+            x += fw + 1;
+        }
         shelf = std::max(shelf, d.height);
+        if (w.hero) {
+            const objects::Template* t = library.find(w.key);
+            if (frames != 1 && frames != 4)
+                FORGE_WARN("у картинки героя %s %u кадров, а нужно 4 или 1: герой рисуется как прежде", path_to_utf8(w.file).c_str(),
+                           frames);
+            else if (t) {
+                ++heroes;
+                if (hero_id.empty() || t->id < hero_id) {
+                    hero_id = t->id;
+                    hero_key_ = w.key;
+                }
+            }
+        }
     }
+    if (heroes > 1)
+        FORGE_WARN("объектов вида «Герой» с картинкой %u: герой рисуется картинкой «%s», первого по id", heroes, hero_id.c_str());
     const u32 height = places.empty() ? base.height : y + shelf + 1;
 
     sheet.width = width;
@@ -98,12 +131,11 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
     for (const Place& p : places) {
         const Decoded& d = *p.image;
         for (u32 row = 0; row < d.height; ++row)
-            std::copy_n(&d.rgba[static_cast<usize>(row) * d.width * 4], static_cast<usize>(d.width) * 4,
+            std::copy_n(&d.rgba[(static_cast<usize>(row) * d.width + p.sx) * 4], static_cast<usize>(p.w) * 4,
                         &sheet.rgba[(static_cast<usize>(p.y + row) * width + p.x) * 4]);
-        by_key_[p.key] = {static_cast<u32>(sheet.frames.size()),
-                          static_cast<f32>(d.width) / static_cast<f32>(d.height)};
-        sheet.frames.push_back({p.x, p.y, d.width, d.height});
+        sheet.frames.push_back({p.x, p.y, p.w, d.height});
     }
+    for (auto& [key, picture] : made) by_key_[key] = picture;
     return true;
 }
 

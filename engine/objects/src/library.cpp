@@ -311,6 +311,10 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     t.about = text_of(yyjson_obj_get(root, "about"));
     t.genre = text_of(yyjson_obj_get(root, "genre"));
     t.picture = text_of(yyjson_obj_get(root, "picture"));
+    if (yyjson_val* frames = yyjson_obj_get(root, "frames"); yyjson_is_uint(frames) || yyjson_is_sint(frames)) {
+        const i64 n = yyjson_get_sint(frames);
+        t.frames = n >= 1 && n <= kMaxFrames ? static_cast<u32>(n) : 1;
+    }
     t.blocks = read_list(yyjson_obj_get(root, "blocks"));
     t.values = read_values(yyjson_obj_get(root, "values"));
     yyjson_doc_free(doc);
@@ -333,6 +337,7 @@ std::string template_json(const Template& t) {
     if (!t.genre.empty()) s += "  \"genre\": " + json_text(t.genre) + ",\n";
     if (!t.about.empty()) s += "  \"about\": " + json_text(t.about) + ",\n";
     if (!t.picture.empty()) s += "  \"picture\": " + json_text(t.picture) + ",\n";
+    if (t.frames != 1) s += "  \"frames\": " + std::to_string(t.frames) + ",\n";
     if (!t.blocks.empty()) {
         s += "  \"blocks\": [";
         for (usize i = 0; i < t.blocks.size(); ++i) s += (i ? ", " : "") + json_text(t.blocks[i]);
@@ -355,7 +360,7 @@ u32 template_rev(const Template& t) {
 
 u32 Template::look() const {
     if (picture.empty()) return rev;
-    return (rev ^ static_cast<u32>(fnv1a(picture) >> 7) ^ (picture_stamp * 0x9E3779B1u)) | 1u;
+    return (rev ^ static_cast<u32>(fnv1a(picture) >> 7) ^ (picture_stamp * 0x9E3779B1u) ^ ((frames - 1) * 0x85EBCA6Bu)) | 1u;
 }
 
 // --- the library ------------------------------------------------------------
@@ -438,6 +443,7 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
         kind.icon = text_of(yyjson_obj_get(k, "icon"));
         kind.about = text_of(yyjson_obj_get(k, "about"));
         if (yyjson_val* f = yyjson_obj_get(k, "foot")) kind.foot = yyjson_get_num(f);
+        if (yyjson_val* p = yyjson_obj_get(k, "placed"); yyjson_is_bool(p)) kind.placed = yyjson_get_bool(p);
         kind.blocks = read_list(yyjson_obj_get(k, "blocks"));
         std::vector<Part> own = read_parts(yyjson_obj_get(k, "components"), kind.name);
         kind.props = read_props(yyjson_obj_get(k, "props"), kind.name);
@@ -663,7 +669,7 @@ std::optional<Template> Library::copy_from(const Library& from, const Template& 
 bool Library::same_as(const Library& from, const Template& t) const {
     const Template* here = find(fnv1a(t.id));
     if (!here || here->name != t.name || here->about != t.about || here->genre != t.genre || here->kind != t.kind ||
-        here->rev != t.rev || here->picture.empty() != t.picture.empty())
+        here->rev != t.rev || here->picture.empty() != t.picture.empty() || here->frames != t.frames)
         return false;
     if (!t.picture.empty() && !same_file(picture_file(*here), from.picture_file(t))) return false;
     for (const PropDef* prop : from.props_of(t)) {

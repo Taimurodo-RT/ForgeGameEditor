@@ -168,6 +168,67 @@ TEST_CASE("a template's own picture is kept in its file") {
     CHECK(read->rev == t->rev); // a picture does not touch the copies' values
 }
 
+TEST_CASE("a template's picture of frames: read, written and looked at") {
+    Fixture f;
+    Template coins = *f.lib.find("coins");
+    CHECK(coins.frames == 1);
+    coins.picture = "монета.png";
+    const u32 one = coins.look(), rev = coins.rev;
+    coins.frames = 4;
+    CHECK(coins.look() != one); // its icons are cut from frame 0 again
+    REQUIRE(f.lib.put(coins));
+    CHECK(f.lib.find("coins")->rev == rev); // the copies' values are as they were
+    std::vector<u8> bytes;
+    REQUIRE(read_file(coins.file, bytes));
+    CHECK(std::string(bytes.begin(), bytes.end()).find("\"frames\": 4") != std::string::npos);
+    std::optional<Template> read = read_template(coins.file);
+    REQUIRE(read);
+    CHECK(read->frames == 4);
+    // One frame is not written; what is not 1..8 reads as one.
+    coins.frames = 1;
+    REQUIRE(f.lib.put(coins));
+    REQUIRE(read_file(coins.file, bytes));
+    CHECK(std::string(bytes.begin(), bytes.end()).find("frames") == std::string::npos);
+    for (const char* bad : {"0", "9", "-2", "\"4\"", "2.5"}) {
+        write_text(f.dir / "objects" / "odd.object.json",
+                   std::string(R"({"id": "odd", "name": "Странный", "kind": "pickup", "picture": "x.png", "frames": )") + bad + "}");
+        read = read_template(f.dir / "objects" / "odd.object.json");
+        REQUIRE(read);
+        CHECK_MESSAGE(read->frames == 1, bad);
+    }
+    write_text(f.dir / "objects" / "odd.object.json", R"({"id": "odd", "name": "Странный", "kind": "pickup", "frames": 8})");
+    REQUIRE((read = read_template(f.dir / "objects" / "odd.object.json")));
+    CHECK(read->frames == kMaxFrames);
+    // Shared and taken back: another number of frames is another template.
+    const auto shared_dir = temp_folder("forge_objects_frames_shared_test");
+    Library shared;
+    shared.set_pictures_folder(shared_dir / "pictures");
+    REQUIRE(shared.load(f.lib.kinds_file(), shared_dir / "objects"));
+    write_text(f.lib.pictures_folder() / utf8_path("монета.png"), "not really a png");
+    coins.frames = 2;
+    REQUIRE(f.lib.put(coins));
+    std::optional<Template> up = shared.copy_from(f.lib, coins);
+    REQUIRE(up);
+    CHECK(up->frames == 2);
+    REQUIRE(shared.put(*up));
+    CHECK(shared.same_as(f.lib, coins));
+    coins.frames = 3;
+    REQUIRE(f.lib.put(coins));
+    CHECK_FALSE(shared.same_as(f.lib, coins));
+}
+
+TEST_CASE("a kind may be one whose templates are not put on levels") {
+    const auto dir = temp_folder("forge_objects_placed_test");
+    write_text(dir / "kinds.json", R"({"kinds": [
+        {"id": "pickup", "name": "Подбираемое", "components": {"ObjTestBody": {}}},
+        {"id": "hero", "name": "Герой", "placed": false, "components": {}}]})");
+    Library lib;
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    REQUIRE(lib.kinds().size() == 2);
+    CHECK(lib.kinds()[0].placed);
+    CHECK_FALSE(lib.kinds()[1].placed);
+}
+
 TEST_CASE("a picture with new content under its name draws its templates again") {
     Fixture f;
     const KindDef& k = f.lib.kinds()[0];

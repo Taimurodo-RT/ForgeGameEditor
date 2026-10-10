@@ -257,7 +257,9 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         sim::draw_position(p, b, alpha, x, y);
         const f32 side = c.dir < 0 ? -1.0f : 1.0f;
         if (const Pictures::Picture* pic = picture(e)) {
-            at(x, y, side * pic->aspect, 1.0f, pic->frame, 1);
+            // Its frames one after another every 8 ticks while it walks on the ground; else the first.
+            const bool walks = (b.contacts & sim::OnGround) && std::fabs(b.vx) > 0.3f;
+            at(x, y, side * pic->aspect, 1.0f, pic->frame + (walks ? phase % pic->frames : 0u), 1);
             return;
         }
         Sprite* s = batch.push(1);
@@ -425,7 +427,7 @@ const std::vector<level::ObjectDef>& SliceLevel::objects() const {
         object_defs_.clear();
         for (const objects::Template& t : library_.templates()) {
             const objects::KindDef* k = library_.kind_of(t);
-            if (!k) continue;
+            if (!k || !k->placed) continue;
             object_defs_.push_back({t.id, t.name, k->group, t.about, t.key});
         }
     }
@@ -467,7 +469,8 @@ void SliceLevel::object_icon(const level::ObjectDef& def, u32 size, std::vector<
 void SliceLevel::hero_icon(u32 size, std::vector<u8>& rgba) const {
     rgba.assign(static_cast<usize>(size) * size * 4, 0);
     refresh_pictures();
-    frame_icon(FrameHero, size, rgba);
+    const Pictures::Picture* pic = pictures_.hero(); // the game's own picture of the hero: its first frame
+    frame_icon(pic ? pic->frame : FrameHero, size, rgba);
 }
 
 void SliceLevel::frame_icon(u32 frame, u32 size, std::vector<u8>& rgba) const {

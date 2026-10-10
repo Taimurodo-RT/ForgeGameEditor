@@ -660,7 +660,7 @@
             <div class="divider vertical"/>
             <div id="ol-open" class="command strong" title="Открыть редактор объекта (Enter, двойной щелчок)" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel" data-event-click="ol_open"><icon name="edit_square"/><span>Открыть редактор</span></div>
             <div id="ol-take" class="command strong" title="Скопировать общий объект в эту игру" data-if="ol_in_shared" data-class-disabled="!ol_has_sel || ol_sel_twin == 'same'" data-event-click="ol_take"><icon name="download"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить из общих' : 'Взять в игру' }}</span></div>
-            <div id="ol-place" class="command strong" title="Поставить на уровень" data-class-disabled="!ol_has_sel" data-event-click="ol_place"><icon name="add_location_alt"/><span>Поставить на уровень</span></div>
+            <div id="ol-place" class="command strong" title="Поставить на уровень" data-class-disabled="!ol_has_sel || !ol_sel_placed" data-event-click="ol_place"><icon name="add_location_alt"/><span>Поставить на уровень</span></div>
             <div id="ol-share" class="command" title="Положить копию объекта в общие, чтобы взять его в другую игру" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel || ol_sel_twin == 'same'" data-event-click="ol_share"><icon name="share"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить в общих' : 'Сделать общим' }}</span></div>
             <div id="ol-duplicate" class="command" title="Копия (Ctrl+D)" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel" data-event-click="ol_duplicate"><icon name="content_copy"/><span>Копия</span></div>
             <div id="ol-rename" class="command" title="Переименовать (F2)" data-if="!ol_in_shared" data-class-disabled="!ol_has_sel" data-event-click="ol_rename_start"><icon name="drive_file_rename_outline"/><span>Переименовать</span></div>
@@ -722,12 +722,13 @@
                         <div class="info row"><span class="key">Жанр</span><span class="value">{{ ol_sel_genre }}</span></div>
                         <div class="info row" data-if="ol_sel_about != ''"><span class="key">Заметка</span><span class="value">{{ ol_sel_about }}</span></div>
                         <div class="info row"><span class="key">Файл</span><span class="value path">{{ ol_sel_file }}</span></div>
+                        <div id="ol-hero-note" class="info row" data-if="ol_sel_hero != ''"><span class="key">Герой</span><span class="value">{{ ol_sel_hero }}</span></div>
                         <div id="ol-twin" class="info row"><span class="key">{{ ol_in_shared ? 'В этой игре' : 'Общий' }}</span><span class="value">{{ ol_sel_twin == 'same' ? 'да, такой же' : ol_sel_twin == 'differs' ? 'да, но отличается' : 'нет' }}</span></div>
                     </div>
                     <div class="links column">
                         <div id="ol-open-link" class="link row" data-if="!ol_in_shared" data-event-click="ol_open"><icon class="s" name="edit_square"/><span>Открыть редактор</span></div>
                         <div id="ol-take-link" class="link row" data-if="ol_in_shared && ol_sel_twin != 'same'" data-event-click="ol_take"><icon class="s" name="download"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить из общих' : 'Взять в игру' }}</span></div>
-                        <div id="ol-place-link" class="link row" data-event-click="ol_place"><icon class="s" name="add_location_alt"/><span>Поставить на уровень</span></div>
+                        <div id="ol-place-link" class="link row" data-if="ol_sel_placed" data-event-click="ol_place"><icon class="s" name="add_location_alt"/><span>Поставить на уровень</span></div>
                         <div id="ol-share-link" class="link row" data-if="!ol_in_shared && ol_sel_twin != 'same'" data-event-click="ol_share"><icon class="s" name="share"/><span>{{ ol_sel_twin == 'differs' ? 'Обновить в общих' : 'Сделать общим' }}</span></div>
                     </div>
                 </div>
@@ -742,7 +743,7 @@
                     <span class="ol-editor-title">{{ ol_sel_name }}</span>
                     <span class="muted">{{ ol_sel_kind }}</span>
                     <div class="grow"/>
-                    <div class="command strong" data-event-click="ol_place"><icon name="add_location_alt"/><span>Поставить на уровень</span></div>
+                    <div class="command strong" data-if="ol_sel_placed" data-event-click="ol_place"><icon name="add_location_alt"/><span>Поставить на уровень</span></div>
                 </div>
                 <div class="ol-editor-body row grow">
                     <div class="ol-editor-look column">
@@ -754,6 +755,13 @@
                                 <div id="ol-picture-pick" class="command" title="Выбрать картинку из «Ресурсов»" data-event-click="ol_picture_pick"><icon name="image"/><span>Выбрать…</span></div>
                                 <div id="ol-picture-clear" class="command" title="Вернуть обычную картинку" data-if="ol_sel_picture != ''" data-event-click="ol_picture_clear"><icon name="hide_image"/><span>Убрать</span></div>
                             </div>
+                            <div id="ol-frames" class="row gap-1" data-if="ol_sel_picture != ''" title="Картинка — полоса из стольких кадров одного размера, слева направо: у героя 4 (стоит, шаг, шаг, в воздухе), у зверька и врага 2 (шаги)">
+                                <span class="body-small grow">Кадров в картинке</span>
+                                <div id="ol-frames-less" class="icon-button small" title="Меньше" data-event-click="ol_frames(-1)"><icon name="remove"/></div>
+                                <span id="ol-frames-n">{{ ol_sel_frames }}</span>
+                                <div id="ol-frames-more" class="icon-button small" title="Больше" data-event-click="ol_frames(1)"><icon name="add"/></div>
+                            </div>
+                            <div id="ol-hero-note-ed" class="muted body-small" data-if="ol_sel_hero != ''">{{ ol_sel_hero }}</div>
                         </div>
                         <div class="muted body-small ol-kind-about">{{ ol_sel_kind_about }}</div>
                     </div>

@@ -178,6 +178,7 @@ GameInfo read_game_info(const fs::path& game_dir) {
         info.org = json_str(yyjson_obj_get(root, "org"), "Forge");
         info.theme = json_str(yyjson_obj_get(root, "theme"));
         if (yyjson_val* a = yyjson_obj_get(root, "autosave_minutes"); yyjson_is_num(a)) info.autosave_minutes = yyjson_get_num(a);
+        if (yyjson_val* z = yyjson_obj_get(root, "zoom"); yyjson_is_num(z)) info.zoom = yyjson_get_num(z);
     }
     if (doc) yyjson_doc_free(doc);
     return info;
