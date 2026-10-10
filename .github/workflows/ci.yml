@@ -144,17 +144,19 @@ jobs:
           trap 'mv build/slice-away games/slice' EXIT
           "./$packed" --test --scene levels
           (cd build/elsewhere && "../../$packed" --test --scene levels_continue)
-      - name: The platformer's rules on two levels in the build, then in the package with games/slice moved away (slice scenes platformer, then platformer_continue from another working folder)
+      - name: The platformer's rules on two levels in the build, then in the package with games/slice moved away (slice scenes platformer, then platformer_continue and platformer_edges from another working folder)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then built=build/apps/slice/Release/forge_slice.exe; packed=build/dist/OldMine/OldMine.exe; else built=build/apps/slice/forge_slice; packed=build/dist/OldMine/OldMine; fi
           mkdir -p build/elsewhere
           "./$built" --test --scene platformer
           (cd build/elsewhere && "../../$built" --test --scene platformer_continue)
+          (cd build/elsewhere && "../../$built" --test --scene platformer_edges)
           mv games/slice build/slice-away
           trap 'mv build/slice-away games/slice' EXIT
           "./$packed" --test --scene platformer
           (cd build/elsewhere && "../../$packed" --test --scene platformer_continue)
+          (cd build/elsewhere && "../../$packed" --test --scene platformer_edges)
       - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels and platformer) play in the package and the build with games/slice moved away, the game of levels from its start level and through its links, then continued from another working folder
         if: runner.os == 'Linux'
         run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/slice/forge_slice

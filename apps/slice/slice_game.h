@@ -258,6 +258,8 @@ public:
     u32 hazard_hits() const { return hazard_hits_; }
     u32 falls() const { return falls_; }
     u32 backs() const { return backs_; }
+    // Times a return found no place that would do (the hero stayed where it was).
+    u32 nowheres() const { return nowheres_; }
     // How many times the game ended since it began or was loaded (at most once).
     u32 endings() const { return endings_; }
 
@@ -327,7 +329,10 @@ private:
     void lose_hearts(f64 n);
     void settle();
     void wake_up();
-    void go_back();
+    void hearts_out();
+    bool go_back();
+    const char* return_spot(bool waking, f64& x, f64& y);
+    bool in_pit(f64 x, f64 y) const;
     void finish(bool won);
     bool back_spot(f64 x, f64 y, f64& out_x, f64& out_y, std::string* why);
     bool is_pit(forge::u64 area) const;
@@ -437,8 +442,13 @@ private:
     bool has_back_ = false;
     f64 back_x_ = 0, back_y_ = 0; // the return point: under the hero's feet
     bool back_asked_ = false;     // spikes or a pit: back after the ticks
+    bool fell_ = false;           // that back is from a pit (nothing to stand on there)
+    bool nowhere_ = false;        // no place to go back to for this touch of hazards: not looked for until off them
+    bool has_ground_ = false;     // where the hero last stood safely on the floor of this level (not saved)
+    f64 ground_x_ = 0, ground_y_ = 0;
+    bool placed_ = false;         // teleported since the last tick: the body's contacts are from before
     bool out_of_hearts_ = false;  // the last heart went: the end (or the old waking up) after the ticks
-    u32 stomps_ = 0, enemy_hits_ = 0, hazard_hits_ = 0, falls_ = 0, backs_ = 0, endings_ = 0;
+    u32 stomps_ = 0, enemy_hits_ = 0, hazard_hits_ = 0, falls_ = 0, backs_ = 0, endings_ = 0, nowheres_ = 0;
     // Enemies the hero was in when it beat another: they do not hurt it until it is out of them.
     std::vector<flecs::entity_t> spared_;
 };

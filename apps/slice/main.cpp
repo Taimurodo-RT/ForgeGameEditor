@@ -10,7 +10,7 @@
 //                                   over the game and draws new ones into logic.json)
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
 //                                                    |tiled|tiled_update|levels|levels_continue|platformer
-//                                                    |platformer_continue|project]
+//                                                    |platformer_continue|platformer_edges|project]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
@@ -26,7 +26,9 @@
 //                                   process: «Продолжить» from that save, both levels as they were left;
 //                                   platformer: the platformer's rules (enemies, coins and the score, spikes, a pit,
 //                                   the end of the game) on a game of two levels with nothing around them, played by
-//                                   the keys and saved; platformer_continue, another process: «Продолжить», a win)
+//                                   the keys and saved; platformer_continue, another process: «Продолжить», a win;
+//                                   platformer_edges, a third: a link «собирает», the frame a game ends in, no place
+//                                   to put the hero back in, with the window «при поражении» and without)
 //   forge_slice --test --scene project [--play] --data GAME [--level DIR --at X,Y --user DIR] [--edits FILE]
 //                                   a game the editor made of a template, as its «Играть» starts it: that game's data,
 //                                   title and links, the hero at X,Y, the player's files in DIR; with FILE, what the
@@ -148,12 +150,20 @@ constexpr u32 kTrailLink = 201, kEntryLink = 202, kPitLink = 203, kFinishLink = 
 constexpr f64 kCoinX = 6.5, kBeetleX = 22.5, kHedgeX = 40.5, kPairAX = 55.5, kPairBX = 56.2, kPairX = 55.85, kBesideX = 70.5,
               kSpinyX = 71.4, kDropX = 100.5;
 constexpr f64 kCoin2X = 8.5, kLoudX = 18.5, kSpikesX = 30.5, kWandererX = 64.5;
+// What platformer_edges puts on them, by their level ids: a «Самоцвет» the link «Герой собирает Самоцвет» takes, a
+// «Гудящий зверёк» (a sound near it), a «Монетка» and a «Ёж» where the game is lost, a «Монетка» in «Финиш», a «Ряд
+// шипов» over the places the hero is put back in. kGemLink: that link.
+constexpr u64 kGem = 0x142c000000000301, kHum = 0x142c000000000302, kEndCoin = 0x142c000000000303, kEndHedge = 0x142c000000000304,
+              kWinCoin = 0x142c000000000305, kWinHum = 0x142c000000000306, kOver = 0x142c000000000307;
+constexpr u32 kGemLink = 205;
+constexpr f64 kGemX = 12.5, kOverX = 1.5; // «Ряд шипов» at kOverX: from 0 to 3
 // How far before an enemy the running hero jumps to come down onto it (a jump of 15.5 tiles / s at 8.5 tiles / s).
 constexpr f64 kJumpAhead = 6.1;
 
 // The two levels as the level editor writes them (its Level and the game's module): cells, areas, the spawn point,
 // the copies with their ids; nothing around (world.json). feet: the floor's top.
-inline bool write_levels(const std::filesystem::path& game, f64 feet, std::string& why) {
+// hill_spawn_x: the spawn point of «Холм» (platformer_edges puts it where there is no floor).
+inline bool write_levels(const std::filesystem::path& game, f64 feet, std::string& why, f64 hill_spawn_x = 1.5) {
     namespace fs = std::filesystem;
     using namespace forge::world;
     const i32 v = static_cast<i32>(feet);
@@ -213,7 +223,7 @@ inline bool write_levels(const std::filesystem::path& game, f64 feet, std::strin
     forge::level::LevelAreas hill;
     hill.areas = {area(kEntry, "Вход", 0, 3, -6, 2), area(kPit, "Яма", 40, 43, 1, 14), area(kFinish, "Финиш", 55, 58, -6, 2)};
     hill.spawn = true;
-    hill.spawn_x = 1.5;
+    hill.spawn_x = hill_spawn_x;
     hill.spawn_y = feet;
     return one(
                "level",
@@ -1140,8 +1150,8 @@ private:
             build_levels(s, scene_ == "levels_continue");
             return;
         }
-        if (scene_ == "platformer" || scene_ == "platformer_continue") {
-            build_platformer(s, scene_ == "platformer_continue");
+        if (scene_ == "platformer" || scene_ == "platformer_continue" || scene_ == "platformer_edges") {
+            build_platformer(s, scene_ == "platformer_continue", scene_ == "platformer_edges");
             return;
         }
         if (scene_ == "own_tiles") {
@@ -5239,8 +5249,9 @@ private:
     // --scene platformer and platformer_continue (step 14.2c, 14.2-платформер-модель.md, «Как проверяется 14.2c»): the
     // platformer's rules on the game of two levels in plat::root(), «Луг» and «Холм», nothing around them. The keys lead
     // the hero (walking, jumping onto enemies); a new game ends in a loss, «Ещё раз» plays a clean one over to «Холм»
-    // and back, where it is saved; platformer_continue goes on from there in another process and wins.
-    void build_platformer(Shell& s, bool continued) {
+    // and back, where it is saved; platformer_continue goes on from there in another process and wins; platformer_edges,
+    // a third process on the same game, plays a link «собирает», the frames games end in and returns with no place to go.
+    void build_platformer(Shell& s, bool continued, bool edges) {
         namespace fs = std::filesystem;
         SliceGame& g = g_;
         using Files = std::vector<std::pair<std::string, std::vector<u8>>>;
@@ -5249,6 +5260,8 @@ private:
             u32 phase = 0, at = 0, hit1 = 0;
             f64 x0 = 0, y0 = 0, top = 0, score0 = 0, wx = 0;
             u32 stomps0 = 0, hits0 = 0, hazards0 = 0, backs0 = 0, falls0 = 0, travels0 = 0, coins_cue = 0, crate_cue = 0, named0 = 0;
+            u32 last = 0, nowheres0 = 0, pickup_cue = 0;
+            f64 coins0 = 0, gx = 0;
             Files saves;
             std::map<std::string, f64> notes; // what the first process saw
         };
@@ -5331,6 +5344,392 @@ private:
             return true;
         };
 
+        if (edges) {
+            // The same game in a third process; «Холм» written again with its spawn point where there is no floor
+            // (x −20.5): a place to put the hero back in that will not do.
+            steps_.push_back({"края: та же игра, точка появления «Холма» там, где нет пола", 40, [&s, &g, this, st](u32 f) {
+                if (f < 5) return false;
+                std::error_code ec;
+                FORGE_INFO("рабочая папка: %s", path_to_utf8(fs::current_path(ec)).c_str());
+                check(fs::equivalent(s.game_dir(), plat::root() / "data", ec), "игра читает данные из " + path_to_utf8(s.game_dir()));
+                check(s.data_errors().empty(), "данные игры читаются без ошибок");
+                logic::Logic links;
+                std::string why;
+                check(links.load(s.game_dir() / "logic.json", &why), "связи игры читаются: " + why);
+                const auto gem = std::find_if(links.links.begin(), links.links.end(), [](const logic::Link& l) { return l.id == plat::kGemLink; });
+                check(gem != links.links.end() && gem->a == "hero" && gem->verb == "collect" && gem->b == "gem",
+                      "в logic.json связь «Герой собирает Самоцвет»");
+                check(plat::write_levels(s.game_dir(), st->v, why, -20.5), "уровни записаны: " + why);
+                g.set_level({});
+                check(s.new_game(), "новая игра");
+                return true;
+            }});
+            // A real link «собирает»: the hero runs to the «Самоцвет»; the link's touch (1.4 tiles round it) meets it
+            // before the hero's own taking (its box) does: the link's sound, not the coins'.
+            steps_.push_back({"«Герой собирает Самоцвет»: его очки и монеты один раз", 90, [&s, &g, this, st, put, keys, there, var](u32 f) {
+                if (f < 20) return false; // the new game laid out
+                if (f == 20) {
+                    check(g.level_id() == "level" && g.score() == 0, "«Луг», 0 очков");
+                    st->score0 = g.score();
+                    st->coins0 = var("inv.coins");
+                    st->coins_cue = g.sounds().played(Cue::Coins);
+                    st->pickup_cue = g.sounds().played(Cue::Pickup);
+                    st->at = 0;
+                    check(g.spawn_copy("gem", plat::kGemX, st->v, plat::kGem) != 0, "«Самоцвет» на «Луге»");
+                    return false;
+                }
+                if (f == 22) {
+                    put(plat::kGemX - 4, st->v);
+                    keys(false, true, false);
+                }
+                if (f < 23) return false;
+                if (!st->at) {
+                    if (there(plat::kGem)) {
+                        if (f < 70) return false;
+                        check(false, "«Самоцвет» не собран");
+                        return true;
+                    }
+                    g.script(Controls{});
+                    st->at = f;
+                    check(g.score() == st->score0 + 30 && var("inv.coins") == st->coins0 + 2,
+                          "«Самоцвет» дал свои 30 очков и 2 монеты: очки " + std::to_string(g.score()) + ", монеты " +
+                              std::to_string(var("inv.coins")));
+                    check(g.sounds().played(Cue::Pickup) == st->pickup_cue + 1 && g.sounds().played(Cue::Coins) == st->coins_cue,
+                          "собрала его связь (её звук), а не касание (звук монет)");
+                    check(s.vars().get("hero.score").number() == 30, "hero.score: " + s.vars().get("hero.score").text());
+                    return false;
+                }
+                if (f < st->at + 30) return false;
+                check(g.score() == st->score0 + 30 && var("inv.coins") == st->coins0 + 2 && g.sounds().played(Cue::Pickup) == st->pickup_cue + 1,
+                      "и через полсекунды столько же: выдача одна");
+                return true;
+            }});
+            steps_.push_back({"«Холм» и обратно: «Самоцвета» нет, очки не прибавились", 40, [&g, this, st, there, var, at, where](u32 f) {
+                if (f == 0) {
+                    g.go_to("hill", area_thing_id(plat::kEntry));
+                    return false;
+                }
+                if (f == 5) {
+                    check(g.level_id() == "hill", "на «Холме»" + where());
+                    g.go_to("level");
+                    return false;
+                }
+                if (f < 12) return false;
+                check(g.level_id() == "level" && at(0.5), "снова на «Луге»" + where());
+                check(!there(plat::kGem) && g.score() == st->score0 + 30 && var("inv.coins") == st->coins0 + 2,
+                      "«Самоцвета» нет, очки и монеты те же: " + std::to_string(g.score()));
+                return true;
+            }});
+            steps_.push_back({"сохранение и загрузка: «Самоцвета» нет, очки не прибавились", 40, [&s, &g, this, st, there, var, where](u32 f) {
+                if (f == 0) {
+                    check(s.save("самоцвет", "Самоцвет"), "сохранено");
+                    return false;
+                }
+                if (f == 3) {
+                    check(s.load("самоцвет"), "сохранение загружается");
+                    return false;
+                }
+                if (f < 15) return false;
+                check(g.level_id() == "level", "на «Луге»" + where());
+                check(!there(plat::kGem) && g.score() == st->score0 + 30 && var("inv.coins") == st->coins0 + 2,
+                      "«Самоцвета» нет, очки и монеты те же: " + std::to_string(g.score()));
+                return true;
+            }});
+            // The frame a game ends in does nothing after the end: what lies under the hero stays there, the sounds of
+            // objects stopped by the end do not start again.
+            steps_.push_back({"кадр поражения: «Монетка» под героем цела, звук «Гудящего зверька» не начат снова", 200,
+                              [&s, &g, this, st, put, there, var, num](u32 f) {
+                if (f == 0) {
+                    g.script(Controls{});
+                    put(94.5, st->v);
+                    check(g.spawn_copy("hum", 96.5, st->v, plat::kHum) != 0 && g.spawn_copy("coin", plat::kDropX, st->v, plat::kEndCoin) != 0 &&
+                              g.spawn_copy("hedgehog", plat::kDropX, st->v, plat::kEndHedge) != 0,
+                          "«Гудящий зверёк», «Монетка» и «Ёж» на «Луге»");
+                    g.hurt(g.hearts() - 1);
+                    st->at = 0;
+                    return false;
+                }
+                if (!st->at) {
+                    if (g.safe_time() > 0 || g.sounds().loops() == 0) {
+                        if (f < 150) return false;
+                        check(false, "не дождался: неуязвимость " + num(g.safe_time()) + ", звуков рядом " + std::to_string(g.sounds().loops()));
+                        return true;
+                    }
+                    check(g.hearts() == 1 && g.sounds().loops() == 1, "одно сердце, звук «Гудящего зверька» звучит");
+                    st->at = f;
+                    st->score0 = g.score();
+                    st->coins0 = var("inv.coins");
+                    st->coins_cue = g.sounds().played(Cue::Coins);
+                    st->named0 = g.sounds().played_named();
+                    put(plat::kDropX, st->v); // into «Ёж» and onto «Монетка» at once
+                    return false;
+                }
+                if (!st->last) {
+                    if (!g.lost()) {
+                        if (f < st->at + 5) return false;
+                        check(false, "касание «Ежа» не окончило игру");
+                        return true;
+                    }
+                    st->last = f;
+                    check(g.endings() == 1 && g.hearts() == 0, "кадр окончил игру поражением");
+                    check(there(plat::kEndCoin) && g.score() == st->score0 && var("inv.coins") == st->coins0 && g.sounds().played(Cue::Coins) == st->coins_cue,
+                          "в этом кадре «Монетка» не подобрана: очки " + std::to_string(g.score()) + ", монеты " + std::to_string(var("inv.coins")));
+                    check(g.sounds().loops() == 0, "звук «Гудящего зверька» снят и в этом кадре не начат снова: " + std::to_string(g.sounds().loops()));
+                    return false;
+                }
+                if (f < st->last + 30) return false;
+                check(there(plat::kEndCoin) && g.score() == st->score0 && var("inv.coins") == st->coins0 && g.sounds().loops() == 0 &&
+                          g.sounds().played_named() == st->named0,
+                      "и после: «Монетка» цела, звуков объектов нет");
+                st->last = 0;
+                press_page(s, 800, 530); // «Ещё раз»
+                return true;
+            }});
+            steps_.push_back({"кадр победы: «Монетка» в «Финише» цела, звук не начат снова", 120, [&s, &g, this, st, put, there, var, where](u32 f) {
+                if (f < 30) return false; // the new game after «Ещё раз»
+                if (f == 30) {
+                    check(g.running() && !g.lost() && g.endings() == 0, "«Ещё раз»: новая игра");
+                    g.go_to("hill", area_thing_id(plat::kEntry));
+                    st->at = 0;
+                    return false;
+                }
+                if (f < 35) return false;
+                if (f == 35) {
+                    check(g.level_id() == "hill", "на «Холме»" + where());
+                    put(52.5, st->v);
+                    check(g.spawn_copy("hum", 51.5, st->v, plat::kWinHum) != 0 && g.spawn_copy("coin", 56.5, st->v, plat::kWinCoin) != 0,
+                          "«Гудящий зверёк» у «Финиша», «Монетка» в нём");
+                    return false;
+                }
+                if (!st->at) {
+                    if (g.sounds().loops() == 0) {
+                        if (f < 90) return false;
+                        check(false, "звук «Гудящего зверька» не звучит");
+                        return true;
+                    }
+                    st->at = f;
+                    st->score0 = g.score();
+                    st->coins0 = var("inv.coins");
+                    st->coins_cue = g.sounds().played(Cue::Coins);
+                    put(56.5, st->v); // into «Финиш» and onto «Монетка» at once
+                    return false;
+                }
+                if (!g.won()) {
+                    if (f < st->at + 5) return false;
+                    check(false, "«Финиш» не дал победы" + where());
+                    return true;
+                }
+                check(g.endings() == 1, "кадр окончил игру победой");
+                check(there(plat::kWinCoin) && g.score() == st->score0 && var("inv.coins") == st->coins0 && g.sounds().played(Cue::Coins) == st->coins_cue,
+                      "в этом кадре «Монетка» не подобрана: очки " + std::to_string(g.score()));
+                check(g.sounds().loops() == 0, "звук «Гудящего зверька» снят и не начат снова: " + std::to_string(g.sounds().loops()));
+                press_page(s, 800, 530); // «Ещё раз»
+                return true;
+            }});
+            // No place to put the hero back in: where it came into the level, the level's spawn point, the game's start
+            // (x 2.5) and where it last stood on the floor all under «Ряд шипов». It stays where it is, the keys its own.
+            steps_.push_back({"возвращать некуда, окно поражения есть: герой стоит, где был, сердце раз в секунду, потом поражение", 400,
+                              [&s, &g, this, st, at, where, num](u32 f) {
+                if (f < 30) return false; // the new game after «Ещё раз»
+                if (f == 30) {
+                    check(g.running() && !g.won() && g.endings() == 0 && g.level_id() == "level" && at(0.5), "«Ещё раз»: новая игра на «Луге»" + where());
+                    check(g.spawn_copy("spikes_row", plat::kOverX, st->v, plat::kOver) != 0,
+                          "«Ряд шипов» от 0 до 3: под точкой появления (0,5) и стартом игры (2,5)");
+                    st->x0 = g.hero_x();
+                    st->backs0 = g.backs();
+                    st->hazards0 = g.hazard_hits();
+                    st->nowheres0 = g.nowheres();
+                    st->hit1 = 0;
+                    st->last = 0;
+                    return false;
+                }
+                if (g.hero_x() != st->x0) {
+                    check(false, "героя перенесли: " + num(st->x0) + " → " + num(g.hero_x()) + where());
+                    return true;
+                }
+                const u32 hits = g.hazard_hits() - st->hazards0;
+                if (hits > st->hit1) {
+                    if (st->hit1 > 0)
+                        check(f - st->last >= 59 && f - st->last <= 75, "снова, когда кончилась неуязвимость: через " + std::to_string(f - st->last) + " кадров");
+                    st->hit1 = hits;
+                    st->last = f;
+                }
+                if (!g.lost()) return false;
+                check(hits == 3 && g.hearts() == 0, "три раза по сердцу: " + std::to_string(hits));
+                check(g.backs() == st->backs0, "ни одного переноса: " + std::to_string(g.backs() - st->backs0));
+                check(g.nowheres() == st->nowheres0 + 1, "место искалось один раз, пока герой на шипах: " + std::to_string(g.nowheres() - st->nowheres0));
+                check(g.endings() == 1 && s.screens().shown("поражение"), "поражение, его окно");
+                st->last = 0;
+                press_page(s, 800, 530); // «Ещё раз»
+                return true;
+            }});
+            steps_.push_back({"возвращать некуда: кнопки уводят героя с шипов, а встав на пол, он возвращается туда", 400,
+                              [&g, this, st, keys, at, where](u32 f) {
+                if (f < 30) return false;
+                if (f == 30) {
+                    check(g.running() && g.endings() == 0 && at(0.5), "«Ещё раз»: новая игра" + where());
+                    check(g.spawn_copy("spikes_row", plat::kOverX, st->v, plat::kOver) != 0, "«Ряд шипов» от 0 до 3");
+                    st->backs0 = g.backs();
+                    st->hazards0 = g.hazard_hits();
+                    st->phase = 0;
+                    return false;
+                }
+                if (st->phase == 0) { // on them until a heart goes
+                    if (g.hazard_hits() == st->hazards0) return false;
+                    check(g.hearts() == 2 && g.backs() == st->backs0, "минус сердце, героя не перенесли");
+                    st->phase = 1;
+                    st->at = f;
+                    keys(false, true, false);
+                    return false;
+                }
+                if (st->phase == 1) { // off them by the keys
+                    if (g.hero_x() < 6.5) {
+                        if (f < st->at + 90) return false;
+                        check(false, "кнопки не увели героя с шипов" + where());
+                        return true;
+                    }
+                    g.script(Controls{});
+                    st->phase = 2;
+                    st->at = f;
+                    return false;
+                }
+                if (st->phase == 2) { // standing on the floor; not safe any more, back onto them
+                    if (f < st->at + 20 || g.safe_time() > 0) return false;
+                    keys(true, false, false);
+                    st->phase = 3;
+                    st->at = f;
+                    return false;
+                }
+                if (g.hazard_hits() == st->hazards0 + 1) {
+                    if (f < st->at + 120) return false;
+                    check(false, "шипы не ранили снова" + where());
+                    return true;
+                }
+                g.script(Controls{});
+                check(g.hearts() == 1 && g.backs() == st->backs0 + 1, "минус сердце, и героя вернули: возвратов " + std::to_string(g.backs() - st->backs0));
+                check(at(3.5), "туда, где он последний раз стоял на полу (клетка 3), не на шипы" + where());
+                return true;
+            }});
+            steps_.push_back({"из «Ямы» некуда вернуть, окно поражения есть: как последнее сердце", 200, [&s, &g, this, st, put, at, where](u32 f) {
+                if (f == 0) {
+                    g.hurt(-2);
+                    g.go_to("hill", area_thing_id(plat::kEntry));
+                    return false;
+                }
+                if (f < 10) return false;
+                if (f == 10) {
+                    check(g.level_id() == "hill" && at(1.5) && g.hearts() == 3, "на «Холме», во «Входе», три сердца" + where());
+                    check(g.spawn_copy("spikes_row", plat::kOverX, st->v, plat::kOver) != 0,
+                          "«Ряд шипов» под «Входом» (1,5), стартом игры (2,5) и местом, где герой стоял (1,5)");
+                    put(41.5, st->v - 2); // over «Яма»
+                    st->falls0 = g.falls();
+                    st->backs0 = g.backs();
+                    st->nowheres0 = g.nowheres();
+                    return false;
+                }
+                if (!g.lost()) {
+                    if (f < 180) return false;
+                    check(false, "нет поражения" + where());
+                    return true;
+                }
+                check(g.falls() == st->falls0 + 1 && g.backs() == st->backs0, "упал в «Яму», переноса нет");
+                check(g.nowheres() == st->nowheres0 + 1, "вернуть некуда: ни «Вход», ни точка появления без пола, ни старт, ни место на шипах");
+                check(g.hearts() == 0 && g.endings() == 1 && s.screens().shown("поражение"), "как последнее сердце: поражение, его окно");
+                press_page(s, 800, 530); // «Ещё раз»
+                return true;
+            }});
+            // A game without a window «при поражении» (as «Старая шахта»): the last heart wakes the hero up, with no
+            // place for it where it is.
+            steps_.push_back({"без окна поражения, возвращать некуда: «Герой очнулся», где стоял, кнопки ведут его", 500,
+                              [&s, &g, this, st, keys, at, where, num](u32 f) {
+                if (f < 30) return false;
+                if (f == 30) {
+                    check(g.running() && g.endings() == 0 && at(0.5), "«Ещё раз»: новая игра" + where());
+                    s.screens().remove("поражение");
+                    check(s.screens().endings("lose").empty(), "окна «при поражении» больше нет");
+                    check(g.spawn_copy("spikes_row", plat::kOverX, st->v, plat::kOver) != 0, "«Ряд шипов» от 0 до 3");
+                    st->backs0 = g.backs();
+                    st->hazards0 = g.hazard_hits();
+                    st->phase = 0;
+                    keys(false, true, false);
+                    return false;
+                }
+                if (st->phase == 0) { // a step along them, still on them: not at the spawn point
+                    if (g.hero_x() < 1.4) return false;
+                    g.script(Controls{});
+                    st->phase = 1;
+                    st->at = f;
+                    return false;
+                }
+                if (st->phase == 1) {
+                    if (f < st->at + 10) return false;
+                    st->x0 = g.hero_x();
+                    check(std::fabs(st->x0 - plat::kOverX) < 1.5 + kHeroHalfW, "герой на шипах, не в точке появления" + where());
+                    st->phase = 2;
+                    return false;
+                }
+                if (st->phase == 2) {
+                    if (g.hero_x() != st->x0) {
+                        check(false, "героя перенесли: " + num(st->x0) + " → " + num(g.hero_x()) + where());
+                        return true;
+                    }
+                    if (g.hazard_hits() < st->hazards0 + 3) return false;
+                    check(g.hearts() == 3 && !g.lost() && g.endings() == 0, "последнее сердце: «Герой очнулся», три сердца, игра идёт");
+                    check(g.backs() == st->backs0, "ни одного переноса, и очнулся он там же: " + num(g.hero_x()));
+                    keys(false, true, false);
+                    st->phase = 3;
+                    st->at = f;
+                    return false;
+                }
+                if (g.hero_x() < 4) {
+                    if (f < st->at + 60) return false;
+                    check(false, "кнопки не ведут героя" + where());
+                    return true;
+                }
+                g.script(Controls{});
+                return true;
+            }});
+            steps_.push_back({"без окна поражения: из «Ямы» — туда, где герой последний раз стоял на полу", 300, [&g, this, st, put, keys, at, where](u32 f) {
+                if (f == 0) {
+                    g.go_to("hill", area_thing_id(plat::kEntry));
+                    return false;
+                }
+                if (f < 10) return false;
+                if (f == 10) {
+                    check(g.level_id() == "hill" && at(1.5), "на «Холме», во «Входе»" + where());
+                    keys(false, true, false);
+                    st->phase = 0;
+                    return false;
+                }
+                if (st->phase == 0) {
+                    if (g.hero_x() < 10) return false;
+                    g.script(Controls{});
+                    st->phase = 1;
+                    st->at = f;
+                    return false;
+                }
+                if (st->phase == 1) {
+                    if (f < st->at + 20) return false;
+                    st->gx = g.hero_x();
+                    check(g.spawn_copy("spikes_row", plat::kOverX, st->v, plat::kOver) != 0, "«Ряд шипов» под «Входом» и стартом игры");
+                    put(41.5, st->v - 2); // over «Яма»
+                    st->falls0 = g.falls();
+                    st->backs0 = g.backs();
+                    st->phase = 2;
+                    st->at = f;
+                    return false;
+                }
+                if (g.falls() == st->falls0) {
+                    if (f < st->at + 100) return false;
+                    check(false, "герой не упал в «Яму»" + where());
+                    return true;
+                }
+                check(g.backs() == st->backs0 + 1 && at(std::floor(st->gx) + 0.5), "вернулся туда, где стоял" + where());
+                check(!g.lost() && g.endings() == 0, "игра идёт");
+                return true;
+            }});
+            return;
+        }
         if (continued) {
             steps_.push_back({"«Продолжить» другим процессом: «Холм», где сохранились", 40, [&s, &g, this, st, there, num, where, hud_says, hud_text](u32 f) {
                 std::error_code ec;
@@ -5576,19 +5975,19 @@ private:
                 put(plat::kSpinyX - 0.2, st->v); // stays in «Ёж»
                 return false;
             }
-            const u32 in = f - st->at;
-            if (in < 80) {
+            const u32 inside = f - st->at;
+            if (inside < 80) {
                 if (g.enemy_hits() != st->hits0) {
-                    check(false, "«Ёж» ранил героя, который в нём с тика победы: через " + std::to_string(in) + " кадров");
+                    check(false, "«Ёж» ранил героя, который в нём с тика победы: через " + std::to_string(inside) + " кадров");
                     return true;
                 }
-                if (in == 79) {
+                if (inside == 79) {
                     check(g.spared() == 1 && g.hearts() == 3, "80 кадров в «Еже»: урона нет, «Ёж» всё ещё не ранит");
                     put(plat::kSpinyX - 3, st->v); // out of it
                 }
                 return false;
             }
-            if (in == 81) {
+            if (inside == 81) {
                 check(g.spared() == 0 && g.enemy_hits() == st->hits0, "герой вышел из «Ежа»: он снова ранит");
                 put(plat::kSpinyX - 0.2, st->v); // and back in
                 return false;
@@ -5596,10 +5995,10 @@ private:
             if (!st->hit1) {
                 if (g.enemy_hits() == st->hits0 + 1) {
                     st->hit1 = f;
-                    check(in <= 84 && g.hearts() == 2, "снова в «Еже»: минус сердце сразу, через " + std::to_string(in - 81) + " кадров");
+                    check(inside <= 84 && g.hearts() == 2, "снова в «Еже»: минус сердце сразу, через " + std::to_string(inside - 81) + " кадров");
                     put(plat::kSpinyX - 3, st->v); // out of it again,
                     g.hurt(-1);                    // and the next steps count from three hearts
-                } else if (in > 90) {
+                } else if (inside > 90) {
                     check(false, "снова в «Еже», но урона нет");
                     return true;
                 }
@@ -7340,7 +7739,12 @@ static bool make_platformer_game(const std::filesystem::path& from, std::string&
         {"Монетка.object.json",
          R"({"id": "coin", "name": "Монетка", "kind": "pickup", "about": "одна монетка и 10 очков", "values": {"what": "coins", "count": 1, "score": 10}})"},
         {"Ряд шипов.object.json",
-         R"({"id": "spikes_row", "name": "Ряд шипов", "kind": "trap", "about": "шипы в три клетки", "values": {"half_height": 0.5, "half_width": 1.5}})"}};
+         R"({"id": "spikes_row", "name": "Ряд шипов", "kind": "trap", "about": "шипы в три клетки", "values": {"half_height": 0.5, "half_width": 1.5}})"},
+        {"Самоцвет.object.json",
+         R"({"id": "gem", "name": "Самоцвет", "kind": "pickup", "about": "его собирает связь: две монеты и 30 очков", "values": {"what": "coins", "count": 2, "score": 30}})"},
+        {"Гудящий зверёк.object.json",
+         R"({"id": "hum", "name": "Гудящий зверёк", "kind": "critter", "about": "стоит и гудит: звук «Рядом»",
+             "blocks": ["body", "control", "sound"], "values": {"scheme": "stand", "sound_near": "шаг.wav"}})"}};
     for (const auto& [file, json] : templates)
         if (!text(game / "objects" / utf8_path(file), json)) return false;
     logic::Logic links;
@@ -7366,6 +7770,15 @@ static bool make_platformer_game(const std::filesystem::path& from, std::string&
     }
     link(plat::kPitLink, "fall", plat::kPit);
     link(plat::kFinishLink, "win", plat::kFinish);
+    {
+        logic::Link l; // «Герой собирает Самоцвет», with the verb's sound
+        l.id = plat::kGemLink;
+        l.a = "hero";
+        l.verb = "collect";
+        l.b = "gem";
+        l.sound = true;
+        links.links.push_back(l);
+    }
     if (!links.save(game / "logic.json", &why)) return false;
     // The author's screens: the HUD over the game; the windows the game shows itself at its end, with «Ещё раз» (a new
     // game) and «В меню». The loss's window stops the world as a window may; the win's does not, the end does.
@@ -7531,8 +7944,9 @@ int main(int argc, char** argv) {
         args.push_back(const_cast<char*>("--user"));
         args.push_back(user.data());
     }
-    // --scene platformer, platformer_continue (step 14.2c): the platformer's game in this run's own folder, the same way.
-    if ((scene == "platformer" || scene == "platformer_continue") && options.silent) {
+    // --scene platformer, platformer_continue, platformer_edges (step 14.2c): the platformer's game in this run's own
+    // folder, the same way.
+    if ((scene == "platformer" || scene == "platformer_continue" || scene == "platformer_edges") && options.silent) {
         std::error_code ec;
         if (scene == "platformer") {
             const std::filesystem::path packaged = exe_dir() / "data" / "game";

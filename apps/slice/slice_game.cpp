@@ -55,6 +55,11 @@ constexpr f64 kHearts = 3;
 // hero is placed (a new game, a save loaded, a level come into); how a hurting enemy pushes the hero away.
 constexpr f64 kSafe = 1.0;
 constexpr f32 kKnockX = 6, kKnockY = 6;
+// The places a hero is put back in (return_spot), as the log names them.
+constexpr const char* kEntryPlace = "точка входа на уровень";
+constexpr const char* kSpawnPlace = "точка появления уровня";
+constexpr const char* kStartPlace = "старт игры";
+constexpr const char* kGroundPlace = "место, где герой последний раз стоял на полу";
 
 struct SlotDef {
     const char* item; // also the icon's colour class in hud.rcss: tone-<item>
@@ -436,7 +441,7 @@ void SliceGame::do_deeds() {
             if (d.target == level_->hero.id()) {
                 ++falls_;
                 if (safe_ <= 0) lose_hearts(1);
-                back_asked_ = true;
+                back_asked_ = fell_ = true;
                 settle();
             }
             continue;
@@ -822,16 +827,12 @@ void SliceGame::hurt_hero(f64 n) {
 // the village (a level with nothing around: at its spawn point).
 void SliceGame::wake_up() {
     shell_->vars().set("hero.hearts", kHearts);
-    if (level_ && level_->around.empty_around) {
-        // No village around: the level's spawn point, if there is one to stand on.
-        f64 x = 0, y = 0;
-        shell_->toast("Герой очнулся");
-        if (level_->areas.spawn && spawn_spot(level_->areas.spawn_x, level_->areas.spawn_y, x, y, nullptr))
-            teleport(x, y - kHeroHalfH);
-        return;
-    }
-    shell_->toast("Герой очнулся в деревне");
-    teleport(gen_->spawn_x(), gen_->spawn_y() - kHeroHalfH);
+    // The village's start first (or the spawn point of a level with nothing around), checked as a return is; none
+    // will do: where it is.
+    f64 x = 0, y = 0;
+    const char* where = return_spot(true, x, y);
+    shell_->toast(where == kStartPlace && !level_->around.empty_around ? "Герой очнулся в деревне" : "Герой очнулся");
+    if (where) teleport(x, y - kHeroHalfH);
 }
 
 // --- the platformer's rules ----------------------------------------------------------
@@ -861,6 +862,7 @@ void SliceGame::came_in(f64 x, f64 feet_y) {
     back_x_ = x;
     // Standing on a cell's top, the hero's place (in floats) has its feet a hair above it: on it.
     back_y_ = std::fabs(feet_y - std::round(feet_y)) < 1e-3 ? std::round(feet_y) : feet_y;
+    has_ground_ = nowhere_ = false;
     // A second the hero loses no heart where it is placed (in an enemy's box, say), not blinking.
     if (safe_ < kSafe) {
         safe_ = kSafe;
@@ -959,13 +961,27 @@ void SliceGame::contacts_tick(const TickContext& ctx) {
         on = true;
         hurts = std::max(hurts, h.hearts);
     });
-    if (!on) return;
-    back_asked_ = true;
+    // The contacts are of the last move, from where the hero was if it has been placed since.
+    const bool placed = std::exchange(placed_, false);
+    if (!on) {
+        nowhere_ = false; // off them: the next touch looks for a place to go back to again
+        // Standing safely on the floor: the last place to go back to, when no other will do.
+        if (!placed && (level_->hero.get<Body>().contacts & OnGround) && !in_pit(hero.x, hero.y)) {
+            const f64 feet = hero.y + kHeroHalfH;
+            has_ground_ = true;
+            ground_x_ = hero.x;
+            ground_y_ = std::fabs(feet - std::round(feet)) < 1e-3 ? std::round(feet) : feet;
+        }
+        return;
+    }
+    // With no place to go back to found for this touch the hero stays on them, the keys its own; they hurt it again
+    // once it is not safe, as a long touch of an enemy does.
+    if (!nowhere_) back_asked_ = true;
     if (safe_ <= 0 && hurts > 0) {
         ++hazard_hits_;
         lose_hearts(hurts);
     }
-    level_->sim->stop_ticks(); // back at once, after this tick
+    if (back_asked_) level_->sim->stop_ticks(); // back at once, after this tick
 }
 
 void SliceGame::lose_hearts(f64 n) {
@@ -982,15 +998,31 @@ void SliceGame::settle() {
         return;
     }
     if (out_of_hearts_) {
-        out_of_hearts_ = back_asked_ = false;
-        if (!shell_->screens().endings("lose").empty()) finish(false);
-        else wake_up();
+        out_of_hearts_ = back_asked_ = fell_ = false;
+        hearts_out();
         return;
     }
     if (back_asked_) {
         back_asked_ = false;
-        go_back();
+        const bool fell = std::exchange(fell_, false);
+        if (go_back() || !fell) return;
+        // In a pit there is nothing to stand on: with nowhere to go back to, as the last heart.
+        FORGE_WARN("slice: из зоны «падает в» вернуть героя некуда: как последнее сердце");
+        shell_->vars().set("hero.hearts", 0.0);
+        hearts_out();
     }
+}
+
+// No hearts left: the end when the game has a window «при поражении», else the old waking up.
+void SliceGame::hearts_out() {
+    if (!shell_->screens().endings("lose").empty()) finish(false);
+    else wake_up();
+}
+
+bool SliceGame::in_pit(f64 x, f64 y) const {
+    for (const forge::level::Area& a : level_->areas.areas)
+        if (a.contains(x, y) && is_pit(a.id)) return true;
+    return false;
 }
 
 bool SliceGame::is_pit(u64 area) const {
@@ -1019,20 +1051,44 @@ bool SliceGame::back_spot(f64 x, f64 y, f64& out_x, f64& out_y, std::string* why
     return true;
 }
 
-// Back where the hero came into the level, checked each time: else the level's spawn point, else the game's start.
-void SliceGame::go_back() {
-    if (!hero_alive()) return;
-    f64 x = 0, y = 0;
-    std::string why;
-    if (!has_back_ || !back_spot(back_x_, back_y_, x, y, &why)) {
-        if (has_back_) FORGE_WARN("slice: точка возврата %.2f, %.2f не годится: %s", back_x_, back_y_, why.c_str());
-        if (!level_->areas.spawn || !back_spot(level_->areas.spawn_x, level_->areas.spawn_y, x, y, &why)) {
-            if (level_->areas.spawn) FORGE_WARN("slice: точка появления уровня не годится для возврата: %s", why.c_str());
-            FORGE_WARN("slice: герой возвращается на старт игры");
-            x = gen_->spawn_x();
-            y = gen_->spawn_y();
-        }
+// The places the hero is put back in, in order, each checked the same way (back_spot): where it came into the level,
+// the level's spawn point, the game's start, where it last stood safely on the floor here. Waking up (no hearts, no
+// window «при поражении») begins where the game always woke it: the village's start, or the spawn point of a level
+// with nothing around. Returns which place it found (x, y: under its feet), nullptr when none will do.
+const char* SliceGame::return_spot(bool waking, f64& x, f64& y) {
+    struct Place {
+        const char* what;
+        bool has;
+        f64 x, y;
+    };
+    const Place entry{kEntryPlace, has_back_, back_x_, back_y_};
+    const Place spawn{kSpawnPlace, level_->areas.spawn, level_->areas.spawn_x, level_->areas.spawn_y};
+    const Place start{kStartPlace, true, gen_->spawn_x(), gen_->spawn_y()};
+    const Place ground{kGroundPlace, has_ground_, ground_x_, ground_y_};
+    const Place* order[4] = {&entry, &spawn, &start, &ground};
+    if (waking && !level_->around.empty_around) order[0] = &start, order[2] = &entry; // start, spawn, entry, ground
+    else if (waking) order[0] = &spawn, order[1] = &entry;                         // spawn, entry, start, ground
+    for (const Place* p : order) {
+        if (!p->has) continue;
+        std::string why;
+        if (back_spot(p->x, p->y, x, y, &why)) return p->what;
+        FORGE_WARN("slice: %s %.2f, %.2f не годится для возврата: %s", p->what, p->x, p->y, why.c_str());
     }
+    FORGE_WARN("slice: вернуть героя некуда: он остаётся, где был (%.2f, %.2f)", hero_x(), hero_y() + kHeroHalfH);
+    ++nowheres_;
+    return nullptr;
+}
+
+// Back after spikes or a pit, to the first place that will do (return_spot); none will: it stays where it is, its
+// speed and the keys its own, and the hazards do not ask for it again until the hero is off them (false).
+bool SliceGame::go_back() {
+    if (!hero_alive()) return false;
+    f64 x = 0, y = 0;
+    if (!return_spot(false, x, y)) {
+        nowhere_ = true;
+        return false;
+    }
+    nowhere_ = false;
     const f64 cy = y - kHeroHalfH;
     teleport(x, cy);
     // It is in the areas there already: no area there is entered now (a «Вход» would send it back).
@@ -1041,6 +1097,7 @@ void SliceGame::go_back() {
     ++backs_;
     if (safe_ < kSafe) safe_ = kSafe;
     FORGE_INFO("slice: герой вернулся к точке %.2f, %.2f", x, y);
+    return true;
 }
 
 void SliceGame::finish(bool won) {
@@ -1344,8 +1401,8 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     travel_problem_.clear();
     ended_ = Ending::None;
     safe_ = 0;
-    blink_ = back_asked_ = out_of_hearts_ = has_back_ = false;
-    stomps_ = enemy_hits_ = hazard_hits_ = falls_ = backs_ = endings_ = 0;
+    blink_ = back_asked_ = fell_ = out_of_hearts_ = has_back_ = has_ground_ = nowhere_ = false;
+    stomps_ = enemy_hits_ = hazard_hits_ = falls_ = backs_ = endings_ = nowheres_ = 0;
     spared_.clear();
     level_screens_.clear();
     deeds_.clear();
@@ -1732,6 +1789,7 @@ void SliceGame::teleport(f64 x, f64 y) {
     Body& b = level_->hero.get_mut<Body>();
     b.vx = b.vy = 0;
     b.last_dx = b.last_dy = 0;
+    placed_ = true; // its contacts are from where it was
     // The hero moves to its new chunk while the old place is still loaded:
     // otherwise the old place could unload with the hero still filed there.
     load_around(x, y);
@@ -2189,7 +2247,9 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     const forge::level::Area* place =
         hero_alive() && ended_ == Ending::None ? forge::level::music_area(level_->areas, hero_x_, hero_y_) : nullptr;
     shell_->screens().set_place_music(place ? place->music : std::string());
-    if (live) {
+    // The game may have ended in this frame's ticks or deeds: from then on nothing more is done, sounded or taken.
+    const bool going = live && ended_ == Ending::None;
+    if (going) {
         hero_sounds(dt);
         sounds_.update_objects(*level_->scene, hero_x_, hero_y_, dt);
         act(dt);
@@ -2205,7 +2265,7 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
         }
     }
     follow_camera(dt);
-    emit_effects(live ? dt : 0.0);
+    emit_effects(going ? dt : 0.0);
     build_sprites();
     watch_links();
     update_hud(playing);
