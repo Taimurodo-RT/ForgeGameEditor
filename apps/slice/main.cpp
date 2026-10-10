@@ -20,9 +20,11 @@
 //                                   copy of the game's data with what the import wrote, with nothing of Tiled, its
 //                                   frame compared with tmxrasterizer's; tiled_update: the same after two pictures of
 //                                   the map changed and it was imported again, from the build only, which has the map)
-//   forge_slice --test --scene project --play --data GAME [--level DIR --at X,Y --user DIR]
+//   forge_slice --test --scene project --play --data GAME [--level DIR --at X,Y --user DIR] [--edits FILE]
 //                                   a game the editor made of a template, as its «Играть» starts it: that game's data,
-//                                   title and links, the hero at X,Y, the player's files in DIR
+//                                   title and links, the hero at X,Y, the player's files in DIR; with FILE, what the
+//                                   author made in it (slice_edits.h), met as a player meets it, or, for another game
+//                                   of the template, that none of it is there
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -33,6 +35,7 @@
 // wheel zooms. Esc pauses, J opens the journal, F5 saves, F9 loads.
 
 #include "slice_art.h"
+#include "slice_edits.h"
 #include "slice_game.h"
 #include "slice_level.h"
 
@@ -103,6 +106,10 @@ public:
     std::filesystem::path project_data, project_user;
     bool project_at = false;
     f64 project_at_x = 0, project_at_y = 0;
+    // --edits FILE: what the author made in that game (or that another game has none of it); why it was not read.
+    bool project_has_edits = false;
+    ProjectEdits project_edits;
+    std::string project_edits_error;
 
     bool frame(Shell& shell, int& failures) {
         if (steps_.empty()) build(shell);
@@ -130,6 +137,10 @@ private:
     void check(bool ok, const std::string& what) {
         if (!ok) fail(what);
     }
+    bool check_ok(bool ok, const std::string& what) {
+        check(ok, what);
+        return ok;
+    }
     void fail(const std::string& what) {
         ++*failures_;
         FORGE_ERROR("self-test: %s (hero at %.1f, %.1f)", what.c_str(), g_.hero_x(), g_.hero_y());
@@ -140,7 +151,10 @@ private:
     bool click(Shell& s, const char* id) { return click(s, s.find_element(id)); }
     bool click(Shell& s, Rml::Element* e) {
         if (!e) return false;
-        const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+        return click_at(s, e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f);
+    }
+    // At a point of the player's screen (the context's pixels).
+    bool click_at(Shell& s, Rml::Vector2f p) {
         SDL_Event ev{};
         ev.type = SDL_EVENT_MOUSE_MOTION;
         ev.motion.x = p.x;
@@ -282,6 +296,225 @@ private:
         steps_.push_back({"игра идёт", 60, [&g, this](u32 f) {
             if (f < 60) return false;
             check(g.hero_alive(), "герой жив через секунду игры");
+            return true;
+        }});
+        if (project_has_edits) build_edits(s);
+    }
+
+    // The frame the player sees now (the world and the screens over it): its pixels, as wide and tall as the game's.
+    bool frame_pixels(Shell& s, std::vector<u8>& rgba, u32& w, u32& h) {
+        w = g_.frame_width();
+        h = g_.frame_height();
+        SDL_GPUDevice* device = g_.device();
+        SDL_GPUTexture* target = w && h ? render::create_render_target(device, w, h) : nullptr;
+        if (!target) return false;
+        SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
+        s.render(cmd, target, w, h);
+        SDL_SubmitGPUCommandBuffer(cmd);
+        const bool ok = render::read_pixels(device, target, w, h, rgba);
+        SDL_ReleaseGPUTexture(device, target);
+        return ok;
+    }
+    static std::array<int, 3> pixel_at(const std::vector<u8>& rgba, u32 w, u32 h, f32 x, f32 y) {
+        const i32 px = static_cast<i32>(std::floor(x)), py = static_cast<i32>(std::floor(y));
+        if (px < 0 || py < 0 || px >= static_cast<i32>(w) || py >= static_cast<i32>(h) || rgba.size() < static_cast<usize>(w) * h * 4)
+            return {-1, -1, -1};
+        const usize i = (static_cast<usize>(py) * w + static_cast<usize>(px)) * 4;
+        return {rgba[i], rgba[i + 1], rgba[i + 2]};
+    }
+    static std::string rgb_text(const std::array<int, 3>& p) {
+        return std::to_string(p[0]) + "," + std::to_string(p[1]) + "," + std::to_string(p[2]);
+    }
+    static bool near_rgb(const std::array<int, 3>& a, const std::vector<int>& b, int most) {
+        if (b.size() != 3) return false;
+        for (int c = 0; c < 3; ++c)
+            if (std::abs(a[c] - b[static_cast<usize>(c)]) > most) return false;
+        return true;
+    }
+    // A layer of a screen's page (#n<id>).
+    static Rml::Element* layer(Shell& s, const std::string& screen, u32 id) {
+        Rml::ElementDocument* doc = s.screens().document(screen);
+        return doc ? doc->GetElementById("n" + std::to_string(id)) : nullptr;
+    }
+    // Where the player sees the middle of a layer of a screen: its place on the page (its own size, 1920 × 1080),
+    // through the page's fit onto the player's screen, in the context's pixels.
+    static std::optional<Rml::Vector2f> on_screen(Shell& s, const std::string& screen, u32 id) {
+        Rml::Element* e = layer(s, screen, id);
+        Rml::Element* root = e;
+        while (root && !root->HasAttribute("forge-screen")) root = root->GetParentNode();
+        if (!e || !root) return std::nullopt;
+        f32 w = 1920, h = 1080;
+        std::sscanf(root->GetAttribute<Rml::String>("forge-size", "").c_str(), "%f %f", &w, &h);
+        const Rml::Vector2f c = e->GetAbsoluteOffset(Rml::BoxArea::Border) - root->GetAbsoluteOffset(Rml::BoxArea::Border) +
+                                e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+        const Rml::Vector2i size = s.context()->GetDimensions();
+        const game::ScreenFit fit =
+            game::fit_screen(root->GetAttribute<Rml::String>("forge-fit", ""), w, h, static_cast<f32>(size.x), static_cast<f32>(size.y));
+        return Rml::Vector2f(game::fit_to_view_x(fit, c.x), game::fit_to_view_y(fit, c.y));
+    }
+    static std::string text_of(Rml::Element* e) {
+        if (!e) return {};
+        std::string out = e->GetInnerRML();
+        // The words without the markup around them.
+        std::string plain;
+        bool tag = false;
+        for (char c : out) {
+            if (c == '<') tag = true;
+            else if (c == '>') tag = false;
+            else if (!tag) plain += c;
+        }
+        return plain;
+    }
+
+    // --scene project --edits FILE (step 14.1b, «Находка»): what the author made through the editor's tabs, met as a
+    // player meets it. The own object stands on the level drawn with its picture; the hero touches it: the link adds
+    // to the game's value and shows the window, whose text says the value, whose picture is the same and moves by its
+    // keys, whose button plays the chosen sound (that file, its length) and closes it; a second touch does nothing.
+    // The game is saved and a setting changed: into this game's player's folder. absent: another game of the same
+    // template, with none of it and a player's folder of its own.
+    void build_edits(Shell& s) {
+        SliceGame& g = g_;
+        if (!project_edits_error.empty()) {
+            steps_.push_back({"правки автора", 1, [this](u32) {
+                check(false, project_edits_error);
+                return true;
+            }});
+            return;
+        }
+        if (project_edits.absent) {
+            steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {
+                if (f < 2) return false;
+                const ProjectEdits& e = project_edits;
+                std::error_code ec;
+                check(g.copies_of(e.object).empty(), "объекта «" + e.object_name + "» (" + e.object + ") здесь нет");
+                bool linked = false;
+                for (const logic::Link& l : g.links().links) linked = linked || l.a == e.object || l.b == e.object;
+                check(!linked, "связей с ним нет");
+                check(!s.screens().exists(e.screen), "экрана «" + e.screen + "» нет");
+                check(!s.vars().has(e.var), "значения «" + e.var + "» нет");
+                check(!std::filesystem::exists(s.game_dir() / "sounds" / utf8_path(e.sound), ec), "звука «" + e.sound + "» в игре нет");
+                check(!std::filesystem::exists(s.game_dir() / "sources.json", ec), "копий из «Ресурсов» нет (нет sources.json)");
+                check(s.slots().list().empty(), "сохранений нет: папка игрока своя (" + path_to_utf8(s.user_folder()) + ")");
+                check(std::fabs(s.settings().music_volume - Settings{}.music_volume) < 1e-4f,
+                      "настройки свои: громкость музыки " + std::to_string(s.settings().music_volume));
+                return true;
+            }});
+            return;
+        }
+        struct State {
+            f64 ox = 0, oy = 0;
+            u32 clicks = 0;
+            u64 since = 0; // when the window opened (its appearing and its picture's keys go by the clock)
+        };
+        auto st = std::make_shared<State>();
+        // The hero a few steps from where the editor put it (wherever the game started it): its place is loaded and
+        // in view; then the frame is looked at.
+        steps_.push_back({"находка стоит на уровне своей картинкой", 90, [&s, &g, this, st](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                g.teleport(e.x - 3, e.y - 0.43);
+                return false;
+            }
+            if (f < 60) return false; // the hero lands, the view follows
+            const std::vector<flecs::entity_t> copies = g.copies_of(e.object);
+            check(copies.size() == 1, "«" + e.object_name + "» на уровне одна: " + std::to_string(copies.size()));
+            if (copies.empty() || !g.position_of(copies[0], st->ox, st->oy)) return true;
+            check(std::fabs(st->ox - e.x) < 0.01 && std::fabs(st->oy - e.y) < 0.01,
+                  "она там, где её поставил редактор: " + std::to_string(st->ox) + ", " + std::to_string(st->oy));
+            check(!s.vars().has(e.var) && !s.screens().shown(e.screen), "герой её ещё не касался: значения и окна нет");
+            std::vector<u8> px;
+            u32 w = 0, h = 0;
+            check(frame_pixels(s, px, w, h), "кадр игры снят");
+            const render::Camera2D& c = g.camera();
+            const std::array<int, 3> at = pixel_at(px, w, h, static_cast<f32>((st->ox - c.snapped_x()) * c.zoom + w * 0.5),
+                                                   static_cast<f32>((st->oy - c.snapped_y()) * c.zoom + h * 0.5));
+            check(near_rgb(at, e.color, 24), "«" + e.object_name + "» нарисована своей картинкой: " + rgb_text(at) + ", ждали " +
+                                                 std::to_string(e.color.size() == 3 ? e.color[0] : -1) + "," +
+                                                 std::to_string(e.color.size() == 3 ? e.color[1] : -1) + "," +
+                                                 std::to_string(e.color.size() == 3 ? e.color[2] : -1));
+            return true;
+        }});
+        steps_.push_back({"герой касается находки: значение и окно", 120, [&s, &g, this, st](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                g.teleport(st->ox, st->oy - 0.43);
+                return false;
+            }
+            if (!s.screens().shown(e.screen) && f < 100) return false;
+            check(s.screens().shown(e.screen), "касание открывает окно «" + e.screen + "»");
+            check(s.vars().has(e.var) && var(s, e.var.c_str()) == e.value,
+                  "значение «" + e.var + "» = " + s.vars().get(e.var).text() + ", ждали " + std::to_string(e.value));
+            return true;
+        }});
+        steps_.push_back({"окно: значение, та же картинка, она движется", 120, [&s, this, st](u32 f) {
+            if (f == 0) st->since = SDL_GetTicks();
+            if (SDL_GetTicks() - st->since < 600 && f < 100) {
+                SDL_Delay(5); // laid out, appeared
+                return false;
+            }
+            const ProjectEdits& e = project_edits;
+            const std::string said = text_of(layer(s, e.screen, e.text_node));
+            check(said.find(e.text) != std::string::npos, "в окне «" + said + "», ждали «" + e.text + "»");
+            Rml::Element* pic = layer(s, e.screen, e.picture_node);
+            if (!check_ok(pic != nullptr, "в окне картинка (слой " + std::to_string(e.picture_node) + ")")) return true;
+            std::vector<u8> px;
+            u32 w = 0, h = 0;
+            check(frame_pixels(s, px, w, h), "кадр с окном снят");
+            const std::optional<Rml::Vector2f> at = on_screen(s, e.screen, e.picture_node);
+            const Rml::Vector2i size = s.context()->GetDimensions();
+            const std::array<int, 3> c = at && size.x > 0 && size.y > 0
+                                             ? pixel_at(px, w, h, at->x * static_cast<f32>(w) / static_cast<f32>(size.x),
+                                                        at->y * static_cast<f32>(h) / static_cast<f32>(size.y))
+                                             : std::array<int, 3>{-1, -1, -1};
+            check(near_rgb(c, e.color, 24), "картинка в окне та же: " + rgb_text(c));
+            // Its keys play: what it looks like now and a moment later differ.
+            auto look = [pic] {
+                const Rml::Property* t = pic->GetProperty("transform");
+                const Rml::Property* o = pic->GetProperty("opacity");
+                return (t ? t->ToString() : std::string()) + "|" + (o ? o->ToString() : std::string());
+            };
+            const std::string before = look();
+            SDL_Delay(300);
+            s.context()->Update();
+            const std::string after = look();
+            check(before != after, "картинка в окне движется по своим ключам: «" + before + "» → «" + after + "»");
+            return true;
+        }});
+        steps_.push_back({"«Забрать»: тот самый звук, окно закрывается", 30, [&s, &g, this, st](u32 f) {
+            const ProjectEdits& e = project_edits;
+            audio::ScreenSounds& snd = g.sounds().screens();
+            if (f == 0) {
+                st->clicks = snd.clicks();
+                const std::optional<Rml::Vector2f> at = on_screen(s, e.screen, e.button_node);
+                check(at && click_at(s, *at), "кнопка окна нажата мышью");
+                return false;
+            }
+            check(snd.clicks() == st->clicks + 1 && snd.last_click() == e.sound,
+                  "кнопка сыграла «" + snd.last_click() + "», ждали «" + e.sound + "»");
+            const audio::ClipPtr clip = snd.clip(e.sound);
+            check(clip && clip->frames() == e.sound_frames, "звук — тот самый файл: " + std::to_string(clip ? clip->frames() : 0) +
+                                                                " кадров, ждали " + std::to_string(e.sound_frames));
+            check(!s.screens().shown(e.screen), "окно закрылось");
+            return true;
+        }});
+        steps_.push_back({"второе касание ничего не делает («Только один раз»)", 150, [&s, &g, this, st](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) g.teleport(st->ox - 5, st->oy - 0.43);
+            if (f == 40) g.teleport(st->ox, st->oy - 0.43);
+            if (f < 120) return false;
+            check(var(s, e.var.c_str()) == e.value && !s.screens().shown(e.screen),
+                  "значение осталось " + s.vars().get(e.var).text() + ", окно не открылось");
+            return true;
+        }});
+        steps_.push_back({"сохранение и настройка — в папке игрока этой игры", 5, [&s, this](u32 f) {
+            if (f < 1) return false;
+            Settings mine = s.settings();
+            mine.music_volume = 0.3f;
+            s.apply_settings(mine);
+            check(s.save("находка", "Находка"), "игра сохраняется");
+            std::error_code ec;
+            check(std::filesystem::is_regular_file(s.user_folder() / "settings.json", ec) && s.slots().exists("находка"),
+                  "настройки и сохранение — в " + path_to_utf8(s.user_folder()));
             return true;
         }});
     }
@@ -5049,6 +5282,15 @@ int main(int argc, char** argv) {
                                         std::filesystem::copy_options::overwrite_existing, ec);
         if (ec) FORGE_ERROR("--scene project: не скопирован %s", path_to_utf8(project_data / "logic.json").c_str());
     }
+    ProjectEdits edits;
+    std::string edits_error;
+    bool has_edits = false;
+    if (scene == "project" && options.silent)
+        for (int i = 1; i + 1 < argc; ++i)
+            if (std::strcmp(argv[i], "--edits") == 0) {
+                has_edits = true;
+                read_edits(utf8_path(argv[i + 1]), edits, edits_error);
+            }
     if (scene == "volumes" && options.silent) {
         const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_slice_volumes";
         std::error_code ec;
@@ -5082,6 +5324,9 @@ int main(int argc, char** argv) {
     test.project_at = options.at;
     test.project_at_x = options.at_x;
     test.project_at_y = options.at_y;
+    test.project_has_edits = has_edits;
+    test.project_edits = edits;
+    test.project_edits_error = edits_error;
     GameMain m;
     m.dev_ui_dir = FORGE_UI_DIR;
     m.dev_game_dir = SLICE_DATA_DIR;

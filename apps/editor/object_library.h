@@ -33,16 +33,26 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace forge::editor_app {
 
+// A file of «Ресурсы» into a folder of the game the way the game keeps them
+// (main: game/sources.json remembers which asset each copy is, so the asset's
+// changes reach the copy and it is never copied twice). nullopt: no asset of
+// «Ресурсы» (or not a folder of the game), copied the plain way; "": it could
+// not be copied.
+using CopyIn = std::function<std::optional<std::string>(const std::filesystem::path& source, const std::filesystem::path& folder)>;
+
 // A file into the game's folder (pictures, sounds), under its own name; the
 // same file already there is used as it is, another one of that name gets a
-// number. The name it has there; empty when it cannot be copied.
-std::string copy_into(const std::filesystem::path& source, const std::filesystem::path& folder, const char* what);
+// number (an asset of «Ресурсы» goes through via when given). The name it has
+// there; empty when it cannot be copied.
+std::string copy_into(const std::filesystem::path& source, const std::filesystem::path& folder, const char* what,
+                      const CopyIn& via = {});
 
 class ObjectLibrary {
 public:
@@ -109,9 +119,12 @@ public:
     // images: the file is copied into the library's pictures folder, so it
     // goes with the game.
     std::function<std::vector<std::filesystem::path>()> list_images; // absolute paths
+    CopyIn copy_in; // how a picked picture or sound goes into the game (main)
     bool set_picture(const std::filesystem::path& source);
     bool clear_picture();
     void open_pictures();
+    // Files of «Ресурсы» got new content: the chooser's thumbnails are made again.
+    void files_changed() { pic_icons_.clear(); }
     void close_pictures();
     bool pictures_open() const { return m_pics_open_; }
     void set_picture_search(const std::string& text);

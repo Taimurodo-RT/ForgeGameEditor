@@ -89,6 +89,9 @@ jobs:
         run: |
           ./build/apps/editor/forge_editor --self-test --screenshot world-editor.png
           ./build/apps/editor/forge_editor --bench --frames 300
+      - name: Two games of one template (editor self-test part two-games): «Находка» made in A through the tabs, A opened again elsewhere and updated, the template and B byte for byte as before
+        if: runner.os == 'Linux'
+        run: ./build/apps/editor/forge_editor --self-test two-games
       - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
         if: runner.os == 'Linux'
         run: |
@@ -124,15 +127,16 @@ jobs:
           ./build/dist/OldMine/OldMine --test --scene zones --screenshot world-slice-packaged-zones.png
           ./build/dist/OldMine/OldMine --test --scene own_tiles --screenshot world-slice-packaged-own-tiles.png
           ./build/dist/OldMine/OldMine --test --scene tiled --screenshot world-slice-packaged-tiled.png
-      - name: The author's game «Игра А» (made of a template by the editor's self-test) plays in the package and the build with games/slice moved away
+      - name: The author's games (made of a template by the editor's self-test parts new-game and two-games) play in the package and the build with games/slice moved away
         if: runner.os == 'Linux'
         run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/slice/forge_slice
       # Windows has no GPU here: the editor and the game draw with D3D12's software device (WARP), if SDL finds it.
-      - name: New game from a template on Windows (editor self-test part new-game, then «Игра А» in an editor of its own) and «Игра А» in the package and the build
+      - name: New game from a template on Windows (editor self-test parts new-game and two-games, each game in an editor of its own) and the games in the package and the build
         if: runner.os == 'Windows'
         shell: bash
         run: |
           ./build/apps/editor/Release/forge_editor.exe --self-test new-game
+          ./build/apps/editor/Release/forge_editor.exe --self-test two-games
           python tools/author_game/play.py build/dist/OldMine/OldMine.exe build/apps/slice/Release/forge_slice.exe
       - uses: actions/upload-artifact@v4
         with:

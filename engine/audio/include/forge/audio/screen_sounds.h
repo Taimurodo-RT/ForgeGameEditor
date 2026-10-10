@@ -57,6 +57,8 @@ public:
 
     // The clip of a name (read once; null when there is none).
     ClipPtr clip(const std::string& name);
+    // The clip of a name as read so far (null when it has not been read): what a button played, for checks.
+    ClipPtr loaded(const std::string& name) const;
 
 private:
     Mixer* mixer_ = nullptr;

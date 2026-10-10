@@ -689,6 +689,7 @@ void AssetLibrary::take_results() {
         rebuild_rows();
         rebuild_tree();
         ++selection_version_; // details (size, tags) may have changed
+        if (on_index) on_index();
     }
     for (Staged& s : staged) {
         for (const std::string& e : s.errors) FORGE_WARN("Не импортирован %s", e.c_str());
@@ -1502,6 +1503,7 @@ std::string AssetLibrary::status() const {
     s += " · всего " + files_text(static_cast<int>(records_.size()));
     if (!selection_.empty()) s += " · выбрано " + std::to_string(selection_.size());
     if (!cut_.empty()) s += (copying_ ? " · скопировано " : " · вырезано ") + std::to_string(cut_.size());
+    if (!note.empty()) s += " · " + note;
     return s;
 }
 
@@ -1823,5 +1825,20 @@ std::vector<std::filesystem::path> AssetLibrary::of_type(const char* type) const
 
 std::vector<std::filesystem::path> AssetLibrary::images() const { return of_type("image"); }
 std::vector<std::filesystem::path> AssetLibrary::sounds() const { return of_type("audio"); }
+
+const assets::AssetRecord* AssetLibrary::record_of(const fs::path& file) const {
+    std::error_code ec;
+    const fs::path rel = fs::weakly_canonical(file, ec).lexically_relative(fs::weakly_canonical(config_.folder, ec));
+    if (rel.empty() || *rel.begin() == "..") return nullptr;
+    std::string key = path_to_utf8(rel);
+    std::replace(key.begin(), key.end(), '\\', '/');
+    return record(key);
+}
+
+const assets::AssetRecord* AssetLibrary::find_id(const Guid& id) const {
+    for (const assets::AssetRecord& r : records_)
+        if (r.id == id) return &r;
+    return nullptr;
+}
 
 } // namespace forge::editor_app

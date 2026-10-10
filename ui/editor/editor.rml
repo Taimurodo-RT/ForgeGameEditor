@@ -672,7 +672,7 @@
                     <div data-for="c : ol_cards" class="ol-card column" data-attr-id="'ol-card-' + it_index" data-class-selected="c.selected" data-attr-title="c.about" data-event-mousedown="ol_card_down(it_index)" data-event-dblclick="ol_card_open(it_index)">
                         <div class="ol-thumb"><img data-attr-src="c.icon"/><span class="ol-badge" data-if="c.badge != ''">{{ c.badge }}</span></div>
                         <span class="name" data-if="!c.renaming">{{ c.name }}</span>
-                        <input id="ol-rename" type="text" class="small ol-rename" data-if="c.renaming" data-attr-value="c.name" data-event-change="ol_rename_done(ev.linebreak)" data-event-blur="ol_rename_done(true)"/>
+                        <input id="ol-name-field" type="text" class="small ol-rename" data-if="c.renaming" data-attr-value="c.name" data-event-change="ol_rename_done(ev.linebreak)" data-event-blur="ol_rename_done(true)"/>
                         <span class="kind">{{ c.kind }}</span>
                     </div>
                 </div>

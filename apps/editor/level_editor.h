@@ -31,6 +31,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -205,8 +206,9 @@ public:
     bool spawn_ground(f64& x, f64& y);
     // The links of «Логика» to an area, as phrases (the editor sets this).
     std::function<std::vector<std::string>(u64 area)> area_links;
-    // The sounds of «Ресурсы», offered for a place's music.
+    // The sounds of «Ресурсы», offered for a place's music, and how a pick goes into the game (copy_into's via).
     std::function<std::vector<std::filesystem::path>()> list_sounds;
+    std::function<std::optional<std::string>(const std::filesystem::path&, const std::filesystem::path&)> copy_in;
     // The game's sounds (game/sounds): a place's music is one of them.
     void set_sounds_folder(std::filesystem::path folder) { sounds_folder_ = std::move(folder); }
     const std::filesystem::path& sounds_folder() const { return sounds_folder_; }

@@ -424,6 +424,11 @@ public:
     // Sounds of «Ресурсы» the author can pick for a screen's music and its
     // buttons besides the game's own (a pick is copied into game/sounds).
     std::function<std::vector<std::filesystem::path>()> list_sounds;
+    // How such a pick goes into the game (copy_into's via; main).
+    std::function<std::optional<std::string>(const std::filesystem::path&, const std::filesystem::path&)> copy_in;
+    // Files of the game's pictures or sounds got new content under their names (an asset of «Ресурсы» changed):
+    // the page, its pictures and the sounds of «Проверить» are read again.
+    void files_changed();
     // «Проверить» plays without a device (tests); its sound, for tests.
     bool silent = false;
     std::filesystem::path sounds_folder() const { return game_dir_ / "sounds"; }

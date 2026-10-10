@@ -638,6 +638,17 @@ void UiEditor::set_shown(bool shown) {
     }
 }
 
+void UiEditor::files_changed() {
+    // RmlUi keeps a picture by its file once read: all of them are let go (each is read again when next drawn).
+    Rml::ReleaseTextures();
+    check_sound_.forget();
+    page_dirty_ = true;
+    if (shown_) {
+        scan_pictures();
+        scan_sounds();
+    }
+}
+
 d::HtmlOptions UiEditor::html_options() const {
     d::HtmlOptions options;
     options.library = &library_;
@@ -916,7 +927,7 @@ std::optional<std::string> UiEditor::sound_pick(const std::string& value) {
         FORGE_WARN("%s", sound_note_.c_str());
         return std::nullopt;
     }
-    const std::string name = copy_into(source, sounds_folder(), "звук");
+    const std::string name = copy_into(source, sounds_folder(), "звук", copy_in);
     if (name.empty()) {
         sound_note_ = "«" + shown + "» не скопировался в папку звуков игры.";
         return std::nullopt;
