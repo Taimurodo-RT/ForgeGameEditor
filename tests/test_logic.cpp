@@ -1,5 +1,6 @@
 #include "forge/core/file.h"
 #include "forge/core/jobs.h"
+#include "forge/core/path.h"
 #include "forge/logic/logic.h"
 #include "forge/objects/library.h"
 #include "forge/script/compiler.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 
 using namespace forge;
@@ -880,4 +882,22 @@ TEST_CASE("coming into an area runs its links; once is kept by the hero; areas a
     runtime.area_event(kMine, hero.id(), true);
     run(12);
     CHECK(game.hints.size() == 2);
+}
+
+// Files that are not there, named in Cyrillic: the error names them, nothing throws.
+TEST_CASE("logic: verbs, ideas and links not there, their names in Cyrillic") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / utf8_path("forge_tests_связи нет");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::string error;
+    Verbs verbs;
+    CHECK_FALSE(verbs.load(dir / utf8_path("глаголы.json"), &error));
+    CHECK(error == "не читается глаголы.json");
+    // A file where its folder should be.
+    const std::string text = "файл";
+    REQUIRE(write_file_atomic(dir / utf8_path("занято"), std::span(reinterpret_cast<const u8*>(text.data()), text.size())));
+    Logic links;
+    error.clear();
+    CHECK_FALSE(links.save(dir / utf8_path("занято") / utf8_path("связи.json"), &error));
+    CHECK(error == "не записывается связи.json");
 }

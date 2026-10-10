@@ -12849,10 +12849,12 @@ private:
             ng_open_b_discarding();
             ng_await_ = true;
             break;
-        case 20:
-            check(pjw().view() == "message" && pj_has(pjw().note(), "Игра «Игра Б» не открылась: редактор не запустился") &&
+        case 20: {
+            const std::string said = "Игра «Игра Б» не открылась: редактор не запустился (папка интерфейса " +
+                                     path_to_utf8(ng_root_ / utf8_path("нет интерфейса")) + ").";
+            check(pjw().view() == "message" && pj_has(pjw().note(), said.c_str()) &&
                       pj_has(pjw().note(), "осталась открытой, ничего не потеряно"),
-                  "«Игра «Игра Б» не открылась: редактор не запустился…» (what it said)");
+                  "«Игра «Игра Б» не открылась: редактор не запустился (папка интерфейса …/нет интерфейса).» (what it said)");
             check(!ed_.discarding && !ed_.quit_asked && ed_.history.dirty(), "this game stays open, its changes kept");
             // One that does not answer in time: it is stopped.
             pjw().answer("ok");
@@ -12860,6 +12862,7 @@ private:
             ng_open_b_discarding();
             ng_await_ = true;
             break;
+        }
         case 21:
             check(pjw().view() == "message" && pj_has(pjw().note(), "не открыл её за 0.05 с и остановлен") &&
                       pj_has(pjw().note(), "осталась открытой, ничего не потеряно"),
