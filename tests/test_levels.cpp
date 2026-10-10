@@ -1,6 +1,7 @@
 // A game's levels (game/levels.json): a game without the file has its one level and nothing is written into it;
-// ids that never change and the folders that come from them; names; a file that cannot be used is told and kept;
-// a change of the list that cannot be written leaves the list and the game as they were.
+// ids that never change and the folders that come from them; names; a file that cannot be used, or is read only in
+// part, is told and kept as it is; a change of the list that cannot be written leaves the list and the game as they
+// were.
 
 #include "forge/core/file.h"
 #include "forge/core/path.h"
@@ -192,19 +193,22 @@ TEST_CASE("levels: a list that cannot be used is told, the game starts with «le
     CHECK(read_levels(g.game).broken);
 }
 
-TEST_CASE("levels: entries that cannot be used are left out and told; a start not in the list is the first") {
+TEST_CASE("levels: entries that cannot be used are left out and told; a start not in the list is the first; the file is "
+          "not written over") {
     Game g;
-    Game::write_text(g.game / kLevelsFile,
-                     "{\"start_level\": \"lgone\", \"levels\": ["
-                     "{\"id\": \"Пещера\", \"name\": \"Плохой id\"},"
-                     "{\"id\": \"cave\", \"name\": \"Пещера\"},"
-                     "{\"id\": \"../x\", \"name\": \"Наружу\"},"
-                     "{\"id\": \"cave\", \"name\": \"Ещё раз\"},"
-                     "\"не объект\","
-                     "{\"id\": \"level\"}],"
-                     "\"later\": {\"key\": 1}}");
-    const LevelList list = read_levels(g.game);
+    const std::string text = "{\"start_level\": \"lgone\", \"levels\": ["
+                             "{\"id\": \"Пещера\", \"name\": \"Плохой id\"},"
+                             "{\"id\": \"cave\", \"name\": \"Пещера\"},"
+                             "{\"id\": \"../x\", \"name\": \"Наружу\"},"
+                             "{\"id\": \"cave\", \"name\": \"Ещё раз\"},"
+                             "\"не объект\","
+                             "{\"id\": \"level\"}],"
+                             "\"later\": {\"key\": 1}}";
+    Game::write_text(g.game / kLevelsFile, text);
+    LevelList list = read_levels(g.game);
     CHECK_FALSE(list.broken);
+    CHECK(list.locked);
+    CHECK_FALSE(list.writable());
     REQUIRE(list.levels.size() == 2);
     CHECK(list.levels[0].id == "cave");
     CHECK(list.levels[0].name == "Пещера");
@@ -217,12 +221,103 @@ TEST_CASE("levels: entries that cannot be used are left out and told; a start no
     CHECK(has(list.notes, "нет id"));
     CHECK(has(list.notes, "нет имени"));
     CHECK(has(list.notes, "стартового уровня «lgone» нет"));
+    CHECK(has(list.notes, "поле «later» не прочитано"));
+    CHECK(list.problem.find("levels.json: прочитано не всё") == 0);
+    CHECK(list.problem.find("«later»") != std::string::npos);
+    CHECK(list.problem.find("«lgone»") != std::string::npos);
+    CHECK(list.problem.find("нет имени") == std::string::npos); // put right, nothing lost
     CHECK(level_folder(g.game, "cave") == g.game / "levels" / "cave");
     std::string id;
     std::vector<std::string> notes;
     CHECK(start_level_folder(g.game, &id, &notes) == g.game / "levels" / "cave");
     CHECK(id == "cave");
     CHECK(has(notes, "«lgone»"));
+    // Nothing of the list changes, and the file stays as the author wrote it.
+    const LevelList kept = list;
+    std::string error, made;
+    CHECK_FALSE(add_level(g.game, list, "Уровень 3", made, &error));
+    CHECK(error.find("файл не переписывается") != std::string::npos);
+    CHECK(made.empty());
+    CHECK_FALSE(rename_level(g.game, list, "cave", "Шахта", &error));
+    CHECK_FALSE(set_start_level(g.game, list, "level", &error));
+    CHECK_FALSE(write_levels(g.game, list, &error));
+    CHECK(error.find("прочитано не всё") != std::string::npos);
+    CHECK(list.levels.size() == kept.levels.size());
+    CHECK(list.find("cave")->name == "Пещера");
+    CHECK(list.start == "cave");
+    CHECK(g.list_text() == text);
+    std::error_code ec;
+    CHECK_FALSE(fs::exists(g.game / "levels", ec));
+}
+
+TEST_CASE("levels: a list read only in part is not written over; one read whole and put right is") {
+    // Codex's case: a level whose id this Forge cannot use. Renaming the start level must not lose «Cave».
+    Game g;
+    const std::string text = "{\"start_level\":\"level\",\"levels\":[{\"id\":\"level\",\"name\":\"Start\"},"
+                             "{\"id\":\"Cave\",\"name\":\"Recoverable cave\"}]}";
+    Game::write_text(g.game / kLevelsFile, text);
+    LevelList list = read_levels(g.game);
+    CHECK(list.locked);
+    REQUIRE(list.levels.size() == 1);
+    CHECK(list.levels[0].name == "Start");
+    CHECK(list.problem.find("«Cave»") != std::string::npos);
+    const LevelList kept = list;
+    std::string error, made;
+    CHECK_FALSE(rename_level(g.game, list, "level", "Renamed start", &error));
+    CHECK(error.find("«Cave»") != std::string::npos);
+    CHECK(error.find("файл не переписывается") != std::string::npos);
+    CHECK_FALSE(add_level(g.game, list, "Уровень 2", made, &error));
+    CHECK_FALSE(set_start_level(g.game, list, "level", &error));
+    CHECK(list.levels.size() == 1);
+    CHECK(list.levels[0].name == kept.levels[0].name);
+    CHECK(list.start == kept.start);
+    CHECK(list.locked);
+    CHECK(g.list_text() == text);
+    std::error_code ec;
+    CHECK_FALSE(fs::exists(g.game / "levels", ec));
+
+    // Each thing writing would lose locks the list: a field this Forge does not know (of the list, of a level), a
+    // field written twice, a name that is no text, a start that is no id or no level of the list.
+    const char* in_part[] = {
+        "{\"start_level\":\"level\",\"levels\":[{\"id\":\"level\",\"name\":\"Start\"}],\"transitions\":[]}",
+        "{\"start_level\":\"level\",\"levels\":[{\"id\":\"level\",\"name\":\"Start\",\"music\":\"a.ogg\"}]}",
+        "{\"start_level\":\"level\",\"levels\":[{\"id\":\"level\",\"name\":\"Start\",\"name\":\"Again\"}]}",
+        "{\"start_level\":\"level\",\"start_level\":\"level\",\"levels\":[{\"id\":\"level\",\"name\":\"Start\"}]}",
+        "{\"start_level\":\"level\",\"levels\":[{\"id\":\"level\",\"name\":5}]}",
+        "{\"start_level\":7,\"levels\":[{\"id\":\"level\",\"name\":\"Start\"}]}",
+        "{\"start_level\":\"lgone\",\"levels\":[{\"id\":\"level\",\"name\":\"Start\"}]}",
+    };
+    const char* said[] = {"«transitions»", "«music»", "«name» записано не раз", "«start_level» записано не раз", "не строка",
+                          "«start_level» — не id", "«lgone»"};
+    for (usize k = 0; k < std::size(in_part); ++k) {
+        CAPTURE(in_part[k]);
+        Game::write_text(g.game / kLevelsFile, in_part[k]);
+        LevelList l = read_levels(g.game);
+        CHECK_FALSE(l.broken);
+        CHECK(l.locked);
+        CHECK(l.problem.find(said[k]) != std::string::npos);
+        CHECK(l.start == "level");
+        CHECK_FALSE(rename_level(g.game, l, "level", "Другое", &error));
+        CHECK(g.list_text() == in_part[k]);
+    }
+
+    // Put right and nothing lost: a level with no name (named by its id), no start_level (the first), a name with
+    // spaces around. Read whole: a change is written, and the file has it all.
+    Game::write_text(g.game / kLevelsFile, "{\"levels\":[{\"id\":\"cave\",\"name\":\"  Пещера \"},{\"id\":\"level\"}]}");
+    LevelList whole = read_levels(g.game);
+    CHECK_FALSE(whole.locked);
+    CHECK(whole.writable());
+    CHECK(whole.problem.empty());
+    CHECK(has(whole.notes, "нет имени"));
+    CHECK(has(whole.notes, "стартовый уровень не указан"));
+    CHECK(whole.start == "cave");
+    REQUIRE(rename_level(g.game, whole, "level", "Деревня", &error));
+    const LevelList again = read_levels(g.game);
+    CHECK(again.notes.empty());
+    REQUIRE(again.levels.size() == 2);
+    CHECK(again.levels[0].name == "Пещера");
+    CHECK(again.levels[1].name == "Деревня");
+    CHECK(again.start == "cave");
 }
 
 TEST_CASE("levels: a change that cannot be written leaves the list, the file and the folders as they were") {

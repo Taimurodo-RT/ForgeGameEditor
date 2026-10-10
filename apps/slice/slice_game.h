@@ -13,6 +13,7 @@
 #include "slice_world.h"
 
 #include "forge/game/shell.h"
+#include "forge/level/levels.h"
 #include "forge/logic/logic.h"
 #include "forge/render/lighting.h"
 #include "forge/render/particles.h"
@@ -35,7 +36,8 @@ struct HeroSave {
     u32 slot = 0;
     f32 zoom = 0;
     // The level the game plays: its id in the game's list (levels.json); empty for a folder that is no level of it.
-    std::string level;
+    // A save made before levels has no such field: it played game/level, so that is what it reads as.
+    std::string level{forge::level::kFirstLevel};
 };
 
 struct Options {

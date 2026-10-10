@@ -381,9 +381,11 @@ private:
             }});
             return;
         }
-        // The level: the one the author meant, with what they put into it; and so again from the game's save.
+        // The level: the one the author meant, with what they put into it; and so again from the game's save. A save
+        // made before levels (hero.json without "level") plays game/level, and is saved so; one of a folder that is
+        // no level of the game ("level": "") stays so.
         if (!project_edits.level.empty() || !project_edits.cells.empty())
-            steps_.push_back({"игра играет нужный уровень", 40, [&s, &g, this](u32 f) {
+            steps_.push_back({"игра играет нужный уровень", 60, [&s, &g, this](u32 f) {
                 const ProjectEdits& e = project_edits;
                 auto look = [&](const std::string& when) {
                     if (!e.level.empty())
@@ -403,11 +405,60 @@ private:
                     check(s.save("levels", "Уровни"), "игра сохраняется");
                     return false;
                 }
+                // The save "levels" as another game wrote it: hero.json without "level" (null), or with the level given.
+                auto save_as = [&](const char* to, const std::string* level) {
+                    namespace fs = std::filesystem;
+                    std::error_code ec;
+                    const fs::path into = s.slots().folder(to);
+                    fs::remove_all(into, ec);
+                    fs::copy(s.slots().folder("levels"), into, fs::copy_options::recursive, ec);
+                    std::vector<u8> bytes;
+                    if (ec || !read_file(into / "hero.json", bytes)) return false;
+                    std::string text(bytes.begin(), bytes.end());
+                    const usize at = text.find("\"level\""), comma = text.rfind(',', at);
+                    const usize open = text.find('"', text.find(':', at)), close = text.find('"', open + 1);
+                    if (at == std::string::npos || comma == std::string::npos || close == std::string::npos) return false;
+                    if (level) text.replace(open, close + 1 - open, "\"" + *level + "\"");
+                    else text.erase(comma, close + 1 - comma);
+                    return (level || text.find("\"level\"") == std::string::npos) &&
+                           write_file_atomic(into / "hero.json", {reinterpret_cast<const u8*>(text.data()), text.size()});
+                };
+                auto hero_text = [&](const char* slot) {
+                    std::vector<u8> bytes;
+                    read_file(s.slots().folder(slot) / "hero.json", bytes);
+                    return std::string(bytes.begin(), bytes.end());
+                };
                 if (f == 5) {
                     check(s.load("levels"), "сохранение загружается");
                     return false;
                 }
-                if (f < 10) return false;
+                if (f == 10) {
+                    look(" (после загрузки сохранения)");
+                    check(save_as("levels-old", nullptr), "сохранение, как до уровней: в hero.json нет «level»");
+                    check(s.load("levels-old"), "старое сохранение загружается");
+                    return false;
+                }
+                if (f == 15) {
+                    check(g.level_id() == "level", "старое сохранение (без «level») играет «level», а не «" + g.level_id() + "»");
+                    check(s.save("levels-old-again", "Снова"), "старое сохранение сохраняется заново");
+                    check(hero_text("levels-old-again").find("\"level\": \"level\"") != std::string::npos,
+                          "в новом сохранении «level»: «level»: " + hero_text("levels-old-again"));
+                    check(s.load("levels-old-again"), "и оно загружается");
+                    return false;
+                }
+                if (f == 20) {
+                    check(g.level_id() == "level", "сохранённое заново играет «level», а не «" + g.level_id() + "»");
+                    const std::string none;
+                    check(save_as("levels-outside", &none), "сохранение папки не из списка уровней: «level»: \"\"");
+                    check(s.load("levels-outside"), "оно загружается");
+                    return false;
+                }
+                if (f == 25) {
+                    check(g.level_id().empty(), "«level»: \"\" так и остаётся пустым, а не «" + g.level_id() + "»");
+                    check(s.load("levels"), "сохранение «levels» загружается снова");
+                    return false;
+                }
+                if (f < 30) return false;
                 look(" (после загрузки сохранения)");
                 return true;
             }});

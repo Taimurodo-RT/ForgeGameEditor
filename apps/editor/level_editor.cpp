@@ -289,8 +289,8 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
         levels_ = level::read_levels(config.game_data);
         const level::LevelEntry* e = level::level_of_folder(config.game_data, levels_, config.folder);
         level_id_ = e ? e->id : std::string();
-        if (levels_.broken) {
-            levels_note_ = levels_.problem + ": список уровней не меняется, пока его не исправят";
+        if (!levels_.writable()) {
+            levels_note_ = levels_.why_unchanged();
             FORGE_WARN("Уровни игры: %s", levels_note_.c_str());
         }
         for (const std::string& n : levels_.notes) FORGE_WARN("Уровни игры: %s", n.c_str());

@@ -111,7 +111,7 @@ void LevelEditor::sync_levels() {
         model_.DirtyVariable("lv_levels");
     }
     set(m_levels_open_, levels_open_, "lv_levels_open");
-    set(m_levels_can_, !levels_.broken && !config_.game_data.empty(), "lv_levels_can");
+    set(m_levels_can_, levels_.writable() && !config_.game_data.empty(), "lv_levels_can");
     set(m_levels_note_, Rml::String(levels_note_), "lv_levels_note");
     set(m_level_name_, Rml::String(level_name()), "lv_level_name");
     set(m_level_listed_, !level_id_.empty(), "lv_level_listed");
@@ -126,12 +126,12 @@ void LevelEditor::set_levels_menu(bool open) {
     if (open) {
         // The list as it is on disk now (another editor of the game, a hand edit).
         if (!config_.game_data.empty()) {
-            const bool was_broken = levels_.broken;
+            const bool was_unchanged = !levels_.writable();
             levels_ = level::read_levels(config_.game_data);
             const level::LevelEntry* e = level::level_of_folder(config_.game_data, levels_, level_->folder());
             level_id_ = e ? e->id : std::string();
-            if (levels_.broken) levels_note_ = levels_.problem + ": список уровней не меняется, пока его не исправят";
-            else if (was_broken) levels_note_.clear(); // put right: what was said of it holds no more
+            if (!levels_.writable()) levels_note_ = levels_.why_unchanged();
+            else if (was_unchanged) levels_note_.clear(); // put right: what was said of it holds no more
         }
         naming_.clear();
     }
@@ -200,8 +200,8 @@ void LevelEditor::choose_level(const std::string& id) {
 
 void LevelEditor::begin_new_level() {
     levels_open_ = false;
-    if (levels_.broken || config_.game_data.empty()) {
-        levels_note_ = levels_.broken ? levels_.problem + ": список уровней не меняется, пока его не исправят" : "у уровня нет игры";
+    if (!levels_.writable() || config_.game_data.empty()) {
+        levels_note_ = !levels_.writable() ? levels_.why_unchanged() : "у уровня нет игры";
         ++levels_serial_;
         return;
     }
@@ -213,8 +213,8 @@ void LevelEditor::begin_new_level() {
 
 void LevelEditor::begin_rename_level() {
     levels_open_ = false;
-    if (level_id_.empty() || levels_.broken) {
-        levels_note_ = levels_.broken ? levels_.problem + ": список уровней не меняется, пока его не исправят"
+    if (level_id_.empty() || !levels_.writable()) {
+        levels_note_ = !levels_.writable() ? levels_.why_unchanged()
                                       : "Этот уровень не из списка уровней игры: переименовать его нельзя";
         ++levels_serial_;
         return;

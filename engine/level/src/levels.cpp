@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <random>
 
 namespace forge::level {
@@ -118,43 +119,86 @@ LevelList read_levels(const fs::path& game) {
     if (!yyjson_is_arr(levels)) return broken("«levels» — не список уровней");
     LevelList out;
     out.from_file = true;
+    // What is told: put right (a level with no name), or left out, which the file keeps only while it is not
+    // written anew (a level that cannot be used, a field this Forge does not know).
+    auto note = [&](const std::string& what) { out.notes.push_back(std::string(kLevelsFile) + ": " + what); };
+    std::vector<std::string> left_out;
+    auto leave_out = [&](const std::string& what) {
+        note(what);
+        left_out.push_back(what);
+    };
+    auto known_fields = [&](yyjson_val* obj, std::initializer_list<std::string_view> known, const std::string& of) {
+        std::vector<std::string> seen;
+        usize k, m;
+        yyjson_val *key, *value;
+        yyjson_obj_foreach(obj, k, m, key, value) {
+            const std::string field(yyjson_get_str(key), yyjson_get_len(key));
+            bool is_known = false;
+            for (const std::string_view f : known) is_known = is_known || f == field;
+            bool again = false;
+            for (const std::string& f : seen) again = again || f == field;
+            if (!is_known) leave_out(of + "поле " + in_quotes(field) + " не прочитано: эта версия Forge его не знает");
+            else if (again) leave_out(of + "поле " + in_quotes(field) + " записано не раз, прочитано первое");
+            seen.push_back(field);
+        }
+    };
+    known_fields(root, {"start_level", "levels"}, "");
     usize i, n;
     yyjson_val* v;
     yyjson_arr_foreach(levels, i, n, v) {
         const std::string at = "уровень " + std::to_string(i + 1);
         yyjson_val* id = yyjson_obj_get(v, "id");
         if (!yyjson_is_obj(v) || !yyjson_is_str(id)) {
-            out.notes.push_back(std::string(kLevelsFile) + ": " + at + " пропущен: нет id");
+            leave_out(at + " пропущен: нет id");
             continue;
         }
         LevelEntry e;
         e.id.assign(yyjson_get_str(id), yyjson_get_len(id));
         if (!valid_level_id(e.id)) {
-            out.notes.push_back(std::string(kLevelsFile) + ": " + at + " пропущен: id " + in_quotes(e.id) +
-                                " — не буквы a–z, цифры, «_» и «-»");
+            leave_out(at + " пропущен: id " + in_quotes(e.id) + " — не буквы a–z, цифры, «_» и «-»");
             continue;
         }
         if (out.find(e.id)) {
-            out.notes.push_back(std::string(kLevelsFile) + ": " + at + " пропущен: id " + in_quotes(e.id) + " уже есть");
+            leave_out(at + " пропущен: id " + in_quotes(e.id) + " уже есть");
             continue;
         }
+        known_fields(v, {"id", "name"}, "у уровня " + in_quotes(e.id) + " ");
         yyjson_val* name = yyjson_obj_get(v, "name");
         if (yyjson_is_str(name)) e.name = trimmed({yyjson_get_str(name), yyjson_get_len(name)});
-        if (e.name.empty()) {
+        if (name && !yyjson_is_str(name)) {
             e.name = e.id;
-            out.notes.push_back(std::string(kLevelsFile) + ": у уровня " + in_quotes(e.id) + " нет имени, он назван по id");
+            leave_out("у уровня " + in_quotes(e.id) + " имя — не строка, он назван по id");
+        } else if (e.name.empty()) {
+            e.name = e.id;
+            note("у уровня " + in_quotes(e.id) + " нет имени, он назван по id");
         }
         out.levels.push_back(std::move(e));
     }
     if (out.levels.empty()) return broken("в списке нет ни одного уровня");
     yyjson_val* start = yyjson_obj_get(root, "start_level");
-    if (yyjson_is_str(start)) out.start.assign(yyjson_get_str(start), yyjson_get_len(start));
-    if (!out.find(out.start)) {
-        out.notes.push_back(std::string(kLevelsFile) + ": стартового уровня " + in_quotes(out.start) +
-                            " нет в списке, стартовый — " + in_quotes(out.levels.front().name));
-        out.start = out.levels.front().id;
+    const std::string first = in_quotes(out.levels.front().name);
+    if (!start) {
+        note("стартовый уровень не указан, стартовый — " + first);
+    } else if (!yyjson_is_str(start)) {
+        leave_out("«start_level» — не id уровня, стартовый — " + first);
+    } else {
+        out.start.assign(yyjson_get_str(start), yyjson_get_len(start));
+        if (!out.find(out.start)) leave_out("стартового уровня " + in_quotes(out.start) + " нет в списке, стартовый — " + first);
+    }
+    if (!out.find(out.start)) out.start = out.levels.front().id;
+    if (!left_out.empty()) {
+        out.locked = true;
+        out.problem = std::string(kLevelsFile) + ": прочитано не всё (";
+        for (usize k = 0; k < left_out.size(); ++k) out.problem += (k ? "; " : "") + left_out[k];
+        out.problem += ")";
     }
     return out;
+}
+
+std::string LevelList::why_unchanged() const {
+    if (broken) return problem + "; исправьте или уберите его, иначе список уровней не меняется";
+    if (locked) return problem + "; файл не переписывается, чтобы это не потерялось: исправьте его, иначе список уровней не меняется";
+    return {};
 }
 
 bool write_levels(const fs::path& game, const LevelList& list, std::string* error) {
@@ -162,7 +206,7 @@ bool write_levels(const fs::path& game, const LevelList& list, std::string* erro
         if (error) *error = why;
         return false;
     };
-    if (list.broken) return fail(list.problem + "; исправьте или уберите его, иначе список уровней не меняется");
+    if (!list.writable()) return fail(list.why_unchanged());
     if (list.levels.empty() || !list.find(list.start)) return fail("в списке уровней нет стартового");
     for (const LevelEntry& l : list.levels)
         if (!valid_level_id(l.id)) return fail("у уровня " + in_quotes(l.name) + " id " + in_quotes(l.id) + " не годится");
@@ -216,7 +260,7 @@ bool add_level(const fs::path& game, LevelList& list, std::string_view name, std
         if (error) *error = why;
         return false;
     };
-    if (list.broken) return fail(list.problem + "; исправьте или уберите его, иначе список уровней не меняется");
+    if (!list.writable()) return fail(list.why_unchanged());
     if (const std::string why = level_name_problem(list, name); !why.empty()) return fail(why);
     const std::string made = new_level_id(game, list);
     const fs::path folder = level_folder(game, made);
@@ -243,6 +287,7 @@ bool rename_level(const fs::path& game, LevelList& list, std::string_view id, st
         if (error) *error = why;
         return false;
     };
+    if (!list.writable()) return fail(list.why_unchanged());
     if (!list.find(id)) return fail("уровня " + in_quotes(id) + " нет в списке");
     if (const std::string why = level_name_problem(list, name, id); !why.empty()) return fail(why);
     LevelList next = list;
@@ -256,10 +301,12 @@ bool rename_level(const fs::path& game, LevelList& list, std::string_view id, st
 }
 
 bool set_start_level(const fs::path& game, LevelList& list, std::string_view id, std::string* error) {
-    if (!list.find(id)) {
-        if (error) *error = "уровня " + in_quotes(id) + " нет в списке";
+    auto fail = [&](const std::string& why) {
+        if (error) *error = why;
         return false;
-    }
+    };
+    if (!list.writable()) return fail(list.why_unchanged());
+    if (!list.find(id)) return fail("уровня " + in_quotes(id) + " нет в списке");
     LevelList next = list;
     next.from_file = true;
     next.notes.clear();

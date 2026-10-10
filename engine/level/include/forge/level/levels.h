@@ -31,11 +31,16 @@ struct LevelList {
     std::string start;              // the id of the start level, one of levels
     bool from_file = false;         // read from levels.json (false: a game without it, its one level)
     bool broken = false;            // levels.json is there and cannot be used: the one level, and nothing is written
-    std::string problem;            // why it is broken
+    bool locked = false;            // levels.json is read, but not all of it: used as read, and nothing is written
+                                    // (writing it anew would lose what was left out)
+    std::string problem;            // why it is broken or locked
     std::vector<std::string> notes; // what was left out or put right when it was read, in words
 
     const LevelEntry* find(std::string_view id) const;
     const LevelEntry& start_level() const;
+    // Whether a change of the list may be written (neither broken nor locked), and why not, in words.
+    bool writable() const { return !broken && !locked; }
+    std::string why_unchanged() const;
 };
 
 // "level", or letters a-z, digits, "_" and "-", 1 to 40 of them.
@@ -48,8 +53,8 @@ const LevelEntry* level_of_folder(const std::filesystem::path& game, const Level
                                   const std::filesystem::path& folder);
 
 LevelList read_levels(const std::filesystem::path& game);
-// The whole list in one file, written over the old one at once. Refused for a broken list: the author's file is
-// not written over.
+// The whole list in one file, written over the old one at once. Refused for a broken or locked list: the author's
+// file is not written over.
 bool write_levels(const std::filesystem::path& game, const LevelList& list, std::string* error);
 
 // The folder a new game starts in: the start level's; id is its id. A game without levels.json: game/level.

@@ -14419,12 +14419,14 @@ private:
     // their pictures and the music the same bytes (SHA-256). «Не сохранять» leaves «Уровень 1» as saved. A cell of
     // each level by the spawn point, stone in one, dirt (which does not fall, as sand does) in the other. levels-again, from a third working folder:
     // «Пещера» opens (the level open last) by the same ids, the same bytes; «Играть» plays each level with its cell;
-    // «Играть со стартового» starts «Пещера» with no --level. Then the list and the template are looked at.
+    // «Играть со стартового» starts «Пещера» with no --level; a levels.json read only in part (a level this Forge
+    // cannot use, a field it does not know) is used as read and kept as it is: no level made, renamed or started.
     int lvl_step_ = 0;
     std::map<std::string, std::string> lvl_rec_; // what levels-a made, for levels-again (a file of the test)
     std::map<std::string, std::vector<u8>> lvl_tmpl_, lvl_first_, lvl_second_; // the template; «Уровень 1», «Пещера» as saved
     std::filesystem::path lvl_block_; // a file of «Уровень 1» whose place a folder takes
     std::vector<u8> lvl_list_;        // levels.json before it was taken away
+    std::vector<u8> lvl_locked_;      // levels.json with what this Forge does not read
     i32 lvl_x_ = 0, lvl_y_ = 0;       // the cell painted first; then the cell by the spawn point
 
     static std::filesystem::path lvl_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_уровни"); }
@@ -14892,12 +14894,13 @@ private:
     // In an editor for the game started from a third working folder (--self-test levels-again).
     bool levels_again_step() {
         namespace fs = std::filesystem;
-        const fs::path g = pjw().config().root, game = g / "game";
+        const fs::path g = pjw().config().root, game = g / "game", list_file = game / level::kLevelsFile;
         auto cells = [&](const char* tile) {
             return std::vector<int>{1, std::atoi(lvl_rec_["x"].c_str()), std::atoi(lvl_rec_["y"].c_str()), std::atoi(lvl_rec_[tile].c_str())};
         };
         const std::string id = lvl_rec_["id"];
         auto said = [&](const char* id_of, const std::string& bit) { return element_text(id_of).find(bit) != std::string::npos; };
+        auto note = [&](const char* bit) { return lv().levels_note().find(bit) != std::string::npos; };
         switch (lvl_step_) {
         case 0:
             lvl_rec_ = tg_get(lvl_root() / utf8_path("записи.txt"));
@@ -14955,8 +14958,44 @@ private:
             const slice::ProjectEdits e = lvl_edits(id, "Пещера", cells("dirt"));
             const int code = tg_play(&e, "ожидания старт.json", lvl_root());
             check(code == 0, "the game starts «Пещера», as a player starts it (exit " + std::to_string(code) + ")");
-            return false;
+            // A list read, but not all of it (a level this Forge cannot use, a field it does not know): used as
+            // read, and nothing writes it over, so nothing of it is lost.
+            lvl_list_ = tg_bytes(list_file);
+            const std::string text = "{\"start_level\": \"" + id + "\", \"levels\": [{\"id\": \"level\", \"name\": \"Уровень 1\"}, {\"id\": \"" +
+                                     id + "\", \"name\": \"Пещера\"}, {\"id\": \"Cave\", \"name\": \"Пещера другой версии\"}], \"transitions\": []}\n";
+            lvl_locked_.assign(text.begin(), text.end());
+            check(write_file_atomic(list_file, lvl_locked_), "levels.json with what this Forge does not read");
+            break;
         }
+        case 6:
+        case 8:
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 7: {
+            if (wait(2)) return true;
+            const level::LevelList& l = lv().levels();
+            check(l.locked && !l.broken && l.levels.size() == 2 && l.start == id && note("прочитано не всё") && note("«Cave»") &&
+                      note("«transitions»") && note("файл не переписывается"),
+                  "read, not all of it: its two levels, and what is left out is said: " + lv().levels_note());
+            check(pj_class("lv-level-new", "disabled") && pj_class("lv-level-rename", "disabled") && pj_class("lv-level-start", "disabled"),
+                  "«Новый уровень», «Переименовать…», «Сделать стартовым» off");
+            check(pj_click("lv-level-new") && lv().naming_level().empty(), "«Новый уровень» does nothing");
+            lv().begin_rename_level();
+            check(lv().naming_level().empty() && note("файл не переписывается"), "renaming does not begin");
+            check(lv().level_id() == "level" && !lv().make_start_level() && note("Стартовый уровень не изменён") && lv().levels().start == id,
+                  "«Уровень 1» is not made the start: " + lv().levels_note());
+            check(tg_bytes(list_file) == lvl_locked_ && pj_names(game / "levels") == std::vector<std::string>{id},
+                  "the author's file as it is, no level made");
+            check(write_file_atomic(list_file, lvl_list_), "levels.json back");
+            break;
+        }
+        case 9:
+            if (wait(2)) return true;
+            check(lv().levels().writable() && lv().levels().levels.size() == 2 && lv().levels_note().empty() &&
+                      !pj_class("lv-level-new", "disabled") && tg_bytes(list_file) == lvl_list_,
+                  "put right: the list read again, its menu on, nothing said of it");
+            return false;
         default:
             break;
         }
