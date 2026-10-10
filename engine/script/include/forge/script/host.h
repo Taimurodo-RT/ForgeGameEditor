@@ -185,6 +185,10 @@ public:
     void* user(std::string_view key) const;
     // The entity whose handler is running (0 outside handlers).
     flecs::entity_t running() const;
+    // The handler call running now: an id of its own from its start to its end, its waits included (0 outside
+    // handlers); and whether a call is not over yet (it waits).
+    u64 running_call() const;
+    bool call_waits(u64 call) const;
     scene::Scene& scene() { return scene_; }
 
     struct Impl; // shared with the engine functions in api_core.cpp

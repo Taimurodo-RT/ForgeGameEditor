@@ -7,6 +7,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -287,6 +289,69 @@ TEST_CASE("saving one chunk keeps its neighbours in the same region") {
     CHECK(w.tile(0, 1, 1) == TileSand);
     CHECK(w.tile(0, 2, 2) == TileWater);
     CHECK(w.tile(0, 65, 1) == TileSnow);
+}
+
+namespace {
+// Every file of a folder with its bytes.
+std::map<std::string, std::string> folder_files(const std::filesystem::path& dir) {
+    std::map<std::string, std::string> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        std::ifstream in(e.path(), std::ios::binary);
+        out[e.path().filename().string()] = std::string(std::istreambuf_iterator<char>(in), {});
+    }
+    return out;
+}
+} // namespace
+
+TEST_CASE("a copy of the save gets the world as it is; the save folder stays; a moved save folder is used where it went") {
+    PoolScope pool;
+    SaveDir dir, copy, blocked, moved;
+    WorldDesc desc;
+    desc.load_margin = 0;
+    desc.keep_extra = 0;
+    auto gen = std::make_shared<TopDownGenerator>(9);
+    World w(desc, gen);
+    REQUIRE(w.open_save(dir.path));
+    load_around(w, view_at(0, 0, 64, 64));
+    w.set_tile(0, 1, 1, TileSand);
+    REQUIRE(w.save().ok);
+    w.set_tile(0, 2, 2, TileWater);
+    load_around(w, view_at(5000, 0, 64, 64)); // chunk (0,0) leaves memory changed
+    w.set_tile(0, 5001, 1, TileSnow);
+    const auto before = folder_files(dir.path);
+    std::filesystem::copy(dir.path, copy.path, std::filesystem::copy_options::recursive);
+
+    const SaveReport c = w.save_copy(copy.path);
+    CHECK(c.ok);
+    CHECK(c.chunks == 2);
+    CHECK(folder_files(dir.path) == before);
+    CHECK(w.stats().stored_edits == 1); // nothing counts as saved
+    {
+        World other(desc, gen);
+        REQUIRE(other.open_save(copy.path));
+        load_around(other, view_at(0, 0, 64, 64));
+        CHECK(other.tile(0, 1, 1) == TileSand);
+        CHECK(other.tile(0, 2, 2) == TileWater);
+        load_around(other, view_at(5000, 0, 64, 64));
+        CHECK(other.tile(0, 5001, 1) == TileSnow);
+    }
+    // A copy that cannot be written (a region's place taken by a folder): not ok, the save folder as it was.
+    std::filesystem::copy(dir.path, blocked.path, std::filesystem::copy_options::recursive);
+    std::filesystem::remove(blocked.path / "r.0.0.fwr");
+    std::filesystem::create_directories(blocked.path / "r.0.0.fwr" / "taken");
+    CHECK_FALSE(w.save_copy(blocked.path).ok);
+    CHECK(folder_files(dir.path) == before);
+
+    // The save folder renamed: the world saves there and reads its chunks from there.
+    std::filesystem::rename(dir.path, moved.path);
+    w.moved_save(moved.path);
+    REQUIRE(w.save().ok);
+    CHECK_FALSE(std::filesystem::exists(dir.path));
+    CHECK(w.stats().stored_edits == 0);
+    load_around(w, view_at(0, 0, 64, 64)); // (0,0) comes back from the moved folder
+    CHECK(w.tile(0, 1, 1) == TileSand);
+    CHECK(w.tile(0, 2, 2) == TileWater);
 }
 
 TEST_CASE("a damaged region file falls back to the generator") {

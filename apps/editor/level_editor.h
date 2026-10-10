@@ -155,6 +155,8 @@ public:
         ask_unsaved;
     // Bumped whenever another level opens (its areas are other areas).
     u64 levels_opened() const { return levels_opened_; }
+    // Bumped whenever the list or its menu changes (a level made, renamed, made the start).
+    u64 levels_serial() const { return levels_serial_; }
     // Why the last save() did not write (empty when it did).
     const std::string& save_error() const { return save_error_; }
 

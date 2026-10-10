@@ -25,6 +25,14 @@ FORGE_REFLECT(slice::ProjectEdits, 1) {
     t.field("level", &slice::ProjectEdits::level);
     t.field("level_name", &slice::ProjectEdits::level_name);
     t.field("cells", &slice::ProjectEdits::cells);
+    t.field("go_continue", &slice::ProjectEdits::go_continue);
+    t.field("go_start", &slice::ProjectEdits::go_start);
+    t.field("go_through", &slice::ProjectEdits::go_through);
+    t.field("go_level", &slice::ProjectEdits::go_level);
+    t.field("go_arrive", &slice::ProjectEdits::go_arrive);
+    t.field("go_mark_put", &slice::ProjectEdits::go_mark_put);
+    t.field("go_mark_find", &slice::ProjectEdits::go_mark_find);
+    t.field("go_save", &slice::ProjectEdits::go_save);
 }
 
 namespace slice {

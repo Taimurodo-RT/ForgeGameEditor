@@ -63,6 +63,20 @@ struct Api {
         }
         return 0;
     }
+    // Where a link sends the hero: asked for now, done by the game after the tick.
+    static int go(lua_State* L) {
+        Runtime& r = rt(L);
+        const u32 link = static_cast<u32>(lua_isnumber(L, 4) ? lua_tonumber(L, 4) : 0);
+        r.asking_ = r.host_.running_call();
+        const bool can = r.game_.go(entity_arg(L, 1), string_arg(L, 2), string_arg(L, 3), link);
+        r.asking_ = 0;
+        if (!can) {
+            static bool said = false;
+            if (!said) FORGE_WARN("Связи: игра не умеет переходить на другой уровень");
+            said = true;
+        }
+        return 0;
+    }
     static int hint(lua_State* L) {
         rt(L).game_.hint(entity_arg(L, 1), string_arg(L, 2));
         return 0;
@@ -92,13 +106,21 @@ struct Api {
             lua_pushboolean(L, false);
             return 1;
         }
+        const script::ScriptVars* before = ecs.entity(e).try_get<script::ScriptVars>();
+        if (const script::ScriptVar* had = before ? before->find(key) : nullptr;
+            had && had->kind == script::VarKind::Bool && had->x != 0) {
+            lua_pushboolean(L, false);
+            return 1;
+        }
+        Runtime::Mark m{e, static_cast<u32>(lua_tonumber(L, 2)), r.host_.running_call(), before != nullptr, false, {}};
+        if (const script::ScriptVar* had = before ? before->find(key) : nullptr) m.had_var = true, m.was = *had;
+        r.fresh_.push_back(std::move(m));
         script::ScriptVars& vars = ecs.entity(e).ensure<script::ScriptVars>();
         script::ScriptVar& v = vars.get_or_add(key);
-        const bool done = v.kind == script::VarKind::Bool && v.x != 0;
         v.kind = script::VarKind::Bool;
         v.x = 1;
         ecs.entity(e).modified<script::ScriptVars>();
-        lua_pushboolean(L, !done);
+        lua_pushboolean(L, true);
         return 1;
     }
     // The nearest copy of a template around an entity, or nil.
@@ -146,6 +168,7 @@ Runtime::Runtime(script::ScriptHost& host, const objects::Library& library, Game
     add("logic.hero", &Api::hero);
     add("logic.has", &Api::has);
     add("logic.act", &Api::act);
+    add("logic.go", &Api::go);
     add("logic.hint", &Api::hint);
     add("logic.sound", &Api::sound);
     add("logic.night", &Api::night);
@@ -161,11 +184,12 @@ Runtime::~Runtime() {
 
 bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>* problems) {
     std::vector<Thing> things;
-    things.reserve(library_.templates().size() + 1 + areas_.size() + other_areas_.size());
+    things.reserve(library_.templates().size() + 1 + areas_.size() + other_areas_.size() + levels_.size());
     things.push_back(hero_thing());
     for (const objects::Template& t : library_.templates()) things.push_back(thing_of(library_, t));
     things.insert(things.end(), areas_.begin(), areas_.end());
     things.insert(things.end(), other_areas_.begin(), other_areas_.end());
+    things.insert(things.end(), levels_.begin(), levels_.end());
     const FindThing find = [&](std::string_view id) -> const Thing* {
         for (const Thing& t : things)
             if (t.id == id) return &t;
@@ -199,6 +223,7 @@ bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>*
 
 void Runtime::set_areas(std::vector<Thing> areas) { areas_ = std::move(areas); }
 void Runtime::set_other_areas(std::vector<Thing> areas) { other_areas_ = std::move(areas); }
+void Runtime::set_levels(std::vector<Thing> levels) { levels_ = std::move(levels); }
 
 void Runtime::sync_areas() {
     if (!scene_) return;
@@ -227,6 +252,38 @@ void Runtime::area_event(std::string_view area, flecs::entity_t hero, bool enter
 flecs::entity_t Runtime::area_entity(std::string_view area) const {
     const auto it = area_entities_.find(std::string(area));
     return it == area_entities_.end() ? 0 : it->second;
+}
+
+bool Runtime::take_back_first(u64 call, u32 link) {
+    bool any = false;
+    flecs::world& ecs = host_.scene().ecs();
+    const std::string key = "связь " + std::to_string(link);
+    // Newest first: an entity's variables go back to what they were before the oldest.
+    for (usize i = fresh_.size(); i-- > 0;) {
+        if (fresh_[i].call != call || fresh_[i].link != link) continue;
+        const Mark m = std::move(fresh_[i]);
+        fresh_.erase(fresh_.begin() + static_cast<std::ptrdiff_t>(i));
+        any = true;
+        if (!m.entity || !ecs.is_alive(m.entity)) continue;
+        flecs::entity e = ecs.entity(m.entity);
+        script::ScriptVars* vars = e.try_get_mut<script::ScriptVars>();
+        if (!vars) continue;
+        if (m.had_var) {
+            vars->get_or_add(key) = m.was;
+        } else {
+            std::erase_if(vars->vars, [&](const script::ScriptVar& v) { return v.name == key; });
+            if (!m.had_vars && vars->vars.empty()) {
+                e.remove<script::ScriptVars>();
+                continue;
+            }
+        }
+        e.modified<script::ScriptVars>();
+    }
+    return any;
+}
+
+void Runtime::keep_firsts() {
+    std::erase_if(fresh_, [&](const Mark& m) { return !host_.call_waits(m.call); });
 }
 
 bool Runtime::is_area_entity(flecs::entity_t e) const {

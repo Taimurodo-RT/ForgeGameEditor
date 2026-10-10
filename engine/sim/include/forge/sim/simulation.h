@@ -179,6 +179,10 @@ public:
     u32 update(f64 frame_seconds, const world::Rect& focus) {
         return update(frame_seconds, std::span<const world::Rect>(&focus, 1));
     }
+    // The ticks left of this update() do not run: the one running now is this
+    // world's last (a game leaves it after the tick: the hero goes to another
+    // level). Called from a system or a script during update().
+    void stop_ticks() { stop_ticks_ = true; }
 
     const SimClock& clock() const { return clock_; }
     const Zones& zones() const { return zones_; }
@@ -205,6 +209,7 @@ private:
     CollisionRules collision_;
     TileView tiles_;
     bool tiles_dirty_ = true;
+    bool stop_ticks_ = false;
     std::vector<SystemFn> systems_;
     flecs::query<scene::Position, Body> bodies_;
     flecs::query<scene::Position, Trigger> triggers_;

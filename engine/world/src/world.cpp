@@ -2,6 +2,7 @@
 
 #include "forge/core/assert.h"
 #include "forge/core/jobs.h"
+#include "forge/core/log.h"
 #include "forge/core/profile.h"
 #include "forge/core/time.h"
 
@@ -226,8 +227,28 @@ bool World::open_save(const std::filesystem::path& folder, std::string* error) {
 
 SaveReport World::save() {
     FORGE_ZONE_N("World save");
+    if (!store_) return {};
+    return write_changes(*store_, true);
+}
+
+SaveReport World::save_copy(const std::filesystem::path& folder) {
+    FORGE_ZONE_N("World save copy");
+    if (!store_) return {};
+    RegionStore copy;
+    std::string error;
+    if (!copy.open(folder, desc_.layer_count, &error)) {
+        FORGE_ERROR("world save: %s", error.c_str());
+        return {};
+    }
+    return write_changes(copy, false);
+}
+
+void World::moved_save(const std::filesystem::path& folder) {
+    if (store_) store_->moved(folder);
+}
+
+SaveReport World::write_changes(RegionStore& into, bool saved) {
     SaveReport report;
-    if (!store_) return report;
     const u64 start = time_now_ns();
     // No chunk may be read from the region files while they are rewritten.
     finish_loading();
@@ -253,9 +274,9 @@ SaveReport World::save() {
         ++removed;
     }
 
-    report.ok = store_->write(writes, &report.regions, &report.bytes);
+    report.ok = into.write(writes, &report.regions, &report.bytes);
     report.chunks = static_cast<u32>(writes.size() - removed);
-    if (report.ok) {
+    if (report.ok && saved) {
         for (Chunk* c : changed) c->saved_revision = c->revision;
         stored_edits_.clear();
         stored_bytes_ = 0;

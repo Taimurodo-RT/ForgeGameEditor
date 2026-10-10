@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <random>
 #include <set>
@@ -225,6 +228,66 @@ TEST_CASE("entities are saved and come back in a new session") {
     }
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("a copy of the save gets the entities as they are, one left out; the save folder stays; a moved one is used") {
+    PoolScope pool;
+    const std::string stamp = std::to_string(time_now_ns());
+    const auto tmp = std::filesystem::temp_directory_path();
+    const auto dir = tmp / ("forge_scene_copy_" + stamp), copy = tmp / ("forge_scene_copy_b_" + stamp),
+               moved = tmp / ("forge_scene_copy_c_" + stamp);
+    auto gen = std::make_shared<TopDownGenerator>(1);
+    auto files = [](const std::filesystem::path& d) {
+        std::map<std::string, std::string> out;
+        for (const auto& e : std::filesystem::directory_iterator(d)) {
+            std::ifstream in(e.path(), std::ios::binary);
+            out[e.path().filename().string()] = std::string(std::istreambuf_iterator<char>(in), {});
+        }
+        return out;
+    };
+    auto found_at = [&](const std::filesystem::path& folder, f64 x, f64 y) {
+        World w(tight_desc(), gen);
+        Scene s(w);
+        s.register_component<SceneTestHealth>();
+        REQUIRE(w.open_save(folder));
+        REQUIRE(s.open_save(folder));
+        settle(w, s, kHome);
+        std::vector<flecs::entity_t> found;
+        s.query_radius(x, y, 0.5f, found);
+        return found.empty() ? -1.0f : s.ecs().entity(found[0]).try_get<SceneTestHealth>()->hp;
+    };
+    {
+        World w(tight_desc(), gen);
+        Scene s(w);
+        s.register_component<SceneTestHealth>();
+        REQUIRE(w.open_save(dir));
+        REQUIRE(s.open_save(dir));
+        settle(w, s, kHome);
+        flecs::entity a = s.spawn(Position::at_tile(1, 1)).set<SceneTestHealth>({7.0f, 1});
+        s.update();
+        REQUIRE(s.save().ok);
+        const auto before = files(dir);
+        a.set<SceneTestHealth>({8.0f, 1});
+        const flecs::entity hero = s.spawn(Position::at_tile(3, 1)).set<SceneTestHealth>({50.0f, 2});
+        s.update();
+        std::filesystem::copy(dir, copy, std::filesystem::copy_options::recursive);
+        CHECK(s.save_copy(copy, hero.id()).ok);
+        CHECK(files(dir) == before);
+        CHECK(found_at(copy, 1, 1) == 8.0f);
+        CHECK(found_at(copy, 3, 1) == -1.0f); // left out
+        CHECK(found_at(dir, 1, 1) == 7.0f);
+        CHECK(hero.is_alive());
+        // The folder renamed: saved there.
+        std::filesystem::rename(dir, moved);
+        s.moved_save(moved);
+        w.moved_save(moved);
+        CHECK(s.save().ok);
+        CHECK_FALSE(std::filesystem::exists(dir));
+    }
+    CHECK(found_at(moved, 1, 1) == 8.0f);
+    CHECK(found_at(moved, 3, 1) == 50.0f);
+    std::error_code ec;
+    for (const auto& d : {dir, copy, moved}) std::filesystem::remove_all(d, ec);
 }
 
 TEST_CASE("entities saved by an older game keep their components") {

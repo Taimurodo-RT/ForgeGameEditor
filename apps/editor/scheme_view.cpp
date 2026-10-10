@@ -572,6 +572,12 @@ bool SchemeView::set_value(u32 link, u32 node, const std::string& pin, const std
     const std::string* now = n->value(pin);
     if ((now ? *now : std::string()) == value) return false;
     n->set_value(pin, value);
+    // «Перейти на уровень»: an area of another level does not stay where the hero comes out.
+    if (n->def == "logic.go" && pin == "level")
+        if (const std::string* at = n->value("arrive"); at && !at->empty()) {
+            const logic::Thing* t = ed_.thing(*at);
+            if (!t || t->level != value) n->set_value("arrive", "");
+        }
     commit(link, g, "Значение ноды", "value-" + node_id(link, node) + "-" + pin);
     return true;
 }
@@ -641,7 +647,13 @@ void SchemeView::open_pick(u32 link, u32 node, const std::string& pin) {
     pick_link_ = link;
     pick_node_ = node;
     pick_pin_ = pin;
-    m_choices_ = p->enum_type == "thing" ? m_things_ : p->enum_type == "action" ? m_actions_ : m_cues_;
+    if (p->enum_type == "arrival") {
+        const script::GraphNode* n = g->find(node);
+        const std::string* level = n ? n->value("level") : nullptr;
+        m_choices_ = arrivals(level ? *level : std::string());
+    } else {
+        m_choices_ = p->enum_type == "thing" ? m_things_ : p->enum_type == "action" ? m_actions_ : p->enum_type == "level" ? m_levels_ : m_cues_;
+    }
     // Under the field.
     const std::string id = node_id(link, node);
     for (const NodeView& n : m_nodes_)
@@ -843,8 +855,28 @@ std::string SchemeView::out_title(u32 link, const script::GraphNode& n, const sc
     return p.title.get().empty() ? p.id : p.title.get();
 }
 
+std::vector<SchemeView::OptionView> SchemeView::arrivals(const std::string& level) const {
+    std::vector<OptionView> out;
+    const logic::Thing* lv = ed_.thing(std::string(logic::kLevelPrefix) + level);
+    if (!lv) return out;
+    out.push_back({"", "точка появления"});
+    const std::string suffix = " (" + lv->name + ")";
+    for (const logic::Thing& t : ed_.things_)
+        if (t.area && t.level == level) {
+            std::string name = t.name;
+            if (name.size() > suffix.size() && name.ends_with(suffix)) name.resize(name.size() - suffix.size());
+            out.push_back({t.id, "зона «" + name + "»"});
+        }
+    return out;
+}
+
 std::string SchemeView::option_name(const std::string& list, const std::string& id) const {
-    const std::vector<OptionView>& opts = list == "thing" ? m_things_ : list == "action" ? m_actions_ : m_cues_;
+    if (list == "arrival") {
+        if (id.empty()) return "точка появления";
+        const logic::Thing* t = ed_.thing(id);
+        return t ? "зона «" + t->name + "»" : id;
+    }
+    const std::vector<OptionView>& opts = list == "thing" ? m_things_ : list == "action" ? m_actions_ : list == "level" ? m_levels_ : m_cues_;
     for (const OptionView& o : opts)
         if (o.id == id) return o.name;
     return id;
@@ -892,7 +924,8 @@ SchemeView::NodeBox SchemeView::box_of(u32 link, const script::Graph& g, const s
             const std::string* val = n.value(pd.id);
             p.value = val ? *val : pd.value;
             if (!p.wired) {
-                if (pd.enum_type == "thing" || pd.enum_type == "action" || pd.enum_type == "cue") {
+                if (pd.enum_type == "thing" || pd.enum_type == "action" || pd.enum_type == "cue" || pd.enum_type == "level" ||
+                    pd.enum_type == "arrival") {
                     p.field = "pick";
                     p.list = pd.enum_type;
                     p.title = (p.title.empty() ? "" : p.title + ": ") + option_name(pd.enum_type, p.value);
@@ -1145,8 +1178,11 @@ void SchemeView::rebuild() {
     m_actions_.clear();
     m_cues_.clear();
     std::set<std::string> acts, cues;
+    m_levels_.clear();
+    for (const logic::Thing& t : ed_.level_things_) m_levels_.push_back({t.level, t.name});
     for (const logic::VerbDef& v : ed_.verbs_.all()) {
-        if (!v.action.empty() && acts.insert(v.action).second) {
+        // Going to a level has its own node («Перейти на уровень»), with where to.
+        if (!v.action.empty() && v.action != logic::kGoAction && acts.insert(v.action).second) {
             std::string name = v.step.empty() ? v.action : v.step.substr(0, v.step.find(' '));
             m_actions_.push_back({v.action, name});
         }

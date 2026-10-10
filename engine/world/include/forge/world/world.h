@@ -134,6 +134,12 @@ public:
     // to the save folder. Only the regions holding them are rewritten.
     SaveReport save();
     bool has_save() const { return store_ != nullptr; }
+    // The world as it is now written into another folder that holds a copy of the save folder: what save() would
+    // write goes there. The world and its own folder stay as they were, nothing counts as saved (a step that may
+    // still be given up writes so: a level the hero leaves, 14.2b). Not ok when the copy cannot be written.
+    SaveReport save_copy(const std::filesystem::path& folder);
+    // The save folder was moved (renamed) to folder, its files as they were: chunks are read and saved there.
+    void moved_save(const std::filesystem::path& folder);
 
     // nullptr when the chunk is not in memory or not ready yet.
     Chunk* find_chunk(ChunkCoord coord);
@@ -189,6 +195,8 @@ private:
     void unload(Chunk* chunk);
     void release_unloaded();
     bool in_bounds(ChunkCoord coord) const;
+    // The changes since the last save into a store; saved: they count as saved then (the world's own store).
+    SaveReport write_changes(RegionStore& into, bool saved);
 
     WorldDesc desc_;
     std::shared_ptr<const Generator> generator_;

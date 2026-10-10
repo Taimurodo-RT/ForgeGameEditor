@@ -12,10 +12,13 @@ Then, when `forge_editor --self-test two-games` has made them (step 14.1b), its
 wrote it must have: A's «Находка» (its picture on the level, the value, the
 window, the button's sound), none of it in B. And when `forge_editor
 --self-test levels` has made it (step 14.2a), «Игра с уровнями» with no
---level: the game starts its start level «Пещера», as a player starts it, and
-must have the cell the author left there. This plays a game's own folder with
-a game program (OldMine of the template, or the build's); it is not an export
-of the author's game.
+--level: the game starts its start level, as a player starts it, and must have
+the cell the author left there. Then (step 14.2b) it goes through the links
+«уходит через» the author made between its levels and is saved; another run,
+with the same player's folder, from another working folder and without
+--play, takes «Продолжить» and finds the level as the hero left it. This plays
+a game's own folder with a game program (OldMine of the template, or the
+build's); it is not an export of the author's game.
 """
 
 import os
@@ -51,10 +54,20 @@ def main() -> int:
         plays += [(levels / "Мои игры" / "Игра с уровнями", levels / "ожидания старт.json", False)]
     else:
         print(f"нет {levels / 'ожидания старт.json'}: игра с уровнями не играется (forge_editor --self-test levels её делает)", flush=True)
+    going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
+    if not going:
+        print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)
     slice_dir = ROOT / "games" / "slice"
     away = Path(tempfile.mkdtemp(prefix="forge_slice_away_")) / "slice"
     shutil.move(str(slice_dir), str(away))
     failed = 0
+
+    def run(args, cwd) -> int:
+        print("$ " + " ".join(f'"{a}"' if " " in a else a for a in args), flush=True)
+        code = subprocess.run(args, cwd=cwd).returncode
+        print(f"exit {code}", flush=True)
+        return code
+
     try:
         for exe in games:
             for folder, edits, level in plays:
@@ -65,10 +78,16 @@ def main() -> int:
                 args += ["--user", str(user)]
                 if edits:
                     args += ["--edits", str(edits)]
-                print("$ " + " ".join(f'"{a}"' if " " in a else a for a in args), flush=True)
-                code = subprocess.run(args, cwd=tempfile.gettempdir()).returncode
-                print(f"exit {code}", flush=True)
-                failed += code != 0
+                failed += run(args, tempfile.gettempdir()) != 0
+            if going:
+                # Through the links, saved; then «Продолжить» by another run, from another working folder.
+                user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))
+                data = str(levels / "Мои игры" / "Игра с уровнями" / "game")
+                failed += run([str(exe), "--test", "--scene", "project", "--play", "--data", data, "--user", str(user),
+                               "--edits", str(levels / "ожидания переход.json")], tempfile.gettempdir()) != 0
+                elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
+                failed += run([str(exe), "--test", "--scene", "project", "--data", data, "--user", str(user),
+                               "--edits", str(levels / "ожидания продолжить.json")], str(elsewhere)) != 0
     finally:
         shutil.move(str(away), str(slice_dir))
     return 1 if failed else 0

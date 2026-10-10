@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 FORGE_REFLECT(slice::HeroSave, 1) {
     t.field("x", &slice::HeroSave::x);
@@ -175,9 +176,7 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     if (!L->around.empty_around)
         L->scene->set_populator([this](ChunkCoord c, scene::Scene& s) { populate(*gen_, library_, c, s); });
     // The level's own tiles: which stop the hero and light, how they look.
-    set_own_solid(L->own);
-    atlas_ = make_tile_art(L->own);
-    lights_.set_rules(light_rules());
+    use_tiles(*L);
 
     SimDesc sd;
     sd.gravity_y = kGravity;
@@ -290,22 +289,32 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     L->scripts->set_user(script::kGameBridge, bridge_.get());
     L->links = std::make_unique<logic::Runtime>(*L->scripts, library_, *logic_);
     std::vector<logic::Thing> areas;
-    for (const forge::level::Area& a : L->areas.areas) areas.push_back(logic::area_thing(area_thing_id(a.id), a.name));
+    for (const forge::level::Area& a : L->areas.areas) areas.push_back(logic::area_thing(area_thing_id(a.id), a.name, level_id_));
     // The game's other levels' areas: «Логика» is the game's, its links to them are not broken here, only idle.
-    std::vector<logic::Thing> others;
+    // And its levels, where links may send the hero: the list as read (an entry not read is no level).
+    std::vector<logic::Thing> others, levels;
     const fs::path game = shell_ && !save_folder.empty() ? shell_->game_dir() : fs::path();
     const forge::level::LevelList list = game.empty() ? forge::level::LevelList{} : forge::level::read_levels(game);
     for (const forge::level::LevelEntry& e : list.levels) {
+        levels.push_back(logic::level_thing(e.id, e.name));
         forge::level::LevelAreas there;
         if (!forge::level::load_areas(forge::level::level_folder(game, e.id), there, nullptr, nullptr)) continue;
         for (const forge::level::Area& a : there.areas)
-            if (!L->areas.find(a.id)) others.push_back(logic::area_thing(area_thing_id(a.id), a.name + " (" + e.name + ")"));
+            if (!L->areas.find(a.id))
+                others.push_back(logic::area_thing(area_thing_id(a.id), a.name + " (" + e.name + ")", e.id));
     }
     L->links->set_areas(std::move(areas));
     L->links->set_other_areas(std::move(others));
+    L->links->set_levels(std::move(levels));
     L->links->load(links_, verbs_);
     L->links->attach(*L->scene);
     return L;
+}
+
+void SliceGame::use_tiles(const Level& level) {
+    set_own_solid(level.own);
+    atlas_ = make_tile_art(level.own);
+    lights_.set_rules(light_rules());
 }
 
 // --- links -------------------------------------------------------------------
@@ -335,6 +344,10 @@ public:
         g_.deeds_.push_back({std::string(action), std::string(thing), target, other});
         return true;
     }
+    bool go(flecs::entity_t, std::string_view level, std::string_view arrive, u32 link) override {
+        g_.ask_travel(std::string(level), std::string(arrive), link);
+        return true;
+    }
     void hint(flecs::entity_t, std::string_view text) override { g_.hints_.emplace_back(text); }
     void sound(flecs::entity_t at, std::string_view cue) override { g_.cues_.emplace_back(at, std::string(cue)); }
     // The level's hour (light.json; it does not run in the game), never the editor's «Просмотр».
@@ -348,7 +361,7 @@ private:
 // Scripts and schemes reach the game's variables and screens through this.
 class ShellBridge final : public script::GameBridge {
 public:
-    explicit ShellBridge(game::Shell& shell) : s_(shell) {}
+    ShellBridge(game::Shell& shell, std::set<std::string>& opened) : s_(shell), opened_(opened) {}
     f64 var(std::string_view name, std::string* text) override {
         const game::Value v = s_.vars().get(name);
         if (text && v.is_text()) *text = v.text();
@@ -356,13 +369,17 @@ public:
     }
     void set_var(std::string_view name, f64 number) override { s_.vars().set(name, number); }
     void set_text(std::string_view name, std::string_view text) override { s_.vars().set(name, std::string(text)); }
+    // The level's links and schemes open and close windows: the ones they leave open close when the hero leaves.
     void screen(std::string_view what, std::string_view name) override {
         if (what == "toggle") s_.screens().toggle(name);
         else s_.screens().show(name, what == "show");
+        if (s_.screens().shown(name)) opened_.insert(std::string(name));
+        else opened_.erase(std::string(name));
     }
 
 private:
     game::Shell& s_;
+    std::set<std::string>& opened_;
 };
 
 void SliceGame::note_fired(u32 link) {
@@ -446,6 +463,297 @@ void SliceGame::do_deeds() {
         sounds_.play(c, x, y);
     }
     cues_.clear();
+}
+
+// --- going to another level ----------------------------------------------------
+// 14.2-платформер-модель.md, «Порядок перехода в игре»: everything the going writes is made beside the session's
+// folders, and the level gone to is made from its copy while the left one still plays; only then the folders take
+// their places, and the left level is destroyed whole (SliceGame::end without leaving the game). A going refused
+// before that leaves the game and the session as they were.
+
+void SliceGame::ask_travel(std::string level, std::string arrive, u32 link) {
+    if (!running_ || !level_) return;
+    const u64 call = level_->links->asking();
+    if (trip_) {
+        ++travels_dropped_;
+        // Its «Только один раз» does not stand: it did not send the hero anywhere.
+        level_->links->take_back_first(call, link);
+        FORGE_INFO("slice: переход на «%s» (связь %u) не нужен: в этом шаге герой уже уходит на «%s»", level.c_str(), link,
+                   trip_->level.c_str());
+        return;
+    }
+    trip_ = Trip{std::move(level), std::move(arrive), link, call};
+    // This tick is the level's last: the ticks left of the frame do not run in it.
+    level_->sim->stop_ticks();
+}
+
+SliceGame::Carried SliceGame::carry_hero() const {
+    Carried c;
+    c.x = hero_x();
+    c.y = hero_y();
+    if (!hero_alive()) return c;
+    if (const Hero* h = level_->hero.try_get<Hero>()) c.facing = h->facing;
+    if (const script::ScriptVars* v = level_->hero.try_get<script::ScriptVars>()) {
+        c.has_vars = true;
+        c.vars = *v;
+    }
+    return c;
+}
+
+void SliceGame::put_hero(const Carried& c, f64 x, f64 y) {
+    load_around(x, y);
+    spawn_hero(x, y);
+    if (!hero_alive()) return;
+    level_->hero.set<Hero>({c.facing});
+    if (c.has_vars) level_->hero.set<script::ScriptVars>(c.vars);
+    hero_x_ = x;
+    hero_y_ = y;
+    camera_.x = x;
+    camera_.y = y - 2;
+    load_around(x, y);
+    // Where it comes out it is already in: no area there is entered now (the way back would send it back at once).
+    level_->watch.settle(level_->areas, x, y);
+    location_ = place_name(x, y);
+}
+
+void SliceGame::arrival(const std::string& arrive, f64& x, f64& y) {
+    // The game's start, as a new game without a spawn point.
+    x = gen_->spawn_x();
+    y = gen_->spawn_y() - kHeroHalfH;
+    f64 px = 0, py = 0;
+    std::string what;
+    if (!arrive.empty()) {
+        const forge::level::Area* a = area_of(arrive);
+        if (!a) return; // checked before going
+        px = (a->x0 + a->x1) * 0.5;
+        py = (a->y0 + a->y1) * 0.5;
+        what = "зона «" + a->name + "»";
+    } else if (level_->areas.spawn) {
+        px = level_->areas.spawn_x;
+        py = level_->areas.spawn_y;
+        what = "точка появления";
+    } else {
+        FORGE_WARN("slice: у уровня «%s» нет точки появления: герой приходит на старт игры", level_id_.c_str());
+        return;
+    }
+    f64 fx = 0, fy = 0;
+    std::string why;
+    if (spawn_spot(px, py, fx, fy, &why)) {
+        x = fx;
+        y = fy - kHeroHalfH;
+    } else {
+        FORGE_WARN("slice: %s %.2f, %.2f: %s; герой приходит на старт игры", what.c_str(), px, py, why.c_str());
+    }
+}
+
+void SliceGame::travel() {
+    const Trip trip = std::move(*trip_);
+    trip_.reset();
+    const TravelFault fault = std::exchange(travel_fault_, TravelFault::None);
+    const fs::path game = shell_->game_dir();
+    const forge::level::LevelList list = forge::level::read_levels(game);
+    const forge::level::LevelEntry* to = list.find(trip.level);
+    const std::string name = to ? to->name : trip.level;
+    auto refuse = [&](const std::string& why) {
+        // The link's «Только один раз» stands only if the hero went.
+        level_->links->take_back_first(trip.call, trip.link);
+        ++travels_refused_;
+        travel_problem_ = why;
+        FORGE_WARN("slice: переход на «%s» не сделан: %s", name.c_str(), why.c_str());
+        shell_->toast("Перехода не будет: " + why);
+    };
+    // 2. The level gone to and where the hero comes out there, nothing changed yet.
+    if (!to) return refuse("уровня «" + trip.level + "» нет в списке уровней игры");
+    u64 area_id = 0;
+    if (!trip.arrive.empty() && (!trip.arrive.starts_with(logic::kAreaPrefix) ||
+                                 !forge::level::parse_area_id(std::string_view(trip.arrive).substr(logic::kAreaPrefix.size()), area_id)))
+        return refuse("где появиться — не зона: «" + trip.arrive + "»");
+    if (to->id == level_id_) { // the same level: the hero only moves
+        if (area_id && !level_->areas.find(area_id)) return refuse("на уровне «" + name + "» нет зоны, где появиться");
+        const Carried c = carry_hero();
+        f64 x = 0, y = 0;
+        arrival(trip.arrive, x, y);
+        if (hero_alive()) {
+            teleport(x, y);
+            level_->watch.settle(level_->areas, x, y);
+            location_ = place_name(x, y);
+        } else {
+            put_hero(c, x, y);
+        }
+        ++travels_;
+        travel_problem_.clear();
+        FORGE_INFO("slice: герой перешёл в другое место уровня «%s»", name.c_str());
+        return;
+    }
+    std::error_code ec;
+    const fs::path levels = session_ / "levels";
+    const fs::path world = session_ / "world";
+    const fs::path been = levels / to->id;
+    const fs::path source = forge::level::level_folder(game, to->id);
+    const bool visited = fs::exists(been, ec);
+    if (visited && !fs::is_directory(been, ec)) return refuse("в сохранении на месте уровня «" + name + "» файл, а не папка");
+    if (!visited && fs::exists(source, ec) && !fs::is_directory(source, ec))
+        return refuse("папка уровня «" + name + "» — файл: " + path_to_utf8(source));
+    const fs::path from = visited ? been : source;
+    if (area_id) {
+        forge::level::LevelAreas there;
+        std::string why;
+        if (!forge::level::load_areas(from, there, nullptr, &why)) return refuse("зоны уровня «" + name + "» не читаются: " + why);
+        if (!there.find(area_id)) return refuse("на уровне «" + name + "» нет зоны, где появиться");
+    }
+    // 3. Everything the going writes, beside the session's folders: the level gone to (its own copy, the first time),
+    // the left one as it is now (its folder, then what changed in it, without the hero). A level that is no level of
+    // the list cannot be come back to: nothing of it is kept.
+    const std::string left = level_id_;
+    const forge::level::LevelEntry* here = list.find(left);
+    const std::string left_name = here ? here->name : left.empty() ? std::string("вне списка") : left;
+    const bool keep_left = !left.empty();
+    const bool made_levels = !fs::exists(levels, ec);
+    const fs::path target = visited ? been : levels / ("." + to->id + ".tmp");
+    const fs::path stage = levels / ("." + left + ".leave.tmp");
+    const fs::path stale = levels / ("." + left + ".stale.tmp");
+    const fs::path old_world = levels / ".world.old.tmp";
+    auto clean = [&] {
+        if (!visited) fs::remove_all(target, ec);
+        if (keep_left) fs::remove_all(stage, ec);
+        if (made_levels) fs::remove(levels, ec); // only when nothing is left in it
+    };
+    if (!visited) {
+        fs::create_directories(levels, ec);
+        if (ec || !fs::is_directory(levels, ec)) {
+            clean();
+            return refuse("не создать папку уровней в сохранении: " + path_to_utf8(levels));
+        }
+        fs::remove_all(target, ec);
+        std::string error;
+        bool ok = forge::level::copy_level(source, target, &error);
+        if (ok) {
+            fs::create_directories(target, ec); // a level of the list with no folder yet: an empty one
+            ok = !ec;
+        }
+        if (!ok) {
+            clean();
+            return refuse("уровень «" + name + "» не скопировался в сохранение" + (error.empty() ? "" : ": " + error));
+        }
+    }
+    if (keep_left) {
+        fs::remove_all(stage, ec);
+        fs::copy(world, stage, fs::copy_options::recursive, ec);
+        bool ok = !ec;
+        if (ok) {
+            // The scene's index first: what the links of this step destroyed is gone from it.
+            level_->scene->update();
+            ok = level_->world->save_copy(stage).ok &&
+                 level_->scene->save_copy(stage, hero_alive() ? level_->hero.id() : 0).ok;
+        }
+        if (!ok || fault == TravelFault::Save) {
+            clean();
+            return refuse("уровень «" + left_name + "» не записался на диск");
+        }
+    }
+    // 4. The level gone to, made from its copy while the left one still plays (the areas are named by their level).
+    level_id_ = to->id;
+    std::string error;
+    std::unique_ptr<Level> next;
+    if (fault != TravelFault::Make) next = make_level(target, &error);
+    level_id_ = left;
+    auto drop = [&](const std::string& why) {
+        next.reset();
+        use_tiles(*level_);
+        clean();
+        refuse(why);
+    };
+    if (!next) return drop("уровень «" + name + "» не открылся" + (error.empty() ? std::string() : ": " + error));
+    // 5. The folders take their places: the session's world aside, the level gone to into it, the left one into
+    // levels/<id>. Each move undone in reverse when the next one fails.
+    fs::remove_all(old_world, ec);
+    if (fs::exists(stale, ec)) fs::remove_all(stale, ec);
+    if (fault != TravelFault::Move) fs::rename(world, old_world, ec); // the fault for the test: it did not move
+    if (ec || fault == TravelFault::Move) return drop("папка уровня в сохранении не переместилась");
+    const fs::path keep = levels / left;
+    bool had_keep = false, published = false;
+    std::string why;
+    if (fault != TravelFault::Back) fs::rename(target, world, ec); // the fault for the test: it did not move
+    if (!ec && fault != TravelFault::Back) {
+        published = true;
+        // A folder of the left level already there (none should be: its folder was the session's world) goes.
+        if (keep_left && fs::exists(keep, ec)) {
+            fs::rename(keep, stale, ec);
+            had_keep = !ec;
+            if (ec) why = "в сохранении уже есть папка уровня «" + left_name + "», она не убирается";
+        }
+        if (why.empty() && keep_left) {
+            fs::rename(stage, keep, ec);
+            if (ec) why = "уровень «" + left_name + "» не встал на место в сохранении";
+        }
+        if (why.empty()) {
+            // 6. Done: the session holds the going whole. The level gone to reads and writes its folder where it is now.
+            next->world->moved_save(world);
+            next->scene->moved_save(world);
+            fs::remove_all(old_world, ec);
+            if (ec) FORGE_WARN("slice: не удалить %s", path_to_utf8(old_world).c_str());
+            if (had_keep) {
+                FORGE_WARN("slice: в сохранении уже была папка %s: она заменена уровнем, с которого ушёл герой",
+                           path_to_utf8(keep).c_str());
+                fs::remove_all(stale, ec);
+            }
+            if (!keep_left) FORGE_INFO("slice: уровень вне списка игры не сохраняется: вернуться в него нельзя");
+        }
+    } else {
+        why = "папка уровня «" + name + "» в сохранении не переместилась";
+    }
+    if (!why.empty()) {
+        // Undone in reverse; when that fails too, the session is no game to go on with: the main menu, the saves
+        // untouched (the game is not running, nothing is written).
+        bool undone = fault != TravelFault::Back;
+        if (undone && had_keep) {
+            fs::rename(stale, keep, ec);
+            undone = !ec;
+        }
+        if (undone && published) {
+            fs::rename(world, target, ec);
+            undone = !ec;
+        }
+        if (undone) {
+            fs::rename(old_world, world, ec);
+            undone = !ec;
+        }
+        if (!undone) {
+            next.reset();
+            FORGE_ERROR("slice: переход не сделан (%s), и папки сохранения не вернулись на место: игра — в главное меню",
+                        why.c_str());
+            travel_problem_ = why + "; папки сохранения не вернулись на место";
+            end();
+            shell_->to_main_menu(); // no autosave: the game is not running
+            shell_->toast("Перехода не будет: " + why + ". Игра вернулась в главное меню, сохранения не тронуты");
+            return;
+        }
+        return drop(why);
+    }
+    // 7. The left level goes, as SliceGame::end has it go, but the game goes on; the hero comes into the other.
+    const Carried hero = carry_hero();
+    for (const std::string& screen : level_screens_)
+        if (shell_->screens().shown(screen)) shell_->screens().show(screen, false);
+    level_screens_.clear();
+    if (shell_->in_dialogue()) shell_->dialogue_runner().stop();
+    talking_ = 0;
+    sounds_.stop_objects();
+    shell_->screens().set_place_music({});
+    tiles_.shutdown();
+    tiles_world_ = nullptr;
+    level_.reset();
+    deeds_.clear();
+    hints_.clear();
+    cues_.clear();
+    level_ = std::move(next);
+    level_id_ = to->id;
+    f64 x = 0, y = 0;
+    arrival(trip.arrive, x, y);
+    put_hero(hero, x, y);
+    ++travels_;
+    travel_problem_.clear();
+    FORGE_INFO("slice: герой ушёл с уровня «%s» на уровень «%s»%s", left.c_str(), to->id.c_str(),
+               trip.arrive.empty() ? "" : (" в зону " + trip.arrive).c_str());
 }
 
 f64 SliceGame::hearts() const {
@@ -603,7 +911,7 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     shell.screens().on_music = [this](const std::string& name) { sounds_.screens().music(name); };
     shell.screens().on_sound = [this](const std::string& name) { sounds_.screens().click(name); };
     logic_ = std::make_unique<SliceLogic>(*this);
-    bridge_ = std::make_unique<ShellBridge>(shell);
+    bridge_ = std::make_unique<ShellBridge>(shell, level_screens_);
     // A button's «Сообщение логике» goes to every scheme listening nearby.
     shell.on_message = [this](const std::string& message) {
         if (level_ && level_->scripts) level_->scripts->send(0, message);
@@ -741,6 +1049,25 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
         else FORGE_INFO("slice: новая игра с уровня в %s", path_to_utf8(level).c_str());
         if (!forge::level::copy_level(level, session / "world", error)) return false;
     }
+    // A save says which level it played before that level is made (its areas are that level's for the links).
+    HeroSave saved;
+    if (!new_game) {
+        std::vector<u8> bytes;
+        data::LoadReport report;
+        if (!read_file(session / "hero.json", bytes) ||
+            !data::from_json(saved, {reinterpret_cast<const char*>(bytes.data()), bytes.size()}, report)) {
+            if (error) *error = "в сохранении нет героя (hero.json)";
+            return false;
+        }
+        level_id_ = saved.level;
+    }
+    trip_.reset();
+    travels_ = travels_dropped_ = travels_refused_ = 0;
+    travel_problem_.clear();
+    level_screens_.clear();
+    deeds_.clear();
+    hints_.clear();
+    cues_.clear();
     level_ = make_level(session / "world", error);
     if (!level_) return false;
 
@@ -774,15 +1101,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
         shell_->vars().set("inv.torch", 5);
         shell_->vars().set("hero.dig_speed", 1);
     } else {
-        std::vector<u8> bytes;
-        data::LoadReport report;
-        if (!read_file(session / "hero.json", bytes) ||
-            !data::from_json(hs, {reinterpret_cast<const char*>(bytes.data()), bytes.size()}, report)) {
-            if (error) *error = "в сохранении нет героя (hero.json)";
-            level_.reset();
-            return false;
-        }
-        level_id_ = hs.level;
+        hs = saved;
     }
     slot_ = hs.slot < kSlots ? hs.slot : 0;
     camera_.zoom = hs.zoom > 0 ? hs.zoom : kZoom;
@@ -824,6 +1143,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
 
 bool SliceGame::save(const fs::path& session, std::string& location, std::string* error) {
     if (!level_) return false;
+    level_->scene->update(); // what the frame destroyed after its last tick (a pickup, a link's deed) out of the index
     const SaveReport w = level_->world->save();
     const scene::SceneSaveReport s = level_->scene->save();
     if (!w.ok || !s.ok) {
@@ -849,6 +1169,8 @@ bool SliceGame::save(const fs::path& session, std::string& location, std::string
 void SliceGame::end() {
     if (!running_) return;
     running_ = false;
+    trip_.reset();
+    level_screens_.clear();
     shell_->screens().set_place_music({});
     sounds_.stop_objects();
     tiles_.shutdown();
@@ -932,6 +1254,7 @@ void SliceGame::spawn_stress() {
 // --- queries for tests -----------------------------------------------------
 
 bool SliceGame::hero_alive() const { return level_ && level_->hero.is_alive(); }
+flecs::entity_t SliceGame::hero_entity() const { return hero_alive() ? level_->hero.id() : 0; }
 f64 SliceGame::hero_x() const { return hero_alive() ? level_->hero.get<Position>().tile_x() : 0; }
 f64 SliceGame::hero_y() const { return hero_alive() ? level_->hero.get<Position>().tile_y() : 0; }
 bool SliceGame::on_ground() const { return hero_alive() && (level_->hero.get<Body>().contacts & OnGround); }
@@ -959,12 +1282,13 @@ u32 SliceGame::count_items(ItemKind kind) const {
     return n;
 }
 
-flecs::entity_t SliceGame::spawn_critter(f64 x, f64 feet_y, Scheme scheme) {
+flecs::entity_t SliceGame::spawn_critter(f64 x, f64 feet_y, Scheme scheme, u64 id) {
     const objects::Template* t = library_.find("critter");
     if (!level_ || !t) return 0;
     flecs::entity e = library_.spawn(*level_->scene, *t, x, feet_y);
     if (!e.is_valid()) return 0;
     if (Critter* c = e.try_get_mut<Critter>()) c->scheme = static_cast<u8>(scheme);
+    if (id) e.set<forge::level::LevelId>({id});
     return e.id();
 }
 
@@ -983,6 +1307,31 @@ std::vector<flecs::entity_t> SliceGame::copies_of(std::string_view template_id) 
         if (ref.key == t->key) out.push_back(e.id());
     });
     return out;
+}
+
+flecs::entity_t SliceGame::spawn_copy(std::string_view template_id, f64 x, f64 feet_y, u64 id) {
+    const objects::Template* t = library_.find(template_id);
+    if (!level_ || !t || !id) return 0;
+    flecs::entity e = library_.spawn(*level_->scene, *t, x, feet_y);
+    if (!e.is_valid()) return 0;
+    e.set<forge::level::LevelId>({id});
+    return e.id();
+}
+
+flecs::entity_t SliceGame::copy_with_id(u64 id) const {
+    flecs::entity_t out = 0;
+    if (!level_ || !id) return out;
+    level_->scene->ecs().each([&](flecs::entity e, const forge::level::LevelId& l) {
+        if (l.id == id) out = e.id();
+    });
+    return out;
+}
+
+bool SliceGame::hero_marked(u32 link) const {
+    if (!hero_alive()) return false;
+    const script::ScriptVars* vars = level_->hero.try_get<script::ScriptVars>();
+    const script::ScriptVar* v = vars ? vars->find("связь " + std::to_string(link)) : nullptr;
+    return v && v->kind == script::VarKind::Bool && v->x != 0;
 }
 
 flecs::entity_t SliceGame::spawn_probe(f64 x, f64 y) {
@@ -1511,11 +1860,22 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     hero_x_ = hero_x();
     hero_y_ = hero_y();
 
+    if (trip_) { // asked between frames (go_to)
+        travel();
+        if (!level_) return;
+    }
     const u64 t0 = time_now_ns();
     sync_doors(*level_->scene);
     level_->sim->update(playing ? dt : 0.0, focus());
     sim_ms_ = ns_to_ms(time_now_ns() - t0);
     do_deeds();
+    if (trip_) {
+        travel();
+        if (!level_) return; // could not go, nor put the session back: the main menu
+    }
+    // The links' «Только один раз» stand once their call is over and a going it asked for is done or refused; a
+    // call still waiting may yet ask to go.
+    level_->links->keep_firsts();
     sync_doors(*level_->scene);
     if (!level_->hero.is_alive()) find_hero();
     hero_x_ = hero_x();

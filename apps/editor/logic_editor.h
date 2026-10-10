@@ -79,6 +79,9 @@ public:
     // that changes whenever they do (the board is rebuilt then).
     std::function<std::vector<logic::Thing>()> level_areas;
     std::function<u64()> areas_version;
+    // The game's levels as read from levels.json (logic::level_thing): where a link «уходит на уровень» may send
+    // the hero. An entry not read is no level. areas_version changes with them too.
+    std::function<std::vector<logic::Thing>()> levels;
 
     // Each frame while the tab is open.
     void update(Rml::Context* context);
@@ -132,6 +135,15 @@ public:
     const std::string& choice(usize i) const { return m_choices_[i].id; }
     bool choose(const std::string& thing);
     const logic::Idea* idea_of(u32 link) const;
+    // «Куда» of a link that sends the hero to a level: the level (its id in the list) and where it comes out
+    // there ("" its spawn point, or one of its areas), as one step of the history. Another level keeps the
+    // area only when it is that level's.
+    bool set_destination(u32 link, const std::string& level, const std::string& arrive);
+    bool choose_level(const std::string& level);   // of the selected link
+    bool choose_arrival(const std::string& arrive); // of the selected link
+    // What «Куда» offers for the selected link (ids: level ids; "" and area ids), and which is chosen.
+    std::vector<std::string> level_choices() const;
+    std::vector<std::string> arrival_choices() const;
     // A link happened in the running game: lit for a moment (the game's
     // file does this; tests call it).
     void light(u32 link);
@@ -239,6 +251,11 @@ private:
         Rml::String id, name, icon;
         bool current = false;
     };
+    struct GoOption {
+        Rml::String id, key, name, about; // key: for the element's id («spawn», an area's hex)
+        bool current = false;
+        bool operator==(const GoOption&) const = default;
+    };
 
     void load();
     void rebuild();
@@ -301,6 +318,7 @@ private:
     logic::Ideas ideas_;
     logic::Logic logic_;
     std::vector<logic::Thing> things_; // the hero and the templates
+    std::vector<logic::Thing> level_things_; // the game's levels: where links lead, never on the board
     std::map<u32, std::string> problems_;
     std::vector<logic::Problem> compiled_; // every problem the logic has (the scheme marks nodes with them)
     bool keep_compiled_ = false;           // the next rebuild only moved nodes: the code is the same
@@ -331,6 +349,8 @@ private:
     std::vector<IdeaCard> m_idea_cards_;
     std::vector<IdeaView> m_ideas_;
     std::vector<ChoiceView> m_choices_;
+    std::vector<GoOption> m_go_levels_, m_go_arrivals_;
+    bool m_sel_go_ = false;
     Rml::String m_choose_title_;
     bool m_gallery_ = false, m_choosing_ = false;
     Rml::String m_mode_ = "links";

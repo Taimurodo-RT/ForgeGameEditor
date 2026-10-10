@@ -53,12 +53,46 @@ struct Plan {
     const Thing* b = nullptr;
     Side listener = Side::B;
     std::vector<std::string> scheme; // its scheme's code, when it has one
+    std::string where;               // where it sends the hero, in words (destination)
 };
 
 bool fits(std::string_view rule, const Thing& t) {
+    if (is_level(t.id)) return false; // where a link leads, never one of its sides
     if (rule == "hero") return t.id == kHero;
     if (rule == "thing") return t.id != kHero && !t.area;
     if (rule == "area") return t.area;
+    return true;
+}
+
+// A link of a verb that sends the hero elsewhere which does not: its own code
+// does instead, or its own scheme has no «Перейти на уровень».
+bool going_nowhere(const Link& l, const VerbDef& v, const Thing& a, const Thing& b) {
+    if (!l.code.empty()) return true;
+    return own_scheme(l, v, a, b) && l.graph.find("\"logic.go\"") == std::string::npos;
+}
+
+// The level is one of the game's and the area to come out in is on it.
+bool destination_ok(const Link& l, const FindThing& things, std::string& problem) {
+    if (l.level.empty()) {
+        problem = "не выбран уровень, куда уходить";
+        return false;
+    }
+    const Thing* level = things(std::string(kLevelPrefix) + l.level);
+    if (!level) {
+        problem = "уровня «" + l.level + "» нет в списке уровней игры: его удалили или levels.json прочитан не весь";
+        return false;
+    }
+    if (l.arrive.empty()) return true;
+    const Thing* at = things(l.arrive);
+    if (!at || !at->area) {
+        problem = is_area(l.arrive) ? "нет зоны, где появиться, на уровне «" + level->name + "»: её удалили"
+                                    : "где появиться — не зона: «" + l.arrive + "»";
+        return false;
+    }
+    if (at->level != l.level) {
+        problem = "зона «" + at->name + "», где появиться, — не с уровня «" + level->name + "»";
+        return false;
+    }
     return true;
 }
 
@@ -89,6 +123,9 @@ bool plan(const Link& l, usize index, const Verbs& verbs, const FindThing& thing
         problem = "герой связан сам с собой";
         return false;
     }
+    p.where = destination(l, *p.verb, things);
+    if (p.verb->action == kGoAction && !going_nowhere(l, *p.verb, *p.a, *p.b) && !destination_ok(l, things, problem))
+        return false;
     if (p.verb->always) {
         if (l.a == kHero) {
             problem = "«" + p.verb->name + "» у героя не бывает: его ведёт игрок";
@@ -135,9 +172,12 @@ void emit_body(Writer& w, const Plan& p, const std::string& in, bool fired) {
         body += "  ";
     }
     if (fired) w.line(body + "logic.fired(" + std::to_string(l.id) + ")", at);
-    w.line(body + "logic.act(" + quote(v.action) + ", target, " + quote(thing_of(l, v.target)) + ", " +
-               entity(p, other(v.target)) + ", hero)",
-           at);
+    if (v.action == kGoAction)
+        w.line(body + "logic.go(target, " + quote(l.level) + ", " + quote(l.arrive) + ", " + std::to_string(l.id) + ")", at);
+    else
+        w.line(body + "logic.act(" + quote(v.action) + ", target, " + quote(thing_of(l, v.target)) + ", " +
+                   entity(p, other(v.target)) + ", hero)",
+               at);
     if (l.sound && !v.sound.empty()) w.line(body + "logic.sound(self, " + quote(v.sound) + ")", at);
     if (l.once) w.line(in + "  end", at);
     if (l.hint && can_fail && !v.fail.empty()) {
@@ -165,7 +205,7 @@ bool scheme_code(Plan& p, const script::NodeLibrary* nodes, std::vector<Problem>
         return false;
     }
     for (script::GraphNode& n : g.nodes)
-        if (n.def == "logic.once") n.set_value("_link", std::to_string(l.id));
+        if (n.def == "logic.once" || n.def == "logic.go") n.set_value("_link", std::to_string(l.id));
     auto side = [&](Side s) { return s == p.verb->target ? std::string("target") : entity(p, s); };
     const script::CompileResult r =
         script::compile_event_body(g, *nodes, when, {{"a", side(Side::A)}, {"b", side(Side::B)}, {"hero", "hero"}});
@@ -186,7 +226,7 @@ bool scheme_code(Plan& p, const script::NodeLibrary* nodes, std::vector<Problem>
 void emit_scheme(Writer& w, const Plan& p, const std::string& in) {
     const Link& l = *p.link;
     const u32 at = static_cast<u32>(p.index);
-    w.line(in + "-- " + comment(phrase(l, *p.verb, *p.a, *p.b)) + " (схема)", at);
+    w.line(in + "-- " + comment(phrase(l, *p.verb, *p.a, *p.b, p.where)) + " (схема)", at);
     w.line(in + "local target = " + entity(p, p.verb->target), at);
     w.line(in + "if not target then return end", at);
     w.line(in + "logic.fired(" + std::to_string(l.id) + ")", at);
@@ -197,7 +237,7 @@ void emit(Writer& w, const Plan& p, const char* indent) {
     const Link& l = *p.link;
     const u32 at = static_cast<u32>(p.index);
     const std::string in(indent);
-    w.line(in + "-- " + comment(phrase(l, *p.verb, *p.a, *p.b)) + (l.code.empty() ? "" : " (свой код)"), at);
+    w.line(in + "-- " + comment(phrase(l, *p.verb, *p.a, *p.b, p.where)) + (l.code.empty() ? "" : " (свой код)"), at);
     w.line(in + "do", at);
     w.line(in + "  local target = " + entity(p, p.verb->target), at);
     if (l.code.empty()) {

@@ -22,6 +22,8 @@
 #include "forge/sim/simulation.h"
 
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -107,6 +109,8 @@ public:
     // The level this game plays: its id in the game's list; empty for a folder that is no level of it.
     const std::string& level_id() const { return level_id_; }
     bool hero_alive() const;
+    // The hero's entity (0: none); a going refused keeps the same one.
+    flecs::entity_t hero_entity() const;
     f64 hero_x() const;
     f64 hero_y() const;
     bool on_ground() const;
@@ -126,8 +130,8 @@ public:
     u32 count_items(ItemKind kind) const;
     // The things the screens' lists know (names and pictures), as given to them.
     const std::vector<forge::game::ScreenItem>& screen_items() const { return screen_items_; }
-    // A «Зверёк» copy moving by a scheme, and where it is now (NaN: gone).
-    flecs::entity_t spawn_critter(f64 x, f64 feet_y, Scheme scheme);
+    // A «Зверёк» copy moving by a scheme (id: a level's id of its own, as spawn_copy), and where it is now (NaN: gone).
+    flecs::entity_t spawn_critter(f64 x, f64 feet_y, Scheme scheme, forge::u64 id = 0);
     f64 critter_x(flecs::entity_t e) const;
     // Physics: a small body that falls and is pulled like anything else (a
     // probe), and what an entity felt in its last tick: where it is and the
@@ -173,6 +177,12 @@ public:
     bool set_sounds(flecs::entity_t e, const Sounds& sounds);
     // The loaded copies of a template (by its id).
     std::vector<flecs::entity_t> copies_of(std::string_view template_id) const;
+    // A copy of a template with a level's id of its own, as one the author put on the level (the id stays with it
+    // through saves), and the copy of that id in the level now (0: none).
+    flecs::entity_t spawn_copy(std::string_view template_id, f64 x, f64 feet_y, forge::u64 id);
+    flecs::entity_t copy_with_id(forge::u64 id) const;
+    // The hero remembers that a link of an area happened («Только один раз»).
+    bool hero_marked(u32 link) const;
     // Hurts the hero by n hearts (n < 0 heals), as a link does.
     void hurt(f64 n) { hurt_hero(n); }
     f64 inventory(const char* item) const;
@@ -203,10 +213,32 @@ public:
     // «Связи» over the game (F2).
     LinkOverlay& overlay() { return overlay_; }
 
+    // Going to another level («уходит на уровень»): a link asks, the game goes after the tick
+    // (14.2-платформер-модель.md, «Порядок перехода в игре»). go_to asks as a link does (link 0); the first ask
+    // of a tick wins. A going not done (refused, or dropped) leaves the game and the session as they were and its
+    // link's «Только один раз» unmarked (however long its code waited before asking). travels, travels_dropped,
+    // travels_refused: how many went, were dropped, were refused since the game began or was loaded; travel_problem:
+    // why the last one did not go ("" when it went).
+    void go_to(std::string level, std::string arrive = {}) { ask_travel(std::move(level), std::move(arrive), 0); }
+    u32 travels() const { return travels_; }
+    const std::string& travel_problem() const { return travel_problem_; }
+    u32 travels_dropped() const { return travels_dropped_; }
+    u32 travels_refused() const { return travels_refused_; }
+    // For the self-test: the next going fails at this step as if the disk refused (Save: the left level is not
+    // written; Move: the session's world does not move aside; Make: the level gone to does not open; Back: the level
+    // gone to does not move into the session, nor does the session's world move back).
+    enum class TravelFault : u8 { None, Save, Move, Make, Back };
+    void fail_next_travel(TravelFault f) { travel_fault_ = f; }
+    // The screens the level's links and schemes opened and have not closed (a going closes them).
+    const std::set<std::string>& level_screens() const { return level_screens_; }
+
 private:
     friend class SliceLogic;
     struct Level;
     std::unique_ptr<Level> make_level(const std::filesystem::path& save_folder, std::string* error);
+    // The level's own tiles for the whole game (which stop the hero and light, how they look): make_level sets them
+    // for the level it makes; a going that did not happen sets them back for the level played.
+    void use_tiles(const Level& level);
     void spawn_hero(f64 x, f64 y);
     void find_hero();
     void load_around(f64 x, f64 y);
@@ -234,6 +266,21 @@ private:
     // What links asked for during a tick, done after it (they may destroy,
     // move the hero, start a dialogue).
     void do_deeds();
+    // Going to another level: asked during a tick (the first ask wins), done after the links' deeds.
+    void ask_travel(std::string level, std::string arrive, u32 link);
+    void travel();
+    // Where the hero comes out on the level now loaded: an area's middle, else its spawn point, else the game's
+    // start (both stood on the floor); the hero's feet.
+    void arrival(const std::string& arrive, f64& x, f64& y);
+    // The hero as it leaves a level, and back in one (its variables: «Только один раз» of areas).
+    struct Carried {
+        f64 x = 0, y = 0;
+        f32 facing = 1;
+        bool has_vars = false;
+        forge::script::ScriptVars vars;
+    };
+    Carried carry_hero() const;
+    void put_hero(const Carried& c, f64 x, f64 y);
     // A link happened: into Options::fired_file (each link at most twice a
     // second, so «always» links do not flood it).
     void note_fired(u32 link);
@@ -318,6 +365,16 @@ private:
     std::vector<Deed> deeds_;
     std::vector<std::string> hints_;
     std::vector<std::pair<flecs::entity_t, std::string>> cues_;
+    struct Trip {
+        std::string level, arrive;
+        u32 link = 0;
+        u64 call = 0; // the links' call that asked (logic::Runtime::asking)
+    };
+    std::optional<Trip> trip_;
+    u32 travels_ = 0, travels_dropped_ = 0, travels_refused_ = 0;
+    std::string travel_problem_;
+    TravelFault travel_fault_ = TravelFault::None;
+    std::set<std::string> level_screens_; // opened by this level's links and schemes
     std::string last_hint_;
     // The things links name (the hero and the templates), «Связи» over the
     // game, and the links that have just happened (link -> until, ms).

@@ -893,6 +893,429 @@ TEST_CASE("coming into an area runs its links; once is kept by the hero; areas a
     CHECK(game.hints.size() == 2);
 }
 
+namespace {
+
+const char* kGoVerbs = R"({
+  "verbs": [
+    { "id": "enter", "name": "входит в", "plural": "входят в", "icon": "login", "case": "acc",
+      "when": "touch", "touch": "b", "do": "arrive", "target": "b", "a": "hero", "b": "area",
+      "step": "Показать герою название места: «{b}»", "about": "Название места." },
+    { "id": "go", "name": "уходит через", "plural": "уходят через", "icon": "door_open", "case": "acc",
+      "when": "touch", "touch": "b", "do": "go", "target": "a", "a": "hero", "b": "area",
+      "step": "Перейти {where}",
+      "about": "Когда {a} входит в {b:acc}, он уходит {where}." }
+  ]
+})";
+
+constexpr const char* kExit = "area:00000000000000e1";   // on level «Уровень 1» (id "level")
+constexpr const char* kEntry = "area:00000000000000c1";  // on «Пещера» (id "cave")
+
+struct GoWords : Words {
+    GoWords() {
+        things.push_back(area_thing(kExit, "Выход", "level"));
+        things.push_back(area_thing(kEntry, "Вход (Пещера)", "cave"));
+        things.push_back(level_thing("level", "Уровень 1"));
+        things.push_back(level_thing("cave", "Пещера"));
+    }
+};
+
+struct GoGame final : Game {
+    flecs::entity_t hero_e = 0;
+    std::vector<std::string> gos;
+    bool is_hero(flecs::entity_t e) override { return e && e == hero_e; }
+    flecs::entity_t hero() override { return hero_e; }
+    bool has(flecs::entity_t, std::string_view) override { return false; }
+    bool act(std::string_view, flecs::entity_t, std::string_view, flecs::entity_t, flecs::entity_t) override { return true; }
+    void hint(flecs::entity_t, std::string_view) override {}
+    void sound(flecs::entity_t, std::string_view) override {}
+    bool night() override { return false; }
+    Runtime* rt = nullptr;
+    std::vector<u64> calls; // the call that asked each going (Runtime::asking)
+    bool drop = false;      // the game drops the going at once (another one of the tick won)
+    bool go(flecs::entity_t hero, std::string_view level, std::string_view arrive, u32 link) override {
+        gos.push_back((hero == hero_e ? "hero " : "? ") + std::string(level) + " " + std::string(arrive) + " " + std::to_string(link));
+        calls.push_back(rt ? rt->asking() : 0);
+        if (drop) rt->take_back_first(calls.back(), link);
+        return true;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a link sends the hero to a level: where to, in words, in code, in the file") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kGoVerbs));
+    GoWords w;
+    const Thing& hero = *w.find(kHero);
+    const Thing& exit = *w.find(kExit);
+    const Thing& cave = *w.find("level:cave");
+    const VerbDef& go = *verbs.find("go");
+    const VerbDef& enter = *verbs.find("enter");
+    CHECK(is_level("level:cave"));
+    CHECK_FALSE(is_level(kExit));
+    CHECK(cave.level == "cave");
+    CHECK(exit.level == "level");
+    // A level is where a link leads, never one of its sides.
+    CHECK(suits(go, hero, exit));
+    CHECK_FALSE(suits(go, hero, cave));
+    CHECK_FALSE(suits(enter, hero, cave));
+
+    Link l{0, std::string(kHero), "go", kExit};
+    CHECK(destination(l, go, w.find).empty()); // no level chosen yet
+    CHECK(destination(l, enter, w.find).empty());
+    l.level = "cave";
+    CHECK(destination(l, go, w.find) == "на уровень «Пещера»");
+    l.arrive = kEntry;
+    // Another level's area is «Вход (Пещера)» among the things: the level is said once.
+    const std::string where = destination(l, go, w.find);
+    CHECK(where == "на уровень «Пещера», в зону «Вход»");
+    CHECK(phrase(l, go, hero, exit, where) == "Герой уходит через Выход на уровень «Пещера», в зону «Вход»");
+    CHECK(meaning(l, go, hero, exit, where) == "Когда герой входит в Выход, он уходит на уровень «Пещера», в зону «Вход».");
+    std::vector<Step> st = steps(l, go, hero, exit, where);
+    REQUIRE(st.size() == 2);
+    CHECK(st[0].text == "Когда герой входит в Выход");
+    CHECK(st[1].text == "Перейти на уровень «Пещера», в зону «Вход»");
+    CHECK(steps(l, go, hero, exit)[1].text == "Перейти на другой уровень");
+
+    // The exit's module asks the game to go, with the link's id.
+    Logic logic;
+    const u32 id = logic.add(l);
+    Compiled c = compile(logic, verbs, w.find);
+    for (const Problem& p : c.problems) INFO(p.text);
+    CHECK(c.problems.empty());
+    REQUIRE(c.modules.size() == 1);
+    CHECK(c.modules[0].thing == kExit);
+    CHECK(c.modules[0].source.find("logic.go(target, \"cave\", \"" + std::string(kEntry) + "\", " + std::to_string(id) + ")") !=
+          std::string::npos);
+    CHECK(c.modules[0].source.find("logic.act(") == std::string::npos);
+    CHECK(c.modules[0].source.find("-- Герой уходит через Выход на уровень «Пещера», в зону «Вход»") != std::string::npos);
+    CHECK(default_code(logic.links[0], verbs, w.find).find("logic.go(target, \"cave\"") != std::string::npos);
+
+    // In logic.json: only when set, read back the same; a file without them reads as before.
+    const std::string json = logic.json();
+    CHECK(json.find("\"level\"") != std::string::npos);
+    CHECK(json.find("\"arrive\"") != std::string::npos);
+    Logic again;
+    REQUIRE(again.parse(json));
+    CHECK(again.links[0].level == "cave");
+    CHECK(again.links[0].arrive == kEntry);
+    CHECK(again.json() == json);
+    Logic plain;
+    plain.add({0, std::string(kHero), "enter", kExit});
+    CHECK(plain.json().find("\"level\"") == std::string::npos);
+    CHECK(plain.json().find("\"arrive\"") == std::string::npos);
+
+    // What does not work, and why.
+    auto problem = [&](const Link& with) {
+        Logic one;
+        one.add(with);
+        const Compiled r = compile(one, verbs, w.find);
+        CHECK(r.modules.empty());
+        return r.problems.size() == 1 ? r.problems[0].text : std::string("?");
+    };
+    Link none = l;
+    none.level.clear();
+    none.arrive.clear();
+    CHECK(problem(none) == "не выбран уровень, куда уходить");
+    Link unknown = l;
+    unknown.level = "l00c0ffee"; // not in the list as read: removed, or an entry levels.json could not give
+    CHECK(problem(unknown).find("нет в списке уровней игры") != std::string::npos);
+    Link gone = l;
+    gone.arrive = "area:00000000000000ff";
+    CHECK(problem(gone).find("нет зоны, где появиться") != std::string::npos);
+    Link other = l;
+    other.arrive = kExit; // an area of level 1, not of the cave
+    CHECK(problem(other).find("не с уровня «Пещера»") != std::string::npos);
+    Link spawn = l;
+    spawn.arrive.clear(); // the cave's spawn point
+    {
+        Logic one;
+        one.add(spawn);
+        CHECK(compile(one, verbs, w.find).problems.empty());
+    }
+    // Its own code decides instead: where it leads is not asked for.
+    Link coded = none;
+    coded.code = "logic.hint(hero, \"нет\")\n";
+    {
+        Logic one;
+        one.add(coded);
+        CHECK(compile(one, verbs, w.find).problems.empty());
+    }
+}
+
+TEST_CASE("a link that sends the hero elsewhere as a scheme: its node and the side panel are one") {
+    Verbs verbs;
+    REQUIRE(verbs.parse(kGoVerbs));
+    GoWords w;
+    script::ScriptApi api;
+    script::register_core_api(api);
+    const script::NodeLibrary nodes = node_library(api);
+    REQUIRE(nodes.find("logic.go"));
+    auto go_node = [](const script::Graph& g) -> const script::GraphNode* {
+        for (const script::GraphNode& n : g.nodes)
+            if (n.def == "logic.go") return &n;
+        return nullptr;
+    };
+
+    Logic logic;
+    Link made{0, std::string(kHero), "go", kExit};
+    made.level = "cave";
+    const u32 id = logic.add(made);
+    Link& l = *logic.find(id);
+    script::Graph g = scheme_of(l, verbs, w.find);
+    const script::GraphNode* n = go_node(g);
+    REQUIRE(n);
+    CHECK(*n->value("level") == "cave");
+    CHECK((n->value("arrive") == nullptr || n->value("arrive")->empty()));
+    // Moved nodes: the link stays plain.
+    for (script::GraphNode& m : g.nodes) m.x += 40;
+    set_scheme(l, g, verbs, w.find);
+    CHECK_FALSE(own_scheme(l, verbs, w.find));
+    // Chosen in the side panel: the kept scheme follows, still plain.
+    set_destination(l, "cave", kEntry);
+    CHECK(l.arrive == kEntry);
+    CHECK_FALSE(own_scheme(l, verbs, w.find));
+    script::Graph now = scheme_of(l, verbs, w.find);
+    REQUIRE(go_node(now));
+    CHECK(*go_node(now)->value("arrive") == kEntry);
+    CHECK(now.find(when_node(now))->x == 40); // the places kept
+    // Chosen in the node: the link follows (the side panel shows it).
+    for (script::GraphNode& m : now.nodes)
+        if (m.def == "logic.go") {
+            m.set_value("level", "level");
+            m.set_value("arrive", "");
+        }
+    set_scheme(l, now, verbs, w.find);
+    CHECK(l.level == "level");
+    CHECK(l.arrive.empty());
+    CHECK_FALSE(own_scheme(l, verbs, w.find));
+    // The scheme compiles to the same request, with the link's id.
+    l.arrive = kExit;
+    set_destination(l, "level", kExit);
+    script::Graph own = scheme_of(l, verbs, w.find);
+    const u32 hint = own.add("logic.hint", 900, 0).uid;
+    own.find(hint)->set_value("text", "Прощай");
+    own.link(go_node(own)->uid, script::kFlowNext, hint);
+    set_scheme(l, own, verbs, w.find);
+    CHECK(own_scheme(l, verbs, w.find));
+    const Compiled c = compile(logic, verbs, w.find, &nodes);
+    for (const Problem& p : c.problems) INFO(p.text);
+    CHECK(c.problems.empty());
+    REQUIRE(c.modules.size() == 1);
+    CHECK(c.modules[0].source.find("logic.go(") != std::string::npos);
+    CHECK(c.modules[0].source.find(", " + std::to_string(id) + ")") != std::string::npos);
+    CHECK(c.modules[0].source.find("\"Прощай\"") != std::string::npos);
+}
+
+TEST_CASE("coming into an exit asks the game to go; the game decides") {
+    PoolScope pool;
+    const auto dir = temp_folder("forge_logic_go");
+    write_text(dir / "kinds.json", R"({"kinds": [{"id": "thing", "name": "Вещь", "group": "Разное", "icon": "box", "foot": 0.5}]})");
+    objects::Library library;
+    REQUIRE(library.load(dir / "kinds.json", dir / "objects"));
+    world::World world(world::WorldDesc{}, std::make_shared<EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    library.attach(scene);
+    GoGame game;
+    Runtime runtime(scripts, library, game);
+    game.rt = &runtime;
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    run(1);
+
+    Verbs verbs;
+    REQUIRE(verbs.parse(kGoVerbs));
+    Logic logic;
+    Link l{0, std::string(kHero), "go", kExit};
+    l.level = "cave";
+    l.arrive = kEntry;
+    l.once = true;
+    const u32 id = logic.add(l);
+    runtime.set_areas({area_thing(kExit, "Выход", "level")});
+    runtime.set_other_areas({area_thing(kEntry, "Вход (Пещера)", "cave")});
+    runtime.set_levels({level_thing("level", "Уровень 1"), level_thing("cave", "Пещера")});
+    std::vector<Problem> problems;
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    runtime.attach(scene);
+    flecs::entity hero = scene.spawn(scene::Position::at_tile(20, 5.5));
+    game.hero_e = hero.id();
+    runtime.area_event(kExit, hero.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 1);
+    CHECK(game.gos[0] == "hero cave " + std::string(kEntry) + " " + std::to_string(id));
+    CHECK(game.calls[0] != 0);
+    CHECK(runtime.asking() == 0);
+    // The game did not go (it refused, or another going of the tick won): the mark is taken back, the hero has
+    // nothing of it, and the next time in the link asks again.
+    const std::string mark = "связь " + std::to_string(id);
+    CHECK((hero.try_get<script::ScriptVars>() && hero.try_get<script::ScriptVars>()->find(mark)));
+    CHECK(runtime.take_back_first(game.calls.back(), id));
+    CHECK_FALSE(hero.has<script::ScriptVars>());
+    CHECK_FALSE(runtime.take_back_first(game.calls.back(), id));
+    runtime.area_event(kExit, hero.id(), false);
+    run(1);
+    runtime.area_event(kExit, hero.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 2);
+    // A hero with variables of its own keeps them as they were.
+    hero.get_mut<script::ScriptVars>().get_or_add("ключ").x = 3;
+    hero.get_mut<script::ScriptVars>().get_or_add("ключ").kind = script::VarKind::Number;
+    CHECK_FALSE(runtime.take_back_first(game.calls[0], id)); // not the mark of an earlier call
+    CHECK(runtime.take_back_first(game.calls.back(), id));
+    REQUIRE(hero.try_get<script::ScriptVars>());
+    CHECK_FALSE(hero.try_get<script::ScriptVars>()->find(mark));
+    CHECK(hero.try_get<script::ScriptVars>()->find("ключ")->x == 3);
+    runtime.area_event(kExit, hero.id(), false);
+    run(1);
+    runtime.area_event(kExit, hero.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 3);
+    // It went: the marks of the frame stay (the call is over).
+    runtime.keep_firsts();
+    CHECK_FALSE(runtime.take_back_first(game.calls.back(), id));
+    // Only once: the hero keeps it, as for any area.
+    runtime.area_event(kExit, hero.id(), false);
+    run(1);
+    runtime.area_event(kExit, hero.id(), true);
+    run(1);
+    CHECK(game.gos.size() == 3);
+    // The list without the cave (levels.json changed, or not all of it read): the link does not work.
+    runtime.set_levels({level_thing("level", "Уровень 1")});
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    REQUIRE(problems.size() == 1);
+    CHECK(problems[0].text.find("нет в списке уровней игры") != std::string::npos);
+    // Its own code may ask for anything: the game checks it (a level not in its list does not go).
+    logic.find(id)->once = false;
+    logic.find(id)->code = "logic.go(hero, \"nowhere\", \"\", 7)\n";
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    runtime.area_event(kExit, hero.id(), false);
+    run(1);
+    runtime.area_event(kExit, hero.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 4);
+    CHECK(game.gos[3] == "hero nowhere  7");
+    // A going dropped while the tick runs (another one won): the game takes the mark back in its go(); a hero that
+    // had no variables has none again, and the next time in the link asks again.
+    logic.find(id)->once = true;
+    logic.find(id)->code.clear();
+    runtime.set_levels({level_thing("level", "Уровень 1"), level_thing("cave", "Пещера")});
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    flecs::entity other = scene.spawn(scene::Position::at_tile(24, 5.5));
+    game.hero_e = other.id();
+    game.drop = true;
+    runtime.area_event(kExit, other.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 5);
+    CHECK_FALSE(other.has<script::ScriptVars>());
+    game.drop = false;
+    runtime.area_event(kExit, other.id(), false);
+    run(1);
+    runtime.area_event(kExit, other.id(), true);
+    run(1);
+    REQUIRE(game.gos.size() == 6);
+    runtime.keep_firsts();
+    CHECK((other.try_get<script::ScriptVars>() && other.try_get<script::ScriptVars>()->find(mark)));
+
+    // A scheme that waits between «Только один раз» and «Перейти на уровень»: while its call waits, frame after
+    // frame, its mark stays undoable; the game refuses the going at last and the mark goes (no other's); in again,
+    // it asks again; a going not refused keeps its mark once the call is over.
+    script::Graph g;
+    g.name = "link " + std::to_string(id);
+    const u32 when = g.add("logic.when", 0, 0).uid;
+    const u32 once = g.add("logic.once", 280, 0).uid;
+    script::GraphNode& wait = g.add("api.wait", 560, 0);
+    wait.set_value("seconds", "0.3");
+    const u32 pause = wait.uid;
+    script::GraphNode& go_node = g.add("logic.go", 840, 0);
+    go_node.set_value("level", "cave");
+    go_node.set_value("arrive", kEntry);
+    const u32 going = go_node.uid;
+    g.link(when, script::kFlowNext, once);
+    g.link(once, "first", pause);
+    g.link(pause, script::kFlowNext, going);
+    g.link(when, "a", going, "who");
+    logic.find(id)->graph = g.to_json();
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    CHECK(problems.empty());
+    REQUIRE(runtime.compiled().modules.size() == 1);
+    CHECK(runtime.compiled().modules[0].source.find("wait(") != std::string::npos); // the scheme's own code waits
+    flecs::entity third = scene.spawn(scene::Position::at_tile(28, 5.5));
+    game.hero_e = third.id();
+    const usize asked = game.gos.size();
+    auto marked = [&](flecs::entity e) { return e.try_get<script::ScriptVars>() && e.try_get<script::ScriptVars>()->find(mark); };
+    runtime.area_event(kExit, third.id(), true);
+    for (int i = 0; i < 10; ++i) {
+        run(1);
+        runtime.keep_firsts();
+    }
+    CHECK(game.gos.size() == asked); // still waiting
+    CHECK(marked(third));
+    for (int i = 0; i < 30 && game.gos.size() == asked; ++i) {
+        run(1);
+        if (game.gos.size() == asked) runtime.keep_firsts();
+    }
+    REQUIRE(game.gos.size() == asked + 1);
+    CHECK(game.gos.back() == "hero cave " + std::string(kEntry) + " " + std::to_string(id));
+    CHECK(runtime.take_back_first(game.calls.back(), id));
+    runtime.keep_firsts();
+    CHECK_FALSE(marked(third));
+    CHECK(marked(other)); // a mark of another call, over, stays
+    runtime.area_event(kExit, third.id(), false);
+    run(1);
+    runtime.area_event(kExit, third.id(), true);
+    for (int i = 0; i < 40 && game.gos.size() == asked + 1; ++i) {
+        run(1);
+        runtime.keep_firsts();
+    }
+    REQUIRE(game.gos.size() == asked + 2);
+    CHECK_FALSE(runtime.take_back_first(game.calls.back(), id));
+    CHECK(marked(third));
+    runtime.area_event(kExit, third.id(), false);
+    run(1);
+    runtime.area_event(kExit, third.id(), true);
+    run(30);
+    CHECK(game.gos.size() == asked + 2); // only once
+    CHECK(scripts.errors().empty());
+}
+
+// The rest of a frame's ticks do not run once a game leaves the world in one (the hero goes to another level).
+TEST_CASE("a simulation stops after the tick it is told to") {
+    PoolScope pool;
+    world::World world(world::WorldDesc{}, std::make_shared<EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::SimDesc desc;
+    sim::Simulation sim(world, scene, desc);
+    const world::Rect view{-8, -8, 8, 8};
+    sim.update(0, view);
+    world.finish_loading();
+    u32 seen = 0;
+    bool stop = false;
+    sim.add_system([&](const sim::TickContext&) {
+        ++seen;
+        if (stop) sim.stop_ticks();
+    });
+    const f64 three = 3.5 / static_cast<f64>(desc.ticks_per_second);
+    const u32 first = sim.update(three, view);
+    CHECK(first >= 2);
+    CHECK(seen == first);
+    stop = true;
+    CHECK(sim.update(three, view) == 1);
+    CHECK(seen == first + 1);
+    stop = false;
+    const u32 next = sim.update(three, view); // the next frame runs as before
+    CHECK(next >= 2);
+    CHECK(seen == first + 1 + next);
+}
+
 // Files that are not there, named in Cyrillic: the error names them, nothing throws.
 TEST_CASE("logic: verbs, ideas and links not there, their names in Cyrillic") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / utf8_path("forge_tests_связи нет");
