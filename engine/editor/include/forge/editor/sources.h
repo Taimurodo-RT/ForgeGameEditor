@@ -24,7 +24,10 @@
 //
 // A copy's name is its entry's even while the file is missing: another asset
 // of the same file name gets "name 2.ext", so what uses one copy never gets
-// the other's content.
+// the other's content. Names are one where case does not count (same_name:
+// «Łódź.png» and «łódź.png» are one file on Windows), on every system, so a
+// game's folder moves to any. Two names the file system takes for one file
+// are one too: a file there is never written over for another copy.
 //
 // Each change is whole: when sources.json cannot be written, the files the
 // change wrote get back what they had (a file it made is taken away again)
@@ -115,6 +118,13 @@ private:
 
 // The content's hash as sources.json keeps it.
 std::string hash_of(std::span<const u8> bytes);
+
+// Whether two names (or paths of the game's folder, with /) are one file where
+// case does not count: Unicode case folding (CaseFolding.txt, as SDL has it),
+// and on Windows also what Windows itself takes for one name. Wider than a
+// file system may be (Straße and STRASSE are one here): that only gives
+// another copy a name of its own.
+bool same_name(std::string_view a, std::string_view b);
 
 // Whether the game can take these bytes as a file of that folder: a picture of
 // "pictures" decodes, a sound of "sounds" decodes (WAV, OGG); a file of any

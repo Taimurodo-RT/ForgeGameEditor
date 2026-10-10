@@ -449,6 +449,151 @@ TEST_CASE("sources: names that differ only in case are one file: each asset keep
     CHECK(s.copy_in(f.asset(d), "pictures") == "лист.png");
 }
 
+TEST_CASE("sources: one name where case does not count, in any alphabet") {
+    // Unicode case folding, not a list of alphabets: Latin Extended-A, -B, -C, -D and Additional, Cyrillic and its
+    // Supplement and Extended-B, Greek, Armenian, Cherokee, Deseret (outside 16 bits), signs with letters' cases.
+    const char* one[][2] = {
+        {"Crystal.png", "crystal.PNG"}, {"Кристалл.png", "кристалл.png"}, {"Łódź.png", "łódź.png"},
+        {"Ґрунт.png", "ґрунт.png"},     {"ŐRSÉG.png", "őrség.png"},       {"Ǆ.png", "ǆ.png"},
+        {"Ǆ.png", "ǅ.png"},             {"ẠNH.png", "ạnh.png"},           {"Ⱡ.png", "ⱡ.png"},
+        {"Ꜳ.png", "ꜳ.png"},             {"Ԁ.png", "ԁ.png"},               {"Ꙁ.png", "ꙁ.png"},
+        {"ЀЍЎ.png", "ѐѝў.png"},         {"Ӂ.png", "ӂ.png"},               {"ΩΣ.png", "ως.png"},
+        {"Ա.png", "ա.png"},             {"Ꭰ.png", "ꭰ.png"},               {"𐐀.png", "𐐨.png"},
+        {"Ⅻ.png", "ⅻ.png"},             {"Ⓐ.png", "ⓐ.png"},               {"k.png", "K.png"}, // the Kelvin sign
+        {"Straße.png", "STRASSE.png"}, // wider than NTFS: only another name for a copy
+        {"pictures/Łódź.png", "PICTURES/łódź.png"},
+    };
+    for (const auto& [a, b] : one) {
+        CAPTURE(a);
+        CAPTURE(b);
+        CHECK(same_name(a, b));
+        CHECK(same_name(b, a));
+    }
+    const char* two[][2] = {
+        {"e.png", "е.png"}, // Latin e, Cyrillic е
+        {"a.png", "b.png"}, {"Łódź.png", "Lodz.png"}, {"ґрунт.png", "грунт.png"}, {"pictures/a.png", "sounds/a.png"},
+        {"кристалл.png", "кристалл 2.png"},
+    };
+    for (const auto& [a, b] : two) {
+        CAPTURE(a);
+        CAPTURE(b);
+        CHECK_FALSE(same_name(a, b));
+    }
+}
+
+TEST_CASE("sources: a name that differs only in case, in any alphabet, with the first copy there or missing") {
+    // Two assets with different Guids whose file names are one file where case does not count. With the first
+    // copy there, or with it and its asset gone: the second gets a name of its own; the first comes back as its
+    // own; the second changed changes only its own; read again, each copy is its asset's.
+    const char* pairs[][3] = {
+        {"Crystal.png", "crystal.PNG", "crystal 2.PNG"}, {"Кристалл.png", "кристалл.png", "кристалл 2.png"},
+        {"Łódź.png", "łódź.png", "łódź 2.png"},          {"Ґрунт.png", "ґрунт.png", "ґрунт 2.png"},
+        {"Ԁара.png", "ԁара.png", "ԁара 2.png"},          {"Ǆemal.png", "ǆemal.png", "ǆemal 2.png"},
+    };
+    for (const bool missing : {false, true})
+        for (const auto& [first, second, own] : pairs) {
+            CAPTURE(missing);
+            CAPTURE(first);
+            Fixture f;
+            const Guid a = Guid::generate(), b = Guid::generate();
+            const std::string asset_a = std::string("первые/") + first, asset_b = std::string("вторые/") + second;
+            const std::string copy_a = std::string("pictures/") + first, copy_b = std::string("pictures/") + own;
+            put(f.assets / utf8_path(asset_a), kBlue);
+            put(f.assets / utf8_path(asset_b), kRed);
+            f.where[a] = asset_a;
+            f.where[b] = asset_b;
+            Sources s;
+            REQUIRE(s.load(f.game));
+            REQUIRE(s.copy_in(f.asset(a), "pictures") == first);
+            if (missing) {
+                fs::remove(f.assets / utf8_path(asset_a));
+                fs::remove(f.game / utf8_path(copy_a));
+                CHECK(s.sync(f.finder()).lost.size() == 1);
+            }
+            std::string error;
+            CHECK(s.copy_in(f.asset(b), "pictures", &error) == own);
+            CHECK(error.empty());
+            CHECK(bytes_of(f.game / utf8_path(copy_b)) == kRed);
+            CHECK(names(f.game / "pictures") == (missing ? std::vector<std::string>{own} : std::vector<std::string>{first, own}));
+            if (!missing) CHECK(bytes_of(f.game / utf8_path(copy_a)) == kBlue); // not written over
+            REQUIRE(s.of_file(std::string("pictures/") + second));
+            CHECK(s.of_file(std::string("pictures/") + second)->asset == a); // A's name, whatever the case
+            CHECK(s.of_file(copy_b)->asset == b);
+
+            if (missing) {
+                put(f.assets / utf8_path(asset_a), kBlue);
+                const Report back = s.sync(f.finder());
+                CHECK(back.restored.size() == 1);
+                CHECK(back.errors.empty());
+            }
+            CHECK(bytes_of(f.game / utf8_path(copy_a)) == kBlue);
+            CHECK(bytes_of(f.game / utf8_path(copy_b)) == kRed);
+            put(f.assets / utf8_path(asset_b), kGreen);
+            const Report r = s.sync(f.finder());
+            REQUIRE(r.updated.size() == 1);
+            CHECK(r.updated[0].asset == b);
+            CHECK(bytes_of(f.game / utf8_path(copy_a)) == kBlue);
+            CHECK(bytes_of(f.game / utf8_path(copy_b)) == kGreen);
+
+            Sources again;
+            error.clear();
+            REQUIRE(again.load(f.game, &error));
+            CHECK(error.empty());
+            REQUIRE(again.entries().size() == 2);
+            REQUIRE(again.of_file(copy_a));
+            REQUIRE(again.of_file(copy_b));
+            CHECK(again.of_file(copy_a)->asset == a);
+            CHECK(again.of_file(copy_b)->asset == b);
+            CHECK_FALSE(again.sync(f.finder()).changed());
+        }
+}
+
+TEST_CASE("sources: two names of one file of the disk: neither copy is written over for the other") {
+    // Where the file system takes two names for one file (as Windows takes «Łódź.png» for «łódź.png»; here a
+    // hard link makes it so on any system), the other asset's copy is not written through the other name.
+    Fixture f;
+    const Guid a = Guid::generate(), b = Guid::generate(), d = Guid::generate();
+    put(f.assets / utf8_path("первые/один.png"), kBlue);
+    put(f.assets / utf8_path("вторые/другой.png"), kRed);
+    f.where[a] = "первые/один.png";
+    f.where[b] = "вторые/другой.png";
+    Sources s;
+    REQUIRE(s.load(f.game));
+    REQUIRE(s.copy_in(f.asset(a), "pictures") == "один.png");
+    REQUIRE(s.copy_in(f.asset(b), "pictures") == "другой.png");
+    // B's copy gone, and its name now one file with A's.
+    REQUIRE(fs::remove(f.copy("pictures/другой.png")));
+    std::error_code ec;
+    fs::create_hard_link(f.copy("pictures/один.png"), f.copy("pictures/другой.png"), ec);
+    REQUIRE_FALSE(ec);
+
+    put(f.assets / utf8_path("вторые/другой.png"), kGreen);
+    const Report r = s.sync(f.finder());
+    CHECK(r.updated.empty());
+    REQUIRE(r.errors.size() == 1);
+    CHECK(r.errors[0].find("один файл") != std::string::npos);
+    CHECK(bytes_of(f.copy("pictures/один.png")) == kBlue);
+    std::string error;
+    CHECK(s.copy_in(f.asset(b), "pictures", &error).empty());
+    CHECK(error.find("один файл") != std::string::npos);
+    CHECK(bytes_of(f.copy("pictures/один.png")) == kBlue);
+
+    // A file of the same content that is another copy on the disk is not taken as a new asset's.
+    put(f.assets / utf8_path("третьи/лист.png"), kBlue);
+    f.where[d] = "третьи/лист.png";
+    fs::create_hard_link(f.copy("pictures/один.png"), f.copy("pictures/лист.png"), ec);
+    REQUIRE_FALSE(ec);
+    CHECK(s.copy_in(f.asset(d), "pictures") == "лист 2.png");
+
+    // Read again: one file of the disk named twice is one entry, the first named, and said.
+    Sources again;
+    error.clear();
+    REQUIRE(again.load(f.game, &error));
+    CHECK(error.find("назван дважды") != std::string::npos);
+    CHECK(again.entries().size() == 2); // «другой.png» (first by name) and «лист 2.png»
+    CHECK(again.of_file("pictures/лист 2.png"));
+}
+
 TEST_CASE("sources: a change sources.json cannot record leaves nothing of it") {
     Fixture f;
     const Guid stone = Guid::generate();
@@ -523,6 +668,16 @@ TEST_CASE("sources: entries that name a file outside the game, or one named twic
     CHECK(error.find("/tmp/x.png") != std::string::npos);
     CHECK(error.find("назван дважды") != std::string::npos);
     CHECK(error.find("pictures/OK.PNG") != std::string::npos); // the same file where case does not count
+
+    // Latin Extended: one file too.
+    put(f.game / "sources.json", "{\"files\": {\"pictures/Łódź.png\": {\"asset\": \"" + id + "\"}, \"pictures/łódź.png\": {\"asset\": \"" +
+                                     other + "\"}}}");
+    error.clear();
+    REQUIRE(s.load(f.game, &error));
+    REQUIRE(s.entries().size() == 1);
+    REQUIRE(s.of_file("pictures/ŁÓDŹ.PNG"));
+    CHECK(s.of_file("pictures/ŁÓDŹ.PNG")->asset.to_string() == id);
+    CHECK(error.find("pictures/łódź.png") != std::string::npos);
 
     put(f.game / "sources.json", "не json");
     CHECK(!s.load(f.game, &error));
