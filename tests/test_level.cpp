@@ -27,9 +27,11 @@ struct PoolScope {
     ~PoolScope() { jobs::shutdown(); }
 };
 
-// Air above y = 0, stone below; layer 1 is blocks.
+// Air above y = 0, stone below; layer 1 is blocks. The walls are written too (empty): a chunk's memory is not
+// cleared before a generator fills it.
 struct FlatGenerator final : Generator {
     void generate(ChunkCoord coord, const ChunkTiles& out) const override {
+        std::fill(out.layer(0), out.layer(0) + kChunkTiles, TileId{0});
         TileId* blocks = out.layer(1);
         for (i32 ly = 0; ly < kChunkSize; ++ly) {
             const i32 y = coord.y * kChunkSize + ly;

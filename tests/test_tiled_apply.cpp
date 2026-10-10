@@ -50,11 +50,13 @@ struct PoolScope {
 };
 
 // Stone from y 20 down on the blocks; water in the two rows over it from x -50 to 59 (a lake in the map's place).
+// Every layer is written, the background too (empty): a chunk's memory is not cleared before a generator fills it.
 struct HillsGenerator final : Generator {
     void generate(ChunkCoord coord, const ChunkTiles& out) const override {
         for (i32 ly = 0; ly < kChunkSize; ++ly)
             for (i32 lx = 0; lx < kChunkSize; ++lx) {
                 const i32 x = coord.x * kChunkSize + lx, y = coord.y * kChunkSize + ly;
+                out.layer(0)[ly * kChunkSize + lx] = 0;
                 out.layer(1)[ly * kChunkSize + lx] = y >= 20 ? 3 : 0;
                 out.layer(2)[ly * kChunkSize + lx] = (y == 18 || y == 19) && x >= -50 && x < 60 ? 5 : 0;
             }
