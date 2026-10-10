@@ -284,6 +284,17 @@ bool LevelEditor::init(ui::Ui& ui, SDL_GPUDevice* device, SDL_GPUTextureFormat f
     look_around_level();
     camera_.zoom = 16;
     history_.clear();
+    // The game's levels, and which of them this is.
+    if (!config.game_data.empty()) {
+        levels_ = level::read_levels(config.game_data);
+        const level::LevelEntry* e = level::level_of_folder(config.game_data, levels_, config.folder);
+        level_id_ = e ? e->id : std::string();
+        if (!levels_.writable()) {
+            levels_note_ = levels_.why_unchanged();
+            FORGE_WARN("Уровни игры: %s", levels_note_.c_str());
+        }
+        for (const std::string& n : levels_.notes) FORGE_WARN("Уровни игры: %s", n.c_str());
+    }
 
     if (!module_.init_view(device, format)) return false;
     art_ = demo::make_sprite_sheet();
@@ -746,6 +757,7 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
         camera_.y = map_cy_ + (std::clamp(fy, 0.0f, 1.0f) - 0.5) * span;
     });
     bind_tiled(model);
+    bind_levels(model);
 }
 
 // --- tools -------------------------------------------------------------------
@@ -2385,9 +2397,11 @@ bool LevelEditor::save() {
     edit_begins();
     const level::Level::SaveReport r = level_->save();
     if (!r.ok) {
+        save_error_ = r.error.empty() ? std::string("уровень не записан") : r.error;
         FORGE_ERROR("Уровень не сохранился: %s. Изменения остались в редакторе, попробуйте ещё раз", r.error.c_str());
         return false;
     }
+    save_error_.clear();
     history_.mark_saved();
     FORGE_INFO("Уровень сохранён: участков с плитками %u, с объектами %u%s%s (%.0f мс)", r.tile_chunks, r.object_chunks,
                r.physics ? ", гравитация мира в physics.json" : "", r.areas ? ", зоны в areas.json" : "", r.ms);
@@ -2409,6 +2423,10 @@ bool LevelEditor::open_folder(const fs::path& folder) {
         return false;
     }
     config_.folder = folder;
+    const level::LevelEntry* listed = config_.game_data.empty() ? nullptr : level::level_of_folder(config_.game_data, levels_, folder);
+    level_id_ = listed ? listed->id : std::string();
+    ++levels_opened_;
+    ++levels_serial_;
     look_around_level();
     history_.clear();
     zn_area_ = zn_ask_ = 0;
@@ -2452,13 +2470,19 @@ bool LevelEditor::play_here() {
         return false;
     }
     last_play_ = play_command(x, y);
+    if (!launch(last_play_)) return false;
+    if (!config_.game_exe.empty() && !config_.offscreen) FORGE_INFO("Игра запущена с точки %.0f, %.0f", x, y);
+    return true;
+}
+
+// The game with these arguments (offscreen: only as if).
+bool LevelEditor::launch(const std::vector<std::string>& args) {
     if (config_.game_exe.empty() || config_.offscreen) return true;
     std::error_code ec;
     if (!fs::exists(config_.game_exe, ec)) {
         FORGE_ERROR("Игра не найдена: %s (соберите forge_slice)", path_to_utf8(config_.game_exe).c_str());
         return false;
     }
-    const std::vector<std::string> args = play_command(x, y);
     std::vector<const char*> argv;
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -2468,7 +2492,6 @@ bool LevelEditor::play_here() {
         FORGE_ERROR("Игра не запустилась: %s", SDL_GetError());
         return false;
     }
-    FORGE_INFO("Игра запущена с точки %.0f, %.0f", x, y);
     return true;
 }
 
@@ -2525,6 +2548,7 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
     sync_model();
     sync_areas(context);
     sync_tiled();
+    sync_levels();
 }
 
 void LevelEditor::update_minimap() {
@@ -3131,6 +3155,12 @@ bool LevelEditor::handle_key(const SDL_KeyboardEvent& k) {
     // The import window holds the keys: Esc is its «Отмена».
     if (tm_open_) {
         if (k.key == SDLK_ESCAPE) cancel_tiled();
+        return true;
+    }
+    // The levels' menu and the name field: Esc closes them.
+    if ((levels_open_ || !naming_.empty()) && k.key == SDLK_ESCAPE) {
+        set_levels_menu(false);
+        cancel_level_name();
         return true;
     }
     const bool ctrl = (k.mod & SDL_KMOD_CTRL) != 0;

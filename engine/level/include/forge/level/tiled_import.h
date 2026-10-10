@@ -107,6 +107,10 @@ struct Options {
     // that is not this picture's (made by something else, or showing another
     // picture): a new one then gets another id.
     std::function<bool(const Picture&)> template_taken;
+    // The level the map goes into, by its id in the game's list of levels: a part of the new templates' ids and of
+    // the ids of the map's zones and objects, so one map name in two levels makes two of each. Empty for the level
+    // «level» and for a folder that is no level of the list: the ids every import gave before there were levels.
+    std::string level;
 };
 
 // Against the level as it is (its own tiles and zones, an earlier import's

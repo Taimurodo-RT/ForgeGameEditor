@@ -5,6 +5,7 @@ add_library(forge_level STATIC
   src/physics.cpp
   src/light.cpp
   src/areas.cpp
+  src/levels.cpp
   src/own_tiles.cpp
   src/tiled.cpp
   src/tiled_import.cpp

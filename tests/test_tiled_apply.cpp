@@ -8,7 +8,11 @@
 // nothing; a map past the edge of the world refused. Music named anew for
 // another sound of its name is taken by the import's zones that play it, not
 // the author's; tilesets of one name, and maps of one name in two levels of a
-// game, give each picture its own template, as the game loads it.
+// game, give each picture its own template, as the game loads it. In two
+// levels of the game's list one map name makes two of everything: the second
+// level and what it uses stay byte for byte through the first's template
+// edited, imported again, undone, redone, saved and opened again; what the
+// author shares stays shared.
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -18,6 +22,7 @@
 #include "forge/editor/undo.h"
 #include "forge/level/areas.h"
 #include "forge/level/level.h"
+#include "forge/level/levels.h"
 #include "forge/level/object_edit.h"
 #include "forge/level/tile_edit.h"
 #include "forge/level/tiled.h"
@@ -186,12 +191,13 @@ struct Project {
         module.lib = &lib;
     }
     fs::path sounds() const { return game / "sounds"; }
-    tl::Plan plan_for(Level& l, std::string* refusal = nullptr) {
+    tl::Plan plan_for(Level& l, std::string* refusal = nullptr, const std::string& level_id = {}) {
         tl::Map m;
         std::string why;
         REQUIRE_MESSAGE(tl::read_map(map, m, &why), why);
         tl::Options o;
         o.template_taken = [this](const tl::Picture& pic) { return tl::template_taken(lib, pic); };
+        o.level = level_id;
         tl::Plan p;
         const bool ok = tl::plan(m, o, l.own_tiles(), l.areas(), l.tiled_record(), p, &why);
         if (refusal) *refusal = why;
@@ -1094,5 +1100,222 @@ TEST_CASE("Tiled import: a map of the same file name elsewhere into another leve
     import(level2, other / utf8_path("уровень.tmx"), true);
     CHECK(made.templates.empty());
     CHECK(chest_shows(pr.level, a) == pixels(example_dir() / utf8_path("картинки/сундук.png")));
+    fs::remove_all(pr.root);
+}
+
+TEST_CASE("Tiled import: one map name in two levels of the game's list, one picture; the second level stays as it is "
+          "whatever the first does, what the author shares stays shared") {
+    PoolScope pool;
+    Project pr("forge_test_tiled_two_levels");
+    // The game's levels: «level» and one more, made as the editor makes it.
+    pr.level = pr.game / "level";
+    fs::create_directories(pr.level);
+    LevelList list = read_levels(pr.game);
+    std::string second, why;
+    REQUIRE_MESSAGE(add_level(pr.game, list, "Пещера", second, &why), why);
+    const fs::path level2 = level_folder(pr.game, second);
+    REQUIRE(fs::is_directory(level2));
+    // The second map: the example in another folder, the same pictures, the same file name.
+    const fs::path map_a = pr.map, map_b = pr.root / utf8_path("Другая карта") / utf8_path("уровень.tmx");
+    std::error_code ec;
+    fs::copy(example_dir(), map_b.parent_path(), fs::copy_options::recursive, ec);
+    REQUIRE_MESSAGE(!ec, ec.message());
+
+    editor::Document doc1, doc2;
+    editor::UndoStack history1(doc1), history2(doc2);
+    tl::Resources made;
+    auto import = [&](Level& l, editor::UndoStack& h, const fs::path& map, const std::string& scope) {
+        load_view(l);
+        pr.map = map;
+        tl::Plan p = pr.plan_for(l, nullptr, scope);
+        REQUIRE_MESSAGE(tl::write_resources(p, pr.lib, pr.sounds(), made, &why), why);
+        REQUIRE_MESSAGE(tl::apply(l, h, pr.lib, p, {}, &why), why);
+        return p;
+    };
+    auto one = std::make_unique<Level>(pr.module);
+    REQUIRE(one->open(pr.level));
+    const tl::Plan a = import(*one, history1, map_a, "");
+    REQUIRE(one->save().ok);
+    auto two = std::make_unique<Level>(pr.module);
+    REQUIRE(two->open(level2));
+    const tl::Plan b = import(*two, history2, map_b, second);
+    REQUIRE(two->save().ok);
+    two.reset();
+
+    // «level»: the ids every import gave before there were levels. The other level: its own of everything.
+    std::vector<std::string> ids_a, ids_b;
+    for (const tl::Picture& p : a.pictures) ids_a.push_back(p.template_id);
+    for (const tl::Picture& p : b.pictures) ids_b.push_back(p.template_id);
+    CHECK(ids_a == std::vector<std::string>{"tiled_уровень_предметы_0", "tiled_уровень_предметы_3", "tiled_уровень_предметы_3h",
+                                            "tiled_уровень_предметы_7"});
+    CHECK(ids_b == std::vector<std::string>{"tiled_" + second + "_уровень_предметы_0", "tiled_" + second + "_уровень_предметы_3",
+                                            "tiled_" + second + "_уровень_предметы_3h", "tiled_" + second + "_уровень_предметы_7"});
+    REQUIRE(a.pictures.size() == b.pictures.size());
+    for (usize i = 0; i < a.pictures.size(); ++i) {
+        const objects::Template* ta = pr.lib.find(std::string_view(a.pictures[i].template_id));
+        const objects::Template* tb = pr.lib.find(std::string_view(b.pictures[i].template_id));
+        REQUIRE(ta);
+        REQUIRE(tb);
+        CHECK(ta->picture != tb->picture);
+        CHECK(pixels(pr.lib.picture_file(*ta)) == pixels(pr.lib.picture_file(*tb))); // one picture, two files
+    }
+    const Area& cave_a = zone_named(a.areas, "Пещера");
+    const Area& cave_b = zone_named(b.areas, "Пещера");
+    CHECK(cave_a.id != cave_b.id);
+    CHECK(cave_a.music == cave_b.music); // one sound, one file: by its content
+    REQUIRE(a.objects.size() == b.objects.size());
+    for (usize i = 0; i < a.objects.size(); ++i) CHECK(a.objects[i].level_id != b.objects[i].level_id);
+
+    // The second level and everything it uses, byte for byte.
+    auto snapshot2 = [&] {
+        std::map<std::string, std::vector<u8>> out;
+        for (auto& [name, bytes] : files_of(level2)) out["уровень/" + name] = std::move(bytes);
+        objects::Library game;
+        REQUIRE(game.load(pr.game / "kinds.json", pr.game / "objects"));
+        for (const tl::Picture& p : b.pictures) {
+            const objects::Template* t = game.find(std::string_view(p.template_id));
+            REQUIRE(t);
+            std::vector<u8> bytes;
+            REQUIRE(read_file(t->file, bytes));
+            out["заготовка/" + path_to_utf8(t->file.filename())] = bytes;
+            REQUIRE(read_file(game.picture_file(*t), bytes));
+            out["картинка/" + t->picture] = bytes;
+        }
+        std::vector<u8> bytes;
+        REQUIRE(read_file(pr.sounds() / utf8_path(cave_b.music), bytes));
+        out["звук/" + cave_b.music] = bytes;
+        return out;
+    };
+    // As the game sees the second level: its objects, its pictures, its zone.
+    auto check_second = [&] {
+        objects::Library game;
+        REQUIRE(game.load(pr.game / "kinds.json", pr.game / "objects"));
+        Level l(pr.module);
+        REQUIRE(l.open(level2));
+        load_view(l);
+        l.load_objects();
+        for (const tl::PlannedObject& po : b.objects) {
+            CAPTURE(po.name);
+            const flecs::entity e = l.find(po.level_id);
+            REQUIRE(e.is_valid());
+            const objects::Template* t = game.find(e.get<objects::ObjectRef>().key);
+            REQUIRE(t);
+            CHECK(t->id == b.pictures[po.picture].template_id);
+            CHECK(pixels(game.picture_file(*t)) == b.pictures[po.picture].rgba); // its map's picture, flipped as there
+        }
+        CHECK(l.areas().find(cave_b.id));
+        CHECK_FALSE(l.areas().find(cave_a.id));
+    };
+    const auto before = snapshot2();
+    check_second();
+
+    // The first level's chest template edited in «Объекты» (a value of its own), undone, done again.
+    const objects::Template chest = *pr.lib.find(std::string_view(a.pictures[0].template_id));
+    REQUIRE(pr.lib.put(pr.lib.with_value(chest, "half_height", "2")));
+    CHECK(snapshot2() == before);
+    REQUIRE(pr.lib.put(chest));
+    CHECK(snapshot2() == before);
+    REQUIRE(pr.lib.put(pr.lib.with_value(chest, "half_height", "2")));
+    CHECK(snapshot2() == before);
+
+    // The first map's chest and lantern drawn anew and its chest moved, the first level imported again: its
+    // templates take the new pictures, the chest moves (a step of the history); undone, redone, saved.
+    dot_on(map_a.parent_path() / utf8_path("картинки/сундук.png"));
+    dot_on(map_a.parent_path() / utf8_path("картинки/фонарь.png"));
+    {
+        std::string tmx = read_text(map_a);
+        const std::string from = "name=\"Сундук\" gid=\"25\" x=\"544\"";
+        REQUIRE(tmx.find(from) != std::string::npos);
+        tmx.replace(tmx.find(from), from.size(), "name=\"Сундук\" gid=\"25\" x=\"560\"");
+        write_text(map_a, tmx);
+    }
+    history1.clear();
+    const tl::Plan again = import(*one, history1, map_a, "");
+    for (const tl::Picture& p : again.pictures) CHECK(p.known);
+    for (usize i = 0; i < again.pictures.size(); ++i) CHECK(again.pictures[i].template_id == a.pictures[i].template_id);
+    CHECK(pixels(pr.lib.picture_file(*pr.lib.find(std::string_view(a.pictures[0].template_id)))) ==
+          pixels(map_a.parent_path() / utf8_path("картинки/сундук.png")));
+    CHECK(snapshot2() == before);
+    REQUIRE(history1.size() == 1);
+    REQUIRE(history1.undo());
+    CHECK(snapshot2() == before);
+    REQUIRE(history1.redo());
+    CHECK(snapshot2() == before);
+    REQUIRE(one->save().ok);
+    CHECK(snapshot2() == before);
+    one.reset();
+
+    // Opened again, both: the second level as it was, the first with its new pictures.
+    REQUIRE(pr.lib.load(pr.game / "kinds.json", pr.game / "objects"));
+    check_second();
+    CHECK(snapshot2() == before);
+    one = std::make_unique<Level>(pr.module);
+    REQUIRE(one->open(pr.level));
+    load_view(*one);
+    one->load_objects();
+    {
+        const flecs::entity e = one->find(planned(a, 3)->level_id); // the chest
+        REQUIRE(e.is_valid());
+        const objects::Template* t = pr.lib.find(e.get<objects::ObjectRef>().key);
+        REQUIRE(t);
+        CHECK(pixels(pr.lib.picture_file(*t)) == pixels(map_a.parent_path() / utf8_path("картинки/сундук.png")));
+    }
+    // The second imported again unchanged: nothing new, nothing written.
+    two = std::make_unique<Level>(pr.module);
+    REQUIRE(two->open(level2));
+    history2.clear();
+    import(*two, history2, map_b, second);
+    CHECK(made.templates.empty());
+    CHECK(made.pictures.empty());
+    REQUIRE(two->save().ok);
+    CHECK(snapshot2() == before);
+
+    // What the author shares stays shared: a template of their own in both levels is one template; the first
+    // level's lantern put into the second by hand shows the first map's lantern, and its next picture too.
+    const objects::KindDef* picture = pr.lib.kind(tl::kPictureKind);
+    REQUIRE(picture);
+    std::optional<objects::Template> flag = pr.lib.make(*picture, nullptr, "Мой флаг");
+    REQUIRE(flag);
+    REQUIRE(pr.lib.put(*flag));
+    auto put_into = [&](Level& l, editor::UndoStack& h, const objects::Template& t, f64 x) {
+        flecs::entity e = pr.lib.spawn(l.scene(), t, x, 10);
+        REQUIRE(e.is_valid());
+        const ObjectSnapshot snap = snapshot(l, e);
+        e.destruct();
+        h.execute(std::make_unique<ObjectsCommand>(l, std::vector<ObjectSnapshot>{snap}, true, "Поставить"));
+        REQUIRE(l.save().ok);
+        return snap.id;
+    };
+    const objects::Template* mine = pr.lib.find(std::string_view(flag->id));
+    REQUIRE(mine);
+    const u64 flag1 = put_into(*one, history1, *mine, 30.5), flag2 = put_into(*two, history2, *mine, 30.5);
+    const objects::Template* lamp_a = pr.lib.find(std::string_view(a.pictures[3].template_id));
+    REQUIRE(lamp_a);
+    const u64 lamp_in_two = put_into(*two, history2, *lamp_a, 31.5);
+    CHECK(pr.lib.templates().size() == 9); // 4 + 4 of the imports, 1 of the author
+    dot_on(map_a.parent_path() / utf8_path("картинки/фонарь.png")); // the lantern drawn anew again
+    history1.clear();
+    import(*one, history1, map_a, "");
+    REQUIRE(one->save().ok);
+    one.reset();
+    two.reset();
+    objects::Library game;
+    REQUIRE(game.load(pr.game / "kinds.json", pr.game / "objects"));
+    Level l1(pr.module), l2(pr.module);
+    REQUIRE(l1.open(pr.level));
+    REQUIRE(l2.open(level2));
+    for (Level* l : {&l1, &l2}) {
+        load_view(*l);
+        l->load_objects();
+    }
+    CHECK(l1.find(flag1).get<objects::ObjectRef>().key == l2.find(flag2).get<objects::ObjectRef>().key);
+    const objects::Template* lamp_now = game.find(l2.find(lamp_in_two).get<objects::ObjectRef>().key);
+    REQUIRE(lamp_now);
+    CHECK(lamp_now->id == a.pictures[3].template_id);
+    CHECK(pixels(game.picture_file(*lamp_now)) == pixels(map_a.parent_path() / utf8_path("картинки/фонарь.png")));
+    // The second level's own lantern: its map's, as before.
+    const objects::Template* lamp_b = game.find(std::string_view(b.pictures[3].template_id));
+    REQUIRE(lamp_b);
+    CHECK(pixels(game.picture_file(*lamp_b)) == pixels(map_b.parent_path() / utf8_path("картинки/фонарь.png")));
     fs::remove_all(pr.root);
 }

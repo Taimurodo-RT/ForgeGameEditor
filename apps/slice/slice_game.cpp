@@ -4,9 +4,11 @@
 
 #include "forge/core/file.h"
 #include "forge/core/log.h"
+#include "forge/core/path.h"
 #include "forge/core/time.h"
 #include "forge/data/json.h"
 #include "forge/level/areas.h"
+#include "forge/level/levels.h"
 #include "forge/level/light.h"
 #include "forge/script/host.h"
 #include "forge/ui/ui.h"
@@ -23,6 +25,7 @@ FORGE_REFLECT(slice::HeroSave, 1) {
     t.field("y", &slice::HeroSave::y);
     t.field("slot", &slice::HeroSave::slot);
     t.field("zoom", &slice::HeroSave::zoom);
+    t.field("level", &slice::HeroSave::level);
 }
 
 namespace slice {
@@ -288,7 +291,18 @@ std::unique_ptr<SliceGame::Level> SliceGame::make_level(const fs::path& save_fol
     L->links = std::make_unique<logic::Runtime>(*L->scripts, library_, *logic_);
     std::vector<logic::Thing> areas;
     for (const forge::level::Area& a : L->areas.areas) areas.push_back(logic::area_thing(area_thing_id(a.id), a.name));
+    // The game's other levels' areas: «Логика» is the game's, its links to them are not broken here, only idle.
+    std::vector<logic::Thing> others;
+    const fs::path game = shell_ && !save_folder.empty() ? shell_->game_dir() : fs::path();
+    const forge::level::LevelList list = game.empty() ? forge::level::LevelList{} : forge::level::read_levels(game);
+    for (const forge::level::LevelEntry& e : list.levels) {
+        forge::level::LevelAreas there;
+        if (!forge::level::load_areas(forge::level::level_folder(game, e.id), there, nullptr, nullptr)) continue;
+        for (const forge::level::Area& a : there.areas)
+            if (!L->areas.find(a.id)) others.push_back(logic::area_thing(area_thing_id(a.id), a.name + " (" + e.name + ")"));
+    }
     L->links->set_areas(std::move(areas));
+    L->links->set_other_areas(std::move(others));
     L->links->load(links_, verbs_);
     L->links->attach(*L->scene);
     return L;
@@ -707,9 +721,24 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     tiles_world_ = nullptr;
     level_.reset(); // the menu's backdrop
     session_ = session;
-    // A new game starts from the level as the author left it in the editor.
+    // A new game starts from the level as the author left it in the editor: the one given (--level), else the
+    // game's start level. A level of the list with no folder yet is an empty one (the game's world around).
     if (new_game) {
-        const fs::path level = options_.level_dir.empty() ? shell_->game_dir() / "level" : options_.level_dir;
+        const fs::path game = shell_->game_dir();
+        const forge::level::LevelList list = forge::level::read_levels(game);
+        if (list.broken) FORGE_WARN("slice: %s; новая игра — с уровня «level»", list.problem.c_str());
+        for (const std::string& n : list.notes) FORGE_WARN("slice: %s", n.c_str());
+        fs::path level = options_.level_dir;
+        const forge::level::LevelEntry* entry = nullptr;
+        if (level.empty()) {
+            entry = &list.start_level();
+            level = forge::level::level_folder(game, entry->id);
+        } else {
+            entry = forge::level::level_of_folder(game, list, level);
+        }
+        level_id_ = entry ? entry->id : std::string();
+        if (entry) FORGE_INFO("slice: новая игра с уровня «%s» (%s)", entry->name.c_str(), path_to_utf8(level).c_str());
+        else FORGE_INFO("slice: новая игра с уровня в %s", path_to_utf8(level).c_str());
         if (!forge::level::copy_level(level, session / "world", error)) return false;
     }
     level_ = make_level(session / "world", error);
@@ -753,6 +782,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
             level_.reset();
             return false;
         }
+        level_id_ = hs.level;
     }
     slot_ = hs.slot < kSlots ? hs.slot : 0;
     camera_.zoom = hs.zoom > 0 ? hs.zoom : kZoom;
@@ -805,6 +835,7 @@ bool SliceGame::save(const fs::path& session, std::string& location, std::string
     hs.y = hero_y();
     hs.slot = slot_;
     hs.zoom = camera_.zoom;
+    hs.level = level_id_;
     const std::string json = data::to_json(hs);
     if (!write_file_atomic(session / "hero.json", {reinterpret_cast<const u8*>(json.data()), json.size()})) {
         if (error) *error = "hero.json";

@@ -162,7 +162,31 @@
          view (ids pane-<panel> and level-view) where the layout says; the
          frames behind them carry the headers you drag. -->
     <div id="level" class="column" data-if="tab == 'level'">
+        <!-- The game's levels: the open one, the list, a new level, renaming, the start level. A click elsewhere
+             closes the menu and the name field. -->
+        <div class="as-backdrop" data-if="lv_levels_open || lv_level_naming != ''" data-event-mousedown="lv_levels_close"/>
         <div id="level-bar" class="row">
+            <div class="menu-anchor">
+                <div id="lv-levels" class="command lv-levels" title="Уровни игры" data-class-selected="lv_levels_open" data-event-click="lv_levels_menu"><icon name="stacks"/><span>{{ lv_level_name }}</span><icon class="s" name="expand_more"/></div>
+                <div id="lv-levels-menu" class="as-menu menu-list lv-levels-menu" data-if="lv_levels_open">
+                    <div data-for="l : lv_levels" class="menu-item lv-level" data-attr-id="'lv-level-' + l.id" data-class-selected="l.current" data-event-click="lv_level_open(it_index)"><icon name="check" data-if="l.current"/><icon name="stacks" class="lv-level-mark" data-if="!l.current"/><span class="label grow">{{ l.name }}</span><span class="lv-start" data-if="l.start">стартовый</span></div>
+                    <div class="divider"/>
+                    <div id="lv-level-new" class="menu-item" data-class-disabled="!lv_levels_can" data-event-click="lv_level_new"><icon name="add_circle"/><span class="label">Новый уровень</span></div>
+                    <div id="lv-level-rename" class="menu-item" data-class-disabled="!lv_levels_can || !lv_level_listed" data-event-click="lv_level_rename"><icon name="edit"/><span class="label">Переименовать…</span></div>
+                    <div id="lv-level-start" class="menu-item" data-class-disabled="!lv_levels_can || !lv_level_listed || lv_level_is_start" data-event-click="lv_level_start"><icon name="flag"/><span class="label">Сделать стартовым</span></div>
+                    <div id="lv-level-play-start" class="menu-item" title="Как у игрока: со стартового уровня и его точки появления" data-event-click="lv_level_play_start"><icon name="play_arrow"/><span class="label">Играть со стартового</span></div>
+                </div>
+                <div id="lv-level-naming" class="as-menu lv-levels-menu lv-naming column" data-if="lv_level_naming != ''">
+                    <div class="pj-lead">{{ lv_level_naming_title }}</div>
+                    <input id="lv-level-name" type="text" class="small" data-attr-value="lv_level_name_field" data-event-change="lv_level_name_text(ev.value, ev.linebreak)"/>
+                    <div class="row lv-naming-foot">
+                        <div class="grow"/>
+                        <div id="lv-level-name-cancel" class="command" title="Esc" data-event-click="lv_level_name_cancel"><span>Отмена</span></div>
+                        <div id="lv-level-name-ok" class="button filled small" title="Enter" data-event-click="lv_level_name_ok"><span data-if="lv_level_naming == 'new'">Создать</span><span data-if="lv_level_naming != 'new'">Переименовать</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="divider vertical"/>
             <div class="modes row">
                 <div class="mode" data-class-selected="lv_mode == 'select'" data-event-click="lv_mode('select')"><icon name="near_me"/><span>Выбор</span></div>
                 <div class="mode" data-class-selected="lv_mode == 'tiles'" data-event-click="lv_mode('tiles')"><icon name="grid_on"/><span>Тайлы</span></div>
@@ -223,6 +247,10 @@
             <div id="play-here" class="button filled small" data-event-click="lv_play"><icon name="play_arrow"/>Играть отсюда</div>
         </div>
 
+        <div id="lv-levels-note" class="tm-note row" data-if="lv_levels_note != ''">
+            <icon name="stacks" class="s"/><span class="grow">{{ lv_levels_note }}</span>
+            <div class="icon-button small" title="Скрыть" data-event-click="lv_levels_note_close"><icon name="close" class="s"/></div>
+        </div>
         <div id="tm-note" class="tm-note row" data-if="!lv_tm_open && lv_tm_note != ''">
             <icon name="map" class="s"/><span class="grow">{{ lv_tm_note }}</span>
             <div class="icon-button small" title="Скрыть" data-event-click="lv_tm_note_close"><icon name="close" class="s"/></div>
@@ -2800,8 +2828,8 @@
         </div>
     </div>
     <div id="pj-unsaved" class="pj-window pj-small column" data-if="pj_view == 'unsaved'">
-        <div class="row pj-head"><icon name="save"/><span class="pj-title grow">Открыть игру «{{ pj_next }}»</span></div>
-        <div class="pj-lead">Игра «{{ pj_game }}» закроется. В ней есть то, что не сохранено:</div>
+        <div class="row pj-head"><icon name="save"/><span class="pj-title grow">{{ pj_ask_title }}</span></div>
+        <div class="pj-lead">{{ pj_ask_lead }}</div>
         <div data-for="u : pj_unsaved" class="pj-unsaved-line">{{ u }}</div>
         <div class="row pj-foot">
             <div class="grow"/>

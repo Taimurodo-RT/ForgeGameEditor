@@ -408,13 +408,30 @@ public:
         // «Зоны»: a place's music is one of the game's sounds; «Логика» links to the level's areas.
         level.list_sounds = [this] { return assets.sounds(); };
         level.set_sounds_folder(sounds_folder);
+        // The open level's areas as they are now, then the game's other levels' as saved: «Логика» is the game's, a
+        // link to an area of another level is no broken link.
         logic_tab.level_areas = [this] {
             std::vector<logic::Thing> out;
             for (const level::Area& a : level.level().areas().areas)
                 out.push_back(logic::area_thing(std::string(logic::kAreaPrefix) + level::area_id_text(a.id), a.name));
+            if (game_dir.empty()) return out;
+            const level::LevelList list = level::read_levels(game_dir);
+            for (const level::LevelEntry& e : list.levels) {
+                if (e.id == level.level_id()) continue;
+                level::LevelAreas there;
+                if (!level::load_areas(level::level_folder(game_dir, e.id), there)) continue;
+                for (const level::Area& a : there.areas)
+                    if (!level.level().areas().find(a.id))
+                        out.push_back(logic::area_thing(std::string(logic::kAreaPrefix) + level::area_id_text(a.id), a.name + " (" + e.name + ")"));
+            }
             return out;
         };
-        logic_tab.areas_version = [this] { return level.level().areas_version(); };
+        logic_tab.areas_version = [this] { return level.level().areas_version() + (level.levels_opened() << 40); };
+        // Another level opens with this one changed: the window about unsaved changes, for the level.
+        level.ask_unsaved = [this](const std::string& from, const std::string& to, std::vector<std::string> unsaved,
+                                   std::function<bool(std::string&)> save, std::function<void(bool)> go) {
+            projects.ask_level(from, to, std::move(unsaved), std::move(save), std::move(go));
+        };
         level.area_links = [this](u64 id) {
             std::vector<std::string> out;
             const std::string thing = std::string(logic::kAreaPrefix) + level::area_id_text(id);
@@ -879,6 +896,12 @@ public:
                 if (!e.key.repeat) ui_tab.templates_enter(); // the form saved, or the selected template taken
                 return true;
             }
+        }
+        // The name field of a level (new, renamed): Esc closes it, even from the field.
+        if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE && m_tab_ == "level" && !level.naming_level().empty()) {
+            if (Rml::Element* focus = context_ ? context_->GetFocusElement() : nullptr) focus->Blur();
+            level.cancel_level_name();
+            return true;
         }
         // Keys first, unless a text field has the keyboard.
         if (e.type == SDL_EVENT_KEY_DOWN && !text_focus() && handle_key(e.key)) return true;
@@ -1727,7 +1750,9 @@ struct Options {
     std::string templates;
     // offscreen: --self-test PART, only that part: "new-game" (the window «Новая игра» and «Открыть игру…»; it starts
     // the editor for the game it made with "opened-game", which plays it from there); "two-games" (two games of one
-    // template: A made through the tabs by "two-games-a", opened again by "two-games-a-again", B by "two-games-b").
+    // template: A made through the tabs by "two-games-a", opened again by "two-games-a-again", B by "two-games-b");
+    // "levels" (a game's levels: made, renamed, the start level and maps imported by "levels-a", opened again and
+    // played by "levels-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -1766,7 +1791,8 @@ public:
         editor_.scene_path = options.scene.empty() ? project / "scene.forge.json" : options.scene;
         editor_.use_game_dir(open.game);
         LevelConfig lc;
-        lc.folder = options.level_given ? options.level : open.game / "level";
+        lc.folder = options.level_given ? options.level : level_to_open(project, open.game);
+        lc.project_root = project;
         lc.game_data = open.game;
         lc.game_exe = utf8_path(FORGE_SLICE_EXE);
         lc.play_dir = play_folder(project);
@@ -1915,6 +1941,9 @@ public:
         if (part == "two-games-a") return frame < 3 || two_games_a_step();
         if (part == "two-games-a-again") return frame < 3 || two_games_again_step();
         if (part == "two-games-b") return frame < 3 || two_games_b_step();
+        if (part == "levels") return frame < 3 || levels_step();
+        if (part == "levels-a") return frame < 3 || levels_a_step();
+        if (part == "levels-again") return frame < 3 || levels_again_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -13279,10 +13308,11 @@ private:
         const std::string text = tg_manifest(tree);
         return tg_sha256(std::vector<u8>(text.begin(), text.end()));
     }
-    // Written next to the games (снимки/NAME.txt); the SHA-256 of that list, for the log.
-    static std::string tg_snap(const std::string& name, const std::map<std::string, std::vector<u8>>& tree) {
+    // Written next to the games (снимки/NAME.txt, under root: tg_root() when empty); the SHA-256 of that list, for the log.
+    static std::string tg_snap(const std::string& name, const std::map<std::string, std::vector<u8>>& tree,
+                               const std::filesystem::path& root = {}) {
         const std::string text = tg_manifest(tree);
-        const std::filesystem::path file = tg_root() / utf8_path("снимки") / utf8_path(name + ".txt");
+        const std::filesystem::path file = (root.empty() ? tg_root() : root) / utf8_path("снимки") / utf8_path(name + ".txt");
         std::error_code ec;
         std::filesystem::create_directories(file.parent_path(), ec);
         write_file_atomic(file, std::span(reinterpret_cast<const u8*>(text.data()), text.size()));
@@ -13386,13 +13416,13 @@ private:
         return out;
     }
     // The game as «Играть» started it, the scene project, and what it must find (or must not) written to a file
-    // outside the games; its exit code.
-    int tg_play(const slice::ProjectEdits* edits, const std::string& file_name) {
+    // outside the games (in root: tg_root() when empty); its exit code.
+    int tg_play(const slice::ProjectEdits* edits, const std::string& file_name, const std::filesystem::path& root = {}) {
         std::vector<std::string> args = lv().last_play();
         if (args.empty()) return -1;
         for (const char* more : {"--test", "--scene", "project"}) args.push_back(more);
         if (edits) {
-            const std::filesystem::path file = tg_root() / utf8_path(file_name);
+            const std::filesystem::path file = (root.empty() ? tg_root() : root) / utf8_path(file_name);
             if (!slice::write_edits(file, *edits)) return -1;
             args.push_back("--edits");
             args.push_back(path_to_utf8(file));
@@ -14377,6 +14407,602 @@ private:
         return true;
     }
 
+    // --- «Уровни игры» (step 14.2a) --------------------------------------------------------------------------
+    // --self-test levels makes «Игра с уровнями» of «Старая шахта» (no levels.json: a game as before levels) and two
+    // copies of games/examples/tiled's map in folders of their own («карты/первая», «карты/вторая»): one file name,
+    // the same pictures. levels-a, an editor for the game started from another working folder, with the mouse and the
+    // keys: «Играть» plays the one level as before; a cell painted; «Новый уровень» asks about it: «Отмена» changes
+    // nothing, «Сохранить» that cannot write says so and keeps the edit (Ctrl+Z, Ctrl+Y), «Сохранить» saves and opens
+    // «Уровень 2» with a history of its own; a list that cannot be written or read changes nothing; «Пещера» by its
+    // new name, made the start level. «вторая» imported into «Пещера», «первая» into «Уровень 1»; «первая» changed
+    // (the chest's picture, the chest moved) and imported again, undone, done again, saved: «Пещера», its templates,
+    // their pictures and the music the same bytes (SHA-256). «Не сохранять» leaves «Уровень 1» as saved. A cell of
+    // each level by the spawn point, stone in one, dirt (which does not fall, as sand does) in the other. levels-again, from a third working folder:
+    // «Пещера» opens (the level open last) by the same ids, the same bytes; «Играть» plays each level with its cell;
+    // «Играть со стартового» starts «Пещера» with no --level; a levels.json read only in part (a level this Forge
+    // cannot use, a field it does not know) is used as read and kept as it is: no level made, renamed or started.
+    int lvl_step_ = 0;
+    std::map<std::string, std::string> lvl_rec_; // what levels-a made, for levels-again (a file of the test)
+    std::map<std::string, std::vector<u8>> lvl_tmpl_, lvl_first_, lvl_second_; // the template; «Уровень 1», «Пещера» as saved
+    std::filesystem::path lvl_block_; // a file of «Уровень 1» whose place a folder takes
+    std::vector<u8> lvl_list_;        // levels.json before it was taken away
+    std::vector<u8> lvl_locked_;      // levels.json with what this Forge does not read
+    i32 lvl_x_ = 0, lvl_y_ = 0;       // the cell painted first; then the cell by the spawn point
+
+    static std::filesystem::path lvl_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_уровни"); }
+    static std::filesystem::path lvl_game() { return lvl_root() / utf8_path("Мои игры") / utf8_path("Игра с уровнями"); }
+    static std::filesystem::path lvl_map(const char* folder) {
+        return lvl_root() / utf8_path("карты") / utf8_path(folder) / utf8_path("уровень.tmx");
+    }
+    static bool lvl_same(const std::filesystem::path& a, const std::filesystem::path& b) {
+        std::error_code ec;
+        return std::filesystem::weakly_canonical(a, ec) == std::filesystem::weakly_canonical(b, ec);
+    }
+    // A level of the game as files: its folder, the templates its import of the map uses (as the editor has it for
+    // the open level, else as its tiled.json says: their files and pictures), the zone's music.
+    std::map<std::string, std::vector<u8>> lvl_level(const std::string& id) {
+        const std::filesystem::path game = lvl_game() / "game", folder = level::level_folder(game, id);
+        std::map<std::string, std::vector<u8>> out;
+        for (auto& [path, bytes] : pj_tree(folder)) out["level/" + path] = std::move(bytes);
+        level::tiled::Record r;
+        if (lv().level_id() == id) r = lv().level().tiled_record();
+        else level::tiled::load_record(folder, r);
+        objects::Library& lib = tm_lib();
+        for (const auto& [picture, tid] : r.templates) {
+            const objects::Template* t = lib.find(std::string_view(tid));
+            out["objects/" + tid] = t ? tg_bytes(t->file) : std::vector<u8>();
+            out["pictures/" + tid] = t ? tg_bytes(lib.picture_file(*t)) : std::vector<u8>();
+        }
+        out["sounds/пещера.wav"] = tg_bytes(game / "sounds" / utf8_path("пещера.wav"));
+        return out;
+    }
+    usize lvl_templates(const std::string& id) {
+        const std::string prefix = id == level::kFirstLevel ? "tiled_уровень_" : "tiled_" + id + "_уровень_";
+        usize n = 0;
+        for (const objects::Template& t : tm_lib().templates()) n += t.id.rfind(prefix, 0) == 0;
+        return n;
+    }
+    // The ids the map's import gave in the open level: templates, objects (Tiled's id: LevelId), zones.
+    std::string lvl_ids() {
+        const level::tiled::Record& r = lv().level().tiled_record();
+        std::string out = r.map + ":";
+        for (const auto& [pic, t] : r.templates) out += " " + t;
+        out += ";";
+        for (const auto& [tid, id] : r.objects) out += " " + std::to_string(tid) + "=" + std::to_string(id);
+        out += ";";
+        for (const auto& [tid, id] : r.zones) out += " " + std::to_string(tid) + "=" + level::area_id_text(id);
+        return out;
+    }
+    // The --level of the last «Играть» ("" with none).
+    std::string lvl_given() {
+        const std::vector<std::string>& run = lv().last_play();
+        const auto at = std::find(run.begin(), run.end(), std::string("--level"));
+        return at != run.end() && at + 1 != run.end() ? *(at + 1) : std::string();
+    }
+    slice::ProjectEdits lvl_edits(const std::string& id, const std::string& name, std::vector<int> cells = {}) {
+        slice::ProjectEdits e;
+        e.level = id;
+        e.level_name = name;
+        e.cells = std::move(cells);
+        return e;
+    }
+    // The view at the level's spawn point.
+    void lvl_at_spawn() {
+        const level::LevelAreas& a = lv().level().areas();
+        lv().camera().x = a.spawn_x;
+        lv().camera().y = a.spawn_y - 1;
+    }
+    // The name typed into the level's field and Enter.
+    bool lvl_name(const std::string& name) {
+        const bool typed = pj_type("lv-level-name", name);
+        key(SDLK_RETURN, SDL_KMOD_NONE);
+        return typed;
+    }
+
+    // --self-test levels: the game made; each part in an editor of its own, from a working folder of its own.
+    bool levels_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path g = lvl_game();
+        fs::remove_all(lvl_root(), ec);
+        fs::create_directories(lvl_root() / utf8_path("Мои игры"), ec);
+        lvl_tmpl_ = tg_template();
+        tg_snap("шаблон до", lvl_tmpl_, lvl_root());
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto old_mine = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "old-mine"; });
+        fs::path made;
+        check(old_mine != all.end() && pj::create(*old_mine, editor_modules(), lvl_root() / utf8_path("Мои игры"), "Игра с уровнями", made, &error) &&
+                  lvl_same(made, g),
+              "«Игра с уровнями» made of «Старая шахта» " + error);
+        check(!fs::exists(g / "game" / level::kLevelsFile, ec), "a game as before levels: no levels.json");
+        const fs::path example = utf8_path(FORGE_GAMES_DIR) / "examples" / "tiled" / utf8_path("Карта Tiled");
+        for (const char* folder : {"первая", "вторая"}) {
+            fs::create_directories(lvl_map(folder).parent_path(), ec);
+            fs::copy(example, lvl_map(folder).parent_path(), fs::copy_options::recursive, ec);
+            check(!ec && fs::is_regular_file(lvl_map(folder), ec), std::string("the map in «карты/") + folder + "»: уровень.tmx and its pictures");
+        }
+        fs::remove_all(play_folder(g), ec);
+        const std::string exe = path_to_utf8(editor_exe()), project = path_to_utf8(g / "project.forge");
+        const fs::path one = lvl_root() / utf8_path("посторонняя папка"), two = lvl_root() / utf8_path("другая папка");
+        fs::create_directories(one, ec);
+        fs::create_directories(two, ec);
+        int code = pj_run({exe, "--project", project, "--self-test", "levels-a"}, one);
+        check(code == 0, "a second level made, renamed and made the start level, the maps imported into each, through the editor "
+                         "(levels-a: exit " + std::to_string(code) + ")");
+        code = pj_run({exe, "--project", project, "--self-test", "levels-again"}, two);
+        check(code == 0, "opened again elsewhere: the same levels, ids and bytes; each played; the start level as a player starts it "
+                         "(levels-again: exit " + std::to_string(code) + ")");
+        lvl_rec_ = tg_get(lvl_root() / utf8_path("записи.txt"));
+        const level::LevelList list = level::read_levels(g / "game");
+        const std::string id = lvl_rec_["id"];
+        check(list.from_file && !list.broken && list.notes.empty() && list.levels.size() == 2 && list.levels[0].id == "level" &&
+                  list.levels[0].name == "Уровень 1" && list.levels[1].id == id && list.levels[1].name == "Пещера" && list.start == id,
+              "game/levels.json: «Уровень 1» (level) and «Пещера» (" + id + "), the start «Пещера»");
+        const auto tmpl = tg_template();
+        check(tg_snap("шаблон после", tmpl, lvl_root()) == tg_digest(lvl_tmpl_) && tmpl == lvl_tmpl_, "the template byte for byte as before");
+        return false;
+    }
+
+    // In the editor for «Игра с уровнями» (--self-test levels-a).
+    bool levels_a_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path g = pjw().config().root, game = g / "game", list_file = game / level::kLevelsFile;
+        const usize stone = tile_named("stone"), dirt = tile_named("dirt");
+        const auto stone_v = ed_.level_module.tiles()[stone].value, dirt_v = ed_.level_module.tiles()[dirt].value;
+        const std::string id = lvl_rec_["id"];
+        const std::string pal_stone = "pal-" + std::to_string(stone), pal_dirt = "pal-" + std::to_string(dirt);
+        auto in_list = [&] {
+            std::vector<std::string> names;
+            for (const level::LevelEntry& e : level::read_levels(game).levels) names.push_back(e.id + " " + e.name);
+            return names;
+        };
+        auto note = [&](const char* bit) { return lv().levels_note().find(bit) != std::string::npos; };
+        auto said = [&](const char* id_of, const std::string& bit) { return element_text(id_of).find(bit) != std::string::npos; };
+        switch (lvl_step_) {
+        case 0:
+            check(pjw().config().title == "Игра с уровнями" && lvl_same(ed_.game_dir, game), "the editor has «Игра с уровнями» open");
+            check(!lvl_same(fs::current_path(), g), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            check(!fs::exists(list_file, ec) && lv().level_id() == "level" && lv().level_name() == "Уровень 1" &&
+                      lv().levels().levels.size() == 1 && !lv().levels().from_file && lvl_same(lv().level().folder(), game / "level"),
+                  "no levels.json: the one level «Уровень 1», game/level");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 1: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            check(shown("lv-levels") && said("lv-levels", "Уровень 1"), "the bar names the level: «Уровень 1»");
+            check(pj_click("play") && lvl_same(utf8_path(lvl_given()), game / "level"), "«Играть»: --level " + lvl_given());
+            const slice::ProjectEdits e = lvl_edits("level", "Уровень 1");
+            const int code = tg_play(&e, "ожидания 1.json", lvl_root());
+            check(code == 0, "the game plays its one level, as before levels (exit " + std::to_string(code) + ")");
+            check(!fs::exists(list_file, ec), "nothing has written levels.json");
+            check(pj_click(pal_stone.c_str()), "the palette: stone");
+            break;
+        }
+        case 2:
+            check(lv().tile_index() == stone && lv().layer() == 1, "stone on the block layer");
+            lv().set_brush_radius(0);
+            lvl_x_ = static_cast<i32>(std::floor(lv().camera().x)) - 6;
+            lvl_y_ = static_cast<i32>(std::floor(lv().camera().y)) - 4;
+            check(lv().level().loaded(lvl_x_, lvl_y_) && at(lvl_x_, lvl_y_) != stone_v, "a cell in view that is no stone");
+            click_cell(lvl_x_, lvl_y_);
+            check(at(lvl_x_, lvl_y_) == stone_v && lv().dirty() && lv().history().size() == 1, "the cell painted: «Уровень 1» unsaved");
+            lvl_block_ = game / "level" /
+                         ("r." + std::to_string((lvl_x_ >> world::kChunkShift) >> world::kRegionShift) + "." +
+                          std::to_string((lvl_y_ >> world::kChunkShift) >> world::kRegionShift) + ".fwr");
+            check(!fs::exists(lvl_block_, ec), "its region has no file yet: " + path_to_utf8(lvl_block_.filename()));
+            check(lv().make_start_level() && !fs::exists(list_file, ec) && lv().levels_note() == "Игра и так начинается с уровня «Уровень 1»",
+                  "«Сделать стартовым» for the start level writes nothing: " + lv().levels_note());
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 3:
+            if (wait(2)) return true;
+            check(lv().levels_menu() && shown("lv-levels-menu") && shown("lv-level-level") && pj_class("lv-level-level", "selected"),
+                  "the menu: «Уровень 1», open");
+            check(pj_class("lv-level-start", "disabled") && !pj_class("lv-level-new", "disabled") && !pj_class("lv-level-rename", "disabled"),
+                  "«Сделать стартовым» off (it is), «Новый уровень» and «Переименовать…» on");
+            check(pj_click("lv-level-new"), "«Новый уровень»");
+            break;
+        case 4:
+            if (wait(2)) return true;
+            check(lv().naming_level() == "new" && shown("lv-level-naming") && input_value("lv-level-name") == "Уровень 2",
+                  "the field for its name: «Уровень 2»");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(lv().naming_level().empty() && !fs::exists(list_file, ec) && !fs::exists(game / "levels", ec) && lv().dirty(),
+                  "Esc: nothing made, the edit still there");
+            break;
+        case 5:
+            if (wait(2)) return true;
+            check(!shown("lv-level-naming") && pj_click("lv-levels"), "the menu again");
+            break;
+        case 6:
+        case 10:
+        case 15:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-new"), "«Новый уровень»");
+            break;
+        case 7:
+        case 11:
+        case 16:
+            if (wait(2)) return true;
+            check(lvl_name("Уровень 2") && pjw().view() == "unsaved", "«Уровень 2», Enter: the window about unsaved changes");
+            break;
+        case 8:
+            if (wait(2)) return true;
+            check(shown("pj-unsaved") && said("pj-unsaved", "Открыть уровень «Уровень 2»") && said("pj-unsaved", "Уровень «Уровень 1» закроется") &&
+                      said("pj-unsaved", "Уровень «Уровень 1»: правки не сохранены"),
+                  "it says which level closes, which opens and what is unsaved: " + element_text("pj-unsaved"));
+            check(pj_click("pj-stay") && pjw().view().empty(), "«Отмена»");
+            check(lv().level_id() == "level" && lv().dirty() && lv().history().size() == 1 && at(lvl_x_, lvl_y_) == stone_v &&
+                      !fs::exists(list_file, ec) && !fs::exists(game / "levels", ec),
+                  "nothing made, «Уровень 1» open with its edit");
+            // The level's file cannot be written: its place taken by a folder.
+            fs::create_directories(lvl_block_ / utf8_path("занято"), ec);
+            break;
+        case 9:
+        case 14:
+        case 18:
+        case 31:
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 12:
+            if (wait(2)) return true;
+            check(pj_click("pj-save") && pjw().view() == "message", "«Сохранить» that cannot write");
+            check(lv().level_id() == "level" && lv().dirty() && lv().history().size() == 1 && at(lvl_x_, lvl_y_) == stone_v &&
+                      !fs::exists(list_file, ec) && !fs::exists(game / "levels", ec),
+                  "nothing made: «Уровень 1» open, unsaved, its edit there");
+            break;
+        case 13:
+            if (wait(2)) return true;
+            check(said("pj-message-text", "Не сохранилось") && said("pj-message-text", "Уровень «Уровень 1» остался открытым, правки на месте"),
+                  "the window says so: " + element_text("pj-message-text"));
+            check(pj_click("pj-ok") && pjw().view().empty(), "«Понятно»");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(at(lvl_x_, lvl_y_) != stone_v, "Ctrl+Z takes the cell back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(at(lvl_x_, lvl_y_) == stone_v && lv().dirty(), "Ctrl+Y paints it again");
+            fs::remove_all(lvl_block_, ec);
+            break;
+        case 17: {
+            if (wait(2)) return true;
+            check(pj_click("pj-save") && pjw().view().empty(), "«Сохранить»");
+            const std::string made = lv().level_id();
+            check(made.size() == 9 && made[0] == 'l' && level::valid_level_id(made) && lv().level_name() == "Уровень 2" &&
+                      lvl_same(lv().level().folder(), game / "levels" / made) && lv().history().size() == 0 && !lv().dirty(),
+                  "«Уровень 2» made and open: " + made + ", game/levels/" + made + ", a history of its own");
+            check(fs::is_regular_file(lvl_block_, ec) && in_list() == std::vector<std::string>{"level Уровень 1", made + " Уровень 2"} &&
+                      level::read_levels(game).start == "level",
+                  "«Уровень 1» saved first; levels.json: both, the start «Уровень 1»");
+            lvl_rec_["id"] = made;
+            lvl_first_ = pj_tree(game / "level");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().history().size() == 0 && pj_tree(game / "level") == lvl_first_ && lv().level_id() == made,
+                  "Ctrl+Z here: nothing of «Уровень 1»");
+            break;
+        }
+        case 19:
+            if (wait(2)) return true;
+            check(shown("lv-level-level") && shown(("lv-level-" + id).c_str()) && pj_class(("lv-level-" + id).c_str(), "selected"),
+                  "the menu: both levels, «Уровень 2» open");
+            // levels.json cannot be written: its place taken by a folder after the menu read it.
+            lvl_list_ = tg_bytes(list_file);
+            fs::remove(list_file, ec);
+            fs::create_directories(list_file / utf8_path("занято"), ec);
+            check(pj_click("lv-level-new"), "«Новый уровень»");
+            break;
+        case 20:
+            if (wait(2)) return true;
+            check(input_value("lv-level-name") == "Уровень 3" && lvl_name("Уровень 3") && pjw().view().empty(), "«Уровень 3», Enter");
+            check(note("Уровень не создан") && note("Открыт «Уровень 2», как был") && lv().level_id() == id &&
+                      pj_names(game / "levels") == std::vector<std::string>{id} && lv().levels().levels.size() == 2,
+                  "levels.json not written: no level made, no folder, «Уровень 2» open: " + lv().levels_note());
+            fs::remove_all(list_file, ec);
+            check(write_file_atomic(list_file, lvl_list_), "levels.json back");
+            // A list that cannot be read.
+            check(write_file_atomic(list_file, std::vector<u8>{'{', ' ', 'n', 'o'}), "levels.json spoiled");
+            break;
+        case 21:
+            if (wait(2)) return true;
+            check(shown("lv-levels-note") && said("lv-levels-note", "Уровень не создан"), "the note under the bar says so");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 22:
+            if (wait(2)) return true;
+            check(lv().levels().broken && note("levels.json") && note("список уровней не меняется") && pj_class("lv-level-new", "disabled"),
+                  "a list that cannot be read: said, «Новый уровень» off: " + lv().levels_note());
+            check(pj_click("lv-level-new") && lv().naming_level().empty() && tg_bytes(list_file) == std::vector<u8>{'{', ' ', 'n', 'o'},
+                  "«Новый уровень» does nothing; the author's file as it is");
+            check(write_file_atomic(list_file, lvl_list_), "levels.json back");
+            break;
+        case 23:
+        case 27:
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 24:
+            if (wait(2)) return true;
+            check(!lv().levels().broken && lv().levels().levels.size() == 2, "the list read again");
+            check(pj_click("lv-level-rename"), "«Переименовать…»");
+            break;
+        case 25:
+            if (wait(2)) return true;
+            check(lv().naming_level() == "rename" && input_value("lv-level-name") == "Уровень 2", "the field: «Уровень 2»");
+            check(lvl_name("уровень 1") && lv().naming_level() == "rename" && note("Имя не подходит: уровень «Уровень 1» уже есть") &&
+                      tg_bytes(list_file) == lvl_list_,
+                  "«уровень 1»: refused, the case does not count: " + lv().levels_note());
+            break;
+        case 26:
+            if (wait(2)) return true;
+            check(lvl_name("Пещера") && lv().naming_level().empty() && lv().level_name() == "Пещера" && lv().level_id() == id &&
+                      in_list() == std::vector<std::string>{"level Уровень 1", id + " Пещера"} && note("Уровень «Уровень 2» теперь «Пещера»"),
+                  "«Пещера»: renamed, the same id: " + lv().levels_note());
+            check(lv().history().size() == 0 && !lv().dirty(), "no edit of the level");
+            break;
+        case 28:
+            if (wait(2)) return true;
+            check(said("lv-levels", "Пещера") && pj_class(("lv-level-" + id).c_str(), "selected"), "the bar and the menu: «Пещера»");
+            check(pj_click("lv-level-start"), "«Сделать стартовым»");
+            break;
+        case 29: {
+            if (wait(2)) return true;
+            check(lv().levels().start == id && level::read_levels(game).start == id && note("Игра начинается с уровня «Пещера»"),
+                  "the start level «Пещера»: " + lv().levels_note());
+            check(pj_tree(game / "level") == lvl_first_, "the list's changes did not touch «Уровень 1»");
+            lv().tiled_picked(lvl_map("вторая")); // the file the dialog gives
+            break;
+        }
+        case 30: {
+            if (wait(3)) return true;
+            bool scoped = !lv().tiled_plan().pictures.empty();
+            for (const level::tiled::Picture& p : lv().tiled_plan().pictures) scoped &= p.template_id.rfind("tiled_" + id + "_уровень_", 0) == 0 && !p.known;
+            check(lv().tiled_open() && scoped, "«вторая» into «Пещера»: templates of its own, tiled_" + id + "_уровень_…");
+            check(click_id("tm-import") && !lv().tiled_open() && lv().history().size() == 1 && lvl_templates(id) == 4 &&
+                      lvl_templates("level") == 0,
+                  "imported: one step, 4 templates of «Пещера»");
+            lvl_rec_["ids2"] = lvl_ids();
+            check(lv().level().tiled_record().zones.size() == 1 && lv().level().areas().areas.size() == 1, "its zone");
+            if (!lv().level().tiled_record().zones.empty())
+                lvl_rec_["zone2"] = level::area_id_text(lv().level().tiled_record().zones.front().second);
+            break;
+        }
+        case 32:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-level"), "«Уровень 1»");
+            break;
+        case 33: {
+            if (wait(2)) return true;
+            check(pjw().view() == "unsaved" && said("pj-unsaved", "Открыть уровень «Уровень 1»") && said("pj-unsaved", "Уровень «Пещера» закроется"),
+                  "the window: «Пещера» unsaved");
+            check(pj_click("pj-save") && pjw().view().empty() && lv().level_id() == "level" && lv().history().size() == 0,
+                  "«Сохранить»: «Пещера» saved, «Уровень 1» open");
+            lvl_second_ = lvl_level(id);
+            tg_snap("Пещера после импорта", lvl_second_, lvl_root());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().history().size() == 0 && lvl_level(id) == lvl_second_, "Ctrl+Z here: nothing of «Пещера»");
+            lv().tiled_picked(lvl_map("первая"));
+            break;
+        }
+        case 34: {
+            if (hold(lv().level().loaded(lvl_x_, lvl_y_), "the cell painted first is loaded")) return true;
+            if (wait(3)) return true;
+            check(at(lvl_x_, lvl_y_) == stone_v, "«Уровень 1» as it was saved: the cell painted first is stone");
+            bool legacy = !lv().tiled_plan().pictures.empty();
+            for (const level::tiled::Picture& p : lv().tiled_plan().pictures) legacy &= p.template_id.rfind("tiled_уровень_", 0) == 0 && !p.known;
+            check(lv().tiled_open() && legacy, "«первая» into «Уровень 1»: the templates' ids as before levels, tiled_уровень_…");
+            check(click_id("tm-import") && !lv().tiled_open() && lv().history().size() == 1 && lvl_templates("level") == 4 && lvl_templates(id) == 4,
+                  "imported: one step, 4 templates of «Уровень 1»");
+            check(lvl_level(id) == lvl_second_, "«Пещера» the same bytes");
+            lvl_rec_["ids1"] = lvl_ids();
+            // Each a key of its own: no object or zone id of one in the other.
+            const level::tiled::Record& r = lv().level().tiled_record();
+            usize shared = 0;
+            for (const auto& [tid, oid] : r.objects) shared += lvl_rec_["ids2"].find("=" + std::to_string(oid) + " ") != std::string::npos ||
+                                                               lvl_rec_["ids2"].find("=" + std::to_string(oid) + ";") != std::string::npos;
+            for (const auto& [tid, zid] : r.zones) shared += lvl_rec_["ids2"].find(level::area_id_text(zid)) != std::string::npos;
+            check(!r.objects.empty() && !r.zones.empty() && shared == 0, "no object or zone of «Уровень 1» has an id of «Пещера»");
+            lvl_first_ = lvl_level("level");
+            // «первая» changed in Tiled: the chest's picture, the chest moved; imported again.
+            const fs::path chest = lvl_map("первая").parent_path() / utf8_path("картинки") / utf8_path("сундук.png");
+            std::vector<u8> bytes = tg_bytes(chest);
+            assets::CookedTexture img;
+            bool changed = assets::decode_image(bytes, img);
+            for (usize i = 0; i + 3 < img.rgba8.size(); i += 4)
+                for (usize c = 0; c < 3; ++c) img.rgba8[i + c] = static_cast<u8>(255 - img.rgba8[i + c]);
+            std::vector<u8> png;
+            changed = changed && assets::encode_image(img, ".png", png) && write_file_atomic(chest, png);
+            std::string tmx = text_of(lvl_map("первая"));
+            const std::string from = "name=\"Сундук\" gid=\"25\" x=\"544\"";
+            const usize where = tmx.find(from);
+            if (where != std::string::npos) tmx.replace(where, from.size(), "name=\"Сундук\" gid=\"25\" x=\"560\"");
+            changed = changed && where != std::string::npos &&
+                      write_file_atomic(lvl_map("первая"), {reinterpret_cast<const u8*>(tmx.data()), tmx.size()});
+            check(changed, "«первая» changed: the chest's picture, the chest a cell to the right");
+            lv().tiled_picked(lvl_map("первая"));
+            break;
+        }
+        case 35:
+            if (wait(3)) return true;
+            check(lv().tiled_open() && lv().tiled_preview().templates_updated == 1 && lv().tiled_preview().templates_new == 0,
+                  "the window: one template of «Уровень 1» to update");
+            check(click_id("tm-import") && !lv().tiled_open() && lv().history().size() == 2 && lvl_level("level") != lvl_first_,
+                  "imported again: a step, «Уровень 1» and its chest changed");
+            check(lvl_level(id) == lvl_second_, "«Пещера», its templates, their pictures, the music: the same bytes");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lv().history().cursor() == 1 && lvl_level(id) == lvl_second_, "Ctrl+Z: «Пещера» the same bytes");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().history().cursor() == 2 && lvl_level(id) == lvl_second_, "Ctrl+Y: «Пещера» the same bytes");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty() && lvl_level(id) == lvl_second_, "Ctrl+S: «Уровень 1» saved, «Пещера» the same bytes");
+            lvl_at_spawn();
+            break;
+        case 36:
+            if (wait(2)) return true;
+            lvl_x_ = static_cast<i32>(std::floor(lv().level().areas().spawn_x)) + 3;
+            lvl_y_ = static_cast<i32>(std::floor(lv().level().areas().spawn_y)) - 4;
+            check(lv().level().areas().spawn && lv().level().loaded(lvl_x_, lvl_y_), "the spawn point in view");
+            check(lv().tile_index() == stone && at(lvl_x_, lvl_y_) != stone_v && at(lvl_x_, lvl_y_) != dirt_v,
+                  "stone still picked; the cell neither stone nor dirt");
+            click_cell(lvl_x_, lvl_y_);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(at(lvl_x_, lvl_y_) == stone_v && !lv().dirty(), "a stone by the spawn point of «Уровень 1», saved");
+            lvl_first_ = pj_tree(game / "level");
+            // An edit then let go: «Не сохранять».
+            click_cell(lvl_x_ + 1, lvl_y_);
+            check(lv().dirty(), "one more cell: unsaved");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 37:
+            if (wait(2)) return true;
+            check(pj_click(("lv-level-" + id).c_str()), "«Пещера»");
+            break;
+        case 38:
+            if (wait(2)) return true;
+            check(pjw().view() == "unsaved" && pj_click("pj-discard") && pjw().view().empty(), "«Не сохранять»");
+            check(lv().level_id() == id && lv().history().size() == 0 && pj_tree(game / "level") == lvl_first_ && lvl_level(id) == lvl_second_,
+                  "«Пещера» open; «Уровень 1» as saved, the cell let go is not there");
+            lvl_at_spawn();
+            break;
+        case 39:
+            if (wait(2)) return true;
+            check(pj_click(pal_dirt.c_str()), "the palette: dirt");
+            break;
+        case 40: {
+            check(lv().tile_index() == dirt, "dirt");
+            click_cell(lvl_x_, lvl_y_);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(at(lvl_x_, lvl_y_) == dirt_v && !lv().dirty(), "dirt by the spawn point of «Пещера», saved");
+            lvl_rec_["x"] = std::to_string(lvl_x_);
+            lvl_rec_["y"] = std::to_string(lvl_y_);
+            lvl_rec_["stone"] = std::to_string(stone_v);
+            lvl_rec_["dirt"] = std::to_string(dirt_v);
+            lvl_rec_["first"] = tg_snap("Уровень 1", lvl_level("level"), lvl_root());
+            lvl_rec_["second"] = tg_snap("Пещера", lvl_level(id), lvl_root());
+            check(tg_put(lvl_root() / utf8_path("записи.txt"), lvl_rec_), "what was made, written down for the next editor");
+            return false;
+        }
+        default:
+            break;
+        }
+        ++lvl_step_;
+        return true;
+    }
+
+    // In an editor for the game started from a third working folder (--self-test levels-again).
+    bool levels_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path g = pjw().config().root, game = g / "game", list_file = game / level::kLevelsFile;
+        auto cells = [&](const char* tile) {
+            return std::vector<int>{1, std::atoi(lvl_rec_["x"].c_str()), std::atoi(lvl_rec_["y"].c_str()), std::atoi(lvl_rec_[tile].c_str())};
+        };
+        const std::string id = lvl_rec_["id"];
+        auto said = [&](const char* id_of, const std::string& bit) { return element_text(id_of).find(bit) != std::string::npos; };
+        auto note = [&](const char* bit) { return lv().levels_note().find(bit) != std::string::npos; };
+        switch (lvl_step_) {
+        case 0:
+            lvl_rec_ = tg_get(lvl_root() / utf8_path("записи.txt"));
+            check(lvl_rec_.count("id") && lvl_rec_.count("second"), "what levels-a made is written down");
+            check(!lvl_same(fs::current_path(), g), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            check(lv().level_id() == lvl_rec_["id"] && lv().level_name() == "Пещера" && lv().levels().start == lvl_rec_["id"] &&
+                      lvl_same(lv().level().folder(), game / "levels" / lvl_rec_["id"]),
+                  "«Пещера» opens, the level open last; the start level");
+            check(tg_digest(lvl_level(lvl_rec_["id"])) == lvl_rec_["second"] && tg_digest(lvl_level("level")) == lvl_rec_["first"],
+                  "both levels, their templates and pictures the same bytes as they were left");
+            check(lvl_ids() == lvl_rec_["ids2"], "«Пещера»'s templates, objects and zone by the same ids");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 1:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            lvl_at_spawn();
+            break;
+        case 2: {
+            if (wait(2)) return true;
+            check(said("lv-levels", "Пещера"), "the bar: «Пещера»");
+            check(pj_click("play") && lvl_same(utf8_path(lvl_given()), game / "levels" / id), "«Играть»: --level " + lvl_given());
+            const slice::ProjectEdits e = lvl_edits(id, "Пещера", cells("dirt"));
+            const int code = tg_play(&e, "ожидания Пещера.json", lvl_root());
+            check(code == 0, "the game plays «Пещера», dirt by its spawn point (exit " + std::to_string(code) + ")");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        }
+        case 3:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-level") && pjw().view().empty() && lv().level_id() == "level" && lvl_ids() == lvl_rec_["ids1"],
+                  "«Уровень 1», nothing unsaved: it opens; its import's ids as they were");
+            lvl_at_spawn();
+            {
+                // «Логика» knows the zones of both: this level's, and «Пещера»'s with its level's name.
+                std::string there;
+                for (const logic::Thing& t : ed_.logic_tab.level_areas())
+                    if (t.id == std::string(logic::kAreaPrefix) + lvl_rec_["zone2"]) there = t.name;
+                check(there == "Пещера (Пещера)" && ed_.logic_tab.level_areas().size() == 2,
+                      "«Логика» has «Пещера»'s zone as «" + there + "», and this level's own");
+            }
+            break;
+        case 4: {
+            if (wait(2)) return true;
+            check(pj_click("play") && lvl_same(utf8_path(lvl_given()), game / "level"), "«Играть»: --level " + lvl_given());
+            const slice::ProjectEdits e = lvl_edits("level", "Уровень 1", cells("stone"));
+            const int code = tg_play(&e, "ожидания Уровень 1.json", lvl_root());
+            check(code == 0, "the game plays «Уровень 1», stone by its spawn point (exit " + std::to_string(code) + ")");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        }
+        case 5: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty() && lvl_given().empty(),
+                  "«Играть со стартового»: no --level, the game's start level");
+            const slice::ProjectEdits e = lvl_edits(id, "Пещера", cells("dirt"));
+            const int code = tg_play(&e, "ожидания старт.json", lvl_root());
+            check(code == 0, "the game starts «Пещера», as a player starts it (exit " + std::to_string(code) + ")");
+            // A list read, but not all of it (a level this Forge cannot use, a field it does not know): used as
+            // read, and nothing writes it over, so nothing of it is lost.
+            lvl_list_ = tg_bytes(list_file);
+            const std::string text = "{\"start_level\": \"" + id + "\", \"levels\": [{\"id\": \"level\", \"name\": \"Уровень 1\"}, {\"id\": \"" +
+                                     id + "\", \"name\": \"Пещера\"}, {\"id\": \"Cave\", \"name\": \"Пещера другой версии\"}], \"transitions\": []}\n";
+            lvl_locked_.assign(text.begin(), text.end());
+            check(write_file_atomic(list_file, lvl_locked_), "levels.json with what this Forge does not read");
+            break;
+        }
+        case 6:
+        case 8:
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 7: {
+            if (wait(2)) return true;
+            const level::LevelList& l = lv().levels();
+            check(l.locked && !l.broken && l.levels.size() == 2 && l.start == id && note("прочитано не всё") && note("«Cave»") &&
+                      note("«transitions»") && note("файл не переписывается"),
+                  "read, not all of it: its two levels, and what is left out is said: " + lv().levels_note());
+            check(pj_class("lv-level-new", "disabled") && pj_class("lv-level-rename", "disabled") && pj_class("lv-level-start", "disabled"),
+                  "«Новый уровень», «Переименовать…», «Сделать стартовым» off");
+            check(pj_click("lv-level-new") && lv().naming_level().empty(), "«Новый уровень» does nothing");
+            lv().begin_rename_level();
+            check(lv().naming_level().empty() && note("файл не переписывается"), "renaming does not begin");
+            check(lv().level_id() == "level" && !lv().make_start_level() && note("Стартовый уровень не изменён") && lv().levels().start == id,
+                  "«Уровень 1» is not made the start: " + lv().levels_note());
+            check(tg_bytes(list_file) == lvl_locked_ && pj_names(game / "levels") == std::vector<std::string>{id},
+                  "the author's file as it is, no level made");
+            check(write_file_atomic(list_file, lvl_list_), "levels.json back");
+            break;
+        }
+        case 9:
+            if (wait(2)) return true;
+            check(lv().levels().writable() && lv().levels().levels.size() == 2 && lv().levels_note().empty() &&
+                      !pj_class("lv-level-new", "disabled") && tg_bytes(list_file) == lvl_list_,
+                  "put right: the list read again, its menu on, nothing said of it");
+            return false;
+        default:
+            break;
+        }
+        ++lvl_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -14865,7 +15491,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
     {
         Editor editor;
         // --self-test opened-game, ready, two-games-*: the game given, opened as the editor opens it (the self-test made it).
-        const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0;
+        const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0 ||
+                            options.self_part.rfind("levels-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -14919,8 +15546,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         LevelConfig lc;
         lc.offscreen = true;
         lc.game_data = editor.game_dir;
-        lc.folder = opened ? game.game / "level"
+        lc.folder = opened ? (options.level_given ? options.level : level_to_open(game.root, game.game))
                     : options.level_given ? options.level : std::filesystem::temp_directory_path() / "forge_editor_level";
+        if (opened) lc.project_root = game.root;
         if (!options.level_given && !opened) {
             std::error_code ec;
             std::filesystem::remove_all(lc.folder, ec);
@@ -15345,11 +15973,12 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--ready-file") == 0 && has_value) app.options.ready_file = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    static const char* const kParts[] = {"new-game", "opened-game", "ready", "two-games", "two-games-a", "two-games-a-again", "two-games-b"};
+    static const char* const kParts[] = {"new-game",          "opened-game", "ready",  "two-games",  "two-games-a",
+                                         "two-games-a-again", "two-games-b", "levels", "levels-a", "levels-again"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
-                    "two-games-b)",
+                    "two-games-b, levels and its parts levels-a, levels-again)",
                     app.options.self_part.c_str());
         return 2;
     }

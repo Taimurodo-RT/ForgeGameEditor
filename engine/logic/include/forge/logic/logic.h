@@ -381,6 +381,8 @@ public:
     // own running its module, with no Position: it is no chunk's, so it is
     // never unloaded, doubled or saved with one.
     void set_areas(std::vector<Thing> areas);
+    // The areas of the game's other levels: links to them compile (they are no broken links) but never run here.
+    void set_other_areas(std::vector<Thing> areas);
     // The hero came into an area or left it: the area's links run with this
     // tick's triggers (ScriptHost::enter). The game checks where the hero is.
     void area_event(std::string_view area, flecs::entity_t hero, bool entered);
@@ -412,6 +414,7 @@ private:
     scene::Scene* scene_ = nullptr;
     flecs::observer observer_;
     std::vector<Thing> areas_;
+    std::vector<Thing> other_areas_;
     std::unordered_map<std::string, flecs::entity_t> area_entities_; // area -> its entity
 };
 

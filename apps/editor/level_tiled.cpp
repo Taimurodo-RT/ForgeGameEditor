@@ -155,6 +155,9 @@ void LevelEditor::refigure_tiled() {
     o.liquids = module_.liquids_layer();
     objects::Library* lib = module_.library();
     o.template_taken = [lib](const tl::Picture& pic) { return lib && tl::template_taken(*lib, pic); };
+    // The level's own templates and zones: one map name in another level of the game makes others. «level» and a
+    // folder that is no level of the game: the ids as before there were levels.
+    o.level = level_id_ == level::kFirstLevel ? std::string() : level_id_;
     std::string why;
     tm_refusal_.clear();
     tm_preview_ = {};
