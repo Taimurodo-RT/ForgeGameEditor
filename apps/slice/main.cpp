@@ -70,6 +70,8 @@
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/SystemInterface.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Transform.h>
@@ -1062,17 +1064,43 @@ private:
                                                         at->y * static_cast<f32>(h) / static_cast<f32>(size.y))
                                              : std::array<int, 3>{-1, -1, -1};
             check(near_rgb(c, e.color, 24), "картинка в окне та же: " + rgb_text(c));
-            // Its keys play: what it looks like now and a moment later differ.
-            auto look = [pic] {
-                const Rml::Property* t = pic->GetProperty("transform");
-                const Rml::Property* o = pic->GetProperty("opacity");
-                return (t ? t->ToString() : std::string()) + "|" + (o ? o->ToString() : std::string());
+            // Its keys play: 100 %, e.motion_scale at the middle key, 100 % again, a pass in e.motion_seconds, over and
+            // over. Not two looks by the wall clock: RmlUi moves at most 0.1 s between updates, and a pass that comes
+            // back the way it went looks the same 0.05 s before its end and 0.05 s after it. The context's clock takes
+            // over at the moment the wall clock is at (the movement goes on from where it is) and goes a pass in steps
+            // of a twentieth: whatever moment of the pass it started at, one of them is within a fortieth of a pass of
+            // each end and of the middle key, and the last is the first again.
+            const f64 pass = e.motion_seconds, middle = e.motion_scale;
+            if (!check_ok(pass > 0 && middle > 0 && std::abs(middle - 1) > 0.1,
+                          "ожидания: движение по ключам (" + std::to_string(middle) + ", " + std::to_string(pass) + " с)"))
+                return true;
+            auto scale = [pic]() -> f64 {
+                const Rml::Property* p = pic->GetProperty("transform");
+                const Rml::TransformPtr t = p ? p->Get<Rml::TransformPtr>() : nullptr;
+                if (t)
+                    for (const Rml::TransformPrimitive& prim : t->GetPrimitives())
+                        if (prim.type == Rml::TransformPrimitive::SCALE2D) return prim.scale_2d.values[0];
+                return t ? -1 : 1; // no movement: as it stands
             };
-            const std::string before = look();
-            SDL_Delay(300);
-            s.context()->Update();
-            const std::string after = look();
-            check(before != after, "картинка в окне движется по своим ключам: «" + before + "» → «" + after + "»");
+            constexpr int kLooks = 20;
+            const double from = Rml::GetSystemInterface()->GetElapsedTime();
+            std::vector<f64> seen;
+            for (int i = 0; i <= kLooks; ++i) {
+                s.ui().set_clock(s.context(), from + pass * i / kLooks);
+                s.ui().update_context(s.context());
+                seen.push_back(scale());
+            }
+            s.ui().set_clock(s.context(), std::nullopt);
+            std::string said_scales;
+            for (const f64 v : seen) said_scales += (said_scales.empty() ? "" : " ") + std::to_string(v).substr(0, 5);
+            FORGE_INFO("scene: картинка в окне за проход по часам контекста: %s", said_scales.c_str());
+            const auto [lo, hi] = std::minmax_element(seen.begin(), seen.end());
+            const f64 low = std::min(1.0, middle), high = std::max(1.0, middle), near = 0.1 * (high - low);
+            check(*lo > low - 0.001 && *hi < high + 0.001, "картинка в окне не выходит за свои ключи: " + said_scales);
+            check(std::abs((middle > 1 ? *hi : *lo) - middle) < near,
+                  "картинка в окне доходит до среднего ключа " + std::to_string(middle) + ": " + said_scales);
+            check(std::abs((middle > 1 ? *lo : *hi) - 1) < near, "и возвращается к 100 %: " + said_scales);
+            check(std::abs(seen.back() - seen.front()) < 0.002, "проход за " + std::to_string(pass) + " с, снова: " + said_scales);
             return true;
         }});
         steps_.push_back({"«Забрать»: тот самый звук, окно закрывается", 30, [&s, &g, this, st](u32 f) {

@@ -21,6 +21,8 @@ FORGE_REFLECT(slice::ProjectEdits, 1) {
     t.field("button_node", &slice::ProjectEdits::button_node);
     t.field("sound", &slice::ProjectEdits::sound);
     t.field("sound_frames", &slice::ProjectEdits::sound_frames);
+    t.field("motion_scale", &slice::ProjectEdits::motion_scale);
+    t.field("motion_seconds", &slice::ProjectEdits::motion_seconds);
     t.field("absent", &slice::ProjectEdits::absent);
     t.field("level", &slice::ProjectEdits::level);
     t.field("level_name", &slice::ProjectEdits::level_name);

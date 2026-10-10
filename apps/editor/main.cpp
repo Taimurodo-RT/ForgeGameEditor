@@ -13469,6 +13469,8 @@ private:
         e.text_node = tg_u32("text");
         e.picture_node = tg_u32("picture");
         e.button_node = tg_u32("button");
+        e.motion_scale = 1.5; // its middle key, as «Движение» got it typed (150 %), a pass of 1 s as it was
+        e.motion_seconds = 1;
         e.sound = "звон.wav";
         const audio::ClipPtr clip = audio::load(ed_.game_dir / "sounds" / utf8_path("звон.wav"));
         e.sound_frames = clip ? clip->frames() : 0;

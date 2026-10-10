@@ -35,6 +35,9 @@ struct ProjectEdits {
     forge::u32 text_node = 0, picture_node = 0, button_node = 0; // their layers (#n<id> on the page)
     std::string sound;       // the button's sound, a file of the game's sounds
     forge::u32 sound_frames = 0; // its length
+    // The picture's movement by its own keys, as the author keyed it: its scale at the middle key (100 % at both
+    // ends) and the seconds of one pass; 0: not looked at.
+    double motion_scale = 0, motion_seconds = 0;
     bool absent = false;     // none of it is in this game
     std::string level;       // the level the game plays (its id in levels.json); empty: not checked
     std::string level_name;  // its name, for messages
