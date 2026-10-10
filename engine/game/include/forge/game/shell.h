@@ -64,6 +64,12 @@ public:
     // Back to the main menu: let go of the world.
     virtual void end() = 0;
     virtual bool running() const = 0;
+    // Whether the game may be saved now (false: why not, in words for the player). A game that is over (won or lost)
+    // is never saved: the shell writes no slot, says why to the player, and keeps quiet for an autosave.
+    virtual bool can_save(std::string* why) const {
+        (void)why;
+        return true;
+    }
 
     // Every frame, also while a menu is open. playing: the game is on
     // screen and not paused (dialogues do not pause the world); input: the

@@ -68,6 +68,7 @@ enum Frame : u32 {
     FrameDrop,
     FrameKey, // 60
     FrameDoor, // a piece of a closed door (one tile)
+    FrameSpikes, // a tile of «Опасность» without a picture of its own (step 14.2c)
     FrameCount = 64,
 };
 

@@ -1616,6 +1616,11 @@
                                     <option value="any">Везде: над меню и игрой</option><option value="game">Только над игрой</option><option value="menu">Только над главным меню</option>
                                 </select>
                             </div>
+                            <div class="ue-line row"><span class="ue-key">Показывается сам</span>
+                                <select id="ue-s-ending" class="ue-select grow" data-value="ue_s.ending" data-event-change="ue_spick('ending')">
+                                    <option value="none">Нет</option><option value="win">При победе</option><option value="lose">При поражении</option>
+                                </select>
+                            </div>
                             <div id="ue-s-pauses" class="ue-check row" data-event-click="ue_sset('pauses', '')"><icon class="xs" data-attr-name="ue_s.pauses ? 'check_box' : 'check_box_outline_blank'"/><span>Пока открыто, игра стоит</span></div>
                             <div id="ue-s-esc" class="ue-check row" data-event-click="ue_sset('esc', '')"><icon class="xs" data-attr-name="ue_s.esc_closes ? 'check_box' : 'check_box_outline_blank'"/><span>Закрывается по Esc</span></div>
                             <div id="ue-s-dim" class="ue-check row" data-event-click="ue_sset('dim', '')"><icon class="xs" data-attr-name="ue_s.dim ? 'check_box' : 'check_box_outline_blank'"/><span>Затемнять то, что под окном</span></div>
@@ -1725,6 +1730,11 @@
                             <div class="ue-line row"><span class="ue-key">Где появляется</span>
                                 <select id="ue-screen-over" class="ue-select grow" data-value="ue_p.over" data-event-change="ue_pick('screen.over')">
                                     <option value="any">Везде: над меню и игрой</option><option value="game">Только над игрой</option><option value="menu">Только над главным меню</option>
+                                </select>
+                            </div>
+                            <div class="ue-line row"><span class="ue-key">Показывается сам</span>
+                                <select id="ue-screen-ending" class="ue-select grow" data-value="ue_p.ending" data-event-change="ue_pick('screen.ending')">
+                                    <option value="none">Нет</option><option value="win">При победе</option><option value="lose">При поражении</option>
                                 </select>
                             </div>
                             <div id="ue-screen-pauses" class="ue-check row" data-event-click="ue_set('screen.pauses', '')"><icon class="xs" data-attr-name="ue_p.pauses ? 'check_box' : 'check_box_outline_blank'"/><span>Пока открыто, игра стоит</span></div>

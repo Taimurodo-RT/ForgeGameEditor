@@ -590,6 +590,35 @@ TEST_CASE("ui design: a window's place and veil survive saving and go onto the p
     }
 }
 
+// Step 14.2c: windows of victory and defeat the game shows itself when it ends.
+TEST_CASE("ui design: a window the game shows itself at its end survives saving and goes onto the page") {
+    Screen screen = make_screen("Поражение", 1920, 1080);
+    screen.show = ScreenShow::Command;
+    screen.pauses = true;
+    CHECK(screen.ending == WindowEnding::None);
+    screen.ending = WindowEnding::Lose;
+    Screen back;
+    REQUIRE(load_screen(save_screen(screen), back));
+    CHECK(back.ending == WindowEnding::Lose);
+    screen.ending = WindowEnding::Win;
+    REQUIRE(load_screen(save_screen(screen), back));
+    CHECK(back.ending == WindowEnding::Win);
+    CHECK(std::string(window_ending_word(WindowEnding::None)) == "none");
+    CHECK(contains(screen_html(screen), "forge-pauses=\"1\" forge-ending=\"win\""));
+    // Windows from before: none; «нет» is not written.
+    Screen old;
+    REQUIRE(load_screen(R"({"title": "Старое", "settings": {"show": "command"}, "root": {"id": 1, "type": "frame"}})", old));
+    CHECK(old.ending == WindowEnding::None);
+    CHECK_FALSE(contains(save_screen(old), "\"ending\""));
+    CHECK_FALSE(contains(screen_html(old), "forge-ending"));
+    // Only a window: over the game or the main menu the game never shows a screen by itself.
+    for (const ScreenShow show : {ScreenShow::Playing, ScreenShow::Menu}) {
+        Screen other = screen;
+        other.show = show;
+        CHECK_FALSE(contains(screen_html(other), "forge-ending"));
+    }
+}
+
 TEST_CASE("ui design: a list of the game's survives saving and goes onto the page") {
     Screen screen = make_screen("Сумка", 1280, 720);
     Node list;

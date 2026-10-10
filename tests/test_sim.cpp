@@ -112,6 +112,89 @@ TEST_CASE("bodies fall onto the floor and stop at walls") {
     CHECK(rb->vx == 0);
 }
 
+// Step 14.2c: the hero meets an enemy (bodies do not collide with each other, only with tiles): which face it came
+// through, from where both were before the move.
+TEST_CASE("touch_side tells top, bottom and side by where the boxes were before the move") {
+    auto box = [](f64 x, f64 y, f64 hw, f64 hh) { return Box{x, y, hw, hh}; };
+    // An enemy standing on a floor at y 10 (its top at 9.2), a hero 0.38 × 0.92 around it.
+    const Box enemy = box(10, 9.6, 0.35, 0.4);
+    // Falling onto it: its bottom over the enemy's top before, inside it now.
+    CHECK(touch_side(box(10.2, 8.18, 0.38, 0.92), box(10.2, 8.48, 0.38, 0.92), enemy, enemy) == Touch::Top);
+    // The same move that also met the floor (its speed is 0 after it): still the top, by where it was.
+    CHECK(touch_side(box(10.2, 8.27, 0.38, 0.92), box(10.2, 9.08, 0.38, 0.92), enemy, enemy) == Touch::Top);
+    // Walking into it along the floor: the side.
+    CHECK(touch_side(box(9.2, 9.08, 0.38, 0.92), box(9.35, 9.08, 0.38, 0.92), enemy, enemy) == Touch::Side);
+    CHECK(touch_side(box(10.8, 9.08, 0.38, 0.92), box(10.65, 9.08, 0.38, 0.92), enemy, enemy) == Touch::Side);
+    // Not touching now: nothing, from anywhere.
+    CHECK(touch_side(box(10.2, 7.0, 0.38, 0.92), box(10.2, 7.5, 0.38, 0.92), enemy, enemy) == Touch::None);
+    CHECK(touch_side(box(9.0, 9.08, 0.38, 0.92), box(9.25, 9.08, 0.38, 0.92), enemy, enemy) == Touch::None);
+    // An enemy falling onto the hero's head: the hero came through its bottom (the hero did not move).
+    const Box hero = box(10, 9.08, 0.38, 0.92); // its top at 8.16
+    CHECK(touch_side(hero, hero, box(10.1, 7.7, 0.35, 0.4), box(10.1, 7.9, 0.35, 0.4)) == Touch::Bottom);
+    // Jumping up into a hovering one: the bottom too.
+    CHECK(touch_side(box(10, 7.6, 0.38, 0.92), box(10, 7.4, 0.38, 0.92), box(10, 6.2, 0.35, 0.4), box(10, 6.2, 0.35, 0.4)) ==
+          Touch::Bottom);
+    // The enemy hops up into the hero's feet as the hero rises slower: against the enemy the hero came down, onto its top.
+    CHECK(touch_side(box(10, 8.18, 0.38, 0.92), box(10, 8.0, 0.38, 0.92), box(10, 9.6, 0.35, 0.4), box(10, 9.0, 0.35, 0.4)) ==
+          Touch::Top);
+    // Rising beside it, its column reached in the same move: the side, not the bottom.
+    CHECK(touch_side(box(9.2, 9.0, 0.38, 0.92), box(9.4, 8.8, 0.38, 0.92), enemy, enemy) == Touch::Side);
+    // Already inside each other before the move (after a load, or touching at its side for a while): the side.
+    CHECK(touch_side(box(10.2, 8.9, 0.38, 0.92), box(10.2, 9.0, 0.38, 0.92), enemy, enemy) == Touch::Side);
+}
+
+TEST_CASE("touch_side at a corner: the face whose gap closed last") {
+    auto box = [](f64 x, f64 y, f64 hw, f64 hh) { return Box{x, y, hw, hh}; };
+    const Box enemy = box(10, 9.6, 0.35, 0.4); // its box: x 9.65..10.35, y 9.2..10
+    // Apart both ways before (0.1 over its top, 0.1 to its left); now inside both ways.
+    // Down 0.5 and right 0.2: over its top in 0.2 of the move, beside it in 0.5: through the side.
+    CHECK(touch_side(box(9.17, 8.18, 0.38, 0.92), box(9.37, 8.68, 0.38, 0.92), enemy, enemy) == Touch::Side);
+    // Down 0.2 and right 0.5: beside it in 0.2, over its top in 0.5: through the top.
+    CHECK(touch_side(box(9.17, 8.18, 0.38, 0.92), box(9.67, 8.38, 0.38, 0.92), enemy, enemy) == Touch::Top);
+    // Already over its column before (apart sideways ≤ 0): only the vertical gap counts.
+    CHECK(touch_side(box(9.5, 8.18, 0.38, 0.92), box(9.9, 8.5, 0.38, 0.92), enemy, enemy) == Touch::Top);
+}
+
+TEST_CASE("touch_side: rounding over a top face, eps") {
+    auto box = [](f64 x, f64 y, f64 hw, f64 hh) { return Box{x, y, hw, hh}; };
+    const Box enemy = box(10, 9.6, 0.35, 0.4);
+    // A hair (0.03) inside before, falling: still the top; 0.2 inside: the side.
+    CHECK(touch_side(box(10, 8.31, 0.38, 0.92), box(10, 8.6, 0.38, 0.92), enemy, enemy) == Touch::Top);
+    CHECK(touch_side(box(10, 8.48, 0.38, 0.92), box(10, 8.7, 0.38, 0.92), enemy, enemy) == Touch::Side);
+    CHECK(touch_side(box(10, 8.48, 0.38, 0.92), box(10, 8.7, 0.38, 0.92), enemy, enemy, 0.25) == Touch::Top);
+}
+
+// The hero's move, as move_body makes it: crossing the enemy's top and meeting the floor in one tick zeroes its speed;
+// where it was before the move still says it came from above.
+TEST_CASE("a body that met the floor in the move that took it into another came through its top") {
+    PoolScope pool;
+    Room room;
+    Body enemy_body;
+    enemy_body.half_w = 0.35f;
+    enemy_body.half_h = 0.4f;
+    flecs::entity enemy = room.body_at(10.5, 9.6, enemy_body);
+    room.run(5);
+    Body hero_body;
+    hero_body.half_w = 0.38f;
+    hero_body.half_h = 0.92f;
+    hero_body.vy = 49; // a fall at nearly the most: 0.82 of a tile a tick, more than the enemy is tall
+    flecs::entity hero = room.body_at(10.6, 9.2 - 0.92 - 0.01, hero_body);
+    for (u32 i = 0; i < 3 && hero.get<Body>().last_dy == 0; ++i) room.run(1); // its first tick
+    const Body& hb = hero.get<Body>();
+    const Body& eb = enemy.get<Body>();
+    const Position& hp = hero.get<Position>();
+    const Position& ep = enemy.get<Position>();
+    CHECK(hb.vy == 0);
+    CHECK((hb.contacts & OnGround) != 0);
+    CHECK(std::fabs(hp.tile_y() + 0.92 - 10.0) < 1e-3);
+    const Box before{hp.tile_x() - hb.last_dx, hp.tile_y() - hb.last_dy, hb.half_w, hb.half_h};
+    const Box now{hp.tile_x(), hp.tile_y(), hb.half_w, hb.half_h};
+    const Box e_before{ep.tile_x() - eb.last_dx, ep.tile_y() - eb.last_dy, eb.half_w, eb.half_h};
+    const Box e_now{ep.tile_x(), ep.tile_y(), eb.half_w, eb.half_h};
+    CHECK(hb.last_dy > 0.5f);
+    CHECK(touch_side(before, now, e_before, e_now) == Touch::Top);
+}
+
 TEST_CASE("one-way ledges hold from above and let through from below") {
     PoolScope pool;
     Room room;

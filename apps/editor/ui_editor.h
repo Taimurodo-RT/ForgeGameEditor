@@ -697,6 +697,7 @@ private:
         // The link to the game.
         Rml::String screen_show; // "playing", "command", "menu"
         Rml::String over;        // a window's «Где появляется»: "any", "game", "menu"
+        Rml::String ending = "none"; // a window's «Показывается сам»: "none", "win", "lose"
         bool pauses = false, esc_closes = true, dim = false;
         bool covers_game = false; // shown while playing with a solid background: the world can't be seen
         Rml::String show_if;
@@ -903,6 +904,7 @@ private:
         Rml::String x, y, w, h, anchor_h, anchor_v;
         Rml::String action = "none", target, needs;
         Rml::String image, bar_value, bar_max, list_source, picture_from, show, over, inside;
+        Rml::String ending = "none";
         Rml::String hidden;
         Rml::String music, button_sound, click_sound;
         bool pauses = false, esc_closes = true, dim = false; // a window's: the game stops, Esc closes it, what is under is darkened

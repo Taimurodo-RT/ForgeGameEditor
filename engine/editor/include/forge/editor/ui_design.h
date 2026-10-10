@@ -242,6 +242,11 @@ enum class WindowOver : u8 {
 };
 const char* window_over_word(WindowOver o); // "any", "game", "menu"
 
+// A window the game shows itself when it ends (step 14.2c): never (only a button or the logic opens it), when the
+// player wins, when the player loses.
+enum class WindowEnding : u8 { None, Win, Lose };
+const char* window_ending_word(WindowEnding e); // "none", "win", "lose"
+
 // Movement («Анимация»). How a change speeds up and slows down.
 enum class Easing : u8 {
     Smooth,  // starts and ends gently (CSS ease)
@@ -416,6 +421,7 @@ struct Screen {
     bool esc_closes = true;  // Esc hides it (Command screens)
     bool dim = false;        // what is under it (the world, other screens, the menu) darkened, its clicks stopped (Command screens)
     WindowOver over = WindowOver::Any; // where it may come up (Command screens)
+    WindowEnding ending = WindowEnding::None; // the game shows it itself when it ends so (Command screens)
     Appear appear = Appear::None; // how it comes and goes (Command and Menu screens)
     f32 appear_time = 0.25f;      // seconds
     // Its sound: the music while it is up and its buttons' sound when

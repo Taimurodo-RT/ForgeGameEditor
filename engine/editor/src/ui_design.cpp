@@ -49,6 +49,7 @@ const char* const kActions[] = {"show", "hide", "toggle", "close", "message", "c
                                 "menu", "quit", "new", "continue", "load", "save", "settings"};
 const char* const kScreenShows[] = {"playing", "command", "menu"};
 const char* const kWindowOvers[] = {"any", "game", "menu"};
+const char* const kWindowEndings[] = {"none", "win", "lose"};
 const char* const kEasings[] = {"smooth", "linear", "in", "out", "back", "bounce", "elastic"};
 const char* const kMotions[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
 const char* const kAppears[] = {"none", "fade", "rise", "drop", "zoom", "left", "right"};
@@ -620,6 +621,7 @@ const char* action_word(ActionKind k) { return word(k, kActions); }
 
 const char* list_word(ListSource s) { return word(s, kLists); }
 const char* window_over_word(WindowOver o) { return word(o, kWindowOvers); }
+const char* window_ending_word(WindowEnding e) { return word(e, kWindowEndings); }
 const char* screen_fit_word(ScreenFit f) { return word(f, kScreenFits); }
 
 std::vector<std::pair<std::string, std::string>> list_fields(ListSource s) {
@@ -686,6 +688,7 @@ std::string save_screen(const Screen& screen) {
             if (!screen.esc_closes) yyjson_mut_obj_add_bool(doc, so, "esc_closes", false);
             if (screen.dim) yyjson_mut_obj_add_bool(doc, so, "dim", true);
             if (screen.over != WindowOver::Any) yyjson_mut_obj_add_str(doc, so, "over", word(screen.over, kWindowOvers));
+            if (screen.ending != WindowEnding::None) yyjson_mut_obj_add_str(doc, so, "ending", word(screen.ending, kWindowEndings));
             if (screen.appear != Appear::None) {
                 yyjson_mut_obj_add_str(doc, so, "appear", word(screen.appear, kAppears));
                 put_num(doc, so, "appear_time", screen.appear_time);
@@ -759,6 +762,7 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         s.esc_closes = flag(so, "esc_closes", true);
         s.dim = flag(so, "dim", false);
         s.over = enum_of(so, "over", kWindowOvers, WindowOver::Any);
+        s.ending = enum_of(so, "ending", kWindowEndings, WindowEnding::None);
         s.appear = enum_of(so, "appear", kAppears, Appear::None);
         s.appear_time = std::clamp(num(so, "appear_time", 0.25f), 0.05f, 10.0f);
         s.music = str(so, "music");
@@ -1938,6 +1942,8 @@ void write_elements(const Node& n, std::string& html, int depth, const std::vect
         if (screen->dim && screen->show == ScreenShow::Command) html += " forge-dim=\"1\"";
         if (screen->over != WindowOver::Any && screen->show == ScreenShow::Command)
             html += std::string(" forge-over=\"") + word(screen->over, kWindowOvers) + "\"";
+        if (screen->ending != WindowEnding::None && screen->show == ScreenShow::Command)
+            html += std::string(" forge-ending=\"") + word(screen->ending, kWindowEndings) + "\"";
         if (screen->appear != Appear::None)
             html += std::string(" forge-appear=\"") + word(screen->appear, kAppears) + "\" forge-appear-time=\"" +
                     fmt(screen->appear_time) + "\"";

@@ -42,6 +42,20 @@ struct Body {
 // slides along solid tiles. Returns the contacts, also stored in the body.
 u8 move_body(scene::Position& p, Body& body, f32 dt, f32 gx, f32 gy, f32 max_fall, const TileView& tiles);
 
+// A box: its centre and half its size, in tiles.
+struct Box {
+    f64 x = 0, y = 0;
+    f64 half_w = 0, half_h = 0;
+};
+// How box a came to touch box b in the last move (y grows down, as tiles do): through b's top (a came from above),
+// its bottom (from below) or a side; None when they do not overlap now. before: where each box was before that move
+// (its Position less the body's last_dx, last_dy), now: after it. It is told by where they were, not by speeds, which
+// a move that met a floor has already zeroed. The face they met through is the gap that closed last; a gap closed
+// before the move does not count (they were already side by side, or already inside each other). eps: how far a may
+// already have been inside b across that face (rounding).
+enum class Touch : u8 { None, Top, Bottom, Side };
+Touch touch_side(const Box& a_before, const Box& a_now, const Box& b_before, const Box& b_now, f64 eps = 0.05);
+
 // Where to draw a body between ticks (alpha from SimClock::alpha()).
 inline void draw_position(const scene::Position& p, const Body& b, f32 alpha, f64& tile_x, f64& tile_y) {
     tile_x = p.tile_x() - static_cast<f64>((1.0f - alpha) * b.last_dx);

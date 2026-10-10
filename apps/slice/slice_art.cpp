@@ -418,6 +418,21 @@ demo::SheetImage make_sheet() {
                 c.put(x, y, col);
             }
     }
+    // Spikes: four iron points on a strip, lit from the left.
+    {
+        const Canvas c = small(FrameSpikes);
+        for (i32 y = 0; y < 16; ++y)
+            for (i32 x = 0; x < 16; ++x) {
+                if (y >= 13) {
+                    c.put(x, y, y == 13 ? Rgb{120, 116, 112} : Rgb{84, 80, 78});
+                    continue;
+                }
+                const i32 cx = (x / 4) * 4, dx = x - cx; // each point 4 wide, from row 2 down to the strip
+                const f32 half = static_cast<f32>(y - 2) / 11.0f * 2.0f;
+                if (y >= 2 && std::fabs(static_cast<f32>(dx) - 1.5f) <= half)
+                    c.put(x, y, dx < 2 ? Rgb{214, 214, 220} : Rgb{150, 150, 160});
+            }
+    }
     for (u32 f = FramePickaxe; f < FrameCount; ++f) {
         const u32 i = f - FramePickaxe;
         img.frames.push_back({(i % kCols) * kCell + 1, (7 + i / kCols) * kCell + 1, 16, 16});

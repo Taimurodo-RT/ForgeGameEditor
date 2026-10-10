@@ -117,6 +117,7 @@ const char* const kArtRepeatWords[] = {"stretch", "repeat", "round", "space"};
 const char* const kScreenFitWords[] = {"expand", "fit", "stretch"};
 const char* const kScreenShowWords[] = {"playing", "command", "menu"};
 const char* const kWindowOverWords[] = {"any", "game", "menu"};
+const char* const kWindowEndingWords[] = {"none", "win", "lose"};
 const char* const kBarFromWords[] = {"left", "right", "bottom", "top"};
 // Movement (the file's words, design::Motion and friends).
 const char* const kMotionWords[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
@@ -455,6 +456,10 @@ void UiEditor::refresh_openers() {
         // «Логика» runs while the game is played.
         if (logic_openers)
             for (const std::string& where : logic_openers(name_)) row("«Логика», " + where + ": над игрой", d::WindowOver::Game);
+        // The game itself, when it ends (step 14.2c).
+        if (screen_.ending != d::WindowEnding::None)
+            row(std::string("Игра сама, ") + (screen_.ending == d::WindowEnding::Win ? "при победе" : "при поражении") + ": над игрой",
+                d::WindowOver::Game);
     }
     dirty("ue_openers");
 }
@@ -1626,6 +1631,7 @@ void UiEditor::refresh_props() {
             p.esc_closes = screen_.esc_closes;
             p.dim = screen_.dim;
             p.over = kWindowOverWords[static_cast<int>(screen_.over)];
+            p.ending = kWindowEndingWords[static_cast<int>(screen_.ending)];
             p.covers_game = covers_game();
             p.music = screen_.music;
             p.button_sound = screen_.button_sound;
@@ -1875,6 +1881,7 @@ void UiEditor::refresh_simple(const d::Node* n) {
         s.esc_closes = screen_.esc_closes;
         s.dim = screen_.dim;
         s.over = kWindowOverWords[static_cast<int>(screen_.over)];
+        s.ending = kWindowEndingWords[static_cast<int>(screen_.ending)];
         s.music = screen_.music;
         s.button_sound = screen_.button_sound;
         s.click_sound = n->click_sound;
@@ -1985,6 +1992,7 @@ std::string UiEditor::simple_shown(const std::string& field) const {
     if (field == "list") return m_s_shown_.list_source;
     if (field == "show") return m_s_shown_.show;
     if (field == "over") return m_s_shown_.over;
+    if (field == "ending") return m_s_shown_.ending;
     if (field == "anchor_h") return m_s_shown_.anchor_h;
     if (field == "anchor_v") return m_s_shown_.anchor_v;
     if (field == "music") return m_s_shown_.music;
@@ -2101,6 +2109,10 @@ bool UiEditor::set_simple_property(const std::string& field, const std::string& 
         if (!root || screen_.library || screen_.show != d::ScreenShow::Command) return false;
         ops.push_back({id, "screen.over", value});
         word = "Где появляется окно";
+    } else if (field == "ending") {
+        if (!root || screen_.library || screen_.show != d::ScreenShow::Command) return false;
+        ops.push_back({id, "screen.ending", value});
+        word = "Показывается сам";
     } else if (field == "pauses" || field == "esc" || field == "dim") {
         // A window's behaviour, as in «Полный» (each a switch).
         if (!root || screen_.library || screen_.show != d::ScreenShow::Command) return false;
@@ -2158,7 +2170,8 @@ std::string change_label(const std::string& field) {
         {"clip", "Обрезка"}, {"show_if", "Условие показа"}, {"name", "Имя"}, {"list", "Список"}, {"list_gap", "Расстояние в списке"},
         {"picture_from", "Картинка из данных"}, {"click_sound", "Звук нажатия"}, {"screen.music", "Музыка экрана"},
         {"screen.button_sound", "Звук кнопок экрана"}, {"screen.pauses", "Пауза окна"}, {"screen.esc", "Закрытие по Esc"},
-        {"screen.dim", "Затемнение фона"}, {"screen.over", "Где появляется окно"}};
+        {"screen.dim", "Затемнение фона"}, {"screen.over", "Где появляется окно"},
+        {"screen.ending", "Показывается сам"}};
     for (const auto& [f, word] : words)
         if (field == f) return std::string("Изменено: ") + word;
     static const std::pair<const char*, const char*> groups[] = {
@@ -2623,6 +2636,14 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             if (screen_.library || screen_.show != d::ScreenShow::Command || i < 0 || screen_.over == static_cast<d::WindowOver>(i))
                 return false;
             screen_.over = static_cast<d::WindowOver>(i);
+            refresh_openers();
+            return true;
+        }
+        if (f == "ending") {
+            const int i = index_of(value, kWindowEndingWords);
+            if (screen_.library || screen_.show != d::ScreenShow::Command || i < 0 || screen_.ending == static_cast<d::WindowEnding>(i))
+                return false;
+            screen_.ending = static_cast<d::WindowEnding>(i);
             refresh_openers();
             return true;
         }
@@ -4780,6 +4801,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("picture_from", &SimpleProps::picture_from);
         s.RegisterMember("show", &SimpleProps::show);
         s.RegisterMember("over", &SimpleProps::over);
+        s.RegisterMember("ending", &SimpleProps::ending);
         s.RegisterMember("pauses", &SimpleProps::pauses);
         s.RegisterMember("esc_closes", &SimpleProps::esc_closes);
         s.RegisterMember("dim", &SimpleProps::dim);
@@ -4876,6 +4898,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("text_style", &Props::text_style);
         s.RegisterMember("screen_show", &Props::screen_show);
         s.RegisterMember("over", &Props::over);
+        s.RegisterMember("ending", &Props::ending);
         s.RegisterMember("covers_game", &Props::covers_game);
         s.RegisterMember("pauses", &Props::pauses);
         s.RegisterMember("esc_closes", &Props::esc_closes);
