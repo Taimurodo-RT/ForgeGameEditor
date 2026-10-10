@@ -6,6 +6,10 @@
 #include "forge/data/reflect.h"
 #include "forge/editor/project.h"
 #include "forge/editor/ui_design.h"
+#include "forge/assets/image.h"
+#include "forge/game/shell.h"
+#include "forge/level/levels.h"
+#include "forge/level/own_tiles.h"
 
 #include <doctest/doctest.h>
 
@@ -568,4 +572,102 @@ TEST_CASE("project: the catalog's «Старая шахта» makes a game") {
     std::vector<std::string> refreshed;
     CHECK(refresh_module_files(g.game, modules[0], refreshed, &error));
     CHECK(refreshed.empty());
+}
+
+// The template «Платформер» (step 14.2d): games/platformer as the catalog's second card makes it.
+TEST_CASE("project: the catalog's «Платформер» makes a game with its «Ресурсы» and the module's files") {
+    const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
+    std::vector<Template> list;
+    std::string error;
+    REQUIRE(read_catalog(games / "templates.json", list, &error));
+    REQUIRE(list.size() == 2);
+    CHECK(list[0].id == "old-mine"); // the cards in this order: «Новая игра» shows «Платформер» second
+    const Template& t = list[1];
+    CHECK(t.id == "platformer");
+    CHECK(t.name == "Платформер");
+    CHECK(t.module == "slice");
+    CHECK(t.game == games / "platformer");
+    CHECK(t.assets == games / "templates" / "platformer" / "assets");
+    CHECK(t.picture == games / "templates" / "platformer.png");
+    CHECK(t.bad.empty());
+    assets::CookedTexture card;
+    std::vector<u8> bytes;
+    REQUIRE(read_file(t.picture, bytes));
+    REQUIRE(assets::decode_image(bytes, card));
+    CHECK(card.width == 480);
+    CHECK(card.height == 270);
+    const std::vector<Module> modules{{"slice", "Старая шахта", games / "slice"}};
+    std::string all;
+    for (const std::string& p : template_problems(t, modules)) all += p + "; ";
+    CHECK_MESSAGE(all.empty(), all);
+    const fs::path parent = fresh("forge_tests_проект_платформер");
+    fs::path made;
+    REQUIRE_MESSAGE(create(t, modules, parent, "Мой платформер", made, &error), error);
+    Game g;
+    REQUIRE(find(made, modules, g, &error) == Found::Game);
+    CHECK(g.title == "Мой платформер");
+    CHECK(g.description.from == "platformer");
+    // Its «Ресурсы»: the template's pictures with their .meta, byte for byte.
+    for (const char* name : {"герой.png", "жук.png", "еж.png", "монета.png", "шипы.png", "ряд_шипов.png", "флаг.png", "указатель.png",
+                             "сердце.png"})
+        for (const std::string& file : {std::string(name), std::string(name) + ".meta"})
+            CHECK_MESSAGE(text_of(made / "assets" / utf8_path("картинки") / utf8_path(file)) ==
+                              text_of(t.assets / utf8_path("картинки") / utf8_path(file)),
+                          file);
+    // The module's files are the module's: nothing to refresh.
+    for (const char* file : {"kinds.json", "verbs.json", "ideas.json"})
+        CHECK_MESSAGE(text_of(t.game / file) == text_of(games / "slice" / file), file);
+    std::vector<std::string> refreshed;
+    CHECK(refresh_module_files(g.game, modules[0], refreshed, &error));
+    CHECK(refreshed.empty());
+    // Its view: 32 pixels a tile, as the pictures are drawn.
+    CHECK(game::read_game_info(t.game).zoom == 32);
+    CHECK(game::read_game_info(games / "slice").zoom == 0); // a game without it: the game's own
+}
+
+TEST_CASE("project: the levels of «Платформер» have the tiles of its tiles.png, solid ones opaque on top") {
+    const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
+    const fs::path game = games / "platformer";
+    const level::LevelList levels = level::read_levels(game);
+    REQUIRE(levels.from_file);
+    REQUIRE(levels.writable());
+    REQUIRE(levels.levels.size() == 3);
+    CHECK(levels.start == "level");
+    std::string error;
+    // The template's tiles.png (the brief's contract): 16 pictures of 32 px in a row, ids 256..271.
+    assets::CookedTexture atlas;
+    std::vector<u8> bytes;
+    REQUIRE(read_file(games / "templates" / "platformer" / "tiles.png", bytes));
+    REQUIRE(assets::decode_image(bytes, atlas));
+    REQUIRE(atlas.width == 512);
+    REQUIRE(atlas.height == 32);
+    for (const level::LevelEntry& e : levels.levels) {
+        CAPTURE(e.id);
+        const fs::path folder = level::level_folder(game, e.id);
+        level::LevelTiles tiles;
+        bool found = false;
+        REQUIRE_MESSAGE(level::load_tiles(folder, tiles, 3, 2, &found, &error), error);
+        REQUIRE(found);
+        CHECK(tiles.px == 32);
+        REQUIRE(tiles.tiles.size() == 16);
+        for (usize i = 0; i < tiles.tiles.size(); ++i) {
+            const level::OwnTile& o = tiles.tiles[i];
+            CAPTURE(o.name);
+            CHECK(o.id == level::kFirstOwnTile + i);
+            CHECK(o.solid == (i < 10)); // 256..265: ground, bridge and stone
+            CHECK(o.layer == (o.solid ? 1u : 0u)); // solid on «Блоки», the rest on «Стены»
+            const u8* p = tiles.picture(i);
+            bool same = true;
+            for (u32 y = 0; y < 32; ++y)
+                same = same && std::equal(p + y * 32 * 4, p + (y + 1) * 32 * 4, &atlas.rgba8[(static_cast<usize>(y) * 512 + i * 32) * 4]);
+            CHECK_MESSAGE(same, "its picture is cell ", i, " of the template's tiles.png");
+            if (!o.solid) continue;
+            bool top = true;
+            for (u32 x = 0; x < 32; ++x) top = top && p[x * 4 + 3] == 255;
+            CHECK_MESSAGE(top, "the top row of a solid tile is opaque: the hero stands on what is seen");
+        }
+        level::LevelWorld world;
+        REQUIRE(level::load_world(folder, world, &found, &error));
+        CHECK(world.empty_around);
+    }
 }

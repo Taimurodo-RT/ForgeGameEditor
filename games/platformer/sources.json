@@ -1,0 +1,49 @@
+{
+    "files": {
+        "pictures/герой.png": {
+            "asset": "ed2d6773-4aad-57a7-b133-fa7c2d4e2392",
+            "from": "картинки/герой.png",
+            "hash": "c1e16dd9f293048c06fc8dd2a70a88ff"
+        },
+        "pictures/еж.png": {
+            "asset": "ed2ce17c-a2d7-5b66-81b0-81f3c4d46e8d",
+            "from": "картинки/еж.png",
+            "hash": "9046b6f31acc2bb22038a3b09c75f358"
+        },
+        "pictures/жук.png": {
+            "asset": "a105beef-e70e-5e57-be7e-d265245cd821",
+            "from": "картинки/жук.png",
+            "hash": "57d9525140d016388f323ce450b3b0bc"
+        },
+        "pictures/монета.png": {
+            "asset": "c416ca7c-6371-57ec-bd95-b8406fc9ce32",
+            "from": "картинки/монета.png",
+            "hash": "5ae5ea40c19fa9c2897018be81a3dd00"
+        },
+        "pictures/ряд_шипов.png": {
+            "asset": "9496a244-c572-5aaa-9d10-908fe0dfb29d",
+            "from": "картинки/ряд_шипов.png",
+            "hash": "f92f1dd8037d2b8f1aa0082ea072d61f"
+        },
+        "pictures/сердце.png": {
+            "asset": "7021b755-b2bd-5842-98bc-7564291de538",
+            "from": "картинки/сердце.png",
+            "hash": "4e2fa44621a0e299e4bb63cfb6ff2d92"
+        },
+        "pictures/указатель.png": {
+            "asset": "9a477526-59a1-5a37-a8a2-2c56df9f7131",
+            "from": "картинки/указатель.png",
+            "hash": "40343aea5e83c7c7fa0c3266155773d9"
+        },
+        "pictures/флаг.png": {
+            "asset": "07ad5519-c82a-5d8b-95c7-aa777682009f",
+            "from": "картинки/флаг.png",
+            "hash": "f2d5292ff436c4449f71fbae56b2ee2f"
+        },
+        "pictures/шипы.png": {
+            "asset": "15f21de3-2c71-553b-964c-35f85a8c4594",
+            "from": "картинки/шипы.png",
+            "hash": "82a7068ad54faba5b1cc9ecea78d18e3"
+        }
+    }
+}

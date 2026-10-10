@@ -1,4 +1,5 @@
 #include "object_library.h"
+#include "slice_pictures.h"
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -240,6 +241,9 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("ol_sel_icon", &m_sel_icon_);
     model.Bind("ol_sel_file", &m_sel_file_);
     model.Bind("ol_sel_picture", &m_sel_picture_);
+    model.Bind("ol_sel_frames", &m_sel_frames_);
+    model.Bind("ol_sel_hero", &m_sel_hero_);
+    model.Bind("ol_sel_placed", &m_sel_placed_);
     model.Bind("ol_pics", &m_pics_);
     model.Bind("ol_blocks", &m_blocks_);
     model.Bind("ol_add_blocks", &m_add_blocks_);
@@ -320,6 +324,9 @@ void ObjectLibrary::bind(Rml::DataModelConstructor& model) {
     });
     on("ol_picture_pick", [this](Rml::Event&, const Rml::VariantList&) { open_pictures(); });
     on("ol_picture_clear", [this](Rml::Event&, const Rml::VariantList&) { clear_picture(); });
+    on("ol_frames", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        if (const objects::Template* t = selected()) set_frames(static_cast<int>(t->frames) + arg_int(a, 0));
+    });
     on("ol_picture_choose", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
         if (i >= 0) choose_picture(static_cast<usize>(i));
@@ -399,7 +406,16 @@ std::string ObjectLibrary::icon_path(const objects::Template& t, bool from_share
     std::vector<u8> bytes;
     assets::CookedTexture image;
     if (from_shared && !t.picture.empty() && read_file(shared_.picture_file(t), bytes) && assets::decode_image(bytes, image)) {
-        // Its own picture, from the shared library's folder, centred.
+        // Its own picture, from the shared library's folder, centred: of a strip of frames the first.
+        if (t.frames > 1 && image.width % t.frames == 0) {
+            const u32 fw = image.width / t.frames;
+            std::vector<u8> first(static_cast<usize>(fw) * image.height * 4);
+            for (u32 y = 0; y < image.height; ++y)
+                std::copy_n(&image.rgba8[static_cast<usize>(y) * image.width * 4], static_cast<usize>(fw) * 4,
+                            &first[static_cast<usize>(y) * fw * 4]);
+            image.rgba8 = std::move(first);
+            image.width = fw;
+        }
         const assets::CookedTexture fit = assets::fit_image(image, kIconPx);
         rgba.assign(static_cast<usize>(kIconPx) * kIconPx * 4, 0);
         const u32 ox = (kIconPx - std::min(fit.width, kIconPx)) / 2, oy = (kIconPx - std::min(fit.height, kIconPx)) / 2;
@@ -501,6 +517,9 @@ void ObjectLibrary::rebuild_side() {
         m_sel_genre_ = t->genre.empty() ? kAnyGame : t->genre;
         m_sel_file_ = path_to_utf8(t->file.filename());
         m_sel_picture_ = t->picture;
+        m_sel_frames_ = static_cast<int>(t->frames);
+        m_sel_placed_ = !k || k->placed;
+        m_sel_hero_ = hero_note(*t);
         for (const std::string& g : lib.genres()) m_genre_items_.push_back({g, g, t->genre == g});
         m_genre_items_.push_back({"", kAnyGame, t->genre.empty()});
         // The editor: the object's blocks and their properties.
@@ -560,7 +579,8 @@ void ObjectLibrary::rebuild_side() {
     }
     if (model_)
         for (const char* name : {"ol_props", "ol_blocks", "ol_add_blocks", "ol_genre_items", "ol_sel_name", "ol_sel_about", "ol_sel_icon", "ol_sel_kind",
-                                 "ol_sel_kind_icon", "ol_sel_kind_about", "ol_sel_genre", "ol_sel_file", "ol_sel_picture", "ol_sel_twin"})
+                                 "ol_sel_kind_icon", "ol_sel_kind_about", "ol_sel_genre", "ol_sel_file", "ol_sel_picture", "ol_sel_frames", "ol_sel_hero", "ol_sel_placed",
+                                 "ol_sel_twin"})
             model_.DirtyVariable(name);
 }
 
@@ -674,6 +694,7 @@ bool ObjectLibrary::duplicate() {
     t->values = src->values;
     t->blocks = src->blocks;
     t->picture = src->picture;
+    t->frames = src->frames;
     const u64 key = t->key;
     change(std::move(*t), "Копия: " + src->name);
     history_.seal();
@@ -742,6 +763,8 @@ bool ObjectLibrary::set_genre(const std::string& genre) {
 
 bool ObjectLibrary::place_selected() {
     if (!selected_ || !on_place) return false;
+    // Its kind is not put on levels (the hero's picture: the game puts the hero).
+    if (const objects::Template* t = selected(); t && library().kind_of(*t) && !library().kind_of(*t)->placed) return false;
     // A shared object is placed as the game's copy of it.
     if (showing_shared() && twin(*selected()) != "same" && !take_selected()) return false;
     if (!library().find(selected_)) return false;
@@ -963,6 +986,35 @@ bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
     change(std::move(after), "«" + t->name + "»: картинка");
     history_.seal();
     return true;
+}
+
+bool ObjectLibrary::set_frames(int n) {
+    const objects::Template* t = selected();
+    if (!t || showing_shared() || t->picture.empty()) return false;
+    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(objects::kMaxFrames)));
+    if (frames == t->frames) return false;
+    objects::Template after = *t;
+    after.frames = frames;
+    change(std::move(after), "«" + t->name + "»: кадров в картинке " + std::to_string(frames));
+    history_.seal();
+    return true;
+}
+
+std::string ObjectLibrary::hero_note(const objects::Template& t) {
+    const objects::Library& lib = library();
+    if (!lib.has_block(t, "hero")) return {};
+    // By the game's own rule (slice::hero_picture_ok): what this says is what the game draws.
+    if (std::string why; !slice::hero_picture_ok(lib, t, &why)) return "Герой рисуется как прежде: " + why + ".";
+    const objects::Template* first = nullptr;
+    usize n = 0;
+    for (const objects::Template& o : lib.templates())
+        if (slice::hero_picture_ok(lib, o)) {
+            ++n;
+            if (!first || o.id < first->id) first = &o;
+        }
+    if (n < 2) return {};
+    if (first->id == t.id) return "Объектов вида «Герой» с картинкой " + std::to_string(n) + ": героя рисует этот, первый по id.";
+    return "Объектов вида «Герой» с картинкой " + std::to_string(n) + ": героя рисует «" + first->name + "», первый по id, а не этот.";
 }
 
 bool ObjectLibrary::clear_picture() {

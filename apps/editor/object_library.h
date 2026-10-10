@@ -122,6 +122,11 @@ public:
     CopyIn copy_in; // how a picked picture or sound goes into the game (main)
     bool set_picture(const std::filesystem::path& source);
     bool clear_picture();
+    // «Кадров в картинке»: the picture is a strip of n equal frames (1..objects::kMaxFrames).
+    bool set_frames(int n);
+    // At an object of kind «Герой», what the game does with it, when not plainly drawing the hero with it: no picture,
+    // frames other than 4 or 1, or more of them (the game takes the first by id, as slice::Pictures does). "" else.
+    std::string hero_note(const objects::Template& t);
     void open_pictures();
     // Files of «Ресурсы» got new content: the chooser's thumbnails are made again.
     void files_changed() { pic_icons_.clear(); }
@@ -268,6 +273,9 @@ private:
     std::vector<BlockView> m_blocks_, m_add_blocks_;
     std::vector<PicView> m_pics_;
     Rml::String m_pics_search_, m_pics_note_, m_sel_picture_;
+    int m_sel_frames_ = 1;
+    Rml::String m_sel_hero_; // hero_note() of the chosen
+    bool m_sel_placed_ = true; // its kind is put on levels
     bool m_pics_open_ = false;
     std::vector<SndView> m_snds_;
     Rml::String m_snds_search_, m_snds_note_, m_snds_title_;

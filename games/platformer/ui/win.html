@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Победа</title>
+<!-- Made by Forge «Интерфейс» from Победа.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: calc(50% + -380px);
+  width: 760px;
+  top: calc(50% + -210px);
+  height: 420px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 44px 40px 44px 40px;
+  justify-content: flex-start;
+  align-items: center;
+  background-color: #2b1d2e;
+  outline: 4px solid #ffd54a;
+  outline-offset: -4px;
+  border-radius: 28px 28px 28px 28px;
+}
+#n3 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 72px;
+  font-weight: 800;
+  line-height: normal;
+  text-align: left;
+  color: #ffd54a;
+  white-space: pre;
+}
+#n4 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 32px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: left;
+  color: #eee4d2;
+  white-space: pre;
+}
+#n9 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  gap: 28px;
+  padding: 18px 0px 0px 0px;
+  justify-content: center;
+  align-items: center;
+}
+#n6 {
+  position: relative;
+  width: 280px;
+  flex-shrink: 0;
+  height: 76px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 14px 36px 14px 36px;
+  justify-content: center;
+  align-items: center;
+  background-color: #f2b33d;
+  border-radius: 18px 18px 18px 18px;
+}
+#n5 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #2b1d2e;
+  white-space: pre;
+}
+#n8 {
+  position: relative;
+  width: 280px;
+  flex-shrink: 0;
+  height: 76px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 14px 36px 14px 36px;
+  justify-content: center;
+  align-items: center;
+  background-color: #58425c;
+  border-radius: 18px 18px 18px 18px;
+}
+#n7 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+html, body, #n1 {
+  pointer-events: none;
+}
+#n2, #n3, #n4, #n6, #n5, #n8, #n7 {
+  pointer-events: auto;
+}
+#n6, #n8 {
+  tab-index: auto;
+}
+#forge-dim {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="forge-dim"></div>
+<div id="n1" class="frame" title="Победа" forge-screen="command" forge-fit="expand" forge-size="1920 1080" forge-pauses="1" forge-esc="0" forge-dim="1" forge-over="game" forge-ending="win" forge-appear="zoom" forge-appear-time="0.25">
+  <div id="n2" class="frame" title="Окно">
+    <div id="n3" class="text" title="Заголовок">Победа!</div>
+    <div id="n4" class="text" title="Итог" forge-text="Флаг взят. Очки: {hero.score}, монет: {inv.coins}.">Флаг взят. Очки: {hero.score}, монет: {inv.coins}.</div>
+    <div id="n9" class="frame" title="Кнопки">
+      <div id="n6" class="frame" title="Кнопка «Ещё раз»" forge-click="[[&quot;new&quot;,&quot;&quot;]]">
+        <div id="n5" class="text" title="Ещё раз">Ещё раз</div>
+      </div>
+      <div id="n8" class="frame" title="Кнопка «В меню»" forge-click="[[&quot;menu&quot;,&quot;&quot;]]">
+        <div id="n7" class="text" title="В меню">В меню</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

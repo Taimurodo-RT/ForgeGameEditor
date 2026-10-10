@@ -13,6 +13,7 @@
 // put into that level, which the game must have; without an object only these are checked. And going between its
 // levels (step 14.2b): the areas the hero comes into, where it must be after each. The platformer (step 14.2c): the
 // author's enemy, coin, trap and goal, the zone the hero falls into, the HUD and the windows the game shows at its end.
+// The template «Платформер» (step 14.2d): what the author changed in a game made of it.
 
 #include "forge/core/types.h"
 #include "forge/data/reflect.h"
@@ -35,6 +36,9 @@ struct ProjectEdits {
     forge::u32 text_node = 0, picture_node = 0, button_node = 0; // their layers (#n<id> on the page)
     std::string sound;       // the button's sound, a file of the game's sounds
     forge::u32 sound_frames = 0; // its length
+    // The picture's movement by its own keys, as the author keyed it: its scale at the middle key (100 % at both
+    // ends) and the seconds of one pass; 0: not looked at.
+    double motion_scale = 0, motion_seconds = 0;
     bool absent = false;     // none of it is in this game
     std::string level;       // the level the game plays (its id in levels.json); empty: not checked
     std::string level_name;  // its name, for messages
@@ -63,6 +67,25 @@ struct ProjectEdits {
     std::string pl_hud, pl_lose, pl_win;
     forge::u32 pl_hud_text = 0, pl_lose_text = 0, pl_lose_again = 0, pl_win_text = 0;
     std::vector<int> pl_goal_color;
+    // The template «Платформер» (step 14.2d) as the author changed it in the tabs of a game made of it. tp_hero: the
+    // hero's picture replaced in «Ресурсы», r, g, b of the middle of each of its four frames (stands, step, step, in the
+    // air); the coin's template and its «Очки», a copy of it the author put (x, y of its middle); the enemy's template,
+    // its «Скорость» and «Урон»; cells made solid over a pit (x0, x1, y: e.cells has them); the start level's exit (its
+    // area) and where its link leads now (a level, an area of it); there the pit (its area) and the goal (the flag's
+    // template); the HUD's score layer, the windows of the end: the lose window's «Ещё раз», the win window's title
+    // layer and its button «Ещё раз» (the button, its label's layer) and what they say now.
+    std::vector<int> tp_hero;
+    std::string tp_coin;
+    std::vector<double> tp_coin_at;
+    double tp_coin_score = 0;
+    std::string tp_enemy;
+    double tp_enemy_speed = 0, tp_enemy_damage = 0;
+    std::vector<int> tp_bridge;
+    std::string tp_exit, tp_exit_level, tp_exit_arrive, tp_pit, tp_goal;
+    std::string tp_hud, tp_lose, tp_win;
+    forge::u32 tp_hud_score = 0, tp_again = 0, tp_win_title = 0, tp_win_again = 0, tp_win_again_label = 0;
+    std::string tp_win_text, tp_win_again_text;
+    std::string tp_twin; // the author's «Копия» of tp_enemy (its template's id)
 };
 
 // False (error says why) when the file cannot be read.

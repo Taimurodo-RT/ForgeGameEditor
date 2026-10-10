@@ -113,6 +113,9 @@ struct KindDef {
     std::string icon;  // a Material Symbols name, "paid"
     std::string about; // what objects of this kind do, in one or two sentences
     f64 foot = 0.5;    // from the object's centre down to its feet, in tiles
+    // Its templates are put on levels and linked in «Логика» ("placed": false: they only say something to the
+    // game, as the hero's picture does, and the editor's palette and «Логика» leave them out).
+    bool placed = true;
     // Its blocks (ids), when the kind is put together from blocks; the
     // components and props below are then theirs, with the kind's own
     // starting values on top.
@@ -125,6 +128,9 @@ struct KindDef {
 
     const PropDef* prop(std::string_view prop_id) const;
 };
+
+// The most frames a template's picture may be cut into.
+inline constexpr u32 kMaxFrames = 8;
 
 struct Template {
     std::string id;   // "coins": stable, written in the file; the key comes from it
@@ -141,6 +147,9 @@ struct Template {
     // Its own picture: a file name in the library's pictures folder
     // ("coin.png"); empty: the game draws its usual one.
     std::string picture;
+    // How many frames the picture is: a strip of that many equal frames side by side (1..8; 1: the picture as it is).
+    // Which one shows is the game's: the hero's four (stands, step, step, in the air), a walker's two.
+    u32 frames = 1;
     std::filesystem::path file;
     u32 rev = 0; // hash of the values and blocks: copies with another rev are behind
     // Its picture file got new content under the same name (Library::picture_changed); not saved.

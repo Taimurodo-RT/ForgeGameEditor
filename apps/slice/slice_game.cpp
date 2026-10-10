@@ -49,7 +49,7 @@ constexpr f32 kWalk = 8.5f;
 constexpr f32 kJump = 15.5f;
 constexpr f32 kReach = 5.5f;     // tiles from the hero's centre to dig or build
 constexpr f32 kTalkReach = 2.6f; // to a villager
-constexpr f32 kZoom = 30;
+constexpr f32 kZoom = 30, kZoomMin = 14, kZoomMax = 72;
 constexpr f64 kHearts = 3;
 // The platformer's rules (14.2-платформер-модель.md, «Касание врага»): the safe time after a heart lost, and after the
 // hero is placed (a new game, a save loaded, a level come into); how a hurting enemy pushes the hero away.
@@ -1351,7 +1351,10 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     overlay_.set_handle(h.handle);
     if (!shell.ui().load_document(ctx, "slice/hud.rml")) return false;
 
-    camera_.zoom = kZoom;
+    // The view of a new game: the game's own (game.json «zoom», as far as the wheel goes), else kZoom.
+    const f64 zoom = forge::game::read_game_info(shell.game_dir()).zoom;
+    zoom_ = zoom > 0 ? std::clamp(static_cast<f32>(zoom), kZoomMin, kZoomMax) : kZoom;
+    camera_.zoom = zoom_;
     return true;
 }
 
@@ -1421,7 +1424,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     HeroSave hs;
     hs.x = gen_->spawn_x();
     hs.y = gen_->spawn_y() - kHeroHalfH;
-    hs.zoom = kZoom;
+    hs.zoom = zoom_;
     // Where a new game puts the hero: «Играть отсюда», else the level's spawn
     // point, else the game's start.
     if (new_game && options_.at) {
@@ -1453,7 +1456,7 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
         hs = saved;
     }
     slot_ = hs.slot < kSlots ? hs.slot : 0;
-    camera_.zoom = hs.zoom > 0 ? hs.zoom : kZoom;
+    camera_.zoom = hs.zoom > 0 ? hs.zoom : zoom_;
     camera_.x = hs.x;
     camera_.y = hs.y - 2;
     if (options_.stress) {
@@ -1669,6 +1672,11 @@ std::vector<flecs::entity_t> SliceGame::copies_of(std::string_view template_id) 
         if (ref.key == t->key) out.push_back(e.id());
     });
     return out;
+}
+
+const Pictures::Picture* SliceGame::picture_of(std::string_view template_id) const {
+    const objects::Template* t = library_.find(template_id);
+    return t ? pictures_.of(t->key) : nullptr;
 }
 
 flecs::entity_t SliceGame::spawn_copy(std::string_view template_id, f64 x, f64 feet_y, u64 id) {
@@ -1926,7 +1934,7 @@ bool SliceGame::talk_nearest() {
 void SliceGame::handle_event(const SDL_Event& e) {
     if (!running_) return;
     if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0)
-        camera_.zoom = std::clamp(camera_.zoom * (e.wheel.y > 0 ? 1.15f : 1.0f / 1.15f), 14.0f, 72.0f);
+        camera_.zoom = std::clamp(camera_.zoom * (e.wheel.y > 0 ? 1.15f : 1.0f / 1.15f), kZoomMin, kZoomMax);
     if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
         if (e.key.key >= SDLK_1 && e.key.key < SDLK_1 + static_cast<SDL_Keycode>(kSlots)) select(static_cast<u32>(e.key.key - SDLK_1));
         if (e.key.key == SDLK_E) talk_nearest();
@@ -1975,6 +1983,7 @@ void SliceGame::hero_tick(const TickContext& ctx) {
         if (ground) {
             b.vy = -kJump;
             jumped_ = true;
+            jump_tick_ = ctx.tick;
         } else if (b.liquid != 0) {
             // Swim up; at the surface, a kick that clears the bank.
             const i32 hx = static_cast<i32>(std::floor(p.tile_x()));
@@ -2384,12 +2393,18 @@ void SliceGame::build_sprites() {
         const Hero& h = level_->hero.get<Hero>();
         f64 x, y;
         draw_position(p, b, alpha, x, y);
-        u32 frame = FrameHero;
-        if (!(b.contacts & OnGround) && b.liquid == 0) frame = FrameHero + 3;
-        else if (std::fabs(b.vx) > 0.5f) frame = FrameHero + 1 + (static_cast<u32>(sim.clock().tick() / 6) & 1u);
+        hero_drawn_x_ = x;
+        hero_drawn_y_ = y;
+        // Its frame and side from one look at it (HeroLook): its picture's (the template «Герой», 4 frames or 1),
+        // else the code's.
+        hero_frame_ = hero_look_.see(&sim, sim.clock().tick(), (b.contacts & OnGround) || b.liquid != 0, b.vx, jump_tick_);
+        const Pictures::Picture* pic = pictures_.hero();
+        hero_pictured_ = pic != nullptr;
+        const u32 frame = pic ? pic->frame + (pic->frames == 4 ? hero_frame_ : 0u) : FrameHero + hero_frame_;
+        const f32 side = h.facing < 0 ? -1.0f : 1.0f, w = pic ? 2.0f * pic->aspect : 1.0f;
         // Blinking in the safe second after a heart lost.
         const bool faint = blinking() && (sim.clock().tick() / 5) % 2 == 1;
-        at(x, y, h.facing < 0 ? -1.0f : 1.0f, 2.0f, frame, 4, faint ? render::pack_color(255, 255, 255, 70) : 0xffffffffu);
+        at(x, y, side * w, 2.0f, frame, 4, faint ? render::pack_color(255, 255, 255, 70) : 0xffffffffu);
         // The tool in hand while digging.
         if (controls_.use && inv("pickaxe") > 0) {
             const f32 swing = std::sin(static_cast<f32>(sim.clock().tick()) * 0.5f) * 0.9f;

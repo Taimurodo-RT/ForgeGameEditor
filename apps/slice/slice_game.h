@@ -120,6 +120,12 @@ public:
     f64 hero_x() const;
     f64 hero_y() const;
     bool on_ground() const;
+    // The hero's frame drawn last (0 stands, 1 and 2 the steps, 3 in the air) and whether by its picture.
+    u32 hero_frame() const { return hero_frame_; }
+    bool hero_pictured() const { return hero_pictured_; }
+    // Where it was drawn last (between two ticks: the frame's own place), in tiles.
+    f64 hero_drawn_x() const { return hero_drawn_x_; }
+    f64 hero_drawn_y() const { return hero_drawn_y_; }
     // Moves the hero (the place is loaded first).
     void teleport(f64 x, f64 y);
     // Talks to the villager within reach; false when nobody is near.
@@ -183,6 +189,9 @@ public:
     bool set_sounds(flecs::entity_t e, const Sounds& sounds);
     // The loaded copies of a template (by its id).
     std::vector<flecs::entity_t> copies_of(std::string_view template_id) const;
+    // The game's templates, and the picture the copies of one are drawn with (null: their usual frame).
+    const forge::objects::Library& library() const { return library_; }
+    const Pictures::Picture* picture_of(std::string_view template_id) const;
     // A copy of a template with a level's id of its own, as one the author put on the level (the id stays with it
     // through saves), and the copy of that id in the level now (0: none).
     flecs::entity_t spawn_copy(std::string_view template_id, f64 x, f64 feet_y, forge::u64 id);
@@ -386,6 +395,14 @@ private:
     u32 dig_ticks_ = 0;
     // The hero as last heard: for steps, landings and splashes.
     bool jumped_ = false, was_ground_ = true, was_wet_ = false;
+    // Its frame (HeroLook), the tick of its last jump's push, the frame drawn last (0..3), whether by its picture and
+    // where.
+    HeroLook hero_look_;
+    f32 zoom_ = 30; // a new game's view: pixels per tile
+    u64 jump_tick_ = HeroLook::kNever;
+    u32 hero_frame_ = 0;
+    bool hero_pictured_ = false;
+    f64 hero_drawn_x_ = 0, hero_drawn_y_ = 0;
     f64 fall_ = 0, walked_ = 0;
     flecs::entity_t talking_ = 0;
     std::string location_;

@@ -1,0 +1,17 @@
+{
+  "start_level": "level",
+  "levels": [
+    {
+      "id": "level",
+      "name": "Луг"
+    },
+    {
+      "id": "hills",
+      "name": "Холмы"
+    },
+    {
+      "id": "summit",
+      "name": "Вершина"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "id": "flag",
+  "name": "Флаг",
+  "kind": "picture",
+  "about": "цель игры: герой доходит до флага, и это победа",
+  "picture": "флаг.png",
+  "values": {
+    "half_height": 1
+  }
+}

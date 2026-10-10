@@ -98,6 +98,9 @@ jobs:
       - name: A platformer made by its author (editor self-test part platformer), an enemy, a coin, spikes and a flag made and set in «Объекты» with undo and redo, put on the level, a zone «Пропасть», links «падает в» and «доходит до» in «Логика», a HUD and the windows «Показывается сам» in «Интерфейс», opened again elsewhere and played as set, the template and B byte for byte as before
         if: runner.os == 'Linux'
         run: ./build/apps/editor/forge_editor --self-test platformer
+      - name: The catalog's template «Платформер» (editor self-test part platformer-template), games/platformer made again from its sources byte for byte, A and B made of its card in the window «Новая игра», in A the hero's picture replaced in «Ресурсы», the coin's «Очки» and the beetle's «Скорость» in «Объекты», a coin and a bridge on «Луг», the exit's link in «Логика» and the win window's title in «Интерфейс» with undo and redo, opened again elsewhere and played as changed, the template and B byte for byte as before
+        if: runner.os == 'Linux'
+        run: ./build/apps/editor/forge_editor --self-test platformer-template
       - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
         if: runner.os == 'Linux'
         run: |
@@ -157,11 +160,23 @@ jobs:
           "./$packed" --test --scene platformer
           (cd build/elsewhere && "../../$packed" --test --scene platformer_continue)
           (cd build/elsewhere && "../../$packed" --test --scene platformer_edges)
-      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels and platformer) play in the package and the build with games/slice moved away, the game of levels from its start level and through its links, then continued from another working folder
+      - name: The template «Платформер» in the build, then in the package with games/slice and games/platformer moved away (slice scenes platformer_template, a bot through «Луг» to «Холмы», saved there, three falls and «Ещё раз»; then platformer_template_continue from another working folder, «Продолжить», no reward twice, through «Вершина» to the flag)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then built=build/apps/slice/Release/forge_slice.exe; packed=build/dist/OldMine/OldMine.exe; else built=build/apps/slice/forge_slice; packed=build/dist/OldMine/OldMine; fi
+          mkdir -p build/elsewhere
+          "./$built" --test --scene platformer_template --screenshot world-slice-platformer-template.png
+          (cd build/elsewhere && "../../$built" --test --scene platformer_template_continue --screenshot ../../world-slice-platformer-template-won.png)
+          mv games/slice build/slice-away
+          mv games/platformer build/platformer-away
+          trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer' EXIT
+          "./$packed" --test --scene platformer_template
+          (cd build/elsewhere && "../../$packed" --test --scene platformer_template_continue)
+      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels, platformer and platformer-template) play in the package and the build with games/slice moved away, the game of levels from its start level and through its links, then continued from another working folder
         if: runner.os == 'Linux'
         run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/slice/forge_slice
       # Windows has no GPU here: the editor and the game draw with D3D12's software device (WARP), if SDL finds it.
-      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels and platformer, each game in an editor of its own) and the games in the package and the build
+      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer and platformer-template, each game in an editor of its own) and the games in the package and the build
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -169,6 +184,7 @@ jobs:
           ./build/apps/editor/Release/forge_editor.exe --self-test two-games
           ./build/apps/editor/Release/forge_editor.exe --self-test levels
           ./build/apps/editor/Release/forge_editor.exe --self-test platformer
+          ./build/apps/editor/Release/forge_editor.exe --self-test platformer-template
           python tools/author_game/play.py build/dist/OldMine/OldMine.exe build/apps/slice/Release/forge_slice.exe
       - uses: actions/upload-artifact@v4
         with:

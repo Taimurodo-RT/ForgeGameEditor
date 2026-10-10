@@ -41,6 +41,7 @@
 #include "story_editor.h"
 #include "ui_editor.h"
 #include "object_library.h"
+#include "platformer_template.h"
 #include "slice_edits.h"
 #include "slice_level.h"
 
@@ -1765,7 +1766,8 @@ struct Options {
     // played by "levels-again"; links between them made in «Логика» by "levels-go", opened again, gone through in the
     // game and continued in another process by "levels-go-again"); "platformer" (step 14.2c: an enemy, a coin, spikes, a
     // flag, a zone, links and windows made and set through the tabs by "platformer-a", opened again and played as set by
-    // "platformer-a-again").
+    // "platformer-a-again"); "platformer-template" (step 14.2d: two games of the catalog's «Платформер», A changed through
+    // the tabs by "platformer-template-a", opened again and played as changed by "platformer-template-a-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -1962,6 +1964,9 @@ public:
         if (part == "platformer") return frame < 3 || platformer_step();
         if (part == "platformer-a") return frame < 3 || platformer_a_step();
         if (part == "platformer-a-again") return frame < 3 || platformer_again_step();
+        if (part == "platformer-template") return frame < 3 || platformer_template_step();
+        if (part == "platformer-template-a") return frame < 3 || platformer_template_a_step();
+        if (part == "platformer-template-a-again") return frame < 3 || platformer_template_again_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -13469,6 +13474,8 @@ private:
         e.text_node = tg_u32("text");
         e.picture_node = tg_u32("picture");
         e.button_node = tg_u32("button");
+        e.motion_scale = 1.5; // its middle key, as «Движение» got it typed (150 %), a pass of 1 s as it was
+        e.motion_seconds = 1;
         e.sound = "звон.wav";
         const audio::ClipPtr clip = audio::load(ed_.game_dir / "sounds" / utf8_path("звон.wav"));
         e.sound_frames = clip ? clip->frames() : 0;
@@ -15882,6 +15889,610 @@ private:
         return true;
     }
 
+    // --- «Платформер» из каталога (step 14.2d) -----------------------------------------------------------------
+    // --self-test platformer-template: the template's game made again from its sources (platformer_template::make) is
+    // games/platformer byte for byte. «Платформер Б» and «Платформер А» made of the catalog's card «Платформер» with
+    // the window «Новая игра». The editor for A, started by the window (platformer-template-a), through the tabs, with
+    // the mouse and the keys: the hero's picture replaced in «Ресурсы» by the author's own (as another program saves
+    // it) and brought into the game by F5; in «Объекты» the coin's «Очки», the beetle's «Скорость» and «Урон»; a «Монетка»
+    // put on «Луг» and «Мостки» painted over its first pit in «Уровень»; the exit of «Луг» led to «Вершина» in «Логика»;
+    // the title and a button of the window «при победе» in «Интерфейс»; each undone and done again; saved. platformer-template-a-again,
+    // from another working folder: the same ids, values, cells, link and window; «Играть со стартового»: the game plays
+    // them as changed (scene project with --edits). The template and B: the same bytes before and after.
+    static constexpr u8 kTpHero[4][3] = {{200, 40, 40}, {40, 160, 60}, {150, 60, 210}, {230, 200, 30}};
+    static constexpr i32 kTpBridge0 = 20, kTpBridge1 = 21, kTpCoin = 5; // the cells: «Мостки» over «Луг»'s first pit, a «Монетка»
+    int tp_step_ = 0;
+    std::map<std::string, std::string> tp_rec_; // what platformer-template-a did (a file of the test, outside the games)
+    std::map<std::string, std::vector<u8>> tp_tmpl_, tp_b_;
+    std::vector<u8> tp_copy_; // the game's copy of the hero's picture before
+
+    static std::filesystem::path tp_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_шаблон платформер"); }
+    static std::filesystem::path tp_mine(const char* title) { return tp_root() / utf8_path("Мои игры") / utf8_path(title); }
+    // The template as the window takes it: the catalog, its pictures and «Ресурсы», the module's game and games/platformer.
+    static std::map<std::string, std::vector<u8>> tp_template() {
+        std::map<std::string, std::vector<u8>> out = tg_template();
+        for (auto& [path, bytes] : pj_tree(utf8_path(FORGE_GAMES_DIR) / "platformer")) out["games/platformer/" + path] = std::move(bytes);
+        return out;
+    }
+    // The author's picture of the hero: the template's strip (four frames of 32 × 64), each frame a figure of one colour.
+    static std::vector<u8> tp_hero_png() {
+        assets::CookedTexture t;
+        t.width = 128;
+        t.height = 64;
+        t.rgba8.assign(128 * 64 * 4, 0);
+        for (u32 k = 0; k < 4; ++k)
+            for (u32 y = 3; y <= 61; ++y)
+                for (u32 x = k * 32 + 4; x <= k * 32 + 27; ++x) {
+                    u8* p = &t.rgba8[(y * 128 + x) * 4];
+                    p[0] = kTpHero[k][0];
+                    p[1] = kTpHero[k][1];
+                    p[2] = kTpHero[k][2];
+                    p[3] = 255;
+                }
+        std::vector<u8> png;
+        assets::encode_image(t, ".png", png);
+        return png;
+    }
+    // «Луг»'s exit and where its link leads; «Вершина»'s «Вход» and «Пропасть» (as the template makes their ids).
+    static constexpr const char* kTpExit = "area:142d00a000000101";
+    static constexpr const char* kTpSummitIn = "142d00a000000301";
+    static constexpr const char* kTpSummitPit = "area:142d00a000000302";
+    static constexpr u32 kTpExitLink = 1;
+    // What the game must find: the values as the tabs have them now.
+    slice::ProjectEdits tp_edits() {
+        slice::ProjectEdits e;
+        e.level = "level";
+        e.level_name = "Луг";
+        for (i32 x : {kTpBridge0, kTpBridge1}) e.cells.insert(e.cells.end(), {1, x, 0, 263});
+        for (const auto& c : kTpHero) e.tp_hero.insert(e.tp_hero.end(), {c[0], c[1], c[2]});
+        e.tp_coin = "coin";
+        e.tp_coin_at = {std::strtod(tp_rec_["coin_x"].c_str(), nullptr), std::strtod(tp_rec_["coin_y"].c_str(), nullptr)};
+        e.tp_coin_score = std::strtod(pl_value("coin", "score").c_str(), nullptr);
+        e.tp_enemy = "beetle";
+        e.tp_enemy_speed = std::strtod(pl_value("beetle", "speed").c_str(), nullptr);
+        e.tp_enemy_damage = std::strtod(pl_value("beetle", "damage").c_str(), nullptr);
+        e.tp_twin = tp_rec_["beetle_copy"];
+        e.tp_bridge = {kTpBridge0, kTpBridge1, 0};
+        e.tp_exit = kTpExit;
+        if (const logic::Link* l = lg().links().find(kTpExitLink)) {
+            e.tp_exit_level = l->level;
+            e.tp_exit_arrive = l->arrive;
+        }
+        e.tp_pit = kTpSummitPit;
+        e.tp_goal = "flag";
+        e.tp_hud = "hud";
+        e.tp_hud_score = 6;
+        e.tp_lose = "lose";
+        e.tp_again = 6;
+        e.tp_win = "win";
+        e.tp_win_title = 3;
+        e.tp_win_again = 6;
+        e.tp_win_again_label = 5;
+        if (ue().open("win") && ue_node(3) && ue_node(5)) {
+            e.tp_win_text = ue_node(3)->text;
+            e.tp_win_again_text = ue_node(5)->text;
+        }
+        return e;
+    }
+
+    // --self-test platformer-template: the games made with the window; A in an editor the window starts, then again
+    // from another working folder; the template and B compared byte for byte.
+    bool platformer_template_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = tp_mine("Платформер А"), b = tp_mine("Платформер Б");
+        if (ng_await_) {
+            if (pj_wait(!pjw().opening(), "the editor for the game answers")) return true;
+            ng_await_ = false;
+        }
+        // The window «Новая игра»: the card «Платформер», the title typed, «Мои игры» typed, «Создать и открыть».
+        auto make = [&](int at, const char* title, const fs::path& folder) {
+            switch (at) {
+            case 0: check(pj_click("pj-game"), "the game's button"); break;
+            case 1: check(pj_click("pj-new"), "«Новая игра из шаблона…»"); break;
+            case 2: {
+                const auto& all = pjw().templates();
+                check(pjw().view() == "new" && all.size() == 2 && all[1].id == "platformer" && all[1].name == "Платформер" && shown("pj-template-1"),
+                      "the window «Новая игра»: the catalog's second card «Платформер»");
+                Rml::ElementList pics;
+                if (Rml::Element* card = ed_.find_element("pj-template-1")) card->GetElementsByTagName(pics, "img");
+                check(pics.size() == 1 && pics[0]->GetAttribute<Rml::String>("src", "") == "/memory/pj_template_1" && pics[0]->IsVisible(true),
+                      "its card has its picture");
+                check(pj_click("pj-template-1") && pjw().chosen() == 1, "a click chooses «Платформер»");
+                check(pj_type("pj-title-input", title) && pj_type("pj-where-input", path_to_utf8(tp_root() / utf8_path("Мои игры"))),
+                      std::string("«") + title + "» in «Мои игры» typed");
+                break;
+            }
+            case 3:
+                check(pj_class("pj-template-1", "selected") && !pj_class("pj-template-0", "selected"), "its card is shown chosen");
+                check(pjw().can_create() && pjw().chosen() == 1 && utf8_path(pjw().folder()) == folder, "it can be made: " + pjw().folder());
+                check(pj_click("pj-create") && pjw().opening(), std::string("«Создать и открыть»: «") + title + "» made, its editor starts");
+                ng_await_ = true;
+                break;
+            default: break;
+            }
+        };
+        switch (tp_step_) {
+        case 0: {
+            fs::remove_all(tp_root(), ec);
+            fs::create_directories(tp_root() / utf8_path("Мои игры"), ec);
+            // The template's game is what its sources make: by the function into a folder of Cyrillic name, and by the
+            // command line from another working folder; byte for byte, line ends of the text files aside on both sides
+            // (a Windows checkout has CRLF in them: in games/platformer and in the module's files the maker copies,
+            // while what it writes itself ends its lines with LF). Pictures and regions are compared as they are.
+            const fs::path games = utf8_path(FORGE_GAMES_DIR);
+            auto same = [&](const fs::path& made, const char* how, bool built, const std::string& why) {
+                const auto ours = pj_tree(made), theirs = pj_tree(games / "platformer");
+                auto lf = [](const std::string& path, std::vector<u8> bytes) {
+                    if (path.ends_with(".json") || path.ends_with(".html")) std::erase(bytes, static_cast<u8>('\r'));
+                    return bytes;
+                };
+                std::string differ;
+                for (const auto& [path, bytes] : theirs)
+                    if (!ours.count(path) || lf(path, ours.at(path)) != lf(path, bytes)) differ += " " + path;
+                for (const auto& [path, bytes] : ours)
+                    if (!theirs.count(path)) differ += " +" + path;
+                check(built && differ.empty() && ours.size() == theirs.size() && !fs::exists(made.parent_path() / utf8_path(path_to_utf8(made.filename()) + ".сборка")),
+                      std::string("games/platformer is what its sources make ") + how + ", byte for byte, line ends of text aside (" +
+                          std::to_string(ours.size()) + " files) " + why + differ);
+            };
+            {
+                const fs::path made = tp_root() / utf8_path("сборка");
+                std::string why;
+                const bool built = platformer_template::make(games, made, why);
+                same(made, "(platformer_template::make)", built, why);
+            }
+            {
+                const fs::path other = tp_root() / utf8_path("другая папка"), made = tp_root() / utf8_path("сборка из командной строки");
+                fs::create_directories(other, ec);
+                const int code = pj_run({path_to_utf8(editor_exe()), "--make-template", "platformer", path_to_utf8(made)}, other);
+                same(made, "(forge_editor --make-template)", code == 0, "exit " + std::to_string(code));
+            }
+            // Sources that do not make the game (tiles.png gone) leave the folder made into as it was.
+            {
+                const fs::path broken = tp_root() / utf8_path("источники без плиток"), keep = tp_root() / utf8_path("прежняя папка");
+                fs::create_directories(broken / "slice", ec);
+                for (const char* file : editor::project::kModuleFiles) fs::copy_file(games / "slice" / file, broken / "slice" / file, ec);
+                fs::create_directories(broken / "templates", ec);
+                fs::copy(games / "templates" / "platformer", broken / "templates" / "platformer", fs::copy_options::recursive, ec);
+                fs::remove(broken / "templates" / "platformer" / "tiles.png", ec);
+                fs::create_directories(keep, ec);
+                const std::vector<u8> note = {'f', 'o', 'r', 'g', 'e'};
+                check(write_file_atomic(keep / utf8_path("записка.txt"), note), "a folder with a file of its own");
+                std::string why;
+                const bool built = platformer_template::make(broken, keep, why);
+                check(!built && why.find("tiles.png") != std::string::npos && tg_bytes(keep / utf8_path("записка.txt")) == note &&
+                          pj_tree(keep).size() == 1 && !fs::exists(tp_root() / utf8_path("прежняя папка.сборка")),
+                      "sources without tiles.png make nothing, the folder stays as it was: " + why);
+            }
+            std::string why;
+            // The author's own picture of the hero, apart from both games and the template.
+            const fs::path src = tp_root() / utf8_path("исходники");
+            fs::create_directories(src, ec);
+            check(write_file_atomic(src / utf8_path("герой.png"), tp_hero_png()), "the author's picture of the hero, in «исходники»");
+            fs::remove_all(play_folder(a), ec);
+            fs::remove_all(play_folder(b), ec);
+            tp_tmpl_ = tp_template();
+            check(tp_tmpl_.count("games/platformer/game.json") && tp_tmpl_.count("games/templates/platformer.png") &&
+                      tp_tmpl_.count("games/templates/platformer/assets/картинки/герой.png"),
+                  "the template: games/platformer, its card's picture and «Ресурсы» (" + std::to_string(tp_tmpl_.size()) + " files)");
+            tg_snap("шаблон до", tp_tmpl_, tp_root());
+            ng_config_ = pjw().config();
+            ng_scene_ = ed_.scene_path;
+            ed_.scene_path = tp_root() / utf8_path("сцена.json");
+            check(ed_.save_unsaved(why) && ed_.unsaved().empty(), "nothing unsaved to begin with");
+            // «Платформер Б» first: its editor opens it, says so and closes.
+            pjw().configure(ng_launching());
+            make(0, "Платформер Б", b);
+            break;
+        }
+        case 1: case 2: case 3:
+            make(tp_step_, "Платформер Б", b);
+            break;
+        case 4: {
+            check(!pjw().opening() && ed_.quit_asked, "the editor for «Платформер Б» is ready");
+            const int code = pjw().wait_opened();
+            check(code == 0, "it opened «Платформер Б» (exit " + std::to_string(code) + ")");
+            ed_.quit_asked = false;
+            tp_b_ = pj_tree(b);
+            // B is the template's game (retitled) and its «Ресурсы».
+            std::string differ;
+            usize files = 0;
+            for (const auto& [path, bytes] : tp_tmpl_) {
+                std::string mine;
+                if (path.rfind("games/platformer/", 0) == 0) mine = "game/" + path.substr(17);
+                else if (path.rfind("games/templates/platformer/assets/", 0) == 0) mine = "assets/" + path.substr(34);
+                else continue;
+                ++files;
+                if (!tp_b_.count(mine) || (mine != "game/game.json" && tp_b_.at(mine) != bytes)) differ += " " + mine;
+            }
+            pj::Description d;
+            const std::vector<u8> desc = tp_b_["project.forge"];
+            check(pj::read_description({reinterpret_cast<const char*>(desc.data()), desc.size()}, d) && d.from == "platformer" && d.module == "slice" &&
+                      pj::game_title(b / "game") == "Платформер Б",
+                  "«Платформер Б»: of the template «Платформер», the module «slice», titled");
+            check(differ.empty() && files > 60, "its game and «Ресурсы» are the template's, file for file (" + std::to_string(files) + ")" + differ);
+            tg_snap("Платформер Б до", tp_b_, tp_root());
+            // «Платформер А»: its editor changes it through the tabs, saves and closes.
+            pjw().configure(ng_launching({"--self-test", "platformer-template-a"}));
+            make(0, "Платформер А", a);
+            break;
+        }
+        case 5: case 6: case 7:
+            make(tp_step_ - 4, "Платформер А", a);
+            break;
+        case 8: {
+            check(!pjw().opening() && ed_.quit_asked, "the editor for «Платформер А» is ready");
+            int code = pjw().wait_opened();
+            check(code == 0, "the hero's picture, the coin, the beetle, the level, the exit and the window changed in «Платформер А» through its "
+                             "editor's tabs (platformer-template-a: exit " + std::to_string(code) + ")");
+            ed_.quit_asked = false;
+            // Opened again by its project.forge, from a working folder of neither game.
+            const fs::path other = tp_root() / utf8_path("другая папка");
+            fs::create_directories(other, ec);
+            code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"), "--self-test", "platformer-template-a-again"},
+                          other);
+            check(code == 0, "opened again elsewhere: the same ids, values, cells, link and window; the game plays them as changed "
+                             "(platformer-template-a-again: exit " + std::to_string(code) + ")");
+            const auto tmpl = tp_template(), btree = pj_tree(b);
+            check(tg_snap("шаблон после", tmpl, tp_root()) == tg_digest(tp_tmpl_) && tmpl == tp_tmpl_, "the template byte for byte as before");
+            check(tg_snap("Платформер Б после", btree, tp_root()) == tg_digest(tp_b_) && btree == tp_b_, "«Платформер Б» byte for byte as before");
+            tp_rec_ = tg_get(tp_root() / utf8_path("записи.txt"));
+            const std::string hero = tp_rec_["hero_hash"];
+            const std::vector<std::string> of_a = {hero, tp_rec_["coin_copy"], tp_rec_["beetle_copy"]};
+            check(!hero.empty() && !tp_rec_["beetle_copy"].empty() && tg_naming(b, of_a).empty() &&
+                      tg_naming(utf8_path(FORGE_GAMES_DIR) / "platformer", of_a).empty(),
+                  "nothing of A in B or the template (the new picture's hash, the coin's id, the copy's id): " + tg_naming(b, of_a));
+            pjw().configure(ng_config_);
+            ed_.scene_path = ng_scene_;
+            tp_step_ = -1;
+            return false;
+        }
+        default: break;
+        }
+        ++tp_step_;
+        return true;
+    }
+
+    // In the editor the window started for «Платформер А» (--self-test platformer-template-a).
+    bool platformer_template_a_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game", src = tp_root() / utf8_path("исходники");
+        const fs::path copy = game / "pictures" / utf8_path("герой.png");
+        objects::Library& lib = ol().library();
+        const bool idle = !as().busy();
+        const char* const hero = "картинки/герой.png";
+        auto record = [&](const char* rel) { return as().record_of(as().abs(rel)); };
+        auto link = [&] { return lg().links().find(kTpExitLink); };
+        // The middle of the hero's icon as the editor draws it: the middle of the first frame of the game's picture.
+        auto icon = [&](std::string& rgb) {
+            std::vector<u8> rgba;
+            ed_.level_module.hero_icon(32, rgba);
+            const u8* mid = rgba.size() >= 32 * 32 * 4 ? &rgba[(16 * 32 + 16) * 4] : nullptr;
+            assets::CookedTexture pic;
+            const std::vector<u8> bytes = tg_bytes(copy);
+            const bool read = assets::decode_image(bytes, pic) && pic.width == 128 && pic.height == 64;
+            const u8* want = read ? &pic.rgba8[(32 * 128 + 16) * 4] : nullptr;
+            rgb = (mid ? tg_rgb(mid) : std::string("-")) + ", в картинке " + (want ? tg_rgb(want) : std::string("-"));
+            return mid && want && tg_near(mid, {want[0], want[1], want[2]});
+        };
+        // The open object's value, typed, undone and done again.
+        auto value = [&](const char* id, const char* row, const char* prop, const char* was, const char* now) {
+            check(pl_value(id, prop) == was, std::string("«") + row + "»: " + was);
+            check(pl_set(row, now) && pl_value(id, prop) == now, std::string("«") + row + "» typed: " + now);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(pl_value(id, prop) == was, std::string("Ctrl+Z: ") + was);
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(pl_value(id, prop) == now, std::string("Ctrl+Y: ") + now);
+        };
+        // A card of «Объекты» found by its name and opened by a double click.
+        auto open_card = [&](const char* name) {
+            f32 x = 0, y = 0;
+            check(ue_type("ol-search", name) && card_at(card_named(name), x, y), std::string("«") + name + "» found by its name, its card on screen");
+            left_click(x, y);
+            left_click(x, y);
+        };
+        switch (tp_step_) {
+        case 0: {
+            check(pjw().config().title == "Платформер А" && lvl_same(ed_.game_dir, game), "the editor has «Платформер А» open");
+            check(lib.templates().size() == 8 && ed_.sources.entries().size() == 9, "the template's 8 objects and 9 pictures from «Ресурсы»");
+            check(lv().level_id() == "level" && lv().level_name() == "Луг" && lv().levels().levels.size() == 3, "its start level «Луг», of three");
+            std::string rgb;
+            check(icon(rgb), "the hero's icon is the first frame of the template's picture: " + rgb);
+            tp_copy_ = tg_bytes(copy);
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        // «Ресурсы»: the hero's picture changed in place by another program, F5 brings it into the game (14.1b).
+        case 1: {
+            if (hold(idle && ed_.tab() == "assets" && record(hero), "«Ресурсы» are indexed")) return true;
+            tp_rec_["hero_asset"] = record(hero)->id.to_string();
+            check(tg_bytes(as().abs(hero)) == tp_copy_ && ed_.sources.of_file("pictures/герой.png") &&
+                      ed_.sources.of_file("pictures/герой.png")->asset.to_string() == tp_rec_["hero_asset"],
+                  "the game's picture of the hero is a copy of «картинки/герой.png» of «Ресурсы»");
+            tg_said_ = tg_mark();
+            const auto now = fs::file_time_type::clock::now();
+            check(write_file_atomic(as().abs(hero), tg_bytes(src / utf8_path("герой.png"))), "«картинки/герой.png» saved over by the author's");
+            fs::last_write_time(as().abs(hero), now + std::chrono::seconds(1), ec);
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 2: {
+            if (hold(idle && tg_bytes(copy) == tg_bytes(as().abs(hero)), "F5: the game's copy follows")) return true;
+            check(record(hero) && record(hero)->id.to_string() == tp_rec_["hero_asset"] && as().record_count() == 9, "the same asset, the same id, none more");
+            const editor::sources::Entry* s = ed_.sources.of_file("pictures/герой.png");
+            check(s && s->asset.to_string() == tp_rec_["hero_asset"] && s->hash == editor::sources::hash_of(tg_bytes(copy)),
+                  "game/sources.json: the same copy of the same asset, the new content's hash");
+            tp_rec_["hero_hash"] = s ? s->hash : std::string();
+            const usize updated = tg_said("Из «Ресурсов» обновлено в игре"), restart = tg_said("после перезапуска («Играть»)");
+            check(updated == 1 && restart == 1, "the log says once what was brought up to date, and that a running game sees it when started again (" +
+                                                    std::to_string(updated) + ", " + std::to_string(restart) + ")");
+            std::string rgb;
+            check(icon(rgb) && rgb.rfind(tg_rgb(kTpHero[0]), 0) == 0, "the hero's icon is the first frame of the author's picture now: " + rgb);
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Объекты»: the coin's «Очки», the beetle's «Скорость».
+        case 3:
+            if (ol().editing()) click("ol-back");
+            open_card("Монетка");
+            break;
+        case 4:
+            if (hold(ol().editing() && pl_prop("Очки") >= 0 && shown("ol-num-" + std::to_string(pl_prop("Очки"))), "its editor is laid out")) return true;
+            check(ol().selected() && ol().selected()->id == "coin", "a double click opens «Монетка»");
+            value("coin", "Очки", "score", "10", "25");
+            check(click("ol-back"), "«К библиотеке»");
+            break;
+        case 5:
+            open_card("Жук");
+            break;
+        case 6:
+            if (hold(ol().editing() && pl_prop("Скорость") >= 0 && shown("ol-num-" + std::to_string(pl_prop("Скорость"))), "its editor is laid out"))
+                return true;
+            check(ol().selected() && ol().selected()->id == "beetle", "a double click opens «Жук»");
+            value("beetle", "Скорость", "speed", "1.5", "3");
+            value("beetle", "Урон", "damage", "1", "2");
+            check(click("ol-back"), "«К библиотеке»");
+            // «Копия» of «Жук»: its picture and its two frames go with it, undone and done again; it stays.
+            if (const objects::Template* b = lib.find(std::string_view("beetle"))) {
+                const std::string picture = b->picture;
+                ol().select(b->key);
+                pl_n_ = lib.templates().size();
+                check(click("ol-duplicate") && lib.templates().size() == pl_n_ + 1, "«Копия» of «Жук»");
+                const objects::Template* twin = ol().selected();
+                const std::string id = twin && twin->id != "beetle" ? twin->id : std::string();
+                check(!id.empty() && twin->picture == picture && twin->frames == 2 && lib.find(std::string_view("beetle"))->frames == 2,
+                      "the copy has «Жук»'s picture and «Кадров в картинке» 2");
+                tp_rec_["beetle_copy"] = id;
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(lib.templates().size() == pl_n_ && !lib.find(std::string_view(id)), "Ctrl+Z: the copy gone");
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                const objects::Template* again = lib.find(std::string_view(id));
+                const std::optional<objects::Template> file = again ? objects::read_template(again->file) : std::nullopt;
+                check(lib.templates().size() == pl_n_ + 1 && again && again->frames == 2 && again->picture == picture && file && file->frames == 2,
+                      "Ctrl+Y: the copy again, 2 frames, in its file too");
+            }
+            // A second object of kind «Герой»: the editor says which of them draws the hero.
+            if (const objects::Template* h = lib.find(std::string_view("hero_look"))) {
+                check(ol().hero_note(*h).empty(), "«Герой»: the game's hero is drawn with it, nothing to say");
+                ol().select(h->key);
+            }
+            pl_n_ = lib.templates().size();
+            check(click("ol-duplicate") && lib.templates().size() == pl_n_ + 1, "«Копия» of «Герой»");
+            break;
+        // A «Монетка» put on «Луг» by the start.
+        case 7: {
+            const objects::Template* h = lib.find(std::string_view("hero_look"));
+            const objects::Template* twin = ol().selected();
+            if (h && twin && twin != h) {
+                check(twin->picture == h->picture && twin->frames == 4 && h->frames == 4, "the copy of «Герой» has its picture of 4 frames");
+                const bool mine_first = h->id < twin->id;
+                const std::string first = mine_first ? ol().hero_note(*h) : ol().hero_note(*twin);
+                const std::string other = mine_first ? ol().hero_note(*twin) : ol().hero_note(*h);
+                check(first == "Объектов вида «Герой» с картинкой 2: героя рисует этот, первый по id." &&
+                          other == "Объектов вида «Герой» с картинкой 2: героя рисует «" + (mine_first ? h->name : twin->name) + "», первый по id, а не этот.",
+                      "two of kind «Герой»: each says which draws the hero: «" + first + "», «" + other + "»");
+                check(shown("ol-hero-note") && element_text("ol-hero-note").find(ol().hero_note(*twin)) != std::string::npos,
+                      "the panel says it at the copy: " + element_text("ol-hero-note"));
+            } else {
+                check(false, "the copy of «Герой» is chosen");
+            }
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lib.templates().size() == pl_n_ && h && ol().hero_note(*h).empty(), "Ctrl+Z: the copy gone, nothing to say again");
+            f32 x = 0, y = 0;
+            check(ue_type("ol-search", "Монетка") && card_at(card_named("Монетка"), x, y), "«Монетка» found");
+            left_click(x, y);
+            check(ol().selected() && ol().selected()->id == "coin", "a click chooses it");
+            check(ue_type("ol-search", "") && click("ol-place") && ed_.tab() == "level", "«Поставить на уровень»");
+            break;
+        }
+        case 8: {
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            const auto& defs = ed_.level_module.objects();
+            const i32 armed = lv().armed_object();
+            check(armed >= 0 && defs[static_cast<usize>(armed)].key == lib.find(std::string_view("coin"))->key && lv().level_id() == "level",
+                  "«Монетка» in hand, on «Луг»");
+            view_over(0, -6, 26, 4);
+            click_cell(kTpCoin, -1);
+            const flecs::entity e = lv().selection().empty() ? flecs::entity() : lv().level().find(lv().selection()[0]);
+            check(e.is_valid() && lib.template_of(e) == lib.find(std::string_view("coin")), "a click puts it on the grass");
+            if (!e.is_valid()) return false;
+            const u64 placed = lv().selection()[0];
+            tp_rec_["coin_copy"] = std::to_string(placed);
+            tp_rec_["coin_x"] = std::to_string(e.get<scene::Position>().tile_x());
+            tp_rec_["coin_y"] = std::to_string(e.get<scene::Position>().tile_y());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!lv().level().find(placed).is_valid(), "Ctrl+Z takes it off");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lv().level().find(placed).is_valid(), "Ctrl+Y puts it back, the same id");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            key(SDLK_T, SDL_KMOD_NONE);
+            break;
+        }
+        // «Мостки» over the first pit.
+        case 9: {
+            if (wait(3)) return true;
+            const usize bridge = palette_index("own_263");
+            check(lv().mode() == Mode::Tiles && bridge < lv().tiles().size() && lv().tiles()[bridge].name == "Мостки" && lv().tiles()[bridge].layer == 1 &&
+                      shown("pal-" + std::to_string(bridge)),
+                  "T: the palette has the template's «Мостки», solid");
+            check(click("pal-" + std::to_string(bridge)) && lv().tile_index() == bridge, "a click takes them");
+            // The pit's edges: «Трава, правый край» (258) left of it, «Трава, левый край» (257) right of it.
+            check(at(kTpBridge0, 0) == 0 && at(kTpBridge1, 0) == 0 && at(kTpBridge0 - 1, 0) == 258 && at(kTpBridge1 + 1, 0) == 257,
+                  "nothing over the pit yet, the grass's edges by it");
+            key(SDLK_B, SDL_KMOD_NONE);
+            lv().set_brush_radius(0);
+            const usize entries = lv().history().cursor();
+            to_cell(kTpBridge0, 0);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x_, y_);
+            to_cell(kTpBridge1, 0);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x_, y_);
+            check(at(kTpBridge0, 0) == 263 && at(kTpBridge1, 0) == 263 && at(kTpBridge0 - 1, 0) == 258 && at(kTpBridge1 + 1, 0) == 257 &&
+                      at(kTpBridge0, 1) == 0 && lv().history().cursor() == entries + 1,
+                  "the brush lays «Мостки» over the pit, two cells, one history entry");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(at(kTpBridge0, 0) == 0 && at(kTpBridge1, 0) == 0, "Ctrl+Z takes them back");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(at(kTpBridge0, 0) == 263 && at(kTpBridge1, 0) == 263, "Ctrl+Y lays them again");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S writes «Луг»");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        // «Логика»: «Выход на Холмы» leads to «Вершина» now.
+        case 10:
+            if (wait(2)) return true;
+            check(link() && link()->level == "hills" && lg().problem_of(kTpExitLink).empty() &&
+                      lg().phrase_of(kTpExitLink) == "Герой уходит через Выход на Холмы на уровень «Холмы», в зону «Вход»",
+                  "the exit of «Луг»: " + lg().phrase_of(kTpExitLink));
+            lg().select_link(kTpExitLink);
+            break;
+        case 11:
+            if (wait(2)) return true;
+            check(lg().level_choices() == std::vector<std::string>{"level", "hills", "summit"} && shown("lg-go-level-summit"),
+                  "«Куда»: the template's three levels");
+            check(click("lg-go-level-summit") && link()->level == "summit" && link()->arrive.empty(), "«Вершина» chosen: its spawn point");
+            break;
+        case 12:
+            if (wait(2)) return true;
+            check(shown(std::string("lg-go-arrive-") + kTpSummitIn) && click(std::string("lg-go-arrive-") + kTpSummitIn) &&
+                      link()->arrive == std::string(logic::kAreaPrefix) + kTpSummitIn && lg().problem_of(kTpExitLink).empty(),
+                  "its zone «Вход» chosen");
+            check(lg().phrase_of(kTpExitLink) == "Герой уходит через Выход на Холмы на уровень «Вершина», в зону «Вход»", "in words: " + lg().phrase_of(kTpExitLink));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(link()->level == "hills" && link()->arrive == "area:142d00a000000201", "Ctrl+Z twice: «Холмы», «Вход» as the template has it");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(link()->level == "summit" && link()->arrive == std::string(logic::kAreaPrefix) + kTpSummitIn, "Ctrl+Y twice: «Вершина», «Вход»");
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        // «Интерфейс»: the title of the window «при победе».
+        case 13:
+            if (hold(ed_.tab() == "ui" && shown("ue-new-screen"), "«Интерфейс» is laid out")) return true;
+            check(ue().open("win") && ue().screen().ending == d::WindowEnding::Win && ue_node(3) && ue_node(3)->text == "Победа!",
+                  "the window «при победе», its «Заголовок» «Победа!»");
+            if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            ue().select({3});
+            break;
+        case 14:
+            if (hold(shown("ue-s-text"), "the text's field is laid out")) return true;
+            check(ue_type("ue-s-text", "Флаг ваш!") && ue_node(3)->text == "Флаг ваш!", "«Флаг ваш!» typed");
+            ue().undo();
+            check(ue_node(3)->text == "Победа!", "Ctrl+Z: «Победа!»");
+            ue().redo();
+            check(ue_node(3)->text == "Флаг ваш!" && ue_file(".html", "win").find("Флаг ваш!") != std::string::npos, "Ctrl+Y: «Флаг ваш!», on its page too");
+            ue().select({5});
+            break;
+        case 15:
+            if (hold(shown("ue-s-text"), "the button's text field is laid out")) return true;
+            check(ue_node(5) && ue_node(5)->text == "Ещё раз", "the button «Ещё раз» of the window");
+            check(ue_type("ue-s-text", "Сыграть снова") && ue_node(5)->text == "Сыграть снова", "«Сыграть снова» typed");
+            ue().undo();
+            check(ue_node(5)->text == "Ещё раз", "Ctrl+Z: «Ещё раз»");
+            ue().redo();
+            check(ue_node(5)->text == "Сыграть снова" && ue_node(6) && ue_node(6)->on_click.size() == 1 &&
+                      ue_node(6)->on_click[0].kind == d::ActionKind::NewGame,
+                  "Ctrl+Y: «Сыграть снова»; the button still starts a new game");
+            {
+                std::string error;
+                check(ed_.save_unsaved(error) && ed_.unsaved().empty() && !lv().dirty(), "everything is written: " + error);
+            }
+            check(tg_put(tp_root() / utf8_path("записи.txt"), tp_rec_), "what was done written down for the next editor (outside the games)");
+            {
+                std::string all;
+                for (const auto& [k, v] : tp_rec_) all += " " + k + "=" + v;
+                FORGE_INFO("self-test: шаблон автора:%s", all.c_str());
+            }
+            return false;
+        default: break;
+        }
+        ++tp_step_;
+        return true;
+    }
+
+    // In an editor for «Платформер А» from another working folder (--self-test platformer-template-a-again).
+    bool platformer_template_again_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game";
+        objects::Library& lib = ol().library();
+        switch (tp_step_) {
+        case 0: {
+            tp_rec_ = tg_get(tp_root() / utf8_path("записи.txt"));
+            check(tp_rec_.count("coin_copy") && tp_rec_.count("hero_asset"), "what platformer-template-a did is written down");
+            check(!lvl_same(fs::current_path(), a), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            const editor::sources::Entry* s = ed_.sources.of_file("pictures/герой.png");
+            check(tg_bytes(game / "pictures" / utf8_path("герой.png")) == tp_hero_png() && s && s->asset.to_string() == tp_rec_["hero_asset"] &&
+                      s->hash == tp_rec_["hero_hash"],
+                  "the hero's picture is the author's, a copy of the same asset");
+            check(pl_value("coin", "score") == "25" && pl_value("beetle", "speed") == "3" && pl_value("beetle", "damage") == "2" &&
+                      lib.templates().size() == 9,
+                  "«Монетка»: «Очки» 25; «Жук»: «Скорость» 3, «Урон» 2; no object more than its «Копия»");
+            const objects::Template* twin = lib.find(std::string_view(tp_rec_["beetle_copy"]));
+            check(twin && twin->kind == "enemy" && twin->picture == lib.find(std::string_view("beetle"))->picture && twin->frames == 2,
+                  "the «Копия» of «Жук» by its id: the same picture, «Кадров в картинке» 2");
+            check(lv().level_id() == "level", "«Луг» opens, the level open last");
+            const flecs::entity e = lv().level().find(std::strtoull(tp_rec_["coin_copy"].c_str(), nullptr, 10));
+            check(e.is_valid() && lib.template_of(e) == lib.find(std::string_view("coin")) &&
+                      std::to_string(e.get<scene::Position>().tile_x()) == tp_rec_["coin_x"] &&
+                      std::to_string(e.get<scene::Position>().tile_y()) == tp_rec_["coin_y"],
+                  "the «Монетка» by its id, where it was put");
+            lv().level().ensure_loaded({kTpBridge0 - 4, -4, kTpBridge1 + 4, 4});
+            check(at(kTpBridge0, 0) == 263 && at(kTpBridge1, 0) == 263 && at(kTpBridge0, 1) == 0, "«Мостки» over the pit");
+            const logic::Link* l = lg().links().find(kTpExitLink);
+            check(l && l->b == kTpExit && l->level == "summit" && l->arrive == std::string(logic::kAreaPrefix) + kTpSummitIn &&
+                      lg().problem_of(kTpExitLink).empty(),
+                  "the exit of «Луг» leads to «Вершина», «Вход»");
+            check(ue().open("win") && ue().screen().ending == d::WindowEnding::Win && ue_node(3) && ue_node(3)->text == "Флаг ваш!" && ue_node(5) &&
+                      ue_node(5)->text == "Сыграть снова",
+                  "the window «при победе»: «Флаг ваш!», «Сыграть снова»");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 1:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 2: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const slice::ProjectEdits e = tp_edits();
+            const int code = tg_play(&e, "ожидания шаблон.json", tp_root());
+            check(code == 0, "the game plays the author's picture, coin, beetle, bridge, exit and window as changed (exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++tp_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -16803,6 +17414,20 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
 } // namespace
 
 int main(int argc, char** argv) {
+    // The template «Платформер» made anew from its sources (platformer_template.h): no window.
+    if (argc == 4 && std::strcmp(argv[1], "--make-template") == 0) {
+        if (std::strcmp(argv[2], "platformer") != 0) {
+            FORGE_ERROR("--make-template: нет шаблона «%s» (есть platformer)", argv[2]);
+            return 2;
+        }
+        jobs::init();
+        std::string why;
+        const bool ok = platformer_template::make(utf8_path(FORGE_GAMES_DIR), utf8_path(argv[3]), why);
+        jobs::shutdown();
+        if (ok) FORGE_INFO("Шаблон «Платформер» собран в %s", argv[3]);
+        else FORGE_ERROR("Шаблон «Платформер» не собран: %s", why.c_str());
+        return ok ? 0 : 1;
+    }
     AppConfig config;
     config.title = "Forge — редактор";
     config.background_fps = 30; // leave the PC to the game the user starts next to the editor
@@ -16854,12 +17479,14 @@ int main(int argc, char** argv) {
     }
     static const char* const kParts[] = {"new-game",     "opened-game",     "ready",      "two-games",    "two-games-a",       "two-games-a-again",
                                          "two-games-b",  "levels",          "levels-a",   "levels-again", "levels-go",         "levels-go-again",
-                                         "platformer",   "platformer-a",    "platformer-a-again"};
+                                         "platformer",   "platformer-a",    "platformer-a-again", "platformer-template",
+                                         "platformer-template-a", "platformer-template-a-again"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
                     "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again, platformer and its parts "
-                    "platformer-a, platformer-a-again)",
+                    "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
+                    "platformer-template-a-again)",
                     app.options.self_part.c_str());
         return 2;
     }

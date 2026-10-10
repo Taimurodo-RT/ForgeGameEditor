@@ -1,0 +1,13 @@
+{
+  "id": "coin",
+  "name": "Монетка",
+  "kind": "pickup",
+  "genre": "Платформер",
+  "about": "одна монетка и 10 очков в счёт",
+  "picture": "монета.png",
+  "values": {
+    "what": "coins",
+    "count": 1,
+    "score": 10
+  }
+}

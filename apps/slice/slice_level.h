@@ -98,6 +98,47 @@ struct Sounds {
 
 // The hero's size, for spawning people.
 inline constexpr f32 kHeroHalfW = 0.38f, kHeroHalfH = 0.92f;
+// Which of the hero's four frames shows (0 stands, 1 and 2 the steps, 3 in the air), the code's and a picture's alike.
+// The game looks at the hero as it draws it, so the frame and the side it faces come from one state of it:
+// - on the ground (or in water) it stands, or walks when it goes faster than 0,5 tile/s: its first frame walking is
+//   always 1, then 1 and 2 by turns every 6 ticks from the tick it began to walk (not by the game's clock);
+// - it is in the air 3 ticks after it left the ground (a step down does not show it: till then it goes on as it was),
+//   or at once after a jump's push;
+// - back on the ground it stands or walks in that same frame: there is no frame of landing.
+// Another world (a level gone into, a game loaded) starts it anew.
+struct HeroLook {
+    static constexpr u64 kNever = ~0ull;
+    const void* world = nullptr; // the level's simulation it was seen in
+    u64 seen = 0;                // the tick it was looked at last
+    u64 ground = 0;              // the last tick it stood
+    u64 walk_from = 0;           // the tick it began to walk
+    u64 fast = 0;                // the last tick it went fast enough to walk
+    bool walking = false;
+    // tick: the level's clock now; jump: the tick of the last jump's push (kNever: none).
+    u32 see(const void* in, u64 tick, bool on_ground, f32 vx, u64 jump) {
+        if (in != world || tick < seen) {
+            *this = {};
+            world = in;
+            ground = tick;
+        }
+        seen = tick;
+        if (on_ground) {
+            const bool walks = vx > 0.5f || vx < -0.5f;
+            if (walks && !walking) walk_from = tick;
+            if (walks) fast = tick;
+            // Two ticks slower keep the walk (a step walked up stops the hero for one): no frame of standing flashes in it.
+            walking = walks || (walking && tick - fast <= 2);
+            ground = tick;
+            return walking ? 1u + static_cast<u32>(((tick - walk_from) / 6) & 1u) : 0u;
+        }
+        if (tick - ground > 3 || (jump != kNever && jump >= ground)) {
+            walking = false;
+            return 3u;
+        }
+        return walking ? 1u + static_cast<u32>(((tick - walk_from) / 6) & 1u) : 0u; // just off the ground: as it was
+    }
+};
+
 // The world's pull of a level without physics.json, tiles / s² down.
 inline constexpr f32 kGravity = 40;
 // The light of a torch.
