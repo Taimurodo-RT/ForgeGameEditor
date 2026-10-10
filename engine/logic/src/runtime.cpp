@@ -63,6 +63,17 @@ struct Api {
         }
         return 0;
     }
+    // Where a link sends the hero: asked for now, done by the game after the tick.
+    static int go(lua_State* L) {
+        Runtime& r = rt(L);
+        const u32 link = static_cast<u32>(lua_isnumber(L, 4) ? lua_tonumber(L, 4) : 0);
+        if (!r.game_.go(entity_arg(L, 1), string_arg(L, 2), string_arg(L, 3), link)) {
+            static bool said = false;
+            if (!said) FORGE_WARN("Связи: игра не умеет переходить на другой уровень");
+            said = true;
+        }
+        return 0;
+    }
     static int hint(lua_State* L) {
         rt(L).game_.hint(entity_arg(L, 1), string_arg(L, 2));
         return 0;
@@ -146,6 +157,7 @@ Runtime::Runtime(script::ScriptHost& host, const objects::Library& library, Game
     add("logic.hero", &Api::hero);
     add("logic.has", &Api::has);
     add("logic.act", &Api::act);
+    add("logic.go", &Api::go);
     add("logic.hint", &Api::hint);
     add("logic.sound", &Api::sound);
     add("logic.night", &Api::night);
@@ -161,11 +173,12 @@ Runtime::~Runtime() {
 
 bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>* problems) {
     std::vector<Thing> things;
-    things.reserve(library_.templates().size() + 1 + areas_.size() + other_areas_.size());
+    things.reserve(library_.templates().size() + 1 + areas_.size() + other_areas_.size() + levels_.size());
     things.push_back(hero_thing());
     for (const objects::Template& t : library_.templates()) things.push_back(thing_of(library_, t));
     things.insert(things.end(), areas_.begin(), areas_.end());
     things.insert(things.end(), other_areas_.begin(), other_areas_.end());
+    things.insert(things.end(), levels_.begin(), levels_.end());
     const FindThing find = [&](std::string_view id) -> const Thing* {
         for (const Thing& t : things)
             if (t.id == id) return &t;
@@ -199,6 +212,7 @@ bool Runtime::load(const Logic& logic, const Verbs& verbs, std::vector<Problem>*
 
 void Runtime::set_areas(std::vector<Thing> areas) { areas_ = std::move(areas); }
 void Runtime::set_other_areas(std::vector<Thing> areas) { other_areas_ = std::move(areas); }
+void Runtime::set_levels(std::vector<Thing> levels) { levels_ = std::move(levels); }
 
 void Runtime::sync_areas() {
     if (!scene_) return;

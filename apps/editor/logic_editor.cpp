@@ -277,6 +277,14 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("current", &ChoiceView::current);
     }
     model.RegisterArray<std::vector<ChoiceView>>();
+    if (auto s = model.RegisterStruct<GoOption>()) {
+        s.RegisterMember("id", &GoOption::id);
+        s.RegisterMember("key", &GoOption::key);
+        s.RegisterMember("name", &GoOption::name);
+        s.RegisterMember("about", &GoOption::about);
+        s.RegisterMember("current", &GoOption::current);
+    }
+    model.RegisterArray<std::vector<GoOption>>();
 
     model.Bind("lg_things", &m_things_);
     model.Bind("lg_links", &m_links_);
@@ -317,6 +325,9 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_choose_title", &m_choose_title_);
     model.Bind("lg_gallery", &m_gallery_);
     model.Bind("lg_choosing", &m_choosing_);
+    model.Bind("lg_sel_go", &m_sel_go_);
+    model.Bind("lg_go_levels", &m_go_levels_);
+    model.Bind("lg_go_arrivals", &m_go_arrivals_);
 
     auto on = [&model](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) { fn(ev, a); });
@@ -388,6 +399,14 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     on("lg_choose", [this](Rml::Event& ev, const Rml::VariantList& a) {
         ev.StopPropagation();
         choose(arg_str(a, 0));
+    });
+    on("lg_go_level", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        choose_level(arg_str(a, 0));
+    });
+    on("lg_go_arrive", [this](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        choose_arrival(arg_str(a, 0));
     });
     on("lg_choose_cancel", [this](Rml::Event& ev, const Rml::VariantList&) {
         ev.StopPropagation();
@@ -469,6 +488,9 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
 const logic::Thing* LogicEditor::thing(std::string_view id) const {
     for (const logic::Thing& t : things_)
         if (t.id == id) return &t;
+    if (logic::is_level(id))
+        for (const logic::Thing& t : level_things_)
+            if (t.id == id) return &t;
     return nullptr;
 }
 
@@ -510,6 +532,7 @@ void LogicEditor::rebuild() {
     built_areas_ = areas_version ? areas_version() : 0;
     if (level_areas)
         for (logic::Thing& t : level_areas()) things_.push_back(std::move(t));
+    level_things_ = levels ? levels() : std::vector<logic::Thing>{};
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
     problems_.clear();
     if (!keep_compiled_) compiled_ = logic::compile(logic_, verbs_, find, &scheme_.nodes()).problems;
@@ -632,6 +655,27 @@ void LogicEditor::rebuild_side() {
     m_sel_code_ = l && !l->code.empty();
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
     m_sel_scheme_ = l && l->code.empty() && logic::own_scheme(*l, verbs_, find);
+    // «Куда»: the game's levels, then where on the chosen one (its spawn point, its areas).
+    const logic::VerbDef* lv = l ? verbs_.find(l->verb) : nullptr;
+    m_sel_go_ = lv && lv->action == logic::kGoAction && l->code.empty();
+    std::vector<GoOption> go_levels, go_arrivals;
+    if (m_sel_go_) {
+        for (const logic::Thing& t : level_things_)
+            go_levels.push_back({t.level, t.level, t.name, {}, t.level == l->level});
+        const logic::Thing* chosen = thing(std::string(logic::kLevelPrefix) + l->level);
+        if (chosen) {
+            go_arrivals.push_back({"", "spawn", "Точка появления уровня", "где начинает новая игра на этом уровне", l->arrive.empty()});
+            const std::string suffix = " (" + chosen->name + ")";
+            for (const logic::Thing& t : things_)
+                if (t.area && t.level == l->level) {
+                    std::string name = t.name;
+                    if (name.size() > suffix.size() && name.ends_with(suffix)) name.resize(name.size() - suffix.size());
+                    go_arrivals.push_back({t.id, t.id.substr(logic::kAreaPrefix.size()), "Зона «" + name + "»", "в её середине, на полу", t.id == l->arrive});
+                }
+        }
+    }
+    set(m_go_levels_, go_levels, "lg_go_levels");
+    set(m_go_arrivals_, go_arrivals, "lg_go_arrivals");
     if (l) {
         m_sel_phrase_ = phrase_of(l->id);
         m_sel_meaning_ = meaning_of(l->id);
@@ -662,7 +706,7 @@ void LogicEditor::rebuild_side() {
     for (const logic::Link& k : logic_.links)
         m_words_.push_back({static_cast<int>(k.id), phrase_of(k.id), meaning_of(k.id), problem_of(k.id), k.id == sel_link_, lit(k.id)});
     if (model_)
-        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code", "lg_sel_scheme", "lg_sel_own", "lg_sel_area",
+        for (const char* name : {"lg_has_link", "lg_has_thing", "lg_refine", "lg_sel_phrase", "lg_sel_meaning", "lg_sel_problem", "lg_sel_code", "lg_sel_scheme", "lg_sel_own", "lg_sel_area", "lg_sel_go",
                                  "lg_thing_links", "lg_sel_name", "lg_sel_icon", "lg_sel_links", "lg_words"})
             model_.DirtyVariable(name);
 }
@@ -674,7 +718,8 @@ std::string LogicEditor::phrase_of(u32 link) const {
     const logic::Thing* a = thing(l->a);
     const logic::Thing* b = thing(l->b);
     if (!v || !a || !b) return (a ? a->name : l->a) + " " + (v ? v->name : l->verb) + " " + (b ? b->name : l->b);
-    return logic::phrase(*l, *v, *a, *b);
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    return logic::phrase(*l, *v, *a, *b, logic::destination(*l, *v, find));
 }
 
 std::string LogicEditor::meaning_of(u32 link) const {
@@ -683,7 +728,8 @@ std::string LogicEditor::meaning_of(u32 link) const {
     const logic::VerbDef* v = verbs_.find(l->verb);
     const logic::Thing* a = thing(l->a);
     const logic::Thing* b = thing(l->b);
-    return v && a && b ? logic::meaning(*l, *v, *a, *b) : std::string();
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    return v && a && b ? logic::meaning(*l, *v, *a, *b, logic::destination(*l, *v, find)) : std::string();
 }
 
 std::string LogicEditor::problem_of(u32 link) const {
@@ -1033,6 +1079,47 @@ bool LogicEditor::refine(u32 link, const std::string& what, bool on) {
     return true;
 }
 
+bool LogicEditor::set_destination(u32 link, const std::string& level, const std::string& arrive) {
+    const logic::Link* l = logic_.find(link);
+    const logic::Thing* lv = thing(std::string(logic::kLevelPrefix) + level);
+    if (!l || !lv) return false;
+    // Only an area of that level (or its spawn point).
+    const logic::Thing* at = arrive.empty() ? nullptr : thing(arrive);
+    if (!arrive.empty() && (!at || !at->area || at->level != level)) return false;
+    if (l->level == level && l->arrive == arrive) return true;
+    logic::Logic after = logic_;
+    logic::set_destination(*after.find(link), level, arrive);
+    std::string label = "Куда: на уровень «" + lv->name + "»";
+    if (at) label += ", в зону";
+    change(after, label);
+    return true;
+}
+
+bool LogicEditor::choose_level(const std::string& level) {
+    const logic::Link* l = logic_.find(sel_link_);
+    if (!l) return false;
+    // The area stays when it is on the level chosen.
+    const logic::Thing* at = l->arrive.empty() ? nullptr : thing(l->arrive);
+    return set_destination(sel_link_, level, at && at->level == level ? l->arrive : std::string());
+}
+
+bool LogicEditor::choose_arrival(const std::string& arrive) {
+    const logic::Link* l = logic_.find(sel_link_);
+    return l && !l->level.empty() && set_destination(sel_link_, l->level, arrive);
+}
+
+std::vector<std::string> LogicEditor::level_choices() const {
+    std::vector<std::string> out;
+    for (const GoOption& o : m_go_levels_) out.push_back(o.id);
+    return out;
+}
+
+std::vector<std::string> LogicEditor::arrival_choices() const {
+    std::vector<std::string> out;
+    for (const GoOption& o : m_go_arrivals_) out.push_back(o.id);
+    return out;
+}
+
 bool LogicEditor::remove_link() {
     if (!logic_.find(sel_link_)) return false;
     logic::Logic after = logic_;
@@ -1050,7 +1137,8 @@ std::vector<logic::Step> LogicEditor::steps_of(u32 link) const {
     const logic::VerbDef* v = l ? verbs_.find(l->verb) : nullptr;
     const logic::Thing* a = l ? thing(l->a) : nullptr;
     const logic::Thing* b = l ? thing(l->b) : nullptr;
-    return v && a && b ? logic::steps(*l, *v, *a, *b) : std::vector<logic::Step>{};
+    const logic::FindThing find = [this](std::string_view id) { return thing(id); };
+    return v && a && b ? logic::steps(*l, *v, *a, *b, logic::destination(*l, *v, find)) : std::vector<logic::Step>{};
 }
 
 void LogicEditor::open_adds(u32 link) {

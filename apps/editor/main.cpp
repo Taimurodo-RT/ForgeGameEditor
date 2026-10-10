@@ -413,7 +413,7 @@ public:
         logic_tab.level_areas = [this] {
             std::vector<logic::Thing> out;
             for (const level::Area& a : level.level().areas().areas)
-                out.push_back(logic::area_thing(std::string(logic::kAreaPrefix) + level::area_id_text(a.id), a.name));
+                out.push_back(logic::area_thing(std::string(logic::kAreaPrefix) + level::area_id_text(a.id), a.name, level.level_id()));
             if (game_dir.empty()) return out;
             const level::LevelList list = level::read_levels(game_dir);
             for (const level::LevelEntry& e : list.levels) {
@@ -422,11 +422,20 @@ public:
                 if (!level::load_areas(level::level_folder(game_dir, e.id), there)) continue;
                 for (const level::Area& a : there.areas)
                     if (!level.level().areas().find(a.id))
-                        out.push_back(logic::area_thing(std::string(logic::kAreaPrefix) + level::area_id_text(a.id), a.name + " (" + e.name + ")"));
+                        out.push_back(logic::area_thing(std::string(logic::kAreaPrefix) + level::area_id_text(a.id),
+                                                        a.name + " (" + e.name + ")", e.id));
             }
             return out;
         };
-        logic_tab.areas_version = [this] { return level.level().areas_version() + (level.levels_opened() << 40); };
+        // Where links may send the hero: the levels of the list as read (an entry not read is no level).
+        logic_tab.levels = [this] {
+            std::vector<logic::Thing> out;
+            for (const level::LevelEntry& e : level.levels().levels) out.push_back(logic::level_thing(e.id, e.name));
+            return out;
+        };
+        logic_tab.areas_version = [this] {
+            return level.level().areas_version() + (level.levels_opened() << 40) + (level.levels_serial() << 20);
+        };
         // Another level opens with this one changed: the window about unsaved changes, for the level.
         level.ask_unsaved = [this](const std::string& from, const std::string& to, std::vector<std::string> unsaved,
                                    std::function<bool(std::string&)> save, std::function<void(bool)> go) {
@@ -1752,7 +1761,8 @@ struct Options {
     // the editor for the game it made with "opened-game", which plays it from there); "two-games" (two games of one
     // template: A made through the tabs by "two-games-a", opened again by "two-games-a-again", B by "two-games-b");
     // "levels" (a game's levels: made, renamed, the start level and maps imported by "levels-a", opened again and
-    // played by "levels-again").
+    // played by "levels-again"; links between them made in «Логика» by "levels-go", opened again, gone through in the
+    // game and continued in another process by "levels-go-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -1944,6 +1954,8 @@ public:
         if (part == "levels") return frame < 3 || levels_step();
         if (part == "levels-a") return frame < 3 || levels_a_step();
         if (part == "levels-again") return frame < 3 || levels_again_step();
+        if (part == "levels-go") return frame < 3 || levels_go_step();
+        if (part == "levels-go-again") return frame < 3 || levels_go_again_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -14535,12 +14547,28 @@ private:
         code = pj_run({exe, "--project", project, "--self-test", "levels-again"}, two);
         check(code == 0, "opened again elsewhere: the same levels, ids and bytes; each played; the start level as a player starts it "
                          "(levels-again: exit " + std::to_string(code) + ")");
+        const fs::path three = lvl_root() / utf8_path("третья папка"), four = lvl_root() / utf8_path("четвёртая папка");
+        fs::create_directories(three, ec);
+        fs::create_directories(four, ec);
+        code = pj_run({exe, "--project", project, "--self-test", "levels-go"}, three);
+        check(code == 0, "links «уходит через» between the levels made in «Логика», their level and zone renamed (levels-go: exit " +
+                             std::to_string(code) + ")");
+        code = pj_run({exe, "--project", project, "--self-test", "levels-go-again"}, four);
+        check(code == 0, "opened again: the links as they were; the game goes through them, is saved and continued in another process "
+                         "(levels-go-again: exit " + std::to_string(code) + ")");
         lvl_rec_ = tg_get(lvl_root() / utf8_path("записи.txt"));
         const level::LevelList list = level::read_levels(g / "game");
         const std::string id = lvl_rec_["id"];
         check(list.from_file && !list.broken && list.notes.empty() && list.levels.size() == 2 && list.levels[0].id == "level" &&
-                  list.levels[0].name == "Уровень 1" && list.levels[1].id == id && list.levels[1].name == "Пещера" && list.start == id,
-              "game/levels.json: «Уровень 1» (level) and «Пещера» (" + id + "), the start «Пещера»");
+                  list.levels[0].name == "Уровень 1" && list.levels[1].id == id && list.levels[1].name == "Глубокая пещера" && list.start == id,
+              "game/levels.json: «Уровень 1» (level) and «Глубокая пещера» (" + id + "), the start «Глубокая пещера»");
+        logic::Logic links;
+        const logic::Link* go = links.load(g / "game" / "logic.json") ? links.find(static_cast<u32>(std::atoi(lvl_rec_["go"].c_str()))) : nullptr;
+        const logic::Link* back = links.find(static_cast<u32>(std::atoi(lvl_rec_["back"].c_str())));
+        const std::string a1 = std::string(logic::kAreaPrefix) + lvl_rec_["zone1"], a2 = std::string(logic::kAreaPrefix) + lvl_rec_["zone2"];
+        check(go && go->verb == "go" && go->b == a1 && go->level == id && go->arrive == a2 && back && back->verb == "go" && back->b == a2 &&
+                  back->level == "level" && back->arrive.empty(),
+              "game/logic.json: «Уровень 1»'s zone to «Глубокая пещера»'s «Вход», and «Вход» to «Уровень 1»'s spawn point, by their ids");
         const auto tmpl = tg_template();
         check(tg_snap("шаблон после", tmpl, lvl_root()) == tg_digest(lvl_tmpl_) && tmpl == lvl_tmpl_, "the template byte for byte as before");
         return false;
@@ -14996,6 +15024,306 @@ private:
                       !pj_class("lv-level-new", "disabled") && tg_bytes(list_file) == lvl_list_,
                   "put right: the list read again, its menu on, nothing said of it");
             return false;
+        default:
+            break;
+        }
+        ++lvl_step_;
+        return true;
+    }
+
+    // Going between the levels (step 14.2b). levels-go: in «Логика», a link «Герой уходит через» «Уровень 1»'s zone,
+    // its «Куда» chosen from lists (the level, then its spawn point or a zone of it), taken back and done again; the
+    // lists only have the levels of levels.json as read (no folder outside it, no entry not read); the level and the
+    // zone it leads to renamed: the link keeps their ids and says their new names; a link back from that zone.
+    // levels-go-again: opened again elsewhere, the links as they were; the game played from its start level goes
+    // through both and is saved; another process from another working folder takes «Продолжить» and finds the level
+    // as the hero left it.
+    u32 lvl_go_ = 0, lvl_back_ = 0; // the two links
+    std::string lvl_z1_;           // «Уровень 1»'s zone (its id's text)
+
+    // A link of the hero and an area by the verb «уходит через», picked on the board (the two clicked before).
+    bool lvl_pick_go(const std::string& through) {
+        std::string offered;
+        i64 at_ = -1;
+        for (usize i = 0; i < lg().pick_options(); ++i) {
+            offered += " «" + lg().pick_phrase(i) + "»";
+            if (lg().pick_phrase(i).rfind("Герой уходит через " + through, 0) == 0) at_ = static_cast<i64>(i);
+        }
+        return check(at_ >= 0 && lg().pick(static_cast<usize>(at_)), "«Герой уходит через " + through + "…» among:" + offered);
+    }
+    // logic.json as written: the link's level and arrive ("?" without the link).
+    std::string lvl_go_file(u32 link) {
+        logic::Logic l;
+        const logic::Link* k = l.load(pjw().config().root / "game" / "logic.json") ? l.find(link) : nullptr;
+        return k ? k->verb + " " + k->a + " " + k->b + " → " + k->level + " " + k->arrive : std::string("?");
+    }
+
+    // In an editor for the game from a fourth working folder (--self-test levels-go).
+    bool levels_go_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path g = pjw().config().root, game = g / "game", list_file = game / level::kLevelsFile;
+        const std::string id = lvl_rec_["id"], z2 = lvl_rec_["zone2"];
+        const std::string a1 = std::string(logic::kAreaPrefix) + lvl_z1_, a2 = std::string(logic::kAreaPrefix) + z2;
+        const fs::path foreign = game / "levels" / "lforeign1";
+        auto link = [&](u32 l) { return lg().links().find(l); };
+        auto note = [&](const char* bit) { return lv().levels_note().find(bit) != std::string::npos; };
+        switch (lvl_step_) {
+        case 0:
+            lvl_rec_ = tg_get(lvl_root() / utf8_path("записи.txt"));
+            check(lvl_rec_.count("id") && lvl_rec_.count("zone2"), "what levels-a made is written down");
+            check(!lvl_same(fs::current_path(), g), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            check(lv().level_id() == "level" && lv().level_name() == "Уровень 1", "«Уровень 1» opens, the level open last");
+            check(lv().level().tiled_record().zones.size() == 1, "its map's zone");
+            if (!lv().level().tiled_record().zones.empty())
+                lvl_z1_ = level::area_id_text(lv().level().tiled_record().zones.front().second);
+            check(click_tab(6) && ed_.tab() == "logic", "«Логика»");
+            break;
+        case 1:
+            if (wait(2)) return true;
+            check(shown("lg-add-" + a1) && !shown("lg-add-" + std::string(logic::kLevelPrefix) + id) &&
+                      !shown("lg-add-" + std::string(logic::kLevelPrefix) + "level"),
+                  "the left column offers «Уровень 1»'s zone «Пещера»; a level is no thing for the board");
+            check(click("lg-add-" + a1) && lg().links().spot(a1), "the zone onto the board");
+            break;
+        case 2:
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("hero") && thing_click(a1) && lg().picking(), "the hero, then the zone «Пещера»");
+            break;
+        case 3:
+            if (!lvl_pick_go("Пещер")) break;
+            lvl_go_ = lg().selected_link();
+            check(lvl_go_ && link(lvl_go_) && link(lvl_go_)->verb == "go" && link(lvl_go_)->level.empty() &&
+                      lg().problem_of(lvl_go_).find("не выбран уровень, куда уходить") != std::string::npos,
+                  "a link with nowhere to go yet says so: " + lg().problem_of(lvl_go_));
+            check(lvl_go_file(lvl_go_) == "go hero " + a1 + " →  ", "logic.json: the link, no level: " + lvl_go_file(lvl_go_));
+            break;
+        case 4:
+            if (wait(2)) return true;
+            check(shown("lg-go") && shown("lg-go-level-level") && shown(("lg-go-level-" + id).c_str()) && !shown("lg-go-arrive-spawn") &&
+                      lg().level_choices() == std::vector<std::string>{"level", id},
+                  "«Куда»: the game's two levels, no place yet");
+            check(click("lg-go-level-" + id) && link(lvl_go_)->level == id && link(lvl_go_)->arrive.empty() && lg().problem_of(lvl_go_).empty(),
+                  "«Пещера» chosen: the link works, the hero comes out at its spawn point");
+            break;
+        case 5:
+            if (wait(2)) return true;
+            check(shown("lg-go-arrive-spawn") && shown(("lg-go-arrive-" + z2).c_str()) && !shown(("lg-go-arrive-" + lvl_z1_).c_str()) &&
+                      lg().arrival_choices() == std::vector<std::string>{"", a2},
+                  "«Где появиться»: «Пещера»'s spawn point and its zone, none of this level's");
+            check(click("lg-go-arrive-" + z2) && link(lvl_go_)->arrive == a2 && lg().problem_of(lvl_go_).empty(), "its zone chosen");
+            check(lg().phrase_of(lvl_go_) == "Герой уходит через Пещеру на уровень «Пещера», в зону «Пещера»", "in words: " + lg().phrase_of(lvl_go_));
+            check(lvl_go_file(lvl_go_) == "go hero " + a1 + " → " + id + " " + a2, "logic.json: " + lvl_go_file(lvl_go_));
+            break;
+        case 6:
+            if (wait(2)) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(link(lvl_go_)->level == id && link(lvl_go_)->arrive.empty(), "Ctrl+Z: the spawn point again");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(link(lvl_go_)->level.empty() && !lg().problem_of(lvl_go_).empty() && lvl_go_file(lvl_go_) == "go hero " + a1 + " →  ",
+                  "Ctrl+Z: no level again, and so in logic.json");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(link(lvl_go_)->level == id && link(lvl_go_)->arrive == a2 && lg().problem_of(lvl_go_).empty() &&
+                      lvl_go_file(lvl_go_) == "go hero " + a1 + " → " + id + " " + a2,
+                  "Ctrl+Y twice: «Пещера», its zone, written");
+            // A folder in game/levels the list does not name, and an entry of the list this Forge does not read.
+            fs::create_directories(foreign, ec);
+            check(write_file_atomic(foreign / level::kAreasFile, tg_bytes(level::level_folder(game, id) / level::kAreasFile)),
+                  "a level's folder outside the list, with a zone");
+            lvl_list_ = tg_bytes(list_file);
+            {
+                const std::string text = "{\"start_level\": \"" + id + "\", \"levels\": [{\"id\": \"level\", \"name\": \"Уровень 1\"}, {\"id\": \"" + id +
+                                         "\", \"name\": \"Пещера\"}, {\"id\": \"Cave\", \"name\": \"Пещера другой версии\"}], \"transitions\": []}\n";
+                lvl_locked_.assign(text.begin(), text.end());
+            }
+            check(write_file_atomic(list_file, lvl_locked_), "levels.json with what this Forge does not read");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 7:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu: the list read again");
+            break;
+        case 8:
+            if (wait(2)) return true;
+            check(lv().levels().locked && note("«Cave»"), "read, not all of it: " + lv().levels_note());
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(click_tab(6), "«Логика»");
+            break;
+        case 9:
+            if (wait(2)) return true;
+            lg().select_link(lvl_go_);
+            break;
+        case 10:
+            if (wait(2)) return true;
+            check(lg().level_choices() == std::vector<std::string>{"level", id} && !shown("lg-go-level-Cave") && !shown("lg-go-level-lforeign1"),
+                  "«Куда» offers the two levels read: not «Cave», not the folder outside the list");
+            check(lg().problem_of(lvl_go_).empty() && tg_bytes(list_file) == lvl_locked_, "the link as it was; the author's file as it is");
+            check(write_file_atomic(list_file, lvl_list_), "levels.json back");
+            fs::remove_all(foreign, ec);
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 11:
+        case 14:
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 12:
+            if (wait(2)) return true;
+            check(lv().levels().writable() && lv().levels().levels.size() == 2, "the list read again, all of it");
+            check(pj_click(("lv-level-" + id).c_str()), "«Пещера»");
+            break;
+        case 13:
+            if (wait(2)) return true;
+            check(pjw().view().empty() && lv().level_id() == id, "«Пещера» open");
+            break;
+        case 15:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-rename"), "«Переименовать…»");
+            break;
+        case 16:
+            if (wait(2)) return true;
+            check(lv().naming_level() == "rename" && lvl_name("Глубокая пещера") && lv().naming_level().empty() &&
+                      lv().level_name() == "Глубокая пещера" && lv().level_id() == id,
+                  "renamed «Глубокая пещера», the same id: " + lv().levels_note());
+            key(SDLK_Z, SDL_KMOD_NONE);
+            break;
+        case 17: {
+            if (wait(3)) return true;
+            u64 zone = 0;
+            check(level::parse_area_id(z2, zone) && lv().mode() == Mode::Zones && click_id(("zn-area-" + z2).c_str()) && lv().selected_area() == zone,
+                  "«Зоны»: its zone «Пещера» picked in the list");
+            break;
+        }
+        case 18: {
+            if (wait(2)) return true;
+            u64 zone = 0;
+            level::parse_area_id(z2, zone);
+            check(lt_type("zn-name", "Вход") && lv().level().areas().find(zone) && lv().level().areas().find(zone)->name == "Вход",
+                  "the zone renamed «Вход»");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S");
+            key(SDLK_Q, SDL_KMOD_NONE);
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 19:
+            if (wait(2)) return true;
+            check(link(lvl_go_) && link(lvl_go_)->level == id && link(lvl_go_)->arrive == a2 && lg().problem_of(lvl_go_).empty() &&
+                      lvl_go_file(lvl_go_) == "go hero " + a1 + " → " + id + " " + a2,
+                  "the link to them by the same ids");
+            check(lg().phrase_of(lvl_go_).ends_with(" на уровень «Глубокая пещера», в зону «Вход»"), "and their new names: " + lg().phrase_of(lvl_go_));
+            check(shown("lg-add-" + a2) && click("lg-add-" + a2) && lg().links().spot(a2), "«Вход» onto the board");
+            break;
+        case 20:
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("hero") && thing_click(a2) && lg().picking(), "the hero, then «Вход»");
+            break;
+        case 21:
+            if (!lvl_pick_go("Вход")) break;
+            lvl_back_ = lg().selected_link();
+            check(lvl_back_ && lvl_back_ != lvl_go_ && !lg().problem_of(lvl_back_).empty(), "a link back, nowhere to go yet");
+            break;
+        case 22:
+            if (wait(2)) return true;
+            check(click("lg-go-level-level") && link(lvl_back_)->level == "level" && link(lvl_back_)->arrive.empty(), "«Уровень 1»");
+            break;
+        case 23:
+            if (wait(2)) return true;
+            check(shown("lg-go-arrive-spawn") && shown(("lg-go-arrive-" + lvl_z1_).c_str()) && click("lg-go-arrive-spawn") &&
+                      link(lvl_back_)->arrive.empty() && lg().problem_of(lvl_back_).empty(),
+                  "its spawn point");
+            check(lg().phrase_of(lvl_back_) == "Герой уходит через Вход на уровень «Уровень 1»", "in words: " + lg().phrase_of(lvl_back_));
+            check(lvl_go_file(lvl_back_) == "go hero " + a2 + " → level ", "logic.json: " + lvl_go_file(lvl_back_));
+            lvl_rec_["go"] = std::to_string(lvl_go_);
+            lvl_rec_["back"] = std::to_string(lvl_back_);
+            lvl_rec_["zone1"] = lvl_z1_;
+            check(tg_put(lvl_root() / utf8_path("записи.txt"), lvl_rec_), "the links written down for the next editor");
+            return false;
+        default:
+            break;
+        }
+        ++lvl_step_;
+        return true;
+    }
+
+    // In an editor for the game from a fifth working folder (--self-test levels-go-again).
+    bool levels_go_again_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path g = pjw().config().root, game = g / "game";
+        const std::string id = lvl_rec_["id"], z2 = lvl_rec_["zone2"];
+        const std::string a1 = std::string(logic::kAreaPrefix) + lvl_rec_["zone1"], a2 = std::string(logic::kAreaPrefix) + z2;
+        auto link = [&](u32 l) { return lg().links().find(l); };
+        switch (lvl_step_) {
+        case 0:
+            lvl_rec_ = tg_get(lvl_root() / utf8_path("записи.txt"));
+            lvl_go_ = static_cast<u32>(std::atoi(lvl_rec_["go"].c_str()));
+            lvl_back_ = static_cast<u32>(std::atoi(lvl_rec_["back"].c_str()));
+            check(lvl_go_ && lvl_back_, "the links levels-go made are written down");
+            check(!lvl_same(fs::current_path(), g), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            check(lv().level_id() == lvl_rec_["id"] && lv().level_name() == "Глубокая пещера", "«Глубокая пещера» opens, the level open last");
+            check(click_tab(6) && ed_.tab() == "logic", "«Логика»");
+            break;
+        case 1:
+            if (wait(2)) return true;
+            check(link(lvl_go_) && link(lvl_go_)->a == "hero" && link(lvl_go_)->b == a1 && link(lvl_go_)->level == id && link(lvl_go_)->arrive == a2 &&
+                      lg().problem_of(lvl_go_).empty() && lg().phrase_of(lvl_go_).ends_with(" на уровень «Глубокая пещера», в зону «Вход»"),
+                  "the link to «Глубокая пещера» as it was: " + lg().phrase_of(lvl_go_) + " " + lg().problem_of(lvl_go_));
+            check(link(lvl_back_) && link(lvl_back_)->b == a2 && link(lvl_back_)->level == "level" && link(lvl_back_)->arrive.empty() &&
+                      lg().problem_of(lvl_back_).empty() && lg().phrase_of(lvl_back_) == "Герой уходит через Вход на уровень «Уровень 1»",
+                  "the link back as it was: " + lg().phrase_of(lvl_back_) + " " + lg().problem_of(lvl_back_));
+            lg().select_link(lvl_go_);
+            break;
+        case 2:
+            if (wait(2)) return true;
+            check(lg().level_choices() == std::vector<std::string>{"level", id} && lg().arrival_choices() == std::vector<std::string>{"", a2},
+                  "its «Куда» offers the levels and «Глубокая пещера»'s places");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 3:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 4: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty() && lvl_given().empty(), "«Играть со стартового»");
+            // The game from «Глубокая пещера»: through «Вход» to «Уровень 1» (a crate of the game put there), through its
+            // «Пещера» back into «Вход»; saved.
+            slice::ProjectEdits e;
+            e.go_start = id;
+            e.go_through = {a2, a1};
+            e.go_level = {"level", id};
+            e.go_arrive = {"", a2};
+            e.go_mark_put = "level";
+            e.go_save = "переход";
+            int code = tg_play(&e, "ожидания переход.json", lvl_root());
+            check(code == 0, "the game goes through both links as the editor made them, and is saved (exit " + std::to_string(code) + ")");
+            // Another process, from another working folder, as a player starts the game: «Продолжить», then through «Вход».
+            slice::ProjectEdits c;
+            c.go_continue = true;
+            c.go_save = "переход";
+            c.go_start = id;
+            c.go_through = {a2};
+            c.go_level = {"level"};
+            c.go_arrive = {""};
+            c.go_mark_find = "level";
+            const fs::path file = lvl_root() / utf8_path("ожидания продолжить.json"), elsewhere = lvl_root() / utf8_path("шестая папка");
+            fs::create_directories(elsewhere, ec);
+            std::vector<std::string> args = lv().last_play();
+            args.erase(std::remove(args.begin(), args.end(), std::string("--play")), args.end());
+            for (const char* more : {"--test", "--scene", "project", "--edits"}) args.push_back(more);
+            args.push_back(path_to_utf8(file));
+            check(slice::write_edits(file, c), "what the second process must find");
+            code = pj_run(args, elsewhere);
+            check(code == 0, "«Продолжить» in another process: «Глубокая пещера», then «Уровень 1» with the crate left there (exit " +
+                                 std::to_string(code) + ")");
+            return false;
+        }
         default:
             break;
         }
@@ -15973,12 +16301,12 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--ready-file") == 0 && has_value) app.options.ready_file = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--tab") == 0 && has_value) tab = std::atoi(argv[++i]);
     }
-    static const char* const kParts[] = {"new-game",          "opened-game", "ready",  "two-games",  "two-games-a",
-                                         "two-games-a-again", "two-games-b", "levels", "levels-a", "levels-again"};
+    static const char* const kParts[] = {"new-game",    "opened-game", "ready",    "two-games",    "two-games-a", "two-games-a-again",
+                                         "two-games-b", "levels",      "levels-a", "levels-again", "levels-go",   "levels-go-again"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
-                    "two-games-b, levels and its parts levels-a, levels-again)",
+                    "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again)",
                     app.options.self_part.c_str());
         return 2;
     }

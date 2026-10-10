@@ -54,6 +54,14 @@ inline constexpr std::string_view kHero = "hero";
 // renamed area keeps its links.
 inline constexpr std::string_view kAreaPrefix = "area:";
 bool is_area(std::string_view thing);
+// A level of the game is the thing "level:" and its id in the game's list
+// (levels.json): where a link sends the hero («уходит на уровень»). Levels are
+// never a side of a link, only where it leads.
+inline constexpr std::string_view kLevelPrefix = "level:";
+bool is_level(std::string_view thing);
+// The game's action that sends the hero to another level: a link with it says
+// where in Link::level and Link::arrive, and runs forge.logic.go.
+inline constexpr std::string_view kGoAction = "go";
 
 // --- verbs ---------------------------------------------------------------
 
@@ -159,6 +167,11 @@ struct Link {
     // does what the link does; when it is just what the refinements make, it
     // only keeps where its nodes are. Empty: the verb's, laid out anew.
     std::string graph;
+    // Where it sends the hero, for a verb whose action is kGoAction: the
+    // level's id in the game's list, and where the hero comes out there: ""
+    // its spawn point, or one of its areas ("area:" and the id).
+    std::string level;
+    std::string arrive;
 };
 
 // A thing's own scheme: what every copy of it does by itself, with no link
@@ -219,6 +232,9 @@ struct Thing {
     bool animate = false; // a person or an animal: «вижу героя», not «вижу герой»
     bool plural = false;  // «Шипы», «Монеты»
     bool area = false;    // an area of the level («Шахта»), not a template
+    // An area's level (its id in the game's list; "" when it is no level of
+    // the list); a level's own id for a level ("level:" things).
+    std::string level;
     Forms forms;
     std::vector<std::string> blocks; // the template's blocks (none for the hero or an area)
 };
@@ -232,15 +248,24 @@ bool looks_plural(std::string_view name);
 Thing hero_thing();
 // A template as a thing (animate when it is a villager, critter or player).
 Thing thing_of(const objects::Library& library, const objects::Template& t);
-// An area of the level as a thing: id is "area:" and its id, name its name.
-Thing area_thing(std::string_view id, std::string_view name);
+// An area of the level as a thing: id is "area:" and its id, name its name;
+// level: the level it is on.
+Thing area_thing(std::string_view id, std::string_view name, std::string_view level = {});
+// A level of the game as a thing: id is "level:" and level, name its name.
+Thing level_thing(std::string_view level, std::string_view name);
 
 using FindThing = std::function<const Thing*(std::string_view id)>;
 
-// «Ключ открывает Дверь» (empty when a thing or the verb is unknown).
-std::string phrase(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b);
-// What happens, in plain words, with the refinements.
-std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b);
+// Where a link sends the hero, in words: «на уровень «Пещера»», then «, в зону
+// «Вход»» when it comes out in an area; «— уровень не выбран» when it has no
+// level. Empty for a link that sends nowhere (its verb's action is not
+// kGoAction). Names from things ("level:" and the area), else the ids.
+std::string destination(const Link& link, const VerbDef& verb, const FindThing& things);
+// «Ключ открывает Дверь» (empty when a thing or the verb is unknown); where:
+// destination(), put after it.
+std::string phrase(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where = {});
+// What happens, in plain words, with the refinements (and where).
+std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where = {});
 // A verb's text with {a} {b} {a:gen}… filled in.
 std::string fill(std::string_view text, const Thing& a, const Thing& b);
 // The verb makes sense for these two (sides and blocks): what the editor
@@ -256,7 +281,7 @@ struct Step {
     std::string text;
     std::string refine; // "night", "once", "sound", "hint"; "" the verb's own
 };
-std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b);
+std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where = {});
 // The refinements a link can have, as steps not yet there (what «Добавить
 // шаг» offers), and whether it has them.
 struct Refine {
@@ -320,8 +345,12 @@ u32 when_node(const script::Graph& graph);
 // Gives the link this scheme. When the scheme is what some refinements make
 // (a check taken away, a sound added, nodes moved), the link gets those
 // refinements and keeps the scheme only for where its nodes are: simple
-// modes stay simple.
+// modes stay simple. Where its «Перейти на уровень» leads is the link's
+// level and arrive.
 void set_scheme(Link& link, const script::Graph& graph, const Verbs& verbs, const FindThing& things);
+// Sends the link elsewhere: its level and arrive, and its scheme's «Перейти на
+// уровень» with them (so a scheme kept for its places stays the link's).
+void set_destination(Link& link, std::string_view level, std::string_view arrive);
 // The link has a scheme of its own: one no refinements make. Only then does
 // the scheme decide what happens (and the simple modes show «Уточнено в
 // Схеме»).
@@ -354,6 +383,13 @@ public:
     virtual bool night() = 0;
     // A link happened (the editor lights it up).
     virtual void fired(u32 link) { (void)link; }
+    // A link sends the hero to a level (its id in the game's list) and an
+    // area there ("" its spawn point). Only asked for: the game goes after
+    // the tick. False: this game has no levels to go to (said once in the log).
+    virtual bool go(flecs::entity_t hero, std::string_view level, std::string_view arrive, u32 link) {
+        (void)hero, (void)level, (void)arrive, (void)link;
+        return false;
+    }
 };
 
 // How close the hero must come to touch a thing, in tiles from its centre.
@@ -383,6 +419,8 @@ public:
     void set_areas(std::vector<Thing> areas);
     // The areas of the game's other levels: links to them compile (they are no broken links) but never run here.
     void set_other_areas(std::vector<Thing> areas);
+    // The game's levels (level_thing): where links may send the hero.
+    void set_levels(std::vector<Thing> levels);
     // The hero came into an area or left it: the area's links run with this
     // tick's triggers (ScriptHost::enter). The game checks where the hero is.
     void area_event(std::string_view area, flecs::entity_t hero, bool entered);
@@ -415,6 +453,7 @@ private:
     flecs::observer observer_;
     std::vector<Thing> areas_;
     std::vector<Thing> other_areas_;
+    std::vector<Thing> levels_;
     std::unordered_map<std::string, flecs::entity_t> area_entities_; // area -> its entity
 };
 

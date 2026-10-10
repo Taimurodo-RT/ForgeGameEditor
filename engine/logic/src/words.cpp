@@ -233,13 +233,24 @@ Thing hero_thing() {
 }
 
 bool is_area(std::string_view thing) { return thing.starts_with(kAreaPrefix); }
+bool is_level(std::string_view thing) { return thing.starts_with(kLevelPrefix); }
 
-Thing area_thing(std::string_view id, std::string_view name) {
+Thing area_thing(std::string_view id, std::string_view name, std::string_view level) {
     Thing t;
     t.id = std::string(id);
     t.name = std::string(name);
     t.area = true;
+    t.level = std::string(level);
     t.plural = looks_plural(name);
+    t.forms = decline(name, false);
+    return t;
+}
+
+Thing level_thing(std::string_view level, std::string_view name) {
+    Thing t;
+    t.id = std::string(kLevelPrefix) + std::string(level);
+    t.name = std::string(name);
+    t.level = std::string(level);
     t.forms = decline(name, false);
     return t;
 }
@@ -281,15 +292,44 @@ std::string fill(std::string_view text, const Thing& a, const Thing& b) {
     return out;
 }
 
-std::string phrase(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b) {
-    (void)link;
-    return a.name + " " + (a.plural ? verb.plural : verb.name) + " " + b.forms.get(verb.object_case);
+namespace {
+
+// A verb's text with {where} as where the link sends the hero (else «на другой уровень»).
+std::string with_where(std::string text, std::string_view where) {
+    const usize at = text.find("{where}");
+    if (at != std::string::npos) text.replace(at, 7, where.empty() ? std::string_view("на другой уровень") : where);
+    return text;
 }
 
-std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b) {
+} // namespace
+
+std::string destination(const Link& link, const VerbDef& verb, const FindThing& things) {
+    if (verb.action != kGoAction || link.level.empty()) return {};
+    const Thing* level = things ? things(std::string(kLevelPrefix) + link.level) : nullptr;
+    const std::string level_name = level ? level->name : link.level;
+    std::string s = "на уровень «" + level_name + "»";
+    if (!link.arrive.empty()) {
+        const Thing* at = things ? things(link.arrive) : nullptr;
+        std::string name = at ? at->name : link.arrive;
+        // Another level's area is «Вход (Пещера)» among the things: here the level is said already.
+        const std::string suffix = " (" + level_name + ")";
+        if (name.size() > suffix.size() && name.ends_with(suffix)) name.resize(name.size() - suffix.size());
+        s += ", в зону «" + name + "»";
+    }
+    return s;
+}
+
+std::string phrase(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where) {
+    (void)link;
+    std::string s = a.name + " " + (a.plural ? verb.plural : verb.name) + " " + b.forms.get(verb.object_case);
+    if (!where.empty()) s += " " + std::string(where);
+    return s;
+}
+
+std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where) {
     if (!link.code.empty()) return "Вместо обычного действия работает свой код (режим «Код»).";
     if (own_scheme(link, verb, a, b)) return "Связь уточнена в режиме «Схема»: что происходит, решают её ноды.";
-    std::string s = fill(verb.about, a, b);
+    std::string s = with_where(fill(verb.about, a, b), where);
     std::vector<std::string> extra;
     if (link.night) extra.push_back("только ночью");
     if (link.once) extra.push_back("только один раз");
@@ -306,6 +346,7 @@ std::string meaning(const Link& link, const VerbDef& verb, const Thing& a, const
 namespace {
 
 bool side_fits(std::string_view rule, const std::vector<std::string>& has, const Thing& t) {
+    if (is_level(t.id)) return false; // where a link leads, never one of its sides
     if (rule == "hero" && t.id != kHero) return false;
     if (rule == "thing" && (t.id == kHero || t.area)) return false;
     if (rule == "area" && !t.area) return false;
@@ -336,7 +377,7 @@ std::vector<Refine> refinements(const Link& link, const VerbDef& verb, const Thi
     return out;
 }
 
-std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b) {
+std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where) {
     std::vector<Step> out;
     if (verb.always) {
         out.push_back({"when", "all_inclusive", "Всё время, пока " + quoted(a) + " есть на уровне", ""});
@@ -366,7 +407,7 @@ std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, c
         checks = true;
     }
     if (link.once) out.push_back({"if", "looks_one", "Если здесь это ещё не случалось", "once"});
-    const std::string action = verb.step.empty() ? fill(verb.about, a, b) : fill(verb.step, a, b);
+    const std::string action = with_where(verb.step.empty() ? fill(verb.about, a, b) : fill(verb.step, a, b), where);
     out.push_back({"then", verb.icon.empty() ? "arrow_forward" : verb.icon, action, ""});
     if (link.sound && !verb.sound.empty()) out.push_back({"then", "volume_up", "Обычный звук действия", "sound"});
     if (checks && link.hint && !verb.fail.empty())

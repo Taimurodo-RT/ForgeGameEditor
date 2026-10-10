@@ -1106,6 +1106,19 @@
                     <div class="lg-title">{{ lg_sel_phrase }}</div>
                     <div class="lg-problem row" data-if="lg_sel_problem != ''"><icon class="s" name="error"/><span>{{ lg_sel_problem }}</span></div>
                     <div class="lg-meaning">{{ lg_sel_meaning }}</div>
+                    <div id="lg-go" class="column" data-if="lg_sel_go">
+                        <div class="section-title">Куда</div>
+                        <div class="muted body-small" data-if="lg_go_levels.size == 0">В списке уровней игры нет ни одного уровня.</div>
+                        <div data-for="o : lg_go_levels" class="lg-refine row" data-attr-id="'lg-go-level-' + o.key" data-event-click="lg_go_level(o.id)">
+                            <icon data-attr-name="o.current ? 'radio_button_checked' : 'radio_button_unchecked'"/>
+                            <div class="column grow"><span>{{ o.name }}</span></div>
+                        </div>
+                        <div class="section-title" data-if="lg_go_arrivals.size > 0">Где появиться</div>
+                        <div data-for="o : lg_go_arrivals" class="lg-refine row" data-attr-id="'lg-go-arrive-' + o.key" data-attr-title="o.about" data-event-click="lg_go_arrive(o.id)">
+                            <icon data-attr-name="o.current ? 'radio_button_checked' : 'radio_button_unchecked'"/>
+                            <div class="column grow"><span>{{ o.name }}</span><span class="muted body-small">{{ o.about }}</span></div>
+                        </div>
+                    </div>
                     <div class="section-title" data-if="!lg_sel_code && !lg_sel_scheme">Уточнить</div>
                     <div data-for="r : lg_refine" class="lg-refine row" data-attr-id="'lg-refine-' + r.id" data-attr-title="r.hint" data-event-click="lg_refine(r.id)">
                         <icon data-attr-name="r.on ? 'check_box' : 'check_box_outline_blank'"/>

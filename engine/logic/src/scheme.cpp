@@ -75,13 +75,24 @@ Graph build(const Link& l, const VerbDef& v, const Thing& a, const Thing& b) {
         exit = "first";
         x += kColumn;
     }
-    GraphNode& act = g.add("logic.act", x, 0);
-    act.set_value("action", v.action);
-    act.set_value("thing", side_thing(l, v.target));
-    g.link(w, v.target == Side::A ? "a" : "b", act.uid, "target");
-    g.link(w, v.target == Side::A ? "b" : "a", act.uid, "other");
-    g.link(last, exit, act.uid);
-    last = act.uid;
+    u32 did = 0;
+    if (v.action == kGoAction) {
+        // Where to: the link's level and area, chosen in the node as in the side panel.
+        GraphNode& go = g.add("logic.go", x, 0);
+        go.set_value("level", l.level);
+        go.set_value("arrive", l.arrive);
+        g.link(w, v.target == Side::A ? "a" : "b", go.uid, "who");
+        did = go.uid;
+    } else {
+        GraphNode& act = g.add("logic.act", x, 0);
+        act.set_value("action", v.action);
+        act.set_value("thing", side_thing(l, v.target));
+        g.link(w, v.target == Side::A ? "a" : "b", act.uid, "target");
+        g.link(w, v.target == Side::A ? "b" : "a", act.uid, "other");
+        did = act.uid;
+    }
+    g.link(last, exit, did);
+    last = did;
     exit = script::kFlowNext;
     x += kColumn;
     if (l.sound && !v.sound.empty()) {
@@ -215,6 +226,22 @@ script::Graph scheme_of(const Link& link, const Verbs& verbs, const FindThing& t
 void set_scheme(Link& link, const script::Graph& graph, const Verbs& verbs, const FindThing& things) {
     link.code.clear();
     link.graph = graph.to_json();
+    // Its «Перейти на уровень» says where the link leads (the side panel shows the same).
+    const GraphNode* go = nullptr;
+    for (const GraphNode& n : graph.nodes)
+        if (n.def == "logic.go") {
+            if (go) {
+                go = nullptr; // two of them: the scheme decides, the link keeps what it had
+                break;
+            }
+            go = &n;
+        }
+    if (go) {
+        const std::string* level = go->value("level");
+        const std::string* arrive = go->value("arrive");
+        link.level = level ? *level : std::string();
+        link.arrive = arrive ? *arrive : std::string();
+    }
     const VerbDef* v = verbs.find(link.verb);
     const Thing* a = things(link.a);
     const Thing* b = things(link.b);
@@ -226,6 +253,22 @@ void set_scheme(Link& link, const script::Graph& graph, const Verbs& verbs, cons
     link.once = (m & 2) != 0;
     link.sound = (m & 4) != 0;
     link.hint = (m & 8) != 0;
+}
+
+void set_destination(Link& link, std::string_view level, std::string_view arrive) {
+    link.level = std::string(level);
+    link.arrive = std::string(arrive);
+    if (link.graph.empty()) return;
+    Graph g;
+    if (!g.from_json(link.graph)) return;
+    bool changed = false;
+    for (GraphNode& n : g.nodes)
+        if (n.def == "logic.go") {
+            n.set_value("level", std::string(level));
+            n.set_value("arrive", std::string(arrive));
+            changed = true;
+        }
+    if (changed) link.graph = g.to_json();
 }
 
 script::Graph new_thing_scheme(std::string_view thing) {

@@ -9,7 +9,7 @@
 //                                   that happen, for its «Логика» tab; F2 shows the links
 //                                   over the game and draws new ones into logic.json)
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
-//                                                    |tiled|tiled_update|project]
+//                                                    |tiled|tiled_update|levels|levels_continue|project]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
@@ -19,12 +19,16 @@
 //                                   tiled: the level imported from the map of Tiled in games/examples/tiled, over a
 //                                   copy of the game's data with what the import wrote, with nothing of Tiled, its
 //                                   frame compared with tmxrasterizer's; tiled_update: the same after two pictures of
-//                                   the map changed and it was imported again, from the build only, which has the map)
-//   forge_slice --test --scene project --play --data GAME [--level DIR --at X,Y --user DIR] [--edits FILE]
+//                                   the map changed and it was imported again, from the build only, which has the map;
+//                                   levels: going between two levels of a copy of the game's data, by links «уходит
+//                                   через», and what stays of each, saved in the second; levels_continue, another
+//                                   process: «Продолжить» from that save, both levels as they were left)
+//   forge_slice --test --scene project [--play] --data GAME [--level DIR --at X,Y --user DIR] [--edits FILE]
 //                                   a game the editor made of a template, as its «Играть» starts it: that game's data,
 //                                   title and links, the hero at X,Y, the player's files in DIR; with FILE, what the
 //                                   author made in it (slice_edits.h), met as a player meets it, or, for another game
-//                                   of the template, that none of it is there
+//                                   of the template, that none of it is there; without --play the game starts at its
+//                                   main menu (FILE says to take «Продолжить»)
 //   forge_slice --test --window --no-vsync --scene inventory
 //                                   10 000 things in a list scrolled to the end and back
 //                                   in a real window; the frame times while scrolling go
@@ -44,6 +48,7 @@
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/core/time.h"
+#include "forge/data/json.h"
 #include "forge/editor/document.h"
 #include "forge/editor/project.h"
 #include "forge/audio/screen_sounds.h"
@@ -53,6 +58,7 @@
 #include "forge/level/light.h"
 #include "forge/level/tiled_apply.h"
 #include "forge/render/offscreen.h"
+#include "forge/script/graph.h"
 #include "forge/ui/ui.h"
 
 #include <RmlUi/Core/ComputedValues.h>
@@ -72,6 +78,7 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -84,6 +91,30 @@ using namespace forge::game;
 using namespace slice;
 
 namespace {
+
+// --scene levels and levels_continue (step 14.2b): a game of two levels, «Деревня» and «Пещера», with links that send
+// the hero from one to the other, made by the scene levels in this run's own folder (its data and the player's
+// files); levels_continue plays on there in another process, as a player's «Продолжить».
+namespace trip {
+inline std::filesystem::path root() { return std::filesystem::temp_directory_path() / utf8_path("forge_slice_уровни"); }
+// What the first process leaves for the second: the save it made in «Пещера» and what it saw then.
+inline std::filesystem::path notes() { return root() / utf8_path("заметки.txt"); }
+// The areas: «Двор» (its music; coming into it opens a window), «Метка» (once), «Выход» (to «Пещера», «Вход») on
+// «Деревня»; «Вход» (its music; back to «Деревня») and «Грот» on «Пещера».
+constexpr u64 kYard = 0x14b2000000000001, kMark = 0x14b2000000000002, kExit = 0x14b2000000000003,
+              kEntry = 0x14b2000000000004, kGrotto = 0x14b2000000000005;
+// The copies the scene puts on «Деревня», by their level ids: «Часы» counting seconds with a sound near them, two
+// «Зверька» (one wanders and steps with a sound, one goes by the keys), a falling «Ящик», «Родник» and «Монеты».
+constexpr u64 kTicker = 0x14b2000000000101, kCritter = 0x14b2000000000102, kCrate = 0x14b2000000000103,
+              kSpring = 0x14b2000000000104, kCoin = 0x14b2000000000105, kPlayer = 0x14b2000000000106;
+// The links the scene adds to the game's.
+constexpr u32 kYardLink = 101, kMarkLink = 102, kGoLink = 103, kGoTooLink = 104, kLateLink = 105, kBackLink = 106,
+              kGrottoLink = 107, kGrottoWait = 108, kTickerLink = 109, kSpringLink = 110;
+// «Часы» count twice: test.ticks by a link «При старте»: wait a second, +1, again (its waiting is not saved: after a
+// load or a coming back it does not go on, as «При старте» does not run again), and test.frames by their own scheme,
+// +1 «Каждый шаг».
+constexpr u32 kTickerScheme = 111;
+} // namespace trip
 
 // The self-test: steps run one after another, each over as many frames as
 // it needs (a step returns true when it is done).
@@ -277,7 +308,16 @@ private:
             const std::string title = editor::project::game_title(project_data);
             check(!title.empty() && s.title() == title, "название игры из её game.json: «" + s.title() + "», ждали «" + title + "»");
             check(s.data_errors().empty(), "данные игры читаются без ошибок");
-            check(s.screen() == Screen::Playing, "«Играть» сразу начинает игру");
+            // «Продолжить» (step 14.2b): the game started as a player starts it, at its main menu, and goes on from
+            // the newest save.
+            const bool resume = project_has_edits && project_edits.go_continue;
+            check(s.screen() == (resume ? Screen::Main : Screen::Playing), resume ? "игра начинается с главного меню" : "«Играть» сразу начинает игру");
+            if (resume) {
+                const std::optional<SlotInfo> latest = s.slots().latest();
+                check(latest && latest->id == project_edits.go_save, "последнее сохранение — «" + project_edits.go_save + "»: «" +
+                                                                         (latest ? latest->id : std::string()) + "»");
+                check(s.continue_game(), "«Продолжить»");
+            }
             std::vector<u8> mine, links;
             check(read_file(project_data / "logic.json", mine) && read_file(g_.links_path(), links) && mine == links,
                   "связи «Логики» — из logic.json этой игры");
@@ -372,6 +412,114 @@ private:
     // keys, whose button plays the chosen sound (that file, its length) and closes it; a second touch does nothing.
     // The game is saved and a setting changed: into this game's player's folder. absent: another game of the same
     // template, with none of it and a player's folder of its own.
+    // Going between the levels of a game the editor made (step 14.2b), by its links «уходит через»: from the level
+    // the game is on, into each area of the plan, and where the hero must be after it; a crate put on a level is found
+    // there when the hero comes back, in this process or after «Продолжить» in another; then a save.
+    void build_going(Shell& s) {
+        namespace fs = std::filesystem;
+        SliceGame& g = g_;
+        struct State {
+            usize leg = 0;
+            u32 at = 0;      // the frame the hero came into the area
+            std::string was; // the level it came into it on
+        };
+        auto st = std::make_shared<State>();
+        constexpr u64 kMarker = 0x14b2000000000201;
+        auto in = [&g](const std::string& thing) {
+            u64 id = 0;
+            if (!thing.starts_with(logic::kAreaPrefix) || !forge::level::parse_area_id(std::string_view(thing).substr(logic::kAreaPrefix.size()), id))
+                return false;
+            const std::vector<u64> now = g.areas_inside();
+            return std::find(now.begin(), now.end(), id) != now.end();
+        };
+        auto area = [&g](const std::string& thing) -> const forge::level::Area* {
+            u64 id = 0;
+            if (!g.areas() || !thing.starts_with(logic::kAreaPrefix) ||
+                !forge::level::parse_area_id(std::string_view(thing).substr(logic::kAreaPrefix.size()), id))
+                return nullptr;
+            return g.areas()->find(id);
+        };
+        auto mark = [&g, this]() {
+            const ProjectEdits& e = project_edits;
+            if (g.level_id() == e.go_mark_put && !g.copy_with_id(kMarker) && g.areas() && g.areas()->spawn)
+                check(g.spawn_copy("crate", g.areas()->spawn_x + 6.5, g.areas()->spawn_y - 3, kMarker) != 0,
+                      "ящик игры поставлен на уровень «" + g.level_id() + "»");
+            if (g.level_id() == e.go_mark_find)
+                check(g.copy_with_id(kMarker) != 0, "на уровне «" + g.level_id() + "» ящик, который игра там оставила: уровень такой, каким его оставили");
+        };
+        steps_.push_back({"переходы: с какого уровня", 20, [&s, &g, this, mark](u32 f) {
+            if (f < 10) return false;
+            const ProjectEdits& e = project_edits;
+            check(g.level_id() == e.go_start, "игра на уровне «" + e.go_start + "», а не «" + g.level_id() + "»");
+            check(e.go_level.size() == e.go_through.size() && e.go_arrive.size() == e.go_through.size(), "план переходов: по три строки");
+            if (e.go_continue) {
+                // Where the save has the hero.
+                std::vector<u8> bytes;
+                HeroSave saved;
+                data::LoadReport report;
+                check(read_file(s.slots().folder(e.go_save) / "hero.json", bytes) &&
+                          data::from_json(saved, {reinterpret_cast<const char*>(bytes.data()), bytes.size()}, report) &&
+                          saved.level == e.go_start && std::fabs(g.hero_x() - saved.x) < 0.01 && std::fabs(g.hero_y() - saved.y) < 0.05,
+                      "герой там, где его сохранили: " + std::to_string(saved.x) + ", " + std::to_string(saved.y) + " на «" + saved.level + "»");
+            }
+            mark();
+            return true;
+        }});
+        steps_.push_back({"переходы по связям «уходит через»", 2000, [&s, &g, this, st, in, area, mark](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (st->leg >= e.go_through.size() || e.go_level.size() != e.go_through.size() || e.go_arrive.size() != e.go_through.size())
+                return true;
+            const std::string& through = e.go_through[st->leg];
+            if (st->at == 0) {
+                // From the level's spawn point (out of the area), then into the area's middle.
+                const forge::level::Area* a = area(through);
+                if (!check_ok(a != nullptr && g.areas()->spawn, "на уровне «" + g.level_id() + "» зона " + through + " и точка появления"))
+                    return true;
+                if (f % 20 == 0) {
+                    g.teleport(g.areas()->spawn_x, g.areas()->spawn_y - kHeroHalfH - 0.1);
+                    return false;
+                }
+                if (f % 20 == 10) {
+                    if (!check_ok(!in(through), "герой не в зоне " + through + " перед тем, как в неё войти")) return true;
+                    st->was = g.level_id();
+                    st->at = f;
+                    g.teleport((a->x0 + a->x1) * 0.5, (a->y0 + a->y1) * 0.5);
+                }
+                return false;
+            }
+            if (g.level_id() == st->was && f < st->at + 120) return false;
+            const std::string& to = e.go_level[st->leg], &arrive = e.go_arrive[st->leg];
+            check(g.level_id() == to && g.travel_problem().empty(),
+                  "из зоны " + through + " — на уровень «" + to + "», а герой на «" + g.level_id() + "»: «" + g.travel_problem() + "»");
+            if (arrive.empty()) {
+                const forge::level::LevelAreas* here = g.areas();
+                check(here && here->spawn && std::fabs(g.hero_x() - here->spawn_x) <= 1.0 &&
+                          std::fabs(g.hero_y() + kHeroHalfH - here->spawn_y) <= 3.0,
+                      "герой у точки появления уровня «" + g.level_id() + "»: " + std::to_string(g.hero_x()) + ", " + std::to_string(g.hero_y()));
+            } else {
+                check(area(arrive) && in(arrive), "герой в зоне " + arrive + " уровня «" + g.level_id() + "»: " + std::to_string(g.hero_x()) +
+                                                      ", " + std::to_string(g.hero_y()));
+            }
+            mark();
+            ++st->leg;
+            st->at = 0;
+            return st->leg >= e.go_through.size();
+        }});
+        steps_.push_back({"сохранение после переходов", 10, [&s, &g, this](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f < 5) return false;
+            if (e.go_save.empty() || e.go_continue) return true;
+            std::error_code ec;
+            SDL_Delay(1100); // the newest save by a second
+            check(s.save(e.go_save, "После переходов"), "игра сохраняется на уровне «" + g.level_id() + "»");
+            for (const std::string& id : e.go_level)
+                if (id != g.level_id())
+                    check(fs::is_directory(s.slots().folder(e.go_save) / "levels" / utf8_path(id), ec),
+                          "в сохранении и уровень «" + id + "», каким его оставили");
+            return true;
+        }});
+    }
+
     void build_edits(Shell& s) {
         SliceGame& g = g_;
         if (!project_edits_error.empty()) {
@@ -462,6 +610,7 @@ private:
                 look(" (после загрузки сохранения)");
                 return true;
             }});
+        if (!project_edits.go_through.empty() || project_edits.go_continue) build_going(s);
         if (project_edits.object.empty() && !project_edits.absent) return;
         if (project_edits.absent) {
             steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {
@@ -632,6 +781,10 @@ private:
         }
         if (scene_ == "zones") {
             build_zones(s);
+            return;
+        }
+        if (scene_ == "levels" || scene_ == "levels_continue") {
+            build_levels(s, scene_ == "levels_continue");
             return;
         }
         if (scene_ == "own_tiles") {
@@ -3927,6 +4080,670 @@ private:
         }});
     }
 
+    // Going from level to level (step 14.2b, 14.2-платформер-модель.md, «Порядок перехода в игре»), in the game of
+    // trip::root() that main() made. The level the hero left is gone while it is away: its seconds do not count, its
+    // critters and falling crate stand still, its sounds are silent, the keys move nothing in it; back there,
+    // everything is as it was left. The hero carries its hearts, the bag and the game's values; «Только один раз» of
+    // a copy stays with the copy, of an area with the hero. A link sends the hero (two in one step: the first wins; a
+    // link's code still waiting when its level goes never goes on), a save made in «Пещера» keeps both levels, a new
+    // game starts clean, saves made before levels go on, and a going refused loses nothing: a level not in the list,
+    // its folder a file, an area not there, the disk refusing at each step (the game goes on where it was, or, when
+    // even the level left does not open again, to the main menu with the saves as they were). continued: the save
+    // made in «Пещера», by another process («Продолжить»).
+    void build_levels(Shell& s, bool continued) {
+        namespace fs = std::filesystem;
+        SliceGame& g = g_;
+        using Files = std::vector<std::pair<std::string, std::vector<u8>>>;
+        struct State {
+            f64 v = 0;                  // the top of the village's floor: where feet stand
+            f64 ky = 0, cx = 0, px = 0; // «Ящик»'s y, «Зверёк»'s x and the keys' «Зверёк»'s x when «Деревня» was left
+            f64 ticks = 0, frames = 0, hearts = 0, coins = 0, hx = 0;
+            u32 named = 0, travels = 0, dropped = 0, arrived = 0;
+            bool said = false;
+            std::map<std::string, Files> slots; // every save's files, as they were before the refusals
+            std::vector<std::pair<fs::path, fs::path>> aside; // region files moved away (where, from) for a write that fails
+            std::map<std::string, f64> notes;   // what the first process saw
+        };
+        auto st = std::make_shared<State>();
+        auto files_of = [](const fs::path& dir) {
+            Files out;
+            std::error_code ec;
+            for (const auto& e : fs::recursive_directory_iterator(dir, ec)) {
+                if (!e.is_regular_file()) continue;
+                std::vector<u8> bytes;
+                read_file(e.path(), bytes);
+                out.emplace_back(path_to_utf8(fs::relative(e.path(), dir)), std::move(bytes));
+            }
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        auto saves = [&s, files_of] {
+            std::map<std::string, Files> out;
+            for (const SlotInfo& i : s.slots().list()) out[i.id] = files_of(s.slots().folder(i.id));
+            return out;
+        };
+        auto put = [&g](f64 feet_x, f64 feet_y) { g.teleport(feet_x, feet_y - kHeroHalfH); };
+        auto in = [&g](u64 id) {
+            const std::vector<u64> now = g.areas_inside();
+            return std::find(now.begin(), now.end(), id) != now.end();
+        };
+        auto var = [&s](const char* name) { return s.vars().get(name).number(); };
+        auto num = [](f64 x) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%.2f", x);
+            return std::string(b);
+        };
+        auto at_spawn = [&g, st] { return g.hero_x() == 2.5 && std::fabs(g.hero_y() - (st->v - kHeroHalfH)) < 0.05; };
+        auto at_entry = [&g, st] { return g.hero_x() == -47.5 && std::fabs(g.hero_y() - (st->v - kHeroHalfH)) < 0.05; };
+        auto where = [&g, num] { return " (уровень «" + g.level_id() + "», герой " + num(g.hero_x()) + ", " + num(g.hero_y()) + ")"; };
+        auto same_areas = [](const fs::path& a, const fs::path& b) {
+            std::vector<u8> x, y;
+            return read_file(a / "areas.json", x) && read_file(b / "areas.json", y) && x == y;
+        };
+        // hero.json of a save as a game before levels wrote it (no "level"), or with the level given.
+        auto hero_level = [&s](const char* slot, const std::string* level) {
+            const fs::path file = s.slots().folder(slot) / "hero.json";
+            std::vector<u8> bytes;
+            if (!read_file(file, bytes)) return false;
+            std::string text(bytes.begin(), bytes.end());
+            const usize at = text.find("\"level\""), comma = text.rfind(',', at);
+            const usize open = text.find('"', text.find(':', at)), close = text.find('"', open + 1);
+            if (at == std::string::npos || comma == std::string::npos || close == std::string::npos) return false;
+            if (level) text.replace(open, close + 1 - open, "\"" + *level + "\"");
+            else text.erase(comma, close + 1 - comma);
+            return write_file_atomic(file, {reinterpret_cast<const u8*>(text.data()), text.size()});
+        };
+        // The keys' critter, the wandering one, the crate: where they are now.
+        auto look = [&g](f64& cx, f64& px, f64& ky) {
+            f64 x = 0;
+            cx = g.critter_x(g.copy_with_id(trip::kCritter));
+            px = g.critter_x(g.copy_with_id(trip::kPlayer));
+            return g.position_of(g.copy_with_id(trip::kCrate), x, ky) && !std::isnan(cx) && !std::isnan(px);
+        };
+        auto walk = [&g](bool right) {
+            Controls c;
+            c.right = right;
+            c.left = !right;
+            g.script(c);
+        };
+
+        if (continued) {
+            steps_.push_back({"«Продолжить» другим процессом: «Пещера», где сохранились", 40, [&s, &g, this, st, in, var, num, where](u32 f) {
+                std::error_code ec;
+                if (f < 5) return false;
+                if (f == 5) {
+                    st->v = g.generator().village_y();
+                    std::vector<u8> bytes;
+                    check(read_file(trip::notes(), bytes), "заметки первого процесса: " + path_to_utf8(trip::notes()));
+                    const std::string text(bytes.begin(), bytes.end());
+                    for (usize start = 0; start < text.size();) {
+                        usize end = text.find('\n', start);
+                        if (end == std::string::npos) end = text.size();
+                        const std::string line = text.substr(start, end - start);
+                        if (const usize sp = line.find(' '); sp != std::string::npos)
+                            st->notes[line.substr(0, sp)] = std::strtod(line.c_str() + sp + 1, nullptr);
+                        start = end + 1;
+                    }
+                    FORGE_INFO("рабочая папка: %s", path_to_utf8(fs::current_path(ec)).c_str());
+                    check(fs::equivalent(s.user_folder(), trip::root() / "user", ec), "файлы игрока — в " + path_to_utf8(s.user_folder()));
+                    check(s.slots().latest() && s.slots().latest()->id == "уровни", "последнее сохранение — «уровни»");
+                    check(s.continue_game(), "«Продолжить»");
+                    return false;
+                }
+                if (f < 15) return false;
+                std::map<std::string, f64>& n = st->notes;
+                check(g.level_id() == "cave" && std::fabs(g.hero_x() - n["x"]) < 0.01 && std::fabs(g.hero_y() - n["y"]) < 0.05,
+                      "герой в «Пещере», где сохранился: " + num(n["x"]) + ", " + num(n["y"]) + where());
+                check(g.areas() && g.areas()->find(trip::kEntry) && g.areas()->find(trip::kGrotto) && in(trip::kGrotto),
+                      "зоны «Пещеры», герой в «Гроте»");
+                check(g.hearts() == n["hearts"] && var("inv.coins") == n["coins"] && var("test.ticks") == n["ticks"] &&
+                          var("test.frames") == n["frames"],
+                      "сердца, сумка и значения игры — как при сохранении");
+                check(g.hero_marked(trip::kMarkLink), "герой помнит «Метку»");
+                check(!g.copy_with_id(trip::kTicker) && g.copies_of("ticker").empty(), "«Часов» «Деревни» здесь нет");
+                return true;
+            }});
+            steps_.push_back({"«Деревня» не идёт, пока героя там нет", 130, [&g, this, st, var](u32 f) {
+                if (f < 120) return false;
+                check(g.level_id() == "cave" && var("test.ticks") == st->notes["ticks"] && var("test.frames") == st->notes["frames"],
+                      "«Часы» «Деревни» не считают: test.ticks " + std::to_string(var("test.ticks")) + ", test.frames " +
+                          std::to_string(var("test.frames")));
+                return true;
+            }});
+            steps_.push_back({"в «Деревню»: она такая, какой её оставили", 200, [&s, &g, this, st, put, in, var, look, where](u32 f) {
+                std::map<std::string, f64>& n = st->notes;
+                if (f == 0) {
+                    g.go_to("level");
+                    return false;
+                }
+                if (f == 1) {
+                    f64 cx = 0, px = 0, ky = 0;
+                    const bool seen = look(cx, px, ky);
+                    check(g.level_id() == "level" && g.travel_problem().empty(), "герой в «Деревне»" + where());
+                    check(seen && std::fabs(ky - n["ky"]) < 1.0 && std::fabs(cx - n["cx"]) < 0.5 && std::fabs(px - n["px"]) < 0.5,
+                          "«Ящик» и оба «Зверька» там, где их оставили: " + std::to_string(ky) + ", " + std::to_string(cx) + ", " +
+                              std::to_string(px));
+                    check(g.copy_with_id(trip::kTicker) && g.copy_with_id(trip::kSpring) && !g.copy_with_id(trip::kCoin),
+                          "«Часы» и «Родник» на месте, подобранных монет нет");
+                    check(s.screens().place_music() == "двор.wav", "музыка «Двора»: «" + s.screens().place_music() + "»");
+                    g.hurt(1);
+                    put(34.5, st->v);
+                    return false;
+                }
+                if (f == 30) {
+                    check(g.hearts() == n["hearts"] - 1, "«Родник» помнит, что уже лечил: сердец " + std::to_string(g.hearts()));
+                    put(25.5, st->v);
+                }
+                if (f == 50) check(in(trip::kMark) && g.last_hint() != "Метка", "«Метка» себя не называет: «" + g.last_hint() + "»");
+                if (f < 150) return false;
+                check(var("test.frames") >= n["frames"] + 100, "схема «Часов» снова считает шаги: test.frames " + std::to_string(var("test.frames")));
+                return true;
+            }});
+            steps_.push_back({"и снова в «Пещеру»; сохранение", 30, [&s, &g, this, at_entry, where](u32 f) {
+                if (f == 0) {
+                    g.go_to("cave", area_thing_id(trip::kEntry));
+                    return false;
+                }
+                if (f < 5) return false;
+                check(g.level_id() == "cave" && at_entry(), "герой в середине «Входа»" + where());
+                check(s.save("уровни-2", "Уровни 2"), "игра сохраняется снова");
+                return true;
+            }});
+            return;
+        }
+
+        steps_.push_back({"игра двух уровней в своей папке: новая игра", 30, [&s, &g, this, st](u32 f) {
+            if (f < 5) return false;
+            std::error_code ec;
+            check(fs::equivalent(s.game_dir(), trip::root() / "data", ec), "игра читает данные из " + path_to_utf8(s.game_dir()));
+            check(fs::equivalent(s.user_folder(), trip::root() / "user", ec), "файлы игрока — в " + path_to_utf8(s.user_folder()));
+            check(s.data_errors().empty(), "данные игры читаются без ошибок");
+            const forge::level::LevelList list = forge::level::read_levels(s.game_dir());
+            check(list.from_file && list.writable() && list.levels.size() == 3 && list.start == "level",
+                  "levels.json: «Деревня» (старт), «Пещера» и «Файл»");
+            check(s.slots().list().empty(), "сохранений ещё нет");
+            // The areas, on the village's floor (the game's world is around both levels).
+            st->v = g.generator().village_y();
+            const i32 v = g.generator().village_y();
+            auto area = [v](u64 id, const char* name, i32 x0, i32 x1, const char* music) {
+                forge::level::Area a;
+                a.id = id;
+                a.name = name;
+                a.x0 = x0;
+                a.x1 = x1;
+                a.y0 = v - 6;
+                a.y1 = v + 2;
+                a.music = music;
+                return a;
+            };
+            forge::level::LevelAreas village, cave;
+            village.areas = {area(trip::kYard, "Двор", -6, 8, "двор.wav"), area(trip::kMark, "Метка", 24, 27, ""),
+                             area(trip::kExit, "Выход", 40, 43, "")};
+            village.spawn = true;
+            village.spawn_x = 2.5;
+            village.spawn_y = v;
+            cave.areas = {area(trip::kEntry, "Вход", -50, -46, "пещера.wav"), area(trip::kGrotto, "Грот", -62, -59, "")};
+            cave.spawn = true;
+            cave.spawn_x = -40.5;
+            cave.spawn_y = v;
+            std::string why;
+            for (const auto& [id, areas] : {std::pair{"level", &village}, std::pair{"cave", &cave}}) {
+                const fs::path dir = forge::level::level_folder(s.game_dir(), id);
+                fs::create_directories(dir, ec);
+                check(forge::level::save_areas(dir, *areas, &why), std::string("зоны уровня ") + id + " записаны " + why);
+            }
+            g.set_level({});
+            check(s.new_game(), "новая игра");
+            return true;
+        }});
+        steps_.push_back({"новая игра — на стартовом уровне «Деревня»", 40, [&s, &g, this, st, var, at_spawn, where](u32 f) {
+            if (f < 20) return false;
+            std::error_code ec;
+            check(g.level_id() == "level" && at_spawn(), "герой в точке появления «Деревни»" + where());
+            check(!fs::exists(s.slots().session() / "levels", ec), "других уровней в игре ещё нет (session/levels)");
+            check(g.travels() == 0 && g.travel_problem().empty(), "переходов ещё не было");
+            check(s.screens().shown("окно_уровня") && g.level_screens().count("окно_уровня"), "«Двор» открыл окно уровня");
+            check(s.screens().place_music() == "двор.wav", "музыка «Двора»: «" + s.screens().place_music() + "»");
+            check(g.hearts() == 3 && var("inv.coins") == 0, "три сердца, монет нет");
+            return true;
+        }});
+        steps_.push_back({"«Деревня» живёт: секунды, зверьки, звук, клавиши", 200, [&s, &g, this, st, var](u32 f) {
+            const f64 v = st->v;
+            if (f == 0) {
+                const flecs::entity_t t = g.spawn_copy("ticker", -3.5, v, trip::kTicker);
+                Sounds near;
+                near.near = "ручей.wav";
+                near.range = 24;
+                check(t && g.set_sounds(t, near), "«Часы» стоят, рядом с ними журчит");
+                const flecs::entity_t c = g.spawn_critter(-8.5, v, Scheme::Wander, trip::kCritter);
+                Sounds steps;
+                steps.step = "шаг.wav";
+                steps.range = 24;
+                check(c && g.set_sounds(c, steps), "«Зверёк» бегает и стучит шагами");
+                check(g.spawn_critter(-1.5, v, Scheme::Player, trip::kPlayer) != 0, "«Зверёк» по клавишам стоит рядом с героем");
+                check(g.spawn_copy("spring", 34.5, v, trip::kSpring) && g.spawn_copy("coins", 20.5, v, trip::kCoin), "«Родник» и «Монеты»");
+                check(s.screens().show("окно_игрока", true), "игрок открыл своё окно"); // as a button of the HUD opens it
+                st->named = g.sounds().played_named();
+                st->cx = g.critter_x(c);
+                return false;
+            }
+            if (f == 60) {
+                st->px = g.critter_x(g.copy_with_id(trip::kPlayer));
+                Controls c;
+                c.right = true;
+                g.script(c);
+            }
+            if (f == 80) g.stop_script();
+            if (f < 180) return false;
+            check(var("test.ticks") >= 2, "«Часы» считают секунды: test.ticks = " + s.vars().get("test.ticks").text());
+            check(var("test.frames") >= 100, "и шаги своей схемой: test.frames = " + s.vars().get("test.frames").text());
+            check(g.sounds().loops() == 1, "у «Часов» журчит: петель звука " + std::to_string(g.sounds().loops()));
+            check(g.sounds().played_named() > st->named, "шаги «Зверька» звучат: " + std::to_string(g.sounds().played_named()));
+            check(std::fabs(g.critter_x(g.copy_with_id(trip::kCritter)) - st->cx) > 0.5, "«Зверёк» бегает");
+            check(g.critter_x(g.copy_with_id(trip::kPlayer)) > st->px + 0.5, "клавиши ведут «Зверька» по клавишам");
+            return true;
+        }});
+        steps_.push_back({"сердца, монеты, «Родник» и «Метка»", 100, [&g, this, st, put, in, var](u32 f) {
+            if (f == 0) {
+                g.hurt(1);
+                put(20.5, st->v); // onto the coins
+            }
+            if (f == 15) {
+                check(var("inv.coins") == 10 && !g.copy_with_id(trip::kCoin), "монеты подобраны: в сумке " + std::to_string(var("inv.coins")));
+                put(25.5, st->v); // into «Метка»
+            }
+            if (f == 30) {
+                check(in(trip::kMark) && g.last_hint() == "Метка" && g.hero_marked(trip::kMarkLink),
+                      "«Метка» назвала себя, «один раз» запомнил герой: «" + g.last_hint() + "»");
+                put(34.5, st->v); // onto «Родник»
+            }
+            if (f == 60) {
+                check(g.hearts() == 3, "«Родник» вылечил: сердец " + std::to_string(g.hearts()));
+                put(2.5, st->v);
+            }
+            return f >= 80;
+        }});
+        steps_.push_back({"в «Пещеру» между шагами: «Деревня» замерла целиком", 260, [&s, &g, this, st, put, in, var, look, at_entry, where,
+                                                                                  same_areas](u32 f) {
+            std::error_code ec;
+            if (f == 0) {
+                check(g.spawn_copy("crate", 5.5, st->v - 25, trip::kCrate) != 0, "«Ящик» высоко над землёй");
+                return false;
+            }
+            if (f < 25) return false;
+            if (f == 25) {
+                check(look(st->cx, st->px, st->ky) && st->ky < st->v - 15, "«Ящик» падает: y " + std::to_string(st->ky));
+                st->ticks = var("test.ticks");
+                st->frames = var("test.frames");
+                st->named = g.sounds().played_named();
+                st->hearts = g.hearts();
+                st->coins = var("inv.coins");
+                st->travels = g.travels();
+                st->said = false;
+                g.go_to("cave", area_thing_id(trip::kEntry));
+                return false;
+            }
+            if (f == 26) {
+                const fs::path session = s.slots().session();
+                check(g.level_id() == "cave" && g.travels() == st->travels + 1 && g.travel_problem().empty(),
+                      "герой в «Пещере»: «" + g.travel_problem() + "»" + where());
+                check(at_entry(), "герой в середине «Входа», на полу" + where());
+                check(g.areas() && g.areas()->find(trip::kEntry) && !g.areas()->find(trip::kYard), "зоны — «Пещеры»");
+                check(in(trip::kEntry) && g.area_enters(trip::kEntry) == 0, "герой уже во «Входе», в него не входил: обратно не уходит");
+                for (const u64 id : {trip::kTicker, trip::kCritter, trip::kCrate, trip::kSpring, trip::kPlayer})
+                    check(!g.copy_with_id(id), "вещи «Деревни» в «Пещере» нет: " + forge::level::area_id_text(id));
+                check(g.copies_of("ticker").empty() && g.copies_of("spring").empty(), "«Часов» и «Родника» здесь нет");
+                check(g.sounds().loops() == 0, "петли звука «Деревни» остановлены: " + std::to_string(g.sounds().loops()));
+                check(!s.screens().shown("окно_уровня") && g.level_screens().empty(), "окно, открытое «Деревней», закрыто");
+                check(s.screens().shown("окно_игрока"), "окно, открытое игроком, осталось");
+                check(s.screens().place_music() == "пещера.wav", "музыка места — «Входа»: «" + s.screens().place_music() + "»");
+                check(g.hearts() == st->hearts && var("inv.coins") == st->coins && var("test.ticks") == st->ticks &&
+                          var("test.frames") == st->frames,
+                      "сердца, сумка и значения игры — те же");
+                check(g.hero_marked(trip::kMarkLink), "герой помнит «Метку»");
+                check(fs::is_directory(session / "levels" / "level", ec), "«Деревня» записана в session/levels/level");
+                check(same_areas(session / "world", forge::level::level_folder(s.game_dir(), "cave")), "мир игры — копия «Пещеры» автора");
+                check(!fs::exists(session / "levels" / "cave", ec) && !fs::exists(session / "levels" / ".cave.tmp", ec),
+                      "копия «Пещеры» стала миром игры, лишних папок нет");
+                Controls c; // the keys: here, not in «Деревня»
+                c.right = true;
+                g.script(c);
+                return false;
+            }
+            if (f == 60) g.stop_script();
+            if (f == 100) put(-60.5, st->v); // into «Грот»
+            // Every frame there: «Деревня» counts nothing and sounds nothing.
+            if (!st->said && (var("test.ticks") != st->ticks || var("test.frames") != st->frames ||
+                              g.sounds().played_named() != st->named || g.sounds().loops() != 0)) {
+                st->said = true;
+                check(false, "в «Пещере» «Деревня» не идёт: test.ticks " + std::to_string(var("test.ticks")) + " (было " +
+                                 std::to_string(st->ticks) + "), test.frames " + std::to_string(var("test.frames")) + " (было " +
+                                 std::to_string(st->frames) + "), звуков по имени " + std::to_string(g.sounds().played_named()) +
+                                 " (было " + std::to_string(st->named) + "), петель " + std::to_string(g.sounds().loops()));
+            }
+            if (f < 26 + 200) return false;
+            check(g.level_id() == "cave" && in(trip::kGrotto), "герой всё ещё в «Пещере», в «Гроте»" + where());
+            check(g.last_hint() == "Грот" && var("test.grot") == 1, "«Грот»: название и связь, ждавшая 0,3 с, сделаны: test.grot " +
+                                                                      std::to_string(var("test.grot")));
+            return true;
+        }});
+        steps_.push_back({"обратно между шагами: «Деревня» такая, какой её оставили", 200, [&s, &g, this, st, var, look, at_spawn, where](u32 f) {
+            std::error_code ec;
+            if (f == 0) {
+                st->travels = g.travels();
+                g.go_to("level");
+                return false;
+            }
+            f64 cx = 0, px = 0, ky = 0;
+            const bool seen = look(cx, px, ky);
+            if (f == 1) {
+                const fs::path session = s.slots().session();
+                check(g.level_id() == "level" && g.travels() == st->travels + 1 && at_spawn(), "герой в точке появления «Деревни»" + where());
+                check(seen && std::fabs(ky - st->ky) < 1.0, "«Ящик» висит, где его оставили: y " + std::to_string(ky) + ", был " + std::to_string(st->ky));
+                check(seen && std::fabs(cx - st->cx) < 0.5, "«Зверёк» там, где его оставили: x " + std::to_string(cx) + ", был " + std::to_string(st->cx));
+                check(seen && std::fabs(px - st->px) < 0.5, "клавиши в «Пещере» «Зверька» «Деревни» не двигали: x " + std::to_string(px) +
+                                                                ", был " + std::to_string(st->px));
+                check(g.copy_with_id(trip::kTicker) && g.copy_with_id(trip::kSpring) && !g.copy_with_id(trip::kCoin),
+                      "«Часы» и «Родник» на месте, подобранных монет нет");
+                check(var("test.ticks") == st->ticks && var("test.frames") - st->frames <= 4,
+                      "пока героя не было, «Часы» не считали: test.ticks " + std::to_string(var("test.ticks")) + ", test.frames " +
+                          std::to_string(var("test.frames")) + " (было " + std::to_string(st->frames) + ")");
+                check(!s.screens().shown("окно_уровня") && s.screens().shown("окно_игрока"), "окно уровня закрыто, окно игрока открыто");
+                check(s.screens().place_music() == "двор.wav", "музыка «Двора»: «" + s.screens().place_music() + "»");
+                check(!fs::exists(session / "levels" / "level", ec) && fs::is_directory(session / "levels" / "cave", ec),
+                      "«Пещера» ждёт в session/levels/cave");
+                return false;
+            }
+            if (f < 150) return false;
+            check(var("test.frames") >= st->frames + 100, "схема «Часов» снова считает шаги: test.frames " + std::to_string(var("test.frames")));
+            // Their «При старте» does not run again, as after a load: its waiting a second is gone (a limit of 14.2b).
+            FORGE_INFO("«Часы» «При старте» после возвращения: test.ticks %.0f (было %.0f)", var("test.ticks"), st->ticks);
+            check(g.sounds().loops() == 1, "и журчат: петель звука " + std::to_string(g.sounds().loops()));
+            check(seen && ky > st->v - 2, "«Ящик» упал на землю: y " + std::to_string(ky));
+            s.screens().show("окно_игрока", false);
+            return true;
+        }});
+        steps_.push_back({"«Только один раз»: «Родник» помнит сам, «Метку» помнит герой", 80, [&g, this, st, put, in](u32 f) {
+            if (f == 0) {
+                g.hurt(1);
+                put(34.5, st->v);
+            }
+            if (f == 30) {
+                check(g.hearts() == 2, "«Родник» второй раз не лечит: сердец " + std::to_string(g.hearts()));
+                put(25.5, st->v);
+            }
+            if (f < 50) return false;
+            check(in(trip::kMark) && g.last_hint() == "Грот", "«Метка» второй раз себя не называет: подсказка «" + g.last_hint() + "»");
+            put(2.5, st->v);
+            return true;
+        }});
+        steps_.push_back({"по связи: «Выход» → «Пещера», «Вход»; вторая связь того же шага не нужна", 300,
+                          [&g, this, st, put, in, var, walk, at_entry, where](u32 f) {
+            if (f == 0) {
+                st->travels = g.travels();
+                st->dropped = g.travels_dropped();
+                st->arrived = 0;
+                put(37.5, st->v);
+                return false;
+            }
+            if (f < 10) return false;
+            if (!st->arrived && g.level_id() == "level" && f < 250) {
+                walk(true);
+                return false;
+            }
+            g.stop_script();
+            if (!st->arrived) {
+                st->arrived = f;
+                check(g.level_id() == "cave" && g.travels() == st->travels + 1, "герой вошёл в «Выход» и ушёл в «Пещеру»" + where());
+                check(at_entry() && in(trip::kEntry), "в середину «Входа», как сказала первая связь" + where());
+                check(g.travels_dropped() == st->dropped + 1, "вторая связь того же шага («в точку появления») не нужна: " +
+                                                                  std::to_string(g.travels_dropped() - st->dropped));
+            }
+            if (f < st->arrived + 60) return false;
+            check(g.level_id() == "cave" && g.travels() == st->travels + 1 && at_entry(), "через секунду герой там же: обратно его не отправило" + where());
+            check(var("test.after") == 0, "код связи, ждавший в «Деревне», после ухода не продолжился: test.after " + std::to_string(var("test.after")));
+            return true;
+        }});
+        steps_.push_back({"по связи обратно: «Вход» → «Деревня», точка появления", 300, [&g, this, st, put, in, walk, at_spawn, where](u32 f) {
+            if (f == 0) {
+                st->travels = g.travels();
+                st->arrived = 0;
+                put(-43.5, st->v);
+                return false;
+            }
+            if (f < 10) return false;
+            if (f == 10) check(!in(trip::kEntry), "герой вышел из «Входа»");
+            if (!st->arrived && g.level_id() == "cave" && f < 250) {
+                walk(false);
+                return false;
+            }
+            g.stop_script();
+            if (!st->arrived) {
+                st->arrived = f;
+                check(g.level_id() == "level" && g.travels() == st->travels + 1 && at_spawn(), "герой вернулся в точку появления «Деревни»" + where());
+                check(g.copy_with_id(trip::kTicker) && !g.copy_with_id(trip::kCoin), "«Деревня» та же");
+            }
+            if (f < st->arrived + 60) return false;
+            check(g.level_id() == "level" && g.travels() == st->travels + 1, "через секунду герой там же" + where());
+            return true;
+        }});
+        steps_.push_back({"новая игра начинается с начала", 40, [&s, &g, this, var](u32 f) {
+            std::error_code ec;
+            const fs::path session = s.slots().session();
+            if (f == 0) {
+                check(s.save("перед-новой", "Перед новой"), "игра сохраняется в «Деревне»");
+                check(fs::is_directory(s.slots().folder("перед-новой") / "levels" / "cave", ec), "в сохранении и «Пещера»");
+                check(s.new_game(), "новая игра");
+                return false;
+            }
+            if (f == 10) {
+                check(g.level_id() == "level" && g.travels() == 0, "новая игра — на «Деревне»");
+                check(!fs::exists(session / "levels", ec), "уровней прошлой игры нет (session/levels)");
+                check(!g.copy_with_id(trip::kTicker) && !g.hero_marked(trip::kMarkLink), "«Деревня» — как у автора, герой ничего не помнит");
+                check(g.hearts() == 3 && var("inv.coins") == 0 && var("test.ticks") == 0 && var("test.frames") == 0, "сердца, сумка и значения — новые");
+                // session/levels is a file: the level left cannot be kept, so the hero does not go.
+                const std::string_view text = "файл на месте папки уровней";
+                check(write_file_atomic(session / "levels", {reinterpret_cast<const u8*>(text.data()), text.size()}), "session/levels — файл");
+                g.go_to("cave");
+                return false;
+            }
+            if (f == 11) {
+                check(g.level_id() == "level" && g.hero_alive() && g.travel_problem().find("не создать папку уровней") != std::string::npos,
+                      "session/levels — файл: «Пещеры» не будет, «Деревня» играет: «" + g.travel_problem() + "»");
+                fs::remove(session / "levels", ec);
+                g.go_to("cave");
+                return false;
+            }
+            if (f == 12) {
+                check(g.level_id() == "cave" && g.travel_problem().empty(), "файл убран — переход есть");
+                g.go_to("level");
+                return false;
+            }
+            if (f < 20) return false;
+            check(g.level_id() == "level" && s.load("перед-новой"), "сохранение «перед-новой» загружается");
+            return true;
+        }});
+        steps_.push_back({"сохранения прежних версий: без «level» и «level»: \"\"", 30, [&s, &g, this, hero_level](u32 f) {
+            std::error_code ec;
+            const fs::path session = s.slots().session();
+            if (f == 0) {
+                check(g.level_id() == "level" && g.copy_with_id(trip::kTicker), "«перед-новой»: «Деревня» с «Часами»");
+                check(s.save("старое", "Старое") && hero_level("старое", nullptr), "сохранение, как до уровней: в hero.json нет «level»");
+                const std::string none;
+                check(s.save("вне-списка", "Вне списка") && hero_level("вне-списка", &none), "сохранение уровня не из списка: «level»: \"\"");
+                check(s.load("старое"), "старое сохранение загружается");
+                return false;
+            }
+            if (f == 5) {
+                check(g.level_id() == "level", "без «level» — «level», а не «" + g.level_id() + "»");
+                g.go_to("cave");
+                return false;
+            }
+            if (f == 6) {
+                check(g.level_id() == "cave", "из старого сохранения — в «Пещеру»");
+                g.go_to("level");
+                return false;
+            }
+            if (f == 7) {
+                check(g.level_id() == "level" && g.copy_with_id(trip::kTicker), "и обратно: «Деревня» та же, с «Часами»");
+                check(s.load("вне-списка"), "сохранение уровня не из списка загружается");
+                return false;
+            }
+            if (f == 12) {
+                check(g.level_id().empty() && g.copy_with_id(trip::kTicker), "«level»: \"\" — уровень не из списка («" + g.level_id() + "»)");
+                g.go_to("cave");
+                return false;
+            }
+            if (f == 13) {
+                check(g.level_id() == "cave", "из него — в «Пещеру»");
+                std::string left;
+                for (const auto& e : fs::directory_iterator(session / "levels", ec)) left += " " + path_to_utf8(e.path().filename());
+                check(left.empty(), "уровень не из списка не сохраняется (вернуться в него нельзя), временных папок нет:" + left);
+                g.go_to("level");
+                return false;
+            }
+            if (f == 14) {
+                check(g.level_id() == "level" && !g.copy_with_id(trip::kTicker), "«Деревня» после него — как у автора");
+                check(s.load("перед-новой"), "сохранение «перед-новой» загружается");
+                return false;
+            }
+            return f >= 20;
+        }});
+        steps_.push_back({"отказы: игра идёт, где шла, сохранения не тронуты", 30, [&s, &g, this, st, saves, same_areas](u32 f) {
+            std::error_code ec;
+            const fs::path session = s.slots().session();
+            auto refused = [&](const std::string& what, const char* says) {
+                check(g.level_id() == "level" && g.running() && g.hero_alive() && std::fabs(g.hero_x() - st->hx) < 0.01 &&
+                          g.copy_with_id(trip::kTicker) && g.travel_problem().find(says) != std::string::npos,
+                      what + ": «Деревня» играет дальше, герой на месте; почему — «" + g.travel_problem() + "»");
+            };
+            switch (f) {
+            case 0:
+                check(g.level_id() == "level" && g.copy_with_id(trip::kTicker), "«перед-новой»: «Деревня» с «Часами»");
+                st->slots = saves();
+                st->hx = g.hero_x();
+                g.go_to("nowhere");
+                break;
+            case 1:
+                refused("уровня нет в списке", "нет в списке уровней");
+                g.go_to("file");
+                break;
+            case 2:
+                refused("папка уровня — файл", "— файл");
+                g.go_to("cave", "area:00000000000000ff");
+                break;
+            case 3:
+                refused("зоны, где появиться, нет", "нет зоны");
+                g.go_to("cave", "spawn");
+                break;
+            case 4:
+                refused("где появиться — не зона", "не зона");
+                g.fail_next_travel(SliceGame::TravelFault::Save);
+                g.go_to("cave");
+                break;
+            case 5:
+                refused("«Деревня» не записалась", "не записался на диск");
+                g.fail_next_travel(SliceGame::TravelFault::Move);
+                g.go_to("cave");
+                break;
+            case 6:
+                refused("папка «Деревни» не переместилась", "не переместилась");
+                g.fail_next_travel(SliceGame::TravelFault::Make);
+                g.go_to("cave");
+                break;
+            case 7: {
+                refused("«Пещера» не открылась", "не открылся");
+                check(fs::is_directory(session / "levels" / "cave", ec) && same_areas(session / "world", forge::level::level_folder(s.game_dir(), "level")),
+                      "папки вернулись: «Деревня» — мир игры, «Пещера» — в session/levels/cave");
+                // The disk refuses for real: the files of the level's objects are folders now.
+                const fs::path away = trip::root() / utf8_path("в сторону");
+                fs::create_directories(away, ec);
+                for (const auto& e : fs::directory_iterator(session / "world", ec)) {
+                    const std::string name = path_to_utf8(e.path().filename());
+                    if (!e.is_regular_file() || !name.starts_with("e.") || !name.ends_with(".fwr")) continue;
+                    st->aside.emplace_back(away / e.path().filename(), e.path());
+                }
+                for (const auto& [to, from] : st->aside) {
+                    fs::rename(from, to, ec);
+                    fs::create_directories(from / utf8_path("занято"), ec);
+                }
+                check(!st->aside.empty(), "файлы объектов уровня заменены папками");
+                g.go_to("cave");
+                break;
+            }
+            case 8:
+                refused("диск не пишет файлы уровня", "не записался на диск");
+                for (const auto& [to, from] : st->aside) {
+                    fs::remove_all(from, ec);
+                    fs::rename(to, from, ec);
+                }
+                st->aside.clear();
+                g.go_to("cave");
+                break;
+            case 9:
+                check(g.level_id() == "cave" && g.travel_problem().empty(), "файлы вернули — переход есть: «" + g.travel_problem() + "»");
+                g.go_to("level");
+                break;
+            case 10:
+                check(g.level_id() == "level" && g.copy_with_id(trip::kTicker), "и обратно: «Деревня» с «Часами»");
+                check(saves() == st->slots, "сохранения те же, байт в байт");
+                return true;
+            default: break;
+            }
+            return false;
+        }});
+        steps_.push_back({"сбой и при возвращении: главное меню, сохранения не тронуты", 20, [&s, &g, this, st, saves](u32 f) {
+            if (f == 0) {
+                g.fail_next_travel(SliceGame::TravelFault::Back);
+                g.go_to("cave");
+                return false;
+            }
+            if (f == 1) {
+                check(!g.running() && s.screen() == Screen::Main, "ни «Пещера», ни снова «Деревня» не открылись: игра в главном меню");
+                check(g.travel_problem().find("не открылся снова") != std::string::npos, "почему: «" + g.travel_problem() + "»");
+                check(saves() == st->slots, "сохранения те же, байт в байт, автосохранения нет");
+                return false;
+            }
+            if (f < 5) return false;
+            check(s.load("перед-новой") && g.level_id() == "level" && g.copy_with_id(trip::kTicker), "сохранение «перед-новой» играется дальше");
+            return true;
+        }});
+        steps_.push_back({"сохранение в «Пещере»: оба уровня", 90, [&s, &g, this, st, put, in, var, look, same_areas](u32 f) {
+            std::error_code ec;
+            if (f == 0) {
+                check(look(st->cx, st->px, st->ky), "«Деревня»: оба «Зверька» и «Ящик»");
+                g.go_to("cave", area_thing_id(trip::kEntry));
+                return false;
+            }
+            if (f == 30) put(-60.5, st->v); // into «Грот»
+            if (f < 60) return false;
+            check(g.level_id() == "cave" && in(trip::kGrotto), "герой в «Пещере», в «Гроте»");
+            SDL_Delay(1100); // the newest save by a second: «Продолжить» takes it
+            check(s.save("уровни", "Уровни"), "игра сохраняется в «Пещере»");
+            const fs::path slot = s.slots().folder("уровни");
+            std::vector<u8> bytes;
+            read_file(slot / "hero.json", bytes);
+            const std::string hero(bytes.begin(), bytes.end());
+            check(hero.find("\"level\": \"cave\"") != std::string::npos, "hero.json: «level»: «cave»: " + hero);
+            check(fs::is_directory(slot / "levels" / "level", ec) && !fs::exists(slot / "levels" / "cave", ec) &&
+                      same_areas(slot / "world", forge::level::level_folder(s.game_dir(), "cave")),
+                  "в сохранении «Пещера» — мир игры, «Деревня» — levels/level");
+            for (const auto& e : fs::directory_iterator(slot / "levels", ec))
+                check(path_to_utf8(e.path().filename())[0] != '.', "временных папок нет: " + path_to_utf8(e.path().filename()));
+            check(s.slots().latest() && s.slots().latest()->id == "уровни", "оно последнее: его продолжит «Продолжить»");
+            std::string text;
+            char line[96];
+            for (const auto& [key, value] : std::initializer_list<std::pair<const char*, f64>>{
+                     {"x", g.hero_x()}, {"y", g.hero_y()}, {"ticks", var("test.ticks")}, {"frames", var("test.frames")}, {"hearts", g.hearts()},
+                     {"coins", var("inv.coins")}, {"ky", st->ky}, {"cx", st->cx}, {"px", st->px}}) {
+                std::snprintf(line, sizeof line, "%s %.17g\n", key, value);
+                text += line;
+            }
+            check(write_file_atomic(trip::notes(), {reinterpret_cast<const u8*>(text.data()), text.size()}), "заметки для второго процесса");
+            return true;
+        }});
+    }
+
     // The level editor's «Свет» as the game plays it: games/examples/light/level, made in the editor with the mouse
     // and the panel (its self-test makes it again and compares), read from the files the way «Играть отсюда» starts
     // it (in a package from the package's own data/examples). An old level keeps the light it always had; the
@@ -5263,6 +6080,107 @@ static bool tiled_changed(const std::filesystem::path& example, const std::files
     return true;
 }
 
+// --scene levels: the game of two levels in trip::root(), made anew from the game's data (from): levels.json with
+// «Деревня» (game/level, the start), «Пещера» (game/levels/cave) and «Файл», whose folder is a file; two templates of
+// pictures, «Часы» and «Родник»; the links between the levels and around them; two windows, the areas' music and the
+// objects' sounds. The areas are the scene's (on the village's floor, where the game's world has it).
+static bool make_travel_game(const std::filesystem::path& from, std::string& why) {
+    namespace fs = std::filesystem;
+    const fs::path root = trip::root(), game = root / "data";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "user", ec);
+    fs::copy(from, game, fs::copy_options::recursive, ec);
+    if (ec) {
+        why = "не скопированы данные игры из " + path_to_utf8(from) + ": " + ec.message();
+        return false;
+    }
+    auto text = [&](const fs::path& file, std::string_view t) {
+        fs::create_directories(file.parent_path(), ec);
+        if (write_file_atomic(file, {reinterpret_cast<const u8*>(t.data()), t.size()})) return true;
+        why = "не записан " + path_to_utf8(file);
+        return false;
+    };
+    forge::level::LevelList list;
+    list.levels = {{"level", "Деревня"}, {"cave", "Пещера"}, {"file", "Файл"}};
+    list.start = "level";
+    if (!forge::level::write_levels(game, list, &why) || !text(game / "levels" / "file", "не папка уровня"))
+        return false;
+    if (!text(game / "objects" / utf8_path("Часы.object.json"),
+              R"({"id": "ticker", "name": "Часы", "kind": "picture", "about": "каждую секунду прибавляет test.ticks"})") ||
+        !text(game / "objects" / utf8_path("Родник.object.json"),
+              R"({"id": "spring", "name": "Родник", "kind": "picture", "about": "лечит героя, один раз"})"))
+        return false;
+    // The links: the game's, and these.
+    logic::Logic links;
+    if (!links.load(game / "logic.json", &why)) return false;
+    auto link = [&](u32 id, const char* a, const char* verb, const std::string& b) -> logic::Link& {
+        logic::Link l;
+        l.id = id;
+        l.a = a;
+        l.verb = verb;
+        l.b = b;
+        links.links.push_back(l);
+        return links.links.back();
+    };
+    link(trip::kYardLink, "hero", "enter", area_thing_id(trip::kYard)).code = "forge.ui.show(\"окно_уровня\")";
+    link(trip::kMarkLink, "hero", "enter", area_thing_id(trip::kMark)).once = true;
+    {
+        logic::Link& l = link(trip::kGoLink, "hero", "go", area_thing_id(trip::kExit));
+        l.level = "cave";
+        l.arrive = area_thing_id(trip::kEntry);
+    }
+    link(trip::kGoTooLink, "hero", "go", area_thing_id(trip::kExit)).level = "cave";
+    link(trip::kLateLink, "hero", "go", area_thing_id(trip::kExit)).code =
+        "forge.wait(0.3)\nforge.game.add_var(\"test.after\", 1)\nlogic.go(target, \"level\", \"\", " + std::to_string(trip::kLateLink) + ")";
+    link(trip::kBackLink, "hero", "go", area_thing_id(trip::kEntry)).level = "level";
+    link(trip::kGrottoLink, "hero", "enter", area_thing_id(trip::kGrotto));
+    link(trip::kGrottoWait, "hero", "enter", area_thing_id(trip::kGrotto)).code = "forge.wait(0.3)\nforge.game.add_var(\"test.grot\", 1)";
+    link(trip::kTickerLink, "ticker", "follow", "hero").code = "while true do\n  forge.wait(1)\n  forge.game.add_var(\"test.ticks\", 1)\nend";
+    link(trip::kSpringLink, "spring", "heal", "hero").once = true;
+    script::Graph frames;
+    const u32 tick = frames.add("std.event.tick").uid;
+    script::GraphNode& add = frames.add("api.game.add_var", 240, 0);
+    add.set_value("name", "test.frames");
+    add.set_value("amount", "1");
+    frames.link(tick, script::kFlowNext, add.uid);
+    links.schemes.push_back({trip::kTickerScheme, "ticker", frames.to_json()});
+    if (!links.save(game / "logic.json", &why)) return false;
+    // Two windows that do not stop the world: one a link of «Двор» opens, one the player opens.
+    auto page = [](const char* id, const char* says) {
+        return std::string("<html><head><style>body, #") + id + " { pointer-events: none; } #" + id +
+               " { position: relative; width: 100%; height: 100%; }</style></head><body><div id=\"" + id +
+               "\" forge-screen=\"command\" forge-size=\"1920 1080\"><div>" + says + "</div></div></body></html>";
+    };
+    if (!text(game / "ui" / utf8_path("окно_уровня.html"), page("lv-level", "Окно уровня")) ||
+        !text(game / "ui" / utf8_path("окно_игрока.html"), page("lv-player", "Окно игрока")))
+        return false;
+    // Sounds: the areas' music, a stream near «Часы», the steps of «Зверёк».
+    auto tune = [](std::initializer_list<f32> notes, f32 step) {
+        std::vector<audio::Tone> tones;
+        f32 at = 0;
+        for (f32 hz : notes) {
+            tones.push_back({audio::Wave::Triangle, hz, hz, step * 0.95f, 0.01f, 3, 0.35f, at});
+            at += step;
+        }
+        return audio::synth(tones);
+    };
+    const audio::Tone step[] = {{audio::Wave::Square, 300, 200, 0.05f, 0.001f, 40, 0.3f}};
+    const std::pair<const char*, audio::ClipPtr> sounds[] = {{"двор.wav", tune({262, 330, 392}, 0.3f)},
+                                                             {"пещера.wav", tune({196, 233, 175}, 0.3f)},
+                                                             {"ручей.wav", tune({880, 988}, 0.2f)},
+                                                             {"шаг.wav", audio::synth(step)}};
+    fs::create_directories(game / "sounds", ec);
+    for (const auto& [name, clip] : sounds) {
+        std::vector<u8> wav;
+        if (!clip || !audio::encode_wav(*clip, wav) || !write_file_atomic(game / "sounds" / utf8_path(name), wav)) {
+            why = std::string("не записан звук ") + name;
+            return false;
+        }
+    }
+    return true;
+}
+
 int main(int argc, char** argv) {
     Options options;
     std::string scene = "village";
@@ -5373,6 +6291,25 @@ int main(int argc, char** argv) {
                 has_edits = true;
                 read_edits(utf8_path(argv[i + 1]), edits, edits_error);
             }
+    // --scene levels, levels_continue (step 14.2b): the game of two levels in this run's own folder; levels makes it
+    // anew, levels_continue plays on in it as levels left it (another process, the player's «Продолжить»).
+    if ((scene == "levels" || scene == "levels_continue") && options.silent) {
+        std::error_code ec;
+        if (scene == "levels") {
+            const std::filesystem::path packaged = exe_dir() / "data" / "game";
+            const std::filesystem::path from =
+                std::filesystem::is_directory(packaged / "objects", ec) ? packaged : utf8_path(SLICE_DATA_DIR);
+            std::string why;
+            if (!make_travel_game(from, why)) FORGE_ERROR("--scene levels: %s", why.c_str());
+        }
+        options.links_file.clear(); // the game's own logic.json, as a player's game has it
+        data = path_to_utf8(trip::root() / "data");
+        user = path_to_utf8(trip::root() / "user");
+        args.push_back(const_cast<char*>("--data"));
+        args.push_back(data.data());
+        args.push_back(const_cast<char*>("--user"));
+        args.push_back(user.data());
+    }
     if (scene == "volumes" && options.silent) {
         const std::filesystem::path dir = std::filesystem::temp_directory_path() / "forge_slice_volumes";
         std::error_code ec;

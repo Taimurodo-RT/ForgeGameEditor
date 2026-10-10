@@ -222,6 +222,8 @@ bool Logic::parse(std::string_view json, std::string* error) {
                 std::free(text);
             }
         }
+        l.level = str(v, "level");
+        l.arrive = str(v, "arrive");
         if (l.a.empty() || l.b.empty() || l.verb.empty()) continue;
         if (l.id == 0 || out.find(l.id)) l.id = 0; // given one below
         out.links.push_back(std::move(l));
@@ -284,6 +286,8 @@ std::string Logic::json() const {
                 yyjson_mut_obj_add_val(doc, o, "graph", yyjson_val_mut_copy(doc, yyjson_doc_get_root(g)));
                 yyjson_doc_free(g);
             }
+        if (!l.level.empty()) yyjson_mut_obj_add_strncpy(doc, o, "level", l.level.data(), l.level.size());
+        if (!l.arrive.empty()) yyjson_mut_obj_add_strncpy(doc, o, "arrive", l.arrive.data(), l.arrive.size());
         yyjson_mut_arr_append(list, o);
     }
     yyjson_mut_obj_add_val(doc, root, "links", list);

@@ -88,8 +88,11 @@ u32 Simulation::update(f64 frame_seconds, std::span<const world::Rect> focus) {
     stats_.world_ms = ns_to_ms(time_now_ns() - t0);
 
     frame_events_.clear();
-    for (u32 i = 0; i < ticks; ++i) tick();
-    stats_.ticks = ticks;
+    stop_ticks_ = false;
+    u32 ran = 0;
+    for (; ran < ticks && !stop_ticks_; ++ran) tick();
+    stop_ticks_ = false;
+    stats_.ticks = ran;
 
     t0 = time_now_ns();
     scene_.update();
@@ -97,12 +100,12 @@ u32 Simulation::update(f64 frame_seconds, std::span<const world::Rect> focus) {
 
     // Triggers look at where everything ended up this frame, through the
     // fresh spatial index.
-    if (ticks > 0) {
+    if (ran > 0) {
         t0 = time_now_ns();
         step_triggers();
         stats_.triggers_ms = ns_to_ms(time_now_ns() - t0);
     }
-    return ticks;
+    return ran;
 }
 
 void Simulation::tick() {

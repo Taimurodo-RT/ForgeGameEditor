@@ -225,6 +225,8 @@ private:
     std::string node_title(u32 link, const script::GraphNode& n, const script::NodeDef* d) const;
     std::string out_title(u32 link, const script::GraphNode& n, const script::PinDef& p) const;
     std::string option_name(const std::string& list, const std::string& id) const;
+    // «Где появиться» of «Перейти на уровень»: the level's spawn point and its areas.
+    std::vector<OptionView> arrivals(const std::string& level) const;
     NodeBox box_of(u32 link, const script::Graph& g, const script::GraphNode& n,
                    const std::set<std::pair<u32, std::string>>& wired_in) const;
     static std::set<std::pair<u32, std::string>> wired_inputs(const script::Graph& g);
@@ -283,7 +285,7 @@ private:
     std::vector<NodeView> m_nodes_;
     std::vector<WireView> m_wires_;
     std::vector<FrameView> m_frames_;
-    std::vector<OptionView> m_things_, m_actions_, m_cues_;
+    std::vector<OptionView> m_things_, m_actions_, m_cues_, m_levels_;
     std::vector<PaletteItem> m_palette_items_;
     bool m_palette_ = false, m_choosing_ = false;
     std::vector<OptionView> m_choices_;
