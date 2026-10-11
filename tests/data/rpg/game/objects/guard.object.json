@@ -1,0 +1,9 @@
+{
+  "id": "guard",
+  "name": "Стражник",
+  "kind": "villager",
+  "genre": "RPG",
+  "values": {
+    "talk": "guard"
+  }
+}

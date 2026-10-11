@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>HUD</title>
+<!-- Made by Forge «Интерфейс» from HUD.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n6 {
+  position: absolute;
+  left: 24px;
+  width: 460px;
+  top: 24px;
+  height: 240px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 20px 16px 20px;
+  justify-content: flex-start;
+  align-items: flex-start;
+  background-color: rgba(24, 30, 26, 0.784);
+  border-radius: 20px 20px 20px 20px;
+}
+#n7 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: normal;
+  text-align: left;
+  color: #ffd54a;
+  white-space: pre;
+}
+#n4 {
+  position: relative;
+  width: 420px;
+  height: 160px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+#n3 {
+  position: absolute;
+  left: 8px;
+  width: 198px;
+  top: 8px;
+  height: 48px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 6px 12px 6px 12px;
+  justify-content: center;
+  align-items: center;
+  background-color: #465648;
+  border-radius: 12px 12px 12px 12px;
+}
+#n2 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: normal;
+  text-align: left;
+  color: #dee8dc;
+  white-space: pre;
+}
+#n5 {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  box-sizing: border-box;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: left;
+  color: #dee8dc;
+  white-space: pre;
+}
+#n9 {
+  position: absolute;
+  left: calc(50% + -200px);
+  width: 400px;
+  bottom: 40px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 12px 28px 12px 28px;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(24, 30, 26, 0.784);
+  border-radius: 18px 18px 18px 18px;
+}
+#n8 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+html, body, #n1 {
+  pointer-events: none;
+}
+#n6, #n7, #n4, #n3, #n2, #n5, #n9, #n8 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="HUD" forge-screen="playing" forge-fit="expand" forge-size="1920 1080">
+  <div id="n6" class="frame" title="Сумка">
+    <div id="n7" class="text" title="Карта" forge-text="{rpg.map}">{rpg.map}</div>
+    <div id="n4" class="frame" title="Инвентарь" forge-list="items" forge-list-gap="8" forge-cell="8 8 198 48">
+      <div id="n3" class="frame" title="Вещь">
+        <div id="n2" class="text" title="Название" forge-text="{item.name} ×{item.count}">{item.name} ×{item.count}</div>
+      </div>
+      <div id="n5" class="text" title="Пока пусто">Сумка пуста</div>
+    </div>
+  </div>
+  <div id="n9" class="frame" title="Подсказка" forge-show-if="rpg.near &gt; 0">
+    <div id="n8" class="text" title="Слова">E — поговорить</div>
+  </div>
+</div>
+</body>
+</html>

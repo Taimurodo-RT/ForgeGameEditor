@@ -1,0 +1,10 @@
+{
+  "id": "elder",
+  "name": "Староста",
+  "kind": "villager",
+  "genre": "RPG",
+  "picture": "староста.png",
+  "values": {
+    "talk": "elder"
+  }
+}

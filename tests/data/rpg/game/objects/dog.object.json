@@ -1,0 +1,9 @@
+{
+  "id": "dog",
+  "name": "Пёс",
+  "kind": "villager",
+  "genre": "RPG",
+  "picture": "пёс.png",
+  "frames": 2,
+  "values": {}
+}

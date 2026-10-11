@@ -1,0 +1,13 @@
+{
+  "start_level": "village",
+  "levels": [
+    {
+      "id": "village",
+      "name": "Деревня"
+    },
+    {
+      "id": "glade",
+      "name": "Поляна"
+    }
+  ]
+}

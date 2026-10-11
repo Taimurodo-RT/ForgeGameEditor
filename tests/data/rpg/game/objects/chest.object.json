@@ -1,0 +1,11 @@
+{
+  "id": "chest",
+  "name": "Сундук",
+  "kind": "pickup",
+  "genre": "RPG",
+  "picture": "сундук.png",
+  "values": {
+    "what": "treasure",
+    "count": 1
+  }
+}

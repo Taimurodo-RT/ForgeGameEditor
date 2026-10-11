@@ -54,6 +54,7 @@ add_subdirectory(apps/probe)
 add_subdirectory(apps/editor)
 add_subdirectory(apps/slice)
 add_subdirectory(apps/match3)
+add_subdirectory(apps/rpg)
 
 if(FORGE_BUILD_TESTS)
   enable_testing()

@@ -1,0 +1,10 @@
+{
+  "id": "coins",
+  "name": "Монеты",
+  "kind": "pickup",
+  "genre": "RPG",
+  "values": {
+    "what": "coins",
+    "count": 5
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "guard",
+  "speakers": {"guard": {"name": "Стражник", "color": "#8ab4f8"}},
+  "start": [{"goto": "hello"}],
+  "nodes": [
+    {"id": "hello", "speaker": "guard", "text": "Стой! Ворота за мной. Без дела не ходи.",
+     "choices": [
+       {"text": "Понял.", "goto": "end"},
+       {"text": "Сдаюсь, иду домой.", "goto": "give_up"}
+     ]},
+    {"id": "give_up", "speaker": "guard", "text": "Вот и правильно. Ступай домой.", "do": "lose()"}
+  ]
+}
