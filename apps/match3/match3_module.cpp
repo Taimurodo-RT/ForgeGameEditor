@@ -89,6 +89,8 @@ std::map<std::string, std::vector<u8>> files_of(const fs::path& dir) {
         read_file(it->path(), bytes);
         std::string name = path_to_utf8(it->path().lexically_relative(dir));
         std::replace(name.begin(), name.end(), '\\', '/');
+        // A checkout on Windows may end the lines of text files with CR LF; the maker writes LF.
+        if (name.ends_with(".json") || name.ends_with(".html")) std::erase(bytes, u8{'\r'});
         out[name] = std::move(bytes);
     }
     return out;
