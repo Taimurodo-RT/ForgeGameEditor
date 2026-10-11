@@ -1,5 +1,6 @@
 #include "rpg_module.h"
 
+#include "project_edits.h"
 #include "rpg_game.h"
 #include "rpg_testgame.h"
 
@@ -59,6 +60,11 @@ namespace {
 //                       inventory, the quest's stage; saves broken three ways refused, one with the hero in a wall
 //                       loaded with him at the start; then the guard and «Сдаюсь»: the window of defeat after the talk
 // --scene rpg_make      the test game made anew, byte for byte the one in tests/data/rpg
+// --scene project --edits FILE (step 14.4b) a game made of the template «RPG сверху» and changed by its author in the
+//                       editor's tabs (forge::edits::ProjectEdits, rp_*), played as a player: the cells the author laid,
+//                       the elder and the author's villager drawn with the author's picture, the hero walking by the
+//                       author's frames, the coins picked up with the author's sound, the HUD's hint as the author
+//                       wrote it near the villager, his dialogue giving its reward once, the author's place passing the map
 
 struct Step {
     const char* name;
@@ -114,7 +120,7 @@ constexpr Way kWays[] = {
 
 class SelfTest {
 public:
-    SelfTest(RpgGame& game, std::string scene) : g_(game), scene_(std::move(scene)) {}
+    SelfTest(RpgGame& game, std::string scene, fs::path edits) : g_(game), scene_(std::move(scene)), edits_file_(std::move(edits)) {}
 
     bool frame(Shell& s, u32 f, int& failures) {
         failures_ = &failures;
@@ -365,6 +371,7 @@ private:
         s_ = &s;
         const std::string sc = scene_;
         if (sc == "rpg_make") return make_scene();
+        if (sc == "project") return project_scene();
         steps_.push_back({"данные тестовой игры", 5, [this](u32) {
             check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
             std::vector<std::string> list;
@@ -372,7 +379,7 @@ private:
             std::sort(list.begin(), list.end());
             std::string ids;
             for (const std::string& id : list) ids += (ids.empty() ? "" : ", ") + id;
-            check(ids == "chest, coins, dog, elder, gate, guard, hero, key", "шаблоны тестовой игры: " + ids);
+            check(ids == "chest, coins, dog, elder, gate, guard, hero_look, key", "шаблоны тестовой игры: " + ids);
             list.clear();
             for (const modules::Value& v : values(&g_.library())) list.push_back(v.var);
             std::sort(list.begin() + 2, list.end());
@@ -427,7 +434,7 @@ private:
                   "в инвентаре всего по нулю, и переменные есть");
             check(var("rpg.near") == 0, "рядом жителя нет: rpg.near = 0");
             if (!grab()) return fail("кадр не снят"), true;
-            check_pixel("герой стоит, кадр 0", thing_pixel("hero", g_.hero_x(), g_.hero_y()), picture_colour("hero", 0));
+            check_pixel("герой стоит, кадр 0", thing_pixel("hero_look", g_.hero_x(), g_.hero_y()), picture_colour("hero_look", 0));
             check_pixel("староста", thing_pixel("elder", 7.5, 7.0), picture_colour("elder", 0));
             check_pixel("стражник без картинки — фигура", thing_pixel("guard", 21.5, 8.0), rgb_of(Painter::figure_colour(Thing::Kind::Villager)));
             check_pixel("монеты без картинки — ромб", pixel(9.5, 11.5), rgb_of(Painter::figure_colour(Thing::Kind::Pickup)));
@@ -730,6 +737,174 @@ private:
         }});
     }
 
+    // --- the author's game (step 14.4b) ---
+    // A layer of a screen's page (#n<id>), and its words without the markup.
+    Rml::Element* layer(const std::string& screen, u32 id) const {
+        Rml::ElementDocument* doc = s_->screens().document(screen);
+        return doc ? doc->GetElementById("n" + std::to_string(id)) : nullptr;
+    }
+    static std::string words_of(Rml::Element* e) {
+        if (!e) return {};
+        std::string plain;
+        bool tag = false;
+        for (char c : std::string(e->GetInnerRML())) {
+            if (c == '<') tag = true;
+            else if (c == '>') tag = false;
+            else if (!tag) plain += c;
+        }
+        return plain;
+    }
+    // The map's thing of a template at a cell (null: none).
+    const Thing* thing_at(const std::vector<Thing>& things, const std::string& tmpl, i32 cx, i32 cy) const {
+        for (const Thing& t : things)
+            if (t.tmpl && t.tmpl->id == tmpl && t.cx == cx && t.cy == cy) return &t;
+        return nullptr;
+    }
+    const Thing* first_of(const std::vector<Thing>& things, const std::string& tmpl) const {
+        for (const Thing& t : things)
+            if (t.tmpl && t.tmpl->id == tmpl) return &t;
+        return nullptr;
+    }
+
+    void project_scene() {
+        steps_.push_back({"ожидания автора", 5, [this](u32) {
+            std::string why;
+            const bool read = !edits_file_.empty() && edits::read_edits(edits_file_, e_, why);
+            check(read && !e_.rp_villager.empty() && e_.rp_villager_at.size() == 2 && e_.rp_place_at.size() == 2 && e_.rp_elder.size() == 3,
+                  "файл ожиданий " + path_to_utf8(edits_file_) + " читается " + why);
+            check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
+            const objects::Library& lib = g_.library();
+            const objects::Template* v = lib.find(std::string_view(e_.rp_villager));
+            const objects::PropDef* talk = v ? lib.prop_of(*v, "talk") : nullptr;
+            check(v && v->name == e_.rp_villager_name && v->kind == "villager" && talk && lib.value(*v, *talk) == "\"" + e_.rp_talk + "\"",
+                  "житель автора «" + e_.rp_villager_name + "» (" + e_.rp_villager + "): говорит «" + e_.rp_talk + "»");
+            const objects::Template* place = lib.find(std::string_view(e_.rp_place));
+            check(place && place->name == e_.rp_place_name && place->kind == "place", "место автора «" + e_.rp_place_name + "» (" + e_.rp_place + ")");
+            const objects::Template* coins = lib.find(std::string_view(e_.rp_coins));
+            const objects::PropDef* sound = coins ? lib.prop_of(*coins, "sound") : nullptr;
+            check(sound && lib.value(*coins, *sound) == "\"" + e_.rp_sound + "\"" && fs::is_regular_file(lib.sound_file(e_.rp_sound)),
+                  "у «" + (coins ? coins->name : e_.rp_coins) + "» звук автора " + e_.rp_sound);
+            return true;
+        }});
+        new_game();
+        steps_.push_back({"карта автора", 3, [this](u32) {
+            const MapData* m = g_.map();
+            check(m && g_.level_id() == e_.level, "игра начинается на карте «" + e_.level_name + "» (" + e_.level + ")" + state());
+            if (!m) return true;
+            std::string differ;
+            for (usize i = 0; i + 3 < e_.cells.size(); i += 4) {
+                const i32 x = e_.cells[i + 1], y = e_.cells[i + 2];
+                const world::TileId got = e_.cells[i] == 0 ? m->ground_at(x, y) : m->obstacle_at(x, y);
+                if (got != static_cast<world::TileId>(e_.cells[i + 3]))
+                    differ += " " + std::to_string(x) + ":" + std::to_string(y) + "=" + std::to_string(got);
+            }
+            check(!e_.cells.empty() && differ.empty(), std::to_string(e_.cells.size() / 4) + " клеток, проложенных автором, на месте" + differ);
+            const Thing* v = thing_at(m->villagers, e_.rp_villager, e_.rp_villager_at[0], e_.rp_villager_at[1]);
+            const Thing* p = thing_at(m->places, e_.rp_place, e_.rp_place_at[0], e_.rp_place_at[1]);
+            check(v && v->talk == e_.rp_talk, "«" + e_.rp_villager_name + "» на своей клетке, его разговор «" + (v ? v->talk : "?") + "»");
+            check(p && p->shown, "«" + e_.rp_place_name + "» на своей клетке, видно в игре");
+            if (!grab()) return fail("кадр не снят"), true;
+            const Rgb want{e_.rp_elder[0], e_.rp_elder[1], e_.rp_elder[2]};
+            const Thing* elder = first_of(m->villagers, "elder");
+            check(elder != nullptr, "староста на карте");
+            if (elder) check_pixel("староста нарисован картинкой автора", thing_pixel("elder", elder->x, elder->y), want);
+            if (v) check_pixel("«" + e_.rp_villager_name + "» — копия старосты, с той же картинкой", thing_pixel(e_.rp_villager.c_str(), v->x, v->y), want);
+            shot("rpg-автор-карта");
+            return true;
+        }});
+        // The hero walks by the author's frames: their runs while the right key is held.
+        steps_.push_back({"герой идёт кадрами автора", 80, [this](u32 f) {
+            if (f == 0) {
+                runs_.clear();
+                hold(false, false, false, true);
+            }
+            if (f >= 2 && g_.walking()) {
+                const u32 fr = g_.hero_frame();
+                if (runs_.empty() || runs_.back().first != fr) runs_.push_back({fr, 0});
+                ++runs_.back().second;
+            }
+            if (f < 70) return false;
+            let_go();
+            const u32 tick = e_.rp_walk_fps > 0 ? static_cast<u32>(std::lround(60.0 / e_.rp_walk_fps)) : 0;
+            std::string seen;
+            for (const auto& [fr, n] : runs_) seen += " " + std::to_string(fr) + "×" + std::to_string(n);
+            // The first run may be cut by the start; the next ones are whole: frames 1, 2, 1 at fps, the last 1 and the
+            // first 1 of the next round one run of two.
+            const bool frames = e_.rp_walk == std::vector<int>{1, 2, 1} && runs_.size() >= 4 && runs_[1].first == 2 && runs_[2].first == 1 &&
+                                runs_[3].first == 2;
+            check(frames && runs_[1].second == tick && runs_[2].second == 2 * tick,
+                  "кадры шага 1, 2, 1 по " + std::to_string(tick) + " кадров игры (" + num(e_.rp_walk_fps) + " в секунду):" + seen);
+            return true;
+        }});
+        steps_.push_back({"монеты", 3000, [this](u32 f) {
+            const Thing* c = g_.map() ? first_of(g_.map()->pickups, e_.rp_coins) : nullptr;
+            if (f == 0) {
+                if (!c) return fail("монет на карте нет"), true;
+                coins_ = var("inv.coins");
+                sounds_ = g_.sounds_played().size();
+                coins_at_ = {c->cx, c->cy};
+            }
+            if (!walk_to(coins_at_.first, coins_at_.second, f)) return false;
+            return true;
+        }});
+        steps_.push_back({"монеты со звуком автора", 3, [this](u32 f) {
+            if (f < 1) return false;
+            const std::vector<std::string>& played = g_.sounds_played();
+            check(var("inv.coins") > coins_ && played.size() == sounds_ + 1 && played.back() == e_.rp_sound,
+                  "монеты подобраны (inv.coins = " + num(var("inv.coins")) + "), прозвучал " + (played.size() > sounds_ ? played.back() : "никакой звук"));
+            return true;
+        }});
+        steps_.push_back({"к жителю автора", 3000, [this](u32 f) {
+            return walk_to(e_.rp_villager_at[0] - 1, e_.rp_villager_at[1], f);
+        }});
+        steps_.push_back({"подсказка автора", 5, [this](u32 f) {
+            if (f < 2) return false;
+            Rml::Element* hint = layer(e_.rp_hud, e_.rp_hint_node);
+            check(var("rpg.near") > 0 && hint && hint->IsVisible(true) && words_of(hint) == e_.rp_hint,
+                  "рядом с жителем HUD говорит «" + words_of(hint) + "»" + state());
+            coins_ = var("inv.coins");
+            return true;
+        }});
+        talk_step("разговор автора", [this] {
+            const game::DialogueRunner& r = s_->dialogue_runner();
+            check(s_->in_dialogue() && r.dialogue() && r.dialogue()->id() == e_.rp_talk && r.line().text == e_.rp_talk_line &&
+                      r.line().choices.size() == 1 && r.line().choices[0].text == e_.rp_choice,
+                  "E у «" + e_.rp_villager_name + "»: разговор «" + e_.rp_talk + "», «" + std::string(r.line().text) + "», ответ «" +
+                      (r.line().choices.empty() ? std::string() : std::string(r.line().choices[0].text)) + "»");
+            check(g_.talked_to().rfind(e_.rp_villager + "@", 0) == 0, "герой говорит с ним: " + g_.talked_to());
+            tap(SDLK_1);
+        });
+        steps_.push_back({"награда", 5, [this](u32 f) {
+            if (f < 1) return false;
+            check(var("inv.coins") == coins_ + e_.rp_reward && var(e_.rp_once) == 1,
+                  "«" + e_.rp_choice + "»: монет +" + num(e_.rp_reward) + " (" + num(var("inv.coins")) + "), " + e_.rp_once + " = 1");
+            if (s_->in_dialogue()) tap(SDLK_E);
+            if (f < 3) return false;
+            check(!s_->in_dialogue(), "разговор кончился");
+            coins_ = var("inv.coins");
+            return true;
+        }});
+        talk_step("второй раз", [this] {
+            const game::DialogueRunner& r = s_->dialogue_runner();
+            check(s_->in_dialogue() && r.dialogue() && r.dialogue()->id() == e_.rp_talk && r.line().choices.empty(),
+                  "второй разговор: ответа с наградой больше нет");
+            tap(SDLK_E);
+        });
+        steps_.push_back({"награды нет", 4, [this](u32 f) {
+            if (f < 2) return false;
+            check(!s_->in_dialogue() && var("inv.coins") == coins_, "монет столько же: " + num(var("inv.coins")));
+            return true;
+        }});
+        steps_.push_back({"к месту автора", 3000, [this](u32 f) { return walk_to(e_.rp_place_at[0], e_.rp_place_at[1], f); }});
+        steps_.push_back({"окно «Уровень пройден»", 30, [this](u32) {
+            if (!window("level")) return false;
+            check(g_.outcome() == RpgGame::Outcome::LevelPassed && !g_.said().empty() && g_.said().back() == "reach:" + e_.rp_place,
+                  "«" + e_.rp_place_name + "»: событие reach:" + e_.rp_place + ", связь автора, карта пройдена" + state());
+            shot("rpg-автор-место");
+            return true;
+        }});
+    }
+
     void make_scene() {
         steps_.push_back({"тестовая игра делается заново байт в байт", 5, [this](u32) {
             const fs::path data = s_->game_dir().parent_path();
@@ -762,15 +937,24 @@ private:
     std::vector<std::pair<i32, i32>> path_;
     usize at_cell_ = 0;
     f64 start_x_ = 0, start_y_ = 0;
+    // The author's game (scene project).
+    fs::path edits_file_;
+    edits::ProjectEdits e_;
+    std::vector<std::pair<u32, u32>> runs_; // the hero's frames while he walks: frame, frames of the game it showed
+    f64 coins_ = 0;
+    usize sounds_ = 0;
+    std::pair<i32, i32> coins_at_;
 };
 
 int run(int argc, char** argv) {
     Options options;
     std::string scene = "rpg";
     RpgGame::Break broken = RpgGame::Break::None;
+    fs::path edits;
     for (int i = 1; i < argc; ++i) {
         const bool value = i + 1 < argc;
         if (std::strcmp(argv[i], "--scene") == 0 && value) scene = argv[++i];
+        else if (std::strcmp(argv[i], "--edits") == 0 && value) edits = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--level") == 0 && value) options.level_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--test") == 0) options.silent = true;
         else if (std::strcmp(argv[i], "--make-test-game") == 0 && value) {
@@ -792,7 +976,7 @@ int run(int argc, char** argv) {
     }
     RpgGame game(options);
     game.set_break(broken);
-    SelfTest test(game, scene);
+    SelfTest test(game, scene, edits);
     game::GameMain m;
     m.dev_ui_dir = FORGE_UI_DIR;
     m.dev_game_dir = RPG_GAME_DIR;
@@ -813,6 +997,7 @@ modules::ModuleDef module_def() {
     m.values = values;
     m.run = run;
     m.make_level_module = [] { return std::make_unique<RpgLevel>(); };
+    m.templates.push_back({"rpg", make_template});
     return m;
 }
 

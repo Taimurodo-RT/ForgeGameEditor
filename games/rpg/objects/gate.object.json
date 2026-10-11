@@ -1,0 +1,11 @@
+{
+  "id": "gate",
+  "name": "Ворота",
+  "kind": "place",
+  "genre": "RPG",
+  "about": "выход из деревни на поляну",
+  "picture": "ворота.png",
+  "values": {
+    "shown": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "coins",
+  "name": "Монеты",
+  "kind": "pickup",
+  "genre": "RPG",
+  "about": "горсть монет",
+  "picture": "монеты.png",
+  "values": {
+    "what": "coins",
+    "count": 5,
+    "sound": "звон.wav"
+  }
+}

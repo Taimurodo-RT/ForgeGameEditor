@@ -312,13 +312,20 @@ std::vector<std::string> game_problems(const fs::path& game, const Module* modul
                         out.push_back("объект «" + o.name + "»: нет картинки pictures/" + o.picture);
                 }
                 for (const objects::PropDef* p : lib.props_of(o)) {
-                    const std::string* value = p->asset == "sound" ? o.value(p->id) : nullptr;
+                    const std::string* value = p->asset == "sound" || p->asset == "talk" ? o.value(p->id) : nullptr;
                     if (!value) continue;
                     yyjson_doc* doc = yyjson_read(value->data(), value->size(), 0);
                     const char* sound = doc ? yyjson_get_str(yyjson_doc_get_root(doc)) : nullptr;
                     const std::string name = sound ? sound : "";
                     yyjson_doc_free(doc);
                     if (name.empty()) continue;
+                    // A villager's talk: a dialogue of the game (step 14.4b).
+                    if (p->asset == "talk") {
+                        if (name.find('/') != std::string::npos || !inside_name(name + ".json") ||
+                            !fs::is_regular_file(game / "dialogues" / utf8_path(name + ".json"), ec))
+                            out.push_back("объект «" + o.name + "»: нет разговора dialogues/" + name + ".json");
+                        continue;
+                    }
                     if (!inside_name(name))
                         out.push_back("объект «" + o.name + "»: звук «" + name + "» вне папки игры (нужен файл в sounds/)");
                     else if (!fs::is_regular_file(lib.sound_file(name), ec))

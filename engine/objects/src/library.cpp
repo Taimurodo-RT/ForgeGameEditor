@@ -530,6 +530,7 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
         kind.about = text_of(yyjson_obj_get(k, "about"));
         if (yyjson_val* f = yyjson_obj_get(k, "foot")) kind.foot = yyjson_get_num(f);
         if (yyjson_val* p = yyjson_obj_get(k, "placed"); yyjson_is_bool(p)) kind.placed = yyjson_get_bool(p);
+        if (yyjson_val* h = yyjson_obj_get(k, "hero"); yyjson_is_bool(h)) kind.hero = yyjson_get_bool(h);
         kind.blocks = read_list(yyjson_obj_get(k, "blocks"));
         std::vector<Part> own = read_parts(yyjson_obj_get(k, "components"), kind.name);
         kind.props = read_props(yyjson_obj_get(k, "props"), kind.name);
@@ -1052,6 +1053,24 @@ bool Library::set_value(scene::Scene& scene, flecs::entity e, const PropDef& pro
 
 // --- text -------------------------------------------------------------------
 
+namespace {
+// After a talk whose dialogue the game has no more (Library::display); parse takes it back as it was.
+constexpr std::string_view kNoTalk = " — нет в «Сюжете»";
+} // namespace
+
+void Library::set_talks(const std::vector<std::string>& ids) {
+    auto fill = [&](PropDef& p) {
+        if (p.asset != "talk") return;
+        p.choices.clear();
+        p.choices.push_back({"", p.empty.empty() ? "нет" : p.empty, 0});
+        for (const std::string& id : ids) p.choices.push_back({id, id, 0});
+    };
+    for (BlockDef& b : blocks_)
+        for (PropDef& p : b.props) fill(p);
+    for (KindDef& k : kinds_)
+        for (PropDef& p : k.props) fill(p);
+}
+
 std::string Library::display(const PropDef& prop, const std::string& json) {
     yyjson_doc* doc = yyjson_read(json.data(), json.size(), 0);
     if (!doc) return json;
@@ -1059,8 +1078,11 @@ std::string Library::display(const PropDef& prop, const std::string& json) {
     std::string out;
     if (yyjson_is_str(v)) {
         out = text_of(v);
+        bool chosen = false;
         for (const Choice& c : prop.choices)
-            if (c.id == out) out = c.name;
+            if (c.id == out) out = c.name, chosen = true;
+        // A talk the game has no more (its dialogue was deleted): said, not hidden.
+        if (!chosen && prop.asset == "talk" && !prop.choices.empty() && !out.empty()) out += kNoTalk;
         if (out.empty() && !prop.empty.empty()) out = prop.empty;
     } else if (yyjson_is_bool(v)) {
         out = yyjson_get_bool(v) ? "да" : "нет";
@@ -1081,6 +1103,8 @@ std::optional<std::string> Library::parse(const PropDef& prop, std::string_view 
     if (!prop.choices.empty()) {
         for (const Choice& c : prop.choices)
             if (c.id == text || c.name == text) return json_text(c.id);
+        if (prop.asset == "talk" && text.size() > kNoTalk.size() && text.ends_with(kNoTalk))
+            return json_text(text.substr(0, text.size() - kNoTalk.size()));
         return std::nullopt;
     }
     using reflect::Kind;

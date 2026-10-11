@@ -1,0 +1,11 @@
+{
+  "id": "elder",
+  "name": "Староста",
+  "kind": "villager",
+  "genre": "RPG",
+  "about": "даёт задание «Ключ от ворот»",
+  "picture": "староста.png",
+  "values": {
+    "talk": "elder"
+  }
+}

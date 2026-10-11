@@ -12,6 +12,8 @@
 #include "forge/level/levels.h"
 #include "forge/level/own_tiles.h"
 
+#include "rpg_level.h"
+
 #include <doctest/doctest.h>
 
 #include <algorithm>
@@ -627,6 +629,80 @@ TEST_CASE("project: the catalog's «Платформер» makes a game with its
     CHECK(game::read_game_info(games / "slice").zoom == 0); // a game without it: the game's own
 }
 
+// The components of the module rpg's kinds, known as a build of Forge with the module knows them.
+static void rpg_components() {
+    reflect::TypeOf<rpg::Hero>::get();
+    reflect::TypeOf<rpg::Villager>::get();
+    reflect::TypeOf<rpg::Pickup>::get();
+    reflect::TypeOf<rpg::Place>::get();
+}
+
+// The template «RPG сверху» (step 14.4b): games/rpg as the catalog's third card makes it, of the module rpg.
+TEST_CASE("project: the catalog's «RPG сверху» makes a game of the module rpg with its «Ресурсы»") {
+    rpg_components();
+    const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
+    std::vector<Template> list;
+    std::string error;
+    REQUIRE(read_catalog(games / "templates.json", list, &error));
+    REQUIRE(list.size() >= 3);
+    const Template& t = list[2];
+    CHECK(t.id == "rpg");
+    CHECK(t.name == "RPG сверху");
+    CHECK(t.module == "rpg");
+    CHECK(t.game == games / "rpg");
+    CHECK(t.assets == games / "templates" / "rpg" / "assets");
+    CHECK(t.picture == games / "templates" / "rpg.png");
+    CHECK(t.bad.empty());
+    assets::CookedTexture card;
+    std::vector<u8> bytes;
+    REQUIRE(read_file(t.picture, bytes));
+    REQUIRE(assets::decode_image(bytes, card));
+    CHECK(card.width == 480);
+    CHECK(card.height == 270);
+    const std::vector<Module> modules{{"slice", "Старая шахта", games / "modules" / "slice", {"touch", "always"}},
+                                      {"rpg", "RPG сверху", games / "modules" / "rpg", {"pick", "reach"}}};
+    std::string all;
+    for (const std::string& p : template_problems(t, modules)) all += p + "; ";
+    CHECK_MESSAGE(all.empty(), all);
+    // Without the module in this build of Forge the card says so.
+    all.clear();
+    for (const std::string& p : template_problems(t, {modules[0]})) all += p + "; ";
+    CHECK(all.find("нужен модуль «rpg»") != std::string::npos);
+    const fs::path parent = fresh("forge_tests_проект_rpg");
+    fs::path made;
+    REQUIRE_MESSAGE(create(t, modules, parent, "Моя деревня", made, &error), error);
+    Game g;
+    REQUIRE(find(made, modules, g, &error) == Found::Game);
+    CHECK(g.title == "Моя деревня");
+    CHECK(g.description.from == "rpg");
+    CHECK(g.description.module == "rpg");
+    // Its «Ресурсы»: the template's pictures and the coins' sound with their .meta, byte for byte.
+    for (const char* name : {"картинки/герой.png", "картинки/староста.png", "картинки/стражник.png", "картинки/пёс.png",
+                             "картинки/ключ.png", "картинки/монеты.png", "картинки/сундук.png", "картинки/ворота.png", "звуки/звон.wav"})
+        for (const std::string& file : {std::string(name), std::string(name) + ".meta"})
+            CHECK_MESSAGE(text_of(made / "assets" / utf8_path(file)) == text_of(t.assets / utf8_path(file)), file);
+    // The module's files are the module's: nothing to refresh.
+    for (const char* file : kModuleFiles)
+        CHECK_MESSAGE(text_of(t.game / file) == text_of(games / "modules" / "rpg" / file), file);
+    std::vector<std::string> refreshed;
+    CHECK(refresh_module_files(g.game, modules[1], refreshed, &error));
+    CHECK(refreshed.empty());
+}
+
+// A villager's talk is a dialogue of the game: one that is not there is a problem of the template, said by name.
+TEST_CASE("project: a villager whose talk the game has no dialogue for is a problem of the game") {
+    rpg_components();
+    const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
+    const fs::path game = fresh("forge_tests_проект_разговор") / "game";
+    fs::copy(games / "rpg", game, fs::copy_options::recursive);
+    const Module rpg{"rpg", "RPG сверху", games / "modules" / "rpg", {"pick", "reach"}};
+    CHECK(game_problems(game, &rpg).empty());
+    fs::remove(game / "dialogues" / "dog.json");
+    const std::vector<std::string> problems = game_problems(game, &rpg);
+    REQUIRE(problems.size() == 1);
+    CHECK(problems[0] == "объект «Пёс»: нет разговора dialogues/dog.json");
+}
+
 TEST_CASE("project: the levels of «Платформер» have the tiles of its tiles.png, solid ones opaque on top") {
     const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
     const fs::path game = games / "platformer";
@@ -683,7 +759,13 @@ TEST_CASE("project: the module's files are in games/modules/slice, the same byte
         CHECK_MESSAGE(text_of(games / "slice" / file) == module, file);
         CHECK_MESSAGE(text_of(games / "platformer" / file) == module, file);
     }
-    // Both templates name their module in game.json, as the cards do.
+    // And games/modules/rpg those of the template «RPG сверху» (step 14.4b).
+    for (const char* file : kModuleFiles) {
+        const std::string module = text_of(games / "modules" / "rpg" / file);
+        CHECK_MESSAGE(module != "<нет>", file);
+        CHECK_MESSAGE(text_of(games / "rpg" / file) == module, file);
+    }
+    // The templates name their module in game.json, as the cards do.
     std::vector<Template> list;
     std::string error;
     REQUIRE(read_catalog(games / "templates.json", list, &error));

@@ -19,6 +19,7 @@ FORGE_REFLECT(rpg::Villager, 1) { t.field("talk", &rpg::Villager::talk).label("�
 FORGE_REFLECT(rpg::Pickup, 1) {
     t.field("what", &rpg::Pickup::what).label("Что даёт");
     t.field("count", &rpg::Pickup::count).label("Сколько").range(1, 999);
+    t.field("sound", &rpg::Pickup::sound).label("Звук");
 }
 FORGE_REFLECT(rpg::Place, 1) { t.field("shown", &rpg::Place::shown).label("Видно в игре"); }
 
@@ -277,6 +278,7 @@ bool read_map(level::Level& level, const objects::Library& library, const std::s
         case Thing::Kind::Pickup:
             th.what = json_string(prop("what"));
             th.count = static_cast<u32>(std::clamp(json_number(prop("count"), 1), 1.0, 999.0));
+            th.sound = json_string(prop("sound"));
             if (th.what.empty()) empty_pickups += (empty_pickups.empty() ? "«" : ", «") + t->name + "» в " + cell_words(th.cx, th.cy);
             break;
         case Thing::Kind::Place: th.shown = json_bool(prop("shown"), false); break;

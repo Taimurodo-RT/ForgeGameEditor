@@ -17,7 +17,7 @@ forge_target_defaults(forge_rpg_lib)
 add_library(forge_rpg_module STATIC rpg_game.cpp rpg_testgame.cpp rpg_module.cpp)
 target_include_directories(forge_rpg_module PUBLIC module)
 target_link_libraries(forge_rpg_module PUBLIC forge::modules
-                      PRIVATE forge_rpg_lib forge::game forge::editor forge::logic forge::audio forge::platform RmlUi::Core yyjson)
+                      PRIVATE forge_rpg_lib forge_demo_common forge::game forge::editor forge::logic forge::audio forge::platform RmlUi::Core yyjson)
 # Running from the build folder reads the UI, the module's files and its test game from the source tree.
 target_compile_definitions(forge_rpg_module PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"
                                                     RPG_GAME_DIR="${PROJECT_SOURCE_DIR}/tests/data/rpg/game"

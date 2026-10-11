@@ -394,8 +394,15 @@ std::string StoryEditor::status() const {
 // --- phrases ----------------------------------------------------------------
 
 std::string StoryEditor::item_name(const std::string& id) const {
-    if (library_)
-        if (const objects::Template* t = library_->find(std::string_view(id))) return t->name;
+    // An item is what a pickup gives: the template of its id that gives it, else the first that gives it («Монетка»
+    // gives coins), else a template of that id.
+    if (library_) {
+        const objects::Template* same = library_->find(std::string_view(id));
+        if (same && library_->item_of(*same) == id) return same->name;
+        for (const objects::Template& t : library_->templates())
+            if (library_->item_of(t) == id) return t.name;
+        if (same) return same->name;
+    }
     return id;
 }
 
@@ -1210,10 +1217,13 @@ bool StoryEditor::open_menu(const std::string& where, const std::string& node, i
         m_menu_items_.push_back({text, icon, group, value == now});
         menu_.push_back({std::move(value)});
     };
+    // The things the hero carries, by the names the game counts them by (inv.<what>): what a pickup gives, not its
+    // template's id (step 14.4b: «Монетка» gives coins, the chest of the RPG gives treasure).
     std::vector<std::string> items;
     if (library_)
         for (const objects::Template& t : library_->templates())
-            if (t.kind == "pickup") items.push_back(t.id);
+            if (std::string what = library_->item_of(t); !what.empty() && std::find(items.begin(), items.end(), what) == items.end())
+                items.push_back(std::move(what));
     for (const std::string& u : items_used())
         if (std::find(items.begin(), items.end(), u) == items.end()) items.push_back(u);
 

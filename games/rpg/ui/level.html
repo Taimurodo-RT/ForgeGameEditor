@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Уровень пройден</title>
+<!-- Made by Forge «Интерфейс» from Уровень пройден.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n2 {
+  position: absolute;
+  left: calc(50% + -380px);
+  width: 760px;
+  top: calc(50% + -200px);
+  height: 400px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 44px 40px 44px 40px;
+  justify-content: flex-start;
+  align-items: center;
+  background-color: #181e1a;
+  border-radius: 28px 28px 28px 28px;
+}
+#n7 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 72px;
+  font-weight: 800;
+  line-height: normal;
+  text-align: left;
+  color: #ffd54a;
+  white-space: pre;
+}
+#n8 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 32px;
+  font-weight: 500;
+  line-height: normal;
+  text-align: left;
+  color: #dee8dc;
+  white-space: pre;
+}
+#n9 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  gap: 28px;
+  padding: 18px 0px 0px 0px;
+  justify-content: center;
+  align-items: center;
+}
+#n4 {
+  position: relative;
+  width: 280px;
+  flex-shrink: 0;
+  height: 76px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 14px 36px 14px 36px;
+  justify-content: center;
+  align-items: center;
+  background-color: #f2b33d;
+  border-radius: 18px 18px 18px 18px;
+}
+#n3 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #181e1a;
+  white-space: pre;
+}
+#n6 {
+  position: relative;
+  width: 280px;
+  flex-shrink: 0;
+  height: 76px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  padding: 14px 36px 14px 36px;
+  justify-content: center;
+  align-items: center;
+  background-color: #465648;
+  border-radius: 18px 18px 18px 18px;
+}
+#n5 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+html, body, #n1 {
+  pointer-events: none;
+}
+#n2, #n7, #n8, #n4, #n3, #n6, #n5 {
+  pointer-events: auto;
+}
+#n4, #n6 {
+  tab-index: auto;
+}
+#forge-dim {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="forge-dim"></div>
+<div id="n1" class="frame" title="Уровень пройден" forge-screen="command" forge-fit="expand" forge-size="1920 1080" forge-pauses="1" forge-esc="0" forge-dim="1" forge-over="game" forge-ending="level">
+  <div id="n2" class="frame" title="Окно">
+    <div id="n7" class="text" title="Заголовок">Карта пройдена!</div>
+    <div id="n8" class="text" title="Итог" forge-text="«{rpg.map}» позади. Дальше — новая карта.">«{rpg.map}» позади. Дальше — новая карта.</div>
+    <div id="n9" class="frame" title="Кнопки">
+      <div id="n4" class="frame" title="Кнопка «Дальше»" forge-click="[[&quot;next&quot;,&quot;&quot;]]">
+        <div id="n3" class="text" title="Дальше">Дальше</div>
+      </div>
+      <div id="n6" class="frame" title="Кнопка «В меню»" forge-click="[[&quot;menu&quot;,&quot;&quot;]]">
+        <div id="n5" class="text" title="В меню">В меню</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

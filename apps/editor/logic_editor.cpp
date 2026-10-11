@@ -529,7 +529,7 @@ void LogicEditor::rebuild() {
     things_.push_back(logic::hero_thing());
     if (lib)
         for (const objects::Template& t : lib->templates())
-            if (const objects::KindDef* k = lib->kind_of(t); !k || k->placed) things_.push_back(logic::thing_of(*lib, t));
+            if (const objects::KindDef* k = lib->kind_of(t); !k || (k->placed && !k->hero)) things_.push_back(logic::thing_of(*lib, t));
     built_areas_ = areas_version ? areas_version() : 0;
     if (level_areas)
         for (logic::Thing& t : level_areas()) things_.push_back(std::move(t));

@@ -6,11 +6,11 @@
 {
   "verbs": [
     { "id": "reaches", "name": "доходит до", "plural": "доходят до", "icon": "flag", "case": "gen",
-      "when": "reach", "do": "level_won", "a": "thing", "b": "thing", "a_has": ["hero"], "b_has": ["place"],
+      "when": "reach", "do": "level_won", "a": "hero", "b": "thing", "b_has": ["place"],
       "step": "Карта пройдена",
       "about": "Когда герой входит в {b:acc}, карта пройдена: дальше следующая, после последней — победа." },
     { "id": "finds", "name": "находит", "plural": "находят", "icon": "search", "case": "acc",
-      "when": "pick", "do": "level_won", "a": "thing", "b": "thing", "a_has": ["hero"], "b_has": ["pickup"],
+      "when": "pick", "do": "level_won", "a": "hero", "b": "thing", "b_has": ["pickup"],
       "step": "Карта пройдена",
       "about": "Когда герой подбирает {b:acc}, карта пройдена: дальше следующая, после последней — победа." }
   ]

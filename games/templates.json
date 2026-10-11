@@ -16,6 +16,15 @@
       "game": "platformer",
       "assets": "templates/platformer/assets",
       "picture": "templates/platformer.png"
+    },
+    {
+      "id": "rpg",
+      "name": "RPG сверху",
+      "about": "Деревня и поляна, вид сверху: герой ходит в восемь сторон, говорит с жителями, берёт задание старосты, подбирает ключ и монеты, у ворот уходит на поляну за сундуком. Всё правится во вкладках редактора.",
+      "module": "rpg",
+      "game": "rpg",
+      "assets": "templates/rpg/assets",
+      "picture": "templates/rpg.png"
     }
   ]
 }

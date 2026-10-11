@@ -1,0 +1,30 @@
+{
+  "links": [
+    {
+      "id": 1,
+      "a": "hero",
+      "verb": "reaches",
+      "b": "gate"
+    },
+    {
+      "id": 2,
+      "a": "hero",
+      "verb": "finds",
+      "b": "chest"
+    }
+  ],
+  "board": {
+    "hero": [
+      60.0,
+      200.0
+    ],
+    "gate": [
+      300.0,
+      120.0
+    ],
+    "chest": [
+      300.0,
+      280.0
+    ]
+  }
+}

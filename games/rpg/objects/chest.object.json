@@ -1,0 +1,12 @@
+{
+  "id": "chest",
+  "name": "Сундук",
+  "kind": "pickup",
+  "genre": "RPG",
+  "about": "клад на поляне: найден — игра пройдена",
+  "picture": "сундук.png",
+  "values": {
+    "what": "treasure",
+    "count": 1
+  }
+}

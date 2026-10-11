@@ -1042,6 +1042,7 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
         const objects::KindDef* kd = tmpl ? lib->kind_of(*tmpl) : nullptr;
         const objects::ObjectRef* ref = e.try_get<objects::ObjectRef>();
         m_sel_kind_ = kd ? kd->name : "";
+        if (kd) lib->set_talks(talk_ids(lib->folder().parent_path())); // the dialogues the game has now
         if (kd)
             for (const objects::PropDef* pp : lib->props_of(*tmpl)) {
                 const objects::PropDef& prop = *pp;

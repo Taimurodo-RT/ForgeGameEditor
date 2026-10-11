@@ -1,0 +1,49 @@
+{
+    "files": {
+        "pictures/ворота.png": {
+            "asset": "f5d932bb-ac8d-57f5-a544-ffb4e0ae193a",
+            "from": "картинки/ворота.png",
+            "hash": "3532b31e4d3b2523063d711caf8f1263"
+        },
+        "pictures/герой.png": {
+            "asset": "25f0633b-514f-5a1e-bb03-197cc79885cd",
+            "from": "картинки/герой.png",
+            "hash": "3329d448386f7aca1d417e1cc2bb2737"
+        },
+        "pictures/ключ.png": {
+            "asset": "2a5b6570-d175-5c39-b941-335a07195d52",
+            "from": "картинки/ключ.png",
+            "hash": "27648ba5fa64bef2461037ba159c1645"
+        },
+        "pictures/монеты.png": {
+            "asset": "cb153ba9-1cce-59f1-979f-094071a1423e",
+            "from": "картинки/монеты.png",
+            "hash": "11b137f7b8b7f0224dbc5e3576a8b0bb"
+        },
+        "pictures/пёс.png": {
+            "asset": "1b68730f-9d60-5033-9af7-73606ef1ac55",
+            "from": "картинки/пёс.png",
+            "hash": "eb0eba4e1e52c9b666b91985dd91ae9a"
+        },
+        "pictures/староста.png": {
+            "asset": "3f446852-235d-5217-bd0e-b68103783d9a",
+            "from": "картинки/староста.png",
+            "hash": "b2a2cc6d92cefee7fc6d5123ed4d17a0"
+        },
+        "pictures/стражник.png": {
+            "asset": "f8af3f5a-55af-58d2-a216-e6e55ae2b93e",
+            "from": "картинки/стражник.png",
+            "hash": "a752f286355dc6178967663a6ad35ef6"
+        },
+        "pictures/сундук.png": {
+            "asset": "b0a66e0d-fd44-5e2c-ab76-2499ade79ad2",
+            "from": "картинки/сундук.png",
+            "hash": "4a0805a983bbc6510574c67034237fa8"
+        },
+        "sounds/звон.wav": {
+            "asset": "32e0a029-3526-5f67-b134-7bf290b75b9d",
+            "from": "звуки/звон.wav",
+            "hash": "74623f46de4aa8429e41400c0a667fdb"
+        }
+    }
+}

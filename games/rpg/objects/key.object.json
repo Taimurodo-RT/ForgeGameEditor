@@ -1,0 +1,12 @@
+{
+  "id": "key",
+  "name": "Ключ",
+  "kind": "pickup",
+  "genre": "RPG",
+  "about": "ключ старосты от ворот",
+  "picture": "ключ.png",
+  "values": {
+    "what": "key",
+    "count": 1
+  }
+}
