@@ -181,16 +181,35 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
     return result;
 }
 
+bool packaged_data(fs::path& ui, fs::path& game) {
+    std::error_code ec;
+    const fs::path packaged = exe_dir() / "data";
+    if (!fs::is_directory(packaged / "ui", ec) || !fs::is_directory(packaged / "game", ec)) return false;
+    ui = packaged / "ui";
+    game = packaged / "game";
+    return true;
+}
+
 } // namespace
+
+fs::path game_data_dir(int argc, char** argv, const fs::path& dev_game_dir) {
+    fs::path ui, game;
+    if (!packaged_data(ui, game)) game = dev_game_dir;
+    for (int i = 1; i + 1 < argc; ++i)
+        if (std::strcmp(argv[i], "--data") == 0) game = utf8_path(argv[++i]);
+    return game;
+}
 
 int run_game(Game& game, const GameMain& main, int argc, char** argv) {
     Options o;
+    if (main.module.empty()) {
+        FORGE_ERROR("run_game: модуль игры не назван (GameMain::module)");
+        return 1;
+    }
+    o.shell.module = main.module;
     // A packaged game keeps its files in "data" next to the executable.
     std::error_code ec;
-    const fs::path packaged = exe_dir() / "data";
-    if (fs::is_directory(packaged / "ui", ec) && fs::is_directory(packaged / "game", ec)) {
-        o.shell.ui_dir = packaged / "ui";
-        o.shell.game_dir = packaged / "game";
+    if (packaged_data(o.shell.ui_dir, o.shell.game_dir)) {
         o.shell.dev = false;
     } else {
         o.shell.ui_dir = main.dev_ui_dir;

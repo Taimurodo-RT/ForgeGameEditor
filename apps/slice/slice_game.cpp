@@ -1156,7 +1156,8 @@ bool SliceGame::reload_links(std::string* error) {
     const fs::path file = links_path();
     std::error_code ec;
     const auto time = fs::last_write_time(file, ec);
-    if (!verbs.load(shell_->game_dir() / "verbs.json", error) || !links.load(file, error)) return false;
+    // With the module's events (verb_events): a verb of another module's event is no verb of this game.
+    if (!verbs.load(shell_->game_dir() / "verbs.json", error, verb_event_ids()) || !links.load(file, error)) return false;
     verbs_ = std::move(verbs);
     links_ = std::move(links);
     links_time_ = time;

@@ -2,5 +2,6 @@
   "title": "Старая шахта",
   "org": "Forge",
   "theme": "fantasy",
-  "autosave_minutes": 5
+  "autosave_minutes": 5,
+  "module": "slice"
 }

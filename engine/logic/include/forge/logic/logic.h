@@ -76,11 +76,14 @@ struct VerbDef {
     // "dat" (даёт монету герою), "ins" (говорит с героем), "gen" (убегает от
     // героя).
     std::string object_case = "acc";
-    // "touch": it happens when the hero touches one of the two things (the
-    // touched side; the hero's own side means the other one); an area is
-    // touched when the hero comes into it. "always": from the start, as long
-    // as the first thing is there.
-    bool always = false;
+    // The event it happens on, one of its module's (step 14.3a: the module
+    // declares them, forge::modules::ModuleDef::events). slice's: "touch": it
+    // happens when the hero touches one of the two things (the touched side;
+    // the hero's own side means the other one); an area is touched when the
+    // hero comes into it. "always": from the start, as long as the first
+    // thing is there.
+    std::string when = "touch";
+    bool always = false; // when == "always"
     Side touch = Side::B;
     // The hero must carry a copy of this side's thing ("" none).
     std::string needs;
@@ -107,8 +110,11 @@ struct VerbDef {
 
 class Verbs {
 public:
-    bool load(const std::filesystem::path& file, std::string* error = nullptr);
-    bool parse(std::string_view json, std::string* error = nullptr);
+    // events: the module's (its ModuleDef::events), the same list in the
+    // editor and in the game; a verb whose "when" is not one of them makes the
+    // file fail, the error naming both. Empty: any word (tools and tests).
+    bool load(const std::filesystem::path& file, std::string* error = nullptr, const std::vector<std::string>& events = {});
+    bool parse(std::string_view json, std::string* error = nullptr, const std::vector<std::string>& events = {});
     const VerbDef* find(std::string_view id) const;
     const std::vector<VerbDef>& all() const { return verbs_; }
 

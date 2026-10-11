@@ -291,4 +291,18 @@ void LinkOverlay::update(const std::vector<Seen>& seen, const forge::render::Cam
     set(m_rows_, rows, "ln_rows");
 }
 
+const std::vector<forge::modules::Event>& verb_events() {
+    static const std::vector<forge::modules::Event> events = {
+        {"touch", "касается: герой касается вещи (в зону входит)"},
+        {"always", "всегда: всё время, пока первая вещь есть"},
+    };
+    return events;
+}
+
+std::vector<std::string> verb_event_ids() {
+    std::vector<std::string> out;
+    for (const forge::modules::Event& e : verb_events()) out.push_back(e.id);
+    return out;
+}
+
 } // namespace slice

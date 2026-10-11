@@ -7,6 +7,7 @@
 #include "forge/editor/project.h"
 #include "forge/editor/ui_design.h"
 #include "forge/assets/image.h"
+#include "forge/game/game_module.h"
 #include "forge/game/shell.h"
 #include "forge/level/levels.h"
 #include "forge/level/own_tiles.h"
@@ -77,7 +78,7 @@ struct Fixture {
         put(module_dir / "verbs.json", verbs);
         put(module_dir / "ideas.json", R"({"ideas": []})");
         const fs::path game = root / utf8_path("каталог") / utf8_path("Проба игры") / "game";
-        put(game / "game.json", "{\n  \"title\": \"Проба\",\n  \"org\": \"Forge\",\n  \"autosave_minutes\": 5\n}\n");
+        put(game / "game.json", "{\n  \"title\": \"Проба\",\n  \"org\": \"Forge\",\n  \"autosave_minutes\": 5,\n  \"module\": \"test\"\n}\n");
         put(game / "kinds.json", kinds);
         put(game / "verbs.json", verbs);
         put(game / "ideas.json", R"({"ideas": []})");
@@ -187,7 +188,7 @@ TEST_CASE("project: a game made of a template is a copy of its own; the template
     const auto source = tree(f.catalog.parent_path() / utf8_path("Проба игры"));
     auto made = tree(a);
     CHECK(made.at("project.forge") == description_json({kFormat, "test", "probe"}));
-    CHECK(made.at("game/game.json") == "{\n  \"title\": \"Игра А\",\n  \"org\": \"Forge\",\n  \"autosave_minutes\": 5\n}\n");
+    CHECK(made.at("game/game.json") == "{\n  \"title\": \"Игра А\",\n  \"org\": \"Forge\",\n  \"autosave_minutes\": 5,\n  \"module\": \"test\"\n}\n");
     made.erase("project.forge");
     made.erase("game/game.json");
     auto copied = source;
@@ -553,7 +554,7 @@ TEST_CASE("project: the catalog's «Старая шахта» makes a game") {
     REQUIRE(mine != list.end());
     CHECK(mine->name == "Старая шахта");
     CHECK(mine->game == games / "slice");
-    const std::vector<Module> modules{{"slice", "Старая шахта", games / "slice"}};
+    const std::vector<Module> modules{{"slice", "Старая шахта", games / "modules" / "slice", {"touch", "always"}}};
     std::string all;
     for (const std::string& p : template_problems(*mine, modules)) all += p + "; ";
     CHECK_MESSAGE(all.empty(), all);
@@ -580,8 +581,9 @@ TEST_CASE("project: the catalog's «Платформер» makes a game with its
     std::vector<Template> list;
     std::string error;
     REQUIRE(read_catalog(games / "templates.json", list, &error));
-    REQUIRE(list.size() == 2);
-    CHECK(list[0].id == "old-mine"); // the cards in this order: «Новая игра» shows «Платформер» second
+    // The cards in this order, whatever comes after them: «Новая игра» shows «Платформер» second.
+    REQUIRE(list.size() >= 2);
+    CHECK(list[0].id == "old-mine");
     const Template& t = list[1];
     CHECK(t.id == "platformer");
     CHECK(t.name == "Платформер");
@@ -596,7 +598,7 @@ TEST_CASE("project: the catalog's «Платформер» makes a game with its
     REQUIRE(assets::decode_image(bytes, card));
     CHECK(card.width == 480);
     CHECK(card.height == 270);
-    const std::vector<Module> modules{{"slice", "Старая шахта", games / "slice"}};
+    const std::vector<Module> modules{{"slice", "Старая шахта", games / "modules" / "slice", {"touch", "always"}}};
     std::string all;
     for (const std::string& p : template_problems(t, modules)) all += p + "; ";
     CHECK_MESSAGE(all.empty(), all);
@@ -616,7 +618,7 @@ TEST_CASE("project: the catalog's «Платформер» makes a game with its
                           file);
     // The module's files are the module's: nothing to refresh.
     for (const char* file : {"kinds.json", "verbs.json", "ideas.json"})
-        CHECK_MESSAGE(text_of(t.game / file) == text_of(games / "slice" / file), file);
+        CHECK_MESSAGE(text_of(t.game / file) == text_of(games / "modules" / "slice" / file), file);
     std::vector<std::string> refreshed;
     CHECK(refresh_module_files(g.game, modules[0], refreshed, &error));
     CHECK(refreshed.empty());
@@ -670,4 +672,112 @@ TEST_CASE("project: the levels of «Платформер» have the tiles of its
         REQUIRE(level::load_world(folder, world, &found, &error));
         CHECK(world.empty_around);
     }
+}
+
+// Step 14.3a: the module's files left games/slice for games/modules/slice byte for byte, and the games keep copies.
+TEST_CASE("project: the module's files are in games/modules/slice, the same bytes as the games' copies") {
+    const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
+    for (const char* file : kModuleFiles) {
+        const std::string module = text_of(games / "modules" / "slice" / file);
+        CHECK_MESSAGE(module != "<нет>", file);
+        CHECK_MESSAGE(text_of(games / "slice" / file) == module, file);
+        CHECK_MESSAGE(text_of(games / "platformer" / file) == module, file);
+    }
+    // Both templates name their module in game.json, as the cards do.
+    std::vector<Template> list;
+    std::string error;
+    REQUIRE(read_catalog(games / "templates.json", list, &error));
+    for (const Template& t : list) {
+        std::string id;
+        CHECK_MESSAGE(game::game_module(t.game, id, &error) == game::GameModule::Named, t.id);
+        CHECK_MESSAGE(id == t.module, t.id);
+    }
+}
+
+// Step 14.3a: project.forge and game.json name one module; a game that cannot be opened is found so before anything
+// is written into it.
+TEST_CASE("project: game.json and project.forge name one module, else the game is not opened and nothing is written") {
+    Fixture f;
+    f.modules.push_back({"slice", "Старая шахта", f.module_dir, {"touch", "always"}});
+    fs::path a;
+    std::string error;
+    REQUIRE(create(f.t, f.modules, f.parent(), "Игра А", a, &error));
+    Game g;
+    REQUIRE(find(a, f.modules, g, &error) == Found::Game);
+    CHECK(g.description.module == "test");
+    const fs::path json = a / "game" / "game.json";
+    auto refused = [&](std::string_view game_json, std::string_view words) {
+        put(json, game_json);
+        const auto before = tree(a);
+        const Found found = find(a, f.modules, g, &error);
+        CHECK_MESSAGE(found == Found::Broken, game_json);
+        CHECK_MESSAGE(error.find(words) != std::string::npos, error);
+        CHECK_MESSAGE(tree(a) == before, game_json);
+    };
+    // Another module, none (a game.json from before: "slice"), an empty one, one that is no string, a broken file.
+    refused(R"({"title": "Игра А", "module": "slice"})", "project.forge называет модуль «test», а game/game.json — «slice»");
+    refused(R"({"title": "Игра А"})", "(в game.json модуль не назван)");
+    refused(R"({"title": "Игра А", "module": ""})", "пустой «module»");
+    refused(R"({"title": "Игра А", "module": 5})", "«module» — не строка");
+    refused(R"({"title": "Игра А", "module": null})", "«module» — не строка");
+    refused("{", "game.json не читается");
+    // project.forge naming "slice" and a game.json without a module: a game of 14.2, opened as it is.
+    put(a / "project.forge", description_json({kFormat, "slice", "old-mine"}));
+    put(json, R"({"title": "Игра А"})");
+    REQUIRE(find(a, f.modules, g, &error) == Found::Game);
+    CHECK(g.description.module == "slice");
+    // project.forge still must name a module (read_description): not weakened.
+    put(a / "project.forge", R"({"forge_project": 1})");
+    CHECK(find(a, f.modules, g, &error) == Found::Broken);
+    CHECK(error.find("не назван модуль") != std::string::npos);
+
+    // A folder from before step 14 (no project.forge) is «Старая шахта»: its game.json names no module or "slice".
+    const fs::path old = f.root / utf8_path("старый проект");
+    put(old / "game" / "game.json", R"({"title": "Старая шахта", "module": "slice"})");
+    REQUIRE(find(old, f.modules, g, &error) == Found::Game);
+    CHECK(g.description.module == "slice");
+    put(old / "game" / "game.json", R"({"title": "Старая шахта", "module": "test"})");
+    CHECK(find(old, f.modules, g, &error) == Found::Broken);
+    CHECK(error.find("нет project.forge") != std::string::npos);
+    put(old / "game" / "game.json", R"({"title": "Старая шахта", "module": ""})");
+    CHECK(find(old, f.modules, g, &error) == Found::Broken);
+}
+
+TEST_CASE("project: a template whose game.json names another module than its card makes no game") {
+    Fixture f;
+    f.modules.push_back({"slice", "Старая шахта", f.module_dir, {}});
+    const fs::path json = f.t.game / "game.json";
+    const std::string was = text_of(json);
+    for (const auto& [game_json, words] : std::vector<std::pair<std::string, std::string>>{
+             {R"({"title": "Проба", "module": "slice"})", "game.json шаблона называет модуль «slice», а карточка каталога — «test»"},
+             {R"({"title": "Проба"})", "game.json шаблона называет модуль «slice», а карточка каталога — «test»"},
+             {R"({"title": "Проба", "module": ""})", "шаблон: в game.json пустой «module»"}}) {
+        put(json, game_json);
+        std::string all;
+        for (const std::string& p : template_problems(f.t, f.modules)) all += p + "; ";
+        CHECK_MESSAGE(all.find(words) != std::string::npos, all);
+        fs::path made;
+        std::string error;
+        CHECK_FALSE(create(f.t, f.modules, f.parent(), "Игра", made, &error));
+        CHECK(error.find(words) != std::string::npos);
+        CHECK(fs::is_empty(f.parent()));
+    }
+    put(json, was);
+    CHECK(template_problems(f.t, f.modules).empty());
+}
+
+TEST_CASE("project: a verb on an event its module does not have is a problem of the game") {
+    Fixture f;
+    f.modules[0].events = {"touch", "always"};
+    CHECK(template_problems(f.t, f.modules).empty());
+    put(f.module_dir / "verbs.json",
+        R"({"verbs": [{"id": "open", "name": "открывает", "plural": "открывают", "case": "acc", "do": "open", "when": "probe_ping"}]})");
+    put(f.t.game / "logic.json", R"({"links": []})");
+    std::string all;
+    for (const std::string& p : template_problems(f.t, f.modules)) all += p + "; ";
+    CHECK_MESSAGE(all.find("глаголы verbs.json не читаются: глагол «открывает»: события «probe_ping» нет у модуля (есть: touch, always)") !=
+                      std::string::npos,
+                  all);
+    f.modules[0].events = {"probe_ping"};
+    CHECK(template_problems(f.t, f.modules).empty());
 }

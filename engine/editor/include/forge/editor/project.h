@@ -43,6 +43,7 @@ struct Module {
     std::string id;   // "slice"
     std::string name; // "Старая шахта"
     std::filesystem::path files;
+    std::vector<std::string> events; // what its verbs happen on ("touch", "always"); empty: any
 };
 inline constexpr const char* kModuleFiles[] = {"kinds.json", "verbs.json", "ideas.json"};
 const Module* find_module(const std::vector<Module>& modules, std::string_view id);
@@ -64,9 +65,10 @@ struct Template {
 // file cannot be read.
 bool read_catalog(const std::filesystem::path& file, std::vector<Template>& out, std::string* error = nullptr);
 // What keeps a game from being made of t, in words; empty when nothing does:
-// a module this editor does not have, no game folder or game.json, no
-// picture or «Ресурсы» the catalog names, and what game_problems finds in its
-// game folder. Read from the files each time: nothing is kept.
+// a module this editor does not have, no game folder or game.json, a game.json
+// whose module (forge::game::game_module) is not the card's, no picture or
+// «Ресурсы» the catalog names, and what game_problems finds in its game folder.
+// Read from the files each time: nothing is kept.
 std::vector<std::string> template_problems(const Template& t, const std::vector<Module>& modules);
 // What keeps the game in game (a game/ folder) from being played as a game of
 // its own, in words; empty when nothing does. Its data as the game reads it:
@@ -123,6 +125,10 @@ enum class Found {
     NoGame, // a folder with no game in it (or no folder): nothing to open
     Broken, // a game this editor cannot open (error says why)
 };
+// Nothing is written: a game that is Broken is found so before anything opens it or refreshes its files. Broken: a
+// project.forge that cannot be read, names no module or one this editor does not have; a game.json whose module
+// (forge::game::game_module: none is "slice"; empty or no string is none) cannot be read or is not project.forge's;
+// a folder from before step 14 (no project.forge) whose game.json names a module other than "slice".
 Found find(const std::filesystem::path& path, const std::vector<Module>& modules, Game& out, std::string* error = nullptr);
 
 // Opening a described game: the module's files that differ from its own are

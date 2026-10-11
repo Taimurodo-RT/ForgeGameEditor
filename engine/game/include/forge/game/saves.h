@@ -10,7 +10,7 @@
 // So any slot can be saved over at any time, and progress that was not saved
 // never touches the slots.
 //
-//   <user dir>/saves/<slot id>/slot.json    title, place, play time, date
+//   <user dir>/saves/<slot id>/slot.json    title, place, play time, date, the game's module
 //   <user dir>/saves/<slot id>/...          what the session folder held
 //   <user dir>/session/                     the game being played
 //   <user dir>/settings.json
@@ -47,7 +47,15 @@ struct SlotInfo {
     i64 saved_at = 0;     // seconds since 1970 (UTC)
     bool autosave = false;
     u32 version = 1;      // of the game's save format
+    // The module of the game that saved it (step 14.3a), slot.json "module" read by the rule of game.json
+    // (game_module.h): none in the file (a slot from before) is "slice"; an empty one or one that is no string leaves
+    // module empty and module_error saying why: such a slot is no slot of any module, "slice" included.
+    std::string module;
+    std::string module_error;
 };
+
+// Whether a game of module may load slot: the slot's module is its own. False: why, in words for the player.
+bool slot_fits(const SlotInfo& slot, std::string_view module, std::string* why = nullptr);
 
 class SaveSlots {
 public:
@@ -55,6 +63,8 @@ public:
 
     // Newest first. Folders without a readable slot.json are left out.
     std::vector<SlotInfo> list() const;
+    // One slot's slot.json; none when there is no readable one.
+    std::optional<SlotInfo> info(std::string_view id) const;
     std::optional<SlotInfo> latest() const;
     bool exists(std::string_view id) const;
     std::filesystem::path folder(std::string_view id) const;
@@ -67,7 +77,7 @@ public:
     // Empties the session folder (a new game) or fills it from a slot.
     bool begin_session(std::string_view from_slot = {}, std::string* error = nullptr);
     // Copies the session into the slot (replacing it) with info as slot.json.
-    // info.id names the slot; saved_at is filled in.
+    // info.id names the slot; saved_at is filled in; info.module, when set, goes in as "module".
     bool commit(SlotInfo info, std::string* error = nullptr);
 
     bool remove(std::string_view id);

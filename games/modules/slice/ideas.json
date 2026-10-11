@@ -1,0 +1,40 @@
+// Идеи для «Старой шахты»: готовые кусочки игры с парой полей. Идея — это
+// связь, показанная попроще: её действие (verb из verbs.json), какие вещи
+// выбирает автор (fields: side "a" — первая вещь, "b" — вторая) и с какими
+// уточнениями она появляется (refine: night, once, sound, hint).
+// В режиме «Идеи» связь показывается первой идеей с её действием.
+{
+  "ideas": [
+    { "id": "door_key", "name": "Дверь с ключом", "icon": "key", "group": "Двери и проходы", "verb": "open",
+      "about": "Дверь открывается, когда герой подходит с ключом. Без ключа — подсказка.",
+      "fields": [ { "side": "b", "label": "Дверь" }, { "side": "a", "label": "Открывает" } ],
+      "refine": { "sound": true, "hint": true } },
+    { "id": "lever", "name": "Рычаг", "icon": "toggle_on", "group": "Двери и проходы", "verb": "toggle",
+      "about": "Герой касается рычага, и дверь открывается или закрывается.",
+      "fields": [ { "side": "a", "label": "Рычаг" }, { "side": "b", "label": "Что переключает" } ] },
+    { "id": "treasure", "name": "Добыча", "icon": "back_hand", "group": "Предметы", "verb": "collect",
+      "about": "Герой касается вещи, и она попадает в сумку.",
+      "fields": [ { "side": "b", "label": "Что собирает герой" } ],
+      "refine": { "sound": true } },
+    { "id": "coin_spot", "name": "Монетка", "icon": "paid", "group": "Предметы", "verb": "coin",
+      "about": "Касание вещи даёт герою монету, один раз.",
+      "fields": [ { "side": "a", "label": "Что даёт монету" } ],
+      "refine": { "once": true } },
+    { "id": "trap", "name": "Ловушка", "icon": "heart_broken", "group": "Опасности", "verb": "hurt",
+      "about": "Касание отнимает у героя сердце.",
+      "fields": [ { "side": "a", "label": "Что ранит" } ] },
+    { "id": "healer", "name": "Лечение", "icon": "favorite", "group": "Опасности", "verb": "heal",
+      "about": "Касание прибавляет герою сердце, один раз.",
+      "fields": [ { "side": "a", "label": "Что лечит" } ],
+      "refine": { "once": true } },
+    { "id": "talker", "name": "Собеседник", "icon": "forum", "group": "Жители", "verb": "talk",
+      "about": "Герой подходит, и начинается разговор.",
+      "fields": [ { "side": "a", "label": "Кто говорит" } ] },
+    { "id": "companion", "name": "Спутник", "icon": "directions_walk", "group": "Жители", "verb": "follow",
+      "about": "Житель или зверь всё время идёт за героем.",
+      "fields": [ { "side": "a", "label": "Кто идёт за героем" } ] },
+    { "id": "shy", "name": "Пугливый зверь", "icon": "directions_run", "group": "Жители", "verb": "flee",
+      "about": "Зверь убегает, когда герой подходит близко.",
+      "fields": [ { "side": "a", "label": "Кто убегает" } ] }
+  ]
+}

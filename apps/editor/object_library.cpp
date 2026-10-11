@@ -1,5 +1,4 @@
 #include "object_library.h"
-#include "slice_pictures.h"
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -1000,22 +999,7 @@ bool ObjectLibrary::set_frames(int n) {
     return true;
 }
 
-std::string ObjectLibrary::hero_note(const objects::Template& t) {
-    const objects::Library& lib = library();
-    if (!lib.has_block(t, "hero")) return {};
-    // By the game's own rule (slice::hero_picture_ok): what this says is what the game draws.
-    if (std::string why; !slice::hero_picture_ok(lib, t, &why)) return "Герой рисуется как прежде: " + why + ".";
-    const objects::Template* first = nullptr;
-    usize n = 0;
-    for (const objects::Template& o : lib.templates())
-        if (slice::hero_picture_ok(lib, o)) {
-            ++n;
-            if (!first || o.id < first->id) first = &o;
-        }
-    if (n < 2) return {};
-    if (first->id == t.id) return "Объектов вида «Герой» с картинкой " + std::to_string(n) + ": героя рисует этот, первый по id.";
-    return "Объектов вида «Герой» с картинкой " + std::to_string(n) + ": героя рисует «" + first->name + "», первый по id, а не этот.";
-}
+std::string ObjectLibrary::hero_note(const objects::Template& t) { return module_.object_note(library(), t); }
 
 bool ObjectLibrary::clear_picture() {
     const objects::Template* t = selected();

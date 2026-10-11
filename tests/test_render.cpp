@@ -1,10 +1,14 @@
+#include "forge/core/file.h"
 #include "forge/core/jobs.h"
+#include "forge/core/path.h"
 #include "forge/core/sort.h"
+#include "forge/render/offscreen.h"
 #include "forge/render/sprite_batch.h"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <random>
 #include <vector>
@@ -82,4 +86,33 @@ TEST_CASE("sprite batch: pushes from many threads, culls and sorts") {
 
     const SpriteList all = batch.finish({100, 0, 200, 100}, false, out.data(), order.data(), kCount);
     CHECK(all.draws == kCount);
+}
+
+TEST_CASE("write_png: a UTF-8 path with Cyrillic and spaces is the file written, in its folder and by its name") {
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::temp_directory_path() / utf8_path("forge снимки тест");
+    std::error_code ec;
+    fs::remove_all(folder, ec);
+    REQUIRE(fs::create_directories(folder / utf8_path("кириллица и пробелы"), ec));
+    const fs::path file = folder / utf8_path("кириллица и пробелы") / utf8_path("кадр пробы.png");
+    std::vector<u8> rgba(3 * 2 * 4, 0);
+    for (usize i = 0; i < rgba.size(); i += 4) rgba[i] = 30, rgba[i + 1] = 140, rgba[i + 2] = 120, rgba[i + 3] = 255;
+    CHECK(write_png(path_to_utf8(file).c_str(), 3, 2, rgba));
+    // The very file: the PNG signature, then IHDR's width 3 and height 2; nothing else in the folder.
+    std::vector<u8> bytes;
+    REQUIRE(read_file(file, bytes));
+    REQUIRE(bytes.size() > 24);
+    const u8 signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    CHECK(std::equal(signature, signature + 8, bytes.begin()));
+    CHECK(bytes[19] == 3);
+    CHECK(bytes[23] == 2);
+    usize files = 0;
+    for (const fs::directory_entry& e : fs::recursive_directory_iterator(folder, ec))
+        if (e.is_regular_file()) ++files;
+    CHECK(files == 1);
+    // Too few pixels: nothing written.
+    const fs::path none = folder / utf8_path("нет.png");
+    CHECK_FALSE(write_png(path_to_utf8(none).c_str(), 3, 2, std::vector<u8>(4, 0)));
+    CHECK_FALSE(fs::exists(none, ec));
+    fs::remove_all(folder, ec);
 }

@@ -2480,7 +2480,7 @@ bool LevelEditor::launch(const std::vector<std::string>& args) {
     if (config_.game_exe.empty() || config_.offscreen) return true;
     std::error_code ec;
     if (!fs::exists(config_.game_exe, ec)) {
-        FORGE_ERROR("Игра не найдена: %s (соберите forge_slice)", path_to_utf8(config_.game_exe).c_str());
+        FORGE_ERROR("Игра не найдена: %s (соберите forge_game)", path_to_utf8(config_.game_exe).c_str());
         return false;
     }
     std::vector<const char*> argv;

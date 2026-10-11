@@ -4,6 +4,7 @@ add_library(forge_game STATIC
   src/dialogue_source.cpp
   src/quests.cpp
   src/saves.cpp
+  src/game_module.cpp
   src/shell.cpp
   src/runner.cpp
   src/screens.cpp)

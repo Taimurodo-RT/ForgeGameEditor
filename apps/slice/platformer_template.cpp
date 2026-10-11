@@ -489,17 +489,17 @@ std::optional<Guid> meta_id(const fs::path& meta) {
 
 // The game made in out, a folder of its own (made anew).
 bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
-    const fs::path module = games / "slice", from = games / "templates" / "platformer";
+    const fs::path module = games / "modules" / "slice", from = games / "templates" / "platformer";
     std::error_code ec;
     fs::create_directories(out / "objects", ec);
     if (ec) {
         why = "не создана папка " + path_to_utf8(out) + ": " + ec.message();
         return false;
     }
-    // The game, its camera at 32 px of the screen a tile: the pictures' own pixels.
+    // The game, its camera at 32 px of the screen a tile: the pictures' own pixels. Its module, named (step 14.3a).
     if (!write_text(out / "game.json",
                     "{\n  \"title\": \"Платформер\",\n  \"org\": \"Forge\",\n  \"theme\": \"fantasy\",\n  \"autosave_minutes\": 5,\n"
-                    "  \"zoom\": 32\n}\n",
+                    "  \"zoom\": 32,\n  \"module\": \"slice\"\n}\n",
                     why))
         return false;
     for (const char* file : editor::project::kModuleFiles) {

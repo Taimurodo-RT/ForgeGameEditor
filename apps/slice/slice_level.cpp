@@ -558,6 +558,22 @@ bool SliceLevel::object_component_shown(const reflect::TypeInfo* type) const {
            type == reflect::type_of<Door>();
 }
 
+std::string SliceLevel::object_note(const objects::Library& lib, const objects::Template& t) const {
+    if (!lib.has_block(t, "hero")) return {};
+    // By the game's own rule (hero_picture_ok): what this says is what the game draws.
+    if (std::string why; !hero_picture_ok(lib, t, &why)) return "Герой рисуется как прежде: " + why + ".";
+    const objects::Template* first = nullptr;
+    usize n = 0;
+    for (const objects::Template& o : lib.templates())
+        if (hero_picture_ok(lib, o)) {
+            ++n;
+            if (!first || o.id < first->id) first = &o;
+        }
+    if (n < 2) return {};
+    if (first->id == t.id) return "Объектов вида «Герой» с картинкой " + std::to_string(n) + ": героя рисует этот, первый по id.";
+    return "Объектов вида «Герой» с картинкой " + std::to_string(n) + ": героя рисует «" + first->name + "», первый по id, а не этот.";
+}
+
 u32 SliceLevel::map_color(u32 layer, TileId value) const {
     if (value == 0) return 0;
     if (layer == kLiquids) return render::pack_color(51, 115, 242, 255);

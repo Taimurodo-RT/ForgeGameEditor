@@ -378,7 +378,14 @@ bool Shell::begin(std::string_view slot_id) {
 bool Shell::new_game() { return begin({}); }
 
 bool Shell::load(std::string_view slot_id) {
-    if (!slots_->exists(slot_id)) return false;
+    const std::optional<SlotInfo> info = slots_->info(slot_id);
+    if (!info) return false;
+    // Before begin: it ends the game and empties the session.
+    if (std::string why; !slot_fits(*info, config_.module, &why)) {
+        FORGE_WARN("Загрузка: %s", why.c_str());
+        toast("Не загрузить: " + why);
+        return false;
+    }
     const bool ok = begin(slot_id);
     if (ok) toast("Загружено");
     return ok;
@@ -421,6 +428,7 @@ bool Shell::save(std::string_view slot_id, std::string title, bool autosave) {
     }
     SlotInfo info;
     info.id = std::string(slot_id);
+    info.module = config_.module;
     info.title = std::move(title);
     info.location = std::move(location);
     info.playtime_s = playtime_;

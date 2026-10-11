@@ -24,8 +24,15 @@
 //                ready`: open the game, say so, close), waits for them as the editor does (and for one that fails,
 //                closes first or does not answer), and starts `forge_editor --project ".../project.forge"
 //                --self-test opened-game` from another folder, which opens it and plays it with «Играть»
+//   forge_editor --self-test modules   only the modules (step 14.3a): the registry, two modules' levels side by side,
+//                a game of the test module «Проба» and one from before step 14.3 opened in editors of their own, the
+//                games whose module is none or another refused, before the open game or its history is touched
+//   forge_editor --make-template ID OUT   no window: the template ID made anew from its module's sources into OUT
+//                (platformer: «Старая шахта»'s maker of the catalog's «Платформер»)
 //
-// The «Уровень» tab opens the game's level, game/level in its folder (or
+// The editor is the editor of the game's module (forge::modules, the registry of apps/builtin the launcher forge_game
+// has too): its level, objects, values, events and verbs are the module's; «Играть» starts forge_game, which runs the
+// game with the same module. The «Уровень» tab opens the game's level, game/level in its folder (or
 // --level DIR); the «Сцена» tab opens scene.forge.json in the game's folder
 // (or --scene FILE), or makes a sample scene of 50 000 objects when there is
 // none. A folder with no game yet gets a copy of «Старая шахта»; one
@@ -41,9 +48,10 @@
 #include "story_editor.h"
 #include "ui_editor.h"
 #include "object_library.h"
-#include "platformer_template.h"
-#include "slice_edits.h"
-#include "slice_level.h"
+#include "project_edits.h"
+#include "slice_checks.h"
+
+#include "builtin.h"
 
 #include "forge/assets/image.h"
 #include "forge/audio/audio.h"
@@ -59,6 +67,8 @@
 #include "forge/editor/inspector.h"
 #include "forge/editor/sources.h"
 #include "forge/editor/undo.h"
+#include "forge/game/game_module.h"
+#include "forge/modules/modules.h"
 #include "forge/platform/app.h"
 #include "forge/render/camera.h"
 #include "forge/render/gpu.h"
@@ -69,6 +79,7 @@
 #include "forge/ui/tokens.h"
 #include "forge/ui/ui.h"
 #include "forge/ui/virtual_list.h"
+#include "forge/world/generators.h"
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -102,8 +113,14 @@
 #ifndef FORGE_EXAMPLES_DIR
 #define FORGE_EXAMPLES_DIR "games/examples"
 #endif
+#ifndef FORGE_GAME_EXE
+#define FORGE_GAME_EXE ""
+#endif
 #ifndef FORGE_SLICE_EXE
 #define FORGE_SLICE_EXE ""
+#endif
+#ifndef FORGE_PROBE_GAME_DIR
+#define FORGE_PROBE_GAME_DIR "tests/data/probe/game"
 #endif
 
 using namespace forge;
@@ -303,6 +320,14 @@ struct Drawable {
 
 class Editor {
 public:
+    // An editor is of one module (step 14.3a): the one its game names, known before the editor is made. Its level
+    // module is made here and lives as long as the editor, longer than the tabs that keep it and their callbacks.
+    explicit Editor(const modules::ModuleDef& def) : module(def), level_module_(def.make_level_module()) {}
+    Editor(const Editor&) = delete;
+    Editor& operator=(const Editor&) = delete;
+
+    // The game's module: its level, the events of its verbs («Логика»), the values its screens may show («Интерфейс»).
+    const modules::ModuleDef& module;
     Document doc;
     UndoStack history{doc};
     PlaySession play;
@@ -329,7 +354,12 @@ public:
     }
     // The objects shared by every game: this computer's, outside any game.
     std::filesystem::path shared_folder = default_shared_folder();
-    slice::SliceLevel level_module;
+
+private:
+    std::unique_ptr<level::LevelModule> level_module_; // before the tabs: made before them, gone after them
+
+public:
+    level::LevelModule& level_module = *level_module_;
     LevelEditor level{level_module};
     ObjectLibrary objects_tab{level_module};
     LogicEditor logic_tab{level_module};
@@ -400,6 +430,8 @@ public:
         level_module.library()->set_sounds_folder(sounds_folder);
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
+        // «Логика» reads the verbs with the module's events, as the game does.
+        logic_tab.events = module.event_ids();
         if (!level.init(ui_, device, format, level_config)) return false;
         objects_tab.set_shared_folder(shared_folder);
         objects_tab.init(ui_);
@@ -479,22 +511,15 @@ public:
         level.copy_in = copy_in;
         assets.on_index = [this] { sync_sources(); };
         context_ = ui_.create_context("editor", width, height);
-        // What screens can show: the game's values in the author's words.
+        // What screens can show: the game's values in the author's words. The module's (forge::modules::ModuleDef::
+        // values: the same list its game is checked against), then the shell's, which every game has, then the quests'.
         ui_tab.game_values = [this] {
-            std::vector<std::pair<std::string, std::string>> out = {
-                {"hero.hearts", "Сердца героя"}, {"hero.hearts_max", "Сердец всего"}, {"hero.score", "Очки"}, {"inv.coins", "Монеты"},
-                {"inv.copper", "Медь"},
-                {"settings.master", "Громкость всего, 0–100"}, {"settings.music", "Громкость музыки, 0–100"},
-                {"settings.sound", "Громкость звуков, 0–100"}};
-            const objects::Library& lib = *level_module.library();
-            for (const objects::Template& t : lib.templates()) {
-                if (!lib.has_block(t, "pickup")) continue;
-                const objects::PropDef* what = lib.prop_of(t, "what");
-                if (!what) continue;
-                std::string item = lib.value(t, *what);
-                if (item.size() >= 2 && item.front() == '"') item = item.substr(1, item.size() - 2);
-                if (!item.empty()) out.emplace_back("inv." + item, t.name);
-            }
+            std::vector<std::pair<std::string, std::string>> out;
+            if (module.values)
+                for (modules::Value& v : module.values(level_module.library())) out.emplace_back(std::move(v.var), std::move(v.words));
+            for (auto [var, words] : {std::pair{"settings.master", "Громкость всего, 0–100"}, std::pair{"settings.music", "Громкость музыки, 0–100"},
+                                      std::pair{"settings.sound", "Громкость звуков, 0–100"}})
+                out.emplace_back(var, words);
             for (const game::Quest& q : story_tab.quests().quests())
                 if (!q.var.empty()) out.emplace_back(q.var, "Задание «" + q.title + "»");
             std::vector<std::pair<std::string, std::string>> unique;
@@ -1705,15 +1730,33 @@ void HierarchySource::on_row_event(u32 row, std::string_view event, int modifier
 
 // --- app ----------------------------------------------------------------------
 
-// The modules built into this editor: «Старая шахта» (its files are next to its game's data).
-std::vector<editor::project::Module> editor_modules() { return {{"slice", "Старая шахта", utf8_path(SLICE_DATA_DIR)}}; }
+// The modules built into this editor (apps/builtin: the launcher has the same; with --self-test also the test module
+// «Проба»), set up by main() before anything opens.
+modules::Registry g_modules;
+
+// A module's maker of its template id (--make-template, the self-test of «Платформер»); null when none has it.
+const modules::TemplateMaker* template_maker(std::string_view id) {
+    for (const modules::ModuleDef* m : g_modules.all())
+        for (const modules::TemplateMaker& t : m->templates)
+            if (t.id == id) return &t;
+    return nullptr;
+}
+
+// What the editor's project code knows of them: their ids, names, files and events.
+std::vector<editor::project::Module> editor_modules() {
+    std::vector<editor::project::Module> out;
+    for (const modules::ModuleDef* m : g_modules.all()) out.push_back({m->id, m->name, m->files, m->event_ids()});
+    return out;
+}
 
 // The game the editor opens: path is its folder or its project.forge. A described game gets its module's files from
 // the module (its own copies stay when the module is not there); a folder from before step 14, or one with no game
-// yet, goes the old way (the first start copies «Старая шахта» into it).
+// yet, goes the old way (the first start copies «Старая шахта» into it), its module's files from that module too.
+// module: the module the game names (a folder from before: "slice"), which this editor has (find refuses others).
 struct OpenGame {
     std::filesystem::path root, game;
     std::string title;
+    std::string module;
 };
 bool open_game(const std::filesystem::path& path, OpenGame& out, std::string& error) {
     namespace pj = editor::project;
@@ -1721,13 +1764,18 @@ bool open_game(const std::filesystem::path& path, OpenGame& out, std::string& er
     pj::Game g;
     const pj::Found found = pj::find(path, modules, g, &error);
     if (found == pj::Found::Broken) return false;
-    if (found == pj::Found::Game && g.described) {
+    auto refresh = [&](const std::filesystem::path& game, const std::string& module) {
+        const pj::Module* m = pj::find_module(modules, module);
+        if (!m) return;
         std::vector<std::string> refreshed;
         std::string note;
-        pj::refresh_module_files(g.game, *pj::find_module(modules, g.description.module), refreshed, &note);
+        pj::refresh_module_files(game, *m, refreshed, &note);
         for (const std::string& f : refreshed) FORGE_INFO("Игра: %s обновлён из модуля", f.c_str());
         if (!note.empty()) FORGE_WARN("Игра: %s", note.c_str());
-        out = {g.root, g.game, g.title};
+    };
+    if (found == pj::Found::Game && g.described) {
+        refresh(g.game, g.description.module);
+        out = {g.root, g.game, g.title, g.description.module};
         return true;
     }
     if (found == pj::Found::NoGame && path.filename() == utf8_path(pj::kDescription)) return false;
@@ -1736,7 +1784,9 @@ bool open_game(const std::filesystem::path& path, OpenGame& out, std::string& er
     if (!prepare_project_game(root, utf8_path(SLICE_DATA_DIR), pg, &error)) return false;
     if (pg.created) FORGE_INFO("Проект: игра скопирована в %s", path_to_utf8(pg.dir).c_str());
     for (const std::string& f : pg.refreshed) FORGE_INFO("Проект: %s обновлён из движка", f.c_str());
-    out = {root, pg.dir, pj::game_title(pg.dir)};
+    const std::string module(game::kOldGameModule);
+    refresh(pg.dir, module);
+    out = {root, pg.dir, pj::game_title(pg.dir), module};
     return true;
 }
 
@@ -1767,7 +1817,9 @@ struct Options {
     // game and continued in another process by "levels-go-again"); "platformer" (step 14.2c: an enemy, a coin, spikes, a
     // flag, a zone, links and windows made and set through the tabs by "platformer-a", opened again and played as set by
     // "platformer-a-again"); "platformer-template" (step 14.2d: two games of the catalog's «Платформер», A changed through
-    // the tabs by "platformer-template-a", opened again and played as changed by "platformer-template-a-again").
+    // the tabs by "platformer-template-a", opened again and played as changed by "platformer-template-a-again");
+    // "modules" (step 14.3a: the editor of a game's module, from the registry; a game of the test module «Проба» opened
+    // by "modules-probe" in an editor of its own, a game from before step 14.3 by "modules-old", the games refused).
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -1794,7 +1846,10 @@ public:
         // The author's work lives in the game's folder, apart from the engine: --project, else the working folder.
         const std::filesystem::path given = options.project.empty() ? std::filesystem::current_path() : options.project;
         OpenGame open;
-        if (std::string error; !open_game(given, open, error)) {
+        std::string error;
+        const modules::ModuleDef* def = open_game(given, open, error) ? g_modules.find(open.module) : nullptr;
+        if (!def) {
+            if (error.empty()) error = modules::missing_module(open.module);
             FORGE_ERROR("Игра не открылась: %s", error.c_str());
             // The editor that started this one says it in its own window, its game still open.
             tell_starter(options, "failed: " + error);
@@ -1802,28 +1857,30 @@ public:
             if (options.ready_file.empty()) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Forge — редактор", text.c_str(), window());
             return false;
         }
+        // The editor of the game's module (step 14.3a): made now that the module is known.
+        editor_ = std::make_unique<Editor>(*def);
         const std::filesystem::path project = open.root;
-        editor_.scene_path = options.scene.empty() ? project / "scene.forge.json" : options.scene;
-        editor_.use_game_dir(open.game);
+        editor_->scene_path = options.scene.empty() ? project / "scene.forge.json" : options.scene;
+        editor_->use_game_dir(open.game);
         LevelConfig lc;
         lc.folder = options.level_given ? options.level : level_to_open(project, open.game);
         lc.project_root = project;
         lc.game_data = open.game;
-        lc.game_exe = utf8_path(FORGE_SLICE_EXE);
+        lc.game_exe = utf8_path(FORGE_GAME_EXE);
         lc.play_dir = play_folder(project);
         if (char* pref = SDL_GetPrefPath("Forge", "Editor")) {
             lc.settings = utf8_path(pref);
             SDL_free(pref);
         }
-        editor_.project_config = {project,     open.title, utf8_path(FORGE_GAMES_DIR) / "templates.json", editor_modules(),
-                                  lc.settings, editor_exe(), window()};
-        editor_.on_quit = [this] { request_quit(); };
+        editor_->project_config = {project,     open.title, utf8_path(FORGE_GAMES_DIR) / "templates.json", editor_modules(),
+                                   lc.settings, editor_exe(), window()};
+        editor_->on_quit = [this] { request_quit(); };
         AssetsConfig ac;
         ac.folder = options.assets.empty() ? project / "assets" : options.assets;
         ac.library = ac.folder.parent_path() / ".forge" / "library";
         ac.settings = lc.settings;
         ac.window = window();
-        if (!editor_.init(gpu(), window(), swapchain_format(), static_cast<u32>(w), static_cast<u32>(h),
+        if (!editor_->init(gpu(), window(), swapchain_format(), static_cast<u32>(w), static_cast<u32>(h),
                           options.ui_dir, options.theme, options.objects, lc, ac)) {
             FORGE_ERROR("editor: start failed (UI folder: %s)", path_to_utf8(options.ui_dir).c_str());
             tell_starter(options, "failed: редактор не запустился (папка интерфейса " + path_to_utf8(options.ui_dir) + ")");
@@ -1831,13 +1888,17 @@ public:
         }
         return true;
     }
-    void on_event(const SDL_Event& e) override { editor_.handle_event(e); }
+    void on_event(const SDL_Event& e) override {
+        if (editor_) editor_->handle_event(e);
+    }
     void on_frame(f64 dt) override {
-        editor_.update(dt);
-        set_status(editor_.play.playing() ? "игра идёт" : "");
+        if (!editor_) return;
+        editor_->update(dt);
+        set_status(editor_->play.playing() ? "игра идёт" : "");
     }
     void on_render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 w, u32 h) override {
-        editor_.render(cmd, target, swapchain_format(), w, h);
+        if (!editor_) return;
+        editor_->render(cmd, target, swapchain_format(), w, h);
         // The game and the UI are open and drawn: the editor that started this one may close.
         if (!told_) tell_starter(options, "ready");
         told_ = true;
@@ -1845,12 +1906,13 @@ public:
     void on_shutdown() override {
         const FrameStats& s = frame_stats();
         FORGE_INFO("frame avg %.3f ms, worst %.3f ms (last %u frames)", s.avg_ms, s.worst_ms, FrameStats::kWindow);
-        if (editor_.history.dirty()) FORGE_WARN("editor: unsaved changes were not saved");
-        editor_.shutdown();
+        if (!editor_) return;
+        if (editor_->history.dirty()) FORGE_WARN("editor: unsaved changes were not saved");
+        editor_->shutdown();
     }
 
 private:
-    Editor editor_;
+    std::unique_ptr<Editor> editor_; // of the game's module: made in on_init, once the game is open
     bool told_ = false;
 };
 
@@ -1967,6 +2029,9 @@ public:
         if (part == "platformer-template") return frame < 3 || platformer_template_step();
         if (part == "platformer-template-a") return frame < 3 || platformer_template_a_step();
         if (part == "platformer-template-a-again") return frame < 3 || platformer_template_again_step();
+        if (part == "modules") return frame < 3 || modules_step();
+        if (part == "modules-probe") return frame < 3 || modules_probe_step();
+        if (part == "modules-old") return frame < 3 || modules_old_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -2218,13 +2283,10 @@ private:
                           copy.tile(1, cx_ + 1, cy_) == 0,
                       "the saved level has the painted tiles");
                 // The villagers come back with their bodies (the game moves only those).
-                const i32 vy = ed_.level_module.slice_generator().village_y();
+                const i32 vy = slice_checks::places(ed_.level_module).village_y;
                 copy.ensure_loaded({-40, vy - 8, 24, vy + 4});
                 int people = 0, with_bodies = 0;
-                copy.scene().ecs().each([&](flecs::entity e, const slice::Npc&) {
-                    ++people;
-                    with_bodies += e.has<sim::Body>();
-                });
+                slice_checks::villagers(copy.scene().ecs(), people, with_bodies);
                 check(people == 2 && with_bodies == 2, "the saved villagers keep their bodies");
             }
             break;
@@ -2256,8 +2318,7 @@ private:
             check(lv().selection().size() == 1, "the placed object is selected");
             object_ = lv().selection().empty() ? 0 : lv().selection()[0];
             const flecs::entity e = placed();
-            check(e.is_valid() && e.has<slice::Item>() && e.get<slice::Item>().kind == u8(slice::ItemKind::Coins) &&
-                      e.get<slice::Item>().count == 10 && e.has<objects::ObjectRef>(),
+            check(e.is_valid() && slice_checks::thing(e).kind == "coins" && slice_checks::thing(e).count == 10 && e.has<objects::ObjectRef>(),
                   "the coins are in the world, a copy of their template");
             break;
         }
@@ -2312,7 +2373,7 @@ private:
             check(copy.open(lv().level().folder()), "the level opens again");
             copy.ensure_loaded({cx_ + 8, cy_ - 4, cx_ + 18, cy_ + 4});
             const flecs::entity e = copy.find(object_);
-            check(e.is_valid() && e.get<slice::Item>().count == 7 &&
+            check(e.is_valid() && slice_checks::thing(e).count == 7 &&
                       std::abs(e.get<scene::Position>().tile_x() - (cx_ + 13.5)) < 1e-6,
                   "the saved level keeps the coins where they were put");
             lv().select_objects({object_}); // for a screenshot of the panels
@@ -2326,7 +2387,7 @@ private:
     static constexpr u32 kPhysLast = 32;
     // The example, as this run makes it (the folder is new each run).
     static std::filesystem::path phys_root() { return std::filesystem::temp_directory_path() / "forge_editor_physics"; }
-    i32 vy() { return ed_.level_module.slice_generator().village_y(); }
+    i32 vy() { return slice_checks::places(ed_.level_module).village_y; }
     flecs::entity point_entity() { return lv().level().find(point_); }
     sim::GravitySource point_source() {
         const flecs::entity e = point_entity();
@@ -2851,11 +2912,7 @@ private:
                                   g.fade, g.replace, e.has<level::LevelId>());
                     out.push_back(t);
                 });
-                lvl.scene().ecs().each([&](const scene::Position& p, const slice::Item& i) {
-                    char t[96];
-                    std::snprintf(t, sizeof(t), "item %d %.2f %.2f", i.kind, p.tile_x(), p.tile_y());
-                    out.push_back(t);
-                });
+                slice_checks::things(lvl.scene().ecs(), out);
                 std::sort(out.begin(), out.end());
                 return out;
             };
@@ -3135,7 +3192,7 @@ private:
                       input_value("lv-num-4") == "10",
                   "the panel shows its centre, colour, brightness and radius");
             // The editor's view lights it as the game does: bright at the centre, nothing past the radius.
-            const Color c = ed_.level_module.lights().lamp_at(ax, ay), out = ed_.level_module.lights().lamp_at(ax + 10.6, ay);
+            const Color c = slice_checks::lamp_at(ed_.level_module, ax, ay), out = slice_checks::lamp_at(ed_.level_module, ax + 10.6, ay);
             check(c.r > 1.2f && c.g > 0.9f && c.b > 0.6f && out.r == 0 && out.g == 0 && out.b == 0,
                   "the view: light at the centre (" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " + std::to_string(c.b) +
                       "), none 10.6 tiles away");
@@ -3481,7 +3538,7 @@ private:
     static constexpr u32 kZonesLast = 46;
     // The example, as this run makes it (the folder is new each run).
     static std::filesystem::path zones_root() { return std::filesystem::temp_directory_path() / "forge_editor_zones"; }
-    const slice::SliceGenerator& gen() { return ed_.level_module.slice_generator(); }
+    slice_checks::Places gen() { return slice_checks::places(ed_.level_module); }
     const level::Area* area(u64 id) { return lv().level().areas().find(id); }
     std::string area_text(u64 id) {
         const level::Area* a = area(id);
@@ -3556,11 +3613,11 @@ private:
     }
 
     bool zones_step() {
-        const i32 sy = gen().mine_y(), gy = gen().gallery_y(), mx = gen().mine_x();
+        const i32 sy = gen().mine_y, gy = gen().gallery_y, mx = gen().mine_x;
         // «Шахта»: the whole mine, from the entrance column (mx) west past the far chamber, from over the entrance down
         // under the gallery's floor. «Дальний зал»: the chamber at the gallery's west end, inside «Шахта».
         const i32 m0 = mx - 153, m1 = mx + 1, n0 = sy - 5, n1 = gy + 3;
-        const i32 h0 = mx - 153, h1 = gen().gallery_x1() + 2, k0 = gy - 8, k1 = gy + 2;
+        const i32 h0 = mx - 153, h1 = gen().gallery_x1 + 2, k0 = gy - 8, k1 = gy + 2;
         const std::filesystem::path example = zones_root() / "level";
         const std::filesystem::path tune = zones_root() / utf8_path("Ресурсы") / utf8_path("шахта.wav");
         const std::filesystem::path broken = zones_root() / utf8_path("Ресурсы") / utf8_path("сломан.wav");
@@ -5212,7 +5269,7 @@ private:
             break;
         case 6: {
             const flecs::entity e = placed();
-            check(e.is_valid() && e.get<slice::Item>().kind == u8(slice::ItemKind::Copper) && count() == 7,
+            check(e.is_valid() && slice_checks::thing(e).kind == "copper" && count() == 7,
                   "the copy on the level follows the template, but keeps its own count of 7");
             check(lv().history().undo_label() != "«Монеты»: Сколько", "the level's history is not touched");
             click_tab(2);
@@ -5224,7 +5281,7 @@ private:
             break;
         }
         case 7:
-            check(placed().is_valid() && placed().get<slice::Item>().kind == u8(slice::ItemKind::Coins),
+            check(placed().is_valid() && slice_checks::thing(placed()).kind == "coins",
                   "and the copy is coins again");
             click_tab(2);
             break;
@@ -5319,7 +5376,7 @@ private:
             check(armed >= 0 && defs[static_cast<usize>(armed)].key == new_template_, "with the new template in hand");
             click_cell(cx_ + 8, cy_);
             const flecs::entity e = lv().selection().empty() ? flecs::entity() : lv().level().find(lv().selection()[0]);
-            check(e.is_valid() && e.get<slice::Item>().count == 1 && lib.template_of(e) == lib.find(new_template_),
+            check(e.is_valid() && slice_checks::thing(e).count == 1 && lib.template_of(e) == lib.find(new_template_),
                   "a click places a copy of it");
             click_tab(2);
             break;
@@ -5426,9 +5483,7 @@ private:
         }
         case 28: {
             const flecs::entity e = placed();
-            check(e.is_valid() && e.has<slice::Critter>() &&
-                      e.get<slice::Critter>().scheme == static_cast<u8>(slice::Scheme::Wander) &&
-                      e.get<slice::Item>().count == 7,
+            check(e.is_valid() && slice_checks::wanders(e) && slice_checks::thing(e).count == 7,
                   "the coins on the level now run, and keep their own count");
             click_tab(2);
             ol().undo();
@@ -5445,7 +5500,7 @@ private:
         }
         case 29: {
             const flecs::entity e = placed();
-            check(e.is_valid() && !e.has<slice::Critter>() && e.has<slice::Item>(), "and the coins on the level are coins again");
+            check(e.is_valid() && !slice_checks::critter(e) && !slice_checks::thing(e).kind.empty(), "and the coins on the level are coins again");
             click_tab(2);
             ol().close_editor();
             ol().select(lib.find("coins")->key); // for a screenshot
@@ -13263,6 +13318,323 @@ private:
         return true;
     }
 
+    // --- «Модули» (step 14.3a) ----------------------------------------------------------------------------------
+    // --self-test modules: the modules of this editor and of the launcher are the same list (apps/builtin), each module
+    // its own. In this process: the list twice is refused (one id twice), a level module of «Старая шахта» and one of
+    // the test module «Проба» side by side keep their own libraries, events, values and verbs, and one made after
+    // them starts clean. Then in editors of their own, from a working folder of neither game, by paths with spaces and
+    // Cyrillic letters: «Игра пробы» (modules-probe: its level, values, events, verbs and objects are the probe's, and
+    // «Играть» starts forge_game, which draws the probe's colour), and a game from before step 14.3 (modules-old: no
+    // project.forge, game.json without "module" and with CRLF: «Старая шахта», played, game.json not touched). Then
+    // games this editor cannot open (a module it has not, project.forge and game.json naming different modules, an empty
+    // module, one that is a number, a folder from before naming another module) refused before anything is written,
+    // this game and its undo as they were; an editor started for one says why; the launcher and its old name
+    // forge_slice refuse them too, and the probe for a player, and run the probe for a test.
+    int md_step_ = 0;
+    std::map<std::string, std::vector<u8>> md_old_, md_broken_;
+    std::filesystem::path md_scene_;
+    ProjectConfig md_config_;
+    usize md_cursor_ = 0;
+    std::string md_undo_;
+    static std::filesystem::path md_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor модули"); }
+    static std::filesystem::path md_game(const char* title) { return md_root() / utf8_path("Мои игры") / utf8_path(title); }
+    static bool md_put(const std::filesystem::path& file, std::string_view text) {
+        std::error_code ec;
+        std::filesystem::create_directories(file.parent_path(), ec);
+        return write_file_atomic(file, {reinterpret_cast<const u8*>(text.data()), text.size()});
+    }
+    // The games this editor must not open: (folder, what the refusal says).
+    static std::vector<std::pair<std::filesystem::path, std::string>> md_refused() {
+        return {{md_game("Нет модуля") / "project.forge", "игре нужен модуль «nope», его нет в этой сборке Forge"},
+                {md_game("Не тот модуль") / "project.forge", "project.forge называет модуль «probe», а game/game.json — «slice»"},
+                {md_game("Пустой модуль") / "project.forge", "в game.json пустой «module»"},
+                {md_game("Модуль числом") / "project.forge", "в game.json «module» — не строка"},
+                {md_game("Старая чужая"), "у игры нет project.forge, а game/game.json называет модуль «probe»"}};
+    }
+    // A pixel of a PNG the game wrote (--screenshot), r g b; false when it cannot be read.
+    static bool md_pixel(const std::filesystem::path& png, u32 x, u32 y, u8 (&out)[3]) {
+        std::vector<u8> bytes;
+        assets::CookedTexture img;
+        if (!read_file(png, bytes) || !assets::decode_image(bytes, img) || x >= img.width || y >= img.height) return false;
+        const usize at = (static_cast<usize>(y) * img.width + x) * 4;
+        for (int i = 0; i < 3; ++i) out[i] = img.rgba8[at + static_cast<usize>(i)];
+        return true;
+    }
+    // The module's level and library, made as an editor makes them, its kinds from the module's files.
+    static std::unique_ptr<level::LevelModule> md_level(const modules::ModuleDef& m) {
+        std::unique_ptr<level::LevelModule> lm = m.make_level_module();
+        const std::filesystem::path none = std::filesystem::temp_directory_path() / utf8_path("forge_editor модули без объектов");
+        std::error_code ec;
+        std::filesystem::create_directories(none, ec);
+        if (lm && lm->library()) lm->library()->load(m.files / "kinds.json", none);
+        return lm;
+    }
+    static bool md_has_value(const std::vector<modules::Value>& values, std::string_view prefix) {
+        return std::any_of(values.begin(), values.end(), [&](const modules::Value& v) { return v.var.rfind(prefix, 0) == 0; });
+    }
+
+    bool modules_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path probe = md_game("Игра пробы"), old = md_game("Старая игра"), other = md_root() / utf8_path("посторонняя папка");
+        const std::string exe = path_to_utf8(editor_exe());
+        switch (md_step_) {
+        case 0: {
+            fs::remove_all(md_root(), ec);
+            fs::create_directories(other, ec);
+            // This editor: «Старая шахта»'s, its events and values.
+            check(ed_.module.id == "slice" && ed_.logic_tab.events == std::vector<std::string>{"touch", "always"},
+                  "this editor is of «Старая шахта»: its verbs' events touch, always");
+            const auto shown_values = ed_.ui_tab.game_values();
+            const bool hearts = std::any_of(shown_values.begin(), shown_values.end(), [](const auto& v) { return v.first == "hero.hearts"; });
+            const bool probes = std::any_of(shown_values.begin(), shown_values.end(), [](const auto& v) { return v.first.rfind("probe.", 0) == 0; });
+            check(hearts && !probes, "«Интерфейс» offers its values (hero.hearts), none of «Проба»");
+            // The list: the same modules twice is refused; an id it has not is no module.
+            const modules::ModuleDef* sl = g_modules.find("slice");
+            const modules::ModuleDef* pr = g_modules.find("probe");
+            check(sl && pr && !g_modules.find("nope") && pr->test_only && !sl->test_only,
+                  "the editor's modules: slice and, for the self-test, probe; no «nope»");
+            modules::Registry twice;
+            std::string error;
+            const bool first = builtin::add_modules(twice, true, &error), again = builtin::add_modules(twice, true, &error);
+            check(first && !again && pj_has(error, "модуль «slice» уже есть"), "the list added twice is refused: " + error);
+            check(modules::missing_module("nope") == "игре нужен модуль «nope», его нет в этой сборке Forge", "an unknown module, in words");
+            if (!sl || !pr) return false;
+            if (std::unique_ptr<level::LevelModule> p = pr->make_level_module()) probe_color_ = p->background();
+            // Two level modules side by side, then a third after them.
+            usize slice_kinds = 0;
+            {
+                std::unique_ptr<level::LevelModule> a = md_level(*sl), b = md_level(*pr);
+                check(a && b && a->title() == "Старая шахта" && b->title() == "Проба" && b->layer_names() == std::vector<std::string>{"Проба"} &&
+                          a->layer_names() != b->layer_names(),
+                      "each module makes its own level: «Старая шахта», «Проба»");
+                const objects::Library *la = a ? a->library() : nullptr, *lb = b ? b->library() : nullptr;
+                check(la && lb && la != lb && la->kind("hero") && !la->kind("probe_stone") && lb->kind("probe_stone") && !lb->kind("hero") &&
+                          lb->kinds().size() == 1,
+                      "each its own library: «Герой» in slice's, «Камень пробы» in the probe's only");
+                slice_kinds = la ? la->kinds().size() : 0;
+                const std::vector<modules::Value> va = sl->values(la), vb = pr->values(lb);
+                check(md_has_value(va, "hero.") && md_has_value(va, "inv.") && !md_has_value(va, "probe.") && md_has_value(vb, "probe.") &&
+                          !md_has_value(vb, "hero.") && !md_has_value(vb, "inv."),
+                      "each its own values: hero.*, inv.* of slice; probe.* of the probe");
+                check(sl->event_ids() == std::vector<std::string>{"touch", "always"} && pr->event_ids() == std::vector<std::string>{"probe_ping"},
+                      "each its own events: touch, always; probe_ping");
+                logic::Verbs verbs;
+                std::string why;
+                const bool own = verbs.load(pr->files / "verbs.json", &why, pr->event_ids()) && verbs.find("ping");
+                check(own, "the probe's verbs read with its events " + why);
+                const bool other_events = verbs.load(pr->files / "verbs.json", &why, sl->event_ids());
+                check(!other_events && pj_has(why, "probe_ping") && pj_has(why, "touch, always"), "and not with slice's: " + why);
+                why.clear();
+                const bool slice_verbs = verbs.load(sl->files / "verbs.json", &why, pr->event_ids());
+                check(!slice_verbs && pj_has(why, "probe_ping"), "slice's verbs not with the probe's events: " + why);
+            }
+            {
+                std::unique_ptr<level::LevelModule> c = md_level(*sl);
+                const objects::Library* lc = c ? c->library() : nullptr;
+                check(lc && lc->kinds().size() == slice_kinds && !lc->kind("probe_stone") && !md_has_value(sl->values(lc), "probe."),
+                      "a level of slice made after both: its library as the first's, nothing of the probe");
+            }
+            const pj::Template stranger{"stranger", "Чужой", "", "nope", utf8_path(FORGE_PROBE_GAME_DIR)};
+            const std::vector<std::string> problems = pj::template_problems(stranger, editor_modules());
+            check(!problems.empty() && pj_has(problems[0], "нужен модуль «nope»"), "a template of a module this editor has not: " +
+                                                                                     (problems.empty() ? std::string("nothing said") : problems[0]));
+            // «Игра пробы»: a description of the probe and its game.json; the module's files come when it opens.
+            check(md_put(probe / "project.forge", R"({"forge_project": 1, "module": "probe", "template": "probe"})") &&
+                      md_put(probe / "game" / "game.json", "{\n  \"title\": \"Игра пробы\",\n  \"org\": \"Forge\",\n  \"module\": \"probe\"\n}\n"),
+                  "«Игра пробы» made: project.forge and game/game.json of the module «probe»");
+            const int code = pj_run({exe, "--project", path_to_utf8(probe / "project.forge"), "--self-test", "modules-probe"}, other);
+            check(code == 0, "«Игра пробы» opened in an editor of its own and played (modules-probe: exit " + std::to_string(code) + ")");
+            break;
+        }
+        case 1: {
+            // A game from before step 14.3: a copy of «Старая шахта», no project.forge, game.json as it was then, CRLF.
+            fs::create_directories(old, ec);
+            fs::copy(utf8_path(SLICE_DATA_DIR), old / "game", fs::copy_options::recursive, ec);
+            check(!ec && md_put(old / "game" / "game.json",
+                                "{\r\n  \"title\": \"Старая шахта\",\r\n  \"org\": \"Forge\",\r\n  \"theme\": \"fantasy\",\r\n  \"autosave_minutes\": 5\r\n}\r\n"),
+                  "a game from before step 14.3: game.json without «module», CRLF, no project.forge");
+            md_old_ = pj_tree(old / "game");
+            const int code = pj_run({exe, "--project", path_to_utf8(old), "--self-test", "modules-old"}, other);
+            check(code == 0, "it opens and plays as «Старая шахта» (modules-old: exit " + std::to_string(code) + ")");
+            check(tg_bytes(old / "game" / "game.json") == md_old_["game.json"] && !fs::exists(old / "project.forge", ec),
+                  "its game.json not touched by a byte, no project.forge written");
+            break;
+        }
+        case 2: {
+            // The games this editor cannot open.
+            check(md_put(md_game("Нет модуля") / "project.forge", R"({"forge_project": 1, "module": "nope"})") &&
+                      md_put(md_game("Нет модуля") / "game" / "game.json", R"({"title": "Нет модуля", "module": "nope"})") &&
+                      md_put(md_game("Не тот модуль") / "project.forge", R"({"forge_project": 1, "module": "probe"})") &&
+                      md_put(md_game("Не тот модуль") / "game" / "game.json", R"({"title": "Не тот модуль", "module": "slice"})") &&
+                      md_put(md_game("Пустой модуль") / "project.forge", R"({"forge_project": 1, "module": "slice"})") &&
+                      md_put(md_game("Пустой модуль") / "game" / "game.json", R"({"title": "Пустой модуль", "module": ""})") &&
+                      md_put(md_game("Модуль числом") / "project.forge", R"({"forge_project": 1, "module": "slice"})") &&
+                      md_put(md_game("Модуль числом") / "game" / "game.json", R"({"title": "Модуль числом", "module": 5})") &&
+                      md_put(md_game("Старая чужая") / "game" / "game.json", R"({"title": "Старая чужая", "module": "probe"})"),
+                  "five games this editor cannot open");
+            md_broken_ = pj_tree(md_root() / utf8_path("Мои игры"));
+            // This game with a change not saved: it must stay, with its undo.
+            md_config_ = pjw().config();
+            md_scene_ = ed_.scene_path;
+            ed_.scene_path = md_root() / utf8_path("сцена.json");
+            ed_.add_object();
+            md_cursor_ = ed_.history.cursor();
+            md_undo_ = ed_.history.undo_label();
+            check(ed_.history.dirty() && !md_undo_.empty(), "a change here, not saved: «" + md_undo_ + "»");
+            const std::vector<std::string> launched = pjw().launched();
+            for (const auto& [path, said] : md_refused()) {
+                pjw().open_game(path);
+                check(pjw().view() == "message" && pj_has(pjw().note(), said.c_str()) && pjw().launched() == launched && !pjw().opening() &&
+                          !ed_.quit_asked,
+                      "«Открыть игру…» " + path_to_utf8(path.lexically_relative(md_root())) + ": refused, no editor started: " + pjw().note());
+                pjw().answer("ok");
+                check(ed_.history.dirty() && ed_.history.cursor() == md_cursor_ && ed_.history.undo_label() == md_undo_ && !ed_.discarding,
+                      "this game and its undo as they were");
+            }
+            check(pj_tree(md_root() / utf8_path("Мои игры")) == md_broken_, "nothing written into any of them");
+            break;
+        }
+        case 3: {
+            // An editor started for such a game says why, and nothing is written there either.
+            const fs::path ready = md_root() / utf8_path("ответ редактора.txt");
+            const int code = pj_run({exe, "--project", path_to_utf8(md_game("Нет модуля") / "project.forge"), "--self-test", "ready",
+                                     "--ready-file", path_to_utf8(ready)},
+                                    other);
+            const std::vector<u8> said = tg_bytes(ready);
+            const std::string text(said.begin(), said.end());
+            check(code != 0 && text.rfind("failed: ", 0) == 0 && pj_has(text, "игре нужен модуль «nope»"),
+                  "an editor started for «Нет модуля» says why (exit " + std::to_string(code) + "): " + text);
+            // The launcher, by both names: a module it has not, a module that is none, the probe for a player — refused,
+            // nothing written; the probe for a test — run, its colour on the screen.
+            const fs::path shot = md_root() / utf8_path("кадр пробы.png"), refused = md_root() / utf8_path("кадр отказа.png");
+            const std::string game_exe = path_to_utf8(utf8_path(FORGE_GAME_EXE)), slice_exe = path_to_utf8(utf8_path(FORGE_SLICE_EXE));
+            for (const std::string& launcher : {game_exe, slice_exe}) {
+                for (const char* bad : {"Нет модуля", "Пустой модуль", "Модуль числом"}) {
+                    fs::remove(refused, ec); // each run on its own: a frame one left behind is not the next one's
+                    const int c = pj_run({launcher, "--test", "--data", path_to_utf8(md_game(bad) / "game"), "--screenshot", path_to_utf8(refused)}, other);
+                    check(c == 1 && !fs::exists(refused, ec), std::string("the launcher refuses «") + bad + "» (exit " + std::to_string(c) + "): " + launcher);
+                }
+                fs::remove(refused, ec);
+                const int player = pj_run({launcher, "--screenshot", path_to_utf8(refused), "--data", path_to_utf8(probe / "game")}, other);
+                check(player == 1 && !fs::exists(refused, ec), "the probe is no module of a player's run (exit " + std::to_string(player) + ")");
+                fs::remove(shot, ec);
+                const int test = pj_run({launcher, "--test", "--scene", "probe", "--data", path_to_utf8(probe / "game"), "--screenshot",
+                                         path_to_utf8(shot)},
+                                        other);
+                u8 px[3] = {};
+                const Color bg = probe_color_;
+                const bool drawn = md_pixel(shot, 4, 4, px);
+                check(test == 0 && drawn && std::abs(px[0] - static_cast<int>(bg.r * 255 + 0.5f)) <= 2 &&
+                          std::abs(px[1] - static_cast<int>(bg.g * 255 + 0.5f)) <= 2 && std::abs(px[2] - static_cast<int>(bg.b * 255 + 0.5f)) <= 2,
+                      "the probe's game for a test, its colour on the screen (exit " + std::to_string(test) + ", " + tg_rgb(px) + "): " + launcher);
+            }
+            break;
+        }
+        case 4:
+            ed_.history.undo();
+            check(ed_.history.cursor() + 1 == md_cursor_, "Ctrl+Z still takes the change back");
+            pjw().configure(md_config_);
+            ed_.scene_path = md_scene_;
+            return false;
+        default: break;
+        }
+        ++md_step_;
+        return true;
+    }
+    Color probe_color_{};
+
+    // In the editor started for «Игра пробы» (forge_editor --project ".../Игра пробы/project.forge" --self-test modules-probe).
+    bool modules_probe_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path root = pjw().config().root, game = root / "game";
+        switch (md_step_) {
+        case 0: {
+            check(ed_.module.id == "probe" && ed_.game_dir == game, "the editor of «Игра пробы» is of the module «probe»");
+            check(!fs::equivalent(fs::current_path(), root, ec), "the working folder is not the game's");
+            const level::LevelModule& lm = ed_.level_module;
+            check(lm.title() == "Проба" && lm.layer_names() == std::vector<std::string>{"Проба"} && lm.tiles().size() == 1 &&
+                      lm.tiles()[0].id == "probe_tile",
+                  "«Уровень»: the probe's level, its one layer «Проба» and one tile");
+            const objects::Library* lib = ed_.level_module.library();
+            check(lib && lib->kind("probe_stone") && !lib->kind("hero") && lib->kinds().size() == 1, "«Объекты»: the probe's kinds, none of slice's");
+            check(ed_.logic_tab.events == std::vector<std::string>{"probe_ping"}, "«Логика»: the probe's event, probe_ping");
+            const logic::VerbDef* ping = ed_.logic_tab.verbs().find("ping");
+            check(ping && ping->when == "probe_ping" && ed_.logic_tab.verbs().all().size() == 1, "its verb «пингует» on probe_ping, nothing else");
+            const auto values = ed_.ui_tab.game_values();
+            auto has = [&](std::string_view prefix) {
+                return std::any_of(values.begin(), values.end(), [&](const auto& v) { return v.first.rfind(prefix, 0) == 0; });
+            };
+            check(has("probe.ticks") && has("probe.mark") && has("settings.master") && !has("hero.") && !has("inv."),
+                  "«Интерфейс»: the probe's values and the shell's, none of slice's");
+            for (const char* file : editor::project::kModuleFiles)
+                check(tg_bytes(game / file) == tg_bytes(utf8_path(FORGE_PROBE_GAME_DIR).parent_path() / "module" / file),
+                      std::string("the game has the probe's ") + file + " (from the module, as it opened)");
+            check(click_tab(0), "a click on the tab «Уровень»");
+            break;
+        }
+        case 1:
+            check(ed_.tab() == "level" && pj_click("play"), "a click on «Играть»");
+            break;
+        case 2: {
+            const std::vector<std::string>& run = lv().last_play();
+            check(!run.empty() && utf8_path(run[0]) == utf8_path(FORGE_GAME_EXE), "«Играть» starts forge_game");
+            std::vector<std::string> args = run;
+            const fs::path shot = fs::temp_directory_path() / utf8_path("forge_editor модули играть.png");
+            fs::remove(shot, ec);
+            for (const std::string& more : {std::string("--test"), std::string("--scene"), std::string("probe"), std::string("--screenshot"), path_to_utf8(shot)})
+                args.push_back(more);
+            const int code = pj_run(args, fs::current_path());
+            u8 px[3] = {};
+            const Color bg = ed_.level_module.background();
+            const bool drawn = md_pixel(shot, 4, 4, px);
+            check(code == 0 && drawn && std::abs(px[0] - static_cast<int>(bg.r * 255 + 0.5f)) <= 2 &&
+                      std::abs(px[1] - static_cast<int>(bg.g * 255 + 0.5f)) <= 2 && std::abs(px[2] - static_cast<int>(bg.b * 255 + 0.5f)) <= 2,
+                  "the game it starts is the probe's: its colour on the screen (exit " + std::to_string(code) + ", " + tg_rgb(px) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++md_step_;
+        return true;
+    }
+
+    // In the editor started for a game from before step 14.3 (forge_editor --project ".../Старая игра" --self-test modules-old).
+    bool modules_old_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path root = pjw().config().root, game = root / "game";
+        switch (md_step_) {
+        case 0: {
+            check(ed_.module.id == "slice" && ed_.game_dir == game && !fs::exists(root / "project.forge", ec),
+                  "a game from before step 14.3 opens as «Старая шахта»'s");
+            check(ed_.logic_tab.events == std::vector<std::string>{"touch", "always"} && ed_.logic_tab.verbs().find("open"),
+                  "its verbs with slice's events");
+            const auto values = ed_.ui_tab.game_values();
+            check(std::none_of(values.begin(), values.end(), [](const auto& v) { return v.first.rfind("probe.", 0) == 0; }),
+                  "no value of the probe");
+            check(click_tab(0), "a click on the tab «Уровень»");
+            break;
+        }
+        case 1:
+            check(ed_.tab() == "level" && pj_click("play"), "a click on «Играть»");
+            break;
+        case 2: {
+            std::vector<std::string> args = lv().last_play();
+            check(!args.empty() && utf8_path(args[0]) == utf8_path(FORGE_GAME_EXE), "«Играть» starts forge_game");
+            for (const char* more : {"--test", "--scene", "project"}) args.push_back(more);
+            const int code = pj_run(args, fs::current_path());
+            check(code == 0, "the game plays it as «Старая шахта» (scene project: exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++md_step_;
+        return true;
+    }
+
     // --- «Две игры из одного шаблона» (step 14.1b, «Находка») ------------------------------------------------
     // --self-test two-games makes «Игра Б» and «Игра А» of «Старая шахта» with the window «Новая игра». «Игра А»
     // opens in an editor of its own (two-games-a) that makes «Находка» through the tabs, with the mouse and the
@@ -13444,13 +13816,13 @@ private:
     }
     // The game as «Играть» started it, the scene project, and what it must find (or must not) written to a file
     // outside the games (in root: tg_root() when empty); its exit code.
-    int tg_play(const slice::ProjectEdits* edits, const std::string& file_name, const std::filesystem::path& root = {}) {
+    int tg_play(const edits::ProjectEdits* edits, const std::string& file_name, const std::filesystem::path& root = {}) {
         std::vector<std::string> args = lv().last_play();
         if (args.empty()) return -1;
         for (const char* more : {"--test", "--scene", "project"}) args.push_back(more);
         if (edits) {
             const std::filesystem::path file = (root.empty() ? tg_root() : root) / utf8_path(file_name);
-            if (!slice::write_edits(file, *edits)) return -1;
+            if (!edits::write_edits(file, *edits)) return -1;
             args.push_back("--edits");
             args.push_back(path_to_utf8(file));
         }
@@ -13460,8 +13832,8 @@ private:
         return pj_run(args, std::filesystem::current_path());
     }
     // What «Находка» is in the game, as the editor's tabs have it now: for the game to find it.
-    slice::ProjectEdits tg_edits(const u8 (&color)[3]) {
-        slice::ProjectEdits e;
+    edits::ProjectEdits tg_edits(const u8 (&color)[3]) {
+        edits::ProjectEdits e;
         e.object = tg_rec_["object"];
         e.object_name = "Находка";
         e.x = std::strtod(tg_rec_["x"].c_str(), nullptr);
@@ -14169,7 +14541,7 @@ private:
                       std::to_string(e.get<scene::Position>().tile_x()) == tg_rec_["x"] && std::to_string(e.get<scene::Position>().tile_y()) == tg_rec_["y"],
                   "«Находка» on the level, the same id and place");
             check(play_now(), "«Играть»");
-            const slice::ProjectEdits edits = tg_edits(kTgTeal);
+            const edits::ProjectEdits edits = tg_edits(kTgTeal);
             check(edits.sound_frames > 0, "its sound reads: " + std::to_string(edits.sound_frames) + " frames");
             const int code = tg_play(&edits, "ожидания А.json");
             check(code == 0, "the game plays «Находка» as made (exit " + std::to_string(code) + ")");
@@ -14296,7 +14668,7 @@ private:
         case 11: {
             if (wait(2)) return true;
             check(play_now(), "«Играть» again");
-            const slice::ProjectEdits edits = tg_edits(kTgOrange);
+            const edits::ProjectEdits edits = tg_edits(kTgOrange);
             const int code = tg_play(&edits, "ожидания А.json");
             check(code == 0, "the next game has the new picture and sound, the same ids (exit " + std::to_string(code) + ")");
             check(click_tab(10), "«Ресурсы»");
@@ -14378,8 +14750,8 @@ private:
             check(pj_names(game / "pictures") == tg_pictures_ && pj_names(game / "sounds") == tg_sounds_ && as().record_count() == 2,
                   "no copy or asset more than before");
             // For the package: what A has now.
-            const slice::ProjectEdits edits = tg_edits(kTgOrange);
-            check(slice::write_edits(tg_root() / utf8_path("ожидания А.json"), edits), "what «Игра А» has now, for the package");
+            const edits::ProjectEdits edits = tg_edits(kTgOrange);
+            check(edits::write_edits(tg_root() / utf8_path("ожидания А.json"), edits), "what «Игра А» has now, for the package");
             return false;
         }
         default: break;
@@ -14419,7 +14791,7 @@ private:
             const std::vector<std::string>& run = lv().last_play();
             const auto at = std::find(run.begin(), run.end(), std::string("--user"));
             check(at != run.end() && at + 1 != run.end() && utf8_path(*(at + 1)) == play_folder(b), "its own player's folder");
-            slice::ProjectEdits none;
+            edits::ProjectEdits none;
             none.object = tg_rec_["object"];
             none.object_name = "Находка";
             none.var = "находки";
@@ -14508,8 +14880,8 @@ private:
         const auto at = std::find(run.begin(), run.end(), std::string("--level"));
         return at != run.end() && at + 1 != run.end() ? *(at + 1) : std::string();
     }
-    slice::ProjectEdits lvl_edits(const std::string& id, const std::string& name, std::vector<int> cells = {}) {
-        slice::ProjectEdits e;
+    edits::ProjectEdits lvl_edits(const std::string& id, const std::string& name, std::vector<int> cells = {}) {
+        edits::ProjectEdits e;
         e.level = id;
         e.level_name = name;
         e.cells = std::move(cells);
@@ -14620,7 +14992,7 @@ private:
             if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
             check(shown("lv-levels") && said("lv-levels", "Уровень 1"), "the bar names the level: «Уровень 1»");
             check(pj_click("play") && lvl_same(utf8_path(lvl_given()), game / "level"), "«Играть»: --level " + lvl_given());
-            const slice::ProjectEdits e = lvl_edits("level", "Уровень 1");
+            const edits::ProjectEdits e = lvl_edits("level", "Уровень 1");
             const int code = tg_play(&e, "ожидания 1.json", lvl_root());
             check(code == 0, "the game plays its one level, as before levels (exit " + std::to_string(code) + ")");
             check(!fs::exists(list_file, ec), "nothing has written levels.json");
@@ -14967,7 +15339,7 @@ private:
             if (wait(2)) return true;
             check(said("lv-levels", "Пещера"), "the bar: «Пещера»");
             check(pj_click("play") && lvl_same(utf8_path(lvl_given()), game / "levels" / id), "«Играть»: --level " + lvl_given());
-            const slice::ProjectEdits e = lvl_edits(id, "Пещера", cells("dirt"));
+            const edits::ProjectEdits e = lvl_edits(id, "Пещера", cells("dirt"));
             const int code = tg_play(&e, "ожидания Пещера.json", lvl_root());
             check(code == 0, "the game plays «Пещера», dirt by its spawn point (exit " + std::to_string(code) + ")");
             check(pj_click("lv-levels"), "the levels' menu");
@@ -14990,7 +15362,7 @@ private:
         case 4: {
             if (wait(2)) return true;
             check(pj_click("play") && lvl_same(utf8_path(lvl_given()), game / "level"), "«Играть»: --level " + lvl_given());
-            const slice::ProjectEdits e = lvl_edits("level", "Уровень 1", cells("stone"));
+            const edits::ProjectEdits e = lvl_edits("level", "Уровень 1", cells("stone"));
             const int code = tg_play(&e, "ожидания Уровень 1.json", lvl_root());
             check(code == 0, "the game plays «Уровень 1», stone by its spawn point (exit " + std::to_string(code) + ")");
             check(pj_click("lv-levels"), "the levels' menu");
@@ -15000,7 +15372,7 @@ private:
             if (wait(2)) return true;
             check(pj_click("lv-level-play-start") && !lv().last_play().empty() && lvl_given().empty(),
                   "«Играть со стартового»: no --level, the game's start level");
-            const slice::ProjectEdits e = lvl_edits(id, "Пещера", cells("dirt"));
+            const edits::ProjectEdits e = lvl_edits(id, "Пещера", cells("dirt"));
             const int code = tg_play(&e, "ожидания старт.json", lvl_root());
             check(code == 0, "the game starts «Пещера», as a player starts it (exit " + std::to_string(code) + ")");
             // A list read, but not all of it (a level this Forge cannot use, a field it does not know): used as
@@ -15311,7 +15683,7 @@ private:
             check(pj_click("lv-level-play-start") && !lv().last_play().empty() && lvl_given().empty(), "«Играть со стартового»");
             // The game from «Глубокая пещера»: through «Вход» to «Уровень 1» (a crate of the game put there), through its
             // «Пещера» back into «Вход»; saved.
-            slice::ProjectEdits e;
+            edits::ProjectEdits e;
             e.go_start = id;
             e.go_through = {a2, a1};
             e.go_level = {"level", id};
@@ -15321,7 +15693,7 @@ private:
             int code = tg_play(&e, "ожидания переход.json", lvl_root());
             check(code == 0, "the game goes through both links as the editor made them, and is saved (exit " + std::to_string(code) + ")");
             // Another process, from another working folder, as a player starts the game: «Продолжить», then through «Вход».
-            slice::ProjectEdits c;
+            edits::ProjectEdits c;
             c.go_continue = true;
             c.go_save = "переход";
             c.go_start = id;
@@ -15335,7 +15707,7 @@ private:
             args.erase(std::remove(args.begin(), args.end(), std::string("--play")), args.end());
             for (const char* more : {"--test", "--scene", "project", "--edits"}) args.push_back(more);
             args.push_back(path_to_utf8(file));
-            check(slice::write_edits(file, c), "what the second process must find");
+            check(edits::write_edits(file, c), "what the second process must find");
             code = pj_run(args, elsewhere);
             check(code == 0, "«Продолжить» in another process: «Глубокая пещера», then «Уровень 1» with the crate left there (exit " +
                                  std::to_string(code) + ")");
@@ -15408,8 +15780,8 @@ private:
         return check(at >= 0 && lg().pick(static_cast<usize>(at)), "«" + start + "…» among:" + offered);
     }
     // What the game must find: as the records of platformer-a have it, the values as the templates have them now.
-    slice::ProjectEdits pl_edits() {
-        slice::ProjectEdits e;
+    edits::ProjectEdits pl_edits() {
+        edits::ProjectEdits e;
         e.pl_enemy = pl_rec_["enemy"];
         e.pl_coin = pl_rec_["coin"];
         e.pl_trap = pl_rec_["trap"];
@@ -15877,7 +16249,7 @@ private:
             lv().camera().x = kPlStart + 0.5;
             lv().camera().y = v - 1;
             check(pj_click("play") && !lv().last_play().empty(), "«Играть» from the village's ground");
-            const slice::ProjectEdits e = pl_edits();
+            const edits::ProjectEdits e = pl_edits();
             const int code = tg_play(&e, "ожидания платформер.json", pl_root());
             check(code == 0, "the game plays the author's enemy, coin, spikes, zone, flag and windows as set (exit " + std::to_string(code) + ")");
             check(!fs::exists(game / "levels.json", ec), "nothing has written levels.json");
@@ -15890,7 +16262,16 @@ private:
     }
 
     // --- «Платформер» из каталога (step 14.2d) -----------------------------------------------------------------
-    // --self-test platformer-template: the template's game made again from its sources (platformer_template::make) is
+    // The template «Платформер» made by its module's maker (slice's, found by the template's id as --make-template finds it).
+    static bool tp_make(const std::filesystem::path& games, const std::filesystem::path& out, std::string& why) {
+        const modules::TemplateMaker* maker = template_maker("platformer");
+        if (!maker) {
+            why = "ни у одного модуля нет шаблона «platformer»";
+            return false;
+        }
+        return maker->make(games, out, why);
+    }
+    // --self-test platformer-template: the template's game made again from its sources (the module's maker) is
     // games/platformer byte for byte. «Платформер Б» and «Платформер А» made of the catalog's card «Платформер» with
     // the window «Новая игра». The editor for A, started by the window (platformer-template-a), through the tabs, with
     // the mouse and the keys: the hero's picture replaced in «Ресурсы» by the author's own (as another program saves
@@ -15939,8 +16320,8 @@ private:
     static constexpr const char* kTpSummitPit = "area:142d00a000000302";
     static constexpr u32 kTpExitLink = 1;
     // What the game must find: the values as the tabs have them now.
-    slice::ProjectEdits tp_edits() {
-        slice::ProjectEdits e;
+    edits::ProjectEdits tp_edits() {
+        edits::ProjectEdits e;
         e.level = "level";
         e.level_name = "Луг";
         for (i32 x : {kTpBridge0, kTpBridge1}) e.cells.insert(e.cells.end(), {1, x, 0, 263});
@@ -16040,8 +16421,8 @@ private:
             {
                 const fs::path made = tp_root() / utf8_path("сборка");
                 std::string why;
-                const bool built = platformer_template::make(games, made, why);
-                same(made, "(platformer_template::make)", built, why);
+                const bool built = tp_make(games, made, why);
+                same(made, "(the module's maker of «platformer»)", built, why);
             }
             {
                 const fs::path other = tp_root() / utf8_path("другая папка"), made = tp_root() / utf8_path("сборка из командной строки");
@@ -16052,8 +16433,9 @@ private:
             // Sources that do not make the game (tiles.png gone) leave the folder made into as it was.
             {
                 const fs::path broken = tp_root() / utf8_path("источники без плиток"), keep = tp_root() / utf8_path("прежняя папка");
-                fs::create_directories(broken / "slice", ec);
-                for (const char* file : editor::project::kModuleFiles) fs::copy_file(games / "slice" / file, broken / "slice" / file, ec);
+                fs::create_directories(broken / "modules" / "slice", ec);
+                for (const char* file : editor::project::kModuleFiles)
+                    fs::copy_file(games / "modules" / "slice" / file, broken / "modules" / "slice" / file, ec);
                 fs::create_directories(broken / "templates", ec);
                 fs::copy(games / "templates" / "platformer", broken / "templates" / "platformer", fs::copy_options::recursive, ec);
                 fs::remove(broken / "templates" / "platformer" / "tiles.png", ec);
@@ -16061,7 +16443,7 @@ private:
                 const std::vector<u8> note = {'f', 'o', 'r', 'g', 'e'};
                 check(write_file_atomic(keep / utf8_path("записка.txt"), note), "a folder with a file of its own");
                 std::string why;
-                const bool built = platformer_template::make(broken, keep, why);
+                const bool built = tp_make(broken, keep, why);
                 check(!built && why.find("tiles.png") != std::string::npos && tg_bytes(keep / utf8_path("записка.txt")) == note &&
                           pj_tree(keep).size() == 1 && !fs::exists(tp_root() / utf8_path("прежняя папка.сборка")),
                       "sources without tiles.png make nothing, the folder stays as it was: " + why);
@@ -16482,7 +16864,7 @@ private:
         case 2: {
             if (wait(2)) return true;
             check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
-            const slice::ProjectEdits e = tp_edits();
+            const edits::ProjectEdits e = tp_edits();
             const int code = tg_play(&e, "ожидания шаблон.json", tp_root());
             check(code == 0, "the game plays the author's picture, coin, beetle, bridge, exit and window as changed (exit " + std::to_string(code) + ")");
             return false;
@@ -16788,7 +17170,7 @@ private:
     }
     u32 count() {
         const flecs::entity e = placed();
-        return e.is_valid() ? e.get<slice::Item>().count : 0;
+        return slice_checks::thing(e).count;
     }
     void to_point(f64 x, f64 y) {
         lv().screen_of(x, y, x_, y_);
@@ -16979,10 +17361,10 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
     SDL_GPUTexture* target = render::create_render_target(device, w, h);
     int result = 1;
     {
-        Editor editor;
         // --self-test opened-game, ready, two-games-*: the game given, opened as the editor opens it (the self-test made it).
         const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0 ||
-                            options.self_part.rfind("levels-", 0) == 0 || options.self_part.rfind("platformer-", 0) == 0;
+                            options.self_part.rfind("levels-", 0) == 0 || options.self_part.rfind("platformer-", 0) == 0 ||
+                            options.self_part.rfind("modules-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -16990,6 +17372,16 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             tell_starter(options, "failed: " + error);
             ready = false;
         }
+        // The editor of the game's module (an opened game's; else «Старая шахта», whose data the offscreen runs copy).
+        const modules::ModuleDef* def = g_modules.find(opened && ready ? game.module : std::string(game::kOldGameModule));
+        if (!def) {
+            FORGE_ERROR("self-test FAILED: %s", modules::missing_module(opened && ready ? game.module : std::string(game::kOldGameModule)).c_str());
+            if (target) SDL_ReleaseGPUTexture(device, target);
+            render::destroy_offscreen_device(device);
+            jobs::shutdown();
+            return 1;
+        }
+        Editor editor(*def);
         if (opened) editor.use_game_dir(game.game);
         // Never touch a scene file from an offscreen run.
         editor.scene_path = opened ? game.root / "scene.forge.json"
@@ -17053,7 +17445,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         // The game the editor has open: for opened-game the one given; otherwise a folder that is no game (the menu
         // and the window are used, and the games they make go where the self-test says).
         if (opened) {
-            lc.game_exe = utf8_path(FORGE_SLICE_EXE);
+            lc.game_exe = utf8_path(FORGE_GAME_EXE);
             lc.play_dir = play_folder(game.root);
         }
         editor.project_config = {opened ? game.root : std::filesystem::temp_directory_path() / "forge_editor_offscreen_game",
@@ -17414,18 +17806,29 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
 } // namespace
 
 int main(int argc, char** argv) {
-    // The template «Платформер» made anew from its sources (platformer_template.h): no window.
+    // The modules built in (apps/builtin), the test module «Проба» too for the self-test.
+    bool self_testing = false;
+    for (int i = 1; i < argc; ++i) self_testing = self_testing || std::strcmp(argv[i], "--self-test") == 0;
+    if (std::string error; !builtin::add_modules(g_modules, self_testing, &error)) {
+        FORGE_ERROR("Модули редактора: %s", error.c_str());
+        return 1;
+    }
+    // A template of a module made anew from its sources (the module's maker, forge::modules::TemplateMaker): no window.
     if (argc == 4 && std::strcmp(argv[1], "--make-template") == 0) {
-        if (std::strcmp(argv[2], "platformer") != 0) {
-            FORGE_ERROR("--make-template: нет шаблона «%s» (есть platformer)", argv[2]);
+        const modules::TemplateMaker* maker = template_maker(argv[2]);
+        if (!maker) {
+            std::string have;
+            for (const modules::ModuleDef* m : g_modules.all())
+                for (const modules::TemplateMaker& t : m->templates) have += (have.empty() ? "" : ", ") + t.id;
+            FORGE_ERROR("--make-template: нет шаблона «%s» (есть %s)", argv[2], have.c_str());
             return 2;
         }
         jobs::init();
         std::string why;
-        const bool ok = platformer_template::make(utf8_path(FORGE_GAMES_DIR), utf8_path(argv[3]), why);
+        const bool ok = maker->make(utf8_path(FORGE_GAMES_DIR), utf8_path(argv[3]), why);
         jobs::shutdown();
-        if (ok) FORGE_INFO("Шаблон «Платформер» собран в %s", argv[3]);
-        else FORGE_ERROR("Шаблон «Платформер» не собран: %s", why.c_str());
+        if (ok) FORGE_INFO("Шаблон «%s» собран в %s", argv[2], argv[3]);
+        else FORGE_ERROR("Шаблон «%s» не собран: %s", argv[2], why.c_str());
         return ok ? 0 : 1;
     }
     AppConfig config;
@@ -17480,13 +17883,13 @@ int main(int argc, char** argv) {
     static const char* const kParts[] = {"new-game",     "opened-game",     "ready",      "two-games",    "two-games-a",       "two-games-a-again",
                                          "two-games-b",  "levels",          "levels-a",   "levels-again", "levels-go",         "levels-go-again",
                                          "platformer",   "platformer-a",    "platformer-a-again", "platformer-template",
-                                         "platformer-template-a", "platformer-template-a-again"};
+                                         "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
                     "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again, platformer and its parts "
                     "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
-                    "platformer-template-a-again)",
+                    "platformer-template-a-again, modules and its parts modules-probe, modules-old)",
                     app.options.self_part.c_str());
         return 2;
     }

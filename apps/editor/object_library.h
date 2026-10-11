@@ -124,8 +124,8 @@ public:
     bool clear_picture();
     // «Кадров в картинке»: the picture is a strip of n equal frames (1..objects::kMaxFrames).
     bool set_frames(int n);
-    // At an object of kind «Герой», what the game does with it, when not plainly drawing the hero with it: no picture,
-    // frames other than 4 or 1, or more of them (the game takes the first by id, as slice::Pictures does). "" else.
+    // What the game does with t that the author would not guess, by the module's own rule (LevelModule::object_note:
+    // slice's says which of several objects of kind «Герой» it draws the hero with). "" else.
     std::string hero_note(const objects::Template& t);
     void open_pictures();
     // Files of «Ресурсы» got new content: the chooser's thumbnails are made again.

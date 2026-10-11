@@ -1,5 +1,6 @@
 #include "forge/game/dialogue.h"
 #include "forge/game/dialogue_source.h"
+#include "forge/game/game_module.h"
 #include "forge/game/quests.h"
 #include "forge/game/saves.h"
 #include "forge/game/screens.h"
@@ -456,6 +457,90 @@ TEST_CASE("game: save slots copy the session and list newest first") {
 
     CHECK(slots.remove("slot-1"));
     CHECK(slots.list().size() == 1);
+    fs::remove_all(dir);
+}
+
+// Step 14.3a: which module a game is, by its game.json, one rule for the editor and the game launcher.
+TEST_CASE("game: game.json names the game's module; none is slice, an empty or broken one is none") {
+    std::string id, error;
+    CHECK(game_module_of(R"({"title": "Игра", "module": "probe"})", id, &error) == GameModule::Named);
+    CHECK(id == "probe");
+    CHECK(game_module_of(R"({"title": "Игра", "module": "slice"})", id, &error) == GameModule::Named);
+    CHECK(id == "slice");
+    CHECK(game_module_of(R"({"title": "Старая шахта"})", id, &error) == GameModule::Old);
+    CHECK(id == "slice");
+    for (const char* broken : {R"({"module": ""})", R"({"module": 5})", R"({"module": null})", R"({"module": ["slice"]})",
+                               R"({"module": {"id": "slice"}})", "{", "[]", ""}) {
+        error.clear();
+        CHECK_MESSAGE(game_module_of(broken, id, &error) == GameModule::Broken, broken);
+        CHECK_MESSAGE(id.empty(), broken); // never "slice" for a broken one
+        CHECK_MESSAGE(!error.empty(), broken);
+    }
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / u8"forge_test_модуль игры";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    CHECK(game_module(dir, id, &error) == GameModule::Broken);
+    CHECK(error.find("нет game.json") != std::string::npos);
+    const std::string text = "{\r\n  \"title\": \"Игра\",\r\n  \"module\": \"probe\"\r\n}\r\n"; // CRLF, as a Windows checkout has it
+    REQUIRE(write_file_atomic(dir / "game.json", {reinterpret_cast<const u8*>(text.data()), text.size()}));
+    CHECK(game_module(dir, id, &error) == GameModule::Named);
+    CHECK(id == "probe");
+    fs::remove_all(dir);
+}
+
+// Step 14.3a: a slot records the module of the game that saved it; a slot from before is slice's; a slot of another
+// module, or whose module cannot be read, is no slot of this game.
+TEST_CASE("game: a save slot keeps its game's module, and a game loads only its own") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "forge_test_saves_module";
+    fs::remove_all(dir);
+    SaveSlots slots(dir);
+    REQUIRE(slots.begin_session());
+    SlotInfo info;
+    info.id = "probe-slot";
+    info.title = "Проба";
+    info.module = "probe";
+    REQUIRE(slots.commit(info));
+    std::vector<u8> bytes;
+    REQUIRE(read_file(slots.folder("probe-slot") / "slot.json", bytes));
+    CHECK(std::string(bytes.begin(), bytes.end()).find("\"module\": \"probe\"") != std::string::npos);
+    auto read = slots.info("probe-slot");
+    REQUIRE(read);
+    CHECK(read->module == "probe");
+    CHECK(read->module_error.empty());
+    std::string why;
+    CHECK(slot_fits(*read, "probe", &why));
+    CHECK_FALSE(slot_fits(*read, "slice", &why));
+    CHECK(why == "сохранение «Проба» сделано другой игрой (модуль «probe»), эта игра — модуль «slice»");
+    CHECK_FALSE(slots.info("нет такого"));
+
+    // slot.json as a game before step 14.3a wrote it: no "module", slice's.
+    auto put_slot = [&](const char* id, const std::string& json) {
+        fs::create_directories(slots.folder(id));
+        REQUIRE(write_file_atomic(slots.folder(id) / "slot.json", {reinterpret_cast<const u8*>(json.data()), json.size()}));
+    };
+    put_slot("old", R"({"$type": "forge::game::SlotInfo", "id": "old", "title": "Старое", "location": "Деревня", "playtime_s": 5,
+                       "saved_at": 100, "autosave": false, "version": 1})");
+    read = slots.info("old");
+    REQUIRE(read);
+    CHECK(read->module == "slice");
+    CHECK(slot_fits(*read, "slice", &why));
+    CHECK_FALSE(slot_fits(*read, "probe", &why));
+    // An empty module or one that is no string: listed (the player sees it), loaded by no game, slice included.
+    for (const char* module : {R"("")", "5", "null"}) {
+        put_slot("broken", std::string(R"({"$type": "forge::game::SlotInfo", "id": "broken", "title": "Сломанное", "module": )") +
+                               module + "}");
+        read = slots.info("broken");
+        REQUIRE(read);
+        CHECK(read->module.empty());
+        CHECK_FALSE(read->module_error.empty());
+        CHECK(read->module_error.find("slot.json") != std::string::npos);
+        CHECK_FALSE(slot_fits(*read, "slice", &why));
+        CHECK(why.find("повреждено") != std::string::npos);
+        CHECK_FALSE(slot_fits(*read, "", &why));
+    }
+    CHECK(slots.list().size() == 3);
     fs::remove_all(dir);
 }
 

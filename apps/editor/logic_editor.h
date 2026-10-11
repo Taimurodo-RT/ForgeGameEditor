@@ -59,6 +59,9 @@ public:
 
     // game_dir holds verbs.json; file is the links (logic.json).
     bool init(ui::Ui& ui, const std::filesystem::path& game_dir, const std::filesystem::path& file);
+    // The events the game's module has (forge::modules::ModuleDef::events, set before init): verbs.json is read with
+    // them, as the game reads it, and a verb of another event makes it fail. Empty: any.
+    std::vector<std::string> events;
     // The file a game started from the editor writes the links that happen
     // to (one id a line); the tab lights them up.
     void set_fired_file(std::filesystem::path file) { fired_file_ = std::move(file); }

@@ -5,6 +5,7 @@
 #include "forge/core/path.h"
 #include "forge/editor/ui_design.h"
 #include "forge/game/dialogue.h"
+#include "forge/game/game_module.h"
 #include "forge/game/quests.h"
 #include "forge/logic/logic.h"
 #include "forge/objects/library.h"
@@ -255,8 +256,14 @@ std::vector<std::string> template_problems(const Template& t, const std::vector<
     }
     std::string json;
     if (!read_text(t.game / "game.json", json)) out.push_back("в шаблоне нет game.json");
-    else if (yyjson_doc* doc = yyjson_read(json.data(), json.size(), 0)) yyjson_doc_free(doc);
-    else out.push_back("game.json шаблона не читается");
+    else if (yyjson_doc* doc = yyjson_read(json.data(), json.size(), 0)) {
+        yyjson_doc_free(doc);
+        // The game made of it plays on the module its game.json names: the card's.
+        std::string id, why;
+        if (forge::game::game_module_of(json, id, &why) == forge::game::GameModule::Broken) out.push_back("шаблон: " + why);
+        else if (id != t.module)
+            out.push_back("game.json шаблона называет модуль «" + id + "», а карточка каталога — «" + t.module + "»");
+    } else out.push_back("game.json шаблона не читается");
     if (!t.picture.empty() && !fs::is_regular_file(t.picture, ec)) out.push_back("нет картинки шаблона");
     if (!t.assets.empty() && !fs::is_directory(t.assets, ec)) out.push_back("нет папки «Ресурсов» шаблона");
     for (std::string& p : game_problems(t.game, module)) out.push_back(std::move(p));
@@ -354,7 +361,8 @@ std::vector<std::string> game_problems(const fs::path& game, const Module* modul
                                                                                                    : game / "verbs.json";
         std::string error;
         if (!links.load(game / "logic.json", &error)) out.push_back("связи logic.json не читаются: " + error);
-        else if (!verbs.load(verbs_file, &error)) out.push_back("глаголы verbs.json не читаются: " + error);
+        else if (!verbs.load(verbs_file, &error, module ? module->events : std::vector<std::string>{}))
+            out.push_back("глаголы verbs.json не читаются: " + error);
         else
             for (const logic::Link& l : links.links)
                 if (!verbs.find(l.verb)) out.push_back("связь №" + std::to_string(l.id) + ": глагола «" + l.verb + "» нет в модуле");
@@ -534,9 +542,22 @@ Found find(const fs::path& path, const std::vector<Module>& modules, Game& out, 
         if (!find_module(modules, out.description.module))
             return broken("игре нужен модуль «" + out.description.module + "», его нет в этой сборке Forge");
         if (!fs::is_regular_file(out.game / "game.json", ec)) return broken("в игре нет game/game.json");
+        // game.json says the same: the game plays on the module its game.json names (forge_game reads only that).
+        std::string id;
+        const forge::game::GameModule named = forge::game::game_module(out.game, id, &why);
+        if (named == forge::game::GameModule::Broken) return broken("игра: " + why);
+        if (id != out.description.module)
+            return broken("project.forge называет модуль «" + out.description.module + "», а game/game.json — «" + id + "»" +
+                          (named == forge::game::GameModule::Old ? std::string(" (в game.json модуль не назван)") : std::string()));
         out.described = true;
     } else if (fs::is_regular_file(out.game / "game.json", ec)) {
-        out.description.module = "slice"; // every game before step 14 is one of «Старая шахта»
+        // Every game before step 14 is one of «Старая шахта»: its game.json names no module, or "slice".
+        std::string id, why;
+        if (forge::game::game_module(out.game, id, &why) == forge::game::GameModule::Broken) return broken("игра: " + why);
+        if (id != forge::game::kOldGameModule)
+            return broken("у игры нет project.forge, а game/game.json называет модуль «" + id +
+                          "»: такая игра открывается только со своим project.forge");
+        out.description.module = id;
     } else {
         if (error) *error = "в папке " + shown(root) + " нет игры Forge (нет project.forge)";
         return Found::NoGame;

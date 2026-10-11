@@ -99,6 +99,9 @@ struct ShellConfig {
     std::filesystem::path game_dir; // game.json, dialogues/, quests.json
     std::filesystem::path user_dir; // empty = the system's place for game data
     std::string theme;              // empty = game.json's, then the settings'
+    // The module the game runs on ("slice"): its slots say so, and a slot of another module (or of none) is not
+    // loaded (slot_fits).
+    std::string module;
     // Running from the source tree: UI files reload when saved, F8 inspects
     // the UI. Off in a packaged game.
     bool dev = true;
@@ -160,6 +163,8 @@ public:
     // --- for menus, tests and the offscreen runner ---
     Screen screen() const { return screen_; }
     bool new_game();
+    // A slot of another module, or one whose module cannot be read, is refused before anything changes: the game,
+    // its session and its variables stay as they were, and the player is told why.
     bool load(std::string_view slot_id);
     bool save(std::string_view slot_id, std::string title, bool autosave = false);
     bool continue_game();       // the newest slot

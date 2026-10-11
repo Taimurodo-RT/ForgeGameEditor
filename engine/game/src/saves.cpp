@@ -1,5 +1,7 @@
 #include "forge/game/saves.h"
 
+#include "forge/game/game_module.h"
+
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
@@ -7,10 +9,12 @@
 
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_stdinc.h>
+#include <yyjson.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <system_error>
 
@@ -81,7 +85,37 @@ bool read_info(const fs::path& folder, SlotInfo& info) {
     std::string text;
     if (!read_text(folder / "slot.json", text)) return false;
     data::LoadReport report;
-    return data::from_json(info, text, report);
+    if (!data::from_json(info, text, report)) return false;
+    // The module, by game.json's rule: none (a slot from before) is "slice", one that is empty or no string is none.
+    std::string why;
+    if (game_module_of(text, info.module, &why) == GameModule::Broken) {
+        info.module.clear();
+        // Its words name game.json: here the file is slot.json.
+        if (const usize at = why.find("game.json"); at != std::string::npos) why.replace(at, 9, "slot.json");
+        info.module_error = why;
+    }
+    return true;
+}
+
+// slot.json: the reflected fields, then "module" when the game named one.
+std::string slot_json(const SlotInfo& info) {
+    std::string text = data::to_json(info);
+    if (info.module.empty()) return text;
+    yyjson_doc* doc = yyjson_read(text.data(), text.size(), 0);
+    yyjson_mut_doc* mut = doc ? yyjson_doc_mut_copy(doc, nullptr) : nullptr;
+    yyjson_doc_free(doc);
+    yyjson_mut_val* root = mut ? yyjson_mut_doc_get_root(mut) : nullptr;
+    if (!yyjson_mut_is_obj(root)) {
+        yyjson_mut_doc_free(mut);
+        return text;
+    }
+    yyjson_mut_obj_add_strncpy(mut, root, "module", info.module.data(), info.module.size());
+    usize len = 0;
+    char* out = yyjson_mut_write(mut, YYJSON_WRITE_PRETTY_TWO_SPACES, &len);
+    yyjson_mut_doc_free(mut);
+    if (out) text.assign(out, len);
+    std::free(out);
+    return text;
 }
 
 // Copies a folder's files (recursively) into an empty or missing folder.
@@ -129,6 +163,13 @@ std::vector<SlotInfo> SaveSlots::list() const {
     return out;
 }
 
+std::optional<SlotInfo> SaveSlots::info(std::string_view id) const {
+    SlotInfo info;
+    if (id.empty() || !read_info(folder(id), info)) return std::nullopt;
+    info.id = std::string(id);
+    return info;
+}
+
 std::optional<SlotInfo> SaveSlots::latest() const {
     std::vector<SlotInfo> all = list();
     if (all.empty()) return std::nullopt;
@@ -173,7 +214,7 @@ bool SaveSlots::commit(SlotInfo info, std::string* error) {
     fs::remove_all(temp, ec);
     fs::remove_all(old, ec);
     if (!copy_tree(session(), temp, error)) return false;
-    if (!write_text(temp / "slot.json", data::to_json(info))) {
+    if (!write_text(temp / "slot.json", slot_json(info))) {
         if (error) *error = "не удалось записать slot.json";
         return false;
     }
@@ -197,6 +238,20 @@ bool SaveSlots::remove(std::string_view id) {
     if (id.empty()) return false;
     std::error_code ec;
     return fs::remove_all(folder(id), ec) > 0 && !ec;
+}
+
+bool slot_fits(const SlotInfo& slot, std::string_view module, std::string* why) {
+    const std::string name = slot.title.empty() ? slot.id : slot.title;
+    if (!slot.module_error.empty()) {
+        if (why) *why = "сохранение «" + name + "» повреждено: " + slot.module_error;
+        return false;
+    }
+    if (slot.module != module) {
+        if (why) *why = "сохранение «" + name + "» сделано другой игрой (модуль «" + slot.module + "»), эта игра — модуль «" +
+                        std::string(module) + "»";
+        return false;
+    }
+    return true;
 }
 
 // --- settings ----------------------------------------------------------------
