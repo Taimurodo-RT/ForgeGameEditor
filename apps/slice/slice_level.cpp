@@ -257,9 +257,9 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         sim::draw_position(p, b, alpha, x, y);
         const f32 side = c.dir < 0 ? -1.0f : 1.0f;
         if (const Pictures::Picture* pic = picture(e)) {
-            // Its frames one after another every 8 ticks while it walks on the ground; else the first.
+            // It walks while it goes on the ground, else it stands: its animation of that pose by the level's clock.
             const bool walks = (b.contacts & sim::OnGround) && std::fabs(b.vx) > 0.3f;
-            at(x, y, side * pic->aspect, 1.0f, pic->frame + (walks ? phase % pic->frames : 0u), 1);
+            at(x, y, side * pic->aspect, 1.0f, pic->at(walks ? Pose::Walk : Pose::Stand, tick), 1);
             return;
         }
         Sprite* s = batch.push(1);
@@ -278,7 +278,7 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         sim::draw_position(p, b, alpha, x, y);
         const f32 side = n.facing < 0 ? -1.0f : 1.0f;
         if (const Pictures::Picture* pic = picture(e)) {
-            at(x, y, side * 2.0f * pic->aspect, 2.0f, pic->frame, 2);
+            at(x, y, side * 2.0f * pic->aspect, 2.0f, pic->at(Pose::Idle, tick), 2);
             return;
         }
         const u32 base = n.who == 0 ? FrameMiner : FrameSmith;
@@ -290,7 +290,7 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         sim::draw_position(p, b, alpha, x, y);
         const f64 bob = std::sin(static_cast<f64>(tick) * 0.08 + p.tile_x()) * 0.08;
         if (const Pictures::Picture* pic = picture(e))
-            at(x, y + bob, 0.8f * pic->aspect, 0.8f, pic->frame, 3);
+            at(x, y + bob, 0.8f * pic->aspect, 0.8f, pic->at(Pose::Idle, tick), 3);
         else
             at(x, y + bob, 0.8f, 0.8f, item_frame(static_cast<ItemKind>(i.kind)), 3);
         if (i.kind == static_cast<u8>(ItemKind::Pickaxe))
@@ -298,7 +298,7 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
     });
     objects.crates.each([&](flecs::entity e, const Position& p, const RigidBody& rb) {
         const Pictures::Picture* pic = picture(e);
-        at(p.tile_x(), p.tile_y(), rb.half_w * 2.0f, rb.half_h * 2.0f, pic ? pic->frame : demo::kFrameCrate, 1,
+        at(p.tile_x(), p.tile_y(), rb.half_w * 2.0f, rb.half_h * 2.0f, pic ? pic->at(Pose::Idle, tick) : demo::kFrameCrate, 1,
            0xffffffffu, rb.angle);
     });
     // Objects that only have a body: their picture, else a crate. «Опасность» fills its box (the box that hurts):
@@ -311,7 +311,7 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         const f32 h = b.half_h * 2.0f;
         if (e.has<Hazard>()) {
             if (pic) {
-                at(x, y, b.half_w * 2.0f, h, pic->frame, 1);
+                at(x, y, b.half_w * 2.0f, h, pic->at(Pose::Idle, tick), 1);
                 return;
             }
             const i32 n = std::max(1, static_cast<i32>(std::lround(b.half_w * 2.0f)));
@@ -319,7 +319,7 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
             for (i32 i = 0; i < n; ++i) at(x - b.half_w + w * (static_cast<f32>(i) + 0.5f), y, w, h, FrameSpikes, 1);
             return;
         }
-        at(x, y, pic ? h * pic->aspect : b.half_w * 2.0f, h, pic ? pic->frame : demo::kFrameCrate, 1);
+        at(x, y, pic ? h * pic->aspect : b.half_w * 2.0f, h, pic ? pic->at(Pose::Idle, tick) : demo::kFrameCrate, 1);
     });
     // Doors: a closed one fills its column, an open one stands at its side.
     objects.doors.each([&](flecs::entity e, const Position& p, const Door& d) {
@@ -329,7 +329,7 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         const f32 h = static_cast<f32>(bottom - top + 1);
         const f64 cy = (top + bottom + 1) * 0.5;
         if (pic) {
-            at(x + (d.open ? 0.15 : 0.5), cy, d.open ? 0.3f : 1.0f, h, pic->frame, 1);
+            at(x + (d.open ? 0.15 : 0.5), cy, d.open ? 0.3f : 1.0f, h, pic->at(Pose::Idle, tick), 1);
             return;
         }
         for (i32 y = top; y <= bottom; ++y)
@@ -556,6 +556,14 @@ void SliceLevel::object_moved(flecs::entity e) {
 bool SliceLevel::object_component_shown(const reflect::TypeInfo* type) const {
     return type == reflect::type_of<Npc>() || type == reflect::type_of<Item>() || type == reflect::type_of<Critter>() ||
            type == reflect::type_of<Door>();
+}
+
+std::vector<level::LevelModule::AnimState> SliceLevel::anim_states(const objects::Library& lib, const objects::Template& t) const {
+    std::vector<AnimState> out;
+    if (t.picture.empty()) return out;
+    const Mover mover = mover_of(lib, t);
+    for (Pose pose : poses_of(mover)) out.push_back({pose_id(pose), pose_name(pose), pose_rule(mover, pose, t.frames)});
+    return out;
 }
 
 std::string SliceLevel::object_note(const objects::Library& lib, const objects::Template& t) const {

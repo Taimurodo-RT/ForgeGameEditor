@@ -9,6 +9,7 @@
 #include "forge/core/types.h"
 #include "forge/objects/library.h"
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -29,6 +30,21 @@ bool hero_frames_ok(u32 frames, u32 width, std::string* why = nullptr);
 // hero_frames_ok. The game draws the hero by the first such template by id; the editor tells which one it is.
 bool hero_picture_ok(const forge::objects::Library& library, const forge::objects::Template& t, std::string* why = nullptr);
 
+// The states the game plays a template's picture in (the tab «Анимация»), by the ids the template file has them.
+enum class Pose : u8 { Stand, Walk, Air, Idle };
+inline constexpr usize kPoses = 4;
+const char* pose_id(Pose pose);   // "walk"
+const char* pose_name(Pose pose); // «Идёт»
+// What moves a template's copies, and so the poses it has: the hero (block hero: stands, walks, in the air), a walker
+// (block control: stands, walks), anything else (idle).
+enum class Mover : u8 { Hero, Walker, Still };
+Mover mover_of(const forge::objects::Library& library, const forge::objects::Template& t);
+std::vector<Pose> poses_of(Mover mover);
+// The game's own rule for a pose of a picture of `frames` frames, what it draws when the template has no animation
+// of its own for it: the hero stands in frame 0, walks in 1 and 2 by turns every 6 ticks, is in the air in 3 (of 4;
+// of 1, frame 0 in all); a walker walks through all its frames every 8 ticks and stands in 0; anything else is frame 0.
+forge::objects::Clip pose_rule(Mover mover, Pose pose, u32 frames);
+
 class Pictures {
 public:
     // A picture of frames (Template::frames: a strip of equal frames side by side) is that many frames of the sheet,
@@ -37,6 +53,11 @@ public:
         u32 frame = 0;  // the first
         u32 frames = 1; // how many
         f32 aspect = 1; // width / height of one
+        // What it plays in each pose (by Pose): the template's own animation when it can play on these frames, else
+        // the game's rule (pose_rule).
+        std::array<forge::objects::Clip, kPoses> clips;
+        // Its frame of the sheet in a pose, `ticks` after the pose began.
+        u32 at(Pose pose, u64 ticks) const { return frame + forge::objects::clip_frame(clips[static_cast<usize>(pose)], ticks); }
     };
     // The largest side a frame keeps in the sheet; bigger ones are scaled down. The sheet is at least kMaxSide + 2
     // wide, so any frame fits on a shelf of its own with a pixel either side.
@@ -66,6 +87,8 @@ private:
         std::vector<u8> rgba;      // empty: could not be read
     };
     const Decoded& decode(const std::filesystem::path& file, std::filesystem::file_time_type mtime, u32 frames);
+    // Each picture's clips from its template's animations as they are now (cheap: on every update).
+    void set_clips(const forge::objects::Library& library);
 
     std::unordered_map<std::string, Decoded> cache_; // by file and frames
     std::unordered_map<u64, Picture> by_key_;

@@ -123,6 +123,12 @@ public:
     // The hero's frame drawn last (0 stands, 1 and 2 the steps, 3 in the air) and whether by its picture.
     u32 hero_frame() const { return hero_frame_; }
     bool hero_pictured() const { return hero_pictured_; }
+    // The frame of its picture drawn last (of its animation in its pose); without a picture, hero_frame().
+    u32 hero_picture_frame() const { return hero_picture_frame_; }
+    Pose hero_pose() const { return hero_look_.pose; }
+    // The tick it took that pose (its animation plays from then), and the level's tick of the picture drawn last.
+    u64 hero_pose_since() const { return hero_look_.since; }
+    u64 drawn_tick() const { return drawn_tick_; }
     // Where it was drawn last (between two ticks: the frame's own place), in tiles.
     f64 hero_drawn_x() const { return hero_drawn_x_; }
     f64 hero_drawn_y() const { return hero_drawn_y_; }
@@ -185,6 +191,8 @@ public:
     // entity is now (false: gone).
     flecs::entity_t nearest_item(f64 x, f64 y, f64 radius) const;
     bool position_of(flecs::entity_t e, f64& x, f64& y) const;
+    // The whole width and height of an entity's body, in tiles (false: it has none).
+    bool body_size(flecs::entity_t e, f64& w, f64& h) const;
     // Gives an object a «Звук» block.
     bool set_sounds(flecs::entity_t e, const Sounds& sounds);
     // The loaded copies of a template (by its id).
@@ -402,6 +410,8 @@ private:
     u64 jump_tick_ = HeroLook::kNever;
     u32 hero_frame_ = 0;
     bool hero_pictured_ = false;
+    u32 hero_picture_frame_ = 0;
+    u64 drawn_tick_ = 0;
     f64 hero_drawn_x_ = 0, hero_drawn_y_ = 0;
     f64 fall_ = 0, walked_ = 0;
     flecs::entity_t talking_ = 0;

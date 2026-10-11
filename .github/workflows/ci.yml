@@ -110,6 +110,9 @@ jobs:
       - name: Modules (editor self-test part modules), the editor of a game's module from the registry, two modules' levels, values, events and verbs side by side and apart, a game of the test module «Проба» and a game from before step 14.3 (no project.forge, game.json without "module", CRLF) each opened in an editor of its own from another working folder and played with «Играть», the games whose module is none, another, empty or a number refused before the open game or its undo is touched, and refused by forge_game and forge_slice
         if: runner.os == 'Linux'
         run: ./build/apps/editor/forge_editor --self-test modules
+      - name: The tab «Анимация» (editor self-test part animation), A and B made of the catalog's «Платформер», in A with the mouse and the keys the beetle's walk, the hero's walk and jump and the flag's two frames, each step's file, undone and done again, a frame the picture has not, «Объекты» undone apart, «Сделать анимацию» of «Ресурсы», opened again elsewhere and played, each frame on the screen as the author's animation has it at that tick, the template and B byte for byte as before
+        if: runner.os == 'Linux'
+        run: ./build/apps/editor/forge_editor --self-test animation
       - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
         if: runner.os == 'Linux'
         run: |
@@ -205,11 +208,11 @@ jobs:
           trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer; mv build/modules-away games/modules' EXIT
           "./$packed" --test --scene platformer_template
           (cd build/elsewhere && "../../$packed" --test --scene platformer_template_continue)
-      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels, platformer, platformer-template and modules) play in the package, the build's forge_game and its old name forge_slice with games/slice, games/platformer and games/modules moved away (back with the same SHA-256), the game of levels from its start level and through its links, then continued from another working folder, a game from before step 14.3 as «Старая шахта», two modules' saves in one player's folder
+      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels, platformer, platformer-template, modules and animation) play in the package, the build's forge_game and its old name forge_slice with games/slice, games/platformer and games/modules moved away (back with the same SHA-256), the game of levels from its start level and through its links, then continued from another working folder, a game from before step 14.3 as «Старая шахта», two modules' saves in one player's folder
         if: runner.os == 'Linux'
         run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/game/forge_game build/apps/slice/forge_slice
       # Windows has no GPU here: the editor and the game draw with D3D12's software device (WARP), if SDL finds it.
-      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer, platformer-template and modules, each game in an editor of its own) and the games in the package, the build's forge_game and forge_slice
+      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer, platformer-template, modules and animation, each game in an editor of its own) and the games in the package, the build's forge_game and forge_slice
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -219,6 +222,7 @@ jobs:
           ./build/apps/editor/Release/forge_editor.exe --self-test platformer
           ./build/apps/editor/Release/forge_editor.exe --self-test platformer-template
           ./build/apps/editor/Release/forge_editor.exe --self-test modules
+          ./build/apps/editor/Release/forge_editor.exe --self-test animation
           python tools/author_game/play.py build/dist/OldMine/OldMine.exe build/apps/game/Release/forge_game.exe build/apps/slice/Release/forge_slice.exe
       - uses: actions/upload-artifact@v4
         with:

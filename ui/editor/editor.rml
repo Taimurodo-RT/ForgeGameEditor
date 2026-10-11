@@ -10,6 +10,7 @@
     <link type="text/rcss" href="level.rcss"/>
     <link type="text/rcss" href="assets.rcss"/>
     <link type="text/rcss" href="objects.rcss"/>
+    <link type="text/rcss" href="animation.rcss"/>
     <link type="text/rcss" href="logic.rcss"/>
     <link type="text/rcss" href="story.rcss"/>
     <link type="text/rcss" href="uiedit.rcss"/>
@@ -56,7 +57,7 @@
         <div class="editor-tab" data-class-selected="tab == 'level'" data-event-click="open_tab('level', 'Уровень', '', '', 'landscape')"><icon name="landscape"/><span>Уровень</span></div>
         <div class="editor-tab" data-class-selected="tab == 'world'" data-event-click="open_tab('world', 'Сцена', '', '', 'public')"><icon name="public"/><span>Сцена</span></div>
         <div class="editor-tab" data-class-selected="tab == 'objects'" data-event-click="open_tab('objects', 'Объекты', '', '', 'deployed_code')"><icon name="deployed_code"/><span>Объекты</span></div>
-        <div class="editor-tab" data-class-selected="tab == 'animation'" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon name="movie"/><span>Анимация</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'animation'" data-event-click="open_tab('animation', 'Анимация', '', '', 'movie')"><icon name="movie"/><span>Анимация</span></div>
         <div class="editor-tab" data-class-selected="tab == 'images'" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'шаг 9: библиотека ассетов', 'image')"><icon name="image"/><span>Изображения</span></div>
         <div class="editor-tab" data-class-selected="tab == 'audio'" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'шаг 9: библиотека ассетов', 'volume_up')"><icon name="volume_up"/><span>Аудио</span></div>
         <div class="editor-tab" data-class-selected="tab == 'logic'" data-event-click="open_tab('logic', 'Логика', '', '', 'account_tree')"><icon name="account_tree"/><span>Логика</span></div>
@@ -66,7 +67,7 @@
         <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', '', '', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
     </div>
 
-    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects' || tab == 'logic' || tab == 'story' || tab == 'ui')">
+    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects' || tab == 'animation' || tab == 'logic' || tab == 'story' || tab == 'ui')">
         <icon class="big" data-attr-name="tab_icon"/>
         <div class="headline-small">{{ tab_title }}</div>
         <div class="muted">{{ tab_description }}</div>
@@ -1160,6 +1161,83 @@
                         <span class="problem" data-if="w.problem != ''">{{ w.problem }}</span>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- «Анимация»: the templates with a picture on the left, the one selected playing in the middle over the frames of
+         its picture, the states the game plays it in on the right. -->
+    <div id="animation" class="column" data-if="tab == 'animation'">
+        <div class="an-bar row">
+            <div class="st-crumb row"><icon class="s" name="movie"/><span>Анимация</span><icon class="s" name="chevron_right"/><b>{{ an_sel_name }}</b></div>
+            <div class="lg-modes row">
+                <div id="an-mode-frames" class="lg-mode selected" title="Кадры картинки по порядку для каждого состояния в игре"><icon name="burst_mode"/><span>Покадровая</span></div>
+                <div id="an-mode-skeleton" class="lg-mode soon" title="Кости и части персонажа: появится"><icon name="accessibility_new"/><span>Скелетная</span><span class="an-soon">появится</span></div>
+                <div id="an-mode-scene" class="lg-mode soon" title="Сцена на уровне, для катсцен игры: появится"><icon name="theaters"/><span>Сцена</span><span class="an-soon">появится</span></div>
+                <div id="an-mode-ui" class="lg-mode soon" title="Сложные анимированные экраны «Интерфейса»: появится"><icon name="animation"/><span>Интерфейс</span><span class="an-soon">появится</span></div>
+                <div id="an-mode-pixel" class="lg-mode soon" title="Особый режим для пиксельных персонажей: появится"><icon name="grid_on"/><span>Пиксельные</span><span class="an-soon">появится</span></div>
+            </div>
+            <div class="grow"/>
+        </div>
+        <div class="an-body row grow">
+            <div class="an-nav column">
+                <div class="lg-nav-title">Шаблоны с картинкой</div>
+                <div data-for="r : an_list" class="an-row row" data-attr-id="'an-tpl-' + it_index" data-class-selected="r.selected" data-event-click="an_select(it_index)">
+                    <img data-attr-src="r.icon"/>
+                    <div class="column grow"><span class="name">{{ r.name }}</span><span class="sub">{{ r.frames }}<span data-if="r.note != ''"> · {{ r.note }}</span></span></div>
+                </div>
+                <div id="an-note" class="an-empty" data-if="an_note != ''">{{ an_note }}</div>
+            </div>
+
+            <div class="an-stage column grow" data-if="an_has_sel">
+                <div class="an-preview">
+                    <img id="an-preview" data-if="an_preview != ''" data-attr-src="an_preview"/>
+                </div>
+                <div class="an-controls row">
+                    <div id="an-back" class="icon-button" title="Кадр назад (←)" data-event-click="an_step(-1)"><icon name="skip_previous"/></div>
+                    <div id="an-play" class="icon-button" title="Пауза и пуск (пробел)" data-event-click="an_play"><icon data-attr-name="an_playing ? 'pause' : 'play_arrow'"/></div>
+                    <div id="an-forward" class="icon-button" title="Кадр вперёд (→)" data-event-click="an_step(1)"><icon name="skip_next"/></div>
+                    <span class="muted">{{ an_state_name }}</span>
+                </div>
+                <div class="an-strip-head row">
+                    <span class="an-label">Кадры картинки</span>
+                    <div class="grow"/>
+                    <span class="an-label">Кадров в картинке</span>
+                    <div id="an-frames-less" class="icon-button small" data-event-click="an_frames_less"><icon class="s" name="remove"/></div>
+                    <span id="an-frames" class="an-count">{{ an_frames }}</span>
+                    <div id="an-frames-more" class="icon-button small" data-event-click="an_frames_more"><icon class="s" name="add"/></div>
+                </div>
+                <div class="an-strip row">
+                    <div data-for="f : an_strip" class="an-frame" data-attr-id="'an-frame-' + f.index" data-class-used="f.used" data-class-shown="f.shown"
+                         title="Добавить кадр в выбранное состояние" data-event-click="an_add(f.index)">
+                        <img data-attr-src="f.icon"/><span class="an-num">{{ f.index + 1 }}</span>
+                    </div>
+                </div>
+                <div class="an-sel-note" data-if="an_sel_note != ''">{{ an_sel_note }}</div>
+            </div>
+
+            <div class="an-side column" data-if="an_has_sel">
+                <div class="lg-nav-title">Состояния в игре</div>
+                <div data-for="s : an_states" class="an-state column" data-attr-id="'an-state-' + s.id" data-class-selected="s.selected" data-event-click="an_state(s.id)">
+                    <div class="row"><span class="name grow">{{ s.name }}</span><span class="an-tag" data-if="!s.own">как в игре</span><span class="an-tag own" data-if="s.own">своя</span></div>
+                    <span class="sub">кадры {{ s.frames }} · {{ s.fps }}<span data-if="!s.loop"> · без повтора</span></span>
+                    <span class="an-problem" data-if="s.problem != ''">{{ s.problem }}: играет как в игре</span>
+                </div>
+                <div class="lg-nav-title">{{ an_state_name }}: кадры по порядку</div>
+                <div class="an-seq row">
+                    <div data-for="f : an_seq" class="an-frame small"><img data-attr-src="f.icon"/><span class="an-num">{{ f.index + 1 }}</span></div>
+                </div>
+                <div class="row an-actions">
+                    <div id="an-remove-last" class="button outlined small" data-class-disabled="!an_own" data-event-click="an_remove_last"><icon class="s" name="backspace"/><span>Убрать последний</span></div>
+                    <div id="an-reset" class="button outlined small" data-class-disabled="!an_own" data-event-click="an_reset"><icon class="s" name="restart_alt"/><span>Как в игре</span></div>
+                </div>
+                <div class="lg-nav-title">Кадров в секунду</div>
+                <div class="an-fps row">
+                    <div data-for="c : an_fps" class="an-chip" data-attr-id="'an-fps-' + it_index" data-class-selected="c.selected" data-event-click="an_set_fps(it_index)">{{ c.label }}</div>
+                </div>
+                <div id="an-loop" class="an-check row" data-event-click="an_loop_toggle"><icon class="s" data-attr-name="an_loop ? 'check_box' : 'check_box_outline_blank'"/><span>Повторять</span></div>
+                <div class="an-problem" data-if="an_problem != ''">{{ an_problem }}: игра играет это состояние как в игре.</div>
+                <div class="an-hint">Щёлкните кадры картинки по порядку: так появится своя анимация состояния. Игра увидит её при следующем «Играть».</div>
             </div>
         </div>
     </div>
@@ -2645,7 +2723,7 @@
                     <div class="section-title" data-if="as_sel_count &lt;= 1">Открыть</div>
                     <div class="links column" data-if="as_sel_count &lt;= 1">
                         <div class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon class="s" name="open_in_new"/><span>В редакторе изображений</span></div>
-                        <div class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('animation', 'Анимация', 'Кадры, ключи и состояния анимаций', 'шаг 10: библиотека объектов', 'movie')"><icon class="s" name="open_in_new"/><span>Сделать анимацию</span></div>
+                        <div class="link row" data-if="as_sel_count == 1 && as_sel_image" id="as-animate" data-event-click="an_from_asset"><icon class="s" name="open_in_new"/><span>Сделать анимацию</span></div>
                         <div class="link row" data-if="as_sel_count == 1 && as_sel_audio" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'позже: обрезка и громкость', 'volume_up')"><icon class="s" name="open_in_new"/><span>В редакторе звука</span></div>
                         <div id="as-import-map" class="link row" data-if="as_sel_count == 1 && as_sel_tmx" data-event-click="as_import_map"><icon class="s" name="map"/><span>Импортировать в уровень…</span></div>
                         <div class="link row" data-event-click="as_show"><icon class="s" name="folder_open"/><span>Показать в проводнике Windows</span></div>
@@ -2895,9 +2973,10 @@
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'steps'">Ctrl+Z / Ctrl+Y отмена и повтор · × убирает шаг · «Добавить шаг» уточняет связь · Del удаляет выбранную связь</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'scheme'">Ctrl+Z / Ctrl+Y отмена и повтор · тяните от точки к точке, чтобы соединить · правый щелчок по рамке — новая нода · Alt+щелчок по точке убирает провода · Delete убирает выбранное</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'code'">Код собран из связей · щелчок по строке: её связь · Ctrl+Z / Ctrl+Y отмена и повтор</span>
+        <span class="muted" data-if="tab == 'animation'">Ctrl+Z / Ctrl+Y отмена и повтор · ↑ ↓ шаблон · 1 2 3 состояние · щелчок по кадру: добавить · Backspace убрать последний · Del как в игре · пробел пауза · ← → кадр</span>
         <span class="muted" data-if="tab == 'story'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по реплике: править · Enter сохранить · Esc отмена · щелчок по пометке: выбрать из списка</span>
         <span class="muted" data-if="tab == 'ui'">V F R O T инструменты · правая кнопка: меню · Ctrl+колесо: масштаб · пробел или средняя кнопка: двигать холст · Shift+A автораскладка · Ctrl+G в рамку · Ctrl+D копия · Ctrl: без прилипания</span>
-        <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic' && tab != 'story' && tab != 'ui'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic' && tab != 'story' && tab != 'ui' && tab != 'animation'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>
 </rml>
