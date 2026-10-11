@@ -16328,6 +16328,11 @@ private:
         const objects::Template* t = an().library().find(std::string_view(id));
         return t ? tg_bytes(t->file) : std::vector<u8>{};
     }
+    // The bytes with line ends as LF: a checkout with CRLF (Git on Windows) gives the template's files CR, the editor writes LF.
+    static std::vector<u8> an_lf(std::vector<u8> bytes) {
+        std::erase(bytes, u8{'\r'});
+        return bytes;
+    }
     std::string an_text(const char* id) {
         const std::vector<u8> b = an_file(id);
         return std::string(b.begin(), b.end());
@@ -16598,7 +16603,7 @@ private:
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(an().problem().empty() && an().clip() == flag && an_file("flag") == an_flag_done_, "Ctrl+Z: two frames, it plays");
             for (int i = 0; i < 4; ++i) key(SDLK_Z, SDL_KMOD_CTRL);
-            check(an_file("flag") == an_flag_, "Ctrl+Z four times: the file is the template's, byte for byte");
+            check(an_lf(an_file("flag")) == an_lf(an_flag_), "Ctrl+Z four times: the file is the template's, byte for byte (line ends aside)");
             for (int i = 0; i < 4; ++i) key(SDLK_Y, SDL_KMOD_CTRL);
             check(an_file("flag") == an_flag_done_ && an_is("flag", "idle", flag), "Ctrl+Y four times: 1, 2 two a second again, byte for byte");
             // «Объекты»: «Жук»'s «Скорость», then its animation here; undone there, the animation stays.
