@@ -100,7 +100,9 @@ bool simple_action(ActionKind k) {
     case ActionKind::Pause:
     case ActionKind::Resume:
     case ActionKind::Menu:
-    case ActionKind::Quit: return true;
+    case ActionKind::Quit:
+    case ActionKind::NextLevel:
+    case ActionKind::Retry: return true;
     default: return false; // hide, toggle, change, talk: «Полный»
     }
 }

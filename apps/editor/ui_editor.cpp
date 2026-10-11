@@ -117,7 +117,7 @@ const char* const kArtRepeatWords[] = {"stretch", "repeat", "round", "space"};
 const char* const kScreenFitWords[] = {"expand", "fit", "stretch"};
 const char* const kScreenShowWords[] = {"playing", "command", "menu"};
 const char* const kWindowOverWords[] = {"any", "game", "menu"};
-const char* const kWindowEndingWords[] = {"none", "win", "lose"};
+const char* const kWindowEndingWords[] = {"none", "win", "lose", "level"};
 const char* const kBarFromWords[] = {"left", "right", "bottom", "top"};
 // Movement (the file's words, design::Motion and friends).
 const char* const kMotionWords[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
@@ -458,7 +458,11 @@ void UiEditor::refresh_openers() {
             for (const std::string& where : logic_openers(name_)) row("«Логика», " + where + ": над игрой", d::WindowOver::Game);
         // The game itself, when it ends (step 14.2c).
         if (screen_.ending != d::WindowEnding::None)
-            row(std::string("Игра сама, ") + (screen_.ending == d::WindowEnding::Win ? "при победе" : "при поражении") + ": над игрой",
+            row(std::string("Игра сама, ") +
+                    (screen_.ending == d::WindowEnding::Win    ? "при победе"
+                     : screen_.ending == d::WindowEnding::Lose ? "при поражении"
+                                                               : "когда уровень пройден") +
+                    ": над игрой",
                 d::WindowOver::Game);
     }
     dirty("ue_openers");
@@ -5783,7 +5787,7 @@ void UiEditor::check_action(const game::ScreenAction& a, const std::string& page
         static const std::pair<const char*, const char*> words[] = {
             {"pause", "Пауза"}, {"resume", "Вернуться в игру"}, {"menu", "В главное меню"}, {"quit", "Выйти из игры"},
             {"new", "Новая игра"}, {"continue", "Продолжить"}, {"load", "Загрузить"}, {"save", "Сохранить"},
-            {"settings", "Настройки"}};
+            {"settings", "Настройки"}, {"next", "Следующий уровень"}, {"retry", "Уровень заново"}};
         said = a.what;
         for (const auto& [w, ru] : words)
             if (a.what == w) said = std::string("Кнопка: ") + ru;

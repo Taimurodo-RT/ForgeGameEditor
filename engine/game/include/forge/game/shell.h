@@ -80,6 +80,11 @@ public:
     virtual void render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) = 0;
     // Events the UI did not use, while the player has control.
     virtual void handle_event(const SDL_Event& event) { (void)event; }
+    // A window's buttons «Следующий уровень» (next) and «Уровень заново» (retry), step 14.3b: the game goes on to the
+    // level after the one it plays, or plays that one anew from its start. The shell has closed the game's windows
+    // and the pause first. False: this game has no such level (the shell says so in the log, nothing changes).
+    virtual bool next_level() { return false; }
+    virtual bool retry_level() { return false; }
     virtual void shutdown() = 0;
 };
 

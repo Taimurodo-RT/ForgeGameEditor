@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "title": "HUD",
+  "next_id": 6,
+  "width": 1920.0,
+  "height": 1080.0,
+  "settings": {
+    "font": "Onest",
+    "font_size": 24.0,
+    "text_color": "#ffffff",
+    "fit": "expand",
+    "show": "playing"
+  },
+  "root": {
+    "id": 1,
+    "name": "HUD",
+    "type": "frame",
+    "x": 0.0,
+    "y": 0.0,
+    "w": 1920.0,
+    "h": 1080.0,
+    "clip": true,
+    "children": [
+      {
+        "id": 5,
+        "name": "Счёт",
+        "type": "frame",
+        "x": 460.0,
+        "y": 12.0,
+        "w": 1000.0,
+        "h": 64.0,
+        "horizontal": "center",
+        "height_sizing": "hug",
+        "layout": {
+          "mode": "row",
+          "gap": 40.0,
+          "padding": [
+            10.0,
+            32.0,
+            10.0,
+            32.0
+          ],
+          "align": 4
+        },
+        "fills": [
+          {
+            "kind": "solid",
+            "color": "#1e1a2ed2"
+          }
+        ],
+        "radius": [
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "children": [
+          {
+            "id": 2,
+            "name": "Уровень",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 367.2,
+            "h": 44.2,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "{board.level_number}. {board.level}",
+            "style": {
+              "family": "",
+              "size": 34.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#ffffff"
+            }
+          },
+          {
+            "id": 3,
+            "name": "Очки",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 448.8,
+            "h": 44.2,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "Очки: {board.score} из {board.target}",
+            "style": {
+              "family": "",
+              "size": 34.0,
+              "weight": 800,
+              "align": "left",
+              "color": "#ffd54a"
+            }
+          },
+          {
+            "id": 4,
+            "name": "Ходы",
+            "type": "text",
+            "x": 0.0,
+            "y": 0.0,
+            "w": 265.2,
+            "h": 44.2,
+            "width_sizing": "hug",
+            "height_sizing": "hug",
+            "text": "Ходов: {board.moves}",
+            "style": {
+              "family": "",
+              "size": 34.0,
+              "weight": 700,
+              "align": "left",
+              "color": "#e2def0"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

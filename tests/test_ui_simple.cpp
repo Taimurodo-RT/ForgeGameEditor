@@ -208,7 +208,7 @@ TEST_CASE("ui simple: a layer from «Полный» names what the simple panel 
     // Every simple action is one of the game's; hide, toggle, change and talk are «Полный»'s.
     for (ActionKind k : {ActionKind::Show, ActionKind::Close, ActionKind::Message, ActionKind::NewGame, ActionKind::Continue,
                          ActionKind::Load, ActionKind::Save, ActionKind::Settings, ActionKind::Pause, ActionKind::Resume,
-                         ActionKind::Menu, ActionKind::Quit})
+                         ActionKind::Menu, ActionKind::Quit, ActionKind::NextLevel, ActionKind::Retry})
         CHECK(simple_action(k));
     for (ActionKind k : {ActionKind::Hide, ActionKind::Toggle, ActionKind::Change, ActionKind::Talk}) CHECK(!simple_action(k));
 }

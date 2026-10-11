@@ -24,6 +24,7 @@
 
 namespace match3 {
 
+using forge::f32;
 using forge::f64;
 using forge::i32;
 using forge::i64;

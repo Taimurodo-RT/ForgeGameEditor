@@ -46,10 +46,10 @@ const char* const kScreenFits[] = {"expand", "fit", "stretch"};
 const char* const kNodeTypes[] = {"frame", "rectangle", "ellipse", "text", "image"};
 const char* const kBarFroms[] = {"left", "right", "bottom", "top"};
 const char* const kActions[] = {"show", "hide", "toggle", "close", "message", "change", "talk", "pause", "resume",
-                                "menu", "quit", "new", "continue", "load", "save", "settings"};
+                                "menu", "quit", "new", "continue", "load", "save", "settings", "next", "retry"};
 const char* const kScreenShows[] = {"playing", "command", "menu"};
 const char* const kWindowOvers[] = {"any", "game", "menu"};
-const char* const kWindowEndings[] = {"none", "win", "lose"};
+const char* const kWindowEndings[] = {"none", "win", "lose", "level"};
 const char* const kEasings[] = {"smooth", "linear", "in", "out", "back", "bounce", "elastic"};
 const char* const kMotions[] = {"none", "pulse", "float", "swing", "spin", "shake", "blink", "custom"};
 const char* const kAppears[] = {"none", "fade", "rise", "drop", "zoom", "left", "right"};

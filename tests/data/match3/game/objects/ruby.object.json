@@ -1,0 +1,11 @@
+{
+  "id": "ruby",
+  "name": "Рубин",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "picture": "рубин.png",
+  "frames": 3,
+  "values": {
+    "points": 10
+  }
+}

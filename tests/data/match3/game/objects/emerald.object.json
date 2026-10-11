@@ -1,0 +1,10 @@
+{
+  "id": "emerald",
+  "name": "Изумруд",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "picture": "изумруд.png",
+  "values": {
+    "points": 10
+  }
+}

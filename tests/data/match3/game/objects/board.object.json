@@ -1,0 +1,7 @@
+{
+  "id": "board",
+  "name": "Поле",
+  "kind": "board_rules",
+  "genre": "Три в ряд",
+  "values": {}
+}

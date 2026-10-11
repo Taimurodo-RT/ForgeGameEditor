@@ -205,6 +205,8 @@ enum class ActionKind : u8 {
     Load,    // the list of saves to load
     Save,    // the list of saves to save into
     Settings, // the game's settings
+    NextLevel, // the level after the one played (step 14.3b: «Уровень пройден» → «Дальше»)
+    Retry,     // the level played, anew from its start («Ещё раз»)
 };
 const char* action_word(ActionKind k); // "show", "hide", ... (the file and the page)
 std::optional<ActionKind> parse_action(std::string_view word);
@@ -244,8 +246,9 @@ const char* window_over_word(WindowOver o); // "any", "game", "menu"
 
 // A window the game shows itself when it ends (step 14.2c): never (only a button or the logic opens it), when the
 // player wins, when the player loses.
-enum class WindowEnding : u8 { None, Win, Lose };
-const char* window_ending_word(WindowEnding e); // "none", "win", "lose"
+// Level: shown when a level is passed and the game goes on (step 14.3b, «Уровень пройден»).
+enum class WindowEnding : u8 { None, Win, Lose, Level };
+const char* window_ending_word(WindowEnding e); // "none", "win", "lose", "level"
 
 // Movement («Анимация»). How a change speeds up and slows down.
 enum class Easing : u8 {

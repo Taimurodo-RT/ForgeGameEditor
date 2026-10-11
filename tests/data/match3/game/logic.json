@@ -1,0 +1,32 @@
+{
+  "links": [
+    {
+      "id": 1,
+      "a": "board",
+      "verb": "plus_moves",
+      "b": "topaz"
+    },
+    {
+      "id": 2,
+      "a": "board",
+      "verb": "reaches_target",
+      "b": "board"
+    },
+    {
+      "id": 3,
+      "a": "board",
+      "verb": "out_of_moves",
+      "b": "board"
+    }
+  ],
+  "board": {
+    "board": [
+      60.0,
+      200.0
+    ],
+    "topaz": [
+      300.0,
+      200.0
+    ]
+  }
+}

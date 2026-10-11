@@ -233,6 +233,14 @@ void Shell::screen_action(const ScreenAction& a) {
     else if (a.what == "menu") to_main_menu();
     else if (a.what == "quit") quit_ = true;
     else if (a.what == "new") start_loading([this] { new_game(); });
+    else if (a.what == "next" || a.what == "retry") {
+        if (!game_->running()) return;
+        // The window it is on («Уровень пройден», «Поражение») and any other the game showed close, the pause too.
+        screens_->hide_commands();
+        if (screen_ == Screen::Paused) pause(false);
+        if (!(a.what == "next" ? game_->next_level() : game_->retry_level()))
+            FORGE_WARN("кнопка: «%s»: у игры нет такого уровня", a.what == "next" ? "Следующий уровень" : "Уровень заново");
+    }
     else if (a.what == "continue") {
         if (!slots_->list().empty()) start_loading([this] { if (!continue_game()) show(Screen::Main); });
     } else if (a.what == "load" || a.what == "save") {

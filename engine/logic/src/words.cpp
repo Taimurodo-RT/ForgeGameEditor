@@ -321,7 +321,8 @@ std::string destination(const Link& link, const VerbDef& verb, const FindThing& 
 
 std::string phrase(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where) {
     (void)link;
-    std::string s = a.name + " " + (a.plural ? verb.plural : verb.name) + " " + b.forms.get(verb.object_case);
+    std::string s = a.name + " " + (a.plural ? verb.plural : verb.name);
+    if (!verb.self()) s += " " + b.forms.get(verb.object_case);
     if (!where.empty()) s += " " + std::string(where);
     return s;
 }
@@ -361,6 +362,7 @@ std::string quoted(const Thing& t) { return "«" + t.name + "»"; }
 } // namespace
 
 bool suits(const VerbDef& verb, const Thing& a, const Thing& b) {
+    if (verb.self()) return a.id == b.id && side_fits(verb.a_is, verb.a_has, a); // one thing: the link's b is its a
     if (a.id == b.id) return false;
     if (verb.always && a.id == kHero) return false;
     return side_fits(verb.a_is, verb.a_has, a) && side_fits(verb.b_is, verb.b_has, b);

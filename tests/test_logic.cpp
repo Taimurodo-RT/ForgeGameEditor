@@ -1424,3 +1424,33 @@ TEST_CASE("logic: the module's «падает в» and «доходит до» g
     CHECK(module("flag")->find("logic.act(\"win\", target") != std::string::npos);
     CHECK(module(kGoal)->find("logic.act(\"win\", target") != std::string::npos);
 }
+
+TEST_CASE("verbs: an amount for what the action adds, and a verb of one thing («Поле набирает цель»)") {
+    const char* json = R"({"verbs": [
+  {"id": "plus_moves", "name": "даёт +2 хода за", "case": "acc", "when": "match", "do": "add_moves", "amount": 2,
+   "a": "thing", "b": "thing", "b_has": ["gem"]},
+  {"id": "won", "name": "набирает цель", "when": "target", "do": "level_won", "a": "thing", "a_has": ["board_rules"], "b": "self"},
+  {"id": "plain", "name": "открывает", "do": "open", "when": "match"}
+]})";
+    logic::Verbs verbs;
+    std::string error;
+    REQUIRE(verbs.parse(json, &error, {"match", "target"}));
+    const VerbDef& plus = *verbs.find("plus_moves");
+    const VerbDef& won = *verbs.find("won");
+    CHECK(plus.amount == 2);
+    CHECK(verbs.find("plain")->amount == 0);
+    CHECK_FALSE(plus.self());
+    CHECK(won.self());
+    Thing board = thing("board", "Поле"), star = thing("star", "Звезда");
+    board.blocks = {"board_rules"};
+    star.blocks = {"gem"};
+    Link l;
+    CHECK(phrase(l, plus, board, star) == "Поле даёт +2 хода за Звезду");
+    // One thing: no second one in the phrase, and the link's b is its a.
+    CHECK(phrase(l, won, board, board) == "Поле набирает цель");
+    CHECK(suits(won, board, board));
+    CHECK_FALSE(suits(won, board, star));
+    CHECK_FALSE(suits(won, star, star)); // a needs the block «Правила уровня»
+    CHECK(suits(plus, board, star));
+    CHECK_FALSE(suits(plus, board, board));
+}

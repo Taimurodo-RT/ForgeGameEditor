@@ -3,9 +3,12 @@
 
 #include "match3_rules.h"
 
+#include "forge/core/ease.h"
+
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
@@ -516,4 +519,26 @@ TEST_CASE("match3: one seed, one game; a save in between goes on with the same g
     bad.board.cells[0] = 6;
     CHECK_FALSE(p.resume(bad, 5, tens(5), r, why));
     CHECK(why == "в сохранении на поле фишка, которой нет в наборе");
+}
+
+TEST_CASE("ease: the share of the way at a share of the time, for what a module moves by itself") {
+    using namespace forge;
+    CHECK(ease::progress(0, 0.15) == 0);
+    CHECK(ease::progress(0.075, 0.15) == doctest::Approx(0.5));
+    CHECK(ease::progress(1, 0.15) == 1);
+    CHECK(ease::progress(-1, 0.15) == 0);
+    CHECK(ease::progress(0.1, 0) == 1);
+    CHECK(ease::linear(0.25) == 0.25);
+    CHECK(ease::linear(2) == 1);
+    CHECK(ease::in_out(0) == 0);
+    CHECK(ease::in_out(0.5) == doctest::Approx(0.5));
+    CHECK(ease::in_out(1) == 1);
+    CHECK(ease::in_out(0.1) < 0.1); // gently at the start
+    CHECK(ease::in_out(0.9) > 0.9); // and at the end
+    CHECK(ease::fall(0.5) == doctest::Approx(0.25));
+    CHECK(ease::fall(1) == 1);
+    // From rest under g: 2 tiles at 40 tiles / s² take √(2·2/40) s, and the way at half that time is a quarter.
+    CHECK(ease::fall_time(2, 40) == doctest::Approx(std::sqrt(0.1)));
+    CHECK(ease::fall_time(0, 40) == 0);
+    CHECK(ease::lerp(2, 6, 0.25) == 3);
 }
