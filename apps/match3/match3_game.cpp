@@ -162,6 +162,7 @@ i32 Match3Game::picked() const { return field_ ? field_->picked : -1; }
 bool Match3Game::begin(const fs::path& session, bool new_game, std::string* error) {
     std::string why;
     refusal_.clear();
+    ends_ = 0;
     field_.reset();
     later_.clear();
     said_.clear();
@@ -418,7 +419,7 @@ void Match3Game::on_board(u64 generation, const Event& e) {
         any = true;
         fired_.push_back(link.id);
         act(link, *verb);
-        if (break_ == Break::RewardTwice && e.kind == Event::Kind::Target) act(link, *verb);
+        if (break_ == Break::RewardTwice) act(link, *verb);
     }
     if (!any && e.kind != Event::Kind::Match && !said_once_[kind]) {
         said_once_[kind] = true;
@@ -444,6 +445,7 @@ void Match3Game::later(f64 delay, std::function<void()> fn) {
 }
 
 void Match3Game::level_won() {
+    if (outcome_ != Outcome::Playing) return; // two links «набирает цель»: the level is passed once
     usize at = levels_.levels.size();
     for (usize i = 0; i < levels_.levels.size(); ++i)
         if (levels_.levels[i].id == field_->level) at = i;
@@ -452,6 +454,7 @@ void Match3Game::level_won() {
         return;
     }
     outcome_ = Outcome::LevelPassed;
+    ++ends_;
     shell_->vars().set("game.result", std::string("уровень пройден"));
     const u32 shown = shell_->screens().show_ending("level");
     FORGE_INFO("Три в ряд: уровень «%s» пройден, очков %llu; окон «Уровень пройден» %u", field_->name.c_str(),
@@ -466,6 +469,7 @@ void Match3Game::level_won() {
 void Match3Game::finish(bool won, const std::string& why) {
     if (outcome_ == Outcome::Won || outcome_ == Outcome::Lost) return;
     outcome_ = won ? Outcome::Won : Outcome::Lost;
+    ++ends_;
     shell_->vars().set("game.result", std::string(won ? "победа" : "поражение"));
     shell_->vars().set("board.reason", why);
     const u32 shown = shell_->screens().show_ending(won ? "win" : "lose");

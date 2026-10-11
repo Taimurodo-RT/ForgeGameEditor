@@ -115,6 +115,8 @@ public:
     u32 sounds_played() const { return sounds_played_; }
     // Why the last begin() refused (a save that does not fit the game, a level that would not start).
     const std::string& refusal() const { return refusal_; }
+    // How many times a level of this game ended (passed, the game won or lost): once a level, whatever links say.
+    u32 ends() const { return ends_; }
     // The level a new game starts from (the self-test's levels).
     void set_level(const std::filesystem::path& dir) { options_.level_dir = dir; }
     // Breaks a rule on purpose, so a check is seen to fail without it (--break).
@@ -168,6 +170,7 @@ private:
     u32 stale_ = 0, stale_events_ = 0;
     std::vector<std::string> problems_;
     std::string refusal_;
+    u32 ends_ = 0;
     std::vector<Drawn> drawn_;
     u32 width_ = 0, height_ = 0;
     // The mouse: the cell pressed on and whether it is held (a drag swaps with the neighbour it comes onto).

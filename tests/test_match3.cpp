@@ -157,6 +157,12 @@ TEST_CASE("match3: gems fall past holes, and new ones come into the top cells of
     CHECK((drops[2].cell == 4 && drops[2].above == 2));
     CHECK((drops[3].cell == 1 && drops[3].above == 3));
     CHECK(rng.calls == 5);
+    // A hole at the bottom of a column: the gem falls onto the cell above it, never into it.
+    Board low = board_of({"C", ".", "#"});
+    const std::vector<Fall> onto = fall(low);
+    CHECK(rows_of(low) == std::vector<std::string>{".", "C", "#"});
+    REQUIRE(onto.size() == 1);
+    CHECK((onto[0].from == 0 && onto[0].to == 1));
 }
 
 TEST_CASE("match3: a swap without a row goes back and spends no move; a swap is of two neighbouring gems") {
@@ -189,11 +195,12 @@ TEST_CASE("match3: a swap without a row goes back and spends no move; a swap is 
 }
 
 TEST_CASE("match3: a cascade goes step by step, its groups in the order of their top left cell, the chain growing") {
-    // A swap of (2,1) and (2,2)... set up so the first step has two groups and new rows come of the fall.
-    Board b = board_of({"BCDB",
-                        "AADC",
-                        "CBAB",
-                        "BBCB"});
+    // The swap makes «AAA» in row 2; when it goes, column 0 falls into «CCC»: a second step whatever the new gems are.
+    Board b = board_of({"CDBC",
+                        "CADB",
+                        "ABAD",
+                        "CDCA"});
+    REQUIRE(find_groups(b).empty());
     Play p;
     std::string why;
     Play::Saved s;
@@ -205,26 +212,38 @@ TEST_CASE("match3: a cascade goes step by step, its groups in the order of their
     REQUIRE(p.resume(s, 4, tens(4), r, why));
     std::vector<Event> events;
     p.on_event = [&](const Event& e) { events.push_back(e); };
-    // (2,2) A up to (2,1): «AAA» across row 1; and B at (2,1)… down to (2,2): «BB B» in row 3? no: (2,2) is in row 2.
-    REQUIRE(p.swap(b.index(2, 1), b.index(2, 2)) == Swap::Done);
+    REQUIRE(p.swap(b.index(1, 1), b.index(1, 2)) == Swap::Done);
     Step first;
     REQUIRE(p.step(first));
     CHECK(first.number == 1);
-    REQUIRE(first.groups.size() >= 1);
-    CHECK(first.groups[0].cells == std::vector<i32>{4, 5, 6});
+    REQUIRE(first.groups.size() == 1);
+    CHECK(first.groups[0].cells == std::vector<i32>{8, 9, 10});
     CHECK(first.points[0] == 30);
-    for (usize i = 1; i < first.groups.size(); ++i) CHECK(first.groups[i - 1].cells.front() < first.groups[i].cells.front());
-    // The groups' events, in that order, each with its points, before the cells went.
-    REQUIRE(events.size() == first.groups.size());
+    // The group's event, with its points, before the cells went.
+    REQUIRE(events.size() == 1);
     CHECK(events[0].kind == Event::Kind::Match);
     CHECK(events[0].gem == 0);
     CHECK(events[0].cells == 3);
     CHECK(events[0].step == 1);
-    // Further steps, if any, score with the chain.
-    for (Step st; p.step(st);) {
-        CHECK(st.number >= 2);
-        for (usize i = 0; i < st.groups.size(); ++i) CHECK(st.points[i] == group_points(st.groups[i], tens(4), st.number));
+    // What fell: column 0 is «CCC» from row 1 down.
+    CHECK(p.board().at(0, 1) == 2);
+    CHECK(p.board().at(0, 2) == 2);
+    CHECK(p.board().at(0, 3) == 2);
+    CHECK(p.busy());
+    // The second step: that column, with the chain.
+    Step second;
+    REQUIRE(p.step(second));
+    CHECK(second.number == 2);
+    bool column = false;
+    for (usize i = 0; i < second.groups.size(); ++i) {
+        const std::vector<i32>& c = second.groups[i].cells;
+        if (std::find(c.begin(), c.end(), 12) != c.end() && std::find(c.begin(), c.end(), 4) != c.end()) column = true;
+        CHECK(second.points[i] == group_points(second.groups[i], tens(4), 2));
+        if (i) CHECK(second.groups[i - 1].cells.front() < second.groups[i].cells.front());
     }
+    CHECK(column);
+    CHECK(events.size() == 1 + second.groups.size());
+    for (Step st; p.step(st);) CHECK(st.number >= 3);
     CHECK_FALSE(p.busy());
     CHECK(find_groups(p.board()).empty());
 }

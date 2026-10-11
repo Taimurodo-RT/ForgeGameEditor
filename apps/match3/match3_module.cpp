@@ -423,6 +423,7 @@ private:
         if (moved_) { // a move just ended: the board at rest
             moved_ = false;
             check_rest("ход " + std::to_string(moves_) + " сыгран");
+            if (g_.generation() == move_gen_) check_rewards();
             if (between && !(seen_swap_ && seen_vanish_ && seen_fall_)) fail("ход " + std::to_string(moves_) + ": не все кадры между сняты" + state());
         }
         if (p->end() != End::None || moves_on_field_ >= most_moves) return true;
@@ -433,6 +434,10 @@ private:
         move_b_ = m->second;
         seen_swap_ = seen_vanish_ = seen_fall_ = false;
         const u32 left = p->moves();
+        move_gen_ = g_.generation();
+        move_said_ = g_.said().size();
+        move_moves_ = left;
+        move_score_ = p->score();
         const bool drag = moves_ % 2 == 1;
         check(move(move_a_, move_b_, drag), std::string("ход ") + std::to_string(moves_ + 1) + (drag ? " протяжкой" : " щелчками") +
                                                 ": " + std::to_string(move_a_) + " ↔ " + std::to_string(move_b_));
@@ -441,6 +446,27 @@ private:
         ++moves_on_field_;
         moved_ = true;
         return false;
+    }
+
+    // What a move gave, by the links of the test game: its groups' points, «+2 хода» for each group of topazes, nothing
+    // more and nothing twice.
+    void check_rewards() {
+        const Play* p = g_.play();
+        const i32 topaz = g_.gems().index("topaz");
+        u64 points = 0;
+        u32 topazes = 0, groups = 0;
+        for (usize i = move_said_; i < g_.said().size(); ++i) {
+            const Event& e = g_.said()[i].event;
+            if (g_.said()[i].generation != move_gen_ || e.kind != Event::Kind::Match) continue;
+            ++groups;
+            points += e.points;
+            if (static_cast<i32>(e.gem) == topaz) ++topazes;
+        }
+        const u64 moves = move_moves_ - 1 + 2 * topazes;
+        check(p->score() == move_score_ + points && p->moves() == moves,
+              "ход " + std::to_string(moves_) + ": групп " + std::to_string(groups) + ", очков +" + std::to_string(points) + ", групп топазов " +
+                  std::to_string(topazes) + " — ходов " + std::to_string(moves) + state());
+        rewards_ += topazes;
     }
 
     // A new field: what its values say.
@@ -581,6 +607,8 @@ private:
             check(refused && why == "игра пройдена", "пройденная игра не сохраняется: «" + why + "»");
             check(g_.stale() == 0 && g_.stale_events() == 0, "ничего от прежних полей не случилось");
             check(in_hole_ > 0, "фишки, что падают сквозь дыры и вырез, там скрыты: " + std::to_string(in_hole_));
+            check(rewards_ > 0, "связь «Поле даёт +2 хода за Топаз» сработала: " + std::to_string(rewards_) + " раз(а), каждый раз +2");
+            check(g_.ends() == 3, "конец уровня — по разу на каждый из трёх: " + std::to_string(g_.ends()));
             return true;
         }});
     }
@@ -838,6 +866,10 @@ private:
     // The bot.
     u32 moves_ = 0, moves_on_field_ = 0;
     bool moved_ = false;
+    // The move being played: its field, where the board's events were, the moves and points before it.
+    u64 move_gen_ = 0, move_score_ = 0;
+    usize move_said_ = 0;
+    u32 move_moves_ = 0, rewards_ = 0;
     i32 move_a_ = -1, move_b_ = -1;
     bool seen_swap_ = false, seen_vanish_ = false, seen_fall_ = false;
     u32 between_[3] = {0, 0, 0};
