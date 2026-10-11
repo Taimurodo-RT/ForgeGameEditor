@@ -1,0 +1,114 @@
+/* The «Анимация» tab (the #animation part of editor.rml): templates with a picture on the left, the one selected
+   playing in the middle over the frames of its picture, the states the game plays it in on the right. */
+
+#animation {
+    flex: 1 1 0px;
+    min-height: 0px;
+    position: relative;
+    padding: 0px var(--space-2) var(--space-2) var(--space-2);
+}
+.an-bar { height: 52px; gap: var(--space-3); align-items: center; }
+.an-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
+
+.an-nav {
+    width: 250px;
+    padding: var(--space-1);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.an-row {
+    min-height: 48px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+.an-row:hover { background-color: var(--state-hover-layer); }
+.an-row.selected { background-color: var(--surface-container-highest); font-weight: 600; }
+.an-row img { width: 40px; height: 40px; }
+.an-row .sub, .an-state .sub { font-size: 12px; font-weight: normal; color: var(--on-surface-variant); }
+.an-empty, .an-hint, .an-sel-note { padding: var(--space-2); font-size: 13px; color: var(--on-surface-variant); }
+
+.an-stage {
+    padding: var(--space-2);
+    gap: var(--space-2);
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+    min-width: 0px;
+}
+.an-preview {
+    flex: 1 1 0px;
+    min-height: 260px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background-color: var(--surface-container-highest);
+}
+.an-controls { gap: var(--space-1); align-items: center; justify-content: center; }
+.an-strip-head { gap: var(--space-1); align-items: center; }
+.an-label { font-size: 12px; font-weight: 600; color: var(--on-surface-variant); }
+.an-count { min-width: 20px; text-align: center; font-weight: 600; }
+.an-strip, .an-seq { flex-wrap: wrap; gap: var(--space-1); }
+.an-frame {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px var(--outline-variant);
+    border-radius: 6px;
+    background-color: var(--surface-container);
+    cursor: pointer;
+}
+.an-frame:hover { border-color: var(--outline); }
+.an-frame.used { border-color: var(--tertiary); }
+.an-frame.shown { border-color: var(--primary); background-color: var(--primary-container); }
+.an-frame.small { width: 44px; height: 44px; cursor: default; }
+.an-frame.small img { width: 36px; height: 36px; }
+.an-num { position: absolute; left: 4px; top: 2px; font-size: 11px; font-weight: 600; color: var(--on-surface-variant); }
+
+.an-side {
+    width: 300px;
+    padding: var(--space-1);
+    gap: var(--space-1);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.an-state {
+    padding: var(--space-2);
+    gap: 2px;
+    border: 1px var(--outline-variant);
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+.an-state:hover { border-color: var(--outline); }
+.an-state.selected { border-color: var(--tertiary); background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.an-tag { font-size: 11px; font-weight: 600; padding: 0px 6px; border-radius: 4px; color: var(--on-surface-variant); background-color: var(--surface-container-highest); }
+.an-tag.own { color: var(--on-primary); background-color: var(--primary); }
+.an-problem { font-size: 12px; color: var(--error); }
+.an-actions { gap: var(--space-1); flex-wrap: wrap; }
+.an-fps { flex-wrap: wrap; gap: 4px; padding: 0px var(--space-1); }
+.an-chip {
+    min-width: 32px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    padding: 0px 6px;
+    border: 1px var(--outline-variant);
+    border-radius: 14px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.an-chip:hover { border-color: var(--outline); }
+.an-chip.selected { border-color: var(--primary); background-color: var(--primary-container); color: var(--on-primary-container); font-weight: 600; }
+.an-check { gap: var(--space-1); align-items: center; padding: var(--space-1) var(--space-2); font-size: 14px; cursor: pointer; }
+
+.an-bar .lg-modes { margin-left: var(--space-3); }
+.an-soon { font-size: 11px; color: var(--on-surface-variant); }
