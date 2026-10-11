@@ -14,7 +14,8 @@
 // put into that level, which the game must have; without an object only these are checked. And going between its
 // levels (step 14.2b): the areas the hero comes into, where it must be after each. The platformer (step 14.2c): the
 // author's enemy, coin, trap and goal, the zone the hero falls into, the HUD and the windows the game shows at its end.
-// The template «Платформер» (step 14.2d): what the author changed in a game made of it.
+// The template «Платформер» (step 14.2d): what the author changed in a game made of it. The tab «Анимация»: the
+// animations the author made, played by the hero, a walker and an object that stands.
 
 #include "forge/core/types.h"
 #include "forge/data/reflect.h"
@@ -87,6 +88,15 @@ struct ProjectEdits {
     forge::u32 tp_hud_score = 0, tp_again = 0, tp_win_title = 0, tp_win_again = 0, tp_win_again_label = 0;
     std::string tp_win_text, tp_win_again_text;
     std::string tp_twin; // the author's «Копия» of tp_enemy (its template's id)
+    // The tab «Анимация» (the first of the order after 14.3a) as the author set it: their animations, each of the
+    // template an_of[i] in its state an_state[i] ("walk", "air", "idle"): an_count[i] frames of its strip, taken in turn
+    // from an_frames (all of them, one animation after another), an_fps[i] frames a second, starting over when an_loop[i]
+    // is 1. an_hero: the hero's template (it walks and jumps); an_walker: a walker's (a copy the game puts beside the
+    // hero walks); an_still: an object's that stands (a copy put there too).
+    std::vector<std::string> an_of, an_state;
+    std::vector<int> an_count, an_frames, an_loop;
+    std::vector<double> an_fps;
+    std::string an_hero, an_walker, an_still;
 };
 
 // False (error says why) when the file cannot be read.

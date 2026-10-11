@@ -78,6 +78,15 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("tp_win_again_label", &forge::edits::ProjectEdits::tp_win_again_label);
     t.field("tp_win_again_text", &forge::edits::ProjectEdits::tp_win_again_text);
     t.field("tp_twin", &forge::edits::ProjectEdits::tp_twin);
+    t.field("an_of", &forge::edits::ProjectEdits::an_of);
+    t.field("an_state", &forge::edits::ProjectEdits::an_state);
+    t.field("an_count", &forge::edits::ProjectEdits::an_count);
+    t.field("an_frames", &forge::edits::ProjectEdits::an_frames);
+    t.field("an_loop", &forge::edits::ProjectEdits::an_loop);
+    t.field("an_fps", &forge::edits::ProjectEdits::an_fps);
+    t.field("an_hero", &forge::edits::ProjectEdits::an_hero);
+    t.field("an_walker", &forge::edits::ProjectEdits::an_walker);
+    t.field("an_still", &forge::edits::ProjectEdits::an_still);
 }
 
 namespace forge::edits {

@@ -38,6 +38,7 @@
 // none. A folder with no game yet gets a copy of «Старая шахта»; one
 // with a project.forge was made of a template of games/templates.json.
 
+#include "animation_editor.h"
 #include "asset_library.h"
 #include "components.h"
 #include "demo_art.h"
@@ -364,6 +365,7 @@ public:
     ObjectLibrary objects_tab{level_module};
     LogicEditor logic_tab{level_module};
     StoryEditor story_tab{level_module.library()};
+    AnimationEditor anim_tab{level_module};
     UiEditor ui_tab;
     AssetLibrary assets;
     // The game that is open and the ways to another («Новая игра из шаблона…», «Открыть игру…»); set before init.
@@ -497,6 +499,8 @@ public:
             level.open_tiled(tmx);
         };
         story_tab.init(ui_, story_dir);
+        anim_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
+        anim_tab.init(ui_);
         if (!assets.init(ui_, assets_config)) return false;
         // A picture or a sound picked in «Ресурсы» goes into the game as a copy that remembers its asset; each look
         // at «Ресурсы» brings the copies up to date.
@@ -700,6 +704,7 @@ public:
         else if (m_tab_ == "objects") objects_tab.undo();
         else if (m_tab_ == "logic") logic_tab.undo();
         else if (m_tab_ == "story") story_tab.undo();
+        else if (m_tab_ == "animation") anim_tab.undo();
         else if (m_tab_ == "ui") ui_tab.undo();
         else if (m_tab_ == "level") level.undo();
         else if (history.undo()) FORGE_INFO("Отменено");
@@ -709,6 +714,7 @@ public:
         else if (m_tab_ == "objects") objects_tab.redo();
         else if (m_tab_ == "logic") logic_tab.redo();
         else if (m_tab_ == "story") story_tab.redo();
+        else if (m_tab_ == "animation") anim_tab.redo();
         else if (m_tab_ == "ui") ui_tab.redo();
         else if (m_tab_ == "level") level.redo();
         else if (history.redo()) FORGE_INFO("Повторено");
@@ -719,6 +725,7 @@ public:
         if (m_tab_ == "objects") return objects_tab.history();
         if (m_tab_ == "logic") return logic_tab.history();
         if (m_tab_ == "story") return story_tab.history();
+        if (m_tab_ == "animation") return anim_tab.history();
         if (m_tab_ == "ui") return ui_tab.history();
         return m_tab_ == "level" ? level.history() : history;
     }
@@ -728,8 +735,26 @@ public:
         model_.DirtyVariable("tab");
     }
     const std::string& tab() const { return m_tab_; }
+    bool animate_selected_asset() {
+        if (assets.selection().size() != 1) return false;
+        const std::string& rel = assets.selection().front();
+        const assets::AssetRecord* r = assets.record_of(assets.abs(rel));
+        std::string picture;
+        for (const editor::sources::Entry& e : sources.entries())
+            if (r && e.asset == r->id && e.file.rfind("pictures/", 0) == 0) {
+                picture = e.file.substr(9);
+                break;
+            }
+        const bool found = anim_tab.select_picture(picture, path_to_utf8(utf8_path(rel).filename()));
+        m_tab_title_ = "Анимация";
+        m_tab_icon_ = "movie";
+        for (const char* name : {"tab_title", "tab_icon"}) model_.DirtyVariable(name);
+        open_tab("animation");
+        return found;
+    }
     void save() {
-        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic" || m_tab_ == "story" || m_tab_ == "ui") return; // files are saved as they change
+        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic" || m_tab_ == "story" || m_tab_ == "ui" || m_tab_ == "animation")
+            return; // files are saved as they change
         if (m_tab_ == "level") {
             level.save();
             return;
@@ -870,6 +895,7 @@ public:
         if (m_tab_ == "objects") objects_tab.update(context_);
         if (m_tab_ == "logic") logic_tab.update(context_);
         if (m_tab_ == "story") story_tab.update(context_);
+        if (m_tab_ == "animation") anim_tab.update(dt);
         ui_tab.set_shown(m_tab_ == "ui");
         if (m_tab_ == "ui") ui_tab.update(context_);
         refresh_drawables();
@@ -950,6 +976,7 @@ public:
         if (m_tab_ == "objects") return ui_used;
         if (m_tab_ == "logic") return logic_tab.handle_event(e, density, ui_used) || ui_used;
         if (m_tab_ == "story") return story_tab.handle_event(e) || ui_used;
+        if (m_tab_ == "animation") return ui_used;
         if (m_tab_ == "ui") return ui_tab.handle_event(e, density, context_) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -1125,6 +1152,8 @@ private:
             for (const char* name : {"tab", "tab_title", "tab_description", "tab_step", "tab_icon"})
                 model_.DirtyVariable(name);
         });
+        // «Сделать анимацию» of «Ресурсы»: the tab «Анимация» on the template drawn with the game's copy of the picture.
+        on("an_from_asset", [this](Rml::Event&, const Rml::VariantList&) { animate_selected_asset(); });
         on("add_object", [this](Rml::Event&, const Rml::VariantList&) { add_object(); });
         on("delete_selection", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
         on("expand_all", [this](Rml::Event&, const Rml::VariantList& a) {
@@ -1184,6 +1213,7 @@ private:
         objects_tab.bind(model);
         logic_tab.bind(model);
         story_tab.bind(model);
+        anim_tab.bind(model);
         ui_tab.bind(model);
         projects.bind(model);
         model_ = model.GetModelHandle();
@@ -1192,6 +1222,7 @@ private:
         objects_tab.set_model(model_);
         logic_tab.set_model(model_);
         story_tab.set_model(model_);
+        anim_tab.set_model(model_);
         ui_tab.set_model(model_);
         projects.set_model(model_);
         return true;
@@ -1305,13 +1336,15 @@ private:
         set(m_can_undo_, h.can_undo(), "can_undo");
         set(m_can_redo_, h.can_redo(), "can_redo");
         set(m_undo_label_, h.undo_label(), "undo_label");
-        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && m_tab_ != "story" && m_tab_ != "ui" && h.dirty(), "dirty"); // files are written at once
+        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && m_tab_ != "story" && m_tab_ != "ui" && m_tab_ != "animation" && h.dirty(),
+            "dirty"); // files are written at once
         set(m_scene_name_,
             m_tab_ == "level"    ? level.title()
             : m_tab_ == "assets" ? std::string("Ресурсы проекта")
             : m_tab_ == "objects" ? std::string("Объекты: ") + level.title()
             : m_tab_ == "logic"   ? std::string("Логика: ") + level.title()
             : m_tab_ == "story"   ? std::string("Сюжет: ") + level.title()
+            : m_tab_ == "animation" ? std::string("Анимация: ") + level.title()
             : m_tab_ == "ui"      ? std::string("Интерфейс: ") + ui_tab.screen().title
                                  : path_to_utf8(scene_path.filename()),
             "scene_name");
@@ -1362,6 +1395,8 @@ private:
             set(m_status_, logic_tab.status(), "status");
         } else if (m_tab_ == "story") {
             set(m_status_, story_tab.status(), "status");
+        } else if (m_tab_ == "animation") {
+            set(m_status_, anim_tab.status(), "status");
         } else if (m_tab_ == "ui") {
             set(m_status_, ui_tab.status(), "status");
         } else if (m_tab_ == "objects") {
@@ -1585,6 +1620,7 @@ private:
         if (m_tab_ == "objects") return objects_tab.handle_key(k);
         if (m_tab_ == "logic") return logic_tab.handle_key(k);
         if (m_tab_ == "story") return story_tab.handle_key(k);
+        if (m_tab_ == "animation") return anim_tab.handle_key(k);
         if (m_tab_ == "ui") return ui_tab.handle_key(k);
         if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
@@ -1819,7 +1855,9 @@ struct Options {
     // "platformer-a-again"); "platformer-template" (step 14.2d: two games of the catalog's «Платформер», A changed through
     // the tabs by "platformer-template-a", opened again and played as changed by "platformer-template-a-again");
     // "modules" (step 14.3a: the editor of a game's module, from the registry; a game of the test module «Проба» opened
-    // by "modules-probe" in an editor of its own, a game from before step 14.3 by "modules-old", the games refused).
+    // by "modules-probe" in an editor of its own, a game from before step 14.3 by "modules-old", the games refused);
+    // "animation" (the tab «Анимация»: two games of the catalog's «Платформер», animations of A made in the tab by
+    // "animation-a", opened again and played by "animation-a-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -2032,6 +2070,9 @@ public:
         if (part == "modules") return frame < 3 || modules_step();
         if (part == "modules-probe") return frame < 3 || modules_probe_step();
         if (part == "modules-old") return frame < 3 || modules_old_step();
+        if (part == "animation") return frame < 3 || animation_step();
+        if (part == "animation-a") return frame < 3 || animation_a_step();
+        if (part == "animation-a-again") return frame < 3 || animation_again_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -16261,6 +16302,436 @@ private:
         return true;
     }
 
+    // --- «Анимация» (the first tab of the order after 14.3a) -------------------------------------------------------
+    // --self-test animation: «Анимация А» and «Анимация Б» made of the catalog's «Платформер». The editor for A
+    // (animation-a), in the tab «Анимация» with the mouse and the keys: the strip of five modes, «Покадровая» the one
+    // that works; «Жук» walks by frames 2, 2, 1 four a second; the hero walks by 2, 3, 4, 3 twelve a second and is in the
+    // air by 1, 4 five a second, once; «Флаг» gets two frames and stands by 1, 2 two a second; the preview by its
+    // clock, Space, ← and →; each step's file, undone and done again (the flag's file back to the template's bytes); a
+    // frame its picture has not: the reason, and the game's rule; a change in «Объекты» undone there keeps the
+    // animations; «Сделать анимацию» of «Ресурсы». animation-a-again, from another working folder: the same animations;
+    // «Играть со стартового»: the game plays them (scene project with --edits). The template and B: the same bytes.
+    int an_step_ = 0;
+    std::map<std::string, std::vector<u8>> an_tmpl_, an_b_;
+    std::vector<u8> an_flag_, an_flag_done_, an_air_; // «Флаг»'s file before and after; the hero's file with its air
+    AnimationEditor& an() { return ed_.anim_tab; }
+    static std::filesystem::path an_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_анимация"); }
+    static std::filesystem::path an_mine(const char* title) { return an_root() / utf8_path("Мои игры") / utf8_path(title); }
+    // A template's animation of a state as the library has it (nullopt: none), and the template's file.
+    std::optional<objects::Clip> an_clip(const char* id, const char* state) {
+        const objects::Template* t = an().library().find(std::string_view(id));
+        if (!t) return std::nullopt;
+        const auto it = t->animations.find(state);
+        return it == t->animations.end() ? std::nullopt : std::optional<objects::Clip>(it->second);
+    }
+    std::vector<u8> an_file(const char* id) {
+        const objects::Template* t = an().library().find(std::string_view(id));
+        return t ? tg_bytes(t->file) : std::vector<u8>{};
+    }
+    // The bytes with line ends as LF: a checkout with CRLF (Git on Windows) gives the template's files CR, the editor writes LF.
+    static std::vector<u8> an_lf(std::vector<u8> bytes) {
+        std::erase(bytes, u8{'\r'});
+        return bytes;
+    }
+    std::string an_text(const char* id) {
+        const std::vector<u8> b = an_file(id);
+        return std::string(b.begin(), b.end());
+    }
+    // The library's animation of the state is this one, and the file read again has it the same.
+    bool an_is(const char* id, const char* state, const objects::Clip& want) {
+        const std::optional<objects::Clip> c = an_clip(id, state);
+        const objects::Template* t = an().library().find(std::string_view(id));
+        const std::optional<objects::Template> file = t ? objects::read_template(t->file) : std::nullopt;
+        const auto it = file ? file->animations.find(state) : decltype(file->animations)::const_iterator{};
+        return c && *c == want && file && it != file->animations.end() && it->second == want;
+    }
+    bool an_none(const char* id, const char* state) {
+        const objects::Template* t = an().library().find(std::string_view(id));
+        const std::optional<objects::Template> file = t ? objects::read_template(t->file) : std::nullopt;
+        return t && !t->animations.count(state) && file && !file->animations.count(state);
+    }
+    // The list's row of a template (its id), clicked with the mouse.
+    bool an_pick(const char* id) {
+        const objects::Template* t = an().library().find(std::string_view(id));
+        const auto& l = an().listed();
+        const auto at = t ? std::find(l.begin(), l.end(), t->key) : l.end();
+        return at != l.end() && pj_click(("an-tpl-" + std::to_string(at - l.begin())).c_str());
+    }
+    // The preview at a tick of its clock: the frame of the strip it shows, and its picture that frame's.
+    bool an_shows(u64 ticks, u32 frame) {
+        an().set_clock(ticks);
+        const std::string& img = an().preview_image();
+        return an().shown_frame() == frame && img.ends_with("_" + std::to_string(frame) + "_big");
+    }
+    static std::string an_words(const objects::Clip& c) {
+        std::string s;
+        for (u32 f : c.frames) s += (s.empty() ? "" : ",") + std::to_string(f + 1);
+        char buf[48];
+        std::snprintf(buf, sizeof buf, " · %g к/с%s", static_cast<f64>(c.fps), c.loop ? "" : " · без повтора");
+        return s + buf;
+    }
+    // What the game must play: the animations as the library has them now (the game's own reading is checked against it).
+    edits::ProjectEdits an_edits() {
+        edits::ProjectEdits e;
+        for (const objects::Template& t : an().library().templates())
+            for (const auto& [state, clip] : t.animations) {
+                e.an_of.push_back(t.id);
+                e.an_state.push_back(state);
+                e.an_count.push_back(static_cast<int>(clip.frames.size()));
+                for (u32 f : clip.frames) e.an_frames.push_back(static_cast<int>(f));
+                e.an_fps.push_back(clip.fps);
+                e.an_loop.push_back(clip.loop ? 1 : 0);
+            }
+        e.an_hero = "hero_look";
+        e.an_walker = "beetle";
+        e.an_still = "flag";
+        return e;
+    }
+
+    // --self-test animation: the games made; A in an editor of its own, then again from another working folder; the
+    // template and B compared byte for byte.
+    bool animation_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = an_mine("Анимация А"), b = an_mine("Анимация Б");
+        fs::remove_all(an_root(), ec);
+        fs::create_directories(an_root() / utf8_path("Мои игры"), ec);
+        an_tmpl_ = tp_template();
+        tg_snap("шаблон до", an_tmpl_, an_root());
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto platformer = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "platformer"; });
+        for (const auto& [title, folder] : {std::pair{"Анимация Б", b}, std::pair{"Анимация А", a}}) {
+            fs::path made;
+            check(platformer != all.end() && pj::create(*platformer, editor_modules(), an_root() / utf8_path("Мои игры"), title, made, &error) &&
+                      lvl_same(made, folder),
+                  std::string("«") + title + "» made of «Платформер» " + error);
+            fs::remove_all(play_folder(folder), ec);
+        }
+        an_b_ = pj_tree(b);
+        tg_snap("Анимация Б до", an_b_, an_root());
+        const std::string exe = path_to_utf8(editor_exe()), project = path_to_utf8(a / "project.forge");
+        const fs::path one = an_root() / utf8_path("первая папка"), two = an_root() / utf8_path("вторая папка");
+        fs::create_directories(one, ec);
+        fs::create_directories(two, ec);
+        int code = pj_run({exe, "--project", project, "--self-test", "animation-a"}, one);
+        check(code == 0, "the walk of «Жук», the hero's walk and jump, «Флаг» standing by two frames made in the tab «Анимация» with the mouse "
+                         "and the keys, undone and done again (animation-a: exit " + std::to_string(code) + ")");
+        code = pj_run({exe, "--project", project, "--self-test", "animation-a-again"}, two);
+        check(code == 0, "opened again elsewhere: the same animations; the game plays them (animation-a-again: exit " + std::to_string(code) + ")");
+        const auto tmpl = tp_template(), btree = pj_tree(b);
+        check(tg_snap("шаблон после", tmpl, an_root()) == tg_digest(an_tmpl_) && tmpl == an_tmpl_, "the template byte for byte as before");
+        check(tg_snap("Анимация Б после", btree, an_root()) == tg_digest(an_b_) && btree == an_b_, "«Анимация Б» byte for byte as before");
+        check(tg_naming(b, {"\"animations\""}).empty() && !tg_naming(a, {"\"animations\""}).empty(),
+              "animations in A's files, none in B's: " + tg_naming(b, {"\"animations\""}));
+        return false;
+    }
+
+    // In an editor for «Анимация А» (--self-test animation-a).
+    bool animation_a_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        objects::Library& lib = an().library();
+        const bool idle = !as().busy();
+        const objects::Clip beetle{{1, 1, 0}, 4, true}, walk{{1, 2, 3, 2}, 12, true}, air{{0, 3}, 5, false}, flag{{0, 1}, 2, true};
+        auto undo_redo = [&](const char* id, const char* state, const objects::Clip& before, const objects::Clip& after, const char* what) {
+            const std::vector<u8> now = an_file(id);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_is(id, state, before), std::string("Ctrl+Z: ") + what + " " + an_words(before));
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_is(id, state, after) && an_file(id) == now, std::string("Ctrl+Y: ") + what + " " + an_words(after) + ", the file as it was");
+        };
+        auto open_card = [&](const char* name) {
+            f32 x = 0, y = 0;
+            check(ue_type("ol-search", name) && card_at(card_named(name), x, y), std::string("«") + name + "» found by its name, its card on screen");
+            left_click(x, y);
+            left_click(x, y);
+        };
+        switch (an_step_) {
+        case 0:
+            check(pjw().config().title == "Анимация А" && lvl_same(ed_.game_dir, a / "game"), "the editor has «Анимация А» open");
+            check(lib.templates().size() == 8, "the template's 8 objects");
+            for (const objects::Template& t : lib.templates()) check(t.animations.empty(), "«" + t.name + "»: no animations of its own yet");
+            check(click_tab(3) && ed_.tab() == "animation", "a click on the tab «Анимация»");
+            break;
+        case 1: {
+            if (hold(shown("an-tpl-0") && shown("an-mode-frames"), "the tab is laid out")) return true;
+            std::string names;
+            for (u64 k : an().listed()) names += (names.empty() ? "" : ", ") + lib.find(k)->name;
+            check(tab_lit(3) && an().note().empty() && names == "Герой, Ёж, Жук, Монетка, Ряд шипов, Указатель, Флаг, Шипы",
+                  "the tab lit; its list: the 8 templates with a picture, by the alphabet: " + names);
+            check(pj_class("an-mode-frames", "selected") && !pj_class("an-mode-frames", "soon") &&
+                      element_text("an-mode-frames").find("Покадровая") != std::string::npos,
+                  "the modes: «Покадровая» chosen");
+            for (const auto& [m, name] : {std::pair{"an-mode-skeleton", "Скелетная"}, std::pair{"an-mode-scene", "Сцена"},
+                                          std::pair{"an-mode-ui", "Интерфейс"}, std::pair{"an-mode-pixel", "Пиксельные"}})
+                check(shown(m) && pj_class(m, "soon") && !pj_class(m, "selected") && element_text(m).find(name) != std::string::npos &&
+                          element_text(m).find("появится") != std::string::npos,
+                      std::string("«") + name + "»: «появится»");
+            check(an_pick("beetle"), "a click on «Жук»");
+            break;
+        }
+        // «Жук»: «Идёт» by frames 2, 2, 1, four a second.
+        case 2: {
+            if (hold(an().selected() && an().selected()->id == "beetle" && shown("an-state-walk"), "«Жук» shown")) return true;
+            const auto& s = an().states();
+            check(s.size() == 2 && s[0].id == "stand" && s[0].name == "Стоит" && s[1].id == "walk" && s[1].name == "Идёт" && an().state() == "stand",
+                  "«Жук»: «Стоит», «Идёт» (the walker's), «Стоит» chosen");
+            check(s.size() == 2 && s[0].rule == objects::Clip{{0}, 10, true} && s[1].rule == objects::Clip{{0, 1}, 7.5f, true},
+                  "the game's rules: stands in 1, walks by 1, 2 every 8 ticks");
+            check(shown("an-frame-0") && shown("an-frame-1") && !shown("an-frame-2"), "the strip: its two frames");
+            check(pj_click("an-state-walk") && an().state() == "walk" && !an().own() && an().clip() == s[1].rule, "a click on «Идёт»: the game's rule");
+            check(an_shows(0, 0) && an_shows(7, 0) && an_shows(8, 1) && an_shows(16, 0), "the preview by its clock: 1, 1, 2, 1 at 0, 7, 8, 16");
+            check(pj_click("an-frame-1"), "a click on frame 2 of the strip");
+            break;
+        }
+        case 3:
+            check(an_is("beetle", "walk", {{1}, 7.5f, true}) && an().own() && pj_class("an-state-walk", "selected"),
+                  "«Идёт» has its own animation: frame 2, the rule's 7.5 a second; in its file");
+            check(an().history().undo_label() == "«Жук»: кадр 2 в «Идёт»", "one step: " + an().history().undo_label());
+            check(pj_click("an-frame-1"), "frame 2 again");
+            break;
+        case 4:
+            check(an_is("beetle", "walk", {{1, 1}, 7.5f, true}), "2, 2");
+            check(pj_click("an-frame-0"), "frame 1");
+            break;
+        case 5:
+            check(an_is("beetle", "walk", {{1, 1, 0}, 7.5f, true}) &&
+                      an_text("beetle").find("\"animations\": {\n    \"walk\": {\"frames\": [1, 1, 0], \"fps\": 7.5}\n  },") != std::string::npos,
+                  "2, 2, 1; the file: " + an_text("beetle"));
+            check(pj_click("an-fps-2") && element_text("an-fps-2") == "4", "a click on «4» of «Кадров в секунду»");
+            break;
+        case 6:
+            check(an_is("beetle", "walk", beetle) && pj_class("an-fps-2", "selected"), "«Идёт»: 2, 2, 1 four a second");
+            undo_redo("beetle", "walk", {{1, 1, 0}, 7.5f, true}, beetle, "«Жук» «Идёт»");
+            check(an().status() == "Анимация: «Жук» · Идёт · 3 кадра · 4 к/с · играет", "the status line: " + an().status());
+            check(an_shows(0, 1) && an_shows(14, 1) && an_shows(15, 1) && an_shows(30, 0) && an_shows(45, 1), "the preview: 15 ticks a frame, again");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(!an().playing() && an().status().ends_with("пауза"), "Space: the preview stops");
+            an().set_clock(30);
+            key(SDLK_RIGHT, SDL_KMOD_NONE);
+            check(an().clock() == 45 && an().shown_frame() == 1, "→: a frame on");
+            key(SDLK_LEFT, SDL_KMOD_NONE);
+            key(SDLK_LEFT, SDL_KMOD_NONE);
+            check(an().clock() == 15 && an().shown_frame() == 1, "← twice: two back");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(an().playing(), "Space: it plays again");
+            check(an_pick("hero_look"), "a click on «Герой»");
+            break;
+        // The hero: «Идёт» 2, 3, 4, 3 twelve a second; «В воздухе» 1, 4 five a second, once.
+        case 7: {
+            if (hold(an().selected() && an().selected()->id == "hero_look" && shown("an-state-air"), "«Герой» shown")) return true;
+            const auto& s = an().states();
+            check(s.size() == 3 && s[0].id == "stand" && s[1].id == "walk" && s[2].id == "air" && s[2].name == "В воздухе",
+                  "«Герой»: «Стоит», «Идёт», «В воздухе»");
+            check(s.size() == 3 && s[0].rule == objects::Clip{{0}, 10, true} && s[1].rule == objects::Clip{{1, 2}, 10, true} &&
+                      s[2].rule == objects::Clip{{3}, 10, true},
+                  "the game's rules: stands 1; walks 2, 3 every 6 ticks; in the air 4");
+            key(SDLK_2, SDL_KMOD_NONE);
+            check(an().state() == "walk", "key 2: «Идёт»");
+            check(pj_click("an-frame-1"), "frame 2");
+            break;
+        }
+        case 8: check(pj_click("an-frame-2"), "frame 3"); break;
+        case 9: check(pj_click("an-frame-3"), "frame 4"); break;
+        case 10: check(pj_click("an-frame-2"), "frame 3"); break;
+        case 11:
+            check(an_is("hero_look", "walk", {{1, 2, 3, 2}, 10, true}), "«Идёт»: 2, 3, 4, 3");
+            check(pj_click("an-fps-7") && element_text("an-fps-7") == "12", "«12»");
+            break;
+        case 12:
+            check(an_is("hero_look", "walk", walk), "«Идёт»: 2, 3, 4, 3 twelve a second");
+            key(SDLK_3, SDL_KMOD_NONE);
+            check(an().state() == "air" && an().clip() == objects::Clip{{3}, 10, true}, "key 3: «В воздухе», the game's rule");
+            check(pj_click("an-frame-0"), "frame 1");
+            break;
+        case 13: check(pj_click("an-frame-3"), "frame 4"); break;
+        case 14: check(pj_click("an-fps-3") && element_text("an-fps-3") == "5", "«5»"); break;
+        case 15:
+            check(an_is("hero_look", "air", {{0, 3}, 5, true}), "«В воздухе»: 1, 4 five a second");
+            check(pj_click("an-loop"), "«Повторять» off");
+            break;
+        case 16: {
+            check(an_is("hero_look", "air", air) && an_text("hero_look").find("\"air\": {\"frames\": [0, 3], \"fps\": 5, \"loop\": false},") != std::string::npos,
+                  "once: the file " + an_text("hero_look"));
+            undo_redo("hero_look", "air", {{0, 3}, 5, true}, air, "«В воздухе»");
+            check(an_shows(0, 0) && an_shows(11, 0) && an_shows(12, 3) && an_shows(24, 3) && an_shows(600, 3), "the preview: 1, then 4 and it stays");
+            an_air_ = an_file("hero_look");
+            key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+            check(an_is("hero_look", "air", {{0}, 5, false}), "Backspace: the last frame taken away");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_is("hero_look", "air", air) && an_file("hero_look") == an_air_, "Ctrl+Z: 1, 4 again");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(an_none("hero_look", "air") && !an().own() && an().clip() == objects::Clip{{3}, 10, true} && an_is("hero_look", "walk", walk),
+                  "Delete: «В воздухе» as in the game, «Идёт» stays");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_is("hero_look", "air", air) && an_file("hero_look") == an_air_, "Ctrl+Z: its own again, the file byte for byte");
+            check(pj_click("an-reset") && an_none("hero_look", "air"), "«Как в игре» with the mouse");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_is("hero_look", "air", air) && an_file("hero_look") == an_air_, "Ctrl+Z again");
+            check(an_pick("flag"), "a click on «Флаг»");
+            break;
+        }
+        // «Флаг»: «Кадров в картинке» 2, «Покой» by 1, 2 two a second.
+        case 17: {
+            if (hold(an().selected() && an().selected()->id == "flag" && shown("an-state-idle"), "«Флаг» shown")) return true;
+            const auto& s = an().states();
+            check(s.size() == 1 && s[0].id == "idle" && s[0].name == "Покой" && s[0].rule == objects::Clip{{0}, 10, true} && !shown("an-frame-1"),
+                  "«Флаг»: «Покой» alone, frame 1; one frame in its strip");
+            an_flag_ = an_file("flag");
+            check(pj_click("an-frames-more"), "«Кадров в картинке» +");
+            break;
+        }
+        case 18:
+            if (hold(shown("an-frame-1"), "two frames in the strip")) return true;
+            check(lib.find(std::string_view("flag"))->frames == 2 && objects::read_template(lib.find(std::string_view("flag"))->file)->frames == 2 &&
+                      element_text("an-frames") == "2",
+                  "«Кадров в картинке» 2, in the file too");
+            check(pj_click("an-frame-0"), "frame 1");
+            break;
+        case 19: check(pj_click("an-frame-1"), "frame 2"); break;
+        case 20: check(pj_click("an-fps-0") && element_text("an-fps-0") == "2", "«2»"); break;
+        case 21: {
+            check(an_is("flag", "idle", flag), "«Покой»: 1, 2 two a second");
+            an_flag_done_ = an_file("flag");
+            // A frame its picture has not: the reason said, the game's rule played.
+            check(pj_click("an-frames-less") && lib.find(std::string_view("flag"))->frames == 1, "«Кадров в картинке» − : 1");
+            check(an().problem() == "кадра 2 нет в картинке из 1" && an().clip() == objects::Clip{{0}, 10, true} && an_clip("flag", "idle") == flag,
+                  "the reason: «" + an().problem() + "»; the game's rule plays, the animation kept");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an().problem().empty() && an().clip() == flag && an_file("flag") == an_flag_done_, "Ctrl+Z: two frames, it plays");
+            for (int i = 0; i < 4; ++i) key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("flag")) == an_lf(an_flag_), "Ctrl+Z four times: the file is the template's, byte for byte (line ends aside)");
+            for (int i = 0; i < 4; ++i) key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("flag") == an_flag_done_ && an_is("flag", "idle", flag), "Ctrl+Y four times: 1, 2 two a second again, byte for byte");
+            // «Объекты»: «Жук»'s «Скорость», then its animation here; undone there, the animation stays.
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        case 22:
+            if (ol().editing()) click("ol-back");
+            open_card("Жук");
+            break;
+        case 23:
+            if (hold(ol().editing() && pl_prop("Скорость") >= 0 && shown("ol-num-" + std::to_string(pl_prop("Скорость"))), "its editor is laid out"))
+                return true;
+            check(pl_set("Скорость", "3") && pl_value("beetle", "speed") == "3", "«Жук»: «Скорость» 3");
+            check(click_tab(3), "«Анимация»");
+            break;
+        case 24:
+            check(an_pick("beetle"), "«Жук»");
+            break;
+        case 25:
+            if (hold(an().selected() && an().selected()->id == "beetle" && shown("an-fps-5"), "«Жук» shown")) return true;
+            check(pj_click("an-state-walk") && an().state() == "walk", "a click on «Идёт»");
+            break;
+        case 26:
+            check(pj_click("an-fps-4") && an_is("beetle", "walk", {{1, 1, 0}, 6, true}), "«Идёт» six a second, «Скорость» 3 kept: " + an_text("beetle"));
+            check(pl_value("beetle", "speed") == "3", "«Скорость» 3 kept");
+            check(click_tab(2), "«Объекты»");
+            break;
+        case 27:
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(pl_value("beetle", "speed") == "1.5" && an_is("beetle", "walk", {{1, 1, 0}, 6, true}),
+                  "Ctrl+Z in «Объекты»: «Скорость» 1.5, the animation stays six a second");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(pl_value("beetle", "speed") == "3" && an_is("beetle", "walk", {{1, 1, 0}, 6, true}), "Ctrl+Y: 3, the animation stays");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(pl_value("beetle", "speed") == "1.5", "Ctrl+Z: 1.5 as in the template");
+            check(click_tab(3), "«Анимация»");
+            break;
+        case 28:
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_is("beetle", "walk", beetle) && pl_value("beetle", "speed") == "1.5", "Ctrl+Z in «Анимация»: four a second, «Скорость» 1.5");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        // «Ресурсы»: «Сделать анимацию» of a picture a template draws, and of one none does.
+        case 29:
+            if (hold(idle && ed_.tab() == "assets" && as().record_of(as().abs("картинки/флаг.png")), "«Ресурсы» are indexed")) return true;
+            as().open_folder("картинки");
+            click_row("картинки/флаг.png");
+            break;
+        case 30:
+            if (hold(shown("as-animate"), "«Сделать анимацию» shown")) return true;
+            an().select(lib.find(std::string_view("beetle"))->key);
+            check(click_id("as-animate") && ed_.tab() == "animation" && an().selected() && an().selected()->id == "flag" && an().note().empty(),
+                  "«Сделать анимацию» of «картинки/флаг.png»: «Анимация» on «Флаг»");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        case 31:
+            click_row("картинки/сердце.png");
+            break;
+        case 32:
+            if (hold(shown("as-animate") && as().selection() == std::vector<std::string>{"картинки/сердце.png"}, "«сердце.png» chosen")) return true;
+            check(click_id("as-animate") && ed_.tab() == "animation" && an().selected() && an().selected()->id == "flag",
+                  "«Сделать анимацию» of «картинки/сердце.png»: «Анимация», the template chosen before");
+            break;
+        case 33:
+            if (hold(shown("an-note"), "the note")) return true;
+            check(element_text("an-note").find("Картинку «сердце.png» пока не рисует ни один шаблон игры") == 0, "it says: " + element_text("an-note"));
+            check(an_pick("hero_look"), "«Герой»");
+            break;
+        case 34:
+            if (hold(an().selected() && an().selected()->id == "hero_look" && !shown("an-note"), "«Герой» shown")) return true;
+            key(SDLK_2, SDL_KMOD_NONE);
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            an().set_clock(10); // for a screenshot: «Идёт» at its third frame, the strip's 4
+            check(an().state() == "walk" && an().shown_frame() == 3 && !an().playing(), "«Герой», «Идёт», frame 4 at tick 10, paused");
+            check(an_is("beetle", "walk", beetle) && an_is("hero_look", "walk", walk) && an_is("hero_look", "air", air) && an_is("flag", "idle", flag) &&
+                      an_none("hero_look", "stand") && an_none("beetle", "stand"),
+                  "the animations made: «Жук» «Идёт», «Герой» «Идёт» and «В воздухе», «Флаг» «Покой»; the rest as in the game");
+            return false;
+        default: break;
+        }
+        ++an_step_;
+        return true;
+    }
+
+    // In an editor for «Анимация А» from another working folder (--self-test animation-a-again).
+    bool animation_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        switch (an_step_) {
+        case 0: {
+            check(!lvl_same(fs::current_path(), a), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            check(an_is("beetle", "walk", {{1, 1, 0}, 4, true}) && an_is("hero_look", "walk", {{1, 2, 3, 2}, 12, true}) &&
+                      an_is("hero_look", "air", {{0, 3}, 5, false}) && an_is("flag", "idle", {{0, 1}, 2, true}) &&
+                      an().library().find(std::string_view("flag"))->frames == 2 && pl_value("beetle", "speed") == "1.5",
+                  "the same animations: «Жук» 2, 2, 1 (4 к/с); «Герой» 2, 3, 4, 3 (12) and 1, 4 (5, once); «Флаг» of 2 frames 1, 2 (2)");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        case 1: {
+            if (hold(shown("an-tpl-0"), "the tab is laid out")) return true;
+            const auto& l = an().listed();
+            const std::string row = "an-tpl-" + std::to_string(std::find(l.begin(), l.end(), an().library().find(std::string_view("hero_look"))->key) - l.begin());
+            check(l.size() == 8 && element_text(row.c_str()).find("своих анимаций: 2") != std::string::npos,
+                  "the list: «Герой» has 2 animations of its own");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 2:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 3: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = an_edits();
+            const int code = tg_play(&e, "ожидания анимации.json", an_root());
+            check(code == 0, "the game plays the author's animations: the hero walks and jumps, «Жук» walks, «Флаг» stands by them (exit " +
+                                 std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++an_step_;
+        return true;
+    }
+
     // --- «Платформер» из каталога (step 14.2d) -----------------------------------------------------------------
     // The template «Платформер» made by its module's maker (slice's, found by the template's id as --make-template finds it).
     static bool tp_make(const std::filesystem::path& games, const std::filesystem::path& out, std::string& why) {
@@ -17364,7 +17835,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         // --self-test opened-game, ready, two-games-*: the game given, opened as the editor opens it (the self-test made it).
         const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0 ||
                             options.self_part.rfind("levels-", 0) == 0 || options.self_part.rfind("platformer-", 0) == 0 ||
-                            options.self_part.rfind("modules-", 0) == 0;
+                            options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -17883,13 +18354,15 @@ int main(int argc, char** argv) {
     static const char* const kParts[] = {"new-game",     "opened-game",     "ready",      "two-games",    "two-games-a",       "two-games-a-again",
                                          "two-games-b",  "levels",          "levels-a",   "levels-again", "levels-go",         "levels-go-again",
                                          "platformer",   "platformer-a",    "platformer-a-again", "platformer-template",
-                                         "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old"};
+                                         "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
+                                         "animation",    "animation-a",     "animation-a-again"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
                     "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again, platformer and its parts "
                     "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
-                    "platformer-template-a-again, modules and its parts modules-probe, modules-old)",
+                    "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
+                    "animation-a-again)",
                     app.options.self_part.c_str());
         return 2;
     }

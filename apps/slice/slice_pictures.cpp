@@ -42,6 +42,54 @@ bool hero_picture_ok(const objects::Library& library, const objects::Template& t
     return hero_frames_ok(t.frames, image.width, why);
 }
 
+const char* pose_id(Pose pose) {
+    switch (pose) {
+    case Pose::Stand: return "stand";
+    case Pose::Walk: return "walk";
+    case Pose::Air: return "air";
+    case Pose::Idle: return "idle";
+    }
+    return "";
+}
+
+const char* pose_name(Pose pose) {
+    switch (pose) {
+    case Pose::Stand: return "Стоит";
+    case Pose::Walk: return "Идёт";
+    case Pose::Air: return "В воздухе";
+    case Pose::Idle: return "Покой";
+    }
+    return "";
+}
+
+Mover mover_of(const objects::Library& library, const objects::Template& t) {
+    if (library.has_block(t, "hero")) return Mover::Hero;
+    if (library.has_block(t, "control")) return Mover::Walker;
+    return Mover::Still;
+}
+
+std::vector<Pose> poses_of(Mover mover) {
+    switch (mover) {
+    case Mover::Hero: return {Pose::Stand, Pose::Walk, Pose::Air};
+    case Mover::Walker: return {Pose::Stand, Pose::Walk};
+    case Mover::Still: return {Pose::Idle};
+    }
+    return {};
+}
+
+objects::Clip pose_rule(Mover mover, Pose pose, u32 frames) {
+    if (mover == Mover::Hero && frames == 4) {
+        if (pose == Pose::Walk) return {{1, 2}, 10, true};
+        if (pose == Pose::Air) return {{3}, 10, true};
+    }
+    if (mover == Mover::Walker && pose == Pose::Walk) {
+        objects::Clip all{{}, 7.5f, true};
+        for (u32 f = 0; f < std::max(1u, frames); ++f) all.frames.push_back(f);
+        return all;
+    }
+    return {{0}, 10, true};
+}
+
 const Pictures::Decoded& Pictures::decode(const fs::path& file, fs::file_time_type mtime, u32 frames) {
     Decoded& d = cache_[path_to_utf8(file) + "/" + std::to_string(frames)];
     if (d.mtime == mtime && (d.width || !d.rgba.empty())) return d;
@@ -100,7 +148,10 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
                      std::to_string(wanted.back().mtime.time_since_epoch().count()) + "/" + std::to_string(t.frames) +
                      (wanted.back().hero ? "h" : "") + ";";
     }
-    if (signature == signature_ && !sheet.rgba.empty()) return false;
+    if (signature == signature_ && !sheet.rgba.empty()) {
+        set_clips(library);
+        return false;
+    }
     signature_ = signature;
     by_key_.clear();
     hero_key_ = 0;
@@ -177,7 +228,22 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
         sheet.frames.push_back({p.x, p.y, p.w, d.height});
     }
     for (auto& [key, picture] : made) by_key_[key] = picture;
+    set_clips(library);
     return true;
+}
+
+void Pictures::set_clips(const objects::Library& library) {
+    for (auto& [key, picture] : by_key_) {
+        const objects::Template* t = library.find(key);
+        const Mover mover = t ? mover_of(library, *t) : Mover::Still;
+        for (usize i = 0; i < kPoses; ++i) {
+            const Pose pose = static_cast<Pose>(i);
+            picture.clips[i] = pose_rule(mover, pose, picture.frames);
+            if (!t) continue;
+            const auto own = t->animations.find(pose_id(pose));
+            if (own != t->animations.end() && objects::clip_problem(own->second, picture.frames).empty()) picture.clips[i] = own->second;
+        }
+    }
 }
 
 const Pictures::Picture* Pictures::of(u64 key) const {

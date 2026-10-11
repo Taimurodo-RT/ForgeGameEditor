@@ -290,6 +290,47 @@ u32 values_rev(const std::vector<std::pair<std::string, std::string>>& values) {
 
 // --- files ------------------------------------------------------------------
 
+namespace {
+
+// An animation as a template file has it; why not (no frames, too many, a frame not a number, fps not of the list).
+std::optional<Clip> read_clip(yyjson_val* v, std::string& why) {
+    if (!yyjson_is_obj(v)) {
+        why = "не объект";
+        return std::nullopt;
+    }
+    Clip clip;
+    yyjson_val* frames = yyjson_obj_get(v, "frames");
+    if (!yyjson_is_arr(frames)) {
+        why = "нет списка кадров";
+        return std::nullopt;
+    }
+    usize i, n;
+    yyjson_val* f;
+    yyjson_arr_foreach(frames, i, n, f) {
+        if (!yyjson_is_uint(f) && !(yyjson_is_sint(f) && yyjson_get_sint(f) >= 0)) {
+            why = "кадр не номер";
+            return std::nullopt;
+        }
+        clip.frames.push_back(static_cast<u32>(std::min<u64>(yyjson_get_uint(f), 1000)));
+    }
+    yyjson_val* fps = yyjson_obj_get(v, "fps");
+    clip.fps = yyjson_is_num(fps) ? static_cast<f32>(yyjson_get_num(fps)) : 0;
+    if (yyjson_val* loop = yyjson_obj_get(v, "loop"); yyjson_is_bool(loop)) clip.loop = yyjson_get_bool(loop);
+    why = clip_problem(clip, 1000);
+    if (!why.empty()) return std::nullopt;
+    return clip;
+}
+
+// 10, 7.5.
+std::string fps_text(f32 fps) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%g", static_cast<f64>(fps));
+    return buf;
+}
+
+} // namespace
+
+
 std::optional<Template> read_template(const fs::path& file, std::string* error) {
     std::vector<u8> bytes;
     if (!read_file(file, bytes)) {
@@ -315,6 +356,17 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
         const i64 n = yyjson_get_sint(frames);
         t.frames = n >= 1 && n <= kMaxFrames ? static_cast<u32>(n) : 1;
     }
+    if (yyjson_val* anims = yyjson_obj_get(root, "animations"); yyjson_is_obj(anims)) {
+        yyjson_obj_iter it = yyjson_obj_iter_with(anims);
+        while (yyjson_val* key = yyjson_obj_iter_next(&it)) {
+            const std::string state = text_of(key);
+            std::string why;
+            if (std::optional<Clip> clip = read_clip(yyjson_obj_iter_get_val(key), why)) t.animations[state] = std::move(*clip);
+            else
+                FORGE_WARN("%s: анимация «%s» не читается (%s), это состояние рисуется по правилу игры", path_to_utf8(file).c_str(),
+                           state.c_str(), why.c_str());
+        }
+    }
     t.blocks = read_list(yyjson_obj_get(root, "blocks"));
     t.values = read_values(yyjson_obj_get(root, "values"));
     yyjson_doc_free(doc);
@@ -338,6 +390,19 @@ std::string template_json(const Template& t) {
     if (!t.about.empty()) s += "  \"about\": " + json_text(t.about) + ",\n";
     if (!t.picture.empty()) s += "  \"picture\": " + json_text(t.picture) + ",\n";
     if (t.frames != 1) s += "  \"frames\": " + std::to_string(t.frames) + ",\n";
+    if (!t.animations.empty()) {
+        s += "  \"animations\": {";
+        bool first = true;
+        for (const auto& [state, clip] : t.animations) {
+            s += (first ? "\n    " : ",\n    ") + json_text(state) + ": {\"frames\": [";
+            for (usize i = 0; i < clip.frames.size(); ++i) s += (i ? ", " : "") + std::to_string(clip.frames[i]);
+            s += "], \"fps\": " + fps_text(clip.fps);
+            if (!clip.loop) s += ", \"loop\": false";
+            s += "}";
+            first = false;
+        }
+        s += "\n  },\n";
+    }
     if (!t.blocks.empty()) {
         s += "  \"blocks\": [";
         for (usize i = 0; i < t.blocks.size(); ++i) s += (i ? ", " : "") + json_text(t.blocks[i]);
@@ -356,6 +421,27 @@ u32 template_rev(const Template& t) {
     u64 h = fnv1a("blocks");
     for (const std::string& b : t.blocks) h = fnv1a(b, fnv1a(",", h));
     return (values_rev(t.values) ^ static_cast<u32>(h ^ (h >> 32))) | 1u;
+}
+
+u32 clip_ticks(f32 fps) {
+    for (f32 f : kClipFps)
+        if (std::fabs(f - fps) < 1e-4f) return static_cast<u32>(std::lround(60.0 / f));
+    return 0;
+}
+
+std::string clip_problem(const Clip& clip, u32 frames) {
+    if (clip.frames.empty()) return "нет кадров";
+    if (clip.frames.size() > kMaxClipFrames) return "кадров больше " + std::to_string(kMaxClipFrames);
+    for (u32 f : clip.frames)
+        if (f >= frames) return "кадра " + std::to_string(f + 1) + " нет в картинке из " + std::to_string(frames);
+    if (clip_ticks(clip.fps) == 0) return "кадров в секунду " + fps_text(clip.fps) + " нет в списке";
+    return {};
+}
+
+u32 clip_frame(const Clip& clip, u64 ticks) {
+    if (clip.frames.empty()) return 0;
+    const u64 step = ticks / std::max(1u, clip_ticks(clip.fps)), n = clip.frames.size();
+    return clip.frames[clip.loop ? step % n : std::min(step, n - 1)];
 }
 
 u32 Template::look() const {
@@ -669,7 +755,8 @@ std::optional<Template> Library::copy_from(const Library& from, const Template& 
 bool Library::same_as(const Library& from, const Template& t) const {
     const Template* here = find(fnv1a(t.id));
     if (!here || here->name != t.name || here->about != t.about || here->genre != t.genre || here->kind != t.kind ||
-        here->rev != t.rev || here->picture.empty() != t.picture.empty() || here->frames != t.frames)
+        here->rev != t.rev || here->picture.empty() != t.picture.empty() || here->frames != t.frames ||
+        here->animations != t.animations)
         return false;
     if (!t.picture.empty() && !same_file(picture_file(*here), from.picture_file(t))) return false;
     for (const PropDef* prop : from.props_of(t)) {

@@ -106,6 +106,9 @@ inline constexpr f32 kHeroHalfW = 0.38f, kHeroHalfH = 0.92f;
 //   or at once after a jump's push;
 // - back on the ground it stands or walks in that same frame: there is no frame of landing.
 // Another world (a level gone into, a game loaded) starts it anew.
+// Its pose (stands, walks, in the air) is the one of these frames, and since: the tick it took it (walking: the tick it
+// began to walk). A picture of the hero plays that pose's animation from then (the tab «Анимация»); without one of
+// the template's, the game's rule gives these same frames (pose_rule).
 struct HeroLook {
     static constexpr u64 kNever = ~0ull;
     const void* world = nullptr; // the level's simulation it was seen in
@@ -114,14 +117,28 @@ struct HeroLook {
     u64 walk_from = 0;           // the tick it began to walk
     u64 fast = 0;                // the last tick it went fast enough to walk
     bool walking = false;
+    Pose pose = Pose::Stand;
+    u64 since = 0;
     // tick: the level's clock now; jump: the tick of the last jump's push (kNever: none).
     u32 see(const void* in, u64 tick, bool on_ground, f32 vx, u64 jump) {
         if (in != world || tick < seen) {
             *this = {};
             world = in;
             ground = tick;
+            since = tick;
         }
         seen = tick;
+        const u32 frame = look(tick, on_ground, vx, jump);
+        const Pose now = frame == 3 ? Pose::Air : frame == 0 ? Pose::Stand : Pose::Walk;
+        if (now != pose) {
+            pose = now;
+            since = now == Pose::Walk ? walk_from : tick;
+        }
+        return frame;
+    }
+
+private:
+    u32 look(u64 tick, bool on_ground, f32 vx, u64 jump) {
         if (on_ground) {
             const bool walks = vx > 0.5f || vx < -0.5f;
             if (walks && !walking) walk_from = tick;
@@ -250,6 +267,8 @@ public:
     // At a template of kind «Герой», what the game does with it, when not plainly drawing the hero with it: no picture,
     // frames other than 4 or 1, or more of them (the game takes the first by id, as Pictures does). "" else.
     std::string object_note(const forge::objects::Library& library, const forge::objects::Template& t) const override;
+    // A template with a picture: the poses of what moves it (mover_of), each with the game's rule (pose_rule).
+    std::vector<AnimState> anim_states(const forge::objects::Library& library, const forge::objects::Template& t) const override;
     forge::level::LevelPhysics default_physics() const override { return {0, kGravity}; }
     std::vector<std::string> physics_fills() const override { return {"water", "sand"}; }
     std::unique_ptr<forge::sim::CellSim> make_cells(forge::sim::CollisionRules& rules) const override;

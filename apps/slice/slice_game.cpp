@@ -1790,6 +1790,16 @@ bool SliceGame::position_of(flecs::entity_t id, f64& x, f64& y) const {
     return true;
 }
 
+bool SliceGame::body_size(flecs::entity_t id, f64& w, f64& h) const {
+    if (!level_ || !id) return false;
+    const flecs::entity e(level_->scene->ecs(), id);
+    const Body* b = e.is_alive() ? e.try_get<Body>() : nullptr;
+    if (!b) return false;
+    w = b->half_w * 2.0;
+    h = b->half_h * 2.0;
+    return true;
+}
+
 bool SliceGame::set_sounds(flecs::entity_t id, const Sounds& sounds) {
     if (!level_) return false;
     flecs::entity e = level_->scene->ecs().entity(id);
@@ -2386,8 +2396,9 @@ void SliceGame::build_sprites() {
         batch_.push(s);
     };
 
+    drawn_tick_ = sim.clock().tick();
     push_objects(batch_, level_->objects, level_->around.empty_around ? nullptr : gen_.get(), camera_.x, camera_.y, alpha,
-                 sim.clock().tick(), &pictures_);
+                 drawn_tick_, &pictures_);
     if (running_ && level_->hero.is_alive()) {
         const Position& p = level_->hero.get<Position>();
         const Body& b = level_->hero.get<Body>();
@@ -2396,12 +2407,14 @@ void SliceGame::build_sprites() {
         draw_position(p, b, alpha, x, y);
         hero_drawn_x_ = x;
         hero_drawn_y_ = y;
-        // Its frame and side from one look at it (HeroLook): its picture's (the template «Герой», 4 frames or 1),
-        // else the code's.
-        hero_frame_ = hero_look_.see(&sim, sim.clock().tick(), (b.contacts & OnGround) || b.liquid != 0, b.vx, jump_tick_);
+        // Its frame and side from one look at it (HeroLook): its picture's (the template «Герой», 4 frames or 1) in
+        // its pose from the tick it took it, else the code's.
+        const u64 now = sim.clock().tick();
+        hero_frame_ = hero_look_.see(&sim, now, (b.contacts & OnGround) || b.liquid != 0, b.vx, jump_tick_);
         const Pictures::Picture* pic = pictures_.hero();
         hero_pictured_ = pic != nullptr;
-        const u32 frame = pic ? pic->frame + (pic->frames == 4 ? hero_frame_ : 0u) : FrameHero + hero_frame_;
+        const u32 frame = pic ? pic->at(hero_look_.pose, now - hero_look_.since) : FrameHero + hero_frame_;
+        hero_picture_frame_ = pic ? frame - pic->frame : hero_frame_;
         const f32 side = h.facing < 0 ? -1.0f : 1.0f, w = pic ? 2.0f * pic->aspect : 1.0f;
         // Blinking in the safe second after a heart lost.
         const bool faint = blinking() && (sim.clock().tick() / 5) % 2 == 1;

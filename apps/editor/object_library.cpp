@@ -43,10 +43,30 @@ private:
     void set(const std::optional<objects::Template>& to, const std::optional<objects::Template>& from) {
         std::string error;
         if (to) {
-            if (!lib_.put(*to, &error)) FORGE_ERROR("Шаблон «%s»: %s", to->name.c_str(), error.c_str());
+            // A change goes onto the template as it is now, with only what this step changed: a step of the
+            // «Анимация» tab's own history on the same template (its frames, its animations) stays.
+            const objects::Template* now = from && from->id == to->id ? lib_.find(from->key) : nullptr;
+            const objects::Template t = now ? onto(*now, *to, *from) : *to;
+            if (!lib_.put(t, &error)) FORGE_ERROR("Шаблон «%s»: %s", t.name.c_str(), error.c_str());
         } else if (from) {
             lib_.remove(from->key);
         }
+    }
+    static objects::Template onto(objects::Template now, const objects::Template& to, const objects::Template& from) {
+        auto take = [](auto& field, const auto& want, const auto& was) {
+            if (want != was) field = want;
+        };
+        take(now.name, to.name, from.name);
+        take(now.kind, to.kind, from.kind);
+        take(now.genre, to.genre, from.genre);
+        take(now.blocks, to.blocks, from.blocks);
+        take(now.about, to.about, from.about);
+        take(now.values, to.values, from.values);
+        take(now.picture, to.picture, from.picture);
+        take(now.frames, to.frames, from.frames);
+        take(now.animations, to.animations, from.animations);
+        take(now.file, to.file, from.file);
+        return now;
     }
     objects::Library& lib_;
     std::optional<objects::Template> before_, after_;

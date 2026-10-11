@@ -285,6 +285,20 @@ public:
         (void)library, (void)t;
         return {};
     }
+    // A state the game plays a template's picture in (the tab «Анимация»): its id in the template file ("walk"), its
+    // name for the author («Идёт»), and the game's own rule for it, the frames it shows when the template has no
+    // animation of its own for it.
+    struct AnimState {
+        std::string id;
+        std::string name;
+        objects::Clip rule;
+    };
+    // The states the game plays this template's picture in, as many frames as the template has now. Empty: it draws
+    // none of them by the template (no picture, or nothing the game animates).
+    virtual std::vector<AnimState> anim_states(const objects::Library& library, const objects::Template& t) const {
+        (void)library, (void)t;
+        return {};
+    }
 
     // --- physics ---
     // The game's own pull: what a level without physics.json has.

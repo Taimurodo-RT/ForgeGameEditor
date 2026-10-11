@@ -217,6 +217,93 @@ TEST_CASE("a template's picture of frames: read, written and looked at") {
     CHECK_FALSE(shared.same_as(f.lib, coins));
 }
 
+TEST_CASE("a template's animations: read, written, timed, and why one cannot play") {
+    Fixture f;
+    Template coins = *f.lib.find("coins");
+    coins.picture = "монета.png";
+    coins.frames = 4;
+    REQUIRE(f.lib.put(coins));
+    std::vector<u8> before;
+    REQUIRE(read_file(coins.file, before));
+    // None of its own: nothing written, the file as it was.
+    CHECK(std::string(before.begin(), before.end()).find("animations") == std::string::npos);
+    const u32 rev = coins.rev, look = coins.look();
+    coins.animations["walk"] = {{1, 0, 0}, 4, true};
+    coins.animations["air"] = {{3}, 7.5f, false};
+    coins.animations["dance"] = {{2, 3}, 30, true}; // a state the module may not know: kept as it is
+    REQUIRE(f.lib.put(coins));
+    CHECK(f.lib.find("coins")->rev == rev);     // the copies' values are as they were
+    CHECK(f.lib.find("coins")->look() == look); // and its icons (frame 0)
+    std::vector<u8> bytes;
+    REQUIRE(read_file(coins.file, bytes));
+    const std::string text(bytes.begin(), bytes.end());
+    CHECK(text.find("  \"animations\": {\n"
+                    "    \"air\": {\"frames\": [3], \"fps\": 7.5, \"loop\": false},\n"
+                    "    \"dance\": {\"frames\": [2, 3], \"fps\": 30},\n"
+                    "    \"walk\": {\"frames\": [1, 0, 0], \"fps\": 4}\n"
+                    "  },\n") != std::string::npos);
+    std::optional<Template> read = read_template(coins.file);
+    REQUIRE(read);
+    CHECK(read->animations == coins.animations);
+    CHECK(template_json(*read) == text); // read and written again: byte for byte
+    // Taken away again: the file as it was before.
+    coins.animations.clear();
+    REQUIRE(f.lib.put(coins));
+    REQUIRE(read_file(coins.file, bytes));
+    CHECK(bytes == before);
+
+    // The frame by the ticks since the state began: each frame a whole number of ticks (60 a second).
+    const Clip walk{{1, 0, 0}, 4, true}, air{{3, 2}, 7.5f, false}, steps{{1, 2}, 10, true};
+    CHECK(clip_ticks(4) == 15);
+    CHECK(clip_ticks(7.5f) == 8);
+    CHECK(clip_ticks(10) == 6);
+    CHECK(clip_ticks(8) == 0);
+    CHECK(clip_ticks(0) == 0);
+    for (u64 t : {0u, 14u}) CHECK(clip_frame(walk, t) == 1);
+    for (u64 t : {15u, 29u, 30u, 44u}) CHECK(clip_frame(walk, t) == 0);
+    CHECK(clip_frame(walk, 45) == 1); // and over again
+    CHECK(clip_frame(walk, 45 * 1000 + 15) == 0);
+    CHECK(clip_frame(air, 7) == 3);
+    CHECK(clip_frame(air, 8) == 2);
+    CHECK(clip_frame(air, 8000) == 2); // not again: it stays on its last
+    // The hero's steps as the game has always drawn them: 1 and 2 by turns every 6 ticks.
+    for (u64 t = 0; t < 200; ++t) CHECK(clip_frame(steps, t) == 1u + static_cast<u32>((t / 6) & 1u));
+
+    // Why one cannot play: the same words in the tab and the game.
+    CHECK(clip_problem(walk, 2).empty());
+    CHECK(clip_problem(walk, 1) == "кадра 2 нет в картинке из 1");
+    CHECK(clip_problem({{}, 10, true}, 4) == "нет кадров");
+    CHECK(clip_problem({std::vector<u32>(kMaxClipFrames + 1, 0), 10, true}, 4) == "кадров больше 16");
+    CHECK(clip_problem({{0}, 8, true}, 4) == "кадров в секунду 8 нет в списке");
+    // A file's animation that does not read: left out (the game draws that state by its rule), the others kept.
+    write_text(f.dir / "objects" / "odd.object.json",
+               R"({"id": "odd", "name": "Странный", "kind": "pickup", "frames": 4, "animations": {
+                   "walk": {"frames": [1, 0], "fps": 5}, "a": {"frames": [], "fps": 5}, "b": {"frames": [1], "fps": 9},
+                   "c": {"frames": ["1"], "fps": 5}, "d": {"frames": [-1], "fps": 5}, "e": [1], "f": {"fps": 5},
+                   "g": {"frames": [0], "fps": 5, "loop": "no"}}})");
+    REQUIRE((read = read_template(f.dir / "objects" / "odd.object.json")));
+    CHECK(read->animations.size() == 2);
+    CHECK(read->animations.count("walk"));
+    CHECK(read->animations.count("g")); // a "loop" not true or false: it starts over, as by default
+    CHECK(read->animations["g"].loop);
+    // Shared and taken back: other animations are another template.
+    const auto shared_dir = temp_folder("forge_objects_animations_shared_test");
+    Library shared;
+    shared.set_pictures_folder(shared_dir / "pictures");
+    REQUIRE(shared.load(f.lib.kinds_file(), shared_dir / "objects"));
+    write_text(f.lib.pictures_folder() / utf8_path("монета.png"), "not really a png");
+    coins.animations["walk"] = walk;
+    REQUIRE(f.lib.put(coins));
+    std::optional<Template> up = shared.copy_from(f.lib, coins);
+    REQUIRE(up);
+    CHECK(up->animations == coins.animations);
+    REQUIRE(shared.put(*up));
+    CHECK(shared.same_as(f.lib, coins));
+    coins.animations["walk"].fps = 5;
+    REQUIRE(f.lib.put(coins));
+    CHECK_FALSE(shared.same_as(f.lib, coins));
+}
+
 TEST_CASE("a kind may be one whose templates are not put on levels") {
     const auto dir = temp_folder("forge_objects_placed_test");
     write_text(dir / "kinds.json", R"({"kinds": [

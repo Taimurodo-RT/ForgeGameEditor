@@ -28,6 +28,9 @@ zone «падает в», flag «доходит до», HUD and windows of the g
 А» of the catalog's template «Платформер» with no --level and `--edits` of what the
 author changed: the hero's picture, the coin's «Очки», the beetle's «Скорость», a
 coin and a bridge on «Луг», the exit's link and the win window's title. And when
+`forge_editor --self-test animation` has made it (the tab «Анимация»), «Анимация А» of
+the same template with `--edits` of the animations the author made: the hero's walk
+and jump, the beetle's walk, the flag's two frames, drawn so. And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
@@ -85,6 +88,11 @@ def main() -> int:
         plays += [(template / "Мои игры" / "Платформер А", template / "ожидания шаблон.json", False)]
     else:
         print(f"нет {template / 'ожидания шаблон.json'}: шаблон автора не играется (forge_editor --self-test platformer-template его делает)", flush=True)
+    animation = Path(tempfile.gettempdir()) / "forge_editor_анимация"
+    if (animation / "ожидания анимации.json").is_file():
+        plays += [(animation / "Мои игры" / "Анимация А", animation / "ожидания анимации.json", False)]
+    else:
+        print(f"нет {animation / 'ожидания анимации.json'}: анимации автора не играются (forge_editor --self-test animation их делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
         print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)

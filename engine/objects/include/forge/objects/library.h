@@ -32,6 +32,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -132,6 +133,29 @@ struct KindDef {
 // The most frames a template's picture may be cut into.
 inline constexpr u32 kMaxFrames = 8;
 
+// An animation of a template's picture in one state the game's module names ("walk"): which frames of its strip show
+// one after another, how many a second, and whether it starts over (else it stays on its last frame). A template
+// without one for a state is drawn by the module's own rule for it (the tab «Анимация»).
+struct Clip {
+    std::vector<u32> frames;
+    f32 fps = 10;
+    bool loop = true;
+
+    bool operator==(const Clip&) const = default;
+};
+// The most frames one animation shows in a row.
+inline constexpr u32 kMaxClipFrames = 16;
+// The frames a second an animation may have: each divides the game's 60 ticks a second, so a frame shows a whole
+// number of ticks and an animation keeps time exactly.
+inline constexpr f32 kClipFps[] = {2, 3, 4, 5, 6, 7.5f, 10, 12, 15, 20, 30};
+// The ticks (60 a second) one frame shows; 0 when fps is none of kClipFps.
+u32 clip_ticks(f32 fps);
+// Why the animation cannot play on a picture of `frames` frames: no frames, too many, a frame past the strip, fps not
+// of the list. Empty: it can.
+std::string clip_problem(const Clip& clip, u32 frames);
+// The frame of the strip it shows `ticks` ticks after its state began (of one that can play).
+u32 clip_frame(const Clip& clip, u64 ticks);
+
 struct Template {
     std::string id;   // "coins": stable, written in the file; the key comes from it
     u64 key = 0;      // fnv1a(id): what copies keep
@@ -150,6 +174,9 @@ struct Template {
     // How many frames the picture is: a strip of that many equal frames side by side (1..8; 1: the picture as it is).
     // Which one shows is the game's: the hero's four (stands, step, step, in the air), a walker's two.
     u32 frames = 1;
+    // Its own animations of the picture, by the state of the module's they play in ("stand", "walk"). States the
+    // module does not know stay as they are read.
+    std::map<std::string, Clip> animations;
     std::filesystem::path file;
     u32 rev = 0; // hash of the values and blocks: copies with another rev are behind
     // Its picture file got new content under the same name (Library::picture_changed); not saved.

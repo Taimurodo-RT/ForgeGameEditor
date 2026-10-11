@@ -1256,6 +1256,237 @@ private:
             return true;
         }});
     }
+    // The tab «Анимация»: the author's animations as the game plays them. The game's own clips of the templates are
+    // the author's, and the states the author left are the game's rule. The hero stands, walks and jumps; a copy of the
+    // object that stands and one of the walker put beside it: each drawn with the frame its animation has at the tick
+    // it is drawn at. The game says that frame, and the screen shows it: its pixels there match that frame of the strip
+    // well, and at least as well as any other frame of it. Every frame of each animation is seen so.
+    void build_anim_edits(Shell& s) {
+        SliceGame& g = g_;
+        struct Look {
+            u32 looks = 0, bad = 0;
+            std::array<u32, objects::kMaxClipFrames> seen{};
+            std::string first_bad;
+            u64 longest = 0; // ticks into the pose, the most looked at
+        };
+        struct State {
+            Look stand, walk, air, still, walker;
+            std::map<flecs::entity_t, f64> was;
+        };
+        constexpr u64 kStill = 0x14a1a000000001ull, kWalker = 0x14a1a000000002ull; // the copies' level ids
+        auto st = std::make_shared<State>();
+        auto pose_named = [](const std::string& id, Pose& out) {
+            for (usize i = 0; i < kPoses; ++i)
+                if (id == pose_id(static_cast<Pose>(i))) {
+                    out = static_cast<Pose>(i);
+                    return true;
+                }
+            return false;
+        };
+        // The author's animation of a template in a state (false: they gave it none).
+        auto authored = [this](const std::string& of, const std::string& state, objects::Clip& out) {
+            const ProjectEdits& e = project_edits;
+            usize from = 0;
+            for (usize i = 0; i < e.an_of.size() && i < e.an_state.size() && i < e.an_count.size() && i < e.an_fps.size() && i < e.an_loop.size(); ++i) {
+                const usize n = static_cast<usize>(std::max(0, e.an_count[i]));
+                if (e.an_of[i] == of && e.an_state[i] == state && from + n <= e.an_frames.size()) {
+                    out = {};
+                    for (usize k = from; k < from + n; ++k) out.frames.push_back(static_cast<u32>(e.an_frames[k]));
+                    out.fps = static_cast<f32>(e.an_fps[i]);
+                    out.loop = e.an_loop[i] != 0;
+                    return true;
+                }
+                from += n;
+            }
+            return false;
+        };
+        // What a template plays in a pose by the author: their animation, else the game's rule for its frames.
+        auto expected = [&g, authored](const std::string& of, Pose pose) {
+            objects::Clip c;
+            const objects::Template* t = g.library().find(of);
+            if (authored(of, pose_id(pose), c) || !t) return c;
+            return pose_rule(mover_of(g.library(), *t), pose, t->frames);
+        };
+        // One look: the frame the game says it drew (frame of the strip) against the author's (want), and the screen
+        // there (a box of w × h tiles around x, y) against the picture's strip.
+        auto look = [&s, &g, this](Look& l, const std::string& what, const std::string& of, u32 said, u32 want, u64 into, f64 x, f64 y, f64 w, f64 h) {
+            ++l.looks;
+            l.longest = std::max(l.longest, into);
+            std::string bad;
+            const Pictures::Picture* pic = g.picture_of(of);
+            assets::CookedTexture strip;
+            std::vector<u8> bytes, px;
+            u32 sw = 0, sh = 0;
+            const objects::Template* t = g.library().find(of);
+            if (said != want) bad = "игра рисует кадр " + std::to_string(said + 1) + ", а по анимации автора " + std::to_string(want + 1);
+            else if (!pic || !t || !read_file(g.library().picture_file(*t), bytes) || !assets::decode_image(bytes, strip) || !frame_pixels(s, px, sw, sh))
+                bad = "картинка или кадр экрана не читаются";
+            else {
+                f64 mine = 0, other = 0;
+                u32 rival = 0;
+                for (u32 k = 0; k < pic->frames; ++k) {
+                    const Match m = drawn_frame(px, sw, sh, g.camera(), x, y, w, h, strip, pic->frames, 3, 40, static_cast<i32>(k));
+                    if (k == want) mine = m.score;
+                    else if (m.score > other) other = m.score, rival = k;
+                }
+                char buf[96];
+                std::snprintf(buf, sizeof buf, "на экране кадр %u совпал на %.2f, кадр %u на %.2f", want + 1, mine, rival + 1, other);
+                if (mine < 0.9 || mine < other) bad = buf;
+            }
+            if (bad.empty()) {
+                if (want < l.seen.size()) ++l.seen[want];
+                return;
+            }
+            if (!l.bad++) l.first_bad = what + ", тик позы " + std::to_string(into) + ": " + bad;
+            if (l.bad <= 5) FORGE_WARN("%s, тик позы %llu: %s", what.c_str(), static_cast<unsigned long long>(into), bad.c_str());
+        };
+        // Every frame of the clip seen on the screen, none wrong.
+        auto all_seen = [this](const Look& l, const std::string& what, const objects::Clip& c, u32 at_least) {
+            std::string missing, counts;
+            for (u32 k : c.frames)
+                if (k >= l.seen.size() || l.seen[k] == 0) missing += " " + std::to_string(k + 1);
+            for (u32 k = 0; k < l.seen.size(); ++k)
+                if (l.seen[k]) counts += " " + std::to_string(k + 1) + "×" + std::to_string(l.seen[k]);
+            check(l.bad == 0, what + ": не тот кадр " + std::to_string(l.bad) + " раз из " + std::to_string(l.looks) + ", первый: " + l.first_bad);
+            check(l.looks >= at_least && missing.empty(), what + ": взглядов " + std::to_string(l.looks) + ", кадры на экране:" + counts +
+                                                              (missing.empty() ? std::string() : ", не видно:" + missing));
+            FORGE_INFO("%s: взглядов %u, не тот кадр %u, кадры на экране:%s", what.c_str(), l.looks, l.bad, counts.c_str());
+        };
+
+        steps_.push_back({"анимации автора: игра играет их, остальное по своему правилу", 3, [&g, this, pose_named, authored, expected](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f < 1) return false;
+            usize frames = 0;
+            for (int n : e.an_count) frames += static_cast<usize>(std::max(0, n));
+            if (!check_ok(!e.an_of.empty() && e.an_state.size() == e.an_of.size() && e.an_count.size() == e.an_of.size() &&
+                              e.an_fps.size() == e.an_of.size() && e.an_loop.size() == e.an_of.size() && frames == e.an_frames.size(),
+                          "анимации автора: по шаблону, состоянию, числу кадров, кадрам, кадрам в секунду и повтору"))
+                return true;
+            for (const std::string* of : {&e.an_hero, &e.an_walker, &e.an_still}) {
+                const objects::Template* t = g.library().find(*of);
+                const Pictures::Picture* pic = g.picture_of(*of);
+                if (!check_ok(t && pic, "шаблон «" + *of + "» с картинкой в игре")) continue;
+                for (Pose pose : poses_of(mover_of(g.library(), *t))) {
+                    objects::Clip mine;
+                    const bool own = authored(*of, pose_id(pose), mine);
+                    const objects::Clip want = expected(*of, pose), have = pic->clips[static_cast<usize>(pose)];
+                    check(have == want, "«" + t->name + "», «" + pose_name(pose) + "»: " + (own ? "анимация автора" : "правило игры") + ", кадров " +
+                                            std::to_string(have.frames.size()) + " (" + std::to_string(want.frames.size()) + "), " +
+                                            std::to_string(have.fps) + " к/с (" + std::to_string(want.fps) + ")");
+                }
+            }
+            for (usize i = 0; i < e.an_of.size(); ++i) {
+                Pose pose{};
+                const objects::Template* t = g.library().find(e.an_of[i]);
+                const std::vector<Pose> poses = t ? poses_of(mover_of(g.library(), *t)) : std::vector<Pose>{};
+                check(pose_named(e.an_state[i], pose) && std::find(poses.begin(), poses.end(), pose) != poses.end(),
+                      "«" + e.an_state[i] + "» — состояние, в котором игра рисует «" + e.an_of[i] + "»");
+            }
+            return true;
+        }});
+        steps_.push_back({"новая игра: герой стоит кадром своего состояния", 200, [&s, &g, this, st, look, expected](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                check(s.new_game(), "новая игра");
+                return false;
+            }
+            if (f < 30 || (!g.on_ground() && f < 150)) return false;
+            if (g.hero_pose() == Pose::Stand && !g.blinking()) {
+                const objects::Clip c = expected(e.an_hero, Pose::Stand);
+                const u64 into = g.drawn_tick() - g.hero_pose_since();
+                look(st->stand, "стоит", e.an_hero, g.hero_picture_frame(), objects::clip_frame(c, into), into, g.hero_drawn_x(), g.hero_drawn_y(),
+                     1, 2);
+            }
+            if (f < 50) return false;
+            check(g.hero_pictured() && st->stand.looks >= 10 && st->stand.bad == 0,
+                  "герой стоит кадром «Стоит»: взглядов " + std::to_string(st->stand.looks) + ", не тот " + std::to_string(st->stand.bad) + " " +
+                      st->stand.first_bad);
+            return true;
+        }});
+        steps_.push_back({"герой идёт кадрами анимации автора", 70, [&g, this, st, look, expected, all_seen](u32 f) {
+            const ProjectEdits& e = project_edits;
+            // Right, left, right: on «Луг» from its start, clear of the wall and of what lies further.
+            Controls c;
+            c.right = f < 20 || (f >= 40 && f < 60);
+            c.left = f >= 20 && f < 40;
+            g.script(f < 60 ? c : Controls{});
+            const objects::Clip clip = expected(e.an_hero, Pose::Walk);
+            if (g.on_ground() && g.hero_pose() == Pose::Walk && !g.blinking()) {
+                const u64 into = g.drawn_tick() - g.hero_pose_since();
+                look(st->walk, "идёт", e.an_hero, g.hero_picture_frame(), objects::clip_frame(clip, into), into, g.hero_drawn_x(), g.hero_drawn_y(),
+                     1, 2);
+            }
+            if (f < 62) return false;
+            all_seen(st->walk, "идёт", clip, 30);
+            return true;
+        }});
+        steps_.push_back({"герой в воздухе кадрами анимации автора, без повтора стоит на последнем", 200, [&g, this, st, look, expected, all_seen](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const objects::Clip clip = expected(e.an_hero, Pose::Air);
+            if (f == 0) {
+                g.teleport(g.hero_x(), g.hero_y() - 6);
+                return false;
+            }
+            if (!g.on_ground() && g.hero_pose() == Pose::Air && !g.blinking()) {
+                const u64 into = g.drawn_tick() - g.hero_pose_since();
+                look(st->air, "в воздухе", e.an_hero, g.hero_picture_frame(), objects::clip_frame(clip, into), into, g.hero_drawn_x(),
+                     g.hero_drawn_y(), 1, 2);
+            }
+            if (f < 4 || (!g.on_ground() && f < 190)) return false;
+            all_seen(st->air, "в воздухе", clip, 15);
+            const u64 whole = static_cast<u64>(objects::clip_ticks(clip.fps)) * clip.frames.size();
+            check(clip.loop || st->air.longest >= whole,
+                  "в воздухе дольше всей анимации (взгляд на тике позы " + std::to_string(st->air.longest) + ", в ней " + std::to_string(whole) +
+                      " тиков): после неё её последний кадр");
+            return true;
+        }});
+        steps_.push_back({"копия того, что стоит, кадрами анимации автора", 160, [&g, this, st, look, expected, all_seen](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const objects::Clip clip = expected(e.an_still, Pose::Idle);
+            if (f == 0) {
+                check(g.spawn_copy(e.an_still, g.hero_x() - 3, g.hero_y() + kHeroHalfH, kStill) != 0, "копия «" + e.an_still + "» рядом с героем");
+                return false;
+            }
+            const flecs::entity_t c = g.copy_with_id(kStill);
+            f64 x = 0, y = 0, w = 0, h = 0;
+            const Pictures::Picture* pic = g.picture_of(e.an_still);
+            if (!c || !pic || !g.position_of(c, x, y) || !g.body_size(c, w, h)) return check_ok(false, "копии «" + e.an_still + "» нет");
+            if (f >= 3) {
+                const u64 into = g.drawn_tick();
+                const u32 want = objects::clip_frame(clip, into);
+                // What the game draws it with: the frame of its picture by the level's clock.
+                const u32 said = pic->at(Pose::Idle, into) - pic->frame;
+                look(st->still, "стоит", e.an_still, said, want, into, x, y, h * pic->aspect, h);
+            }
+            if (f < 150) return false;
+            all_seen(st->still, "«" + e.an_still + "» стоит", clip, 100);
+            return true;
+        }});
+        steps_.push_back({"копия того, кто ходит, кадрами анимации автора", 200, [&g, this, st, look, expected, all_seen](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const objects::Clip clip = expected(e.an_walker, Pose::Walk);
+            if (f == 0) {
+                check(g.spawn_copy(e.an_walker, g.hero_x() + 8, g.hero_y() + kHeroHalfH, kWalker) != 0, "копия «" + e.an_walker + "» рядом с героем");
+                st->was.clear();
+                return false;
+            }
+            const flecs::entity_t c = g.copy_with_id(kWalker);
+            f64 x = 0, y = 0;
+            const Pictures::Picture* pic = g.picture_of(e.an_walker);
+            if (!c || !pic || !g.position_of(c, x, y)) return check_ok(false, "копии «" + e.an_walker + "» нет");
+            const auto was = st->was.find(c);
+            // It walks while it goes (the game: on the ground, faster than 0.3 of a tile a second).
+            const bool walking = was != st->was.end() && std::fabs(x - was->second) > 0.01 && std::fabs(x - was->second) < 0.5;
+            st->was[c] = x;
+            if (walking && f >= 10) {
+                const u64 into = g.drawn_tick();
+                look(st->walker, "идёт", e.an_walker, pic->at(Pose::Walk, into) - pic->frame, objects::clip_frame(clip, into), into, x, y, pic->aspect, 1);
+            }
+            if (f < 190) return false;
+            all_seen(st->walker, "«" + e.an_walker + "» идёт", clip, 60);
+            return true;
+        }});
+    }
     static bool one_of(SliceGame& g, const std::string& id, f64& x, f64& y) {
         const std::vector<flecs::entity_t> c = g.copies_of(id);
         return c.size() == 1 && g.position_of(c[0], x, y);
@@ -1354,6 +1585,7 @@ private:
         if (!project_edits.go_through.empty() || project_edits.go_continue) build_going(s);
         if (!project_edits.pl_enemy.empty()) build_platform_edits(s);
         if (!project_edits.tp_hero.empty()) build_template_edits(s);
+        if (!project_edits.an_of.empty()) build_anim_edits(s);
         if (project_edits.object.empty() && !project_edits.absent) return;
         if (project_edits.absent) {
             steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {
@@ -7248,7 +7480,7 @@ private:
     // A strip of frames (a template's picture) the game draws in a box of tw × th tiles around (cx, cy): which frame
     // the screen shows there, mirrored or not, and how well (the share of the frame's opaque pixels the screen has,
     // each channel within `most`), the box looked for up to `slack` pixels around where it should be (a body moving
-    // is drawn between two ticks).
+    // is drawn between two ticks). only: that frame of the strip alone (-1: the best of all).
     struct Match {
         i32 frame = -1;
         bool flip = false;
@@ -7256,14 +7488,14 @@ private:
         i32 dx = 0, dy = 0;
     };
     static Match drawn_frame(const std::vector<u8>& screen, u32 sw, u32 sh, const render::Camera2D& c, f64 cx, f64 cy, f64 tw,
-                             f64 th, const assets::CookedTexture& strip, u32 frames, i32 slack, i32 most = 40) {
+                             f64 th, const assets::CookedTexture& strip, u32 frames, i32 slack, i32 most = 40, i32 only = -1) {
         Match best;
         if (!frames || strip.width % frames || screen.size() < static_cast<usize>(sw) * sh * 4) return best;
         const u32 fw = strip.width / frames, fh = strip.height;
         const f64 left = (cx - tw / 2 - c.snapped_x()) * c.zoom + sw * 0.5, top = (cy - th / 2 - c.snapped_y()) * c.zoom + sh * 0.5;
         const f64 pw = tw * c.zoom, ph = th * c.zoom;
         for (u32 k = 0; k < frames; ++k)
-            for (int flip = 0; flip < 2; ++flip)
+            for (int flip = 0; flip < 2 && (only < 0 || static_cast<u32>(only) == k); ++flip)
                 for (i32 dy = -slack; dy <= slack; ++dy)
                     for (i32 dx = -slack; dx <= slack; ++dx) {
                         u32 opaque = 0, same = 0;
