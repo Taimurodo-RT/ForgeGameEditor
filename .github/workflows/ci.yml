@@ -155,6 +155,10 @@ jobs:
           (cd build/elsewhere && "../../$game" --test --scene probe_save --data ../../tests/data/probe/game --user ../module-slots-built)
           (cd build/elsewhere && "../../$game" --test --scene module_slots --user ../module-slots-built)
           (cd build/elsewhere && "../../$game" --test --scene probe_foreign --data ../../tests/data/probe/game --user ../module-slots-built)
+          # The copy of the links --test plays with, as an earlier run of another game left it (the platformer's: no «Ключ
+          # открывает Дверь»). The package copies its own data's links over it, not games/slice's, which is away.
+          if [ "$RUNNER_OS" = Windows ]; then py=python; else py=python3; fi
+          "$py" -c "import shutil, tempfile, os; d = os.path.join(tempfile.gettempdir(), 'forge_slice_test_logic.json'); shutil.copyfile('games/platformer/logic.json', d); print('left in', d)"
           mv games/slice build/slice-away
           mv games/platformer build/platformer-away
           mv games/modules build/modules-away

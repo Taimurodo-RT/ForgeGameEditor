@@ -9377,10 +9377,14 @@ int slice::run(int argc, char** argv) {
             options.silent = true;
             // «Связи» over the game change a copy of the links, not the game's.
             options.edit_links = true;
+            // The copy is of the links of the data the game plays: a package's own data/game (games/slice may not be
+            // there), else games/slice. Never the copy an earlier run left: when this one fails the game has no links.
             options.links_file = std::filesystem::temp_directory_path() / "forge_slice_test_logic.json";
+            const std::filesystem::path links = forge::game::game_data_dir(1, argv, utf8_path(SLICE_DATA_DIR)) / "logic.json";
             std::error_code ec0;
-            std::filesystem::copy_file(utf8_path(SLICE_DATA_DIR) / "logic.json", options.links_file,
-                                       std::filesystem::copy_options::overwrite_existing, ec0);
+            std::filesystem::remove(options.links_file, ec0);
+            if (!std::filesystem::copy_file(links, options.links_file, std::filesystem::copy_options::overwrite_existing, ec0))
+                FORGE_ERROR("--test: связи «%s» не скопированы: %s", path_to_utf8(links).c_str(), ec0.message().c_str());
             // The links that happen go where the test reads them.
             options.fired_file = std::filesystem::temp_directory_path() / "forge_slice_test_fired.txt";
             std::error_code ec;
