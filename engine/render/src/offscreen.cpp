@@ -1,6 +1,8 @@
 #include "forge/render/offscreen.h"
 
+#include "forge/core/file.h"
 #include "forge/core/log.h"
+#include "forge/core/path.h"
 #include "forge/render/gpu.h"
 
 #include <SDL3/SDL.h>
@@ -80,9 +82,18 @@ bool read_pixels(SDL_GPUDevice* device, SDL_GPUTexture* texture, u32 width, u32 
 }
 
 bool write_png(const char* path, u32 width, u32 height, const std::vector<u8>& rgba) {
+    // Encoded in memory, then written by the file API: the path is UTF-8 (a Cyrillic folder or name), and on Windows
+    // stb's own fopen would take it as the ANSI code page and write another name, or nothing.
+    std::vector<u8> png;
+    auto sink = [](void* context, void* data, int size) {
+        auto* bytes = static_cast<std::vector<u8>*>(context);
+        const u8* p = static_cast<const u8*>(data);
+        bytes->insert(bytes->end(), p, p + size);
+    };
     const bool ok = rgba.size() >= static_cast<usize>(width) * height * 4 &&
-                    stbi_write_png(path, static_cast<int>(width), static_cast<int>(height), 4, rgba.data(),
-                                   static_cast<int>(width * 4)) != 0;
+                    stbi_write_png_to_func(sink, &png, static_cast<int>(width), static_cast<int>(height), 4, rgba.data(),
+                                           static_cast<int>(width * 4)) != 0 &&
+                    write_file_atomic(utf8_path(path), png);
     if (ok) FORGE_INFO("saved %s", path);
     else FORGE_ERROR("could not save %s", path);
     return ok;

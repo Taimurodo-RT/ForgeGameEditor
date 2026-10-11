@@ -2,7 +2,9 @@
 of the template «Старая шахта», in each game given, with games/slice,
 games/platformer and games/modules moved away for the run: the game must take
 everything of it from the game's own folder. They come back after it, every
-file with the SHA-256 it had (checked).
+file with the SHA-256 it had (checked), also when a folder does not move or a
+game does not start; one that does not come back is named with where it is,
+and the others are still moved back.
 
     python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/game/forge_game [build/apps/slice/forge_slice]
 
@@ -38,7 +40,6 @@ forge_slice); it is not an export of the author's game.
 """
 
 import hashlib
-
 import os
 import shutil
 import subprocess
@@ -95,12 +96,12 @@ def main() -> int:
         plays += [(old, None, True)]
     else:
         print(f"нет {old}: игры модулей не играются (forge_editor --self-test modules их делает)", flush=True)
-    # The sources the games must do without, moved away; their files' SHA-256 to compare when they are back.
+    # The sources the games must do without, moved away; their files' SHA-256 to compare when they are back. The
+    # folder they wait in is next to them, on the same disk: a move is a rename, nothing is copied half-way.
     sources = [ROOT / "games" / name for name in ("slice", "platformer", "modules")]
     before = {src: digests(src) for src in sources}
-    aside = Path(tempfile.mkdtemp(prefix="forge_sources_away_"))
-    for src in sources:
-        shutil.move(str(src), str(aside / src.name))
+    aside = Path(tempfile.mkdtemp(prefix="forge_sources_away_", dir=ROOT))
+    moved = []  # (source, where it waits): only those moved, so only those are moved back
     failed = 0
 
     def run(args, cwd) -> int:
@@ -110,6 +111,9 @@ def main() -> int:
         return code
 
     try:
+        for src in sources:
+            shutil.move(str(src), str(aside / src.name))
+            moved.append((src, aside / src.name))
         for exe in games:
             for folder, edits, level in plays:
                 user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))
@@ -135,15 +139,33 @@ def main() -> int:
                 for scene, data in (("probe_save", probe), ("module_slots", old), ("probe_foreign", probe)):
                     elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
                     failed += run([str(exe), "--test", "--scene", scene, "--data", str(data / "game"), "--user", str(user)], str(elsewhere)) != 0
+    except Exception as e:  # a folder that does not move, a game that does not start: the folders come back all the same
+        print(f"прогон прерван: {type(e).__name__}: {e}", flush=True)
+        failed += 1
     finally:
-        for src in sources:
-            shutil.move(str(aside / src.name), str(src))
+        failed += restore(moved)
     for src in sources:
         after = digests(src)
         same = after == before[src]
-        print(f"{src.relative_to(ROOT).as_posix()}: {len(after)} файлов вернулись {'с теми же SHA-256' if same else 'НЕ такими же'}", flush=True)
+        print(f"{src.relative_to(ROOT).as_posix()}: {len(after)} файлов {'на месте с теми же SHA-256' if same else 'НЕ на месте или НЕ такие же'}", flush=True)
         failed += not same
+    try:
+        aside.rmdir()  # empty when everything came back
+    except OSError:
+        print(f"папка {aside} не пуста: в ней то, что не вернулось", flush=True)
     return 1 if failed else 0
+
+
+def restore(moved) -> int:
+    """Moves each folder back to where it was; one that does not come back does not stop the others. The number that did not."""
+    lost = 0
+    for src, waits in reversed(moved):
+        try:
+            shutil.move(str(waits), str(src))
+        except Exception as e:
+            print(f"НЕ ВОЗВРАЩЕНА {src}: она в {waits} ({type(e).__name__}: {e})", flush=True)
+            lost += 1
+    return lost
 
 
 def digests(folder: Path) -> dict:

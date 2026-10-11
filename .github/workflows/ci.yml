@@ -34,6 +34,9 @@ jobs:
       - name: The core names no module (engine, the launcher apps/game and the editor include no header of apps/slice or apps/probe; apps/builtin their public headers only)
         shell: bash
         run: if [ "$RUNNER_OS" = Windows ]; then python tools/check_core_includes.py; else python3 tools/check_core_includes.py; fi
+      - name: play.py puts games/slice, games/platformer and games/modules back with the same SHA-256 when a move fails second or third, a game does not start or fails, or one of them does not come back (tools/author_game/test_play.py, a tree of its own)
+        shell: bash
+        run: if [ "$RUNNER_OS" = Windows ]; then python -m unittest discover -v -s tools/author_game; else python3 -m unittest discover -v -s tools/author_game; fi
       - name: Python for the converters (Linux; Windows builds its own next to the editor)
         if: runner.os == 'Linux'
         run: |
