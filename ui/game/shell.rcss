@@ -70,6 +70,15 @@ body {
 .empty { padding: var(--space-6); text-align: center; }
 
 .setting { width: 240px; }
+.settings-body { overflow-y: auto; }
+.keys-head { margin-top: var(--space-2); align-items: center; }
+.key-row { padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); align-items: center; }
+.key-row:hover { background-color: var(--surface-container-high); }
+.key-row.waiting { background-color: var(--primary-container); }
+.key-row.changed .key-binds { color: var(--primary); }
+.key-binds { color: var(--on-surface-variant); }
+.key-binds.waiting { color: var(--on-primary-container); }
+.keys-note { color: var(--error); }
 .journal { overflow-y: auto; }
 .quest-title { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); font-weight: 600; color: var(--tertiary); margin-bottom: var(--space-1); }
 .quest.done .quest-title { color: var(--on-surface-variant); }

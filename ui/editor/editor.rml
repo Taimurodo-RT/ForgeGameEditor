@@ -11,6 +11,7 @@
     <link type="text/rcss" href="assets.rcss"/>
     <link type="text/rcss" href="objects.rcss"/>
     <link type="text/rcss" href="animation.rcss"/>
+    <link type="text/rcss" href="input.rcss"/>
     <link type="text/rcss" href="logic.rcss"/>
     <link type="text/rcss" href="story.rcss"/>
     <link type="text/rcss" href="uiedit.rcss"/>
@@ -63,11 +64,11 @@
         <div class="editor-tab" data-class-selected="tab == 'logic'" data-event-click="open_tab('logic', 'Логика', '', '', 'account_tree')"><icon name="account_tree"/><span>Логика</span></div>
         <div class="editor-tab" data-class-selected="tab == 'story'" data-event-click="open_tab('story', 'Сюжет', '', '', 'forum')"><icon name="forum"/><span>Сюжет</span></div>
         <div class="editor-tab" data-class-selected="tab == 'ui'" data-event-click="open_tab('ui', 'Интерфейс', 'Меню и экраны игры, как в Figma', 'шаг 13: редактор интерфейсов', 'dashboard')"><icon name="dashboard"/><span>Интерфейс</span></div>
-        <div class="editor-tab" data-class-selected="tab == 'input'" data-event-click="open_tab('input', 'Ввод', 'Клавиши, мышь и геймпад для действий игры', 'шаг 13: редактор интерфейсов', 'sports_esports')"><icon name="sports_esports"/><span>Ввод</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'input'" data-event-click="open_tab('input', 'Ввод', '', '', 'sports_esports')"><icon name="sports_esports"/><span>Ввод</span></div>
         <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', '', '', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
     </div>
 
-    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects' || tab == 'animation' || tab == 'logic' || tab == 'story' || tab == 'ui')">
+    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects' || tab == 'animation' || tab == 'input' || tab == 'logic' || tab == 'story' || tab == 'ui')">
         <icon class="big" data-attr-name="tab_icon"/>
         <div class="headline-small">{{ tab_title }}</div>
         <div class="muted">{{ tab_description }}</div>
@@ -1238,6 +1239,68 @@
                 <div id="an-loop" class="an-check row" data-event-click="an_loop_toggle"><icon class="s" data-attr-name="an_loop ? 'check_box' : 'check_box_outline_blank'"/><span>Повторять</span></div>
                 <div class="an-problem" data-if="an_problem != ''">{{ an_problem }}: игра играет это состояние как в игре.</div>
                 <div class="an-hint">Щёлкните кадры картинки по порядку: так появится своя анимация состояния. Игра увидит её при следующем «Играть».</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- «Ввод»: the game's actions and the shell's with their keys, mouse and gamepad buttons; under them what does not
+         add up (one key on two actions, an action without any). -->
+    <div id="input" class="column" data-if="tab == 'input'">
+        <div class="an-bar row">
+            <div class="st-crumb row"><icon class="s" name="sports_esports"/><span>Ввод</span><icon class="s" name="chevron_right"/><b>Действия игры</b></div>
+            <div class="grow"/>
+        </div>
+        <div class="in-body row grow">
+            <div class="in-list column grow">
+                <div id="in-error" class="in-error" data-if="in_error != ''">{{ in_error }}</div>
+                <div class="lg-nav-title">Игра</div>
+                <div id="in-module-note" class="in-empty" data-if="in_module_note != ''">{{ in_module_note }}</div>
+                <div data-for="r : in_game" class="in-item column">
+                    <div class="in-row row" data-attr-id="'in-' + r.id" data-class-changed="r.changed" data-class-waiting="r.waiting">
+                        <div class="in-name column"><span class="name">{{ r.words }}</span><span class="sub" data-attr-id="'in-changed-' + r.id" data-if="r.changed">изменено автором</span></div>
+                        <div class="in-binds row grow">
+                            <div data-for="b : r.binds" class="in-chip row" data-class-pad="b.pad" data-attr-title="b.text">
+                                <span>{{ b.words }}</span>
+                                <div class="in-x" data-attr-id="'in-x-' + r.id + '-' + b.index" title="Убрать" data-event-click="in_remove(r.id, b.index)"><icon class="s" name="close"/></div>
+                            </div>
+                            <span class="in-none" data-attr-id="'in-none-' + r.id" data-if="r.empty &amp;&amp; !r.waiting">нет ни одной клавиши</span>
+                            <span class="in-wait" data-attr-id="'in-wait-' + r.id" data-if="r.waiting">Нажмите клавишу или кнопку геймпада… Esc — отмена</span>
+                        </div>
+                        <div class="button text small" data-attr-id="'in-key-' + r.id" data-event-click="in_key(r.id)"><icon class="s" name="add"/><span>Клавиша</span></div>
+                        <div class="button text small" data-attr-id="'in-more-' + r.id" data-class-open="r.more" data-event-click="in_more(r.id)"><icon class="s" name="sports_esports"/><span>Мышь, геймпад</span></div>
+                        <div class="button text small" data-attr-id="'in-reset-' + r.id" data-if="r.changed" title="Клавиши модуля" data-event-click="in_reset(r.id)"><icon class="s" name="restart_alt"/><span>Как было</span></div>
+                    </div>
+                    <div class="in-picks row" data-if="r.more">
+                        <div data-for="p : in_picks" class="in-pick" data-attr-id="'in-pick-' + r.id + '-' + it_index" data-class-pad="p.pad" data-class-has="p.has" data-event-click="in_pick(it_index)">{{ p.words }}</div>
+                    </div>
+                </div>
+                <div class="lg-nav-title">Оболочка: в каждой игре</div>
+                <div data-for="r : in_shell" class="in-item column">
+                    <div class="in-row row" data-attr-id="'in-' + r.id" data-class-changed="r.changed" data-class-waiting="r.waiting">
+                        <div class="in-name column"><span class="name">{{ r.words }}</span><span class="sub" data-attr-id="'in-changed-' + r.id" data-if="r.changed">изменено автором</span></div>
+                        <div class="in-binds row grow">
+                            <div data-for="b : r.binds" class="in-chip row" data-class-pad="b.pad" data-attr-title="b.text">
+                                <span>{{ b.words }}</span>
+                                <div class="in-x" data-attr-id="'in-x-' + r.id + '-' + b.index" title="Убрать" data-event-click="in_remove(r.id, b.index)"><icon class="s" name="close"/></div>
+                            </div>
+                            <span class="in-none" data-attr-id="'in-none-' + r.id" data-if="r.empty &amp;&amp; !r.waiting">нет ни одной клавиши</span>
+                            <span class="in-wait" data-attr-id="'in-wait-' + r.id" data-if="r.waiting">Нажмите клавишу или кнопку геймпада… Esc — отмена</span>
+                        </div>
+                        <div class="button text small" data-attr-id="'in-key-' + r.id" data-event-click="in_key(r.id)"><icon class="s" name="add"/><span>Клавиша</span></div>
+                        <div class="button text small" data-attr-id="'in-more-' + r.id" data-class-open="r.more" data-event-click="in_more(r.id)"><icon class="s" name="sports_esports"/><span>Мышь, геймпад</span></div>
+                        <div class="button text small" data-attr-id="'in-reset-' + r.id" data-if="r.changed" title="Клавиши модуля" data-event-click="in_reset(r.id)"><icon class="s" name="restart_alt"/><span>Как было</span></div>
+                    </div>
+                    <div class="in-picks row" data-if="r.more">
+                        <div data-for="p : in_picks" class="in-pick" data-attr-id="'in-pick-' + r.id + '-' + it_index" data-class-pad="p.pad" data-class-has="p.has" data-event-click="in_pick(it_index)">{{ p.words }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="in-side column">
+                <div class="lg-nav-title">Проверка</div>
+                <div id="in-note" class="in-warning" data-if="in_note != ''">{{ in_note }}</div>
+                <div data-for="w : in_warnings" class="in-warning" data-attr-id="'in-warning-' + it_index">{{ w }}</div>
+                <div id="in-ok" class="in-ok" data-if="in_warnings.size == 0 &amp;&amp; in_note == ''">У каждого действия своя клавиша.</div>
+                <div class="in-hint">Каждое изменение сразу записано в input.json игры. «Играть» запускает игру с этими клавишами; игрок может поменять их у себя в «Настройках». Клавиша — место на клавиатуре: W остаётся W и на русской раскладке.</div>
             </div>
         </div>
     </div>
@@ -2977,9 +3040,10 @@
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'scheme'">Ctrl+Z / Ctrl+Y отмена и повтор · тяните от точки к точке, чтобы соединить · правый щелчок по рамке — новая нода · Alt+щелчок по точке убирает провода · Delete убирает выбранное</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'code'">Код собран из связей · щелчок по строке: её связь · Ctrl+Z / Ctrl+Y отмена и повтор</span>
         <span class="muted" data-if="tab == 'animation'">Ctrl+Z / Ctrl+Y отмена и повтор · ↑ ↓ шаблон · 1 2 3 состояние · щелчок по кадру: добавить · Backspace убрать последний · Del как в игре · пробел пауза · ← → кадр</span>
+        <span class="muted" data-if="tab == 'input'">Ctrl+Z / Ctrl+Y отмена и повтор · «Клавиша», потом нужная клавиша или кнопка геймпада · Esc отмена · × убирает привязку</span>
         <span class="muted" data-if="tab == 'story'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по реплике: править · Enter сохранить · Esc отмена · щелчок по пометке: выбрать из списка</span>
         <span class="muted" data-if="tab == 'ui'">V F R O T инструменты · правая кнопка: меню · Ctrl+колесо: масштаб · пробел или средняя кнопка: двигать холст · Shift+A автораскладка · Ctrl+G в рамку · Ctrl+D копия · Ctrl: без прилипания</span>
-        <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic' && tab != 'story' && tab != 'ui' && tab != 'animation'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic' && tab != 'story' && tab != 'ui' && tab != 'animation' && tab != 'input'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>
 </rml>

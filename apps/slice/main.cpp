@@ -15,7 +15,8 @@
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
 //                                                    |tiled|tiled_update|levels|levels_continue|platformer
 //                                                    |platformer_continue|platformer_edges|platformer_template
-//                                                    |platformer_template_continue|module_slots|project]
+//                                                    |platformer_template_continue|module_slots|input|input_again
+//                                                    |project]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
@@ -39,7 +40,12 @@
 //                                   platformer_template_continue, another process: «Продолжить» and on to the flag;
 //                                   module_slots (step 14.3a), with the --user DIR of the test module's probe_save: the
 //                                   module's values in the game, the slots of another module or of none refused, a slot
-//                                   from before step 14.3a loaded)
+//                                   from before step 14.3a loaded;
+//                                   input (the tab «Ввод»): a copy of the template «Платформер» with an input.json of
+//                                   the author's (a jump on K), played by the window's key events and a virtual
+//                                   gamepad; in «Настройки» the player gives the jump L, is refused a key another
+//                                   action has, takes «Как задумано», gives L again; input_again, another process: the
+//                                   player's L from settings.json)
 //   forge_slice --test --scene project [--play] --data GAME [--level DIR --at X,Y --user DIR] [--edits FILE]
 //                                   a game the editor made of a template, as its «Играть» starts it: that game's data,
 //                                   title and links, the hero at X,Y, the player's files in DIR; with FILE, what the
@@ -53,7 +59,9 @@
 //
 // Controls: A/D walk, Space/W jump (and swim), left mouse digs or breaks a
 // crate, right mouse builds with the selected slot (1-6), E talks, the
-// wheel zooms. Esc pauses, J opens the journal, F5 saves, F9 loads.
+// wheel zooms. Esc pauses, J opens the journal, F5 saves, F9 loads. Walking, jumping, talking and the shell's keys are
+// actions (slice::actions, the tab «Ввод»): the author's input.json and the player's «Настройки» change their keys,
+// and a gamepad plays them too.
 
 #include "slice_art.h"
 #include "project_edits.h"
@@ -306,6 +314,14 @@ constexpr u64 kTestBeetle = 0x142d0000000f0001ull;
 // The tiles «Трава» and «Мост» of the template's tiles.png.
 constexpr world::TileId kGrass = 256, kBridge = 263;
 } // namespace tpl
+
+// --scene input and input_again (the tab «Ввод»): a copy of the template «Платформер» with the author's input.json in
+// this run's own folder, played on in another process with the player's settings.json.
+namespace keys_scene {
+inline std::filesystem::path root() { return std::filesystem::temp_directory_path() / utf8_path("forge_slice_ввод"); }
+// The author's choice: the jump on K and the gamepad's A, nothing else changed.
+inline constexpr std::string_view kAuthor = "{\n  \"actions\": [\n    {\"id\": \"jump\", \"binds\": [\"key:K\", \"pad:south\"]}\n  ]\n}\n";
+} // namespace keys_scene
 
 // The self-test: steps run one after another, each over as many frames as
 // it needs (a step returns true when it is done).
@@ -1586,6 +1602,7 @@ private:
         if (!project_edits.pl_enemy.empty()) build_platform_edits(s);
         if (!project_edits.tp_hero.empty()) build_template_edits(s);
         if (!project_edits.an_of.empty()) build_anim_edits(s);
+        if (!project_edits.in_action.empty()) build_input_edits(s);
         if (project_edits.object.empty() && !project_edits.absent) return;
         if (project_edits.absent) {
             steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {
@@ -1790,6 +1807,10 @@ private:
         }
         if (scene_ == "platformer" || scene_ == "platformer_continue" || scene_ == "platformer_edges") {
             build_platformer(s, scene_ == "platformer_continue", scene_ == "platformer_edges");
+            return;
+        }
+        if (scene_ == "input" || scene_ == "input_again") {
+            build_input(s, scene_ == "input_again");
             return;
         }
         if (scene_ == "platformer_template" || scene_ == "platformer_template_continue") {
@@ -7536,6 +7557,336 @@ private:
     // falls lose the game: the window «при поражении», «Ещё раз» a new game, the save as it was.
     // continued (another process, another working folder): «Продолжить» on «Холмы», nothing given twice, the bot on
     // through «Вершина» to the flag: the window «при победе», «Ещё раз», the save still loads.
+    // A key of the keyboard as the window gives it: its place and the letter there.
+    static void key_event(Shell& s, SDL_Scancode sc, bool down) {
+        SDL_Event ev{};
+        ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        ev.key.scancode = sc;
+        ev.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+        ev.key.down = down;
+        s.handle_event(ev);
+    }
+    std::string hero_at() const {
+        char b[64];
+        std::snprintf(b, sizeof b, " (герой %.2f, %.2f)", g_.hero_x(), g_.hero_y());
+        return b;
+    }
+    // A step: the hero on the ground and not moving for a few frames.
+    void push_settle(const char* name) {
+        auto st = std::make_shared<std::array<f64, 3>>(); // x, y, the frame it last moved
+        steps_.push_back({name, 200, [this, st](u32 f) {
+            std::array<f64, 3>& a = *st;
+            if (f == 0) a[2] = 0;
+            if (!g_.on_ground() || std::fabs(g_.hero_x() - a[0]) > 1e-6 || std::fabs(g_.hero_y() - a[1]) > 1e-6) {
+                a = {g_.hero_x(), g_.hero_y(), static_cast<f64>(f)};
+                return f >= 190 && check_ok(false, std::string("герой не встал") + hero_at());
+            }
+            return f >= a[2] + 8;
+        }});
+    }
+    // A step: the key held 12 frames; the hero jumps (goes up by half a tile at least) or not, as `jumps` says; then
+    // it stands again.
+    void push_jump(Shell& s, const char* name, SDL_Scancode sc, bool jumps, std::string what) {
+        struct Jump {
+            f64 y0 = 0, top = 0, x = 0, y = 0;
+            u32 still = 0;
+        };
+        auto st = std::make_shared<Jump>();
+        steps_.push_back({name, 240, [&s, this, st, sc, jumps, what](u32 f) {
+            if (f == 0) {
+                st->y0 = st->top = g_.hero_y();
+                key_event(s, sc, true);
+            }
+            st->top = std::min(st->top, g_.hero_y());
+            if (f == 12) key_event(s, sc, false);
+            if (f < 14) return false;
+            if (!g_.on_ground() || std::fabs(g_.hero_x() - st->x) > 1e-6 || std::fabs(g_.hero_y() - st->y) > 1e-6) {
+                st->x = g_.hero_x();
+                st->y = g_.hero_y();
+                st->still = f;
+                return f >= 230 && check_ok(false, what + ": герой не встал" + hero_at());
+            }
+            if (f < st->still + 8) return false;
+            const bool jumped = st->top < st->y0 - 0.5;
+            check(jumped == jumps, what + (jumped ? ": прыгнул" : ": не прыгнул") + hero_at());
+            return true;
+        }});
+    }
+
+    // --scene input and input_again (the tab «Ввод», editors/ввод-модель.md): the game's actions on the keys the
+    // author gave them (input.json) and the player (settings.json), pressed as the window gives keys and a gamepad.
+    void build_input(Shell& s, bool again) {
+        namespace fs = std::filesystem;
+        SliceGame& g = g_;
+        struct State {
+            f64 x0 = 0, y0 = 0, top = 0, sx = 0, sy = 0;
+            u32 still = 0;
+            SDL_JoystickID pad = 0;
+            SDL_Joystick* joy = nullptr;
+        };
+        auto st = std::make_shared<State>();
+        auto press = [&s](SDL_Scancode sc, bool down) { key_event(s, sc, down); };
+        auto tap = [press](SDL_Scancode sc) {
+            press(sc, true);
+            press(sc, false);
+        };
+        auto binds = [&s](const char* action) {
+            std::vector<std::string> out;
+            if (const input::Action* a = s.input().action(action))
+                for (const input::Bind& b : a->binds) out.push_back(input::format(b));
+            return out;
+        };
+        auto joined = [](const std::vector<std::string>& v) {
+            std::string out;
+            for (const std::string& x : v) out += (out.empty() ? "" : ", ") + x;
+            return "[" + out + "]";
+        };
+        auto where = [this] { return hero_at(); };
+        // The hero on the ground and not moving for a few frames.
+        auto settle = [&g, st](u32 f) {
+            if (f == 0) st->still = 0;
+            if (!g.on_ground() || std::fabs(g.hero_x() - st->sx) > 1e-6 || std::fabs(g.hero_y() - st->sy) > 1e-6) {
+                st->sx = g.hero_x();
+                st->sy = g.hero_y();
+                st->still = f;
+                return false;
+            }
+            return f >= st->still + 8;
+        };
+        const std::vector<std::string> kJump = {"key:K", "pad:south"}, kPlayer = {"key:L", "pad:south"};
+        const fs::path settings_file = s.user_folder() / "settings.json";
+        auto player_keys = [settings_file] {
+            game::Settings st2;
+            std::vector<u8> bytes;
+            if (!read_file(settings_file, bytes)) return std::string("нет файла");
+            data::LoadReport report;
+            if (!data::from_json(st2, std::string(bytes.begin(), bytes.end()), report)) return std::string("не читается");
+            std::string out;
+            for (const input::Choice& c : st2.keys) {
+                out += (out.empty() ? "" : "; ") + c.action + ":";
+                for (const std::string& b : c.binds) out += " " + b;
+            }
+            return out;
+        };
+
+        if (again) {
+            steps_.push_back({"другой процесс: клавиши игрока из settings.json", 10, [&s, this, binds, joined, kPlayer, player_keys](u32 f) {
+                if (f < 3) return false;
+                check(s.data_errors().empty(), "данные игры читаются без ошибок");
+                check(binds("jump") == kPlayer, "прыжок на клавише игрока L и кнопке A автора: " + joined(binds("jump")));
+                check(binds("talk") == std::vector<std::string>{"key:E", "pad:west"}, "«Поговорить» как у модуля: " + joined(binds("talk")));
+                check(player_keys() == "jump: key:L pad:south", "в settings.json выбор игрока: " + player_keys());
+                check(s.new_game(), "новая игра");
+                return true;
+            }});
+            push_settle("новая игра: герой стоит");
+            push_jump(s, "K не прыгает: прыжок игрока на L", SDL_SCANCODE_K, false, "K больше не прыжок");
+            push_jump(s, "L прыгает", SDL_SCANCODE_L, true, "L — прыжок игрока");
+            return;
+        }
+
+        steps_.push_back({"копия шаблона с input.json автора: действия игры и оболочки", 10, [&s, this, binds, joined, kJump](u32 f) {
+            if (f < 5) return false;
+            std::error_code ec;
+            check(fs::equivalent(s.game_dir(), keys_scene::root() / "data", ec), "игра читает данные из " + path_to_utf8(s.game_dir()));
+            check(s.data_errors().empty(), "данные игры читаются без ошибок");
+            std::string ids;
+            for (const input::ActionDef& d : s.action_defs()) ids += (ids.empty() ? "" : " ") + d.id;
+            check(ids == "left right jump talk pause journal quicksave quickload", "действия игры, потом оболочки: " + ids);
+            check(binds("jump") == kJump, "прыжок на клавишах автора: " + joined(binds("jump")));
+            check(binds("left") == std::vector<std::string>{"key:A", "key:Left", "pad:dpleft", "pad:leftx-"},
+                  "«Влево» как у модуля: " + joined(binds("left")));
+            check(binds("pause") == std::vector<std::string>{"key:Escape", "pad:start"}, "пауза как у оболочки: " + joined(binds("pause")));
+            check(s.settings().keys.empty(), "у игрока своих клавиш нет");
+            g_.set_level({});
+            check(s.new_game(), "новая игра");
+            return true;
+        }});
+        push_settle("новая игра: герой стоит");
+        push_jump(s, "пробел (клавиша модуля) не прыгает", SDL_SCANCODE_SPACE, false, "пробел больше не прыжок: автор дал прыжку K");
+        steps_.push_back({"K держится: «Прыжок» нажат, пока она внизу", 20, [&s, this](u32 f) {
+            if (f == 0) key_event(s, SDL_SCANCODE_K, true);
+            if (f == 2) {
+                check(s.input().down("jump") && !s.input().down("talk"), "K держится: «Прыжок» нажат, «Поговорить» нет");
+                key_event(s, SDL_SCANCODE_K, false);
+            }
+            if (f < 4) return false;
+            check(!s.input().down("jump"), "K отпущена: «Прыжок» не нажат");
+            return true;
+        }});
+        push_settle("герой снова стоит");
+        push_jump(s, "K (клавиша автора) прыгает", SDL_SCANCODE_K, true, "K — прыжок автора");
+        steps_.push_back({"D бежит вправо, ← влево", 120, [&g, this, st, press, where](u32 f) {
+            if (f == 0) {
+                st->x0 = g.hero_x();
+                press(SDL_SCANCODE_D, true);
+            }
+            if (f == 30) {
+                press(SDL_SCANCODE_D, false);
+                check(g.hero_x() > st->x0 + 1, "D: герой бежит вправо" + where());
+                st->x0 = g.hero_x();
+                press(SDL_SCANCODE_LEFT, true);
+            }
+            if (f < 60) return false;
+            press(SDL_SCANCODE_LEFT, false);
+            check(g.hero_x() < st->x0 - 1, "←: герой бежит влево" + where());
+            return true;
+        }});
+        steps_.push_back({"геймпад: подключён сам, стик вправо — бег, A — прыжок", 300, [&s, &g, this, st, settle, where](u32 f) {
+            if (f == 0) {
+                SDL_VirtualJoystickDesc desc;
+                SDL_INIT_INTERFACE(&desc);
+                desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+                desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+                desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+                desc.name = "Forge self-test pad";
+                st->pad = SDL_AttachVirtualJoystick(&desc);
+                st->joy = st->pad ? SDL_OpenJoystick(st->pad) : nullptr;
+                return !check_ok(st->joy != nullptr, std::string("виртуальный геймпад: ") + SDL_GetError());
+            }
+            if (f == 3) {
+                check(s.input().gamepads() == 1, "игра открыла подключённый геймпад сама");
+                st->x0 = g.hero_x();
+                SDL_SetJoystickVirtualAxis(st->joy, SDL_GAMEPAD_AXIS_LEFTX, 30000);
+            }
+            if (f == 33) {
+                SDL_SetJoystickVirtualAxis(st->joy, SDL_GAMEPAD_AXIS_LEFTX, 0);
+                check(g.hero_x() > st->x0 + 1, "левый стик вправо: герой бежит" + where());
+            }
+            if (f == 60) {
+                st->y0 = g.hero_y();
+                st->top = g.hero_y();
+                SDL_SetJoystickVirtualButton(st->joy, SDL_GAMEPAD_BUTTON_SOUTH, true);
+            }
+            if (f >= 60) st->top = std::min(st->top, g.hero_y());
+            if (f == 72) SDL_SetJoystickVirtualButton(st->joy, SDL_GAMEPAD_BUTTON_SOUTH, false);
+            if (f < 74) return false;
+            if (!settle(f - 74)) return false;
+            check(st->top < st->y0 - 0.5, "A на геймпаде — прыжок (его оставил автор)" + where());
+            SDL_CloseJoystick(st->joy);
+            SDL_DetachVirtualJoystick(st->pad);
+            st->joy = nullptr;
+            return true;
+        }});
+        steps_.push_back({"геймпад отключён: игра его отпустила", 10, [&s, this](u32 f) {
+            if (f < 3) return false;
+            check(s.input().gamepads() == 0, "отключённого геймпада у игры нет");
+            return true;
+        }});
+        steps_.push_back({"Esc — пауза; меню паузы пишет клавиши действий", 20, [&s, this, tap](u32 f) {
+            if (f == 0) tap(SDL_SCANCODE_ESCAPE);
+            if (f < 3) return false;
+            check(s.screen() == Screen::Paused, "Esc — пауза");
+            check(text_of(s.find_element("pause-resume")).find("Esc") != std::string::npos, "«Продолжить» — Esc");
+            check(text_of(s.find_element("pause-save")).find("F5") != std::string::npos, "«Сохранить» — F5");
+            return true;
+        }});
+        steps_.push_back({"«Настройки» → «Управление»: прыжку L", 30, [&s, this, tap, binds, joined, kPlayer, player_keys](u32 f) {
+            if (f == 0) return !check_ok(click(s, "pause-settings"), "в паузе есть «Настройки»");
+            if (f == 3) {
+                check(s.screen() == Screen::Settings, "открыты «Настройки»");
+                check(text_of(s.find_element("key-jump")).find("K · Геймпад: A (нижняя)") != std::string::npos,
+                      "«Прыжок»: K и A: «" + text_of(s.find_element("key-jump")) + "»");
+                return !check_ok(click(s, "key-jump"), "строка «Прыжок» есть");
+            }
+            if (f == 5) {
+                check(s.rebinding() == "jump", "«Прыжок» ждёт клавишу");
+                check(text_of(s.find_element("key-jump")).find("Нажмите клавишу") != std::string::npos,
+                      "строка просит нажать: «" + text_of(s.find_element("key-jump")) + "»");
+                tap(SDL_SCANCODE_L);
+            }
+            if (f < 8) return false;
+            check(s.rebinding().empty(), "клавиша взята");
+            check(s.screen() == Screen::Settings, "«Настройки» открыты");
+            check(binds("jump") == kPlayer, "прыжок: L игрока, A автора: " + joined(binds("jump")));
+            check(player_keys() == "jump: key:L pad:south", "в settings.json: " + player_keys());
+            check(text_of(s.find_element("key-jump")).find("L · Геймпад: A (нижняя)") != std::string::npos,
+                  "строка «Прыжок»: «" + text_of(s.find_element("key-jump")) + "»");
+            return true;
+        }});
+        steps_.push_back({"клавиша другого действия не ставится; Esc отменяет ожидание", 30, [&s, this, tap, binds, joined](u32 f) {
+            if (f == 0) return !check_ok(click(s, "key-talk"), "строка «Поговорить» есть");
+            if (f == 2) tap(SDL_SCANCODE_D);
+            if (f == 4) {
+                check(binds("talk") == std::vector<std::string>{"key:E", "pad:west"}, "«Поговорить» как было: " + joined(binds("talk")));
+                check(text_of(s.find_element("keys-note")) == "Клавиша D уже у «Вправо»", "отказ словами: «" + text_of(s.find_element("keys-note")) + "»");
+                return !check_ok(click(s, "key-talk"), "строка «Поговорить» есть");
+            }
+            if (f == 6) {
+                check(s.rebinding() == "talk", "«Поговорить» ждёт клавишу");
+                tap(SDL_SCANCODE_ESCAPE);
+            }
+            if (f < 8) return false;
+            check(s.rebinding().empty() && s.screen() == Screen::Settings, "Esc отменил ожидание, «Настройки» открыты");
+            check(binds("talk") == std::vector<std::string>{"key:E", "pad:west"}, "«Поговорить» как было: " + joined(binds("talk")));
+            return true;
+        }});
+        steps_.push_back({"«Как задумано» — клавиши автора; L снова", 30, [&s, this, tap, binds, joined, kJump, kPlayer, player_keys](u32 f) {
+            if (f == 0) return !check_ok(click(s, "keys-default"), "есть «Как задумано»");
+            if (f == 2) {
+                check(binds("jump") == kJump, "прыжок снова K автора: " + joined(binds("jump")));
+                check(player_keys().empty(), "в settings.json нет клавиш игрока: " + player_keys());
+                Rml::Element* reset = s.find_element("keys-default");
+                check(!reset || !reset->IsVisible(true), "«Как задумано» больше не показано");
+                return !check_ok(click(s, "key-jump"), "строка «Прыжок» есть");
+            }
+            if (f == 4) tap(SDL_SCANCODE_L);
+            if (f < 6) return false;
+            check(binds("jump") == kPlayer, "прыжок снова L: " + joined(binds("jump")));
+            return true;
+        }});
+        steps_.push_back({"обратно в игру", 20, [&s, this, tap](u32 f) {
+            if (f == 0) tap(SDL_SCANCODE_ESCAPE);
+            if (f == 3) {
+                check(s.screen() == Screen::Paused, "Esc из «Настроек» — в паузу");
+                tap(SDL_SCANCODE_ESCAPE);
+            }
+            if (f < 6) return false;
+            check(s.screen() == Screen::Playing, "Esc — игра дальше");
+            return true;
+        }});
+        push_jump(s, "K больше не прыгает", SDL_SCANCODE_K, false, "K не прыжок: игрок дал прыжку L");
+        push_jump(s, "L прыгает", SDL_SCANCODE_L, true, "L — прыжок игрока");
+    }
+
+    // The game «Играть» started, with the keys the author gave in the tab «Ввод» (--edits in_*): the actions on them,
+    // the hero jumping on the author's keys and not on the module's.
+    void build_input_edits(Shell& s) {
+        steps_.push_back({"клавиши автора из вкладки «Ввод»", 5, [&s, this](u32 f) {
+            if (f < 1) return false;
+            const ProjectEdits& e = project_edits;
+            usize all = 0;
+            for (int n : e.in_count) all += static_cast<usize>(std::max(0, n));
+            if (!check_ok(e.in_count.size() == e.in_action.size() && all == e.in_binds.size(), "клавиши автора: по действию, числу и привязкам"))
+                return true;
+            check(s.data_errors().empty(), "input.json читается без ошибок");
+            usize at = 0;
+            for (usize i = 0; i < e.in_action.size(); ++i) {
+                std::vector<std::string> want(e.in_binds.begin() + static_cast<std::ptrdiff_t>(at),
+                                              e.in_binds.begin() + static_cast<std::ptrdiff_t>(at + static_cast<usize>(e.in_count[i])));
+                at += static_cast<usize>(e.in_count[i]);
+                std::string got;
+                std::vector<std::string> have;
+                if (const input::Action* a = s.input().action(e.in_action[i]))
+                    for (const input::Bind& b : a->binds) have.push_back(input::format(b));
+                for (const std::string& b : have) got += " " + b;
+                check(have == want, "«" + e.in_action[i] + "» в игре на клавишах автора:" + got);
+            }
+            return true;
+        }});
+        push_settle("герой стоит");
+        for (const std::string& k : project_edits.in_no_jump) {
+            const SDL_Scancode sc = SDL_GetScancodeFromName(k.c_str());
+            if (!check_ok(sc != SDL_SCANCODE_UNKNOWN, "клавиша «" + k + "»")) continue;
+            push_jump(s, "клавиша модуля больше не прыжок", sc, false, k + " (её автор убрал)");
+        }
+        for (const std::string& k : project_edits.in_jump) {
+            const SDL_Scancode sc = SDL_GetScancodeFromName(k.c_str());
+            if (!check_ok(sc != SDL_SCANCODE_UNKNOWN, "клавиша «" + k + "»")) continue;
+            push_jump(s, "клавиша автора — прыжок", sc, true, k + " (её дал автор)");
+        }
+    }
+
     void build_template(Shell& s, bool continued) {
         namespace fs = std::filesystem;
         SliceGame& g = g_;
@@ -9768,6 +10119,30 @@ int slice::run(int argc, char** argv) {
         options.links_file.clear();
         data = path_to_utf8(tpl::root() / "data");
         user = path_to_utf8(tpl::root() / "user");
+        args.push_back(const_cast<char*>("--data"));
+        args.push_back(data.data());
+        args.push_back(const_cast<char*>("--user"));
+        args.push_back(user.data());
+    }
+    // --scene input, input_again (the tab «Ввод»): a copy of the template «Платформер» with the author's input.json, made
+    // anew with an empty player's folder by the first, played on with the player's settings.json by the second.
+    if ((scene == "input" || scene == "input_again") && options.silent) {
+        std::error_code ec;
+        if (scene == "input") {
+            const std::filesystem::path packaged = exe_dir() / "data" / "examples" / "platformer";
+            const std::filesystem::path from =
+                std::filesystem::is_directory(packaged, ec) ? packaged : utf8_path(SLICE_DATA_DIR).parent_path() / "platformer";
+            std::filesystem::remove_all(keys_scene::root(), ec);
+            std::filesystem::create_directories(keys_scene::root() / "user", ec);
+            std::filesystem::copy(from, keys_scene::root() / "data", std::filesystem::copy_options::recursive, ec);
+            if (ec) FORGE_ERROR("--scene input: не скопирован %s: %s", path_to_utf8(from).c_str(), ec.message().c_str());
+            if (!write_file_atomic(keys_scene::root() / "data" / "input.json",
+                                   {reinterpret_cast<const u8*>(keys_scene::kAuthor.data()), keys_scene::kAuthor.size()}))
+                FORGE_ERROR("--scene input: не записан input.json");
+        }
+        options.links_file.clear();
+        data = path_to_utf8(keys_scene::root() / "data");
+        user = path_to_utf8(keys_scene::root() / "user");
         args.push_back(const_cast<char*>("--data"));
         args.push_back(data.data());
         args.push_back(const_cast<char*>("--user"));

@@ -1,0 +1,72 @@
+/* The «Ввод» tab (the #input part of editor.rml): the game's actions and the shell's, each with its binds as chips,
+   and on the right what does not add up. */
+
+#input {
+    flex: 1 1 0px;
+    min-height: 0px;
+    position: relative;
+    padding: 0px var(--space-2) var(--space-2) var(--space-2);
+}
+.in-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
+.in-list {
+    padding: var(--space-1) var(--space-2);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+    min-width: 0px;
+}
+.in-item { gap: 2px; }
+.in-row {
+    min-height: 44px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: 6px;
+    font-size: 14px;
+}
+.in-row:hover { background-color: var(--state-hover-layer); }
+.in-row.waiting { background-color: var(--primary-container); color: var(--on-primary-container); }
+.in-name { width: 190px; }
+.in-name .name { font-weight: 600; }
+.in-name .sub { font-size: 11px; color: var(--primary); }
+.in-binds { flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0px; }
+.in-chip {
+    height: 26px;
+    align-items: center;
+    gap: 2px;
+    padding: 0px 2px 0px 8px;
+    border-radius: 13px;
+    font-size: 13px;
+    border-width: 1px;
+    border-color: var(--outline-variant);
+    background-color: var(--surface-container-highest);
+}
+.in-chip.pad { background-color: var(--tertiary-container); color: var(--on-tertiary-container); border-color: var(--tertiary-container); }
+.in-x { width: 22px; height: 22px; border-radius: 11px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.in-x:hover { background-color: var(--state-hover-layer); }
+.in-none { font-size: 13px; color: var(--error); }
+.in-wait { font-size: 13px; font-weight: 600; }
+.in-row .button.open { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.in-picks { flex-wrap: wrap; gap: 4px; padding: var(--space-1) var(--space-2) var(--space-2) 206px; }
+.in-pick {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    border-width: 1px;
+    border-color: var(--outline-variant);
+    cursor: pointer;
+}
+.in-pick:hover { border-color: var(--outline); }
+.in-pick.pad { border-color: var(--tertiary-container); }
+.in-pick.has { background-color: var(--primary-container); color: var(--on-primary-container); font-weight: 600; }
+.in-side {
+    width: 300px;
+    padding: var(--space-1);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.in-warning { margin: 2px var(--space-2); padding: var(--space-1) var(--space-2); border-radius: 4px; font-size: 13px; color: var(--on-error-container); background-color: var(--error-container); }
+.in-error { margin: var(--space-2); padding: var(--space-2); border-radius: 4px; font-size: 13px; color: var(--on-error-container); background-color: var(--error-container); }
+.in-ok { padding: var(--space-1) var(--space-2); font-size: 13px; color: var(--on-surface-variant); }
+.in-empty, .in-hint { padding: var(--space-2); font-size: 13px; color: var(--on-surface-variant); }

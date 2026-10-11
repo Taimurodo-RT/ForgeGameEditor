@@ -27,6 +27,7 @@ FORGE_REFLECT(forge::game::Settings, 1) {
     t.field("sound_volume", &forge::game::Settings::sound_volume);
     t.field("theme", &forge::game::Settings::theme);
     t.field("show_fps", &forge::game::Settings::show_fps);
+    t.field("keys", &forge::game::Settings::keys);
 }
 
 FORGE_REFLECT(forge::game::SlotInfo, 1) {

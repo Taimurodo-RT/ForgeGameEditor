@@ -1,6 +1,7 @@
 #include "slice_module.h"
 
 #include "platformer_template.h"
+#include "slice_game.h"
 #include "slice_level.h"
 #include "slice_links.h"
 
@@ -45,6 +46,7 @@ forge::modules::ModuleDef module_def() {
     m.name = "Старая шахта";
     m.files = forge::utf8_path(SLICE_MODULE_DIR);
     m.events = verb_events();
+    m.actions = actions();
     m.values = values;
     m.run = run;
     m.make_level_module = [] { return std::make_unique<SliceLevel>(); };
