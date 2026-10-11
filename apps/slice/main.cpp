@@ -1,6 +1,10 @@
 // The vertical slice: «Старая шахта», a small side-view game made the way a
 // big one is (see docs/vertical-slice.md).
 //
+// The game of the module "slice" (step 14.3a): the launcher (apps/game: forge_game, built also as forge_slice and
+// packaged as OldMine) reads the game's module in its game.json (none: a game from before, "slice") and hands its
+// command line over to slice::run, as forge_slice's main() had it. The lines below work with any of those names.
+//
 //   forge_slice                     play
 //   forge_slice --stress            play with 200 000 critters and a million particles
 //   forge_slice --play --level DIR --at X,Y [--fired FILE]
@@ -11,7 +15,7 @@
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
 //                                                    |tiled|tiled_update|levels|levels_continue|platformer
 //                                                    |platformer_continue|platformer_edges|platformer_template
-//                                                    |platformer_template_continue|project]
+//                                                    |platformer_template_continue|module_slots|project]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
@@ -32,11 +36,14 @@
 //                                   to put the hero back in, with the window «при поражении» and without;
 //                                   platformer_template: the template «Платформер» (games/platformer) played through
 //                                   «Луг» to «Холмы» by the keys, the hero's frames by the pixels, saved there, lost;
-//                                   platformer_template_continue, another process: «Продолжить» and on to the flag)
+//                                   platformer_template_continue, another process: «Продолжить» and on to the flag;
+//                                   module_slots (step 14.3a), with the --user DIR of the test module's probe_save: the
+//                                   module's values in the game, the slots of another module or of none refused, a slot
+//                                   from before step 14.3a loaded)
 //   forge_slice --test --scene project [--play] --data GAME [--level DIR --at X,Y --user DIR] [--edits FILE]
 //                                   a game the editor made of a template, as its «Играть» starts it: that game's data,
 //                                   title and links, the hero at X,Y, the player's files in DIR; with FILE, what the
-//                                   author made in it (slice_edits.h), met as a player meets it, or, for another game
+//                                   author made in it (apps/common/project_edits.h), met as a player meets it, or, for another game
 //                                   of the template, that none of it is there; without --play the game starts at its
 //                                   main menu (FILE says to take «Продолжить»)
 //   forge_slice --test --window --no-vsync --scene inventory
@@ -49,9 +56,10 @@
 // wheel zooms. Esc pauses, J opens the journal, F5 saves, F9 loads.
 
 #include "slice_art.h"
-#include "slice_edits.h"
+#include "project_edits.h"
 #include "slice_game.h"
 #include "slice_level.h"
+#include "slice_module.h"
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -63,6 +71,7 @@
 #include "forge/editor/project.h"
 #include "forge/audio/screen_sounds.h"
 #include "forge/game/runner.h"
+#include "forge/game/game_module.h"
 #include "forge/game/saves.h"
 #include "forge/level/level.h"
 #include "forge/level/light.h"
@@ -82,7 +91,6 @@
 #include <RmlUi/Core/Transform.h>
 #include <RmlUi/Core/TransformPrimitive.h>
 
-#include <SDL3/SDL_main.h> // the window-only entry point on Windows
 #include <SDL3/SDL_timer.h>
 
 #include <algorithm>
@@ -103,8 +111,23 @@
 using namespace forge;
 using namespace forge::game;
 using namespace slice;
+using forge::edits::ProjectEdits;
+using forge::edits::read_edits;
 
 namespace {
+
+// The files of the session folder, by their paths in it: what a refused load must leave as it was (step 14.3a).
+std::map<std::string, std::vector<u8>> session_files(const std::filesystem::path& dir) {
+    std::map<std::string, std::vector<u8>> out;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        std::vector<u8> bytes;
+        read_file(it->path(), bytes);
+        out[path_to_utf8(it->path().lexically_relative(dir))] = std::move(bytes);
+    }
+    return out;
+}
 
 // --scene levels and levels_continue (step 14.2b): a game of two levels, «Деревня» and «Пещера», with links that send
 // the hero from one to the other, made by the scene levels in this run's own folder (its data and the player's
@@ -1547,6 +1570,10 @@ private:
         }
         if (scene_ == "tiled" || scene_ == "tiled_update") {
             build_tiled(s, scene_ == "tiled_update");
+            return;
+        }
+        if (scene_ == "module_slots") {
+            build_module_slots(s);
             return;
         }
         SliceGame& g = g_;
@@ -3208,6 +3235,93 @@ private:
     // at an even speed; what the frames took while it scrolled is the
     // number. With --window it runs on the real GPU (add --no-vsync to see
     // past the monitor's rate); offscreen the picture is drawn without a GPU.
+    // --scene module_slots (step 14.3a), with --user DIR of the test module's scene probe_save (its slot probe-slot
+    // there): a new game's values are all the module's (and the module offers no value the game has not); the slot of
+    // another module, and slots whose module is no module ("" and 5), are refused before anything changes, the game
+    // and its session file for file as they were; a slot from before step 14.3a (slot.json without "module", as the
+    // game wrote it then) loads as «Старая шахта»'s. It saves slice-slot and leaves old-slot for probe_foreign.
+    void build_module_slots(Shell& s) {
+        steps_.push_back({"новая игра", 30, [&s, this](u32 f) {
+            if (f < 5) return false;
+            check(s.new_game(), "новая игра начинается");
+            return true;
+        }});
+        steps_.push_back({"значения модуля", 10, [&s, this](u32 f) {
+            if (f < 3) return false;
+            const modules::ModuleDef def = module_def();
+            const std::vector<modules::Value> values = def.values(&g_.library());
+            check(values.size() >= 5, "у модуля есть значения: " + std::to_string(values.size()));
+            for (const modules::Value& v : values)
+                check(s.vars().has(v.var), "значение модуля «" + v.words + "» (" + v.var + ") есть в игре");
+            check(!s.vars().has("probe.ticks") && !s.vars().has("probe.mark"), "значений модуля «Проба» в игре нет");
+            check(s.save("slice-slot", "Шахта до проверки слотов"), "игра сохраняется в slice-slot");
+            const std::optional<SlotInfo> info = s.slots().info("slice-slot");
+            check(info && info->module == kModuleId && info->module_error.empty(), "слот записан с модулем «slice»");
+            return true;
+        }});
+        steps_.push_back({"слоты чужого модуля и сломанные", 10, [&s, this](u32 f) {
+            if (f < 2) return false;
+            const std::optional<SlotInfo> probe_slot = s.slots().info("probe-slot");
+            check(probe_slot && probe_slot->module == "probe",
+                  "слот probe-slot тестового модуля есть (его оставила сцена probe_save с той же папкой --user)");
+            check(write_slot(s, "empty-module", "\"\"") && write_slot(s, "number-module", "5"), "слоты с «module»: \"\" и 5 записаны");
+            for (const char* slot : {"probe-slot", "empty-module", "number-module"}) {
+                const std::optional<SlotInfo> info = s.slots().info(slot);
+                std::string why;
+                check(info && !slot_fits(*info, kModuleId, &why), std::string(slot) + ": не слот «Старой шахты»: " + why);
+                if (std::string(slot) != "probe-slot")
+                    check(info && info->module.empty() && !info->module_error.empty(),
+                          std::string(slot) + ": модуль не читается, и это не slice: " + (info ? info->module_error : ""));
+                s.vars().set("test.mark", 7);
+                check(s.save("slice-before", "Шахта до отказа"), "сессия записана перед загрузкой");
+                const auto before = session_files(s.slots().session());
+                const f64 x = g_.hero_x(), y = g_.hero_y();
+                check(!s.load(slot), std::string("слот ") + slot + " не загружается");
+                check(session_files(s.slots().session()) == before, std::string("после отказа ") + slot + " сессия та же, файл в файл");
+                check(g_.running() && s.screen() == Screen::Playing && var(s, "test.mark") == 7 && g_.hero_x() == x && g_.hero_y() == y,
+                      std::string("и игра идёт как шла: метка 7, герой на месте после ") + slot);
+            }
+            return true;
+        }});
+        steps_.push_back({"слот до шага 14.3a", 30, [&s, this](u32 f) {
+            if (f == 0) {
+                check(write_slot(s, "old-slot", nullptr), "слот без «module», как его писала игра до шага 14.3a, записан");
+                const std::optional<SlotInfo> info = s.slots().info("old-slot");
+                check(info && info->module == kModuleId && info->module_error.empty(), "слот без «module» читается как слот «Старой шахты»");
+                s.vars().set("test.mark", 8);
+                check(s.load("old-slot"), "и загружается");
+                return false;
+            }
+            if (f < 10) return false;
+            check(g_.running() && s.screen() == Screen::Playing && var(s, "test.mark") == 7,
+                  "игра из старого слота идёт, с тем, что в нём было (метка 7)");
+            return true;
+        }});
+    }
+    // A slot made of slice-before (saved by the steps above) with slot.json as the game wrote it before step 14.3a:
+    // the reflected fields only, then "module" with this JSON value when module_json is given ("", 5).
+    bool write_slot(Shell& s, const char* id, const char* module_json) {
+        std::optional<SlotInfo> info = s.slots().info("slice-before");
+        if (!info && !s.save("slice-before", "Шахта до отказа")) return false;
+        info = s.slots().info("slice-before");
+        if (!info) return false;
+        std::error_code ec;
+        const std::filesystem::path to = s.slots().folder(id);
+        std::filesystem::remove_all(to, ec);
+        std::filesystem::copy(s.slots().folder("slice-before"), to, std::filesystem::copy_options::recursive, ec);
+        if (ec) return false;
+        info->module.clear();
+        std::string text = data::to_json(*info);
+        if (module_json) {
+            const usize end = text.rfind('}');
+            if (end == std::string::npos) return false;
+            text = text.substr(0, end) + ",\n  \"module\": " + module_json + "\n}\n";
+            std::string named;
+            const GameModule kind = game_module_of(text, named);
+            if (kind != GameModule::Broken) return false; // what the test means: a module that is none
+        }
+        return write_file_atomic(to / "slot.json", {reinterpret_cast<const u8*>(text.data()), text.size()});
+    }
     void build_inventory(Shell& s) {
         steps_.push_back({"меню", 30, [&s, this](u32 f) {
             if (f < 5) return false;
@@ -9249,7 +9363,11 @@ static bool make_platformer_game(const std::filesystem::path& from, std::string&
     return true;
 }
 
-int main(int argc, char** argv) {
+// The game, as the launcher starts it for a game of the module "slice" (slice_module.cpp).
+namespace slice {
+int run(int argc, char** argv);
+}
+int slice::run(int argc, char** argv) {
     Options options;
     std::string scene = "village";
     for (int i = 1; i < argc; ++i) {
@@ -9458,6 +9576,7 @@ int main(int argc, char** argv) {
     GameMain m;
     m.dev_ui_dir = FORGE_UI_DIR;
     m.dev_game_dir = SLICE_DATA_DIR;
+    m.module = kModuleId;
     m.test = [&](Shell& shell, u32, int& failures) { return test.frame(shell, failures); };
     return run_game(game, m, static_cast<int>(args.size()) - 1, args.data());
 }

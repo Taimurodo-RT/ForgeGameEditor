@@ -3,5 +3,6 @@
   "org": "Forge",
   "theme": "fantasy",
   "autosave_minutes": 5,
-  "zoom": 32
+  "zoom": 32,
+  "module": "slice"
 }

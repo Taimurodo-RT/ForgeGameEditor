@@ -1,21 +1,31 @@
-# The game's code as a library: the game itself links it, and so does the
-# level editor, which paints «Старая шахта» through slice::SliceLevel.
-add_library(forge_slice_lib STATIC slice_game.cpp slice_links.cpp slice_world.cpp slice_art.cpp slice_level.cpp slice_pictures.cpp slice_sounds.cpp
-                            slice_edits.cpp)
+# The game's code as a library: the module's game and its level for the editor (slice::SliceLevel) are made of it.
+add_library(forge_slice_lib STATIC slice_game.cpp slice_links.cpp slice_world.cpp slice_art.cpp slice_level.cpp slice_pictures.cpp slice_sounds.cpp)
 target_include_directories(forge_slice_lib PUBLIC .)
-target_link_libraries(forge_slice_lib PUBLIC forge::game forge::sim forge::render forge::ui forge::level forge::assets forge::audio forge::logic forge_demo_common)
+target_link_libraries(forge_slice_lib PUBLIC forge::game forge::sim forge::render forge::ui forge::level forge::assets forge::audio forge::logic
+                      forge::modules forge_demo_common)
 forge_target_defaults(forge_slice_lib)
 
-set(SLICE_SOURCES main.cpp)
+# The module "slice" (step 14.3a): its game (main.cpp, which the launcher runs), the maker of its template
+# «Платформер» and its forge::modules::ModuleDef. What links it sees module/slice_module.h only: the rest of apps/slice
+# is the module's own (forge_slice_lib is linked PRIVATE, its folder is no include folder of theirs).
+add_library(forge_slice_module STATIC main.cpp slice_module.cpp platformer_template.cpp)
+target_include_directories(forge_slice_module PUBLIC module)
+target_link_libraries(forge_slice_module PUBLIC forge::modules PRIVATE forge_slice_lib forge::editor forge::platform yyjson)
+# Running from the build folder reads the UI and the game's data from the source tree, so edits show up at once. A
+# packaged game has them in "data".
+target_compile_definitions(forge_slice_module PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"
+                                                      SLICE_DATA_DIR="${PROJECT_SOURCE_DIR}/games/slice"
+                                                      SLICE_MODULE_DIR="${PROJECT_SOURCE_DIR}/games/modules/slice")
+forge_target_defaults(forge_slice_module)
+
+# forge_slice: the launcher (apps/game) under its old name, here in build/apps/slice where scripts, shortcuts and
+# forge_update.ps1's users start it; a game.json without "module" is «Старая шахта», so it plays what it played.
+set(SLICE_ICON)
 if(WIN32)
-  list(APPEND SLICE_SOURCES slice.rc) # the icon
+  set(SLICE_ICON ${CMAKE_CURRENT_SOURCE_DIR}/slice.rc) # the icon
 endif()
-add_executable(forge_slice ${SLICE_SOURCES})
-target_link_libraries(forge_slice PRIVATE forge_slice_lib forge::platform)
-# Running from the build folder reads the UI and the game's data from the
-# source tree, so edits show up at once. A packaged game has them in "data".
-target_compile_definitions(forge_slice PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"
-                                               SLICE_DATA_DIR="${PROJECT_SOURCE_DIR}/games/slice")
+forge_launcher(forge_slice forge_slice ${SLICE_ICON})
+
 # The screens of games/examples/simple-mode, as the editor's «Простой» makes them, built into the
 # game for its self-test: they run in the game's own screens, packaged too.
 file(GLOB SIMPLE_PAGES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/games/examples/simple-mode/*.html)
@@ -64,14 +74,9 @@ foreach(page ${SOUND_PAGES})
 endforeach()
 string(APPEND SIMPLE_PAGES_H "};\n")
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/simple_pages.h CONTENT "${SIMPLE_PAGES_H}" @ONLY)
-target_include_directories(forge_slice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_include_directories(forge_slice_module PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
-# A game window without a console on Windows (log.txt in the save folder
-# keeps the messages).
-set_target_properties(forge_slice PROPERTIES WIN32_EXECUTABLE TRUE)
-forge_target_defaults(forge_slice)
-
-# The finished game: one folder with OldMine(.exe) and data/ next to it.
+# The finished game: one folder with OldMine(.exe) (the launcher, forge_slice) and data/ next to it.
 #   cmake --build build --target forge_slice_package [--config Release]
 # puts it in build/dist/OldMine; copy that folder anywhere and run it.
 install(FILES $<TARGET_FILE:forge_slice> DESTINATION . RENAME OldMine${CMAKE_EXECUTABLE_SUFFIX}
