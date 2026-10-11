@@ -1613,6 +1613,7 @@
                                 <option value="new">Новая игра</option><option value="continue">Продолжить игру</option><option value="load">Загрузить</option><option value="save">Сохранить</option>
                                 <option value="settings">Настройки</option><option value="pause">Пауза</option><option value="resume">Вернуться в игру</option>
                                 <option value="menu">В главное меню</option><option value="quit">Выйти из игры</option><option value="message">Сообщение «Логике»</option>
+                                <option value="next">Следующий уровень</option><option value="retry">Уровень заново</option>
                             </select>
                             <div id="ue-f-many" class="ue-f-note grow" data-if="!ue_s.act_editable">Несколько действий: справа, «В игре»</div>
                         </div>
@@ -1704,7 +1705,7 @@
                             </div>
                             <div class="ue-line row"><span class="ue-key">Показывается сам</span>
                                 <select id="ue-s-ending" class="ue-select grow" data-value="ue_s.ending" data-event-change="ue_spick('ending')">
-                                    <option value="none">Нет</option><option value="win">При победе</option><option value="lose">При поражении</option>
+                                    <option value="none">Нет</option><option value="win">При победе</option><option value="lose">При поражении</option><option value="level">Уровень пройден</option>
                                 </select>
                             </div>
                             <div id="ue-s-pauses" class="ue-check row" data-event-click="ue_sset('pauses', '')"><icon class="xs" data-attr-name="ue_s.pauses ? 'check_box' : 'check_box_outline_blank'"/><span>Пока открыто, игра стоит</span></div>
@@ -1758,6 +1759,7 @@
                             <option value="new">Новая игра</option><option value="continue">Продолжить игру</option><option value="load">Загрузить</option><option value="save">Сохранить</option>
                             <option value="settings">Настройки</option><option value="pause">Пауза</option><option value="resume">Вернуться в игру</option>
                             <option value="menu">В главное меню</option><option value="quit">Выйти из игры</option><option value="message">Сообщение «Логике»</option>
+                            <option value="next">Следующий уровень</option><option value="retry">Уровень заново</option>
                         </select>
                         <div class="ue-line row" data-if="ue_s.act_editable &amp;&amp; ue_s.needs == 'screen'"><span class="ue-key">Какой</span>
                             <select id="ue-s-target" class="ue-select grow" data-value="ue_s.target" data-event-change="ue_spick('target')">
@@ -1820,7 +1822,7 @@
                             </div>
                             <div class="ue-line row"><span class="ue-key">Показывается сам</span>
                                 <select id="ue-screen-ending" class="ue-select grow" data-value="ue_p.ending" data-event-change="ue_pick('screen.ending')">
-                                    <option value="none">Нет</option><option value="win">При победе</option><option value="lose">При поражении</option>
+                                    <option value="none">Нет</option><option value="win">При победе</option><option value="lose">При поражении</option><option value="level">Уровень пройден</option>
                                 </select>
                             </div>
                             <div id="ue-screen-pauses" class="ue-check row" data-event-click="ue_set('screen.pauses', '')"><icon class="xs" data-attr-name="ue_p.pauses ? 'check_box' : 'check_box_outline_blank'"/><span>Пока открыто, игра стоит</span></div>
@@ -1866,6 +1868,7 @@
                                     <option value="message">Сообщение «Логике»</option><option value="change">Изменить данные</option><option value="talk">Начать разговор</option>
                                     <option value="new">Новая игра</option><option value="continue">Продолжить</option><option value="load">Загрузить</option><option value="save">Сохранить</option><option value="settings">Настройки</option>
                                     <option value="pause">Пауза</option><option value="resume">Вернуться в игру</option><option value="menu">В главное меню</option><option value="quit">Выйти из игры</option>
+                                    <option value="next">Следующий уровень</option><option value="retry">Уровень заново</option>
                                 </select>
                                 <div class="ue-mini" data-attr-id="'ue-click-remove-' + c.index" title="Убрать" data-event-click="ue_set('click.' + c.index + '.remove', '')"><icon class="xs" name="remove"/></div>
                             </div>

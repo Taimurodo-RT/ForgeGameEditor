@@ -171,6 +171,26 @@ jobs:
           (cd build/elsewhere && "../../$packed" --test --scene probe_save --data ../../tests/data/probe/game --user ../module-slots-packed)
           (cd build/elsewhere && "../../$packed" --test --scene module_slots --user ../module-slots-packed)
           (cd build/elsewhere && "../../$packed" --test --scene probe_foreign --data ../../tests/data/probe/game --user ../module-slots-packed)
+      - name: The module «Три в ряд» in the build, then in the package with games/slice, games/platformer and games/modules moved away (match3 scenes on tests/data/match3, its game made again byte for byte; a bot with the mouse through three fields, the frames of a swap, a row vanishing and gems falling checked on the screen, each move's points and «+2 хода» once; a loss and «Ещё раз», «Ещё раз» mid-fall and before the window; pause and «Дальше» mid-move; a save between moves continued in another process from another working folder, a save with a gem the game has not refused)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then game=build/apps/game/Release/forge_game.exe; packed=build/dist/OldMine/OldMine.exe; else game=build/apps/game/forge_game; packed=build/dist/OldMine/OldMine; fi
+          mkdir -p build/elsewhere
+          "./$game" --test --scene match3_make --data tests/data/match3/game
+          "./$game" --test --scene match3 --data tests/data/match3/game --screenshot world-match3.png
+          "./$game" --test --scene match3_lose --data tests/data/match3/game
+          "./$game" --test --scene match3_next --data tests/data/match3/game
+          (cd build/elsewhere && "../../$game" --test --scene match3_save --data ../../tests/data/match3/game --user ../match3-built)
+          (cd build/elsewhere && "../../$game" --test --scene match3_continue --data ../../tests/data/match3/game --user ../match3-built)
+          mv games/slice build/slice-away
+          mv games/platformer build/platformer-away
+          mv games/modules build/modules-away
+          trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer; mv build/modules-away games/modules' EXIT
+          "./$packed" --test --scene match3 --data tests/data/match3/game
+          "./$packed" --test --scene match3_lose --data tests/data/match3/game
+          "./$packed" --test --scene match3_next --data tests/data/match3/game
+          (cd build/elsewhere && "../../$packed" --test --scene match3_save --data ../../tests/data/match3/game --user ../match3-packed)
+          (cd build/elsewhere && "../../$packed" --test --scene match3_continue --data ../../tests/data/match3/game --user ../match3-packed)
       - name: Going between levels in the build, then in the package with games/slice moved away (slice scenes levels, then levels_continue from another working folder)
         shell: bash
         run: |

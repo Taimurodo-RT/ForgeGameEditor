@@ -1,0 +1,11 @@
+{
+  "id": "amethyst",
+  "name": "Аметист",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "picture": "аметист.png",
+  "values": {
+    "points": 50,
+    "on_board": false
+  }
+}

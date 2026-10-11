@@ -16,7 +16,8 @@
 //                     forge-music    the music it plays while it is up (a
 //                                    file of the game's sounds folder)
 //                     forge-ending   a window the game shows itself when it
-//                                    ends: "win" (won), "lose" (lost)
+//                                    ends: "win" (won), "lose" (lost), or
+//                                    when a level of it is passed: "level"
 //                     forge-button-sound
 //                                    its buttons' sound when pressed
 //   on any layer:     forge-text     a text with {variables} put in

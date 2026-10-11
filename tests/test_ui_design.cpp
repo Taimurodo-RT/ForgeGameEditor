@@ -604,6 +604,18 @@ TEST_CASE("ui design: a window the game shows itself at its end survives saving 
     REQUIRE(load_screen(save_screen(screen), back));
     CHECK(back.ending == WindowEnding::Win);
     CHECK(std::string(window_ending_word(WindowEnding::None)) == "none");
+    // Step 14.3b: «Уровень пройден», with its buttons «Дальше» and «Ещё раз».
+    {
+        Screen level = screen;
+        level.ending = WindowEnding::Level;
+        REQUIRE(load_screen(save_screen(level), back));
+        CHECK(back.ending == WindowEnding::Level);
+        CHECK(contains(screen_html(level), "forge-ending=\"level\""));
+        CHECK(parse_action("next") == ActionKind::NextLevel);
+        CHECK(parse_action("retry") == ActionKind::Retry);
+        CHECK(std::string(action_word(ActionKind::NextLevel)) == "next");
+        CHECK(std::string(action_word(ActionKind::Retry)) == "retry");
+    }
     CHECK(contains(screen_html(screen), "forge-pauses=\"1\" forge-ending=\"win\""));
     // Windows from before: none; «нет» is not written.
     Screen old;

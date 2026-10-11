@@ -1,0 +1,9 @@
+{
+  "id": "topaz",
+  "name": "Топаз",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "values": {
+    "points": 20
+  }
+}

@@ -110,6 +110,7 @@ bool Verbs::parse(std::string_view json, std::string* error, const std::vector<s
         d.a_has = strs(v, "a_has");
         d.b_has = strs(v, "b_has");
         d.step = str(v, "step");
+        d.amount = yyjson_get_num(yyjson_obj_get(v, "amount"));
         if (d.id.empty() || d.name.empty() || d.action.empty()) continue;
         verbs.push_back(std::move(d));
     }

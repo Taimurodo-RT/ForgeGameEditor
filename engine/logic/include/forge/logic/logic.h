@@ -98,7 +98,8 @@ struct VerbDef {
     // their forms.
     std::string about;
     // Which things fit each side: "hero", "thing" (a template: not the hero,
-    // not an area), "area" or "" any.
+    // not an area), "area" or "" any. b_is "self": the verb has one thing,
+    // the link's b is its a («Поле набирает цель»: no second thing named).
     std::string a_is, b_is;
     // A thing on that side must have one of these blocks («Подбирается»:
     // "pickup», «Дверь»: "door"); empty: any. Only for offering verbs: a
@@ -106,6 +107,11 @@ struct VerbDef {
     std::vector<std::string> a_has, b_has;
     // What the game does, as a step: «Открыть {b:acc}».
     std::string step;
+    // How much its action gives, for actions that add («+2 хода»: do
+    // "add_moves", amount 2); 0 when the verb says none.
+    f64 amount = 0;
+
+    bool self() const { return b_is == "self"; }
 };
 
 class Verbs {

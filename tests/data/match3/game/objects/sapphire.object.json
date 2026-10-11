@@ -1,0 +1,11 @@
+{
+  "id": "sapphire",
+  "name": "Сапфир",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "picture": "сапфир.png",
+  "frames": 3,
+  "values": {
+    "points": 10
+  }
+}
