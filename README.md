@@ -276,6 +276,15 @@
   так что старые ярлыки и скрипты работают. Ядро (`engine`, `apps/game`, `apps/editor`) не включает
   заголовки модулей, это проверяет `python3 tools/check_core_includes.py`. `apps/probe` — тестовый модуль
   «Проба» (данные в `tests/data/probe`): он встроен только при `--test` и `--self-test`.
+- `apps/match3` и `games/modules/match3` — модуль «Три в ряд» (шаг 14.3b). Правила поля — отдельная библиотека
+  без окна и файлов (`match3_rules`: ряды, группы, каскад, очки, ходы, перемешивание, генератор), их проверяют
+  юнит-тесты. Уровень — поле, нарисованное плиткой «Клетка» на слое «Поле» (пустая клетка — дыра), на нём фишки
+  (вид «Фишка»: картинка, очки, звук, «На поле») и одна копия «Правил уровня» (ходы, цель, зерно). Игрок меняет
+  соседние фишки мышью — щелчками или протяжкой; ряды исчезают, фишки падают, новые приходят сверху. Связи
+  «Логики» отвечают на события поля: «Поле даёт +2 хода за Топаз», «Поле набирает цель», «Поле остаётся без
+  ходов». Сохранить можно между ходами. Тестовая игра — `tests/data/match3`: её делает заново
+  `forge_game --data tests/data/match3/game --make-test-game НОВАЯ_ПАПКА`, сцена `match3_make` сверяет её байт в
+  байт. Шаблона в каталоге пока нет (14.3c).
 - `tests` — модульные тесты (doctest), `bench` — замер системы задач.
 
 ## Сборка
@@ -331,6 +340,8 @@ build/apps/slice/forge_slice --stress                       # та же игра
 build/apps/slice/forge_slice --test --screenshot slice.png  # сама проходит игру без окна и проверяет её
 build/apps/slice/forge_slice --play --level ПАПКА --at X,Y  # сразу новая игра из папки уровня, герой в X,Y
 build/apps/game/forge_game --test --scene probe --data tests/data/probe/game   # игра тестового модуля «Проба»
+build/apps/game/forge_game --data tests/data/match3/game  # «Три в ряд» на тестовых полях
+build/apps/game/forge_game --test --scene match3 --data tests/data/match3/game   # бот мышью проходит три поля
 cmake --build build --config Release --target forge_slice_package   # готовая игра в build/dist/OldMine
 python3 tools/check_core_includes.py                       # ядро не называет модули
 build/tests/forge_tests
