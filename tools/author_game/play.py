@@ -37,7 +37,10 @@ and W, not on the space. And when `forge_editor --self-test rpg-template` has ma
 (step 14.4b), «RPG А» of the catalog's template «RPG сверху» with no --level and
 `--edits` of what the author changed: the elder's picture, «Мельник Ян» (a copy of the
 elder) with the author's conversation that gives ten coins once, the coins' sound, the
-path to «Мельница» and its link, the HUD's hint, the hero's walk. And when
+path to «Мельница» and its link, the HUD's hint, the hero's walk; saved after the reward,
+another run, with the same player's folder and from another working folder, goes on
+from that save (scene project_continue): the reward kept and not given again, «Мельница»
+passes «Деревня», «Поляна» to its chest. And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
@@ -106,9 +109,8 @@ def main() -> int:
     else:
         print(f"нет {keys / 'ожидания ввода.json'}: клавиши автора не играются (forge_editor --self-test input их делает)", flush=True)
     rpg = Path(tempfile.gettempdir()) / "forge_editor_шаблон rpg"
-    if (rpg / "ожидания шаблон rpg.json").is_file():
-        plays += [(rpg / "Мои игры" / "RPG А", rpg / "ожидания шаблон rpg.json", False)]
-    else:
+    rpg_edits = rpg / "ожидания шаблон rpg.json"
+    if not rpg_edits.is_file():
         print(f"нет {rpg / 'ожидания шаблон rpg.json'}: RPG автора не играется (forge_editor --self-test rpg-template её делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
@@ -149,6 +151,15 @@ def main() -> int:
                 if edits:
                     args += ["--edits", str(edits)]
                 failed += run(args, tempfile.gettempdir()) != 0
+            if rpg_edits.is_file():
+                # «RPG А»: played, saved after the reward; another run, from another working folder, goes on from there.
+                user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))
+                data = str(rpg / "Мои игры" / "RPG А" / "game")
+                failed += run([str(exe), "--test", "--scene", "project", "--play", "--data", data, "--user", str(user),
+                               "--edits", str(rpg_edits)], tempfile.gettempdir()) != 0
+                elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
+                failed += run([str(exe), "--test", "--scene", "project_continue", "--data", data, "--user", str(user),
+                               "--edits", str(rpg_edits)], str(elsewhere)) != 0
             if going:
                 # Through the links, saved; then «Продолжить» by another run, from another working folder.
                 user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))

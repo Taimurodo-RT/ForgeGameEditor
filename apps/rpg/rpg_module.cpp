@@ -64,7 +64,12 @@ namespace {
 //                       editor's tabs (forge::edits::ProjectEdits, rp_*), played as a player: the cells the author laid,
 //                       the elder and the author's villager drawn with the author's picture, the hero walking by the
 //                       author's frames, the coins picked up with the author's sound, the HUD's hint as the author
-//                       wrote it near the villager, his dialogue giving its reward once, the author's place passing the map
+//                       wrote it near the villager, his dialogue giving its reward once (saved then as rpg-author, what
+//                       is saved written next to it), the author's place passing the map
+// --scene project_continue --edits FILE (another process, the same --user) rpg-author goes on: the hero where he
+//                       was, the coins taken and the reward kept (the author's quest variable), the villager without
+//                       the answer that gives it, the author's hint; the author's place passes «Деревня», «Дальше»
+//                       opens «Поляна», the game goes on there until its chest: the window of victory
 // --scene rpg_chain, rpg_chain_window, rpg_next_broken, rpg_next_broken_window
 //                       the test game copied and changed before it starts (prepare_copy): a second link «Герой доходит
 //                       до Ворот» (two links of one event), without the window «Уровень пройден» (the next map at once)
@@ -380,6 +385,7 @@ private:
         const std::string sc = scene_;
         if (sc == "rpg_make") return make_scene();
         if (sc == "project") return project_scene();
+        if (sc == "project_continue") return project_continue_scene();
         steps_.push_back({"данные тестовой игры", 5, [this](u32) {
             check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
             std::vector<std::string> list;
@@ -776,13 +782,19 @@ private:
         return nullptr;
     }
 
+    // What the author changed (--edits), read: a step of both scenes of the author's game.
+    bool read_author() {
+        std::string why;
+        const bool read = !edits_file_.empty() && edits::read_edits(edits_file_, e_, why);
+        check(read && !e_.rp_villager.empty() && e_.rp_villager_at.size() == 2 && e_.rp_place_at.size() == 2 && e_.rp_elder.size() == 3,
+              "файл ожиданий " + path_to_utf8(edits_file_) + " читается " + why);
+        check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
+        return read;
+    }
+
     void project_scene() {
         steps_.push_back({"ожидания автора", 5, [this](u32) {
-            std::string why;
-            const bool read = !edits_file_.empty() && edits::read_edits(edits_file_, e_, why);
-            check(read && !e_.rp_villager.empty() && e_.rp_villager_at.size() == 2 && e_.rp_place_at.size() == 2 && e_.rp_elder.size() == 3,
-                  "файл ожиданий " + path_to_utf8(edits_file_) + " читается " + why);
-            check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
+            read_author();
             const objects::Library& lib = g_.library();
             const objects::Template* v = lib.find(std::string_view(e_.rp_villager));
             const objects::PropDef* talk = v ? lib.prop_of(*v, "talk") : nullptr;
@@ -854,6 +866,7 @@ private:
                 coins_ = var("inv.coins");
                 sounds_ = g_.sounds_played().size();
                 coins_at_ = {c->cx, c->cy};
+                coins_id_ = c->id;
             }
             if (!walk_to(coins_at_.first, coins_at_.second, f)) return false;
             return true;
@@ -906,12 +919,100 @@ private:
             check(!s_->in_dialogue() && var("inv.coins") == coins_, "монет столько же: " + num(var("inv.coins")));
             return true;
         }});
+        // Saved with the reward taken: another process goes on from here (project_continue).
+        steps_.push_back({"сохранено после награды", 3, [this](u32 f) {
+            if (f < 1) return false;
+            std::string why;
+            const bool can = g_.can_save(&why);
+            check(can && s_->save("rpg-author", "Награда мельника"), "сохранение с наградой в rpg-author " + why);
+            char json[512];
+            std::snprintf(json, sizeof json, "{\"x\": %.17g, \"y\": %.17g, \"facing\": \"%s\", \"coins\": %g, \"once\": %g, \"gone\": \"%s\"}\n",
+                          g_.hero_x(), g_.hero_y(), dir_id(g_.facing()), var("inv.coins"), var(e_.rp_once), coins_id_.c_str());
+            check(write_file_atomic(s_->user_folder() / "rpg-author-expect.json", {reinterpret_cast<const u8*>(json), std::strlen(json)}),
+                  std::string("ожидания для другого процесса: ") + json);
+            return true;
+        }});
         steps_.push_back({"к месту автора", 3000, [this](u32 f) { return walk_to(e_.rp_place_at[0], e_.rp_place_at[1], f); }});
         steps_.push_back({"окно «Уровень пройден»", 30, [this](u32) {
             if (!window("level")) return false;
             check(g_.outcome() == RpgGame::Outcome::LevelPassed && !g_.said().empty() && g_.said().back() == "reach:" + e_.rp_place,
                   "«" + e_.rp_place_name + "»: событие reach:" + e_.rp_place + ", связь автора, карта пройдена" + state());
             shot("rpg-автор-место");
+            return true;
+        }});
+    }
+
+    // rpg-author, saved by the scene project with the author's reward taken, goes on in another process: through the
+    // author's place to «Поляна» and its chest.
+    void project_continue_scene() {
+        steps_.push_back({"rpg-author из другого процесса", 30, [this](u32) {
+            if (!read_author()) return true;
+            std::vector<u8> bytes;
+            check(read_file(s_->user_folder() / "rpg-author-expect.json", bytes), "ожидания сцены project есть");
+            yyjson_doc* doc = yyjson_read(reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0);
+            yyjson_val* root = doc ? yyjson_doc_get_root(doc) : nullptr;
+            const f64 x = yyjson_get_num(yyjson_obj_get(root, "x")), y = yyjson_get_num(yyjson_obj_get(root, "y"));
+            const char* face = yyjson_get_str(yyjson_obj_get(root, "facing"));
+            const char* gone = yyjson_get_str(yyjson_obj_get(root, "gone"));
+            coins_ = yyjson_get_num(yyjson_obj_get(root, "coins"));
+            const f64 once = yyjson_get_num(yyjson_obj_get(root, "once"));
+            check(s_->load("rpg-author"), "rpg-author загружается");
+            check(g_.level_id() == e_.level && g_.outcome() == RpgGame::Outcome::Playing && g_.hero_x() == x && g_.hero_y() == y && face &&
+                      std::string(dir_id(g_.facing())) == face,
+                  "«" + e_.level_name + "», герой там же (" + num(x) + ", " + num(y) + "), смотрит " + (face ? face : "?") + state());
+            check(once == 1 && var(e_.rp_once) == 1 && coins_ > 0 && var("inv.coins") == coins_,
+                  "награда автора сохранена: " + e_.rp_once + " = " + num(var(e_.rp_once)) + ", монет " + num(var("inv.coins")) + " из " + num(coins_));
+            check(gone && *gone && g_.gone(gone), std::string("подобранные монеты (") + (gone ? gone : "?") + ") на карте не появились");
+            yyjson_doc_free(doc);
+            return true;
+        }});
+        steps_.push_back({"подсказка автора после загрузки", 5, [this](u32 f) {
+            if (f < 2) return false;
+            Rml::Element* hint = layer(e_.rp_hud, e_.rp_hint_node);
+            check(var("rpg.near") > 0 && hint && hint->IsVisible(true) && words_of(hint) == e_.rp_hint,
+                  "герой у жителя, HUD говорит «" + words_of(hint) + "»" + state());
+            return true;
+        }});
+        talk_step("разговор после загрузки", [this] {
+            const game::DialogueRunner& r = s_->dialogue_runner();
+            check(s_->in_dialogue() && r.dialogue() && r.dialogue()->id() == e_.rp_talk && r.line().text == e_.rp_talk_line && r.line().choices.empty(),
+                  "E у «" + e_.rp_villager_name + "»: «" + std::string(r.line().text) + "», ответа с наградой нет");
+            tap(SDLK_E);
+        });
+        steps_.push_back({"второй награды нет", 4, [this](u32 f) {
+            if (f < 2) return false;
+            check(!s_->in_dialogue() && var("inv.coins") == coins_ && var(e_.rp_once) == 1, "монет столько же: " + num(var("inv.coins")));
+            return true;
+        }});
+        steps_.push_back({"к месту автора", 3000, [this](u32 f) { return walk_to(e_.rp_place_at[0], e_.rp_place_at[1], f); }});
+        steps_.push_back({"окно «Уровень пройден»", 30, [this](u32) {
+            if (!window("level")) return false;
+            check(g_.outcome() == RpgGame::Outcome::LevelPassed && !g_.said().empty() && g_.said().back() == "reach:" + e_.rp_place && g_.ends() == 1,
+                  "«" + e_.rp_place_name + "» после загрузки: связь автора, карта пройдена" + state());
+            return true;
+        }});
+        steps_.push_back({"«Дальше»", 30, [this](u32 f) {
+            if (f == 0) check(press("level", "Дальше"), "кнопка «Дальше»");
+            return g_.level_id() != e_.level;
+        }});
+        steps_.push_back({"«Поляна»", 25, [this](u32 f) {
+            if (f < 20) return false;
+            const MapData* m = g_.map();
+            check(m && g_.level_id() == "glade" && text("rpg.map") == "Поляна" && g_.outcome() == RpgGame::Outcome::Playing && !window("level") &&
+                      !window("win"),
+                  "вторая карта «Поляна»: игра идёт, окон нет" + state());
+            check(var("inv.coins") == coins_ && var(e_.rp_once) == 1 && var("inv.treasure") == 0 && text("game.result").empty(),
+                  "монеты и " + e_.rp_once + " с героем, сундук не найден, итога нет");
+            const Thing* chest = m ? first_of(m->pickups, "chest") : nullptr;
+            check(chest != nullptr, "на «Поляне» сундук");
+            if (chest) coins_at_ = {chest->cx, chest->cy};
+            return true;
+        }});
+        steps_.push_back({"к сундуку", 3000, [this](u32 f) { return walk_to(coins_at_.first, coins_at_.second, f); }});
+        steps_.push_back({"победа", 30, [this](u32) {
+            if (!window("win")) return false;
+            check(g_.outcome() == RpgGame::Outcome::Won && var("inv.treasure") == 1 && g_.ends() == 2, "сундук «Поляны»: окно победы" + state());
+            shot("rpg-автор-победа");
             return true;
         }});
     }
@@ -1050,6 +1151,7 @@ private:
     f64 coins_ = 0;
     usize sounds_ = 0;
     std::pair<i32, i32> coins_at_;
+    std::string coins_id_; // the author's coins picked up (project), for the other process
 };
 
 // The scenes that play a changed copy of the test game (--scene rpg_chain…): the copy, made from the game the command

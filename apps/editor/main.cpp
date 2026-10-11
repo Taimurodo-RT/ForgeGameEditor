@@ -17628,14 +17628,17 @@ private:
     // --self-test rpg-template (step 14.4b, step14/14.4b-шаблон-rpg-модель.md): the template's game made again from its
     // sources (the module's maker of «rpg») is games/rpg byte for byte. «RPG Б» and «RPG А» made of the catalog's card
     // «RPG сверху» with the window «Новая игра». The editor for A, started by the window (rpg-template-a), through the
-    // tabs, with the mouse and the keys: the elder's picture replaced in «Ресурсы» by the author's own and a sound of
+    // tabs with the mouse and the keys, but by the tabs' own calls: all of «Сюжет», a name's text in «Объекты», the
+    // brush's size and the view in «Уровень», the link's phrase in «Логика», the HUD's layer and its undo in
+    // «Интерфейс», saving everything. The elder's picture replaced in «Ресурсы» by the author's own and a sound of
     // the author's put there, brought in by F5; in «Сюжет» a conversation of the author's whose answer gives coins
     // once; in «Объекты» «Мельник», a «Копия» of the elder, saying it (chosen from the game's conversations), a place
     // «Мельница» seen in the game, the coins' sound the author's; in «Уровень» the miller and the mill put on «Деревня»
     // and a path laid to the mill; in «Логика» «Герой доходит до Мельницы»; the miller renamed, the same id; the HUD's
     // hint in «Интерфейс»; the hero's walk in «Анимация»; each undone and done again; saved. rpg-template-a-again, from
     // another working folder: all of it as left; «Играть со стартового»: the game plays it (scene project with
-    // --edits). The template and B: the same bytes before and after.
+    // --edits) and saves after the miller's reward; another process, from a third working folder, goes on from that
+    // save to «Поляна» and its chest (scene project_continue). The template and B: the same bytes before and after.
     static constexpr u8 kRtElder[3] = {40, 96, 210}; // the author's elder: one colour all over
     static constexpr i32 kRtMillerX = 13, kRtMillerY = 11, kRtMillX = 20, kRtMillY = 3;
     static constexpr i32 kRtPath0 = 4, kRtPath1 = 7; // the path from the road up to the mill: (20, 4)…(20, 7)
@@ -18384,9 +18387,21 @@ private:
             if (wait(2)) return true;
             check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
             const edits::ProjectEdits e = rt_edits();
-            const int code = tg_play(&e, "ожидания шаблон rpg.json", rt_root());
-            check(code == 0, "the game plays the author's elder, miller, conversation, coins' sound, walk, hint, path and mill (exit " +
-                                 std::to_string(code) + ")");
+            int code = tg_play(&e, "ожидания шаблон rpg.json", rt_root());
+            check(code == 0, "the game plays the author's elder, miller, conversation, coins' sound, walk, hint, path and mill, saved after "
+                             "the reward (exit " + std::to_string(code) + ")");
+            // Another process, from another working folder, the same player's folder: the save made after the reward
+            // goes on through the mill to «Поляна» and its chest.
+            const fs::path elsewhere = rt_root() / utf8_path("папка продолжения");
+            std::error_code ec;
+            fs::create_directories(elsewhere, ec);
+            std::vector<std::string> args = lv().last_play();
+            args.erase(std::remove(args.begin(), args.end(), std::string("--play")), args.end());
+            for (const char* more : {"--test", "--scene", "project_continue", "--edits"}) args.push_back(more);
+            args.push_back(path_to_utf8(rt_root() / utf8_path("ожидания шаблон rpg.json")));
+            code = pj_run(args, elsewhere);
+            check(code == 0, "another process goes on from the save: the reward kept and not given again, the mill, «Поляна», its chest "
+                             "(scene project_continue: exit " + std::to_string(code) + ")");
             return false;
         }
         default: break;

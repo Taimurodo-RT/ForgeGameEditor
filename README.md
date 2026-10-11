@@ -353,7 +353,7 @@ build/apps/editor/forge_editor --self-test                  # сам рисуе�
 build/apps/editor/forge_editor --self-test modules          # реестр модулей: игры двух модулей, отказ чужим
 build/apps/editor/forge_editor --self-test animation        # «Анимация»: анимации мышью и клавишами, игра их играет
 build/apps/editor/forge_editor --self-test input            # «Ввод»: клавиши действий мышью и клавишами, игра на них прыгает
-build/apps/editor/forge_editor --self-test rpg-template     # шаблон «RPG сверху»: автор правит игру во вкладках, игра это играет
+build/apps/editor/forge_editor --self-test rpg-template     # шаблон «RPG сверху»: автор правит игру во вкладках, игра это играет, сохранение продолжается другим процессом до победы
 build/apps/editor/forge_editor --bench --frames 600         # все 50 500 строк иерархии, прокрутка, замер
 build/apps/editor/forge_editor --bench-level                # полёт над уровнем с рисованием, замер кадра
 build/apps/editor/forge_editor --bench-assets 50000         # проект на 50 000 файлов: индекс, список, поиск
