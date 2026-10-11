@@ -2047,6 +2047,21 @@ private:
             talk.stop();
             return true;
         }});
+        // The key of «Поговорить» as the window gives it, through the shell and then the game (as the runner passes it).
+        steps_.push_back({"E — «Поговорить»: разговор с Борисом начинается клавишей", 5, [&s, &g, &talk, this](u32 f) {
+            if (f < 1) return false;
+            for (const bool down : {true, false}) {
+                SDL_Event ev{};
+                ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                ev.key.scancode = SDL_SCANCODE_E;
+                ev.key.key = SDLK_E;
+                ev.key.down = down;
+                if (!s.handle_event(ev) && s.screen() == Screen::Playing && !s.in_dialogue()) g.handle_event(ev);
+            }
+            check(s.in_dialogue() && talk.node_id() == "not_yet", "E: Борис снова спрашивает про кирку");
+            talk.stop();
+            return true;
+        }});
         steps_.push_back({"копать руками и строить", 120, [&s, &g, aim, v, stand, this](u32 f) {
             if (f == 0) {
                 g.teleport(40.5, v - stand);
@@ -7818,6 +7833,8 @@ private:
             }
             if (f < 8) return false;
             check(s.rebinding().empty() && s.screen() == Screen::Settings, "Esc отменил ожидание, «Настройки» открыты");
+            Rml::Element* note = s.find_element("keys-note");
+            check(!note || !note->IsVisible(true), "Esc — не клавиша, отказа нет: «" + (note ? text_of(note) : std::string()) + "»");
             check(binds("talk") == std::vector<std::string>{"key:E", "pad:west"}, "«Поговорить» как было: " + joined(binds("talk")));
             return true;
         }});
