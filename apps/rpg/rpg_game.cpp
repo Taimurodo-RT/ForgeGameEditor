@@ -167,6 +167,7 @@ bool RpgGame::start_level(const std::string& id, const fs::path& folder, std::st
     std::string name;
     if (!read_level(id, folder, m, name, why)) return false;
     map_ = std::move(m);
+    ++map_gen_;
     level_ = id;
     level_name_ = name;
     folder_ = folder;
@@ -354,6 +355,12 @@ bool RpgGame::next_level() {
     if (!start_level(id, level::level_folder(shell_->game_dir(), id), why)) {
         problems_.push_back(why);
         say(why);
+        // The next map does not open: the player stays on this one and plays on (and may save), its window is gone.
+        if (outcome_ == Outcome::LevelPassed) {
+            outcome_ = Outcome::Playing;
+            shell_->vars().set("game.result", std::string());
+            FORGE_WARN("RPG: следующая карта «%s» не открылась, игра идёт дальше на карте «%s»", id.c_str(), level_name_.c_str());
+        }
         return false;
     }
     return true;
@@ -428,9 +435,10 @@ void RpgGame::touch() {
             std::erase(inside_, p.id);
     }
     // The links after: a map passed starts the next one, and nothing of the old one happens on it.
-    const std::string level = level_;
+    const u64 gen = map_gen_;
+    const u32 ends = ends_;
     for (const auto& [kind, thing] : happened) {
-        if (outcome_ != Outcome::Playing || level_ != level) break;
+        if (outcome_ != Outcome::Playing || map_gen_ != gen || ends_ != ends) break;
         on_event(kind, thing);
     }
 }
@@ -452,7 +460,13 @@ void RpgGame::talk() {
 
 void RpgGame::on_event(const std::string& kind, const Thing& b) {
     said_.push_back(kind + ":" + b.tmpl->id);
+    // An event belongs to the map it happened on. Once one of its links ends that map (the next one starts at once
+    // with no window, or fails to open and this one goes on), its other links are not run: not on the new map, where
+    // only its own events count, and not again on this one.
+    const u64 gen = map_gen_;
+    const u32 ends = ends_;
     for (const logic::Link& link : links_.links) {
+        if (outcome_ != Outcome::Playing || map_gen_ != gen || ends_ != ends) break;
         const logic::VerbDef* verb = verbs_.find(link.verb);
         if (!verb || verb->when != kind || link.b != b.tmpl->id) continue;
         if (!link.a.empty() && link.a != map_->hero.tmpl->id) continue;
@@ -460,7 +474,6 @@ void RpgGame::on_event(const std::string& kind, const Thing& b) {
         if (verb->action == "level_won") level_won();
         else if (verb->action == "lose") finish(false);
         else FORGE_WARN("RPG: связь %u: действия «%s» у игры нет", link.id, verb->action.c_str());
-        if (outcome_ != Outcome::Playing) break;
     }
 }
 
