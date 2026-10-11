@@ -171,7 +171,10 @@ TEST_CASE("rpg: the edge of the map and water are walls") {
 }
 
 TEST_CASE("rpg: a long step does not pass a thin wall") {
-    const Map m = map_of({"...#...", "...#...", "...#..."});
+    // Free ground far beyond the wall, so the end of a long step is a place the hero could stand.
+    const std::string row = "...#" + std::string(60, '.');
+    const Map m = map_of({row, row, row});
+    CHECK(fits(m, {}, 51.0, 2.0, kHeroFeet));
     // 50 cells at once (a stall of the game): stops at the wall.
     const Moved r = move(m, {}, 1.0, 2.0, 50, 0, kHeroFeet);
     CHECK(r.hit_x);
