@@ -194,7 +194,7 @@ jobs:
           "./$packed" --test --scene match3_next --data tests/data/match3/game
           (cd build/elsewhere && "../../$packed" --test --scene match3_save --data ../../tests/data/match3/game --user ../match3-packed)
           (cd build/elsewhere && "../../$packed" --test --scene match3_continue --data ../../tests/data/match3/game --user ../match3-packed)
-      - name: The module «RPG сверху» in the build, then in the package with games/slice, games/platformer and games/modules moved away (rpg scenes on tests/data/rpg, its game made again byte for byte; a bot with the keys through two maps, eight directions at one speed, walls, a slide along them, the elder's quest taken and given back, a pickup once, «Дальше» to the next map and the win, each checked on the screen; a save mid-map continued in another process from another working folder with the hero exactly where he was, broken saves refused, a hero in a wall put at the start, lose() from a dialogue after it ends)
+      - name: The module «RPG сверху» in the build, then in the package with games/slice, games/platformer and games/modules moved away (rpg scenes on tests/data/rpg, its game made again byte for byte; a bot with the keys through two maps, eight directions at one speed, walls, a slide along them, the elder's quest taken and given back, a pickup once, «Дальше» to the next map and the win, each checked on the screen; a save mid-map continued in another process from another working folder with the hero exactly where he was, broken saves refused, a hero in a wall put at the start, lose() from a dialogue after it ends; two links of one event, the second not run once the first passed the map, with the window «Уровень пройден» and without it, so «Поляна» is won only by its own chest; a next map that does not open leaves the player on his map, playing, saved and loaded again)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then game=build/apps/game/Release/forge_game.exe; packed=build/dist/OldMine/OldMine.exe; else game=build/apps/game/forge_game; packed=build/dist/OldMine/OldMine; fi
@@ -203,6 +203,7 @@ jobs:
           "./$game" --test --scene rpg --data tests/data/rpg/game --screenshot world-rpg.png
           (cd build/elsewhere && "../../$game" --test --scene rpg_save --data ../../tests/data/rpg/game --user ../rpg-built)
           (cd build/elsewhere && "../../$game" --test --scene rpg_continue --data ../../tests/data/rpg/game --user ../rpg-built)
+          for scene in rpg_chain rpg_chain_window rpg_next_broken rpg_next_broken_window; do "./$game" --test --scene $scene --data tests/data/rpg/game --user build/rpg-links-built; done
           mv games/slice build/slice-away
           mv games/platformer build/platformer-away
           mv games/modules build/modules-away
@@ -210,6 +211,7 @@ jobs:
           "./$packed" --test --scene rpg --data tests/data/rpg/game
           (cd build/elsewhere && "../../$packed" --test --scene rpg_save --data ../../tests/data/rpg/game --user ../rpg-packed)
           (cd build/elsewhere && "../../$packed" --test --scene rpg_continue --data ../../tests/data/rpg/game --user ../rpg-packed)
+          for scene in rpg_chain rpg_chain_window rpg_next_broken rpg_next_broken_window; do "./$packed" --test --scene $scene --data tests/data/rpg/game --user build/rpg-links-packed; done
       - name: Going between levels in the build, then in the package with games/slice moved away (slice scenes levels, then levels_continue from another working folder)
         shell: bash
         run: |

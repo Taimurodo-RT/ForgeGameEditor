@@ -141,6 +141,8 @@ private:
     std::optional<MapData> map_;
     std::string level_, level_name_;
     std::filesystem::path folder_;
+    // Grows with each map started: what happened on a map is answered on that map only.
+    u64 map_gen_ = 0;
     f64 hero_x_ = 0, hero_y_ = 0;
     Dir facing_ = Dir::S;
     bool walking_ = false;

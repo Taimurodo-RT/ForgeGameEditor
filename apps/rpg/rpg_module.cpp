@@ -65,6 +65,12 @@ namespace {
 //                       the elder and the author's villager drawn with the author's picture, the hero walking by the
 //                       author's frames, the coins picked up with the author's sound, the HUD's hint as the author
 //                       wrote it near the villager, his dialogue giving its reward once, the author's place passing the map
+// --scene rpg_chain, rpg_chain_window, rpg_next_broken, rpg_next_broken_window
+//                       the test game copied and changed before it starts (prepare_copy): a second link «Герой доходит
+//                       до Ворот» (two links of one event), without the window «Уровень пройден» (the next map at once)
+//                       or with it, «Поляна» that does not open. A map passed ends the event: the rest of its links do not
+//                       run on the next map (it goes on until its own chest), and a next map that does not open leaves
+//                       the player on the old one, walking and saving
 
 struct Step {
     const char* name;
@@ -334,8 +340,10 @@ private:
     }
     // Walks to the cell, a frame at a time; true when there (the keys let go).
     bool walk_to(i32 tx, i32 ty, u32 f) {
-        // A map passed or the game over on the way (a gate, a chest): the walk is over.
-        if (g_.outcome() != RpgGame::Outcome::Playing) {
+        // A map passed or the game over on the way (a gate, a chest), with its window or straight to the next map: the
+        // walk is over.
+        if (f == 0) walk_ends_ = g_.ends();
+        if (g_.outcome() != RpgGame::Outcome::Playing || g_.ends() != walk_ends_) {
             let_go();
             return true;
         }
@@ -392,6 +400,8 @@ private:
             return true;
         }});
         if (sc == "rpg") main_scene();
+        else if (sc == "rpg_chain" || sc == "rpg_chain_window") chain_scene(sc == "rpg_chain_window");
+        else if (sc == "rpg_next_broken" || sc == "rpg_next_broken_window") next_broken_scene(sc == "rpg_next_broken_window");
         else if (sc == "rpg_save") save_scene();
         else if (sc == "rpg_continue") continue_scene();
         else
@@ -905,6 +915,100 @@ private:
         }});
     }
 
+    // Two links of «доходит до Ворот» (1 and 3): the first passes «Деревня», the second is not run on «Поляна».
+    void chain_scene(bool window_shown) {
+        new_game();
+        steps_.push_back({"две связи одного события", 3, [this, window_shown](u32) {
+            u32 gate = 0;
+            for (const logic::Link& l : links_of_game())
+                if (l.verb == "reaches" && l.b == "gate") ++gate;
+            check(gate == 2 && s_->screens().endings("level").empty() != window_shown,
+                  std::string("у ворот две связи «доходит до», окно «Уровень пройден» ") + (window_shown ? "есть" : "убрано"));
+            return true;
+        }});
+        go("к воротам", 23, 8);
+        if (window_shown) {
+            steps_.push_back({"окно «Уровень пройден»", 30, [this](u32) {
+                if (!window("level")) return false;
+                check(g_.outcome() == RpgGame::Outcome::LevelPassed && g_.fired() == std::vector<u32>{1} && g_.ends() == 1,
+                      "ворота: связь 1, карта пройдена, связь 3 того же события не сработала" + state());
+                return true;
+            }});
+            steps_.push_back({"«Дальше»", 30, [this](u32 f) {
+                if (f == 0) check(press("level", "Дальше"), "кнопка «Дальше»");
+                return g_.level_id() == "glade";
+            }});
+        } else {
+            steps_.push_back({"сразу «Поляна»", 30, [this](u32) { return g_.level_id() == "glade"; }});
+        }
+        steps_.push_back({"на «Поляне» игра идёт", 25, [this](u32 f) {
+            if (f < 20) return false;
+            check(g_.outcome() == RpgGame::Outcome::Playing && g_.hero_x() == 2.5 && g_.hero_y() == 7.0 && !window("win") && !window("level"),
+                  "«Поляна»: игра идёт, герой на своей копии, окон нет" + state());
+            check(g_.fired() == std::vector<u32>{1} && g_.ends() == 1 && var("inv.treasure") == 0 && text("game.result").empty(),
+                  "сработала только связь 1, конец карты один, сундук не подобран, итога нет (связей сработало " +
+                      std::to_string(g_.fired().size()) + ")");
+            return true;
+        }});
+        go("к сундуку", 9, 2);
+        steps_.push_back({"победа от сундука", 30, [this](u32) {
+            if (!window("win")) return false;
+            check(g_.outcome() == RpgGame::Outcome::Won && g_.fired() == std::vector<u32>{1, 2} && g_.ends() == 2 && var("inv.treasure") == 1,
+                  "победа — от своего события «Поляны»: сундук, связь 2" + state());
+            return true;
+        }});
+    }
+
+    // «Поляна» does not open: the player stays on «Деревня», walks on and may save.
+    void next_broken_scene(bool window_shown) {
+        new_game();
+        go("к воротам", 23, 8);
+        if (window_shown) {
+            steps_.push_back({"«Дальше» к карте, которой нет", 30, [this](u32 f) {
+                if (f == 0) return false;
+                if (!window("level")) return f > 20 ? (fail("окна «Уровень пройден» нет" + state()), true) : false;
+                check(press("level", "Дальше"), "кнопка «Дальше»");
+                return true;
+            }});
+        }
+        steps_.push_back({"«Поляна» не открылась", 10, [this](u32 f) {
+            if (f < 3) return false;
+            const bool said = !g_.problems().empty() && g_.problems().back().find("Поляна") != std::string::npos;
+            check(g_.level_id() == "village" && g_.outcome() == RpgGame::Outcome::Playing && !window("level") && said &&
+                      said_toast(g_.problems().back()),
+                  "следующая карта не открылась: игрок на «Деревне», игра идёт, сказано почему: «" +
+                      (g_.problems().empty() ? std::string() : g_.problems().back()) + "»" + state());
+            check(g_.fired() == std::vector<u32>{1} && g_.ends() == 1 && text("game.result").empty(), "связь 3 того же события не сработала, итога нет");
+            start_x_ = g_.hero_x();
+            return true;
+        }});
+        steps_.push_back({"игра продолжается", 20, [this](u32 f) {
+            if (f == 0) hold(false, false, true, false);
+            if (f < 15) return false;
+            let_go();
+            std::string why;
+            const bool can = g_.can_save(&why);
+            check(g_.hero_x() < start_x_ && g_.outcome() == RpgGame::Outcome::Playing, "герой идёт дальше по «Деревне»" + state());
+            check(can && s_->save("rpg-broken", "Без поляны"), "сохранить можно " + why);
+            start_x_ = g_.hero_x();
+            start_y_ = g_.hero_y();
+            return true;
+        }});
+        steps_.push_back({"сохранение загружается", 5, [this](u32 f) {
+            if (f < 2) return false;
+            check(s_->load("rpg-broken") && g_.level_id() == "village" && g_.outcome() == RpgGame::Outcome::Playing && !window("level") &&
+                      g_.hero_x() == start_x_ && g_.hero_y() == start_y_ && text("game.result").empty(),
+                  "«Без поляны» загружено: «Деревня», игра идёт, герой где был" + state());
+            return true;
+        }});
+    }
+    // The links the game plays (its logic.json).
+    std::vector<logic::Link> links_of_game() const {
+        logic::Logic links;
+        links.load(s_->game_dir() / "logic.json");
+        return links.links;
+    }
+
     void make_scene() {
         steps_.push_back({"тестовая игра делается заново байт в байт", 5, [this](u32) {
             const fs::path data = s_->game_dir().parent_path();
@@ -936,6 +1040,7 @@ private:
     bool held_[4] = {false, false, false, false};
     std::vector<std::pair<i32, i32>> path_;
     usize at_cell_ = 0;
+    u32 walk_ends_ = 0;
     f64 start_x_ = 0, start_y_ = 0;
     // The author's game (scene project).
     fs::path edits_file_;
@@ -945,6 +1050,43 @@ private:
     usize sounds_ = 0;
     std::pair<i32, i32> coins_at_;
 };
+
+// The scenes that play a changed copy of the test game (--scene rpg_chain…): the copy, made from the game the command
+// line names, in the temporary folder; empty when the scene plays the game as it is. False: why says.
+bool prepare_copy(const std::string& scene, const fs::path& game, fs::path& out, std::string& why) {
+    const bool chain = scene == "rpg_chain" || scene == "rpg_chain_window";
+    const bool broken = scene == "rpg_next_broken" || scene == "rpg_next_broken_window";
+    if (!chain && !broken) return true;
+    out = fs::temp_directory_path() / utf8_path("forge_rpg_связи") / utf8_path(scene) / "game";
+    std::error_code ec;
+    fs::remove_all(out.parent_path(), ec);
+    fs::create_directories(out.parent_path(), ec);
+    fs::copy(game, out, fs::copy_options::recursive, ec);
+    if (ec) {
+        why = "игра не скопирована в " + path_to_utf8(out) + ": " + ec.message();
+        return false;
+    }
+    if (!scene.ends_with("_window")) {
+        fs::remove(out / "ui" / "level.json", ec);
+        fs::remove(out / "ui" / "level.html", ec);
+    }
+    if (broken) fs::remove_all(out / "levels" / "glade", ec);
+    // A second link of the same event: «Герой доходит до Ворот» again.
+    logic::Logic links;
+    if (!links.load(out / "logic.json", &why)) return false;
+    const logic::Link* first = links.find(1);
+    if (!first || first->verb != "reaches" || first->b != "gate") {
+        why = "в logic.json нет связи 1 «доходит до Ворот»";
+        return false;
+    }
+    logic::Link again = *first;
+    again.id = 0;
+    if (links.add(again) != 3) {
+        why = "вторая связь не получила id 3";
+        return false;
+    }
+    return links.save(out / "logic.json", &why);
+}
 
 int run(int argc, char** argv) {
     Options options;
@@ -974,6 +1116,25 @@ int run(int argc, char** argv) {
                                              : RpgGame::Break::None;
         }
     }
+    // A scene of a changed copy plays the copy: --data names it.
+    std::vector<std::string> args(argv, argv + argc);
+    {
+        fs::path copy;
+        std::string why;
+        if (!prepare_copy(scene, game::game_data_dir(argc, argv, utf8_path(RPG_GAME_DIR)), copy, why)) {
+            FORGE_ERROR("Копия тестовой игры для сцены %s не сделана: %s", scene.c_str(), why.c_str());
+            return 1;
+        }
+        if (!copy.empty()) {
+            const auto at = std::find(args.begin(), args.end(), std::string("--data"));
+            if (at != args.end() && at + 1 != args.end()) *(at + 1) = path_to_utf8(copy);
+            else args.insert(args.end(), {"--data", path_to_utf8(copy)});
+            FORGE_INFO("Сцена %s играет копию %s", scene.c_str(), path_to_utf8(copy).c_str());
+        }
+    }
+    std::vector<char*> pointers;
+    for (std::string& a : args) pointers.push_back(a.data());
+    pointers.push_back(nullptr);
     RpgGame game(options);
     game.set_break(broken);
     SelfTest test(game, scene, edits);
@@ -982,7 +1143,7 @@ int run(int argc, char** argv) {
     m.dev_game_dir = RPG_GAME_DIR;
     m.module = kModuleId;
     m.test = [&](Shell& shell, u32 frame, int& failures) { return test.frame(shell, frame, failures); };
-    return game::run_game(game, m, argc, argv);
+    return game::run_game(game, m, static_cast<int>(args.size()), pointers.data());
 }
 
 } // namespace
