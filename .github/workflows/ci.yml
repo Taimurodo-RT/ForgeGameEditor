@@ -31,6 +31,9 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: The core names no module (engine, the launcher apps/game and the editor include no header of apps/slice or apps/probe; apps/builtin their public headers only)
+        shell: bash
+        run: if [ "$RUNNER_OS" = Windows ]; then python tools/check_core_includes.py; else python3 tools/check_core_includes.py; fi
       - name: Python for the converters (Linux; Windows builds its own next to the editor)
         if: runner.os == 'Linux'
         run: |
@@ -101,6 +104,9 @@ jobs:
       - name: The catalog's template «Платформер» (editor self-test part platformer-template), games/platformer made again from its sources byte for byte, A and B made of its card in the window «Новая игра», in A the hero's picture replaced in «Ресурсы», the coin's «Очки» and the beetle's «Скорость» in «Объекты», a coin and a bridge on «Луг», the exit's link in «Логика» and the win window's title in «Интерфейс» with undo and redo, opened again elsewhere and played as changed, the template and B byte for byte as before
         if: runner.os == 'Linux'
         run: ./build/apps/editor/forge_editor --self-test platformer-template
+      - name: Modules (editor self-test part modules), the editor of a game's module from the registry, two modules' levels, values, events and verbs side by side and apart, a game of the test module «Проба» and a game from before step 14.3 (no project.forge, game.json without "module", CRLF) each opened in an editor of its own from another working folder and played with «Играть», the games whose module is none, another, empty or a number refused before the open game or its undo is touched, and refused by forge_game and forge_slice
+        if: runner.os == 'Linux'
+        run: ./build/apps/editor/forge_editor --self-test modules
       - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
         if: runner.os == 'Linux'
         run: |
@@ -136,6 +142,25 @@ jobs:
           ./build/dist/OldMine/OldMine --test --scene zones --screenshot world-slice-packaged-zones.png
           ./build/dist/OldMine/OldMine --test --scene own_tiles --screenshot world-slice-packaged-own-tiles.png
           ./build/dist/OldMine/OldMine --test --scene tiled --screenshot world-slice-packaged-tiled.png
+      - name: The launcher forge_game in the build, then in the package with games/slice, games/platformer and games/modules moved away («Старая шахта» from game.json; the test module «Проба»; two modules' saves in one player's folder, each run another process from another working folder - probe_save, module_slots, probe_foreign)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then game=build/apps/game/Release/forge_game.exe; packed=build/dist/OldMine/OldMine.exe; else game=build/apps/game/forge_game; packed=build/dist/OldMine/OldMine; fi
+          mkdir -p build/elsewhere
+          "./$game" --test --scene menu
+          "./$game" --test --scene probe --data tests/data/probe/game
+          (cd build/elsewhere && "../../$game" --test --scene probe_save --data ../../tests/data/probe/game --user ../module-slots-built)
+          (cd build/elsewhere && "../../$game" --test --scene module_slots --user ../module-slots-built)
+          (cd build/elsewhere && "../../$game" --test --scene probe_foreign --data ../../tests/data/probe/game --user ../module-slots-built)
+          mv games/slice build/slice-away
+          mv games/platformer build/platformer-away
+          mv games/modules build/modules-away
+          trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer; mv build/modules-away games/modules' EXIT
+          "./$packed" --test --scene menu
+          "./$packed" --test --scene probe --data tests/data/probe/game
+          (cd build/elsewhere && "../../$packed" --test --scene probe_save --data ../../tests/data/probe/game --user ../module-slots-packed)
+          (cd build/elsewhere && "../../$packed" --test --scene module_slots --user ../module-slots-packed)
+          (cd build/elsewhere && "../../$packed" --test --scene probe_foreign --data ../../tests/data/probe/game --user ../module-slots-packed)
       - name: Going between levels in the build, then in the package with games/slice moved away (slice scenes levels, then levels_continue from another working folder)
         shell: bash
         run: |
@@ -160,7 +185,7 @@ jobs:
           "./$packed" --test --scene platformer
           (cd build/elsewhere && "../../$packed" --test --scene platformer_continue)
           (cd build/elsewhere && "../../$packed" --test --scene platformer_edges)
-      - name: The template «Платформер» in the build, then in the package with games/slice and games/platformer moved away (slice scenes platformer_template, a bot through «Луг» to «Холмы», saved there, three falls and «Ещё раз»; then platformer_template_continue from another working folder, «Продолжить», no reward twice, through «Вершина» to the flag)
+      - name: The template «Платформер» in the build, then in the package with games/slice, games/platformer and games/modules moved away (slice scenes platformer_template, a bot through «Луг» to «Холмы», saved there, three falls and «Ещё раз»; then platformer_template_continue from another working folder, «Продолжить», no reward twice, through «Вершина» to the flag)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then built=build/apps/slice/Release/forge_slice.exe; packed=build/dist/OldMine/OldMine.exe; else built=build/apps/slice/forge_slice; packed=build/dist/OldMine/OldMine; fi
@@ -169,14 +194,15 @@ jobs:
           (cd build/elsewhere && "../../$built" --test --scene platformer_template_continue --screenshot ../../world-slice-platformer-template-won.png)
           mv games/slice build/slice-away
           mv games/platformer build/platformer-away
-          trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer' EXIT
+          mv games/modules build/modules-away
+          trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer; mv build/modules-away games/modules' EXIT
           "./$packed" --test --scene platformer_template
           (cd build/elsewhere && "../../$packed" --test --scene platformer_template_continue)
-      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels, platformer and platformer-template) play in the package and the build with games/slice moved away, the game of levels from its start level and through its links, then continued from another working folder
+      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels, platformer, platformer-template and modules) play in the package, the build's forge_game and its old name forge_slice with games/slice, games/platformer and games/modules moved away (back with the same SHA-256), the game of levels from its start level and through its links, then continued from another working folder, a game from before step 14.3 as «Старая шахта», two modules' saves in one player's folder
         if: runner.os == 'Linux'
-        run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/slice/forge_slice
+        run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/game/forge_game build/apps/slice/forge_slice
       # Windows has no GPU here: the editor and the game draw with D3D12's software device (WARP), if SDL finds it.
-      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer and platformer-template, each game in an editor of its own) and the games in the package and the build
+      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer, platformer-template and modules, each game in an editor of its own) and the games in the package, the build's forge_game and forge_slice
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -185,7 +211,8 @@ jobs:
           ./build/apps/editor/Release/forge_editor.exe --self-test levels
           ./build/apps/editor/Release/forge_editor.exe --self-test platformer
           ./build/apps/editor/Release/forge_editor.exe --self-test platformer-template
-          python tools/author_game/play.py build/dist/OldMine/OldMine.exe build/apps/slice/Release/forge_slice.exe
+          ./build/apps/editor/Release/forge_editor.exe --self-test modules
+          python tools/author_game/play.py build/dist/OldMine/OldMine.exe build/apps/game/Release/forge_game.exe build/apps/slice/Release/forge_slice.exe
       - uses: actions/upload-artifact@v4
         with:
           name: OldMine-${{ runner.os }}

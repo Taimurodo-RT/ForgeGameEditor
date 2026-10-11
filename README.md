@@ -253,7 +253,21 @@
   Звуки шагов, прыжка, приземления, всплеска, копания, постройки, монет и ящиков собраны из тонов
   (`slice_sounds.cpp`); объекты с блоком «Звук» звучат своими файлами.
   Мир 64k × 64k, сохранения, меню. `--stress`: 200 000 существ и миллион частиц в той же игре.
-  Подробно: `docs/vertical-slice.md`.
+  Подробно: `docs/vertical-slice.md`. Это модуль `slice` (см. ниже): его единственный открытый заголовок —
+  `apps/slice/module/slice_module.h`.
+- `engine/modules`, `apps/builtin`, `apps/game` и `games/modules` — модули игр (шаг 14.3a). Модуль — жанр,
+  собранный в Forge: его игра, уровень редактора, события связей, значения для экранов и файлы
+  (`games/modules/<id>`: `kinds.json`, `verbs.json`, `ideas.json`). Реестр (`forge::modules::Registry`)
+  не берёт два модуля с одним id. `apps/builtin` — единственное место, где названы модули сборки; редактор и
+  запускатель берут список оттуда, поэтому выбирают модуль одинаково. Игра называет свой модуль полем
+  `"module"` в `game.json`; нет поля — игра до шага 14.3, это «Старая шахта» (`slice`); пустое, не строка или
+  модуль, которого нет в сборке, — отказ с причиной, без запасного модуля. Так же со слотом сохранения: слот
+  без модуля — «Старой шахты», слот чужого модуля не загружается, текущая игра остаётся как была.
+  `apps/game` — запускатель `forge_game`: читает модуль игры и отдаёт ему командную строку как есть. Тот же
+  запускатель собирается под старым именем `build/apps/slice/forge_slice` и упаковывается как `OldMine`,
+  так что старые ярлыки и скрипты работают. Ядро (`engine`, `apps/game`, `apps/editor`) не включает
+  заголовки модулей, это проверяет `python3 tools/check_core_includes.py`. `apps/probe` — тестовый модуль
+  «Проба» (данные в `tests/data/probe`): он встроен только при `--test` и `--self-test`.
 - `tests` — модульные тесты (doctest), `bench` — замер системы задач.
 
 ## Сборка
@@ -294,18 +308,22 @@ build/apps/ui_demo/forge_ui_demo --screenshot ui.png --frames 60 --reload-every 
 build/apps/editor/forge_editor                              # редактор; ваш проект — папка, откуда он запущен
 build/apps/editor/forge_editor --project ПАПКА              # ...или эта папка проекта
 build/apps/editor/forge_editor --self-test                  # сам рисует, отменяет, двигает панели, сохраняет уровень
+build/apps/editor/forge_editor --self-test modules          # реестр модулей: игры двух модулей, отказ чужим
 build/apps/editor/forge_editor --bench --frames 600         # все 50 500 строк иерархии, прокрутка, замер
 build/apps/editor/forge_editor --bench-level                # полёт над уровнем с рисованием, замер кадра
 build/apps/editor/forge_editor --bench-assets 50000         # проект на 50 000 файлов: индекс, список, поиск
 build/apps/editor/forge_editor --bench-scheme 5000          # схема на 5 000 нод: раскладка, прокрутка, перетаскивание
 build/apps/editor/forge_editor --bench-story                # большой разговор прокручивается колесом мыши, замер
 build/apps/editor/forge_editor --screenshot s.png --talk miner  # снимок «Сюжета» с разговором (cast:ИСТОРИЯ, novel:ИСТОРИЯ)
-build/apps/slice/forge_slice                                # игра «Старая шахта»
+build/apps/game/forge_game                                  # игра «Старая шахта» (модуль из game.json игры)
+build/apps/game/forge_game --data ПРОЕКТ/game               # игра с данными вашего проекта, её модулем
+build/apps/slice/forge_slice                                # тот же запускатель под старым именем
 build/apps/slice/forge_slice --stress                       # та же игра с 200 000 существ и миллионом частиц
 build/apps/slice/forge_slice --test --screenshot slice.png  # сама проходит игру без окна и проверяет её
 build/apps/slice/forge_slice --play --level ПАПКА --at X,Y  # сразу новая игра из папки уровня, герой в X,Y
-build/apps/slice/forge_slice --data ПРОЕКТ/game             # игра с данными вашего проекта
+build/apps/game/forge_game --test --scene probe --data tests/data/probe/game   # игра тестового модуля «Проба»
 cmake --build build --config Release --target forge_slice_package   # готовая игра в build/dist/OldMine
+python3 tools/check_core_includes.py                       # ядро не называет модули
 build/tests/forge_tests
 build/bench/forge_bench_jobs
 build/bench/forge_bench_data
@@ -360,9 +378,10 @@ Ctrl+S — сохранить, F5 — играть отсюда. Щелчок п
 обновление движка (`git pull` и сборка) его не трогает. Проект — папка, из которой запущен редактор (или
 `--project ПАПКА`): в `game/` — данные игры (уровень, разговоры, связи, шаблоны объектов, их картинки и
 звуки, `quests.json`, `game.json`), в `assets/` — «Ресурсы». При первом запуске `game/` копируется из
-`games/slice` движка вместе с правками, сделанными там раньше. Потом редактор только обновляет файлы движка,
-которые сам не пишет (`verbs.json`, `ideas.json`, `kinds.json`), и добавляет новые файлы данных, если они
-появились в движке; ваши файлы остаются как есть. «Играть отсюда» запускает игру с `--data ПРОЕКТ/game`.
+`games/slice` движка вместе с правками, сделанными там раньше. Потом редактор только обновляет файлы модуля
+игры, которые сам не пишет (`verbs.json`, `ideas.json`, `kinds.json` из `games/modules/<модуль>`), и добавляет
+новые файлы данных, если они появились в движке; ваши файлы остаются как есть. Редактор открывается редактором
+модуля игры, «Играть отсюда» запускает `forge_game` с `--data ПРОЕКТ/game`.
 Пути `games/slice/...` выше — образец, с которого начинается проект.
 
 Управление на вкладке «Сцена» `forge_editor`: клик в иерархии или в мире — выделить (Ctrl — добавить, Shift — диапазон
