@@ -1,0 +1,9 @@
+{
+  "id": "gate",
+  "name": "Ворота",
+  "kind": "place",
+  "genre": "RPG",
+  "values": {
+    "shown": true
+  }
+}

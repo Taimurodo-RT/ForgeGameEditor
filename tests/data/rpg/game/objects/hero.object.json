@@ -1,0 +1,11 @@
+{
+  "id": "hero",
+  "name": "Герой",
+  "kind": "hero",
+  "genre": "RPG",
+  "picture": "герой.png",
+  "frames": 3,
+  "values": {
+    "speed": 4
+  }
+}
