@@ -87,6 +87,11 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("an_hero", &forge::edits::ProjectEdits::an_hero);
     t.field("an_walker", &forge::edits::ProjectEdits::an_walker);
     t.field("an_still", &forge::edits::ProjectEdits::an_still);
+    t.field("in_action", &forge::edits::ProjectEdits::in_action);
+    t.field("in_count", &forge::edits::ProjectEdits::in_count);
+    t.field("in_binds", &forge::edits::ProjectEdits::in_binds);
+    t.field("in_jump", &forge::edits::ProjectEdits::in_jump);
+    t.field("in_no_jump", &forge::edits::ProjectEdits::in_no_jump);
 }
 
 namespace forge::edits {

@@ -136,6 +136,9 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
     const u32 w = o.width ? o.width : 1600, h = o.height ? o.height : 900;
     FORGE_INFO("экран игрока: %u×%u пикселей (без окна)", w, h);
     SDL_GPUTexture* target = render::create_render_target(device, w, h);
+    // Gamepads, as in a window: a self-test plugs in SDL's virtual one and its events come through the loop below.
+    const bool pads = SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+    if (!pads) FORGE_WARN("no gamepads: %s", SDL_GetError());
     int result = 1;
     {
         Shell shell;
@@ -148,6 +151,9 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
             for (u32 f = 0; f < frames || testing; ++f) {
                 if (testing) testing = main.test(shell, f, failures);
                 if (f > 100000) break;
+                for (SDL_Event e; SDL_PollEvent(&e);)
+                    if (!shell.handle_event(e) && shell.screen() == Screen::Playing && !shell.in_dialogue())
+                        game.handle_event(e);
                 const u64 t0 = time_now_ns();
                 shell.update(1.0 / 60.0);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
@@ -175,6 +181,7 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
         }
         shell.shutdown();
     }
+    if (pads) SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
     if (target) SDL_ReleaseGPUTexture(device, target);
     render::destroy_offscreen_device(device);
     jobs::shutdown();

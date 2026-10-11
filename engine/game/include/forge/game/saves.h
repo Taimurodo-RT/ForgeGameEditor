@@ -17,6 +17,7 @@
 
 #include "forge/core/types.h"
 #include "forge/data/reflect.h"
+#include "forge/input/input.h"
 
 #include <filesystem>
 #include <optional>
@@ -97,6 +98,8 @@ struct Settings {
     f32 sound_volume = 1.0f;
     std::string theme; // empty = the game's own
     bool show_fps = false;
+    // The player's keys for the game's actions, only those changed («Настройки» → «Управление»).
+    std::vector<input::Choice> keys;
 };
 
 Settings load_settings(const std::filesystem::path& user_dir);

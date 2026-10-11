@@ -80,6 +80,10 @@ struct Controls {
 // The hotbar: the tool, then blocks to place.
 inline constexpr u32 kSlots = 6;
 
+// What the player does in a game of this module, by name, with the default keys (the tab «Ввод»): run left and right,
+// jump, talk. Digging and placing stay the mouse's, the slots the keys 1–6.
+const std::vector<forge::input::ActionDef>& actions();
+
 class SliceGame final : public forge::game::Game {
 public:
     explicit SliceGame(const Options& options);
@@ -95,6 +99,7 @@ public:
     void update(f64 dt, bool playing, bool input) override;
     void render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) override;
     void handle_event(const SDL_Event& event) override;
+    std::vector<forge::input::ActionDef> actions() const override { return slice::actions(); }
     void shutdown() override;
 
     // --- for the self-test ---

@@ -16,12 +16,15 @@
 //   ui/*.html             the game's own screens from the editor's
 //                         «Интерфейс» (screens.h): a HUD, windows, a main
 //                         menu in place of the usual one
+//   input.json            the author's keys for the game's actions (the editor's «Ввод», forge/input/input.h); the
+//                         player's own are in settings.json
 
 #include "forge/game/dialogue.h"
 #include "forge/game/quests.h"
 #include "forge/game/saves.h"
 #include "forge/game/screens.h"
 #include "forge/game/vars.h"
+#include "forge/input/input.h"
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gpu.h>
@@ -85,6 +88,9 @@ public:
     // and the pause first. False: this game has no such level (the shell says so in the log, nothing changes).
     virtual bool next_level() { return false; }
     virtual bool retry_level() { return false; }
+    // What the player does in this game, by name, with the module's default keys (the tab «Ввод»). The shell adds
+    // its own (pause, journal, quicksave, quickload) after them and answers for all of them (Shell::input()).
+    virtual std::vector<input::ActionDef> actions() const { return {}; }
     virtual void shutdown() = 0;
 };
 
@@ -192,6 +198,24 @@ public:
     // The mouse is over the world, not over a window or button.
     bool over_world() const;
 
+    // --- keys (the tab «Ввод») ---
+    // The game's actions and the shell's: what is held and what went down this frame. Every event reaches it before
+    // the UI, so a key let go while a screen is open is let go here too.
+    const input::Input& input() const { return input_; }
+    // The game's actions, then the shell's, with the module's defaults.
+    const std::vector<input::ActionDef>& action_defs() const { return action_defs_; }
+    // The author's choices (the game's input.json).
+    const input::Choices& author_keys() const { return author_keys_; }
+    // The player gives an action a key or a gamepad's button («Настройки» → «Управление»): a key replaces the
+    // action's keys and mouse buttons, a gamepad's bind its gamepad binds. A bind another action has is refused (why,
+    // in words). Saved in settings.json.
+    bool rebind(std::string_view action, const input::Bind& bind, std::string* why = nullptr);
+    // «Как задумано»: the author's keys again.
+    void reset_keys();
+    // The action «Настройки» waits a key for ("" none): the next key or gamepad's button goes to it, Esc cancels.
+    void start_rebind(std::string_view action);
+    const std::string& rebinding() const { return rebinding_; }
+
 private:
     struct Model;
     void bind_model();
@@ -204,6 +228,8 @@ private:
     void screen_action(const ScreenAction& action);
     // The game's volumes as variables (VolumeVars), both ways.
     void sync_settings_vars();
+    // The actions' binds from the module's defaults, the author's and the player's choices.
+    void resolve_keys(bool say);
     Value call(std::string_view name, const std::vector<Value>& args);
 
     Game* game_ = nullptr;
@@ -229,6 +255,10 @@ private:
     std::unique_ptr<DialogueRunner> runner_;
     std::unique_ptr<GameScreens> screens_;
     std::vector<std::string> data_errors_;
+    input::Input input_;
+    std::vector<input::ActionDef> action_defs_;
+    input::Choices author_keys_;
+    std::string rebinding_, keys_note_;
 
     Screen screen_ = Screen::Main;
     Screen back_ = Screen::Main; // where Esc on settings / slots returns

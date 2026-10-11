@@ -31,6 +31,9 @@ coin and a bridge on «Луг», the exit's link and the win window's title. And
 `forge_editor --self-test animation` has made it (the tab «Анимация»), «Анимация А» of
 the same template with `--edits` of the animations the author made: the hero's walk
 and jump, the beetle's walk, the flag's two frames, drawn so. And when
+`forge_editor --self-test input` has made it (the tab «Ввод»), «Ввод А» of the same
+template with `--edits` of the keys the author gave its actions: the hero jumps on K
+and W, not on the space. And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
@@ -93,6 +96,11 @@ def main() -> int:
         plays += [(animation / "Мои игры" / "Анимация А", animation / "ожидания анимации.json", False)]
     else:
         print(f"нет {animation / 'ожидания анимации.json'}: анимации автора не играются (forge_editor --self-test animation их делает)", flush=True)
+    keys = Path(tempfile.gettempdir()) / "forge_editor_ввод"
+    if (keys / "ожидания ввода.json").is_file():
+        plays += [(keys / "Мои игры" / "Ввод А", keys / "ожидания ввода.json", False)]
+    else:
+        print(f"нет {keys / 'ожидания ввода.json'}: клавиши автора не играются (forge_editor --self-test input их делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
         print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)

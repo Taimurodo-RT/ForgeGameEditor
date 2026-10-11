@@ -39,6 +39,7 @@
 // with a project.forge was made of a template of games/templates.json.
 
 #include "animation_editor.h"
+#include "input_editor.h"
 #include "asset_library.h"
 #include "components.h"
 #include "demo_art.h"
@@ -342,6 +343,7 @@ public:
     std::filesystem::path logic_file = game_dir / "logic.json";     // the links («Логика»)
     std::filesystem::path story_dir = game_dir;                     // dialogues/ and quests.json («Сюжет»)
     std::filesystem::path ui_game_dir = game_dir;                   // ui/ («Интерфейс»)
+    std::filesystem::path input_file = game_dir / "input.json";     // the author's keys («Ввод»)
 
     // Before init: the game's data from another folder (the project's game/).
     void use_game_dir(const std::filesystem::path& dir) {
@@ -352,6 +354,7 @@ public:
         logic_file = dir / "logic.json";
         story_dir = dir;
         ui_game_dir = dir;
+        input_file = dir / "input.json";
     }
     // The objects shared by every game: this computer's, outside any game.
     std::filesystem::path shared_folder = default_shared_folder();
@@ -366,6 +369,7 @@ public:
     LogicEditor logic_tab{level_module};
     StoryEditor story_tab{level_module.library()};
     AnimationEditor anim_tab{level_module};
+    InputEditor input_tab;
     UiEditor ui_tab;
     AssetLibrary assets;
     // The game that is open and the ways to another («Новая игра из шаблона…», «Открыть игру…»); set before init.
@@ -501,6 +505,8 @@ public:
         story_tab.init(ui_, story_dir);
         anim_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
         anim_tab.init(ui_);
+        // «Ввод»: the module's actions, then the shell's; what the author changed is the game's input.json.
+        input_tab.open(input_file, module.actions, module.name);
         if (!assets.init(ui_, assets_config)) return false;
         // A picture or a sound picked in «Ресурсы» goes into the game as a copy that remembers its asset; each look
         // at «Ресурсы» brings the copies up to date.
@@ -705,6 +711,7 @@ public:
         else if (m_tab_ == "logic") logic_tab.undo();
         else if (m_tab_ == "story") story_tab.undo();
         else if (m_tab_ == "animation") anim_tab.undo();
+        else if (m_tab_ == "input") input_tab.undo();
         else if (m_tab_ == "ui") ui_tab.undo();
         else if (m_tab_ == "level") level.undo();
         else if (history.undo()) FORGE_INFO("Отменено");
@@ -715,6 +722,7 @@ public:
         else if (m_tab_ == "logic") logic_tab.redo();
         else if (m_tab_ == "story") story_tab.redo();
         else if (m_tab_ == "animation") anim_tab.redo();
+        else if (m_tab_ == "input") input_tab.redo();
         else if (m_tab_ == "ui") ui_tab.redo();
         else if (m_tab_ == "level") level.redo();
         else if (history.redo()) FORGE_INFO("Повторено");
@@ -726,6 +734,7 @@ public:
         if (m_tab_ == "logic") return logic_tab.history();
         if (m_tab_ == "story") return story_tab.history();
         if (m_tab_ == "animation") return anim_tab.history();
+        if (m_tab_ == "input") return input_tab.history();
         if (m_tab_ == "ui") return ui_tab.history();
         return m_tab_ == "level" ? level.history() : history;
     }
@@ -753,7 +762,8 @@ public:
         return found;
     }
     void save() {
-        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic" || m_tab_ == "story" || m_tab_ == "ui" || m_tab_ == "animation")
+        if (m_tab_ == "assets" || m_tab_ == "objects" || m_tab_ == "logic" || m_tab_ == "story" || m_tab_ == "ui" || m_tab_ == "animation" ||
+            m_tab_ == "input")
             return; // files are saved as they change
         if (m_tab_ == "level") {
             level.save();
@@ -942,6 +952,8 @@ public:
 
     bool handle_event(const SDL_Event& e) {
         const f32 density = window_ ? SDL_GetWindowPixelDensity(window_) : 1.0f;
+        // «Ввод»: gamepads connected are opened for it; an action waiting for a key takes the key (even Ctrl+Z).
+        if (input_tab.handle_event(e, m_tab_ == "input" && !projects.shown())) return true;
         // The game menu and its windows are over everything: nothing under them gets the keyboard or the mouse.
         if (projects.shown()) {
             if (e.type == SDL_EVENT_KEY_DOWN && projects.handle_key(e.key)) return true;
@@ -976,7 +988,7 @@ public:
         if (m_tab_ == "objects") return ui_used;
         if (m_tab_ == "logic") return logic_tab.handle_event(e, density, ui_used) || ui_used;
         if (m_tab_ == "story") return story_tab.handle_event(e) || ui_used;
-        if (m_tab_ == "animation") return ui_used;
+        if (m_tab_ == "animation" || m_tab_ == "input") return ui_used;
         if (m_tab_ == "ui") return ui_tab.handle_event(e, density, context_) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -1214,6 +1226,7 @@ private:
         logic_tab.bind(model);
         story_tab.bind(model);
         anim_tab.bind(model);
+        input_tab.bind(model);
         ui_tab.bind(model);
         projects.bind(model);
         model_ = model.GetModelHandle();
@@ -1223,6 +1236,7 @@ private:
         logic_tab.set_model(model_);
         story_tab.set_model(model_);
         anim_tab.set_model(model_);
+        input_tab.set_model(model_);
         ui_tab.set_model(model_);
         projects.set_model(model_);
         return true;
@@ -1336,7 +1350,8 @@ private:
         set(m_can_undo_, h.can_undo(), "can_undo");
         set(m_can_redo_, h.can_redo(), "can_redo");
         set(m_undo_label_, h.undo_label(), "undo_label");
-        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && m_tab_ != "story" && m_tab_ != "ui" && m_tab_ != "animation" && h.dirty(),
+        set(m_dirty_, m_tab_ != "assets" && m_tab_ != "objects" && m_tab_ != "logic" && m_tab_ != "story" && m_tab_ != "ui" && m_tab_ != "animation" &&
+                m_tab_ != "input" && h.dirty(),
             "dirty"); // files are written at once
         set(m_scene_name_,
             m_tab_ == "level"    ? level.title()
@@ -1345,6 +1360,7 @@ private:
             : m_tab_ == "logic"   ? std::string("Логика: ") + level.title()
             : m_tab_ == "story"   ? std::string("Сюжет: ") + level.title()
             : m_tab_ == "animation" ? std::string("Анимация: ") + level.title()
+            : m_tab_ == "input"     ? std::string("Ввод: ") + level.title()
             : m_tab_ == "ui"      ? std::string("Интерфейс: ") + ui_tab.screen().title
                                  : path_to_utf8(scene_path.filename()),
             "scene_name");
@@ -1397,6 +1413,8 @@ private:
             set(m_status_, story_tab.status(), "status");
         } else if (m_tab_ == "animation") {
             set(m_status_, anim_tab.status(), "status");
+        } else if (m_tab_ == "input") {
+            set(m_status_, input_tab.status(), "status");
         } else if (m_tab_ == "ui") {
             set(m_status_, ui_tab.status(), "status");
         } else if (m_tab_ == "objects") {
@@ -1621,6 +1639,7 @@ private:
         if (m_tab_ == "logic") return logic_tab.handle_key(k);
         if (m_tab_ == "story") return story_tab.handle_key(k);
         if (m_tab_ == "animation") return anim_tab.handle_key(k);
+        if (m_tab_ == "input") return false;
         if (m_tab_ == "ui") return ui_tab.handle_key(k);
         if (m_tab_ == "level") return level.handle_key(k);
         if (k.key == SDLK_F5) { toggle_play(); return true; }
@@ -1857,7 +1876,8 @@ struct Options {
     // "modules" (step 14.3a: the editor of a game's module, from the registry; a game of the test module «Проба» opened
     // by "modules-probe" in an editor of its own, a game from before step 14.3 by "modules-old", the games refused);
     // "animation" (the tab «Анимация»: two games of the catalog's «Платформер», animations of A made in the tab by
-    // "animation-a", opened again and played by "animation-a-again").
+    // "animation-a", opened again and played by "animation-a-again"); "input" (the tab «Ввод»: the same, the keys of
+    // A's actions set in the tab by "input-a", opened again and played by "input-a-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -2073,6 +2093,9 @@ public:
         if (part == "animation") return frame < 3 || animation_step();
         if (part == "animation-a") return frame < 3 || animation_a_step();
         if (part == "animation-a-again") return frame < 3 || animation_again_step();
+        if (part == "input") return frame < 3 || input_step();
+        if (part == "input-a") return frame < 3 || input_a_step();
+        if (part == "input-a-again") return frame < 3 || input_again_step();
         switch (frame) {
         case 3: {
             const ObjectId group = ed_.doc.roots().at(0);
@@ -16732,6 +16755,256 @@ private:
         return true;
     }
 
+    // --- «Ввод» (the tab after «Три в ряд» in the order) -----------------------------------------------------------
+    // --self-test input: «Ввод А» and «Ввод Б» made of the catalog's «Платформер». The editor for A (input-a), in the tab
+    // «Ввод» with the mouse and the keys: «Прыжок» gets K (pressed after «Клавиша») and loses «Пробел» (its ×), each
+    // undone and done again; K given to «Поговорить» too is said as one key on two actions, and undone; Esc takes no
+    // key; «Поговорить» gets the gamepad's Y from the list and LB pressed on a gamepad, «Как было» gives it back the
+    // module's; «Быстрая загрузка» without F9 is said, and undone. input.json after each step. input-a-again, from
+    // another working folder: the same keys; «Играть со стартового»: the hero jumps on K and W, not on the space (scene
+    // project with --edits). The template and B: the same bytes, no input.json in B.
+    int in_step_ = 0;
+    std::map<std::string, std::vector<u8>> in_tmpl_, in_b_;
+    std::vector<u8> in_file_; // input.json as a step left it
+    InputEditor& inp() { return ed_.input_tab; }
+    static std::filesystem::path in_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_ввод"); }
+    static std::filesystem::path in_mine(const char* title) { return in_root() / utf8_path("Мои игры") / utf8_path(title); }
+    static constexpr const char* kInJump = "key:W key:Up pad:south key:K"; // «Прыжок» as the author leaves it
+    // The action's binds as the tab has them, one line.
+    std::string in_binds(const char* action) {
+        std::string out;
+        for (const std::string& b : inp().binds(action)) out += (out.empty() ? "" : " ") + b;
+        return out;
+    }
+    // input.json as the tab writes it for these actions' binds (none: no file, "").
+    static std::string in_json(const std::vector<std::pair<std::string, std::string>>& actions) {
+        if (actions.empty()) return {};
+        input::Choices c;
+        for (const auto& [id, binds] : actions) {
+            input::Choice one{id, {}};
+            for (usize at = 0; at < binds.size();) {
+                const usize space = std::min(binds.find(' ', at), binds.size());
+                if (space > at) one.binds.push_back(binds.substr(at, space - at));
+                at = space + 1;
+            }
+            c.push_back(std::move(one));
+        }
+        return input::write_choices(c);
+    }
+    // The game's input.json now ("" none).
+    std::string in_file() {
+        std::error_code ec;
+        if (!std::filesystem::exists(inp().file(), ec)) return {};
+        const std::vector<u8> b = tg_bytes(inp().file());
+        return b.empty() ? std::string("(пустой файл)") : std::string(b.begin(), b.end());
+    }
+    // A key pressed and let go as the window gives it: its place and its letter.
+    void in_key(SDL_Scancode sc, SDL_Keymod mod = SDL_KMOD_NONE) {
+        SDL_Event e{};
+        e.type = SDL_EVENT_KEY_DOWN;
+        e.key.scancode = sc;
+        e.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+        e.key.mod = mod;
+        e.key.down = true;
+        ed_.handle_event(e);
+        e.type = SDL_EVENT_KEY_UP;
+        e.key.down = false;
+        ed_.handle_event(e);
+    }
+    bool in_undo_redo(const char* action, const std::string& before, const std::string& before_file, const std::string& after,
+                      const std::string& after_file, const char* what) {
+        key(SDLK_Z, SDL_KMOD_CTRL);
+        const bool undone = check(in_binds(action) == before && in_file() == before_file, std::string("Ctrl+Z: ") + what + ": " + in_binds(action));
+        key(SDLK_Y, SDL_KMOD_CTRL);
+        return check(in_binds(action) == after && in_file() == after_file, std::string("Ctrl+Y: ") + what + " again: " + in_binds(action)) && undone;
+    }
+
+    // --self-test input: the games made; A in an editor of its own, then again from another working folder; the
+    // template and B compared byte for byte.
+    bool input_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = in_mine("Ввод А"), b = in_mine("Ввод Б");
+        fs::remove_all(in_root(), ec);
+        fs::create_directories(in_root() / utf8_path("Мои игры"), ec);
+        in_tmpl_ = tp_template();
+        tg_snap("шаблон до", in_tmpl_, in_root());
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto platformer = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "platformer"; });
+        for (const auto& [title, folder] : {std::pair{"Ввод Б", b}, std::pair{"Ввод А", a}}) {
+            fs::path made;
+            check(platformer != all.end() && pj::create(*platformer, editor_modules(), in_root() / utf8_path("Мои игры"), title, made, &error) &&
+                      lvl_same(made, folder),
+                  std::string("«") + title + "» made of «Платформер» " + error);
+            fs::remove_all(play_folder(folder), ec);
+        }
+        check(!fs::exists(a / "game" / "input.json", ec), "a game made of the template has no input.json: every action on the module's keys");
+        in_b_ = pj_tree(b);
+        tg_snap("Ввод Б до", in_b_, in_root());
+        const std::string exe = path_to_utf8(editor_exe()), project = path_to_utf8(a / "project.forge");
+        const fs::path one = in_root() / utf8_path("первая папка"), two = in_root() / utf8_path("вторая папка");
+        fs::create_directories(one, ec);
+        fs::create_directories(two, ec);
+        int code = pj_run({exe, "--project", project, "--self-test", "input-a"}, one);
+        check(code == 0, "«Прыжок» on K and without the space, a key on two actions said, Esc, the gamepad's Y and LB, «Как было», an action "
+                         "without keys said, in the tab «Ввод» with the mouse and the keys, undone and done again (input-a: exit " +
+                             std::to_string(code) + ")");
+        code = pj_run({exe, "--project", project, "--self-test", "input-a-again"}, two);
+        check(code == 0, "opened again elsewhere: the same keys; the game jumps on them (input-a-again: exit " + std::to_string(code) + ")");
+        const auto tmpl = tp_template(), btree = pj_tree(b);
+        check(tg_snap("шаблон после", tmpl, in_root()) == tg_digest(in_tmpl_) && tmpl == in_tmpl_, "the template byte for byte as before");
+        check(tg_snap("Ввод Б после", btree, in_root()) == tg_digest(in_b_) && btree == in_b_, "«Ввод Б» byte for byte as before");
+        check(fs::exists(a / "game" / "input.json", ec) && !fs::exists(b / "game" / "input.json", ec), "input.json in A's game, none in B's");
+        return false;
+    }
+
+    // In an editor for «Ввод А» (--self-test input-a).
+    bool input_a_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string jump0 = "key:Space key:W key:Up pad:south", jump_k = jump0 + " key:K", talk0 = "key:E pad:west";
+        const std::string file_k = in_json({{"jump", jump_k}}), file_jump = in_json({{"jump", kInJump}});
+        switch (in_step_) {
+        case 0: {
+            check(pjw().config().title == "Ввод А" && lvl_same(ed_.game_dir, a / "game") && lvl_same(inp().file().parent_path(), a / "game") &&
+                      inp().file().filename() == "input.json",
+                  "the editor has «Ввод А» open, the tab its input.json");
+            std::string ids;
+            for (const input::ActionDef& d : inp().defs()) ids += (ids.empty() ? "" : " ") + d.id;
+            check(ids == "left right jump talk pause journal quicksave quickload" && inp().module_count() == 4,
+                  "the module's actions, then the shell's: " + ids);
+            check(in_file().empty() && in_binds("jump") == jump0 && inp().error().empty(), "no input.json: «Прыжок» on the module's keys " + in_binds("jump"));
+            check(click_tab(9) && ed_.tab() == "input", "a click on the tab «Ввод»");
+            break;
+        }
+        case 1:
+            if (hold(shown("in-jump"), "the tab is laid out")) return true;
+            check(element_text("in-jump").find("Пробел") != std::string::npos && !shown("in-reset-jump") && shown("in-ok"),
+                  "«Прыжок» shows «Пробел», nothing changed, every action its own keys");
+            check(inp().status() == "Ввод: действий 8 · автор изменил 0", "the status line: " + inp().status());
+            check(pj_click("in-key-jump") && inp().waiting() == "jump", "«Клавиша» of «Прыжок»: it waits for a key");
+            break;
+        case 2:
+            check(shown("in-wait-jump") && element_text("in-wait-jump").find("Нажмите клавишу") == 0, "the row asks for a key");
+            in_key(SDL_SCANCODE_K);
+            check(inp().waiting().empty() && in_binds("jump") == jump_k, "K taken for «Прыжок»: " + in_binds("jump"));
+            check(in_file() == file_k, "input.json has «Прыжок» with K: " + in_file());
+            break;
+        case 3:
+            check(shown("in-reset-jump") && shown("in-changed-jump") && !shown("in-wait-jump"), "«Прыжок» marked as the author's, no longer waiting");
+            check(pj_click("in-x-jump-0"), "× on «Пробел»");
+            check(in_binds("jump") == kInJump && in_file() == file_jump, "«Прыжок» without the space: " + in_binds("jump") + "; the file: " + in_file());
+            in_undo_redo("jump", jump_k, file_k, kInJump, file_jump, "«Пробел» of «Прыжок»");
+            in_file_ = tg_bytes(inp().file());
+            break;
+        case 4:
+            check(pj_click("in-key-talk") && inp().waiting() == "talk", "«Клавиша» of «Поговорить»");
+            in_key(SDL_SCANCODE_K);
+            check(in_binds("talk") == talk0 + " key:K", "K for «Поговорить» too: " + in_binds("talk"));
+            break;
+        case 5:
+            check(shown("in-warning-0") && element_text("in-warning-0") == "K — у «Прыжок» и «Поговорить»", "said: " + element_text("in-warning-0"));
+            check(inp().status().find("K — у «Прыжок» и «Поговорить»") != std::string::npos, "and in the status line: " + inp().status());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(in_binds("talk") == talk0 && tg_bytes(inp().file()) == in_file_, "Ctrl+Z: «Поговорить» on E again, the file as it was");
+            break;
+        case 6:
+            check(!shown("in-warning-0") && shown("in-ok"), "nothing to say any more");
+            check(pj_click("in-key-talk") && inp().waiting() == "talk", "«Клавиша» of «Поговорить» again");
+            in_key(SDL_SCANCODE_ESCAPE);
+            check(inp().waiting().empty() && in_binds("talk") == talk0 && tg_bytes(inp().file()) == in_file_, "Esc: no key taken");
+            check(pj_click("in-more-talk") && inp().more() == "talk", "«Мышь, геймпад» of «Поговорить»");
+            break;
+        case 7:
+            check(element_text("in-pick-talk-8") == "Геймпад: Y (верхняя)", "the list has the gamepad's Y: " + element_text("in-pick-talk-8"));
+            check(pj_click("in-pick-talk-8") && in_binds("talk") == talk0 + " pad:north", "Y picked for «Поговорить»: " + in_binds("talk"));
+            check(in_file() == in_json({{"jump", kInJump}, {"talk", talk0 + " pad:north"}}), "input.json has both: " + in_file());
+            check(pj_click("in-key-talk"), "«Клавиша» of «Поговорить»");
+            break;
+        case 8: {
+            SDL_Event e{};
+            e.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+            e.gbutton.button = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER;
+            e.gbutton.down = true;
+            ed_.handle_event(e);
+            check(inp().waiting().empty() && in_binds("talk") == talk0 + " pad:north pad:lb", "LB pressed on a gamepad: " + in_binds("talk"));
+            break;
+        }
+        case 9:
+            check(ed_.find_element("in-pick-talk-8") && ed_.find_element("in-pick-talk-8")->IsClassSet("has") &&
+                      ed_.find_element("in-pick-talk-7")->IsClassSet("has") && !ed_.find_element("in-pick-talk-5")->IsClassSet("has"),
+                  "the list marks Y and X as «Поговорить»'s, not A");
+            check(element_text("in-talk").find("Геймпад: левый бампер") != std::string::npos, "the row shows LB in words");
+            check(pj_click("in-reset-talk"), "«Как было» of «Поговорить»");
+            check(in_binds("talk") == talk0 && tg_bytes(inp().file()) == in_file_, "«Поговорить» on the module's keys, the file only «Прыжок»'s");
+            check(pj_click("in-more-talk") && inp().more().empty(), "«Мышь, геймпад» again: the list closed");
+            break;
+        case 10:
+            check(!shown("in-reset-talk") && !shown("in-changed-talk") && !shown("in-pick-talk-8"), "«Поговорить» not marked, the list closed");
+            check(pj_click("in-x-quickload-0") && in_binds("quickload").empty(), "× on F9 of «Быстрая загрузка»");
+            break;
+        case 11:
+            check(shown("in-none-quickload") && shown("in-warning-0") &&
+                      element_text("in-warning-0").find("У «Быстрая загрузка» нет ни одной клавиши") == 0,
+                  "an action without keys is said: " + element_text("in-warning-0"));
+            check(in_file() == in_json({{"jump", kInJump}, {"quickload", ""}}), "input.json: «Быстрая загрузка» without binds: " + in_file());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(in_binds("quickload") == "key:F9" && tg_bytes(inp().file()) == in_file_, "Ctrl+Z: F9 back, the file only «Прыжок»'s");
+            break;
+        case 12:
+            check(in_binds("jump") == kInJump && inp().changed("jump") && in_file() == file_jump && !shown("in-warning-0"),
+                  "left: «Прыжок» on W, ↑, the gamepad's A and K; the rest on the module's keys");
+            return false;
+        default: break;
+        }
+        ++in_step_;
+        return true;
+    }
+
+    // In an editor for «Ввод А» from another working folder (--self-test input-a-again).
+    bool input_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        switch (in_step_) {
+        case 0:
+            check(!lvl_same(fs::current_path(), a), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            check(in_binds("jump") == kInJump && inp().changed("jump") && !inp().changed("talk") && in_binds("talk") == "key:E pad:west",
+                  "the same keys: «Прыжок» " + in_binds("jump"));
+            check(click_tab(9), "«Ввод»");
+            break;
+        case 1:
+            if (hold(shown("in-jump"), "the tab is laid out")) return true;
+            check(shown("in-changed-jump") && element_text("in-jump").find("Пробел") == std::string::npos,
+                  "«Прыжок» marked as the author's, without «Пробел»");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 2:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 3: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            edits::ProjectEdits e;
+            e.in_action = {"jump"};
+            e.in_count = {4};
+            e.in_binds = {"key:W", "key:Up", "pad:south", "key:K"};
+            e.in_jump = {"K", "W"};
+            e.in_no_jump = {"Space"};
+            const int code = tg_play(&e, "ожидания ввода.json", in_root());
+            check(code == 0, "the game has the author's keys: the hero jumps on K and W, not on the space (exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++in_step_;
+        return true;
+    }
+
     // --- «Платформер» из каталога (step 14.2d) -----------------------------------------------------------------
     // The template «Платформер» made by its module's maker (slice's, found by the template's id as --make-template finds it).
     static bool tp_make(const std::filesystem::path& games, const std::filesystem::path& out, std::string& why) {
@@ -17835,7 +18108,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         // --self-test opened-game, ready, two-games-*: the game given, opened as the editor opens it (the self-test made it).
         const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0 ||
                             options.self_part.rfind("levels-", 0) == 0 || options.self_part.rfind("platformer-", 0) == 0 ||
-                            options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0;
+                            options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0 ||
+                            options.self_part.rfind("input-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -17894,6 +18168,10 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
             std::filesystem::create_directories(editor.ui_game_dir, ec);
             if (std::filesystem::exists(editor.game_dir / "ui", ec))
                 std::filesystem::copy(editor.game_dir / "ui", editor.ui_game_dir / "ui", std::filesystem::copy_options::recursive, ec);
+            // Nor its keys.
+            editor.input_file = std::filesystem::temp_directory_path() / "forge_editor_input.json";
+            std::filesystem::remove(editor.input_file, ec);
+            std::filesystem::copy_file(editor.game_dir / "input.json", editor.input_file, ec);
         }
         // Nor the game's level, unless one is given.
         LevelConfig lc;
@@ -18355,14 +18633,14 @@ int main(int argc, char** argv) {
                                          "two-games-b",  "levels",          "levels-a",   "levels-again", "levels-go",         "levels-go-again",
                                          "platformer",   "platformer-a",    "platformer-a-again", "platformer-template",
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
-                                         "animation",    "animation-a",     "animation-a-again"};
+                                         "animation",    "animation-a",     "animation-a-again", "input", "input-a", "input-a-again"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
                     "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again, platformer and its parts "
                     "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
-                    "animation-a-again)",
+                    "animation-a-again, input and its parts input-a, input-a-again)",
                     app.options.self_part.c_str());
         return 2;
     }

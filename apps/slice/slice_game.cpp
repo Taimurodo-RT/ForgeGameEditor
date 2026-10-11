@@ -1942,15 +1942,25 @@ bool SliceGame::talk_nearest() {
     return true;
 }
 
+const std::vector<forge::input::ActionDef>& actions() {
+    static const std::vector<forge::input::ActionDef> defs = {
+        {"left", "Влево", {"key:A", "key:Left", "pad:dpleft", "pad:leftx-"}},
+        {"right", "Вправо", {"key:D", "key:Right", "pad:dpright", "pad:leftx+"}},
+        {"jump", "Прыжок", {"key:Space", "key:W", "key:Up", "pad:south"}},
+        {"talk", "Поговорить", {"key:E", "pad:west"}},
+    };
+    return defs;
+}
+
 void SliceGame::handle_event(const SDL_Event& e) {
     if (!running_) return;
     if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0)
         camera_.zoom = std::clamp(camera_.zoom * (e.wheel.y > 0 ? 1.15f : 1.0f / 1.15f), kZoomMin, kZoomMax);
     if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
         if (e.key.key >= SDLK_1 && e.key.key < SDLK_1 + static_cast<SDL_Keycode>(kSlots)) select(static_cast<u32>(e.key.key - SDLK_1));
-        if (e.key.key == SDLK_E) talk_nearest();
         if (e.key.key == SDLK_F2 && overlay_.allowed()) overlay_.show(!overlay_.on());
     }
+    if (shell_->input().presses(e, "talk")) talk_nearest();
     // A click on the world, not on a thing: nothing picked any more.
     if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && overlay_.on()) overlay_.cancel();
 }
@@ -1961,12 +1971,14 @@ void SliceGame::read_input(bool input) {
         return;
     }
     controls_ = {};
+    if (!input) return;
+    // The actions, as the author and the player set their keys («Ввод», «Настройки»).
+    const forge::input::Input& in = shell_->input();
+    controls_.left = in.down("left");
+    controls_.right = in.down("right");
+    controls_.jump = in.down("jump");
     SDL_Window* window = SDL_GetKeyboardFocus();
-    if (!input || !window) return;
-    const bool* keys = SDL_GetKeyboardState(nullptr);
-    controls_.left = keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT];
-    controls_.right = keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT];
-    controls_.jump = keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP];
+    if (!window) return;
     f32 mx = 0, my = 0;
     const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mx, &my);
     const f32 density = SDL_GetWindowPixelDensity(window);
@@ -2456,7 +2468,10 @@ void SliceGame::update_hud(bool playing) {
     std::string hint;
     if (visible && !shell_->in_dialogue()) {
         const i32 who = nearest_npc(kTalkReach, nullptr);
-        if (who >= 0) hint = std::string("E — поговорить: ") + npc_name(static_cast<u8>(who));
+        if (who >= 0) {
+            const std::string key = shell_->input().first_words("talk");
+            hint = (key.empty() ? std::string("Поговорить: ") : key + " — поговорить: ") + npc_name(static_cast<u8>(who));
+        }
     }
     const Rml::String coins = running_ ? std::to_string(static_cast<i64>(inv("coins"))) : "0";
     const Rml::String copper = running_ ? std::to_string(static_cast<i64>(inv("copper"))) : "0";

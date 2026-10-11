@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 
 namespace forge::game {
 
@@ -30,6 +31,20 @@ struct QuestView {
 struct ThemeView {
     Rml::String key, name;
 };
+// An action in «Настройки» → «Управление».
+struct KeyView {
+    Rml::String id, words, keys;
+    bool changed = false;   // the player's choice, not the author's
+    bool waiting = false;   // waits for a key
+    bool operator==(const KeyView&) const = default;
+};
+
+// An action's binds in words: «Пробел · W · Геймпад: A (нижняя)».
+std::string binds_words(const std::vector<input::Bind>& binds) {
+    std::string out;
+    for (const input::Bind& b : binds) out += (out.empty() ? "" : " · ") + input::words(b);
+    return out.empty() ? "нет" : out;
+}
 
 struct Toast {
     std::string text;
@@ -91,6 +106,11 @@ struct Shell::Model {
     std::vector<Rml::String> toasts;
     Rml::String fps, playtime;
     bool own_menu = false; // the game's main menu (ui/) instead of this one
+    std::vector<KeyView> keys;
+    Rml::String keys_note;
+    bool keys_changed = false;
+    // The shell's keys as the pause menu shows them.
+    Rml::String key_pause, key_journal, key_quicksave, key_quickload;
 
     std::vector<Toast> toast_list;
     u64 seen_vars = ~0ull;
@@ -149,6 +169,15 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     screens_->on_action = [this](const ScreenAction& a, const std::string&) { screen_action(a); };
     screens_->set_quests(&quests_); // the journal's list
     if (!game.init(*this, device, format)) return false;
+    action_defs_ = game.actions();
+    for (const input::ActionDef& d : input::shell_actions()) action_defs_.push_back(d);
+    if (std::string text; read_text(config_.game_dir / "input.json", text)) {
+        std::string error;
+        std::vector<std::string> warnings;
+        if (!input::read_choices(text, author_keys_, &error, &warnings)) data_errors_.push_back("input.json: " + error);
+        for (const std::string& w : warnings) FORGE_WARN("input.json: %s", w.c_str());
+    }
+    resolve_keys(true);
     load_game_data(); // after the game defined the functions dialogues may call
     screens_->load(context_, config_.game_dir, window != nullptr && config.dev);
     apply_settings(settings_);
@@ -335,6 +364,10 @@ void Shell::toast(std::string text) {
 
 void Shell::show(Screen s) {
     screen_ = s;
+    if (s != Screen::Settings) {
+        rebinding_.clear();
+        keys_note_.clear();
+    }
     if (s == Screen::Main || s == Screen::Slots) model_->slots_dirty = true;
     // Back to the game from its menus: the keyboard goes back where it was before them (a window's button, the
     // screen over the game), not to a menu's button hidden now.
@@ -494,6 +527,23 @@ bool Shell::handle_event(const SDL_Event& e) {
         quit_ = true;
         return true;
     }
+    input_.handle_event(e); // every event: a key let go under a screen is let go for the game too
+    // «Настройки» waits for a key: the next key or gamepad's button goes to the action, Esc cancels; the UI does not
+    // get the key meanwhile. A click goes on to the screens (another action, «Назад»).
+    if (!rebinding_.empty() && screen_ == Screen::Settings) {
+        if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && (e.key.scancode == SDL_SCANCODE_ESCAPE || e.key.key == SDLK_ESCAPE)) {
+            rebinding_.clear();
+            return true;
+        }
+        if (std::optional<input::Bind> b = input::bind_of(e); b && b->device != input::Device::Mouse) {
+            const std::string action = rebinding_;
+            rebinding_.clear();
+            std::string why;
+            if (!rebind(action, *b, &why)) keys_note_ = why;
+            return true;
+        }
+        if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) return true;
+    }
     // A held Enter or Space presses a screen's button once, not again with every repeat.
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.repeat &&
         (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER || e.key.key == SDLK_SPACE) && screens_ &&
@@ -506,8 +556,12 @@ bool Shell::handle_event(const SDL_Event& e) {
                            e.type == SDL_EVENT_MOUSE_WHEEL || e.type == SDL_EVENT_MOUSE_MOTION;
         if (!mouse || !over_world()) return true;
     }
-    if (e.type != SDL_EVENT_KEY_DOWN || e.key.repeat) return false;
-    const SDL_Keycode k = e.key.key;
+    // A key going down (not a repeat), or a gamepad's button or stick: the shell's actions answer either.
+    const bool key = e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat;
+    if (!key && !input::bind_of(e)) return false;
+    const SDL_Keycode k = key ? e.key.key : SDLK_UNKNOWN;
+    const auto act = [&](const char* action) { return input_.presses(e, action); };
+    const bool mouse = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN; // a click on the world is the game's, whatever it binds
 
     if (screen_ == Screen::Playing && in_dialogue()) {
         const DialogueLine& line = runner_->line();
@@ -515,7 +569,7 @@ bool Shell::handle_event(const SDL_Event& e) {
             runner_->choose(static_cast<u32>(k - SDLK_1));
             return true;
         }
-        if ((k == SDLK_SPACE || k == SDLK_RETURN || k == SDLK_E) && line.choices.empty()) {
+        if ((k == SDLK_SPACE || k == SDLK_RETURN || (!mouse && act("talk"))) && line.choices.empty()) {
             runner_->advance();
             return true;
         }
@@ -523,33 +577,85 @@ bool Shell::handle_event(const SDL_Event& e) {
             end_dialogue();
             return true;
         }
-        return true; // the hero does not move while talking
+        return key; // the hero does not move while talking
     }
+    if (mouse) return false;
     switch (screen_) {
     case Screen::Main: return k == SDLK_ESCAPE && screens_->close_top(); // a window opened from the menu
     case Screen::Playing:
-        if (k == SDLK_ESCAPE) {
-            if (!screens_->close_top()) pause(true); // a window of the game's closes first
-        }
-        else if (k == SDLK_J) {
+        if (k == SDLK_ESCAPE && screens_->close_top()) return true; // a window of the game's closes first
+        if (act("pause")) pause(true);
+        else if (act("journal")) {
             back_ = Screen::Playing;
             show(Screen::Journal);
-        } else if (k == SDLK_F5) save(slot_.empty() ? slots_->new_id() : slot_, slot_.empty() ? "Быстрое сохранение" : "Сохранение");
-        else if (k == SDLK_F9) {
+        } else if (act("quicksave")) save(slot_.empty() ? slots_->new_id() : slot_, slot_.empty() ? "Быстрое сохранение" : "Сохранение");
+        else if (act("quickload")) {
             if (!slot_.empty()) load(std::string(slot_));
             else continue_game();
-        } else return screens_->pauses(); // a window that stops the game keeps the game's keys from the world
+        } else return key && screens_->pauses(); // a window that stops the game keeps the game's keys from the world
         return true;
     case Screen::Paused:
-        if (k == SDLK_ESCAPE) pause(false);
-        return true;
+        if (k == SDLK_ESCAPE || act("pause")) pause(false);
+        return key;
     case Screen::Slots:
     case Screen::Settings:
     case Screen::Journal:
-        if (k == SDLK_ESCAPE || (k == SDLK_J && screen_ == Screen::Journal)) show(back_);
-        return true;
+        if (k == SDLK_ESCAPE || (screen_ == Screen::Journal && act("journal"))) show(back_);
+        return key;
     default: return false;
     }
+}
+
+// --- keys --------------------------------------------------------------------
+
+void Shell::resolve_keys(bool say) {
+    std::vector<std::string> warnings;
+    input_.set(input::resolve(action_defs_, author_keys_, settings_.keys, &warnings));
+    if (say)
+        for (const std::string& w : warnings) FORGE_WARN("%s", w.c_str());
+}
+
+bool Shell::rebind(std::string_view action, const input::Bind& bind, std::string* why) {
+    const input::Action* a = input_.action(action);
+    if (!a) {
+        if (why) *why = "действия «" + std::string(action) + "» нет в этой игре";
+        return false;
+    }
+    for (const input::Action& other : input_.actions())
+        if (other.id != action && std::find(other.binds.begin(), other.binds.end(), bind) != other.binds.end()) {
+            if (why)
+                *why = (input::is_pad(bind) ? "«" + input::words(bind) + "»" : "Клавиша " + input::words(bind)) + " уже у «" + other.words + "»";
+            return false;
+        }
+    // A key replaces the action's keys and mouse buttons; a gamepad's bind, its gamepad binds.
+    std::vector<std::string> binds;
+    if (!input::is_pad(bind)) binds.push_back(input::format(bind));
+    for (const input::Bind& b : a->binds)
+        if (input::is_pad(b) != input::is_pad(bind)) binds.push_back(input::format(b));
+    if (input::is_pad(bind)) binds.push_back(input::format(bind));
+    // What the action has without the player: the author's keys, or the module's.
+    std::vector<std::string> base;
+    for (const input::Action& r : input::resolve(action_defs_, author_keys_, {}, nullptr))
+        if (r.id == action)
+            for (const input::Bind& b : r.binds) base.push_back(input::format(b));
+    input::choose(settings_.keys, action, std::move(binds), base);
+    save_settings(user_dir_, settings_);
+    resolve_keys(false);
+    keys_note_.clear();
+    return true;
+}
+
+void Shell::reset_keys() {
+    settings_.keys.clear();
+    save_settings(user_dir_, settings_);
+    resolve_keys(false);
+    rebinding_.clear();
+    keys_note_.clear();
+}
+
+void Shell::start_rebind(std::string_view action) {
+    keys_note_.clear();
+    rebinding_ = input_.action(action) ? std::string(action) : std::string();
 }
 
 // --- frame -----------------------------------------------------------------
@@ -571,6 +677,7 @@ void Shell::update(f64 dt) {
     const bool stopped = playing && screens_->pauses();
     // A game that is not running draws its menu backdrop.
     game_->update(dt, (playing && !stopped) || !game_->running(), playing && !stopped && !in_dialogue());
+    input_.end_frame(); // what went down this frame was the game's to see
     const bool in_game = game_->running() && screen_ != Screen::Main && screen_ != Screen::Loading;
     sync_settings_vars();
     screens_->update(vars_, in_game, screen_ == Screen::Main, static_cast<int>(width_), static_cast<int>(height_),
@@ -627,6 +734,14 @@ void Shell::bind_model() {
         s.RegisterMember("key", &ThemeView::key);
         s.RegisterMember("name", &ThemeView::name);
     }
+    if (auto s = c.RegisterStruct<KeyView>()) {
+        s.RegisterMember("id", &KeyView::id);
+        s.RegisterMember("words", &KeyView::words);
+        s.RegisterMember("keys", &KeyView::keys);
+        s.RegisterMember("changed", &KeyView::changed);
+        s.RegisterMember("waiting", &KeyView::waiting);
+    }
+    c.RegisterArray<std::vector<KeyView>>();
     c.RegisterArray<std::vector<SlotView>>();
     c.RegisterArray<std::vector<QuestView>>();
     c.RegisterArray<std::vector<ThemeView>>();
@@ -659,6 +774,13 @@ void Shell::bind_model() {
     c.Bind("fps", &m.fps);
     c.Bind("playtime", &m.playtime);
     c.Bind("own_menu", &m.own_menu);
+    c.Bind("keys", &m.keys);
+    c.Bind("keys_note", &m.keys_note);
+    c.Bind("keys_changed", &m.keys_changed);
+    c.Bind("key_pause", &m.key_pause);
+    c.Bind("key_journal", &m.key_journal);
+    c.Bind("key_quicksave", &m.key_quicksave);
+    c.Bind("key_quickload", &m.key_quickload);
 
     auto on = [&](const char* name, std::function<void(Rml::Event&, const Rml::VariantList&)> fn) {
         c.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -729,6 +851,8 @@ void Shell::bind_model() {
         s.theme = arg_str(a, 0);
         apply_settings(s);
     });
+    on("rebind", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { start_rebind(arg_str(a, 0)); });
+    on("keys_default", [this](Rml::Event&, const Rml::VariantList&) { reset_keys(); });
     on("choose", [this](Rml::Event&, const Rml::VariantList& a) {
         if (!a.empty()) runner_->choose(static_cast<u32>(a[0].Get<int>()));
     });
@@ -815,6 +939,17 @@ void Shell::refresh_model() {
         std::vector<Rml::String> choices(l.choices.begin(), l.choices.end());
         set(m.d_choices, std::move(choices));
     }
+
+    std::vector<KeyView> keys;
+    for (const input::Action& a : input_.actions())
+        keys.push_back({a.id, a.words, binds_words(a.binds), input::find(settings_.keys, a.id) != nullptr, a.id == rebinding_});
+    set(m.keys, std::move(keys));
+    set(m.keys_note, Rml::String(keys_note_));
+    set(m.keys_changed, !settings_.keys.empty());
+    set(m.key_pause, Rml::String(input_.first_words("pause")));
+    set(m.key_journal, Rml::String(input_.first_words("journal")));
+    set(m.key_quicksave, Rml::String(input_.first_words("quicksave")));
+    set(m.key_quickload, Rml::String(input_.first_words("quickload")));
 
     std::vector<Rml::String> toasts;
     for (const Toast& t : m.toast_list) toasts.push_back(t.text);

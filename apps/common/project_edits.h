@@ -97,6 +97,11 @@ struct ProjectEdits {
     std::vector<int> an_count, an_frames, an_loop;
     std::vector<double> an_fps;
     std::string an_hero, an_walker, an_still;
+    // The tab «Ввод» as the author set it: each action in_action[i] with in_count[i] binds, taken in turn from in_binds
+    // ("key:K", "pad:south"; all of them, one action after another). in_jump: keys (SDL's names of their places) the hero
+    // jumps on now; in_no_jump: keys it no longer jumps on.
+    std::vector<std::string> in_action, in_binds, in_jump, in_no_jump;
+    std::vector<int> in_count;
 };
 
 // False (error says why) when the file cannot be read.

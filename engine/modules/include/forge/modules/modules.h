@@ -16,6 +16,8 @@
 //   m->run(argc, argv);                   // the game
 //   auto view = m->make_level_module();   // the editor's «Уровень», «Объекты», «Логика»
 
+#include "forge/input/input.h"
+
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -58,6 +60,9 @@ struct ModuleDef {
     // (games/modules/<id>). Not there (a package): games keep their copies.
     std::filesystem::path files;
     std::vector<Event> events;
+    // What the player does in its games, with the default keys (the tab «Ввод»); the game says the same
+    // (forge::game::Game::actions). The shell's own come after them in every game.
+    std::vector<input::ActionDef> actions;
     // The values its screens may show. library: the game's objects (a module may offer a value for a template, as
     // slice does for what a pickup gives); null: the module's own only.
     std::function<std::vector<Value>(const objects::Library* library)> values;
