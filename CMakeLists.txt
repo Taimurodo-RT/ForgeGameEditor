@@ -52,6 +52,7 @@ add_subdirectory(apps/builtin)
 add_subdirectory(apps/probe)
 add_subdirectory(apps/editor)
 add_subdirectory(apps/slice)
+add_subdirectory(apps/match3)
 
 if(FORGE_BUILD_TESTS)
   enable_testing()
