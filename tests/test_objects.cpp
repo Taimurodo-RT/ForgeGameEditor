@@ -343,6 +343,7 @@ TEST_CASE("a talk is chosen among the game's dialogues, and one that is gone is 
                    {"id": "note", "name": "Запись", "bind": "ObjTestPickup.ding", "asset": "talk"}]}
       ]
     })");
+    write_text(dir / "objects" / "miller.object.json", R"({"id": "miller", "name": "Мельник", "kind": "villager", "values": {"talk": "miller"}})");
     Library lib;
     REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
     const PropDef& talk = *lib.block("speaks")->prop("talk");
@@ -367,6 +368,29 @@ TEST_CASE("a talk is chosen among the game's dialogues, and one that is gone is 
     CHECK(Library::parse(talk, "miller") == std::optional<std::string>("\"miller\""));
     CHECK(Library::parse(talk, "молчит") == std::optional<std::string>("\"\""));
     CHECK(Library::parse(talk, "smith") == std::nullopt); // only a dialogue of the game
+    {
+        // A copy says its template's talk with the list known (the field keeps the id, not a number).
+        PoolScope pool;
+        World w(tight_desc(), std::make_shared<TopDownGenerator>(1));
+        Scene s(w);
+        s.register_component<ObjTestPickup>();
+        lib.attach(s);
+        settle(w, s, kHome);
+        const Template& miller = *lib.find("miller");
+        CHECK(lib.value(miller, talk) == "\"miller\"");
+        flecs::entity e = lib.spawn(s, miller, 10.5, 20.0);
+        REQUIRE(e.is_valid());
+        CHECK(e.get<ObjTestPickup>().ding == "miller");
+        CHECK(lib.value(s, e, talk) == "\"miller\"");
+        CHECK(lib.set_value(s, e, talk, "\"elder\""));
+        CHECK(e.get<ObjTestPickup>().ding == "elder");
+        CHECK(e.get<ObjectRef>().overrides_prop("talk"));
+        CHECK(lib.set_value(s, e, talk, "\"miller\""));
+        CHECK(!e.get<ObjectRef>().overrides_prop("talk"));
+        REQUIRE(lib.put(lib.with_value(miller, "talk", "\"elder\"")));
+        CHECK(lib.refresh(s) == 1);
+        CHECK(e.get<ObjTestPickup>().ding == "elder"); // the template's new talk reaches its copy
+    }
     // A dialogue deleted in «Сюжет»: the list is the game's again, a villager still saying it is marked.
     lib.set_talks({"miller"});
     REQUIRE(talk.choices.size() == 2);

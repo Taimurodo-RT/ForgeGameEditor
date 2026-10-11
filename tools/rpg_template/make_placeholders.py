@@ -133,21 +133,23 @@ def dog():
 
 
 def key():
-    f = Image.new("RGBA", (32, 32), CLEAR)
+    """48 × 48: a key lying in the middle of its cell."""
+    f = Image.new("RGBA", (48, 48), CLEAR)
     gold = (236, 196, 40, 255)
-    disc(f, 10, 16, 7, gold)
-    disc(f, 10, 16, 3, CLEAR, ink=gold)
-    outline(f, 16, 14, 29, 18, gold)
-    outline(f, 24, 18, 26, 23, gold)
-    outline(f, 20, 18, 22, 21, gold)
+    disc(f, 15, 24, 9, gold)
+    disc(f, 15, 24, 4, CLEAR, ink=gold)
+    outline(f, 23, 21, 41, 27, gold)
+    outline(f, 35, 27, 38, 34, gold)
+    outline(f, 29, 27, 32, 31, gold)
     return strip([f])
 
 
 def coins():
-    f = Image.new("RGBA", (32, 32), CLEAR)
+    """48 × 48: three coins in a heap."""
+    f = Image.new("RGBA", (48, 48), CLEAR)
     gold, dark = (250, 205, 60, 255), (190, 140, 30, 255)
-    for i, (cx, cy) in enumerate(((11, 21), (21, 21), (16, 13))):
-        disc(f, cx, cy, 7.5, gold if i != 1 else dark)
+    for i, (cx, cy) in enumerate(((17, 31), (31, 31), (24, 20))):
+        disc(f, cx, cy, 10.5, gold if i != 1 else dark)
     return strip([f])
 
 

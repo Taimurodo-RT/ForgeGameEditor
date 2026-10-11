@@ -816,7 +816,8 @@ private:
             if (!grab()) return fail("кадр не снят"), true;
             const Rgb want{e_.rp_elder[0], e_.rp_elder[1], e_.rp_elder[2]};
             const Thing* elder = first_of(m->villagers, "elder");
-            check(elder != nullptr, "староста на карте");
+            // The template's own copies keep their talk after the editor saved the map (a copy's talk is its id, not a number).
+            check(elder && elder->talk == "elder", "староста на карте, его разговор «" + (elder ? elder->talk : "?") + "»");
             if (elder) check_pixel("староста нарисован картинкой автора", thing_pixel("elder", elder->x, elder->y), want);
             if (v) check_pixel("«" + e_.rp_villager_name + "» — копия старосты, с той же картинкой", thing_pixel(e_.rp_villager.c_str(), v->x, v->y), want);
             shot("rpg-автор-карта");
@@ -878,9 +879,9 @@ private:
         talk_step("разговор автора", [this] {
             const game::DialogueRunner& r = s_->dialogue_runner();
             check(s_->in_dialogue() && r.dialogue() && r.dialogue()->id() == e_.rp_talk && r.line().text == e_.rp_talk_line &&
-                      r.line().choices.size() == 1 && r.line().choices[0].text == e_.rp_choice,
+                      r.line().choices.size() == 1 && r.line().choices[0] == e_.rp_choice,
                   "E у «" + e_.rp_villager_name + "»: разговор «" + e_.rp_talk + "», «" + std::string(r.line().text) + "», ответ «" +
-                      (r.line().choices.empty() ? std::string() : std::string(r.line().choices[0].text)) + "»");
+                      (r.line().choices.empty() ? std::string() : r.line().choices[0]) + "»");
             check(g_.talked_to().rfind(e_.rp_villager + "@", 0) == 0, "герой говорит с ним: " + g_.talked_to());
             tap(SDLK_1);
         });

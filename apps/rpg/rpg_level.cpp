@@ -638,7 +638,10 @@ flecs::entity RpgLevel::place_object(level::Level& level, usize index, f64 x, f6
     if (index >= defs.size()) return {};
     const objects::Template* t = library_.find(defs[index].key);
     if (!t) return {};
-    return library_.spawn(level.scene(), *t, std::floor(x) + 0.5, std::floor(y) + 1.0);
+    // (x, y) are the feet (LevelModule::place_object): the copy stands in the cell they are in, a point on a cell's
+    // bottom line in the cell above it (the editor gives the line under the cell clicked).
+    const f64 row = std::ceil(y - 1e-6) - 1;
+    return library_.spawn(level.scene(), *t, std::floor(x) + 0.5, row + 1.0);
 }
 
 i32 RpgLevel::object_kind(flecs::entity e) const {

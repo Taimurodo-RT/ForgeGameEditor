@@ -1,6 +1,6 @@
 """Plays the author's game «Игра А» that `forge_editor --self-test new-game` made
 of the template «Старая шахта», in each game given, with games/slice,
-games/platformer and games/modules moved away for the run: the game must take
+games/platformer, games/rpg and games/modules moved away for the run: the game must take
 everything of it from the game's own folder. They come back after it, every
 file with the SHA-256 it had (checked), also when a folder does not move or a
 game does not start; one that does not come back is named with where it is,
@@ -33,7 +33,11 @@ the same template with `--edits` of the animations the author made: the hero's w
 and jump, the beetle's walk, the flag's two frames, drawn so. And when
 `forge_editor --self-test input` has made it (the tab «Ввод»), «Ввод А» of the same
 template with `--edits` of the keys the author gave its actions: the hero jumps on K
-and W, not on the space. And when
+and W, not on the space. And when `forge_editor --self-test rpg-template` has made it
+(step 14.4b), «RPG А» of the catalog's template «RPG сверху» with no --level and
+`--edits` of what the author changed: the elder's picture, «Мельник Ян» (a copy of the
+elder) with the author's conversation that gives ten coins once, the coins' sound, the
+path to «Мельница» and its link, the HUD's hint, the hero's walk. And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
@@ -101,6 +105,11 @@ def main() -> int:
         plays += [(keys / "Мои игры" / "Ввод А", keys / "ожидания ввода.json", False)]
     else:
         print(f"нет {keys / 'ожидания ввода.json'}: клавиши автора не играются (forge_editor --self-test input их делает)", flush=True)
+    rpg = Path(tempfile.gettempdir()) / "forge_editor_шаблон rpg"
+    if (rpg / "ожидания шаблон rpg.json").is_file():
+        plays += [(rpg / "Мои игры" / "RPG А", rpg / "ожидания шаблон rpg.json", False)]
+    else:
+        print(f"нет {rpg / 'ожидания шаблон rpg.json'}: RPG автора не играется (forge_editor --self-test rpg-template её делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
         print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)
@@ -114,7 +123,7 @@ def main() -> int:
         print(f"нет {old}: игры модулей не играются (forge_editor --self-test modules их делает)", flush=True)
     # The sources the games must do without, moved away; their files' SHA-256 to compare when they are back. The
     # folder they wait in is next to them, on the same disk: a move is a rename, nothing is copied half-way.
-    sources = [ROOT / "games" / name for name in ("slice", "platformer", "modules")]
+    sources = [ROOT / "games" / name for name in ("slice", "platformer", "rpg", "modules")]
     before = {src: digests(src) for src in sources}
     aside = Path(tempfile.mkdtemp(prefix="forge_sources_away_", dir=ROOT))
     moved = []  # (source, where it waits): only those moved, so only those are moved back

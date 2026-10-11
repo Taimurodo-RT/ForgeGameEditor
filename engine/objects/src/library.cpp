@@ -93,9 +93,12 @@ std::string field_of(const std::string& component_json, std::string_view field) 
     return out;
 }
 
+// A choice kept in its field as its own id (a talk: the game's dialogues, Library::set_talks), not as a number.
+bool by_id(const PropDef& prop) { return prop.info && prop.info->type && prop.info->type->kind == reflect::Kind::String; }
+
 // A choice's id for a stored number ("coins" for 1), as JSON.
 std::string choice_json(const PropDef& prop, const std::string& field_json) {
-    if (prop.choices.empty()) return field_json;
+    if (prop.choices.empty() || by_id(prop)) return field_json;
     f64 v = 0;
     if (prop.info && prop.info->type && prop.info->type->kind == reflect::Kind::Enum) {
         // Enums are written by name: find the number behind it.
@@ -113,7 +116,7 @@ std::string choice_json(const PropDef& prop, const std::string& field_json) {
 
 // What a property value (JSON) becomes in its field's JSON.
 std::string field_json(const PropDef& prop, const std::string& value) {
-    if (prop.choices.empty()) return value;
+    if (prop.choices.empty() || by_id(prop)) return value;
     yyjson_doc* doc = yyjson_read(value.data(), value.size(), 0);
     const std::string id = doc ? text_of(yyjson_doc_get_root(doc)) : std::string();
     if (doc) yyjson_doc_free(doc);

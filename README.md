@@ -305,7 +305,11 @@
   события героя: «Герой доходит до Ворот», «Герой находит Сундук». Сохраняются карта, точное место героя,
   подобранное и задания. Тестовая игра — `tests/data/rpg` (карты «Деревня» и «Поляна»): её делает заново
   `forge_game --data tests/data/rpg/game --make-test-game НОВАЯ_ПАПКА`, сцена `rpg_make` сверяет её байт в байт.
-  Шаблона в каталоге пока нет (14.4b), картинки тестовой игры — заглушки.
+  Шаблон каталога «RPG сверху» (шаг 14.4b) — игра `games/rpg` на том же модуле со своими картинками: «Новая игра»
+  делает из него игру, которую автор правит во вкладках, как любую. Житель говорит разговор, выбранный из разговоров
+  игры, у предмета есть звук подбора, списки «Сюжета» предлагают то, что дают предметы. Папку `games/rpg` собирает
+  `forge_editor --make-template rpg games/rpg` (см. `games/templates/README.md`); картинки шаблона пока заглушки
+  по ТЗ, а не арт.
 - `tests` — модульные тесты (doctest), `bench` — замер системы задач.
 
 ## Сборка
@@ -349,6 +353,7 @@ build/apps/editor/forge_editor --self-test                  # сам рисуе�
 build/apps/editor/forge_editor --self-test modules          # реестр модулей: игры двух модулей, отказ чужим
 build/apps/editor/forge_editor --self-test animation        # «Анимация»: анимации мышью и клавишами, игра их играет
 build/apps/editor/forge_editor --self-test input            # «Ввод»: клавиши действий мышью и клавишами, игра на них прыгает
+build/apps/editor/forge_editor --self-test rpg-template     # шаблон «RPG сверху»: автор правит игру во вкладках, игра это играет
 build/apps/editor/forge_editor --bench --frames 600         # все 50 500 строк иерархии, прокрутка, замер
 build/apps/editor/forge_editor --bench-level                # полёт над уровнем с рисованием, замер кадра
 build/apps/editor/forge_editor --bench-assets 50000         # проект на 50 000 файлов: индекс, список, поиск
@@ -366,6 +371,7 @@ build/apps/game/forge_game --data tests/data/match3/game  # «Три в ряд»
 build/apps/game/forge_game --test --scene match3 --data tests/data/match3/game   # бот мышью проходит три поля
 build/apps/game/forge_game --data tests/data/rpg/game     # «RPG сверху» на тестовых картах
 build/apps/game/forge_game --test --scene rpg --data tests/data/rpg/game   # бот клавишами проходит две карты
+build/apps/game/forge_game --data games/rpg               # игра шаблона «RPG сверху»
 cmake --build build --config Release --target forge_slice_package   # готовая игра в build/dist/OldMine
 python3 tools/check_core_includes.py                       # ядро не называет модули
 build/tests/forge_tests

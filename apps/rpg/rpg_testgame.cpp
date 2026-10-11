@@ -509,6 +509,15 @@ bool make_in(const fs::path& games, const fs::path& game, Made made, std::string
             if (tmpl && t.id == "dog") t.values.emplace_back("talk", "\"dog\"");
             if (tmpl && t.id == "coins") t.values.emplace_back("sound", "\"звон.wav\"");
             t.file = game / "objects" / (std::string(s.id) + ".object.json");
+            // The template's pictures and sound come from its «Ресурсы»: one that is not there makes nothing.
+            if (tmpl && !fs::is_regular_file(game / "pictures" / utf8_path(t.picture), ec)) {
+                why = "в «Ресурсах» шаблона нет картинки картинки/" + t.picture + " («" + t.name + "»)";
+                return false;
+            }
+            if (tmpl && t.id == "coins" && !fs::is_regular_file(game / "sounds" / utf8_path("звон.wav"), ec)) {
+                why = "в «Ресурсах» шаблона нет звука звуки/звон.wav («Монеты»)";
+                return false;
+            }
             if (!library.kind(t.kind)) {
                 why = std::string("в модуле нет вида ") + s.kind;
                 return false;

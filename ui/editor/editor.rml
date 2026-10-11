@@ -784,7 +784,7 @@
                                         <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'ol-field-' + f.index" data-attr-value="f.value" data-event-change="ol_prop_text(f.index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(f.index)"/>
                                         <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(f.index, ev.value)"/>
                                         <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + f.index" data-attr-value="f.value" data-event-change="ol_prop_text(f.index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(f.index)"/>
-                                        <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(f.index)"><div class="thumb"/></div>
+                                        <div data-if="f.kind == 'bool'" class="switch" data-attr-id="'ol-switch-' + f.index" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(f.index)"><div class="thumb"/></div>
                                         <div data-if="f.kind == 'sound'" class="row gap-1 grow ol-sound">
                                             <span class="ol-sound-name grow" data-class-muted="!f.filled" data-attr-id="'ol-sound-' + f.index">{{ f.value }}</span>
                                             <div data-if="f.filled" class="icon-button small" data-attr-id="'ol-sound-play-' + f.index" title="Послушать" data-event-click="ol_sound_play(f.index)"><icon name="play_arrow"/></div>
