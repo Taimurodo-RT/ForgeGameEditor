@@ -7,6 +7,7 @@
 // the link in its logic.json and the editor, watching the file, takes it in.
 
 #include "forge/logic/logic.h"
+#include "forge/modules/modules.h"
 #include "forge/render/camera.h"
 
 #include <RmlUi/Core/DataModelHandle.h>
@@ -121,5 +122,11 @@ private:
     Rml::String m_title_, m_tip_;
     float m_pick_x_ = 0, m_pick_y_ = 0;
 };
+
+// The events slice's verbs happen on (step 14.3a: the module declares them, forge::modules::ModuleDef::events):
+// "touch" and "always" (logic::VerbDef::when). The game reads verbs.json with these, the editor's «Логика» with the
+// same list from the module; a verb of another event makes the file fail in both.
+const std::vector<forge::modules::Event>& verb_events();
+std::vector<std::string> verb_event_ids();
 
 } // namespace slice

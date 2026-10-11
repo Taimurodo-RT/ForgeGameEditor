@@ -2,7 +2,8 @@
 
 // What an author made in a game through the editor (step 14.1b, «Находка»), for the game's scene project to check
 // with --edits FILE: the editor's self-test writes it from what its tabs hold, the game reads it and plays the game
-// as a player would. Nothing here is the game's data; the game reads only its own folder.
+// as a player would. Nothing here is the game's data; the game reads only its own folder. A file of the tests between
+// the editor and a module's game (step 14.3a: apps/common, so the editor names no module's own header).
 //
 // An own object with a picture of one colour stands on the level; when the hero touches it, a link of «Логика»
 // adds to a value of the game and shows a screen of «Интерфейс»: a text with that value, the same picture moving
@@ -22,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace slice {
+namespace forge::edits {
 
 struct ProjectEdits {
     std::string object;      // the template's id ("o…")
@@ -92,6 +93,6 @@ struct ProjectEdits {
 bool read_edits(const std::filesystem::path& file, ProjectEdits& out, std::string& error);
 bool write_edits(const std::filesystem::path& file, const ProjectEdits& edits);
 
-} // namespace slice
+} // namespace forge::edits
 
-FORGE_REFLECT_DECLARE(slice::ProjectEdits)
+FORGE_REFLECT_DECLARE(forge::edits::ProjectEdits)

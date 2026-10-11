@@ -278,6 +278,13 @@ public:
     virtual void object_moved(flecs::entity e) { (void)e; }
     // Whether the properties panel shows this saved component's fields.
     virtual bool object_component_shown(const reflect::TypeInfo* type) const { (void)type; return true; }
+    // What the panel of a template in «Объекты» says of it, by the game's own rule, when the game does with it what
+    // the author would not guess (step 14.3a: the module's, not the editor's; slice: which of several heroes it
+    // draws). "" when there is nothing to say.
+    virtual std::string object_note(const objects::Library& library, const objects::Template& t) const {
+        (void)library, (void)t;
+        return {};
+    }
 
     // --- physics ---
     // The game's own pull: what a level without physics.json has.

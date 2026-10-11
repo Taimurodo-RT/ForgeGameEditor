@@ -171,6 +171,35 @@ TEST_CASE("ideas name a verb and the fields an author picks") {
     CHECK(none.all().empty());
 }
 
+// Step 14.3a: a verb happens on an event of its module; the module's list is the same in the editor and the game.
+TEST_CASE("verbs: when is an event of the module, an unknown one makes the file fail") {
+    const char* json = R"({"verbs": [
+  {"id": "open", "name": "открывает", "do": "open", "when": "touch"},
+  {"id": "glow", "name": "светится", "do": "light", "when": "always"},
+  {"id": "ping", "name": "пингует", "do": "mark", "when": "probe_ping"}
+]})";
+    logic::Verbs verbs;
+    std::string error;
+    REQUIRE(verbs.parse(json, &error)); // no list: any word, as before
+    REQUIRE(verbs.all().size() == 3);
+    CHECK(verbs.find("open")->when == "touch");
+    CHECK_FALSE(verbs.find("open")->always);
+    CHECK(verbs.find("glow")->always);
+    CHECK(verbs.find("ping")->when == "probe_ping");
+    // slice's events: the probe's verb is refused, the file with it is not taken.
+    CHECK_FALSE(verbs.parse(json, &error, {"touch", "always"}));
+    CHECK(error == "глагол «пингует»: события «probe_ping» нет у модуля (есть: touch, always)");
+    CHECK(verbs.all().size() == 3); // what was read before stays
+    // The probe's: its own verb only.
+    CHECK_FALSE(verbs.parse(json, &error, {"probe_ping"}));
+    CHECK(error.find("события «touch» нет у модуля") != std::string::npos);
+    CHECK(verbs.parse(R"({"verbs": [{"id": "ping", "name": "пингует", "do": "mark", "when": "probe_ping"}]})", &error, {"probe_ping"}));
+    // A verb without "when" is a "touch" one, as it always was.
+    CHECK(verbs.parse(R"({"verbs": [{"id": "open", "name": "открывает", "do": "open"}]})", &error, {"touch", "always"}));
+    CHECK(verbs.find("open")->when == "touch");
+    CHECK_FALSE(verbs.parse(R"({"verbs": [{"id": "open", "name": "открывает", "do": "open"}]})", &error, {"probe_ping"}));
+}
+
 TEST_CASE("links and verbs read and write json") {
     Verbs verbs;
     REQUIRE(verbs.parse(kVerbs));

@@ -131,7 +131,7 @@ bool LogicEditor::set_mode(const std::string& mode) {
 
 void LogicEditor::load() {
     std::string error;
-    if (!verbs_.load(game_dir_ / "verbs.json", &error)) FORGE_ERROR("Связи: %s", error.c_str());
+    if (!verbs_.load(game_dir_ / "verbs.json", &error, events)) FORGE_ERROR("Связи: %s", error.c_str());
     if (!logic_.load(file_, &error)) FORGE_ERROR("Связи: %s", error.c_str());
     if (!ideas_.load(game_dir_ / "ideas.json", &error)) FORGE_ERROR("Идеи: %s", error.c_str());
     // A game without links starts with the hero on the board.

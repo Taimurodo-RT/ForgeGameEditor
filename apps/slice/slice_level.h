@@ -247,6 +247,9 @@ public:
     bool object_box(flecs::entity e, f64& x0, f64& y0, f64& x1, f64& y1) const override;
     void object_moved(flecs::entity e) override;
     bool object_component_shown(const forge::reflect::TypeInfo* type) const override;
+    // At a template of kind «Герой», what the game does with it, when not plainly drawing the hero with it: no picture,
+    // frames other than 4 or 1, or more of them (the game takes the first by id, as Pictures does). "" else.
+    std::string object_note(const forge::objects::Library& library, const forge::objects::Template& t) const override;
     forge::level::LevelPhysics default_physics() const override { return {0, kGravity}; }
     std::vector<std::string> physics_fills() const override { return {"water", "sand"}; }
     std::unique_ptr<forge::sim::CellSim> make_cells(forge::sim::CollisionRules& rules) const override;

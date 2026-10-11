@@ -59,16 +59,16 @@ Side side(std::string_view s) { return s == "a" ? Side::A : Side::B; }
 
 // --- verbs ---------------------------------------------------------------
 
-bool Verbs::load(const std::filesystem::path& file, std::string* error) {
+bool Verbs::load(const std::filesystem::path& file, std::string* error, const std::vector<std::string>& events) {
     std::string text;
     if (!read_text(file, text)) {
         if (error) *error = "не читается " + path_to_utf8(file.filename());
         return false;
     }
-    return parse(text, error);
+    return parse(text, error, events);
 }
 
-bool Verbs::parse(std::string_view json, std::string* error) {
+bool Verbs::parse(std::string_view json, std::string* error, const std::vector<std::string>& events) {
     yyjson_doc* doc = read_doc(json, error);
     if (!doc) return false;
     yyjson_val* list = yyjson_obj_get(yyjson_doc_get_root(doc), "verbs");
@@ -87,8 +87,17 @@ bool Verbs::parse(std::string_view json, std::string* error) {
         d.plural = str(v, "plural", d.name);
         d.icon = str(v, "icon", "arrow_forward");
         d.object_case = str(v, "case", "acc");
-        const std::string when = str(v, "when", "touch");
-        d.always = when == "always";
+        d.when = str(v, "when", "touch");
+        d.always = d.when == "always";
+        if (!events.empty() && std::find(events.begin(), events.end(), d.when) == events.end()) {
+            yyjson_doc_free(doc);
+            if (error) {
+                std::string known;
+                for (const std::string& e : events) known += (known.empty() ? "" : ", ") + e;
+                *error = "глагол «" + (d.name.empty() ? d.id : d.name) + "»: события «" + d.when + "» нет у модуля (есть: " + known + ")";
+            }
+            return false;
+        }
         d.touch = side(str(v, "touch", "b"));
         d.needs = str(v, "needs");
         d.action = str(v, "do");
