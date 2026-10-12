@@ -32,7 +32,7 @@ int App::run(const AppConfig& config) {
         if (!config.headless) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
-                if (event.type == SDL_EVENT_QUIT) quit_ = true;
+                if (event.type == SDL_EVENT_QUIT && on_quit_request()) quit_ = true;
                 track_window(event);
                 on_event(event);
             }

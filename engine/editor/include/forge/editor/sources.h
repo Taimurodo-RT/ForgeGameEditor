@@ -75,6 +75,7 @@ struct Refusal {
     Entry entry;          // the copy, as it stays
     std::string why;      // what is wrong with the asset's file
     bool missing = false; // the copy is not there either
+    bool stale = false;   // the file is not what «Ресурсы» imported last: written after that look, or broken
 };
 
 // What sync found, by copy.

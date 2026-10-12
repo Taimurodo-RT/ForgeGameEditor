@@ -38,6 +38,7 @@
 #include <functional>
 #include <mutex>
 #include <set>
+#include <span>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -140,6 +141,10 @@ public:
     void paste();
     bool edit_image(const std::string& op); // cw, ccw, fliph, flipv, half, double
     bool convert_image(const std::string& extension);
+    // A new file of the given bytes in a folder of the project («Сохранить как…» of «Изображения»): named `name`, or
+    // "name 2.ext" when that is taken; one step of the history (Ctrl+Z takes it away). Its path; empty when it is not
+    // written.
+    std::string add_file(const std::string& folder, const std::string& name, std::span<const u8> bytes, const std::string& label);
     bool set_tags(const std::string& tags);
     void play_sound();
     // «Импортировать в уровень…» on a chosen .tmx: the «Уровень» tab opens
@@ -176,6 +181,8 @@ public:
     const assets::AssetRecord* record_of(const std::filesystem::path& file) const;
     // The asset with that Guid, wherever it is now (null: gone).
     const assets::AssetRecord* find_id(const Guid& id) const;
+    // Another look at the files is asked for or under way: its results (and on_index) are still to come.
+    bool looking() const;
     // Called each time the index has been looked at again (a refresh, a command): what the game copied from
     // «Ресурсы» is compared with it then (main).
     std::function<void()> on_index;

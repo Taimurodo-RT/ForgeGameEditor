@@ -258,6 +258,8 @@ TEST_CASE("sources: a broken asset file is not taken; its copy stays whole until
     for (const Refusal& no : r.refused) {
         CHECK(!no.missing);
         CHECK(!no.why.empty());
+        // The picture is not what «Ресурсы» imported; the sound is, it does not play.
+        CHECK(no.stale == (no.entry.file == "pictures/кристалл.png"));
     }
     CHECK(r.errors.empty());
     // The copies as they were, still a picture and a sound; sources.json as it was.
@@ -294,6 +296,7 @@ TEST_CASE("sources: a broken asset file is not taken; its copy stays whole until
     r = s.sync(find);
     CHECK(!r.changed());
     CHECK(r.refused.size() == 2);
+    for (const Refusal& no : r.refused) CHECK(no.stale);
     CHECK(!fs::exists(f.copy("pictures/кристалл.png")));
     CHECK(bytes_of(f.copy("sounds/звон.wav")) == kRing);
     CHECK(pipeline.refresh().failed == 0);

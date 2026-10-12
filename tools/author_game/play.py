@@ -48,7 +48,11 @@ stone, the level's own moves and target, «Поле»'s moves, the link «+2 х�
 HUD's words and the lose window's title; saved on «Второй» between moves, another run, with
 the same player's folder and from another working folder, goes on from that save by
 «Продолжить» in its main menu (scene project_continue): «Второй» won, «Третий» lost on
-«Поле»'s moves, «Ещё раз». And when
+«Поле»'s moves, «Ещё раз». And when `forge_editor --self-test images` has made it (the tab
+«Изображения»), «Картинки А» of the template «Три в ряд», from another working folder, with
+`--edits` of what the author drew there (scene images): «Рубин»'s four frames of the
+author's pixels, «Фишка» (a copy of «Рубин») drawn by the strip the author made of a 2 × 2
+sheet, put on «Первый», both drawn so on the field and as they vanish. And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
@@ -124,6 +128,10 @@ def main() -> int:
     match3_edits = match3 / "ожидания шаблон три в ряд.json"
     if not match3_edits.is_file():
         print(f"нет {match3_edits}: «Три в ряд» автора не играется (forge_editor --self-test match3-template её делает)", flush=True)
+    images = Path(tempfile.gettempdir()) / "forge_editor_изображения"
+    images_edits = images / "ожидания изображения.json"
+    if not images_edits.is_file():
+        print(f"нет {images_edits}: картинки автора не играются (forge_editor --self-test images их делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
         print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)
@@ -181,6 +189,13 @@ def main() -> int:
                 elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
                 failed += run([str(exe), "--test", "--scene", "project_continue", "--data", data, "--user", str(user),
                                "--edits", str(match3_edits)], str(elsewhere)) != 0
+            if images_edits.is_file():
+                # «Картинки А»: the author's pixels and frames, from another working folder.
+                user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))
+                elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
+                data = str(images / "Мои игры" / "Картинки А" / "game")
+                failed += run([str(exe), "--test", "--scene", "images", "--play", "--data", data, "--user", str(user),
+                               "--edits", str(images_edits)], str(elsewhere)) != 0
             if going:
                 # Through the links, saved; then «Продолжить» by another run, from another working folder.
                 user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))

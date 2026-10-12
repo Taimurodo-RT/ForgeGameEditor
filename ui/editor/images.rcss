@@ -1,0 +1,117 @@
+/* The «Изображения» tab (the #images part of editor.rml): the pictures of «Ресурсы» on the left, the canvas in the
+   middle, the pixel editor, transformations, effects and format on the right. */
+
+#images {
+    flex: 1 1 0px;
+    min-height: 0px;
+    position: relative;
+    padding: 0px var(--space-2) var(--space-2) var(--space-2);
+}
+.im-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
+.im-dirty { margin-left: var(--space-2); font-size: 12px; font-weight: 600; color: var(--tertiary); }
+.im-zoom { gap: 4px; align-items: center; }
+
+.im-nav {
+    width: 230px;
+    padding: var(--space-1);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.im-folder {
+    gap: var(--space-1);
+    align-items: center;
+    padding: var(--space-2) var(--space-2) 2px var(--space-2);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--on-surface-variant);
+}
+.im-row {
+    min-height: 32px;
+    gap: var(--space-1);
+    align-items: center;
+    padding: 0px var(--space-2) 0px var(--space-4);
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+.im-row:hover { background-color: var(--state-hover-layer); }
+.im-row.selected { background-color: var(--surface-container-highest); font-weight: 600; }
+.im-stage {
+    gap: var(--space-1);
+    min-width: 0px;
+    padding: var(--space-2);
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.im-canvas {
+    position: relative;
+    flex: 1 1 0px;
+    min-height: 200px;
+    overflow: hidden;
+    border-radius: 4px;
+    background-color: var(--surface-container-highest);
+    cursor: crosshair;
+}
+.im-canvas img { position: absolute; left: 0px; top: 0px; }
+.im-empty { padding: var(--space-4); font-size: 14px; color: var(--on-surface-variant); }
+.im-status { font-size: 12px; color: var(--on-surface-variant); font-family: var(--font-mono); }
+.im-note { font-size: 13px; color: var(--on-surface); }
+.im-banner {
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--on-error-container);
+    background-color: var(--error-container);
+}
+
+.im-side {
+    width: 320px;
+    padding: var(--space-1) var(--space-2);
+    gap: var(--space-1);
+    overflow-y: auto;
+    border-radius: 6px;
+    background-color: var(--surface-container-low);
+}
+.im-tools, .im-actions, .im-fields, .im-frames { gap: 4px; align-items: center; flex-wrap: wrap; }
+.im-colors { gap: var(--space-1); align-items: center; }
+.im-swatch {
+    width: 18px;
+    height: 18px;
+    border: 1px var(--outline-variant);
+    border-radius: 3px;
+    cursor: pointer;
+}
+.im-swatch.big { width: 30px; height: 30px; border-radius: 4px; cursor: default; }
+.im-swatches { flex-wrap: wrap; gap: 3px; }
+.im-areas, .im-effects { flex-wrap: wrap; gap: 4px; }
+.im-hex, .im-num {
+    height: 28px;
+    padding: 0px var(--space-1);
+    font-size: 13px;
+    font-family: var(--font-mono);
+}
+.im-num { width: 56px; }
+.im-hint { font-size: 12px; color: var(--on-surface-variant); }
+.im-param { gap: 2px; }
+.im-warn {
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--on-tertiary-container);
+    background-color: var(--tertiary-container);
+}
+.im-anchor { gap: 2px; margin-left: var(--space-2); }
+.im-anchor-row { gap: 2px; }
+.im-anchor-cell {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border: 1px var(--outline);
+    border-radius: 2px;
+    cursor: pointer;
+}
+.im-anchor-cell:hover { background-color: var(--state-hover-layer); }
+.im-anchor-cell.selected { background-color: var(--primary); border-color: var(--primary); }

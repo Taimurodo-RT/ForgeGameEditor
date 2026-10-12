@@ -11,6 +11,7 @@
     <link type="text/rcss" href="assets.rcss"/>
     <link type="text/rcss" href="objects.rcss"/>
     <link type="text/rcss" href="animation.rcss"/>
+    <link type="text/rcss" href="images.rcss"/>
     <link type="text/rcss" href="input.rcss"/>
     <link type="text/rcss" href="logic.rcss"/>
     <link type="text/rcss" href="story.rcss"/>
@@ -59,7 +60,7 @@
         <div class="editor-tab" data-class-selected="tab == 'world'" data-event-click="open_tab('world', 'Сцена', '', '', 'public')"><icon name="public"/><span>Сцена</span></div>
         <div class="editor-tab" data-class-selected="tab == 'objects'" data-event-click="open_tab('objects', 'Объекты', '', '', 'deployed_code')"><icon name="deployed_code"/><span>Объекты</span></div>
         <div class="editor-tab" data-class-selected="tab == 'animation'" data-event-click="open_tab('animation', 'Анимация', '', '', 'movie')"><icon name="movie"/><span>Анимация</span></div>
-        <div class="editor-tab" data-class-selected="tab == 'images'" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'шаг 9: библиотека ассетов', 'image')"><icon name="image"/><span>Изображения</span></div>
+        <div class="editor-tab" data-class-selected="tab == 'images'" data-event-click="open_tab('images', 'Изображения', '', '', 'image')"><icon name="image"/><span>Изображения</span></div>
         <div class="editor-tab" data-class-selected="tab == 'audio'" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'шаг 9: библиотека ассетов', 'volume_up')"><icon name="volume_up"/><span>Аудио</span></div>
         <div class="editor-tab" data-class-selected="tab == 'logic'" data-event-click="open_tab('logic', 'Логика', '', '', 'account_tree')"><icon name="account_tree"/><span>Логика</span></div>
         <div class="editor-tab" data-class-selected="tab == 'story'" data-event-click="open_tab('story', 'Сюжет', '', '', 'forum')"><icon name="forum"/><span>Сюжет</span></div>
@@ -68,7 +69,7 @@
         <div class="editor-tab" data-class-selected="tab == 'assets'" data-event-click="open_tab('assets', 'Ресурсы', '', '', 'folder')"><icon name="folder"/><span>Ресурсы</span></div>
     </div>
 
-    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects' || tab == 'animation' || tab == 'input' || tab == 'logic' || tab == 'story' || tab == 'ui')">
+    <div id="placeholder" class="column" data-if="!(tab == 'world' || tab == 'level' || tab == 'assets' || tab == 'objects' || tab == 'animation' || tab == 'images' || tab == 'input' || tab == 'logic' || tab == 'story' || tab == 'ui')">
         <icon class="big" data-attr-name="tab_icon"/>
         <div class="headline-small">{{ tab_title }}</div>
         <div class="muted">{{ tab_description }}</div>
@@ -1240,6 +1241,164 @@
                 <div id="an-loop" class="an-check row" data-event-click="an_loop_toggle"><icon class="s" data-attr-name="an_loop ? 'check_box' : 'check_box_outline_blank'"/><span>Повторять</span></div>
                 <div class="an-problem" data-if="an_problem != ''">{{ an_problem }}: игра играет это состояние как в игре.</div>
                 <div class="an-hint">Щёлкните кадры картинки по порядку: так появится своя анимация состояния. Игра увидит её при следующем «Играть».</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- «Изображения»: the pictures of «Ресурсы» on the left, the one open on its canvas in the middle, the pixel
+         editor, the transformations, the effects and the format on the right (apps/editor/image_editor.h). -->
+    <div id="images" class="column" data-if="tab == 'images'">
+        <div class="an-bar row">
+            <div class="st-crumb row"><icon class="s" name="image"/><span>Изображения</span><icon class="s" name="chevron_right"/><b id="im-name">{{ im_has ? im_name : 'картинка не открыта' }}</b><span id="im-unsaved" class="im-dirty" data-if="im_has && im_unsaved">не сохранена</span></div>
+            <div class="grow"/>
+            <div class="im-zoom row" data-if="im_has">
+                <div id="im-zoom-out" class="icon-button small" title="Мельче (Ctrl и колесо мыши)" data-event-click="im_zoom_out"><icon class="s" name="zoom_out"/></div>
+                <span id="im-zoom" class="an-count">{{ im_zoom }}×</span>
+                <div id="im-zoom-in" class="icon-button small" title="Крупнее (Ctrl и колесо мыши)" data-event-click="im_zoom_in"><icon class="s" name="zoom_in"/></div>
+                <div id="im-one" class="an-chip" title="Пиксель картинки — пиксель экрана" data-event-click="im_one">1:1</div>
+                <div id="im-fit" class="an-chip" title="Вся картинка на холсте" data-event-click="im_fit">Вписать</div>
+            </div>
+        </div>
+        <div class="im-body row grow">
+            <div class="im-nav column">
+                <div class="lg-nav-title">Картинки «Ресурсов»</div>
+                <div data-for="r : im_list" class="column">
+                    <div data-if="r.header" class="im-folder row"><icon class="s" name="folder"/><span>{{ r.name }}</span></div>
+                    <div data-if="!r.header" class="im-row row" data-attr-id="'im-row-' + r.index" data-attr-title="r.rel" data-class-selected="r.selected" data-event-click="im_open(r.index)">
+                        <icon class="s" name="image"/><span class="name grow">{{ r.name }}</span><span class="dirty-dot" data-if="r.unsaved" title="Не сохранена"/>
+                    </div>
+                </div>
+                <div class="an-empty" data-if="im_list.size == 0">В «Ресурсах» нет картинок. Положите файл в «Ресурсы» — он появится здесь.</div>
+            </div>
+
+            <div class="im-stage column grow">
+                <div id="im-outside" class="im-banner column" data-if="im_outside">
+                    <span>{{ im_outside_text }}</span>
+                    <div class="row im-actions">
+                        <div id="im-take-disk" class="button outlined small" title="Картинка как на диске; Ctrl+Z вернёт правки, сделанные здесь" data-event-click="im_take_disk"><span>Взять с диска</span></div>
+                        <div id="im-keep-mine" class="button outlined small" title="Ctrl+S запишет правки поверх" data-event-click="im_keep_mine"><span>Оставить мои</span></div>
+                        <div id="im-outside-png" class="button outlined small" title="Новый файл рядом, тот остаётся как есть" data-event-click="im_save_as('.png')"><span>Сохранить как PNG</span></div>
+                    </div>
+                </div>
+                <div id="im-canvas" class="im-canvas grow">
+                    <img id="im-canvas-img" data-if="im_has && im_canvas != ''" data-attr-src="im_canvas" data-style-width="im_canvas_w + 'px'" data-style-height="im_canvas_h + 'px'"/>
+                    <div class="im-empty" data-if="!im_has">Выберите картинку слева или «Открыть в редакторе изображений» в «Ресурсах»</div>
+                </div>
+                <div id="im-status" class="im-status">{{ im_status }}</div>
+                <div id="im-note" class="im-note" data-if="im_note != ''">{{ im_note }}</div>
+            </div>
+
+            <div class="im-side column" data-if="im_has">
+                <div class="lg-nav-title">Рисование</div>
+                <div class="im-tools row">
+                    <div id="im-tool-pencil" class="icon-button" data-class-selected="im_tool == 'pencil'" title="Карандаш (B); Shift — линия от прошлой точки" data-event-click="im_tool('pencil')"><icon name="edit"/></div>
+                    <div id="im-tool-eraser" class="icon-button" data-class-selected="im_tool == 'eraser'" title="Ластик (E): прозрачный пиксель" data-event-click="im_tool('eraser')"><icon name="ink_eraser"/></div>
+                    <div id="im-tool-fill" class="icon-button" data-class-selected="im_tool == 'fill'" title="Заливка (G): точно тот же цвет, соседи по сторонам" data-event-click="im_tool('fill')"><icon name="format_color_fill"/></div>
+                    <div id="im-tool-picker" class="icon-button" data-class-selected="im_tool == 'picker'" title="Пипетка (I, или Alt со щелчком)" data-event-click="im_tool('picker')"><icon name="colorize"/></div>
+                </div>
+                <div class="im-tools row">
+                    <span class="an-label">Кисть</span>
+                    <div id="im-size-1" class="an-chip" data-class-selected="im_size == 1" data-event-click="im_size(1)">1</div>
+                    <div id="im-size-2" class="an-chip" data-class-selected="im_size == 2" data-event-click="im_size(2)">2</div>
+                    <div id="im-size-3" class="an-chip" data-class-selected="im_size == 3" data-event-click="im_size(3)">3</div>
+                    <div id="im-size-4" class="an-chip" data-class-selected="im_size == 4" data-event-click="im_size(4)">4</div>
+                </div>
+                <div class="im-colors row">
+                    <div id="im-c1" class="im-swatch big" data-style-background-color="im_c1" title="Цвет левой кнопки"/>
+                    <div id="im-c2" class="im-swatch big" data-style-background-color="im_c2" title="Цвет правой кнопки"/>
+                    <div id="im-swap" class="icon-button small" title="Поменять цвета местами (X)" data-event-click="im_swap"><icon class="s" name="swap_horiz"/></div>
+                    <input id="im-hex" type="text" class="im-hex grow" title="Цвет левой кнопки: #rrggbb или #rrggbbaa, Enter" data-attr-value="im_hex" data-event-change="im_hex(ev.value, ev.linebreak)"/>
+                </div>
+                <div class="an-label">Цвета картинки</div>
+                <div class="im-swatches row">
+                    <div data-for="sw : im_colors" class="im-swatch" data-attr-id="'im-color-' + it_index" data-style-background-color="sw.css" data-attr-title="sw.hex + ': левая кнопка — цвет левой, правая — правой'" data-event-mousedown="im_pick(it_index)"><span class="im-swatch-in"/></div>
+                </div>
+                <div class="an-label">Область</div>
+                <div class="im-areas row">
+                    <div data-for="a : im_areas" class="an-chip" data-attr-id="'im-area-' + (a.frame + 1)" data-class-selected="a.selected" data-event-click="im_area(a.frame)">{{ a.label }}</div>
+                </div>
+                <div class="im-frames row">
+                    <span class="an-label grow">Кадров в картинке: <span id="im-frames">{{ im_frames }}</span></span>
+                    <div id="im-frames-less" class="icon-button small" data-if="im_frames_own" data-event-click="im_frames_less"><icon class="s" name="remove"/></div>
+                    <div id="im-frames-more" class="icon-button small" data-if="im_frames_own" data-event-click="im_frames_more"><icon class="s" name="add"/></div>
+                </div>
+                <div id="im-frames-from" class="im-hint">{{ im_frames_from }}</div>
+
+                <div class="lg-nav-title">Трансформации</div>
+                <div class="im-tools row">
+                    <div id="im-turn-cw" class="icon-button" title="Повернуть вправо на 90°" data-event-click="im_turn('cw')"><icon name="rotate_right"/></div>
+                    <div id="im-turn-ccw" class="icon-button" title="Повернуть влево на 90°" data-event-click="im_turn('ccw')"><icon name="rotate_left"/></div>
+                    <div id="im-turn-half" class="icon-button" title="Повернуть на 180°" data-event-click="im_turn('half')"><icon name="sync"/></div>
+                    <div id="im-flip-h" class="icon-button" title="Отразить по горизонтали" data-event-click="im_turn('fliph')"><icon name="flip"/></div>
+                    <div id="im-flip-v" class="icon-button" title="Отразить по вертикали" data-event-click="im_turn('flipv')"><icon name="swap_vert"/></div>
+                </div>
+                <div class="an-label">{{ im_frames > 1 ? 'Размер каждого кадра' : 'Размер' }}</div>
+                <div class="im-fields row">
+                    <input id="im-rw" type="text" class="im-num" data-value="im_rw"/><span>×</span><input id="im-rh" type="text" class="im-num" data-value="im_rh"/>
+                    <div id="im-smooth" class="an-check row" title="Без него — ближайший пиксель: для пиксельной графики" data-event-click="im_smooth"><icon class="s" data-attr-name="im_smooth ? 'check_box' : 'check_box_outline_blank'"/><span>Сглаживание</span></div>
+                </div>
+                <div class="im-actions row">
+                    <div id="im-resize" class="button outlined small" data-event-click="im_resize"><span>Изменить размер</span></div>
+                    <div id="im-half" class="an-chip" data-event-click="im_percent(50)">50%</div>
+                    <div id="im-double" class="an-chip" data-event-click="im_percent(200)">200%</div>
+                </div>
+                <div class="an-label">{{ im_frames > 1 ? 'Холст каждого кадра' : 'Холст' }}</div>
+                <div class="im-fields row">
+                    <input id="im-cw" type="text" class="im-num" data-value="im_cw"/><span>×</span><input id="im-ch" type="text" class="im-num" data-value="im_ch"/>
+                    <div class="im-anchor column" title="Где остаётся картинка">
+                        <div class="im-anchor-row row"><div id="im-anchor-0" class="im-anchor-cell" data-class-selected="im_anchor == 0" data-event-click="im_anchor(0)"/><div id="im-anchor-1" class="im-anchor-cell" data-class-selected="im_anchor == 1" data-event-click="im_anchor(1)"/><div id="im-anchor-2" class="im-anchor-cell" data-class-selected="im_anchor == 2" data-event-click="im_anchor(2)"/></div>
+                        <div class="im-anchor-row row"><div id="im-anchor-3" class="im-anchor-cell" data-class-selected="im_anchor == 3" data-event-click="im_anchor(3)"/><div id="im-anchor-4" class="im-anchor-cell" data-class-selected="im_anchor == 4" data-event-click="im_anchor(4)"/><div id="im-anchor-5" class="im-anchor-cell" data-class-selected="im_anchor == 5" data-event-click="im_anchor(5)"/></div>
+                        <div class="im-anchor-row row"><div id="im-anchor-6" class="im-anchor-cell" data-class-selected="im_anchor == 6" data-event-click="im_anchor(6)"/><div id="im-anchor-7" class="im-anchor-cell" data-class-selected="im_anchor == 7" data-event-click="im_anchor(7)"/><div id="im-anchor-8" class="im-anchor-cell" data-class-selected="im_anchor == 8" data-event-click="im_anchor(8)"/></div>
+                    </div>
+                </div>
+                <div class="im-actions row">
+                    <div id="im-canvas-set" class="button outlined small" data-event-click="im_canvas"><span>Изменить холст</span></div>
+                    <div id="im-trim" class="button outlined small" title="Убрать прозрачные края (у всех кадров одинаково)" data-event-click="im_trim"><icon class="s" name="crop"/><span>Обрезать</span></div>
+                </div>
+                <div class="an-label">Сетка кадров → полоса</div>
+                <div class="im-fields row">
+                    <span>кадр</span><input id="im-gw" type="text" class="im-num" data-value="im_gw"/><span>×</span><input id="im-gh" type="text" class="im-num" data-value="im_gh"/>
+                    <span>столбцов</span><input id="im-gc" type="text" class="im-num" data-value="im_gc"/>
+                </div>
+                <div class="im-actions row">
+                    <div id="im-grid" class="button outlined small" title="Ряды листа сверху вниз, в ряду слева направо — в одну полосу, как её читает игра" data-event-click="im_grid"><icon class="s" name="grid_on"/><span>В полосу</span></div>
+                </div>
+
+                <div class="lg-nav-title">Эффекты</div>
+                <div class="im-effects row">
+                    <div data-for="e : im_effects" class="an-chip" data-attr-id="'im-fx-' + e.id" data-class-selected="e.selected && im_trying" data-event-click="im_effect(e.id)">{{ e.label }}</div>
+                </div>
+                <div class="column" data-if="im_trying">
+                    <div data-for="p : im_params" class="im-param column">
+                        <span class="an-label">{{ p.label }}: {{ p.value }}</span>
+                        <input type="range" class="grow" data-attr-id="'im-param-' + it_index" data-attr-min="p.min" data-attr-max="p.max" step="1" data-attr-value="p.value" data-event-change="im_param(it_index)"/>
+                    </div>
+                    <div class="im-hint" data-if="im_effect == 'outline'">Контур — цветом левой кнопки.</div>
+                    <div class="im-hint" data-if="im_effect == 'replace'">Цвет левой кнопки заменяется цветом правой.</div>
+                    <div class="im-actions row">
+                        <div id="im-apply" class="button filled small" title="Шаг истории (Enter)" data-event-click="im_apply"><span>Применить</span></div>
+                        <div id="im-cancel" class="button outlined small" title="Убрать (Esc)" data-event-click="im_cancel"><span>Отмена</span></div>
+                    </div>
+                </div>
+                <div class="im-hint" data-if="!im_trying">Выберите эффект: он покажется на холсте, файл не меняется.</div>
+
+                <div class="lg-nav-title">Формат</div>
+                <div id="im-info" class="im-hint">{{ im_info }}</div>
+                <div class="im-actions row">
+                    <div id="im-save" class="button filled small" data-class-disabled="!im_unsaved" title="Тот же файл и тот же ресурс: копии в игре обновятся" data-event-click="im_save"><icon class="s" name="save"/><span>Сохранить (Ctrl+S)</span></div>
+                </div>
+                <div class="an-label">Сохранить как… — новый ресурс рядом</div>
+                <div class="im-actions row">
+                    <div id="im-as-png" class="an-chip" data-event-click="im_save_as('.png')">PNG</div>
+                    <div id="im-as-jpg" class="an-chip" data-event-click="im_save_as('.jpg')">JPG</div>
+                    <div id="im-as-bmp" class="an-chip" data-event-click="im_save_as('.bmp')">BMP</div>
+                    <div id="im-as-tga" class="an-chip" data-event-click="im_save_as('.tga')">TGA</div>
+                    <div id="im-as-webp" class="an-chip" data-event-click="im_save_as('.webp')">WebP</div>
+                </div>
+                <div id="im-warning" class="im-warn column" data-if="im_warning != ''">
+                    <span>{{ im_warning }}</span>
+                    <div class="im-actions row"><div id="im-as-jpg-anyway" class="button outlined small" data-event-click="im_save_as_jpg"><span>Всё равно в JPG</span></div></div>
+                </div>
             </div>
         </div>
     </div>
@@ -2789,7 +2948,7 @@
 
                     <div class="section-title" data-if="as_sel_count &lt;= 1">Открыть</div>
                     <div class="links column" data-if="as_sel_count &lt;= 1">
-                        <div class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon class="s" name="open_in_new"/><span>В редакторе изображений</span></div>
+                        <div id="as-edit-image" class="link row" data-if="as_sel_count == 1 && as_sel_image" data-event-click="im_from_asset"><icon class="s" name="open_in_new"/><span>В редакторе изображений</span></div>
                         <div class="link row" data-if="as_sel_count == 1 && as_sel_image" id="as-animate" data-event-click="an_from_asset"><icon class="s" name="open_in_new"/><span>Сделать анимацию</span></div>
                         <div class="link row" data-if="as_sel_count == 1 && as_sel_audio" data-event-click="open_tab('audio', 'Аудио', 'Звуки и музыка проекта', 'позже: обрезка и громкость', 'volume_up')"><icon class="s" name="open_in_new"/><span>В редакторе звука</span></div>
                         <div id="as-import-map" class="link row" data-if="as_sel_count == 1 && as_sel_tmx" data-event-click="as_import_map"><icon class="s" name="map"/><span>Импортировать в уровень…</span></div>
@@ -2877,7 +3036,7 @@
             <div data-if="as_sel_count > 0">
                 <div id="ctx-open" class="menu-item strong" data-if="as_sel_count == 1 && as_sel_dir" data-event-click="as_open_selected"><icon name="folder_open"/><span class="label">Открыть</span><span class="trailing">Enter</span></div>
                 <div class="menu-item strong" data-if="as_sel_count == 1 && as_sel_wav" data-event-click="as_open_selected"><icon name="play_arrow"/><span class="label">Слушать</span></div>
-                <div class="menu-item" data-if="as_sel_count == 1 && as_sel_image" data-event-click="open_tab('images', 'Изображения', 'Просмотр, правка и преобразование картинок', 'позже: рисование и нарезка спрайтов', 'image')"><icon name="open_in_new"/><span class="label">Открыть в редакторе изображений</span></div>
+                <div id="as-menu-edit-image" class="menu-item" data-if="as_sel_count == 1 && as_sel_image" data-event-click="im_from_asset"><icon name="open_in_new"/><span class="label">Открыть в редакторе изображений</span></div>
                 <div id="ctx-import-map" class="menu-item strong" data-if="as_sel_count == 1 && as_sel_tmx" data-event-click="as_import_map"><icon name="map"/><span class="label">Импортировать в уровень…</span></div>
                 <div class="divider" data-if="as_sel_count == 1 && (as_sel_dir || as_sel_wav || as_sel_image || as_sel_tmx)"/>
                 <div id="ctx-cut" class="menu-item" data-event-click="as_cut"><icon name="content_cut"/><span class="label">Вырезать</span><span class="trailing">Ctrl+X</span></div>
@@ -3045,7 +3204,8 @@
         <span class="muted" data-if="tab == 'input'">Ctrl+Z / Ctrl+Y отмена и повтор · «Клавиша», потом нужная клавиша или кнопка геймпада · Esc отмена · × убирает привязку</span>
         <span class="muted" data-if="tab == 'story'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по реплике: править · Enter сохранить · Esc отмена · щелчок по пометке: выбрать из списка</span>
         <span class="muted" data-if="tab == 'ui'">V F R O T инструменты · правая кнопка: меню · Ctrl+колесо: масштаб · пробел или средняя кнопка: двигать холст · Shift+A автораскладка · Ctrl+G в рамку · Ctrl+D копия · Ctrl: без прилипания</span>
-        <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic' && tab != 'story' && tab != 'ui' && tab != 'animation' && tab != 'input'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab == 'images'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · B E G I инструменты · X цвета · [ ] кисть · Shift линия · Alt пипетка · F5 перечитать файлы</span>
+        <span class="muted" data-if="tab != 'level' && tab != 'assets' && tab != 'logic' && tab != 'story' && tab != 'ui' && tab != 'animation' && tab != 'input' && tab != 'images'">Ctrl+Z / Ctrl+Y отмена и повтор · F5 играть · Del удалить · Ctrl+D копия · F фокус · колесо и правая кнопка: камера</span>
     </div>
 </body>
 </rml>

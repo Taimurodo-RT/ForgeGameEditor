@@ -109,6 +109,8 @@ public:
     // A gem's frame of the sheet: frame 0 stands, 1… vanish; how many it has.
     u32 gem_frame(u32 gem, u32 frame) const;
     u32 gem_frames(u32 gem) const;
+    // A gem's frame as the sheet holds it: RGBA rows, w × h (what is drawn of it; the tests compare it).
+    std::vector<u8> gem_pixels(u32 gem, u32 frame, u32& w, u32& h) const;
     // The colour a gem without a picture is drawn in (and the pixels a test looks for).
     static forge::u32 placeholder(u32 gem);
 
