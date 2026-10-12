@@ -2429,7 +2429,8 @@ private:
             return true;
         }});
         // Screens drawn in «Интерфейс» (written here by hand, as the editor
-        // writes them): a HUD with data in it and a window a button opens.
+        // writes them): a HUD with data in it and a window a button opens. The window rises and goes by the step's own
+        // clock (GameScreens::set_clock), as in «поведение окон»: what is seen halfway does not hang on the frames' speed.
         steps_.push_back({"экраны игры", 60, [&s, this](u32 f) {
             static int messages = 0;
             GameScreens& sc = s.screens();
@@ -2462,6 +2463,8 @@ private:
                 s.vars().set("inv.key", 0);
                 s.vars().set("hero.hearts", 5);
                 s.on_message = [](const std::string& m) { if (m == "купил") ++messages; };
+                window_clock_ = time_now_ns();
+                sc.set_clock([this] { return window_clock_; });
             }
             if (f == 3) {
                 Rml::Element* coins = s.find_element("t-coins");
@@ -2477,13 +2480,15 @@ private:
                 check(shown("t-key"), "с ключом ключ виден");
                 check(click(s, "t-open"), "кнопка нажимается");
             }
+            if (f == 6) window_clock_ += 150'000'000; // half of its 0.3 s
             if (f == 7) {
                 check(sc.shown("тест_окно") && shown("t-buy"), "кнопка открыла окно");
                 check(sc.pauses(), "окно ставит мир на паузу");
                 Rml::Element* w = s.find_element("t-window");
-                check(w && w->GetLocalProperty("opacity") && w->GetProperty<float>("opacity") < 1, "окно появляется плавно");
-                SDL_Delay(350); // let it finish rising, or the click lands below the moving button on a slow machine
+                const f32 o = w && w->GetLocalProperty("opacity") ? w->GetProperty<float>("opacity") : -1.0f;
+                check(std::fabs(o - 0.875f) < 0.01f, "окно появляется плавно: на полпути " + std::to_string(o));
             }
+            if (f == 8) window_clock_ += 1'000'000'000; // risen: the click lands on the button where it stays
             if (f == 9) check(click(s, "t-buy"), "кнопка в окне нажимается");
             if (f == 11) {
                 check(s.vars().get("inv.coins").number() == 12, "покупка изменила монеты");
@@ -2502,12 +2507,14 @@ private:
                 s.handle_event(ev);
                 check(!sc.shown("тест_окно") && s.screen() == forge::game::Screen::Playing, "Esc закрывает окно, а не игру");
             }
-            if (f == 14) SDL_Delay(350); // the window's going away (started by the frame after Esc) takes 0.3 s
+            if (f == 14) window_clock_ += 1'000'000'000; // past the end of its going away
             if (f == 16) check(sc.document("тест_окно") && !sc.document("тест_окно")->IsVisible(), "ушедшее окно скрыто");
             if (f < 17) return false;
             sc.remove("тест_hud");
             sc.remove("тест_окно");
             s.on_message = nullptr;
+            sc.set_clock(nullptr);
+            check(!sc.document("тест_hud") && !sc.document("тест_окно") && !sc.own_clock(), "экраны теста убраны, окна снова идут по настоящим часам");
             return true;
         }});
         // Windows' behaviour (13.11): a window that darkens what is under it takes the clicks off the HUD and the
