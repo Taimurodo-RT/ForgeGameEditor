@@ -372,6 +372,8 @@ public:
     AnimationEditor anim_tab{level_module};
     InputEditor input_tab;
     UiEditor ui_tab;
+    // The colour picker (13.4): one for «Интерфейс» and «Изображения», the game's colours those of «Компоненты».
+    ColorPicker color_picker;
     AssetLibrary assets;
     // «Изображения»: pictures of «Ресурсы» edited pixel by pixel; written into their files only when saved.
     ImageEditor image_tab{assets};
@@ -534,6 +536,9 @@ public:
         // «Изображения»: the templates a picture draws are those whose picture is its copy in the game; a picture
         // written there is looked at by «Ресурсы» at once (the copies follow it).
         image_tab.init(ui_);
+        color_picker.game_colors = [this] { return ui_tab.library().colors; };
+        ui_tab.set_picker(&color_picker);
+        image_tab.set_picker(&color_picker);
         image_tab.users_of = [this](const Guid& id) {
             std::vector<ImageEditor::User> out;
             for (const editor::sources::Entry& e : sources.entries()) {
@@ -544,6 +549,21 @@ public:
             return out;
         };
         image_tab.written = [this] { assets.refresh(); };
+        // The game's own pictures (in its pictures/, not copies of «Ресурсы») are shown there for viewing.
+        image_tab.game_dir = game_dir;
+        image_tab.copy_from = [this](const std::string& file) {
+            const editor::sources::Entry* e = sources.of_file(file);
+            if (!e) return std::string();
+            const assets::AssetRecord* a = assets.find_id(e->asset);
+            return a ? a->path : e->from;
+        };
+        image_tab.users_of_file = [this](const std::string& file) {
+            std::vector<ImageEditor::User> out;
+            if (file.rfind("pictures/", 0) != 0) return out;
+            for (const objects::Template& t : level_module.library()->templates())
+                if (t.picture == file.substr(9)) out.push_back({t.name, std::max(1u, t.frames)});
+            return out;
+        };
         context_ = ui_.create_context("editor", width, height);
         // What screens can show: the game's values in the author's words. The module's (forge::modules::ModuleDef::
         // values: the same list its game is checked against), then the shell's, which every game has, then the quests'.
@@ -997,7 +1017,7 @@ public:
         objects_tab.set_ui_updating(true);
         ui_.update();
         // The colour picker stands beside its swatch once its size is known.
-        if (m_tab_ == "ui" && ui_tab.place_picker(context_)) context_->Update();
+        if (color_picker.place(context_)) context_->Update();
         // A key whose time was typed moved among its keys: the keyboard stays with that key's row.
         if (m_tab_ == "ui" && ui_tab.follow_moved_key(context_)) context_->Update();
         level.set_ui_updating(false);
@@ -1311,6 +1331,7 @@ private:
         image_tab.bind(model);
         input_tab.bind(model);
         ui_tab.bind(model);
+        color_picker.bind(model);
         projects.bind(model);
         model_ = model.GetModelHandle();
         level.set_model(model_);
@@ -1322,6 +1343,7 @@ private:
         image_tab.set_model(model_);
         input_tab.set_model(model_);
         ui_tab.set_model(model_);
+        color_picker.set_model(model_);
         projects.set_model(model_);
         return true;
     }
@@ -1973,7 +1995,7 @@ struct Options {
     // after the save, its copies said of and a new game refused; "match3-template-a-restored": the gem brought back by
     // Ctrl+Z, opened again, the save goes on and a new game starts); "images" (the tab «Изображения»: two games of the
     // catalog's «Три в ряд», pictures of A drawn, saved and saved as in the tab by "images-a", opened again from another
-    // working folder and played by "images-a-again").
+    // working folder and played by "images-a-again"; B's own picture of the game shown only by "images-b").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -2195,6 +2217,7 @@ public:
         if (part == "images") return frame < 3 || images_step();
         if (part == "images-a") return frame < 3 || images_a_step();
         if (part == "images-a-again") return frame < 3 || images_again_step();
+        if (part == "images-b") return frame < 3 || images_b_step();
         if (part == "modules") return frame < 3 || modules_step();
         if (part == "modules-probe") return frame < 3 || modules_probe_step();
         if (part == "modules-old") return frame < 3 || modules_old_step();
@@ -19961,6 +19984,12 @@ private:
     // the rest of it is one re-encoding of the file; an effect tried and dropped writes nothing. Closing the window asks
     // about the unsaved picture. images-a-again, from another working folder: all of it as saved, and a game of another
     // process (scene images) draws the author's pixels and frames. The template and «Картинки Б»: the same bytes.
+    // Path A (images_palette_step): a game colour made in «Интерфейс», both colours of the brush from the picker (HEX,
+    // alpha, the game's colour copied), «Отмена», Esc, Ctrl+Z and «Готово» changing nothing, strokes of those colours in
+    // frame 2 that the file, the copy and the game of another process keep, alpha and all. Path B (images_view_step): the
+    // game's own pictures shown only, every change refused with why, the project's folder byte for byte as it was, a
+    // resource of the same name apart, the file changed, gone and back, and linked to «Ресурсы» later. images-b, the
+    // editor of «Картинки Б»: its own picture of the same name, pixels of Б, and changes refused.
     static constexpr assets::Rgba kImMark{40, 90, 250, 255}; // the author's blue, typed «#285afa»
     static constexpr i32 kImCellX = 5, kImCellY = 1;          // a «Рубин» put on «Первый» here
     static constexpr u8 kImSheet[4][3] = {{230, 60, 60}, {60, 200, 90}, {70, 110, 240}, {240, 200, 40}};
@@ -19973,6 +20002,15 @@ private:
     usize im_cursor_ = 0;
     u8 im_level0_[4] = {}, im_hud0_[4] = {};
     u32 im_look0_ = 0;
+    // Paths A and B (the picker on the brush; the pictures only the game has), sub-steps of images-a's steps 16 and 49.
+    static constexpr assets::Rgba kImHalf{40, 90, 250, 102};  // «#285afa» at 40 % in the picker
+    static constexpr assets::Rgba kImTheme{200, 60, 30, 180}; // the game colour «Рубиновый», #C83C1EB4, copied
+    int im_sub_ = 0, im_pal_ = 0, im_view_ = 0;
+    int im_theme_ = -1; // «Рубиновый» among the game's colours
+    bool im_dirty_ = false;
+    std::map<std::string, std::vector<u8>> im_tree_, im_btree_;
+    std::vector<std::string> im_unsaved_;
+    assets::CookedTexture im_shown_;
 
     ImageEditor& im() { return ed_.image_tab; }
     static std::filesystem::path im_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_изображения"); }
@@ -20130,6 +20168,587 @@ private:
         return out;
     }
 
+    // The row of a picture of the game shown only ("" when it is not listed), and whether the list has it.
+    std::string im_game_row(const std::string& rel) {
+        for (int i = 0; i < 200; ++i) {
+            const std::string id = "im-game-" + std::to_string(i);
+            Rml::Element* e = ed_.find_element(id.c_str());
+            if (e && e->GetAttribute<Rml::String>("title", "") == rel) return id;
+        }
+        return {};
+    }
+    bool im_game_listed(const std::string& rel) {
+        const std::vector<std::string> all = im().game_listed();
+        return std::find(all.begin(), all.end(), rel) != all.end();
+    }
+    // A picture only a game has (another program put it in its pictures/): 32 × 16, its halves of two colours, a clear
+    // pixel and a half-clear one in its top row. which: 0 «Картинки А»'s «только_в_игре.png», 1 «Картинки Б»'s of the
+    // same name (other pixels), 2 A's «позже_в_ресурсах.png», 3 a picture of «Ресурсы» named as A's 0.
+    static assets::CookedTexture im_only(int which) {
+        static constexpr u8 kHalves[4][2][3] = {{{30, 140, 200}, {220, 120, 40}}, {{150, 40, 160}, {40, 200, 120}},
+                                                {{90, 90, 30}, {200, 200, 210}}, {{250, 80, 120}, {20, 60, 70}}};
+        assets::CookedTexture t;
+        t.width = 32;
+        t.height = 16;
+        t.rgba8.resize(32 * 16 * 4);
+        for (u32 y = 0; y < 16; ++y)
+            for (u32 x = 0; x < 32; ++x) {
+                const u8* c = kHalves[which][x / 16];
+                assets::set_pixel(t, x, y, {c[0], c[1], c[2], 255});
+            }
+        assets::set_pixel(t, 0, 0, {0, 0, 0, 0});
+        assets::set_pixel(t, 1, 0, {255, 255, 255, 128});
+        return t;
+    }
+    // The pixels "x y r g b a …" of a picture are those of t.
+    static bool im_pixels_are(const assets::CookedTexture& t, const std::string& px) {
+        const std::vector<int> n = im_numbers(px);
+        bool same = !n.empty() && n.size() % 6 == 0;
+        for (usize i = 0; same && i + 5 < n.size(); i += 6)
+            same = static_cast<u32>(n[i]) < t.width && static_cast<u32>(n[i + 1]) < t.height &&
+                   assets::pixel_at(t, static_cast<u32>(n[i]), static_cast<u32>(n[i + 1])) ==
+                       assets::Rgba{static_cast<u8>(n[i + 2]), static_cast<u8>(n[i + 3]), static_cast<u8>(n[i + 4]), static_cast<u8>(n[i + 5])};
+        return same;
+    }
+
+    // Path A (decision 8 of editors/изображения-модель.md: the picker of 13.4 on the brush), in «рубин.png» before it is
+    // saved: a game colour made in «Интерфейс» («Цвета игры» of «Компоненты»), #C83C1EB4; the right colour copied from it,
+    // the left one typed and given 40 % alpha; a HEX that is not a colour refused; «Отмена», Esc and Ctrl+Z put a colour
+    // back; opening and closing changes neither the picture, its file nor its history; the picker's eyedropper takes a
+    // pixel of the picture as it is; strokes of both colours in frame 2, the pixels' RGBA the colours' exactly, undone and
+    // done again; the game colour changed afterwards: the pixels and the brush keep what was copied. True while it goes on.
+    bool images_palette_step() {
+        namespace fs = std::filesystem;
+        const char* const ruby = "картинки/рубин.png";
+        const fs::path copy = pjw().config().root / "game" / "pictures" / utf8_path("рубин.png");
+        // Nothing but the brush's colour changed by the picker.
+        auto untouched = [&] {
+            return im().rel() == ruby && im_same(im().image(), im_before_) && im().history().cursor() == im_cursor_ && im().dirty() == im_dirty_ &&
+                   tg_bytes(as().abs(ruby)) == im_file0_ && tg_bytes(copy) == im_copy0_;
+        };
+        const std::string chip = "ue-cp-theme-" + std::to_string(im_theme_);
+        switch (im_pal_) {
+        case 0:
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        case 1:
+            if (hold(shown("ue-library"), "its screens are listed")) return true;
+            check(ue_press("ue-library") && ue().library_open(), "«Компоненты»: the game's colours");
+            ue().select({});
+            break;
+        case 2: {
+            if (hold(shown("ue-color-add"), "«Цвета игры» shown")) return true;
+            const usize n = ue().library().colors.size();
+            check(ue_press("ue-color-add") && ue().library().colors.size() == n + 1, "«+» of «Цвета игры»: a colour added");
+            im_theme_ = static_cast<int>(n);
+            break;
+        }
+        case 3: {
+            const std::string name = "ue-color-name-" + std::to_string(im_theme_), swatch = "ue-sw-color-" + std::to_string(im_theme_);
+            if (hold(shown(name) && shown(swatch), "the new colour's row")) return true;
+            check(ue_type(name.c_str(), "Рубиновый") && ue().library().colors.at(static_cast<usize>(im_theme_)).name == "Рубиновый", "named «Рубиновый»");
+            check(ue_press(swatch) && ue().picker_open(), "its swatch: the picker");
+            break;
+        }
+        case 4:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#C83C1EB4") && ue_press("ue-cp-done") && !ue().picker_open() &&
+                      ue().library().colors.at(static_cast<usize>(im_theme_)).color == editor::design::Color{200, 60, 30, 180},
+                  "#C83C1EB4 typed, «Готово»: «Рубиновый» is 200 60 30, alpha 180");
+            {
+                // «Интерфейс» writes its files as they change.
+                const std::vector<u8> bytes = tg_bytes(pjw().config().root / "game" / "ui" / "components.json");
+                std::string text(bytes.begin(), bytes.end());
+                std::transform(text.begin(), text.end(), text.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+                check(text.find("рубиновый") != std::string::npos || text.find("Рубиновый") != std::string::npos, "game/ui/components.json has «Рубиновый»");
+                check(text.find("c83c1eb4") != std::string::npos, "of #C83C1EB4");
+            }
+            check(click_tab(4), "«Изображения»");
+            break;
+        case 5:
+            if (hold(ed_.tab() == "images" && shown("im-c2"), "the tab")) return true;
+            im_cursor_ = im().history().cursor();
+            im_before_ = im().image();
+            im_dirty_ = im().dirty();
+            check(im().rel() == ruby && im().color() == kImMark && im().color(true) == assets::Rgba{255, 255, 255, 255},
+                  "«рубин.png», unsaved; the left colour «#285afa», the right one white");
+            check(im_press("im-c2") && im().picking(), "a click on the right colour: the picker");
+            break;
+        case 6:
+            if (hold(shown("ue-cp-hex") && shown(chip), "the picker is laid out, the game's colours in it")) return true;
+            check(element_text("ue-cp-title") == "Цвет правой кнопки" && element_text("ue-cp-note").find("RGBA") != std::string::npos,
+                  "«" + element_text("ue-cp-title") + "»: " + element_text("ue-cp-note"));
+            {
+                const bool picked = ue_press(chip);
+                check(picked && im().color(true) == kImTheme && im().color_theme(true) == "Рубиновый" && untouched(),
+                      "«Рубиновый» of «Цвета игры»: the right colour " + im_rgb(im().color(true)) + " at once; the picture, its file and history as they were");
+            }
+            break;
+        case 7: {
+            check(element_text("ue-cp-note").find("Скопирован цвет игры «Рубиновый»") != std::string::npos && pj_class(chip.c_str(), "selected"),
+                  "the picker says it is a copy, its chip marked: " + element_text("ue-cp-note"));
+            // The alpha field left as it shows (71 %): the alpha stays 180, not 181.
+            auto* field = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element("ue-cp-alpha-field"));
+            if (field) {
+                field->Focus();
+                field->Blur();
+            }
+            check(field && ue_field("ue-cp-alpha-field") == "71%" && im().color(true) == kImTheme, "the alpha field (71 %) left as it was: alpha 180");
+            check(ue_press("ue-cp-done") && !im().picking() && im().color(true) == kImTheme && untouched(), "«Готово»: the colour kept, nothing else changed");
+            break;
+        }
+        case 8:
+            check(element_text("im-color-note").find("копия цвета игры «Рубиновый»") != std::string::npos &&
+                      element_text("im-color-note").find("не изменится") != std::string::npos,
+                  "under the colours: " + element_text("im-color-note"));
+            check(im_press("im-c1") && im().picking(), "a click on the left colour: the picker");
+            break;
+        case 9:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(element_text("ue-cp-title") == "Цвет левой кнопки" && ue_field("ue-cp-hex") == "285AFA", "«Цвет левой кнопки», " + ue_field("ue-cp-hex"));
+            check(ue_type("ue-cp-hex", "#12345") && im().color() == kImMark && untouched(), "#12345 typed: not a colour, nothing changes");
+            break;
+        case 10:
+            check(shown("ue-cp-hex-note"), "the picker says why: " + element_text("ue-cp-hex-note"));
+            {
+                const bool typed = ue_type("ue-cp-alpha-field", "40");
+                check(typed && im().color() == kImHalf && untouched(), "alpha 40 %: the left colour " + im_rgb(im().color()));
+            }
+            check(ue_press("ue-cp-done") && !im().picking() && im().color() == kImHalf && untouched(), "«Готово»");
+            check(im_press("im-c1"), "the picker again");
+            break;
+        // «Отмена», Esc, Ctrl+Z: the colour before; opened and closed without a change: nothing at all.
+        case 11:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#00FF00") && im().color() == assets::Rgba{0, 255, 0, 255} && untouched(), "#00FF00: on the brush at once");
+            check(ue_press("ue-cp-cancel") && !im().picking() && im().color() == kImHalf && untouched(), "«Отмена»: the colour before, nothing else changed");
+            check(im_press("im-c2"), "the right colour's picker");
+            break;
+        case 12:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#FFFFFF") && im().color(true) == assets::Rgba{255, 255, 255, 255} && im().color_theme(true).empty(), "#FFFFFF");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!im().picking() && im().color(true) == kImTheme && im().color_theme(true) == "Рубиновый" && untouched(),
+                  "Esc: «Рубиновый» copied, as before; nothing else changed");
+            check(im_press("im-c1"), "the left colour's picker");
+            break;
+        case 13:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#0000FF") && im().color() == assets::Rgba{0, 0, 255, 255}, "#0000FF");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!im().picking() && im().color() == kImHalf && untouched(), "Ctrl+Z: the picker cancelled; the picture's history not touched");
+            check(im_press("im-c1"), "the picker once more");
+            break;
+        case 14:
+            if (hold(shown("ue-cp-done"), "the picker is laid out")) return true;
+            check(ue_press("ue-cp-done") && !im().picking() && im().color() == kImHalf && untouched(), "«Готово» with no change: no step, nothing written");
+            check(im_press("im-c2"), "the right colour's picker, for its eyedropper");
+            break;
+        // The picker's eyedropper on the picture: a pixel of frame 2 as it is, alpha and all.
+        case 15: {
+            if (hold(shown("ue-cp-dropper"), "the picker is laid out")) return true;
+            check(ue_press("ue-cp-dropper") && ed_.color_picker.dropping(), "its eyedropper");
+            Rml::Element* picker = ed_.find_element("ue-picker");
+            const Rml::Vector2f pa = picker ? picker->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f{},
+                                ps = picker ? picker->GetBox().GetSize(Rml::BoxArea::Border) : Rml::Vector2f{};
+            // A pixel on screen, not under the picker; one with alpha first.
+            i32 px = -1, py = -1;
+            f32 sx = 0, sy = 0;
+            for (int pass = 0; pass < 2 && px < 0; ++pass)
+                for (u32 y = 0; y < 32 && px < 0; ++y)
+                    for (u32 x = 32; x < 64 && px < 0; ++x) {
+                        f32 ax = 0, ay = 0;
+                        const bool see_through = assets::pixel_at(im().image(), x, y).a < 255;
+                        if ((pass == 0) == see_through && im().screen_of(static_cast<f32>(x) + 0.5f, static_cast<f32>(y) + 0.5f, ax, ay) &&
+                            !(ax >= pa.x && ay >= pa.y && ax < pa.x + ps.x && ay < pa.y + ps.y)) {
+                            px = static_cast<i32>(x);
+                            py = static_cast<i32>(y);
+                            sx = ax;
+                            sy = ay;
+                        }
+                    }
+            const assets::Rgba want = px >= 0 ? assets::pixel_at(im().image(), static_cast<u32>(px), static_cast<u32>(py)) : assets::Rgba{};
+            if (px >= 0) left_click(sx, sy);
+            check(px >= 0 && !ed_.color_picker.dropping() && im().picking() && im().color(true) == want && untouched(),
+                  "a click on pixel " + std::to_string(px) + ", " + std::to_string(py) + " of frame 2: the right colour " + im_rgb(im().color(true)) +
+                      ", the pixel's " + im_rgb(want));
+            break;
+        }
+        case 16:
+            check(element_text("ue-cp-hint").find("Взят пиксель") != std::string::npos, "the picker says what it took: " + element_text("ue-cp-hint"));
+            check(ue_press("ue-cp-cancel") && im().color(true) == kImTheme && im().color_theme(true) == "Рубиновый" && untouched(), "«Отмена»: «Рубиновый» again");
+            check(im_press("im-area-2") && im().area() == 1, "«Кадр 2»");
+            break;
+        // Strokes of both colours in frame 2: the pixels' RGBA exactly the colours', the other frames as they were.
+        case 17: {
+            key(SDLK_B, SDL_KMOD_NONE);
+            check(im().tool() == "pencil" && im().size() == 1, "B: the pencil, brush 1");
+            im_before_ = im().image();
+            im_cursor_ = im().history().cursor();
+            check(im_stroke({{36, 20}, {44, 20}}) && im_stroke({{36, 24}, {44, 24}}, true), "a stroke with the left button and one with the right, in frame 2");
+            assets::CookedTexture want = im_before_;
+            for (u32 x = 36; x <= 44; ++x) {
+                assets::set_pixel(want, x, 20, kImHalf);
+                assets::set_pixel(want, x, 24, kImTheme);
+            }
+            bool others = true;
+            for (u32 f : {0u, 2u, 3u}) others = others && im_frame(im().image(), 4, f) == im_frame(im_before_, 4, f);
+            check(im_same(im().image(), want) && others && im().history().cursor() == im_cursor_ + 2,
+                  "frame 2: 9 pixels 40 90 250 102 and 9 pixels 200 60 30 180, the colours exactly; frames 1, 3, 4 byte for byte as they were; two steps");
+            im_want_ = want;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(im_same(im().image(), im_before_) && im().history().cursor() == im_cursor_, "Ctrl+Z twice: frame 2 as it was");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(im_same(im().image(), im_want_) && im().history().cursor() == im_cursor_ + 2, "Ctrl+Y twice: both strokes again");
+            check(tg_bytes(as().abs(ruby)) == im_file0_ && tg_bytes(copy) == im_copy0_, "unsaved: the file and the game's copy as they were");
+            check(click_tab(8), "«Интерфейс»: «Рубиновый» changed after the strokes");
+            break;
+        }
+        case 18:
+            if (hold(shown("ue-library"), "its screens are listed")) return true;
+            check(ue_press("ue-library") && ue().library_open(), "«Компоненты»");
+            break;
+        case 19: {
+            const std::string swatch = "ue-sw-color-" + std::to_string(im_theme_);
+            if (hold(shown(swatch), "«Рубиновый»'s row")) return true;
+            check(ue_press(swatch) && ue().picker_open(), "«Рубиновый»'s swatch: the picker");
+            break;
+        }
+        case 20:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#10A040") && ue_press("ue-cp-done") &&
+                      ue().library().colors.at(static_cast<usize>(im_theme_)).color == editor::design::Color{16, 160, 64, 255},
+                  "«Рубиновый» is #10A040 now");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(click_tab(4), "«Изображения»");
+            break;
+        case 21:
+            if (hold(ed_.tab() == "images", "the tab")) return true;
+            check(im_same(im().image(), im_want_) && assets::pixel_at(im().image(), 36, 24) == kImTheme && im().color(true) == kImTheme,
+                  "the game colour changed: the pixels drawn with it and the brush keep the RGBA copied (" + im_rgb(im().color(true)) + ")");
+            check(im_press("im-area-3") && im().area() == 2, "back to «Кадр 3»");
+            check(im_press("im-c1"), "the left colour's picker");
+            break;
+        case 22:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#285afa") && ue_press("ue-cp-done") && im().color() == kImMark, "«#285afa» again, as before path A");
+            im_pal_ = -1;
+            return false;
+        default: break;
+        }
+        ++im_pal_;
+        return true;
+    }
+
+    // Path B (decision 9: what only the game has is shown, not changed), after the JPEG's saves. Before it, the JPEG
+    // open: the picker opened, a colour cancelled, another kept — nothing written or encoded. The game's
+    // pictures/интерфейс/ (the editor's frames, no line in sources.json) and two put there by another program are listed
+    // apart, «Только в игре»; one opened: its pixels on the canvas, where it is from, why it is shown only. The viewer's
+    // own things work (the zoom, the frames, an area, the tools, the colours, the eyedropper); every change asked for is
+    // refused and said why — the mouse on the canvas, the tools' keys, the buttons of «Трансформации», «Эффекты» and the
+    // saves, Enter and Esc, Ctrl+Z, Ctrl+Y, Ctrl+S, the project saved and the tab's methods themselves; the project's
+    // folder (the picture, game/sources.json, «Ресурсы», .forge) and «Картинки Б» byte for byte as before. A picture of
+    // «Ресурсы» of the same name is another one: each its own pixels and history. The game's file changed by another
+    // program, gone, come back: shown as it is, no step, no banner, the same picture. A picture of «Ресурсы» of the same
+    // bytes linked to another file since: that one stays shown only, its picture of «Ресурсы» opens as itself, apart.
+    bool images_view_step() {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game", b = im_mine("Картинки Б");
+        const char* const photo = "картинки/фон.jpg";
+        const char* const same = "картинки/только_в_игре.png";
+        const char* const linked = "картинки/позже_в_ресурсах.png";
+        const std::string only = "pictures/только_в_игре.png", later = "pictures/позже_в_ресурсах.png", art = "pictures/интерфейс/рамка_дерево.png";
+        const bool idle = !as().busy();
+        auto record = [&](const char* rel) { return as().record_of(as().abs(rel)); };
+        // The note says what was refused, and why: only shown.
+        auto refused = [&](const std::string& what) { return im().note().rfind(what + " — только просмотр: ", 0) == 0; };
+        auto as_shown = [&] {
+            return im().view_only() && im().game_file() == only && im_same(im().image(), im_shown_) && im().history().cursor() == 0 &&
+                   !im().history().can_undo() && !im().dirty() && !im().trying() && im().unsaved() == im_unsaved_;
+        };
+        switch (im_view_) {
+        // The JPEG: the picker cancelled and kept, nothing written.
+        case 0:
+            check(im().rel() == photo && !im().dirty(), "«фон.jpg» open, saved");
+            im_bytes_ = tg_bytes(as().abs(photo));
+            im_cursor_ = im().history().cursor();
+            check(im_press("im-c1") && im().picking(), "the left colour's picker over the JPEG");
+            break;
+        case 1:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#00FFFF") && im().color() == assets::Rgba{0, 255, 255, 255}, "#00FFFF");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!im().picking() && im().color() == kImMark && tg_bytes(as().abs(photo)) == im_bytes_ && im().history().cursor() == im_cursor_ &&
+                      !im().dirty() && !as().looking(),
+                  "Esc: «#285afa» again; the JPEG, its history and «Ресурсы» as they were");
+            check(im_press("im-c1"), "the picker again");
+            break;
+        case 2:
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            check(ue_type("ue-cp-hex", "#FF00FF80") && ue_press("ue-cp-done") && im().color() == assets::Rgba{255, 0, 255, 128},
+                  "#FF00FF80, «Готово»: the brush 255 0 255 128");
+            check(tg_bytes(as().abs(photo)) == im_bytes_ && im().history().cursor() == im_cursor_ && !im().dirty() && !as().looking(),
+                  "the JPEG not written nor encoded again, no step, «Ресурсы» not asked to look");
+            check(write_file_atomic(game / utf8_path(only), im_encoded(im_only(0))) && write_file_atomic(game / utf8_path(later), im_encoded(im_only(2))),
+                  "another program puts «только_в_игре.png» and «позже_в_ресурсах.png» in the game's pictures/");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        case 3: {
+            if (hold(idle && im_game_listed(only) && im_game_listed(later) && !im_game_row(only).empty(), "F5: the tab lists them")) return true;
+            const std::vector<std::string> game_rows = im().game_listed();
+            std::string rows;
+            for (const std::string& r : game_rows) rows += " " + r;
+            check(im_game_listed(art) && !im_listed(only) && !im_listed(art) && !ed_.sources.of_file(only) && !ed_.sources.of_file(art) &&
+                      !ed_.sources.of_file(later) && !im_game_listed("pictures/рубин.png"),
+                  "«Только в игре»: the editor's frames of pictures/интерфейс/ and the two, none of «Ресурсы», none in sources.json, no copy of «Ресурсы»:" + rows);
+            std::string heads;
+            for (int i = 0; i < 200; ++i)
+                if (Rml::Element* e = ed_.find_element(("im-head-" + std::to_string(i)).c_str()); e && e->IsClassSet("game")) heads += " «" + e->GetInnerRML() + "»";
+            check(heads.find("Только в игре: pictures/интерфейс") != std::string::npos && heads.find("Только в игре: pictures<") != std::string::npos,
+                  "under headers of their own:" + heads);
+            im_tree_ = pj_tree(a);
+            im_btree_ = pj_tree(b);
+            im_unsaved_ = im().unsaved();
+            check(im_press(im_game_row(art)), "a click on «рамка_дерево.png»");
+            break;
+        }
+        case 4: {
+            if (hold(im().view_only() && shown("im-view"), "it is shown")) return true;
+            const assets::CookedTexture file = im_read(game / utf8_path(art));
+            check(im().game_file() == art && file.width > 0 && im_same(im().image(), file) && im().asset_id().is_null(),
+                  "«рамка_дерево.png» shown: the file's pixels, " + std::to_string(file.width) + " × " + std::to_string(file.height) + ", no id of «Ресурсы»");
+            check(im_press(im_game_row(only)), "a click on «только_в_игре.png»");
+            break;
+        }
+        case 5: {
+            if (hold(im().game_file() == only && shown("im-view"), "it is shown")) return true;
+            if (wait(2)) return true;
+            im_shown_ = im_only(0);
+            check(im().view_only() && im_same(im().image(), im_shown_) && im().asset_id().is_null() && im().copy_of().empty() && !im().dirty(),
+                  "«только_в_игре.png»: its pixels (32 × 16, two halves, a clear pixel, a half-clear one), shown only, no id of «Ресурсы»");
+            f32 x = 0, y = 0;
+            u8 at[4] = {};
+            const bool read = im().screen_of(8.5f, 8.5f, x, y) && frame_pixel(x, y, at);
+            check(read && im_near(at, assets::pixel_at(im_shown_, 8, 8), 0), "the canvas draws it: " + im_rgb(at));
+            check(shown("im-view-mark") && element_text("im-name") == "игра: " + only && pj_class(im_game_row(only).c_str(), "selected"),
+                  "the crumb: «" + element_text("im-name") + "», «только просмотр»; its row chosen");
+            const std::string why = element_text("im-view-text");
+            check(why.find("есть только в игре") != std::string::npos && why.find("sources.json") != std::string::npos && !shown("im-open-copy"),
+                  "the banner says where it is from and why: " + why);
+            check(im().status().find("(только просмотр)") != std::string::npos, "the status: " + im().status());
+            break;
+        }
+        // The viewer's own: the zoom, the frames, an area, the tools, the colours, the eyedropper.
+        case 6: {
+            if (im_sub_ == 0) {
+                const u32 z = im().zoom();
+                const bool zoomed = im_press("im-zoom-in") && im().zoom() > z;
+                const u32 in = im().zoom();
+                check(zoomed && im_press("im-fit") && im().zoom() == z, "«+» zooms in (" + std::to_string(z) + " → " + std::to_string(in) + "), «Вписать» back");
+                check(im_press("im-frames-more") && im().frames() == 2, "«Кадров в картинке»: 2");
+                im_sub_ = 1;
+                return true;
+            }
+            if (hold(shown("im-area-2"), "its frames' chips")) return true;
+            im_sub_ = 0;
+            check(im_press("im-area-2") && im().area_rect() == assets::PixelRect{16, 0, 16, 16}, "«Кадр 2»: its right half");
+            key(SDLK_I, SDL_KMOD_NONE);
+            check(im().tool() == "picker" && im_click(20, 8) && im().color() == assets::pixel_at(im_shown_, 20, 8), "I and a click: the left colour taken from it");
+            check(im_click(1, 0, SDL_KMOD_ALT, true) && im().color(true) == assets::Rgba{255, 255, 255, 128}, "Alt and a right click on the half-clear pixel: 255 255 255 128");
+            const assets::Rgba left = im().color(), right = im().color(true);
+            key(SDLK_X, SDL_KMOD_NONE);
+            check(im().color() == right && im().color(true) == left, "X swaps them");
+            check(as_shown(), "the picture as it was, no history, nothing unsaved");
+            break;
+        }
+        // Every change asked for: refused, and said why.
+        case 7: {
+            // done: what was asked for was asked (the button there, the mouse on the canvas); the note read after it.
+            auto refusal = [&](bool done, const std::string& what, const std::string& label) {
+                const bool ok = done && refused(what) && as_shown();
+                check(ok, label + ": «" + im().note().substr(0, im().note().find(':')) + "», the picture as it was");
+            };
+            key(SDLK_B, SDL_KMOD_NONE);
+            refusal(im_stroke({{18, 4}, {28, 4}}), "Карандаш", "a stroke of the pencil (B)");
+            key(SDLK_E, SDL_KMOD_NONE);
+            refusal(im_stroke({{18, 6}, {28, 6}}), "Ластик", "the eraser (E)");
+            key(SDLK_G, SDL_KMOD_NONE);
+            refusal(im_click(20, 10, SDL_KMOD_NONE, true), "Заливка", "the fill (G) with the right button");
+            key(SDLK_B, SDL_KMOD_NONE);
+            refusal(im_click(20, 12, SDL_KMOD_SHIFT), "Карандаш", "a line with Shift");
+            for (const char* id : {"im-flip-h", "im-flip-v"}) refusal(im_press(id), "Отразить", id);
+            for (const char* id : {"im-turn-cw", "im-turn-ccw", "im-turn-half"}) refusal(im_press(id), "Повернуть", id);
+            check(im_press("im-area-0") && im().area() == -1, "«Вся картинка»");
+            for (const char* id : {"im-half", "im-double", "im-resize"}) refusal(im_press(id), "Размер", id);
+            refusal(im_press("im-canvas-set"), "Холст", "«Изменить холст»");
+            refusal(im_press("im-trim"), "Обрезать", "«Обрезать»");
+            check(im_press("im-frames-less") && im().frames() == 1, "back to 1 frame");
+            refusal(im_press("im-grid"), "Сетка кадров", "«В полосу»");
+            for (const char* id : {"im-fx-invert", "im-fx-hue", "im-fx-gray"}) refusal(im_press(id) && !im().trying(), "Эффект", std::string(id) + ", not even tried");
+            key(SDLK_RETURN, SDL_KMOD_NONE);
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(as_shown(), "Enter, Esc: nothing");
+            refusal(im_press("im-save"), "Не сохранено", "«Сохранить»");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            refusal(true, "Не сохранено", "Ctrl+S");
+            for (const auto& [id, format] : std::vector<std::pair<const char*, const char*>>{
+                     {"im-as-png", "PNG"}, {"im-as-webp", "WebP"}, {"im-as-bmp", "BMP"}, {"im-as-tga", "TGA"}, {"im-as-jpg", "JPEG"}})
+                refusal(im_press(id) && im().warning().empty(), std::string("Не сохранено как ") + format, std::string("«Сохранить как…» ") + format);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            refusal(true, "Отменять нечего", "Ctrl+Z");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            refusal(true, "Повторять нечего", "Ctrl+Y");
+            std::string why;
+            check(ed_.save_unsaved(why) && why.empty() && as_shown(), "the project saved (what «Сохранить» of the window about unsaved work does)" + why);
+            // The tab's methods themselves, not only its buttons and keys.
+            check(!im().turn(assets::Turn::Cw) && !im().resize(64, 32, false) && !im().canvas(40, 20, assets::Anchor::Center) && !im().trim() &&
+                      !im().grid_to_strip(16, 16, 1) && !im().try_effect({assets::EffectKind::Invert, 0, 0, 0, {}, {}}) && !im().apply_effect() &&
+                      !im().save() && !im().save_as(".png") && !im().save_as(".jpg", true) && !im().take_disk() && !im().keep_mine() && as_shown(),
+                  "the tab's methods refuse too");
+            break;
+        }
+        case 8: {
+            if (hold(idle && !as().looking(), "«Ресурсы» at rest")) return true;
+            const auto now = pj_tree(a);
+            std::string differ;
+            for (const auto& [path, bytes] : now)
+                if (!im_tree_.count(path) || im_tree_.at(path) != bytes) differ += " " + path;
+            for (const auto& [path, bytes] : im_tree_)
+                if (!now.count(path)) differ += " -" + path;
+            check(differ.empty() && pj_tree(b) == im_btree_ && !record(same) && !as().record_of(game / utf8_path(only)),
+                  "the project's folder byte for byte as before (the picture, game/sources.json, «Ресурсы», .forge: " + std::to_string(now.size()) +
+                      " files), «Картинки Б» too; no resource made of it" + differ);
+            check(write_file_atomic(as().abs(same), im_encoded(im_only(3))),
+                  "another program puts a picture of the same name, «только_в_игре.png», in «Ресурсы»: other pixels");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        // The same name in «Ресурсы»: another picture.
+        case 9:
+            if (hold(idle && record(same) && !im_row(same).empty(), "F5: listed")) return true;
+            check(im_game_listed(only) && !ed_.sources.of_file(only) && im().game_file() == only, "the game's file still the game's alone: a name links nothing");
+            check(pj_click_s(im_row(same)) && im().rel() == same && !im().view_only() && !im().asset_id().is_null() && im_same(im().image(), im_only(3)),
+                  "«картинки/только_в_игре.png» of «Ресурсы» opens as itself: its own pixels and id, it can be changed");
+            key(SDLK_B, SDL_KMOD_NONE);
+            check(im_stroke({{2, 2}, {6, 2}}) && im().dirty(), "a stroke on it, unsaved");
+            im_want_ = im().image();
+            check(im_press(im_game_row(only)) && im().view_only() && im().game_file() == only && im_same(im().image(), im_shown_) &&
+                      im().history().cursor() == 0 && !im().dirty() && im().asset_id().is_null(),
+                  "the game's file of the same name: its own pixels, nothing of the stroke, no history of its own");
+            check(pj_click_s(im_row(same)) && im().rel() == same && im_same(im().image(), im_want_) && im().dirty(), "back: the stroke kept there");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!im().dirty() && im_same(im().image(), im_only(3)), "Ctrl+Z: as its file");
+            check(im_press(im_game_row(only)) && im().game_file() == only, "the game's file again");
+            break;
+        // The game's file changed by another program, gone, come back.
+        case 10: {
+            assets::CookedTexture other = im_only(0);
+            assets::apply_effect(other, assets::whole_rect(other), {assets::EffectKind::Invert, 0, 0, 0, {}, {}});
+            im_want_ = other;
+            check(write_file_atomic(game / utf8_path(only), im_encoded(other)), "another program changes it (inverted)");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 11:
+            if (hold(idle && im_same(im().image(), im_want_), "F5: shown as it is now")) return true;
+            check(im().view_only() && im().game_file() == only && im().asset_id().is_null() && im().history().cursor() == 0 && !im().dirty() && !im().outside() &&
+                      !shown("im-outside"),
+                  "the same picture shown as the file is now: no step, nothing unsaved, no banner of a change");
+            check(fs::remove(game / utf8_path(only), ec), "another program deletes it");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        case 12:
+            if (hold(idle && im().missing(), "F5: it is gone")) return true;
+            if (wait(2)) return true;
+            check(im_game_listed(only) && im_same(im().image(), im_want_) && element_text("im-view-text").find("Файла больше нет в игре") != std::string::npos &&
+                      im().status().find("файла больше нет в игре") != std::string::npos,
+                  "still listed while shown, as it was: " + element_text("im-view-text"));
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(refused("Не сохранено") && !fs::exists(game / utf8_path(only), ec), "Ctrl+S does not write it back");
+            check(write_file_atomic(game / utf8_path(only), im_encoded(im_only(0))), "another program puts it back as it first was");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        case 13:
+            if (hold(idle && !im().missing() && im_same(im().image(), im_shown_), "F5: it is back")) return true;
+            check(as_shown(), "back: shown as it is, the same picture, no history");
+            check(im_press(im_game_row(later)) && im().game_file() == later && im_same(im().image(), im_only(2)), "«позже_в_ресурсах.png» shown");
+            check(write_file_atomic(as().abs(linked), tg_bytes(game / utf8_path(later))), "another program puts its very bytes in «Ресурсы»");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        // Linked since: a copy of «Ресурсы» now.
+        case 14: {
+            if (hold(idle && record(linked), "F5: «Ресурсы» find it")) return true;
+            check(im().view_only() && im().copy_of().empty() && !ed_.sources.of_file(later) && im_game_listed(later),
+                  "the same bytes in «Ресурсы» link nothing by themselves");
+            // Picked for the game as «Объекты», «Интерфейс» and «Уровень» pick a picture of «Ресурсы» (their copy_in): the
+            // file of the same bytes there is taken as its copy, not copied again.
+            const std::optional<std::string> name = ed_.copy_from_assets(as().abs(linked), game / "pictures");
+            const editor::sources::Entry* e = ed_.sources.of_file(later);
+            check(name && *name == "позже_в_ресурсах.png" && e && e->asset == record(linked)->id && tg_bytes(game / utf8_path(later)) == tg_bytes(as().abs(linked)),
+                  "picked for the game: sources.json takes «позже_в_ресурсах.png» as the copy of «" + std::string(linked) + "»");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 15: {
+            if (hold(idle && im().copy_of() == linked, "the tab sees it")) return true;
+            if (wait(2)) return true;
+            check(im().view_only() && im().game_file() == later && im().asset_id().is_null() && !im_game_listed(later) && shown("im-open-copy") &&
+                      element_text("im-view-text").find(std::string("копия «") + linked) != std::string::npos &&
+                      im().status().find("теперь копия") != std::string::npos,
+                  "still shown only, as the game's file: «" + element_text("im-view-text") + "»");
+            const usize open = im().open_count();
+            check(im_press("im-open-copy") && im().rel() == linked && !im().view_only() && record(linked) && im().asset_id() == record(linked)->id &&
+                      im().open_count() == open + 1 && im_same(im().image(), im_only(2)),
+                  "«Открыть «" + std::string(linked) + "»»: the picture of «Ресурсы», as itself, apart");
+            im_rec_["only_hash"] = editor::sources::hash_of(tg_bytes(game / utf8_path(only)));
+            check(pj_click_s(im_row(photo)) && im().rel() == photo && !im().dirty(), "back to «фон.jpg»");
+            im_view_ = -1;
+            return false;
+        }
+        default: break;
+        }
+        ++im_view_;
+        return true;
+    }
+
+    // In the editor of «Картинки Б» (--self-test images-b), after «Картинки А»'s: its own «только_в_игре.png», other
+    // pixels than A's of that name, shown only; Ctrl+S and a stroke refused, nothing written.
+    bool images_b_step() {
+        const std::string only = "pictures/только_в_игре.png";
+        switch (im_step_) {
+        case 0:
+            check(pjw().config().title == "Картинки Б", "the editor has «Картинки Б» open");
+            check(click_tab(4), "«Изображения»");
+            break;
+        case 1:
+            if (hold(ed_.tab() == "images" && !im_game_row(only).empty(), "the tab lists the game's pictures")) return true;
+            check(im_press(im_game_row(only)) && im().view_only() && im().game_file() == only && im_same(im().image(), im_only(1)) &&
+                      !im_same(im().image(), im_only(0)) && im().asset_id().is_null(),
+                  "«только_в_игре.png» of «Картинки Б»: its own pixels, not those of A's file of the same name");
+            break;
+        case 2: {
+            if (hold(shown("im-view") && shown("im-canvas-img"), "it is shown")) return true;
+            if (wait(2)) return true;
+            const std::vector<u8> was = tg_bytes(pjw().config().root / "game" / utf8_path(only));
+            key(SDLK_S, SDL_KMOD_CTRL);
+            const bool refused = im().note().rfind("Не сохранено — только просмотр: ", 0) == 0;
+            check(refused, "Ctrl+S: «" + im().note().substr(0, im().note().find(':')) + "»");
+            key(SDLK_B, SDL_KMOD_NONE);
+            const bool stroke = im_stroke({{4, 4}, {10, 4}});
+            check(stroke && im().note().rfind("Карандаш — только просмотр: ", 0) == 0 && im_same(im().image(), im_only(1)) && !im().dirty() &&
+                      tg_bytes(pjw().config().root / "game" / utf8_path(only)) == was,
+                  "a stroke: refused; the file as it was");
+            return false;
+        }
+        default: break;
+        }
+        ++im_step_;
+        return true;
+    }
+
     bool images_step() {
         namespace fs = std::filesystem;
         std::error_code ec;
@@ -20178,6 +20797,10 @@ private:
                 if (!im_b_.count(mine) || (mine != "game/game.json" && im_b_.at(mine) != bytes)) differ += " " + mine;
             }
             check(differ.empty() && files > 60, "«Картинки Б»: the template's game and «Ресурсы», file for file (" + std::to_string(files) + ")" + differ);
+            // A picture only B's game has, of the name A's will have (other pixels): images-b shows it.
+            check(write_file_atomic(b / "game" / "pictures" / utf8_path("только_в_игре.png"), im_encoded(im_only(1))),
+                  "another program puts «только_в_игре.png» in «Картинки Б»'s pictures/");
+            im_b_ = pj_tree(b);
             tg_snap("Картинки Б до", im_b_, im_root());
             // «Картинки А»: its editor draws in «Изображения», saves and closes.
             pjw().configure(ng_launching({"--self-test", "images-a"}, 300));
@@ -20199,6 +20822,9 @@ private:
             code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"), "--self-test", "images-a-again"}, other);
             check(code == 0, "opened again elsewhere: the pictures as saved; a game of another process draws the author's pixels and "
                              "frames (images-a-again: exit " + std::to_string(code) + ")");
+            // B, an editor of its own: its picture of the name A's has, its own pixels, shown only.
+            code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(b / "project.forge"), "--self-test", "images-b"}, other);
+            check(code == 0, "«Картинки Б» opened: its own «только_в_игре.png» shown only (images-b: exit " + std::to_string(code) + ")");
             const auto tmpl = mt_template(), btree = pj_tree(b);
             check(tg_snap("шаблон после", tmpl, im_root()) == tg_digest(im_tmpl_) && tmpl == im_tmpl_, "the template byte for byte as before");
             check(tg_snap("Картинки Б после", btree, im_root()) == tg_digest(im_b_) && btree == im_b_, "«Картинки Б» byte for byte as before");
@@ -20336,12 +20962,23 @@ private:
             check(im_press("im-area-1"), "«Кадр 1»");
             break;
         }
-        // Frame 1: the colour typed, three strokes of brush 4, a stroke into frame 2, a line with Shift.
+        // Frame 1: the colour typed in the picker, three strokes of brush 4, a stroke into frame 2, a line with Shift.
         case 9:
-            check(im().area() == 0 && im().area_rect() == assets::PixelRect{0, 0, 32, 32}, "the area: frame 1, 32 × 32 on the left");
-            check(im_type("im-hex", "#285afa"), "«#285afa» typed");
-            key(SDLK_RETURN, SDL_KMOD_NONE);
-            check(im().color() == kImMark, "Enter: the left button's colour " + im_rgb(im().color()));
+            if (im_sub_ == 0) {
+                check(im().area() == 0 && im().area_rect() == assets::PixelRect{0, 0, 32, 32}, "the area: frame 1, 32 × 32 on the left");
+                check(im_press("im-c1") && im().picking(), "a click on the left colour: the picker");
+                im_sub_ = 1;
+                return true;
+            }
+            if (hold(shown("ue-cp-hex"), "the picker is laid out")) return true;
+            im_sub_ = 0;
+            im_cursor_ = im().history().cursor();
+            {
+                const bool typed = ue_type("ue-cp-hex", "#285afa");
+                check(typed && im().color() == kImMark, "«#285afa» typed: the left button's colour " + im_rgb(im().color()) + " at once");
+            }
+            check(ue_press("ue-cp-done") && !im().picking() && im().color() == kImMark && im().history().cursor() == im_cursor_ && !im().dirty(),
+                  "«Готово»: kept; no step, nothing unsaved");
             check(im_press("im-size-4") && im().size() == 4, "brush 4");
             break;
         case 10: {
@@ -20441,8 +21078,10 @@ private:
                   "«Обрезать» of a frame refused too");
             break;
         }
-        // The canvas shows the working copy; another picture opened and back.
+        // Path A: the picker on both colours, strokes in frame 2. Then the canvas shows the working copy; another picture
+        // opened and back.
         case 16: {
+            if (im_pal_ >= 0 && images_palette_step()) return true;
             if (wait(2)) return true;
             im_mine_ = im().image();
             // An opaque pixel of the chosen frame (the others are drawn dimmed), nearest its middle.
@@ -20537,6 +21176,16 @@ private:
                   "game/sources.json: the copy of the same resource, the new content's hash");
             im_rec_["ruby_hash"] = e ? e->hash : std::string();
             im_rec_["ruby_mid"] = im_middles(im_mine_, 4);
+            {
+                // Path A's strokes in frame 2, alpha and all, and a pixel beside them, for the next editor and the game.
+                std::string px;
+                for (const auto& [x, y] : std::vector<std::pair<u32, u32>>{{36, 20}, {44, 20}, {36, 24}, {44, 24}, {45, 20}, {40, 22}})
+                    px += (px.empty() ? "" : " ") + std::to_string(x) + " " + std::to_string(y) + " " + im_rgb(assets::pixel_at(im_mine_, x, y));
+                check(assets::pixel_at(im_mine_, 36, 20) == kImHalf && assets::pixel_at(im_mine_, 44, 24) == kImTheme &&
+                          im_pixels_are(im_read(as().abs(ruby)), px) && im_pixels_are(im_read(copy), px),
+                      "the file and the game's copy: frame 2's strokes of the picker's colours, alpha and all (x y r g b a: " + px + ")");
+                im_rec_["ruby_px"] = px;
+            }
             check(lib.find("ruby")->look() != im_look0_ && lib.find("ruby")->picture == "рубин.png", "«Объекты»: «Рубин» looks anew, its picture the same file");
             check(click_tab(0), "«Уровень»");
             break;
@@ -20830,7 +21479,9 @@ private:
             key(SDLK_S, SDL_KMOD_CTRL);
             check(!im().dirty() && tg_bytes(as().abs(photo)) == im_saved_, "Ctrl+S writes the picture here over it, as saved before");
             break;
+        // Path B: the pictures only the game has. Then an effect of the JPEG tried and dropped.
         case 49:
+            if (im_view_ >= 0 && images_view_step()) return true;
             im_cursor_ = im().history().cursor();
             im_bytes_ = tg_bytes(as().abs(photo));
             check(im_press("im-fx-invert") && im().trying(), "«Инверсия» tried");
@@ -20886,6 +21537,8 @@ private:
             const assets::CookedTexture copy = im_read(game / "pictures" / utf8_path("рубин.png"));
             check(r && r->asset.to_string() == im_rec_["ruby_asset"] && r->hash == im_rec_["ruby_hash"] && im_middles(copy, 4) == im_rec_["ruby_mid"],
                   "«Рубин»'s picture in the game: the copy of the same resource, the author's pixels (" + im_middles(copy, 4) + ")");
+            check(im_pixels_are(copy, im_rec_["ruby_px"]) && im_pixels_are(im_read(as().abs(ruby)), im_rec_["ruby_px"]),
+                  "frame 2's strokes of the picker's colours, alpha and all: " + im_rec_["ruby_px"]);
             const objects::Template* t = lib.find(std::string_view(im_rec_["chip"]));
             const editor::sources::Entry* s = ed_.sources.of_file("pictures/лист.png");
             const assets::CookedTexture strip = im_read(game / "pictures" / utf8_path("лист.png"));
@@ -20906,9 +21559,19 @@ private:
             break;
         }
         case 2:
-            if (hold(ed_.tab() == "images" && !im_row(ruby).empty(), "the tab lists the pictures")) return true;
-            check(pj_click_s(im_row(ruby)) && im().rel() == ruby && im_middles(im().image(), 4) == im_rec_["ruby_mid"] && im().frames() == 4 && !im().dirty(),
+            if (hold(ed_.tab() == "images" && !im_row(ruby).empty() && !im_game_row("pictures/только_в_игре.png").empty(), "the tab lists the pictures")) return true;
+            check(pj_click_s(im_row(ruby)) && im().rel() == ruby && im_middles(im().image(), 4) == im_rec_["ruby_mid"] && im().frames() == 4 && !im().dirty() &&
+                      im_pixels_are(im().image(), im_rec_["ruby_px"]),
                   "«рубин.png» opens as saved, 4 frames, nothing unsaved");
+            {
+                const std::string only = "pictures/только_в_игре.png", later = "pictures/позже_в_ресурсах.png";
+                const editor::sources::Entry* e = ed_.sources.of_file(later);
+                check(im_press(im_game_row(only)) && im().view_only() && im().game_file() == only && im_same(im().image(), im_only(0)) &&
+                          im().asset_id().is_null() && editor::sources::hash_of(tg_bytes(game / utf8_path(only))) == im_rec_["only_hash"],
+                      "«только_в_игре.png» of the game: shown only, «Картинки А»'s pixels, not B's of that name");
+                check(!im_game_listed(later) && e && record("картинки/позже_в_ресурсах.png") && e->asset == record("картинки/позже_в_ресурсах.png")->id,
+                      "«позже_в_ресурсах.png»: a copy of «Ресурсы» since, not among the game's own");
+            }
             check(pj_click_s(im_row(sheet)) && im().rel() == sheet && im().frames() == 4 && im().frames_from().find("«Фишка»") != std::string::npos,
                   "«лист.png»: «Фишка»'s 4 frames");
             check(click_tab(8) && ue().open("hud"), "«Интерфейс», the HUD");
@@ -20935,6 +21598,7 @@ private:
             e.im_chip_name = "Фишка";
             e.im_chip_rgb = im_numbers(im_rec_["chip_mid"]);
             e.im_at = {kImCellX, kImCellY};
+            e.im_px = im_numbers(im_rec_["ruby_px"]);
             const int code = tg_play(&e, "ожидания изображения.json", im_root(), "images");
             check(code == 0, "a game of another process draws «Рубин» and «Фишка» of the author's pixels and frames (scene images: exit " +
                                  std::to_string(code) + ")");
@@ -21968,7 +22632,7 @@ int main(int argc, char** argv) {
                                          "animation",    "animation-a",     "animation-a-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
-                                         "match3-template-a-restored", "images", "images-a", "images-a-again"};
+                                         "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
@@ -21977,7 +22641,7 @@ int main(int argc, char** argv) {
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
                     "animation-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
-                    "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again)",
+                    "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b)",
                     app.options.self_part.c_str());
         return 2;
     }

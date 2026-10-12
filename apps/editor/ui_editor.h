@@ -45,6 +45,8 @@
 // ui/<name>.html at once (one step of the tab's history each; a drag is one
 // step).
 
+#include "color_picker.h"
+
 #include "forge/audio/screen_sounds.h"
 #include "forge/editor/color_pick.h"
 #include "forge/editor/document.h"
@@ -71,13 +73,15 @@
 
 namespace forge::editor_app {
 
-class UiEditor {
+class UiEditor : public ColorPicker::Client {
 public:
     // game_dir holds ui/ (made with a first screen when missing).
     bool init(ui::Ui& ui, const std::filesystem::path& game_dir);
     void shutdown();
     void bind(Rml::DataModelConstructor& model);
     void set_model(Rml::DataModelHandle handle) { model_ = handle; }
+    // The editor's one colour picker (13.4), shared with «Изображения».
+    void set_picker(ColorPicker* picker) { cp_ = picker; }
 
     // Shown or hidden with the tab: the screen is drawn only while shown.
     void set_shown(bool shown);
@@ -195,7 +199,7 @@ public:
     // history however many layers it changes; false when it does not fit.
     bool set_simple_property(const std::string& field, const std::string& value);
 
-    // --- the colour picker (13.4) ---
+    // --- the colour picker (13.4, ColorPicker) ---
     // A click on a colour's swatch, in either panel, opens it beside the
     // swatch: a square of saturation and brightness, the hue, the alpha over
     // a checkerboard, the HEX, the game's colours and an eyedropper. What it
@@ -203,6 +207,7 @@ public:
     // written or kept: «Готово» (or a click outside it) keeps it as one step
     // of the history, none when nothing changed; «Отмена» and Esc put
     // everything back as it was, links to the game's colours and styles too.
+    // The picker answers for this tab only while it is open for it.
     // field: a colour field of the full panel ("fill.0.color", "fill.0.color2"
     // (a gradient's last stop), "stroke.color", "effect.1.color",
     // "text_color", "screen.text_color", "screen.bars",
@@ -210,10 +215,10 @@ public:
     // library's page) or of the simple one ("simple.color",
     // "simple.text_color"). (x, y, w, h): the swatch, window pixels.
     bool open_picker(const std::string& field, f32 x = 0, f32 y = 0, f32 w = 0, f32 h = 0);
-    bool picker_open() const { return picker_.open; }
-    const std::string& picker_field() const { return picker_.field; }
-    editor::design::Color picker_color() const { return picker_.color; }
-    const std::string& picker_link() const { return picker_.link; }
+    bool picker_open() const { return cp_ && cp_->open_for(*this); }
+    const std::string& picker_field() const;
+    editor::design::Color picker_color() const;
+    const std::string& picker_link() const;
     // The picker's square, hue and alpha as the mouse sets them (0..1 each).
     void picker_square(f32 saturation, f32 brightness);
     void picker_hue(f32 at);
@@ -230,21 +235,18 @@ public:
     // colour shown there; a click anywhere else, the right button or Esc
     // puts it away. It neither selects nor changes another layer.
     void picker_dropper(bool on);
-    bool picker_dropping() const { return picker_.dropper; }
+    bool picker_dropping() const { return picker_open() && cp_->dropping(); }
     // The eyedropper on the screen as «Проверить» runs it (the game's values,
     // the player's size): the canvas comes alive with the picker still open on
     // the selected layers' colour. Its clicks are the eyedropper's, never the
     // game's (no button is pressed). Closing the picker, «Готово» or «Отмена»,
     // ends that check and shows the layers again.
     bool picker_live(bool on);
-    bool picker_living() const { return picker_.live; }
+    bool picker_living() const { return picker_open() && cp_->living(); }
     // Takes the colour the canvas shows at a window point; false off the screen.
-    bool picker_sample(f32 mx, f32 my);
+    bool picker_sample(f32 mx, f32 my) override;
     // keep: «Готово»; otherwise «Отмена».
     void close_picker(bool keep);
-    // After the UI's layout: the open picker beside its swatch, inside the
-    // window. True when it moved (the UI is laid out again to show it there).
-    bool place_picker(Rml::Context* context);
     // After the UI's layout: a field of a key row that moved (its time typed) keeps the keyboard on
     // that key's row, not on the neighbour's that took its place. True when the focus moved.
     bool follow_moved_key(Rml::Context* context);
@@ -513,36 +515,25 @@ private:
     std::string simple_shown(const std::string& field) const;
     void refresh_simple(const editor::design::Node* n);
 
-    // The colour picker.
-    struct Picker {
-        bool open = false, simple = false, linkable = false, dropper = false;
-        bool picked = false; // a colour was chosen (even the one it opened with): it goes to every selected layer
-        bool mixed = false;  // the selected layers differ in this colour (or its link)
-        bool live = false;   // «Проверить» runs for the eyedropper (picker_live)
-        std::string field, before, label, link, start_link;
-        editor::design::Color start{}, color{};
-        editor::design::Hsva hsva;
-        f32 ax = 0, ay = 0, aw = 0, ah = 0; // the swatch it opened from (window pixels)
-        f32 left = -1, top = -1;            // where it stands
-        int drag = 0;                       // the mouse holds 1: the square, 2: the hue, 3: the alpha
+    // The colour picker, open for this tab: what was there when it opened, the step's label.
+    ColorPicker* cp_ = nullptr;
+    struct PickerOpen {
+        bool simple = false;
+        std::string before, label;
     };
-    Picker picker_;
+    PickerOpen picker_;
     bool previewing_ = false; // commit() keeps nothing: the picker shows its colour
     Rml::Context* context_ = nullptr; // the editor's (the panels', the canvas's)
-    struct PickerView {
-        bool open = false, dropper = false, live = false, can_live = false;
-        Rml::String title, hex, alpha, hex_note, note, link, hint;
-        Rml::String old_swatch = "transparent", new_swatch = "transparent", hue_swatch = "#ff0000", alpha_bar = "none";
-        float sv_x = 0, sv_y = 0, hue_x = 0, alpha_x = 0; // percent
-    };
-    PickerView m_cp_;
     std::optional<editor::design::Color> color_of(const std::string& field) const;
     std::optional<editor::design::Color> color_of(const std::string& field, u32 id) const;
-    void picker_set(editor::design::Color c, const std::string& link);
-    void picker_preview();
-    void refresh_picker();
-    bool picker_event(const SDL_Event& e, f32 density, Rml::Context* context);
-    void picker_drag_to(f32 mx, f32 my, Rml::Context* context);
+    // ColorPicker::Client: the screen as it was when the picker opened, with the picker's colour (or game colour) on
+    // its field; kept as one step or put back; the eyedropper on «Проверить».
+    void picker_show(editor::design::Color color, const std::string& link) override;
+    void picker_closed(bool keep, bool live) override;
+    std::string picker_title() const override;
+    std::string picker_note() const override;
+    std::string picker_dropper_hint(bool live) const override;
+    bool picker_checking(bool on) override;
     void switch_checking(bool on);
 
     ui::Ui* ui_ = nullptr;

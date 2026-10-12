@@ -43,6 +43,9 @@ struct ImageEditor::Picture {
     bool outside = false;     // the file changed outside while there are unsaved changes
     bool missing = false;     // the file is gone
     bool kept = false;        // «Оставить мои»: the file is another program's, no state of the history is on disk
+    bool view_only = false;   // a picture of the game that «Ресурсы» has not: shown, never changed or written
+    std::string game_file;    // shown only: its path in the game ("pictures/интерфейс/рамка_дерево.png")
+    std::string copy_of;      // shown only: the picture of «Ресурсы» the file became a copy of since («картинки/x.png»)
 
     // What Ctrl+S would change on disk: the history away from its saved state, or the file kept off.
     bool unsaved() const { return kept || history.dirty(); }
@@ -96,6 +99,7 @@ std::string css_of(Rgba c) {
     return buf;
 }
 
+// A token of the theme ("#rrggbb" or "#rrggbbaa").
 bool parse_hex(std::string s, Rgba& out) {
     if (!s.empty() && s[0] == '#') s.erase(0, 1);
     if (s.size() != 6 && s.size() != 8) return false;
@@ -112,6 +116,15 @@ bool parse_hex(std::string s, Rgba& out) {
     }
     out = {v[0], v[1], v[2], v[3]};
     return true;
+}
+
+Rgba rgba_of(editor::design::Color c) { return {c.r, c.g, c.b, c.a}; }
+editor::design::Color color_of(Rgba c) { return {c.r, c.g, c.b, c.a}; }
+
+// The kinds of pictures the tab reads (decode_image).
+bool picture_extension(const std::string& ext) {
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".gif" || ext == ".psd" ||
+           ext == ".webp";
 }
 
 std::string count_words(u32 n, const char* one, const char* few, const char* many) {
@@ -186,6 +199,7 @@ void ImageEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("header", &ListRow::header);
         s.RegisterMember("selected", &ListRow::selected);
         s.RegisterMember("unsaved", &ListRow::unsaved);
+        s.RegisterMember("game", &ListRow::game);
         s.RegisterMember("index", &ListRow::index);
     }
     model.RegisterArray<std::vector<ListRow>>();
@@ -230,7 +244,12 @@ void ImageEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("im_size", &m_size_);
     model.Bind("im_c1", &m_c1_);
     model.Bind("im_c2", &m_c2_);
-    model.Bind("im_hex", &m_hex_);
+    model.Bind("im_c1_hex", &m_c1_hex_);
+    model.Bind("im_c2_hex", &m_c2_hex_);
+    model.Bind("im_color_note", &m_color_note_);
+    model.Bind("im_view", &m_view_);
+    model.Bind("im_view_text", &m_view_text_);
+    model.Bind("im_view_copy", &m_view_copy_);
     model.Bind("im_frames", &m_frames_);
     model.Bind("im_frames_own", &m_frames_own_);
     model.Bind("im_frames_from", &m_frames_from_);
@@ -263,20 +282,34 @@ void ImageEditor::bind(Rml::DataModelConstructor& model) {
     };
     on("im_open", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
-        if (i >= 0 && i < static_cast<int>(m_list_.size()) && !m_list_[static_cast<usize>(i)].header)
-            open(assets_.abs(m_list_[static_cast<usize>(i)].rel));
+        if (i < 0 || i >= static_cast<int>(m_list_.size()) || m_list_[static_cast<usize>(i)].header) return;
+        const ListRow& r = m_list_[static_cast<usize>(i)];
+        if (r.game) open_game(r.rel);
+        else open(assets_.abs(r.rel));
+    });
+    // Shown only, and a copy of «Ресурсы» since: its picture there, opened as itself.
+    on("im_open_copy", [this](Rml::Event&, const Rml::VariantList&) {
+        if (current_ && current_->view_only && !current_->copy_of.empty()) open(assets_.abs(current_->copy_of));
     });
     on("im_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { set_tool(arg_str(a, 0)); });
     on("im_size", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { set_size(static_cast<u32>(std::max(1, arg_int(a, 0, 1)))); });
     on("im_swap", [this](Rml::Event&, const Rml::VariantList&) { swap_colors(); });
-    on("im_hex", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
-        if (a.size() > 1 && a[1].Get<bool>() && !set_color(arg_str(a, 0))) say("«" + arg_str(a, 0) + "» — не цвет: #rrggbb или #rrggbbaa");
+    // A colour's swatch: the picker beside it.
+    on("im_color", [this, arg_int](Rml::Event& ev, const Rml::VariantList& a) {
+        ev.StopPropagation();
+        Rml::Element* swatch = ev.GetCurrentElement();
+        if (!swatch) return;
+        if (Rml::Context* c = swatch->GetContext()) context_ = c;
+        const Rml::Vector2f at = swatch->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f size = swatch->GetBox().GetSize(Rml::BoxArea::Border);
+        open_color(arg_int(a, 0) == 1, at.x, at.y, size.x, size.y);
     });
     on("im_pick", [this, arg_int](Rml::Event& ev, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
         if (i < 0 || i >= static_cast<int>(colors_.size())) return;
         const bool right = ev.GetParameter<int>("button", 0) == 1;
         (right ? second_ : first_) = colors_[static_cast<usize>(i)];
+        (right ? second_theme_ : first_theme_).clear();
         rebuild_panels();
     });
     on("im_area", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { set_area(arg_int(a, 0, -1)); });
@@ -403,6 +436,18 @@ bool ImageEditor::open(const fs::path& file) {
         say("Нет такой картинки в «Ресурсах»: " + path_to_utf8(file));
         return false;
     }
+    // A file of the game's folder is not of «Ресурсы»: it is shown only.
+    if (!r && !game_dir.empty()) {
+        const fs::path in_game = fs::weakly_canonical(file, ec).lexically_relative(fs::weakly_canonical(game_dir, ec));
+        if (!in_game.empty() && *in_game.begin() != "..") return open_game(path_to_utf8(in_game));
+    }
+    if (!r) {
+        const fs::path in_assets = fs::weakly_canonical(file, ec).lexically_relative(fs::weakly_canonical(assets_.root(), ec));
+        if (in_assets.empty() || *in_assets.begin() == "..") {
+            say("Не картинка «Ресурсов» и не картинка игры: " + path_to_utf8(file));
+            return false;
+        }
+    }
     if (r && r->type != "image") {
         say("«" + r->path + "» — не картинка");
         return false;
@@ -443,9 +488,91 @@ bool ImageEditor::open(const fs::path& file) {
     return true;
 }
 
+bool ImageEditor::open_game(const std::string& game_file_in) {
+    std::string rel = game_file_in;
+    std::replace(rel.begin(), rel.end(), '\\', '/');
+    if (game_dir.empty() || rel.rfind("pictures/", 0) != 0 || rel.find("/../") != std::string::npos || !picture_extension(extension_of(utf8_path(rel)))) {
+        say("Не картинка игры: «" + rel + "» (картинки игры — в её папке pictures)");
+        return false;
+    }
+    const fs::path file = game_dir / utf8_path(rel);
+    cancel_effect();
+    if (stroking_) release();
+    Picture* p = nullptr;
+    for (const auto& q : pictures_)
+        if (q->view_only && q->game_file == rel) p = q.get();
+    if (!p) {
+        auto made = std::make_unique<Picture>();
+        made->view_only = true;
+        made->game_file = rel;
+        made->file = file;
+        made->rel = rel;
+        made->ext = extension_of(file);
+        std::vector<u8> bytes;
+        std::string why;
+        if (!read_disk(*made, bytes, made->image, why)) {
+            say("«" + rel + "» не открывается: " + why);
+            return false;
+        }
+        made->disk_hash = editor::sources::hash_of(bytes);
+        made->copy_of = copy_from ? copy_from(rel) : std::string();
+        p = made.get();
+        pictures_.push_back(std::move(made));
+        FORGE_INFO("Изображения: показана картинка игры «%s» (%s, %s) — только просмотр", rel.c_str(), size_words(p->image).c_str(),
+                   format_of(p->ext).c_str());
+    }
+    current_ = p;
+    have_last_ = false;
+    warning_.clear();
+    jpg_asked_.clear();
+    note_.clear();
+    if (frames() > 1 && p->area >= static_cast<int>(frames())) p->area = -1;
+    colors_ = assets::picture_colors(p->image);
+    list_version_ = ~0ull;
+    touched();
+    return true;
+}
+
+bool ImageEditor::view_only() const { return current_ && current_->view_only; }
+std::string ImageEditor::game_file() const { return current_ && current_->view_only ? current_->game_file : std::string(); }
+std::string ImageEditor::copy_of() const { return current_ && current_->view_only ? current_->copy_of : std::string(); }
+bool ImageEditor::missing() const { return current_ && current_->missing; }
+
+std::string ImageEditor::view_reason(const Picture& p) const {
+    if (!p.copy_of.empty())
+        return "«" + p.game_file + "» — копия «" + p.copy_of + "» из «Ресурсов». Правьте «" + p.copy_of + "»: копия в игре обновится сама";
+    return "«" + p.game_file + "» есть только в игре, в «Ресурсах» его нет. Вкладка пишет картинки «Ресурсов», а игра получает их "
+           "копии через sources.json; файл, записанный прямо в игру, не был бы ничьей копией и разошёлся бы с ними";
+}
+
+bool ImageEditor::editable(const std::string& what) {
+    if (!current_) return false;
+    if (!current_->view_only) return true;
+    say(what + " — только просмотр: " + view_reason(*current_));
+    return false;
+}
+
+std::vector<std::string> ImageEditor::game_pictures() const {
+    std::vector<std::string> out;
+    std::error_code ec;
+    const fs::path root = game_dir / "pictures";
+    if (game_dir.empty() || !fs::is_directory(root, ec)) return out;
+    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) || !picture_extension(extension_of(it->path()))) continue;
+        const std::string rel = "pictures/" + path_to_utf8(it->path().lexically_relative(root));
+        if (copy_from && !copy_from(rel).empty()) continue; // a copy of «Ресурсы»: its picture there is the one to open
+        out.push_back(rel);
+    }
+    return out;
+}
+
 // --- history ---------------------------------------------------------------------------------------------------
 
 bool ImageEditor::commit(Picture& p, const CookedTexture& before, PixelRect changed, std::string label, u32 frames_before) {
+    if (p.view_only) {
+        p.image = before; // (nothing changes it: the actions refuse first)
+        return false;
+    }
     PixelStep::Side b, a;
     b.w = before.width;
     b.h = before.height;
@@ -473,6 +600,12 @@ bool ImageEditor::commit(Picture& p, const CookedTexture& before, PixelRect chan
 
 void ImageEditor::undo() {
     if (!current_) return;
+    // Ctrl+Z while the picker is open puts its colour back (as «Отмена»): the picture's history is not touched.
+    if (picking()) {
+        cp_->close(false);
+        return;
+    }
+    if (!editable("Отменять нечего")) return;
     cancel_effect();
     if (stroking_) release();
     if (current_->history.undo()) FORGE_INFO("Отменено");
@@ -481,6 +614,11 @@ void ImageEditor::undo() {
 
 void ImageEditor::redo() {
     if (!current_) return;
+    if (picking()) {
+        cp_->close(true);
+        return;
+    }
+    if (!editable("Повторять нечего")) return;
     cancel_effect();
     if (current_->history.redo()) FORGE_INFO("Повторено");
     have_last_ = false;
@@ -495,11 +633,14 @@ void ImageEditor::touched() {
 
 std::string ImageEditor::status() const {
     if (!current_) return "Изображения: выберите картинку слева или «Открыть в редакторе изображений» в «Ресурсах»";
-    std::string s = "Изображения: «" + current_->rel + "» · " + size_words(current_->image) + " · " + format_of(current_->ext);
+    std::string s = current_->view_only ? "Изображения: игра «" + current_->game_file + "» (только просмотр) · " + size_words(current_->image) + " · " +
+                                              format_of(current_->ext)
+                                        : "Изображения: «" + current_->rel + "» · " + size_words(current_->image) + " · " + format_of(current_->ext);
     if (frames() > 1) s += " · " + count_words(frames(), "кадр", "кадра", "кадров");
     if (current_->unsaved()) s += " · не сохранена";
     if (current_->outside) s += " · файл изменён снаружи";
-    if (current_->missing) s += " · файла нет";
+    if (current_->missing) s += current_->view_only ? " · файла больше нет в игре" : " · файла нет";
+    if (!current_->copy_of.empty()) s += " · теперь копия «" + current_->copy_of + "»";
     return s;
 }
 
@@ -526,20 +667,107 @@ void ImageEditor::set_size(u32 px) {
 }
 
 bool ImageEditor::set_color(const std::string& hex, bool secondary) {
-    Rgba c;
-    if (!parse_hex(hex, c)) return false;
-    (secondary ? second_ : first_) = c;
+    const std::optional<editor::design::Color> c = editor::design::parse_hex_input(hex);
+    if (!c) {
+        say("«" + hex + "» — не цвет: " + editor::design::hex_problem(hex));
+        return false;
+    }
+    (secondary ? second_ : first_) = rgba_of(*c);
+    (secondary ? second_theme_ : first_theme_).clear();
     rebuild_panels();
     return true;
 }
 
 void ImageEditor::swap_colors() {
+    if (picking()) return; // the picker has the keys
     std::swap(first_, second_);
+    std::swap(first_theme_, second_theme_);
     rebuild_panels();
+}
+
+// --- the colour picker (13.4) on the brush's colours ------------------------------------------------------------------
+
+bool ImageEditor::open_color(bool secondary, f32 x, f32 y, f32 w, f32 h) {
+    if (!cp_) return false;
+    if (picking()) cp_->close(true);
+    if (stroking_) release();
+    picking_second_ = secondary;
+    picking_was_ = secondary ? second_ : first_;
+    picking_was_theme_ = secondary ? second_theme_ : first_theme_;
+    ColorPicker::Request r;
+    r.field = secondary ? "image.right" : "image.left";
+    r.start = color_of(picking_was_);
+    r.linkable = false; // the picture keeps RGBA: a game colour is copied
+    r.x = x;
+    r.y = y;
+    r.w = w;
+    r.h = h;
+    return cp_->open(*this, r, context_);
+}
+
+void ImageEditor::picker_show(editor::design::Color color, const std::string& link) {
+    (void)link; // never followed: the brush keeps the colour's RGBA
+    Rgba& c = picking_second_ ? second_ : first_;
+    std::string& theme = picking_second_ ? second_theme_ : first_theme_;
+    c = rgba_of(color);
+    theme.clear();
+    if (cp_ && !cp_->theme_key().empty() && cp_->game_colors)
+        for (const editor::design::NamedColor& g : cp_->game_colors())
+            if (g.key == cp_->theme_key() && g.color == color) theme = g.name;
+    rebuild_panels();
+}
+
+void ImageEditor::picker_closed(bool keep, bool live) {
+    (void)live;
+    if (!keep) {
+        (picking_second_ ? second_ : first_) = picking_was_;
+        (picking_second_ ? second_theme_ : first_theme_) = picking_was_theme_;
+    }
+    rebuild_panels();
+}
+
+bool ImageEditor::picker_sample(f32 mx, f32 my) {
+    if (!current_ || canvas_w_ == 0 || mx < view_x_ || my < view_y_ || mx >= view_x_ + static_cast<f32>(canvas_w_) ||
+        my >= view_y_ + static_cast<f32>(canvas_h_))
+        return false;
+    // Not where the picker itself stands over the canvas.
+    if (context_)
+        for (int i = 0; i < context_->GetNumDocuments(); ++i)
+            if (Rml::Element* p = context_->GetDocument(i)->GetElementById("ue-picker"); p && p->IsVisible(true)) {
+                const Rml::Vector2f at = p->GetAbsoluteOffset(Rml::BoxArea::Border);
+                const Rml::Vector2f size = p->GetBox().GetSize(Rml::BoxArea::Border);
+                if (mx >= at.x && my >= at.y && mx < at.x + size.x && my < at.y + size.y) return false;
+            }
+    i32 x = -1, y = -1;
+    const CookedTexture& img = shown();
+    if (!to_pixel(mx, my, x, y) || x < 0 || y < 0 || static_cast<u32>(x) >= img.width || static_cast<u32>(y) >= img.height) return false;
+    const Rgba c = assets::pixel_at(img, static_cast<u32>(x), static_cast<u32>(y));
+    cp_->take(color_of(c), "Взят пиксель " + std::to_string(x) + ", " + std::to_string(y) + " картинки: " + hex_of(c) +
+                               (c.a == 0 ? " (прозрачный)" : c.a < 255 ? " (с прозрачностью)" : "") + ".");
+    return true;
+}
+
+std::string ImageEditor::picker_title() const { return picking_second_ ? "Цвет правой кнопки" : "Цвет левой кнопки"; }
+
+std::string ImageEditor::picker_note() const {
+    std::string note = "Цвет кисти. Картинка хранит пиксели RGBA: цвет игры копируется в кисть как есть, и если потом поменять его в "
+                       "«Компонентах», уже нарисованные пиксели не перекрасятся. Рисунок, файл и Ctrl+Z от выбора цвета не меняются.";
+    const std::string& theme = picking_second_ ? second_theme_ : first_theme_;
+    if (!theme.empty()) note = "Скопирован цвет игры «" + theme + "». " + note;
+    return note;
+}
+
+std::string ImageEditor::picker_dropper_hint(bool live) const {
+    (void)live;
+    return "Пипетка: щёлкните по картинке на холсте — возьмётся цвет её пикселя, с прозрачностью. Щелчок мимо картинки, правая кнопка "
+           "или Esc — убрать пипетку.";
 }
 
 u32 ImageEditor::frames() const {
     if (!current_) return 1;
+    if (current_->view_only && users_of_file)
+        for (const User& u : users_of_file(current_->game_file))
+            if (u.frames > 0) return u.frames;
     if (users_of && !current_->id.is_null())
         for (const User& u : users_of(current_->id))
             if (u.frames > 0) return u.frames;
@@ -548,8 +776,8 @@ u32 ImageEditor::frames() const {
 
 std::string ImageEditor::frames_from() const {
     if (!current_) return {};
-    if (users_of && !current_->id.is_null()) {
-        const std::vector<User> users = users_of(current_->id);
+    if ((users_of && !current_->id.is_null()) || (current_->view_only && users_of_file)) {
+        const std::vector<User> users = current_->view_only ? users_of_file(current_->game_file) : users_of(current_->id);
         if (!users.empty()) {
             std::string s = "«Кадров в картинке» шаблона «" + users.front().name + "»";
             for (usize i = 1; i < users.size(); ++i)
@@ -563,7 +791,8 @@ std::string ImageEditor::frames_from() const {
 
 bool ImageEditor::set_frames(u32 n) {
     if (!current_ || n < 1 || n > 64) return false;
-    if (users_of && !current_->id.is_null() && !users_of(current_->id).empty()) {
+    if ((current_->view_only && users_of_file && !users_of_file(current_->game_file).empty()) ||
+        (users_of && !current_->id.is_null() && !users_of(current_->id).empty())) {
         say("Число кадров задаёт «Кадров в картинке» шаблона в «Объектах»: " + frames_from());
         return false;
     }
@@ -607,9 +836,11 @@ void ImageEditor::press(i32 x, i32 y, bool secondary, bool shift, bool alt) {
         const CookedTexture& img = shown();
         if (x < 0 || y < 0 || static_cast<u32>(x) >= img.width || static_cast<u32>(y) >= img.height) return;
         (secondary ? second_ : first_) = assets::pixel_at(img, static_cast<u32>(x), static_cast<u32>(y));
+        (secondary ? second_theme_ : first_theme_).clear();
         rebuild_panels();
         return;
     }
+    if (!editable(tool == "fill" ? "Заливка" : tool == "eraser" ? "Ластик" : "Карандаш")) return;
     if (trying_) {
         say("Сначала «Применить» или «Отмена» эффекта");
         return;
@@ -664,7 +895,7 @@ void ImageEditor::release() {
 
 bool ImageEditor::turn(assets::Turn t) {
     Picture* p = current_;
-    if (!p) return false;
+    if (!p || !editable(t == assets::Turn::FlipH || t == assets::Turn::FlipV ? "Отразить" : "Повернуть")) return false;
     cancel_effect();
     const char* words = t == assets::Turn::Cw ? "Повернуть вправо" : t == assets::Turn::Ccw ? "Повернуть влево" : t == assets::Turn::Half ? "Повернуть на 180°"
                         : t == assets::Turn::FlipH ? "Отразить по горизонтали" : "Отразить по вертикали";
@@ -703,7 +934,7 @@ const char* kWholeOnly = "Размер меняется у всей картин
 
 bool ImageEditor::resize(u32 width, u32 height, bool smooth) {
     Picture* p = current_;
-    if (!p) return false;
+    if (!p || !editable("Размер")) return false;
     cancel_effect();
     if (p->area >= 0) {
         say(kWholeOnly);
@@ -729,7 +960,7 @@ bool ImageEditor::resize(u32 width, u32 height, bool smooth) {
 
 bool ImageEditor::canvas(u32 width, u32 height, assets::Anchor anchor) {
     Picture* p = current_;
-    if (!p) return false;
+    if (!p || !editable("Холст")) return false;
     cancel_effect();
     if (p->area >= 0) {
         say(kWholeOnly);
@@ -754,7 +985,7 @@ bool ImageEditor::canvas(u32 width, u32 height, assets::Anchor anchor) {
 
 bool ImageEditor::trim() {
     Picture* p = current_;
-    if (!p) return false;
+    if (!p || !editable("Обрезать")) return false;
     cancel_effect();
     if (p->area >= 0) {
         say(kWholeOnly);
@@ -792,7 +1023,7 @@ bool ImageEditor::trim() {
 
 bool ImageEditor::grid_to_strip(u32 frame_w, u32 frame_h, u32 columns) {
     Picture* p = current_;
-    if (!p) return false;
+    if (!p || !editable("Сетка кадров")) return false;
     cancel_effect();
     if (p->area >= 0) {
         say("«Сетка кадров» делает полосу из всей картинки: выберите «Вся картинка»");
@@ -845,7 +1076,7 @@ void ImageEditor::effect_from_panel() {
 }
 
 bool ImageEditor::try_effect(const assets::Effect& effect) {
-    if (!current_) return false;
+    if (!current_ || !editable("Эффект")) return false;
     if (stroking_) release();
     tried_ = current_->image;
     tried_changed_ = assets::apply_effect(tried_, area_rect(), effect);
@@ -858,7 +1089,7 @@ bool ImageEditor::try_effect(const assets::Effect& effect) {
 
 bool ImageEditor::apply_effect() {
     Picture* p = current_;
-    if (!p || !trying_) return false;
+    if (!p || !editable("Применить эффект") || !trying_) return false;
     static const char* names[] = {"Яркость и контраст", "Тон, насыщенность, светлота", "Инверсия", "Оттенки серого", "Контур",
                                   "Порог альфы", "Меньше цветов", "Замена цвета"};
     std::string label = names[static_cast<int>(tried_effect_.kind)];
@@ -915,6 +1146,8 @@ bool ImageEditor::write_picture(Picture& p, const fs::path& to, const std::strin
 bool ImageEditor::save() {
     Picture* p = current_;
     if (!p) return false;
+    if (picking()) cp_->close(true); // the colour as picked; the picture's file does not depend on it
+    if (!editable("Не сохранено")) return false;
     if (stroking_) release();
     if (p->missing) {
         say("Файла «" + p->rel + "» больше нет в «Ресурсах»: «Сохранить как…» запишет картинку новым файлом");
@@ -963,7 +1196,7 @@ bool ImageEditor::save_all(std::string& error) {
     Picture* was = current_;
     bool ok = true;
     for (const auto& p : pictures_) {
-        if (!p->unsaved()) continue;
+        if (p->view_only || !p->unsaved()) continue;
         current_ = p.get();
         if (!save()) {
             if (ok) error = "картинка «" + p->rel + "» не записана: " + note_;
@@ -978,7 +1211,7 @@ bool ImageEditor::save_all(std::string& error) {
 bool ImageEditor::save_as(const std::string& extension_in, bool confirm) {
     Picture* p = current_;
     const std::string extension = lower(extension_in);
-    if (!p || !assets::can_encode_image(extension)) return false;
+    if (!p || !editable("Не сохранено как " + format_of(extension)) || !assets::can_encode_image(extension)) return false;
     if (stroking_) release();
     cancel_effect();
     const bool jpg = extension == ".jpg" || extension == ".jpeg";
@@ -1030,7 +1263,7 @@ bool ImageEditor::outside() const { return current_ && current_->outside; }
 
 bool ImageEditor::take_disk() {
     Picture* p = current_;
-    if (!p) return false;
+    if (!p || !editable("«Взять с диска»")) return false;
     cancel_effect();
     std::vector<u8> bytes;
     CookedTexture disk;
@@ -1052,7 +1285,7 @@ bool ImageEditor::take_disk() {
 
 bool ImageEditor::keep_mine() {
     Picture* p = current_;
-    if (!p || !p->outside) return false;
+    if (!p || !editable("«Оставить мои»") || !p->outside) return false;
     std::vector<u8> bytes;
     if (read_file(p->file, bytes)) p->disk_hash = editor::sources::hash_of(bytes);
     p->outside = false;
@@ -1063,8 +1296,44 @@ bool ImageEditor::keep_mine() {
 }
 
 void ImageEditor::files_changed() {
+    game_files_known_ = false;
     for (const auto& up : pictures_) {
         Picture& p = *up;
+        if (p.view_only) {
+            // Shown only: the file as it is now, nothing to keep or ask about; its identity stays the game's file.
+            const std::string copy = copy_from ? copy_from(p.game_file) : std::string();
+            if (copy != p.copy_of) {
+                if (!copy.empty())
+                    FORGE_INFO("Изображения: «%s» теперь копия «%s» из «Ресурсов» — здесь по-прежнему только просмотр, правьте «%s»",
+                               p.game_file.c_str(), copy.c_str(), copy.c_str());
+                p.copy_of = copy;
+            }
+            std::vector<u8> bytes;
+            std::error_code ec;
+            if (!fs::is_regular_file(p.file, ec) || !read_file(p.file, bytes)) {
+                if (!p.missing) FORGE_WARN("Изображения: файла игры «%s» больше нет — показана картинка, какой была", p.game_file.c_str());
+                p.missing = true;
+                continue;
+            }
+            const std::string hash = editor::sources::hash_of(bytes);
+            if (hash == p.disk_hash && !p.missing) continue;
+            CookedTexture now;
+            if (!assets::decode_image(bytes, now)) {
+                FORGE_WARN("Изображения: «%s» в игре не читается как картинка — показана, какой была", p.game_file.c_str());
+                continue;
+            }
+            const bool back = p.missing;
+            p.image = std::move(now);
+            p.disk_hash = hash;
+            p.missing = false;
+            if (&p == current_) {
+                if (p.area >= 0 && assets::frame_rect(p.image, frames(), static_cast<u32>(p.area)).empty()) p.area = -1;
+                colors_of_ = nullptr; // its colours again
+            }
+            FORGE_INFO("Изображения: картинка игры «%s» %s — показана как сейчас (только просмотр)", p.game_file.c_str(),
+                       back ? "снова на месте" : "изменена снаружи");
+            continue;
+        }
         const assets::AssetRecord* r = p.id.is_null() ? assets_.record_of(p.file) : assets_.find_id(p.id);
         if (r) {
             if (p.id.is_null()) p.id = r->id;
@@ -1167,6 +1436,9 @@ void ImageEditor::sync_hover() {
 
 bool ImageEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rml::Context* context) {
     (void)ui_used;
+    if (context) context_ = context;
+    // The picker open on a colour has the mouse (its eyedropper the picture's pixels) and Esc.
+    if (picking() && cp_->handle_event(e, density, context)) return true;
     switch (e.type) {
     case SDL_EVENT_KEY_UP:
         if (e.key.key == SDLK_SPACE) space_ = false;
@@ -1261,6 +1533,7 @@ bool ImageEditor::handle_event(const SDL_Event& e, f32 density, bool ui_used, Rm
 }
 
 bool ImageEditor::handle_key(const SDL_KeyboardEvent& k) {
+    if (picking()) return cp_->handle_key(k); // Esc, Enter; the tab's keys wait
     if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) return false;
     switch (k.key) {
     case SDLK_SPACE: space_ = true; return true;
@@ -1291,7 +1564,14 @@ bool ImageEditor::handle_key(const SDL_KeyboardEvent& k) {
 std::vector<std::string> ImageEditor::listed() const {
     std::vector<std::string> out;
     for (const ListRow& r : m_list_)
-        if (!r.header) out.push_back(r.rel);
+        if (!r.header && !r.game) out.push_back(r.rel);
+    return out;
+}
+
+std::vector<std::string> ImageEditor::game_listed() const {
+    std::vector<std::string> out;
+    for (const ListRow& r : m_list_)
+        if (!r.header && r.game) out.push_back(r.rel);
     return out;
 }
 
@@ -1320,14 +1600,50 @@ void ImageEditor::rebuild_list() {
         r.folder = folder;
         r.index = static_cast<int>(rows.size());
         for (const auto& p : pictures_)
-            if (p->rel == rel) {
+            if (!p->view_only && p->rel == rel) {
                 r.unsaved = p->unsaved();
                 r.selected = p.get() == current_;
             }
         rows.push_back(r);
     }
+    // The game's pictures that «Ресурсы» has not: shown only. (Looked for again after each look at the files, not
+    // after each stroke.)
+    if (!game_files_known_) {
+        game_files_ = game_pictures();
+        game_files_known_ = true;
+    }
+    std::vector<std::string> game = game_files_;
+    // (One open and gone since stays listed while it is open: the tab still shows it.)
+    for (const auto& p : pictures_)
+        if (p->view_only && p->missing && std::find(game.begin(), game.end(), p->game_file) == game.end()) game.push_back(p->game_file);
+    std::sort(game.begin(), game.end(), [](const std::string& a, const std::string& b) {
+        const std::string fa = alphabet_key(folder_of(a)), fb = alphabet_key(folder_of(b));
+        return fa != fb ? fa < fb : alphabet_key(name_of(a)) < alphabet_key(name_of(b));
+    });
+    folder = "\x01";
+    for (const std::string& rel : game) {
+        if (folder_of(rel) != folder) {
+            folder = folder_of(rel);
+            ListRow h;
+            h.header = true;
+            h.game = true;
+            h.name = "Только в игре: " + folder;
+            h.index = static_cast<int>(rows.size());
+            rows.push_back(h);
+        }
+        ListRow r;
+        r.rel = rel;
+        r.name = name_of(rel);
+        r.folder = folder;
+        r.game = true;
+        r.index = static_cast<int>(rows.size());
+        for (const auto& p : pictures_)
+            if (p->view_only && p->game_file == rel) r.selected = p.get() == current_;
+        rows.push_back(r);
+    }
     auto same = [](const ListRow& a, const ListRow& b) {
-        return a.rel == b.rel && a.name == b.name && a.header == b.header && a.selected == b.selected && a.unsaved == b.unsaved;
+        return a.rel == b.rel && a.name == b.name && a.header == b.header && a.selected == b.selected && a.unsaved == b.unsaved &&
+               a.game == b.game;
     };
     if (!std::equal(rows.begin(), rows.end(), m_list_.begin(), m_list_.end(), same)) {
         m_list_ = std::move(rows);
@@ -1349,7 +1665,19 @@ void ImageEditor::rebuild_panels() {
     set_value(m_size_, static_cast<int>(size_), model_, "im_size");
     set_value(m_c1_, Rml::String(css_of(first_)), model_, "im_c1");
     set_value(m_c2_, Rml::String(css_of(second_)), model_, "im_c2");
-    set_value(m_hex_, Rml::String(hex_of(first_)), model_, "im_hex");
+    set_value(m_c1_hex_, Rml::String(hex_of(first_)), model_, "im_c1_hex");
+    set_value(m_c2_hex_, Rml::String(hex_of(second_)), model_, "im_c2_hex");
+    {
+        std::string note;
+        auto copied = [&](const char* which, const std::string& name, Rgba c) {
+            if (name.empty()) return;
+            note += std::string(note.empty() ? "" : " ") + which + " " + hex_of(c) + " — копия цвета игры «" + name + "».";
+        };
+        copied("Левая", first_theme_, first_);
+        copied("Правая", second_theme_, second_);
+        if (!note.empty()) note += " Картинка хранит пиксели RGBA: если поменять цвет игры, нарисованное не изменится.";
+        set_value(m_color_note_, Rml::String(note), model_, "im_color_note");
+    }
     set_value(m_trying_, trying_, model_, "im_trying");
     set_value(m_effect_, Rml::String(effect_), model_, "im_effect");
     set_value(m_warning_, Rml::String(warning_), model_, "im_warning");
@@ -1376,16 +1704,29 @@ void ImageEditor::rebuild_panels() {
     if (!p) {
         set_value(m_name_, Rml::String(), model_, "im_name");
         set_value(m_status_, Rml::String(), model_, "im_status");
+        set_value(m_view_, false, model_, "im_view");
         return;
     }
-    set_value(m_name_, Rml::String(p->rel), model_, "im_name");
+    set_value(m_name_, Rml::String(p->view_only ? "игра: " + p->game_file : p->rel), model_, "im_name");
+    set_value(m_view_, p->view_only, model_, "im_view");
+    {
+        std::string text;
+        if (p->view_only) {
+            text = "Только просмотр: " + view_reason(*p) + ".";
+            if (p->missing) text += " Файла больше нет в игре: показана картинка, какой была.";
+        }
+        set_value(m_view_text_, Rml::String(text), model_, "im_view_text");
+        set_value(m_view_copy_, Rml::String(p->view_only ? p->copy_of : std::string()), model_, "im_view_copy");
+    }
     set_value(m_unsaved_, p->unsaved(), model_, "im_unsaved");
     const u32 n = frames();
     set_value(m_info_, Rml::String(size_words(p->image) + " · " + format_of(p->ext) + (n > 1 ? " · " + count_words(n, "кадр", "кадра", "кадров") : "")),
               model_, "im_info");
     set_value(m_frames_, static_cast<int>(n), model_, "im_frames");
     set_value(m_frames_from_, Rml::String(frames_from()), model_, "im_frames_from");
-    set_value(m_frames_own_, !(users_of && !p->id.is_null() && !users_of(p->id).empty()), model_, "im_frames_own");
+    set_value(m_frames_own_,
+              p->view_only ? !(users_of_file && !users_of_file(p->game_file).empty()) : !(users_of && !p->id.is_null() && !users_of(p->id).empty()),
+              model_, "im_frames_own");
     set_value(m_zoom_, static_cast<int>(zoom()), model_, "im_zoom");
     set_value(m_outside_shown_, p->outside, model_, "im_outside");
     set_value(m_outside_, Rml::String(p->outside ? "Файл «" + p->rel + "» изменён другой программой, а здесь есть несохранённые правки." : ""), model_,
@@ -1433,7 +1774,11 @@ void ImageEditor::rebuild_panels() {
 }
 
 void ImageEditor::update(Rml::Context* context) {
-    if (!context) return;
+    if (!context) {
+        if (picking()) cp_->close(true); // another tab: the colour as picked
+        return;
+    }
+    context_ = context;
     if (m_list_.empty() && list_version_ == ~0ull) rebuild_list();
     if (list_version_ == ~0ull) {
         rebuild_list();
