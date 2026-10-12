@@ -601,6 +601,11 @@ bool AssetLibrary::busy() const {
     return refresh_wanted_ || refreshing_ || !imports_.empty() || !snapshots_.empty() || !staged_.empty();
 }
 
+bool AssetLibrary::looking() const {
+    std::lock_guard lock(mutex_);
+    return refresh_wanted_ || refreshing_ || !snapshots_.empty();
+}
+
 void AssetLibrary::want_thumb(const std::string& name, const assets::ContentHash& key, u32 box) const {
     if (asked_.count(name)) return;
     asked_.insert(name);

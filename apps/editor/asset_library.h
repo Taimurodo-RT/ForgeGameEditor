@@ -181,6 +181,8 @@ public:
     const assets::AssetRecord* record_of(const std::filesystem::path& file) const;
     // The asset with that Guid, wherever it is now (null: gone).
     const assets::AssetRecord* find_id(const Guid& id) const;
+    // Another look at the files is asked for or under way: its results (and on_index) are still to come.
+    bool looking() const;
     // Called each time the index has been looked at again (a refresh, a command): what the game copied from
     // «Ресурсы» is compared with it then (main).
     std::function<void()> on_index;

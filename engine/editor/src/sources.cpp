@@ -346,7 +346,7 @@ Report Sources::sync(const std::function<std::optional<Asset>(const Guid&)>& fin
         const std::string hash = hash_of(bytes);
         if (there && hash == e.hash) continue;
         if (std::string why; !fits(*a, folder_of(e.file), bytes, hash, &why)) {
-            r.refused.push_back({e, why, !there});
+            r.refused.push_back({e, why, !there, !a->imported.empty() && hash != a->imported});
             continue;
         }
         if (const Entry* o = there ? sharing(game_, entries_, copy, &e) : nullptr) {

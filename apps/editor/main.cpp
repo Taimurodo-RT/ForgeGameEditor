@@ -672,12 +672,27 @@ public:
             note = "обновлено в игре: " + std::to_string(r.updated.size() + r.restored.size());
         }
         for (const std::string& e : r.errors) FORGE_WARN("Игра: %s", e.c_str());
-        // What is missing, said when it changes (each look at «Ресурсы» finds it again).
+        // A look that another one follows says nothing of what is missing or not taken: a file written while «Ресурсы»
+        // looked (Ctrl+S in «Изображения» right after the tab asked for a look) differs from what that look imported,
+        // and the next look, already asked for, takes it. A file another program wrote while «Ресурсы» looked is the
+        // same, with no look asked for: one more is asked for before the file is said to be not taken. What the
+        // last look finds is said.
+        bool settled = !assets.looking();
+        std::string stale;
+        for (const editor::sources::Refusal& e : r.refused)
+            if (e.stale) stale += e.entry.file + ";";
+        if (settled && !stale.empty() && stale != sources_relook_) {
+            sources_relook_ = stale;
+            assets.refresh();
+            settled = false;
+        } else if (settled && stale.empty()) {
+            sources_relook_.clear();
+        }
         std::string missing;
         for (const editor::sources::Entry& e : r.gone) missing += "g" + e.file + ";";
         for (const editor::sources::Entry& e : r.lost) missing += "l" + e.file + ";";
         for (const editor::sources::Refusal& e : r.refused) missing += "r" + e.entry.file + e.entry.from + e.why + ";";
-        if (missing != sources_missing_) {
+        if (settled && missing != sources_missing_) {
             sources_missing_ = missing;
             for (const editor::sources::Refusal& e : r.refused)
                 if (e.missing)
@@ -703,9 +718,11 @@ public:
         }
         std::vector<editor::sources::Entry> refused;
         for (const editor::sources::Refusal& e : r.refused) refused.push_back(e.entry);
-        if (!r.lost.empty()) note = "нет файлов игры: " + list(r.lost);
-        else if (!refused.empty()) note = "не перенесено в игру: " + list(refused);
-        else if (!r.gone.empty() && note.empty()) note = "нет ресурсов для файлов игры: " + list(r.gone);
+        if (settled) {
+            if (!r.lost.empty()) note = "нет файлов игры: " + list(r.lost);
+            else if (!refused.empty()) note = "не перенесено в игру: " + list(refused);
+            else if (!r.gone.empty() && note.empty()) note = "нет ресурсов для файлов игры: " + list(r.gone);
+        }
         assets.note = note;
     }
 
@@ -1729,6 +1746,7 @@ private:
     Rml::DataModelHandle model_;
     bool sources_ok_ = false;     // game/sources.json read (else picks are plain copies and nothing is compared)
     std::string sources_missing_; // what sync_sources last said is missing
+    std::string sources_relook_;  // the files not what «Ресурсы» imported that sync_sources asked one more look for
     demo::SheetImage art_;
     render::SpriteRenderer sprites_;
     render::SpriteBatch batch_;
@@ -19948,6 +19966,7 @@ private:
     static constexpr u8 kImSheet[4][3] = {{230, 60, 60}, {60, 200, 90}, {70, 110, 240}, {240, 200, 40}};
     int im_step_ = 0;
     std::map<std::string, std::string> im_rec_; // what images-a did (a file of the test, outside the games)
+    usize im_updates_ = 0;                      // the log's «обновлено в игре» lines for «рубин.png» before its save
     std::map<std::string, std::vector<u8>> im_tmpl_, im_b_;
     assets::CookedTexture im_px0_, im_before_, im_mine_, im_want_;
     std::vector<u8> im_file0_, im_copy0_, im_bytes_;
@@ -20483,6 +20502,7 @@ private:
             assets::CookedTexture outside = im_px0_;
             assets::apply_effect(outside, assets::frame_rect(outside, 4, 3), {assets::EffectKind::Grayscale, 0, 0, 0, {}, {}});
             im_bytes_ = im_encoded(outside);
+            tg_said_ = tg_mark();
             check(write_file_atomic(as().abs(ruby), im_bytes_), "another program writes «рубин.png» (frame 4 grey)");
             key(SDLK_S, SDL_KMOD_CTRL);
             check(im().outside() && im().note().find("изменён другой программой") != std::string::npos && tg_bytes(as().abs(ruby)) == im_bytes_ &&
@@ -20497,6 +20517,7 @@ private:
                   "the file as the other program left it, a step");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(im_same(im().image(), im_mine_) && im().dirty(), "Ctrl+Z: the changes made here again");
+            im_updates_ = tg_said("Из «Ресурсов» обновлено в игре: pictures/рубин.png");
             key(SDLK_S, SDL_KMOD_CTRL);
             check(!im().dirty() && im_same(im_read(as().abs(ruby)), im_mine_) && record(ruby) && record(ruby)->id.to_string() == im_rec_["ruby_asset"],
                   "Ctrl+S writes them: the same file, the same resource; " + im().note());
@@ -20504,6 +20525,13 @@ private:
         // The game's copy follows; «Уровень» and «Объекты» show it, without a restart.
         case 22: {
             if (hold(idle && tg_bytes(copy) == tg_bytes(as().abs(ruby)), "the game's copy follows")) return true;
+            // Neither the file another program wrote while «Ресурсы» looked nor the save is said to be not taken: the
+            // look under way when they were written did not import them, the next one did. The save updated the copy once.
+            const usize refused = tg_said("не перенесён"),
+                        updated = tg_said("Из «Ресурсов» обновлено в игре: pictures/рубин.png") - im_updates_;
+            check(refused == 0 && updated == 1 && as().status().find("не перенесено") == std::string::npos,
+                  "the log: the copy updated (" + std::to_string(updated) + "), nothing «не перенесён» (" + std::to_string(refused) + "); «" +
+                      as().status() + "»");
             const editor::sources::Entry* e = ed_.sources.of_file("pictures/рубин.png");
             check(e && e->asset.to_string() == im_rec_["ruby_asset"] && e->hash == editor::sources::hash_of(tg_bytes(copy)),
                   "game/sources.json: the copy of the same resource, the new content's hash");
@@ -20689,13 +20717,19 @@ private:
         }
         case 42:
             if (hold(ed_.tab() == "images", "the tab")) return true;
+            tg_said_ = tg_mark();
             key(SDLK_S, SDL_KMOD_CTRL);
             check(!im().dirty(), "Ctrl+S");
             break;
-        case 43:
+        case 43: {
             if (hold(idle && tg_bytes(game / "pictures" / utf8_path("очки.png")) == tg_bytes(as().abs(points)), "the game's copy follows")) return true;
+            const usize refused = tg_said("не перенесён"), updated = tg_said("Из «Ресурсов» обновлено в игре: pictures/очки.png");
+            check(refused == 0 && updated == 1 && as().status().find("не перенесено") == std::string::npos,
+                  "the log: the copy updated (" + std::to_string(updated) + "), nothing «не перенесён» (" + std::to_string(refused) + "); «" +
+                      as().status() + "»");
             check(click_tab(8) && ue().open("hud"), "«Интерфейс», the HUD");
             break;
+        }
         case 44: {
             if (wait(3)) return true;
             u8 at[4] = {};
