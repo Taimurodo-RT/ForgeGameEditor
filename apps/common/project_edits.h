@@ -137,8 +137,10 @@ struct ProjectEdits {
     // m3_first_target), its holes m3_holes (x, y, x, y, … in the level's cells), of them those with a stone m3_stones,
     // the author's gems put before m3_star_at (x, y, …). m3_kind_moves: «Поле»'s «Ходов», which a level whose copy has
     // none of its own plays (m3_inherit: that level's id). The HUD's moves layer (m3_hud, node m3_hud_node) says
-    // m3_hud_text, {board.moves} in it; the lose window's title (m3_lose, node m3_lose_node) m3_lose_title.
-    std::string m3_refusal;
+    // m3_hud_text, {board.moves} in it; the lose window's title (m3_lose, node m3_lose_node) m3_lose_title. m3_gone
+    // (scene project_continue): the author deleted m3_star (named m3_star_name) in «Объекты» after the save m3-author:
+    // «Продолжить» must be refused with these words, the save left as it was; nothing else is looked at.
+    std::string m3_refusal, m3_gone;
     std::string m3_star, m3_star_name, m3_star_sound;
     std::vector<int> m3_star_color, m3_ruby;
     double m3_star_points = 0, m3_ruby_points = 0;

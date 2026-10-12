@@ -76,9 +76,12 @@ namespace {
 //                          HUD's words; the bot plays it with the mouse, each star's row gives «+2 хода» by the author's
 //                          link; «Дальше» to «Второй», one move, saved between moves (m3-author), two moves more written
 //                          down. With m3_refusal in FILE only that a new game is refused, saying it
-// --scene project_continue --edits FILE (another process, the same --user) m3-author goes on: the same two moves make
-//                          the same; «Второй» won, «Третий» plays «Поле»'s moves (its copy has none of its own) and is
-//                          lost, the author's title on the lose window, «Ещё раз» the same field anew
+// --scene project_continue --edits FILE (another process, the same --user) «Продолжить» in the main menu, pressed with
+//                          the mouse, takes m3-author: the same two moves make the same; «Второй» won, «Третий» plays
+//                          «Поле»'s moves (its copy has none of its own) and is lost, the author's title on the lose
+//                          window, «Ещё раз» the same field anew. With m3_gone in FILE (the author deleted the star after
+//                          the save) «Продолжить» is refused with those words on the screen, nothing in the star's place,
+//                          the save byte for byte as it was and no save added
 
 struct Step {
     const char* name;
@@ -836,12 +839,13 @@ private:
     }
 
     void continue_scene() {
-        continue_steps("m3-slot", "m3-expect.json", "Первый");
+        continue_steps("m3-slot", "m3-expect.json", "Первый", false);
         gone_steps();
     }
-    // slot (saved by save_steps in another process) goes on: the same field, and the same two moves make the same.
-    void continue_steps(std::string slot, std::string expect, std::string level) {
-        steps_.push_back({"сохранение из другого процесса", 30, [this, slot, expect, level](u32) {
+    // slot (saved by save_steps in another process) goes on: the same field, and the same two moves make the same. by_menu:
+    // the game took it by «Продолжить» in its main menu (menu_continue_steps), else it is loaded here.
+    void continue_steps(std::string slot, std::string expect, std::string level, bool by_menu) {
+        steps_.push_back({"сохранение из другого процесса", 30, [this, slot, expect, level, by_menu](u32) {
             std::vector<u8> text;
             check(read_file(s_->user_folder() / utf8_path(expect), text), "ожидания " + expect + " есть");
             yyjson_doc* doc = yyjson_read(reinterpret_cast<const char*>(text.data()), text.size(), 0);
@@ -854,7 +858,7 @@ private:
             const char* rng = yyjson_get_str(yyjson_obj_get(root, "saved_rng"));
             const u64 gen = yyjson_get_uint(yyjson_obj_get(root, "generation"));
             saved_score_ = score;
-            check(s_->load(slot), slot + " загружается");
+            check(by_menu ? g_.running() && s_->screen() == Screen::Playing : s_->load(slot), slot + " загружается");
             const Play* p = g_.play();
             check(p && p->score() == score && p->moves() == moves && rng && std::to_string(p->rng().state) == rng && g_.generation() == gen,
                   "то же поле: очки " + std::to_string(score) + ", ходов " + std::to_string(moves) + ", генератор и поколение те же" + state());
@@ -1025,14 +1029,79 @@ private:
     }
     static Rgb rgb_of(const std::vector<int>& v) { return v.size() == 3 ? Rgb{v[0], v[1], v[2]} : Rgb{-1, -1, -1}; }
 
+    // «Продолжить» in the main menu, pressed with the mouse where the player sees it: the newest save, slot, goes on. With
+    // m3_gone the author deleted a gem the save has: the game is refused with those words, the player stays in the main
+    // menu, the save's files are as they were and no save is added; the scene ends there.
+    void menu_continue_steps(std::string slot) {
+        steps_.push_back({"«Продолжить» в главном меню", 300, [this, slot](u32 f) {
+            if (f == 0) {
+                const auto latest = s_->slots().latest();
+                check(s_->screen() == Screen::Main && latest && latest->id == slot,
+                      "главное меню, последнее сохранение — " + slot + ": «" + (latest ? latest->id : std::string()) + "»");
+                slot_files_ = files_of(s_->slots().folder(slot));
+                slot_count_ = s_->slots().list().size();
+                if (!e_.m3_gone.empty()) {
+                    const auto board = slot_files_.find("board.json");
+                    const std::string json = board == slot_files_.end() ? std::string() : std::string(board->second.begin(), board->second.end());
+                    check(json.find("\"" + e_.m3_star + "\"") != std::string::npos && json.find(e_.m3_star_name) != std::string::npos,
+                          "в сохранении " + slot + " на поле есть «" + e_.m3_star_name + "» (" + e_.m3_star + ")");
+                }
+                Rml::Element* button = s_->find_element("menu-continue");
+                check(button && button->IsVisible(true), "в главном меню есть «Продолжить»");
+                if (!button) {
+                    steps_.resize(at_ + 1);
+                    return true;
+                }
+                const Rml::Vector2f c = button->GetAbsoluteOffset(Rml::BoxArea::Border) + button->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+                mouse(SDL_EVENT_MOUSE_MOTION, c.x, c.y);
+                mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, c.x, c.y);
+                mouse(SDL_EVENT_MOUSE_BUTTON_UP, c.x, c.y);
+                return false;
+            }
+            if (e_.m3_gone.empty()) return g_.running() && s_->screen() == Screen::Playing;
+            if (g_.refusal().empty() || s_->screen() != Screen::Main) return false;
+            check(g_.refusal() == e_.m3_gone && !g_.running() && !g_.play(), "«Продолжить» отказано: «" + g_.refusal() + "», игра не идёт");
+            check(files_of(s_->slots().folder(slot)) == slot_files_ && s_->slots().list().size() == slot_count_,
+                  "сохранение " + slot + " байт в байт прежнее, новых сохранений нет");
+            return true;
+        }});
+        steps_.push_back({"игроку сказано почему", 30, [this](u32 f) {
+            if (e_.m3_gone.empty()) return true;
+            if (f < 2) return false;
+            // The toast at the top of the main menu.
+            std::string said;
+            Rml::Element* button = s_->find_element("menu-continue");
+            if (Rml::ElementDocument* doc = button ? button->GetOwnerDocument() : nullptr) {
+                Rml::ElementList toasts;
+                doc->GetElementsByClassName(toasts, "toast");
+                for (Rml::Element* e : toasts)
+                    if (e->IsVisible(true)) said += (said.empty() ? "" : " | ") + words_of(e);
+            }
+            check(said.find("Не удалось начать: " + e_.m3_gone) != std::string::npos, "на экране: «" + said + "»");
+            check(s_->screen() == Screen::Main && button && button->IsVisible(true), "игрок в главном меню, «Продолжить» на месте");
+            steps_.resize(at_ + 1);
+            return true;
+        }});
+    }
+
     // What the author changed (--edits), read; the game's data as the author left it.
     void author_data() {
         steps_.push_back({"ожидания автора", 5, [this](u32) {
             std::string why;
             const bool read = !edits_file_.empty() && edits::read_edits(edits_file_, e_, why);
-            check(read && (!e_.m3_refusal.empty() || (!e_.m3_star.empty() && e_.m3_star_color.size() == 3 && e_.m3_ruby.size() == 3 &&
-                                                       e_.m3_holes.size() >= 2 && e_.m3_star_at.size() >= 2)),
+            check(read && (!e_.m3_refusal.empty() || (!e_.m3_gone.empty() && !e_.m3_star.empty()) ||
+                           (!e_.m3_star.empty() && e_.m3_star_color.size() == 3 && e_.m3_ruby.size() == 3 && e_.m3_holes.size() >= 2 &&
+                            e_.m3_star_at.size() >= 2)),
                   "файл ожиданий " + path_to_utf8(edits_file_) + " читается " + why);
+            if (read && !e_.m3_gone.empty()) {
+                // The author deleted the gem after the save: the game reads without it, nothing in its place.
+                check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
+                std::string ids;
+                for (const objects::Template* t : g_.gems().gems) ids += (ids.empty() ? "" : ", ") + t->id;
+                check(ids == "amethyst, diamond, emerald, ruby, sapphire, topaz" && g_.gems().index(e_.m3_star) < 0,
+                      "набор поля — шесть самоцветов шаблона, «" + e_.m3_star_name + "» (" + e_.m3_star + ") в игре нет: " + ids);
+                return true;
+            }
             if (read && !e_.m3_refusal.empty()) {
                 // The field the author left cannot start: the game says so, of that field alone.
                 const auto& said = g_.problems();
@@ -1148,7 +1217,8 @@ private:
 
     void project_continue_scene() {
         author_data();
-        continue_steps("m3-author", "m3-author-expect.json", "Второй");
+        menu_continue_steps("m3-author");
+        continue_steps("m3-author", "m3-author-expect.json", "Второй", true);
         play_level("бот доигрывает «Второй»", false);
         steps_.push_back({"«Дальше» на «Третий»", 60, [this](u32) {
             if (g_.outcome() != Match3Game::Outcome::LevelPassed) return false;
@@ -1221,6 +1291,8 @@ private:
     int* failures_ = nullptr;
     std::vector<Step> steps_;
     usize at_ = 0;
+    std::map<std::string, std::vector<u8>> slot_files_; // the save «Продолжить» takes, before it (menu_continue_steps)
+    usize slot_count_ = 0;
     u32 in_step_ = 0;
     std::vector<u8> px_;
     u32 pw_ = 0, ph_ = 0;

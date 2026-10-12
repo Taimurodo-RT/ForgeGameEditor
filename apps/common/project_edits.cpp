@@ -115,6 +115,7 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("rp_copy_talk", &forge::edits::ProjectEdits::rp_copy_talk);
     t.field("rp_copy_line", &forge::edits::ProjectEdits::rp_copy_line);
     t.field("m3_refusal", &forge::edits::ProjectEdits::m3_refusal);
+    t.field("m3_gone", &forge::edits::ProjectEdits::m3_gone);
     t.field("m3_star", &forge::edits::ProjectEdits::m3_star);
     t.field("m3_star_name", &forge::edits::ProjectEdits::m3_star_name);
     t.field("m3_star_sound", &forge::edits::ProjectEdits::m3_star_sound);
