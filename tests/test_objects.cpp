@@ -316,6 +316,91 @@ TEST_CASE("a kind may be one whose templates are not put on levels") {
     CHECK_FALSE(lib.kinds()[1].placed);
 }
 
+TEST_CASE("a kind may be the one that puts the game's hero on the level") {
+    const auto dir = temp_folder("forge_objects_hero_test");
+    write_text(dir / "kinds.json", R"({"kinds": [
+        {"id": "pickup", "name": "Подбираемое", "components": {"ObjTestBody": {}}},
+        {"id": "hero", "name": "Герой", "hero": true, "components": {"ObjTestBody": {}}}]})");
+    Library lib;
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    REQUIRE(lib.kinds().size() == 2);
+    CHECK_FALSE(lib.kinds()[0].hero);
+    CHECK(lib.kinds()[1].hero);
+    CHECK(lib.kinds()[1].placed); // its one copy is on the level
+}
+
+TEST_CASE("a talk is chosen among the game's dialogues, and one that is gone is said so") {
+    const auto dir = temp_folder("forge_objects_talk_test");
+    write_text(dir / "kinds.json", R"({
+      "blocks": [
+        {"id": "speaks", "name": "Говорит", "components": {"ObjTestPickup": {}},
+         "props": [{"id": "talk", "name": "Разговор", "bind": "ObjTestPickup.ding", "asset": "talk", "empty": "молчит"}]}
+      ],
+      "kinds": [
+        {"id": "villager", "name": "Житель", "blocks": ["speaks"]},
+        {"id": "bell", "name": "Колокол", "components": {"ObjTestPickup": {}},
+         "props": [{"id": "ding", "name": "Звон", "bind": "ObjTestPickup.ding", "asset": "sound", "empty": "нет"},
+                   {"id": "note", "name": "Запись", "bind": "ObjTestPickup.ding", "asset": "talk"}]}
+      ]
+    })");
+    write_text(dir / "objects" / "miller.object.json", R"({"id": "miller", "name": "Мельник", "kind": "villager", "values": {"talk": "miller"}})");
+    Library lib;
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    const PropDef& talk = *lib.block("speaks")->prop("talk");
+    const PropDef& note = *lib.kinds()[1].prop("note");
+    const PropDef& ding = *lib.kinds()[1].prop("ding");
+    CHECK(talk.choices.empty()); // no list until the game's dialogues are known
+    CHECK(Library::display(talk, "\"elder\"") == "elder");
+    const u64 version = lib.version();
+    lib.set_talks({"elder", "miller"});
+    CHECK(lib.version() == version); // the templates are as they were
+    REQUIRE(talk.choices.size() == 3);
+    CHECK(talk.choices[0].id.empty());
+    CHECK(talk.choices[0].name == "молчит");
+    CHECK(talk.choices[1].id == "elder");
+    CHECK(talk.choices[2].name == "miller");
+    REQUIRE(note.choices.size() == 3); // a kind's own property too; without «empty» — «нет»
+    CHECK(note.choices[0].name == "нет");
+    CHECK(ding.choices.empty()); // a sound is not a talk
+    CHECK(Library::display(talk, "\"miller\"") == "miller");
+    CHECK(Library::display(talk, "\"\"") == "молчит");
+    CHECK(Library::display(talk, "\"smith\"") == "smith — нет в «Сюжете»");
+    CHECK(Library::parse(talk, "miller") == std::optional<std::string>("\"miller\""));
+    CHECK(Library::parse(talk, "молчит") == std::optional<std::string>("\"\""));
+    CHECK(Library::parse(talk, "smith") == std::nullopt); // only a dialogue of the game
+    {
+        // A copy says its template's talk with the list known (the field keeps the id, not a number).
+        PoolScope pool;
+        World w(tight_desc(), std::make_shared<TopDownGenerator>(1));
+        Scene s(w);
+        s.register_component<ObjTestPickup>();
+        lib.attach(s);
+        settle(w, s, kHome);
+        const Template& miller = *lib.find("miller");
+        CHECK(lib.value(miller, talk) == "\"miller\"");
+        flecs::entity e = lib.spawn(s, miller, 10.5, 20.0);
+        REQUIRE(e.is_valid());
+        CHECK(e.get<ObjTestPickup>().ding == "miller");
+        CHECK(lib.value(s, e, talk) == "\"miller\"");
+        CHECK(lib.set_value(s, e, talk, "\"elder\""));
+        CHECK(e.get<ObjTestPickup>().ding == "elder");
+        CHECK(e.get<ObjectRef>().overrides_prop("talk"));
+        CHECK(lib.set_value(s, e, talk, "\"miller\""));
+        CHECK(!e.get<ObjectRef>().overrides_prop("talk"));
+        REQUIRE(lib.put(lib.with_value(miller, "talk", "\"elder\"")));
+        CHECK(lib.refresh(s) == 1);
+        CHECK(e.get<ObjTestPickup>().ding == "elder"); // the template's new talk reaches its copy
+    }
+    // A dialogue deleted in «Сюжет»: the list is the game's again, a villager still saying it is marked.
+    lib.set_talks({"miller"});
+    REQUIRE(talk.choices.size() == 2);
+    CHECK(Library::display(talk, "\"elder\"") == "elder — нет в «Сюжете»");
+    CHECK(Library::parse(talk, "elder — нет в «Сюжете»") == std::optional<std::string>("\"elder\"")); // kept as it was
+    lib.set_talks({});
+    REQUIRE(talk.choices.size() == 1);
+    CHECK(Library::display(talk, "\"\"") == "молчит");
+}
+
 TEST_CASE("a picture with new content under its name draws its templates again") {
     Fixture f;
     const KindDef& k = f.lib.kinds()[0];

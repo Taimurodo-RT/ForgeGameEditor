@@ -32,10 +32,12 @@ struct Hero {
 struct Villager {
     std::string talk;
 };
-// «Предмет»: what it gives to the inventory (inv.<what>) and how many.
+// «Предмет»: what it gives to the inventory (inv.<what>), how many, and the sound of picking it up (a file of the
+// game's sounds; empty — none).
 struct Pickup {
     std::string what = "key";
     u32 count = 1;
+    std::string sound;
 };
 // «Место»: a cell the hero comes to; drawn in the game when «Видно в игре» is on.
 struct Place {
@@ -72,6 +74,7 @@ struct Thing {
     std::string talk;   // a villager's
     std::string what;   // a pickup's
     u32 count = 1;
+    std::string sound;  // a pickup's: played when it is picked up
     bool shown = true; // a place's «Видно в игре»
 };
 

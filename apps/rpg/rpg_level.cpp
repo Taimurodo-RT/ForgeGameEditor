@@ -19,6 +19,7 @@ FORGE_REFLECT(rpg::Villager, 1) { t.field("talk", &rpg::Villager::talk).label("�
 FORGE_REFLECT(rpg::Pickup, 1) {
     t.field("what", &rpg::Pickup::what).label("Что даёт");
     t.field("count", &rpg::Pickup::count).label("Сколько").range(1, 999);
+    t.field("sound", &rpg::Pickup::sound).label("Звук");
 }
 FORGE_REFLECT(rpg::Place, 1) { t.field("shown", &rpg::Place::shown).label("Видно в игре"); }
 
@@ -277,6 +278,7 @@ bool read_map(level::Level& level, const objects::Library& library, const std::s
         case Thing::Kind::Pickup:
             th.what = json_string(prop("what"));
             th.count = static_cast<u32>(std::clamp(json_number(prop("count"), 1), 1.0, 999.0));
+            th.sound = json_string(prop("sound"));
             if (th.what.empty()) empty_pickups += (empty_pickups.empty() ? "«" : ", «") + t->name + "» в " + cell_words(th.cx, th.cy);
             break;
         case Thing::Kind::Place: th.shown = json_bool(prop("shown"), false); break;
@@ -636,7 +638,10 @@ flecs::entity RpgLevel::place_object(level::Level& level, usize index, f64 x, f6
     if (index >= defs.size()) return {};
     const objects::Template* t = library_.find(defs[index].key);
     if (!t) return {};
-    return library_.spawn(level.scene(), *t, std::floor(x) + 0.5, std::floor(y) + 1.0);
+    // (x, y) are the feet (LevelModule::place_object): the copy stands in the cell they are in, a point on a cell's
+    // bottom line in the cell above it (the editor gives the line under the cell clicked).
+    const f64 row = std::ceil(y - 1e-6) - 1;
+    return library_.spawn(level.scene(), *t, std::floor(x) + 0.5, row + 1.0);
 }
 
 i32 RpgLevel::object_kind(flecs::entity e) const {

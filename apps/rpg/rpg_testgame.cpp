@@ -5,10 +5,13 @@
 #include "forge/core/file.h"
 #include "forge/core/path.h"
 #include "forge/editor/project.h"
+#include "forge/editor/sources.h"
 #include "forge/editor/ui_design.h"
 #include "forge/level/levels.h"
 #include "forge/logic/logic.h"
 #include "forge/render/offscreen.h"
+
+#include <yyjson.h>
 
 #include <algorithm>
 #include <array>
@@ -104,12 +107,12 @@ std::vector<MapSpec> maps() {
           "T.####....FFF..FFF.....T", "T.####.................T", "T.####.................T", "T......................T",
           "T=======================", "T......................T", "T......................T", "T......................T",
           "T......................T", "TTTTTTTTTTTTTTTTTTTTTTTT"},
-         {{"hero", 4, 10}, {"elder", 7, 6}, {"guard", 21, 7}, {"dog", 18, 11}, {"key", 15, 2}, {"coins", 9, 11}, {"gate", 23, 8}}},
+         {{"hero_look", 4, 10}, {"elder", 7, 6}, {"guard", 21, 7}, {"dog", 18, 11}, {"key", 15, 2}, {"coins", 9, 11}, {"gate", 23, 8}}},
         {"glade",
          "Поляна",
          {"TTTTTTTTTTTT", "T..........T", "T..RR......T", "T..........T", "T....~~....T", "T....~~....T", "T..........T",
           "T..........T", "TTTTTTTTTTTT"},
-         {{"hero", 2, 6}, {"chest", 9, 2}}},
+         {{"hero_look", 2, 6}, {"chest", 9, 2}}},
     };
 }
 
@@ -204,6 +207,17 @@ const char* const kGuard = R"json({
        {"text": "Сдаюсь, иду домой.", "goto": "give_up"}
      ]},
     {"id": "give_up", "speaker": "guard", "text": "Вот и правильно. Ступай домой.", "do": "lose()"}
+  ]
+}
+)json";
+
+// The template's dog: a villager of a line (the test game's says nothing).
+const char* const kDog = R"json({
+  "id": "dog",
+  "speakers": {"dog": {"name": "Пёс", "color": "#c8a070"}},
+  "start": [{"goto": "hello"}],
+  "nodes": [
+    {"id": "hello", "speaker": "dog", "text": "Гав! Гав-гав!"}
   ]
 }
 )json";
@@ -368,8 +382,55 @@ bool write_screen(const fs::path& game, const std::string& name, const d::Screen
            write_text(game / "ui" / utf8_path(name + ".html"), d::screen_html(s, options), why);
 }
 
-bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
-    const fs::path game = out / "game";
+// The Guid a .meta of «Ресурсы» keeps.
+std::optional<Guid> meta_id(const fs::path& meta) {
+    std::vector<u8> bytes;
+    if (!read_file(meta, bytes)) return std::nullopt;
+    yyjson_doc* doc = yyjson_read(reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0);
+    const char* id = doc ? yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "id")) : nullptr;
+    std::optional<Guid> out = id ? Guid::parse(id) : std::nullopt;
+    yyjson_doc_free(doc);
+    return out;
+}
+
+// The files of one folder of the template's «Ресурсы» (games/templates/rpg/assets/<from>) copied into the game's
+// folder as the editor copies them (sources.json remembers which asset each copy is).
+bool copy_assets(const fs::path& assets, const char* from, const char* ext, const char* folder, editor::sources::Sources& sources,
+                 std::string& why) {
+    const fs::path dir = assets / utf8_path(from);
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ext) files.push_back(it->path());
+    std::sort(files.begin(), files.end());
+    if (files.empty()) {
+        why = "нет файлов " + std::string(ext) + " в " + path_to_utf8(dir);
+        return false;
+    }
+    for (const fs::path& file : files) {
+        std::vector<u8> bytes;
+        fs::path meta = file;
+        meta += ".meta";
+        const std::optional<Guid> id = meta_id(meta);
+        if (!id || !read_file(file, bytes)) {
+            why = "нет .meta или не читается " + path_to_utf8(file);
+            return false;
+        }
+        const editor::sources::Asset asset{*id, std::string(from) + "/" + path_to_utf8(file.filename()), file, editor::sources::hash_of(bytes)};
+        if (sources.copy_in(asset, folder, &why) != path_to_utf8(file.filename())) {
+            why = path_to_utf8(file.filename()) + " не скопирован: " + why;
+            return false;
+        }
+    }
+    return true;
+}
+
+// What is made: the test game (pictures drawn here, its special cases) or the template's game (pictures and the
+// coins' sound from the template's «Ресурсы», every thing with its picture, the dog with a line).
+enum class Made : u8 { TestGame, Template };
+
+bool make_in(const fs::path& games, const fs::path& game, Made made, std::string& why) {
+    const bool tmpl = made == Made::Template;
     std::error_code ec;
     fs::create_directories(game / "objects", ec);
     if (ec) {
@@ -377,8 +438,8 @@ bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
         return false;
     }
     if (!write_text(game / "game.json",
-                    "{\n  \"title\": \"RPG сверху: проба\",\n  \"org\": \"Forge\",\n  \"theme\": \"fantasy\",\n"
-                    "  \"autosave_minutes\": 5,\n  \"module\": \"rpg\"\n}\n",
+                    std::string("{\n  \"title\": \"") + (tmpl ? "RPG сверху" : "RPG сверху: проба") +
+                        "\",\n  \"org\": \"Forge\",\n  \"theme\": \"fantasy\",\n  \"autosave_minutes\": 5,\n  \"module\": \"rpg\"\n}\n",
                     why))
         return false;
     for (const char* file : editor::project::kModuleFiles) {
@@ -389,19 +450,28 @@ bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
         }
     }
     if (!write_text(game / "quests.json", kQuests, why) || !write_text(game / "dialogues" / "elder.json", kElder, why) ||
-        !write_text(game / "dialogues" / "guard.json", kGuard, why))
+        !write_text(game / "dialogues" / "guard.json", kGuard, why) || (tmpl && !write_text(game / "dialogues" / "dog.json", kDog, why)))
         return false;
-    // The hero of three frames (stands, two steps), the elder, the dog of two, the key, the chest; the guard, the coins
-    // and the gate have none (they are figures).
-    const std::vector<Paint> paints = {
-        {"герой.png", 48, 64, Shape::Figure, {{{52, 96, 220}}, {{80, 130, 240}}, {{30, 70, 180}}}},
-        {"староста.png", 48, 64, Shape::Figure, {{{200, 120, 60}}}},
-        {"пёс.png", 48, 40, Shape::Box, {{{140, 110, 80}}, {{160, 128, 92}}}},
-        {"ключ.png", 32, 32, Shape::Disc, {{{236, 196, 40}}}},
-        {"сундук.png", 48, 40, Shape::Box, {{{150, 90, 40}}}},
-    };
-    for (const Paint& p : paints)
-        if (!write_picture(game / "pictures" / utf8_path(p.file), p, why)) return false;
+    if (tmpl) {
+        // The template's «Ресурсы»: its pictures and the coins' sound.
+        const fs::path assets = games / "templates" / "rpg" / "assets";
+        editor::sources::Sources sources;
+        if (!sources.load(game, &why) || !copy_assets(assets, "картинки", ".png", "pictures", sources, why) ||
+            !copy_assets(assets, "звуки", ".wav", "sounds", sources, why))
+            return false;
+    } else {
+        // The hero of three frames (stands, two steps), the elder, the dog of two, the key, the chest; the guard, the
+        // coins and the gate have none (they are figures).
+        const std::vector<Paint> paints = {
+            {"герой.png", 48, 64, Shape::Figure, {{{52, 96, 220}}, {{80, 130, 240}}, {{30, 70, 180}}}},
+            {"староста.png", 48, 64, Shape::Figure, {{{200, 120, 60}}}},
+            {"пёс.png", 48, 40, Shape::Box, {{{140, 110, 80}}, {{160, 128, 92}}}},
+            {"ключ.png", 32, 32, Shape::Disc, {{{236, 196, 40}}}},
+            {"сундук.png", 48, 40, Shape::Box, {{{150, 90, 40}}}},
+        };
+        for (const Paint& p : paints)
+            if (!write_picture(game / "pictures" / utf8_path(p.file), p, why)) return false;
+    }
     {
         objects::Library library;
         if (!library.load(game / "kinds.json", game / "objects", &why)) return false;
@@ -409,19 +479,22 @@ bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
             const char* id;
             const char* name;
             const char* kind;
-            const char* picture;
+            const char* about;
+            const char* picture; // the test game's; the template's own when it has none here
+            const char* own;     // the template's
             u32 frames;
             std::vector<std::pair<std::string, std::string>> values;
         };
         const Spec specs[] = {
-            {"hero", "Герой", "hero", "герой.png", 3, {{"speed", "4"}}},
-            {"elder", "Староста", "villager", "староста.png", 1, {{"talk", "\"elder\""}}},
-            {"guard", "Стражник", "villager", "", 1, {{"talk", "\"guard\""}}},
-            {"dog", "Пёс", "villager", "пёс.png", 2, {}},
-            {"key", "Ключ", "pickup", "ключ.png", 1, {{"what", "\"key\""}, {"count", "1"}}},
-            {"coins", "Монеты", "pickup", "", 1, {{"what", "\"coins\""}, {"count", "5"}}},
-            {"chest", "Сундук", "pickup", "сундук.png", 1, {{"what", "\"treasure\""}, {"count", "1"}}},
-            {"gate", "Ворота", "place", "", 1, {{"shown", "true"}}},
+            {"hero_look", "Герой", "hero", "тот, кем ходит игрок: стоит, шаг, шаг", "герой.png", "герой.png", 3, {{"speed", "4"}}},
+            {"elder", "Староста", "villager", "даёт задание «Ключ от ворот»", "староста.png", "староста.png", 1, {{"talk", "\"elder\""}}},
+            {"guard", "Стражник", "villager", "стоит у ворот; с ним можно сдаться", "", "стражник.png", 1, {{"talk", "\"guard\""}}},
+            {"dog", "Пёс", "villager", "деревенский пёс", "пёс.png", "пёс.png", 2, {}},
+            {"key", "Ключ", "pickup", "ключ старосты от ворот", "ключ.png", "ключ.png", 1, {{"what", "\"key\""}, {"count", "1"}}},
+            {"coins", "Монеты", "pickup", "горсть монет", "", "монеты.png", 1, {{"what", "\"coins\""}, {"count", "5"}}},
+            {"chest", "Сундук", "pickup", "клад на поляне: найден — игра пройдена", "сундук.png", "сундук.png", 1,
+             {{"what", "\"treasure\""}, {"count", "1"}}},
+            {"gate", "Ворота", "place", "выход из деревни на поляну", "", "ворота.png", 1, {{"shown", "true"}}},
         };
         for (const Spec& s : specs) {
             objects::Template t;
@@ -429,10 +502,26 @@ bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
             t.name = s.name;
             t.kind = s.kind;
             t.genre = "RPG";
-            t.picture = s.picture;
+            if (tmpl) t.about = s.about;
+            t.picture = tmpl ? s.own : s.picture;
             t.frames = s.frames;
             t.values = s.values;
+            if (tmpl && t.id == "dog") t.values.emplace_back("talk", "\"dog\"");
+            if (tmpl && t.id == "coins") t.values.emplace_back("sound", "\"звон.wav\"");
             t.file = game / "objects" / (std::string(s.id) + ".object.json");
+            // The template's pictures and sound come from its «Ресурсы»: one that is not there makes nothing.
+            if (tmpl && !fs::is_regular_file(game / "pictures" / utf8_path(t.picture), ec)) {
+                why = "в «Ресурсах» шаблона нет картинки картинки/" + t.picture + " («" + t.name + "»)";
+                return false;
+            }
+            if (tmpl && t.id == "coins" && !fs::is_regular_file(game / "sounds" / utf8_path("звон.wav"), ec)) {
+                why = "в «Ресурсах» шаблона нет звука звуки/звон.wav («Монеты»)";
+                return false;
+            }
+            if (!library.kind(t.kind)) {
+                why = std::string("в модуле нет вида ") + s.kind;
+                return false;
+            }
             if (!library.put(t, &why)) return false;
         }
     }
@@ -447,12 +536,12 @@ bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
     logic::Logic links;
     for (auto [verb, b] : {std::pair{"reaches", "gate"}, {"finds", "chest"}}) {
         logic::Link l;
-        l.a = "hero";
+        l.a = std::string(logic::kHero);
         l.verb = verb;
         l.b = b;
         links.add(l);
     }
-    links.set_spot("hero", 60, 200);
+    links.set_spot(std::string(logic::kHero), 60, 200);
     links.set_spot("gate", 300, 120);
     links.set_spot("chest", 300, 280);
     if (!links.save(game / "logic.json", &why)) return false;
@@ -460,15 +549,14 @@ bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
            write_screen(game, "win", window("win"), why) && write_screen(game, "lose", window("lose"), why);
 }
 
-} // namespace
-
-bool make_test_game(const fs::path& games, const fs::path& out, std::string& why) {
-    // Made beside it first: what is in out stays as it was till the whole game is made.
+// out made by make: beside it first, so what is in out stays as it was till the whole game is made.
+template <typename Make>
+bool made_beside(const fs::path& out, Make make, std::string& why) {
     const fs::path target = out.has_filename() ? out : out.parent_path();
     const fs::path made = target.parent_path() / utf8_path(path_to_utf8(target.filename()) + ".сборка");
     std::error_code ec;
     fs::remove_all(made, ec);
-    if (!make_in(games, made, why)) {
+    if (!make(made)) {
         fs::remove_all(made, ec);
         return false;
     }
@@ -479,6 +567,16 @@ bool make_test_game(const fs::path& games, const fs::path& out, std::string& why
         return false;
     }
     return true;
+}
+
+} // namespace
+
+bool make_test_game(const fs::path& games, const fs::path& out, std::string& why) {
+    return made_beside(out, [&](const fs::path& made) { return make_in(games, made / "game", Made::TestGame, why); }, why);
+}
+
+bool make_template(const fs::path& games, const fs::path& out, std::string& why) {
+    return made_beside(out, [&](const fs::path& made) { return make_in(games, made, Made::Template, why); }, why);
 }
 
 } // namespace rpg

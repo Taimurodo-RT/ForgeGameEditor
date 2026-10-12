@@ -530,9 +530,9 @@
                                     <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'lv-num-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
                                     <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="lv_field_toggle(it_index)"><div class="thumb"/></div>
                                     <div data-if="f.kind == 'enum'" class="cycler grow">
-                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
-                                        <span class="value">{{ f.value }}</span>
-                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                        <div class="icon-button small" data-attr-id="'lv-prev-' + it_index" data-event-click="lv_field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                        <span class="value" data-attr-id="'lv-enum-' + it_index">{{ f.value }}</span>
+                                        <div class="icon-button small" data-attr-id="'lv-next-' + it_index" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
                                     </div>
                                     <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
                                     <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
@@ -550,9 +550,9 @@
                                     <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'lv-num-' + it_index" data-attr-value="f.value" data-event-change="lv_field_text(it_index, ev.value, ev.linebreak)" data-event-blur="lv_field_commit(it_index)"/>
                                     <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="lv_field_toggle(it_index)"><div class="thumb"/></div>
                                     <div data-if="f.kind == 'enum'" class="cycler grow">
-                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
-                                        <span class="value">{{ f.value }}</span>
-                                        <div class="icon-button small" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
+                                        <div class="icon-button small" data-attr-id="'lv-prev-' + it_index" data-event-click="lv_field_cycle(it_index, -1)"><icon name="chevron_left"/></div>
+                                        <span class="value" data-attr-id="'lv-enum-' + it_index">{{ f.value }}</span>
+                                        <div class="icon-button small" data-attr-id="'lv-next-' + it_index" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
                                     </div>
                                     <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
                                     <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
@@ -784,7 +784,7 @@
                                         <input data-if="f.kind == 'text'" type="text" class="small grow" data-attr-id="'ol-field-' + f.index" data-attr-value="f.value" data-event-change="ol_prop_text(f.index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(f.index)"/>
                                         <input data-if="f.kind == 'slider'" type="range" class="grow" data-attr-min="f.min" data-attr-max="f.max" data-attr-step="f.step" data-attr-value="f.value" data-event-change="ol_prop_slide(f.index, ev.value)"/>
                                         <input data-if="f.kind == 'slider'" type="text" class="small number" data-attr-id="'ol-num-' + f.index" data-attr-value="f.value" data-event-change="ol_prop_text(f.index, ev.value, ev.linebreak)" data-event-blur="ol_prop_commit(f.index)"/>
-                                        <div data-if="f.kind == 'bool'" class="switch" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(f.index)"><div class="thumb"/></div>
+                                        <div data-if="f.kind == 'bool'" class="switch" data-attr-id="'ol-switch-' + f.index" data-class-on="f.value == 'true'" data-event-click="ol_prop_toggle(f.index)"><div class="thumb"/></div>
                                         <div data-if="f.kind == 'sound'" class="row gap-1 grow ol-sound">
                                             <span class="ol-sound-name grow" data-class-muted="!f.filled" data-attr-id="'ol-sound-' + f.index">{{ f.value }}</span>
                                             <div data-if="f.filled" class="icon-button small" data-attr-id="'ol-sound-play-' + f.index" title="Послушать" data-event-click="ol_sound_play(f.index)"><icon name="play_arrow"/></div>

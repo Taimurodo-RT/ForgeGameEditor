@@ -1,0 +1,23 @@
+{
+  "id": "elder",
+  "speakers": {"elder": {"name": "Староста", "color": "#e8b04a"}},
+  "start": [
+    {"if": "quest.key >= 2", "goto": "thanks"},
+    {"if": "quest.key >= 1", "goto": "waiting"},
+    {"goto": "hello"}
+  ],
+  "nodes": [
+    {"id": "hello", "speaker": "elder",
+     "text": "Здравствуй, путник! Я обронил ключ от ворот у пруда, за забором. Найдёшь?",
+     "choices": [
+       {"text": "Найду.", "do": "quest.key = 1", "goto": "go"},
+       {"text": "Не сейчас.", "goto": "end"}
+     ]},
+    {"id": "go", "speaker": "elder", "text": "Пруд к северу. В заборе есть проход."},
+    {"id": "waiting", "branches": [{"if": "has(\"key\")", "goto": "give_back"}], "next": "not_yet"},
+    {"id": "not_yet", "speaker": "elder", "text": "Ключ лежит у пруда, к северу."},
+    {"id": "give_back", "speaker": "elder", "text": "Мой ключ! Держи тридцать монет. Ворота на востоке, ступай.",
+     "do": "quest.key = 2; take(\"key\"); give(\"coins\", 30)"},
+    {"id": "thanks", "speaker": "elder", "text": "Ворота на востоке, ступай."}
+  ]
+}

@@ -92,6 +92,28 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("in_binds", &forge::edits::ProjectEdits::in_binds);
     t.field("in_jump", &forge::edits::ProjectEdits::in_jump);
     t.field("in_no_jump", &forge::edits::ProjectEdits::in_no_jump);
+    t.field("rp_elder", &forge::edits::ProjectEdits::rp_elder);
+    t.field("rp_villager", &forge::edits::ProjectEdits::rp_villager);
+    t.field("rp_villager_name", &forge::edits::ProjectEdits::rp_villager_name);
+    t.field("rp_talk", &forge::edits::ProjectEdits::rp_talk);
+    t.field("rp_talk_line", &forge::edits::ProjectEdits::rp_talk_line);
+    t.field("rp_choice", &forge::edits::ProjectEdits::rp_choice);
+    t.field("rp_once", &forge::edits::ProjectEdits::rp_once);
+    t.field("rp_villager_at", &forge::edits::ProjectEdits::rp_villager_at);
+    t.field("rp_reward", &forge::edits::ProjectEdits::rp_reward);
+    t.field("rp_place", &forge::edits::ProjectEdits::rp_place);
+    t.field("rp_place_name", &forge::edits::ProjectEdits::rp_place_name);
+    t.field("rp_place_at", &forge::edits::ProjectEdits::rp_place_at);
+    t.field("rp_coins", &forge::edits::ProjectEdits::rp_coins);
+    t.field("rp_sound", &forge::edits::ProjectEdits::rp_sound);
+    t.field("rp_walk", &forge::edits::ProjectEdits::rp_walk);
+    t.field("rp_walk_fps", &forge::edits::ProjectEdits::rp_walk_fps);
+    t.field("rp_hud", &forge::edits::ProjectEdits::rp_hud);
+    t.field("rp_hint", &forge::edits::ProjectEdits::rp_hint);
+    t.field("rp_hint_node", &forge::edits::ProjectEdits::rp_hint_node);
+    t.field("rp_copy_at", &forge::edits::ProjectEdits::rp_copy_at);
+    t.field("rp_copy_talk", &forge::edits::ProjectEdits::rp_copy_talk);
+    t.field("rp_copy_line", &forge::edits::ProjectEdits::rp_copy_line);
 }
 
 namespace forge::edits {

@@ -92,6 +92,9 @@ public:
 
     // Each frame while the tab is open; context: to find the elements.
     void update(f64 dt, Rml::Context* context);
+    // When the tab opens: the properties panel again, with what the other tabs changed meanwhile (a dialogue «Сюжет»
+    // added is a choice of «Разговор»).
+    void opened();
     // Outside a render pass, then inside the one that draws the window.
     void prepare(SDL_GPUCommandBuffer* cmd);
     void draw(SDL_GPUCommandBuffer* cmd, SDL_GPURenderPass* pass);
@@ -194,6 +197,9 @@ public:
     void delete_selection();
     // A field of the properties panel (row i) set from text, as the user types it.
     void set_field(int i, const std::string& text, bool dragging);
+    // The panel's row with this label (-1: none), and what its cycler offers as the panel was last built.
+    int field_row(std::string_view label) const;
+    std::vector<std::string> field_choices(int i) const;
     u64 minimap_updates() const { return minimap_updates_; }
     // The minimap's colour of tile (x, y), false when the map does not draw that tile (it draws every other one).
     bool minimap_at(i32 x, i32 y, u8 rgb[3]) const;

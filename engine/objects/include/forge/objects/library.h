@@ -67,6 +67,8 @@ struct PropDef {
     bool advanced = false; // shown under «Подробно»
     // "sound": the value is a sound's name in the library's sounds folder
     // (a file today; the sound editor's sounds later).
+    // "talk": the value is the id of one of the game's talks (its dialogues of
+    // «Сюжет»); the choices are those, «empty» first (Library::set_talks).
     std::string asset;
     std::string empty; // shown for an empty value: "обычный", "нет"
 
@@ -117,6 +119,9 @@ struct KindDef {
     // Its templates are put on levels and linked in «Логика» ("placed": false: they only say something to the
     // game, as the hero's picture does, and the editor's palette and «Логика» leave them out).
     bool placed = true;
+    // Its one copy on a level is where the game's hero starts ("hero": true, step 14.4b): «Логика» calls it the hero
+    // (logic::kHero), as it does a game's hero that is not on the level, and has no thing of its own for it.
+    bool hero = false;
     // Its blocks (ids), when the kind is put together from blocks; the
     // components and props below are then theirs, with the kind's own
     // starting values on top.
@@ -229,6 +234,10 @@ public:
     const std::filesystem::path& sounds_folder() const { return sounds_; }
     void set_sounds_folder(std::filesystem::path folder) { sounds_ = std::move(folder); }
     std::filesystem::path sound_file(std::string_view name) const;
+
+    // The game's talks (ids of its dialogues, step 14.4b): the choices of every property "asset": "talk", the empty
+    // value first. A value no talk has any more shows as such (display). Not a change of any template.
+    void set_talks(const std::vector<std::string>& ids);
 
     const std::vector<KindDef>& kinds() const { return kinds_; }
     const std::vector<BlockDef>& blocks() const { return blocks_; }

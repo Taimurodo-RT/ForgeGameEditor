@@ -1,0 +1,8 @@
+{
+  "id": "dog",
+  "speakers": {"dog": {"name": "Пёс", "color": "#c8a070"}},
+  "start": [{"goto": "hello"}],
+  "nodes": [
+    {"id": "hello", "speaker": "dog", "text": "Гав! Гав-гав!"}
+  ]
+}

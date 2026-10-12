@@ -418,6 +418,7 @@ void RpgGame::touch() {
         gone_.push_back(p.id);
         give(p.what, p.count, false);
         if (break_ == Break::PickTwice) give(p.what, p.count, false);
+        play_sound(p.sound);
         say(p.count == 1 ? "Найдено: " + p.tmpl->name : "Найдено: " + p.tmpl->name + " ×" + std::to_string(p.count));
         FORGE_INFO("RPG: подобрано «%s» (%s), inv.%s = %g", p.tmpl->name.c_str(), p.id.c_str(), p.what.c_str(), inv(p.what));
         happened.emplace_back("pick", p);
@@ -441,6 +442,20 @@ void RpgGame::touch() {
         if (outcome_ != Outcome::Playing || map_gen_ != gen || ends_ != ends) break;
         on_event(kind, thing);
     }
+}
+
+void RpgGame::play_sound(const std::string& name) {
+    if (name.empty()) return;
+    auto it = named_.find(name);
+    if (it == named_.end()) {
+        std::string error;
+        audio::ClipPtr clip = audio::load(module_.library_ref().sounds_folder() / utf8_path(name), &error);
+        if (!clip) FORGE_WARN("Звук «%s» не играет: %s", name.c_str(), error.c_str());
+        it = named_.emplace(name, clip ? audio::sound_of(std::move(clip), 1.0f, 0.04f) : nullptr).first;
+    }
+    if (!it->second) return;
+    sounds_played_.push_back(name);
+    mixer_.play(*it->second, {});
 }
 
 void RpgGame::talk() {
@@ -469,7 +484,8 @@ void RpgGame::on_event(const std::string& kind, const Thing& b) {
         if (outcome_ != Outcome::Playing || map_gen_ != gen || ends_ != ends) break;
         const logic::VerbDef* verb = verbs_.find(link.verb);
         if (!verb || verb->when != kind || link.b != b.tmpl->id) continue;
-        if (!link.a.empty() && link.a != map_->hero.tmpl->id) continue;
+        // Side A is the hero: «Логика» names it logic::kHero, as every module's hero.
+        if (!link.a.empty() && link.a != logic::kHero) continue;
         fired_.push_back(link.id);
         if (verb->action == "level_won") level_won();
         else if (verb->action == "lose") finish(false);

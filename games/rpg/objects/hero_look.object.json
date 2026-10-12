@@ -1,0 +1,12 @@
+{
+  "id": "hero_look",
+  "name": "Герой",
+  "kind": "hero",
+  "genre": "RPG",
+  "about": "тот, кем ходит игрок: стоит, шаг, шаг",
+  "picture": "герой.png",
+  "frames": 3,
+  "values": {
+    "speed": 4
+  }
+}

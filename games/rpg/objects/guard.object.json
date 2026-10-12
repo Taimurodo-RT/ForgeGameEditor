@@ -1,0 +1,11 @@
+{
+  "id": "guard",
+  "name": "Стражник",
+  "kind": "villager",
+  "genre": "RPG",
+  "about": "стоит у ворот; с ним можно сдаться",
+  "picture": "стражник.png",
+  "values": {
+    "talk": "guard"
+  }
+}

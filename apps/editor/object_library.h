@@ -54,6 +54,10 @@ using CopyIn = std::function<std::optional<std::string>(const std::filesystem::p
 std::string copy_into(const std::filesystem::path& source, const std::filesystem::path& folder, const char* what,
                       const CopyIn& via = {});
 
+// The game's dialogues a villager can say (a property with "asset": "talk"): the files of game/dialogues, as the
+// game reads them (Shell::load_game_data), sorted. A story's dialogues (its own folder) are said by its quests.
+std::vector<std::string> talk_ids(const std::filesystem::path& game);
+
 class ObjectLibrary {
 public:
     explicit ObjectLibrary(level::LevelModule& module);

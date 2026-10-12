@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace rpg {
@@ -83,6 +84,9 @@ public:
     const std::vector<forge::u32>& fired() const { return fired_; }
     // What the game said to the player at the top of the screen, in order.
     const std::vector<std::string>& toasts() const { return toasts_; }
+    // The sounds of things that played (their files), in order. Without a sound device (the self-test) they still
+    // "play" when their file is read.
+    const std::vector<std::string>& sounds_played() const { return sounds_played_; }
     Outcome outcome() const { return outcome_; }
     u32 ends() const { return ends_; }
     // Problems of the game's data, and why the last begin() refused.
@@ -115,6 +119,7 @@ private:
     void finish(bool won);
     void set_values();
     void say(std::string text);
+    void play_sound(const std::string& name);
     void fit_camera(u32 width, u32 height);
     f64 inv(const std::string& item) const;
     void give(const std::string& item, f64 n, bool tell);
@@ -162,6 +167,8 @@ private:
     u64 clock_ticks_ = 0;
     forge::audio::Mixer mixer_;
     forge::audio::ScreenSounds screen_sounds_;
+    std::unordered_map<std::string, forge::audio::SoundPtr> named_; // a file that does not read: null
+    std::vector<std::string> sounds_played_;
 };
 
 } // namespace rpg

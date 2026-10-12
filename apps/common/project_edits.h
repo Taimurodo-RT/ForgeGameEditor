@@ -15,7 +15,8 @@
 // levels (step 14.2b): the areas the hero comes into, where it must be after each. The platformer (step 14.2c): the
 // author's enemy, coin, trap and goal, the zone the hero falls into, the HUD and the windows the game shows at its end.
 // The template «Платформер» (step 14.2d): what the author changed in a game made of it. The tab «Анимация»: the
-// animations the author made, played by the hero, a walker and an object that stands.
+// animations the author made, played by the hero, a walker and an object that stands. The template «RPG сверху» (step
+// 14.4b): what the author changed in a game made of it, played by the module rpg.
 
 #include "forge/core/types.h"
 #include "forge/data/reflect.h"
@@ -102,6 +103,30 @@ struct ProjectEdits {
     // jumps on now; in_no_jump: keys it no longer jumps on.
     std::vector<std::string> in_action, in_binds, in_jump, in_no_jump;
     std::vector<int> in_count;
+    // The template «RPG сверху» (step 14.4b) as the author changed it in the tabs of a game made of it, for the module
+    // rpg's scene project. rp_elder: the elder's picture replaced in «Ресурсы», r, g, b, one colour all over. rp_villager:
+    // the author's villager (a «Копия» of the elder, renamed rp_villager_name), standing at rp_villager_at (its cell
+    // x, y on the start map, e.level), saying rp_talk, the author's dialogue of «Сюжет»: its first line rp_talk_line, its
+    // answer rp_choice (the first) gives rp_reward coins once (rp_once: the variable it sets). rp_place: the author's
+    // place at rp_place_at, a link «доходит до» to it passes the map. rp_coins: the coins' template, its sound now
+    // rp_sound (a file of the game's sounds). rp_walk: the hero's frames while he walks, rp_walk_fps of them a second.
+    // rp_hint: the HUD's hint as the author left it (its layer rp_hint_node of the screen rp_hud). Cells the author laid
+    // are e.cells. rp_copy_at: another copy of rp_villager on that map, at that cell, saying its own rp_copy_talk (a
+    // dialogue added in «Сюжет» after the copy was put, chosen in its properties on «Уровень»; the template still says
+    // rp_talk): its first line rp_copy_line, no answers.
+    std::vector<int> rp_elder;
+    std::string rp_villager, rp_villager_name, rp_talk, rp_talk_line, rp_choice, rp_once;
+    std::vector<int> rp_villager_at;
+    double rp_reward = 0;
+    std::string rp_place, rp_place_name;
+    std::vector<int> rp_place_at;
+    std::string rp_coins, rp_sound;
+    std::vector<int> rp_walk;
+    double rp_walk_fps = 0;
+    std::string rp_hud, rp_hint;
+    forge::u32 rp_hint_node = 0;
+    std::vector<int> rp_copy_at;
+    std::string rp_copy_talk, rp_copy_line;
 };
 
 // False (error says why) when the file cannot be read.

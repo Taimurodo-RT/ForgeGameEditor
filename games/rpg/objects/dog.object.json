@@ -1,0 +1,12 @@
+{
+  "id": "dog",
+  "name": "Пёс",
+  "kind": "villager",
+  "genre": "RPG",
+  "about": "деревенский пёс",
+  "picture": "пёс.png",
+  "frames": 2,
+  "values": {
+    "talk": "dog"
+  }
+}

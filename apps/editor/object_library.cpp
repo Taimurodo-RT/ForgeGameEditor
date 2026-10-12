@@ -122,6 +122,16 @@ View make_prop_view(const objects::Library& lib, const objects::Template& t, con
 
 } // namespace
 
+std::vector<std::string> talk_ids(const std::filesystem::path& game) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(game / "dialogues", ec))
+        if (std::error_code ec2; e.is_regular_file(ec2) && e.path().extension() == ".json" && e.path().stem().extension().empty())
+            out.push_back(path_to_utf8(e.path().stem()));
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 ObjectLibrary::ObjectLibrary(level::LevelModule& module) : module_(module) {}
 
 bool ObjectLibrary::init(ui::Ui& ui) {
@@ -517,6 +527,10 @@ void ObjectLibrary::rebuild() {
 
 void ObjectLibrary::rebuild_side() {
     objects::Library& lib = library();
+    // «Разговор» chooses among the dialogues the game has now («Сюжет» may have added or deleted one).
+    const std::vector<std::string> talks = talk_ids(lib.folder().parent_path());
+    lib.set_talks(talks);
+    shared_.set_talks(talks);
     const objects::Template* t = selected();
     const objects::KindDef* k = t ? lib.kind_of(*t) : nullptr;
     set(m_has_sel_, t != nullptr, "ol_has_sel");
