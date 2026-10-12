@@ -414,7 +414,7 @@ void ProjectWindow::answer(const std::string& what) {
         if (what == "save") {
             std::string error;
             if (!ask.save(error)) {
-                message("Не сохранилось: " + error + ". Уровень «" + ask.from + "» остался открытым, правки на месте.");
+                message("Не сохранилось: " + error + ". " + ask.kept);
                 return;
             }
             close();
@@ -461,9 +461,21 @@ void ProjectWindow::close() {
 void ProjectWindow::ask_level(const std::string& from, const std::string& to, std::vector<std::string> lines,
                               std::function<bool(std::string& error)> save_level, std::function<void(bool discarding)> go) {
     set_menu(false);
-    level_ask_ = LevelAsk{from, to, std::move(save_level), std::move(go)};
+    level_ask_ = LevelAsk{from, to, std::move(save_level), std::move(go), "Уровень «" + from + "» остался открытым, правки на месте."};
     set(m_ask_title_, Rml::String("Открыть уровень «" + to + "»"), "pj_ask_title");
     set(m_ask_lead_, Rml::String("Уровень «" + from + "» закроется. В нём не сохранено:"), "pj_ask_lead");
+    m_unsaved_.assign(lines.begin(), lines.end());
+    if (model_) model_.DirtyVariable("pj_unsaved");
+    set(m_note_, Rml::String(), "pj_note");
+    set_view("unsaved");
+}
+
+void ProjectWindow::ask_close(std::vector<std::string> lines, std::function<bool(std::string& error)> save_all,
+                              std::function<void(bool discarding)> go) {
+    set_menu(false);
+    level_ask_ = LevelAsk{m_game_, "", std::move(save_all), std::move(go), "Редактор не закрыт, правки на месте."};
+    set(m_ask_title_, Rml::String("Закрыть редактор"), "pj_ask_title");
+    set(m_ask_lead_, Rml::String("Игра «" + m_game_ + "» закроется. В ней не сохранено:"), "pj_ask_lead");
     m_unsaved_.assign(lines.begin(), lines.end());
     if (model_) model_.DirtyVariable("pj_unsaved");
     set(m_note_, Rml::String(), "pj_note");

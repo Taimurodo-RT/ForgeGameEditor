@@ -149,6 +149,12 @@ struct ProjectEdits {
     std::string m3_inherit;
     std::string m3_hud, m3_hud_text, m3_lose, m3_lose_title;
     forge::u32 m3_hud_node = 0, m3_lose_node = 0;
+    // A game of «Три в ряд» whose pictures the author drew in the tab «Изображения» (the editor's self-test images), for
+    // the module match3's scene images. im_ruby: «Рубин»'s 4 frames, the r g b in the middle of each (12 numbers);
+    // im_chip: the author's gem (its id), named im_chip_name, drawn by a strip made of a 2 × 2 sheet, the middle of each
+    // of its 4 frames im_chip_rgb; im_at: the cell (x, y) a «Рубин» was put on, on the start level.
+    std::vector<int> im_ruby, im_chip_rgb, im_at;
+    std::string im_chip, im_chip_name;
 };
 
 // False (error says why) when the file cannot be read.

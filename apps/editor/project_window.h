@@ -106,6 +106,10 @@ public:
     // сохранять»: go(true); «Отмена» and Esc: nothing changes.
     void ask_level(const std::string& from, const std::string& to, std::vector<std::string> lines,
                    std::function<bool(std::string& error)> save_level, std::function<void(bool discarding)> go);
+    // The editor's window is closed with something unsaved that closing would lose (pictures of «Изображения»): the
+    // same window. «Сохранить»: save_all() (a save that fails says why, and the editor stays), then go(false); «Не
+    // сохранять»: go(true); «Отмена» and Esc: the editor stays as it was.
+    void ask_close(std::vector<std::string> lines, std::function<bool(std::string& error)> save_all, std::function<void(bool discarding)> go);
 
     // --- for the self-test ---
     const std::string& view() const { return m_view_; } // "", "new", "unsaved", "opening", "message"
@@ -134,6 +138,7 @@ private:
         std::string from, to;
         std::function<bool(std::string&)> save;
         std::function<void(bool)> go;
+        std::string kept; // what stays as it was when saving fails
     };
     void refresh();
     void ask_or_go(const editor::project::Game& game);

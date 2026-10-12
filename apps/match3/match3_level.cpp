@@ -403,6 +403,22 @@ u32 Painter::gem_frame(u32 gem, u32 frame) const {
 
 u32 Painter::gem_frames(u32 gem) const { return gem < count_.size() ? count_[gem] : 1; }
 
+std::vector<u8> Painter::gem_pixels(u32 gem, u32 frame, u32& w, u32& h) const {
+    w = h = 0;
+    const u32 at = gem_frame(gem, frame);
+    if (gem >= first_.size() || at >= frames_.size()) return {};
+    const render::SpriteRect& r = frames_[at];
+    std::vector<u8> out;
+    out.reserve(static_cast<usize>(r.w) * r.h * 4);
+    for (u32 y = 0; y < r.h; ++y) {
+        const u8* row = &rgba_[(static_cast<usize>(r.y + y) * width_ + r.x) * 4];
+        out.insert(out.end(), row, row + static_cast<usize>(r.w) * 4);
+    }
+    w = r.w;
+    h = r.h;
+    return out;
+}
+
 void Painter::begin(const render::Camera2D& camera) { batch_.begin(camera.snapped_x(), camera.snapped_y(), 4096); }
 
 void Painter::put(u32 frame, f64 x, f64 y, f32 w, f32 h, u32 color, u32 order) {

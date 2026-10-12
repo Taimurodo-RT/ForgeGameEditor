@@ -83,6 +83,12 @@ namespace {
 //                          window, «Ещё раз» the same field anew. With m3_gone in FILE (the author deleted the star after
 //                          the save) «Продолжить» is refused with those words on the screen, nothing in the star's place,
 //                          the save byte for byte as it was and no save added
+// --scene images --edits FILE (the tab «Изображения») a game of the template whose pictures its author drew in the
+//                          editor's tab (the editor's self-test part images-a-again writes FILE): «Рубин»'s frames and
+//                          «Фишка»'s (a strip made of a 2 × 2 sheet) in the game's pictures are the author's pixels, the
+//                          game's sheet holds each of their 4 frames byte for byte in order, the «Рубин» put on «Первый»
+//                          on its cell; the bot plays «Первый» with the mouse, every cell at rest drawn with its gem's
+//                          frame 1, and a «Рубин» or «Фишка» vanishing drawn with the author's frame of that moment
 
 struct Step {
     const char* name;
@@ -354,6 +360,7 @@ private:
     void check_between() {
         const Play* p = g_.play();
         if (!p) return;
+        if (im_watching_) im_watch();
         const f64 t = g_.phase_progress();
         const auto& drawn = g_.drawn();
         if (g_.phase() == Match3Game::Phase::Swap && !seen_swap_ && t >= 0.75 && t <= 0.95) {
@@ -562,6 +569,7 @@ private:
         if (sc == "template") return template_scene();
         if (sc == "project") return project_scene();
         if (sc == "project_continue") return project_continue_scene();
+        if (sc == "images") return images_scene();
         steps_.push_back({"данные тестовой игры", 5, [this](u32) {
             check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
             const GemSet& set = g_.gems();
@@ -1243,6 +1251,110 @@ private:
         save_steps("m3-author", "m3-author-expect.json");
     }
 
+    // --scene images: the author's pictures of the tab «Изображения».
+    void images_scene() {
+        plus_gem_.clear(); // the template's game: no gem gives «+2 хода»
+        steps_.push_back({"картинки автора", 5, [this](u32) {
+            std::string why;
+            const bool read = !edits_file_.empty() && edits::read_edits(edits_file_, e_, why);
+            check(read && e_.im_ruby.size() == 12 && e_.im_chip_rgb.size() == 12 && !e_.im_chip.empty() && e_.im_at.size() == 2,
+                  "файл ожиданий " + path_to_utf8(edits_file_) + " читается " + why);
+            check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
+            const GemSet& set = g_.gems();
+            im_ruby_ = set.index("ruby");
+            im_chip_ = read && !e_.im_chip.empty() ? set.index(e_.im_chip) : -1;
+            std::string ids;
+            for (const objects::Template* t : set.gems) ids += (ids.empty() ? "" : ", ") + t->id;
+            check(set.size() == 7 && im_ruby_ >= 0 && im_chip_ >= 0 && set.gems[static_cast<usize>(im_chip_)]->name == e_.im_chip_name,
+                  "набор поля — шесть самоцветов шаблона и «" + e_.im_chip_name + "» автора: " + ids);
+            if (im_ruby_ < 0 || im_chip_ < 0 || e_.im_ruby.size() != 12 || e_.im_chip_rgb.size() != 12 || e_.im_at.size() != 2) {
+                steps_.resize(at_ + 1);
+                return true;
+            }
+            const usize r = static_cast<usize>(im_ruby_), c = static_cast<usize>(im_chip_);
+            check(set.gems[r]->frames == 4 && set.gems[c]->frames == 4 && set.scoring.points[r] == 10 && set.scoring.points[c] == 10 &&
+                      set.sounds[r] == "звон.wav" && set.sounds[c] == "звон.wav",
+                  "«Рубин» и «" + e_.im_chip_name + "» по 4 кадра, очки 10 и звук звон.wav, как у «Рубина» шаблона");
+            std::string got;
+            bool same = true;
+            for (u32 f = 0; f < 4; ++f) {
+                const Rgb rw{e_.im_ruby[3 * f], e_.im_ruby[3 * f + 1], e_.im_ruby[3 * f + 2]};
+                const Rgb cw{e_.im_chip_rgb[3 * f], e_.im_chip_rgb[3 * f + 1], e_.im_chip_rgb[3 * f + 2]};
+                same = same && colour(static_cast<u8>(r), f) == rw && colour(static_cast<u8>(c), f) == cw;
+                got += " " + rgb_text(colour(static_cast<u8>(r), f)) + " / " + rgb_text(colour(static_cast<u8>(c), f));
+            }
+            check(same, "середины кадров 1–4 в картинках игры — пиксели автора (рубин / фишка):" + got);
+            return true;
+        }});
+        new_game();
+        steps_.push_back({"кадры в листе игры и на поле", 5, [this](u32) {
+            // The sheet the game draws from: each frame byte for byte its picture's, in their order.
+            std::string bad;
+            for (const i32 gem : {im_ruby_, im_chip_}) {
+                const objects::Template& t = *g_.gems().gems[static_cast<usize>(gem)];
+                std::vector<u8> bytes;
+                assets::CookedTexture img;
+                const fs::path file = s_->game_dir() / "pictures" / utf8_path(t.picture);
+                if (!read_file(file, bytes) || !assets::decode_image(bytes, img) || img.width % 4 != 0) {
+                    bad += " " + t.picture + " не читается";
+                    continue;
+                }
+                const u32 fw = img.width / 4;
+                if (g_.painter().gem_frames(static_cast<u32>(gem)) != 4)
+                    bad += " у «" + t.name + "» кадров " + std::to_string(g_.painter().gem_frames(static_cast<u32>(gem)));
+                for (u32 f = 0; f < 4; ++f) {
+                    u32 w = 0, h = 0;
+                    const std::vector<u8> sheet = g_.painter().gem_pixels(static_cast<u32>(gem), f, w, h);
+                    std::vector<u8> want;
+                    for (u32 y = 0; y < img.height; ++y) {
+                        const u8* row = &img.rgba8[(static_cast<usize>(y) * img.width + f * fw) * 4];
+                        want.insert(want.end(), row, row + static_cast<usize>(fw) * 4);
+                    }
+                    if (w != fw || h != img.height || sheet != want) bad += " «" + t.name + "» кадр " + std::to_string(f + 1);
+                }
+            }
+            check(bad.empty(), "лист игры: 4 кадра «Рубина» и «" + e_.im_chip_name + "» байт в байт из их картинок, по порядку" + bad);
+            const Field& f = *g_.field();
+            const Board& b = g_.play()->board();
+            check(b.at(e_.im_at[0] - f.x0, e_.im_at[1] - f.y0) == im_ruby_,
+                  "«Рубин», поставленный автором, на клетке " + std::to_string(e_.im_at[0]) + ":" + std::to_string(e_.im_at[1]));
+            check_rest("поле в начале: каждая фишка нарисована своим кадром 1");
+            if (grab()) {
+                f32 x = 0, y = 0;
+                screen_of(e_.im_at[0] + 0.5, e_.im_at[1] + 0.5, x, y);
+                const Rgb got = pixel(x, y), want{e_.im_ruby[0], e_.im_ruby[1], e_.im_ruby[2]};
+                check(near(got, want, 12), "на его клетке кадр 1 автора: " + rgb_text(got) + " (" + rgb_text(want) + ")");
+            }
+            im_watching_ = true;
+            return true;
+        }});
+        play_level("бот играет «Первый» с картинками автора", true);
+        steps_.push_back({"исчезают кадрами автора", 1, [this](u32) {
+            im_watching_ = false;
+            std::string seen;
+            for (const auto& [frame, ok] : im_seen_) seen += " " + frame;
+            check(im_bad_.empty(), "исчезающие «Рубин» и «" + e_.im_chip_name + "» нарисованы кадрами автора:" +
+                                       (seen.empty() ? std::string(" ни один не исчезал кадрами за игру") : seen) + im_bad_);
+            return true;
+        }});
+    }
+    // While the scene images plays: a «Рубин» or the author's gem vanishing at its frame 2, 3 or 4, drawn whole: in its
+    // middle the middle of that frame of its picture. Each gem's frame once.
+    void im_watch() {
+        if (g_.phase() != Match3Game::Phase::Vanish) return;
+        const auto& drawn = g_.drawn();
+        for (const Match3Game::Drawn& d : drawn) {
+            if ((static_cast<i32>(d.gem) != im_ruby_ && static_cast<i32>(d.gem) != im_chip_) || d.frame == 0 || d.alpha < 1) continue;
+            const std::string name = (static_cast<i32>(d.gem) == im_ruby_ ? "рубин:" : "фишка:") + std::to_string(d.frame + 1);
+            if (im_seen_.count(name) || !grab()) continue;
+            f32 x = 0, y = 0;
+            screen_of(d.x, d.y, x, y);
+            const Rgb got = pixel(x, y), want = colour(d.gem, d.frame);
+            im_seen_[name] = near(got, want, 14);
+            if (!im_seen_[name]) im_bad_ += " " + name + " " + rgb_text(got) + " вместо " + rgb_text(want);
+        }
+    }
+
     void project_continue_scene() {
         author_data();
         menu_continue_steps("m3-author");
@@ -1336,6 +1448,11 @@ private:
     std::string plus_gem_ = "topaz"; // the gem whose groups give «+2 хода» by a link of the game
     i32 move_a_ = -1, move_b_ = -1;
     bool seen_swap_ = false, seen_vanish_ = false, seen_fall_ = false;
+    // The scene images: the gems of the author's pictures, their vanishing frames seen (gem:frame, drawn right).
+    i32 im_ruby_ = -1, im_chip_ = -1;
+    bool im_watching_ = false;
+    std::map<std::string, bool> im_seen_;
+    std::string im_bad_;
     u32 between_[3] = {0, 0, 0};
     u32 fades_ = 0, frames_ = 0, hidden_ = 0, in_hole_ = 0;
     // What steps hand on.

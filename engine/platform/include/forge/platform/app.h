@@ -59,6 +59,9 @@ public:
     // Every window and input event, before on_frame.
     virtual void on_event(const SDL_Event& event) { (void)event; }
     virtual void on_shutdown() {}
+    // The window is closed (the system's close button, Alt+F4): true lets it close now; false keeps it open (the app
+    // asks first, then calls request_quit).
+    virtual bool on_quit_request() { return true; }
 
     int run(const AppConfig& config);
     void request_quit() { quit_ = true; }

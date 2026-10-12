@@ -1278,6 +1278,23 @@ bool AssetLibrary::convert_image(const std::string& extension) {
     return true;
 }
 
+std::string AssetLibrary::add_file(const std::string& folder, const std::string& name_in, std::span<const u8> bytes, const std::string& label) {
+    std::error_code dir;
+    if (!fs::is_directory(abs(folder), dir)) return {};
+    const std::string name = unique_name(abs(folder), name_in);
+    const fs::path staged = staging_dir() / utf8_path(name);
+    std::error_code ec;
+    fs::create_directories(staged.parent_path(), ec);
+    if (!write_file_atomic(staged, bytes)) return {};
+    const std::string rel = folder.empty() ? name : folder + "/" + name;
+    history_.execute(std::make_unique<FileMoves>(*this, std::vector<FileMoves::Move>{{staged, abs(rel)}}, label + ": " + name));
+    history_.seal();
+    std::error_code exists;
+    if (!fs::is_regular_file(abs(rel), exists)) return {};
+    select({rel});
+    return rel;
+}
+
 // --- «Конвертировать…» -------------------------------------------------------
 
 std::vector<std::string> AssetLibrary::convertible(const Converter& c) const {
