@@ -582,7 +582,9 @@ private:
 
     void new_game() {
         steps_.push_back({"новая игра", 10, [this](u32) {
-            check(s_->new_game(), "новая игра начинается" + (g_.problems().empty() ? std::string() : ": " + g_.problems().back()));
+            const bool started = s_->new_game();
+            check(started, "новая игра начинается" + (g_.problems().empty() ? std::string() : ": " + g_.problems().back()));
+            if (!started) steps_.resize(at_ + 1); // no field to play: the steps after it would only fall over
             return true;
         }});
         steps_.push_back({"первый кадр", 3, [this](u32 f) { return f >= 2; }});
@@ -1042,10 +1044,14 @@ private:
             if (!read) return true;
             const GemSet& set = g_.gems();
             const i32 star = set.index(e_.m3_star), ruby = set.index("ruby");
-            std::string ids;
+            std::string ids, want;
             for (const objects::Template* t : set.gems) ids += (ids.empty() ? "" : ", ") + t->id;
-            check(set.size() == 7 && star >= 0 && ruby >= 0 && set.gems[static_cast<usize>(star)]->name == e_.m3_star_name,
-                  "набор поля — шесть самоцветов шаблона и «" + e_.m3_star_name + "» автора, по id: " + ids);
+            // In the order of the ids, whatever the names: a name the author changes does not change the field.
+            std::vector<std::string> by_id = {"amethyst", "diamond", "emerald", "ruby", "sapphire", "topaz", e_.m3_star};
+            std::sort(by_id.begin(), by_id.end());
+            for (const std::string& id : by_id) want += (want.empty() ? "" : ", ") + id;
+            check(set.size() == 7 && ids == want && star >= 0 && ruby >= 0 && set.gems[static_cast<usize>(star)]->name == e_.m3_star_name,
+                  "набор поля — шесть самоцветов шаблона и «" + e_.m3_star_name + "» автора, в порядке id: " + ids);
             if (star < 0 || ruby < 0) return true;
             std::string points;
             bool rest = true;
