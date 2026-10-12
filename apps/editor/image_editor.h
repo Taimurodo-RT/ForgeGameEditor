@@ -2,14 +2,17 @@
 
 // The «Изображения» tab: a picture of «Ресурсы» edited pixel by pixel (editors/изображения-модель.md).
 //
-// Left, the pictures of «Ресурсы» by folder; «Открыть в редакторе изображений» there opens one here. In the middle the
+// Left, the pictures of «Ресурсы» by folder; «Открыть в редакторе изображений» there opens one here. Under them the
+// pictures of the game that «Ресурсы» has not (in its pictures/, not a copy sources.json keeps): shown only, with where
+// they are from and why they are not changed here. In the middle the
 // canvas: the picture at 1–32 times (Ctrl with the wheel, «1:1», «Вписать»), moved with the middle button or Space with
 // the mouse, a chequerboard under what is clear, the pixel grid from 8 times, the grid of the strip's frames; under it
 // the size, the format, the point and colour under the mouse, the frame. Right, four sections:
 //   - «Рисование»: pencil 1–4 px, eraser, fill (exactly the colour, joined by sides), eyedropper (I, or Alt and a
-//     click), a line from the last point with Shift; two colours (left and right button, X swaps them), the picture's
-//     colours as swatches, a colour typed in hex; the area: the whole picture or «Кадр N» (the brush, the effects and
-//     the transformations keep to it);
+//     click), a line from the last point with Shift; two colours (left and right button, X swaps them): a click on
+//     either opens the editor's colour picker (13.4: HSV, HEX, alpha, the game's colours, which are copied, and its
+//     eyedropper on the picture); the picture's colours as swatches; the area: the whole picture or «Кадр N» (the
+//     brush, the effects and the transformations keep to it);
 //   - «Трансформации»: turns and mirrors of the area, the size (nearest pixel or smooth), the canvas with its anchor,
 //     trim, «Сетка кадров» (a sheet of frames into the strip the game reads);
 //   - «Эффекты»: shown on the canvas while their sliders move, «Применить» makes them a step, «Отмена» and Esc drop them;
@@ -23,6 +26,13 @@
 // it was, the tab marks the picture unsaved, and another picture opened keeps it so. A lossy format (JPEG) is encoded
 // from the working copy once, when saved. A file changed outside while its picture has unsaved changes is not written
 // over without the author's choice; one changed while there are none is taken as it is now (a step: Ctrl+Z goes back).
+//
+// A picture shown only (of the game, not of «Ресурсы») has no history and is never written: drawing, effects,
+// transformations, Ctrl+S and «Сохранить как…» say why, whatever asks for them (a button, a key, a method). It gets no
+// id of «Ресурсы», no line in sources.json and no copy; a file changed outside, gone or come back is shown as it is, and
+// one that became a copy of «Ресурсы» since stays shown only (its picture of «Ресурсы» opens apart, as itself).
+
+#include "color_picker.h"
 
 #include "forge/assets/image_edit.h"
 #include "forge/data/guid.h"
@@ -44,7 +54,7 @@ namespace forge::editor_app {
 
 class AssetLibrary;
 
-class ImageEditor {
+class ImageEditor : public ColorPicker::Client {
 public:
     explicit ImageEditor(AssetLibrary& assets);
     ~ImageEditor();
@@ -52,6 +62,8 @@ public:
     bool init(ui::Ui& ui);
     void bind(Rml::DataModelConstructor& model);
     void set_model(Rml::DataModelHandle handle) { model_ = handle; }
+    // The editor's one colour picker (13.4), shared with «Интерфейс».
+    void set_picker(ColorPicker* picker) { cp_ = picker; }
     // Each frame; context: only while the tab is open (the canvas is drawn for its size then).
     void update(Rml::Context* context);
     bool handle_event(const SDL_Event& e, f32 density, bool ui_used, Rml::Context* context);
@@ -77,10 +89,25 @@ public:
     std::function<void()> written;
     // How a file is written (the self-test: a write that fails).
     std::function<bool(const std::filesystem::path&, std::span<const u8>)> write_file;
+    // The game's folder: the pictures of its pictures/ that «Ресурсы» has not are shown for viewing.
+    std::filesystem::path game_dir;
+    // The picture of «Ресурсы» a file of the game ("pictures/рубин.png") is a copy of, by sources.json ("" none).
+    std::function<std::string(const std::string& game_file)> copy_from;
+    // The templates drawn with a file of the game ("pictures/рубин.png").
+    std::function<std::vector<User>(const std::string& game_file)> users_of_file;
 
     // --- actions (the buttons, the mouse, the keys, the self-test) ---
-    // A picture of «Ресурсы» (its file); false when it is none or does not read (note() says why).
+    // A picture of «Ресурсы» (its file); false when it is none or does not read (note() says why). A file of the
+    // game's pictures/ is shown only, as open_game.
     bool open(const std::filesystem::path& file);
+    // A picture of the game ("pictures/интерфейс/рамка_дерево.png"), shown only.
+    bool open_game(const std::string& game_file);
+    // The open picture is shown only: a picture of the game; its path there; the picture of «Ресурсы» it became a
+    // copy of since it was opened; its file gone.
+    bool view_only() const;
+    std::string game_file() const;
+    std::string copy_of() const;
+    bool missing() const;
     bool has_picture() const { return current_ != nullptr; }
     std::filesystem::path file() const;
     std::string rel() const;
@@ -113,10 +140,17 @@ public:
     const std::string& tool() const { return tool_; }
     void set_size(u32 px);
     u32 size() const { return size_; }
-    // The colours: "#rrggbb" or "#rrggbbaa" (false: not a colour).
+    // The colours: HEX as the picker takes it ("#rgb", "#rrggbb", "#rrggbbaa"...; false: not a colour).
     bool set_color(const std::string& hex, bool secondary = false);
     assets::Rgba color(bool secondary = false) const { return secondary ? second_ : first_; }
+    // The game colour a colour was copied from, its name ("" none): the brush keeps the pixels' RGBA, not the link.
+    const std::string& color_theme(bool secondary = false) const { return secondary ? second_theme_ : first_theme_; }
     void swap_colors();
+    // A click on the left (or right) colour: the picker opens beside the swatch at (x, y, w, h), window pixels.
+    // What it picks is the brush's colour at once; «Отмена» and Esc put the one before back. The picture, its file and
+    // its history do not change either way.
+    bool open_color(bool secondary, f32 x = 0, f32 y = 0, f32 w = 0, f32 h = 0);
+    bool picking() const { return cp_ && cp_->open_for(*this); }
     // The picture's colours as swatches (up to 64, the most used first).
     const std::vector<assets::Rgba>& colors() const { return colors_; }
     // The area: -1 the whole picture, else that frame of the strip (from 0).
@@ -158,8 +192,10 @@ public:
     const std::vector<u8>& canvas_pixels() const { return canvas_; }
     u32 canvas_width() const { return canvas_w_; }
     u32 canvas_height() const { return canvas_h_; }
-    // The pictures the list shows (their paths in «Ресурсы»), and those open with their working copies.
+    // The pictures the list shows (their paths in «Ресурсы»), those of the game shown only (their paths in the game),
+    // and those open with their working copies.
     std::vector<std::string> listed() const;
+    std::vector<std::string> game_listed() const;
     usize open_count() const { return pictures_.size(); }
 
     struct Picture;
@@ -167,7 +203,7 @@ public:
 private:
     struct ListRow {
         Rml::String rel, name, folder;
-        bool header = false, selected = false, unsaved = false;
+        bool header = false, selected = false, unsaved = false, game = false;
         int index = 0;
     };
     struct Swatch {
@@ -189,6 +225,18 @@ private:
 
     Picture* current() const { return current_; }
     Picture* find(const Guid& id) const;
+    // The open picture can be changed: true; one shown only says why `what` is not done (false).
+    bool editable(const std::string& what);
+    std::string view_reason(const Picture& p) const;
+    // The game's pictures that «Ресурсы» has not (their paths in the game, "pictures/…").
+    std::vector<std::string> game_pictures() const;
+    // ColorPicker::Client: the brush's colour.
+    void picker_show(editor::design::Color color, const std::string& link) override;
+    void picker_closed(bool keep, bool live) override;
+    bool picker_sample(f32 x, f32 y) override;
+    std::string picker_title() const override;
+    std::string picker_note() const override;
+    std::string picker_dropper_hint(bool live) const override;
     // A step of the picture's history: its pixels in `changed` (or all of it, when its size changed) before and after;
     // frames_before: the tab's own number of frames before, when the step changed it (0: it did not).
     bool commit(Picture& p, const assets::CookedTexture& before, assets::PixelRect changed, std::string label, u32 frames_before = 0);
@@ -210,6 +258,8 @@ private:
 
     AssetLibrary& assets_;
     ui::Ui* ui_ = nullptr;
+    ColorPicker* cp_ = nullptr;
+    Rml::Context* context_ = nullptr; // the editor's, while the tab is shown
     Rml::DataModelHandle model_;
     editor::Document empty_doc_;
     editor::UndoStack empty_history_{empty_doc_};
@@ -220,6 +270,13 @@ private:
     std::string tool_ = "pencil";
     u32 size_ = 1;
     assets::Rgba first_{0, 0, 0, 255}, second_{255, 255, 255, 255};
+    std::vector<std::string> game_files_; // game_pictures() as last looked for
+    bool game_files_known_ = false;
+    std::string first_theme_, second_theme_; // the game colours they were copied from (names)
+    // The colour the picker is open on: which, and what it was when it opened.
+    bool picking_second_ = false;
+    assets::Rgba picking_was_{};
+    std::string picking_was_theme_;
     std::vector<assets::Rgba> colors_;
     bool stroking_ = false, stroke_second_ = false;
     assets::CookedTexture stroke_before_;
@@ -259,11 +316,11 @@ private:
     std::vector<AreaChip> m_areas_;
     std::vector<EffectChip> m_effects_;
     std::vector<Param> m_params_;
-    Rml::String m_name_, m_info_, m_status_, m_canvas_, m_tool_ = "pencil", m_c1_ = "rgba(0,0,0,255)", m_c2_ = "rgba(255,255,255,255)", m_hex_, m_frames_from_, m_note_, m_warning_,
-        m_outside_, m_effect_ = "hue";
+    Rml::String m_name_, m_info_, m_status_, m_canvas_, m_tool_ = "pencil", m_c1_ = "rgba(0,0,0,255)", m_c2_ = "rgba(255,255,255,255)", m_c1_hex_, m_c2_hex_,
+        m_color_note_, m_frames_from_, m_note_, m_warning_, m_outside_, m_effect_ = "hue", m_view_text_, m_view_copy_;
     Rml::String m_rw_, m_rh_, m_cw_, m_ch_, m_gw_ = "32", m_gh_ = "32", m_gc_ = "2";
     int m_canvas_w_ = 0, m_canvas_h_ = 0, m_size_ = 1, m_frames_ = 1, m_zoom_ = 1, m_anchor_ = 4;
-    bool m_has_ = false, m_unsaved_ = false, m_smooth_ = false, m_trying_ = false, m_outside_shown_ = false, m_frames_own_ = true;
+    bool m_has_ = false, m_unsaved_ = false, m_smooth_ = false, m_trying_ = false, m_outside_shown_ = false, m_frames_own_ = true, m_view_ = false;
 };
 
 } // namespace forge::editor_app

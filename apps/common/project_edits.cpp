@@ -138,6 +138,7 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("m3_lose_node", &forge::edits::ProjectEdits::m3_lose_node);
     t.field("im_ruby", &forge::edits::ProjectEdits::im_ruby);
     t.field("im_chip_rgb", &forge::edits::ProjectEdits::im_chip_rgb);
+    t.field("im_px", &forge::edits::ProjectEdits::im_px);
     t.field("im_at", &forge::edits::ProjectEdits::im_at);
     t.field("im_chip", &forge::edits::ProjectEdits::im_chip);
     t.field("im_chip_name", &forge::edits::ProjectEdits::im_chip_name);

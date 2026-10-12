@@ -1,5 +1,5 @@
-/* The «Изображения» tab (the #images part of editor.rml): the pictures of «Ресурсы» on the left, the canvas in the
-   middle, the pixel editor, transformations, effects and format on the right. */
+/* The «Изображения» tab (the #images part of editor.rml): the pictures of «Ресурсы» on the left (under them the game's
+   own, shown only), the canvas in the middle, the pixel editor, transformations, effects and format on the right. */
 
 #images {
     flex: 1 1 0px;
@@ -9,6 +9,7 @@
 }
 .im-body { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
 .im-dirty { margin-left: var(--space-2); font-size: 12px; font-weight: 600; color: var(--tertiary); }
+.im-view-mark { margin-left: var(--space-2); font-size: 12px; font-weight: 600; color: var(--secondary); }
 .im-zoom { gap: 4px; align-items: center; }
 
 .im-nav {
@@ -37,6 +38,9 @@
 }
 .im-row:hover { background-color: var(--state-hover-layer); }
 .im-row.selected { background-color: var(--surface-container-highest); font-weight: 600; }
+.im-folder.game { color: var(--secondary); margin-top: var(--space-2); }
+.im-row.im-game { color: var(--on-surface-variant); }
+.im-row.im-game.selected { color: var(--on-surface); }
 .im-stage {
     gap: var(--space-1);
     min-width: 0px;
@@ -65,6 +69,9 @@
     color: var(--on-error-container);
     background-color: var(--error-container);
 }
+.im-banner.im-view { color: var(--on-secondary-container); background-color: var(--secondary-container); }
+/* Shown only: what would change the picture looks off; its actions say why when asked. */
+.im-locked { opacity: 0.45; }
 
 .im-side {
     width: 320px;
@@ -83,7 +90,8 @@
     border-radius: 3px;
     cursor: pointer;
 }
-.im-swatch.big { width: 30px; height: 30px; border-radius: 4px; cursor: default; }
+.im-swatch.big { width: 30px; height: 30px; border-radius: 4px; }
+.im-swatch.big:hover { border-color: #2f7bf5; }
 .im-swatches { flex-wrap: wrap; gap: 3px; }
 .im-areas, .im-effects { flex-wrap: wrap; gap: 4px; }
 .im-hex, .im-num {

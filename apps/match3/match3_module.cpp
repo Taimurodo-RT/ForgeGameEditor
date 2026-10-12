@@ -1314,6 +1314,23 @@ private:
                 }
             }
             check(bad.empty(), "лист игры: 4 кадра «Рубина» и «" + e_.im_chip_name + "» байт в байт из их картинок, по порядку" + bad);
+            // The pixels the editor drew with the picker's colours: in the sheet as drawn, alpha and all.
+            std::string px;
+            bool exact = !e_.im_px.empty() && e_.im_px.size() % 6 == 0;
+            for (usize i = 0; exact && i + 5 < e_.im_px.size(); i += 6) {
+                u32 w = 0, h = 0;
+                g_.painter().gem_pixels(static_cast<u32>(im_ruby_), 0, w, h);
+                const u32 x = static_cast<u32>(e_.im_px[i]), y = static_cast<u32>(e_.im_px[i + 1]);
+                const std::vector<u8> sheet = w ? g_.painter().gem_pixels(static_cast<u32>(im_ruby_), x / w, w, h) : std::vector<u8>{};
+                const usize at = w ? (static_cast<usize>(y) * w + x % w) * 4 : 0;
+                const bool there = w > 0 && y < h && at + 3 < sheet.size();
+                px += " " + std::to_string(x) + "," + std::to_string(y) + ":";
+                for (usize k = 0; k < 4; ++k) {
+                    px += " " + (there ? std::to_string(sheet[at + k]) : std::string("?"));
+                    exact = exact && there && sheet[at + k] == e_.im_px[i + 2 + k];
+                }
+            }
+            check(exact, "пиксели «Рубина», нарисованные цветами палитры, в листе игры как в редакторе, с альфой:" + px);
             const Field& f = *g_.field();
             const Board& b = g_.play()->board();
             check(b.at(e_.im_at[0] - f.x0, e_.im_at[1] - f.y0) == im_ruby_,

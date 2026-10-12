@@ -1249,7 +1249,7 @@
          editor, the transformations, the effects and the format on the right (apps/editor/image_editor.h). -->
     <div id="images" class="column" data-if="tab == 'images'">
         <div class="an-bar row">
-            <div class="st-crumb row"><icon class="s" name="image"/><span>Изображения</span><icon class="s" name="chevron_right"/><b id="im-name">{{ im_has ? im_name : 'картинка не открыта' }}</b><span id="im-unsaved" class="im-dirty" data-if="im_has && im_unsaved">не сохранена</span></div>
+            <div class="st-crumb row"><icon class="s" name="image"/><span>Изображения</span><icon class="s" name="chevron_right"/><b id="im-name">{{ im_has ? im_name : 'картинка не открыта' }}</b><span id="im-unsaved" class="im-dirty" data-if="im_has && im_unsaved">не сохранена</span><span id="im-view-mark" class="im-view-mark" data-if="im_has && im_view">только просмотр</span></div>
             <div class="grow"/>
             <div class="im-zoom row" data-if="im_has">
                 <div id="im-zoom-out" class="icon-button small" title="Мельче (Ctrl и колесо мыши)" data-event-click="im_zoom_out"><icon class="s" name="zoom_out"/></div>
@@ -1263,15 +1263,24 @@
             <div class="im-nav column">
                 <div class="lg-nav-title">Картинки «Ресурсов»</div>
                 <div data-for="r : im_list" class="column">
-                    <div data-if="r.header" class="im-folder row"><icon class="s" name="folder"/><span>{{ r.name }}</span></div>
-                    <div data-if="!r.header" class="im-row row" data-attr-id="'im-row-' + r.index" data-attr-title="r.rel" data-class-selected="r.selected" data-event-click="im_open(r.index)">
+                    <div data-if="r.header" class="im-folder row" data-attr-id="'im-head-' + r.index" data-class-game="r.game"><icon class="s" data-attr-name="r.game ? 'visibility' : 'folder'"/><span>{{ r.name }}</span></div>
+                    <div data-if="!r.header && !r.game" class="im-row row" data-attr-id="'im-row-' + r.index" data-attr-title="r.rel" data-class-selected="r.selected" data-event-click="im_open(r.index)">
                         <icon class="s" name="image"/><span class="name grow">{{ r.name }}</span><span class="dirty-dot" data-if="r.unsaved" title="Не сохранена"/>
+                    </div>
+                    <div data-if="!r.header && r.game" class="im-row im-game row" data-attr-id="'im-game-' + r.index" data-attr-title="r.rel" data-class-selected="r.selected" data-event-click="im_open(r.index)">
+                        <icon class="s" name="visibility"/><span class="name grow">{{ r.name }}</span>
                     </div>
                 </div>
                 <div class="an-empty" data-if="im_list.size == 0">В «Ресурсах» нет картинок. Положите файл в «Ресурсы» — он появится здесь.</div>
             </div>
 
             <div class="im-stage column grow">
+                <div id="im-view" class="im-banner im-view column" data-if="im_has && im_view">
+                    <span id="im-view-text">{{ im_view_text }}</span>
+                    <div class="row im-actions" data-if="im_view_copy != ''">
+                        <div id="im-open-copy" class="button outlined small" title="Картинка «Ресурсов», копия которой этот файл" data-event-click="im_open_copy"><span>Открыть «{{ im_view_copy }}»</span></div>
+                    </div>
+                </div>
                 <div id="im-outside" class="im-banner column" data-if="im_outside">
                     <span>{{ im_outside_text }}</span>
                     <div class="row im-actions">
@@ -1290,13 +1299,13 @@
 
             <div class="im-side column" data-if="im_has">
                 <div class="lg-nav-title">Рисование</div>
-                <div class="im-tools row">
+                <div class="im-tools row" data-class-im-locked="im_view">
                     <div id="im-tool-pencil" class="icon-button" data-class-selected="im_tool == 'pencil'" title="Карандаш (B); Shift — линия от прошлой точки" data-event-click="im_tool('pencil')"><icon name="edit"/></div>
                     <div id="im-tool-eraser" class="icon-button" data-class-selected="im_tool == 'eraser'" title="Ластик (E): прозрачный пиксель" data-event-click="im_tool('eraser')"><icon name="ink_eraser"/></div>
                     <div id="im-tool-fill" class="icon-button" data-class-selected="im_tool == 'fill'" title="Заливка (G): точно тот же цвет, соседи по сторонам" data-event-click="im_tool('fill')"><icon name="format_color_fill"/></div>
                     <div id="im-tool-picker" class="icon-button" data-class-selected="im_tool == 'picker'" title="Пипетка (I, или Alt со щелчком)" data-event-click="im_tool('picker')"><icon name="colorize"/></div>
                 </div>
-                <div class="im-tools row">
+                <div class="im-tools row" data-class-im-locked="im_view">
                     <span class="an-label">Кисть</span>
                     <div id="im-size-1" class="an-chip" data-class-selected="im_size == 1" data-event-click="im_size(1)">1</div>
                     <div id="im-size-2" class="an-chip" data-class-selected="im_size == 2" data-event-click="im_size(2)">2</div>
@@ -1304,17 +1313,18 @@
                     <div id="im-size-4" class="an-chip" data-class-selected="im_size == 4" data-event-click="im_size(4)">4</div>
                 </div>
                 <div class="im-colors row">
-                    <div id="im-c1" class="im-swatch big" data-style-background-color="im_c1" title="Цвет левой кнопки"/>
-                    <div id="im-c2" class="im-swatch big" data-style-background-color="im_c2" title="Цвет правой кнопки"/>
+                    <div id="im-c1" class="im-swatch big ue-checker" data-attr-title="'Цвет левой кнопки ' + im_c1_hex + ': щелчок — палитра (HEX, прозрачность, цвета игры)'" data-event-click="im_color(0)"><div class="ue-swatch-fill" data-style-background-color="im_c1"/></div>
+                    <div id="im-c2" class="im-swatch big ue-checker" data-attr-title="'Цвет правой кнопки ' + im_c2_hex + ': щелчок — палитра (HEX, прозрачность, цвета игры)'" data-event-click="im_color(1)"><div class="ue-swatch-fill" data-style-background-color="im_c2"/></div>
                     <div id="im-swap" class="icon-button small" title="Поменять цвета местами (X)" data-event-click="im_swap"><icon class="s" name="swap_horiz"/></div>
-                    <input id="im-hex" type="text" class="im-hex grow" title="Цвет левой кнопки: #rrggbb или #rrggbbaa, Enter" data-attr-value="im_hex" data-event-change="im_hex(ev.value, ev.linebreak)"/>
+                    <span id="im-c-hex" class="im-hint grow">{{ im_c1_hex }} · {{ im_c2_hex }}</span>
                 </div>
+                <div id="im-color-note" class="im-hint" data-if="im_color_note != ''">{{ im_color_note }}</div>
                 <div class="an-label">Цвета картинки</div>
                 <div class="im-swatches row">
                     <div data-for="sw : im_colors" class="im-swatch" data-attr-id="'im-color-' + it_index" data-style-background-color="sw.css" data-attr-title="sw.hex + ': левая кнопка — цвет левой, правая — правой'" data-event-mousedown="im_pick(it_index)"><span class="im-swatch-in"/></div>
                 </div>
                 <div class="an-label">Область</div>
-                <div class="im-areas row">
+                <div class="im-areas row" data-class-im-locked="im_view">
                     <div data-for="a : im_areas" class="an-chip" data-attr-id="'im-area-' + (a.frame + 1)" data-class-selected="a.selected" data-event-click="im_area(a.frame)">{{ a.label }}</div>
                 </div>
                 <div class="im-frames row">
@@ -1325,6 +1335,7 @@
                 <div id="im-frames-from" class="im-hint">{{ im_frames_from }}</div>
 
                 <div class="lg-nav-title">Трансформации</div>
+                <div class="column" data-class-im-locked="im_view">
                 <div class="im-tools row">
                     <div id="im-turn-cw" class="icon-button" title="Повернуть вправо на 90°" data-event-click="im_turn('cw')"><icon name="rotate_right"/></div>
                     <div id="im-turn-ccw" class="icon-button" title="Повернуть влево на 90°" data-event-click="im_turn('ccw')"><icon name="rotate_left"/></div>
@@ -1363,9 +1374,10 @@
                 <div class="im-actions row">
                     <div id="im-grid" class="button outlined small" title="Ряды листа сверху вниз, в ряду слева направо — в одну полосу, как её читает игра" data-event-click="im_grid"><icon class="s" name="grid_on"/><span>В полосу</span></div>
                 </div>
+                </div>
 
                 <div class="lg-nav-title">Эффекты</div>
-                <div class="im-effects row">
+                <div class="im-effects row" data-class-im-locked="im_view">
                     <div data-for="e : im_effects" class="an-chip" data-attr-id="'im-fx-' + e.id" data-class-selected="e.selected && im_trying" data-event-click="im_effect(e.id)">{{ e.label }}</div>
                 </div>
                 <div class="column" data-if="im_trying">
@@ -1384,11 +1396,11 @@
 
                 <div class="lg-nav-title">Формат</div>
                 <div id="im-info" class="im-hint">{{ im_info }}</div>
-                <div class="im-actions row">
+                <div class="im-actions row" data-class-im-locked="im_view">
                     <div id="im-save" class="button filled small" data-class-disabled="!im_unsaved" title="Тот же файл и тот же ресурс: копии в игре обновятся" data-event-click="im_save"><icon class="s" name="save"/><span>Сохранить (Ctrl+S)</span></div>
                 </div>
                 <div class="an-label">Сохранить как… — новый ресурс рядом</div>
-                <div class="im-actions row">
+                <div class="im-actions row" data-class-im-locked="im_view">
                     <div id="im-as-png" class="an-chip" data-event-click="im_save_as('.png')">PNG</div>
                     <div id="im-as-jpg" class="an-chip" data-event-click="im_save_as('.jpg')">JPG</div>
                     <div id="im-as-bmp" class="an-chip" data-event-click="im_save_as('.bmp')">BMP</div>
@@ -3077,12 +3089,12 @@
     </div>
 
 
-    <!-- «Интерфейс»: the colour picker (opened by a colour's swatch). The cover under it takes the click
-         outside it (that click keeps the colour and goes no further: the canvas under it is not clicked). -->
+    <!-- The colour picker (13.4), one for «Интерфейс» and «Изображения» (opened by a colour's swatch). The cover under it
+         takes the click outside it (that click keeps the colour and goes no further: the canvas under it is not clicked). -->
     <div id="ue-cp-cover" class="ue-cp-cover" data-if="ue_cp.open" data-class-dropper="ue_cp.dropper" data-event-mousedown="ue_cp_outside"/>
     <div id="ue-picker" class="ue-picker column" data-if="ue_cp.open" data-class-dropper="ue_cp.dropper">
         <div class="ue-cp-head row">
-            <span class="grow ue-ellipsis">{{ ue_cp.title }}</span>
+            <span id="ue-cp-title" class="grow ue-ellipsis">{{ ue_cp.title }}</span>
             <div id="ue-cp-dropper" class="ue-mini" data-class-selected="ue_cp.dropper" title="Пипетка: щёлкните по экрану на холсте, возьмётся цвет, который там виден" data-event-click="ue_cp_dropper"><icon class="xs" name="colorize"/></div>
             <div id="ue-cp-live" class="ue-mini" data-if="ue_cp.can_live" data-class-selected="ue_cp.live" title="Пипетка на экране «Проверить»: экран оживает, как в игре; щелчок берёт цвет, кнопки не нажимаются" data-event-click="ue_cp_live"><icon class="xs" name="play_circle"/></div>
         </div>
@@ -3105,10 +3117,10 @@
         </div>
         <div id="ue-cp-hex-note" class="ue-note ue-warn" data-if="ue_cp.hex_note != ''">{{ ue_cp.hex_note }}</div>
         <div class="ue-note" data-if="ue_cp.hex_note == ''">HEX: FF8800 или F80; с прозрачностью FF880080. Enter применяет.</div>
-        <div class="column" data-if="ue_game_colors.size > 0">
+        <div class="column" data-if="ue_cp_colors.size > 0">
             <div class="ue-key">Цвета игры</div>
             <div class="ue-s-theme row">
-                <div data-for="c : ue_game_colors" class="ue-s-chip ue-checker" data-attr-id="'ue-cp-theme-' + it_index" data-attr-title="c.name" data-class-selected="ue_cp.link == c.key" data-event-click="ue_cp_theme(c.key)"><div class="ue-swatch-fill" data-style-background-color="c.swatch"/></div>
+                <div data-for="c : ue_cp_colors" class="ue-s-chip ue-checker" data-attr-id="'ue-cp-theme-' + it_index" data-attr-title="c.name" data-class-selected="ue_cp.link == c.key || ue_cp.theme == c.key" data-event-click="ue_cp_theme(c.key)"><div class="ue-swatch-fill" data-style-background-color="c.swatch"/></div>
             </div>
         </div>
         <div id="ue-cp-note" class="ue-note" data-if="ue_cp.note != ''">{{ ue_cp.note }}</div>
