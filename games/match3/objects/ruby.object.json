@@ -1,0 +1,13 @@
+{
+  "id": "ruby",
+  "name": "Рубин",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "about": "красный, круглой огранки",
+  "picture": "рубин.png",
+  "frames": 4,
+  "values": {
+    "points": 10,
+    "gem_sound": "звон.wav"
+  }
+}

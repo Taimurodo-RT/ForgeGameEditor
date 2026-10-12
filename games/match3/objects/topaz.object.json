@@ -1,0 +1,13 @@
+{
+  "id": "topaz",
+  "name": "Топаз",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "about": "жёлтый ромб",
+  "picture": "топаз.png",
+  "frames": 4,
+  "values": {
+    "points": 10,
+    "gem_sound": "звон.wav"
+  }
+}

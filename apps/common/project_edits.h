@@ -16,7 +16,8 @@
 // author's enemy, coin, trap and goal, the zone the hero falls into, the HUD and the windows the game shows at its end.
 // The template «Платформер» (step 14.2d): what the author changed in a game made of it. The tab «Анимация»: the
 // animations the author made, played by the hero, a walker and an object that stands. The template «RPG сверху» (step
-// 14.4b): what the author changed in a game made of it, played by the module rpg.
+// 14.4b): what the author changed in a game made of it, played by the module rpg. The template «Три в ряд» (step 14.3c):
+// the same, played by the module match3.
 
 #include "forge/core/types.h"
 #include "forge/data/reflect.h"
@@ -127,6 +128,27 @@ struct ProjectEdits {
     forge::u32 rp_hint_node = 0;
     std::vector<int> rp_copy_at;
     std::string rp_copy_talk, rp_copy_line;
+    // The template «Три в ряд» (step 14.3c) as the author changed it in the tabs of a game made of it, for the module
+    // match3's scenes project and project_continue. m3_refusal: the game as saved then must not start, saying this (the
+    // author's field is wrong); nothing else is looked at. m3_star: the author's gem, a «Копия» of «Рубин» named
+    // m3_star_name, its «Очки» m3_star_points, its «Звук сбора» m3_star_sound (a file of the game's sounds), its picture
+    // one colour all over (m3_star_color, r, g, b); a link «Поле даёт +2 хода за» it. m3_ruby: «Рубин»'s picture replaced
+    // in «Ресурсы», one colour; its «Очки» m3_ruby_points. The start level: its own moves and target (m3_first_moves,
+    // m3_first_target), its holes m3_holes (x, y, x, y, … in the level's cells), of them those with a stone m3_stones,
+    // the author's gems put before m3_star_at (x, y, …). m3_kind_moves: «Поле»'s «Ходов», which a level whose copy has
+    // none of its own plays (m3_inherit: that level's id). The HUD's moves layer (m3_hud, node m3_hud_node) says
+    // m3_hud_text, {board.moves} in it; the lose window's title (m3_lose, node m3_lose_node) m3_lose_title. m3_gone
+    // (scene project_continue): the author deleted m3_star (named m3_star_name) in «Объекты» after the save m3-author:
+    // «Продолжить» must be refused with these words, the save left as it was; nothing else is looked at.
+    std::string m3_refusal, m3_gone;
+    std::string m3_star, m3_star_name, m3_star_sound;
+    std::vector<int> m3_star_color, m3_ruby;
+    double m3_star_points = 0, m3_ruby_points = 0;
+    double m3_first_moves = 0, m3_first_target = 0, m3_kind_moves = 0;
+    std::vector<int> m3_holes, m3_stones, m3_star_at;
+    std::string m3_inherit;
+    std::string m3_hud, m3_hud_text, m3_lose, m3_lose_title;
+    forge::u32 m3_hud_node = 0, m3_lose_node = 0;
 };
 
 // False (error says why) when the file cannot be read.

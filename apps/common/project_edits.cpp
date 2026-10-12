@@ -114,6 +114,28 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("rp_copy_at", &forge::edits::ProjectEdits::rp_copy_at);
     t.field("rp_copy_talk", &forge::edits::ProjectEdits::rp_copy_talk);
     t.field("rp_copy_line", &forge::edits::ProjectEdits::rp_copy_line);
+    t.field("m3_refusal", &forge::edits::ProjectEdits::m3_refusal);
+    t.field("m3_gone", &forge::edits::ProjectEdits::m3_gone);
+    t.field("m3_star", &forge::edits::ProjectEdits::m3_star);
+    t.field("m3_star_name", &forge::edits::ProjectEdits::m3_star_name);
+    t.field("m3_star_sound", &forge::edits::ProjectEdits::m3_star_sound);
+    t.field("m3_star_color", &forge::edits::ProjectEdits::m3_star_color);
+    t.field("m3_ruby", &forge::edits::ProjectEdits::m3_ruby);
+    t.field("m3_star_points", &forge::edits::ProjectEdits::m3_star_points);
+    t.field("m3_ruby_points", &forge::edits::ProjectEdits::m3_ruby_points);
+    t.field("m3_first_moves", &forge::edits::ProjectEdits::m3_first_moves);
+    t.field("m3_first_target", &forge::edits::ProjectEdits::m3_first_target);
+    t.field("m3_kind_moves", &forge::edits::ProjectEdits::m3_kind_moves);
+    t.field("m3_holes", &forge::edits::ProjectEdits::m3_holes);
+    t.field("m3_stones", &forge::edits::ProjectEdits::m3_stones);
+    t.field("m3_star_at", &forge::edits::ProjectEdits::m3_star_at);
+    t.field("m3_inherit", &forge::edits::ProjectEdits::m3_inherit);
+    t.field("m3_hud", &forge::edits::ProjectEdits::m3_hud);
+    t.field("m3_hud_text", &forge::edits::ProjectEdits::m3_hud_text);
+    t.field("m3_lose", &forge::edits::ProjectEdits::m3_lose);
+    t.field("m3_lose_title", &forge::edits::ProjectEdits::m3_lose_title);
+    t.field("m3_hud_node", &forge::edits::ProjectEdits::m3_hud_node);
+    t.field("m3_lose_node", &forge::edits::ProjectEdits::m3_lose_node);
 }
 
 namespace forge::edits {

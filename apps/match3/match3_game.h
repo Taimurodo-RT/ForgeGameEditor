@@ -113,6 +113,11 @@ public:
     // Problems of the game's data (its objects, verbs, links, a level that would not start), in words.
     const std::vector<std::string>& problems() const { return problems_; }
     u32 sounds_played() const { return sounds_played_; }
+    // How often the sound of that file (of the game's sounds) played.
+    u32 sound_count(const std::string& name) const {
+        const auto it = sounds_by_name_.find(name);
+        return it == sounds_by_name_.end() ? 0 : it->second;
+    }
     // Why the last begin() refused (a save that does not fit the game, a level that would not start).
     const std::string& refusal() const { return refusal_; }
     // How many times a level of this game ended (passed, the game won or lost): once a level, whatever links say.
@@ -181,6 +186,7 @@ private:
     forge::audio::ScreenSounds screen_sounds_;
     std::unordered_map<std::string, forge::audio::SoundPtr> named_;
     u32 sounds_played_ = 0;
+    std::unordered_map<std::string, u32> sounds_by_name_;
     std::unordered_map<std::string, bool> said_once_;
 };
 

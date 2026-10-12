@@ -12,6 +12,7 @@
 #include "forge/level/levels.h"
 #include "forge/level/own_tiles.h"
 
+#include "match3_level.h"
 #include "rpg_level.h"
 
 #include <doctest/doctest.h>
@@ -687,6 +688,98 @@ TEST_CASE("project: the catalog's «RPG сверху» makes a game of the modul
     std::vector<std::string> refreshed;
     CHECK(refresh_module_files(g.game, modules[1], refreshed, &error));
     CHECK(refreshed.empty());
+}
+
+// The components of the module match3's kinds.
+static void match3_components() {
+    reflect::TypeOf<match3::Gem>::get();
+    reflect::TypeOf<match3::BoardRules>::get();
+}
+
+// The template «Три в ряд» (step 14.3c): games/match3 as the catalog's fourth card makes it, of the module match3; its
+// levels' cells are the level's own tiles, cut from the template's tiles.png.
+TEST_CASE("project: the catalog's «Три в ряд» makes a game of the module match3 with its «Ресурсы» and cells") {
+    match3_components();
+    const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
+    std::vector<Template> list;
+    std::string error;
+    REQUIRE(read_catalog(games / "templates.json", list, &error));
+    REQUIRE(list.size() == 4);
+    const Template& t = list[3];
+    CHECK(t.id == "match3");
+    CHECK(t.name == "Три в ряд");
+    CHECK(t.module == "match3");
+    CHECK(t.game == games / "match3");
+    CHECK(t.assets == games / "templates" / "match3" / "assets");
+    CHECK(t.picture == games / "templates" / "match3.png");
+    CHECK(t.bad.empty());
+    assets::CookedTexture card;
+    std::vector<u8> bytes;
+    REQUIRE(read_file(t.picture, bytes));
+    REQUIRE(assets::decode_image(bytes, card));
+    CHECK(card.width == 480);
+    CHECK(card.height == 270);
+    const std::vector<Module> modules{{"slice", "Старая шахта", games / "modules" / "slice", {"touch", "always"}},
+                                      {"match3", "Три в ряд", games / "modules" / "match3", {"match", "target", "moves_out"}}};
+    std::string all;
+    for (const std::string& p : template_problems(t, modules)) all += p + "; ";
+    CHECK_MESSAGE(all.empty(), all);
+    all.clear();
+    for (const std::string& p : template_problems(t, {modules[0]})) all += p + "; ";
+    CHECK(all.find("нужен модуль «match3»") != std::string::npos);
+    CHECK(game_problems(t.game, &modules[1]).empty());
+    const fs::path parent = fresh("forge_tests_проект_три_в_ряд");
+    fs::path made;
+    REQUIRE_MESSAGE(create(t, modules, parent, "Мои самоцветы", made, &error), error);
+    Game g;
+    REQUIRE(find(made, modules, g, &error) == Found::Game);
+    CHECK(g.title == "Мои самоцветы");
+    CHECK(g.description.from == "match3");
+    CHECK(g.description.module == "match3");
+    // Its «Ресурсы»: the gems' and the HUD's pictures and the gems' sound with their .meta, byte for byte.
+    for (const char* name : {"картинки/рубин.png", "картинки/изумруд.png", "картинки/сапфир.png", "картинки/топаз.png", "картинки/аметист.png",
+                             "картинки/алмаз.png", "картинки/ходы.png", "картинки/цель.png", "картинки/очки.png", "звуки/звон.wav"})
+        for (const std::string& file : {std::string(name), std::string(name) + ".meta"})
+            CHECK_MESSAGE(text_of(made / "assets" / utf8_path(file)) == text_of(t.assets / utf8_path(file)), file);
+    for (const char* file : kModuleFiles)
+        CHECK_MESSAGE(text_of(t.game / file) == text_of(games / "modules" / "match3" / file), file);
+    std::vector<std::string> refreshed;
+    CHECK(refresh_module_files(g.game, modules[1], refreshed, &error));
+    CHECK(refreshed.empty());
+    // The cells: tiles.png of the brief (96 × 32: «Клетка», «Клетка тёмная», «Камень»), in each level folder as its own.
+    assets::CookedTexture atlas;
+    REQUIRE(read_file(games / "templates" / "match3" / "tiles.png", bytes));
+    REQUIRE(assets::decode_image(bytes, atlas));
+    REQUIRE(atlas.width == 96);
+    REQUIRE(atlas.height == 32);
+    const level::LevelList levels = level::read_levels(t.game);
+    REQUIRE(levels.levels.size() == 3);
+    CHECK(levels.start == "level");
+    for (const level::LevelEntry& e : levels.levels) {
+        CAPTURE(e.id);
+        level::LevelTiles tiles;
+        bool found = false;
+        REQUIRE_MESSAGE(level::load_tiles(level::level_folder(t.game, e.id), tiles, 3, 2, &found, &error), error);
+        REQUIRE(found);
+        CHECK(tiles.px == 32);
+        REQUIRE(tiles.tiles.size() == 3);
+        const char* names[] = {"Клетка", "Клетка тёмная", "Камень"};
+        for (usize i = 0; i < 3; ++i) {
+            const level::OwnTile& o = tiles.tiles[i];
+            CHECK(o.id == level::kFirstOwnTile + i);
+            CHECK(o.name == names[i]);
+            CHECK(o.layer == 0u);
+            CHECK(o.solid == (i == 2)); // the stone: a hole of the field with a picture
+            const u8* px = tiles.picture(i);
+            bool same = true, opaque = true;
+            for (u32 y = 0; y < 32; ++y) {
+                same = same && std::equal(px + y * 32 * 4, px + (y + 1) * 32 * 4, &atlas.rgba8[(static_cast<usize>(y) * 96 + i * 32) * 4]);
+                for (u32 x = 0; x < 32; ++x) opaque = opaque && px[(y * 32 + x) * 4 + 3] == 255;
+            }
+            CHECK_MESSAGE(same, "its picture is cell ", i, " of the template's tiles.png");
+            if (i < 2) CHECK_MESSAGE(opaque, "the cells are opaque all over (the brief)");
+        }
+    }
 }
 
 // A villager's talk is a dialogue of the game: one that is not there is a problem of the template, said by name.

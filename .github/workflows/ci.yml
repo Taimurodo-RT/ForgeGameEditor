@@ -34,7 +34,7 @@ jobs:
       - name: The core names no module (engine, the launcher apps/game and the editor include no header of apps/slice or apps/probe; apps/builtin their public headers only)
         shell: bash
         run: if [ "$RUNNER_OS" = Windows ]; then python tools/check_core_includes.py; else python3 tools/check_core_includes.py; fi
-      - name: play.py puts games/slice, games/platformer, games/rpg and games/modules back with the same SHA-256 when a move fails first, second, third or fourth, a game does not start or fails, or one of them does not come back (tools/author_game/test_play.py, a tree of its own)
+      - name: play.py puts games/slice, games/platformer, games/rpg, games/match3 and games/modules back with the same SHA-256 when a move fails first, second, third, fourth or fifth, a game does not start or fails, or one of them does not come back (tools/author_game/test_play.py, a tree of its own)
         shell: bash
         run: if [ "$RUNNER_OS" = Windows ]; then python -m unittest discover -v -s tools/author_game; else python3 -m unittest discover -v -s tools/author_game; fi
       - name: Python for the converters (Linux; Windows builds its own next to the editor)
@@ -119,6 +119,9 @@ jobs:
       - name: The catalog's template «RPG сверху» (editor self-test part rpg-template), games/rpg made again from its sources byte for byte (by the module's maker and by --make-template from another working folder; sources without the elder's picture make nothing and leave the folder as it was), A and B made of its card in the window «Новая игра», in A through the tabs with the mouse and the keys (all of «Сюжет», a name's text, the brush's size and the view, the link's phrase, the HUD's layer and its undo and saving everything by the tabs' own calls) the elder's picture replaced in «Ресурсы» and a sound put there, a conversation in «Сюжет» whose answer gives ten coins once, «Мельник» a copy of the elder saying it, a place «Мельница» seen in the game, the coins' sound the author's in «Объекты», both put on «Деревня» with a second miller beside the road, a conversation added in «Сюжет» after he was put and chosen in his properties back on «Уровень», and a path laid there, «Герой доходит до Мельницы» in «Логика», the miller renamed by the same id, the HUD's hint in «Интерфейс» and the hero's walk in «Анимация», each undone and done again, opened again elsewhere and played as changed (the second miller says his own conversation) and saved after the miller's reward, that save continued by another process from a third working folder (the reward kept and not given again, «Мельница» passes «Деревня», «Поляна» to its chest and the victory), the template and B byte for byte as before
         if: runner.os == 'Linux'
         run: ./build/apps/editor/forge_editor --self-test rpg-template
+      - name: The catalog's template «Три в ряд» (editor self-test part match3-template), games/match3 made again from its sources byte for byte (by the module's maker and by --make-template from another working folder; sources without «Сапфир»'s picture make nothing and leave the folder as it was), A and B made of its card in the window «Новая игра», in A through the tabs by SDL mouse and key events (the tabs, buttons and the palette by RmlUi's Element::Click; a name after F2, the level panel's numbers, the brush's size, the camera, the link's verb and the link chosen, the UI's screen and layer with their undo, the Resources' folder and row by the tabs' own calls) «Рубин»'s picture replaced in «Ресурсы» and the author's star picture and sound put there, «Звезда» a copy of «Рубин» with them and 50 points, «Рубин» 20 points and «Поле» 3 moves in «Объекты», three stars in a row on «Первый» (the panel's warning, a game of another process refusing that field with the same words), the middle one deleted, a star's «Очки» the template's and not its own, two cells erased and a stone laid, the level's own moves and target, «Третий» on «Поле»'s moves through an undo in «Объекты», «Поле даёт +2 хода за Звезду» with its steps in the module's words and «Поле остаётся без ходов» deleted (the tab's warning) and made again in «Логика», the HUD's moves and the lose window's title in «Интерфейс», the star picture and «Звезда» renamed by the same ids, each undone and done again, opened again elsewhere and played as changed (the author's gems, points, sound, holes, stone, stars, link and HUD) and saved on «Второй» between moves; then «Звезда шахты» chosen with a click and deleted with Delete in «Объекты» (its copies and link stay, «Логика» says the link does not work), Ctrl+S, «Уровень» says «Первый»'s two copies are of an object no more in the game with their cells and the template's key, another editor from another working folder opens the game as saved, says the same and its game refuses «Новая игра» pressed with the mouse with those words on the screen (no save written), a game of another process refuses «Продолжить» pressed with the mouse in its main menu with words on the screen, the saves byte for byte as they were, and Ctrl+Z brings the star back by the same id with its copies, «Уровень» saying nothing; a third editor from a third working folder sees it all as before, its game continues that save by «Продолжить» («Второй» won, «Третий» lost on «Поле»'s 3 moves with the author's title, «Ещё раз») and a new game plays it all again, the template and B byte for byte as before
+        if: runner.os == 'Linux'
+        run: ./build/apps/editor/forge_editor --self-test match3-template
       - name: Vertical slice self-test (plays the game through, saves and loads) and stress run
         if: runner.os == 'Linux'
         run: |
@@ -177,12 +180,13 @@ jobs:
           (cd build/elsewhere && "../../$packed" --test --scene probe_save --data ../../tests/data/probe/game --user ../module-slots-packed)
           (cd build/elsewhere && "../../$packed" --test --scene module_slots --user ../module-slots-packed)
           (cd build/elsewhere && "../../$packed" --test --scene probe_foreign --data ../../tests/data/probe/game --user ../module-slots-packed)
-      - name: The module «Три в ряд» in the build, then in the package with games/slice, games/platformer and games/modules moved away (match3 scenes on tests/data/match3, its game made again byte for byte; a bot with the mouse through three fields, the frames of a swap, a row vanishing and gems falling checked on the screen, each move's points and «+2 хода» once; a loss and «Ещё раз», «Ещё раз» mid-fall and before the window; pause and «Дальше» mid-move; a save between moves continued in another process from another working folder, a save with a gem the game has not refused)
+      - name: The module «Три в ряд» in the build, then in the package with games/slice, games/platformer and games/modules moved away (match3 scenes on tests/data/match3, its game made again byte for byte; the catalog's template games/match3 played by a bot with the mouse through its three fields to the victory, its own cells, holes and stones checked on the screen; a bot with the mouse through three fields, the frames of a swap, a row vanishing and gems falling checked on the screen, each move's points and «+2 хода» once; a loss and «Ещё раз», «Ещё раз» mid-fall and before the window; pause and «Дальше» mid-move; a save between moves continued in another process from another working folder, a save with a gem the game has not refused)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then game=build/apps/game/Release/forge_game.exe; packed=build/dist/OldMine/OldMine.exe; else game=build/apps/game/forge_game; packed=build/dist/OldMine/OldMine; fi
           mkdir -p build/elsewhere
           "./$game" --test --scene match3_make --data tests/data/match3/game
+          "./$game" --test --scene template --data games/match3 --screenshot world-match3-template.png
           "./$game" --test --scene match3 --data tests/data/match3/game --screenshot world-match3.png
           "./$game" --test --scene match3_lose --data tests/data/match3/game
           "./$game" --test --scene match3_next --data tests/data/match3/game
@@ -193,6 +197,7 @@ jobs:
           mv games/modules build/modules-away
           trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer; mv build/modules-away games/modules' EXIT
           "./$packed" --test --scene match3 --data tests/data/match3/game
+          "./$packed" --test --scene template --data games/match3
           "./$packed" --test --scene match3_lose --data tests/data/match3/game
           "./$packed" --test --scene match3_next --data tests/data/match3/game
           (cd build/elsewhere && "../../$packed" --test --scene match3_save --data ../../tests/data/match3/game --user ../match3-packed)
@@ -266,11 +271,11 @@ jobs:
           trap 'mv build/slice-away games/slice; mv build/platformer-away games/platformer; mv build/modules-away games/modules' EXIT
           "./$packed" --test --scene input
           (cd build/elsewhere && "../../$packed" --test --scene input_again)
-      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels, platformer, platformer-template, modules, animation, input and rpg-template) play in the package, the build's forge_game and its old name forge_slice with games/slice, games/platformer, games/rpg and games/modules moved away (back with the same SHA-256), the game of levels from its start level and through its links, then continued from another working folder, «RPG А» saved after the miller's reward and continued by another run to «Поляна» and its chest, a game from before step 14.3 as «Старая шахта», two modules' saves in one player's folder
+      - name: The author's games (made of a template by the editor's self-test parts new-game, two-games, levels, platformer, platformer-template, modules, animation, input, rpg-template and match3-template) play in the package, the build's forge_game and its old name forge_slice with games/slice, games/platformer, games/rpg, games/match3 and games/modules moved away (back with the same SHA-256), the game of levels from its start level and through its links, then continued from another working folder, «RPG А» saved after the miller's reward and continued by another run to «Поляна» and its chest, «Три в ряд А» saved on «Второй» between moves and continued by another run to the loss on «Третий» and «Ещё раз», a game from before step 14.3 as «Старая шахта», two modules' saves in one player's folder
         if: runner.os == 'Linux'
         run: python3 tools/author_game/play.py build/dist/OldMine/OldMine build/apps/game/forge_game build/apps/slice/forge_slice
       # Windows has no GPU here: the editor and the game draw with D3D12's software device (WARP), if SDL finds it.
-      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer, platformer-template, modules, animation, input and rpg-template, each game in an editor of its own) and the games in the package, the build's forge_game and forge_slice
+      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer, platformer-template, modules, animation, input, rpg-template and match3-template, each game in an editor of its own) and the games in the package, the build's forge_game and forge_slice
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -283,6 +288,7 @@ jobs:
           ./build/apps/editor/Release/forge_editor.exe --self-test animation
           ./build/apps/editor/Release/forge_editor.exe --self-test input
           ./build/apps/editor/Release/forge_editor.exe --self-test rpg-template
+          ./build/apps/editor/Release/forge_editor.exe --self-test match3-template
           python tools/author_game/play.py build/dist/OldMine/OldMine.exe build/apps/game/Release/forge_game.exe build/apps/slice/Release/forge_slice.exe
       - uses: actions/upload-artifact@v4
         with:

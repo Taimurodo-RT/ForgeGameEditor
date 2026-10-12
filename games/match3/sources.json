@@ -1,0 +1,54 @@
+{
+    "files": {
+        "pictures/алмаз.png": {
+            "asset": "7c22a144-3f73-532c-a37a-77295d09553e",
+            "from": "картинки/алмаз.png",
+            "hash": "2eca4850cad614b43efd09676797f458"
+        },
+        "pictures/аметист.png": {
+            "asset": "93a7cc3c-181d-5ac4-ac27-e0b0c4600d0c",
+            "from": "картинки/аметист.png",
+            "hash": "bb1ef23200590f266d9978c07a25cbc6"
+        },
+        "pictures/изумруд.png": {
+            "asset": "5a515b99-cb8f-585e-9d66-2d97c8401b3b",
+            "from": "картинки/изумруд.png",
+            "hash": "398b51dec601e36b21ef9aa4032c32fa"
+        },
+        "pictures/очки.png": {
+            "asset": "51601b05-2946-5678-91aa-edf4846efb7d",
+            "from": "картинки/очки.png",
+            "hash": "51f0da77722048aaceb9878c5823f1b4"
+        },
+        "pictures/рубин.png": {
+            "asset": "d6ee4419-b593-5dc8-9b9f-abf4f1d5bba6",
+            "from": "картинки/рубин.png",
+            "hash": "97c44e5550a05bf601d2329dff81b5c9"
+        },
+        "pictures/сапфир.png": {
+            "asset": "4a71f9dc-c5f5-5f28-9dcd-e32499f20c29",
+            "from": "картинки/сапфир.png",
+            "hash": "afe0c14644625329b253e2f4d862697c"
+        },
+        "pictures/топаз.png": {
+            "asset": "ef9a5335-5b75-5505-a580-072db4de7792",
+            "from": "картинки/топаз.png",
+            "hash": "8d313b72e47ad7e2131b08e285630a5a"
+        },
+        "pictures/ходы.png": {
+            "asset": "f9768e18-d64c-5875-9f0e-42c571c5f424",
+            "from": "картинки/ходы.png",
+            "hash": "d44261e64c2f70dadb2e34d8e022c43f"
+        },
+        "pictures/цель.png": {
+            "asset": "adb0827e-ebe1-5aca-915e-e0ecb0f706ba",
+            "from": "картинки/цель.png",
+            "hash": "98549b2f09e9d3c80e637a91670b52d3"
+        },
+        "sounds/звон.wav": {
+            "asset": "c3107701-a010-5511-99cb-b9ea85f334a7",
+            "from": "звуки/звон.wav",
+            "hash": "74623f46de4aa8429e41400c0a667fdb"
+        }
+    }
+}

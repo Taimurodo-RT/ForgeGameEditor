@@ -1,0 +1,17 @@
+{
+  "start_level": "level",
+  "levels": [
+    {
+      "id": "level",
+      "name": "Первый"
+    },
+    {
+      "id": "second",
+      "name": "Второй"
+    },
+    {
+      "id": "third",
+      "name": "Третий"
+    }
+  ]
+}

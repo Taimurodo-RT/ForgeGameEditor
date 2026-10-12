@@ -18,8 +18,13 @@ namespace fs = std::filesystem;
 using namespace forge;
 
 const std::vector<modules::Event>& events() {
+    // Steps of «Логика» in the game's words (step 14.3c); a level ends only by a link on «цель» or «ходы».
     static const std::vector<modules::Event> list = {
-        {"match", "поле собирает фишку"}, {"target", "цель набрана"}, {"moves_out", "ходы кончились"}};
+        {"match", "поле собирает фишку", "Когда на поле исчезает ряд {b:gen}", ""},
+        {"target", "цель набрана", "Когда очки дошли до цели",
+         "Уровень не кончится победой: в «Логике» нет связи «… набирает цель». Добавьте её: щелчок по правилам уровня на доске, потом ещё один по ним же."},
+        {"moves_out", "ходы кончились", "Когда ходы кончились, а цель не набрана",
+         "Уровень не кончится поражением: в «Логике» нет связи «… остаётся без ходов». Добавьте её: щелчок по правилам уровня на доске, потом ещё один по ним же."}};
     return list;
 }
 
@@ -489,6 +494,7 @@ void Match3Game::play_sound(const std::string& name) {
     }
     if (!it->second) return;
     ++sounds_played_;
+    ++sounds_by_name_[name];
     mixer_.play(*it->second, {});
 }
 
@@ -751,7 +757,7 @@ void Match3Game::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 w
     const Color bg = module_.background();
     if (field_ && painter_.ready()) {
         fit_camera(width, height);
-        painter_.update(module_.library_ref(), set_);
+        painter_.update(module_.library_ref(), set_, &field_->field.own);
         painter_.begin(camera_);
         push_board();
         painter_.prepare(cmd, camera_, width, height);

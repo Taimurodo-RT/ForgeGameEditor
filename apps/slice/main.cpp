@@ -2429,7 +2429,8 @@ private:
             return true;
         }});
         // Screens drawn in «Интерфейс» (written here by hand, as the editor
-        // writes them): a HUD with data in it and a window a button opens.
+        // writes them): a HUD with data in it and a window a button opens. The window rises and goes by the step's own
+        // clock (GameScreens::set_clock), as in «поведение окон»: what is seen halfway does not hang on the frames' speed.
         steps_.push_back({"экраны игры", 60, [&s, this](u32 f) {
             static int messages = 0;
             GameScreens& sc = s.screens();
@@ -2462,6 +2463,8 @@ private:
                 s.vars().set("inv.key", 0);
                 s.vars().set("hero.hearts", 5);
                 s.on_message = [](const std::string& m) { if (m == "купил") ++messages; };
+                window_clock_ = time_now_ns();
+                sc.set_clock([this] { return window_clock_; });
             }
             if (f == 3) {
                 Rml::Element* coins = s.find_element("t-coins");
@@ -2477,13 +2480,15 @@ private:
                 check(shown("t-key"), "с ключом ключ виден");
                 check(click(s, "t-open"), "кнопка нажимается");
             }
+            if (f == 6) window_clock_ += 150'000'000; // half of its 0.3 s
             if (f == 7) {
                 check(sc.shown("тест_окно") && shown("t-buy"), "кнопка открыла окно");
                 check(sc.pauses(), "окно ставит мир на паузу");
                 Rml::Element* w = s.find_element("t-window");
-                check(w && w->GetLocalProperty("opacity") && w->GetProperty<float>("opacity") < 1, "окно появляется плавно");
-                SDL_Delay(350); // let it finish rising, or the click lands below the moving button on a slow machine
+                const f32 o = w && w->GetLocalProperty("opacity") ? w->GetProperty<float>("opacity") : -1.0f;
+                check(std::fabs(o - 0.875f) < 0.01f, "окно появляется плавно: на полпути " + std::to_string(o));
             }
+            if (f == 8) window_clock_ += 1'000'000'000; // risen: the click lands on the button where it stays
             if (f == 9) check(click(s, "t-buy"), "кнопка в окне нажимается");
             if (f == 11) {
                 check(s.vars().get("inv.coins").number() == 12, "покупка изменила монеты");
@@ -2502,19 +2507,28 @@ private:
                 s.handle_event(ev);
                 check(!sc.shown("тест_окно") && s.screen() == forge::game::Screen::Playing, "Esc закрывает окно, а не игру");
             }
-            if (f == 14) SDL_Delay(350); // the window's going away (started by the frame after Esc) takes 0.3 s
+            if (f == 14) window_clock_ += 1'000'000'000; // past the end of its going away
             if (f == 16) check(sc.document("тест_окно") && !sc.document("тест_окно")->IsVisible(), "ушедшее окно скрыто");
             if (f < 17) return false;
             sc.remove("тест_hud");
             sc.remove("тест_окно");
             s.on_message = nullptr;
+            sc.set_clock(nullptr);
+            check(!sc.document("тест_hud") && !sc.document("тест_окно") && !sc.own_clock(), "экраны теста убраны, окна снова идут по настоящим часам");
             return true;
         }});
         // Windows' behaviour (13.11): a window that darkens what is under it takes the clicks off the HUD and the
         // world; Esc closes only the window on top, and one that Esc does not close keeps the ones under it (Esc
-        // opens the pause); a window set to come up only over the main menu does not open in the game.
+        // opens the pause); a window set to come up only over the main menu does not open in the game. The window
+        // with the veil comes and goes by the step's own clock (GameScreens::set_clock), moved on by the step: what
+        // is seen halfway does not hang on how long the frames take; the real clock is back at the end.
         steps_.push_back({"поведение окон", 40, [&s, this](u32 f) {
             GameScreens& sc = s.screens();
+            auto opacity = [](Rml::Element* e) { return e && e->GetLocalProperty("opacity") ? e->GetProperty<float>("opacity") : -1.0f; };
+            auto dim_root = [&]() {
+                Rml::ElementDocument* d = sc.document("тест_затемнение");
+                return d ? d->GetElementById("o-dim") : nullptr;
+            };
             auto key = [&](SDL_Keycode k) {
                 SDL_Event ev{};
                 ev.type = SDL_EVENT_KEY_DOWN;
@@ -2564,6 +2578,8 @@ private:
                                    page("o-menu", "forge-screen=\"command\" forge-over=\"menu\"", false, ""), "test/ui/тест_только_меню.html"),
                       "окно только для меню строится");
                 s.vars().set("test.hud", 0);
+                window_clock_ = time_now_ns();
+                sc.set_clock([this] { return window_clock_; });
             }
             if (f == 2) {
                 check(sc.over("тест_только_меню") == "menu" && !sc.fits("тест_только_меню"), "окно только для меню не подходит игре");
@@ -2574,18 +2590,23 @@ private:
                 check(s.vars().get("test.hud").number() == 1, "без окна щелчок доходит до HUD");
                 check(click(s, "o-open"), "кнопка открывает окно");
             }
+            if (f == 5) window_clock_ += 150'000'000; // half of its 0.3 s
             if (f == 6) {
                 check(sc.shown("тест_затемнение") && sc.pauses(), "окно открыто и ставит игру на паузу");
                 Rml::Element* veil = s.find_element("forge-dim");
                 check(veil && veil->IsVisible(true), "затемнение видно");
-                check(veil && veil->GetLocalProperty("opacity") && veil->GetProperty<float>("opacity") < 1, "затемнение проявляется вместе с окном");
+                // Halfway in (it slows down: 1 − 0.5³): the veil as far as the window.
+                const f32 dim_o = opacity(veil), root_o = opacity(dim_root());
+                check(std::fabs(dim_o - 0.875f) < 0.01f && std::fabs(dim_o - root_o) < 0.001f,
+                      "на полпути затемнение проявляется вместе с окном: " + std::to_string(dim_o) + " и " + std::to_string(root_o));
                 check(click(s, "o-count"), "щелчок по кнопке HUD под затемнением");
                 check(hovered() == "forge-dim" && !s.over_world(), "мышь над затемнением, не над миром: " + hovered());
-                SDL_Delay(350);
             }
+            if (f == 7) window_clock_ += 1'000'000'000; // past its end
             if (f == 8) {
                 Rml::Element* veil = s.find_element("forge-dim");
-                check(veil && !veil->GetLocalProperty("opacity"), "окно появилось: затемнение целиком");
+                check(veil && !veil->GetLocalProperty("opacity") && dim_root() && !dim_root()->GetLocalProperty("opacity"),
+                      "окно появилось: затемнение и окно целиком");
                 check(s.vars().get("test.hud").number() == 1, "затемнение не пропустило щелчок к HUD");
                 check(sc.shown("тест_затемнение"), "щелчок по затемнению окно не закрывает");
                 check(click(s, "o-more"), "кнопка в окне открывает второе окно");
@@ -2606,8 +2627,20 @@ private:
                 check(!sc.shown("тест_затемнение") && s.screen() == forge::game::Screen::Playing, "Esc закрыл окно с затемнением");
                 check(sc.windows().empty() && !sc.pauses(), "окон нет, игра идёт");
             }
-            if (f == 15) SDL_Delay(350); // the window and its veil fade away
-            if (f == 17) check(click(s, "o-count"), "кнопка HUD снова нажимается");
+            if (f == 15) window_clock_ += 150'000'000; // half of its going away
+            if (f == 16) {
+                // Halfway out (it speeds up: 0.5³), still drawn, but the mouse goes to what is under it.
+                Rml::ElementDocument* d = sc.document("тест_затемнение");
+                const f32 dim_o = opacity(s.find_element("forge-dim")), root_o = opacity(dim_root());
+                check(d && d->IsVisible() && d->HasAttribute("forge-leaving") && std::fabs(dim_o - 0.125f) < 0.01f && std::fabs(dim_o - root_o) < 0.001f,
+                      "на полпути ухода затемнение уходит вместе с окном: " + std::to_string(dim_o) + " и " + std::to_string(root_o));
+                check(click(s, "o-count") && hovered() == "o-count", "уходящее окно щелчок не держит: он у кнопки HUD (" + hovered() + ")");
+            }
+            if (f == 17) window_clock_ += 1'000'000'000;
+            if (f == 18) {
+                Rml::ElementDocument* d = sc.document("тест_затемнение");
+                check(d && !d->IsVisible() && !d->HasAttribute("forge-leaving"), "окно с затемнением ушло и скрыто");
+            }
             if (f == 19) {
                 check(s.vars().get("test.hud").number() == 2, "без окна щелчок снова доходит до HUD");
                 // A window without the veil: a click beside its buttons goes to the HUD under it.
@@ -2620,7 +2653,13 @@ private:
             }
             if (f == 25) check(sc.windows().empty(), "окон нет");
             if (f < 26) return false;
-            for (const char* n : {"тест_hud2", "тест_затемнение", "тест_без_esc", "тест_только_меню"}) sc.remove(n);
+            bool left = false;
+            for (const char* n : {"тест_hud2", "тест_затемнение", "тест_без_esc", "тест_только_меню"}) {
+                sc.remove(n);
+                left = left || sc.document(n);
+            }
+            sc.set_clock(nullptr);
+            check(!left && !sc.own_clock(), "окна теста убраны, окна снова идут по настоящим часам");
             return true;
         }});
         // The example screens made of «Простой»'s blocks (games/examples/simple-mode, built in): the HUD's
@@ -9624,6 +9663,7 @@ private:
 
     SliceGame& g_;
     std::string scene_;
+    u64 window_clock_ = 0; // the clock the windows come and go by in «поведение окон»
     std::vector<Step> steps_;
     std::deque<std::string> names_; // of the steps named as they are made
     usize index_ = 0;

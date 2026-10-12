@@ -293,7 +293,10 @@ struct Step {
     std::string text;
     std::string refine; // "night", "once", "sound", "hint"; "" the verb's own
 };
-std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where = {});
+// when: the step «Когда» of the verb's event in its module's words (forge::modules::Event::step, {a} {b} and their
+// forms); empty: the hero touching or coming into a thing (slice's "touch").
+std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where = {},
+                        std::string_view when = {});
 // The refinements a link can have, as steps not yet there (what «Добавить
 // шаг» offers), and whether it has them.
 struct Refine {

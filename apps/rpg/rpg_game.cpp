@@ -16,7 +16,8 @@ namespace fs = std::filesystem;
 using namespace forge;
 
 const std::vector<modules::Event>& events() {
-    static const std::vector<modules::Event> list = {{"pick", "герой подбирает предмет"}, {"reach", "герой доходит до места"}};
+    static const std::vector<modules::Event> list = {{"pick", "герой подбирает предмет", "Когда герой подбирает {b:acc}", ""},
+                                                     {"reach", "герой доходит до места", "Когда герой доходит до {b:gen}", ""}};
     return list;
 }
 

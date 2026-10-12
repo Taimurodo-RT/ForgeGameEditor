@@ -217,6 +217,7 @@ std::vector<PropDef> read_props(yyjson_val* arr, const std::string& owner) {
         prop.advanced = yyjson_get_bool(yyjson_obj_get(p, "advanced"));
         prop.asset = text_of(yyjson_obj_get(p, "asset"));
         prop.empty = text_of(yyjson_obj_get(p, "empty"));
+        prop.template_only = yyjson_get_bool(yyjson_obj_get(p, "template_only"));
         if (yyjson_val* mn = yyjson_obj_get(p, "min")) prop.min = yyjson_get_num(mn), prop.has_range = true;
         if (yyjson_val* mx = yyjson_obj_get(p, "max")) prop.max = yyjson_get_num(mx), prop.has_range = true;
         usize ci, cn;
@@ -1040,6 +1041,7 @@ std::string Library::value(scene::Scene& scene, flecs::entity e, const PropDef& 
 }
 
 bool Library::set_value(scene::Scene& scene, flecs::entity e, const PropDef& prop, const std::string& json) const {
+    if (prop.template_only && e.has<ObjectRef>()) return false; // the template's alone
     const flecs::entity_t id = prop.type ? component_id(scene, prop.type) : 0;
     ecs_world_t* world = scene.ecs().c_ptr();
     void* data = id && e.is_alive() ? ecs_get_mut_id(world, e, id) : nullptr;

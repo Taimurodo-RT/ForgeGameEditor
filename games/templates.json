@@ -25,6 +25,15 @@
       "game": "rpg",
       "assets": "templates/rpg/assets",
       "picture": "templates/rpg.png"
+    },
+    {
+      "id": "match3",
+      "name": "Три в ряд",
+      "about": "Три поля из самоцветов шахты: меняйте соседние фишки мышью, ряд из трёх исчезает. У каждого уровня свои ходы и цель, дыры и камни в поле. Всё правится во вкладках редактора.",
+      "module": "match3",
+      "game": "match3",
+      "assets": "templates/match3/assets",
+      "picture": "templates/match3.png"
     }
   ]
 }

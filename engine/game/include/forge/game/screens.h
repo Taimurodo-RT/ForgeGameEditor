@@ -157,6 +157,10 @@ public:
     // name; and showing them. show_ending returns how many came up (0: the game has none for it).
     std::vector<std::string> endings(std::string_view kind) const;
     u32 show_ending(std::string_view kind);
+    // The clock windows come and go by (forge-appear), in nanoseconds; none: the real one (time_now_ns). A test
+    // that looks at a window halfway in or out sets its own, whatever the speed of its frames; own_clock: one is set.
+    void set_clock(std::function<u64()> now);
+    bool own_clock() const;
     // A shown page stops the world.
     bool pauses() const;
     // The game's own main menu is there (the shell's is not shown).

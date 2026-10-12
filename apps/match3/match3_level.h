@@ -9,6 +9,7 @@
 
 #include "forge/data/reflect.h"
 #include "forge/level/level.h"
+#include "forge/level/own_tiles.h"
 #include "forge/objects/library.h"
 #include "forge/render/camera.h"
 #include "forge/render/sprite_batch.h"
@@ -48,6 +49,12 @@ inline constexpr std::string_view kRulesBlock = "board_rules";
 inline constexpr forge::u32 kFieldLayer = 0;
 inline constexpr forge::world::TileId kCell = 1, kCellDark = 2;
 inline bool is_cell(forge::world::TileId t) { return t == kCell || t == kCellDark; }
+// What a tile of the layer «Поле» is to the field (step 14.3c): nothing (a hole), a cell, or a stone. A level's own
+// tiles (forge/level/own_tiles.h: tiles.json and tiles.png, as the template's brief has them) are cells too, and one
+// marked «Твёрдая» is a stone: a hole of the field with a picture of its own (no gem is ever on it, falling gems pass
+// it hidden).
+enum class Spot : u8 { None, Cell, Stone };
+Spot spot_of(forge::world::TileId t, const forge::level::LevelTiles& own);
 // The field is read within this many tiles of the level's origin each way; cells further out are not looked at.
 inline constexpr i32 kReach = 32;
 
@@ -68,6 +75,8 @@ struct Field {
     Board shape;        // its cells (kNone), holes, and the gems put before (their numbers in the set)
     i32 x0 = 0, y0 = 0; // the level's tile of the board's top left cell
     std::vector<bool> dark; // by cell: drawn with «Клетка тёмная»
+    std::vector<forge::world::TileId> look; // by cell: the tile drawn there (0: none; an own tile: its picture)
+    forge::level::LevelTiles own;           // the level's own tiles, for their pictures
     Rules rules;
     u32 rules_copies = 0; // of «Правила уровня» (0: the kind's values)
 };
@@ -89,11 +98,14 @@ public:
     bool init(SDL_GPUDevice* device, SDL_GPUTextureFormat format);
     void shutdown();
     bool ready() const { return ready_; }
-    // The sheet made anew when the set's pictures changed (templates, files); outside any render pass.
-    void update(const forge::objects::Library& library, const GemSet& set);
+    // The sheet made anew when the set's pictures changed (templates, files), or the level's own tiles did; outside
+    // any render pass.
+    void update(const forge::objects::Library& library, const GemSet& set, const forge::level::LevelTiles* own = nullptr);
 
     u32 white() const { return 0; }
     u32 cell(bool dark) const { return dark ? 2 : 1; }
+    // An own tile's picture (white() when the sheet has none for it).
+    u32 own_frame(forge::world::TileId id) const;
     // A gem's frame of the sheet: frame 0 stands, 1… vanish; how many it has.
     u32 gem_frame(u32 gem, u32 frame) const;
     u32 gem_frames(u32 gem) const;
@@ -108,14 +120,17 @@ public:
 
     // Pushes a sprite of a frame at a point of the level (tiles), size in tiles.
     void put(u32 frame, f64 x, f64 y, f32 w, f32 h, u32 color = 0xffffffffu, u32 order = 1);
-    // A field's cells as the author drew them, and the frame round it (over the gems: they pass under it).
+    // A field's cells as the author drew them, and the frame round it (over the gems: they pass under it). Stones
+    // over what hides the gems in holes: falling gems pass under them.
     void put_cells(const Field& field);
+    // A tile of the layer «Поле» at a cell's middle, as the editor and the game draw it.
+    void put_tile(forge::world::TileId t, f64 x, f64 y, const forge::level::LevelTiles& own);
     // What hides the gems where the field has no cells: above it (new gems come from there) and its holes (falling
     // gems pass them). In the colour of what is behind the field.
     void put_covers(const Field& field, u32 color);
 
 private:
-    void make_sheet(const forge::objects::Library& library, const GemSet& set);
+    void make_sheet(const forge::objects::Library& library, const GemSet& set, const forge::level::LevelTiles* own);
 
     bool ready_ = false;
     forge::render::SpriteRenderer sprites_;
@@ -124,6 +139,8 @@ private:
     u32 width_ = 0, height_ = 0;
     std::vector<forge::render::SpriteRect> frames_;
     std::vector<u32> first_, count_; // by gem: its first frame, how many
+    std::vector<u32> own_;           // by own tile (id - kFirstOwnTile): its frame
+    forge::level::LevelTiles own_tiles_;
     std::string signature_ = "-";
     bool sheet_changed_ = false;
 };
@@ -168,6 +185,9 @@ public:
 
     // What the field of a level says now (for the status line and the tests): "" when it starts.
     std::string field_problem(forge::level::Level& level, const std::string& name) const;
+    std::string level_problem(forge::level::Level& level, const std::string& name) const override {
+        return field_problem(level, name);
+    }
 
 private:
     forge::objects::Library library_;

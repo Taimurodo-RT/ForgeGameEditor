@@ -131,6 +131,9 @@ public:
     const std::string& level_id() const { return level_id_; }
     // The open level's name: its name in the list, else its folder's.
     std::string level_name() const;
+    // What the game says of this level by its own rules (LevelModule::level_problem): why it would not start it; ""
+    // when nothing is. Shown in the status line; made anew when the level, its objects or tiles change.
+    const std::string& problem() const { return problem_; }
     void set_levels_menu(bool open);
     bool levels_menu() const { return levels_open_; }
     // Opens a level of the list, asking about unsaved changes first (ask_unsaved).
@@ -597,7 +600,9 @@ private:
     Rml::String m_tile_name_, m_tile_hint_, m_tile_icon_, m_tile_layer_;
     bool m_light_ = false, m_grid_ = false, m_chunks_ = false, m_outline_ = false;
     bool m_dirty_ = false;
-    Rml::String m_minimap_, m_place_, m_info_;
+    Rml::String m_minimap_, m_place_, m_info_, m_problem_;
+    std::string problem_;
+    std::string problem_key_ = "-"; // what it was made for: the level's edits, objects, tiles and name
     std::vector<Rml::String> m_history_;
     std::vector<PaletteGroup> m_objects_;
     int m_object_ = -1, m_sel_count_ = 0;

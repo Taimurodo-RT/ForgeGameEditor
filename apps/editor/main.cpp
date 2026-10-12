@@ -438,6 +438,11 @@ public:
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         // «Логика» reads the verbs with the module's events, as the game does.
         logic_tab.events = module.event_ids();
+        // Its steps in the module's words, and the events a level ends by (step 14.3c).
+        for (const modules::Event& e : module.events) {
+            if (!e.step.empty()) logic_tab.event_steps[e.id] = e.step;
+            if (!e.needed.empty()) logic_tab.needed_events.emplace_back(e.id, e.needed);
+        }
         if (!level.init(ui_, device, format, level_config)) return false;
         objects_tab.set_shared_folder(shared_folder);
         objects_tab.init(ui_);
@@ -1881,7 +1886,10 @@ struct Options {
     // "animation-a", opened again and played by "animation-a-again"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
-    // changed by "rpg-template-a-again").
+    // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
+    // "match3-template-a" and "match3-template-a-again"; "match3-template-a-gone": the game as saved without a gem deleted
+    // after the save, its copies said of and a new game refused; "match3-template-a-restored": the gem brought back by
+    // Ctrl+Z, opened again, the save goes on and a new game starts).
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -2094,6 +2102,11 @@ public:
         if (part == "rpg-template") return frame < 3 || rpg_template_step();
         if (part == "rpg-template-a") return frame < 3 || rpg_template_a_step();
         if (part == "rpg-template-a-again") return frame < 3 || rpg_template_again_step();
+        if (part == "match3-template") return frame < 3 || match3_template_step();
+        if (part == "match3-template-a") return frame < 3 || match3_template_a_step();
+        if (part == "match3-template-a-again") return frame < 3 || match3_template_again_step();
+        if (part == "match3-template-a-gone") return frame < 3 || match3_template_gone_step();
+        if (part == "match3-template-a-restored") return frame < 3 || match3_template_restored_step();
         if (part == "modules") return frame < 3 || modules_step();
         if (part == "modules-probe") return frame < 3 || modules_probe_step();
         if (part == "modules-old") return frame < 3 || modules_old_step();
@@ -17767,9 +17780,9 @@ private:
             case 1: check(pj_click("pj-new"), "«Новая игра из шаблона…»"); break;
             case 2: {
                 const auto& all = pjw().templates();
-                check(pjw().view() == "new" && all.size() == 3 && card == 2 && all[2].name == "RPG сверху" && all[2].module == "rpg" &&
+                check(pjw().view() == "new" && all.size() == 4 && card == 2 && all[2].name == "RPG сверху" && all[2].module == "rpg" &&
                           shown(id),
-                      "the window «Новая игра»: three cards, the third «RPG сверху» of the module «rpg»");
+                      "the window «Новая игра»: four cards, the third «RPG сверху» of the module «rpg»");
                 Rml::ElementList pics;
                 if (Rml::Element* c = ed_.find_element(id.c_str())) c->GetElementsByTagName(pics, "img");
                 check(pics.size() == 1 && pics[0]->GetAttribute<Rml::String>("src", "") == "/memory/pj_template_2" && pics[0]->IsVisible(true),
@@ -18528,6 +18541,1313 @@ private:
         return true;
     }
 
+    // --self-test match3-template (step 14.3c, step14/14.3c-шаблон-модель.md): the template's game made again from its
+    // sources (the module's maker of «match3») is games/match3 byte for byte; sources without a gem's picture make
+    // nothing. «Три в ряд Б» and «Три в ряд А» made of the catalog's fourth card with the window «Новая игра». The editor
+    // for A, started by the window (match3-template-a), through the tabs by SDL's mouse and key events (the tabs, buttons
+    // and the palette by RmlUi's Element::Click), but by the tabs' own calls for a name after F2, the level panel's
+    // numbers, the brush's size, the camera, the link's verb and the link chosen, the UI's screen and layer with their
+    // undo, the Resources' folder and row: «Рубин»'s picture replaced in «Ресурсы» and the author's star picture and
+    // sound put there, brought in by F5; in «Объекты»
+    // «Звезда», a «Копия» of «Рубин» with the star picture, 50 points and the author's sound, «Рубин» 20 points, the
+    // template «Поле» 3 moves; in «Уровень» on «Первый» three stars put in a row (the panel's warning, a game of another
+    // process refusing to start with the same words), the middle one deleted, a star's «Очки» the template's and not
+    // its own, two cells erased and a «Камень» laid on one, the level's own moves and target; on «Третий» its moves the
+    // template's (3, 25 after Ctrl+Z in «Объекты», 3 again); in «Логика» «Поле даёт +2 хода за Звезду» with its words,
+    // «Поле остаётся без ходов» deleted (the tab's warning) and made again with two clicks on «Поле»; the HUD's moves and
+    // the lose window's title in «Интерфейс»; the star picture renamed in «Ресурсы» and «Звезда» renamed «Звезда шахты»
+    // in «Объекты», the same ids; each undone and done again; saved. match3-template-a-again, from another working
+    // folder: all of it as left; «Играть со стартового»: the game plays it (scene project with --edits) and saves on
+    // «Второй» with stars on the field; then (step 11 of the model) «Звезда шахты» chosen with a click and deleted with
+    // Delete in «Объекты» (its copies on «Первый» and its link stay, «Логика» says the link does not work), Ctrl+S;
+    // «Уровень» says «Первый»'s copies are of an object no more there, with their cells and the template's key; another
+    // editor opens the game as saved (match3-template-a-gone): the same words, and its game refuses «Новая игра»
+    // pressed with the mouse with them; a game of another process refuses «Продолжить» in its main menu with words for
+    // the player, the saves byte for byte as they were; Ctrl+Z brings the star back by the same id (Ctrl+Y and Ctrl+Z
+    // again), «Уровень» says nothing, Ctrl+S. match3-template-a-restored, from a third working folder: the star, its
+    // copies and its link as before; another process goes on from the save by «Продолжить» (scene project_continue),
+    // and a new game plays it all again (scene project). The template and B: the same bytes before and after.
+    static constexpr u8 kMtRuby[3] = {240, 120, 20};  // the author's «Рубин»: one colour all over
+    static constexpr u8 kMtStar[3] = {120, 230, 230}; // the author's star
+    static constexpr i32 kMtStarY = 5, kMtStar0 = 1, kMtStar2 = 3; // three stars put in a row on «Первый», the middle deleted
+    static constexpr i32 kMtHole0X = 0, kMtHole0Y = 0, kMtStoneX = 3, kMtStoneY = 3; // two cells erased, a stone on the second
+    static constexpr i32 kMtRulesX = -2, kMtRulesY = 0;                               // the level's copy of «Поле»
+    static constexpr const char* kMtHud = "Осталось ходов: {board.moves}";
+    static constexpr const char* kMtLose = "Камни не сошлись";
+    int mt_step_ = 0;
+    std::map<std::string, std::string> mt_rec_; // what match3-template-a did (a file of the test, outside the games)
+    std::map<std::string, std::vector<u8>> mt_tmpl_, mt_b_;
+    std::vector<u8> mt_copy_; // the game's copy of «Рубин»'s picture before
+
+    static std::filesystem::path mt_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_шаблон три в ряд"); }
+    static std::filesystem::path mt_mine(const char* title) { return mt_root() / utf8_path("Мои игры") / utf8_path(title); }
+    static std::map<std::string, std::vector<u8>> mt_template() {
+        std::map<std::string, std::vector<u8>> out = tg_template();
+        for (auto& [path, bytes] : pj_tree(utf8_path(FORGE_GAMES_DIR) / "match3")) out["games/match3/" + path] = std::move(bytes);
+        return out;
+    }
+    // A gem's picture of the author's: the template's size (4 frames of 32 × 32), one colour.
+    static std::vector<u8> mt_png(const u8 (&c)[3]) {
+        assets::CookedTexture t;
+        t.width = 128;
+        t.height = 32;
+        t.rgba8.resize(128 * 32 * 4);
+        for (usize i = 0; i < t.rgba8.size(); i += 4) {
+            t.rgba8[i] = c[0];
+            t.rgba8[i + 1] = c[1];
+            t.rgba8[i + 2] = c[2];
+            t.rgba8[i + 3] = 255;
+        }
+        std::vector<u8> png;
+        assets::encode_image(t, ".png", png);
+        return png;
+    }
+    static std::vector<u8> mt_sound() { return tg_wav(4410, 990); }
+    // A layer of the open screen of «Интерфейс» by its name (0: none).
+    u32 mt_layer(const std::string& name) {
+        std::function<u32(const editor::design::Node&)> find = [&](const editor::design::Node& n) -> u32 {
+            if (n.name == name) return n.id;
+            for (const editor::design::Node& c : n.children)
+                if (const u32 id = find(c)) return id;
+            return 0;
+        };
+        return find(ue().screen().root);
+    }
+    // A field of the level's properties panel: its row's number, what it shows, whether it is the copy's own.
+    std::string mt_field(const char* label, bool* own = nullptr) {
+        const int row = lv().field_row(label);
+        const std::string n = std::to_string(row);
+        if (own) *own = row >= 0 && shown("lv-reset-" + n);
+        if (row < 0) return "<нет>";
+        if (shown("lv-ro-" + n)) return "ro:" + element_text(("lv-ro-" + n).c_str());
+        return input_value(("lv-num-" + n).c_str());
+    }
+    // The copy at a cell of the open level (its id; 0: none) and of which template.
+    u64 mt_copy_at(i32 cx, i32 cy, const std::string& tmpl) {
+        objects::Library& lib = ol().library();
+        u64 found = 0;
+        lv().level().load_objects();
+        lv().level().scene().ecs().each([&](flecs::entity e, const objects::ObjectRef&, const scene::Position& p) {
+            const objects::Template* t = lib.template_of(e);
+            const level::LevelId* id = e.try_get<level::LevelId>();
+            if (t && id && t->id == tmpl && static_cast<i32>(std::floor(p.tile_x())) == cx && static_cast<i32>(std::floor(p.tile_y())) == cy)
+                found = id->id;
+        });
+        return found;
+    }
+    // The copies of the template whose key is key (whether or not there is such a template now), by their ids, sorted.
+    std::string mt_keyed(u64 key) {
+        std::vector<u64> ids;
+        lv().level().load_objects();
+        lv().level().scene().ecs().each([&](flecs::entity e, const objects::ObjectRef& ref) {
+            if (const level::LevelId* id = e.try_get<level::LevelId>(); id && ref.key == key) ids.push_back(id->id);
+        });
+        std::sort(ids.begin(), ids.end());
+        std::string out;
+        for (u64 id : ids) out += " " + std::to_string(id);
+        return out;
+    }
+    bool mt_library_shown() { return ed_.tab() == "objects" && !ol().editing() && shown("ol-search"); }
+    // What «Первый» says, and its game, with the two stars left on it and their template deleted (its key).
+    static std::string mt_gone_said(u64 key) {
+        char hex[24];
+        std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(key));
+        auto cell = [](i32 x) { return std::to_string(x + 1) + ":" + std::to_string(kMtStarY + 1); };
+        return "Поле «Первый»: копии объекта, которого больше нет в игре: клетки " + cell(kMtStar0) + ", " + cell(kMtStar2) +
+               " (ключ шаблона " + hex + ")";
+    }
+    std::map<std::string, std::vector<u8>> mt_saves_; // the player's saves after the game saved m3-author
+    u64 mt_star_key_ = 0;                             // «Звезда шахты» before it is deleted: its key, file, bytes, copies
+    std::filesystem::path mt_star_file_;
+    std::vector<u8> mt_star_bytes_;
+    std::string mt_star_copies_;
+    u32 mt_copies(const std::string& tmpl) {
+        objects::Library& lib = ol().library();
+        u32 n = 0;
+        lv().level().load_objects();
+        lv().level().scene().ecs().each([&](flecs::entity e, const objects::ObjectRef&) {
+            const objects::Template* t = lib.template_of(e);
+            n += t && t->id == tmpl;
+        });
+        return n;
+    }
+    // The link «Поле … ходов» of the author's gem (0: none).
+    u32 mt_link(const std::string& verb, const std::string& b) {
+        for (const logic::Link& l : lg().links().links)
+            if (l.verb == verb && l.a == "board" && l.b == b) return l.id;
+        return 0;
+    }
+
+    // What the game must find: the values as the tabs have them now.
+    edits::ProjectEdits mt_edits() {
+        edits::ProjectEdits e;
+        const std::string star = mt_rec_["star"];
+        e.m3_star = star;
+        if (const objects::Template* t = ol().library().find(std::string_view(star))) e.m3_star_name = t->name;
+        e.m3_star_points = std::strtod(pl_value(star, "points").c_str(), nullptr);
+        e.m3_star_sound = rt_text(star, "gem_sound");
+        e.m3_star_color = {kMtStar[0], kMtStar[1], kMtStar[2]};
+        e.m3_ruby = {kMtRuby[0], kMtRuby[1], kMtRuby[2]};
+        e.m3_ruby_points = std::strtod(pl_value("ruby", "points").c_str(), nullptr);
+        e.m3_first_moves = 15;
+        e.m3_first_target = 300;
+        e.m3_kind_moves = std::strtod(pl_value("board", "moves").c_str(), nullptr);
+        e.m3_inherit = "third";
+        e.m3_holes = {kMtHole0X, kMtHole0Y, kMtStoneX, kMtStoneY};
+        e.m3_stones = {kMtStoneX, kMtStoneY};
+        e.m3_star_at = {kMtStar0, kMtStarY, kMtStar2, kMtStarY};
+        e.m3_hud = "hud";
+        e.m3_hud_node = static_cast<u32>(std::strtoul(mt_rec_["hud_node"].c_str(), nullptr, 10));
+        e.m3_hud_text = kMtHud;
+        e.m3_lose = "lose";
+        e.m3_lose_node = static_cast<u32>(std::strtoul(mt_rec_["lose_node"].c_str(), nullptr, 10));
+        e.m3_lose_title = kMtLose;
+        return e;
+    }
+
+    // --self-test match3-template: the games made with the window; A in an editor the window starts, then again from
+    // another working folder; the template and B compared byte for byte.
+    bool match3_template_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = mt_mine("Три в ряд А"), b = mt_mine("Три в ряд Б");
+        if (ng_await_) {
+            if (pj_wait(!pjw().opening(), "the editor for the game answers")) return true;
+            ng_await_ = false;
+        }
+        // The window «Новая игра»: the card «Три в ряд», the title typed, «Мои игры» typed, «Создать и открыть».
+        auto make = [&](int at, const char* title, const fs::path& folder) {
+            const int card = rt_card(pjw(), "match3");
+            const std::string id = "pj-template-" + std::to_string(card);
+            switch (at) {
+            case 0: check(pj_click("pj-game"), "the game's button"); break;
+            case 1: check(pj_click("pj-new"), "«Новая игра из шаблона…»"); break;
+            case 2: {
+                const auto& all = pjw().templates();
+                check(pjw().view() == "new" && all.size() == 4 && card == 3 && all[3].name == "Три в ряд" && all[3].module == "match3" && shown(id),
+                      "the window «Новая игра»: four cards, the fourth «Три в ряд» of the module «match3»");
+                Rml::ElementList pics;
+                if (Rml::Element* c = ed_.find_element(id.c_str())) c->GetElementsByTagName(pics, "img");
+                check(pics.size() == 1 && pics[0]->GetAttribute<Rml::String>("src", "") == "/memory/pj_template_3" && pics[0]->IsVisible(true),
+                      "its card has its picture");
+                check(element_text(id.c_str()).find("самоцветов") != std::string::npos, "and its words: " + element_text(id.c_str()));
+                check(pj_click(id.c_str()) && pjw().chosen() == card, "a click chooses «Три в ряд»");
+                check(pj_type("pj-title-input", title) && pj_type("pj-where-input", path_to_utf8(mt_root() / utf8_path("Мои игры"))),
+                      std::string("«") + title + "» in «Мои игры» typed");
+                break;
+            }
+            case 3:
+                check(pj_class(id.c_str(), "selected") && !pj_class("pj-template-0", "selected") && !pj_class("pj-template-2", "selected"),
+                      "its card is shown chosen");
+                check(pjw().can_create() && pjw().chosen() == card && utf8_path(pjw().folder()) == folder, "it can be made: " + pjw().folder());
+                check(pj_click("pj-create") && pjw().opening(), std::string("«Создать и открыть»: «") + title + "» made, its editor starts");
+                ng_await_ = true;
+                break;
+            default: break;
+            }
+        };
+        switch (mt_step_) {
+        case 0: {
+            fs::remove_all(mt_root(), ec);
+            fs::create_directories(mt_root() / utf8_path("Мои игры"), ec);
+            // The template's game is what its sources make: by the function into a folder of Cyrillic name, and by the
+            // command line from another working folder; byte for byte, line ends of the text files aside on both sides.
+            const fs::path games = utf8_path(FORGE_GAMES_DIR);
+            const modules::TemplateMaker* maker = template_maker("match3");
+            check(maker != nullptr, "the module «match3» makes the template «match3»");
+            auto same = [&](const fs::path& made, const char* how, bool built, const std::string& why) {
+                const auto ours = pj_tree(made), theirs = pj_tree(games / "match3");
+                auto lf = [](const std::string& path, std::vector<u8> bytes) {
+                    if (path.ends_with(".json") || path.ends_with(".html")) std::erase(bytes, static_cast<u8>('\r'));
+                    return bytes;
+                };
+                std::string differ;
+                for (const auto& [path, bytes] : theirs)
+                    if (!ours.count(path) || lf(path, ours.at(path)) != lf(path, bytes)) differ += " " + path;
+                for (const auto& [path, bytes] : ours)
+                    if (!theirs.count(path)) differ += " +" + path;
+                check(built && differ.empty() && ours.size() == theirs.size() && ours.size() > 40 &&
+                          !fs::exists(made.parent_path() / utf8_path(path_to_utf8(made.filename()) + ".сборка")),
+                      std::string("games/match3 is what its sources make ") + how + ", byte for byte, line ends of text aside (" +
+                          std::to_string(ours.size()) + " files) " + why + differ);
+            };
+            if (maker) {
+                const fs::path made = mt_root() / utf8_path("сборка");
+                std::string why;
+                const bool built = maker->make(games, made, why);
+                same(made, "(the module's maker of «match3»)", built, why);
+            }
+            {
+                const fs::path other = mt_root() / utf8_path("другая папка"), made = mt_root() / utf8_path("сборка из командной строки");
+                fs::create_directories(other, ec);
+                const int code = pj_run({path_to_utf8(editor_exe()), "--make-template", "match3", path_to_utf8(made)}, other);
+                same(made, "(forge_editor --make-template)", code == 0, "exit " + std::to_string(code));
+            }
+            // Sources that do not make the game («Сапфир»'s picture gone) leave the folder made into as it was.
+            if (maker) {
+                const fs::path broken = mt_root() / utf8_path("источники без сапфира"), keep = mt_root() / utf8_path("прежняя папка");
+                fs::create_directories(broken / "modules", ec);
+                fs::copy(games / "modules" / "match3", broken / "modules" / "match3", fs::copy_options::recursive, ec);
+                fs::create_directories(broken / "templates", ec);
+                fs::copy(games / "templates" / "match3", broken / "templates" / "match3", fs::copy_options::recursive, ec);
+                fs::remove(broken / "templates" / "match3" / "assets" / utf8_path("картинки") / utf8_path("сапфир.png"), ec);
+                fs::create_directories(keep, ec);
+                const std::vector<u8> note = {'f', 'o', 'r', 'g', 'e'};
+                check(write_file_atomic(keep / utf8_path("записка.txt"), note), "a folder with a file of its own");
+                std::string why;
+                const bool built = maker->make(broken, keep, why);
+                check(!built && why.find("сапфир.png") != std::string::npos && tg_bytes(keep / utf8_path("записка.txt")) == note &&
+                          pj_tree(keep).size() == 1 && !fs::exists(mt_root() / utf8_path("прежняя папка.сборка")),
+                      "sources without сапфир.png make nothing, the folder stays as it was: " + why);
+            }
+            std::string why;
+            // The author's own pictures and sound, apart from both games and the template.
+            const fs::path src = mt_root() / utf8_path("исходники");
+            fs::create_directories(src, ec);
+            check(write_file_atomic(src / utf8_path("рубин.png"), mt_png(kMtRuby)) && write_file_atomic(src / utf8_path("звезда.png"), mt_png(kMtStar)) &&
+                      write_file_atomic(src / utf8_path("колокольчик.wav"), mt_sound()),
+                  "the author's «Рубин», star picture and sound, in «исходники»");
+            fs::remove_all(play_folder(a), ec);
+            fs::remove_all(play_folder(b), ec);
+            mt_tmpl_ = mt_template();
+            check(mt_tmpl_.count("games/match3/game.json") && mt_tmpl_.count("games/templates/match3.png") &&
+                      mt_tmpl_.count("games/templates/match3/tiles.png") && mt_tmpl_.count("games/templates/match3/assets/картинки/рубин.png") &&
+                      mt_tmpl_.count("games/templates/match3/assets/звуки/звон.wav"),
+                  "the template: games/match3, its card's picture, cells and «Ресурсы» (" + std::to_string(mt_tmpl_.size()) + " files)");
+            tg_snap("шаблон до", mt_tmpl_, mt_root());
+            ng_config_ = pjw().config();
+            ng_scene_ = ed_.scene_path;
+            ed_.scene_path = mt_root() / utf8_path("сцена.json");
+            check(ed_.save_unsaved(why) && ed_.unsaved().empty(), "nothing unsaved to begin with");
+            // «Три в ряд Б» first: its editor opens it, says so and closes.
+            pjw().configure(ng_launching());
+            make(0, "Три в ряд Б", b);
+            break;
+        }
+        case 1: case 2: case 3:
+            make(mt_step_, "Три в ряд Б", b);
+            break;
+        case 4: {
+            check(!pjw().opening() && ed_.quit_asked, "the editor for «Три в ряд Б» is ready");
+            const int code = pjw().wait_opened();
+            check(code == 0, "it opened «Три в ряд Б» (exit " + std::to_string(code) + ")");
+            ed_.quit_asked = false;
+            mt_b_ = pj_tree(b);
+            // B is the template's game (retitled) and its «Ресурсы».
+            std::string differ;
+            usize files = 0;
+            for (const auto& [path, bytes] : mt_tmpl_) {
+                std::string mine;
+                if (path.rfind("games/match3/", 0) == 0) mine = "game/" + path.substr(13);
+                else if (path.rfind("games/templates/match3/assets/", 0) == 0) mine = "assets/" + path.substr(30);
+                else continue;
+                ++files;
+                if (!mt_b_.count(mine) || (mine != "game/game.json" && mt_b_.at(mine) != bytes)) differ += " " + mine;
+            }
+            pj::Description d;
+            const std::vector<u8> desc = mt_b_["project.forge"];
+            check(pj::read_description({reinterpret_cast<const char*>(desc.data()), desc.size()}, d) && d.from == "match3" && d.module == "match3" &&
+                      pj::game_title(b / "game") == "Три в ряд Б",
+                  "«Три в ряд Б»: of the template «Три в ряд», the module «match3», titled");
+            check(differ.empty() && files > 60, "its game and «Ресурсы» are the template's, file for file (" + std::to_string(files) + ")" + differ);
+            tg_snap("Три в ряд Б до", mt_b_, mt_root());
+            // «Три в ряд А»: its editor changes it through the tabs, saves and closes.
+            pjw().configure(ng_launching({"--self-test", "match3-template-a"}, 300));
+            make(0, "Три в ряд А", a);
+            break;
+        }
+        case 5: case 6: case 7:
+            make(mt_step_ - 4, "Три в ряд А", a);
+            break;
+        case 8: {
+            check(!pjw().opening() && ed_.quit_asked, "the editor for «Три в ряд А» is ready");
+            int code = pjw().wait_opened();
+            check(code == 0, "«Рубин»'s picture, a star and its sound, «Звезда», the points, «Поле»'s moves, the stars, holes and a stone on "
+                             "«Первый», a link, the HUD, the lose window and the renames changed in «Три в ряд А» through its editor's tabs "
+                             "(match3-template-a: exit " + std::to_string(code) + ")");
+            ed_.quit_asked = false;
+            // Opened again by its project.forge, from a working folder of neither game.
+            const fs::path other = mt_root() / utf8_path("другая папка");
+            fs::create_directories(other, ec);
+            code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"), "--self-test", "match3-template-a-again"},
+                          other);
+            check(code == 0, "opened again elsewhere: all of it as left; the game plays it and saves; «Звезда шахты» deleted, "
+                             "«Продолжить» refused, the save as it was; Ctrl+Z brings it back (match3-template-a-again: exit " +
+                                 std::to_string(code) + ")");
+            // Opened once more, from a third working folder: the star as it was before it was deleted; the save goes on.
+            const fs::path third = mt_root() / utf8_path("третья папка редактора");
+            fs::create_directories(third, ec);
+            code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"), "--self-test", "match3-template-a-restored"},
+                          third);
+            check(code == 0, "opened once more: «Звезда шахты» by its id, its copies and its link; «Продолжить» goes on from the save "
+                             "(match3-template-a-restored: exit " + std::to_string(code) + ")");
+            const auto tmpl = mt_template(), btree = pj_tree(b);
+            check(tg_snap("шаблон после", tmpl, mt_root()) == tg_digest(mt_tmpl_) && tmpl == mt_tmpl_, "the template byte for byte as before");
+            check(tg_snap("Три в ряд Б после", btree, mt_root()) == tg_digest(mt_b_) && btree == mt_b_, "«Три в ряд Б» byte for byte as before");
+            mt_rec_ = tg_get(mt_root() / utf8_path("записи.txt"));
+            const std::vector<std::string> of_a = {mt_rec_["ruby_hash"], mt_rec_["star"], "колокольчик", "Звезда", "звезда", kMtHud, kMtLose};
+            check(!mt_rec_["ruby_hash"].empty() && !mt_rec_["star"].empty() && tg_naming(b, of_a).empty() &&
+                      tg_naming(utf8_path(FORGE_GAMES_DIR) / "match3", of_a).empty(),
+                  "nothing of A in B or the template (the new picture's hash, the star's id, the sound, the names, the words): " +
+                      tg_naming(b, of_a) + tg_naming(utf8_path(FORGE_GAMES_DIR) / "match3", of_a));
+            pjw().configure(ng_config_);
+            ed_.scene_path = ng_scene_;
+            mt_step_ = -1;
+            return false;
+        }
+        default: break;
+        }
+        ++mt_step_;
+        return true;
+    }
+
+    // In the editor the window started for «Три в ряд А» (--self-test match3-template-a).
+    bool match3_template_a_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game", src = mt_root() / utf8_path("исходники");
+        const fs::path copy = game / "pictures" / utf8_path("рубин.png");
+        objects::Library& lib = ol().library();
+        const bool idle = !as().busy();
+        const char* const ruby = "картинки/рубин.png";
+        const char* const star_png = "картинки/звезда.png";
+        const char* const bell = "звуки/колокольчик.wav";
+        auto record = [&](const char* rel) { return as().record_of(as().abs(rel)); };
+        auto picked = [&](const std::string& name) {
+            for (usize i = 0; i < ol().picture_choices(); ++i)
+                if (ol().picture_choice(i) == name) return static_cast<i64>(i);
+            return i64(-1);
+        };
+        auto pick_card = [&](const char* name, bool open) {
+            f32 x = 0, y = 0;
+            check(ue_type("ol-search", name) && card_at(card_named(name), x, y), std::string("«") + name + "» found by its name, its card on screen");
+            // A click on the same place within RmlUi's double-click time (0.5 s) would open the editor: one click waits it
+            // out, as a person's would.
+            if (!open) SDL_Delay(520);
+            left_click(x, y);
+            if (open) left_click(x, y);
+        };
+        auto undo_redo = [&](const std::function<bool()>& before, const std::function<bool()>& after, const std::string& what) {
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(before(), "Ctrl+Z: " + what + " as before");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(after(), "Ctrl+Y: " + what + " again");
+        };
+        // The open object's value, typed into its field, undone and done again.
+        auto value = [&](const std::string& id, const char* row, const char* prop, const char* was, const char* now) {
+            check(pl_value(id, prop) == was, std::string("«") + row + "»: " + was);
+            check(pl_set(row, now) && pl_value(id, prop) == now, std::string("«") + row + "» typed: " + now);
+            undo_redo([&] { return pl_value(id, prop) == was; }, [&] { return pl_value(id, prop) == now; }, std::string("«") + row + "»");
+        };
+        std::string library_state;
+        auto library_shown = [&] {
+            const bool search = shown("ol-search");
+            library_state = "the library is laid out (the tab «" + ed_.tab() + "», " + (ol().editing() ? "an object's editor open" : "no editor open") +
+                            ", the search " + (search ? "shown" : "not shown") + ")";
+            return ed_.tab() == "objects" && !ol().editing() && search;
+        };
+        const std::string star = mt_rec_["star"];
+        const std::string problem_start = "Поле «Первый»: фишки, поставленные заранее, уже стоят в ряд";
+        switch (mt_step_) {
+        case 0: {
+            check(pjw().config().title == "Три в ряд А" && lvl_same(ed_.game_dir, game), "the editor has «Три в ряд А» open");
+            check(lib.templates().size() == 7 && ed_.sources.entries().size() == 10, "the template's 7 objects, 10 files from «Ресурсы»");
+            check(lv().level_id() == "level" && lv().level_name() == "Первый" && lv().levels().levels.size() == 3, "its start level «Первый», of three");
+            mt_copy_ = tg_bytes(copy);
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        // «Ресурсы»: «Рубин»'s picture changed in place by another program, the author's star picture and sound put in; F5.
+        case 1: {
+            if (hold(idle && ed_.tab() == "assets" && record(ruby), "«Ресурсы» are indexed")) return true;
+            if (!record(ruby)) return false;
+            mt_rec_["ruby_asset"] = record(ruby)->id.to_string();
+            check(tg_bytes(as().abs(ruby)) == mt_copy_ && ed_.sources.of_file("pictures/рубин.png") &&
+                      ed_.sources.of_file("pictures/рубин.png")->asset.to_string() == mt_rec_["ruby_asset"],
+                  "the game's picture of «Рубин» is a copy of «картинки/рубин.png» of «Ресурсы»");
+            check(!record(star_png) && !record(bell) && as().record_count() == 10, "10 files in «Ресурсы», nothing of the author's yet");
+            tg_said_ = tg_mark();
+            const auto now = fs::file_time_type::clock::now();
+            check(write_file_atomic(as().abs(ruby), tg_bytes(src / utf8_path("рубин.png"))), "«картинки/рубин.png» saved over by the author's");
+            fs::last_write_time(as().abs(ruby), now + std::chrono::seconds(1), ec);
+            check(write_file_atomic(as().abs(star_png), tg_bytes(src / utf8_path("звезда.png"))) &&
+                      write_file_atomic(as().abs(bell), tg_bytes(src / utf8_path("колокольчик.wav"))),
+                  "«картинки/звезда.png» and «звуки/колокольчик.wav» of the author's put in");
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 2: {
+            if (hold(idle && tg_bytes(copy) == tg_bytes(as().abs(ruby)) && record(star_png) && record(bell), "F5: the game's copy follows, the new files are found"))
+                return true;
+            check(record(ruby) && record(ruby)->id.to_string() == mt_rec_["ruby_asset"] && as().record_count() == 12,
+                  "the same asset, the same id; two files more");
+            const editor::sources::Entry* s = ed_.sources.of_file("pictures/рубин.png");
+            check(s && s->asset.to_string() == mt_rec_["ruby_asset"] && s->hash == editor::sources::hash_of(tg_bytes(copy)),
+                  "game/sources.json: the same copy of the same asset, the new content's hash");
+            mt_rec_["ruby_hash"] = s ? s->hash : std::string();
+            mt_rec_["star_asset"] = record(star_png) ? record(star_png)->id.to_string() : std::string();
+            const usize updated = tg_said("Из «Ресурсов» обновлено в игре");
+            check(updated == 1, "the log says once what was brought up to date (" + std::to_string(updated) + ")");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Объекты»: «Звезда», a «Копия» of «Рубин».
+        case 3:
+            if (ol().editing()) click("ol-back");
+            pick_card("Рубин", false);
+            check(ol().selected() && ol().selected()->id == "ruby" && click("ol-duplicate"), "«Рубин» chosen, «Копия»");
+            break;
+        case 4: {
+            const objects::Template* c = ol().selected();
+            const std::string id = c && c->id != "ruby" ? c->id : std::string();
+            check(!id.empty() && c->kind == "gem" && c->picture == "рубин.png" && c->frames == 4 && lib.templates().size() == 8 &&
+                      pl_value(id, "points") == "10",
+                  "the copy: a gem with «Рубин»'s picture of 4 frames and its 10 points");
+            mt_rec_["star"] = id;
+            undo_redo([&] { return !lib.find(std::string_view(id)) && lib.templates().size() == 7; },
+                      [&] { return lib.find(std::string_view(id)) && lib.templates().size() == 8; }, "the copy, the same id,");
+            if (const objects::Template* again = lib.find(std::string_view(id))) ol().select(again->key);
+            key(SDLK_F2, SDL_KMOD_NONE);
+            check(ol().renaming(), "F2: renaming on the card");
+            break;
+        }
+        case 5: {
+            check(shown("ol-name-field") && ol().rename("Звезда") && !ol().renaming(), "renamed «Звезда»");
+            const objects::Template* s = lib.find(std::string_view(star));
+            check(s && s->name == "Звезда" && path_to_utf8(s->file.filename()) == "Звезда.object.json", "the same id, its file renamed too");
+            pick_card("Звезда", true);
+            break;
+        }
+        case 6:
+            if (hold(ol().editing() && shown("ol-picture-pick") && pl_prop("Очки") >= 0, "its editor is laid out")) return true;
+            check(ol().selected() && ol().selected()->id == star, "a double click opens «Звезда»");
+            check(click("ol-picture-pick") && ol().pictures_open(), "«Картинка: Выбрать…»");
+            break;
+        case 7: {
+            if (hold(shown("ol-pic-0"), "the chooser is laid out")) return true;
+            std::string offered;
+            for (usize i = 0; i < ol().picture_choices(); ++i) offered += " «" + ol().picture_choice(i) + "»";
+            const i64 at = picked("звезда");
+            check(at >= 0 && click("ol-pic-" + std::to_string(at)), "«звезда» of «Ресурсы» picked among:" + offered);
+            const objects::Template* t = lib.find(std::string_view(star));
+            check(t && t->picture == "звезда.png" && t->frames == 4 && tg_bytes(game / "pictures" / utf8_path("звезда.png")) == tg_bytes(as().abs(star_png)),
+                  "it is the star's picture (4 frames), copied into the game's pictures");
+            const editor::sources::Entry* e = ed_.sources.of_file("pictures/звезда.png");
+            check(e && e->asset.to_string() == mt_rec_["star_asset"] && e->from == "картинки/звезда.png", "game/sources.json: the copy keeps its asset's id");
+            undo_redo([&] { return lib.find(std::string_view(star))->picture == "рубин.png"; },
+                      [&] { return lib.find(std::string_view(star))->picture == "звезда.png"; }, "the picture");
+            value(star, "Очки", "points", "10", "50");
+            check(pl_prop("Звук сбора") >= 0 && click("ol-sound-pick-" + rt_row("Звук сбора")), "«Звук сбора»: «Выбрать…»");
+            break;
+        }
+        case 8: {
+            if (hold(shown("ol-snd-0"), "the sound chooser is laid out")) return true;
+            int at = -1;
+            for (int i = 0; i < 8 && shown("ol-snd-" + std::to_string(i)); ++i)
+                if (element_text(("ol-snd-" + std::to_string(i)).c_str()).find("колокольчик") != std::string::npos) at = i;
+            check(at >= 0 && click("ol-snd-" + std::to_string(at)) && !ol().sounds_open(), "a click on «колокольчик.wav» chooses it");
+            const std::string now = rt_text(star, "gem_sound");
+            check(now.find("колокольчик") != std::string::npos && fs::is_regular_file(lib.sound_file(now)) && tg_bytes(lib.sound_file(now)) == mt_sound() &&
+                      rt_text("ruby", "gem_sound") == "звон.wav",
+                  "«Звук сбора» " + now + ", copied into the game's sounds; «Рубин» keeps звон.wav");
+            undo_redo([&] { return rt_text(star, "gem_sound") == "звон.wav"; }, [&] { return rt_text(star, "gem_sound") == now; }, "«Звук сбора»");
+            check(click("ol-back"), "«К библиотеке»");
+            break;
+        }
+        // «Рубин» 20 points, «Поле» 3 moves.
+        case 9:
+            if (const bool ready = library_shown(); hold(ready, library_state.c_str())) return true;
+            if (wait(2)) return true;
+            pick_card("Рубин", true);
+            break;
+        case 10:
+            if (hold(ol().editing() && pl_prop("Очки") >= 0 && shown("ol-num-" + rt_row("Очки")), "its editor is laid out")) return true;
+            check(ol().selected() && ol().selected()->id == "ruby", "a double click opens «Рубин»");
+            value("ruby", "Очки", "points", "10", "20");
+            check(pl_value(star, "points") == "50", "«Звезда» keeps its 50");
+            check(click("ol-back"), "«К библиотеке»");
+            break;
+        case 11:
+            if (const bool ready = library_shown(); hold(ready, library_state.c_str())) return true;
+            if (wait(2)) return true;
+            pick_card("Поле", true);
+            break;
+        case 12:
+            if (hold(ol().editing() && pl_prop("Ходов") >= 0 && shown("ol-num-" + rt_row("Ходов")), "its editor is laid out")) return true;
+            check(ol().selected() && ol().selected()->id == "board", "a double click opens «Поле»");
+            value("board", "Ходов", "moves", "25", "3");
+            check(click("ol-back"), "«К библиотеке»");
+            break;
+        case 13:
+            if (const bool ready = library_shown(); hold(ready, library_state.c_str())) return true;
+            if (wait(2)) return true;
+            pick_card("Звезда", false);
+            check(ol().selected() && ol().selected()->id == star && click("ol-place") && ed_.tab() == "level", "«Звезда» chosen, «Поставить на уровень»");
+            break;
+        // «Уровень», «Первый»: three stars in a row; the panel says the field cannot start, and so does the game.
+        case 14: {
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            const auto& defs = ed_.level_module.objects();
+            const i32 armed = lv().armed_object();
+            check(armed >= 0 && defs[static_cast<usize>(armed)].key == lib.find(std::string_view(star))->key && lv().level_id() == "level",
+                  "«Звезда» in hand, on «Первый»");
+            check(lv().problem().empty() && !shown("lv-problem"), "the field can start: nothing said");
+            view_over(-3, -1, 8, 8);
+            for (i32 x = kMtStar0; x <= kMtStar2; ++x) click_cell(x, kMtStarY);
+            std::string at;
+            for (i32 x = kMtStar0; x <= kMtStar2; ++x) {
+                const u64 c = mt_copy_at(x, kMtStarY, star);
+                at += " " + std::to_string(c);
+                mt_rec_["star_" + std::to_string(x)] = std::to_string(c);
+            }
+            check(mt_copies(star) == 3 && at.find(" 0") == std::string::npos, "three clicks put three «Звезда» in a row:" + at);
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            break;
+        }
+        case 15: {
+            const std::string said = lv().problem();
+            check(said.rfind(problem_start, 0) == 0 && said.find("2:6, 3:6, 4:6") != std::string::npos, "the panel's warning: «" + said + "»");
+            check(shown("lv-problem") && element_text("lv-problem").find(said) != std::string::npos, "shown in the status line: " + element_text("lv-problem"));
+            mt_rec_["refusal"] = said;
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S writes «Первый» as it is");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        }
+        case 16: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            edits::ProjectEdits e;
+            e.m3_refusal = mt_rec_["refusal"];
+            const int code = tg_play(&e, "ожидания отказ.json", mt_root());
+            check(code == 0, "the game of another process does not start the field, saying what the panel says (exit " + std::to_string(code) + ")");
+            break;
+        }
+        // The middle star chosen with a click (the menu closed first), deleted.
+        case 17: {
+            if (wait(3)) return true;
+            key(SDLK_O, SDL_KMOD_NONE);
+            view_over(-3, -1, 8, 8);
+            click_cell(kMtStar0 + 1, kMtStarY);
+            const u64 middle = std::strtoull(mt_rec_["star_" + std::to_string(kMtStar0 + 1)].c_str(), nullptr, 10);
+            check(lv().armed_object() < 0 && lv().selection() == std::vector<u64>{middle},
+                  "O, a click chooses the middle «Звезда» (" + std::to_string(lv().selection().size()) + " chosen)");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(mt_copies(star) == 2 && !lv().level().find(middle).is_valid(), "Delete: two stars left");
+            break;
+        }
+        case 18:
+            check(lv().problem().empty() && !shown("lv-problem"), "the warning is gone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(mt_copies(star) == 3, "Ctrl+Z: the middle star back");
+            break;
+        case 19:
+            check(lv().problem().rfind(problem_start, 0) == 0 && shown("lv-problem"), "and the warning with it: " + lv().problem());
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(mt_copies(star) == 2, "Ctrl+Y: deleted again");
+            break;
+        // A star's «Очки» on the panel: the template's, not to be changed on the copy.
+        case 20: {
+            check(lv().problem().empty() && !shown("lv-problem"), "no warning");
+            click_cell(kMtStar0, kMtStarY);
+            const u64 first = std::strtoull(mt_rec_["star_" + std::to_string(kMtStar0)].c_str(), nullptr, 10);
+            check(lv().selection() == std::vector<u64>{first}, "a click chooses the first «Звезда»");
+            break;
+        }
+        case 21: {
+            const int row = lv().field_row("Очки");
+            if (hold(row >= 0 && shown("lv-ro-" + std::to_string(row)), "its properties are laid out")) return true;
+            check(mt_field("Очки") == "ro:50" && !shown("lv-num-" + std::to_string(row)), "«Очки» 50, the template's, shown without a field: " + mt_field("Очки"));
+            const usize entries = lv().history().cursor();
+            lv().set_field(row, "7", false);
+            const flecs::entity e = lv().level().find(std::strtoull(mt_rec_["star_" + std::to_string(kMtStar0)].c_str(), nullptr, 10));
+            const objects::ObjectRef* ref = e.is_valid() ? e.try_get<objects::ObjectRef>() : nullptr;
+            check(ref && !ref->overrides_prop("points") && lv().history().cursor() == entries && pl_value(star, "points") == "50",
+                  "typed 7 into it all the same (the tab's call): the copy has no value of its own, nothing in the history");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            key(SDLK_T, SDL_KMOD_NONE);
+            break;
+        }
+        // Two cells erased; a «Камень» laid on the second.
+        case 22: {
+            if (wait(3)) return true;
+            const usize stone = palette_index("own_258");
+            check(lv().mode() == Mode::Tiles && stone < lv().tiles().size() && lv().tiles()[stone].name == "Камень" && lv().tiles()[stone].layer == 0 &&
+                      shown("pal-" + std::to_string(stone)),
+                  "T: the palette has the template's «Камень» on «Поле»");
+            check(click("pal-" + std::to_string(stone)) && lv().tile_index() == stone, "a click takes it");
+            check(at(kMtHole0X, kMtHole0Y, 0) == 256 && at(kMtStoneX, kMtStoneY, 0) == 256, "«Клетка» on both cells");
+            key(SDLK_E, SDL_KMOD_NONE);
+            lv().set_brush_radius(0);
+            view_over(-3, -1, 8, 8);
+            click_cell(kMtHole0X, kMtHole0Y);
+            click_cell(kMtStoneX, kMtStoneY);
+            check(lv().tool() == Tool::Eraser && at(kMtHole0X, kMtHole0Y, 0) == 0 && at(kMtStoneX, kMtStoneY, 0) == 0 && at(1, 0, 0) == 257 &&
+                      at(0, 1, 0) == 257 && at(kMtStoneX + 1, kMtStoneY, 0) == 257,
+                  "E, the brush one cell: the eraser clears the two cells, nothing beside them (" + std::to_string(at(1, 0, 0)) + " " +
+                      std::to_string(at(0, 1, 0)) + " " + std::to_string(at(kMtStoneX + 1, kMtStoneY, 0)) + ")");
+            undo_redo([&] { return at(kMtHole0X, kMtHole0Y, 0) == 0 && at(kMtStoneX, kMtStoneY, 0) == 256; },
+                      [&] { return at(kMtStoneX, kMtStoneY, 0) == 0; }, "the second cell");
+            key(SDLK_B, SDL_KMOD_NONE);
+            lv().set_brush_radius(0);
+            click_cell(kMtStoneX, kMtStoneY);
+            check(at(kMtStoneX, kMtStoneY, 0) == 258 && at(kMtHole0X, kMtHole0Y, 0) == 0, "B: «Камень» on the second hole");
+            undo_redo([&] { return at(kMtStoneX, kMtStoneY, 0) == 0; }, [&] { return at(kMtStoneX, kMtStoneY, 0) == 258; }, "the stone");
+            break;
+        }
+        // The level's own moves and target, on its copy of «Поле».
+        case 23: {
+            check(lv().problem().empty(), "holes and a stone: the field still starts");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            key(SDLK_O, SDL_KMOD_NONE);
+            view_over(-3, -1, 8, 8);
+            click_cell(kMtRulesX, kMtRulesY);
+            const u64 rules = mt_copy_at(kMtRulesX, kMtRulesY, "board");
+            check(rules != 0 && lv().selection() == std::vector<u64>{rules}, "a click chooses the level's «Поле»");
+            mt_rec_["rules_first"] = std::to_string(rules);
+            break;
+        }
+        case 24: {
+            const int moves = lv().field_row("Ходов"), target = lv().field_row("Цель, очков");
+            if (hold(moves >= 0 && target >= 0 && shown("lv-num-" + std::to_string(moves)), "its properties are laid out")) return true;
+            bool own_moves = false, own_target = false;
+            check(mt_field("Ходов", &own_moves) == "20" && own_moves && mt_field("Цель, очков", &own_target) == "400" && own_target,
+                  "«Первый»: «Ходов» 20, «Цель» 400, the level's own (each can go back to the template's)");
+            lv().set_field(moves, "15", false);
+            lv().set_field(target, "300", false);
+            break;
+        }
+        case 25:
+            check(mt_field("Ходов") == "15" && mt_field("Цель, очков") == "300", "15 and 300 typed (the tab's calls)");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            break;
+        case 26:
+            check(mt_field("Ходов") == "15" && mt_field("Цель, очков") == "400", "Ctrl+Z: «Цель» 400");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            break;
+        case 27:
+            check(mt_field("Цель, очков") == "300", "Ctrl+Y: 300");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty() && lv().problem().empty(), "Ctrl+S writes «Первый»; it starts");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        // «Третий»: its copy of «Поле» has no moves of its own: the template's, as «Объекты» has them.
+        case 28:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-third"), "«Третий»");
+            break;
+        case 29:
+            if (hold(lv().level_id() == "third" && lv().view_w() > 0, "«Третий» is open")) return true;
+            view_over(-3, -1, 8, 8); // the copies of the cells in view are loaded by the frames after
+            if (wait(3)) return true;
+            key(SDLK_O, SDL_KMOD_NONE);
+            view_over(-3, -1, 8, 8);
+            click_cell(kMtRulesX, kMtRulesY);
+            check(lv().selection().size() == 1, "a click chooses its «Поле»");
+            break;
+        case 30: {
+            if (hold(lv().field_row("Ходов") >= 0, "its properties are laid out")) return true;
+            bool own_moves = true, own_target = false;
+            check(mt_field("Ходов", &own_moves) == "3" && !own_moves && mt_field("Цель, очков", &own_target) == "600" && own_target,
+                  "«Третий»: «Ходов» 3, the template's (nothing of its own); «Цель» 600, its own");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        case 31:
+            if (hold(ed_.tab() == "objects", "«Объекты»")) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(pl_value("board", "moves") == "25", "Ctrl+Z in «Объекты»: «Поле» 25 moves");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 32:
+            if (hold(ed_.tab() == "level" && lv().field_row("Ходов") >= 0, "«Уровень» with the copy chosen")) return true;
+            check(mt_field("Ходов") == "25" && lv().level_id() == "third", "«Третий» plays 25 now");
+            check(lv().armed_object() < 0, "nothing in hand: «Звезда», put away with Esc, stays away when the templates change");
+            check(click_tab(2), "«Объекты»");
+            break;
+        case 33:
+            if (hold(ed_.tab() == "objects", "«Объекты»")) return true;
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(pl_value("board", "moves") == "3", "Ctrl+Y: 3");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 34:
+            if (hold(ed_.tab() == "level" && lv().field_row("Ходов") >= 0, "«Уровень»")) return true;
+            check(mt_field("Ходов") == "3", "«Третий» 3 again");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 35:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-level"), "«Первый»");
+            break;
+        case 36:
+            if (hold(lv().level_id() == "level" && lv().view_w() > 0, "«Первый» is open")) return true;
+            view_over(-3, -1, 8, 8); // the copies of the cells in view are loaded by the frames after
+            if (wait(3)) return true;
+            key(SDLK_O, SDL_KMOD_NONE);
+            view_over(-3, -1, 8, 8);
+            click_cell(kMtRulesX, kMtRulesY);
+            check(lv().selection() == std::vector<u64>{std::strtoull(mt_rec_["rules_first"].c_str(), nullptr, 10)},
+                  "a click chooses «Первый»'s «Поле», the same id (chosen " + (lv().selection().empty() ? std::string("nothing") : std::to_string(lv().selection()[0])) +
+                      ", at the cell " + std::to_string(mt_copy_at(kMtRulesX, kMtRulesY, "board")) + ", recorded " + mt_rec_["rules_first"] + ")");
+            break;
+        case 37: {
+            if (hold(lv().field_row("Ходов") >= 0, "its properties are laid out")) return true;
+            bool own = false;
+            check(mt_field("Ходов", &own) == "15" && own && mt_field("Цель, очков") == "300", "«Первый» keeps its own 15 and 300");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        // «Логика»: «Поле даёт +2 хода за Звезду».
+        case 38:
+            if (wait(2)) return true;
+            check(lg().warning().empty() && !shown("lg-warning"), "both ends of a level are linked: nothing said");
+            check(shown("lg-add-" + star) && click("lg-add-" + star) && lg().links().spot(star), "«Звезда» onto the board");
+            break;
+        case 39:
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("board") && thing_click(star) && lg().picking(),
+                  std::string("«Поле», then «Звезда» (") + (shown("lg-thing-board") ? "«Поле» shown" : "no «Поле»") + ", " +
+                      (shown("lg-thing-" + star) ? "«Звезда» shown" : "no «Звезда»") + ", chosen «" + lg().selected_thing() + "»)");
+            break;
+        case 40: {
+            if (!pl_pick("Поле даёт +2 хода за ")) break;
+            const u32 link = lg().selected_link();
+            const logic::Link* l = lg().links().find(link);
+            check(l && l->a == "board" && l->verb == "plus_moves" && l->b == star && lg().problem_of(link).empty(),
+                  "a link that works: " + lg().phrase_of(link) + " " + lg().problem_of(link));
+            check(lg().phrase_of(link) == "Поле даёт +2 хода за Звезду", "in words: " + lg().phrase_of(link));
+            std::string steps;
+            for (const logic::Step& s : lg().steps_of(link)) steps += (steps.empty() ? "" : " → ") + s.text;
+            check(steps == "Когда на поле исчезает ряд Звезды → Прибавить 2 хода", "its steps in the module's words: " + steps);
+            undo_redo([&] { return !lg().links().find(link); }, [&] { return lg().links().find(link) && lg().links().find(link)->b == star; },
+                      "the link, the same id,");
+            mt_rec_["link"] = std::to_string(link);
+            // «Поле остаётся без ходов» deleted: the tab says a level cannot be lost.
+            const u32 lose = mt_link("out_of_moves", "board");
+            check(lose != 0, "the template's «Поле остаётся без ходов»");
+            lg().select_link(lose);
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            check(!lg().links().find(lose) && lg().warning().find("Уровень не кончится поражением") != std::string::npos,
+                  "Delete: the link gone, the tab says: " + lg().warning());
+            break;
+        }
+        case 41: {
+            if (wait(3)) return true;
+            check(shown("lg-warning") && element_text("lg-warning").find("Уровень не кончится поражением") != std::string::npos,
+                  "shown over the board: " + element_text("lg-warning"));
+            const u32 lose = mt_link("out_of_moves", "board");
+            undo_redo([&] { return mt_link("out_of_moves", "board") != 0 && lg().warning().empty(); },
+                      [&] { return mt_link("out_of_moves", "board") == 0 && !lg().warning().empty(); }, "the link and the warning");
+            check(lose == 0, "deleted");
+            // Made again with the mouse: a click on «Поле», another on it: what «Поле» does by itself.
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("board"), "a click on «Поле»");
+            break;
+        }
+        case 42:
+            if (wait(2)) return true;
+            check(thing_click("board") && lg().picking(), "a second click on it: what it does by itself");
+            break;
+        case 43: {
+            if (!pl_pick("Поле остаётся без ходов")) break;
+            const u32 link = lg().selected_link();
+            const logic::Link* l = lg().links().find(link);
+            check(l && l->a == "board" && l->b == "board" && l->verb == "out_of_moves" && lg().problem_of(link).empty(), "«Поле остаётся без ходов» again");
+            check(lg().warning().empty(), "nothing said now");
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        }
+        // «Интерфейс»: the HUD's moves, the lose window's title.
+        case 44: {
+            if (hold(ed_.tab() == "ui" && shown("ue-new-screen"), "«Интерфейс» is laid out")) return true;
+            const u32 moves = ue().open("hud") ? mt_layer("Ходы") : 0;
+            check(moves && ue_node(moves)->text == "Ходов: {board.moves}", "the HUD, its layer «Ходы»: «Ходов: {board.moves}»");
+            mt_rec_["hud_node"] = std::to_string(moves);
+            if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            ue().select({moves});
+            break;
+        }
+        case 45: {
+            if (hold(shown("ue-s-text"), "the text's field is laid out")) return true;
+            const u32 moves = static_cast<u32>(std::strtoul(mt_rec_["hud_node"].c_str(), nullptr, 10));
+            check(ue_type("ue-s-text", kMtHud) && ue_node(moves)->text == kMtHud, std::string("«") + kMtHud + "» typed");
+            ue().undo();
+            check(ue_node(moves)->text == "Ходов: {board.moves}", "Ctrl+Z: as it was");
+            ue().redo();
+            check(ue_node(moves)->text == kMtHud && ue_file(".html", "hud").find("Осталось ходов") != std::string::npos, "Ctrl+Y: the author's, on its page too");
+            const u32 title = ue().open("lose") ? mt_layer("Заголовок") : 0;
+            check(title && ue().screen().ending == d::WindowEnding::Lose && ue_node(title)->text == "Поражение",
+                  "the window «при поражении», its «Заголовок» «Поражение»");
+            mt_rec_["lose_node"] = std::to_string(title);
+            ue().select({title});
+            break;
+        }
+        case 46: {
+            if (hold(shown("ue-s-text"), "the text's field is laid out")) return true;
+            const u32 title = static_cast<u32>(std::strtoul(mt_rec_["lose_node"].c_str(), nullptr, 10));
+            check(ue_type("ue-s-text", kMtLose) && ue_node(title)->text == kMtLose, std::string("«") + kMtLose + "» typed");
+            ue().undo();
+            check(ue_node(title)->text == "Поражение", "Ctrl+Z: «Поражение»");
+            ue().redo();
+            check(ue_node(title)->text == kMtLose && ue_file(".html", "lose").find(kMtLose) != std::string::npos, "Ctrl+Y: the author's, on its page too");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        // The star picture renamed in «Ресурсы»: its id, the game's copy and «Звезда»'s picture stay.
+        case 47:
+            if (hold(idle && ed_.tab() == "assets", "«Ресурсы»")) return true;
+            as().open_folder("картинки");
+            click_row("картинки/звезда.png");
+            break;
+        case 48:
+            if (hold(shown("as-name"), "its name field")) return true;
+            check(ue_type("as-name", "звезда шахты") && fs::exists(as().abs("картинки/звезда шахты.png")) && !fs::exists(as().abs(star_png)),
+                  "renamed «звезда шахты» in its name field (the field's text)");
+            break;
+        case 49:
+            if (hold(idle && record("картинки/звезда шахты.png"), "the rename is indexed")) return true;
+            check(record("картинки/звезда шахты.png")->id.to_string() == mt_rec_["star_asset"], "the same id");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(fs::exists(as().abs(star_png)), "Ctrl+Z: the old name");
+            break;
+        case 50:
+            if (hold(idle && record(star_png), "the undo is indexed")) return true;
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(fs::exists(as().abs("картинки/звезда шахты.png")), "Ctrl+Y: «звезда шахты»");
+            break;
+        case 51: {
+            if (hold(idle && record("картинки/звезда шахты.png") && ed_.sources.of_file("pictures/звезда.png") &&
+                         ed_.sources.of_file("pictures/звезда.png")->from == "картинки/звезда шахты.png",
+                     "game/sources.json follows the rename"))
+                return true;
+            check(record("картинки/звезда шахты.png")->id.to_string() == mt_rec_["star_asset"] && as().record_count() == 12, "the same 12 assets, the same ids");
+            check(lib.find(std::string_view(star))->picture == "звезда.png" &&
+                      tg_bytes(game / "pictures" / utf8_path("звезда.png")) == tg_bytes(as().abs("картинки/звезда шахты.png")),
+                  "«Звезда» keeps the game's copy, as it was");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Звезда» renamed «Звезда шахты»: the same id, the link and the copies its.
+        case 52:
+            if (const bool ready = library_shown(); hold(ready, library_state.c_str())) return true;
+            if (wait(2)) return true;
+            pick_card("Звезда", false);
+            key(SDLK_F2, SDL_KMOD_NONE);
+            break;
+        case 53: {
+            check(ol().renaming() && ol().rename("Звезда шахты"), "F2, «Звезда шахты»");
+            const objects::Template* s = lib.find(std::string_view(star));
+            check(s && s->name == "Звезда шахты" && path_to_utf8(s->file.filename()) == "Звезда шахты.object.json" && pl_value(star, "points") == "50",
+                  "«Звезда шахты»: the same id, 50 points, its file renamed");
+            undo_redo([&] { return lib.find(std::string_view(star))->name == "Звезда"; },
+                      [&] { return lib.find(std::string_view(star))->name == "Звезда шахты"; }, "the name");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 54: {
+            if (wait(2)) return true;
+            const u32 link = static_cast<u32>(std::strtoul(mt_rec_["link"].c_str(), nullptr, 10));
+            check(lg().links().find(link) && lg().links().find(link)->b == star && lg().phrase_of(link) == "Поле даёт +2 хода за Звезду шахты",
+                  "the link by its id says the new name: " + lg().phrase_of(link));
+            check(shown("lg-thing-" + star) && element_text(("lg-thing-" + star).c_str()).find("Звезда шахты") != std::string::npos,
+                  "its card on the board too");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 55: {
+            if (hold(ed_.tab() == "level" && lv().level_id() == "level", "«Первый»")) return true;
+            std::string at;
+            for (i32 x : {kMtStar0, kMtStar2}) at += " " + std::to_string(mt_copy_at(x, kMtStarY, star));
+            check(mt_copies(star) == 2 && at == " " + mt_rec_["star_" + std::to_string(kMtStar0)] + " " + mt_rec_["star_" + std::to_string(kMtStar2)],
+                  "its two copies on «Первый», by their ids:" + at);
+            std::string error;
+            check(ed_.save_unsaved(error) && ed_.unsaved().empty() && !lv().dirty(), "everything is written: " + error);
+            check(tg_put(mt_root() / utf8_path("записи.txt"), mt_rec_), "what was done written down for the next editor (outside the games)");
+            std::string all;
+            for (const auto& [k, v] : mt_rec_) all += " " + k + "=" + v;
+            FORGE_INFO("self-test: шаблон «Три в ряд» автора:%s", all.c_str());
+            return false;
+        }
+        default: break;
+        }
+        ++mt_step_;
+        return true;
+    }
+
+    // In an editor for «Три в ряд А» from another working folder (--self-test match3-template-a-again).
+    bool match3_template_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root, game = a / "game";
+        objects::Library& lib = ol().library();
+        switch (mt_step_) {
+        case 0: {
+            mt_rec_ = tg_get(mt_root() / utf8_path("записи.txt"));
+            const std::string star = mt_rec_["star"];
+            check(!star.empty() && mt_rec_.count("ruby_asset") && mt_rec_.count("hud_node"), "what match3-template-a did is written down");
+            check(!lvl_same(fs::current_path(), a), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            const editor::sources::Entry* r = ed_.sources.of_file("pictures/рубин.png");
+            check(tg_bytes(game / "pictures" / utf8_path("рубин.png")) == mt_png(kMtRuby) && r && r->asset.to_string() == mt_rec_["ruby_asset"] &&
+                      r->hash == mt_rec_["ruby_hash"],
+                  "«Рубин»'s picture is the author's, a copy of the same asset");
+            const editor::sources::Entry* s = ed_.sources.of_file("pictures/звезда.png");
+            check(s && s->asset.to_string() == mt_rec_["star_asset"] && s->from == "картинки/звезда шахты.png", "the star's copy: of the renamed asset, by its id");
+            const objects::Template* t = lib.find(std::string_view(star));
+            check(lib.templates().size() == 8 && t && t->name == "Звезда шахты" && t->kind == "gem" && t->picture == "звезда.png" && t->frames == 4 &&
+                      pl_value(star, "points") == "50" && rt_text(star, "gem_sound").find("колокольчик") != std::string::npos,
+                  "«Звезда шахты» by its id: its picture, 50 points, the author's sound");
+            check(pl_value("ruby", "points") == "20" && pl_value("board", "moves") == "3", "«Рубин» 20 points, «Поле» 3 moves");
+            check(lv().level_id() == "level", "«Первый» opens, the level open last");
+            lv().level().ensure_loaded({-4, -4, 10, 10});
+            check(at(kMtHole0X, kMtHole0Y, 0) == 0 && at(kMtStoneX, kMtStoneY, 0) == 258 && at(1, 0, 0) == 257, "the hole, the stone");
+            std::string copies;
+            for (i32 x : {kMtStar0, kMtStar2}) copies += " " + std::to_string(mt_copy_at(x, kMtStarY, star));
+            check(mt_copies(star) == 2 && copies == " " + mt_rec_["star_" + std::to_string(kMtStar0)] + " " + mt_rec_["star_" + std::to_string(kMtStar2)],
+                  "the two stars by their ids, where they were left:" + copies);
+            const u32 hud = static_cast<u32>(std::strtoul(mt_rec_["hud_node"].c_str(), nullptr, 10));
+            const u32 lose = static_cast<u32>(std::strtoul(mt_rec_["lose_node"].c_str(), nullptr, 10));
+            check(ue().open("hud") && ue_node(hud) && ue_node(hud)->text == kMtHud && ue().open("lose") && ue_node(lose) && ue_node(lose)->text == kMtLose,
+                  "the HUD's moves and the lose window's title, the author's");
+            check(lv().problem().empty(), "«Первый» starts");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 1: {
+            if (wait(2)) return true;
+            const std::string star = mt_rec_["star"];
+            const u32 link = static_cast<u32>(std::strtoul(mt_rec_["link"].c_str(), nullptr, 10));
+            check(lg().links().find(link) && lg().phrase_of(link) == "Поле даёт +2 хода за Звезду шахты" && mt_link("out_of_moves", "board") != 0 &&
+                      mt_link("reaches_target", "board") != 0,
+                  "the links: «" + lg().phrase_of(link) + "» by its id, both ends of a level");
+            check(lg().warning().empty() && !shown("lg-warning") && shown("lg-link-" + std::to_string(link)) &&
+                      element_text(("lg-thing-" + star).c_str()).find("Звезда шахты") != std::string::npos,
+                  "on the board: its chip, «Звезда шахты»'s card, nothing said");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        // The level's own values and the template's, told apart as before.
+        case 2:
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            view_over(-3, -1, 8, 8); // the copies of the cells in view are loaded by the frames after
+            if (wait(3)) return true;
+            key(SDLK_O, SDL_KMOD_NONE);
+            view_over(-3, -1, 8, 8);
+            click_cell(kMtRulesX, kMtRulesY);
+            check(lv().armed_object() < 0 && lv().selection() == std::vector<u64>{std::strtoull(mt_rec_["rules_first"].c_str(), nullptr, 10)},
+                  "a click chooses «Первый»'s «Поле», the same id");
+            break;
+        case 3: {
+            if (hold(lv().field_row("Ходов") >= 0, "its properties are laid out")) return true;
+            bool own = false;
+            check(mt_field("Ходов", &own) == "15" && own && mt_field("Цель, очков") == "300", "«Первый»: 15 and 300, its own");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        }
+        case 4:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-third"), "«Третий»");
+            break;
+        case 5:
+            if (hold(lv().level_id() == "third" && lv().view_w() > 0, "«Третий» is open")) return true;
+            view_over(-3, -1, 8, 8); // the copies of the cells in view are loaded by the frames after
+            if (wait(3)) return true;
+            key(SDLK_O, SDL_KMOD_NONE);
+            view_over(-3, -1, 8, 8);
+            click_cell(kMtRulesX, kMtRulesY);
+            break;
+        case 6: {
+            if (hold(lv().field_row("Ходов") >= 0, "its properties are laid out")) return true;
+            bool own = true;
+            check(mt_field("Ходов", &own) == "3" && !own && mt_field("Цель, очков") == "600", "«Третий»: «Ходов» 3, the template's; «Цель» 600");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        }
+        case 7: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = mt_edits();
+            const int code = tg_play(&e, "ожидания шаблон три в ряд.json", mt_root());
+            check(code == 0, "the game plays the author's gems, points, sound, pictures, holes, stone, stars, link and HUD on «Первый», "
+                             "saved on «Второй» between moves (exit " + std::to_string(code) + ")");
+            // Step 11 of the model: the save has «Звезда шахты» on its field; the author deletes the gem afterwards.
+            mt_saves_ = pj_tree(play_folder(a) / "saves");
+            const auto board = mt_saves_.find("m3-author/board.json");
+            const std::string json = board == mt_saves_.end() ? std::string() : std::string(board->second.begin(), board->second.end());
+            check(json.find("\"" + mt_rec_["star"] + "\"") != std::string::npos, "the save m3-author has «Звезда шахты» on its field, by its id");
+            break;
+        }
+        // «Играть со стартового» closed the menu: its backdrop, still there in the frame of that click, would take a click on the bar.
+        case 8:
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 9:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-level"), "«Первый»");
+            break;
+        case 10: {
+            if (hold(lv().level_id() == "level" && lv().view_w() > 0, "«Первый» is open")) return true;
+            view_over(-3, -1, 8, 8);
+            if (wait(3)) return true;
+            const objects::Template* s = lib.find(std::string_view(mt_rec_["star"]));
+            check(s != nullptr, "«Звезда шахты»");
+            if (!s) return false;
+            mt_star_key_ = s->key;
+            mt_star_file_ = s->file;
+            mt_star_bytes_ = tg_bytes(s->file);
+            mt_star_copies_ = mt_keyed(mt_star_key_);
+            std::vector<u64> left;
+            for (i32 x : {kMtStar0, kMtStar2}) left.push_back(std::strtoull(mt_rec_["star_" + std::to_string(x)].c_str(), nullptr, 10));
+            std::sort(left.begin(), left.end());
+            check(mt_star_copies_ == " " + std::to_string(left[0]) + " " + std::to_string(left[1]) && left[0] != 0 && !mt_star_bytes_.empty(),
+                  "its two copies on «Первый», the two left there:" + mt_star_copies_);
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Звезда шахты» deleted: its card chosen with a click, Delete.
+        case 11: {
+            if (const bool ready = mt_library_shown(); hold(ready, "the library is laid out")) return true;
+            if (wait(2)) return true;
+            f32 x = 0, y = 0;
+            check(ue_type("ol-search", "Звезда шахты") && card_at(card_named("Звезда шахты"), x, y), "«Звезда шахты» found by its name, its card on screen");
+            SDL_Delay(520); // a click on the place of an earlier one within RmlUi's double-click time would open the editor
+            left_click(x, y);
+            break;
+        }
+        case 12:
+            if (wait(2)) return true;
+            check(ol().selected() && ol().selected()->id == mt_rec_["star"] && !ol().editing(), "a click chooses «Звезда шахты»");
+            key(SDLK_DELETE, SDL_KMOD_NONE);
+            break;
+        case 13: {
+            if (wait(2)) return true;
+            const std::string star = mt_rec_["star"];
+            const u32 link = static_cast<u32>(std::strtoul(mt_rec_["link"].c_str(), nullptr, 10));
+            std::error_code ec;
+            check(!lib.find(std::string_view(star)) && lib.templates().size() == 7 && !fs::exists(mt_star_file_, ec),
+                  "Delete: «Звезда шахты» gone from the library, its file too");
+            check(!mt_star_copies_.empty() && mt_keyed(mt_star_key_) == mt_star_copies_ && mt_copies(star) == 0,
+                  "its copies on «Первый» stay as they were, of no object now (not another one's):" + mt_keyed(mt_star_key_));
+            const logic::Link* l = lg().links().find(link);
+            check(l && l->b == star && logic_text().find(star) != std::string::npos, "the link stays, by the star's id, in logic.json too");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 14: {
+            if (wait(3)) return true;
+            const u32 link = static_cast<u32>(std::strtoul(mt_rec_["link"].c_str(), nullptr, 10));
+            check(!lg().problem_of(link).empty(), "«Логика» says the link does not work: «" + lg().problem_of(link) + "»");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            break;
+        }
+        // «Уровень», saved: «Первый» says its two copies are of an object no more there. Another editor, from another working
+        // folder, opens the game as saved: the same words, and its game refuses «Новая игра» with them.
+        case 15:
+            if (wait(2)) return true;
+            check(ed_.unsaved().empty(), "Ctrl+S: nothing unsaved");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 16: {
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(3)) return true;
+            const std::string said = mt_gone_said(mt_star_key_);
+            check(lv().level_id() == "level" && lv().problem() == said && shown("lv-problem") &&
+                      element_text("lv-problem").find(said) != std::string::npos,
+                  "«Первый» says: «" + lv().problem() + "»");
+            const fs::path other = mt_root() / utf8_path("папка без звезды");
+            std::error_code ec;
+            fs::create_directories(other, ec);
+            const int code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"), "--self-test", "match3-template-a-gone"},
+                                    other);
+            check(code == 0, "opened elsewhere as saved: «Первый» says the same, «Новая игра» refused with those words (match3-template-a-gone: exit " +
+                                 std::to_string(code) + ")");
+            check(pj_tree(play_folder(a) / "saves") == mt_saves_, "the saves byte for byte as before: the new game refused wrote none");
+            break;
+        }
+        // Another process of the game: «Продолжить» in its main menu takes the save, refused.
+        case 17: {
+            edits::ProjectEdits e;
+            e.m3_star = mt_rec_["star"];
+            e.m3_star_name = "Звезда шахты";
+            e.m3_gone = "в сохранении фишка «Звезда шахты», её больше нет в игре";
+            const fs::path file = mt_root() / utf8_path("ожидания без звезды.json"), elsewhere = mt_root() / utf8_path("папка отказа");
+            std::error_code ec;
+            fs::create_directories(elsewhere, ec);
+            check(edits::write_edits(file, e), "what the game must say, written down");
+            std::vector<std::string> args = lv().last_play();
+            args.erase(std::remove(args.begin(), args.end(), std::string("--play")), args.end());
+            for (const char* more : {"--test", "--scene", "project_continue", "--edits"}) args.push_back(more);
+            args.push_back(path_to_utf8(file));
+            const int code = pj_run(args, elsewhere);
+            check(code == 0, "another process: «Продолжить» refused, «" + e.m3_gone + "» on the screen, the game goes on running "
+                             "(scene project_continue with m3_gone: exit " + std::to_string(code) + ")");
+            check(pj_tree(play_folder(a) / "saves") == mt_saves_, "the saves byte for byte as before: m3-author not written over, no save added");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // Ctrl+Z: the star back, the same id; Ctrl+Y and Ctrl+Z again.
+        case 18: {
+            if (const bool ready = mt_library_shown(); hold(ready, "the library is laid out")) return true;
+            if (wait(2)) return true;
+            const std::string star = mt_rec_["star"];
+            auto back = [&] {
+                const objects::Template* s = lib.find(std::string_view(star));
+                return s && s->name == "Звезда шахты" && s->key == mt_star_key_ && s->file == mt_star_file_ && tg_bytes(mt_star_file_) == mt_star_bytes_ &&
+                       mt_copies(star) == 2 && mt_keyed(mt_star_key_) == mt_star_copies_;
+            };
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(back(), "Ctrl+Z: «Звезда шахты» back by the same id, its file the same bytes, its two copies its own again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(!lib.find(std::string_view(star)) && mt_keyed(mt_star_key_) == mt_star_copies_, "Ctrl+Y: deleted again, the copies stay");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(back(), "Ctrl+Z: back again, the same id");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 19: {
+            if (wait(3)) return true;
+            const u32 link = static_cast<u32>(std::strtoul(mt_rec_["link"].c_str(), nullptr, 10));
+            check(lg().problem_of(link).empty() && lg().phrase_of(link) == "Поле даёт +2 хода за Звезду шахты",
+                  "the link works again: «" + lg().phrase_of(link) + "» " + lg().problem_of(link));
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 20:
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(3)) return true;
+            check(lv().level_id() == "level" && lv().problem().empty() && !shown("lv-problem"), "«Первый» says nothing again: «" + lv().problem() + "»");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            break;
+        case 21:
+            if (wait(2)) return true;
+            check(ed_.unsaved().empty() && tg_bytes(mt_star_file_) == mt_star_bytes_, "Ctrl+S: nothing unsaved, the star's file as it was");
+            return false;
+        default: break;
+        }
+        ++mt_step_;
+        return true;
+    }
+
+    // In an editor for «Три в ряд А» from yet another working folder (--self-test match3-template-a-gone), while the one
+    // that deleted «Звезда шахты» is still open: the game as saved without it. «Первый» says its copies are of an object
+    // no more there; «Играть со стартового»: the game of another process refuses «Новая игра» with the same words.
+    bool match3_template_gone_step() {
+        objects::Library& lib = ol().library();
+        switch (mt_step_) {
+        case 0: {
+            mt_rec_ = tg_get(mt_root() / utf8_path("записи.txt"));
+            const std::string star = mt_rec_["star"];
+            check(!star.empty() && !lib.find(std::string_view(star)) && lib.templates().size() == 7, "opened as saved: «Звезда шахты» is not in the library");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 1:
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 2:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-level"), "«Первый»");
+            break;
+        case 3: {
+            if (hold(lv().level_id() == "level" && lv().view_w() > 0, "«Первый» is open")) return true;
+            view_over(-3, -1, 8, 8);
+            if (wait(3)) return true;
+            const u64 key = fnv1a(mt_rec_["star"]);
+            std::vector<u64> left;
+            for (i32 x : {kMtStar0, kMtStar2}) left.push_back(std::strtoull(mt_rec_["star_" + std::to_string(x)].c_str(), nullptr, 10));
+            std::sort(left.begin(), left.end());
+            check(mt_keyed(key) == " " + std::to_string(left[0]) + " " + std::to_string(left[1]), "the two copies on «Первый» stay, of no object:" + mt_keyed(key));
+            const std::string said = mt_gone_said(key);
+            check(lv().problem() == said && shown("lv-problem") && element_text("lv-problem").find(said) != std::string::npos,
+                  "«Первый» says: «" + lv().problem() + "»");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        }
+        case 4: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            edits::ProjectEdits e;
+            e.m3_refusal = mt_gone_said(fnv1a(mt_rec_["star"]));
+            const int code = tg_play(&e, "ожидания новой игры без звезды.json", mt_root());
+            check(code == 0, "the game of another process refuses «Новая игра» pressed with the mouse, saying «" + e.m3_refusal +
+                                 "» (scene project with m3_refusal: exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++mt_step_;
+        return true;
+    }
+
+    // In an editor for «Три в ряд А» from a third working folder (--self-test match3-template-a-restored): «Звезда шахты»,
+    // deleted after the save and brought back by Ctrl+Z, is as it was; «Продолжить» goes on from that save.
+    bool match3_template_restored_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        objects::Library& lib = ol().library();
+        switch (mt_step_) {
+        case 0: {
+            mt_rec_ = tg_get(mt_root() / utf8_path("записи.txt"));
+            const std::string star = mt_rec_["star"];
+            check(!star.empty() && !lvl_same(fs::current_path(), a), "what match3-template-a did is written down; from a third working folder");
+            const objects::Template* t = lib.find(std::string_view(star));
+            check(lib.templates().size() == 8 && t && t->name == "Звезда шахты" && t->kind == "gem" && t->picture == "звезда.png" && t->frames == 4 &&
+                      pl_value(star, "points") == "50" && rt_text(star, "gem_sound").find("колокольчик") != std::string::npos,
+                  "«Звезда шахты» by its id: its picture, 50 points, the author's sound");
+            check(lv().level_id() == "level", "«Первый» opens, the level open last");
+            lv().level().ensure_loaded({-4, -4, 10, 10});
+            std::string copies;
+            for (i32 x : {kMtStar0, kMtStar2}) copies += " " + std::to_string(mt_copy_at(x, kMtStarY, star));
+            check(mt_copies(star) == 2 && copies == " " + mt_rec_["star_" + std::to_string(kMtStar0)] + " " + mt_rec_["star_" + std::to_string(kMtStar2)],
+                  "its two copies by their ids, where they were left:" + copies);
+            check(lv().problem().empty(), "«Первый» starts");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 1: {
+            if (wait(2)) return true;
+            const u32 link = static_cast<u32>(std::strtoul(mt_rec_["link"].c_str(), nullptr, 10));
+            check(lg().links().find(link) && lg().phrase_of(link) == "Поле даёт +2 хода за Звезду шахты" && lg().problem_of(link).empty() &&
+                      lg().warning().empty(),
+                  "the link by its id: «" + lg().phrase_of(link) + "», nothing said");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 2:
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 3: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            // Another process, from another working folder, the same player's folder: «Продолжить» takes the save.
+            const fs::path elsewhere = mt_root() / utf8_path("папка продолжения");
+            std::error_code ec;
+            fs::create_directories(elsewhere, ec);
+            std::vector<std::string> args = lv().last_play();
+            args.erase(std::remove(args.begin(), args.end(), std::string("--play")), args.end());
+            for (const char* more : {"--test", "--scene", "project_continue", "--edits"}) args.push_back(more);
+            args.push_back(path_to_utf8(mt_root() / utf8_path("ожидания шаблон три в ряд.json")));
+            const int code = pj_run(args, elsewhere);
+            check(code == 0, "another process: «Продолжить» goes on from the save: the same moves make the same, «Второй» won, «Третий» on "
+                             "«Поле»'s 3 moves lost with the author's title, «Ещё раз» (scene project_continue: exit " + std::to_string(code) + ")");
+            // And a new game: «Первый» as the author left it, the star's copies on it, «Дальше», saved again on «Второй».
+            const edits::ProjectEdits e = mt_edits();
+            const int again = tg_play(&e, "ожидания шаблон три в ряд.json", mt_root());
+            check(again == 0, "another process: a new game plays the author's gems, the stars put on «Первый», the link and the HUD "
+                              "(scene project: exit " + std::to_string(again) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++mt_step_;
+        return true;
+    }
+
     std::string shared_count_; // the shared coins' count, for the «Общие» checks
     std::filesystem::path sound_dir_;
     int sound_row_ = -1; // the coins' «Подбирают» row
@@ -19018,7 +20338,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         const bool opened = options.self_part == "opened-game" || options.self_part == "ready" || options.self_part.rfind("two-games-", 0) == 0 ||
                             options.self_part.rfind("levels-", 0) == 0 || options.self_part.rfind("platformer-", 0) == 0 ||
                             options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0 ||
-                            options.self_part.rfind("input-", 0) == 0 || options.self_part.rfind("rpg-template-", 0) == 0;
+                            options.self_part.rfind("input-", 0) == 0 || options.self_part.rfind("rpg-template-", 0) == 0 ||
+                            options.self_part.rfind("match3-template-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -19543,7 +20864,9 @@ int main(int argc, char** argv) {
                                          "platformer",   "platformer-a",    "platformer-a-again", "platformer-template",
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
                                          "animation",    "animation-a",     "animation-a-again", "input", "input-a", "input-a-again",
-                                         "rpg-template", "rpg-template-a", "rpg-template-a-again"};
+                                         "rpg-template", "rpg-template-a", "rpg-template-a-again",
+                                         "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
+                                         "match3-template-a-restored"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
@@ -19551,7 +20874,8 @@ int main(int argc, char** argv) {
                     "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
                     "animation-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
-                    "rpg-template-a-again)",
+                    "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
+                    "match3-template-a-gone, match3-template-a-restored)",
                     app.options.self_part.c_str());
         return 2;
     }

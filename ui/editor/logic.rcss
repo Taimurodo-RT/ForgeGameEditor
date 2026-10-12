@@ -10,6 +10,9 @@
 #logic .command { margin-top: var(--space-3); }
 
 .lg-bar { height: 52px; gap: var(--space-2); align-items: center; }
+/* An event a level ends by with no link on it (step 14.3c). */
+.lg-warning { color: var(--warning); max-width: 640px; }
+.lg-warning icon { font-size: 16px; line-height: 16px; color: var(--warning); margin-right: var(--space-1); }
 .lg-modes {
     gap: 2px;
     padding: 3px;
