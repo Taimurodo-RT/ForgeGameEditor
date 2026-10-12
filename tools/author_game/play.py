@@ -46,8 +46,9 @@ and `--edits` of what the author changed: «Рубин»'s picture and points, �
 copy of «Рубин» with the author's picture, points and sound) put on «Первый», its holes and
 stone, the level's own moves and target, «Поле»'s moves, the link «+2 хода» for its rows, the
 HUD's words and the lose window's title; saved on «Второй» between moves, another run, with
-the same player's folder and from another working folder, goes on from that save (scene
-project_continue): «Второй» won, «Третий» lost on «Поле»'s moves, «Ещё раз». And when
+the same player's folder and from another working folder, goes on from that save by
+«Продолжить» in its main menu (scene project_continue): «Второй» won, «Третий» lost on
+«Поле»'s moves, «Ещё раз». And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
