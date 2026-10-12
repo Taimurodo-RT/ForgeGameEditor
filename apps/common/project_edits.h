@@ -111,7 +111,9 @@ struct ProjectEdits {
     // place at rp_place_at, a link «доходит до» to it passes the map. rp_coins: the coins' template, its sound now
     // rp_sound (a file of the game's sounds). rp_walk: the hero's frames while he walks, rp_walk_fps of them a second.
     // rp_hint: the HUD's hint as the author left it (its layer rp_hint_node of the screen rp_hud). Cells the author laid
-    // are e.cells.
+    // are e.cells. rp_copy_at: another copy of rp_villager on that map, at that cell, saying its own rp_copy_talk (a
+    // dialogue added in «Сюжет» after the copy was put, chosen in its properties on «Уровень»; the template still says
+    // rp_talk): its first line rp_copy_line, no answers.
     std::vector<int> rp_elder;
     std::string rp_villager, rp_villager_name, rp_talk, rp_talk_line, rp_choice, rp_once;
     std::vector<int> rp_villager_at;
@@ -123,6 +125,8 @@ struct ProjectEdits {
     double rp_walk_fps = 0;
     std::string rp_hud, rp_hint;
     forge::u32 rp_hint_node = 0;
+    std::vector<int> rp_copy_at;
+    std::string rp_copy_talk, rp_copy_line;
 };
 
 // False (error says why) when the file cannot be read.

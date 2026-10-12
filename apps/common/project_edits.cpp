@@ -111,6 +111,9 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("rp_hud", &forge::edits::ProjectEdits::rp_hud);
     t.field("rp_hint", &forge::edits::ProjectEdits::rp_hint);
     t.field("rp_hint_node", &forge::edits::ProjectEdits::rp_hint_node);
+    t.field("rp_copy_at", &forge::edits::ProjectEdits::rp_copy_at);
+    t.field("rp_copy_talk", &forge::edits::ProjectEdits::rp_copy_talk);
+    t.field("rp_copy_line", &forge::edits::ProjectEdits::rp_copy_line);
 }
 
 namespace forge::edits {

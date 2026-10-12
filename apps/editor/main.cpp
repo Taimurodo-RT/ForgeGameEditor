@@ -740,6 +740,7 @@ public:
     }
     void open_tab(const std::string& key) {
         if (key == "assets" && m_tab_ != "assets") assets.opened();
+        if (key == "level" && m_tab_ != "level") level.opened();
         m_tab_ = key;
         model_.DirtyVariable("tab");
     }
@@ -1156,6 +1157,7 @@ private:
         // Editor tabs: the list, titles and texts live in editor.rml.
         on("open_tab", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
             if (arg_str(a, 0) == "assets" && m_tab_ != "assets") assets.opened();
+            if (arg_str(a, 0) == "level" && m_tab_ != "level") level.opened();
             m_tab_ = arg_str(a, 0);
             m_tab_title_ = arg_str(a, 1);
             m_tab_description_ = arg_str(a, 2);
@@ -17633,20 +17635,25 @@ private:
     // «Интерфейс», saving everything. The elder's picture replaced in «Ресурсы» by the author's own and a sound of
     // the author's put there, brought in by F5; in «Сюжет» a conversation of the author's whose answer gives coins
     // once; in «Объекты» «Мельник», a «Копия» of the elder, saying it (chosen from the game's conversations), a place
-    // «Мельница» seen in the game, the coins' sound the author's; in «Уровень» the miller and the mill put on «Деревня»
-    // and a path laid to the mill; in «Логика» «Герой доходит до Мельницы»; the miller renamed, the same id; the HUD's
-    // hint in «Интерфейс»; the hero's walk in «Анимация»; each undone and done again; saved. rpg-template-a-again, from
-    // another working folder: all of it as left; «Играть со стартового»: the game plays it (scene project with
-    // --edits) and saves after the miller's reward; another process, from a third working folder, goes on from that
-    // save to «Поляна» and its chest (scene project_continue). The template and B: the same bytes before and after.
+    // «Мельница» seen in the game, the coins' sound the author's; in «Уровень» the miller put on «Деревня» and a second
+    // miller beside the road; with him still chosen, a conversation added in «Сюжет» (talk2) and, back on «Уровень», chosen
+    // in his properties (the panel offers the dialogues there are now); the mill put there and a path laid to it; in
+    // «Логика» «Герой доходит до Мельницы»; the miller renamed, the same id; the HUD's hint in «Интерфейс»; the hero's
+    // walk in «Анимация»; each undone and done again; saved. rpg-template-a-again, from another working folder: all of
+    // it as left, the second miller's properties too; «Играть со стартового»: the game plays it (scene project with
+    // --edits: the second miller says talk2) and saves after the miller's reward; another process, from a third working
+    // folder, goes on from that save to «Поляна» and its chest (scene project_continue). The template and B: the same
+    // bytes before and after.
     static constexpr u8 kRtElder[3] = {40, 96, 210}; // the author's elder: one colour all over
     static constexpr i32 kRtMillerX = 13, kRtMillerY = 11, kRtMillX = 20, kRtMillY = 3;
+    static constexpr i32 kRtCopyX = 16, kRtCopyY = 12; // a second copy of the miller, with a conversation of its own
     static constexpr i32 kRtPath0 = 4, kRtPath1 = 7; // the path from the road up to the mill: (20, 4)…(20, 7)
     static constexpr u32 kRtHint = 8;                // the HUD's hint, as the template makes it
     static constexpr const char* kRtLine = "Мука нынче дорогая, а мешки тяжёлые. Поможешь?";
     static constexpr const char* kRtChoice = "Помогу.";
     static constexpr const char* kRtGive = "give(\"coins\", 10)";
     static constexpr const char* kRtOnce = "quest.miller";
+    static constexpr const char* kRtCopyLine = "Я тут мешки считаю. Мельница на севере, за дорогой.";
     int rt_step_ = 0;
     std::map<std::string, std::string> rt_rec_; // what rpg-template-a did (a file of the test, outside the games)
     std::map<std::string, std::vector<u8>> rt_tmpl_, rt_b_;
@@ -17691,6 +17698,21 @@ private:
         if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
         return v;
     }
+    // A copy's «Разговор» on the open map, as the game reads it (a talk is its id: a string); own: the copy's own, not
+    // its template's.
+    std::string rt_copy_talk(const std::string& copy, bool* own = nullptr) {
+        objects::Library& lib = ol().library();
+        const flecs::entity e = lv().level().find(std::strtoull(copy.c_str(), nullptr, 10));
+        const objects::Template* t = e.is_valid() ? lib.template_of(e) : nullptr;
+        const objects::PropDef* p = t ? lib.prop_of(*t, "talk") : nullptr;
+        const objects::ObjectRef* ref = e.is_valid() ? e.try_get<objects::ObjectRef>() : nullptr;
+        if (own) *own = ref && ref->overrides_prop("talk");
+        return p ? lib.value(lv().level().scene(), e, *p) : std::string();
+    }
+    // The properties panel of «Уровень»: what its «Разговор» shows and offers.
+    std::string rt_panel_talk() { return element_text(("lv-enum-" + std::to_string(lv().field_row("Разговор"))).c_str()); }
+    std::vector<std::string> rt_panel_talks() { return lv().field_choices(lv().field_row("Разговор")); }
+
     // What the game must find: the values as the tabs have them now.
     edits::ProjectEdits rt_edits() {
         edits::ProjectEdits e;
@@ -17719,6 +17741,9 @@ private:
         e.rp_hud = "hud";
         e.rp_hint_node = kRtHint;
         if (ue().open("hud") && ue_node(kRtHint)) e.rp_hint = ue_node(kRtHint)->text;
+        e.rp_copy_at = {std::atoi(rt_rec_["copy_x"].c_str()), std::atoi(rt_rec_["copy_y"].c_str())};
+        e.rp_copy_talk = rt_rec_["copy_talk"];
+        e.rp_copy_line = kRtCopyLine;
         return e;
     }
 
@@ -18161,7 +18186,7 @@ private:
             break;
         // «Уровень»: the miller and the mill on «Деревня», a path laid to the mill.
         case 24:
-        case 26: {
+        case 31: {
             if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
             const bool first = rt_step_ == 24;
             const std::string id = first ? miller : mill;
@@ -18185,18 +18210,87 @@ private:
             check(rt_rec_[name + "_x"] == std::to_string(cx) && rt_rec_[name + "_y"] == std::to_string(cy),
                   "on its cell " + std::to_string(cx) + ":" + std::to_string(cy) + " (" + rt_rec_[name + "_x"] + ":" + rt_rec_[name + "_y"] + ")");
             undo_redo([&] { return !lv().level().find(placed).is_valid(); }, [&] { return lv().level().find(placed).is_valid(); }, "the copy, the same id,");
+            if (first) {
+                // Another click: a second «Мельник» by the road, chosen.
+                click_cell(kRtCopyX, kRtCopyY);
+                const u64 second = lv().selection().empty() ? 0 : lv().selection()[0];
+                const flecs::entity c = second ? lv().level().find(second) : flecs::entity();
+                check(c.is_valid() && second != placed && lib.template_of(c) == lib.find(std::string_view(id)) &&
+                          static_cast<i32>(std::floor(c.get<scene::Position>().tile_x())) == kRtCopyX &&
+                          static_cast<i32>(std::floor(c.get<scene::Position>().tile_y())) == kRtCopyY,
+                      "another click puts a second «Мельник» on " + std::to_string(kRtCopyX) + ":" + std::to_string(kRtCopyY) + ", chosen");
+                rt_rec_["copy"] = std::to_string(second);
+                rt_rec_["copy_x"] = std::to_string(kRtCopyX);
+                rt_rec_["copy_y"] = std::to_string(kRtCopyY);
+            }
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
-            if (first) check(click_tab(2), "«Объекты»");
-            else key(SDLK_T, SDL_KMOD_NONE);
+            if (!first) key(SDLK_T, SDL_KMOD_NONE);
             break;
         }
-        case 25:
+        // The second miller's «Разговор» as the panel has it: the template's, of the dialogues there are.
+        case 25: {
+            const int row = lv().field_row("Разговор");
+            check(lv().armed_object() < 0 && lv().selection() == std::vector<u64>{std::strtoull(rt_rec_["copy"].c_str(), nullptr, 10)},
+                  "Esc: nothing in hand, the second «Мельник» still chosen");
+            check(row >= 0 && shown("lv-next-" + std::to_string(row)) && rt_panel_talk() == "talk" && !shown("lv-reset-" + std::to_string(row)),
+                  "its properties: «Разговор» talk, the template's (" + rt_panel_talk() + ")");
+            const std::vector<std::string> talks{"молчит", "dog", "elder", "guard", "talk"};
+            check(rt_panel_talks() == talks, "«Разговор» offers «молчит» and the four dialogues there are");
+            check(click_tab(7), "«Сюжет»");
+            break;
+        }
+        // «Сюжет»: another conversation, for him.
+        case 26: {
+            if (hold(ed_.tab() == "story", "«Сюжет» is shown")) return true;
+            const std::string id = st().new_talk();
+            check(id == "talk2" && st().opened() == id && st().talks().size() == 5 && st().editing(), "«Новый разговор»: «talk2», its first line open");
+            rt_rec_["copy_talk"] = id;
+            st().set_edit_text(std::string(kRtCopyLine) + "\n");
+            break;
+        }
+        case 27:
+            check(talk.nodes.size() == 1 && talk.nodes[0].text == kRtCopyLine && talk_text("talk2").find(kRtCopyLine) != std::string::npos,
+                  "its line, in dialogues/talk2.json");
+            check(click_tab(0), "back to «Уровень»");
+            break;
+        // Back to his properties: the list has the new dialogue; a click chooses it.
+        case 28: {
+            const int row = lv().field_row("Разговор");
+            if (hold(ed_.tab() == "level" && row >= 0 && shown("lv-next-" + std::to_string(row)), "his properties are laid out")) return true;
+            check(lv().selection() == std::vector<u64>{std::strtoull(rt_rec_["copy"].c_str(), nullptr, 10)} && rt_panel_talk() == "talk",
+                  "the second «Мельник» still chosen, «Разговор» talk");
+            const std::vector<std::string> talks{"молчит", "dog", "elder", "guard", "talk", "talk2"};
+            std::string offered;
+            for (const std::string& t : rt_panel_talks()) offered += " " + t;
+            check(rt_panel_talks() == talks, "«Разговор» offers the dialogues there are now, talk2 too:" + offered);
+            check(click("lv-next-" + std::to_string(row)), "a click on the next one");
+            break;
+        }
+        case 29: {
+            const int row = lv().field_row("Разговор");
+            if (hold(row >= 0 && shown("lv-next-" + std::to_string(row)), "his properties are laid out")) return true;
+            const std::string second = rt_rec_["copy"];
+            bool own = false;
+            const std::string value = rt_copy_talk(second, &own);
+            check(rt_panel_talk() == "talk2" && shown("lv-reset-" + std::to_string(row)), "→ talk2, his own (" + rt_panel_talk() + ")");
+            check(value == "\"talk2\"" && own, "the copy keeps it by its id: " + value);
+            bool first_own = true;
+            check(rt_copy_talk(rt_rec_["miller_copy"], &first_own) == "\"talk\"" && !first_own && rt_text(miller, "talk") == "talk",
+                  "the first «Мельник» and the template: talk");
+            undo_redo([&] { bool o = true; return rt_copy_talk(second, &o) == "\"talk\"" && !o; },
+                      [&] { bool o = false; return rt_copy_talk(second, &o) == "\"talk2\"" && o; }, "his «Разговор»");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!lv().dirty(), "Ctrl+S writes «Деревня»");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        case 30:
             if (const bool ready = library_shown(); hold(ready, library_state.c_str())) return true;
             if (wait(2)) return true;
             pick_card("Мельница", false);
             check(click("ol-place") && ed_.tab() == "level", "«Поставить на уровень»");
             break;
-        case 27: {
+        case 32: {
             if (wait(3)) return true;
             const usize path = palette_index("path");
             check(lv().mode() == Mode::Tiles && path < lv().tiles().size() && lv().tiles()[path].name == "Дорога" && lv().tiles()[path].layer == 0 &&
@@ -18226,36 +18320,37 @@ private:
             break;
         }
         // The miller renamed: the same id, the same conversation, his copy on the map his.
-        case 28:
+        case 33:
             if (const bool ready = library_shown(); hold(ready, library_state.c_str())) return true;
             if (wait(2)) return true;
             pick_card("Мельник", false);
             key(SDLK_F2, SDL_KMOD_NONE);
             break;
-        case 29: {
+        case 34: {
             check(ol().renaming() && ol().rename("Мельник Ян"), "F2, «Мельник Ян»");
             const objects::Template* m = lib.find(std::string_view(miller));
             const flecs::entity e = lv().level().find(std::strtoull(rt_rec_["miller_copy"].c_str(), nullptr, 10));
             check(m && m->name == "Мельник Ян" && rt_text(miller, "talk") == "talk" && path_to_utf8(m->file.filename()) == "Мельник Ян.object.json",
                   "«Мельник Ян»: the same id, «Разговор» talk, its file renamed");
-            check(e.is_valid() && lib.template_of(e) == m, "his copy on «Деревня» is his");
+            const flecs::entity c = lv().level().find(std::strtoull(rt_rec_["copy"].c_str(), nullptr, 10));
+            check(e.is_valid() && lib.template_of(e) == m && c.is_valid() && lib.template_of(c) == m, "his two copies on «Деревня» are his");
             undo_redo([&] { return lib.find(std::string_view(miller))->name == "Мельник"; },
                       [&] { return lib.find(std::string_view(miller))->name == "Мельник Ян"; }, "the name");
             check(click_tab(6), "«Логика»");
             break;
         }
         // «Логика»: «Герой доходит до Мельницы».
-        case 30:
+        case 35:
             if (wait(2)) return true;
             check(!shown("lg-thing-hero_look") && !shown("lg-add-hero_look"), "one hero on the board: the template «Герой» is not a second");
             check(shown("lg-add-" + mill) && click("lg-add-" + mill) && lg().links().spot(mill), "«Мельница» onto the board");
             break;
-        case 31:
+        case 36:
             if (wait(2)) return true;
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
             check(thing_click("hero") && thing_click(mill) && lg().picking(), "the hero, then «Мельница»");
             break;
-        case 32: {
+        case 37: {
             if (!pl_pick("Герой доходит до ")) break;
             const u32 link = lg().selected_link();
             const logic::Link* l = lg().links().find(link);
@@ -18271,14 +18366,14 @@ private:
             break;
         }
         // «Интерфейс»: the HUD's hint.
-        case 33:
+        case 38:
             if (hold(ed_.tab() == "ui" && shown("ue-new-screen"), "«Интерфейс» is laid out")) return true;
             check(ue().open("hud") && ue().screen().show == d::ScreenShow::Playing && ue_node(kRtHint) && ue_node(kRtHint)->text == "E — поговорить",
                   "the HUD, its hint «E — поговорить»");
             if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
             ue().select({kRtHint});
             break;
-        case 34:
+        case 39:
             if (hold(shown("ue-s-text"), "the text's field is laid out")) return true;
             check(ue_type("ue-s-text", "E — говорить") && ue_node(kRtHint)->text == "E — говорить", "«E — говорить» typed");
             ue().undo();
@@ -18289,11 +18384,11 @@ private:
             check(click_tab(3), "«Анимация»");
             break;
         // «Анимация»: the hero walks by frames 2, 3, 2 of his strip, six a second.
-        case 35:
+        case 40:
             if (hold(shown("an-tpl-0") && shown("an-mode-frames"), "the tab is laid out")) return true;
             check(an_pick("hero_look"), "a click on «Герой»");
             break;
-        case 36: {
+        case 41: {
             if (hold(an().selected() && an().selected()->id == "hero_look" && shown("an-state-walk"), "«Герой» shown")) return true;
             const auto& s = an().states();
             check(s.size() == 2 && s[0].id == "stand" && s[1].id == "walk" && s[1].rule == objects::Clip{{1, 2}, 10, true},
@@ -18302,13 +18397,13 @@ private:
             check(an().state() == "walk" && pj_click("an-frame-1"), "key 2: «Идёт»; frame 2");
             break;
         }
-        case 37: check(pj_click("an-frame-2"), "frame 3"); break;
-        case 38: check(pj_click("an-frame-1"), "frame 2"); break;
-        case 39:
+        case 42: check(pj_click("an-frame-2"), "frame 3"); break;
+        case 43: check(pj_click("an-frame-1"), "frame 2"); break;
+        case 44:
             check(an_is("hero_look", "walk", {{1, 2, 1}, 10, true}), "«Идёт»: 2, 3, 2");
             check(pj_click("an-fps-4") && element_text("an-fps-4") == "6", "«6»");
             break;
-        case 40: {
+        case 45: {
             const objects::Clip walk{{1, 2, 1}, 6, true};
             check(an_is("hero_look", "walk", walk), "«Идёт»: 2, 3, 2 six a second, in its file");
             undo_redo([&] { return an_is("hero_look", "walk", {{1, 2, 1}, 10, true}); }, [&] { return an_is("hero_look", "walk", walk); }, "«Идёт»");
@@ -18359,6 +18454,15 @@ private:
                           std::to_string(static_cast<i32>(std::floor(e.get<scene::Position>().tile_y()))) == rt_rec_[n + "_y"],
                       "«" + (t ? t->name : n) + "» by its copy's id, where it was put");
             }
+            const flecs::entity c = lv().level().find(std::strtoull(rt_rec_["copy"].c_str(), nullptr, 10));
+            bool own = false;
+            check(c.is_valid() && lib.template_of(c) == m && rt_copy_talk(rt_rec_["copy"], &own) == "\"talk2\"" && own &&
+                      static_cast<i32>(std::floor(c.get<scene::Position>().tile_x())) == kRtCopyX &&
+                      static_cast<i32>(std::floor(c.get<scene::Position>().tile_y())) == kRtCopyY,
+                  "the second «Мельник Ян» where it was put, «Разговор» talk2 his own, by its id");
+            game::DialogueSource second;
+            const game::SourceNode* line = second.parse(talk_text("talk2"), nullptr) ? second.node("hello") : nullptr;
+            check(line && line->text == kRtCopyLine && line->choices.empty(), "dialogues/talk2.json: his line");
             lv().level().ensure_loaded({0, 0, 24, 14});
             bool laid = true;
             for (i32 y = kRtPath0; y <= kRtPath1; ++y) laid &= at(kRtMillX, y, 0) == 2;
@@ -18378,12 +18482,26 @@ private:
             check(click_tab(0), "«Уровень»");
             break;
         }
+        // O, a click on the second miller: his properties.
         case 1:
             if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
-            if (wait(2)) return true;
+            key(SDLK_O, SDL_KMOD_NONE);
+            check(lv().mode() == Mode::Objects && lv().armed_object() < 0, "O: the objects mode, nothing in hand");
+            view_over(0, 0, 24, 14);
+            click_cell(kRtCopyX, kRtCopyY);
+            check(lv().selection() == std::vector<u64>{std::strtoull(rt_rec_["copy"].c_str(), nullptr, 10)}, "a click chooses the second «Мельник Ян»");
+            break;
+        // His properties in this editor: talk2 his own, of the dialogues the game has.
+        case 2: {
+            const int row = lv().field_row("Разговор");
+            if (hold(row >= 0 && shown("lv-next-" + std::to_string(row)), "his properties are laid out")) return true;
+            const std::vector<std::string> talks{"молчит", "dog", "elder", "guard", "talk", "talk2"};
+            check(rt_panel_talk() == "talk2" && shown("lv-reset-" + std::to_string(row)) && rt_panel_talks() == talks,
+                  "the second «Мельник Ян»: «Разговор» talk2, his own, of the five dialogues (" + rt_panel_talk() + ")");
             check(pj_click("lv-levels"), "the maps' menu");
             break;
-        case 2: {
+        }
+        case 3: {
             if (wait(2)) return true;
             check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
             const edits::ProjectEdits e = rt_edits();

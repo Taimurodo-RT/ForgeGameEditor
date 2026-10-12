@@ -786,7 +786,8 @@ private:
     bool read_author() {
         std::string why;
         const bool read = !edits_file_.empty() && edits::read_edits(edits_file_, e_, why);
-        check(read && !e_.rp_villager.empty() && e_.rp_villager_at.size() == 2 && e_.rp_place_at.size() == 2 && e_.rp_elder.size() == 3,
+        check(read && !e_.rp_villager.empty() && e_.rp_villager_at.size() == 2 && e_.rp_place_at.size() == 2 && e_.rp_elder.size() == 3 &&
+                  e_.rp_copy_at.size() == 2 && !e_.rp_copy_talk.empty(),
               "файл ожиданий " + path_to_utf8(edits_file_) + " читается " + why);
         check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
         return read;
@@ -824,6 +825,9 @@ private:
             const Thing* v = thing_at(m->villagers, e_.rp_villager, e_.rp_villager_at[0], e_.rp_villager_at[1]);
             const Thing* p = thing_at(m->places, e_.rp_place, e_.rp_place_at[0], e_.rp_place_at[1]);
             check(v && v->talk == e_.rp_talk, "«" + e_.rp_villager_name + "» на своей клетке, его разговор «" + (v ? v->talk : "?") + "»");
+            const Thing* copy = e_.rp_copy_at.size() == 2 ? thing_at(m->villagers, e_.rp_villager, e_.rp_copy_at[0], e_.rp_copy_at[1]) : nullptr;
+            check(copy && copy->talk == e_.rp_copy_talk && e_.rp_copy_talk != e_.rp_talk,
+                  "второй «" + e_.rp_villager_name + "» на своей клетке, его свой разговор «" + (copy ? copy->talk : "?") + "»");
             check(p && p->shown, "«" + e_.rp_place_name + "» на своей клетке, видно в игре");
             if (!grab()) return fail("кадр не снят"), true;
             const Rgb want{e_.rp_elder[0], e_.rp_elder[1], e_.rp_elder[2]};
@@ -876,6 +880,22 @@ private:
             const std::vector<std::string>& played = g_.sounds_played();
             check(var("inv.coins") > coins_ && played.size() == sounds_ + 1 && played.back() == e_.rp_sound,
                   "монеты подобраны (inv.coins = " + num(var("inv.coins")) + "), прозвучал " + (played.size() > sounds_ ? played.back() : "никакой звук"));
+            return true;
+        }});
+        // The second copy says the dialogue chosen in its properties, not the template's.
+        steps_.push_back({"ко второму жителю", 3000, [this](u32 f) { return walk_to(e_.rp_copy_at[0] - 1, e_.rp_copy_at[1], f); }});
+        talk_step("разговор второго", [this] {
+            const game::DialogueRunner& r = s_->dialogue_runner();
+            const std::string at = e_.rp_villager + "@" + std::to_string(e_.rp_copy_at[0]) + "," + std::to_string(e_.rp_copy_at[1]);
+            check(s_->in_dialogue() && r.dialogue() && r.dialogue()->id() == e_.rp_copy_talk && r.line().text == e_.rp_copy_line &&
+                      r.line().choices.empty() && g_.talked_to() == at,
+                  "E у второго «" + e_.rp_villager_name + "» (" + g_.talked_to() + "): разговор «" + (r.dialogue() ? r.dialogue()->id() : "") +
+                      "», «" + std::string(r.line().text) + "»");
+            tap(SDLK_E);
+        });
+        steps_.push_back({"его разговор кончился", 4, [this](u32 f) {
+            if (f < 2) return false;
+            check(!s_->in_dialogue() && var(e_.rp_once) == 0, "разговор кончился, награды от него нет: " + e_.rp_once + " = " + num(var(e_.rp_once)));
             return true;
         }});
         steps_.push_back({"к жителю автора", 3000, [this](u32 f) {

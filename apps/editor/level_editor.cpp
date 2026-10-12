@@ -1246,6 +1246,21 @@ bool LevelEditor::parse_number(const FieldRef& ref, const std::string& label, co
     return true;
 }
 
+void LevelEditor::opened() {
+    fields_built_ = 0;
+}
+
+int LevelEditor::field_row(std::string_view label) const {
+    for (usize i = 0; i < m_fields_.size(); ++i)
+        if (m_fields_[i].label == label) return static_cast<int>(i);
+    return -1;
+}
+
+std::vector<std::string> LevelEditor::field_choices(int i) const {
+    if (i < 0 || i >= static_cast<int>(field_refs_.size())) return {};
+    return field_refs_[static_cast<usize>(i)].options;
+}
+
 void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
     // Bindings fill the inputs during the UI's update and fire change events then.
     if (ui_updating_ || i < 0 || i >= static_cast<int>(field_refs_.size()) || selection_.empty()) return;
