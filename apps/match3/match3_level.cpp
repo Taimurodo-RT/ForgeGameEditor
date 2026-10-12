@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <cstdio>
 #include <map>
 
 FORGE_REFLECT(match3::Gem, 1) {
@@ -212,10 +213,15 @@ bool read_field(level::Level& level, const objects::Library& library, const GemS
     // The copies: gems put before, and the rules.
     std::string off, foreign, twice;
     std::map<i32, std::string> taken;
+    std::map<u64, std::vector<std::pair<i32, i32>>> gone; // copies of objects the game has not (deleted after they were put)
     BoardRules kind_rules;
     level.scene().ecs().each([&](flecs::entity e, const objects::ObjectRef& ref, const scene::Position& p) {
         const objects::Template* t = library.find(ref.key);
-        if (!t) return;
+        if (!t) {
+            // Neither left out (the field would start other than the author left it) nor taken for another object.
+            gone[ref.key].emplace_back(static_cast<i32>(std::floor(p.tile_y())) - y0, static_cast<i32>(std::floor(p.tile_x())) - x0);
+            return;
+        }
         if (library.has_block(*t, kRulesBlock)) {
             ++f.rules_copies;
             auto num = [&](std::string_view prop, f64 fallback) {
@@ -247,6 +253,20 @@ bool read_field(level::Level& level, const objects::Library& library, const GemS
         taken[i] = t->id;
         f.shape.set(cx, cy, static_cast<u8>(gem));
     });
+    if (!gone.empty()) {
+        // Where, and the key the copies keep of their template (its id is not in the game any more).
+        std::string where;
+        for (auto& [key, cells] : gone) {
+            std::sort(cells.begin(), cells.end());
+            char hex[24];
+            std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(key));
+            std::string at;
+            for (const auto& [y, x] : cells) at += (at.empty() ? "" : ", ") + std::to_string(x + 1) + ":" + std::to_string(y + 1);
+            where += (where.empty() ? "" : "; ") + std::string(cells.size() == 1 ? "клетка " : "клетки ") + at + " (ключ шаблона " + hex + ")";
+        }
+        why = field + "копии объекта, которого больше нет в игре: " + where;
+        return false;
+    }
     if (!off.empty()) {
         why = field + "фишки стоят не на клетках поля (" + off + ")";
         return false;

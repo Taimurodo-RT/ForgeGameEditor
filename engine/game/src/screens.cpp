@@ -181,8 +181,10 @@ struct GameScreens::Impl : Rml::EventListener {
     const QuestBook* quests = nullptr;
     Rows item_rows, quest_rows;
     f64 lists_ms = 0;
+    std::function<u64()> clock; // of the windows' coming and going (set_clock); none: the real one
 
     void ProcessEvent(Rml::Event& event) override { self->click(event.GetTargetElement()); }
+    u64 now() const { return clock ? clock() : time_now_ns(); }
 
     Page* find(std::string_view name) {
         for (auto& p : pages)
@@ -614,7 +616,7 @@ struct GameScreens::Impl : Rml::EventListener {
     }
     f32 progress(const Page& p) const {
         if (!p.move_start) return 1;
-        const f64 t = static_cast<f64>(time_now_ns() - p.move_start) * 1e-9 / std::max(p.appear_time, 0.01f);
+        const f64 t = static_cast<f64>(now() - p.move_start) * 1e-9 / std::max(p.appear_time, 0.01f);
         const f32 f = static_cast<f32>(std::min(t, 1.0));
         return p.leaving ? 1 - f : f;
     }
@@ -824,7 +826,7 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
                 const f32 from = p.move_start ? impl_->progress(p) : 0.0f;
                 p.leaving = false;
                 p.doc->RemoveAttribute("forge-leaving");
-                p.move_start = moves ? time_now_ns() - static_cast<u64>(from * p.appear_time * 1e9) : 0;
+                p.move_start = moves ? impl_->now() - static_cast<u64>(from * p.appear_time * 1e9) : 0;
                 if (moves) impl_->place(p, from);
             } else if (moves) {
                 const f32 from = p.move_start ? impl_->progress(p) : 1.0f;
@@ -834,7 +836,7 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
                 p.doc->SetAttribute("forge-leaving", "");
                 if (Rml::Context* c = p.doc->GetContext(); c && c->GetFocusElement() && c->GetFocusElement()->GetOwnerDocument() == p.doc)
                     c->UnfocusDocument(p.doc);
-                p.move_start = time_now_ns() - static_cast<u64>((1 - from) * p.appear_time * 1e9);
+                p.move_start = impl_->now() - static_cast<u64>((1 - from) * p.appear_time * 1e9);
             } else {
                 p.doc->Hide();
                 restacked = true;
@@ -961,6 +963,10 @@ u32 GameScreens::show_ending(std::string_view kind) {
         if (show(name, true)) ++n;
     return n;
 }
+
+void GameScreens::set_clock(std::function<u64()> now) { impl_->clock = std::move(now); }
+
+bool GameScreens::own_clock() const { return static_cast<bool>(impl_->clock); }
 
 bool GameScreens::pauses() const {
     for (auto& p : impl_->pages)

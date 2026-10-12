@@ -75,7 +75,8 @@ namespace {
 //                          points, the start level's holes, stone, own moves and target and the stars put before, the
 //                          HUD's words; the bot plays it with the mouse, each star's row gives «+2 хода» by the author's
 //                          link; «Дальше» to «Второй», one move, saved between moves (m3-author), two moves more written
-//                          down. With m3_refusal in FILE only that a new game is refused, saying it
+//                          down. With m3_refusal in FILE only that «Новая игра», pressed with the mouse, is refused,
+//                          the player told why in those words, no save written
 // --scene project_continue --edits FILE (another process, the same --user) «Продолжить» in the main menu, pressed with
 //                          the mouse, takes m3-author: the same two moves make the same; «Второй» won, «Третий» plays
 //                          «Поле»'s moves (its copy has none of its own) and is lost, the author's title on the lose
@@ -1046,16 +1047,12 @@ private:
                     check(json.find("\"" + e_.m3_star + "\"") != std::string::npos && json.find(e_.m3_star_name) != std::string::npos,
                           "в сохранении " + slot + " на поле есть «" + e_.m3_star_name + "» (" + e_.m3_star + ")");
                 }
-                Rml::Element* button = s_->find_element("menu-continue");
-                check(button && button->IsVisible(true), "в главном меню есть «Продолжить»");
-                if (!button) {
+                const bool pressed = press("menu-continue");
+                check(pressed, "в главном меню есть «Продолжить»");
+                if (!pressed) {
                     steps_.resize(at_ + 1);
                     return true;
                 }
-                const Rml::Vector2f c = button->GetAbsoluteOffset(Rml::BoxArea::Border) + button->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
-                mouse(SDL_EVENT_MOUSE_MOTION, c.x, c.y);
-                mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, c.x, c.y);
-                mouse(SDL_EVENT_MOUSE_BUTTON_UP, c.x, c.y);
                 return false;
             }
             if (e_.m3_gone.empty()) return g_.running() && s_->screen() == Screen::Playing;
@@ -1068,20 +1065,35 @@ private:
         steps_.push_back({"игроку сказано почему", 30, [this](u32 f) {
             if (e_.m3_gone.empty()) return true;
             if (f < 2) return false;
-            // The toast at the top of the main menu.
-            std::string said;
-            Rml::Element* button = s_->find_element("menu-continue");
-            if (Rml::ElementDocument* doc = button ? button->GetOwnerDocument() : nullptr) {
-                Rml::ElementList toasts;
-                doc->GetElementsByClassName(toasts, "toast");
-                for (Rml::Element* e : toasts)
-                    if (e->IsVisible(true)) said += (said.empty() ? "" : " | ") + words_of(e);
-            }
+            const std::string said = toasts();
             check(said.find("Не удалось начать: " + e_.m3_gone) != std::string::npos, "на экране: «" + said + "»");
+            Rml::Element* button = s_->find_element("menu-continue");
             check(s_->screen() == Screen::Main && button && button->IsVisible(true), "игрок в главном меню, «Продолжить» на месте");
             steps_.resize(at_ + 1);
             return true;
         }});
+    }
+    // A button of the main menu pressed with the mouse where the player sees it; false when it is not there.
+    bool press(const char* id) {
+        Rml::Element* button = s_->find_element(id);
+        if (!button || !button->IsVisible(true)) return false;
+        const Rml::Vector2f c = button->GetAbsoluteOffset(Rml::BoxArea::Border) + button->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+        mouse(SDL_EVENT_MOUSE_MOTION, c.x, c.y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, c.x, c.y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, c.x, c.y);
+        return true;
+    }
+    // The toasts at the top of the main menu, as shown now.
+    std::string toasts() {
+        std::string said;
+        Rml::Element* menu = s_->find_element("menu-new");
+        if (Rml::ElementDocument* doc = menu ? menu->GetOwnerDocument() : nullptr) {
+            Rml::ElementList list;
+            doc->GetElementsByClassName(list, "toast");
+            for (Rml::Element* e : list)
+                if (e->IsVisible(true)) said += (said.empty() ? "" : " | ") + words_of(e);
+        }
+        return said;
     }
 
     // What the author changed (--edits), read; the game's data as the author left it.
@@ -1094,7 +1106,8 @@ private:
                             e_.m3_star_at.size() >= 2)),
                   "файл ожиданий " + path_to_utf8(edits_file_) + " читается " + why);
             if (read && !e_.m3_gone.empty()) {
-                // The author deleted the gem after the save: the game reads without it, nothing in its place.
+                // The author deleted the gem after the save: the game reads without it, nothing in its place (a level
+                // where its copies stay is read only when a new game starts it).
                 check(g_.problems().empty(), "данные игры читаются: " + (g_.problems().empty() ? std::string("без ошибок") : g_.problems().front()));
                 std::string ids;
                 for (const objects::Template* t : g_.gems().gems) ids += (ids.empty() ? "" : ", ") + t->id;
@@ -1155,10 +1168,25 @@ private:
                 check(s_->new_game(), "новая игра начинается" + (g_.problems().empty() ? std::string() : ": " + g_.problems().back()));
                 return true;
             }
-            // The field as the author saved it is wrong: no game, the player told why, in the editor's words.
-            const bool started = s_->new_game();
-            check(!started && g_.refusal() == e_.m3_refusal && !g_.running(), "игра не начинается: «" + g_.refusal() + "»");
-            check(s_->screen() == Screen::Main, "игрок в главном меню");
+            // The field as the author saved it is wrong: the game «Играть» started was refused already (author_data);
+            // «Новая игра» pressed with the mouse is refused once more, the player told why, in the editor's words; no
+            // save written.
+            slot_count_ = s_->slots().list().size();
+            problems_before_ = g_.problems().size();
+            check(s_->screen() == Screen::Main && press("menu-new"), "«Новая игра» в главном меню нажата");
+            return true;
+        }});
+        steps_.push_back({"новая игра не начинается", 60, [this](u32 f) {
+            if (e_.m3_refusal.empty()) return true;
+            if (g_.problems().size() == problems_before_ && f < 30) return false;
+            if (f < 2) return false;
+            check(g_.problems().size() == problems_before_ + 1 && g_.problems().back() == e_.m3_refusal && g_.refusal() == e_.m3_refusal &&
+                      !g_.running() && !g_.play(),
+                  "нажатая «Новая игра» не начинается: «" + g_.refusal() + "» (отказов было " + std::to_string(problems_before_) + ", стало " +
+                      std::to_string(g_.problems().size()) + ")");
+            const std::string said = toasts();
+            check(said.find("Не удалось начать: " + e_.m3_refusal) != std::string::npos, "на экране: «" + said + "»");
+            check(s_->screen() == Screen::Main && s_->slots().list().size() == slot_count_, "игрок в главном меню, сохранений не прибавилось");
             steps_.resize(at_ + 1);
             return true;
         }});
@@ -1293,6 +1321,7 @@ private:
     usize at_ = 0;
     std::map<std::string, std::vector<u8>> slot_files_; // the save «Продолжить» takes, before it (menu_continue_steps)
     usize slot_count_ = 0;
+    usize problems_before_ = 0; // the game's refusals before «Новая игра» is pressed (project_scene)
     u32 in_step_ = 0;
     std::vector<u8> px_;
     u32 pw_ = 0, ph_ = 0;

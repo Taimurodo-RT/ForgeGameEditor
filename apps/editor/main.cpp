@@ -1887,8 +1887,9 @@ struct Options {
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
-    // "match3-template-a" and "match3-template-a-again", and "match3-template-a-restored": a gem deleted after the save
-    // and brought back by Ctrl+Z, opened again and the save goes on).
+    // "match3-template-a" and "match3-template-a-again"; "match3-template-a-gone": the game as saved without a gem deleted
+    // after the save, its copies said of and a new game refused; "match3-template-a-restored": the gem brought back by
+    // Ctrl+Z, opened again, the save goes on and a new game starts).
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -2104,6 +2105,7 @@ public:
         if (part == "match3-template") return frame < 3 || match3_template_step();
         if (part == "match3-template-a") return frame < 3 || match3_template_a_step();
         if (part == "match3-template-a-again") return frame < 3 || match3_template_again_step();
+        if (part == "match3-template-a-gone") return frame < 3 || match3_template_gone_step();
         if (part == "match3-template-a-restored") return frame < 3 || match3_template_restored_step();
         if (part == "modules") return frame < 3 || modules_step();
         if (part == "modules-probe") return frame < 3 || modules_probe_step();
@@ -18557,12 +18559,14 @@ private:
     // in «Объекты», the same ids; each undone and done again; saved. match3-template-a-again, from another working
     // folder: all of it as left; «Играть со стартового»: the game plays it (scene project with --edits) and saves on
     // «Второй» with stars on the field; then (step 11 of the model) «Звезда шахты» chosen with a click and deleted with
-    // Delete in «Объекты» (its copies on «Первый» and its link stay, «Логика» says the link does not work), Ctrl+S, and a
-    // game of another process refuses «Продолжить» in its main menu with words for the player, the saves byte for byte
-    // as they were; Ctrl+Z brings the star back by the same id (Ctrl+Y and Ctrl+Z again), Ctrl+S.
-    // match3-template-a-restored, from a third working folder: the star, its copies and its link as before; another
-    // process goes on from the save by «Продолжить» (scene project_continue). The template and B: the same bytes before
-    // and after.
+    // Delete in «Объекты» (its copies on «Первый» and its link stay, «Логика» says the link does not work), Ctrl+S;
+    // «Уровень» says «Первый»'s copies are of an object no more there, with their cells and the template's key; another
+    // editor opens the game as saved (match3-template-a-gone): the same words, and its game refuses «Новая игра»
+    // pressed with the mouse with them; a game of another process refuses «Продолжить» in its main menu with words for
+    // the player, the saves byte for byte as they were; Ctrl+Z brings the star back by the same id (Ctrl+Y and Ctrl+Z
+    // again), «Уровень» says nothing, Ctrl+S. match3-template-a-restored, from a third working folder: the star, its
+    // copies and its link as before; another process goes on from the save by «Продолжить» (scene project_continue),
+    // and a new game plays it all again (scene project). The template and B: the same bytes before and after.
     static constexpr u8 kMtRuby[3] = {240, 120, 20};  // the author's «Рубин»: one colour all over
     static constexpr u8 kMtStar[3] = {120, 230, 230}; // the author's star
     static constexpr i32 kMtStarY = 5, kMtStar0 = 1, kMtStar2 = 3; // three stars put in a row on «Первый», the middle deleted
@@ -18644,6 +18648,14 @@ private:
         return out;
     }
     bool mt_library_shown() { return ed_.tab() == "objects" && !ol().editing() && shown("ol-search"); }
+    // What «Первый» says, and its game, with the two stars left on it and their template deleted (its key).
+    static std::string mt_gone_said(u64 key) {
+        char hex[24];
+        std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(key));
+        auto cell = [](i32 x) { return std::to_string(x + 1) + ":" + std::to_string(kMtStarY + 1); };
+        return "Поле «Первый»: копии объекта, которого больше нет в игре: клетки " + cell(kMtStar0) + ", " + cell(kMtStar2) +
+               " (ключ шаблона " + hex + ")";
+    }
     std::map<std::string, std::vector<u8>> mt_saves_; // the player's saves after the game saved m3-author
     u64 mt_star_key_ = 0;                             // «Звезда шахты» before it is deleted: its key, file, bytes, copies
     std::filesystem::path mt_star_file_;
@@ -19631,10 +19643,32 @@ private:
             key(SDLK_S, SDL_KMOD_CTRL);
             break;
         }
-        // Another process of the game: «Продолжить» in its main menu takes the save, refused.
-        case 15: {
+        // «Уровень», saved: «Первый» says its two copies are of an object no more there. Another editor, from another working
+        // folder, opens the game as saved: the same words, and its game refuses «Новая игра» with them.
+        case 15:
             if (wait(2)) return true;
             check(ed_.unsaved().empty(), "Ctrl+S: nothing unsaved");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 16: {
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(3)) return true;
+            const std::string said = mt_gone_said(mt_star_key_);
+            check(lv().level_id() == "level" && lv().problem() == said && shown("lv-problem") &&
+                      element_text("lv-problem").find(said) != std::string::npos,
+                  "«Первый» says: «" + lv().problem() + "»");
+            const fs::path other = mt_root() / utf8_path("папка без звезды");
+            std::error_code ec;
+            fs::create_directories(other, ec);
+            const int code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"), "--self-test", "match3-template-a-gone"},
+                                    other);
+            check(code == 0, "opened elsewhere as saved: «Первый» says the same, «Новая игра» refused with those words (match3-template-a-gone: exit " +
+                                 std::to_string(code) + ")");
+            check(pj_tree(play_folder(a) / "saves") == mt_saves_, "the saves byte for byte as before: the new game refused wrote none");
+            break;
+        }
+        // Another process of the game: «Продолжить» in its main menu takes the save, refused.
+        case 17: {
             edits::ProjectEdits e;
             e.m3_star = mt_rec_["star"];
             e.m3_star_name = "Звезда шахты";
@@ -19655,7 +19689,7 @@ private:
             break;
         }
         // Ctrl+Z: the star back, the same id; Ctrl+Y and Ctrl+Z again.
-        case 16: {
+        case 18: {
             if (const bool ready = mt_library_shown(); hold(ready, "the library is laid out")) return true;
             if (wait(2)) return true;
             const std::string star = mt_rec_["star"];
@@ -19673,18 +19707,76 @@ private:
             check(click_tab(6), "«Логика»");
             break;
         }
-        case 17: {
+        case 19: {
             if (wait(3)) return true;
             const u32 link = static_cast<u32>(std::strtoul(mt_rec_["link"].c_str(), nullptr, 10));
             check(lg().problem_of(link).empty() && lg().phrase_of(link) == "Поле даёт +2 хода за Звезду шахты",
                   "the link works again: «" + lg().phrase_of(link) + "» " + lg().problem_of(link));
-            key(SDLK_S, SDL_KMOD_CTRL);
+            check(click_tab(0), "«Уровень»");
             break;
         }
-        case 18:
+        case 20:
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(3)) return true;
+            check(lv().level_id() == "level" && lv().problem().empty() && !shown("lv-problem"), "«Первый» says nothing again: «" + lv().problem() + "»");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            break;
+        case 21:
             if (wait(2)) return true;
             check(ed_.unsaved().empty() && tg_bytes(mt_star_file_) == mt_star_bytes_, "Ctrl+S: nothing unsaved, the star's file as it was");
             return false;
+        default: break;
+        }
+        ++mt_step_;
+        return true;
+    }
+
+    // In an editor for «Три в ряд А» from yet another working folder (--self-test match3-template-a-gone), while the one
+    // that deleted «Звезда шахты» is still open: the game as saved without it. «Первый» says its copies are of an object
+    // no more there; «Играть со стартового»: the game of another process refuses «Новая игра» with the same words.
+    bool match3_template_gone_step() {
+        objects::Library& lib = ol().library();
+        switch (mt_step_) {
+        case 0: {
+            mt_rec_ = tg_get(mt_root() / utf8_path("записи.txt"));
+            const std::string star = mt_rec_["star"];
+            check(!star.empty() && !lib.find(std::string_view(star)) && lib.templates().size() == 7, "opened as saved: «Звезда шахты» is not in the library");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 1:
+            if (hold(ed_.tab() == "level" && lv().view_w() > 0, "the level view is laid out")) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 2:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-level"), "«Первый»");
+            break;
+        case 3: {
+            if (hold(lv().level_id() == "level" && lv().view_w() > 0, "«Первый» is open")) return true;
+            view_over(-3, -1, 8, 8);
+            if (wait(3)) return true;
+            const u64 key = fnv1a(mt_rec_["star"]);
+            std::vector<u64> left;
+            for (i32 x : {kMtStar0, kMtStar2}) left.push_back(std::strtoull(mt_rec_["star_" + std::to_string(x)].c_str(), nullptr, 10));
+            std::sort(left.begin(), left.end());
+            check(mt_keyed(key) == " " + std::to_string(left[0]) + " " + std::to_string(left[1]), "the two copies on «Первый» stay, of no object:" + mt_keyed(key));
+            const std::string said = mt_gone_said(key);
+            check(lv().problem() == said && shown("lv-problem") && element_text("lv-problem").find(said) != std::string::npos,
+                  "«Первый» says: «" + lv().problem() + "»");
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        }
+        case 4: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            edits::ProjectEdits e;
+            e.m3_refusal = mt_gone_said(fnv1a(mt_rec_["star"]));
+            const int code = tg_play(&e, "ожидания новой игры без звезды.json", mt_root());
+            check(code == 0, "the game of another process refuses «Новая игра» pressed with the mouse, saying «" + e.m3_refusal +
+                                 "» (scene project with m3_refusal: exit " + std::to_string(code) + ")");
+            return false;
+        }
         default: break;
         }
         ++mt_step_;
@@ -19743,6 +19835,11 @@ private:
             const int code = pj_run(args, elsewhere);
             check(code == 0, "another process: «Продолжить» goes on from the save: the same moves make the same, «Второй» won, «Третий» on "
                              "«Поле»'s 3 moves lost with the author's title, «Ещё раз» (scene project_continue: exit " + std::to_string(code) + ")");
+            // And a new game: «Первый» as the author left it, the star's copies on it, «Дальше», saved again on «Второй».
+            const edits::ProjectEdits e = mt_edits();
+            const int again = tg_play(&e, "ожидания шаблон три в ряд.json", mt_root());
+            check(again == 0, "another process: a new game plays the author's gems, the stars put on «Первый», the link and the HUD "
+                              "(scene project: exit " + std::to_string(again) + ")");
             return false;
         }
         default: break;
@@ -20768,7 +20865,8 @@ int main(int argc, char** argv) {
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
                                          "animation",    "animation-a",     "animation-a-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
-                                         "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-restored"};
+                                         "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
+                                         "match3-template-a-restored"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
@@ -20777,7 +20875,7 @@ int main(int argc, char** argv) {
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
                     "animation-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
-                    "match3-template-a-restored)",
+                    "match3-template-a-gone, match3-template-a-restored)",
                     app.options.self_part.c_str());
         return 2;
     }
