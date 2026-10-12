@@ -1,0 +1,13 @@
+{
+  "id": "sapphire",
+  "name": "Сапфир",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "about": "синий, капля остриём вверх",
+  "picture": "сапфир.png",
+  "frames": 4,
+  "values": {
+    "points": 10,
+    "gem_sound": "звон.wav"
+  }
+}

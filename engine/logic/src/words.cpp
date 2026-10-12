@@ -379,10 +379,13 @@ std::vector<Refine> refinements(const Link& link, const VerbDef& verb, const Thi
     return out;
 }
 
-std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where) {
+std::vector<Step> steps(const Link& link, const VerbDef& verb, const Thing& a, const Thing& b, std::string_view where,
+                        std::string_view when) {
     std::vector<Step> out;
     if (verb.always) {
         out.push_back({"when", "all_inclusive", "Всё время, пока " + quoted(a) + " есть на уровне", ""});
+    } else if (!when.empty()) {
+        out.push_back({"when", "bolt", fill(when, a, b), ""});
     } else {
         const Thing& touched = verb.touch == Side::A ? (a.id == kHero ? b : a) : (b.id == kHero ? a : b);
         if (touched.area) out.push_back({"when", "login", "Когда герой входит в " + touched.forms.get("acc"), ""});

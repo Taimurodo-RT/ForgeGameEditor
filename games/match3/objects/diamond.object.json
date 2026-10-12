@@ -1,0 +1,13 @@
+{
+  "id": "diamond",
+  "name": "Алмаз",
+  "kind": "gem",
+  "genre": "Три в ряд",
+  "about": "белый с голубым, остриём вниз",
+  "picture": "алмаз.png",
+  "frames": 4,
+  "values": {
+    "points": 10,
+    "gem_sound": "звон.wav"
+  }
+}

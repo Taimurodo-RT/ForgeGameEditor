@@ -71,6 +71,9 @@ struct PropDef {
     // «Сюжет»); the choices are those, «empty» first (Library::set_talks).
     std::string asset;
     std::string empty; // shown for an empty value: "обычный", "нет"
+    // The value is the template's alone: the game reads it from the template, so a copy on a level has none of its
+    // own (set_value on a copy refuses; the level's panel shows the template's, not to be changed there).
+    bool template_only = false;
 
     const reflect::TypeInfo* type = nullptr;  // the component's, found when the kinds load
     const reflect::FieldInfo* info = nullptr; // the field's

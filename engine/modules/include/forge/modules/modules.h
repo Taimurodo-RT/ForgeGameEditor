@@ -44,6 +44,12 @@ struct Value {
 struct Event {
     std::string id;    // "touch"
     std::string words; // "герой касается"
+    // The step «Когда» of a link on it in «Логика» (step 14.3c): {a} {b} are the link's things, {b:gen} their forms
+    // («Когда на поле исчезает ряд {b:gen}»). Empty: the editor's words for the hero touching a thing.
+    std::string step;
+    // Only a link on this event ends a level of the game: what «Логика» says when the game has none ("" when a game
+    // does without).
+    std::string needed;
 };
 
 // A maker of one of the module's templates: the template's game made in out from its sources in the repository's

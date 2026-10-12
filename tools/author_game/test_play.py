@@ -1,5 +1,5 @@
 """play.py puts the source folders back: on a tree of its own (not the repository), a move that fails first, second,
-third or fourth, a game that does not start, a game that fails, a folder that does not come back, and a run that goes well.
+third, fourth or fifth, a game that does not start, a game that fails, a folder that does not come back, and a run that goes well.
 
 The folders are really moved, into the folder play.py makes and back. What is stubbed: the move that is to fail (it
 raises before moving anything) and, but for the game that does not start, the game itself: subprocess.run returns the
@@ -22,7 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 PLAY = Path(__file__).resolve().parent / "play.py"
-FOLDERS = ("slice", "platformer", "rpg", "modules")
+FOLDERS = ("slice", "platformer", "rpg", "match3", "modules")
 
 
 def digests(root: Path) -> dict:
@@ -44,7 +44,7 @@ class Staging(unittest.TestCase):
         (game / "project.forge").write_text("{}", encoding="utf-8")
         self.before = digests(self.root / "games")
         self.exe = self.base / "игра с пробелом"  # never started but in the case it does not start: then it is not there
-        self.runs = []  # per stubbed start: were the four folders away then
+        self.runs = []  # per stubbed start: were the five folders away then
 
     def play(self, exit_code=None, fail_away=None, fail_back=None, while_away=None):
         """play.py's main() with its ROOT and temp folder here. exit_code: what the stubbed game returns (None: the real
@@ -92,8 +92,8 @@ class Staging(unittest.TestCase):
         self.assertEqual(digests(self.root / "games"), self.before)
         self.assertEqual(list(self.root.glob("forge_sources_away_*")), [])
 
-    def test_a_move_that_fails_first_second_third_or_fourth_puts_back_the_ones_moved(self):
-        for n in (1, 2, 3, 4):
+    def test_a_move_that_fails_first_second_third_fourth_or_fifth_puts_back_the_ones_moved(self):
+        for n in (1, 2, 3, 4, 5):
             with self.subTest(move=n):
                 code, said = self.play(exit_code=0, fail_away=n)
                 self.assertEqual(code, 1)
@@ -111,7 +111,7 @@ class Staging(unittest.TestCase):
     def test_a_game_that_fails_puts_them_back(self):
         code, _ = self.play(exit_code=3)
         self.assertEqual(code, 1)
-        self.assertEqual(self.runs, [[False, False, False, False]])  # it ran with the four away
+        self.assertEqual(self.runs, [[False] * 5])  # it ran with the five away
         self.assert_all_back()
 
     def test_one_that_does_not_come_back_is_named_and_the_others_come_back(self):
@@ -133,7 +133,7 @@ class Staging(unittest.TestCase):
     def test_a_run_that_goes_well(self):
         code, said = self.play(exit_code=0)
         self.assertEqual(code, 0, said)
-        self.assertEqual(self.runs, [[False, False, False, False]])
+        self.assertEqual(self.runs, [[False] * 5])
         self.assertIn("на месте с теми же SHA-256", said)
         self.assert_all_back()
 

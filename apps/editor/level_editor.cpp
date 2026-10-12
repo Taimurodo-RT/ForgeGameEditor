@@ -410,9 +410,10 @@ std::string LevelEditor::place_name(f64 x, f64 y) const {
 
 void LevelEditor::build_objects() {
     objects_version_ = module_.objects_version();
-    // The armed object stays armed if its template is still there.
+    // The armed object stays armed if its template is still there; one put away (Esc, a right click, another mode)
+    // stays away.
     const auto& objects = module_.objects();
-    const u64 armed = armed_key_;
+    const u64 armed = object_ >= 0 ? armed_key_ : 0;
     object_ = -1;
     m_objects_.clear();
     std::vector<u8> icon;
@@ -533,6 +534,7 @@ void LevelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lv_minimap", &m_minimap_);
     model.Bind("lv_place", &m_place_);
     model.Bind("lv_info", &m_info_);
+    model.Bind("lv_problem", &m_problem_);
     model.Bind("lv_history", &m_history_);
     model.Bind("lv_history_cursor", &m_history_cursor_);
     model.Bind("lv_ph_tool", &m_ph_tool_);
@@ -1057,7 +1059,12 @@ void LevelEditor::rebuild_fields(Rml::Context* context) {
                 FieldRef r;
                 r.prop = &prop;
                 r.template_value = shown(lib->value(*tmpl, prop));
-                if (!prop.choices.empty()) {
+                if (prop.template_only) {
+                    // The game reads it from the template: here it is shown, not changed (a copy has none of its own).
+                    f.kind = "readonly";
+                    f.value = r.template_value;
+                    f.hint = (prop.hint.empty() ? "" : prop.hint + ". ") + "У всех копий одно: меняется у шаблона во вкладке «Объекты»";
+                } else if (!prop.choices.empty()) {
                     f.kind = "enum";
                     for (const objects::Choice& c : prop.choices) r.options.push_back(c.name);
                 } else if (boolean) {
@@ -1330,6 +1337,7 @@ void LevelEditor::set_field(int i, const std::string& text, bool dragging) {
         return;
     }
     if (ref.prop) {
+        if (ref.prop->template_only) return; // the template's alone (shown, not changed here)
         objects::Library* lib = module_.library();
         const std::optional<std::string> json = lib ? objects::Library::parse(*ref.prop, text) : std::nullopt;
         if (!json) {
@@ -2561,6 +2569,14 @@ void LevelEditor::update(f64 dt, Rml::Context* context) {
         fields_built_ = 0;
     }
     rebuild_fields(context);
+    // The game's word on the level, when anything it reads changed.
+    const std::string key = std::to_string(level_->edits()) + "|" + std::to_string(module_.objects_version()) + "|" +
+                            std::to_string(level_->own_tiles_version()) + "|" + level_name();
+    if (key != problem_key_) {
+        problem_key_ = key;
+        problem_ = module_.level_problem(*level_, level_name());
+        set(m_problem_, Rml::String(problem_), "lv_problem");
+    }
     sync_model();
     sync_areas(context);
     sync_tiled();

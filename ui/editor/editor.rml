@@ -534,7 +534,7 @@
                                         <span class="value" data-attr-id="'lv-enum-' + it_index">{{ f.value }}</span>
                                         <div class="icon-button small" data-attr-id="'lv-next-' + it_index" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
                                     </div>
-                                    <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                                    <span data-if="f.kind == 'readonly'" class="muted" data-attr-id="'lv-ro-' + it_index">{{ f.value }}</span>
                                     <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
                                 </div>
                             </div></div>
@@ -554,7 +554,7 @@
                                         <span class="value" data-attr-id="'lv-enum-' + it_index">{{ f.value }}</span>
                                         <div class="icon-button small" data-attr-id="'lv-next-' + it_index" data-event-click="lv_field_cycle(it_index, 1)"><icon name="chevron_right"/></div>
                                     </div>
-                                    <span data-if="f.kind == 'readonly'" class="muted">{{ f.value }}</span>
+                                    <span data-if="f.kind == 'readonly'" class="muted" data-attr-id="'lv-ro-' + it_index">{{ f.value }}</span>
                                     <div data-if="f.own" class="icon-button small own-reset" data-attr-id="'lv-reset-' + it_index" title="Своё значение этой копии. Нажми, чтобы вернуть как в шаблоне" data-event-click="lv_field_reset(it_index)"><icon name="undo" class="s"/></div>
                                 </div>
                             </div></div>
@@ -909,6 +909,7 @@
                 <div id="lg-mode-code" class="lg-mode" data-class-selected="lg_mode == 'code'" title="Та же логика кодом на Luau" data-event-click="lg_mode('code')"><icon name="code"/><span>Код</span></div>
             </div>
             <div class="grow"/>
+            <span id="lg-warning" class="lg-warning body-small" data-if="lg_warning != ''"><icon class="s" name="warning"/>{{ lg_warning }}</span>
             <span class="muted body-small">{{ lg_count }}</span>
         </div>
         <div class="lg-body row grow">
@@ -927,7 +928,7 @@
 
             <!-- The board -->
             <div id="lg-board" class="lg-board grow" data-if="lg_mode == 'links'" data-event-mousedown="lg_board_down">
-                <div data-for="l : lg_links">
+                <div data-for="l : lg_links" data-if="!l.self">
                     <div class="lg-line" data-class-selected="l.selected" data-class-broken="l.broken" data-class-lit="l.lit"
                          data-style-left="l.lx + 'px'" data-style-top="l.ly + 'px'" data-style-width="l.len + 'px'" data-style-transform="'rotate(' + l.angle + 'deg)'"/>
                     <icon class="lg-head" name="play_arrow" data-class-selected="l.selected" data-class-broken="l.broken" data-class-lit="l.lit"
@@ -3031,8 +3032,9 @@
 
     <div id="statusbar" class="row gap-4">
         <span>{{ status }}</span>
+        <span id="lv-problem" class="lv-problem" data-if="tab == 'level' && lv_problem != ''"><icon class="s" name="warning"/>{{ lv_problem }}</span>
         <div class="grow"/>
-        <span class="muted" data-if="tab == 'level'">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
+        <span class="muted" data-if="tab == 'level' && lv_problem == ''">Ctrl+Z / Ctrl+Y отмена и повтор · Ctrl+S сохранить · F5 играть отсюда · B L R G E I инструменты · [ ] размер · колесо и правая кнопка: камера</span>
         <span class="muted" data-if="tab == 'assets'">Ctrl+Z / Ctrl+Y отмена и повтор · Alt+← / Alt+→ назад и вперёд · F2 имя · Ctrl+C / X / V · Del удалить · перетащите файлы в окно для импорта</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'links'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи, потом по другой: связать · Del удалить · Esc отмена · перетаскивание: двигать вещи и доску</span>
         <span class="muted" data-if="tab == 'logic' && lg_mode == 'ideas'">Ctrl+Z / Ctrl+Y отмена и повтор · щелчок по вещи в идее: выбрать другую · «Раскрыть в шаги» показывает подробности · Esc отмена</span>

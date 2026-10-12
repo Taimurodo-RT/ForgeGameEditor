@@ -242,6 +242,14 @@ public:
     // The level's world and entities are about to go: drop anything bound
     // to them (renderers, queries).
     virtual void level_closing(Level& level) { (void)level; }
+    // What is wrong with the level by the game's own rules, in the author's
+    // words: what the game says when it will not start it (name: the
+    // level's). "" when nothing is. «Уровень» shows it under the view as the
+    // level changes (step 14.3c).
+    virtual std::string level_problem(Level& level, const std::string& name) const {
+        (void)level, (void)name;
+        return {};
+    }
 
     // --- objects ---
     // The game's object library (kinds and templates), if it has one; the

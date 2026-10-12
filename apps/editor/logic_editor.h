@@ -62,6 +62,12 @@ public:
     // The events the game's module has (forge::modules::ModuleDef::events, set before init): verbs.json is read with
     // them, as the game reads it, and a verb of another event makes it fail. Empty: any.
     std::vector<std::string> events;
+    // The steps «Когда» of the module's events in its words (forge::modules::Event::step) by event id, and what the tab
+    // says when the game has no link on an event a level ends by (Event::needed). Set before init.
+    std::map<std::string, std::string> event_steps;
+    std::vector<std::pair<std::string, std::string>> needed_events;
+    // What the tab says of the game's links as a whole now: an event a level ends by and no link on it ("" when none).
+    const std::string& warning() const { return m_warning_; }
     // The file a game started from the editor writes the links that happen
     // to (one id a line); the tab lights them up.
     void set_fired_file(std::filesystem::path file) { fired_file_ = std::move(file); }
@@ -194,6 +200,7 @@ private:
         float cx = 0, cy = 0;                     // the verb chip
         int refined = 0;
         bool selected = false, broken = false, lit = false;
+        bool self = false; // a thing's link with itself: a chip under its card, no line
     };
     struct NavRow {
         Rml::String id, name, icon, about;
@@ -357,7 +364,7 @@ private:
     Rml::String m_choose_title_;
     bool m_gallery_ = false, m_choosing_ = false;
     Rml::String m_mode_ = "links";
-    Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_;
+    Rml::String m_pick_title_, m_sel_phrase_, m_sel_meaning_, m_sel_problem_, m_sel_name_, m_sel_icon_, m_count_, m_warning_;
     float m_pick_x_ = 0, m_pick_y_ = 0;
     bool m_editing_ = false, m_sel_code_ = false, m_sel_scheme_ = false, m_sel_own_ = false, m_sel_area_ = false;
     Rml::String m_edit_text_, m_edit_title_, m_edit_error_;

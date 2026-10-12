@@ -14,6 +14,7 @@ namespace {
 // A thing on the board: its card's size in pixels.
 constexpr f32 kCardW = 112, kCardH = 112;
 constexpr f32 kLinkGap = 30; // between links of the same two things
+constexpr f32 kSelfGap = 30; // between the chips under a card of what it does by itself
 constexpr u32 kHeroIconPx = 96;
 
 int arg_int(const Rml::VariantList& a, usize i, int fallback) { return i < a.size() ? a[i].Get<int>() : fallback; }
@@ -171,6 +172,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("selected", &LinkView::selected);
         s.RegisterMember("broken", &LinkView::broken);
         s.RegisterMember("lit", &LinkView::lit);
+        s.RegisterMember("self", &LinkView::self);
     }
     model.RegisterArray<std::vector<LinkView>>();
     if (auto s = model.RegisterStruct<NavRow>()) {
@@ -316,6 +318,7 @@ void LogicEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("lg_sel_icon", &m_sel_icon_);
     model.Bind("lg_sel_links", &m_sel_links_);
     model.Bind("lg_count", &m_count_);
+    model.Bind("lg_warning", &m_warning_);
     model.Bind("lg_mode", &m_mode_);
     model.Bind("lg_cards", &m_cards_);
     model.Bind("lg_code", &m_code_);
@@ -591,6 +594,17 @@ void LogicEditor::rebuild() {
         v.broken = problems_.contains(l.id);
         v.lit = lit(l.id);
         (void)tb;
+        if (l.a == l.b) {
+            // What a thing does by itself («Поле набирает цель»): its chips under its card, one under another, so
+            // neither covers the card nor the other.
+            const auto& same = pairs[std::minmax(l.a, l.b)];
+            const usize k = static_cast<usize>(std::find(same.begin(), same.end(), l.id) - same.begin());
+            v.self = true;
+            v.cx = v.lx = v.hx = sa->x + pan_x_ + kCardW / 2;
+            v.cy = v.ly = v.hy = sa->y + pan_y_ + kCardH + kSelfGap * (static_cast<f32>(k) + 0.5f) + 4;
+            m_links_.push_back(v);
+            continue;
+        }
         f32 ax = sa->x + pan_x_ + kCardW / 2, ay = sa->y + pan_y_ + kCardH / 2;
         f32 bx = sb->x + pan_x_ + kCardW / 2, by = sb->y + pan_y_ + kCardH / 2;
         f32 dx = bx - ax, dy = by - ay;
@@ -636,6 +650,14 @@ void LogicEditor::rebuild() {
         (logic_.spot(t.id) ? m_board_rows_ : m_add_rows_).push_back(r);
     }
     m_count_ = "Связей: " + std::to_string(logic_.links.size()) + ", вещей на доске: " + std::to_string(logic_.board.size());
+    // An event a level ends only by, with no link on it: the level would never end so.
+    m_warning_.clear();
+    for (const auto& [event, note] : needed_events) {
+        bool linked = false;
+        for (const logic::Link& l : logic_.links)
+            if (const logic::VerbDef* v = verbs_.find(l.verb); v && v->when == event) linked = true;
+        if (!linked) m_warning_ += (m_warning_.empty() ? "" : " ") + note;
+    }
     m_hint_ = logic_.links.empty() && !hint_closed_ && mode_ == "links";
     rebuild_side();
     if (mode_ == "ideas") rebuild_ideas();
@@ -643,7 +665,7 @@ void LogicEditor::rebuild() {
     if (mode_ == "code") rebuild_code();
     if (mode_ == "scheme") scheme_.rebuild();
     if (model_)
-        for (const char* name : {"lg_things", "lg_links", "lg_board_rows", "lg_add_rows", "lg_count", "lg_hint"})
+        for (const char* name : {"lg_things", "lg_links", "lg_board_rows", "lg_add_rows", "lg_count", "lg_warning", "lg_hint"})
             model_.DirtyVariable(name);
 }
 
@@ -970,6 +992,15 @@ void LogicEditor::click_thing(const std::string& id) {
         open_picker(sel_thing_, id);
         return;
     }
+    // The selected thing once more: what it does by itself («Поле набирает цель»), when it can do anything so.
+    if (sel_thing_ == id && !id.empty()) {
+        const logic::Thing* t = thing(id);
+        for (const logic::VerbDef& v : verbs_.all())
+            if (t && v.self() && logic::suits(v, *t, *t)) {
+                open_picker(id, id);
+                return;
+            }
+    }
     select_thing(id);
 }
 
@@ -987,7 +1018,7 @@ void LogicEditor::open_picker(const std::string& a, const std::string& b) {
     const logic::Thing* tb = thing(b);
     m_verbs_.clear();
     if (ta && tb) {
-        for (int reversed = 0; reversed < 2; ++reversed) {
+        for (int reversed = 0; reversed < (a == b ? 1 : 2); ++reversed) {
             const logic::Thing& x = reversed ? *tb : *ta;
             const logic::Thing& y = reversed ? *ta : *tb;
             for (const logic::VerbDef& v : verbs_.all()) {
@@ -1002,7 +1033,7 @@ void LogicEditor::open_picker(const std::string& a, const std::string& b) {
     pick_b_ = b;
     sel_thing_.clear();
     sel_link_ = 0;
-    m_pick_title_ = ta && tb ? "Что «" + ta->name + "» делает с «" + tb->name + "»?" : "Связать";
+    m_pick_title_ = ta && tb ? (a == b ? "Что «" + ta->name + "» делает само?" : "Что «" + ta->name + "» делает с «" + tb->name + "»?") : "Связать";
     place_picker();
     m_picking_ = true;
     rebuild();
@@ -1139,7 +1170,10 @@ std::vector<logic::Step> LogicEditor::steps_of(u32 link) const {
     const logic::Thing* a = l ? thing(l->a) : nullptr;
     const logic::Thing* b = l ? thing(l->b) : nullptr;
     const logic::FindThing find = [this](std::string_view id) { return thing(id); };
-    return v && a && b ? logic::steps(*l, *v, *a, *b, logic::destination(*l, *v, find)) : std::vector<logic::Step>{};
+    std::string when;
+    if (v)
+        if (auto it = event_steps.find(v->when); it != event_steps.end()) when = it->second;
+    return v && a && b ? logic::steps(*l, *v, *a, *b, logic::destination(*l, *v, find), when) : std::vector<logic::Step>{};
 }
 
 void LogicEditor::open_adds(u32 link) {

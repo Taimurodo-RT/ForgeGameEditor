@@ -17,7 +17,7 @@ forge_target_defaults(forge_match3_lib)
 add_library(forge_match3_module STATIC match3_game.cpp match3_testgame.cpp match3_module.cpp)
 target_include_directories(forge_match3_module PUBLIC module)
 target_link_libraries(forge_match3_module PUBLIC forge::modules
-                      PRIVATE forge_match3_lib forge::game forge::editor forge::logic forge::audio forge::platform RmlUi::Core yyjson)
+                      PRIVATE forge_match3_lib forge_demo_common forge::game forge::editor forge::logic forge::audio forge::platform RmlUi::Core yyjson)
 # Running from the build folder reads the UI, the module's files and its test game from the source tree.
 target_compile_definitions(forge_match3_module PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"
                                                        MATCH3_GAME_DIR="${PROJECT_SOURCE_DIR}/tests/data/match3/game"

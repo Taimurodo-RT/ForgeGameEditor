@@ -163,15 +163,24 @@ GemSet gem_set(const objects::Library& library) {
 
 // --- the field ---------------------------------------------------------------------------------------------------------
 
+Spot spot_of(world::TileId t, const level::LevelTiles& own) {
+    if (is_cell(t)) return Spot::Cell;
+    if (t < level::kFirstOwnTile) return Spot::None;
+    const level::OwnTile* o = own.find(t);
+    if (!o || o->layer != kFieldLayer) return Spot::None;
+    return o->solid ? Spot::Stone : Spot::Cell;
+}
+
 bool read_field(level::Level& level, const objects::Library& library, const GemSet& set, const std::string& name, Field& out,
                 std::string& why) {
     const std::string field = "Поле «" + name + "»: ";
     level.ensure_loaded(world::Rect{-kReach, -kReach, kReach, kReach});
     level.load_objects();
+    const level::LevelTiles& own = level.own_tiles();
     i32 x0 = INT_MAX, y0 = INT_MAX, x1 = INT_MIN, y1 = INT_MIN;
     for (i32 y = -kReach; y < kReach; ++y)
         for (i32 x = -kReach; x < kReach; ++x)
-            if (is_cell(level.tile(kFieldLayer, x, y))) {
+            if (spot_of(level.tile(kFieldLayer, x, y), own) == Spot::Cell) {
                 x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
             }
     if (x0 == INT_MAX) {
@@ -189,11 +198,16 @@ bool read_field(level::Level& level, const objects::Library& library, const GemS
     f.y0 = y0;
     f.shape = Board(w, h, kHole);
     f.dark.assign(static_cast<usize>(w) * static_cast<usize>(h), false);
+    f.look.assign(static_cast<usize>(w) * static_cast<usize>(h), 0);
+    f.own = own;
     for (i32 y = 0; y < h; ++y)
         for (i32 x = 0; x < w; ++x) {
             const world::TileId tile = level.tile(kFieldLayer, x0 + x, y0 + y);
-            if (is_cell(tile)) f.shape.set(x, y, kNone);
-            f.dark[static_cast<usize>(f.shape.index(x, y))] = tile == kCellDark;
+            const Spot spot = spot_of(tile, own);
+            if (spot == Spot::Cell) f.shape.set(x, y, kNone);
+            const usize i = static_cast<usize>(f.shape.index(x, y));
+            f.dark[i] = tile == kCellDark;
+            if (spot != Spot::None) f.look[i] = tile;
         }
     // The copies: gems put before, and the rules.
     std::string off, foreign, twice;
@@ -262,7 +276,7 @@ u32 Painter::placeholder(u32 gem) {
 
 bool Painter::init(SDL_GPUDevice* device, SDL_GPUTextureFormat format) {
     objects::Library none;
-    make_sheet(none, GemSet{});
+    make_sheet(none, GemSet{}, nullptr);
     render::SpriteSheet sheet{rgba_.data(), width_, height_, frames_.data(), static_cast<u32>(frames_.size()), false};
     ready_ = sprites_.init(device, format, sheet, 4096);
     sheet_changed_ = false;
@@ -274,8 +288,9 @@ void Painter::shutdown() {
     ready_ = false;
 }
 
-void Painter::update(const objects::Library& library, const GemSet& set) {
-    // What the sheet is made of: each gem's template, picture, its file's time and frames.
+void Painter::update(const objects::Library& library, const GemSet& set, const level::LevelTiles* own) {
+    // What the sheet is made of: each gem's template, picture, its file's time and frames; the level's own tiles.
+    const bool tiles_changed = own && !(*own == own_tiles_);
     std::string sig;
     for (const objects::Template* t : set.gems) {
         sig += t->id + "|" + t->picture + "|" + std::to_string(t->frames) + "|";
@@ -284,13 +299,18 @@ void Painter::update(const objects::Library& library, const GemSet& set) {
         if (!file.empty()) sig += std::to_string(fs::last_write_time(file, ec).time_since_epoch().count());
         sig += ";";
     }
-    if (sig == signature_) return;
+    if (sig == signature_ && !tiles_changed) return;
     signature_ = sig;
-    make_sheet(library, set);
+    make_sheet(library, set, own ? own : &own_tiles_);
     sheet_changed_ = true;
 }
 
-void Painter::make_sheet(const objects::Library& library, const GemSet& set) {
+u32 Painter::own_frame(world::TileId id) const {
+    const usize slot = id >= level::kFirstOwnTile ? id - level::kFirstOwnTile : own_.size();
+    return slot < own_.size() ? own_[slot] : white();
+}
+
+void Painter::make_sheet(const objects::Library& library, const GemSet& set, const level::LevelTiles* own) {
     struct Piece {
         u32 w, h;
         std::vector<u8> rgba;
@@ -322,6 +342,21 @@ void Painter::make_sheet(const objects::Library& library, const GemSet& set) {
             pieces.push_back(std::move(d));
             count_.push_back(1);
         }
+    }
+    // The level's own tiles: each its picture.
+    own_.clear();
+    if (own) {
+        if (&own_tiles_ != own) own_tiles_ = *own;
+        for (usize i = 0; i < own_tiles_.tiles.size(); ++i) {
+            const usize slot = own_tiles_.tiles[i].id - level::kFirstOwnTile;
+            if (own_.size() <= slot) own_.resize(slot + 1, white());
+            own_[slot] = static_cast<u32>(pieces.size());
+            const u32 px = own_tiles_.px;
+            const u8* from = own_tiles_.picture(i);
+            pieces.push_back({px, px, std::vector<u8>(from, from + static_cast<usize>(px) * px * 4)});
+        }
+    } else {
+        own_tiles_ = {};
     }
     // Shelves of pieces, a pixel apart.
     frames_.clear();
@@ -362,13 +397,26 @@ void Painter::put(u32 frame, f64 x, f64 y, f32 w, f32 h, u32 color, u32 order) {
     batch_.push(s);
 }
 
+void Painter::put_tile(world::TileId t, f64 x, f64 y, const level::LevelTiles& own) {
+    const Spot spot = spot_of(t, own);
+    if (spot == Spot::None) return;
+    // A stone over what hides gems in holes (order 4), a cell under the gems.
+    if (t >= level::kFirstOwnTile) put(own_frame(t), x, y, 1, 1, 0xffffffffu, spot == Spot::Stone ? 5 : 0);
+    else put(cell(t == kCellDark), x, y, 1, 1, 0xffffffffu, 0);
+}
+
 void Painter::put_cells(const Field& field) {
     const Board& shape = field.shape;
     const i32 x0 = field.x0, y0 = field.y0;
     for (i32 y = 0; y < shape.h; ++y)
         for (i32 x = 0; x < shape.w; ++x) {
-            if (!shape.cell(x, y)) continue;
             const usize i = static_cast<usize>(shape.index(x, y));
+            const world::TileId t = i < field.look.size() ? field.look[i] : 0;
+            if (t >= level::kFirstOwnTile) {
+                put_tile(t, x0 + x + 0.5, y0 + y + 0.5, field.own);
+                continue;
+            }
+            if (!shape.cell(x, y)) continue;
             put(cell(i < field.dark.size() && field.dark[i]), x0 + x + 0.5, y0 + y + 0.5, 1, 1, 0xffffffffu, 0);
         }
     // The frame round the field.
@@ -454,16 +502,19 @@ void Match3Level::prepare_view(SDL_GPUCommandBuffer* cmd, level::Level& level, c
                                u32 height, const level::ViewOptions&, f64) {
     if (!painter_.ready()) return;
     const GemSet set = gem_set(library_);
-    painter_.update(library_, set);
+    const level::LevelTiles& own = level.own_tiles();
+    painter_.update(library_, set, &own);
     painter_.begin(camera);
-    // The cells in sight, as drawn (a field still being drawn may be bigger than any board).
+    // The cells in sight, as drawn (a field still being drawn may be bigger than any board), and the stones.
     const world::Rect view = camera.visible_tiles(width, height);
     i32 x0 = INT_MAX, y0 = INT_MAX, x1 = INT_MIN, y1 = INT_MIN;
     for (i32 y = view.y0; y < view.y1; ++y)
         for (i32 x = view.x0; x < view.x1; ++x) {
             const world::TileId t = level.tile(kFieldLayer, x, y);
-            if (!is_cell(t)) continue;
-            painter_.put(painter_.cell(t == kCellDark), x + 0.5, y + 0.5, 1, 1, 0xffffffffu, 0);
+            const Spot spot = spot_of(t, own);
+            if (spot == Spot::None) continue;
+            painter_.put_tile(t, x + 0.5, y + 0.5, own);
+            if (spot != Spot::Cell) continue;
             x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
         }
     if (x0 != INT_MAX) {
@@ -539,8 +590,10 @@ flecs::entity Match3Level::place_object(level::Level& level, usize index, f64 x,
     if (index >= defs.size()) return {};
     const objects::Template* t = library_.find(defs[index].key);
     if (!t) return {};
-    // In the middle of the cell under the point: its feet on the cell's bottom.
-    return library_.spawn(level.scene(), *t, std::floor(x) + 0.5, std::floor(y) + 1.0);
+    // (x, y) are the feet (LevelModule::place_object): the gem stands in the middle of the cell they are in, a point on
+    // a cell's bottom line in the cell above it (the editor gives the line under the cell clicked).
+    const f64 row = std::ceil(y - 1e-6) - 1;
+    return library_.spawn(level.scene(), *t, std::floor(x) + 0.5, row + 1.0);
 }
 
 i32 Match3Level::object_kind(flecs::entity e) const {

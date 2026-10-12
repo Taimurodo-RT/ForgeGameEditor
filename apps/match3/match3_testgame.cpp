@@ -2,14 +2,18 @@
 
 #include "match3_level.h"
 
+#include "forge/assets/image.h"
 #include "forge/core/file.h"
 #include "forge/core/path.h"
 #include "forge/editor/project.h"
+#include "forge/editor/sources.h"
 #include "forge/editor/ui_design.h"
 #include "forge/level/levels.h"
 #include "forge/level/own_tiles.h"
 #include "forge/logic/logic.h"
 #include "forge/render/offscreen.h"
+
+#include <yyjson.h>
 
 #include <algorithm>
 #include <cmath>
@@ -354,15 +358,311 @@ bool make_in(const fs::path& games, const fs::path& out, std::string& why) {
            write_screen(game, "win", window("win"), why) && write_screen(game, "lose", window("lose"), why);
 }
 
-} // namespace
+// --- the template «Три в ряд» (step 14.3c) -----------------------------------------------------------------------------
 
-bool make_test_game(const fs::path& games, const fs::path& out, std::string& why) {
-    // Made beside it first: what is in out stays as it was till the whole game is made.
+// The cells of its levels: tiles of their own (forge/level/own_tiles.h) from the template's tiles.png, as the brief has
+// them: «Клетка» 256, «Клетка тёмная» 257 on the layer «Поле», «Камень» 258 (solid: a hole of the field with a picture).
+constexpr u32 kTilePx = 32;
+struct OwnSpec {
+    const char* name;
+    bool solid;
+};
+constexpr OwnSpec kOwn[] = {{"Клетка", false}, {"Клетка тёмная", false}, {"Камень", true}};
+constexpr world::TileId kOwnCell = level::kFirstOwnTile, kOwnDark = level::kFirstOwnTile + 1, kOwnStone = level::kFirstOwnTile + 2;
+
+bool read_tiles(const fs::path& file, level::LevelTiles& out, std::string& why) {
+    std::vector<u8> bytes;
+    assets::CookedTexture img;
+    std::string error;
+    if (!read_file(file, bytes) || !assets::decode_image(bytes, img, &error)) {
+        why = "не читается " + path_to_utf8(file) + " " + error;
+        return false;
+    }
+    constexpr u32 n = std::size(kOwn);
+    if (img.width != n * kTilePx || img.height != kTilePx) {
+        why = path_to_utf8(file) + ": нужен " + std::to_string(n * kTilePx) + " × " + std::to_string(kTilePx) + ", а он " +
+              std::to_string(img.width) + " × " + std::to_string(img.height);
+        return false;
+    }
+    out.px = kTilePx;
+    for (u32 i = 0; i < n; ++i) {
+        out.tiles.push_back({static_cast<world::TileId>(level::kFirstOwnTile + i), kOwn[i].name, kFieldLayer, kOwn[i].solid,
+                             "шаблон «Три в ряд», tiles.png, клетка " + std::to_string(i + 1)});
+        for (u32 y = 0; y < kTilePx; ++y) {
+            const u8* row = &img.rgba8[(static_cast<usize>(y) * img.width + i * kTilePx) * 4];
+            out.rgba.insert(out.rgba.end(), row, row + kTilePx * 4);
+        }
+    }
+    return true;
+}
+
+// Its levels: the field's size, its holes (and which of them have a stone), the gems put before, the level's own rules
+// (moves 0: the kind's, «Поле»'s).
+struct TemplateLevel {
+    const char* id;
+    const char* name;
+    i32 w, h;
+    std::vector<std::pair<i32, i32>> holes, stones;
+    std::vector<Put> gems;
+    u32 moves, target, seed;
+};
+std::vector<TemplateLevel> template_levels() {
+    return {
+        {"level", "Первый", 7, 7, {}, {}, {}, 20, 400, 1401},
+        {"second", "Второй", 8, 8, {{0, 0}, {7, 0}, {0, 7}, {7, 7}, {3, 3}, {4, 3}, {3, 4}, {4, 4}}, {{3, 3}, {4, 3}, {3, 4}, {4, 4}},
+         {{"diamond", 1, 6}, {"diamond", 6, 1}}, 20, 500, 1402},
+        {"third", "Третий", 8, 8, {{3, 0}, {4, 0}, {3, 1}, {4, 1}}, {}, {}, 0, 600, 1403},
+    };
+}
+constexpr u32 kKindMoves = 25, kKindTarget = 1000; // «Поле»: what a level has of its own nothing of
+
+u64 template_object_id(usize level, usize n) { return 0x143c000000000000ull | (static_cast<u64>(level + 1) << 16) | (n + 1); }
+
+bool make_template_level(const fs::path& game, const TemplateLevel& s, usize index, const level::LevelTiles& tiles, std::string& why) {
+    const fs::path dir = level::level_folder(game, s.id);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (!level::save_world(dir, level::LevelWorld{true}, &why)) return false;
+    Match3Level module;
+    if (!module.load_objects(game, &why)) return false;
+    level::Level lv(module);
+    if (!lv.open(dir, &why)) return false;
+    if (!lv.set_own_tiles(tiles)) {
+        why = std::string(s.name) + ": тайлы не ложатся в уровень";
+        return false;
+    }
+    lv.ensure_loaded(world::Rect{-8, -8, 16, 16});
+    auto in = [](const std::vector<std::pair<i32, i32>>& list, i32 x, i32 y) {
+        return std::find(list.begin(), list.end(), std::pair{x, y}) != list.end();
+    };
+    for (i32 y = 0; y < s.h; ++y)
+        for (i32 x = 0; x < s.w; ++x) {
+            const world::TileId t = in(s.stones, x, y) ? kOwnStone : in(s.holes, x, y) ? 0 : (x + y) % 2 ? kOwnDark : kOwnCell;
+            if (t && !lv.set_tile(kFieldLayer, x, y, t)) {
+                why = std::string(s.name) + ": клетка не нарисована";
+                return false;
+            }
+        }
+    const objects::Library& library = module.library_ref();
+    usize n = 0;
+    auto spawn = [&](const char* id, i32 x, i32 y) -> flecs::entity {
+        const objects::Template* t = library.find(std::string_view(id));
+        flecs::entity e = t ? library.spawn(lv.scene(), *t, x + 0.5, y + 1.0) : flecs::entity{};
+        if (e.is_valid()) e.set<level::LevelId>({template_object_id(index, n++)});
+        return e;
+    };
+    for (const Put& p : s.gems)
+        if (!spawn(p.id, p.x, p.y).is_valid()) {
+            why = std::string(s.name) + ": не поставлена фишка " + p.id;
+            return false;
+        }
+    // The level's rules: a copy of «Поле» left of the field; its own values are the level's, the rest the kind's.
+    flecs::entity rules = spawn("board", -2, 0);
+    const objects::Template* board = library.find(std::string_view("board"));
+    if (!rules.is_valid() || !board) {
+        why = std::string(s.name) + ": не поставлены правила уровня";
+        return false;
+    }
+    for (auto [prop, value] : {std::pair{"moves", s.moves}, {"target", s.target}, {"seed", s.seed}}) {
+        if (value == 0) continue;
+        const objects::PropDef* def = library.prop_of(*board, prop);
+        if (!def || !library.set_value(lv.scene(), rules, *def, std::to_string(value))) {
+            why = std::string(s.name) + ": правило " + prop + " не задано";
+            return false;
+        }
+    }
+    lv.touch_objects();
+    const level::Level::SaveReport r = lv.save();
+    if (!r.ok) why = std::string(s.name) + ": " + r.error;
+    return r.ok;
+}
+
+d::Node picture(u32& id, std::string name, std::string file, f32 side) {
+    d::Node n;
+    n.id = id++;
+    n.name = std::move(name);
+    n.type = d::NodeType::Image;
+    n.w = n.h = side;
+    d::Paint p;
+    p.kind = d::PaintKind::Image;
+    p.image = "pictures/" + file;
+    p.fit = d::ImageFit::Fit;
+    n.fills = {p};
+    return n;
+}
+
+// The template's HUD: the level, then moves, aim and score, each with its icon (the brief's ходы.png, цель.png, очки.png).
+d::Screen template_hud() {
+    d::Screen s = d::make_screen("HUD", 1920, 1080);
+    s.show = d::ScreenShow::Playing;
+    u32 id = 2;
+    d::Node line = row(id, "Счёт",
+                       {text(id, "Уровень", "{board.level_number}. {board.level}", 34, 700, kWhite),
+                        picture(id, "Значок ходов", "ходы.png", 44), text(id, "Ходы", "Ходов: {board.moves}", 34, 700, kSoft),
+                        picture(id, "Значок цели", "цель.png", 44), text(id, "Цель", "Цель: {board.target}", 34, 700, kSoft),
+                        picture(id, "Значок очков", "очки.png", 44), text(id, "Очки", "Очки: {board.score}", 34, 800, kGold)},
+                       18, {10, 32, 10, 32});
+    line.width_sizing = d::Sizing::Fixed;
+    line.w = 1240;
+    line.h = 68;
+    line.x = (1920 - line.w) / 2;
+    line.y = 12;
+    line.horizontal = d::Constraint::Center;
+    line.radius = {20, 20, 20, 20};
+    line.fills = {solid(kPanel)};
+    s.root.children = {line};
+    s.next_id = id;
+    return s;
+}
+
+// The Guid a .meta of «Ресурсы» keeps.
+std::optional<Guid> meta_id(const fs::path& meta) {
+    std::vector<u8> bytes;
+    if (!read_file(meta, bytes)) return std::nullopt;
+    yyjson_doc* doc = yyjson_read(reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0);
+    const char* id = doc ? yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "id")) : nullptr;
+    std::optional<Guid> out = id ? Guid::parse(id) : std::nullopt;
+    yyjson_doc_free(doc);
+    return out;
+}
+
+// The files of one folder of the template's «Ресурсы» (games/templates/match3/assets/<from>) copied into the game's
+// folder as the editor copies them (sources.json remembers which asset each copy is).
+bool copy_assets(const fs::path& assets, const char* from, const char* ext, const char* folder, editor::sources::Sources& sources,
+                 std::string& why) {
+    const fs::path dir = assets / utf8_path(from);
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ext) files.push_back(it->path());
+    std::sort(files.begin(), files.end());
+    if (files.empty()) {
+        why = "нет файлов " + std::string(ext) + " в " + path_to_utf8(dir);
+        return false;
+    }
+    for (const fs::path& file : files) {
+        std::vector<u8> bytes;
+        fs::path meta = file;
+        meta += ".meta";
+        const std::optional<Guid> id = meta_id(meta);
+        if (!id || !read_file(file, bytes)) {
+            why = "нет .meta или не читается " + path_to_utf8(file);
+            return false;
+        }
+        const editor::sources::Asset asset{*id, std::string(from) + "/" + path_to_utf8(file.filename()), file, editor::sources::hash_of(bytes)};
+        if (sources.copy_in(asset, folder, &why) != path_to_utf8(file.filename())) {
+            why = path_to_utf8(file.filename()) + " не скопирован: " + why;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool make_template_in(const fs::path& games, const fs::path& game, std::string& why) {
+    const fs::path from = games / "templates" / "match3";
+    std::error_code ec;
+    fs::create_directories(game / "objects", ec);
+    if (ec) {
+        why = "не создана папка " + path_to_utf8(game) + ": " + ec.message();
+        return false;
+    }
+    if (!write_text(game / "game.json",
+                    "{\n  \"title\": \"Три в ряд\",\n  \"org\": \"Forge\",\n  \"theme\": \"fantasy\",\n"
+                    "  \"autosave_minutes\": 5,\n  \"module\": \"match3\"\n}\n",
+                    why))
+        return false;
+    for (const char* file : editor::project::kModuleFiles) {
+        fs::copy_file(games / "modules" / "match3" / file, game / file, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            why = std::string("не скопирован ") + file + ": " + ec.message();
+            return false;
+        }
+    }
+    // The template's «Ресурсы»: the gems' and the HUD's pictures, the gems' sound.
+    {
+        editor::sources::Sources sources;
+        const fs::path assets = from / "assets";
+        if (!sources.load(game, &why) || !copy_assets(assets, "картинки", ".png", "pictures", sources, why) ||
+            !copy_assets(assets, "звуки", ".wav", "sounds", sources, why))
+            return false;
+    }
+    {
+        objects::Library library;
+        if (!library.load(game / "kinds.json", game / "objects", &why)) return false;
+        struct Spec {
+            const char* id;
+            const char* name;
+            const char* about;
+            const char* picture;
+        };
+        // The six gems of the brief: one shape each, so they are told apart without colour too.
+        const Spec gems[] = {
+            {"ruby", "Рубин", "красный, круглой огранки", "рубин.png"},
+            {"emerald", "Изумруд", "зелёный, квадрат со срезанными углами", "изумруд.png"},
+            {"sapphire", "Сапфир", "синий, капля остриём вверх", "сапфир.png"},
+            {"topaz", "Топаз", "жёлтый ромб", "топаз.png"},
+            {"amethyst", "Аметист", "фиолетовый шестиугольник", "аметист.png"},
+            {"diamond", "Алмаз", "белый с голубым, остриём вниз", "алмаз.png"},
+        };
+        for (const Spec& g : gems) {
+            objects::Template t;
+            t.id = g.id;
+            t.name = g.name;
+            t.kind = "gem";
+            t.genre = "Три в ряд";
+            t.about = g.about;
+            t.picture = g.picture;
+            t.frames = 4;
+            t.values = {{"points", "10"}, {"gem_sound", "\"звон.wav\""}};
+            t.file = game / "objects" / (std::string(g.id) + ".object.json");
+            if (!fs::is_regular_file(game / "pictures" / utf8_path(t.picture), ec)) {
+                why = "в «Ресурсах» шаблона нет картинки картинки/" + t.picture + " («" + t.name + "»)";
+                return false;
+            }
+            if (!library.put(t, &why)) return false;
+        }
+        objects::Template board;
+        board.id = "board";
+        board.name = "Поле";
+        board.kind = "board_rules";
+        board.genre = "Три в ряд";
+        board.about = "правила уровней: у каждого уровня своя копия, её значения — его";
+        board.values = {{"moves", std::to_string(kKindMoves)}, {"target", std::to_string(kKindTarget)}};
+        board.file = game / "objects" / "board.object.json";
+        if (!library.put(board, &why)) return false;
+    }
+    level::LevelList list;
+    const std::vector<TemplateLevel> specs = template_levels();
+    for (const TemplateLevel& s : specs) list.levels.push_back({s.id, s.name});
+    list.start = specs.front().id;
+    if (!level::write_levels(game, list, &why)) return false;
+    level::LevelTiles tiles;
+    if (!read_tiles(from / "tiles.png", tiles, why)) return false;
+    for (usize i = 0; i < specs.size(); ++i)
+        if (!make_template_level(game, specs[i], i, tiles, why)) return false;
+    // The links: the aim reached passes the level, no moves left loses it.
+    logic::Logic links;
+    for (const char* verb : {"reaches_target", "out_of_moves"}) {
+        logic::Link l;
+        l.a = "board";
+        l.verb = verb;
+        l.b = "board";
+        links.add(l);
+    }
+    links.set_spot("board", 60, 200);
+    if (!links.save(game / "logic.json", &why)) return false;
+    return write_screen(game, "hud", template_hud(), why) && write_screen(game, "level", window("level"), why) &&
+           write_screen(game, "win", window("win"), why) && write_screen(game, "lose", window("lose"), why);
+}
+
+// out made by make: beside it first, so what is in out stays as it was till the whole game is made.
+template <typename Make>
+bool made_beside(const fs::path& out, Make make, std::string& why) {
     const fs::path target = out.has_filename() ? out : out.parent_path();
     const fs::path made = target.parent_path() / utf8_path(path_to_utf8(target.filename()) + ".сборка");
     std::error_code ec;
     fs::remove_all(made, ec);
-    if (!make_in(games, made, why)) {
+    if (!make(made)) {
         fs::remove_all(made, ec);
         return false;
     }
@@ -373,6 +673,17 @@ bool make_test_game(const fs::path& games, const fs::path& out, std::string& why
         return false;
     }
     return true;
+}
+
+} // namespace
+
+bool make_test_game(const fs::path& games, const fs::path& out, std::string& why) {
+    // Made beside it first: what is in out stays as it was till the whole game is made.
+    return made_beside(out, [&](const fs::path& made) { return make_in(games, made, why); }, why);
+}
+
+bool make_template(const fs::path& games, const fs::path& out, std::string& why) {
+    return made_beside(out, [&](const fs::path& made) { return make_template_in(games, made, why); }, why);
 }
 
 } // namespace match3

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>HUD</title>
+<!-- Made by Forge «Интерфейс» from HUD.json; changes here are overwritten. -->
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  font-family: "Onest";
+  font-size: 24px;
+  color: #ffffff;
+}
+#n1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#n9 {
+  position: absolute;
+  left: calc(50% + -620px);
+  width: 1240px;
+  top: 12px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  gap: 18px;
+  padding: 10px 32px 10px 32px;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(30, 26, 46, 0.824);
+  border-radius: 20px 20px 20px 20px;
+}
+#n2 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #ffffff;
+  white-space: pre;
+}
+#n3 {
+  position: relative;
+  width: 44px;
+  flex-shrink: 0;
+  height: 44px;
+  box-sizing: border-box;
+  background-image: url("../pictures/ходы.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+#n4 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #e2def0;
+  white-space: pre;
+}
+#n5 {
+  position: relative;
+  width: 44px;
+  flex-shrink: 0;
+  height: 44px;
+  box-sizing: border-box;
+  background-image: url("../pictures/цель.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+#n6 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: normal;
+  text-align: left;
+  color: #e2def0;
+  white-space: pre;
+}
+#n7 {
+  position: relative;
+  width: 44px;
+  flex-shrink: 0;
+  height: 44px;
+  box-sizing: border-box;
+  background-image: url("../pictures/очки.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+#n8 {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: normal;
+  text-align: left;
+  color: #ffd54a;
+  white-space: pre;
+}
+html, body, #n1 {
+  pointer-events: none;
+}
+#n9, #n2, #n3, #n4, #n5, #n6, #n7, #n8 {
+  pointer-events: auto;
+}
+</style>
+</head>
+<body>
+<div id="n1" class="frame" title="HUD" forge-screen="playing" forge-fit="expand" forge-size="1920 1080">
+  <div id="n9" class="frame" title="Счёт">
+    <div id="n2" class="text" title="Уровень" forge-text="{board.level_number}. {board.level}">{board.level_number}. {board.level}</div>
+    <div id="n3" class="image" title="Значок ходов"></div>
+    <div id="n4" class="text" title="Ходы" forge-text="Ходов: {board.moves}">Ходов: {board.moves}</div>
+    <div id="n5" class="image" title="Значок цели"></div>
+    <div id="n6" class="text" title="Цель" forge-text="Цель: {board.target}">Цель: {board.target}</div>
+    <div id="n7" class="image" title="Значок очков"></div>
+    <div id="n8" class="text" title="Очки" forge-text="Очки: {board.score}">Очки: {board.score}</div>
+  </div>
+</div>
+</body>
+</html>

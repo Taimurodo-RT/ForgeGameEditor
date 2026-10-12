@@ -1,0 +1,26 @@
+{
+  "px": 32,
+  "tiles": [
+    {
+      "id": 256,
+      "name": "Клетка",
+      "layer": 0,
+      "solid": false,
+      "from": "шаблон «Три в ряд», tiles.png, клетка 1"
+    },
+    {
+      "id": 257,
+      "name": "Клетка тёмная",
+      "layer": 0,
+      "solid": false,
+      "from": "шаблон «Три в ряд», tiles.png, клетка 2"
+    },
+    {
+      "id": 258,
+      "name": "Камень",
+      "layer": 0,
+      "solid": true,
+      "from": "шаблон «Три в ряд», tiles.png, клетка 3"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 """Plays the author's game «Игра А» that `forge_editor --self-test new-game` made
 of the template «Старая шахта», in each game given, with games/slice,
-games/platformer, games/rpg and games/modules moved away for the run: the game must take
+games/platformer, games/rpg, games/match3 and games/modules moved away for the run: the game must take
 everything of it from the game's own folder. They come back after it, every
 file with the SHA-256 it had (checked), also when a folder does not move or a
 game does not start; one that does not come back is named with where it is,
@@ -40,7 +40,14 @@ elder) with the author's conversation that gives ten coins once, the coins' soun
 path to «Мельница» and its link, the HUD's hint, the hero's walk; saved after the reward,
 another run, with the same player's folder and from another working folder, goes on
 from that save (scene project_continue): the reward kept and not given again, «Мельница»
-passes «Деревня», «Поляна» to its chest. And when
+passes «Деревня», «Поляна» to its chest. And when `forge_editor --self-test match3-template`
+has made it (step 14.3c), «Три в ряд А» of the catalog's template «Три в ряд» with no --level
+and `--edits` of what the author changed: «Рубин»'s picture and points, «Звезда шахты» (a
+copy of «Рубин» with the author's picture, points and sound) put on «Первый», its holes and
+stone, the level's own moves and target, «Поле»'s moves, the link «+2 хода» for its rows, the
+HUD's words and the lose window's title; saved on «Второй» between moves, another run, with
+the same player's folder and from another working folder, goes on from that save (scene
+project_continue): «Второй» won, «Третий» lost on «Поле»'s moves, «Ещё раз». And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
@@ -112,6 +119,10 @@ def main() -> int:
     rpg_edits = rpg / "ожидания шаблон rpg.json"
     if not rpg_edits.is_file():
         print(f"нет {rpg / 'ожидания шаблон rpg.json'}: RPG автора не играется (forge_editor --self-test rpg-template её делает)", flush=True)
+    match3 = Path(tempfile.gettempdir()) / "forge_editor_шаблон три в ряд"
+    match3_edits = match3 / "ожидания шаблон три в ряд.json"
+    if not match3_edits.is_file():
+        print(f"нет {match3_edits}: «Три в ряд» автора не играется (forge_editor --self-test match3-template её делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
         print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)
@@ -125,7 +136,7 @@ def main() -> int:
         print(f"нет {old}: игры модулей не играются (forge_editor --self-test modules их делает)", flush=True)
     # The sources the games must do without, moved away; their files' SHA-256 to compare when they are back. The
     # folder they wait in is next to them, on the same disk: a move is a rename, nothing is copied half-way.
-    sources = [ROOT / "games" / name for name in ("slice", "platformer", "rpg", "modules")]
+    sources = [ROOT / "games" / name for name in ("slice", "platformer", "rpg", "match3", "modules")]
     before = {src: digests(src) for src in sources}
     aside = Path(tempfile.mkdtemp(prefix="forge_sources_away_", dir=ROOT))
     moved = []  # (source, where it waits): only those moved, so only those are moved back
@@ -160,6 +171,15 @@ def main() -> int:
                 elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
                 failed += run([str(exe), "--test", "--scene", "project_continue", "--data", data, "--user", str(user),
                                "--edits", str(rpg_edits)], str(elsewhere)) != 0
+            if match3_edits.is_file():
+                # «Три в ряд А»: played, saved on «Второй» between moves; another run, from another working folder, goes on.
+                user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))
+                data = str(match3 / "Мои игры" / "Три в ряд А" / "game")
+                failed += run([str(exe), "--test", "--scene", "project", "--play", "--data", data, "--user", str(user),
+                               "--edits", str(match3_edits)], tempfile.gettempdir()) != 0
+                elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
+                failed += run([str(exe), "--test", "--scene", "project_continue", "--data", data, "--user", str(user),
+                               "--edits", str(match3_edits)], str(elsewhere)) != 0
             if going:
                 # Through the links, saved; then «Продолжить» by another run, from another working folder.
                 user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))

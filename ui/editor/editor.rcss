@@ -243,3 +243,6 @@ body {
     border-top-width: var(--border-hairline);
     border-top-color: var(--outline-variant);
 }
+/* What the game says of the level by its own rules (step 14.3c): why it would not start it. */
+.lv-problem { color: var(--warning); gap: var(--space-1); }
+.lv-problem icon { font-size: 16px; line-height: 16px; color: var(--warning); }
