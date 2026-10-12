@@ -19969,7 +19969,7 @@ private:
     usize im_updates_ = 0;                      // the log's «обновлено в игре» lines for «рубин.png» before its save
     std::map<std::string, std::vector<u8>> im_tmpl_, im_b_;
     assets::CookedTexture im_px0_, im_before_, im_mine_, im_want_;
-    std::vector<u8> im_file0_, im_copy0_, im_bytes_;
+    std::vector<u8> im_file0_, im_copy0_, im_bytes_, im_saved_;
     usize im_cursor_ = 0;
     u8 im_level0_[4] = {}, im_hud0_[4] = {};
     u32 im_look0_ = 0;
@@ -20746,13 +20746,33 @@ private:
             if (hold(ed_.tab() == "images", "the tab")) return true;
             key(SDLK_F5, SDL_KMOD_NONE);
             break;
-        // The JPG: ten strokes in its corner, one save: the rest is one re-encoding of the file, not ten.
+        // Ctrl+S with nothing changed writes nothing: a PNG with a copy in the game, a WebP, the JPG (writing would encode
+        // each again — a JPEG loses — and have the game's copies looked at for nothing). Then the JPG: ten strokes in its
+        // corner, one save: the rest is one re-encoding of the file, not ten.
         case 46: {
             if (hold(idle && record(photo) && !im_row(photo).empty(), "F5: the tab lists it")) return true;
+            const fs::path points_copy = game / "pictures" / utf8_path("очки.png");
+            const std::vector<u8> points_was = tg_bytes(as().abs(points)), points_copy_was = tg_bytes(points_copy);
+            const editor::sources::Entry* pe = ed_.sources.of_file("pictures/очки.png");
+            const std::string points_hash = pe ? pe->hash : std::string();
+            check(im().rel() == points && !im().dirty() && !points_hash.empty(), "«очки.png» open, nothing unsaved, its copy in the game");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            pe = ed_.sources.of_file("pictures/очки.png");
+            check(!im().dirty() && tg_bytes(as().abs(points)) == points_was && tg_bytes(points_copy) == points_copy_was && pe && pe->hash == points_hash &&
+                      !as().looking() && im().note().rfind("Нечего сохранять", 0) == 0,
+                  "Ctrl+S with nothing changed: the PNG, its copy and sources.json as they were, «Ресурсы» not asked to look; «" + im().note() + "»");
+            const char* const webp = "картинки/рубин.webp";
+            check(pj_click_s(im_row(webp)) && im().rel() == webp && !im().dirty(), "«рубин.webp» open, nothing unsaved");
+            const std::vector<u8> webp_was = tg_bytes(as().abs(webp));
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!im().dirty() && tg_bytes(as().abs(webp)) == webp_was && !as().looking(), "Ctrl+S with nothing changed: the WebP byte for byte as it was");
             check(pj_click_s(im_row(photo)) && im().rel() == photo, "«фон.jpg» open");
             im_before_ = im().image();
             im_file0_ = tg_bytes(as().abs(photo));
-            check(im_same(im_before_, im_read(as().abs(photo))), "its working copy is the file's pixels");
+            check(im_same(im_before_, im_read(as().abs(photo))) && !im().dirty(), "its working copy is the file's pixels, nothing unsaved");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!im().dirty() && tg_bytes(as().abs(photo)) == im_file0_ && im_same(im_read(as().abs(photo)), im_before_) && !as().looking(),
+                  "Ctrl+S with nothing changed: the JPG's bytes and pixels as they were, not encoded again");
             key(SDLK_B, SDL_KMOD_NONE);
             key(SDLK_RIGHTBRACKET, SDL_KMOD_NONE);
             check(im().tool() == "pencil" && im().size() == 2 && im().color() == kImMark, "B, ]: the pencil, brush 2, «#285afa»");
@@ -20778,14 +20798,44 @@ private:
                 for (u32 x = 0; x < 64; ++x)
                     if ((x >= 16 || y >= 16) && !(assets::pixel_at(now, x, y) == assets::pixel_at(once, x, y))) same = false;
             check(same, "outside the corner the file's pixels are one re-encoding of the file opened");
+            im_saved_ = written;
             break;
         }
-        case 47:
+        // Saved: Ctrl+S again writes nothing, nor after a stroke undone back to the saved state. Another program's JPG
+        // kept off by «Оставить мои», the stroke undone: Ctrl+S still writes the picture here over it.
+        case 47: {
+            if (hold(idle, "«Ресурсы» looked at the saved JPG")) return true;
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!im().dirty() && tg_bytes(as().abs(photo)) == im_saved_ && !as().looking(), "Ctrl+S again: nothing written, no look");
+            im_cursor_ = im().history().cursor();
+            check(im_stroke({{40, 2}, {50, 2}}) && im().dirty(), "a stroke, unsaved");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!im().dirty() && im().history().cursor() == im_cursor_, "Ctrl+Z: the saved state, nothing unsaved");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(tg_bytes(as().abs(photo)) == im_saved_ && !as().looking(), "Ctrl+S: the JPG not encoded again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(im().dirty(), "Ctrl+Y: the stroke again, unsaved");
+            assets::CookedTexture other = im_photo();
+            assets::apply_effect(other, assets::whole_rect(other), {assets::EffectKind::Invert, 0, 0, 0, {}, {}});
+            im_bytes_ = im_encoded(other, ".jpg");
+            check(write_file_atomic(as().abs(photo), im_bytes_), "another program writes «фон.jpg» (inverted)");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(im().outside() && tg_bytes(as().abs(photo)) == im_bytes_, "Ctrl+S does not write over it");
+            break;
+        }
+        case 48:
+            check(shown("im-outside") && pj_click("im-keep-mine") && !im().outside(), "the banner, «Оставить мои»");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(im().history().cursor() == im_cursor_ && im().dirty(), "Ctrl+Z: the state saved here, still unsaved: the file is the other program's");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(!im().dirty() && tg_bytes(as().abs(photo)) == im_saved_, "Ctrl+S writes the picture here over it, as saved before");
+            break;
+        case 49:
             im_cursor_ = im().history().cursor();
             im_bytes_ = tg_bytes(as().abs(photo));
             check(im_press("im-fx-invert") && im().trying(), "«Инверсия» tried");
             break;
-        case 48:
+        case 50:
             check(!im_same(im().shown(), im().image()) && tg_bytes(as().abs(photo)) == im_bytes_, "shown on the canvas, the file as it was");
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
             check(!im().trying() && im().history().cursor() == im_cursor_ && !im().dirty() && tg_bytes(as().abs(photo)) == im_bytes_,
@@ -20794,12 +20844,12 @@ private:
             check(im_stroke({{40, 40}, {50, 40}}) && im().dirty(), "a stroke, unsaved");
             check(!ed_.quit_request(), "the window's close asks first");
             break;
-        case 49:
+        case 51:
             check(pjw().view() == "unsaved" && element_text("pj-unsaved").find("фон.jpg") != std::string::npos,
                   "«Закрыть редактор»: " + element_text("pj-unsaved"));
             check(pj_click("pj-stay"), "«Отмена»");
             break;
-        case 50: {
+        case 52: {
             check(pjw().view().empty() && !ed_.quit_asked && im().dirty() && tg_bytes(as().abs(photo)) == im_bytes_, "the editor stays, the stroke unsaved");
             im_rec_["points_hash"] = ed_.sources.of_file("pictures/очки.png") ? ed_.sources.of_file("pictures/очки.png")->hash : std::string();
             check(tg_put(im_root() / utf8_path("записи.txt"), im_rec_), "what was made, written down for the next editor");
@@ -20807,7 +20857,7 @@ private:
             check(!ed_.quit_request(), "the window's close asks again");
             break;
         }
-        case 51:
+        case 53:
             check(pjw().view() == "unsaved" && pj_click("pj-save"), "«Сохранить»");
             check(!im().dirty() && tg_bytes(as().abs(photo)) == im_encoded(im_want_, ".jpg") && ed_.quit_asked, "the picture written, the editor closes");
             return false;

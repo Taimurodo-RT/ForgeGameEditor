@@ -1331,10 +1331,18 @@ private:
         play_level("бот играет «Первый» с картинками автора", true);
         steps_.push_back({"исчезают кадрами автора", 1, [this](u32) {
             im_watching_ = false;
-            std::string seen;
-            for (const auto& [frame, ok] : im_seen_) seen += " " + frame;
-            check(im_bad_.empty(), "исчезающие «Рубин» и «" + e_.im_chip_name + "» нарисованы кадрами автора:" +
-                                       (seen.empty() ? std::string(" ни один не исчезал кадрами за игру") : seen) + im_bad_);
+            // The bot plays «Первый» from its seed, a frame 1/60 s: «Рубин» and the author's gem vanish the same way each
+            // run. Each of their frames 2–4 seen drawn: a watcher that saw nothing, or a frame never drawn (one frozen),
+            // fails as a wrong pixel does.
+            std::string seen, unseen;
+            for (const char* gem : {"рубин", "фишка"})
+                for (u32 f = 2; f <= 4; ++f) {
+                    const std::string name = std::string(gem) + ":" + std::to_string(f);
+                    (im_seen_.count(name) ? seen : unseen) += " " + name;
+                }
+            check(unseen.empty() && im_bad_.empty(), "исчезающие «Рубин» и «" + e_.im_chip_name + "» нарисованы кадрами автора, увидены:" +
+                                                         (seen.empty() ? std::string(" ни один") : seen) +
+                                                         (unseen.empty() ? std::string() : "; не увидены:" + unseen) + im_bad_);
             return true;
         }});
     }

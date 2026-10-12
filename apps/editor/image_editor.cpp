@@ -42,6 +42,10 @@ struct ImageEditor::Picture {
     f64 cx = 0, cy = 0;       // the canvas's middle, in the picture's pixels
     bool outside = false;     // the file changed outside while there are unsaved changes
     bool missing = false;     // the file is gone
+    bool kept = false;        // «Оставить мои»: the file is another program's, no state of the history is on disk
+
+    // What Ctrl+S would change on disk: the history away from its saved state, or the file kept off.
+    bool unsaved() const { return kept || history.dirty(); }
 };
 
 namespace {
@@ -369,12 +373,12 @@ const CookedTexture& ImageEditor::image() const {
 
 const CookedTexture& ImageEditor::shown() const { return trying_ ? tried_ : image(); }
 
-bool ImageEditor::dirty() const { return current_ && current_->history.dirty(); }
+bool ImageEditor::dirty() const { return current_ && current_->unsaved(); }
 
 std::vector<std::string> ImageEditor::unsaved() const {
     std::vector<std::string> out;
     for (const auto& p : pictures_)
-        if (p->history.dirty()) out.push_back("Изображения: «" + p->rel + "» не сохранена (при закрытии правки теряются)");
+        if (p->unsaved()) out.push_back("Изображения: «" + p->rel + "» не сохранена (при закрытии правки теряются)");
     return out;
 }
 
@@ -493,7 +497,7 @@ std::string ImageEditor::status() const {
     if (!current_) return "Изображения: выберите картинку слева или «Открыть в редакторе изображений» в «Ресурсах»";
     std::string s = "Изображения: «" + current_->rel + "» · " + size_words(current_->image) + " · " + format_of(current_->ext);
     if (frames() > 1) s += " · " + count_words(frames(), "кадр", "кадра", "кадров");
-    if (current_->history.dirty()) s += " · не сохранена";
+    if (current_->unsaved()) s += " · не сохранена";
     if (current_->outside) s += " · файл изменён снаружи";
     if (current_->missing) s += " · файла нет";
     return s;
@@ -916,13 +920,24 @@ bool ImageEditor::save() {
         say("Файла «" + p->rel + "» больше нет в «Ресурсах»: «Сохранить как…» запишет картинку новым файлом");
         return false;
     }
+    std::vector<u8> disk;
+    const bool read = read_file(p->file, disk);
+    // Nothing changed here since the file was read or written (Ctrl+Z back to that state too): writing it again would
+    // encode it again — a JPEG loses each time — and have the game's copies looked at for nothing. A file another
+    // program changed since is taken, as F5 takes it.
+    if (!p->unsaved()) {
+        if (read && editor::sources::hash_of(disk) != p->disk_hash) {
+            files_changed();
+            return true;
+        }
+        say("Нечего сохранять: «" + p->rel + "» как на диске, файл не перезаписан");
+        return true;
+    }
     if (!assets::can_encode_image(p->ext)) {
         say(format_of(p->ext) + " вкладка читает, но не пишет: «Сохранить как…» PNG, WebP, TGA, BMP или JPG");
         return false;
     }
-    std::vector<u8> disk;
-    std::error_code ec;
-    if (read_file(p->file, disk) && editor::sources::hash_of(disk) != p->disk_hash) {
+    if (read && editor::sources::hash_of(disk) != p->disk_hash) {
         p->outside = true;
         say("Файл «" + p->rel + "» изменён другой программой после того, как открыт здесь. Не записан: выберите «Взять с диска» или «Оставить мои», "
             "или «Сохранить как…»");
@@ -936,7 +951,7 @@ bool ImageEditor::save() {
         return false;
     }
     p->history.mark_saved();
-    p->outside = false;
+    p->outside = p->kept = false;
     say("Сохранено: «" + p->rel + "» (" + size_words(p->image) + ", " + format_of(p->ext) + ")");
     list_version_ = ~0ull;
     rebuild_panels();
@@ -948,7 +963,7 @@ bool ImageEditor::save_all(std::string& error) {
     Picture* was = current_;
     bool ok = true;
     for (const auto& p : pictures_) {
-        if (!p->history.dirty()) continue;
+        if (!p->unsaved()) continue;
         current_ = p.get();
         if (!save()) {
             if (ok) error = "картинка «" + p->rel + "» не записана: " + note_;
@@ -1002,7 +1017,7 @@ bool ImageEditor::save_as(const std::string& extension_in, bool confirm) {
     p->ext = extension;
     p->id = Guid{};
     p->disk_hash = editor::sources::hash_of(bytes);
-    p->missing = p->outside = false;
+    p->missing = p->outside = p->kept = false;
     p->history.mark_saved();
     say("Сохранено как «" + made + "» — новый ресурс; «" + from + "» и то, что его использует, как были");
     list_version_ = ~0ull;
@@ -1029,7 +1044,7 @@ bool ImageEditor::take_disk() {
     commit(*p, before, assets::whole_rect(p->image), "Взято с диска: «" + p->rel + "»");
     p->disk_hash = editor::sources::hash_of(bytes);
     p->history.mark_saved();
-    p->outside = false;
+    p->outside = p->kept = false;
     say("«" + p->rel + "» — как на диске; Ctrl+Z вернёт правки, сделанные здесь");
     touched();
     return true;
@@ -1041,6 +1056,7 @@ bool ImageEditor::keep_mine() {
     std::vector<u8> bytes;
     if (read_file(p->file, bytes)) p->disk_hash = editor::sources::hash_of(bytes);
     p->outside = false;
+    p->kept = true; // Ctrl+Z back to the saved state is not the file any more: Ctrl+S still writes
     say("Ctrl+S запишет правки, сделанные здесь, поверх того, что на диске");
     rebuild_panels();
     return true;
@@ -1066,7 +1082,7 @@ void ImageEditor::files_changed() {
         if (!read_file(p.file, bytes)) continue;
         const std::string hash = editor::sources::hash_of(bytes);
         if (hash == p.disk_hash) continue;
-        if (p.history.dirty() || (&p == current_ && (trying_ || stroking_))) {
+        if (p.unsaved() || (&p == current_ && (trying_ || stroking_))) {
             if (!p.outside) FORGE_WARN("Изображения: файл «%s» изменён другой программой, а здесь есть несохранённые правки", p.rel.c_str());
             p.outside = true;
             continue;
@@ -1305,7 +1321,7 @@ void ImageEditor::rebuild_list() {
         r.index = static_cast<int>(rows.size());
         for (const auto& p : pictures_)
             if (p->rel == rel) {
-                r.unsaved = p->history.dirty();
+                r.unsaved = p->unsaved();
                 r.selected = p.get() == current_;
             }
         rows.push_back(r);
@@ -1363,7 +1379,7 @@ void ImageEditor::rebuild_panels() {
         return;
     }
     set_value(m_name_, Rml::String(p->rel), model_, "im_name");
-    set_value(m_unsaved_, p->history.dirty(), model_, "im_unsaved");
+    set_value(m_unsaved_, p->unsaved(), model_, "im_unsaved");
     const u32 n = frames();
     set_value(m_info_, Rml::String(size_words(p->image) + " · " + format_of(p->ext) + (n > 1 ? " · " + count_words(n, "кадр", "кадра", "кадров") : "")),
               model_, "im_info");
@@ -1408,7 +1424,7 @@ void ImageEditor::rebuild_panels() {
         line += " · x " + std::to_string(hover_x_) + ", y " + std::to_string(hover_y_) + " · " + hex_of(c);
         if (n > 1 && p->image.width % n == 0) line += " · кадр " + std::to_string(static_cast<u32>(hover_x_) / (p->image.width / n) + 1);
     }
-    if (p->history.dirty()) line += " · не сохранена";
+    if (p->unsaved()) line += " · не сохранена";
     set_value(m_status_, Rml::String(line), model_, "im_status");
     if (list_version_ != p->history.version() + pictures_.size()) {
         list_version_ = p->history.version() + pictures_.size();
