@@ -30,6 +30,10 @@ target_compile_definitions(forge_editor_app PRIVATE FORGE_UI_DIR="${PROJECT_SOUR
                                                    FORGE_SLICE_EXE="$<TARGET_FILE:forge_slice>")
 add_dependencies(forge_editor_app forge_game_app forge_slice)
 forge_target_defaults(forge_editor_app)
+# main.cpp with its self-test is more sections than an MSVC object file holds by default.
+if(MSVC)
+  target_compile_options(forge_editor_app PRIVATE /bigobj)
+endif()
 
 # Converters («Конвертировать в…» in «Ресурсы») are Python scripts in
 # converters/. On Windows the editor gets a Python of its own with their
