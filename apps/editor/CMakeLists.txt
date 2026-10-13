@@ -1,3 +1,5 @@
+add_subdirectory(pixel)
+
 # The self-test's look into «Старая шахта» (slice_checks.cpp): the one file of the editor that sees slice's own types,
 # as a library of its own that links slice PRIVATE, so no other file of the editor can include a header of slice
 # (step 14.3a; tools/check_core_includes.py checks the sources the same way).
@@ -13,7 +15,7 @@ set_target_properties(forge_editor_app PROPERTIES OUTPUT_NAME forge_editor)
 # The modules come from the composition root (apps/builtin): the editor names none of them.
 target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render forge::ui forge::editor forge::assets forge::audio forge::level forge::logic
                       forge::game forge::sim forge::objects forge::modules forge_builtin_modules forge_editor_slice_checks forge_demo_common
-                      yyjson)
+                      forge_editor_pixel yyjson)
 # UI files are read from the source tree, so editing them updates the running editor.
 # The level of «Старая шахта» lives next to the game's data; «Играть отсюда»
 # starts the game's launcher built next to the editor (forge_game: the module the game names).

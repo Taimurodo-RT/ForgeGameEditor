@@ -19,6 +19,7 @@ include(cmake/Dependencies.cmake)
 include(cmake/Warnings.cmake)
 include(cmake/Shaders.cmake)
 include(cmake/Embed.cmake)
+include(cmake/LinkCheck.cmake)
 
 add_subdirectory(tools/shaderc)
 
@@ -56,6 +57,10 @@ add_subdirectory(apps/editor)
 add_subdirectory(apps/slice)
 add_subdirectory(apps/match3)
 add_subdirectory(apps/rpg)
+
+# The game's launcher, its old name in the package «Старая шахта» and the modules never link ThorVG: the editor bakes.
+forge_check_not_linked(thorvg forge_game_app forge_slice forge_builtin_modules forge_slice_module forge_match3_module forge_rpg_module
+                       forge_probe_module)
 
 if(FORGE_BUILD_TESTS)
   enable_testing()

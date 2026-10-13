@@ -132,6 +132,14 @@ FetchContent_Declare(lunasvg
   GIT_TAG v3.5.0
   GIT_SHALLOW TRUE)
 
+# ThorVG: draws the vector characters of the animator's «Пиксельные» mode, and nothing else: games never link it.
+# It has no CMake build, so only its CPU renderer and its SVG loader are compiled below, from its own sources.
+FetchContent_Declare(thorvg
+  GIT_REPOSITORY https://github.com/thorvg/thorvg.git
+  GIT_TAG v1.1.2
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR do-not-configure)
+
 # HarfBuzz: text shaping. The UI takes glyph widths and kerning from it, so text is as wide as in a browser.
 # Only its single-file build (src/harfbuzz.cc) is compiled, with no optional backends.
 FetchContent_Declare(harfbuzz
@@ -149,7 +157,7 @@ set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
 set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 # RmlUi looks for an installed FreeType; it gets the one fetched above instead.
 set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON)
-FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb libwebp glslang spirv_cross flecs box2d luau freetype lunasvg harfbuzz)
+FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb libwebp glslang spirv_cross flecs box2d luau freetype lunasvg thorvg harfbuzz)
 add_library(harfbuzz STATIC ${harfbuzz_SOURCE_DIR}/src/harfbuzz.cc)
 target_include_directories(harfbuzz SYSTEM PUBLIC ${harfbuzz_SOURCE_DIR}/src)
 if(MSVC)
@@ -172,6 +180,29 @@ foreach(t Luau.Analysis Luau.Config Luau.EqSat Luau.Require Luau.RequireNavigato
     set_target_properties(${t} PROPERTIES EXCLUDE_FROM_ALL TRUE)
   endif()
 endforeach()
+
+# ThorVG's meson build, as a list: its CPU renderer with threads, the SVG loader and raw pixels; no SIMD, OpenMP, file
+# reading (pictures come from memory), fonts, Lottie or other loaders.
+set(thorvg_dir ${thorvg_SOURCE_DIR}/src)
+file(GLOB thorvg_sources
+  ${thorvg_dir}/common/*.cpp
+  ${thorvg_dir}/renderer/*.cpp
+  ${thorvg_dir}/renderer/cpu_engine/*.cpp
+  ${thorvg_dir}/loaders/raw/*.cpp
+  ${thorvg_dir}/loaders/svg/*.cpp)
+add_library(thorvg STATIC ${thorvg_sources})
+# Written only when it changes, so a new configure does not rebuild ThorVG.
+file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/thorvg_config/config.h CONTENT
+  "#pragma once\n#define THORVG_CPU_ENGINE_SUPPORT 1\n#define THORVG_SVG_LOADER_SUPPORT 1\n#define THORVG_THREAD_SUPPORT 1\n#define THORVG_VERSION_STRING \"1.1.2\"\n")
+target_include_directories(thorvg PRIVATE ${CMAKE_BINARY_DIR}/thorvg_config ${thorvg_dir}/common ${thorvg_dir}/renderer
+  ${thorvg_dir}/renderer/cpu_engine ${thorvg_dir}/loaders/raw ${thorvg_dir}/loaders/svg)
+target_include_directories(thorvg SYSTEM PUBLIC ${thorvg_SOURCE_DIR}/inc)
+target_compile_definitions(thorvg PUBLIC TVG_STATIC)
+if(WIN32)
+  target_compile_definitions(thorvg PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+find_package(Threads REQUIRED)
+target_link_libraries(thorvg PRIVATE Threads::Threads)
 
 add_library(xxhash_headers INTERFACE)
 target_include_directories(xxhash_headers SYSTEM INTERFACE ${xxhash_SOURCE_DIR})
