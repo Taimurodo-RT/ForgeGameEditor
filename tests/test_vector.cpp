@@ -14,6 +14,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <string>
 #include <utility>
 #include <vector>
