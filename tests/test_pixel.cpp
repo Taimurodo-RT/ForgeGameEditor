@@ -8,6 +8,7 @@
 #include "forge/pixel/script.h"
 #include "forge/pixel/svg.h"
 #include "forge/vector/ease.h"
+#include "forge/vector/trig.h"
 
 #include <doctest/doctest.h>
 #include <lunasvg.h>
@@ -262,6 +263,35 @@ TEST_CASE("Pixel rig: parts, their nesting, rest bounds and pivots") {
     rig.set_pivot("arm", {31, 24});
     CHECK(rig.pivot(rig.part("arm")) == vector::Point{31, 24});
     CHECK(rig.pivot(-1) == vector::Point{});
+
+    // Where a pivot is carried in a pose: by its own move, not by its turn (it turns round it); by the parent's move
+    // and turn.
+    auto near = [](vector::Point a, vector::Point b) { return std::abs(a.x - b.x) < 1e-4 && std::abs(a.y - b.y) < 1e-4; }; // ThorVG keeps floats
+    auto turn = [](f64 deg, vector::Point c) {
+        const f64 a = deg * vector::trig::kPi / 180;
+        return translation(c.x, c.y) * Affine{std::cos(a), std::sin(a), -std::sin(a), std::cos(a), 0, 0} * translation(-c.x, -c.y);
+    };
+    const i32 arm = rig.part("arm"), hand = rig.part("hand");
+    CHECK(rig.carried(arm) == Affine{});
+    std::string why;
+    Pose pose;
+    pose.parts["arm"].x = 3;
+    pose.parts["arm"].rot = 40;
+    REQUIRE(rig.pose(pose, why));
+    CHECK(near(rig.carried(arm).apply(rig.pivot(arm)), {34, 24}));
+    CHECK(near(rig.carried(arm).apply({0, 0}), {3, 0})); // a move only: the turn is round the pivot
+    pose.parts["body"].y = -2;
+    pose.parts["body"].rot = 90; // round the centre of its bounds, (32, 26): (34, 24) to (34, 28), then up 2
+    REQUIRE(rig.pose(pose, why));
+    CHECK(near(rig.carried(arm).apply(rig.pivot(arm)), {34, 26}));
+    const vector::Point h = rig.pivot(hand); // the centre of its rest bounds, (31, 30.5)
+    const Affine body_m = translation(0, -2) * turn(90, {32, 26}), arm_m = translation(3, 0) * turn(40, {31, 24});
+    CHECK(near(rig.carried(hand).apply(h), (body_m * arm_m).apply(h)));
+    // Dragged back: the point of the pose is the pivot it came from.
+    CHECK(near(inverse(rig.carried(hand)).apply(rig.carried(hand).apply({20, 5})), {20, 5}));
+    REQUIRE(rig.pose({}, why));
+    CHECK(near(rig.carried(hand).apply(h), h));
+    CHECK(rig.carried(-1) == Affine{});
 }
 
 TEST_CASE("Pixel rig: drawn as lunasvg draws the same SVG") {
@@ -727,6 +757,7 @@ TEST_CASE("Pixel doc: .pixel.json read, written and read back") {
     d.outline_color = {16, 32, 48, 255};
     d.hash = "ff";
     d.clips[1].fps = 7.5f;
+    d.strip = {{"walk", 0, 8, 12, true}, {"stand", 8, 4, 7.5f, false}};
     const std::string text = write_pixel_doc(d);
     PixelDoc back;
     REQUIRE(read_pixel_doc(text, back, why));
@@ -740,11 +771,16 @@ TEST_CASE("Pixel doc: .pixel.json read, written and read back") {
         {"{\"seed\": -1}", "seed: нужно целое число от 0"},
         {"{\"params\": {\"a\": \"b\"}}", "params.a: нужно число"},
         {"{\"pivots\": {\"leg\": [1]}}", "pivots.leg: нужна точка [x, y]"},
-        {"{\"clips\": {\"walk\": {\"frames\": 0}}}", "clips.walk.frames: нужно целое от 1 до 64"},
+        {"{\"clips\": {\"walk\": {\"frames\": 0}}}", "clips.walk.frames: нужно целое от 1 до 32"},
+        {"{\"clips\": {\"walk\": {\"frames\": 33}}}", "clips.walk.frames: нужно целое от 1 до 32"},
         {"{\"clips\": {\"walk\": {\"fps\": 0}}}", "clips.walk.fps: нужно число больше 0 и не больше 60"},
         {"{\"clips\": {\"walk\": {\"loop\": 1}}}", "clips.walk.loop: нужно true или false"},
         {"{\"bake\": {\"palette\": \"gold\"}}", "bake.palette: \"svg\" (цвета рисунка) или \"game\" (цвета игры)"},
         {"{\"bake\": {\"outline\": \"thick\"}}", "bake.outline: null или цвет \"#rrggbb\""},
+        {"{\"bake\": {\"strip\": {\"walk\": {\"first\": 30, \"frames\": 4, \"fps\": 10, \"loop\": true}}}}",
+         "bake.strip.walk: нужно {\"first\": 0, \"frames\": 4, \"fps\": 10, \"loop\": true} в пределах 32 кадров"},
+        {"{\"bake\": {\"strip\": {\"walk\": {\"first\": 0, \"frames\": 4, \"fps\": 10}}}}",
+         "bake.strip.walk: нужно {\"first\": 0, \"frames\": 4, \"fps\": 10, \"loop\": true} в пределах 32 кадров"},
     };
     for (const auto& [text_bad, expected] : bad) {
         PixelDoc x;
@@ -767,8 +803,10 @@ TEST_CASE("Pixel bake: the clips' frames side by side, frame k at t = k / fps") 
     doc.pivots["arm"] = {31, 24};
     doc.pivots["nope"] = {0, 0};
     doc.clips = {{"stand", 2, 6, true}, {"walk", 3, 12, false}};
+    rig.set_pivot("head", {1, 2}); // set before (a pivot dragged, then undone): the file has none for it
     CHECK(apply_pivots(rig, doc) == std::vector<std::string>{"nope"});
     CHECK(rig.pivot(rig.part("arm")) == vector::Point{31, 24});
+    CHECK(rig.pivot(rig.part("head")) == vector::Point{32, 16});
     const assets::CookedTexture rest = rig.draw(24, 20);
 
     Strip strip;
@@ -818,6 +856,14 @@ TEST_CASE("Pixel bake: the clips' frames side by side, frame k at t = k / fps") 
     PoseScript broken = script_of("return { pose = function(t, p, rng, clip)\n if t > 0.1 then part('nope'):set{} end\nend }");
     CHECK_FALSE(bake_strip(rig, broken, doc, {}, strip, why));
     CHECK(why == "клип «stand», кадр 2: строка 2: в SVG нет части «nope»");
+    CHECK(strip.picture.rgba8.empty());
+    // As many frames as a picture of the game may have, and not one more.
+    doc.clips = {{"stand", 20, 10, true}, {"walk", 12, 10, true}};
+    CHECK(bake_strip(rig, s, doc, {}, strip, why));
+    CHECK(strip.frames == 32);
+    doc.clips[1].frames = 13;
+    CHECK_FALSE(bake_strip(rig, s, doc, {}, strip, why));
+    CHECK(why == "в клипах 33 кадра, в картинке игры их не больше 32: уберите кадры у клипов");
     CHECK(strip.picture.rgba8.empty());
     doc.clips.clear();
     CHECK_FALSE(bake_strip(rig, s, doc, {}, strip, why));

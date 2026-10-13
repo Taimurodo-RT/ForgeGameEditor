@@ -10,8 +10,12 @@
 //     "params": {"speed": 1.0},
 //     "pivots": {"leg_l": [29.5, 41]},
 //     "clips": {"stand": {"frames": 4, "fps": 6, "loop": true}, "walk": {"frames": 8, "fps": 12, "loop": true}},
-//     "bake": {"palette": "svg", "outline": null, "picture": "<Guid of the baked picture>", "hash": "<its bytes>"}
+//     "bake": {"palette": "svg", "outline": null, "picture": "<Guid of the baked picture>", "hash": "<its bytes>",
+//              "strip": {"stand": {"first": 0, "frames": 4, "fps": 6, "loop": true}, "walk": {"first": 4, …}}}
 //   }
+//
+// "strip" is what the picture holds, as it was baked: «Отдать шаблону…» gives the template these animations, whatever
+// the clips became since.
 
 #include "forge/pixel/rig.h"
 
@@ -23,6 +27,8 @@
 namespace forge::pixel {
 
 inline constexpr u32 kMaxFrameSide = 256;
+// Frames in the baked strip, all clips together: as many as a picture of the game may have (objects::kMaxFrames).
+inline constexpr u32 kMaxStripFrames = 32;
 
 struct ClipSpec {
     std::string state; // the animation state it plays ("walk"), its key in "clips"
@@ -30,6 +36,15 @@ struct ClipSpec {
     f32 fps = 10;
     bool loop = true;
     bool operator==(const ClipSpec&) const = default;
+};
+
+// A clip as baked: its frames in the strip.
+struct StripClip {
+    std::string state;
+    u32 first = 0, frames = 0;
+    f32 fps = 10;
+    bool loop = true;
+    bool operator==(const StripClip&) const = default;
 };
 
 struct PixelDoc {
@@ -45,6 +60,7 @@ struct PixelDoc {
     Rgba8 outline_color{0, 0, 0, 255};
     std::string picture; // the Guid of the baked picture; empty until baked
     std::string hash;    // its bytes' hash when baked: another hash means it was edited since
+    std::vector<StripClip> strip; // what the baked picture holds
     bool operator==(const PixelDoc&) const = default;
 };
 

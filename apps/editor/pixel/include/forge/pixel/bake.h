@@ -13,7 +13,8 @@
 
 namespace forge::pixel {
 
-// The pivots of the file put on the rig; the ids it has no part for, in order.
+// The pivots of the file put on the rig, every other part's the middle of its rest bounds again; the ids of the file it
+// has no part for, in order.
 std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc);
 
 // The pose of frame k of a clip. False with why: "клип «walk», кадр 3: строка 5: …".
@@ -26,12 +27,6 @@ BakeOptions bake_options(const PixelDoc& doc, const std::vector<Rgba8>& game_col
 bool bake_frame(Rig& rig, PoseScript& script, const PixelDoc& doc, const ClipSpec& clip, u32 k, const BakeOptions& options,
                 assets::CookedTexture& out, std::string& why);
 
-struct StripClip {
-    std::string state;
-    u32 first = 0, frames = 0; // its frames in the strip
-    f32 fps = 10;
-    bool loop = true;
-};
 struct Strip {
     assets::CookedTexture picture;
     std::vector<StripClip> clips;

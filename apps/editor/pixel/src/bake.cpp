@@ -5,11 +5,14 @@
 namespace forge::pixel {
 
 std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc) {
-    std::vector<std::string> missing;
-    for (const auto& [id, at] : doc.pivots) {
-        if (rig.part(id) < 0) missing.push_back(id);
-        else rig.set_pivot(id, at);
+    // A part the file has no pivot for turns round the middle of its rest bounds, whatever was set before (Ctrl+Z).
+    for (const Part& p : rig.parts()) {
+        const auto it = doc.pivots.find(p.id);
+        rig.set_pivot(p.id, it != doc.pivots.end() ? it->second : vector::Point{(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2});
     }
+    std::vector<std::string> missing;
+    for (const auto& [id, at] : doc.pivots)
+        if (rig.part(id) < 0) missing.push_back(id);
     return missing;
 }
 
@@ -48,6 +51,13 @@ bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOpt
     for (const ClipSpec& c : doc.clips) out.frames += c.frames;
     if (out.frames == 0) {
         why = "нет ни одного клипа с кадрами";
+        return false;
+    }
+    if (out.frames > kMaxStripFrames) {
+        const u32 d = out.frames % 10, h = out.frames % 100;
+        why = "в клипах " + std::to_string(out.frames) + (d == 1 && h != 11 ? " кадр" : d >= 2 && d <= 4 && (h < 12 || h > 14) ? " кадра" : " кадров") +
+              ", в картинке игры их не больше " + std::to_string(kMaxStripFrames) + ": уберите кадры у клипов";
+        out = {};
         return false;
     }
     const u32 w = doc.frame_w, h = doc.frame_h;

@@ -14,6 +14,7 @@
 #assets icon.ft-folder  { color: var(--currency-gold); }
 #assets icon.ft-image   { color: var(--success); }
 #assets icon.ft-sprite  { color: var(--resource-xp); }
+#assets icon.ft-vector  { color: var(--rarity-rare); }
 #assets icon.ft-audio   { color: var(--rarity-epic); }
 #assets icon.ft-video   { color: var(--rarity-mythic); }
 #assets icon.ft-font    { color: var(--tertiary); }

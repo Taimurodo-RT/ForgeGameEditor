@@ -177,6 +177,8 @@ public:
     std::vector<std::filesystem::path> images() const;
     // The project's sounds, the newest first (absolute paths).
     std::vector<std::filesystem::path> sounds() const;
+    // The project's files whose names end so (".svg", ".pixel.json"; case does not count), by their paths.
+    std::vector<assets::AssetRecord> ending(std::string_view suffix) const;
     // The asset a file of the project is (null: not one of its files, or not looked at yet).
     const assets::AssetRecord* record_of(const std::filesystem::path& file) const;
     // The asset with that Guid, wherever it is now (null: gone).

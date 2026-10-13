@@ -112,3 +112,39 @@
 
 .an-bar .lg-modes { margin-left: var(--space-3); }
 .an-soon { font-size: 11px; color: var(--on-surface-variant); }
+
+/* «Пиксельные»: the vector and the pixel frame side by side, the frames of the clip under them. */
+.px-views { gap: var(--space-2); flex-wrap: wrap; justify-content: center; }
+.px-view { gap: var(--space-1); align-items: center; }
+.px-canvas {
+    width: 288px;
+    height: 288px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background-color: var(--surface-container-highest);
+}
+#px-vector { cursor: crosshair; }
+.px-one { gap: var(--space-1); align-items: center; }
+.px-timeline { flex-wrap: wrap; gap: 4px; justify-content: center; }
+.px-problem { white-space: pre-line; padding: var(--space-1) var(--space-2); }
+.px-part {
+    min-height: 28px;
+    align-items: center;
+    gap: var(--space-1);
+    padding-right: var(--space-2);
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.px-part:hover { background-color: var(--state-hover-layer); }
+.px-part.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); font-weight: 600; }
+.px-part .sub { font-size: 11px; color: var(--on-surface-variant); font-weight: normal; }
+.px-field { gap: var(--space-1); align-items: center; padding: 2px var(--space-2); font-size: 13px; }
+.px-field input { width: 64px; }
+#px-outline-color { width: 84px; }
+.px-clip { gap: var(--space-1); }
+.an-chip.off { opacity: 0.6; }
+.px-warn { gap: var(--space-1); padding: var(--space-2); border-radius: 6px; font-size: 13px; background-color: var(--error-container); color: var(--on-error-container); }
+.px-give { gap: 2px; }

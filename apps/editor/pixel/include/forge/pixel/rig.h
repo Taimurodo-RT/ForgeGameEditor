@@ -108,6 +108,10 @@ public:
 
     // A part's pose bounds in the pixels of a w × h drawing (after the last pose()): x0, y0, x1, y1.
     void bounds(i32 part, u32 w, u32 h, f64 out[4]);
+    // How the last pose() carries a part's pivot, in picture units (identity at rest): by the parts it is inside and by
+    // its own move, not by its own turn and scale, which are round the pivot. The pivot stands at
+    // carried(part).apply(pivot(part)); a point p of the pose is the pivot inverse(carried(part)).apply(p) (dragged).
+    Affine carried(i32 part) const;
 
 private:
     struct Impl;

@@ -252,6 +252,7 @@ struct Rig::Impl {
     std::vector<PartRec> recs;
     std::unordered_map<const tvg::Paint*, i32> part_of;
     std::vector<vector::Point> pivots;
+    std::vector<vector::Point> moves; // each part's own move in the last pose, as applied (snapped)
     std::map<std::string, vector::Morph> morphs;
     vector::Shape scratch;
 
@@ -455,6 +456,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
     };
 
     // Back to rest.
+    m.moves.assign(m.recs.size(), {});
     for (PartRec& r : m.recs) {
         r.paint->transform(r.rest_local);
         r.paint->opacity(r.rest_opacity);
@@ -553,6 +555,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         PartRec& r = m.recs[static_cast<usize>(pi)];
         f64 x = pp.x, y = pp.y;
         if (snap > 0) x = std::round(x / snap) * snap, y = std::round(y / snap) * snap;
+        m.moves[static_cast<usize>(pi)] = {x, y};
         const vector::Point pv = m.pivots[static_cast<usize>(pi)];
         f64 s = 0, c = 1;
         vector::trig::sin_cos(pp.rot * vector::trig::kPi / 180.0, s, c);
@@ -684,6 +687,15 @@ void Rig::bounds(i32 part, u32 w, u32 h, f64 out[4]) {
     const Box& b = drawn.empty() ? any : drawn;
     if (b.empty()) return;
     out[0] = b.x0, out[1] = b.y0, out[2] = b.x1, out[3] = b.y1;
+}
+
+Affine Rig::carried(i32 part) const {
+    const Impl& m = *impl_;
+    if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};
+    const PartRec& r = m.recs[static_cast<usize>(part)];
+    const vector::Point mv = m.moves.empty() ? vector::Point{} : m.moves[static_cast<usize>(part)];
+    // The paint's parent as it stands against its rest, then the part's own move.
+    return m.global(r.paint->parent()) * inverse(r.parent_global) * translation(mv.x, mv.y);
 }
 
 bool parse_color(std::string_view text, Rgba8& out) {

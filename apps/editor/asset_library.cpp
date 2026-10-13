@@ -1846,6 +1846,18 @@ std::vector<std::filesystem::path> AssetLibrary::of_type(const char* type) const
 }
 
 std::vector<std::filesystem::path> AssetLibrary::images() const { return of_type("image"); }
+
+std::vector<assets::AssetRecord> AssetLibrary::ending(std::string_view suffix) const {
+    auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    std::vector<assets::AssetRecord> out;
+    for (const assets::AssetRecord& r : records_)
+        if (r.path.size() >= suffix.size() &&
+            std::equal(suffix.begin(), suffix.end(), r.path.end() - static_cast<std::ptrdiff_t>(suffix.size()),
+                       [&](char a, char b) { return lower(a) == lower(b); }))
+            out.push_back(r);
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+    return out;
+}
 std::vector<std::filesystem::path> AssetLibrary::sounds() const { return of_type("audio"); }
 
 const assets::AssetRecord* AssetLibrary::record_of(const fs::path& file) const {

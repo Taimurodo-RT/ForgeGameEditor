@@ -14,6 +14,8 @@
 //
 // The animations are the template file's (objects::Template::animations), written at once on each change; every
 // change is one step of the tab's history (Ctrl+Z). The game reads them when it starts, the level view at once.
+//
+// This is the mode «Покадровая» of the tab; «Пиксельные» is PixelEditor's (pixel_editor.h), with the same history.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
@@ -43,6 +45,9 @@ public:
     bool handle_key(const SDL_KeyboardEvent& k);
 
     editor::UndoStack& history() { return history_; }
+    // The tab's mode: "frames" («Покадровая», this class) or "pixel" («Пиксельные», PixelEditor).
+    const std::string& mode() const { return mode_; }
+    bool set_mode(const std::string& mode);
     void undo();
     void redo();
     std::string status() const;
@@ -123,6 +128,8 @@ private:
 
     level::LevelModule& module_;
     ui::Ui* ui_ = nullptr;
+    std::string mode_ = "frames";
+    Rml::String m_mode_ = "frames";
     Rml::DataModelHandle model_;
     editor::Document doc_; // the history needs one; the animations live in the template files
     editor::UndoStack history_{doc_};

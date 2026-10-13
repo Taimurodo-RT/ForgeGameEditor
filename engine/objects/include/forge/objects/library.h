@@ -180,7 +180,7 @@ struct Template {
     // Its own picture: a file name in the library's pictures folder
     // ("coin.png"); empty: the game draws its usual one.
     std::string picture;
-    // How many frames the picture is: a strip of that many equal frames side by side (1..8; 1: the picture as it is).
+    // How many frames the picture is: a strip of that many equal frames side by side (1..kMaxFrames; 1: the picture as it is).
     // Which one shows is the game's: the hero's four (stands, step, step, in the air), a walker's two.
     u32 frames = 1;
     // Its own animations of the picture, by the state of the module's they play in ("stand", "walk"). States the

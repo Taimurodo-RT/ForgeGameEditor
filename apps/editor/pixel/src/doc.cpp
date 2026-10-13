@@ -83,8 +83,8 @@ bool read_root(yyjson_val* root, PixelDoc& d, std::string& why) {
             ClipSpec c;
             c.state = name;
             u64 frames = c.frames;
-            if (yyjson_val* f = yyjson_obj_get(val, "frames"); f && !whole(f, 1, 64, frames))
-                return why = "clips." + name + ".frames: нужно целое от 1 до 64", false;
+            if (yyjson_val* f = yyjson_obj_get(val, "frames"); f && !whole(f, 1, kMaxStripFrames, frames))
+                return why = "clips." + name + ".frames: нужно целое от 1 до " + std::to_string(kMaxStripFrames), false;
             c.frames = static_cast<u32>(frames);
             f64 fps = c.fps;
             if (yyjson_val* f = yyjson_obj_get(val, "fps"); f && (!number(f, fps) || fps <= 0 || fps > 60))
@@ -117,6 +117,28 @@ bool read_root(yyjson_val* root, PixelDoc& d, std::string& why) {
         if (yyjson_val* h = yyjson_obj_get(v, "hash")) {
             if (!yyjson_is_str(h)) return why = "bake.hash: нужна строка", false;
             d.hash = yyjson_get_str(h);
+        }
+        if (yyjson_val* st = yyjson_obj_get(v, "strip")) {
+            if (!yyjson_is_obj(st)) return why = "bake.strip: нужен объект {\"состояние\": {\"first\": 0, \"frames\": 4, …}}", false;
+            usize i, n;
+            yyjson_val *key, *val;
+            yyjson_obj_foreach(st, i, n, key, val) {
+                const std::string name = yyjson_get_str(key);
+                StripClip c;
+                c.state = name;
+                u64 first = 0, frames = 0;
+                f64 fps = 0;
+                yyjson_val* l = yyjson_is_obj(val) ? yyjson_obj_get(val, "loop") : nullptr;
+                if (!yyjson_is_obj(val) || !whole(yyjson_obj_get(val, "first"), 0, kMaxStripFrames - 1, first) ||
+                    !whole(yyjson_obj_get(val, "frames"), 1, kMaxStripFrames, frames) || first + frames > kMaxStripFrames ||
+                    !number(yyjson_obj_get(val, "fps"), fps) || fps <= 0 || fps > 60 || !yyjson_is_bool(l))
+                    return why = "bake.strip." + name + ": нужно {\"first\": 0, \"frames\": 4, \"fps\": 10, \"loop\": true} в пределах " +
+                                 std::to_string(kMaxStripFrames) + " кадров",
+                           false;
+                c.first = static_cast<u32>(first), c.frames = static_cast<u32>(frames), c.fps = static_cast<f32>(fps);
+                c.loop = yyjson_get_bool(l);
+                d.strip.push_back(std::move(c));
+            }
         }
     }
     return true;
@@ -175,6 +197,18 @@ std::string write_pixel_doc(const PixelDoc& d) {
     else yyjson_mut_obj_add_null(doc, bake, "outline");
     if (!d.picture.empty()) yyjson_mut_obj_add_strcpy(doc, bake, "picture", d.picture.c_str());
     if (!d.hash.empty()) yyjson_mut_obj_add_strcpy(doc, bake, "hash", d.hash.c_str());
+    if (!d.strip.empty()) {
+        yyjson_mut_val* strip = yyjson_mut_obj(doc);
+        for (const StripClip& c : d.strip) {
+            yyjson_mut_val* o = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_uint(doc, o, "first", c.first);
+            yyjson_mut_obj_add_uint(doc, o, "frames", c.frames);
+            yyjson_mut_obj_add_real(doc, o, "fps", c.fps);
+            yyjson_mut_obj_add_bool(doc, o, "loop", c.loop);
+            yyjson_mut_obj_add(strip, yyjson_mut_strcpy(doc, c.state.c_str()), o);
+        }
+        yyjson_mut_obj_add_val(doc, bake, "strip", strip);
+    }
     yyjson_mut_obj_add_val(doc, root, "bake", bake);
     usize len = 0;
     char* text = yyjson_mut_write(doc, YYJSON_WRITE_PRETTY, &len);

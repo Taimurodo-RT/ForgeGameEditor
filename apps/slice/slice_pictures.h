@@ -24,8 +24,10 @@ using forge::u8;
 using forge::usize;
 
 // Whether a picture of `frames` frames (Template::frames) `width` pixels wide can be the hero's: four frames its width
-// divides (stands, step, step, in the air), or one. why: what is wrong otherwise, for the log and the editor.
-bool hero_frames_ok(u32 frames, u32 width, std::string* why = nullptr);
+// divides (stands, step, step, in the air), or one; any number its width divides when the template has animations of
+// its own (`animated`: «Пиксельные» bakes a strip of the clips), a state without one showing frame 1. why: what is
+// wrong otherwise, for the log and the editor.
+bool hero_frames_ok(u32 frames, u32 width, bool animated, std::string* why = nullptr);
 // The same of a template, its picture read: a template of kind «Герой» (block hero) with a picture that reads and
 // hero_frames_ok. The game draws the hero by the first such template by id; the editor tells which one it is.
 bool hero_picture_ok(const forge::objects::Library& library, const forge::objects::Template& t, std::string* why = nullptr);
