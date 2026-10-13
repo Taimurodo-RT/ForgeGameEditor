@@ -184,19 +184,19 @@ TEST_CASE("a template's picture of frames: read, written and looked at") {
     std::optional<Template> read = read_template(coins.file);
     REQUIRE(read);
     CHECK(read->frames == 4);
-    // One frame is not written; what is not 1..8 reads as one.
+    // One frame is not written; what is not 1..32 reads as one.
     coins.frames = 1;
     REQUIRE(f.lib.put(coins));
     REQUIRE(read_file(coins.file, bytes));
     CHECK(std::string(bytes.begin(), bytes.end()).find("frames") == std::string::npos);
-    for (const char* bad : {"0", "9", "-2", "\"4\"", "2.5"}) {
+    for (const char* bad : {"0", "33", "-2", "\"4\"", "2.5"}) {
         write_text(f.dir / "objects" / "odd.object.json",
                    std::string(R"({"id": "odd", "name": "Странный", "kind": "pickup", "picture": "x.png", "frames": )") + bad + "}");
         read = read_template(f.dir / "objects" / "odd.object.json");
         REQUIRE(read);
         CHECK_MESSAGE(read->frames == 1, bad);
     }
-    write_text(f.dir / "objects" / "odd.object.json", R"({"id": "odd", "name": "Странный", "kind": "pickup", "frames": 8})");
+    write_text(f.dir / "objects" / "odd.object.json", R"({"id": "odd", "name": "Странный", "kind": "pickup", "frames": 32})");
     REQUIRE((read = read_template(f.dir / "objects" / "odd.object.json")));
     CHECK(read->frames == kMaxFrames);
     // Shared and taken back: another number of frames is another template.
@@ -273,7 +273,7 @@ TEST_CASE("a template's animations: read, written, timed, and why one cannot pla
     CHECK(clip_problem(walk, 2).empty());
     CHECK(clip_problem(walk, 1) == "кадра 2 нет в картинке из 1");
     CHECK(clip_problem({{}, 10, true}, 4) == "нет кадров");
-    CHECK(clip_problem({std::vector<u32>(kMaxClipFrames + 1, 0), 10, true}, 4) == "кадров больше 16");
+    CHECK(clip_problem({std::vector<u32>(kMaxClipFrames + 1, 0), 10, true}, 4) == "кадров больше 32");
     CHECK(clip_problem({{0}, 8, true}, 4) == "кадров в секунду 8 нет в списке");
     // A file's animation that does not read: left out (the game draws that state by its rule), the others kept.
     write_text(f.dir / "objects" / "odd.object.json",

@@ -1281,7 +1281,7 @@ private:
         SliceGame& g = g_;
         struct Look {
             u32 looks = 0, bad = 0;
-            std::array<u32, objects::kMaxClipFrames> seen{};
+            std::array<u32, objects::kMaxFrames> seen{}; // by frame of the strip
             std::string first_bad;
             u64 longest = 0; // ticks into the pose, the most looked at
         };
@@ -8460,7 +8460,8 @@ private:
                           !slice::hero_picture_ok(lib, *lib.find("aa_hero")),
                       "правило героя для редактора то же: «" + why0 + "», «" + why1 + "»");
                 // Strips at the sheet's limits, each frame its own colour: 8 frames of 32 and 4 of 256 (a frame as wide as
-                // a picture may be), and 8 frames of 256 × 512 scaled down to 128 × 256; on a sheet as narrow as it gets
+                // a picture may be), 8 frames of 256 × 512 scaled down to 128 × 256 and 32 of 16, as many as a picture may
+                // have (objects::kMaxFrames, «Пиксельные» bakes a character's clips so); on a sheet as narrow as it gets
                 // (no drawn frames: kMaxSide + 2) and on one 512 wide. Every frame inside the sheet, apart from the
                 // others, all of its pixels its frame's colour.
                 struct Strip {
@@ -8470,7 +8471,8 @@ private:
                 };
                 const Strip strips[] = {{"strip8", "полоса8.png", 256, 32, 8, 32, 32},
                                         {"strip4", "полоса4.png", 1024, 64, 4, 256, 64},
-                                        {"strip8_big", "полоса8_большая.png", 2048, 512, 8, 128, 256}};
+                                        {"strip8_big", "полоса8_большая.png", 2048, 512, 8, 128, 256},
+                                        {"strip32", "полоса32.png", 512, 16, objects::kMaxFrames, 16, 16}};
                 bool written = true;
                 for (const Strip& p : strips) {
                     written &= strip_png(p.file, p.w, p.h, p.frames, colour);

@@ -138,8 +138,9 @@ struct KindDef {
     const PropDef* prop(std::string_view prop_id) const;
 };
 
-// The most frames a template's picture may be cut into.
-inline constexpr u32 kMaxFrames = 8;
+// The most frames a template's picture may be cut into: room for a character's clips side by side (four standing and
+// eight walking, more), as «Пиксельные» bakes them (docs/models/вектор-модель.md, step 2).
+inline constexpr u32 kMaxFrames = 32;
 
 // An animation of a template's picture in one state the game's module names ("walk"): which frames of its strip show
 // one after another, how many a second, and whether it starts over (else it stays on its last frame). A template
@@ -152,7 +153,7 @@ struct Clip {
     bool operator==(const Clip&) const = default;
 };
 // The most frames one animation shows in a row.
-inline constexpr u32 kMaxClipFrames = 16;
+inline constexpr u32 kMaxClipFrames = 32;
 // The frames a second an animation may have: each divides the game's 60 ticks a second, so a frame shows a whole
 // number of ticks and an animation keeps time exactly.
 inline constexpr f32 kClipFps[] = {2, 3, 4, 5, 6, 7.5f, 10, 12, 15, 20, 30};
