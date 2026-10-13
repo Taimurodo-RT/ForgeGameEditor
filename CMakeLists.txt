@@ -23,6 +23,7 @@ include(cmake/Embed.cmake)
 add_subdirectory(tools/shaderc)
 
 add_subdirectory(engine/core)
+add_subdirectory(engine/vector)
 add_subdirectory(engine/data)
 add_subdirectory(engine/assets)
 add_subdirectory(engine/world)

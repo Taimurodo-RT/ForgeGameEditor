@@ -5354,6 +5354,16 @@ private:
             if (Rml::Element* c = content->GetChild(i); c->IsVisible(true)) out.push_back(c);
         return out;
     }
+    // The cell now on screen that shows the row of rel, by the name it shows (the list reuses its cells in any order);
+    // null while the list has not laid it out.
+    Rml::Element* list_cell(const std::string& rel) {
+        const i64 r = row_of(rel);
+        if (r < 0) return nullptr;
+        const std::string name = as().row_field(static_cast<usize>(r), "name");
+        for (Rml::Element* c : list_cells())
+            if (Rml::Element* n = c->QuerySelector(".name"); n && n->GetInnerRML() == name) return c;
+        return nullptr;
+    }
     void right_click(f32 x, f32 y) {
         mouse(SDL_EVENT_MOUSE_MOTION, x, y);
         SDL_Event e{};
@@ -20933,12 +20943,10 @@ private:
             as().open_folder("картинки");
             break;
         case 6: {
-            if (hold(row_of(ruby) >= 0, "«рубин.png» is listed")) return true;
-            const i64 r = row_of(ruby);
-            const std::vector<Rml::Element*> cells = list_cells();
-            check(static_cast<usize>(r) < cells.size(), "its row on screen");
-            if (static_cast<usize>(r) < cells.size()) {
-                Rml::Element* cell = cells[static_cast<usize>(r)];
+            // The folder's rows are there at once, their cells once the list lays them out: wait for the cell too.
+            Rml::Element* cell = list_cell(ruby);
+            if (hold(cell != nullptr, "«рубин.png» is listed, its row on screen")) return true;
+            if (cell) {
                 const Rml::Vector2f at = cell->GetAbsoluteOffset(Rml::BoxArea::Border);
                 right_click(at.x + cell->GetOffsetWidth() / 2, at.y + cell->GetOffsetHeight() / 2);
             }
