@@ -176,6 +176,10 @@ struct PoseScript::Impl : BindingEval {
 
 PoseScript::Impl& impl_of(lua_State* L);
 
+// The value at idx as tostring gives it, pushed: a table, function, userdata, coroutine or buffer without __tostring by
+// its kind alone, as "table". Its address changes from run to run and frame to frame, and a pose is a function of time.
+const char* value_text(lua_State* L, int idx, size_t* len);
+
 // motion_record.cpp: the clip functions of Luau (part, all, wait …) and the recording.
 void register_motion_api(lua_State* L);
 bool record_clip(PoseScript::Impl& im, lua_State* T, const Rig* rig, std::string_view clip,

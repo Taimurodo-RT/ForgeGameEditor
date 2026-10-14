@@ -40,6 +40,27 @@ constexpr const char* kMainChunk = "=pose";
 
 PoseScript::Impl& impl_of(lua_State* L) { return *static_cast<PoseScript::Impl*>(lua_callbacks(L)->userdata); }
 
+const char* value_text(lua_State* L, int idx, size_t* len) {
+    idx = lua_absindex(L, idx);
+    switch (lua_type(L, idx)) {
+    case LUA_TTABLE:
+    case LUA_TFUNCTION:
+    case LUA_TUSERDATA:
+    case LUA_TLIGHTUSERDATA:
+    case LUA_TTHREAD:
+    case LUA_TBUFFER:
+        if (!luaL_getmetafield(L, idx, "__tostring")) {
+            lua_pushstring(L, luaL_typename(L, idx));
+            return lua_tolstring(L, -1, len);
+        }
+        lua_pop(L, 1);
+        break;
+    default:
+        break;
+    }
+    return luaL_tolstring(L, idx, len);
+}
+
 namespace {
 
 void on_interrupt(lua_State* L, int gc) {
@@ -166,6 +187,51 @@ int api_ease_call(lua_State* L) {
     vector::Timing t;
     if (!vector::timing_from_word(word, t)) luaL_error(L, "ease: нет слова «%s» (smooth, linear, in, out, back, bounce, elastic, in_sine … in_out_bounce)", word);
     lua_pushnumber(L, vector::timing(t, luaL_checknumber(L, 3)));
+    return 1;
+}
+
+int api_tostring(lua_State* L) {
+    luaL_checkany(L, 1);
+    value_text(L, 1, nullptr);
+    return 1;
+}
+
+// string.format: what %* writes is value_text's; the rest is Luau's own (upvalue 1), %s still a string or a number.
+int api_format(lua_State* L) {
+    size_t n = 0;
+    const char* p = luaL_checklstring(L, 1, &n);
+    const char* end = p + n;
+    const int top = lua_gettop(L);
+    int arg = 1;
+    auto digits = [&] {
+        while (p < end && *p >= '0' && *p <= '9') ++p;
+    };
+    while (p < end) {
+        if (*p++ != '%') continue;
+        if (p < end && *p == '%') {
+            ++p;
+            continue;
+        }
+        ++arg;
+        if (p < end && *p == '*') {
+            ++p;
+            if (arg <= top) {
+                value_text(L, arg, nullptr);
+                lua_replace(L, arg);
+            }
+            continue;
+        }
+        while (p < end && (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0')) ++p;
+        digits();
+        if (p < end && *p == '.') {
+            ++p;
+            digits();
+        }
+        if (p < end) ++p;
+    }
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, top, 1);
     return 1;
 }
 
@@ -312,6 +378,14 @@ PoseScript::Impl::Impl() {
         lua_pushnil(L);
         lua_setglobal(L, name);
     }
+    // Nor an address: tostring and string.format's %* tell a table or a function by its kind.
+    lua_pushcfunction(L, &api_tostring, "tostring");
+    lua_setglobal(L, "tostring");
+    lua_getglobal(L, "string");
+    lua_getfield(L, -1, "format");
+    lua_pushcclosure(L, &api_format, "format", 1);
+    lua_setfield(L, -2, "format");
+    lua_pop(L, 1);
     lua_getglobal(L, "math");
     lua_pushnil(L);
     lua_setfield(L, -2, "random");

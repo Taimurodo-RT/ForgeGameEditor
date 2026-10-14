@@ -984,7 +984,7 @@ bool log_line(Impl& im, lua_State* L) {
     std::string text;
     for (int i = 1; i <= lua_gettop(L); ++i) {
         size_t n = 0;
-        const char* s = luaL_tolstring(L, i, &n);
+        const char* s = value_text(L, i, &n);
         if (i > 1) text += '\t';
         text.append(s, n);
         lua_pop(L, 1);
@@ -1805,12 +1805,12 @@ bool PoseScript::Impl::eval(const Recording& rec, i32 binding, Prop prop, f64 t,
     if (prop_is_number(prop)) {
         good = lua_type(T, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(T, -1));
         if (good) out.v = lua_tonumber(T, -1);
-        else why = std::string("связь ") + prop_word(prop) + " вернула не число";
+        else why = at + "связь " + prop_word(prop) + " вернула не число";
     } else if (prop == Prop::Fill && !lua_isnil(T, -1)) {
         const char* text = lua_tostring(T, -1);
         good = text && parse_color(text, out.color);
         if (good) out.v = 1;
-        else why = "связь fill вернула не цвет \"#rrggbb\"";
+        else why = at + "связь fill вернула не цвет \"#rrggbb\"";
     }
     lua_pop(T, 1);
     return good;

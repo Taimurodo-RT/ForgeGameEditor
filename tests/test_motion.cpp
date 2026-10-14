@@ -944,6 +944,67 @@ TEST_CASE("Motion clip: a binding keeps nothing through require, its environment
     CHECK(pose_at(none, none_rec, 0.5, "a").x == 0);
 }
 
+TEST_CASE("Motion clip: no address of a table or a function reaches a binding's number or the log") {
+    // The review's formula: a number read from tostring({}). It is the same refusal at every t, in any order, in a new
+    // script too, at the binding's line.
+    const std::string address = "local a = part('a')\na.x(function() return tonumber(string.match(tostring({}), \"0x(%x+)\"), 16) end)\nwait(1)";
+    PoseScript s = script_of(clip_of(address));
+    const Recording rec = recorded(s);
+    std::vector<std::string> said;
+    for (f64 t : {0.5, 0.1, 0.5}) {
+        Pose pose;
+        CHECK_FALSE(s.frame(rec, nullptr, t, {}, 1, pose));
+        CHECK(pose.parts.empty());
+        said.push_back(s.error());
+    }
+    PoseScript again = script_of(clip_of(address));
+    const Recording again_rec = recorded(again);
+    Pose pose;
+    CHECK_FALSE(again.frame(again_rec, nullptr, 0.5, {}, 1, pose));
+    said.push_back(again.error());
+    for (const std::string& e : said) CHECK(e == "строка 3: invalid argument #1 to 'tonumber' (string expected, got nil)");
+    // Without tonumber: no hex digits to read, the binding gives no number, refused at its line.
+    PoseScript digits = script_of(clip_of("local a = part('a')\na.x(function() return string.match(tostring({}), '0x(%x+)') end)\nwait(1)"));
+    const Recording digits_rec = recorded(digits);
+    for (f64 t : {0.5, 0.1, 0.5}) {
+        CHECK_FALSE(digits.frame(digits_rec, nullptr, t, {}, 1, pose));
+        CHECK(digits.error() == "строка 3: связь x вернула не число");
+    }
+
+    // Tables, functions, coroutines and buffers are told by their kind, the same in every frame and every script;
+    // numbers, strings, booleans, nil and a __tostring of the author's are as they were.
+    const std::string kinds = R"(local a, b = part("a"), part("b")
+local named = setmetatable({}, { __tostring = function() return "мой" end })
+local function text()
+  return tostring({}) .. "|" .. tostring(print) .. "|" .. string.format("%*|%*|%*", function() end, coroutine.create(print), buffer.create(1))
+    .. "|" .. tostring(named) .. "|" .. tostring(1.5) .. "|" .. tostring(nil) .. "|" .. string.format("%d %s %*|%5.2f|%d%%%*", 3, "x", true, 2, 4, print)
+end
+local want = "table|function|function|thread|buffer|мой|1.5|nil|3 x true| 2.00|4%function"
+a.x(function() return text() == want and 1 or 0 end)
+b.x(function() return #text() end)
+log({}, text(), 2)
+wait(1))";
+    PoseScript k = script_of(clip_of(kinds));
+    const Recording k_rec = recorded(k);
+    REQUIRE(k_rec.log.size() == 1);
+    CHECK(k_rec.log[0].text == "table\ttable|function|function|thread|buffer|мой|1.5|nil|3 x true| 2.00|4%function\t2");
+    PoseScript k2 = script_of(clip_of(kinds));
+    const Recording k2_rec = recorded(k2);
+    REQUIRE(k2_rec.log.size() == 1);
+    CHECK(k2_rec.log[0].text == k_rec.log[0].text);
+    for (f64 t : {0.5, 0.1, 0.5}) {
+        CHECK(pose_at(k, k_rec, t, "a").x == 1);
+        CHECK(pose_at(k2, k2_rec, t, "a").x == 1);
+        CHECK(pose_at(k, k_rec, t, "b").x == pose_at(k2, k2_rec, t, "b").x);
+    }
+    // A format still refuses what it refused: a table where a string or a number goes.
+    PoseScript bad = script_of(clip_of("local a = part('a')\na.x(function() return #string.format('%s', {}) end)\nwait(1)"));
+    const Recording bad_rec = recorded(bad);
+    CHECK_FALSE(bad.frame(bad_rec, nullptr, 0.5, {}, 1, pose));
+    CHECK(bad.error().find("строка 3: ") == 0);
+    CHECK(bad.error().find("string expected, got table") != std::string::npos);
+}
+
 TEST_CASE("Motion clip: tween, save and restore, rest") {
     PoseScript s = script_of(clip_of(R"(local a = part("a")
 tween(0.5, function(k) a.x(10 * k) a.y(k * k) end)
