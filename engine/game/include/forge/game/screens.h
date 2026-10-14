@@ -222,6 +222,9 @@ public:
     // when the picture is drawn, and kept in svg_problems().
     bool svg(const ScreenSvg& change, std::string* why = nullptr);
     const std::vector<std::string>& svg_problems() const;
+    // A game begins (new, loaded, continued): every live picture of the pages shows its file again. What scripts said
+    // of them was the game that ended; saves do not keep it, and the pages are not made again.
+    void reset_pictures();
 
     // The lists' data: the names and pictures of the things inv.<id> counts
     // (in the order lists show them; others follow by id), and the quests the

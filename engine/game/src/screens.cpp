@@ -1047,6 +1047,11 @@ bool GameScreens::svg(const ScreenSvg& c, std::string* why) {
 
 const std::vector<std::string>& GameScreens::svg_problems() const { return impl_->svg_problems; }
 
+void GameScreens::reset_pictures() {
+    for (const auto& page : impl_->pages)
+        if (page->doc) ui::svg_reset_all(page->doc);
+}
+
 bool GameScreens::run_page_action(const ScreenAction& a, const std::string& page) {
     if (a.what == "show") return show(a.target, true), true;
     if (a.what == "hide") return show(a.target.empty() ? page : a.target, false), true;

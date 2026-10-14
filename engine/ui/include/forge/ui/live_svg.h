@@ -45,6 +45,8 @@ bool svg_fade(Rml::Element* element, std::string_view part, f64 opacity);
 bool svg_morph(Rml::Element* element, std::string_view part, std::string_view target, f64 k);
 // The element draws its file again, as it is.
 void svg_reset(Rml::Element* element);
+// Every live element in root's tree (root and the elements under it) draws its files again, as svg_reset does.
+void svg_reset_all(Rml::Element* root);
 
 // What a script said of the element's part (nullptr: nothing).
 const SvgPart* svg_part(Rml::Element* element, std::string_view part);

@@ -384,6 +384,7 @@ bool Shell::begin(std::string_view slot_id) {
     if (game_->running()) game_->end();
     runner_->stop();
     screens_->hide_commands(); // the menu's windows stay with the menu
+    screens_->reset_pictures(); // what the last game's scripts said of live SVG pictures
     vars_.clear();
     volume_vars_ = {};
     playtime_ = 0;

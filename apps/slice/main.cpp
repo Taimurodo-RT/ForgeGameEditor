@@ -8144,15 +8144,16 @@ private:
     // morph its share is ease("smooth", the world's time) and the picture neither shape; once it is 1, the layer is drawn
     // as lunasvg draws the file with the part made the other shape and the other part coloured, at the layer's size on the
     // player's screen: the screen fitted onto the game's window, the pictures rasterized at the fit's scale.
+    struct LiveSeen {
+        Rml::Element *layer = nullptr, *other = nullptr;
+        std::vector<u8> layer_px, other_px; // the two layers as drawn on the player's screen
+        int x = 0, y = 0, w = 0, h = 0, ox = 0, oy = 0, ow = 0, oh = 0;
+        f32 scale = 0;
+        bool halfway = false;
+        u32 since = 0; // the step's frame the morph was still going
+    };
     void build_live_edits(Shell& s) {
-        struct Seen {
-            Rml::Element *layer = nullptr, *other = nullptr;
-            std::vector<u8> layer_px, other_px; // the two layers as drawn on the player's screen
-            int x = 0, y = 0, w = 0, h = 0, ox = 0, oy = 0, ow = 0, oh = 0;
-            f32 scale = 0;
-            bool halfway = false;
-            u32 since = 0; // the step's frame the morph was still going
-        };
+        using Seen = LiveSeen;
         auto seen = std::make_shared<Seen>();
         // The layers where the player sees them, read from a frame of the game.
         auto look = [&s, this, seen]() {
@@ -8211,6 +8212,10 @@ private:
                     }
             return n;
         };
+        if (!project_edits.vlc_said.empty()) {
+            build_live_code(s, seen, look, off);
+            return;
+        }
         steps_.push_back({"живая картинка: морфинг на полпути", 120, [&s, this, seen, look, off](u32 f) {
             const ProjectEdits& e = project_edits;
             const f64 t = g_.script_time();
@@ -8270,6 +8275,159 @@ private:
             for (const std::string& l : errors) said += " [" + l + "]";
             for (const std::string& l : problems) said += " [" + l + "]";
             check(errors.empty() && problems.empty(), "ни ошибок скриптов, ни непонятых частей картинки:" + said);
+            check(s.data_errors().empty(), "данные игры читаются без ошибок");
+            return true;
+        }});
+    }
+
+    // The author's own Luau (a link's «Код», --edits vlc_*): at 0.5 s it says of the parts of the layer vl_other what
+    // vlc_said draws, at 1 s it takes that layer back to its file, at 1.5 s it says it again; vl_layer goes on as its
+    // scheme says. Closed to the main menu while vl_other is so and gone on with «Продолжить»: the screen shows again with
+    // both pictures as their files; what was said once at the start is not said again (the save keeps the things as
+    // started, not what they said), what the scheme says each step is: vl_layer as lunasvg draws vlc_again.
+    template <typename Look, typename Off>
+    void build_live_code(Shell& s, std::shared_ptr<LiveSeen> seen, Look look, Off off) {
+        struct Code {
+            f64 t0 = -1;   // the world's time when the game went on, as the first step after it saw it
+            u32 since = 0; // the step's frame the scheme's morph was still going
+        };
+        auto code = std::make_shared<Code>();
+        // The layer the code speaks of: as lunasvg draws svg, at most a few edge pixels apart.
+        auto other_is = [this, seen, off](const std::string& svg, const std::string& what) {
+            LiveSeen& v = *seen;
+            const int d = off(v.other_px, svg_pixels(svg, v.ow, v.oh)), allowed = 4 + v.ow * v.oh / 400;
+            check(d <= allowed, what + ", как его рисует lunasvg в " + std::to_string(v.ow) + " × " + std::to_string(v.oh) + ": " +
+                                    std::to_string(d) + " пикселей расходятся больше чем на 8 (можно " + std::to_string(allowed) + ")");
+            return d;
+        };
+        // Nothing said of its parts, or all of them said.
+        auto said = [this, seen](bool any, const std::string& when) {
+            const ProjectEdits& e = project_edits;
+            for (const std::string& part : e.vlc_parts)
+                check((forge::ui::svg_part(seen->other, part) != nullptr) == any,
+                      when + ": «" + part + "» второго слоя" + (any ? " — код сказал о ней" : " — о ней ничего не сказано"));
+        };
+        // The other layer the file as it is: the same pixels as lunasvg's.
+        auto as_file = [this, seen, said](const std::string& when) {
+            LiveSeen& v = *seen;
+            said(false, when);
+            const int same = pixels_diff(v.other_px, svg_pixels(project_edits.vl_svg, v.ow, v.oh), true);
+            check(same <= 2, when + ": второй слой — файл как есть (канал расходится самое большее на " + std::to_string(same) + ")");
+        };
+        // The first layer as its scheme leaves it once its morph is done, nothing of the code's on it; both rasterized at
+        // the fit's scale.
+        auto first_done = [this, seen, off](const std::string& when) {
+            const ProjectEdits& e = project_edits;
+            LiveSeen& v = *seen;
+            const int first = off(v.layer_px, svg_pixels(e.vl_end, v.w, v.h)), allowed = 4 + v.w * v.h / 400;
+            check(first <= allowed, when + ": «" + e.vl_layer_name + "» как по схеме: " + std::to_string(first) + " пикселей (можно " +
+                                        std::to_string(allowed) + ")");
+            for (const std::string& part : e.vlc_parts)
+                if (part != e.vl_part && part != e.vl_color_part)
+                    check(!forge::ui::svg_part(v.layer, part), when + ": о «" + part + "» первого слоя код не говорил");
+            check(v.layer->GetPictureScale() == v.scale && v.other->GetPictureScale() == v.scale,
+                  when + ": растр слоёв в масштабе экрана на окне игры: " + std::to_string(v.other->GetPictureScale()) + " при " +
+                      std::to_string(v.scale));
+            return first;
+        };
+        auto as_said = [this, seen, said, other_is, off](const std::string& when) {
+            const ProjectEdits& e = project_edits;
+            LiveSeen& v = *seen;
+            said(true, when);
+            const int from_said = other_is(e.vlc_said, when + ": второй слой как сказал код");
+            const int changed = off(v.other_px, svg_pixels(e.vl_svg, v.ow, v.oh));
+            check(changed > 20, when + ": и не файл (" + std::to_string(changed) + " пикселей)");
+            FORGE_INFO("self-test: свой код, %s: второй слой от сказанного %d, от файла %d пикселей", when.c_str(), from_said, changed);
+        };
+        // At the world's time from..to (a step that comes later fails: the code has gone on by then).
+        auto at = [this](f64 from, f64 to, const char* what) {
+            const f64 t = g_.script_time();
+            if (t < from) return false;
+            check(t < to, std::string(what) + ": посмотрели при " + std::to_string(t) + " с, а надо до " + std::to_string(to));
+            return true;
+        };
+        steps_.push_back({"свой код: до его слов второй слой — файл", 120, [&s, this, look, as_file, at](u32) {
+            const ProjectEdits& e = project_edits;
+            if (!at(0.25, 0.45, "до слов кода")) return false;
+            check(s.screens().shown(e.vl_screen), "экран «" + e.vl_screen + "» показан");
+            std::vector<u8> bytes;
+            read_file(s.game_dir() / utf8_path(e.vl_file), bytes);
+            check(std::string(bytes.begin(), bytes.end()) == e.vl_svg, "«" + e.vl_file + "» игры байт в байт тот, что автор дал «Ресурсам»");
+            logic::Logic links;
+            bool own = false;
+            if (links.load(project_data / "logic.json"))
+                for (const logic::Link& l : links.links) own = own || l.code.find("svg_morph") != std::string::npos;
+            check(own, "в logic.json игры связь со своим кодом Luau");
+            if (look()) as_file("до слов кода");
+            return true;
+        }});
+        steps_.push_back({"свой код: второй слой как он сказал", 120, [this, look, as_said, at](u32) {
+            if (!at(0.75, 0.98, "код сказал в 0,5 с")) return false; // the raster made at the scale that holds
+            if (look()) as_said("код сказал");
+            return true;
+        }});
+        steps_.push_back({"свой код: второй слой снова файл, первый как по схеме", 120, [this, look, as_file, first_done, at](u32) {
+            if (!at(1.25, 1.48, "код вернул файл в 1 с")) return false;
+            if (look()) {
+                as_file("код вернул файл");
+                first_done("код вернул файл");
+            }
+            return true;
+        }});
+        steps_.push_back({"свой код: снова как он сказал, игра закрыта в главное меню", 120, [&s, this, look, as_said, first_done, at](u32) {
+            if (!at(1.75, 2.5, "код сказал снова в 1,5 с")) return false;
+            if (look()) {
+                as_said("код сказал снова");
+                first_done("код сказал снова");
+            }
+            s.to_main_menu();
+            return true;
+        }});
+        steps_.push_back({"свой код: экран закрыт, «Продолжить»", 30, [&s, this](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f < 2) return false;
+            Rml::ElementDocument* doc = s.screens().document(e.vl_screen);
+            check(s.screen() == Screen::Main && doc && !doc->IsVisible(), "главное меню, экрана «" + e.vl_screen + "» не видно");
+            check(s.continue_game(), "«Продолжить»: игра с автосохранения");
+            return true;
+        }});
+        // The game went on from its save: the pictures are their files (what scripts said is not saved), and what the
+        // scripts said once at the start («При старте», the code's link) is not said again; the scheme's «Каждый шаг» is.
+        steps_.push_back({"свой код: экран снова, картинки как в файле", 120, [&s, this, seen, code, look, as_file](u32) {
+            const ProjectEdits& e = project_edits;
+            const f64 t = g_.script_time();
+            if (code->t0 < 0) code->t0 = t;
+            if (t - code->t0 < 0.25) return false;
+            check(t - code->t0 < 0.45, "посмотрели сразу: " + std::to_string(t - code->t0) + " с");
+            check(s.screen() == Screen::Playing && s.screens().shown(e.vl_screen), "игра идёт, экран «" + e.vl_screen + "» снова показан");
+            if (!look()) return true;
+            as_file("после «Продолжить»");
+            check(!forge::ui::svg_part(seen->layer, e.vl_color_part), "«" + e.vl_color_part + "» первого слоя: сказанное «При старте» не повторено");
+            check(forge::ui::svg_part(seen->layer, e.vl_part) != nullptr, "«" + e.vl_part + "» первого слоя: «Каждый шаг» говорит снова");
+            return true;
+        }});
+        steps_.push_back({"свой код: после «Продолжить» второй слой — файл, первый — что схема говорит каждый шаг", 200,
+                          [&s, this, seen, code, look, as_file, off](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (g_.script_time() - code->t0 < 1.6) {
+                code->since = f;
+                return false;
+            }
+            if (f < code->since + 2 * Rml::PictureScale::kStill) return false; // the rasters made at the scale that holds
+            if (!look()) return true;
+            LiveSeen& v = *seen;
+            as_file("после «Продолжить»");
+            const int first = off(v.layer_px, svg_pixels(e.vlc_again, v.w, v.h)), allowed = 4 + v.w * v.h / 400;
+            check(first <= allowed, "«" + e.vl_layer_name + "» после «Продолжить»: только сказанное каждым шагом, " + std::to_string(first) +
+                                        " пикселей (можно " + std::to_string(allowed) + ")");
+            check(v.layer->GetPictureScale() == v.scale && v.other->GetPictureScale() == v.scale,
+                  "растр слоёв в масштабе экрана на окне игры: " + std::to_string(v.other->GetPictureScale()) + " при " + std::to_string(v.scale));
+            FORGE_INFO("self-test: свой код, после «Продолжить»: первый слой от сказанного каждым шагом %d пикселей", first);
+            const std::vector<std::string> errors = g_.script_errors(), problems = s.screens().svg_problems();
+            std::string lines;
+            for (const std::string& l : errors) lines += " [" + l + "]";
+            for (const std::string& l : problems) lines += " [" + l + "]";
+            check(errors.empty() && problems.empty(), "ни ошибок скриптов, ни непонятых частей картинки:" + lines);
             check(s.data_errors().empty(), "данные игры читаются без ошибок");
             return true;
         }});

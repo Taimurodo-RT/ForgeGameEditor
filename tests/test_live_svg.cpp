@@ -286,6 +286,32 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
         CHECK(differ(pixels(0), drawn(stale), 8) > 20);
         CHECK(differ(pixels(64), drawn(changed)) == 0);
     }
+    SUBCASE("a game begins again: every live element of its page draws the file, another page's keeps what was said") {
+        Rml::ElementDocument* other = context->LoadDocumentFromMemory(R"(<rml><head><style>
+        body { width: 200px; height: 200px; margin: 0; }
+        img { display: block; width: 64px; height: 64px; margin-top: 128px; }
+        </style></head><body><img id="c" src="face.svg"/></body></rml>)",
+                                                                      "mem/other.rml");
+        REQUIRE(other);
+        other->Show();
+        Rml::Element* c = other->GetElementById("c");
+        REQUIRE(c);
+        CHECK(forge::ui::svg_morph(a, "mouth", "smile", 1));
+        CHECK(forge::ui::svg_fade(b, "head", 0.5));
+        CHECK(forge::ui::svg_fade(c, "head", 0.5));
+        frame();
+        CHECK(differ(pixels(0), file) > 20);
+        CHECK(differ(pixels(64), file) > 20);
+        forge::ui::svg_reset_all(doc);
+        CHECK_FALSE(forge::ui::svg_part(a, "mouth"));
+        CHECK_FALSE(forge::ui::svg_part(b, "head"));
+        CHECK(forge::ui::svg_part(c, "head"));
+        frame();
+        CHECK(render.at_y[0] == render.at_y[64]);
+        CHECK(differ(pixels(0), file) == 0);
+        CHECK(differ(pixels(128), drawn(replaced(kFace, R"(fill="#f0c040"/>)", R"(fill="#f0c040" opacity="0.5"/>)"))) == 0);
+        other->Close();
+    }
 
     Rml::Shutdown();
     Rml::SetRenderInterface(nullptr);

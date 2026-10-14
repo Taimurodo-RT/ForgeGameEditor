@@ -2053,7 +2053,8 @@ struct Options {
     // "vector-live" (a live SVG picture: a game of the catalog's «Платформер» whose HUD shows an SVG from «Ресурсы» twice
     // and whose own scheme of a thing morphs and colours parts of one of them, made by "vector-live-a", opened again from
     // another working folder, played at the screen's size, twice it and half it, the SVG changed in «Ресурсы», F5 and played
-    // again by "vector-live-a-again").
+    // again, then a link's own Luau of the other picture typed into «Код» and played, closed to the main menu and gone on,
+    // by "vector-live-a-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -18699,7 +18700,11 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     // A opened again from another working folder (vector-live-a-again): the layers and the scheme as saved; «Играть со
     // стартового» at the screen's own size, twice it and half it: the game does what the scheme says to «Лицо» and nothing to
     // «Лицо 2» (scene project with --edits vl_*). Then «лицо.svg» saved over in «Ресурсы» by another program, F5: the same
-    // asset, the game's copy new, and the game morphs into the new smile. The template and B: the same bytes before and after.
+    // asset, the game's copy new, and the game morphs into the new smile. Then the author's own Luau: «Жук идёт за героем»
+    // with a «Код» typed in by keys that moves, turns, colours, fades and morphs the parts of «Лицо 2», takes it back to its
+    // file and says it again; in the game «Лицо 2» as the code says, «Лицо» as the scheme says, and closed to the main
+    // menu and gone on («Продолжить»): both as their files again, then «Лицо» as the scheme says each step (--edits vlc_*).
+    // The template and B: the same bytes before and after.
     static constexpr const char* kVlFace = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
 <rect width="64" height="64" fill="#203048"/>
 <circle id="голова" cx="32" cy="32" r="28" fill="#f0c040"/>
@@ -18734,6 +18739,33 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     }
     // Where the layers go in «Простой»: x, y, w, h on the HUD (whole pixels at the screen's size and at twice it).
     static constexpr int kVlFaceBox[4] = {100, 400, 160, 160}, kVlFace2Box[4] = {400, 400, 96, 96};
+    // The author's own Luau, the «Код» of the link «Жук идёт за героем» (each beetle says the same, at the same time):
+    // «Лицо 2» so at 0.5 s, its file again at 1 s, so again at 1.5 s.
+    static constexpr const char* kVlCode =
+        "-- «Лицо 2» на HUD: глаза сдвинуты и повёрнуты, голова жёлтая и полупрозрачная, рот — улыбка.\n"
+        "local ui = forge.ui\n"
+        "local function face()\n"
+        "  ui.svg_move(\"hud\", \"Лицо 2\", \"глаза\", 6, -4)\n"
+        "  ui.svg_turn(\"hud\", \"Лицо 2\", \"глаза\", 30)\n"
+        "  ui.svg_color(\"hud\", \"Лицо 2\", \"голова\", \"#ffd040\")\n"
+        "  ui.svg_fade(\"hud\", \"Лицо 2\", \"голова\", 0.5)\n"
+        "  ui.svg_morph(\"hud\", \"Лицо 2\", \"рот\", \"улыбка\", 1)\n"
+        "end\n"
+        "forge.wait(0.5)\n"
+        "face()\n"
+        "forge.wait(0.5)\n"
+        "ui.svg_reset(\"hud\", \"Лицо 2\") -- как в файле\n"
+        "forge.wait(0.5)\n"
+        "face()\n";
+    // «Лицо 2» as that code makes it of the file after F5, written out by hand: the eyes moved by 6, -4 and turned 30°
+    // round their centre in the file (32, 24), the head yellow and half seen, the mouth the smile.
+    static std::string vl_said() {
+        std::string s = vl_face2();
+        vl_put(s, R"(<g id="глаза" fill="#202020">)", R"x(<g id="глаза" fill="#202020" transform="translate(6 -4) rotate(30 32 24)">)x");
+        vl_put(s, R"(r="28" fill="#40c0f0"/>)", R"(r="28" fill="#ffd040" opacity="0.5"/>)");
+        vl_put(s, R"(d="M20 44 L44 44 L44 48 L20 48 Z" fill="#a02020")", std::string(kVlSmile2) + R"( fill="#ff4040")");
+        return s;
+    }
 
     bool vector_live_step() {
         namespace fs = std::filesystem;
@@ -18765,7 +18797,8 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         code = pj_run({exe, "--project", path_to_utf8(a / "project.forge"), "--self-test", "vector-live-a-again"}, elsewhere);
         check(code == 0, "opened again from another working folder: the layers and the scheme as saved; played at the screen's size, "
                          "twice it and half it, the game draws «Лицо» as the scheme says and «Лицо 2» as the file; the SVG changed in «Ресурсы», "
-                         "F5, played again with the new shapes (vector-live-a-again: exit " +
+                         "F5, played again with the new shapes; the author's own Luau of «Лицо 2» typed into «Код», played, closed to the "
+                         "main menu and gone on (vector-live-a-again: exit " +
                              std::to_string(code) + ")");
         const std::vector<u8> asset = tg_bytes(a / "assets" / utf8_path("лицо.svg")), copy = tg_bytes(a / "game" / "pictures" / utf8_path("лицо.svg"));
         check(std::string(asset.begin(), asset.end()) == vl_face2() && std::string(copy.begin(), copy.end()) == vl_face2(),
@@ -18775,6 +18808,8 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         check(own && own->graph.find("api.ui.svg_morph") != std::string::npos && own->graph.find("api.ui.svg_color") != std::string::npos &&
                   own->graph.find("улыбка") != std::string::npos,
               "A's logic.json: the own scheme of «Табличка» with the morph and the colour");
+        check(std::any_of(file.links.begin(), file.links.end(), [](const logic::Link& l) { return l.code == kVlCode; }),
+              "and the link with the author's own Luau");
         check(tp_template() == tmpl_before, "the template byte for byte as before");
         check(pj_tree(b) == b_before, "«Живые Б» byte for byte as before");
         return false;
@@ -18890,8 +18925,9 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
             const usize before = g ? g->nodes.size() : 0;
             check(click(std::string("sc-pal-") + kVlaDefs[vla_n_]) && !lg().scheme().palette_open(), std::string(kVlaDefs[vla_n_]) + " added");
             g = lg().scheme().graph(vla_scheme_);
-            for (const script::GraphNode& n : g ? g->nodes : std::vector<script::GraphNode>{})
-                if (n.def == kVlaDefs[vla_n_]) vla_nodes_[vla_n_] = n.uid;
+            if (g)
+                for (const script::GraphNode& n : g->nodes)
+                    if (n.def == kVlaDefs[vla_n_]) vla_nodes_[vla_n_] = n.uid;
             check(g && g->nodes.size() == before + 1 && vla_nodes_[vla_n_], "one node more");
             if (++vla_n_ < 4) {
                 vla_step_ = 12;
@@ -18904,10 +18940,11 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
             if (wait(2)) return true;
             const script::Graph* g = lg().scheme().graph(vla_scheme_);
             u32 start = 0, tick = 0;
-            for (const script::GraphNode& n : g ? g->nodes : std::vector<script::GraphNode>{}) {
-                if (n.def == "std.event.start") start = n.uid;
-                if (n.def == "std.event.tick") tick = n.uid;
-            }
+            if (g)
+                for (const script::GraphNode& n : g->nodes) {
+                    if (n.def == "std.event.start") start = n.uid;
+                    if (n.def == "std.event.tick") tick = n.uid;
+                }
             const std::string s = "sc-pin-" + std::to_string(vla_scheme_) + "-";
             auto pin = [&](u32 node, const char* side) { return s + std::to_string(node) + side; };
             check(start && tick && click(pin(tick, "-o-next")) && click(pin(vla_nodes_[0], "-i-in")), "«Каждый шаг» → «Морфинг части картинки»");
@@ -18963,6 +19000,46 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     int vlg_step_ = 0;
     u32 vlg_layers_[2] = {0, 0};
     std::string vlg_asset_;
+    u32 vlg_link_ = 0; // «Жук идёт за героем», with the author's own code
+    // The game after F5 with the author's code too: «Лицо 2» as the code says; closed to the main menu and gone on with
+    // «Продолжить»: both pictures as their files again, then «Лицо» as the scheme says each step.
+    edits::ProjectEdits vlc_edits() {
+        edits::ProjectEdits e = vlg_edits(vl_face2());
+        e.vlc_said = vl_said();
+        e.vlc_parts = {"глаза", "голова", "рот"};
+        // «Лицо» after «Продолжить»: what the scheme says each step (the smile) again, not what it said at the start (the
+        // green eyes): that was the game that ended, and the save keeps the things as started, not what they said.
+        e.vlc_again = vl_face2();
+        vl_put(e.vlc_again, R"(d="M20 44 L44 44 L44 48 L20 48 Z" fill="#a02020")", std::string(kVlSmile2) + R"( fill="#ff4040")");
+        return e;
+    }
+    // Typed into «Код»'s text box from the keyboard, as the author writes it: what was there taken away, then line by
+    // line with Enter. What the box says then.
+    std::string vl_type_code(const std::string& text) {
+        auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(visible("lg-code-text"));
+        if (!e || !e->IsVisible(true)) return "(no text box)";
+        e->Focus();
+        SDL_SetModState(SDL_KMOD_LCTRL); // the text box reads the keys held, not the event's
+        key(SDLK_END, SDL_KMOD_CTRL);
+        SDL_SetModState(SDL_KMOD_NONE);
+        const Rml::String old = e->GetValue();
+        const usize letters = static_cast<usize>(std::count_if(old.begin(), old.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+        for (usize i = 0; i < letters; ++i) key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+        if (!e->GetValue().empty()) return "(not emptied: " + e->GetValue() + ")";
+        for (usize start = 0; start < text.size();) {
+            const usize end = std::min(text.find('\n', start), text.size());
+            const std::string line = text.substr(start, end - start);
+            if (!line.empty()) {
+                SDL_Event t{};
+                t.type = SDL_EVENT_TEXT_INPUT;
+                t.text.text = line.c_str();
+                ed_.handle_event(t);
+            }
+            if (end < text.size()) key(SDLK_RETURN, SDL_KMOD_NONE);
+            start = end + 1;
+        }
+        return e->GetValue();
+    }
     edits::ProjectEdits vlg_edits(const std::string& face = kVlFace) {
         edits::ProjectEdits e;
         e.vl_screen = "hud";
@@ -19027,8 +19104,10 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
             const logic::ThingScheme* own = lg().links().scheme_for("sign");
             check(own != nullptr, "«Табличка» has its own scheme");
             const script::Graph* g = own ? lg().scheme().graph(own->id) : nullptr;
+            // Pointers into the scheme's own nodes (g->nodes, alive while the view keeps the graph), not into a copy.
             std::map<std::string, const script::GraphNode*> by_def;
-            for (const script::GraphNode& n : g ? g->nodes : std::vector<script::GraphNode>{}) by_def[n.def] = &n;
+            if (g)
+                for (const script::GraphNode& n : g->nodes) by_def[n.def] = &n;
             auto value = [&](const char* def, const char* param) {
                 const auto it = by_def.find(def);
                 return it != by_def.end() && it->second->value(param) ? *it->second->value(param) : std::string();
@@ -19094,6 +19173,65 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
             const edits::ProjectEdits e = vlg_edits(vl_face2());
             const int code = tg_play(&e, "ожидания живые.json", vl_root(), "project", {"--size", "1920x1080"});
             check(code == 0, "after F5 the game morphs the mouth into the new smile, the new head on both layers (exit " + std::to_string(code) + ")");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        // The author's own Luau: «Жук идёт за героем» with «Код» of their own, saying what becomes of «Лицо 2».
+        case 10:
+            if (wait(2)) return true;
+            check(click("lg-mode-links") && lg().mode() == "links", "«Связи»");
+            if (!lg().links().spot("beetle")) check(shown("lg-add-beetle") && click("lg-add-beetle") && lg().links().spot("beetle"), "«Жук» onto the board");
+            break;
+        case 11:
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("beetle") && thing_click("hero") && lg().picking(), "«Жук», then the hero: what does it do to the hero");
+            break;
+        case 12: {
+            std::string offered;
+            for (usize i = 0; i < lg().pick_options(); ++i) offered += " «" + lg().pick_phrase(i) + "»";
+            const i64 at = option_of("Жук идёт за героем");
+            check(at >= 0 && lg().pick(static_cast<usize>(at)), "«Жук идёт за героем» among:" + offered);
+            vlg_link_ = lg().selected_link();
+            check(vlg_link_ && lg().problem_of(vlg_link_).empty(), "a link that works: " + lg().meaning_of(vlg_link_));
+            break;
+        }
+        case 13:
+            if (wait(2)) return true;
+            check(click("lg-code-edit") && lg().editing_code() && lg().mode() == "code", "«Свой код» opens the link's code");
+            break;
+        case 14: {
+            if (wait(2)) return true;
+            const std::string typed = vl_type_code(kVlCode);
+            check(typed == kVlCode, "the author's Luau typed into «Код», line by line: «" + typed + "»");
+            check(click("lg-code-save") && !lg().editing_code(), "«Сохранить»: the code builds");
+            const logic::Link* l = lg().links().find(vlg_link_);
+            check(l && l->code == kVlCode, "the link has the author's code");
+            check(lg().problem_of(vlg_link_).empty(), "it works: " + lg().problem_of(vlg_link_));
+            key(SDLK_S, SDL_KMOD_CTRL);
+            break;
+        }
+        case 15: {
+            check(ed_.unsaved().empty(), "Ctrl+S: nothing left unsaved");
+            logic::Logic file;
+            const logic::Link* l = file.load(ed_.logic_file) ? file.find(vlg_link_) : nullptr;
+            check(l && l->code == kVlCode && file.scheme_for("sign"), "logic.json: the link with the author's code, and the scheme of «Табличка» as it was");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 16:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 17: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = vlc_edits();
+            const int code = tg_play(&e, "ожидания свой код.json", vl_root(), "project", {"--size", "1920x1080"});
+            check(code == 0, "the author's code makes «Лицо 2» what it says, takes it back to its file and says it again, «Лицо» as the "
+                             "scheme says; closed to the main menu and gone on, both as their files, then «Лицо» as the scheme says each "
+                             "step (exit " + std::to_string(code) + ")");
             return false;
         }
         default: return false;

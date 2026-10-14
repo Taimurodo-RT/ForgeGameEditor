@@ -176,6 +176,14 @@ struct ProjectEdits {
     std::string vl_screen, vl_file, vl_svg, vl_layer_name, vl_thing, vl_part, vl_target, vl_color_part, vl_color, vl_end;
     forge::u32 vl_layer = 0, vl_other = 0;
     std::vector<int> vl_layer_box, vl_other_box;
+    // With them, the author's own Luau too (a link's «Код»; vector-live after F5): half a second into a game it says
+    // of the parts vlc_parts of the layer vl_other what makes it as lunasvg draws vlc_said, at a second it takes that
+    // layer back to its file, at a second and a half it says it again; vl_layer goes on as the scheme says. The player
+    // closes the game to its main menu while vl_other is so and goes on («Продолжить»): the screen shows again with both
+    // pictures as their files; then vl_other stays so, vl_layer takes what the scheme says each step again and is drawn
+    // as lunasvg draws vlc_again.
+    std::string vlc_said, vlc_again;
+    std::vector<std::string> vlc_parts;
 };
 
 // False (error says why) when the file cannot be read.

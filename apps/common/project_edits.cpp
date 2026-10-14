@@ -167,6 +167,9 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("vl_other", &forge::edits::ProjectEdits::vl_other);
     t.field("vl_layer_box", &forge::edits::ProjectEdits::vl_layer_box);
     t.field("vl_other_box", &forge::edits::ProjectEdits::vl_other_box);
+    t.field("vlc_said", &forge::edits::ProjectEdits::vlc_said);
+    t.field("vlc_again", &forge::edits::ProjectEdits::vlc_again);
+    t.field("vlc_parts", &forge::edits::ProjectEdits::vlc_parts);
 }
 
 namespace forge::edits {

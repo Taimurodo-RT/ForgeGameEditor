@@ -251,6 +251,20 @@ void svg_reset(Rml::Element* element) {
     if (Rml::SVG::IsLive(element)) Rml::SVG::SetLive(element, false);
 }
 
+void svg_reset_all(Rml::Element* root) {
+    if (!root) return;
+    std::vector<Rml::Element*> under;
+    for (const auto& [element, live] : lives()) {
+        if (!live.element) continue; // gone: live_of lets it go when it is asked
+        for (Rml::Element* e = element; e; e = e->GetParentNode())
+            if (e == root) {
+                under.push_back(element);
+                break;
+            }
+    }
+    for (Rml::Element* element : under) svg_reset(element);
+}
+
 const SvgPart* svg_part(Rml::Element* element, std::string_view part) {
     Live* live = live_of(element);
     if (!live) return nullptr;
