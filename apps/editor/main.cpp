@@ -55,6 +55,7 @@
 #include "ui_editor.h"
 #include "object_library.h"
 #include "project_edits.h"
+#include "svg_reference.h"
 #include "slice_checks.h"
 
 #include "builtin.h"
@@ -2043,9 +2044,11 @@ struct Options {
     // Ctrl+Z, opened again, the save goes on and a new game starts); "images" (the tab «Изображения»: two games of the
     // catalog's «Три в ряд», pictures of A drawn, saved and saved as in the tab by "images-a", opened again from another
     // working folder and played by "images-a-again"; B's own picture of the game shown only by "images-b"); "ui-scale"
-    // (the UI's scale and SVG pictures at their size on screen, at the scales 1, 1.5 and 2 changed on the fly; then a game
-    // of the catalog's «Платформер» whose «Ресурсы» take SVG files dropped in and whose «Интерфейс» picks one, by
-    // "ui-scale-a").
+    // (the UI's scale and SVG pictures at their size on screen, at the scales 1, 1.5 and 2 changed on the fly and by the
+    // window's event of a display's scale; then games of the catalog's «Платформер»: A's «Ресурсы» take SVG files dropped
+    // in and its «Интерфейс» puts two of them on the HUD, undone, done again and saved, by "ui-scale-a"; A opened again
+    // from another working folder, checked, played, an SVG changed in «Ресурсы» and brought in by F5, by "ui-scale-a-again";
+    // the mouse on the canvas and a long list of «Ресурсы» at the display's scales 1, 1.5 and 2 in C, by "ui-scale-b").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -2284,6 +2287,8 @@ public:
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
+        if (part == "ui-scale-a-again") return frame < 3 || ui_scale_again_step();
+        if (part == "ui-scale-b") return frame < 3 || ui_scale_b_step();
         if (part == "input-a") return frame < 3 || input_a_step();
         if (part == "input-a-again") return frame < 3 || input_again_step();
         switch (frame) {
@@ -14083,12 +14088,13 @@ private:
         return out;
     }
     // The game as «Играть» started it, the scene project, and what it must find (or must not) written to a file
-    // outside the games (in root: tg_root() when empty); its exit code.
+    // outside the games (in root: tg_root() when empty); its exit code. more: arguments of the test's own (--size).
     int tg_play(const edits::ProjectEdits* edits, const std::string& file_name, const std::filesystem::path& root = {},
-                const char* scene = "project") {
+                const char* scene = "project", const std::vector<std::string>& more_args = {}) {
         std::vector<std::string> args = lv().last_play();
         if (args.empty()) return -1;
         for (const char* more : {"--test", "--scene", scene}) args.push_back(more);
+        args.insert(args.end(), more_args.begin(), more_args.end());
         if (edits) {
             const std::filesystem::path file = (root.empty() ? tg_root() : root) / utf8_path(file_name);
             if (!edits::write_edits(file, *edits)) return -1;
@@ -17781,7 +17787,22 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
 <div id="frame"/><img id="big" src="pic.svg"/><div id="text">Масштаб</div>
 </body></rml>)rml";
     static std::filesystem::path us_root() { return std::filesystem::temp_directory_path() / "forge_editor_ui_scale"; }
-    static std::filesystem::path us_game() { return us_root() / utf8_path("Мои игры") / utf8_path("Векторы А"); }
+    static std::filesystem::path us_mine(const char* title) { return us_root() / utf8_path("Мои игры") / utf8_path(title); }
+    static std::filesystem::path us_game() { return us_mine("Векторы А"); }
+    // The picture A's HUD takes from «Ресурсы»: opaque all over (over the game's world it shows as drawn), its triangle in
+    // currentColor; and the same file as the author changes it later in «Ресурсы» (another program saves it).
+    static constexpr const char* kUsBadge = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<rect width="32" height="32" fill="#283c64"/><path d="M16 4 L28 26 L4 26 Z" fill="currentColor"/><circle cx="16" cy="19" r="4" fill="#e04040"/></svg>)svg";
+    static constexpr const char* kUsBadge2 = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<rect width="32" height="32" fill="#5a1e3c"/><rect x="6" y="6" width="20" height="20" rx="4" fill="currentColor"/><circle cx="16" cy="16" r="5" fill="#30a060"/></svg>)svg";
+    // A frame of nine parts for a layer: 48 × 48, its corners in 16 × 16 (the slice «Интерфейс» gives a picture it does not
+    // know), its edges one colour along them, opaque.
+    static constexpr const char* kUsFrameArt = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+<rect width="48" height="48" fill="#1c2a3a"/><rect x="3" y="3" width="42" height="42" fill="none" stroke="#e0b040" stroke-width="2"/>
+<circle cx="8" cy="8" r="4" fill="#c04040"/><circle cx="40" cy="8" r="4" fill="#40a0c0"/><circle cx="8" cy="40" r="4" fill="#40c060"/>
+<circle cx="40" cy="40" r="4" fill="#c0a040"/></svg>)svg";
+    static constexpr int kUsFrameSize = 48, kUsFrameSlice = 16;
+    static constexpr int kUsMany = 1000; // files of C's «Ресурсы»: a long list
     // An SVG with what lunasvg leaves out (a blur) or draws by the player's fonts (a text), and the line «Ресурсы» say of it.
     static constexpr const char* kUsSoft = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
 <filter id="soft"><feGaussianBlur stdDeviation="2"/></filter>
@@ -17791,26 +17812,9 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     static constexpr const char* kUsSoftLine =
         "мягкий.svg: фильтр «soft» (размытие) в строке 2 lunasvg не рисует; текст <text> в строке 4 lunasvg рисует шрифтом "
         "компьютера игрока — надёжнее перевести его в кривые; размытие и тень интерфейсу дают свойства filter и box-shadow в RCSS";
-    int usa_step_ = 0;
-    u32 usa_layer_ = 0;
     // lunasvg straight at w × h, as the UI draws it (premultiplied RGBA); color: currentColor.
     static std::vector<u8> us_reference(const std::string& svg, int w, int h, const std::string& color = "") {
-        std::unique_ptr<lunasvg::Document> doc = lunasvg::Document::loadFromData(svg);
-        if (!doc || w <= 0 || h <= 0) return {};
-        if (!color.empty()) doc->documentElement().setAttribute("color", color);
-        lunasvg::Bitmap bitmap = doc->renderToBitmap(w, h);
-        if (bitmap.isNull()) return {};
-        std::vector<u8> out(static_cast<usize>(w) * static_cast<usize>(h) * 4);
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x) {
-                const u8* p = bitmap.data() + static_cast<usize>(y) * static_cast<usize>(bitmap.stride()) + static_cast<usize>(x) * 4;
-                u8* q = out.data() + (static_cast<usize>(y) * static_cast<usize>(w) + static_cast<usize>(x)) * 4;
-                q[0] = p[2];
-                q[1] = p[1];
-                q[2] = p[0];
-                q[3] = p[3];
-            }
-        return out;
+        return edits::svg_pixels(svg, w, h, color);
     }
     // An element's box on the page (content, or border), in pixels of the page's picture.
     bool us_box(const char* id, bool border, int& x, int& y, int& w, int& h) {
@@ -17910,6 +17914,13 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
               "the page at " + us_num(s) + ": " + path_to_utf8(file));
     }
 
+    // What the window says when it is put on a display of another scale, the way the window's events come in.
+    void us_display_event() {
+        SDL_Event e{};
+        e.type = SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED;
+        ed_.handle_event(e);
+    }
+
     bool ui_scale_step() {
         namespace fs = std::filesystem;
         std::error_code ec;
@@ -17971,40 +17982,110 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         case 3:
             if (wait(3)) return true;
             us_picture("icon", kUsIcon, 10, 10, 24, "#2050d0", "a new colour");
+            // The window goes to a display of scale 2: the system says so by the window's event, and only then is it taken.
+            // The test stands in for the display's scale (one display cannot be left for another here); the event goes the
+            // window's own way, through the editor.
+            ed_.ui().stand_in_display_scale(2.0f);
             break;
+        case 4:
+            if (wait(3)) return true;
+            check(ed_.ui().dp_ratio() == 1.0f && ed_.context()->GetDensityIndependentPixelRatio() == 1.0f && us_ctx_->GetDensityIndependentPixelRatio() == 1.0f,
+                  "the display at 2, the window has not said so: the editor and the page at 1");
+            us_display_event();
+            break;
+        case 5: {
+            if (wait(3)) return true;
+            const std::string two = "the display's 2 (the window's event)";
+            check(ed_.ui().display_scale() == 2.0f && ed_.ui().dp_ratio() == 2.0f && ed_.context()->GetDensityIndependentPixelRatio() == 2.0f &&
+                      us_ctx_->GetDensityIndependentPixelRatio() == 2.0f,
+                  two + ": the editor and the page at 2");
+            Rml::Element* bar = ed_.find_element("statusbar");
+            const f32 bar_h = bar ? bar->GetBox().GetSize(Rml::BoxArea::Border).y : 0;
+            check(std::fabs(bar_h - us_bar_h_ * 2) <= 1.5f, two + ": the editor's status bar " + us_num(bar_h) + " pixels high");
+            Rml::Context* design = Rml::GetContext("ui-design");
+            check(design && design->GetDensityIndependentPixelRatio() == 1.0f,
+                  two + ": the game's page on the canvas of «Интерфейс» at its own 1 (its picture is fitted into the canvas)");
+            us_picture("icon", kUsIcon, 20, 20, 48, "#2050d0", two);
+            us_frame(2.0f, two);
+            ed_.ui().stand_in_display_scale(1.0f);
+            us_display_event();
+            break;
+        }
+        case 6: {
+            if (wait(3)) return true;
+            Rml::Element* bar = ed_.find_element("statusbar");
+            const f32 bar_h = bar ? bar->GetBox().GetSize(Rml::BoxArea::Border).y : 0;
+            check(ed_.ui().dp_ratio() == 1.0f && us_ctx_->GetDensityIndependentPixelRatio() == 1.0f && std::fabs(bar_h - us_bar_h_) <= 0.5f,
+                  "back on a display of 1 by the window's event: the editor and the page at 1, the status bar " + us_num(bar_h));
+            us_picture("icon", kUsIcon, 10, 10, 24, "#2050d0", "the display's 1 again");
+            break;
+        }
         default: {
             ed_.ui().destroy_context(us_ctx_);
             us_ctx_ = nullptr;
             us_doc_ = nullptr;
             ed_.ui().set_scale(1.0f);
-            // SVG into «Ресурсы» and from there into the game's interface, in a game of its own.
+            // SVG from «Ресурсы» to a screen of the game and to the player, in games of their own made of «Платформер»: A's
+            // changed, B and the template as they were.
             namespace pj = editor::project;
-            const fs::path a = us_game();
+            const fs::path a = us_game(), b = us_mine("Векторы Б"), c = us_mine("Векторы В");
             const auto tmpl_before = tp_template();
             std::vector<pj::Template> all;
             std::string error;
             check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
             const auto platformer = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "platformer"; });
-            fs::path made;
             fs::create_directories(a.parent_path(), ec);
-            check(platformer != all.end() && pj::create(*platformer, editor_modules(), a.parent_path(), "Векторы А", made, &error) &&
-                      lvl_same(made, a),
-                  "«Векторы А» made of «Платформер» " + error);
-            fs::remove_all(play_folder(a), ec);
-            const fs::path outside = us_root() / utf8_path("снаружи");
+            for (const auto& [title, folder] : {std::pair{"Векторы Б", b}, std::pair{"Векторы А", a}, std::pair{"Векторы В", c}}) {
+                fs::path made;
+                check(platformer != all.end() && pj::create(*platformer, editor_modules(), a.parent_path(), title, made, &error) &&
+                          lvl_same(made, folder),
+                      std::string("«") + title + "» made of «Платформер» " + error);
+                fs::remove_all(play_folder(folder), ec);
+            }
+            const auto b_before = pj_tree(b);
+            const fs::path outside = us_root() / utf8_path("снаружи"), elsewhere = us_root() / utf8_path("другая папка");
             fs::create_directories(outside, ec);
-            const int code = pj_run({path_to_utf8(editor_exe()), "--project", path_to_utf8(a / "project.forge"), "--self-test", "ui-scale-a"}, outside);
-            check(code == 0, "two SVG files dropped into «Ресурсы»: kept as written, what lunasvg leaves out named in a line, their previews "
-                             "drawn by lunasvg; one picked in «Интерфейс» from «Ресурсы» (ui-scale-a: exit " + std::to_string(code) + ")");
+            fs::create_directories(elsewhere, ec);
+            const std::string exe = path_to_utf8(editor_exe());
+            int code = pj_run({exe, "--project", path_to_utf8(a / "project.forge"), "--self-test", "ui-scale-a"}, outside);
+            check(code == 0, "three SVG files dropped into «Ресурсы»: kept as written, what lunasvg leaves out named in a line, their previews "
+                             "drawn by lunasvg; on the HUD in «Интерфейс» a picture layer of one, undone and done again, a layer framed by "
+                             "another; Ctrl+S (ui-scale-a: exit " + std::to_string(code) + ")");
+            code = pj_run({exe, "--project", path_to_utf8(a / "project.forge"), "--self-test", "ui-scale-a-again"}, elsewhere);
+            check(code == 0, "opened again from another working folder: the HUD drawn on the canvas and in «Проверить» as lunasvg draws "
+                             "the game's copies, played; the picture changed in «Ресурсы», F5: the same asset and copy, the canvas and the game "
+                             "draw the new one (ui-scale-a-again: exit " + std::to_string(code) + ")");
             auto text = [](const fs::path& file) {
-                const std::vector<u8> b = tg_bytes(file);
-                return std::string(b.begin(), b.end());
+                const std::vector<u8> bytes = tg_bytes(file);
+                return std::string(bytes.begin(), bytes.end());
             };
-            check(text(a / "assets" / utf8_path("мягкий.svg")) == kUsSoft && text(a / "assets" / utf8_path("значок.svg")) == kUsIcon,
-                  "«Ресурсы» of A: both SVG files byte for byte as dropped");
-            check(text(a / "game" / "pictures" / utf8_path("значок.svg")) == kUsIcon && !fs::exists(a / "game" / "pictures" / utf8_path("мягкий.svg"), ec),
-                  "A's game: «pictures/значок.svg» as written (the picture picked), not the other");
+            check(text(a / "assets" / utf8_path("мягкий.svg")) == kUsSoft && text(a / "assets" / utf8_path("значок.svg")) == kUsBadge2 &&
+                      text(a / "assets" / utf8_path("рамка.svg")) == kUsFrameArt,
+                  "«Ресурсы» of A: «мягкий.svg» and «рамка.svg» as dropped, «значок.svg» as the author changed it");
+            check(text(a / "game" / "pictures" / utf8_path("значок.svg")) == kUsBadge2 && text(a / "game" / "pictures" / utf8_path("рамка.svg")) == kUsFrameArt &&
+                      !fs::exists(a / "game" / "pictures" / utf8_path("мягкий.svg"), ec),
+                  "A's game: «pictures/значок.svg» the changed one, «pictures/рамка.svg» as written, nothing of the other");
+            // The mouse at the display's scales: C, a long list in its «Ресурсы».
+            bool wrote = true;
+            for (int i = 1; i <= kUsMany; ++i) {
+                char name[32];
+                std::snprintf(name, sizeof(name), "запись_%04d.txt", i);
+                const std::string line = std::string(name) + "\n";
+                wrote = wrote && write_file_atomic(c / "assets" / utf8_path(name), {reinterpret_cast<const u8*>(line.data()), line.size()});
+            }
+            check(wrote, std::to_string(kUsMany) + " files put into C's «Ресурсы»");
+            const auto c_ui = pj_tree(c / "game" / "ui");
+            for (const char* scale : {"1", "1.5", "2"}) {
+                code = pj_run({exe, "--project", path_to_utf8(c / "project.forge"), "--ui-scale", scale, "--self-test", "ui-scale-b"}, elsewhere);
+                check(code == 0, std::string("the display's ") + scale + ": a layer of the canvas found, moved and resized by the mouse, undone; a row "
+                                 "of the long list of «Ресурсы» scrolled to by the wheel and clicked (ui-scale-b: exit " + std::to_string(code) + ")");
+            }
+            // «Интерфейс» opened makes the library of components (components.json and .html) the first time; the screens stay.
+            auto c_after = pj_tree(c / "game" / "ui");
+            const bool library = c_after.erase("components.json") + c_after.erase("components.html") == 2 && !c_ui.count("components.json");
+            check(library && c_after == c_ui, "C's screens byte for byte as before (each change undone), its library of components made");
             check(tp_template() == tmpl_before, "the template byte for byte as before");
+            check(pj_tree(b) == b_before, "«Векторы Б» byte for byte as before");
             return false;
         }
         }
@@ -18012,30 +18093,49 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         return true;
     }
 
-    // In an editor for «Векторы А» (--self-test ui-scale-a): SVG files dropped into «Ресурсы» from another folder; one
-    // picked in «Интерфейс» for a picture layer, from «Ресурсы».
+    // In an editor for «Векторы А» (--self-test ui-scale-a): SVG files dropped into «Ресурсы» from another folder; on the
+    // HUD in «Интерфейс» a picture layer of one, from «Ресурсы», undone and done again; a rectangle framed by another
+    // (border-image), from «Ресурсы» too; Ctrl+S.
+    int usa_step_ = 0;
+    u32 usa_layer_ = 0, usa_frame_ = 0;
+    std::string usa_was_;                        // the picture the new layer had before one was picked
+    std::vector<u8> usa_json_, usa_html_;        // the HUD's files before Ctrl+S
+    std::string usa_text(const std::filesystem::path& file) {
+        const std::vector<u8> b = tg_bytes(file);
+        return std::string(b.begin(), b.end());
+    }
+    std::string usa_fill(u32 id) {
+        std::string picture;
+        if (const editor::design::Node* n = ue_node(id))
+            for (const editor::design::Paint& p : n->fills)
+                if (p.kind == editor::design::PaintKind::Image) picture = p.image;
+        return picture;
+    }
+    // An option of a drop-down of the panel brought into sight where a person would scroll to it in the open list.
+    void usa_scroll_to(const char* id, const std::string& value) {
+        auto* sel = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element(id));
+        for (int i = 0; sel && i < sel->GetNumOptions(); ++i)
+            if (Rml::Element* o = sel->GetOption(i); o && o->GetAttribute<Rml::String>("value", "") == value) o->ScrollIntoView(false);
+    }
     bool ui_scale_a_step() {
         namespace fs = std::filesystem;
         namespace d = editor::design;
         const fs::path a = pjw().config().root, outside = us_root() / utf8_path("снаружи");
+        const fs::path json = a / "game" / "ui" / "hud.json", html = a / "game" / "ui" / "hud.html";
         const bool idle = !as().busy() && !as().looking();
-        auto text = [](const fs::path& file) {
-            const std::vector<u8> b = tg_bytes(file);
-            return std::string(b.begin(), b.end());
-        };
         auto logged = [&](const std::string& line) {
             for (const LogLine& l : ed_.log_lines())
                 if (l.text.find(line) != std::string::npos) return true;
             return false;
         };
-        const std::string icon_pick = "add:" + path_to_utf8(as().abs("значок.svg"));
+        const std::string icon_pick = "add:" + path_to_utf8(as().abs("значок.svg")), frame_pick = "add:" + path_to_utf8(as().abs("рамка.svg"));
         switch (usa_step_) {
         case 0: {
             check(pjw().config().title == "Векторы А" && lvl_same(as().root(), a / "assets"), "the editor has «Векторы А» open, its «Ресурсы» in assets/");
             auto put = [&](const char* name, const char* svg) {
                 return write_file_atomic(outside / utf8_path(name), {reinterpret_cast<const u8*>(svg), std::strlen(svg)});
             };
-            check(put("мягкий.svg", kUsSoft) && put("значок.svg", kUsIcon), "two SVG files drawn elsewhere");
+            check(put("мягкий.svg", kUsSoft) && put("значок.svg", kUsBadge) && put("рамка.svg", kUsFrameArt), "three SVG files drawn elsewhere");
             check(click_tab(10) && ed_.tab() == "assets", "a click on «Ресурсы»");
             break;
         }
@@ -18046,7 +18146,7 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         case 2: {
             const assets::AssetRecord* rec = as().record_of(as().abs("мягкий.svg"));
             if (hold(idle && rec && logged(kUsSoftLine), "the dropped SVG indexed, its line said")) return true;
-            check(rec && rec->type == "svg" && text(as().abs("мягкий.svg")) == kUsSoft, "«мягкий.svg» in «Ресурсы», an SVG, byte for byte as dropped");
+            check(rec && rec->type == "svg" && usa_text(as().abs("мягкий.svg")) == kUsSoft, "«мягкий.svg» in «Ресурсы», an SVG, byte for byte as dropped");
             check(as().selection() == std::vector<std::string>{"мягкий.svg"}, "the new file chosen");
             check(logged(kUsSoftLine), std::string("the line said at the import: ") + kUsSoftLine);
             break;
@@ -18067,63 +18167,487 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         }
         case 4: {
             const assets::AssetRecord* rec = as().record_of(as().abs("значок.svg"));
-            if (hold(idle && rec && as().selection() == std::vector<std::string>{"значок.svg"} && as().preview_width() == 24, "the icon indexed, its preview drawn"))
+            if (hold(idle && rec && as().selection() == std::vector<std::string>{"значок.svg"} && as().preview_width() == 32, "the icon indexed, its preview drawn"))
                 return true;
-            check(rec && rec->type == "svg" && text(as().abs("значок.svg")) == kUsIcon, "«значок.svg» in «Ресурсы» byte for byte");
-            check(as().preview_height() == 24 && !shown("as-sel-note") && !logged("значок.svg:"), "lunasvg draws all of it: nothing said");
-            check(click_tab(8) && ed_.tab() == "ui", "a click on «Интерфейс»");
+            check(rec && rec->type == "svg" && usa_text(as().abs("значок.svg")) == kUsBadge, "«значок.svg» in «Ресурсы» byte for byte");
+            check(as().preview_height() == 32 && !shown("as-sel-note") && !logged("значок.svg:"), "lunasvg draws all of it: nothing said");
+            drop(outside / utf8_path("рамка.svg"));
             break;
         }
         case 5: {
+            const assets::AssetRecord* rec = as().record_of(as().abs("рамка.svg"));
+            if (hold(idle && rec && as().selection() == std::vector<std::string>{"рамка.svg"} && as().preview_width() == kUsFrameSize,
+                     "the frame's picture indexed, its preview drawn"))
+                return true;
+            check(rec && rec->type == "svg" && usa_text(as().abs("рамка.svg")) == kUsFrameArt && !logged("рамка.svg:"),
+                  "«рамка.svg» in «Ресурсы» byte for byte, nothing said of it");
+            check(click_tab(8) && ed_.tab() == "ui", "a click on «Интерфейс»");
+            break;
+        }
+        case 6: {
             if (hold(shown("ue-mode-simple") || ue().simple(), "«Интерфейс» laid out")) return true;
+            check(ue().opened() == "hud", "the screen open: the HUD (" + ue().opened() + ")");
             if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
-            bool offered = false, soft = false;
+            bool offered = false, soft = false, frame = false;
             for (const auto& [value, name] : ue().picture_choices()) {
                 if (value == icon_pick) offered = name == "значок — из «Ресурсов»";
                 if (value == "add:" + path_to_utf8(as().abs("мягкий.svg"))) soft = true;
+                if (value == frame_pick) frame = name == "рамка — из «Ресурсов»";
             }
-            check(offered && soft, "the pictures offered: the game's, then «значок — из «Ресурсов»» and «мягкий»");
+            check(offered && soft && frame, "the pictures offered: the game's, then «значок — из «Ресурсов»», «мягкий» and «рамка»");
             break;
         }
-        case 6:
+        case 7:
             if (hold(shown("ue-block-picture"), "«Простой» laid out")) return true;
             check(click("ue-block-picture"), "«Картинка»");
             usa_layer_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
             check(ue_node(usa_layer_) && d::block_of(*ue_node(usa_layer_)) == d::Block::Picture, "a picture layer");
+            usa_was_ = usa_fill(usa_layer_);
             break;
-        case 7:
+        case 8:
             if (hold(shown("ue-s-picture"), "its «Картинка»")) return true;
             check(ue_open("ue-s-picture"), "a click opens its «Картинка»");
             break;
-        case 8: {
-            // The option where a person would scroll to it in the open list.
-            auto* sel = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element("ue-s-picture"));
-            for (int i = 0; sel && i < sel->GetNumOptions(); ++i)
-                if (Rml::Element* o = sel->GetOption(i); o && o->GetAttribute<Rml::String>("value", "") == icon_pick) o->ScrollIntoView(false);
-            break;
-        }
         case 9:
+            usa_scroll_to("ue-s-picture", icon_pick);
+            break;
+        case 10:
             check(ue_option("ue-s-picture", icon_pick), "a click on «значок — из «Ресурсов»»");
             break;
-        case 10: {
-            std::string picture;
-            if (const d::Node* n = ue_node(usa_layer_))
-                for (const d::Paint& p : n->fills)
-                    if (p.kind == d::PaintKind::Image) picture = p.image;
+        case 11: {
             const fs::path copy = a / "game" / "pictures" / utf8_path("значок.svg");
-            if (hold(picture == "pictures/значок.svg", "the layer's picture")) return true;
-            check(text(copy) == kUsIcon, "copied into the game's pictures as written: the SVG, not a raster of it");
+            if (hold(usa_fill(usa_layer_) == "pictures/значок.svg", "the layer's picture")) return true;
+            check(usa_text(copy) == kUsBadge, "copied into the game's pictures as written: the SVG, not a raster of it");
             bool offered = false, listed = false;
             for (const auto& [value, name] : ue().picture_choices()) {
                 if (value == icon_pick) offered = true;
                 if (value == "pictures/значок.svg") listed = true;
             }
             check(listed && !offered, "now one of the game's pictures, not offered from «Ресурсы» again");
+            check(usa_text(html).find("url(\"../pictures/значок.svg\")") != std::string::npos, "hud.html shows it at once");
+            key(SDLK_Z, SDL_KMOD_CTRL);
             break;
         }
+        case 12: {
+            check(!usa_was_.empty() && usa_fill(usa_layer_) == usa_was_, "Ctrl+Z: the layer's picture as it was, " + usa_was_);
+            check(usa_text(html).find("значок.svg") == std::string::npos, "hud.html no longer names «значок.svg»");
+            check(usa_text(a / "game" / "pictures" / utf8_path("значок.svg")) == kUsBadge,
+                  "the game's copy stays (the step undone is the layer's, the file was the game's to keep)");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(usa_fill(usa_layer_) == "pictures/значок.svg" && usa_text(html).find("url(\"../pictures/значок.svg\")") != std::string::npos,
+                  "Ctrl+Y: «значок.svg» again, in hud.html too");
+            // A rectangle framed by a picture of «Ресурсы»: «Полный», «Создать» → «Прямоугольник», «Рамка-картинка».
+            check(click("ue-mode-full") && !ue().simple(), "«Полный»");
+            break;
+        }
+        case 13:
+            if (hold(shown("ue-create"), "«Создать» laid out")) return true;
+            check(click("ue-create") && ue().menu() == "create", "«Создать»");
+            break;
+        case 14:
+            if (hold(shown("ue-new-rectangle"), "its menu laid out")) return true;
+            check(click("ue-new-rectangle"), "«Прямоугольник»");
+            usa_frame_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            check(ue_node(usa_frame_) && ue_node(usa_frame_)->type == d::NodeType::Rectangle && usa_frame_ != usa_layer_, "a rectangle of its own");
+            break;
+        case 15:
+            if (hold(ed_.find_element("ue-frame-add") != nullptr, "its «Рамка-картинка»")) return true;
+            check(click("ue-frame-add") && ue_node(usa_frame_) && !ue_node(usa_frame_)->frame.image.empty(),
+                  "«+» of «Рамка-картинка»: a frame of a picture of the game's");
+            break;
+        case 16:
+            if (hold(shown("ue-frame-image"), "the frame's picture")) return true;
+            check(ue_sd_open("ue-frame-image"), "a click opens the frame's picture");
+            break;
+        case 17:
+            usa_scroll_to("ue-frame-image", frame_pick);
+            break;
+        case 18:
+            check(ue_option("ue-frame-image", frame_pick), "a click on «рамка — из «Ресурсов»»");
+            break;
+        case 19: {
+            const d::Node* n = ue_node(usa_frame_);
+            if (hold(n && n->frame.image == "pictures/рамка.svg", "the frame's picture")) return true;
+            check(usa_text(a / "game" / "pictures" / utf8_path("рамка.svg")) == kUsFrameArt, "«рамка.svg» copied into the game's pictures as written");
+            check(n->frame.slice == std::array<f32, 4>{16, 16, 16, 16} && n->frame.scale == 1 && n->frame.fill,
+                  "cut 16 from each side (a picture «Интерфейс» does not know), as wide on the layer, the middle drawn");
+            const std::string page = usa_text(html);
+            check(page.find("border-image-source: url(\"../pictures/рамка.svg\")") != std::string::npos &&
+                      page.find("url(\"../pictures/значок.svg\")") != std::string::npos,
+                  "hud.html: the frame and the picture");
+            usa_json_ = tg_bytes(json);
+            usa_html_ = tg_bytes(html);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            break;
+        }
+        case 20:
+            check(ed_.unsaved().empty() && tg_bytes(json) == usa_json_ && tg_bytes(html) == usa_html_,
+                  "Ctrl+S: nothing left unsaved, the HUD's files as they were (written as each change was made)");
+            return false;
         default: return false;
         }
         ++usa_step_;
+        return true;
+    }
+
+    // In an editor for «Векторы А» from another working folder (--self-test ui-scale-a-again): the HUD as saved, drawn on
+    // the canvas and in «Проверить» as lunasvg draws the game's copies; played. Then «значок.svg» changed in «Ресурсы» as
+    // another program saves it, F5: the game's copy follows, the same asset and its id, the canvas and «Проверить» draw the
+    // new picture (nothing kept of the old one); played again.
+    int usg_step_ = 0;
+    u32 usg_pic_ = 0, usg_frame_ = 0;
+    std::string usg_asset_;
+    std::vector<u8> usg_meta_;
+    // The two layers on the page the canvas shows, read back as drawn, against lunasvg's pictures of their files.
+    void usg_canvas(const char* svg, const std::string& at) {
+        Rml::ElementDocument* page = ue().page();
+        Rml::Context* ctx = page ? page->GetContext() : nullptr;
+        for (const auto& [id, frame] : {std::pair{usg_pic_, false}, std::pair{usg_frame_, true}}) {
+            Rml::Element* e = page ? page->GetElementById("n" + std::to_string(id)) : nullptr;
+            const editor::design::Node* n = ue_node(id);
+            if (!check(e && ctx && n, at + ": the layer n" + std::to_string(id) + " on the page")) continue;
+            const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border).Round(), size = e->GetBox().GetSize(Rml::BoxArea::Border).Round();
+            const int x = static_cast<int>(p.x), y = static_cast<int>(p.y), w = static_cast<int>(size.x), h = static_cast<int>(size.y);
+            check(x == static_cast<int>(n->x) && y == static_cast<int>(n->y) && w == static_cast<int>(n->w) && h == static_cast<int>(n->h),
+                  at + ": n" + std::to_string(id) + " at " + std::to_string(x) + ", " + std::to_string(y) + ", " + std::to_string(w) + " × " +
+                      std::to_string(h) + " of the page, where the layer is");
+            std::vector<u8> px;
+            if (w <= 0 || h <= 0 || !ed_.ui().read_pixels(ctx, static_cast<u32>(x), static_cast<u32>(y), static_cast<u32>(w), static_cast<u32>(h), px))
+                px.clear();
+            const Rml::Colourb c = e->GetComputedValues().color();
+            const std::vector<u8> want = frame ? edits::svg_frame(kUsFrameArt, kUsFrameSize, kUsFrameSlice, w, h)
+                                               : edits::svg_pixels(svg, w, h, edits::hex_color(c.red, c.green, c.blue));
+            const int dd = edits::pixels_diff(px, want);
+            check(dd <= 2, at + (frame ? ": the frame of «рамка.svg» drawn as lunasvg draws it (corners, edges without seams, middle)"
+                                       : ": «значок.svg» drawn as lunasvg draws the game's copy at " + std::to_string(w) + " × " + std::to_string(h)) +
+                               " (a channel off by " + std::to_string(dd) + " at most)");
+        }
+    }
+    // What the game must have of the HUD, the picture's file as now.
+    edits::ProjectEdits usg_edits(const char* svg) {
+        edits::ProjectEdits e;
+        e.vs_screen = "hud";
+        e.vs_picture = usg_pic_;
+        e.vs_picture_file = "pictures/значок.svg";
+        e.vs_picture_svg = svg;
+        e.vs_frame = usg_frame_;
+        e.vs_frame_file = "pictures/рамка.svg";
+        e.vs_frame_svg = kUsFrameArt;
+        e.vs_frame_size = kUsFrameSize;
+        e.vs_frame_slice = kUsFrameSlice;
+        for (const auto& [id, box] : {std::pair{usg_pic_, &e.vs_picture_box}, std::pair{usg_frame_, &e.vs_frame_box}})
+            if (const editor::design::Node* n = ue_node(id))
+                *box = {static_cast<int>(n->x), static_cast<int>(n->y), static_cast<int>(n->w), static_cast<int>(n->h)};
+        return e;
+    }
+    std::filesystem::path usg_meta_file() {
+        std::filesystem::path meta = as().abs("значок.svg");
+        meta += ".meta";
+        return meta;
+    }
+    bool ui_scale_again_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, copy = a / "game" / "pictures" / utf8_path("значок.svg");
+        const bool idle = !as().busy() && !as().looking();
+        const assets::AssetRecord* rec = ed_.tab() == "assets" ? as().record_of(as().abs("значок.svg")) : nullptr;
+        const editor::sources::Entry* source = ed_.sources.of_file("pictures/значок.svg");
+        // «Играть со стартового» of «Уровень»: the game at the screen's own size, what it must draw in a file of the test's.
+        auto play = [&](const char* svg, const std::string& what) {
+            const edits::ProjectEdits e = usg_edits(svg);
+            const int code = tg_play(&e, "ожидания векторы.json", us_root(), "project", {"--size", "1920x1080"});
+            check(code == 0, "the game draws " + what + " on its HUD as lunasvg draws the game's copies, the frame too (exit " + std::to_string(code) + ")");
+        };
+        switch (usg_step_) {
+        case 0: {
+            check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), us_root() / utf8_path("снаружи")),
+                  "from another working folder: " + path_to_utf8(fs::current_path()));
+            check(pjw().config().title == "Векторы А", "the editor has «Векторы А» open");
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        }
+        case 1: {
+            if (hold(ue().page() != nullptr && ue().opened() == "hud", "«Интерфейс» has the HUD open")) return true;
+            auto visit = [&](auto&& self, const d::Node& n) -> void {
+                for (const d::Paint& p : n.fills)
+                    if (p.kind == d::PaintKind::Image && p.image == "pictures/значок.svg") usg_pic_ = n.id;
+                if (n.frame.image == "pictures/рамка.svg") usg_frame_ = n.id;
+                for (const d::Node& c : n.children) self(self, c);
+            };
+            visit(visit, ue().screen().root);
+            check(usg_pic_ && usg_frame_ && usg_pic_ != usg_frame_, "the HUD as saved: a layer of «значок.svg», a layer framed by «рамка.svg»");
+            break;
+        }
+        case 2:
+            if (wait(4)) return true; // laid out and drawn
+            usg_canvas(kUsBadge, "the canvas");
+            check(click("ue-check") && ue().checking(), "«Проверить»");
+            break;
+        case 3:
+            if (wait(4)) return true;
+            usg_canvas(kUsBadge, "«Проверить»");
+            check(click("ue-check") && !ue().checking(), "«Проверить» again: back to editing");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 4:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 5:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            play(kUsBadge, "«значок.svg»");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        // «значок.svg» changed in «Ресурсы» as another program saves it; F5.
+        case 6: {
+            if (hold(idle && rec && source, "«Ресурсы» indexed, the game's copy of «значок.svg» one of theirs")) return true;
+            usg_asset_ = rec->id.to_string();
+            check(source->asset.to_string() == usg_asset_ && source->hash == editor::sources::hash_of(tg_bytes(copy)),
+                  "game/sources.json: «pictures/значок.svg» the copy of «значок.svg», its id " + usg_asset_);
+            usg_meta_ = tg_bytes(usg_meta_file());
+            check(!usg_meta_.empty() && std::string(usg_meta_.begin(), usg_meta_.end()).find(usg_asset_) != std::string::npos,
+                  "its .meta keeps that id");
+            tg_said_ = tg_mark();
+            check(write_file_atomic(as().abs("значок.svg"), {reinterpret_cast<const u8*>(kUsBadge2), std::strlen(kUsBadge2)}),
+                  "«значок.svg» of «Ресурсы» saved over by another program");
+            fs::last_write_time(as().abs("значок.svg"), fs::file_time_type::clock::now() + std::chrono::seconds(1), ec);
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 7: {
+            if (hold(idle && usa_text(copy) == kUsBadge2, "F5: the game's copy follows")) return true;
+            check(rec && rec->id.to_string() == usg_asset_ && rec->type == "svg", "the same asset, the same id");
+            check(source && source->asset.to_string() == usg_asset_ && source->hash == editor::sources::hash_of(tg_bytes(copy)),
+                  "game/sources.json: the same copy of the same asset, the new content's hash");
+            const std::vector<u8> meta = tg_bytes(usg_meta_file());
+            check(std::string(meta.begin(), meta.end()).find(usg_asset_) != std::string::npos, "its .meta keeps the id");
+            const usize updated = tg_said("Из «Ресурсов» обновлено в игре: pictures/значок.svg");
+            check(updated == 1, "the log says once that «pictures/значок.svg» was brought up to date (" + std::to_string(updated) + ")");
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        }
+        case 8:
+            if (hold(ue().page() != nullptr, "«Интерфейс» laid out")) return true;
+            if (wait(4)) return true;
+            usg_canvas(kUsBadge2, "after F5, the canvas");
+            check(click("ue-check") && ue().checking(), "«Проверить»");
+            break;
+        case 9:
+            if (wait(4)) return true;
+            usg_canvas(kUsBadge2, "after F5, «Проверить»");
+            check(click("ue-check") && !ue().checking(), "«Проверить» again: back to editing");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 10:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 11:
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            play(kUsBadge2, "the changed «значок.svg»");
+            return false;
+        default: return false;
+        }
+        ++usg_step_;
+        return true;
+    }
+
+    // In an editor for «Векторы В» on a display of a scale (--ui-scale 1, 1.5 or 2; --self-test ui-scale-b): the mouse
+    // where things are drawn at that scale. A long list of «Ресурсы» scrolled by the wheel and a row clicked where it is;
+    // on the canvas of «Интерфейс» a new rectangle found under the mouse, moved and resized by it by the window's pixels
+    // (the page's: those over the canvas's zoom), each undone. The tabs and buttons are clicked where they are drawn.
+    int usb_step_ = 0;
+    u32 usb_rect_ = 0, usb_waited_ = 0;
+    i64 usb_row_ = -1;
+    f32 usb_x_ = 0, usb_y_ = 0, usb_w_ = 0, usb_h_ = 0;
+    std::vector<u8> usb_json_;
+    bool usb_hold(bool ready, const char* what) { // as hold, for the indexing of a thousand files
+        if (ready) {
+            usb_waited_ = 0;
+            return false;
+        }
+        SDL_Delay(2);
+        if (++usb_waited_ < 6000) return true;
+        usb_waited_ = 0;
+        check(false, what);
+        return false;
+    }
+    bool usb_click(Rml::Element* e) {
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+        left_click(p.x, p.y);
+        return true;
+    }
+    bool usb_tab(int index) {
+        Rml::Element* bar = ed_.find_element("editor-tabs");
+        return bar && index < bar->GetNumChildren() && usb_click(bar->GetChild(index));
+    }
+    // A point of the page (its pixels) where the canvas shows it, in the window's pixels; k: the window's pixels a pixel
+    // of the page takes there.
+    bool usb_at(f32 px, f32 py, f32& x, f32& y, f32& k) {
+        Rml::ElementDocument* page = ue().page();
+        Rml::Element* image = ed_.find_element("ue-screen");
+        if (!page || !image || !page->GetContext()) return false;
+        const Rml::Vector2i texture = page->GetContext()->GetDimensions();
+        const Rml::Vector2f at = image->GetAbsoluteOffset(Rml::BoxArea::Border), size = image->GetBox().GetSize(Rml::BoxArea::Border);
+        if (texture.x <= 0 || texture.y <= 0 || size.x <= 0) return false;
+        k = size.x / static_cast<f32>(texture.x);
+        x = at.x + px * k;
+        y = at.y + py / static_cast<f32>(texture.y) * size.y;
+        return true;
+    }
+    bool ui_scale_b_step() {
+        namespace d = editor::design;
+        const f32 s = ed_.ui().display_scale();
+        const std::string at = "the display's " + us_num(s);
+        const bool idle = !as().busy() && !as().looking();
+        const std::filesystem::path json = pjw().config().root / "game" / "ui" / "hud.json";
+        switch (usb_step_) {
+        case 0: {
+            const Rml::Vector2i size = ed_.context()->GetDimensions();
+            check((s == 1.0f || s == 1.5f || s == 2.0f) && ed_.ui().dp_ratio() == s && size.x == static_cast<int>(std::lround(1600 * s)) &&
+                      size.y == static_cast<int>(std::lround(900 * s)),
+                  at + ": the editor at it, its window " + std::to_string(size.x) + " × " + std::to_string(size.y) + " pixels");
+            check(pjw().config().title == "Векторы В", "the editor has «Векторы В» open");
+            check(usb_tab(10) && ed_.tab() == "assets", at + ": a click on «Ресурсы» where its tab is drawn");
+            break;
+        }
+        case 1: {
+            if (usb_hold(idle && as().record_count() >= static_cast<usize>(kUsMany), "«Ресурсы» indexed")) return true;
+            usb_row_ = row_of("запись_0700.txt");
+            const std::vector<Rml::Element*> cells = list_cells();
+            const f32 row_h = cells.size() >= 2 ? cells[0]->GetOffsetHeight() : 0;
+            check(usb_row_ >= 700 && std::fabs(row_h - 30 * s) <= 0.5f,
+                  at + ": the list's rows " + us_num(row_h) + " pixels high (30 px of the UI), row " + std::to_string(usb_row_) + " of " +
+                      std::to_string(as().row_count()) + " the 700th file");
+            Rml::Element* list = ed_.find_element("as-list");
+            check(list && list->GetScrollTop() == 0, at + ": the list at its top");
+            if (list) {
+                const Rml::Vector2f p = list->GetAbsoluteOffset(Rml::BoxArea::Content) + list->GetBox().GetSize(Rml::BoxArea::Content) * 0.5f;
+                mouse(SDL_EVENT_MOUSE_MOTION, p.x, p.y);
+            }
+            break;
+        }
+        case 2: {
+            // The wheel, a notch a frame, till the row is well inside the list.
+            Rml::Element* list = ed_.find_element("as-list");
+            const f32 row_h = 30 * s, top = static_cast<f32>(usb_row_) * row_h;
+            const bool inside = list && top >= list->GetScrollTop() + 2 * row_h && top + 3 * row_h <= list->GetScrollTop() + list->GetClientHeight();
+            if (!inside && list && top >= list->GetScrollTop() + 2 * row_h) {
+                SDL_Event e{};
+                e.type = SDL_EVENT_MOUSE_WHEEL;
+                e.wheel.y = -1;
+                ed_.handle_event(e);
+            }
+            if (usb_hold(inside, "the wheel brings the row into the list")) return true;
+            // Where the row is drawn: the list's top, the row's place in it, the list scrolled.
+            const f32 y = list->GetAbsoluteOffset(Rml::BoxArea::Content).y + top - list->GetScrollTop() + row_h * 0.5f;
+            const f32 x = list->GetAbsoluteOffset(Rml::BoxArea::Content).x + 60 * s;
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            Rml::Element* cell = nullptr;
+            for (Rml::Element* h = ed_.context()->GetHoverElement(); h && !cell; h = h->GetParentNode())
+                if (h->IsClassSet("vl-row")) cell = h;
+            Rml::Element* name = cell ? cell->QuerySelector(".name") : nullptr;
+            const std::string want = as().row_field(static_cast<usize>(usb_row_), "name");
+            check(name && name->GetInnerRML() == want, at + ": the wheel scrolled the list " + us_num(list->GetScrollTop()) +
+                                                           " pixels; under the mouse the row of «" + want + "»");
+            left_click(x, y);
+            check(as().selection() == std::vector<std::string>{"запись_0700.txt"}, at + ": a click there chooses «запись_0700.txt»");
+            check(usb_tab(8) && ed_.tab() == "ui", at + ": a click on «Интерфейс» where its tab is drawn");
+            break;
+        }
+        case 3:
+            if (hold(shown("ue-mode-simple") || shown("ue-create"), "«Интерфейс» laid out")) return true;
+            if (ue().simple()) check(pj_click("ue-mode-full") && !ue().simple(), at + ": «Полный» clicked where drawn");
+            break;
+        case 4:
+            if (hold(shown("ue-create") && ue().opened() == "hud", "«Создать» laid out, the HUD open")) return true;
+            usb_json_ = tg_bytes(json);
+            check(pj_click("ue-create") && ue().menu() == "create", at + ": «Создать» clicked where drawn");
+            break;
+        case 5: {
+            if (hold(shown("ue-new-rectangle"), "its menu laid out")) return true;
+            check(pj_click("ue-new-rectangle"), at + ": «Прямоугольник» clicked where drawn");
+            usb_rect_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            const d::Node* n = ue_node(usb_rect_);
+            check(n && n->type == d::NodeType::Rectangle, at + ": a new rectangle, chosen");
+            if (n) usb_x_ = n->x, usb_y_ = n->y, usb_w_ = n->w, usb_h_ = n->h;
+            break;
+        }
+        case 6: {
+            if (wait(3)) return true; // drawn
+            f32 x = 0, y = 0, k = 0;
+            // A click where nothing of the screen is: nothing chosen. The mouse over the rectangle: it is shown as under it,
+            // where it is drawn; a click: chosen.
+            check(usb_at(300, 900, x, y, k), at + ": the canvas");
+            left_click(x, y);
+            check(ue().selection().empty(), at + ": a click on the screen where no layer is: nothing chosen");
+            usb_at(usb_x_ + usb_w_ * 0.5f, usb_y_ + usb_h_ * 0.5f, x, y, k);
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            break;
+        }
+        case 7: {
+            if (wait(2)) return true;
+            f32 x = 0, y = 0, k = 0, x0 = 0, y0 = 0;
+            usb_at(usb_x_, usb_y_, x0, y0, k);
+            Rml::Element* hover = ed_.find_element("ue-hover");
+            // The outline from the layer's corner as the canvas shows it, inside its border the layer's size there.
+            const Rml::Vector2f hp = hover ? hover->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f{},
+                                hs = hover ? hover->GetBox().GetSize(Rml::BoxArea::Padding) : Rml::Vector2f{};
+            check(hover && hover->IsVisible(true) && std::fabs(hp.x - x0) <= 1.5f && std::fabs(hp.y - y0) <= 1.5f &&
+                      std::fabs(hs.x - usb_w_ * k) <= 1.5f && std::fabs(hs.y - usb_h_ * k) <= 1.5f,
+                  at + ": the rectangle shown as under the mouse, its outline from " + us_num(hp.x) + ", " + us_num(hp.y) + " (the layer's corner " +
+                      us_num(x0) + ", " + us_num(y0) + "), " + us_num(hs.x) + " × " + us_num(hs.y) + " inside it");
+            usb_at(usb_x_ + usb_w_ * 0.5f, usb_y_ + usb_h_ * 0.5f, x, y, k);
+            left_click(x, y);
+            check(ue().selection() == std::vector<u32>{usb_rect_}, at + ": a click on it chooses it");
+            // Moved by the mouse (Ctrl: without snapping), by the window's pixels.
+            const f32 dx = 90 * s, dy = 60 * s;
+            SDL_SetModState(SDL_KMOD_LCTRL);
+            ue_drag(x, y, x + dx, y + dy);
+            SDL_SetModState(SDL_KMOD_NONE);
+            const d::Node* n = ue_node(usb_rect_);
+            const f32 wx = std::round(dx / k), wy = std::round(dy / k);
+            check(n && std::fabs(n->x - (usb_x_ + wx)) <= 1 && std::fabs(n->y - (usb_y_ + wy)) <= 1 && n->w == usb_w_ && n->h == usb_h_,
+                  at + ": dragged " + us_num(dx) + ", " + us_num(dy) + " pixels of the window: moved " + us_num(n ? n->x - usb_x_ : 0) + ", " +
+                      us_num(n ? n->y - usb_y_ : 0) + " on the page (" + us_num(wx) + ", " + us_num(wy) + " at a zoom of " + us_num(k) + ")");
+            break;
+        }
+        case 8: {
+            if (wait(2)) return true; // the handles where the rectangle is now
+            const d::Node* moved = ue_node(usb_rect_);
+            Rml::Element* sel = ed_.find_element("ue-selection");
+            Rml::Element* handle = sel ? sel->QuerySelector(".ue-handle.br") : nullptr;
+            f32 x = 0, y = 0, k = 0;
+            check(moved && handle && handle->IsVisible(true) && usb_at(moved->x + moved->w, moved->y + moved->h, x, y, k),
+                  at + ": the bottom right handle shown");
+            if (!moved || !handle) return false;
+            const Rml::Vector2f hc = handle->GetAbsoluteOffset(Rml::BoxArea::Border) + handle->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+            check(std::fabs(hc.x - x) <= 1.5f && std::fabs(hc.y - y) <= 1.5f, at + ": the handle at the rectangle's corner where it is drawn");
+            const f32 mx = moved->x, my = moved->y, dx = 40 * s, dy = 30 * s;
+            SDL_SetModState(SDL_KMOD_LCTRL);
+            ue_drag(hc.x, hc.y, hc.x + dx, hc.y + dy);
+            SDL_SetModState(SDL_KMOD_NONE);
+            const d::Node* n = ue_node(usb_rect_);
+            const f32 ww = std::round(dx / k), wh = std::round(dy / k);
+            check(n && std::fabs(n->w - (usb_w_ + ww)) <= 1 && std::fabs(n->h - (usb_h_ + wh)) <= 1 && n->x == mx && n->y == my,
+                  at + ": its handle dragged " + us_num(dx) + ", " + us_num(dy) + " pixels of the window: " + us_num(n ? n->w : 0) + " × " +
+                      us_num(n ? n->h : 0) + " on the page (" + us_num(usb_w_ + ww) + " × " + us_num(usb_h_ + wh) + ")");
+            break;
+        }
+        case 9: {
+            for (int i = 0; i < 3; ++i) key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!ue_node(usb_rect_) && tg_bytes(json) == usb_json_, at + ": Ctrl+Z three times: no rectangle, hud.json as it was");
+            return false;
+        }
+        default: return false;
+        }
+        ++usb_step_;
         return true;
     }
 
@@ -23814,7 +24338,7 @@ int main(int argc, char** argv) {
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
-                                         "ui-scale-a"};
+                                         "ui-scale-a", "ui-scale-a-again", "ui-scale-b"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
@@ -23823,7 +24347,8 @@ int main(int argc, char** argv) {
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
                     "animation-a-again, pixel and its parts pixel-a, pixel-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
-                    "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale)",
+                    "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
+                    "and its parts ui-scale-a, ui-scale-a-again, ui-scale-b)",
                     app.options.self_part.c_str());
         return 2;
     }

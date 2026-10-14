@@ -108,6 +108,10 @@ public:
     f32 display_scale() const;
     f32 scale() const;
     void set_scale(f32 scale);
+    // The display's scale taken instead of the system's (a test: the window moved to a display of another scale, which a
+    // machine with one display cannot do). As the system's is, it is taken when the window says the display's scale
+    // changed (SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED to handle_event), not before; 0: the system's again.
+    void stand_in_display_scale(f32 scale);
     // A context drawn at a dp-ratio of its own (a page of the game shown at its design size).
     void pin_dp_ratio(Rml::Context* context, f32 dp_ratio);
 

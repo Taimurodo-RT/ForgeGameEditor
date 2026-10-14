@@ -142,6 +142,17 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("im_at", &forge::edits::ProjectEdits::im_at);
     t.field("im_chip", &forge::edits::ProjectEdits::im_chip);
     t.field("im_chip_name", &forge::edits::ProjectEdits::im_chip_name);
+    t.field("vs_screen", &forge::edits::ProjectEdits::vs_screen);
+    t.field("vs_picture_file", &forge::edits::ProjectEdits::vs_picture_file);
+    t.field("vs_picture_svg", &forge::edits::ProjectEdits::vs_picture_svg);
+    t.field("vs_frame_file", &forge::edits::ProjectEdits::vs_frame_file);
+    t.field("vs_frame_svg", &forge::edits::ProjectEdits::vs_frame_svg);
+    t.field("vs_picture", &forge::edits::ProjectEdits::vs_picture);
+    t.field("vs_frame", &forge::edits::ProjectEdits::vs_frame);
+    t.field("vs_frame_size", &forge::edits::ProjectEdits::vs_frame_size);
+    t.field("vs_frame_slice", &forge::edits::ProjectEdits::vs_frame_slice);
+    t.field("vs_picture_box", &forge::edits::ProjectEdits::vs_picture_box);
+    t.field("vs_frame_box", &forge::edits::ProjectEdits::vs_frame_box);
 }
 
 namespace forge::edits {

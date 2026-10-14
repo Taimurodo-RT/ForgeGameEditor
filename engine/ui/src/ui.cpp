@@ -206,6 +206,8 @@ void Ui::set_scale(f32 scale) {
     impl_->refresh_scale();
 }
 
+void Ui::stand_in_display_scale(f32 scale) { impl_->config.display_scale = scale > 0 ? scale : 0.0f; }
+
 void Ui::pin_dp_ratio(Rml::Context* context, f32 dp_ratio) {
     if (!context) return;
     impl_->pinned[context] = dp_ratio;

@@ -1,4 +1,4 @@
-add_library(forge_demo_common STATIC demo_art.cpp project_edits.cpp)
+add_library(forge_demo_common STATIC demo_art.cpp project_edits.cpp svg_reference.cpp)
 target_include_directories(forge_demo_common PUBLIC .)
-target_link_libraries(forge_demo_common PUBLIC forge::render forge::world forge::data)
+target_link_libraries(forge_demo_common PUBLIC forge::render forge::world forge::data PRIVATE lunasvg::lunasvg)
 forge_target_defaults(forge_demo_common)
