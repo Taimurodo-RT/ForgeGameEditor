@@ -10,7 +10,7 @@ forge_target_defaults(forge_slice_lib)
 # is the module's own (forge_slice_lib is linked PRIVATE, its folder is no include folder of theirs).
 add_library(forge_slice_module STATIC main.cpp slice_module.cpp platformer_template.cpp)
 target_include_directories(forge_slice_module PUBLIC module)
-target_link_libraries(forge_slice_module PUBLIC forge::modules PRIVATE forge_slice_lib forge::editor forge::platform yyjson)
+target_link_libraries(forge_slice_module PUBLIC forge::modules PRIVATE forge_slice_lib forge::editor forge::platform forge::vector yyjson)
 # Running from the build folder reads the UI and the game's data from the source tree, so edits show up at once. A
 # packaged game has them in "data".
 target_compile_definitions(forge_slice_module PRIVATE FORGE_UI_DIR="${PROJECT_SOURCE_DIR}/ui"

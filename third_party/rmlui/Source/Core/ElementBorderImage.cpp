@@ -252,6 +252,8 @@ void ElementBorderImage::Generate(Element* element)
 				scale = width[i] / slice[i];
 		if (scale <= 0.f)
 			scale = Math::Min(area.x / image.x, area.y / image.y);
+		// Forge: and at the scale of the transforms over the element (see PictureScale).
+		scale *= element->GetPictureScale();
 		const Vector2i raster = Math::Max(Vector2i((image * scale).Round()), Vector2i(1));
 		const float rx[4] = {0.f, Math::Round(slice[3] * scale), float(raster.x) - Math::Round(slice[1] * scale), float(raster.x)};
 		const float ry[4] = {0.f, Math::Round(slice[0] * scale), float(raster.y) - Math::Round(slice[2] * scale), float(raster.y)};

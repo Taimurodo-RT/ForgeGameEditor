@@ -11,6 +11,7 @@ target_sources(rmlui_core PRIVATE
 	"${CMAKE_CURRENT_SOURCE_DIR}/XMLNodeHandlerSVG.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/XMLNodeHandlerSVG.h"
 	"${PROJECT_SOURCE_DIR}/Include/RmlUi/SVG/ElementSVG.h"
+	"${PROJECT_SOURCE_DIR}/Include/RmlUi/SVG/LivePicture.h"
 )
 
 target_compile_definitions(rmlui_core PRIVATE "RMLUI_SVG_PLUGIN")

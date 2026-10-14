@@ -2023,6 +2023,18 @@ void Element::DirtyLayout()
 		document->DirtyLayout();
 }
 
+// Forge: see the header.
+void Element::DirtyPictures()
+{
+	meta->effects.DirtyEffectsData();
+}
+
+// Forge: see the header.
+float Element::GetPictureScale() const
+{
+	return meta->effects.GetPictureScale();
+}
+
 bool Element::IsLayoutDirty()
 {
 	if (Element* document = GetOwnerDocument())

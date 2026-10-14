@@ -9,6 +9,7 @@
 #include "forge/core/path.h"
 #include "forge/core/profile.h"
 #include "forge/core/time.h"
+#include "forge/ui/live_svg.h"
 #include "forge/ui/tokens.h"
 
 #include <RmlUi/Core.h>
@@ -154,6 +155,7 @@ bool Ui::init(SDL_GPUDevice* device, SDL_Window* window, const UiConfig& config)
     }
     m.initialized = true;
     m.refresh_scale();
+    install_live_svg();
 
     m.icon_instancer = std::make_unique<Rml::ElementInstancerGeneric<ElementIcon>>();
     m.list_instancer = std::make_unique<Rml::ElementInstancerGeneric<ElementVirtualList>>();

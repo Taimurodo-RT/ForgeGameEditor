@@ -2,6 +2,7 @@
 
 #include "../Core/Element.h"
 #include "../Core/Header.h"
+#include "../Core/PictureScale.h"
 
 namespace Rml {
 namespace SVG {
@@ -29,6 +30,9 @@ public:
 	/// @param[in] rml The SVG XML data (as text) or blank string
 	void SetInnerRML(const String& rml) override;
 
+	/// Forge: the picture is taken from the cache again (see Element::DirtyPictures).
+	void DirtyPictures() override;
+
 protected:
 	/// Renders the image.
 	void OnRender() override;
@@ -50,6 +54,7 @@ private:
 
 	String svg_data;
 	bool svg_dirty = false;
+	PictureScale picture_scale; // Forge: the raster's scale under transforms
 
 	SharedPtr<SVG::SVGData> handle;
 };

@@ -22,6 +22,7 @@ private:
 
 	static Vector2i GetDimensions(RenderManager* render_manager, TextureFileIndex texture);
 	static Vector2i GetDimensions(RenderManager* render_manager, StableVectorIndex callback_texture);
+	static void RegenerateCallbackTexture(RenderManager* render_manager, StableVectorIndex callback_texture); // Forge
 
 	static void Render(RenderManager* render_manager, const Geometry& geometry, Vector2f translation, Texture texture, const CompiledShader& shader);
 

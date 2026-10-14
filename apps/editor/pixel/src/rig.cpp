@@ -2,6 +2,7 @@
 
 #include "forge/assets/image_edit.h"
 #include "forge/vector/morph.h"
+#include "forge/vector/svg_shape.h"
 #include "forge/vector/trig.h"
 
 #include <thorvg.h>
@@ -188,53 +189,6 @@ bool view_box(const SvgOutline& svg, f64 out[4]) {
         p = end;
     }
     return out[2] > 0 && out[3] > 0;
-}
-
-// A property as the element shows it: its own or its nearest ancestor's (fill, stroke and their kin inherit).
-std::string inherited(const SvgOutline& svg, i32 index, std::string_view name) {
-    for (i32 i = index; i >= 0; i = svg.elements[static_cast<usize>(i)].parent) {
-        std::string v = svg.elements[static_cast<usize>(i)].property(name);
-        if (!v.empty() && v != "inherit") return v;
-    }
-    return {};
-}
-
-bool display_none(const SvgOutline& svg, i32 index) {
-    for (i32 i = index; i >= 0; i = svg.elements[static_cast<usize>(i)].parent)
-        if (svg.elements[static_cast<usize>(i)].property("display") == "none") return true;
-    return false;
-}
-
-f64 number_or(const std::string& s, f64 fallback) {
-    if (s.empty()) return fallback;
-    char* end = nullptr;
-    const f64 v = std::strtod(s.c_str(), &end);
-    if (end == s.c_str() || !std::isfinite(v)) return fallback;
-    if (*end == '%') return v / 100.0;
-    return v;
-}
-
-// The look of an element read from its attributes (for a shape ThorVG has not built: a hidden one). What does not read
-// as a colour (a gradient, currentColor) stays as `base` has it.
-vector::Look look_from_svg(const SvgOutline& svg, i32 index, const vector::Look& base) {
-    vector::Look l = base;
-    auto paint = [&](std::string_view prop, std::string_view opacity_prop, vector::Paint& out, bool default_on) {
-        const std::string v = inherited(svg, index, prop);
-        Rgba8 c;
-        if (v.empty()) {
-            out = default_on ? vector::Paint{true, 0, 0, 0, 1} : vector::Paint{};
-        } else if (v == "none") {
-            out.on = false;
-        } else if (parse_color(v, c)) {
-            out = vector::rgb8(c.r, c.g, c.b);
-        }
-        out.opacity = std::clamp(number_or(inherited(svg, index, opacity_prop), 1.0), 0.0, 1.0);
-    };
-    paint("fill", "fill-opacity", l.fill, true);
-    paint("stroke", "stroke-opacity", l.stroke, false);
-    l.stroke_width = std::max(0.0, number_or(inherited(svg, index, "stroke-width"), 1.0));
-    l.opacity = std::clamp(number_or(svg.elements[static_cast<usize>(index)].property("opacity"), 1.0), 0.0, 1.0);
-    return l;
 }
 
 } // namespace
@@ -516,8 +470,8 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
             from.look = leaf.rest.vector_look();
             const i32 tp = part(morph.target);
             const PartRec* tr = tp >= 0 ? &m.recs[static_cast<usize>(tp)] : nullptr;
-            if (tr && tr->leaf >= 0 && !display_none(m.outline, ti)) to.look = m.leaves[static_cast<usize>(tr->leaf)].rest.vector_look();
-            else to.look = look_from_svg(m.outline, ti, from.look);
+            if (tr && tr->leaf >= 0 && !vector::display_none(m.outline, ti)) to.look = m.leaves[static_cast<usize>(tr->leaf)].rest.vector_look();
+            else to.look = vector::look_from_svg(m.outline, ti, from.look);
             it = m.morphs.emplace(key, vector::prepare(from, to)).first;
         }
         vector::mix(it->second, morph.k, m.scratch);
@@ -699,63 +653,10 @@ Affine Rig::carried(i32 part) const {
 }
 
 bool parse_color(std::string_view text, Rgba8& out) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
-    auto hex = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    };
-    if (!text.empty() && text[0] == '#') {
-        const std::string_view h = text.substr(1);
-        for (char c : h)
-            if (hex(c) < 0) return false;
-        if (h.size() == 3) {
-            out = {static_cast<u8>(hex(h[0]) * 17), static_cast<u8>(hex(h[1]) * 17), static_cast<u8>(hex(h[2]) * 17), 255};
-            return true;
-        }
-        if (h.size() == 6) {
-            out = {static_cast<u8>(hex(h[0]) * 16 + hex(h[1])), static_cast<u8>(hex(h[2]) * 16 + hex(h[3])),
-                   static_cast<u8>(hex(h[4]) * 16 + hex(h[5])), 255};
-            return true;
-        }
-        return false;
-    }
-    std::string lower(text);
-    for (char& c : lower) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
-    if (lower.rfind("rgb(", 0) == 0 && lower.back() == ')') {
-        std::string body = lower.substr(4, lower.size() - 5);
-        std::replace(body.begin(), body.end(), ',', ' ');
-        const char* p = body.c_str();
-        u8 ch[3];
-        for (u8& v : ch) {
-            char* end = nullptr;
-            f64 n = std::strtod(p, &end);
-            if (end == p || !std::isfinite(n)) return false;
-            if (*end == '%') n = n * 255.0 / 100.0, ++end;
-            v = static_cast<u8>(std::clamp(std::lround(n), 0L, 255L));
-            p = end;
-        }
-        while (*p == ' ') ++p;
-        if (*p) return false;
-        out = {ch[0], ch[1], ch[2], 255};
-        return true;
-    }
-    static const struct {
-        const char* name;
-        u8 r, g, b;
-    } kNames[] = {{"black", 0, 0, 0},       {"white", 255, 255, 255}, {"red", 255, 0, 0},       {"green", 0, 128, 0},
-                  {"blue", 0, 0, 255},      {"yellow", 255, 255, 0},  {"orange", 255, 165, 0},  {"purple", 128, 0, 128},
-                  {"gray", 128, 128, 128},  {"grey", 128, 128, 128},  {"silver", 192, 192, 192}, {"maroon", 128, 0, 0},
-                  {"lime", 0, 255, 0},      {"navy", 0, 0, 128},      {"teal", 0, 128, 128},    {"aqua", 0, 255, 255},
-                  {"fuchsia", 255, 0, 255}, {"olive", 128, 128, 0},   {"brown", 165, 42, 42},   {"pink", 255, 192, 203}};
-    for (const auto& n : kNames)
-        if (lower == n.name) {
-            out = {n.r, n.g, n.b, 255};
-            return true;
-        }
-    return false;
+    u8 c[3];
+    if (!vector::parse_svg_color(text, c)) return false;
+    out = {c[0], c[1], c[2], 255};
+    return true;
 }
 
 } // namespace forge::pixel

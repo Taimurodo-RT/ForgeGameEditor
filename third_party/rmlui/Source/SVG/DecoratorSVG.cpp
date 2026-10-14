@@ -17,9 +17,11 @@ namespace SVG {
 
 	DecoratorDataHandle DecoratorSVG::GenerateElementData(Element* element, BoxArea paint_area) const
 	{
-		// Forge: the path is resolved already (see the instancer), so it is not joined with the document's again.
-		SharedPtr<SVGData> handle =
-			SVGCache::GetHandle(source_path, element, Vector2i(element->GetBox().GetSize(paint_area).Round()), crop_to_content);
+		// Forge: the path is resolved already (see the instancer), so it is not joined with the document's again. Drawn at the
+		// area's size, made at the scale of the transforms over the element (see PictureScale).
+		const Vector2f box = element->GetBox().GetSize(paint_area);
+		SharedPtr<SVGData> handle = SVGCache::GetHandle(source_path, element, Vector2i((box * element->GetPictureScale()).Round()), crop_to_content,
+			Vector2i(box.Round()));
 		if (!handle)
 			return {};
 

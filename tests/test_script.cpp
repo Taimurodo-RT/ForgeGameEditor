@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <string>
@@ -268,6 +269,77 @@ TEST_CASE("scripts reach the game's variables and screens, and hear messages sen
     CHECK(bridge.texts["shop.last"] == "кирка");
     CHECK(bridge.screens == std::vector<std::string>{"show Пусто", "hide Лавка", "show Пусто", "hide Лавка"});
     CHECK(room.scripts.errors().empty());
+}
+
+TEST_CASE("scripts change the parts of a screen's live SVG picture and ease a share of time") {
+    PoolScope pool;
+    Room room;
+    struct Bridge final : GameBridge {
+        std::vector<std::string> said;
+        f64 var(std::string_view, std::string*) override { return 0; }
+        void set_var(std::string_view, f64) override {}
+        void set_text(std::string_view, std::string_view) override {}
+        void screen(std::string_view, std::string_view) override {}
+        bool svg(std::string_view what, std::string_view screen, std::string_view layer, std::string_view part, f64 x, f64 y,
+                 std::string_view text, std::string* why) override {
+            if (layer == "Нет") {
+                *why = "на экране «" + std::string(screen) + "» нет слоя «Нет»";
+                return false;
+            }
+            char numbers[64];
+            std::snprintf(numbers, sizeof(numbers), "%g %g", x, y);
+            said.push_back(std::string(what) + " " + std::string(screen) + "/" + std::string(layer) + "/" + std::string(part) + " " + numbers +
+                           (text.empty() ? "" : " " + std::string(text)));
+            return true;
+        }
+    } bridge;
+    room.scripts.set_user(kGameBridge, &bridge);
+    REQUIRE(room.scripts.load("face", R"(
+        local S = {}
+        function S.on_start(self)
+            forge.ui.svg_move("hud", "Лицо", "глаза", 2, -1)
+            forge.ui.svg_turn("hud", "Лицо", "глаза", 45)
+            forge.ui.svg_color("hud", "Лицо", "глаза", "#00aa00")
+            forge.ui.svg_fade("hud", "Лицо", "щёки", 0.25)
+            forge.ui.svg_morph("hud", "Лицо", "рот", "улыбка", forge.ease("smooth", 0.5))
+            forge.ui.svg_morph("hud", "Лицо", "рот", "улыбка", forge.ease("linear", 2))
+            forge.ui.svg_reset("hud", "Лицо")
+        end
+        return S
+    )"));
+    room.thing(4, 5, "face");
+    room.run(2);
+    CHECK(room.scripts.errors().empty());
+    CHECK(bridge.said == std::vector<std::string>{"move hud/Лицо/глаза 2 -1", "turn hud/Лицо/глаза 45 0", "color hud/Лицо/глаза 0 0 #00aa00",
+                                                  "fade hud/Лицо/щёки 0.25 0", "morph hud/Лицо/рот 0.5 0 улыбка", "morph hud/Лицо/рот 1 0 улыбка",
+                                                  "reset hud/Лицо/ 0 0"});
+    // What the game cannot do is the script's error, at its line; so is an easing it has not.
+    REQUIRE(room.scripts.load("wrong", R"(
+        local S = {}
+        function S.on_start(self)
+            forge.ui.svg_turn("hud", "Нет", "глаза", 45)
+        end
+        return S
+    )"));
+    REQUIRE(room.scripts.load("easing", R"(
+        local S = {}
+        function S.on_start(self)
+            forge.ui.svg_fade("hud", "Лицо", "щёки", forge.ease("rubber", 0.5))
+        end
+        return S
+    )"));
+    room.thing(6, 5, "wrong");
+    room.thing(7, 5, "easing");
+    room.run(2);
+    REQUIRE(room.scripts.errors().size() == 2);
+    CHECK(room.scripts.errors()[0].message.find("ui.svg_turn: на экране «hud» нет слоя «Нет»") != std::string::npos);
+    CHECK(room.scripts.errors()[0].line == 4);
+    CHECK(room.scripts.errors()[1].message.find("ease: «rubber» — нет такого") != std::string::npos);
+    const ApiFunction* morph = room.scripts.api().find("ui.svg_morph");
+    REQUIRE(morph);
+    CHECK(morph->kind == ApiKind::Action);
+    CHECK(morph->params.size() == 5);
+    CHECK(morph->params[3].title_ru == std::string("В фигуру (id)"));
 }
 
 TEST_CASE("every engine function has a description for the node palette") {

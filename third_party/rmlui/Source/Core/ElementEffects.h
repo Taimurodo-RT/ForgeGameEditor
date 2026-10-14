@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Include/RmlUi/Core/CompiledFilterShader.h"
+#include "../../Include/RmlUi/Core/PictureScale.h"
 #include "../../Include/RmlUi/Core/RenderInterface.h"
 #include "../../Include/RmlUi/Core/Types.h"
 #include "ElementBorderImage.h"
@@ -34,6 +35,9 @@ public:
 	// Mark the element data of effects as dirty.
 	void DirtyEffectsData();
 
+	/// Forge: the scale the SVG pictures of the decorators, mask images and border-image are rasterized at (see PictureScale).
+	float GetPictureScale() const { return picture_scale.Raster(); }
+
 private:
 	// Releases existing element data of effects, and regenerates it.
 	void ReloadEffectsData();
@@ -66,6 +70,8 @@ private:
 	CompiledFilter opacity_filter;
 	// Forge: CSS border-image, drawn over the background.
 	ElementBorderImage border_image;
+	// Forge: see GetPictureScale.
+	PictureScale picture_scale;
 
 	// If set, a full reload is necessary.
 	bool effects_dirty = false;

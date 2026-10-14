@@ -5,6 +5,7 @@
 #include "forge/core/path.h"
 #include "forge/core/time.h"
 #include "forge/ui/html.h"
+#include "forge/ui/live_svg.h"
 
 #include <RmlUi/Core.h>
 #include <yyjson.h>
@@ -174,6 +175,7 @@ struct GameScreens::Impl : Rml::EventListener {
     u64 next_poll = 0;
     u64 shows = 0;
     std::vector<std::unique_ptr<Page>> pages;
+    std::vector<std::string> svg_problems; // what live pictures did not take (forge::ui::svg_problems), in order
     std::string music; // what on_music was told last
     std::string place_music; // the game's place's (set_place_music)
     // The lists' data.
@@ -808,6 +810,10 @@ void GameScreens::remove(std::string_view name) {
 
 void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, int height, const CallFn& call) {
     if (impl_->watch && !impl_->dir.empty()) impl_->poll();
+    for (std::string& line : ui::svg_problems()) {
+        FORGE_WARN("живая картинка: %s", line.c_str());
+        impl_->svg_problems.push_back(std::move(line));
+    }
     impl_->over_menu = menu;
     impl_->lists_ms = 0;
     bool restacked = false;
@@ -998,6 +1004,52 @@ std::vector<std::string> GameScreens::names() const {
 Rml::ElementDocument* GameScreens::document(std::string_view name) const {
     const Page* p = impl_->find(name);
     return p ? p->doc : nullptr;
+}
+
+std::vector<Rml::Element*> GameScreens::layers(std::string_view screen, std::string_view layer) const {
+    std::vector<Rml::Element*> out;
+    const Page* p = impl_->find(screen);
+    if (!p || !p->doc || layer.empty()) return out;
+    std::vector<Rml::Element*> stack{p->doc};
+    while (!stack.empty()) {
+        Rml::Element* e = stack.back();
+        stack.pop_back();
+        if (e != p->doc && (e->GetId() == layer || e->GetAttribute<Rml::String>("title", "") == layer)) out.push_back(e);
+        for (int i = e->GetNumChildren() - 1; i >= 0; --i) stack.push_back(e->GetChild(i));
+    }
+    return out;
+}
+
+bool GameScreens::svg(const ScreenSvg& c, std::string* why) {
+    auto fail = [&](std::string text) {
+        if (why) *why = std::move(text);
+        return false;
+    };
+    if (!impl_->find(c.screen)) return fail("нет экрана «" + c.screen + "»");
+    const std::vector<Rml::Element*> found = layers(c.screen, c.layer);
+    if (found.empty()) return fail("на экране «" + c.screen + "» нет слоя «" + c.layer + "»");
+    if (c.what != "reset" && c.part.empty()) return fail("не сказано, какая часть картинки (её id в файле)");
+    for (Rml::Element* e : found) {
+        if (c.what == "move") ui::svg_move(e, c.part, c.x, c.y);
+        else if (c.what == "turn") ui::svg_turn(e, c.part, c.x);
+        else if (c.what == "fade") ui::svg_fade(e, c.part, c.x);
+        else if (c.what == "morph") {
+            if (c.text.empty()) return fail("не сказано, в какую фигуру морфинг (её id в файле)");
+            ui::svg_morph(e, c.part, c.text, c.x);
+        } else if (c.what == "color") {
+            std::string w;
+            if (!ui::svg_color(e, c.part, c.text, &w)) return fail(w);
+        } else if (c.what == "reset") ui::svg_reset(e);
+        else return fail("«" + c.what + "» — не изменение картинки");
+    }
+    return true;
+}
+
+const std::vector<std::string>& GameScreens::svg_problems() const { return impl_->svg_problems; }
+
+void GameScreens::reset_pictures() {
+    for (const auto& page : impl_->pages)
+        if (page->doc) ui::svg_reset_all(page->doc);
 }
 
 bool GameScreens::run_page_action(const ScreenAction& a, const std::string& page) {

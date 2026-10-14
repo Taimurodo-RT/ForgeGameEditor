@@ -31,6 +31,9 @@ public:
 
 	void Release();
 
+	/// Forge: the texture is made again by its callback when it is next used (what it draws changed).
+	void Regenerate();
+
 private:
 	CallbackTexture(RenderManager* render_manager, StableVectorIndex resource_handle) : UniqueRenderResource(render_manager, resource_handle) {}
 	friend class RenderManager;

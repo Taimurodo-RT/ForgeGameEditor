@@ -109,6 +109,16 @@ void apply_screen_fit(Rml::Element* root, const ScreenFit& f, const std::string&
 // Its transform alone ("scale(...)"), for movements to build on.
 std::string screen_fit_transform(const ScreenFit& f);
 
+// What a game's script says of a live SVG picture on a page (step 4 of docs/models/вектор-модель.md, forge/ui/live_svg.h):
+// of a part, by its id in the file, of the picture a layer shows, by the layer's name in «Интерфейс».
+struct ScreenSvg {
+    std::string what;  // "move" (x, y), "turn" (x: degrees), "color" (text), "fade" (x: 0 … 1),
+                       // "morph" (text: the shape's id, x: k), "reset" (the layer's pictures as their files have them)
+    std::string screen, layer, part;
+    f64 x = 0, y = 0;
+    std::string text;
+};
+
 struct ScreenAction {
     std::string what;   // "show", "hide", "toggle", "close", "message", "change", "talk",
                         // "pause", "resume", "menu", "quit", "new", "continue", "load", "save", "settings"
@@ -204,6 +214,17 @@ public:
     std::vector<std::string> variables(std::string_view name) const;
 
     Rml::ElementDocument* document(std::string_view name) const;
+
+    // The layers of a page with this name (as «Интерфейс» names them) or this id: every cell of a list, too.
+    std::vector<Rml::Element*> layers(std::string_view screen, std::string_view layer) const;
+    // A live SVG picture: the change goes to every layer of that name. False with why when the page, the layer or
+    // the colour is not there; what the picture's file lacks (a part, a shape to morph into) is said once in the log
+    // when the picture is drawn, and kept in svg_problems().
+    bool svg(const ScreenSvg& change, std::string* why = nullptr);
+    const std::vector<std::string>& svg_problems() const;
+    // A game begins (new, loaded, continued): every live picture of the pages shows its file again. What scripts said
+    // of them was the game that ended; saves do not keep it, and the pages are not made again.
+    void reset_pictures();
 
     // The lists' data: the names and pictures of the things inv.<id> counts
     // (in the order lists show them; others follow by id), and the quests the

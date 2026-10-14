@@ -194,6 +194,11 @@ void ElementEffects::ReleaseEffects()
 void ElementEffects::RenderEffects(RenderStage render_stage)
 {
 	InstanceEffects();
+	// Forge: the pictures made again when the scale of the transforms over the element takes their raster to another
+	// scale (see PictureScale); once a frame, as the element enters.
+	if (render_stage == RenderStage::Enter && (!decorators.empty() || !mask_images.empty() || border_image.Active()) &&
+		picture_scale.Update(PictureScale::Of(element)))
+		effects_data_dirty = true;
 	ReloadEffectsData();
 
 	if (!decorators.empty())
