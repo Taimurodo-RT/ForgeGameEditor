@@ -93,6 +93,8 @@ protected:
 private:
     std::string source_name_;
     u64 version_ = ~0ull;
+    float dp_ = 0;            // the dp-ratio the mesh was made at
+    bool points_px_ = false; // points="px": the points are px of the style, not pixels of the window
     Rml::Geometry geometry_;
 };
 

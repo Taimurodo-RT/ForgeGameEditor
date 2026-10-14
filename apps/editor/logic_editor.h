@@ -340,7 +340,10 @@ private:
     u32 sel_link_ = 0;
     std::string pick_a_, pick_b_;
     f32 pan_x_ = 0, pan_y_ = 0;
-    f32 board_w_ = 0, board_h_ = 0; // as last laid out
+    f32 board_w_ = 0, board_h_ = 0; // as last laid out, px
+    // The board is laid out in px of the style (the cards are its elements); the mouse and the boxes are pixels of
+    // the window, this many to a px.
+    f32 dp_ = 1;
     // A drag: of a thing (id) or of the board (empty id).
     bool grabbing_ = false, dragged_ = false;
     std::string grab_id_;

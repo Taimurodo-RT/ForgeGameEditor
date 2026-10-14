@@ -1,5 +1,6 @@
 #include "forge/assets/asset_pipeline.h"
 #include "forge/assets/image.h"
+#include "forge/assets/svg.h"
 #include "forge/core/jobs.h"
 #include "forge/core/path.h"
 #include "forge/data/binary.h"
@@ -181,6 +182,96 @@ TEST_CASE("A copied file with its .meta gets its own id") {
     CHECK(r.messages.size() == 1);
     CHECK(pipeline.database().count() == 2);
     CHECK(meta_id(assets / utf8_path("a.txt")) != meta_id(assets / utf8_path("b.txt")));
+}
+
+// An icon as Inkscape saves it: its own elements, the description and normal blending are nothing to name.
+constexpr const char* kCleanSvg = R"svg(<?xml version="1.0" encoding="UTF-8"?>
+<!-- Created with Inkscape -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:cc="http://creativecommons.org/ns#" width="24" height="24" viewBox="0 0 24 24">
+  <title>Значок</title><desc>Треугольник</desc>
+  <metadata><rdf:RDF><cc:Work/></rdf:RDF></metadata>
+  <sodipodi:namedview inkscape:zoom="1"/>
+  <g style="mix-blend-mode:normal;filter:none"><path d="M2 20 L12 4 L22 20 Z" fill="currentColor"/></g>
+</svg>)svg";
+
+TEST_CASE("SVG: what lunasvg leaves out is named, in one line") {
+    CHECK(svg_gaps(kCleanSvg).empty());
+    CHECK(svg_gaps_line(kCleanSvg).empty());
+
+    const char* text = R"svg(<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="0 0 64 64">
+  <defs>
+    <filter id="soft"><feGaussianBlur stdDeviation="2"/></filter>
+    <filter id="drop"><feOffset dx="2" dy="2"/><feGaussianBlur stdDeviation="1"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter><feDropShadow dx="1" dy="1"/></filter>
+  </defs>
+  <inkscape:grid/>
+  <rect width="10" height="10" filter="url(#soft)"><animate attributeName="x" to="5"/></rect>
+  <circle r="3" style="filter: blur(2px); mix-blend-mode: multiply"><set attributeName="r" to="4"/></circle>
+  <foreignObject width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml">hi</div></foreignObject>
+  <text x="1" y="9">Привет</text><text x="1" y="19">ещё</text>
+  <image href="hero.png" width="4" height="4"/><image xlink:href="data:image/png;base64,AAAA" width="4" height="4"/>
+  <switch><g/></switch><textPath>x</textPath>
+</svg>)svg";
+    const std::vector<std::string> want = {
+        "фильтр «soft» (размытие) в строке 3 lunasvg не рисует",
+        "фильтр «drop» (сдвиг, размытие, наложение) в строке 4 lunasvg не рисует",
+        "фильтр (тень) в строке 5 lunasvg не рисует",
+        "анимация <animate> в строке 8 (и ещё 1) не играет",
+        "filter: blur(2px) в строке 9 lunasvg не рисует",
+        "наложение mix-blend-mode: multiply в строке 9 lunasvg не рисует",
+        "<foreignObject> в строке 10 lunasvg не рисует, и всё внутри тоже",
+        "текст <text> в строке 11 (и ещё 1) lunasvg рисует шрифтом компьютера игрока — надёжнее перевести его в кривые",
+        "картинка <image> «hero.png» в строке 12 не загрузится: lunasvg берёт только встроенные (data:)",
+        "<switch> в строке 13 lunasvg не рисует, и всё внутри тоже",
+        "<textPath> в строке 13 lunasvg не рисует",
+    };
+    const std::vector<std::string> got = svg_gaps(text);
+    CHECK(got.size() == want.size());
+    for (usize i = 0; i < std::min(got.size(), want.size()); ++i) CHECK(got[i] == want[i]);
+    std::string line;
+    for (const std::string& clause : want) line += (line.empty() ? "" : "; ") + clause;
+    CHECK(svg_gaps_line(text) == line + "; размытие и тень интерфейсу дают свойства filter и box-shadow в RCSS");
+
+    // Without blur or shadow the line says nothing of them.
+    CHECK(svg_gaps_line("<svg xmlns=\"http://www.w3.org/2000/svg\"><animate/></svg>") == "анимация <animate> в строке 1 не играет");
+    // A file lunasvg does not read at all.
+    CHECK(svg_gaps("<html/>") == std::vector<std::string>{"lunasvg не читает этот файл: строка 1: это не SVG: корень — <html>"});
+    CHECK(svg_gaps("") == std::vector<std::string>{"lunasvg не читает этот файл: строка 1: в файле нет ни одного элемента"});
+}
+
+TEST_CASE("SVG in «Ресурсы»: stored as written, its line in the report once") {
+    PoolScope pool;
+    TempDir dir;
+    const fs::path assets = dir.path / utf8_path("Assets");
+    const std::string soft = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 8 8\">\n"
+                             "<filter id=\"soft\"><feGaussianBlur stdDeviation=\"1\"/></filter>\n"
+                             "<rect width=\"8\" height=\"8\" filter=\"url(#soft)\"/>\n</svg>\n";
+    write(assets / utf8_path("рисунки/мягкий.svg"), soft);
+    write(assets / utf8_path("рисунки/значок.svg"), kCleanSvg);
+    AssetPipeline pipeline(assets, dir.path / utf8_path("Library"));
+    REQUIRE(pipeline.open());
+    pipeline.add_default_importers();
+
+    RefreshReport r = pipeline.refresh();
+    CHECK(r.cooked == 2);
+    CHECK(r.failed == 0);
+    REQUIRE(r.messages.size() == 1);
+    CHECK(r.messages[0] == "рисунки/мягкий.svg: фильтр «soft» (размытие) в строке 2 lunasvg не рисует; "
+                           "размытие и тень интерфейсу дают свойства filter и box-shadow в RCSS");
+    for (const auto& [name, text] : {std::pair<const char*, std::string>{"рисунки/мягкий.svg", soft}, {"рисунки/значок.svg", kCleanSvg}}) {
+        INFO(name);
+        const auto rec = pipeline.database().find_by_path(name);
+        REQUIRE(rec.has_value());
+        CHECK(rec->type == "svg");
+        std::ifstream in(pipeline.cooked_path(rec->cook_key), std::ios::binary);
+        const std::string cooked((std::istreambuf_iterator<char>(in)), {});
+        CHECK(cooked == text); // byte for byte
+    }
+    r = pipeline.refresh();
+    CHECK(r.cooked == 0);
+    CHECK(r.messages.empty());
 }
 
 TEST_CASE("Pictures: turn, mirror, halve, double, fit, and back through PNG") {

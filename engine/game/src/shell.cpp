@@ -158,6 +158,8 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
                                           : uc.theme;
     uc.hot_reload = window != nullptr && config.dev;
     uc.debugger = window != nullptr && config.dev;
+    uc.scale = std::clamp(settings_.ui_scale, 0.5f, 3.0f);
+    uc.display_scale = config.display_scale;
     ui_ = std::make_unique<ui::Ui>();
     if (!ui_->init(device, window, uc)) return false;
     context_ = ui_->create_context("game", width, height);
@@ -515,7 +517,7 @@ void Shell::apply_settings(const Settings& s) {
                                                                                                        : SDL_GPU_PRESENTMODE_VSYNC;
         SDL_SetGPUSwapchainParameters(device_, window_, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
     }
-    if (context_) context_->SetDensityIndependentPixelRatio(settings_.ui_scale);
+    if (ui_) ui_->set_scale(settings_.ui_scale);
     if (!settings_.theme.empty() && ui_ && settings_.theme != ui_->theme()) ui_->set_theme(settings_.theme);
     save_settings(user_dir_, settings_);
 }

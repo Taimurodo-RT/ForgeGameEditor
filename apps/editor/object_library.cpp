@@ -19,7 +19,7 @@ namespace {
 
 constexpr u32 kIconPx = 96;
 constexpr const char* kAnyGame = "Для любой игры";
-constexpr f32 kMenuW = 290, kMenuH = 420; // about the right-click menu's size, to keep it inside the tab
+constexpr f32 kMenuW = 290, kMenuH = 420; // px: about the right-click menu's size, to keep it inside the tab
 
 // Puts a template back as it was, or takes it away (before/after empty).
 class TemplateCommand final : public editor::Command {
@@ -78,17 +78,22 @@ Rml::String input_value(Rml::Event& ev) {
     return e && e->GetTagName() == "input" ? static_cast<Rml::ElementFormControl*>(e)->GetValue() : Rml::String();
 }
 
-// The mouse of an event in the tab's own pixels (the menus are placed
-// inside #objects), with the menu kept inside the tab.
+// The mouse of an event in the tab's own px (the menus are placed inside
+// #objects), with the menu kept inside the tab. The mouse and the boxes are
+// pixels of the window, dp-ratio to a px.
 void menu_point(Rml::Event& ev, f32& x, f32& y) {
     x = ev.GetParameter<float>("mouse_x", 0);
     y = ev.GetParameter<float>("mouse_y", 0);
     Rml::Element* t = ev.GetTargetElement();
+    const f32 dp = t && t->GetContext() ? t->GetContext()->GetDensityIndependentPixelRatio() : 1.0f;
     Rml::Element* tab = t && t->GetOwnerDocument() ? t->GetOwnerDocument()->GetElementById("objects") : nullptr;
-    if (!tab) return;
-    const Rml::Vector2f at = tab->GetAbsoluteOffset(Rml::BoxArea::Border);
-    x = std::clamp(x - at.x, 0.0f, std::max(0.0f, tab->GetOffsetWidth() - kMenuW));
-    y = std::clamp(y - at.y, 0.0f, std::max(0.0f, tab->GetOffsetHeight() - kMenuH));
+    if (tab) {
+        const Rml::Vector2f at = tab->GetAbsoluteOffset(Rml::BoxArea::Border);
+        x = std::clamp(x - at.x, 0.0f, std::max(0.0f, tab->GetOffsetWidth() - kMenuW * dp));
+        y = std::clamp(y - at.y, 0.0f, std::max(0.0f, tab->GetOffsetHeight() - kMenuH * dp));
+    }
+    x /= dp;
+    y /= dp;
 }
 
 // A property as the editor shows it: its kind of field and value in words.

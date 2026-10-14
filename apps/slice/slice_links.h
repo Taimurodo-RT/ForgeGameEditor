@@ -23,6 +23,7 @@ class DataModelConstructor;
 
 namespace slice {
 
+using forge::f32;
 using forge::f64;
 using forge::u32;
 using forge::usize;
@@ -77,10 +78,11 @@ public:
     void show(bool on);
 
     // Each frame while shown: places the marks and arrows. lit: whether a link
-    // has just happened.
+    // has just happened. width × height: the view in pixels of the window; the
+    // marks are placed in px of the HUD's style, dp of those pixels each.
     void update(const std::vector<Seen>& seen, const forge::render::Camera2D& camera, u32 width, u32 height,
                 const forge::logic::Logic& logic, const forge::logic::Verbs& verbs,
-                const std::vector<forge::logic::Thing>& things, const std::function<bool(u32)>& lit);
+                const std::vector<forge::logic::Thing>& things, const std::function<bool(u32)>& lit, f32 dp = 1.0f);
 
     // A click on a thing's mark: the first, then the second (the choices).
     void click(const std::string& id);

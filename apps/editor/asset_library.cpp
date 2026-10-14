@@ -1,6 +1,7 @@
 #include "asset_library.h"
 
 #include "forge/assets/image.h"
+#include "forge/assets/svg.h"
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
@@ -12,8 +13,11 @@
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Input.h>
 
+#include <lunasvg.h>
+
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -296,6 +300,7 @@ void AssetLibrary::bind(Rml::DataModelConstructor& model) {
     model.Bind("as_sel_preview", &m_sel_preview_);
     model.Bind("as_sel_icon", &m_sel_icon_);
     model.Bind("as_sel_extra", &m_sel_extra_);
+    model.Bind("as_sel_note", &m_sel_note_);
     model.Bind("as_sel_image", &m_sel_image_);
     model.Bind("as_sel_audio", &m_sel_audio_);
     model.Bind("as_sel_wav", &m_sel_wav_);
@@ -584,8 +589,31 @@ void AssetLibrary::thumbnailer_main() {
         done.box = job.box;
         std::vector<u8> bytes;
         assets::CookedTexture tex;
-        if (read_file(assets::AssetPipeline::cooked_file(config_.library, job.key), bytes) &&
-            data::from_binary(tex, bytes) == data::BinaryError::None && tex.width > 0) {
+        if (job.svg) {
+            // As the game draws it: lunasvg at the size shown, not a smaller picture stretched.
+            std::unique_ptr<lunasvg::Document> doc;
+            if (read_file(assets::AssetPipeline::cooked_file(config_.library, job.key), bytes))
+                doc = lunasvg::Document::loadFromData(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            const f64 w = doc ? doc->width() : 0, h = doc ? doc->height() : 0;
+            if (w > 0 && h > 0 && job.box > 0) {
+                const f64 k = job.box / std::max(w, h);
+                const u32 bw = std::clamp<u32>(static_cast<u32>(std::lround(w * k)), 1, job.box);
+                const u32 bh = std::clamp<u32>(static_cast<u32>(std::lround(h * k)), 1, job.box);
+                lunasvg::Bitmap bitmap = doc->renderToBitmap(static_cast<int>(bw), static_cast<int>(bh));
+                if (!bitmap.isNull()) {
+                    bitmap.convertToRGBA();
+                    done.rgba.assign(static_cast<usize>(job.box) * job.box * 4, 0);
+                    const u32 ox = (job.box - bw) / 2, oy = (job.box - bh) / 2;
+                    for (u32 y = 0; y < bh; ++y)
+                        std::memcpy(done.rgba.data() + (static_cast<usize>(oy + y) * job.box + ox) * 4,
+                                    bitmap.data() + static_cast<usize>(y) * static_cast<usize>(bitmap.stride()), static_cast<usize>(bw) * 4);
+                    done.src_w = static_cast<u32>(std::max(1l, std::lround(w)));
+                    done.src_h = static_cast<u32>(std::max(1l, std::lround(h)));
+                    done.ok = true;
+                }
+            }
+        } else if (read_file(assets::AssetPipeline::cooked_file(config_.library, job.key), bytes) &&
+                   data::from_binary(tex, bytes) == data::BinaryError::None && tex.width > 0) {
             done.src_w = tex.width;
             done.src_h = tex.height;
             done.rgba = assets::fit_image(tex, job.box).rgba8;
@@ -606,12 +634,12 @@ bool AssetLibrary::looking() const {
     return refresh_wanted_ || refreshing_ || !snapshots_.empty();
 }
 
-void AssetLibrary::want_thumb(const std::string& name, const assets::ContentHash& key, u32 box) const {
+void AssetLibrary::want_thumb(const std::string& name, const assets::ContentHash& key, u32 box, bool svg) const {
     if (asked_.count(name)) return;
     asked_.insert(name);
     {
         std::lock_guard lock(mutex_);
-        thumb_jobs_.push_back({name, key, box});
+        thumb_jobs_.push_back({name, key, box, svg});
         if (thumb_jobs_.size() > kThumbQueue) {
             asked_.erase(thumb_jobs_.front().name);
             thumb_jobs_.pop_front();
@@ -895,7 +923,7 @@ std::string AssetLibrary::field(u32 row, std::string_view name) const {
     const Row& r = rows_[row];
     const assets::AssetRecord* rec = r.record >= 0 ? &records_[static_cast<usize>(r.record)] : nullptr;
     auto thumb = [&]() -> std::string {
-        if (!rec || rec->type != "image") return {};
+        if (!rec || (rec->type != "image" && rec->type != "svg")) return {};
         const bool big = view_ == "icons";
         const std::string key = (big ? "tb_" : "th_") + rec->cook_key.to_hex();
         auto it = thumbs_.find(key);
@@ -903,7 +931,7 @@ std::string AssetLibrary::field(u32 row, std::string_view name) const {
             it->second.used = frame_;
             return "/memory/" + key;
         }
-        want_thumb(key, rec->cook_key, big ? kIconPx : kThumbPx);
+        want_thumb(key, rec->cook_key, big ? kIconPx : kThumbPx, rec->type == "svg");
         return {};
     };
     if (name == "name") return r.name;
@@ -1651,8 +1679,8 @@ void AssetLibrary::sync_preview() {
     synced_rows_ = rows_version_;
     preview_version_ = 0;
     set(m_sel_count_, static_cast<int>(selection_.size()), "as_sel_count");
-    Rml::String name, ext, kind, size, dims, path, tags, preview, icon, extra, date, tint;
-    bool image = false, audio = false, dir = false, editable = false, wav = false, tmx = false;
+    Rml::String name, ext, kind, size, dims, path, tags, preview, icon, extra, date, tint, svg_note;
+    bool image = false, audio = false, dir = false, editable = false, wav = false, tmx = false, shown = false;
     if (selection_.size() == 1) {
         const std::string& rel = selection_[0];
         path = rel;
@@ -1675,14 +1703,27 @@ void AssetLibrary::sync_preview() {
             size = size_text(rec->size);
             tags = rec->tags;
             tmx = ext == ".tmx";
-            if (rec->type == "image") {
-                image = true;
-                editable = assets::can_encode_image(ext);
+            if (rec->type == "image" || rec->type == "svg") {
+                image = rec->type == "image";
+                shown = true;
+                editable = image && assets::can_encode_image(ext);
                 const std::string hex = rec->cook_key.to_hex();
                 const std::string want = "pv_" + hex;
                 if (preview_wanted_ != want) {
                     preview_wanted_ = want;
-                    if (!thumbs_.count(want)) want_thumb(want, rec->cook_key, kPreviewPx);
+                    if (!thumbs_.count(want)) want_thumb(want, rec->cook_key, kPreviewPx, !image);
+                }
+                if (!image) {
+                    // What lunasvg, which draws the SVG in the game, leaves out of it (step 3 of docs/models/вектор-модель.md).
+                    auto it = svg_notes_.find(hex);
+                    if (it == svg_notes_.end()) {
+                        std::vector<u8> bytes;
+                        std::string line;
+                        if (read_file(assets::AssetPipeline::cooked_file(config_.library, rec->cook_key), bytes))
+                            line = assets::svg_gaps_line({reinterpret_cast<const char*>(bytes.data()), bytes.size()});
+                        it = svg_notes_.emplace(hex, std::move(line)).first;
+                    }
+                    svg_note = it->second;
                 }
                 if (preview_name_ == want) preview = "/memory/" + want;
                 auto d = dims_.find(hex);
@@ -1723,7 +1764,7 @@ void AssetLibrary::sync_preview() {
             date = date_text(time_of(folder_));
         }
     }
-    if (!image && !preview_name_.empty()) {
+    if (!shown && !preview_name_.empty()) {
         ui_->drop_image(preview_name_);
         thumbs_.erase(preview_name_);
         preview_name_.clear();
@@ -1741,6 +1782,7 @@ void AssetLibrary::sync_preview() {
     set(m_sel_preview_, preview, "as_sel_preview");
     set(m_sel_icon_, icon, "as_sel_icon");
     set(m_sel_extra_, extra, "as_sel_extra");
+    set(m_sel_note_, svg_note, "as_sel_note");
     set(m_sel_date_, date, "as_sel_date");
     set(m_sel_tint_, tint, "as_sel_tint");
     set(m_sel_image_, image, "as_sel_image");
@@ -1859,6 +1901,7 @@ std::vector<assets::AssetRecord> AssetLibrary::ending(std::string_view suffix) c
     return out;
 }
 std::vector<std::filesystem::path> AssetLibrary::sounds() const { return of_type("audio"); }
+std::vector<std::filesystem::path> AssetLibrary::vectors() const { return of_type("svg"); }
 
 const assets::AssetRecord* AssetLibrary::record_of(const fs::path& file) const {
     std::error_code ec;

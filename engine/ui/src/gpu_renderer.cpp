@@ -609,8 +609,10 @@ void GpuRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
     if (geometry) release_geometry_.push_back(reinterpret_cast<Geometry*>(geometry));
 }
 
-// SVG pictures are drawn at this size (longest side) and scaled by the UI like any image.
-constexpr float kSvgRasterSize = 128.0f;
+// An SVG picture's texture here is its own size (width and height, or the viewBox), no longer side than this. Pictures are
+// drawn from textures of their size on screen (the SVG plugin, third_party/rmlui/Source/SVG); this one gives RmlUi the
+// picture's intrinsic size and draws only where nothing asks for a size.
+constexpr float kSvgMaxIntrinsicRaster = 2048.0f;
 
 void GpuRenderer::set_external_texture(const std::string& name, SDL_GPUTexture* texture, u32 width, u32 height) {
     external_[name] = {texture, width, height};
@@ -677,7 +679,7 @@ Rml::TextureHandle GpuRenderer::LoadTexture(Rml::Vector2i& dimensions, const Rml
         }
         float doc_w = document->width(), doc_h = document->height();
         if (doc_w <= 0.0f || doc_h <= 0.0f) doc_w = doc_h = 1.0f;
-        const float scale = kSvgRasterSize / std::max(doc_w, doc_h);
+        const float scale = std::min(1.0f, kSvgMaxIntrinsicRaster / std::max(doc_w, doc_h));
         const int w = std::max(1, static_cast<int>(std::lround(doc_w * scale)));
         const int h = std::max(1, static_cast<int>(std::lround(doc_h * scale)));
         lunasvg::Bitmap bitmap = document->renderToBitmap(w, h);
@@ -696,7 +698,10 @@ Rml::TextureHandle GpuRenderer::LoadTexture(Rml::Vector2i& dimensions, const Rml
             }
         }
         dimensions = {w, h};
-        return GenerateTexture({pixels.data(), pixels.size()}, dimensions);
+        Rml::TextureHandle handle = GenerateTexture({pixels.data(), pixels.size()}, dimensions);
+        // The picture's own size, also when its texture here is smaller: RmlUi lays it out by this.
+        dimensions = {std::max(1, static_cast<int>(std::lround(doc_w))), std::max(1, static_cast<int>(std::lround(doc_h)))};
+        return handle;
     }
 
     int w = 0, h = 0, channels = 0;

@@ -27,8 +27,8 @@ namespace d = editor::design;
 namespace {
 
 constexpr const char* kImage = "ui-screen"; // the canvas's picture of the screen: <img src="/gpu/ui-screen"/>
-constexpr f32 kSnap = 6;                     // canvas pixels
-constexpr f32 kHandle = 7;                   // canvas pixels: how near a handle a press grabs it
+constexpr f32 kSnap = 6;                     // px of the canvas (times the dp-ratio: pixels of the window)
+constexpr f32 kHandle = 7;                   // px: how near a handle a press grabs it
 
 std::string fmt(f32 v) {
     if (std::fabs(v - std::round(v)) < 0.005f) return std::to_string(static_cast<long long>(std::lround(v)));
@@ -353,7 +353,7 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
     }
     page_context_ = ui.create_context("ui-design", 1920, 1080);
     if (!page_context_) return false;
-    page_context_->SetDensityIndependentPixelRatio(1.0f);
+    ui.pin_dp_ratio(page_context_, 1.0f); // the page at its design size, fitted into the view by its picture
     ui.set_offscreen(page_context_, kImage);
     ui.set_active(page_context_, false);
 
@@ -858,8 +858,29 @@ void UiEditor::scan_pictures() {
         for (const d::Node& c : n.children) self(self, c);
     };
     visit(visit, screen_.root);
+    if (list_pictures) {
+        usize added = 0;
+        for (const fs::path& file : list_pictures()) {
+            std::string ext = path_to_utf8(file.extension());
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".svg" && ext != ".tga") continue;
+            const std::string there = "pictures/" + path_to_utf8(file.filename());
+            if (std::any_of(rows.begin(), rows.end(), [&](const PictureRow& r) { return r.path == there; })) continue;
+            rows.push_back({"add:" + path_to_utf8(file), path_to_utf8(file.stem()) + " — из «Ресурсов»"});
+            if (++added >= 300) break;
+        }
+    }
     m_pictures_ = std::move(rows);
     dirty("ue_pictures");
+}
+
+std::optional<std::string> UiEditor::picture_pick(const std::string& value) {
+    if (value.rfind("add:", 0) != 0) return value;
+    const std::filesystem::path source = utf8_path(value.substr(4));
+    const std::string name = copy_into(source, game_dir_ / "pictures", "картинка", copy_in);
+    if (name.empty()) return std::nullopt;
+    scan_pictures();
+    return "pictures/" + name;
 }
 
 // The game's sounds (game/sounds, WAV and OGG), the ones the screen uses but
@@ -921,6 +942,12 @@ void UiEditor::sync_sound_selects() {
 std::vector<std::pair<std::string, std::string>> UiEditor::sound_choices() const {
     std::vector<std::pair<std::string, std::string>> out;
     for (const SoundRow& r : m_sounds_) out.emplace_back(r.value, r.name);
+    return out;
+}
+
+std::vector<std::pair<std::string, std::string>> UiEditor::picture_choices() const {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const PictureRow& r : m_pictures_) out.emplace_back(r.path, r.name);
     return out;
 }
 
@@ -1236,7 +1263,7 @@ void UiEditor::zoom_to_fit() {
     }
     fit_pending_ = false;
     update_aspect();
-    const f32 margin = 48;
+    const f32 margin = 48 * dp();
     // The player's whole screen, in page pixels.
     const game::ScreenFit fit = view_fit();
     const f32 x0 = game::fit_to_page_x(fit, 0), y0 = game::fit_to_page_y(fit, 0);
@@ -1255,7 +1282,7 @@ void UiEditor::refresh_view() {
     const f32 x0 = game::fit_to_page_x(fit, 0), y0 = game::fit_to_page_y(fit, 0);
     const f32 fw = view_w() / fit.sx, fh = view_h() / fit.sy;
     m_frame_ = {to_canvas_x(x0), to_canvas_y(y0), fw * zoom_x(), fh * zoom_y()};
-    m_frame_label_ = {m_frame_.x, m_frame_.y - 22,
+    m_frame_label_ = {m_frame_.x, m_frame_.y - 22 * dp(),
                       previewing() ? screen_.title + "  на экране игрока " + fmt(view_w()) + " × " + fmt(view_h())
                                    : screen_.title + "  " + fmt(screen_.width) + " × " + fmt(screen_.height)};
     m_zoom_text_ = fmt(std::round(zoom_ * 100)) + "%";
@@ -1276,17 +1303,17 @@ void UiEditor::refresh_view() {
 }
 
 void UiEditor::refresh_rulers() {
-    // A step between labelled ticks that leaves at least ~70 pixels.
+    // A step between labelled ticks that leaves at least ~70 px.
     static const f32 steps[] = {1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
     f32 step = steps[std::size(steps) - 1];
     for (f32 s : steps)
-        if (s * zoom_ >= 70) {
+        if (s * zoom_ >= 70 * dp()) {
             step = s;
             break;
         }
     const f32 minor = step / ((static_cast<int>(step) % 5 == 0 || step < 2) ? 5 : 4);
     const u32 tick = rgba(0x8a, 0x96, 0xa0, 200), major = rgba(0xa9, 0xb4, 0xbd, 255);
-    const f32 ruler = 20;
+    const f32 ruler = 20 * dp(); // .ue-ruler-x's height, .ue-ruler-y's width
     m_ticks_x_.clear();
     m_ticks_y_.clear();
     ruler_x_.list.clear();
@@ -1337,7 +1364,7 @@ void UiEditor::refresh_overlay() {
     if (one && one->id != screen_.root.id && !simple_ && !checking_ && !previewing() && !preview_.on && !dragging && canvas_w_ > 0) {
         const d::Block b = d::block_of(*one);
         int rows = 1;
-        f32 w = 280;
+        f32 w = 280; // px, as .ue-float's widths
         if (one->type == d::NodeType::Text) {
             m_float_ = "text";
             rows = 2;
@@ -1355,12 +1382,15 @@ void UiEditor::refresh_overlay() {
         const bool seen = sel.x + sel.w >= 0 && sel.x <= canvas_w_ && sel.y + sel.h >= 0 && sel.y <= canvas_h_;
         if (!seen) m_float_.clear();
         if (!m_float_.empty()) {
-            constexpr f32 kEdge = 1 + 6, kRow = 32, kGap = 6, kAway = 10, kUnder = 34; // .ue-float; kUnder: past the size label
+            // px of .ue-float, in pixels of the window; kUnder: past the size label.
+            const f32 k = dp();
+            const f32 kEdge = (1 + 6) * k, kRow = 32 * k, kGap = 6 * k, kAway = 10 * k, kUnder = 34 * k, kIn = 4 * k;
+            w *= k;
             const f32 h = 2 * kEdge + static_cast<f32>(rows) * kRow + static_cast<f32>(rows - 1) * kGap;
-            m_float_x_ = std::round(std::clamp(sel.x + sel.w * 0.5f - w * 0.5f, 4.0f, std::max(4.0f, canvas_w_ - w - 4)));
-            m_float_y_ = sel.y - kAway - h >= 4                     ? std::round(sel.y - kAway - h)
-                         : sel.y + sel.h + kUnder + h <= canvas_h_ - 4 ? std::round(sel.y + sel.h + kUnder)
-                                                                         : 4.0f;
+            m_float_x_ = std::round(std::clamp(sel.x + sel.w * 0.5f - w * 0.5f, kIn, std::max(kIn, canvas_w_ - w - kIn)));
+            m_float_y_ = sel.y - kAway - h >= kIn                       ? std::round(sel.y - kAway - h)
+                         : sel.y + sel.h + kUnder + h <= canvas_h_ - kIn ? std::round(sel.y + sel.h + kUnder)
+                                                                          : kIn;
         }
     }
     // Hover.
@@ -1398,11 +1428,11 @@ void UiEditor::refresh_overlay() {
         if (g.horizontal) {
             const f32 y = std::round(to_canvas_y(g.at)) + 0.5f;
             line.points = {to_canvas_x(g.from), y, to_canvas_x(g.to), y};
-            m_measures_.push_back({(to_canvas_x(g.from) + to_canvas_x(g.to)) * 0.5f, y + 4, fmt(std::round(g.to - g.from))});
+            m_measures_.push_back({(to_canvas_x(g.from) + to_canvas_x(g.to)) * 0.5f, y + 4 * dp(), fmt(std::round(g.to - g.from))});
         } else {
             const f32 x = std::round(to_canvas_x(g.at)) + 0.5f;
             line.points = {x, to_canvas_y(g.from), x, to_canvas_y(g.to)};
-            m_measures_.push_back({x + 4, (to_canvas_y(g.from) + to_canvas_y(g.to)) * 0.5f, fmt(std::round(g.to - g.from))});
+            m_measures_.push_back({x + 4 * dp(), (to_canvas_y(g.from) + to_canvas_y(g.to)) * 0.5f, fmt(std::round(g.to - g.from))});
         }
         overlay_lines_.list.push_back(std::move(line));
     }
@@ -2014,6 +2044,14 @@ bool UiEditor::set_simple_property(const std::string& field, const std::string& 
             return false;
         }
         return set_simple_property(field, *name);
+    }
+    if (field == "picture" && value.rfind("add:", 0) == 0) {
+        const std::optional<std::string> path = picture_pick(value);
+        if (!path) {
+            refresh_props();
+            return false;
+        }
+        return set_simple_property(field, *path);
     }
     const u32 id = selection_.empty() ? screen_.root.id : selection_[0];
     const d::Node* n = d::find(screen_.root, id);
@@ -3055,6 +3093,16 @@ bool UiEditor::set_property(const std::string& field, const std::string& value) 
         }
         return set_property(field, *name);
     }
+    // A picture of «Ресурсы»: into the game's pictures first.
+    if ((field == "frame.image" || field == "mask.image" || (field.rfind("fill.", 0) == 0 && field.ends_with(".image"))) &&
+        value.rfind("add:", 0) == 0) {
+        const std::optional<std::string> path = picture_pick(value);
+        if (!path) {
+            refresh_props();
+            return false;
+        }
+        return set_property(field, *path);
+    }
     const std::string before = d::save_screen(screen_);
     bool any = false;
     // Nothing selected: the screen's settings.
@@ -3645,8 +3693,15 @@ bool UiEditor::edit_component() {
     return true;
 }
 
+f32 UiEditor::dp() const { return context_ ? context_->GetDensityIndependentPixelRatio() : 1.0f; }
+
 void UiEditor::update(Rml::Context* context) {
     context_ = context;
+    if (dp() != m_dp_) {
+        m_dp_ = dp();
+        dirty("ue_dp");
+        refresh_view(); // the rulers and the overlay's gaps are px of the style
+    }
     if (drag_ == Drag::Move && dragged_ && drop_wait_ && drop_parent_ != drop_wait_ &&
         time_now_ns() - drop_wait_ns_ >= static_cast<u64>(kDropWait * 1e9)) {
         drop_parent_ = drop_wait_; // rested over another frame: let go here, it goes in
@@ -3711,7 +3766,7 @@ void UiEditor::update(Rml::Context* context) {
         if (Rml::Element* b = tab && menu_under_button_ ? tab->GetElementById("ue-create") : nullptr; b && b->IsVisible(true)) {
             const Rml::Vector2f at = b->GetAbsoluteOffset(Rml::BoxArea::Border) - tab->GetAbsoluteOffset(Rml::BoxArea::Border);
             x = at.x;
-            y = at.y + b->GetOffsetHeight() + 4;
+            y = at.y + b->GetOffsetHeight() + 4 * dp();
         }
         // Shown (`data-if` only hides it: until then its size is the last menu's).
         if (m && m->IsVisible() && m->GetOffsetHeight() > 0) y = std::min(y, std::max(0.0f, tab->GetOffsetHeight() - m->GetOffsetHeight()));
@@ -3933,8 +3988,9 @@ bool UiEditor::press(f32 mx, f32 my, u8 button, u8 clicks, Rml::Context* /*conte
         const f32 hy[8] = {b.y, b.y, b.y, b.y + b.h * 0.5f, b.y + b.h, b.y + b.h, b.y + b.h, b.y + b.h * 0.5f};
         for (int i = 0; i < 8; ++i) {
             // Edge middles only when the box is big enough to tell them apart.
-            if ((i % 2 == 1) && (b.w < 24 || b.h < 24) && (i == 1 || i == 5 ? b.w < 24 : b.h < 24)) continue;
-            if (std::fabs(cx - hx[i]) <= kHandle && std::fabs(cy - hy[i]) <= kHandle) {
+            const f32 big = 24 * dp(), near = kHandle * dp();
+            if ((i % 2 == 1) && (b.w < big || b.h < big) && (i == 1 || i == 5 ? b.w < big : b.h < big)) continue;
+            if (std::fabs(cx - hx[i]) <= near && std::fabs(cy - hy[i]) <= near) {
                 handle_ = i;
                 drag_ = Drag::Resize;
                 grab_box_ = selection_box();
@@ -3997,13 +4053,13 @@ bool UiEditor::press(f32 mx, f32 my, u8 button, u8 clicks, Rml::Context* /*conte
 
 void UiEditor::drag_to(f32 mx, f32 my) {
     const f32 dxw = mx - grab_mx_, dyw = my - grab_my_;
-    if (!dragged_ && std::hypot(dxw, dyw) < 3) return;
+    if (!dragged_ && std::hypot(dxw, dyw) < 3 * dp()) return;
     dragged_ = true;
     const SDL_Keymod mods = SDL_GetModState();
     const bool no_snap = mods & (SDL_KMOD_CTRL | SDL_KMOD_GUI);
     const bool shift = mods & SDL_KMOD_SHIFT;
     const bool alt = mods & SDL_KMOD_ALT;
-    const f32 threshold = kSnap / zoom_;
+    const f32 threshold = kSnap * dp() / zoom_;
     snap_lines_.clear();
     snap_gaps_.clear();
     const f32 sx = to_screen_x(mx - canvas_x_), sy = to_screen_y(my - canvas_y_);
@@ -4645,7 +4701,7 @@ void UiEditor::open_menu(const std::string& menu, f32 x, f32 y) {
         for (int i = 0; !tab && i < context_->GetNumDocuments(); ++i) tab = context_->GetDocument(i)->GetElementById("ui-editor");
         if (tab) {
             const Rml::Vector2f at = tab->GetAbsoluteOffset(Rml::BoxArea::Border);
-            constexpr f32 kMenuW = 290; // .ue-menu; its height is known once it is laid out (`update`)
+            const f32 kMenuW = 290 * dp(); // .ue-menu; its height is known once it is laid out (`update`)
             x = std::clamp(x - at.x, 0.0f, std::max(0.0f, tab->GetOffsetWidth() - kMenuW));
             y = std::clamp(y - at.y, 0.0f, std::max(0.0f, tab->GetOffsetHeight()));
         }
@@ -5021,6 +5077,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_selected", &m_selected_);
     model.Bind("ue_sel_box", &m_sel_box_);
     model.Bind("ue_handles", &m_handles_);
+    model.Bind("ue_dp", &m_dp_);
     model.Bind("ue_float", &m_float_);
     model.Bind("ue_float_x", &m_float_x_);
     model.Bind("ue_float_y", &m_float_y_);
@@ -5126,7 +5183,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         // Under the button (and kept there while the bar is laid out again: `update`).
         Rml::Element* b = ev.GetCurrentElement();
         const Rml::Vector2f at = b ? b->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f{};
-        open_menu("create", at.x, at.y + (b ? b->GetOffsetHeight() + 4 : 0));
+        open_menu("create", at.x, at.y + (b ? b->GetOffsetHeight() + 4 * dp() : 0));
         menu_under_button_ = menu_ == "create";
     });
     on("ue_create", [this, arg_str](Rml::Event& ev, const Rml::VariantList& a) {
@@ -6297,7 +6354,7 @@ bool UiEditor::tree_event(const SDL_Event& e, f32 density, Rml::Context* context
     if (!tree_.on) return false;
     if (e.type == SDL_EVENT_MOUSE_MOTION) {
         const f32 mx = e.motion.x * density, my = e.motion.y * density;
-        if (!tree_.moved && std::hypot(mx - tree_.down_x, my - tree_.down_y) < 5) return false; // a click, not a carry yet
+        if (!tree_.moved && std::hypot(mx - tree_.down_x, my - tree_.down_y) < 5 * dp()) return false; // a click, not a carry yet
         if (!tree_.moved) {
             tree_.moved = true;
             // The selection goes when the row is in it; otherwise the row's layer alone (then selected).

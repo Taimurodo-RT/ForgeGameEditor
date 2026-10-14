@@ -426,6 +426,9 @@ public:
     // Sounds of «Ресурсы» the author can pick for a screen's music and its
     // buttons besides the game's own (a pick is copied into game/sounds).
     std::function<std::vector<std::filesystem::path>()> list_sounds;
+    // Pictures of «Ресурсы» (raster and SVG) offered after the game's own: a pick is copied into game/pictures as it
+    // is, so an SVG stays a vector the game draws at its size (step 3 of docs/models/вектор-модель.md).
+    std::function<std::vector<std::filesystem::path>()> list_pictures;
     // How such a pick goes into the game (copy_into's via; main).
     std::function<std::optional<std::string>(const std::filesystem::path&, const std::filesystem::path&)> copy_in;
     // Files of the game's pictures or sounds got new content under their names (an asset of «Ресурсы» changed):
@@ -438,6 +441,8 @@ public:
     forge::audio::Mixer& check_mixer() { return check_mixer_; }
     // The sounds the drop-downs offer: {value, what the author reads}.
     std::vector<std::pair<std::string, std::string>> sound_choices() const;
+    // The pictures the drop-downs offer: (value, name); "add:<path>" a file of «Ресурсы».
+    std::vector<std::pair<std::string, std::string>> picture_choices() const;
 private:
     friend class UiCommand;
 
@@ -524,6 +529,9 @@ private:
     PickerOpen picker_;
     bool previewing_ = false; // commit() keeps nothing: the picker shows its colour
     Rml::Context* context_ = nullptr; // the editor's (the panels', the canvas's)
+    // Its dp-ratio: a px of its style is this many pixels of the window. The canvas, the overlay and the mouse are in
+    // pixels of the window; sizes that mirror the style's (a handle, a menu's width) are multiplied by it.
+    f32 dp() const;
     std::optional<editor::design::Color> color_of(const std::string& field) const;
     std::optional<editor::design::Color> color_of(const std::string& field, u32 id) const;
     // ColorPicker::Client: the screen as it was when the picker opened, with the picker's colour (or game colour) on
@@ -814,6 +822,8 @@ private:
     // A drop-down's sound: a name of game/sounds as it is, "add:<path>" a
     // file of «Ресурсы» copied there first. Empty when it cannot be used.
     std::optional<std::string> sound_pick(const std::string& value);
+    // A drop-down's picture: a path of game/pictures as it is, "add:<path>" a file of «Ресурсы» copied there first.
+    std::optional<std::string> picture_pick(const std::string& value);
     bool page_from_check_ = false;
     forge::game::Vars check_vars_;
     u64 check_seen_ = ~0ull;
@@ -858,6 +868,7 @@ private:
     Rml::String m_float_; // the panel over the selected layer: its kind, "" when none
     f32 m_float_x_ = 0, m_float_y_ = 0;
     bool m_handles_ = false;
+    float m_dp_ = 1; // ue_dp: the editor's dp-ratio (the canvas and its overlay are in pixels of the window, devpx)
     Box m_hover_;
     bool m_hovering_ = false;
     Box m_drop_;                 // the frame a layer carried on the canvas goes into

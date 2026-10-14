@@ -37,6 +37,9 @@ struct CookOutput {
     std::vector<u8> cooked;
     std::vector<Guid> dependencies;
     std::string error; // set on failure; the previous cooked result stays in use
+    // Lines for the author when the file cooks all the same (what the game will not show of it); they go to
+    // RefreshReport::messages.
+    std::vector<std::string> notes;
 };
 
 class Importer {

@@ -177,6 +177,8 @@ public:
     std::vector<std::filesystem::path> images() const;
     // The project's sounds, the newest first (absolute paths).
     std::vector<std::filesystem::path> sounds() const;
+    // SVG files (step 3 of docs/models/вектор-модель.md: the game gets them as written and lunasvg draws them).
+    std::vector<std::filesystem::path> vectors() const;
     // The project's files whose names end so (".svg", ".pixel.json"; case does not count), by their paths.
     std::vector<assets::AssetRecord> ending(std::string_view suffix) const;
     // The asset a file of the project is (null: not one of its files, or not looked at yet).
@@ -235,6 +237,7 @@ private:
         std::string name; // memory image name
         assets::ContentHash key;
         u32 box = 0;
+        bool svg = false; // the cooked file is the SVG as written: lunasvg draws it at the box's size
     };
     struct ThumbDone {
         std::string name;
@@ -304,7 +307,7 @@ private:
     void copy_in(const std::vector<std::filesystem::path>& sources, const std::string& label);
     bool is_dir(const std::string& rel) const;
     i64 time_of(const std::string& rel) const;
-    void want_thumb(const std::string& name, const assets::ContentHash& key, u32 box) const;
+    void want_thumb(const std::string& name, const assets::ContentHash& key, u32 box, bool svg = false) const;
     const assets::AssetRecord* record(const std::string& rel) const;
     std::string unique_name(const std::filesystem::path& dir, const std::string& name) const;
     bool selection_text_focus(Rml::Context* context) const;
@@ -371,6 +374,7 @@ private:
     mutable std::set<std::string> asked_;                   // requested, not made yet
     u64 frame_ = 0, thumbs_made_ = 0;
     std::unordered_map<std::string, std::pair<u32, u32>> dims_; // picture sizes by cook key
+    std::unordered_map<std::string, std::string> svg_notes_;    // what lunasvg leaves out of an SVG, by cook key
     std::string preview_name_, preview_wanted_;
     u32 preview_w_ = 0, preview_h_ = 0;
     u64 preview_version_ = 0;
@@ -403,7 +407,7 @@ private:
          m_can_back_ = false, m_can_forward_ = false, m_can_up_ = false, m_listing_ = false;
     int m_sel_count_ = 0;
     Rml::String m_sel_name_, m_sel_ext_, m_sel_kind_, m_sel_size_, m_sel_dims_, m_sel_path_, m_sel_tags_, m_sel_preview_,
-        m_sel_icon_, m_sel_extra_, m_sel_date_, m_sel_tint_;
+        m_sel_icon_, m_sel_extra_, m_sel_date_, m_sel_tint_, m_sel_note_;
     bool m_sel_image_ = false, m_sel_audio_ = false, m_sel_dir_ = false, m_sel_editable_ = false, m_sel_wav_ = false, m_sel_tmx_ = false;
     std::vector<Rml::String> m_history_;
     int m_history_cursor_ = 0;

@@ -2509,8 +2509,10 @@ void SliceGame::update_hud(bool playing) {
     }
     const u64 now = SDL_GetTicks();
     std::erase_if(lit_, [now](const auto& l) { return l.second <= now; });
+    const Rml::Context* hud_context = shell_->context();
     overlay_.update(overlay_.on() ? seen_things() : std::vector<Seen>{}, camera_, width_, height_, links_, verbs_, things_,
-                    [this](u32 link) { return lit_.contains(link); });
+                    [this](u32 link) { return lit_.contains(link); },
+                    hud_context ? hud_context->GetDensityIndependentPixelRatio() : 1.0f);
 }
 
 void SliceGame::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) {

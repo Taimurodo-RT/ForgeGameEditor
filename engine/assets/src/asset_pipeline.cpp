@@ -323,6 +323,7 @@ RefreshReport AssetPipeline::refresh() {
                 ++report.failed;
                 continue; // keep the old record and cooked result, if any
             }
+            for (const std::string& note : e.out.notes) report.messages.push_back(e.rel + ": " + note);
             AssetRecord r;
             r.id = e.id;
             r.path = e.rel;

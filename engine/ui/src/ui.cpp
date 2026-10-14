@@ -44,6 +44,11 @@ struct Ui::Impl {
     };
     std::unordered_map<Rml::Context*, Offscreen> offscreen;
     std::unordered_map<Rml::Context*, bool> inactive;
+    std::unordered_map<Rml::Context*, f32> pinned; // contexts with a dp-ratio of their own
+    f32 display_scale = 1.0f;                       // the window's, as last seen
+    f32 dp_ratio() const { return display_scale * config.scale; }
+    // The display's scale again; the contexts that follow the UI's scale get the new dp-ratio.
+    void refresh_scale();
     struct Clock {
         double want = 0; // where the context's time should be
         double at = 0;   // where its last update left it
@@ -148,6 +153,7 @@ bool Ui::init(SDL_GPUDevice* device, SDL_Window* window, const UiConfig& config)
         return false;
     }
     m.initialized = true;
+    m.refresh_scale();
 
     m.icon_instancer = std::make_unique<Rml::ElementInstancerGeneric<ElementIcon>>();
     m.list_instancer = std::make_unique<Rml::ElementInstancerGeneric<ElementVirtualList>>();
@@ -181,11 +187,36 @@ void Ui::shutdown() {
     m.initialized = false;
 }
 
+void Ui::Impl::refresh_scale() {
+    f32 s = config.display_scale;
+    if (s <= 0) s = window ? SDL_GetWindowDisplayScale(window) : 1.0f;
+    if (!(s > 0)) s = 1.0f;
+    display_scale = s;
+    for (Rml::Context* context : contexts)
+        if (!pinned.count(context) && context->GetDensityIndependentPixelRatio() != dp_ratio())
+            context->SetDensityIndependentPixelRatio(dp_ratio());
+}
+
+f32 Ui::dp_ratio() const { return impl_->dp_ratio(); }
+f32 Ui::display_scale() const { return impl_->display_scale; }
+f32 Ui::scale() const { return impl_->config.scale; }
+
+void Ui::set_scale(f32 scale) {
+    impl_->config.scale = scale > 0 ? scale : 1.0f;
+    impl_->refresh_scale();
+}
+
+void Ui::pin_dp_ratio(Rml::Context* context, f32 dp_ratio) {
+    if (!context) return;
+    impl_->pinned[context] = dp_ratio;
+    context->SetDensityIndependentPixelRatio(dp_ratio);
+}
+
 Rml::Context* Ui::create_context(const std::string& name, u32 width, u32 height) {
     Rml::Context* context =
         Rml::CreateContext(name, {static_cast<int>(width), static_cast<int>(height)});
     if (!context) return nullptr;
-    context->SetDensityIndependentPixelRatio(impl_->config.dp_ratio);
+    context->SetDensityIndependentPixelRatio(impl_->dp_ratio());
     impl_->contexts.push_back(context);
     if (!impl_->debugger && impl_->config.debugger) impl_->debugger = Rml::Debugger::Initialise(context);
     return context;
@@ -208,6 +239,8 @@ bool Ui::handle_event(Rml::Context* context, const SDL_Event& event) {
         Rml::Debugger::SetVisible(!Rml::Debugger::IsVisible());
         return true;
     }
+    // The window went to a display of another scale (or the system's scale changed).
+    if (event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) impl_->refresh_scale();
     return process_event(context, impl_->window, event);
 }
 
@@ -262,12 +295,22 @@ void Ui::set_offscreen(Rml::Context* context, const std::string& image) {
 }
 
 bool Ui::read_pixel(Rml::Context* context, u32 x, u32 y, u8 rgba[4]) {
+    std::vector<u8> one;
+    if (!read_pixels(context, x, y, 1, 1, one)) return false;
+    std::copy(one.begin(), one.end(), rgba);
+    return true;
+}
+
+bool Ui::read_pixels(Rml::Context* context, u32 x, u32 y, u32 w, u32 h, std::vector<u8>& rgba) {
     Impl& m = *impl_;
     auto it = m.offscreen.find(context);
-    if (it == m.offscreen.end() || !it->second.texture || x >= it->second.width || y >= it->second.height) return false;
+    if (it == m.offscreen.end() || !it->second.texture || w == 0 || h == 0 || x >= it->second.width || y >= it->second.height ||
+        w > it->second.width - x || h > it->second.height - y)
+        return false;
+    const u32 size = w * h * 4;
     SDL_GPUTransferBufferCreateInfo tb_info{};
     tb_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
-    tb_info.size = 4;
+    tb_info.size = size;
     SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(m.device, &tb_info);
     if (!tb) return false;
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(m.device);
@@ -280,11 +323,13 @@ bool Ui::read_pixel(Rml::Context* context, u32 x, u32 y, u8 rgba[4]) {
     src.texture = it->second.texture;
     src.x = x;
     src.y = y;
-    src.w = 1;
-    src.h = 1;
+    src.w = w;
+    src.h = h;
     src.d = 1;
     SDL_GPUTextureTransferInfo dst{};
     dst.transfer_buffer = tb;
+    dst.pixels_per_row = w;
+    dst.rows_per_layer = h;
     SDL_DownloadFromGPUTexture(copy, &src, &dst);
     SDL_EndGPUCopyPass(copy);
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
@@ -293,7 +338,7 @@ bool Ui::read_pixel(Rml::Context* context, u32 x, u32 y, u8 rgba[4]) {
         SDL_WaitForGPUFences(m.device, true, &fence, 1);
         SDL_ReleaseGPUFence(m.device, fence);
         if (const auto* p = static_cast<const u8*>(SDL_MapGPUTransferBuffer(m.device, tb, false))) {
-            std::copy(p, p + 4, rgba);
+            rgba.assign(p, p + size);
             SDL_UnmapGPUTransferBuffer(m.device, tb);
             ok = true;
         }
@@ -311,6 +356,7 @@ void Ui::destroy_context(Rml::Context* context) {
     Impl& m = *impl_;
     set_offscreen(context, "");
     m.inactive.erase(context);
+    m.pinned.erase(context);
     m.clocks.erase(context);
     m.documents.erase(std::remove_if(m.documents.begin(), m.documents.end(),
                                      [&](const Impl::Document& d) { return d.context == context; }),
@@ -441,6 +487,9 @@ void Ui::update() {
     FORGE_ZONE_N("UiUpdate");
     const u64 start = time_now_ns();
     impl_->poll_files();
+    // As the event says, and once a frame for the event the app did not pass on.
+    if (impl_->window && impl_->config.display_scale <= 0 && SDL_GetWindowDisplayScale(impl_->window) != impl_->display_scale)
+        impl_->refresh_scale();
     for (Rml::Context* context : impl_->contexts)
         if (!impl_->inactive.count(context)) impl_->update(context);
     impl_->stats.update_ms = ns_to_ms(time_now_ns() - start);

@@ -15,7 +15,7 @@ set_target_properties(forge_editor_app PROPERTIES OUTPUT_NAME forge_editor)
 # The modules come from the composition root (apps/builtin): the editor names none of them.
 target_link_libraries(forge_editor_app PRIVATE forge::platform forge::render forge::ui forge::editor forge::assets forge::audio forge::level forge::logic
                       forge::game forge::sim forge::objects forge::modules forge_builtin_modules forge_editor_slice_checks forge_demo_common
-                      forge_editor_pixel yyjson)
+                      forge_editor_pixel yyjson lunasvg::lunasvg)
 # UI files are read from the source tree, so editing them updates the running editor.
 # The level of «Старая шахта» lives next to the game's data; «Играть отсюда»
 # starts the game's launcher built next to the editor (forge_game: the module the game names).

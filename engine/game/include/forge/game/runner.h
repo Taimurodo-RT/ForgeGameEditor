@@ -8,6 +8,8 @@
 //   my_game --test --window [--no-vsync]  the self-test in a real window
 //   my_game --ui DIR --data DIR --user DIR --theme NAME --no-vsync
 //   my_game --play                   a new game at once, past the main menu
+//   my_game --ui-scale S             the UI drawn at a display's scale of S, standing for the system's (times the
+//                                    player's «Масштаб интерфейса»; 1 for --test and --screenshot unless given)
 
 #include "forge/game/shell.h"
 

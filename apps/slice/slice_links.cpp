@@ -170,7 +170,7 @@ bool LinkOverlay::choose(usize i) {
 
 void LinkOverlay::update(const std::vector<Seen>& seen, const forge::render::Camera2D& camera, u32 width, u32 height,
                          const logic::Logic& logic, const logic::Verbs& verbs, const std::vector<logic::Thing>& things,
-                         const std::function<bool(u32)>& lit) {
+                         const std::function<bool(u32)>& lit, f32 dp) {
     verbs_ = &verbs;
     things_ = &things;
     width_ = width;
@@ -178,9 +178,12 @@ void LinkOverlay::update(const std::vector<Seen>& seen, const forge::render::Cam
     set(m_allowed_, allowed_, "ln_allowed");
     set(m_on_, on_, "ln_on");
     if (!on_) return; // the marks stay as they were, hidden
-    const f64 cx = camera.snapped_x(), cy = camera.snapped_y(), zoom = camera.zoom;
-    auto sx = [&](f64 x) { return static_cast<float>((x - cx) * zoom + width * 0.5); };
-    auto sy = [&](f64 y) { return static_cast<float>((y - cy) * zoom + height * 0.5); };
+    // In px: the world's pixels on screen are divided by dp, so the marks' sizes and gaps are the style's.
+    dp = dp > 0 ? dp : 1.0f;
+    const f64 cx = camera.snapped_x(), cy = camera.snapped_y(), zoom = camera.zoom / dp;
+    const f32 view_w = static_cast<f32>(width) / dp, view_h = static_cast<f32>(height) / dp;
+    auto sx = [&](f64 x) { return static_cast<float>((x - cx) * zoom + view_w * 0.5); };
+    auto sy = [&](f64 y) { return static_cast<float>((y - cy) * zoom + view_h * 0.5); };
 
     std::map<std::string, const Seen*> at;
     for (const Seen& s : seen) at[s.id] = &s;
@@ -271,9 +274,9 @@ void LinkOverlay::update(const std::vector<Seen>& seen, const forge::render::Cam
             const float h = 64.0f + static_cast<float>(std::max<usize>(1, m_choices_.size())) * kChoiceH;
             const float bx = sx(it->second->x), by = sy(it->second->y);
             float x = bx + 40;
-            if (x + kPickW > width - kMargin) x = bx - 40 - kPickW;
-            x = std::clamp(x, kMargin, std::max(kMargin, width - kPickW - kMargin));
-            const float y = std::clamp(by - h * 0.5f, kMargin + 40, std::max(kMargin + 40, height - h - 110));
+            if (x + kPickW > view_w - kMargin) x = bx - 40 - kPickW;
+            x = std::clamp(x, kMargin, std::max(kMargin, view_w - kPickW - kMargin));
+            const float y = std::clamp(by - h * 0.5f, kMargin + 40, std::max(kMargin + 40, view_h - h - 110));
             set(m_pick_x_, x, "ln_pick_x");
             set(m_pick_y_, y, "ln_pick_y");
         }

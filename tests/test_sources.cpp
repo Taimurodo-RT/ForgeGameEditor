@@ -697,4 +697,10 @@ TEST_CASE("sources: only a picture or a sound the game reads goes to its folder"
     CHECK(why.find("звук") != std::string::npos);
     const std::string text = "просто текст";
     CHECK(usable("data", std::span(reinterpret_cast<const u8*>(text.data()), text.size())));
+    // An SVG goes as written: lunasvg draws it at its size on screen (step 3 of docs/models/вектор-модель.md).
+    const std::string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 8 8\"><rect width=\"8\" height=\"8\"/></svg>";
+    CHECK(usable("pictures", std::span(reinterpret_cast<const u8*>(svg.data()), svg.size())));
+    const std::string broken = "<svg><rect></svg>";
+    CHECK(!usable("pictures", std::span(reinterpret_cast<const u8*>(broken.data()), broken.size()), &why));
+    CHECK(why.find("картинк") != std::string::npos);
 }

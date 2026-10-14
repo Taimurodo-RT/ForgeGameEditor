@@ -6,6 +6,7 @@
 #include "forge/ui/drawing.h"
 #include "forge/ui/virtual_list.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/ComputedValues.h>
@@ -149,8 +150,9 @@ void ElementVirtualList::OnAttributeChange(const Rml::ElementAttributes& changed
         source_name_ = it->second.Get<Rml::String>();
         version_ = ~0ull;
     }
+    // px of the style: the rows' height until one is measured (in pixels of the window, as the rows are placed).
     if (auto it = changed.find("row-height"); it != changed.end())
-        row_height_ = std::max(1.0f, it->second.Get<float>());
+        row_height_ = std::max(1.0f, it->second.Get<float>() * (GetContext() ? GetContext()->GetDensityIndependentPixelRatio() : 1.0f));
     if (auto it = changed.find("cell-width"); it != changed.end()) {
         const float w = std::max(0.0f, it->second.Get<float>());
         if (w != cell_width_) {
@@ -230,9 +232,12 @@ void ElementVirtualList::OnUpdate() {
         break;
     }
 
-    // A grid: as many columns as fit; cells share the width evenly.
+    // A grid: as many columns as fit; cells share the width evenly. The rows are measured and placed in pixels of the
+    // window (devpx); cell-width is the style's px, dp-ratio pixels each.
     const float width = GetClientWidth();
-    const u32 columns = cell_width_ > 0 ? std::max(1u, static_cast<u32>(width / cell_width_)) : 1u;
+    const float dp = GetContext() ? GetContext()->GetDensityIndependentPixelRatio() : 1.0f;
+    const float cell_min = cell_width_ * dp;
+    const u32 columns = cell_width_ > 0 ? std::max(1u, static_cast<u32>(width / cell_min)) : 1u;
     const float cell_w = cell_width_ > 0 ? std::floor(width / static_cast<float>(columns)) : 0.0f;
     if (columns != columns_ || (cell_width_ > 0 && std::fabs(cell_w - cell_w_) > 0.5f)) {
         columns_ = columns;
@@ -291,7 +296,7 @@ void ElementVirtualList::OnUpdate() {
     if (!layout_changed && !data_changed) return;
 
     const u32 lines = (count + columns - 1) / columns;
-    if (count != count_) content_->SetProperty("height", std::to_string(static_cast<double>(lines) * row_height_) + "px");
+    if (count != count_) content_->SetProperty("height", std::to_string(static_cast<double>(lines) * row_height_) + "devpx");
 
     // Rows are positioned absolutely at index * row height. A row whose
     // index is still on screen keeps it; only rows that scrolled out are
@@ -312,10 +317,10 @@ void ElementVirtualList::OnUpdate() {
         if (taken[index - first]) continue;
         Row& row = *free_rows[next_free++];
         if (row.index == ~0u) row.element->RemoveProperty("display");
-        row.element->SetProperty("top", std::to_string(static_cast<double>(index / columns) * row_height_) + "px");
+        row.element->SetProperty("top", std::to_string(static_cast<double>(index / columns) * row_height_) + "devpx");
         if (cell_width_ > 0) {
-            row.element->SetProperty("left", std::to_string(static_cast<double>(index % columns) * cell_w) + "px");
-            row.element->SetProperty("width", std::to_string(static_cast<double>(cell_w)) + "px");
+            row.element->SetProperty("left", std::to_string(static_cast<double>(index % columns) * cell_w) + "devpx");
+            row.element->SetProperty("width", std::to_string(static_cast<double>(cell_w)) + "devpx");
         }
         bind_row(row, index, *source, data_changed);
     }
@@ -457,18 +462,33 @@ void ElementLines::OnAttributeChange(const Rml::ElementAttributes& changed) {
         source_name_ = GetAttribute<Rml::String>("source", "");
         version_ = ~0ull;
     }
+    if (changed.count("points")) {
+        points_px_ = GetAttribute<Rml::String>("points", "") == "px";
+        version_ = ~0ull;
+    }
 }
 
 void ElementLines::OnRender() {
     const auto it = g_line_sources.find(source_name_);
     if (it == g_line_sources.end()) return;
     const LineSource& src = *it->second;
-    if (src.version() != version_ || !geometry_) {
+    const f32 dp = GetContext() ? GetContext()->GetDensityIndependentPixelRatio() : 1.0f;
+    if (src.version() != version_ || !geometry_ || dp != dp_) {
         version_ = src.version();
+        dp_ = dp;
         Rml::Mesh mesh;
         const f32 opacity = GetComputedValues().opacity();
-        for (const Line& l : src.lines())
-            add_polyline(mesh, l.points.data(), l.points.size() / 2, premultiplied(l.color, opacity), l.width, false);
+        // The points are pixels of the window (or px, points="px"); the width is the style's px, dp-ratio pixels each.
+        std::vector<f32> scaled;
+        for (const Line& l : src.lines()) {
+            const f32* points = l.points.data();
+            if (points_px_ && dp != 1.0f) {
+                scaled.assign(l.points.begin(), l.points.end());
+                for (f32& v : scaled) v *= dp;
+                points = scaled.data();
+            }
+            add_polyline(mesh, points, l.points.size() / 2, premultiplied(l.color, opacity), l.width * dp, false);
+        }
         geometry_ = mesh ? GetRenderManager()->MakeGeometry(std::move(mesh)) : Rml::Geometry();
     }
     if (geometry_) geometry_.Render(GetAbsoluteOffset(Rml::BoxArea::Border));
@@ -499,12 +519,13 @@ void ElementShape::OnRender() {
         const Rml::Colourb c = GetComputedValues().color();
         const u32 rgba = (static_cast<u32>(c.red) << 24) | (static_cast<u32>(c.green) << 16) | (static_cast<u32>(c.blue) << 8) | c.alpha;
         const Rml::ColourbPremultiplied color = premultiplied(rgba, GetComputedValues().opacity());
-        // An arrow head: a box with a point to the right (Unreal's flow pin).
-        const f32 w = size.x, h = size.y, in = 1.0f;
+        // An arrow head: a box with a point to the right (Unreal's flow pin). Its outline is the style's px wide.
+        const f32 dp = GetContext() ? GetContext()->GetDensityIndependentPixelRatio() : 1.0f;
+        const f32 w = size.x, h = size.y, in = 1.0f * dp;
         const f32 pts[10] = {in, in, w * 0.55f, in, w - in, h * 0.5f, w * 0.55f, h - in, in, h - in};
         Rml::Mesh mesh;
         if (filled_) {
-            add_polyline(mesh, pts, 5, color, 1.0f, true);
+            add_polyline(mesh, pts, 5, color, 1.0f * dp, true);
             const int base = static_cast<int>(mesh.vertices.size());
             for (int i = 0; i < 5; ++i) {
                 Rml::Vertex v;
@@ -515,7 +536,7 @@ void ElementShape::OnRender() {
             }
             for (int i = 1; i < 4; ++i) mesh.indices.insert(mesh.indices.end(), {base, base + i, base + i + 1});
         } else {
-            add_polyline(mesh, pts, 5, color, 1.6f, true);
+            add_polyline(mesh, pts, 5, color, 1.6f * dp, true);
         }
         geometry_ = mesh ? GetRenderManager()->MakeGeometry(std::move(mesh)) : Rml::Geometry();
     }

@@ -234,7 +234,13 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
         else if (std::strcmp(argv[i], "--theme") == 0 && has_value) o.shell.theme = argv[++i];
         else if (std::strcmp(argv[i], "--no-vsync") == 0) o.vsync = false;
         else if (std::strcmp(argv[i], "--play") == 0) o.play = true;
-        else if (std::strcmp(argv[i], "--size") == 0 && has_value) {
+        else if (std::strcmp(argv[i], "--ui-scale") == 0 && has_value) {
+            // The display's scale, standing for the system's (a px of the UI is this many pixels, times the player's
+            // «Масштаб интерфейса»).
+            const f32 v = std::strtof(argv[++i], nullptr);
+            if (v >= 0.5f && v <= 4.0f) o.shell.display_scale = v;
+            else FORGE_ERROR("--ui-scale: нужно число от 0.5 до 4, например 1.5");
+        } else if (std::strcmp(argv[i], "--size") == 0 && has_value) {
             unsigned w = 0, h = 0;
             if (std::sscanf(argv[++i], "%ux%u", &w, &h) == 2 && w >= 320 && h >= 200 && w <= 16384 && h <= 16384) {
                 o.width = w;
@@ -244,6 +250,8 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
     }
 
     if (o.screenshot || o.test) {
+        // A test sees the same pixels on every machine: the display's scale is 1 unless --ui-scale says.
+        if (o.shell.display_scale <= 0) o.shell.display_scale = 1.0f;
         // Test runs never touch the player's saves.
         if (o.shell.user_dir.empty()) {
             o.shell.user_dir = fs::temp_directory_path() / "forge_game_offscreen";

@@ -182,17 +182,30 @@ void plot(assets::CookedTexture& t, i64 x, i64 y, const std::array<u8, 4>& c) {
 constexpr std::array<u8, 4> kMark{40, 120, 255, 255}, kMarkEdge{255, 255, 255, 255};
 
 // The selected part over the vector: its bounds and its pivot.
-void mark(assets::CookedTexture& t, const f64 box[4], f64 px, f64 py) {
+// k: texels to a px of the view (its dp-ratio, whole), so the marks keep their size on screen.
+void mark(assets::CookedTexture& t, const f64 box[4], f64 px, f64 py, i64 k) {
     const i64 x0 = std::lround(box[0]), y0 = std::lround(box[1]), x1 = std::lround(box[2]), y1 = std::lround(box[3]);
     for (i64 x = x0; x <= x1; x += 1)
-        if ((x - x0) % 6 < 4) plot(t, x, y0, kMark), plot(t, x, y1, kMark);
+        if ((x - x0) % (6 * k) < 4 * k)
+            for (i64 j = 0; j < k; ++j) plot(t, x, y0 + j, kMark), plot(t, x, y1 - j, kMark);
     for (i64 y = y0; y <= y1; y += 1)
-        if ((y - y0) % 6 < 4) plot(t, x0, y, kMark), plot(t, x1, y, kMark);
+        if ((y - y0) % (6 * k) < 4 * k)
+            for (i64 j = 0; j < k; ++j) plot(t, x0 + j, y, kMark), plot(t, x1 - j, y, kMark);
     const i64 cx = std::lround(px), cy = std::lround(py);
-    for (i64 d = -6; d <= 6; ++d) {
-        for (i64 w = -1; w <= 1; w += 2) plot(t, cx + d, cy + w, kMarkEdge), plot(t, cx + w, cy + d, kMarkEdge);
-        plot(t, cx + d, cy, kMark), plot(t, cx, cy + d, kMark);
+    if (k == 1) {
+        for (i64 d = -6; d <= 6; ++d) {
+            for (i64 w = -1; w <= 1; w += 2) plot(t, cx + d, cy + w, kMarkEdge), plot(t, cx + w, cy + d, kMarkEdge);
+            plot(t, cx + d, cy, kMark), plot(t, cx, cy + d, kMark);
+        }
+        return;
     }
+    // A cross k texels thick, edged k texels on each side.
+    const i64 lo = -(3 * k) / 2, hi = lo + 3 * k - 1;
+    for (i64 j = lo; j <= hi; ++j)
+        if ((j - lo) / k != 1)
+            for (i64 d = -6 * k; d <= 6 * k; ++d) plot(t, cx + d, cy + j, kMarkEdge), plot(t, cx + j, cy + d, kMarkEdge);
+    for (i64 j = lo + k; j < lo + 2 * k; ++j)
+        for (i64 d = -6 * k; d <= 6 * k; ++d) plot(t, cx + d, cy + j, kMark), plot(t, cx + j, cy + d, kMark);
 }
 
 // The script a new character starts with: its first part bobs, so the views move at once.
@@ -435,7 +448,13 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
 
 // --- each frame -------------------------------------------------------------------
 
+u32 PixelEditor::view_px() const { return std::max(1u, static_cast<u32>(std::lround(kViewPx * dp_))); }
+
 void PixelEditor::update(f64 dt, Rml::Context* context) {
+    if (context && context->GetDensityIndependentPixelRatio() != dp_) {
+        dp_ = context->GetDensityIndependentPixelRatio();
+        view_dirty_ = true; // drawn again at the window's pixels
+    }
     if (module_.library() && module_.library()->version() != lib_seen_) {
         lib_seen_ = module_.library()->version();
         rebuild_states();
@@ -1199,7 +1218,7 @@ void PixelEditor::redraw() {
     std::vector<assets::CookedTexture> vec(ks.size());
     for (usize i = ks.size(); i-- > 0;) {
         if (!rig_.pose(poses[i], why) && i == 0 && pose_problem_.empty()) pose_problem_ = why;
-        vec[i] = rig_.draw(kViewPx, kViewPx);
+        vec[i] = rig_.draw(view_px(), view_px());
     }
     for (usize i = 1; i < ks.size(); ++i) {
         over_faint(vec[0], vec[i], kOnion);
@@ -1209,9 +1228,9 @@ void PixelEditor::redraw() {
     vector_ = vec[0];
     if (const i32 pi = rig_.part(part_); pi >= 0) {
         f64 box[4];
-        rig_.bounds(pi, kViewPx, kViewPx, box);
-        const vector::Point at = rig_.to_pixels(kViewPx, kViewPx).apply(rig_.carried(pi).apply(rig_.pivot(pi)));
-        mark(vec[0], box, at.x, at.y);
+        rig_.bounds(pi, view_px(), view_px(), box);
+        const vector::Point at = rig_.to_pixels(view_px(), view_px()).apply(rig_.carried(pi).apply(rig_.pivot(pi)));
+        mark(vec[0], box, at.x, at.y, std::max<i64>(1, std::lround(dp_)));
     }
     show(vec[0], frame_px_);
     sync_problem();
@@ -1226,7 +1245,7 @@ void PixelEditor::show(const assets::CookedTexture& vec, const assets::CookedTex
     m_vector_ = m_pixel_ = m_one_ = "";
     if (!vec.rgba8.empty() && !px.rgba8.empty()) {
         const std::string n = std::to_string(++image_serial_);
-        const u32 s = std::max(1u, kViewPx / std::max(px.width, px.height));
+        const u32 s = std::max(1u, view_px() / std::max(px.width, px.height));
         const assets::CookedTexture big = bigger(px, s);
         images_[0][0] = "px_v_" + n, images_[0][1] = "px_p_" + n, images_[0][2] = "px_1_" + n;
         ui_->set_image(images_[0][0], vec.rgba8.data(), vec.width, vec.height);

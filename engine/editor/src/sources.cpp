@@ -2,6 +2,7 @@
 
 #include "forge/assets/content_hash.h"
 #include "forge/assets/image.h"
+#include "forge/assets/svg.h"
 #include "forge/audio/audio.h"
 #include "forge/core/file.h"
 #include "forge/core/path.h"
@@ -144,6 +145,7 @@ bool usable(std::string_view folder, std::span<const u8> bytes, std::string* why
     if (folder == "pictures") {
         assets::CookedTexture picture;
         if (assets::decode_image(bytes, picture, &error)) return true;
+        if (assets::svg_readable(bytes)) return true; // drawn by lunasvg at its size on screen, as written
         if (why) *why = "это не картинка, которую читает игра (" + error + ")";
         return false;
     }
