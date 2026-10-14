@@ -18074,6 +18074,23 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
                 wrote = wrote && write_file_atomic(c / "assets" / utf8_path(name), {reinterpret_cast<const u8*>(line.data()), line.size()});
             }
             check(wrote, std::to_string(kUsMany) + " files put into C's «Ресурсы»");
+            // C's screens as the editor saves them before they are taken as they were: a checkout of git on Windows
+            // (core.autocrlf) gives the template's files \r\n, the editor writes \n. Only the line ends change here;
+            // ui-scale-b checks the HUD's files are then byte for byte what the editor writes for the screen it opens.
+            int crlf = 0;
+            bool lf_ok = true;
+            for (fs::directory_iterator it(c / "game" / "ui", ec), end; !ec && it != end; it.increment(ec)) {
+                const std::string ext = path_to_utf8(it->path().extension());
+                if (ext != ".json" && ext != ".html") continue;
+                const std::vector<u8> bytes = tg_bytes(it->path());
+                std::vector<u8> lf;
+                for (usize i = 0; i < bytes.size(); ++i)
+                    if (bytes[i] != '\r' || i + 1 >= bytes.size() || bytes[i + 1] != '\n') lf.push_back(bytes[i]);
+                if (lf.size() == bytes.size()) continue;
+                ++crlf;
+                lf_ok = lf_ok && write_file_atomic(it->path(), lf);
+            }
+            check(!ec && lf_ok, "C's screens with the editor's line ends (" + std::to_string(crlf) + " files had \\r\\n of a Windows checkout)");
             const auto c_ui = pj_tree(c / "game" / "ui");
             for (const char* scale : {"1", "1.5", "2"}) {
                 code = pj_run({exe, "--project", path_to_utf8(c / "project.forge"), "--ui-scale", scale, "--self-test", "ui-scale-b"}, elsewhere);
@@ -18568,6 +18585,15 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         case 4:
             if (hold(shown("ue-create") && ue().opened() == "hud", "«Создать» laid out, the HUD open")) return true;
             usb_json_ = tg_bytes(json);
+            {
+                // What Ctrl+Z gives back is the editor's saved form: the HUD's files are that form already.
+                d::HtmlOptions options;
+                options.library = &ue().library();
+                const std::string saved = d::save_screen(ue().screen()), page = d::screen_html(ue().screen(), options);
+                const std::vector<u8> html_bytes = tg_bytes(pjw().config().root / "game" / "ui" / "hud.html");
+                check(std::string(usb_json_.begin(), usb_json_.end()) == saved && std::string(html_bytes.begin(), html_bytes.end()) == page,
+                      at + ": hud.json and hud.html byte for byte as the editor writes the HUD it opened");
+            }
             check(pj_click("ue-create") && ue().menu() == "create", at + ": «Создать» clicked where drawn");
             break;
         case 5: {
