@@ -1118,7 +1118,7 @@ void AssetLibrary::copy_in(const std::vector<fs::path>& sources, const std::stri
 
 void AssetLibrary::new_folder() {
     if (!filter_.empty()) go({folder_, ""});
-    const fs::path staged = staging_dir() / "Новая папка";
+    const fs::path staged = staging_dir() / utf8_path("Новая папка");
     std::error_code ec;
     fs::create_directories(staged, ec);
     const std::string name = unique_name(abs(folder_), "Новая папка");
