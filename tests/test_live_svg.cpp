@@ -143,21 +143,32 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
     forge::ui::install_live_svg();
     Rml::Context* context = Rml::CreateContext("live", {200, 200});
     REQUIRE(context);
-    Rml::ElementDocument* doc = context->LoadDocumentFromMemory(R"(<rml><head><style>
+    // Two elements showing one file; made again as a game makes a page again.
+    Rml::ElementDocument* doc = nullptr;
+    Rml::Element *a = nullptr, *b = nullptr;
+    auto load = [&] {
+        doc = context->LoadDocumentFromMemory(R"(<rml><head><style>
         body { width: 200px; height: 200px; margin: 0; }
         img { display: block; width: 64px; height: 64px; }
         </style></head><body><img id="a" src="face.svg"/><img id="b" src="face.svg"/></body></rml>)",
-                                                                "mem/page.rml");
-    REQUIRE(doc);
-    doc->Show();
-    Rml::Element* a = doc->GetElementById("a");
-    Rml::Element* b = doc->GetElementById("b");
-    REQUIRE(a);
-    REQUIRE(b);
+                                              "mem/page.rml");
+        REQUIRE(doc);
+        doc->Show();
+        a = doc->GetElementById("a");
+        b = doc->GetElementById("b");
+        REQUIRE(a);
+        REQUIRE(b);
+    };
+    load();
     auto frame = [&] {
         render.at_y.clear();
         context->Update();
         context->Render();
+    };
+    auto made = [&] { // textures of pictures alive now (not an <img>'s stand-in for its size)
+        int n = 0;
+        for (const auto& [handle, pixels] : render.textures) n += pixels.empty() ? 0 : 1;
+        return n;
     };
     auto pixels = [&](int y) -> const std::vector<u8>& {
         REQUIRE(render.at_y.count(y));
@@ -234,6 +245,46 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
         frame();
         CHECK(render.at_y[0] == render.at_y[64]);
         CHECK(differ(pixels(0), file) == 0);
+    }
+    SUBCASE("the page closed: the live element's own pictures let go, and nothing said of it stays") {
+        CHECK(forge::ui::svg_morph(a, "mouth", "smile", 0.5));
+        frame();
+        CHECK(made() == 2); // the file's and a's own
+        doc->Close();
+        frame();
+        CHECK(made() == 0);
+        CHECK(files.open.empty());
+        // A page made again: its elements show the file, whatever address they have.
+        load();
+        frame();
+        CHECK_FALSE(forge::ui::svg_part(a, "mouth"));
+        CHECK(render.at_y[0] == render.at_y[64]);
+        CHECK(differ(pixels(0), file) == 0);
+        CHECK(made() == 1);
+    }
+    SUBCASE("the file changed (as by F5) and the page made again: what is said now is drawn on the new file, nothing of the old") {
+        CHECK(forge::ui::svg_morph(a, "mouth", "smile", 1));
+        frame();
+        // The new file: another smile, another head.
+        const std::string old_smile = R"(d="M18 40 C24 54 40 54 46 40 Z")", new_smile = R"(d="M12 34 C22 60 42 60 52 34 Z")";
+        const std::string changed = replaced(replaced(kFace, old_smile, new_smile), R"(fill="#f0c040")", R"(fill="#40c0f0")");
+        files.svg = changed;
+        doc->Close();
+        frame();
+        load();
+        frame();
+        CHECK(render.at_y[0] == render.at_y[64]);
+        CHECK(differ(pixels(0), drawn(changed)) == 0);
+        CHECK(forge::ui::svg_morph(a, "mouth", "smile", 1));
+        frame();
+        const std::string mouth = R"(d="M20 44 L44 44 L44 48 L20 48 Z" fill="#a02020")";
+        const std::string want = replaced(changed, mouth, new_smile + R"( fill="#ff4040")");
+        const std::string stale = replaced(changed, mouth, old_smile + R"( fill="#ff4040")"); // the morph made of the old file
+        const int off = differ(pixels(0), drawn(want), 8);
+        INFO("pixels off by more than 8 from the new file's smile: " << off);
+        CHECK(off <= 4);
+        CHECK(differ(pixels(0), drawn(stale), 8) > 20);
+        CHECK(differ(pixels(64), drawn(changed)) == 0);
     }
 
     Rml::Shutdown();

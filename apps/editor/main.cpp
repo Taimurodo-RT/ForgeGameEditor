@@ -2051,7 +2051,8 @@ struct Options {
     // the mouse on the canvas and a long list of «Ресурсы» at the display's scales 1, 1.5 and 2 in C, by "ui-scale-b");
     // "vector-live" (a live SVG picture: a game of the catalog's «Платформер» whose HUD shows an SVG from «Ресурсы» twice
     // and whose own scheme of a thing morphs and colours parts of one of them, made by "vector-live-a", opened again from
-    // another working folder and played at the screen's size, twice it and half it by "vector-live-a-again").
+    // another working folder, played at the screen's size, twice it and half it, the SVG changed in «Ресурсы», F5 and played
+    // again by "vector-live-a-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -18690,7 +18691,8 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     // each step its mouth morphs into the smile by «Плавность» of the world's time; a field undone and done again; Ctrl+S.
     // A opened again from another working folder (vector-live-a-again): the layers and the scheme as saved; «Играть со
     // стартового» at the screen's own size, twice it and half it: the game does what the scheme says to «Лицо» and nothing to
-    // «Лицо 2» (scene project with --edits vl_*). The template and B: the same bytes before and after.
+    // «Лицо 2» (scene project with --edits vl_*). Then «лицо.svg» saved over in «Ресурсы» by another program, F5: the same
+    // asset, the game's copy new, and the game morphs into the new smile. The template and B: the same bytes before and after.
     static constexpr const char* kVlFace = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
 <rect width="64" height="64" fill="#203048"/>
 <circle id="голова" cx="32" cy="32" r="28" fill="#f0c040"/>
@@ -18702,16 +18704,25 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     static constexpr const char* kVlGreen = "#00aa00";
     static std::filesystem::path vl_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_живой svg"); }
     static std::filesystem::path vl_mine(const char* title) { return vl_root() / utf8_path("Мои игры") / utf8_path(title); }
-    // «лицо.svg» as «Лицо» must show it once the morph is done: the mouth the smile's shape and colour, the eyes green.
-    static std::string vl_end() {
+    static constexpr const char* kVlSmile = R"(d="M18 40 C24 54 40 54 46 40 Z")", *kVlSmile2 = R"(d="M14 38 C22 58 42 58 50 38 Z")";
+    static void vl_put(std::string& s, const std::string& from, const std::string& to) {
+        const usize at = s.find(from);
+        if (at != std::string::npos) s.replace(at, from.size(), to);
+    }
+    // «лицо.svg» as another program saves it later (F5): the smile another shape, the head another colour, the same ids.
+    static std::string vl_face2() {
         std::string s = kVlFace;
-        auto put = [&](const std::string& from, const std::string& to) {
-            const usize at = s.find(from);
-            if (at != std::string::npos) s.replace(at, from.size(), to);
-        };
-        put(R"(<g id="глаза" fill="#202020">)", std::string(R"(<g id="глаза" fill=")") + kVlGreen + "\">");
-        put(R"(r="4" fill="#303030")", std::string(R"(r="4" fill=")") + kVlGreen + "\"");
-        put(R"(d="M20 44 L44 44 L44 48 L20 48 Z" fill="#a02020")", R"(d="M18 40 C24 54 40 54 46 40 Z" fill="#ff4040")");
+        vl_put(s, kVlSmile, kVlSmile2);
+        vl_put(s, R"(fill="#f0c040")", R"(fill="#40c0f0")");
+        return s;
+    }
+    // A face as «Лицо» must show it once the morph is done: the mouth the smile's shape and colour, the eyes green.
+    static std::string vl_end(const std::string& face = kVlFace) {
+        std::string s = face;
+        const char* smile = face.find(kVlSmile2) != std::string::npos ? kVlSmile2 : kVlSmile;
+        vl_put(s, R"(<g id="глаза" fill="#202020">)", std::string(R"(<g id="глаза" fill=")") + kVlGreen + "\">");
+        vl_put(s, R"(r="4" fill="#303030")", std::string(R"(r="4" fill=")") + kVlGreen + "\"");
+        vl_put(s, R"(d="M20 44 L44 44 L44 48 L20 48 Z" fill="#a02020")", std::string(smile) + R"( fill="#ff4040")");
         return s;
     }
     // Where the layers go in «Простой»: x, y, w, h on the HUD (whole pixels at the screen's size and at twice it).
@@ -18746,11 +18757,12 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
                          "again; Ctrl+S (vector-live-a: exit " + std::to_string(code) + ")");
         code = pj_run({exe, "--project", path_to_utf8(a / "project.forge"), "--self-test", "vector-live-a-again"}, elsewhere);
         check(code == 0, "opened again from another working folder: the layers and the scheme as saved; played at the screen's size, "
-                         "twice it and half it, the game draws «Лицо» as the scheme says and «Лицо 2» as the file (vector-live-a-again: exit " +
+                         "twice it and half it, the game draws «Лицо» as the scheme says and «Лицо 2» as the file; the SVG changed in «Ресурсы», "
+                         "F5, played again with the new shapes (vector-live-a-again: exit " +
                              std::to_string(code) + ")");
         const std::vector<u8> asset = tg_bytes(a / "assets" / utf8_path("лицо.svg")), copy = tg_bytes(a / "game" / "pictures" / utf8_path("лицо.svg"));
-        check(std::string(asset.begin(), asset.end()) == kVlFace && std::string(copy.begin(), copy.end()) == kVlFace,
-              "«Ресурсы» of A and its game: «лицо.svg» as dropped");
+        check(std::string(asset.begin(), asset.end()) == vl_face2() && std::string(copy.begin(), copy.end()) == vl_face2(),
+              "«Ресурсы» of A and its game: «лицо.svg» as the author changed it last");
         logic::Logic file;
         const logic::ThingScheme* own = file.load(a / "game" / "logic.json") ? file.scheme_for("sign") : nullptr;
         check(own && own->graph.find("api.ui.svg_morph") != std::string::npos && own->graph.find("api.ui.svg_color") != std::string::npos &&
@@ -18943,11 +18955,12 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     // In an editor for «Живые А» from another working folder (--self-test vector-live-a-again).
     int vlg_step_ = 0;
     u32 vlg_layers_[2] = {0, 0};
-    edits::ProjectEdits vlg_edits() {
+    std::string vlg_asset_;
+    edits::ProjectEdits vlg_edits(const std::string& face = kVlFace) {
         edits::ProjectEdits e;
         e.vl_screen = "hud";
         e.vl_file = "pictures/лицо.svg";
-        e.vl_svg = kVlFace;
+        e.vl_svg = face;
         e.vl_layer = vlg_layers_[0];
         e.vl_other = vlg_layers_[1];
         e.vl_layer_name = "Лицо";
@@ -18956,7 +18969,7 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         e.vl_target = "улыбка";
         e.vl_color_part = "глаза";
         e.vl_color = kVlGreen;
-        e.vl_end = vl_end();
+        e.vl_end = vl_end(face);
         e.vl_layer_box.assign(std::begin(kVlFaceBox), std::end(kVlFaceBox));
         e.vl_other_box.assign(std::begin(kVlFace2Box), std::end(kVlFace2Box));
         return e;
@@ -18964,7 +18977,11 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     bool vector_live_again_step() {
         namespace fs = std::filesystem;
         namespace d = editor::design;
-        const fs::path a = pjw().config().root;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, copy = a / "game" / "pictures" / utf8_path("лицо.svg");
+        const bool idle = !as().busy() && !as().looking();
+        const assets::AssetRecord* rec = ed_.tab() == "assets" ? as().record_of(as().abs("лицо.svg")) : nullptr;
+        const editor::sources::Entry* source = ed_.sources.of_file("pictures/лицо.svg");
         switch (vlg_step_) {
         case 0:
             check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), vl_root() / utf8_path("снаружи")),
@@ -19032,6 +19049,44 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
                 check(code == 0, std::string("the game at ") + size + ": «Лицо» as the scheme says, halfway and at the end, «Лицо 2» as the file (exit " +
                                      std::to_string(code) + ")");
             }
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        // «лицо.svg» changed in «Ресурсы» as another program saves it; F5. The scheme says the same to the new shapes.
+        case 6: {
+            if (hold(idle && rec && source, "«Ресурсы» indexed, the game's copy of «лицо.svg» one of theirs")) return true;
+            vlg_asset_ = rec->id.to_string();
+            check(source->asset.to_string() == vlg_asset_ && source->hash == editor::sources::hash_of(tg_bytes(copy)),
+                  "game/sources.json: «pictures/лицо.svg» the copy of «лицо.svg», its id " + vlg_asset_);
+            tg_said_ = tg_mark();
+            const std::string face2 = vl_face2();
+            check(write_file_atomic(as().abs("лицо.svg"), {reinterpret_cast<const u8*>(face2.data()), face2.size()}),
+                  "«лицо.svg» of «Ресурсы» saved over by another program: another smile, another head");
+            fs::last_write_time(as().abs("лицо.svg"), fs::file_time_type::clock::now() + std::chrono::seconds(1), ec);
+            key(SDLK_F5, SDL_KMOD_NONE);
+            break;
+        }
+        case 7: {
+            if (hold(idle && usa_text(copy) == vl_face2(), "F5: the game's copy follows")) return true;
+            check(rec && rec->id.to_string() == vlg_asset_ && rec->type == "svg", "the same asset, the same id");
+            check(source && source->asset.to_string() == vlg_asset_ && source->hash == editor::sources::hash_of(tg_bytes(copy)),
+                  "game/sources.json: the same copy of the same asset, the new content's hash");
+            const usize updated = tg_said("Из «Ресурсов» обновлено в игре: pictures/лицо.svg");
+            check(updated == 1, "the log says once that «pictures/лицо.svg» was brought up to date (" + std::to_string(updated) + ")");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 8:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 9: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = vlg_edits(vl_face2());
+            const int code = tg_play(&e, "ожидания живые.json", vl_root(), "project", {"--size", "1920x1080"});
+            check(code == 0, "after F5 the game morphs the mouth into the new smile, the new head on both layers (exit " + std::to_string(code) + ")");
             return false;
         }
         default: return false;
