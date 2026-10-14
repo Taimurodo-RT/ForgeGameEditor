@@ -1864,7 +1864,7 @@ private:
                 kept = snd.folder();
                 snd.attach(&g.sounds().mixer(), sound_files());
                 for (const SimplePage& p : kSoundPages)
-                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / utf8_path(std::string(p.name) + ".html"))),
                           std::string("экран примера строится: ") + p.name);
                 for (const char* v : {"demo.presses", "demo.rings", "demo.quiet"}) s.vars().set(v, 0);
                 starts = snd.music_starts();
@@ -2712,7 +2712,7 @@ private:
             if (f == 0) {
                 check(std::size(kSimplePages) == 2, "в игру встроены 2 экрана примера");
                 for (const SimplePage& p : kSimplePages)
-                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / utf8_path(std::string(p.name) + ".html"))),
                           std::string("экран примера строится: ") + p.name);
                 kept.clear();
                 for (const auto& [name, value] : s.vars().all())
@@ -2768,7 +2768,7 @@ private:
             if (f == 0) {
                 check(std::size(kColorPages) == 1, "в игру встроен экран примера палитры");
                 for (const SimplePage& p : kColorPages)
-                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / utf8_path(std::string(p.name) + ".html"))),
                           std::string("экран примера строится: ") + p.name);
                 sc.show(name, true);
             }
@@ -2809,7 +2809,7 @@ private:
                 s.ui().set_clock(s.context(), 0.0);
                 s.ui().at_clock(s.context(), [&]() { // its movements start at the context's clock
                     for (const SimplePage& p : kTimelinePages)
-                        check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                        check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / utf8_path(std::string(p.name) + ".html"))),
                               std::string("экран примера строится: ") + p.name);
                     sc.show(name, true);
                     // Shown now, not by the screens' next update on the wall clock: RmlUi starts movements as it shows.
@@ -2866,7 +2866,7 @@ private:
             if (f == 0) {
                 check(std::size(kMovePages) == 1, "в игру встроен экран примера переноса");
                 for (const SimplePage& p : kMovePages)
-                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / utf8_path(std::string(p.name) + ".html"))),
                           std::string("экран примера строится: ") + p.name);
                 s.vars().set("demo.presses", 0);
                 sc.show(name, true);
@@ -2915,7 +2915,7 @@ private:
                 kept = snd.folder();
                 snd.attach(&mixer, sound_files());
                 for (const SimplePage& p : kSoundPages)
-                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                    check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / utf8_path(std::string(p.name) + ".html"))),
                           std::string("экран примера строится: ") + p.name);
                 s.vars().set("demo.rings", 0);
                 starts = snd.music_starts();
@@ -5069,7 +5069,7 @@ private:
                 snd.attach(&mixer, st->sounds);
                 for (const SimplePage& p : kSoundPages)
                     if (std::string(p.name) != "звук_меню")
-                        check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / (std::string(p.name) + ".html"))),
+                        check(sc.load_page(s.context(), p.name, p.html, path_to_utf8(s.game_dir() / "ui" / utf8_path(std::string(p.name) + ".html"))),
                               std::string("экран примера звука строится: ") + p.name);
                 st->starts = snd.music_starts();
             }
