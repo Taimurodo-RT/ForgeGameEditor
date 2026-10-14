@@ -3,6 +3,7 @@ add_executable(forge_tests
   test_memory.cpp
   test_handle.cpp
   test_jobs.cpp
+  test_file.cpp
   test_types.cpp
   test_reflect.cpp
   test_json.cpp
