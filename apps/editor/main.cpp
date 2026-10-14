@@ -106,6 +106,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <set>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -2155,6 +2156,12 @@ private:
 // the world, undo and redo it, run the game and stop it, delete and duplicate,
 // switch editor tabs.
 // Fails when any action does not do what the user would expect.
+// The files of the sample project below (bench files aside), by the UTF-8 names the self-test uses. On disk their
+// names go through utf8_path: a path of a narrow literal is read in the ANSI code page on Windows, and the files get
+// other names there (every check of «Ресурсы» after that fails for it).
+const char* const kSampleAssets[] = {"персонажи/кузнец.png", "персонажи/шахтёр.png", "тайлы/камень.png",    "тайлы/песок.bmp",
+                                     "данные/предметы.json", "readme.txt",           "звуки/кирка.wav"};
+
 // A small project for offscreen runs: pictures, a sound, data, folders. With
 // bench > 0 also that many files in 50 folders (every tenth a picture);
 // kept between runs while the count is the same.
@@ -2165,7 +2172,7 @@ void make_sample_assets(const std::filesystem::path& root, u32 bench) {
     std::vector<u8> was;
     const std::string want = std::to_string(bench);
     if (bench > 0 && read_file(marker, was) && std::string(was.begin(), was.end()) == want) {
-        fs::remove_all(root / "assets" / "персонажи", ec); // the self-test part is always fresh
+        fs::remove_all(root / "assets" / utf8_path("персонажи"), ec); // the self-test part is always fresh
     } else {
         fs::remove_all(root, ec);
     }
@@ -2194,12 +2201,12 @@ void make_sample_assets(const std::filesystem::path& root, u32 bench) {
         fs::create_directories(file.parent_path(), ec);
         write_file_atomic(file, {reinterpret_cast<const u8*>(body.data()), body.size()});
     };
-    picture(a / "персонажи" / "кузнец.png", 16, 16, 180, 90, 40);
-    picture(a / "персонажи" / "шахтёр.png", 16, 24, 200, 160, 60);
-    if (fs::exists(a / "тайлы", ec)) return; // the rest is kept with the bench files
-    picture(a / "тайлы" / "камень.png", 32, 32, 120, 120, 130);
-    picture(a / "тайлы" / "песок.bmp", 16, 16, 220, 200, 120);
-    text(a / "данные" / "предметы.json", R"({"кирка": {"цена": 10}, "факел": {"цена": 2}})");
+    picture(a / utf8_path("персонажи/кузнец.png"), 16, 16, 180, 90, 40);
+    picture(a / utf8_path("персонажи/шахтёр.png"), 16, 24, 200, 160, 60);
+    if (fs::exists(a / utf8_path("тайлы"), ec)) return; // the rest is kept with the bench files
+    picture(a / utf8_path("тайлы/камень.png"), 32, 32, 120, 120, 130);
+    picture(a / utf8_path("тайлы/песок.bmp"), 16, 16, 220, 200, 120);
+    text(a / utf8_path("данные/предметы.json"), R"({"кирка": {"цена": 10}, "факел": {"цена": 2}})");
     text(a / "readme.txt", "Ресурсы пробного проекта.");
     {
         // A quarter second of a 440 Hz tone, 16-bit mono.
@@ -2221,8 +2228,8 @@ void make_sample_assets(const std::filesystem::path& root, u32 bench) {
         put32(40, n * 2);
         for (u32 i = 0; i < n; ++i)
             put16(44 + i * 2, static_cast<u16>(static_cast<i16>(8000 * std::sin(i * 2 * 3.14159265 * 440 / rate))));
-        fs::create_directories(a / "звуки", ec);
-        write_file_atomic(a / "звуки" / "кирка.wav", wav);
+        fs::create_directories(a / utf8_path("звуки"), ec);
+        write_file_atomic(a / utf8_path("звуки/кирка.wav"), wav);
     }
     for (u32 i = 0; i < bench; ++i) {
         char folder[16], name[48];
@@ -12436,7 +12443,7 @@ private:
                 check(click("ue-tpl-replace"), "«Заменить»");
                 const std::vector<d::TemplateInfo> index = own_index();
                 check(index.size() == 2 && index[0].file == "моё_меню" && index[0].group == "Списки" && index[1].file == "моё_меню_2" &&
-                          !std::filesystem::exists(own_dir / "моё_меню_3.json"),
+                          !std::filesystem::exists(own_dir / utf8_path("моё_меню_3.json")),
                       "replaced in its place: the same file, its new group, nothing added");
                 check(d::save_screen(ue().screen()) == ue_tp_json_ && ue_file(".json") == ue_tp_menu_file_ && steps() == ue_tp_steps_,
                       "the screen still as it was, no step");
@@ -23337,9 +23344,27 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     bool asset_step() {
         const bool idle = !as().busy();
         switch (as_step_) {
-        case 0:
+        case 0: {
+            // Before anything: the sample's files are on disk under the names the checks below look for, and nothing
+            // else is (but the .meta files «Ресурсы» writes beside them). A name the system spelled otherwise is said here
+            // by itself, not as the steps after it failing one by one.
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            std::set<std::string> want(std::begin(kSampleAssets), std::end(kSampleAssets));
+            for (const char* rel : kSampleAssets)
+                for (std::string dir = rel; dir.find('/') != std::string::npos;) want.insert(dir = dir.substr(0, dir.rfind('/')));
+            std::string missing, other;
+            for (const char* rel : kSampleAssets)
+                if (!fs::is_regular_file(as().abs(rel), ec)) missing += std::string(" «") + rel + "»";
+            for (fs::recursive_directory_iterator it(as().root(), ec), end; !ec && it != end; it.increment(ec)) {
+                std::string rel = path_to_utf8(fs::relative(it->path(), as().root(), ec));
+                if (rel.size() > 5 && rel.ends_with(".meta") && want.count(rel.substr(0, rel.size() - 5))) continue;
+                if (!want.count(rel)) other += " «" + rel + "»";
+            }
+            check(missing.empty() && other.empty(), "the sample's files under their names (none missing:" + missing + "; none else:" + other + ")");
             check(click_tab(10), "a click on the Resources tab");
             break;
+        }
         case 1:
             if (hold(idle && as().record_count() >= 7, "the resources are indexed")) return true;
             check(shown("as-list") && shown("as-pane-folders") && shown("as-pane-preview"), "the tab shows the list and panels");
@@ -23427,8 +23452,8 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
                 t.width = t.height = 4;
                 t.rgba8.assign(64, 200);
                 assets::encode_image(t, ".png", png);
-                write_file_atomic(outside / "жук.png", png);
-                drop(outside / "жук.png");
+                write_file_atomic(outside / utf8_path("жук.png"), png);
+                drop(outside / utf8_path("жук.png"));
             }
             break;
         case 9:
@@ -23555,8 +23580,8 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
                 t.height = 4;
                 t.rgba8.assign(6 * 4 * 4, 120);
                 assets::encode_image(t, ".webp", webp);
-                write_file_atomic(outside / "слизень.webp", webp);
-                drop(outside / "слизень.webp");
+                write_file_atomic(outside / utf8_path("слизень.webp"), webp);
+                drop(outside / utf8_path("слизень.webp"));
             }
             break;
         case 22: {
