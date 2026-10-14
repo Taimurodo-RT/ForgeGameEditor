@@ -130,6 +130,7 @@ add_library(rmlui_core
 	Memory.h
 	MeshUtilities.cpp
 	ObserverPtr.cpp
+	PictureScale.cpp
 	Plugin.cpp
 	PluginRegistry.cpp
 	PluginRegistry.h
@@ -305,6 +306,7 @@ target_sources(rmlui_core PRIVATE
 	"${PROJECT_SOURCE_DIR}/Include/RmlUi/Core/NumericValue.h"
 	"${PROJECT_SOURCE_DIR}/Include/RmlUi/Core/ObserverPtr.h"
 	"${PROJECT_SOURCE_DIR}/Include/RmlUi/Core/Platform.h"
+	"${PROJECT_SOURCE_DIR}/Include/RmlUi/Core/PictureScale.h"
 	"${PROJECT_SOURCE_DIR}/Include/RmlUi/Core/Plugin.h"
 	"${PROJECT_SOURCE_DIR}/Include/RmlUi/Core/Profiling.h"
 	"${PROJECT_SOURCE_DIR}/Include/RmlUi/Core/PropertiesIteratorView.h"

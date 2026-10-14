@@ -590,6 +590,13 @@ public:
 	/// Return the computed values of the element's properties. These values are updated as appropriate on every Context::Update.
 	const ComputedValues& GetComputedValues() const;
 
+	/// Forge: the element takes its pictures (decorators, mask images, border-image, the source of an <img> or <svg>)
+	/// from the picture caches again, as a live SVG picture of its own now draws in place of the shared one.
+	virtual void DirtyPictures();
+	/// Forge: the scale the SVG pictures of the element's decorators, mask images and border-image are rasterized at,
+	/// under the transforms over it (see PictureScale).
+	float GetPictureScale() const;
+
 protected:
 	void Update(float dp_ratio, Vector2f vp_dimensions);
 	void Render();

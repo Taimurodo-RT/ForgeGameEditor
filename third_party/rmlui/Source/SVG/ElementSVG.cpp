@@ -41,6 +41,9 @@ bool ElementSVG::GetIntrinsicDimensions(Vector2f& dimensions, float& ratio)
 
 void ElementSVG::OnRender()
 {
+	// Forge: under transforms the picture is made at their scale (see PictureScale), again when that changes.
+	if (picture_scale.Update(PictureScale::Of(this)))
+		svg_dirty = true;
 	EnsureSourceLoaded();
 	// Forge: on whole pixels of the window, as the texture is the box's size in them.
 	if (handle)
@@ -49,6 +52,13 @@ void ElementSVG::OnRender()
 
 void ElementSVG::OnResize()
 {
+	svg_dirty = true;
+}
+
+// Forge: see the header.
+void ElementSVG::DirtyPictures()
+{
+	Element::DirtyPictures();
 	svg_dirty = true;
 }
 
@@ -138,11 +148,12 @@ void ElementSVG::EnsureSourceLoaded()
 		svg_element_source.append(svg_data);
 		svg_element_source.append("</svg>");
 
-		handle = SVG::SVGCache::GetHandle(source_id, svg_element_source, SVG::SVGCache::Data, this, crop_to_content, BoxArea::Content);
+		handle = SVG::SVGCache::GetHandle(source_id, svg_element_source, SVG::SVGCache::Data, this, crop_to_content, BoxArea::Content,
+			picture_scale.Raster());
 	}
 	else
 	{
-		handle = SVG::SVGCache::GetHandle(source, source, SVG::SVGCache::File, this, crop_to_content, BoxArea::Content);
+		handle = SVG::SVGCache::GetHandle(source, source, SVG::SVGCache::File, this, crop_to_content, BoxArea::Content, picture_scale.Raster());
 	}
 }
 } // namespace Rml

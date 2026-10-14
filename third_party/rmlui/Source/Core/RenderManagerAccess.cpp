@@ -9,6 +9,12 @@ Vector2i RenderManagerAccess::GetDimensions(RenderManager* render_manager, Textu
 	return render_manager->texture_database->file_database.GetDimensions(render_manager->render_interface, texture);
 }
 
+// Forge: a callback texture made again when next used.
+void RenderManagerAccess::RegenerateCallbackTexture(RenderManager* render_manager, StableVectorIndex callback_texture)
+{
+	render_manager->texture_database->callback_database.ResetTexture(render_manager->render_interface, callback_texture);
+}
+
 Vector2i RenderManagerAccess::GetDimensions(RenderManager* render_manager, StableVectorIndex callback_texture)
 {
 	return render_manager->texture_database->callback_database.GetDimensions(render_manager, render_manager->render_interface, callback_texture);

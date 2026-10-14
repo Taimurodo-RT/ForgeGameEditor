@@ -6,6 +6,7 @@
 
 #include "forge/core/log.h"
 #include "forge/core/time.h"
+#include "forge/vector/ease.h"
 
 #include <algorithm>
 #include <cmath>
@@ -328,6 +329,46 @@ int screen_call(lua_State* L, const char* what) {
     if (GameBridge* b = bridge_of(L)) b->screen(what, std::string_view(name, len));
     return 0;
 }
+// forge.ui.svg_*: what, then the screen, the layer and the part; the rest by what.
+int svg_call(lua_State* L, const char* what) {
+    auto text_at = [&](int i) {
+        size_t len = 0;
+        const char* s = luaL_checklstring(L, i, &len);
+        return std::string_view(s, len);
+    };
+    const std::string_view screen = text_at(1), layer = text_at(2);
+    const bool reset = std::string_view(what) == "reset";
+    const std::string_view part = reset ? std::string_view() : text_at(3);
+    f64 x = 0, y = 0;
+    std::string_view text;
+    const std::string_view w(what);
+    if (w == "move") x = luaL_checknumber(L, 4), y = luaL_checknumber(L, 5);
+    else if (w == "turn" || w == "fade") x = luaL_checknumber(L, 4);
+    else if (w == "color") text = text_at(4);
+    else if (w == "morph") text = text_at(4), x = luaL_checknumber(L, 5);
+    GameBridge* b = bridge_of(L);
+    std::string why;
+    if (b && !b->svg(w, screen, layer, part, x, y, text, &why)) luaL_error(L, "ui.svg_%s: %s", what, why.c_str());
+    return 0;
+}
+int api_ui_svg_move(lua_State* L) { return svg_call(L, "move"); }
+int api_ui_svg_turn(lua_State* L) { return svg_call(L, "turn"); }
+int api_ui_svg_color(lua_State* L) { return svg_call(L, "color"); }
+int api_ui_svg_fade(lua_State* L) { return svg_call(L, "fade"); }
+int api_ui_svg_morph(lua_State* L) { return svg_call(L, "morph"); }
+int api_ui_svg_reset(lua_State* L) { return svg_call(L, "reset"); }
+
+// forge.ease(how, t): the share of a change at t (0 … 1), as the interface's movement and the pose scripts ease it.
+int api_ease(lua_State* L) {
+    size_t len = 0;
+    const char* how = luaL_optlstring(L, 1, "smooth", &len);
+    vector::Ease e;
+    if (!vector::ease_from_word(std::string_view(how, len), e))
+        luaL_error(L, "ease: «%s» — нет такого; есть smooth, linear, in, out, back, bounce, elastic", how);
+    lua_pushnumber(L, vector::ease(e, luaL_checknumber(L, 2)));
+    return 1;
+}
+
 int api_ui_show(lua_State* L) { return screen_call(L, "show"); }
 int api_ui_hide(lua_State* L) { return screen_call(L, "hide"); }
 int api_ui_toggle(lua_State* L) { return screen_call(L, "toggle"); }
@@ -675,6 +716,38 @@ void register_core_api(ScriptApi& api) {
         .param("name", V::String, "Экран", "Screen");
     api.add("ui.toggle", &api_ui_toggle).action().category("Экраны").icon("flip").title("Показать или скрыть экран", "Toggle screen")
         .param("name", V::String, "Экран", "Screen");
+    // Live SVG pictures (step 4 of docs/models/вектор-модель.md): a part of the picture a layer shows, by its id in
+    // the file; each change is against the file, not the last change.
+    auto svg_target = [](ApiBuilder b) -> ApiBuilder {
+        return b.param("screen", V::String, "Экран", "Screen").param("layer", V::String, "Слой", "Layer")
+            .param("part", V::String, "Часть (id в SVG)", "Part (SVG id)");
+    };
+    svg_target(api.add("ui.svg_move", &api_ui_svg_move).action().category("Экраны").icon("open_with")
+                   .title("Сдвинуть часть картинки", "Move picture part")
+                   .help("Часть SVG-картинки слоя, по её id в файле: на x, y от места в файле, в единицах файла."))
+        .param("x", V::Number, "X", "X", "0").param("y", V::Number, "Y", "Y", "0");
+    svg_target(api.add("ui.svg_turn", &api_ui_svg_turn).action().category("Экраны").icon("rotate_right")
+                   .title("Повернуть часть картинки", "Turn picture part")
+                   .help("По часовой стрелке вокруг центра части, как она нарисована в файле."))
+        .param("degrees", V::Number, "Градусы", "Degrees", "0");
+    svg_target(api.add("ui.svg_color", &api_ui_svg_color).action().category("Экраны").icon("palette")
+                   .title("Цвет части картинки", "Picture part colour")
+                   .help("Заливка части и фигур внутри неё, у которых есть своя заливка: \"#rrggbb\"."))
+        .param("color", V::String, "Цвет", "Colour", "\"#ffffff\"");
+    svg_target(api.add("ui.svg_fade", &api_ui_svg_fade).action().category("Экраны").icon("opacity")
+                   .title("Прозрачность части картинки", "Picture part opacity"))
+        .param("opacity", V::Number, "Непрозрачность", "Opacity", "1").range(0, 1);
+    svg_target(api.add("ui.svg_morph", &api_ui_svg_morph).action().category("Экраны").icon("transform")
+                   .title("Морфинг части картинки", "Morph picture part")
+                   .help("Контур части (<path>) на пути к другой фигуре файла: 0 — часть, 1 — та фигура."))
+        .param("target", V::String, "В фигуру (id)", "Into (id)").param("k", V::Number, "Доля", "Share", "0");
+    api.add("ui.svg_reset", &api_ui_svg_reset).action().category("Экраны").icon("restart_alt")
+        .title("Картинка слоя как в файле", "Picture as its file")
+        .param("screen", V::String, "Экран", "Screen").param("layer", V::String, "Слой", "Layer");
+    api.add("ease", &api_ease).pure().category("Математика").icon("show_chart").title("Плавность", "Ease")
+        .help("Доля изменения в момент t (0 … 1): smooth, linear, in, out, back, bounce, elastic — как у движения в «Интерфейсе».")
+        .param("how", V::String, "Как", "How", "\"smooth\"").param("t", V::Number, "t", "t", "0")
+        .result("value", V::Number, "Доля", "Share");
 
     api.add("compare", &api_compare).hidden().pure().category("Логика").title("Сравнить", "Compare")
         .param("a", V::Any, "A", "A").param("op", V::String, "Как", "Op").param("b", V::Any, "B", "B")

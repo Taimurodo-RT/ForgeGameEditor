@@ -3,6 +3,7 @@
 #include "../../../Include/RmlUi/Core/Element.h"
 #include "../../../Include/RmlUi/Core/Geometry.h"
 #include "../../../Include/RmlUi/Core/Header.h"
+#include "../../../Include/RmlUi/Core/PictureScale.h"
 #include "../../../Include/RmlUi/Core/Spritesheet.h"
 #include "../../../Include/RmlUi/Core/Texture.h"
 
@@ -49,6 +50,9 @@ public:
 
 	/// Loads the current source file if needed. This normally happens automatically during layouting.
 	void EnsureSourceLoaded();
+
+	/// Forge: an SVG source is taken from the cache again (see Element::DirtyPictures).
+	void DirtyPictures() override;
 
 protected:
 	/// Renders the image.
@@ -102,9 +106,11 @@ private:
 	bool geometry_dirty;
 
 	// Forge: an SVG picture is drawn from a texture of its own, rasterized at the content box's size in pixels of the window
-	// (see SVG::SVGCache); 'texture' still gives its intrinsic size. Both are empty for other images.
+	// (see SVG::SVGCache); 'texture' still gives its intrinsic size. Both are empty for other images. The raster is made at
+	// the scale of the transforms over the element (see PictureScale).
 	String svg_path;
 	SharedPtr<SVG::SVGData> svg;
+	PictureScale picture_scale;
 };
 
 } // namespace Rml

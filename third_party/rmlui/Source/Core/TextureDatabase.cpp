@@ -33,6 +33,17 @@ void CallbackTextureDatabase::ReleaseTexture(RenderInterface* render_interface, 
 	texture_list.erase(callback_index);
 }
 
+// Forge: see the header.
+void CallbackTextureDatabase::ResetTexture(RenderInterface* render_interface, StableVectorIndex callback_index)
+{
+	CallbackTextureEntry& data = texture_list[callback_index];
+	if (data.texture_handle)
+		render_interface->ReleaseTexture(data.texture_handle);
+	data.texture_handle = {};
+	data.dimensions = {};
+	data.load_failed = false;
+}
+
 Vector2i CallbackTextureDatabase::GetDimensions(RenderManager* render_manager, RenderInterface* render_interface, StableVectorIndex callback_index)
 {
 	return EnsureLoaded(render_manager, render_interface, callback_index).dimensions;

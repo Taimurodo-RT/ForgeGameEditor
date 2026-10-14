@@ -15,6 +15,8 @@ public:
 
 	StableVectorIndex CreateTexture(CallbackTextureFunction&& callback);
 	void ReleaseTexture(RenderInterface* render_interface, StableVectorIndex callback_index);
+	// Forge: the texture is made again by its callback when next used.
+	void ResetTexture(RenderInterface* render_interface, StableVectorIndex callback_index);
 
 	Vector2i GetDimensions(RenderManager* render_manager, RenderInterface* render_interface, StableVectorIndex callback_index);
 	TextureHandle GetHandle(RenderManager* render_manager, RenderInterface* render_interface, StableVectorIndex callback_index);

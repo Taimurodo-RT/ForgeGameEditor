@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <lunasvg.h>
+#include <string>
 
 #ifdef RMLUI_SVG_DEBUG
 	#define RMLUI_SVG_DEBUG_LOG(...) Rml::Log::Message(Rml::Log::LT_DEBUG, __VA_ARGS__)
@@ -33,11 +34,14 @@ namespace SVG {
 		// Forge: the element's 'color' for pictures that use currentColor; transparent black for the others, so they share
 		// one texture whatever the colour of the text around them.
 		Colourb current_color;
+		// Forge: the size the picture is drawn at, in window pixels before transforms; its raster ('dimensions') is made at
+		// the scale of the transforms over it (see PictureScale).
+		Vector2i quad;
 
 		friend bool operator==(const SVGKey& lhs, const SVGKey& rhs)
 		{
 			return lhs.source_id == rhs.source_id && lhs.dimensions == rhs.dimensions && lhs.crop_to_content == rhs.crop_to_content &&
-				lhs.colour == rhs.colour && lhs.current_color == rhs.current_color;
+				lhs.colour == rhs.colour && lhs.current_color == rhs.current_color && lhs.quad == rhs.quad;
 		}
 	};
 } // namespace SVG
@@ -56,6 +60,8 @@ struct hash<::Rml::SVG::SVGKey> {
 		static_assert(sizeof(uint32_t) == sizeof(key.colour), "Expecting color to be 4 bytes");
 		Rml::Utilities::HashCombine(hash, *reinterpret_cast<const uint32_t*>(&key.colour[0]));
 		Rml::Utilities::HashCombine(hash, *reinterpret_cast<const uint32_t*>(&key.current_color[0])); // Forge
+		Rml::Utilities::HashCombine(hash, key.quad.x);                                                 // Forge
+		Rml::Utilities::HashCombine(hash, key.quad.y);                                                 // Forge
 		return hash;
 	}
 };
@@ -65,11 +71,12 @@ namespace Rml {
 namespace SVG {
 
 	static SharedPtr<SVGData> GetHandle(RenderManager& render_manager, String source_id, const String& source, SVGCache::SourceType source_type,
-		Vector2i dimensions, bool crop_to_content, ColourbPremultiplied colour, Colourb current_color);
+		Vector2i dimensions, Vector2i quad, bool crop_to_content, ColourbPremultiplied colour, Colourb current_color, Element* live_element);
 	static void ReleaseHandle(SVGData* handle);
 
 	struct SVGGeometry {
 		ColourbPremultiplied colour;
+		Vector2i quad; // Forge: see SVGKey::quad
 		UniquePtr<Geometry> geometry;
 	};
 
@@ -87,6 +94,8 @@ namespace SVG {
 		UniquePtr<lunasvg::Document> svg_document;
 		// Forge: the picture uses currentColor, so its textures differ by the element's 'color'.
 		bool uses_current_color = false;
+		// Forge: a live element's own document: the file (or inline key) and the text it was read from.
+		String live_path, live_text;
 		// List of textures using this document, one entry for each unique render dimension plus meta-data.
 		Vector<SVGTexture> textures;
 	};
@@ -99,9 +108,50 @@ namespace SVG {
 		// for cleaning up the resources in the documents, when nothing refers to them any longer. When a handle is
 		// destroyed, it also removes itself from the handle map.
 		StableUnorderedMap<SVGKey, WeakPtr<SVGData>> handles;
+
+		// Forge: the live elements (see SVGCache::SetLive), each with the start of its documents' keys.
+		struct LiveElement {
+			ObserverPtr<Element> element;
+			String prefix;
+		};
+		UnorderedMap<Element*, LiveElement> live;
+		unsigned int live_counter = 0;
 	};
 
 	static ControlledLifetimeResource<SVGCacheData> svg_cache_data;
+	static LiveApply live_apply; // Forge
+
+	// Forge: the key of a picture for this element: its own document's when it is live, else the shared one's.
+	static String LiveId(Element* element, const String& id, Element*& live_element)
+	{
+		live_element = nullptr;
+		auto& live = svg_cache_data->live;
+		if (live.empty() || !element)
+			return id;
+		auto it = live.find(element);
+		if (it == live.end())
+			return id;
+		if (!it->second.element)
+		{
+			live.erase(it); // another element now at a dead one's address
+			return id;
+		}
+		live_element = element;
+		return it->second.prefix + id;
+	}
+
+	// Forge: the size of a raster for a picture drawn at 'dimensions', made at a scale: no side longer than 4096 pixels (a
+	// bigger picture is stretched from it), none shorter than 1.
+	static Vector2i RasterSize(Vector2i dimensions, float scale)
+	{
+		if (dimensions.x <= 0 || dimensions.y <= 0)
+			return {0, 0};
+		Vector2f raster = Vector2f(dimensions) * scale;
+		const int max_side = 4096;
+		if (raster.x > max_side || raster.y > max_side)
+			raster *= float(max_side) / Math::Max(raster.x, raster.y);
+		return Math::Max(Vector2i(raster.Round()), Vector2i(1));
+	}
 
 	SVGData::SVGData(Geometry& geometry, Texture texture, Vector2f intrinsic_dimensions, const SVGKey& cache_key) :
 		geometry(geometry), texture(texture), intrinsic_dimensions(intrinsic_dimensions), cache_key(cache_key)
@@ -133,10 +183,10 @@ namespace SVG {
 		return !path.empty() && GetFileInterface()->LoadFile(path, out_data);
 	}
 
-	static Vector<SVGGeometry>::iterator FindSVGGeometry(SVGTexture& per_size_data, const ColourbPremultiplied colour)
+	static Vector<SVGGeometry>::iterator FindSVGGeometry(SVGTexture& per_size_data, const ColourbPremultiplied colour, const Vector2i quad)
 	{
 		return std::find_if(per_size_data.geometries.begin(), per_size_data.geometries.end(),
-			[&](const SVGGeometry& data) { return data.colour == colour; });
+			[&](const SVGGeometry& data) { return data.colour == colour && data.quad == quad; }); // Forge: and the quad's size
 	}
 
 	static const String& GetSourceOr(const lunasvg::Document* svg_document, const String& default_value)
@@ -150,7 +200,8 @@ namespace SVG {
 	}
 
 	static SharedPtr<SVGData> GetHandle(RenderManager& render_manager, String move_from_id, const String& source, SVGCache::SourceType source_type,
-		const Vector2i dimensions, const bool crop_to_content, const ColourbPremultiplied colour, const Colourb current_color)
+		const Vector2i dimensions, const Vector2i quad, const bool crop_to_content, const ColourbPremultiplied colour, const Colourb current_color,
+		Element* live_element)
 	{
 		// Forge: the document is found (or read) before the handle, as only the document knows whether the key takes the
 		// element's colour (currentColor).
@@ -177,6 +228,11 @@ namespace SVG {
 				// loadFromData(char*, size_t) instead of loadFromData(std::string) in case clients use a non-std string.
 				doc.svg_document.reset(lunasvg::Document::loadFromData(svg_data.data(), svg_data.size()).release());
 				doc.uses_current_color = StringUtilities::ToLower(svg_data).find("currentcolor") != String::npos; // Forge
+				if (live_element) // Forge
+				{
+					doc.live_path = source;
+					doc.live_text = std::move(svg_data);
+				}
 			}
 			else
 			{
@@ -185,6 +241,11 @@ namespace SVG {
 				// loadFromData(char*, size_t) instead of loadFromData(std::string) in case clients use a non-std string.
 				doc.svg_document.reset(lunasvg::Document::loadFromData(source.data(), source.size()).release());
 				doc.uses_current_color = StringUtilities::ToLower(source).find("currentcolor") != String::npos; // Forge
+				if (live_element) // Forge
+				{
+					doc.live_path = source_id.substr(svg_cache_data->live[live_element].prefix.size());
+					doc.live_text = source;
+				}
 			}
 
 			if (!doc.svg_document)
@@ -196,6 +257,10 @@ namespace SVG {
 			doc.intrinsic_dimensions.x = Math::Max(float(doc.svg_document->width()), 1.0f);
 			doc.intrinsic_dimensions.y = Math::Max(float(doc.svg_document->height()), 1.0f);
 
+			// Forge: a live element's document starts as the element's script has it.
+			if (live_element && live_apply)
+				live_apply(live_element, doc.live_path, doc.live_text, *doc.svg_document);
+
 			const auto it_inserted = documents.insert_or_assign(source_id, std::move(doc));
 			RMLUI_ASSERT(it_inserted.second);
 
@@ -205,7 +270,7 @@ namespace SVG {
 		SVGDocument& doc = it_svg_document->second;
 
 		// Forge: the key, with the element's colour only for pictures that use it.
-		SVGKey key{source_id, dimensions, crop_to_content, colour, doc.uses_current_color ? current_color : Colourb(0, 0, 0, 0)};
+		SVGKey key{source_id, dimensions, crop_to_content, colour, doc.uses_current_color ? current_color : Colourb(0, 0, 0, 0), quad};
 		const auto it_handle = handles.find(key);
 		if (it_handle != handles.cend())
 		{
@@ -306,12 +371,13 @@ namespace SVG {
 
 		// Construct and insert per-color geometry
 		SVGTexture& size_data = *it_size;
-		RMLUI_ASSERTMSG(FindSVGGeometry(size_data, colour) == size_data.geometries.end(),
+		RMLUI_ASSERTMSG(FindSVGGeometry(size_data, colour, quad) == size_data.geometries.end(),
 			"We found an existing color entry in the SVG document cache, this should have been found as a cache key map entry instead.");
 		SVGGeometry colour_data;
 		colour_data.colour = colour;
+		colour_data.quad = quad; // Forge
 		Mesh mesh;
-		MeshUtilities::GenerateQuad(mesh, Vector2f(0), Vector2f(size_data.render_dimensions), colour, Vector2f(0), Vector2f(1));
+		MeshUtilities::GenerateQuad(mesh, Vector2f(0), Vector2f(quad), colour, Vector2f(0), Vector2f(1)); // Forge: the quad, not the raster
 		colour_data.geometry = MakeUnique<Geometry>(render_manager.MakeGeometry(std::move(mesh)));
 		size_data.geometries.push_back(std::move(colour_data));
 
@@ -350,7 +416,7 @@ namespace SVG {
 		RMLUI_ASSERT(it_texture != svg_document.textures.cend());
 		SVGTexture& svg_texture = *it_texture;
 
-		auto it_geometry = FindSVGGeometry(svg_texture, key.colour);
+		auto it_geometry = FindSVGGeometry(svg_texture, key.colour, key.quad);
 		RMLUI_ASSERT(it_geometry != svg_texture.geometries.cend());
 
 		if (svg_texture.geometries.size() > 1)
@@ -399,7 +465,7 @@ namespace SVG {
 	}
 
 	SharedPtr<SVGData> SVGCache::GetHandle(const String& source_id, const String& source, SourceType source_type, Element* element,
-		const bool crop_to_content, const BoxArea area)
+		const bool crop_to_content, const BoxArea area, const float raster_scale)
 	{
 		RenderManager* render_manager = element->GetRenderManager();
 		if (!render_manager)
@@ -411,6 +477,9 @@ namespace SVG {
 		Vector2i dimensions(element->GetBox().GetSize(area).Round());
 		if (dimensions.x == 0 || dimensions.y == 0)
 			dimensions = {0, 0};
+		// Forge: drawn at the box's size, made at the scale of the transforms over it.
+		const Vector2i quad = dimensions;
+		dimensions = RasterSize(dimensions, raster_scale);
 
 		if (source_type == File)
 		{
@@ -420,13 +489,19 @@ namespace SVG {
 				const String document_source_url = StringUtilities::Replace(document->GetSourceURL(), '|', ':');
 				GetSystemInterface()->JoinPath(path, document_source_url, source_id);
 			}
-			return Rml::SVG::GetHandle(*render_manager, path, path, source_type, dimensions, crop_to_content, colour, current_color);
+			Element* live_element = nullptr; // Forge
+			String id = LiveId(element, path, live_element);
+			return Rml::SVG::GetHandle(*render_manager, std::move(id), path, source_type, dimensions, quad, crop_to_content, colour, current_color,
+				live_element);
 		}
 
-		return Rml::SVG::GetHandle(*render_manager, source_id, source, source_type, dimensions, crop_to_content, colour, current_color);
+		Element* live_element = nullptr; // Forge
+		String id = LiveId(element, source_id, live_element);
+		return Rml::SVG::GetHandle(*render_manager, std::move(id), source, source_type, dimensions, quad, crop_to_content, colour, current_color,
+			live_element);
 	}
 
-	SharedPtr<SVGData> SVGCache::GetHandle(const String& path, Element* element, Vector2i dimensions, const bool crop_to_content)
+	SharedPtr<SVGData> SVGCache::GetHandle(const String& path, Element* element, Vector2i dimensions, const bool crop_to_content, Vector2i quad)
 	{
 		RenderManager* render_manager = element->GetRenderManager();
 		if (!render_manager)
@@ -435,14 +510,60 @@ namespace SVG {
 		const ColourbPremultiplied colour = computed.image_color().ToPremultiplied(computed.opacity());
 		if (dimensions.x <= 0 || dimensions.y <= 0)
 			dimensions = {0, 0};
-		// No side longer than this: a bigger picture is stretched from it.
-		const int max_side = 4096;
-		if (dimensions.x > max_side || dimensions.y > max_side)
+		if (quad.x <= 0 || quad.y <= 0)
+			quad = dimensions;
+		dimensions = RasterSize(dimensions, 1.f);
+		Element* live_element = nullptr; // Forge
+		String id = LiveId(element, path, live_element);
+		return Rml::SVG::GetHandle(*render_manager, std::move(id), path, File, dimensions, quad, crop_to_content, colour, computed.color(),
+			live_element);
+	}
+
+	void SVGCache::SetLiveApply(LiveApply apply)
+	{
+		live_apply = std::move(apply);
+	}
+
+	void SVGCache::SetLive(Element* element, bool live)
+	{
+		if (!element)
+			return;
+		auto& elements = svg_cache_data->live;
+		for (auto it = elements.begin(); it != elements.end();)
+			it = it->second.element ? std::next(it) : elements.erase(it);
+		const auto it = elements.find(element);
+		if (live == (it != elements.end()))
+			return;
+		if (live)
+			elements.emplace(element,
+				SVGCacheData::LiveElement{element->GetObserverPtr(), "forge-live:" + std::to_string(svg_cache_data->live_counter++) + "|"});
+		else
+			elements.erase(it);
+		element->DirtyPictures();
+	}
+
+	bool SVGCache::IsLive(Element* element)
+	{
+		const auto it = svg_cache_data->live.find(element);
+		return it != svg_cache_data->live.end() && it->second.element;
+	}
+
+	void SVGCache::Touch(Element* element)
+	{
+		const auto it = svg_cache_data->live.find(element);
+		if (it == svg_cache_data->live.end() || !it->second.element)
+			return;
+		const String& prefix = it->second.prefix;
+		for (auto& entry : svg_cache_data->documents)
 		{
-			const float scale = float(max_side) / float(Math::Max(dimensions.x, dimensions.y));
-			dimensions = Math::Max(Vector2i((Vector2f(dimensions) * scale).Round()), Vector2i(1));
+			if (!StringUtilities::StartsWith(entry.first, prefix))
+				continue;
+			SVGDocument& doc = entry.second;
+			if (live_apply)
+				live_apply(element, doc.live_path, doc.live_text, *doc.svg_document);
+			for (SVGTexture& texture : doc.textures)
+				texture.texture.Regenerate();
 		}
-		return Rml::SVG::GetHandle(*render_manager, path, path, File, dimensions, crop_to_content, colour, computed.color());
 	}
 
 	bool SVGCache::IsSVG(const String& path)
@@ -457,6 +578,24 @@ namespace SVG {
 		if (query != String::npos)
 			lower.resize(query);
 		return lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".svg") == 0;
+	}
+
+	// Forge: RmlUi/SVG/LivePicture.h
+	void SetLiveApply(LiveApply apply)
+	{
+		SVGCache::SetLiveApply(std::move(apply));
+	}
+	void SetLive(Element* element, bool live)
+	{
+		SVGCache::SetLive(element, live);
+	}
+	bool IsLive(Element* element)
+	{
+		return SVGCache::IsLive(element);
+	}
+	void Touch(Element* element)
+	{
+		SVGCache::Touch(element);
 	}
 
 } // namespace SVG

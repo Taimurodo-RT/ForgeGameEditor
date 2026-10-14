@@ -71,7 +71,8 @@ DecoratorDataHandle DecoratorTiledImage::GenerateElementData(Element* element, B
 		const Vertex& b = mesh.vertices[2];
 		const Vector2f shown = (b.tex_coord - a.tex_coord), drawn = (b.position - a.position);
 		const Vector2f tile_size(shown.x != 0.f ? Math::Absolute(drawn.x / shown.x) : 0.f, shown.y != 0.f ? Math::Absolute(drawn.y / shown.y) : 0.f);
-		data->svg = SVG::SVGCache::GetHandle(tile.vector_path, element, Vector2i(tile_size.Round()));
+		// Made at the scale of the transforms over the element (see PictureScale).
+		data->svg = SVG::SVGCache::GetHandle(tile.vector_path, element, Vector2i((tile_size * element->GetPictureScale()).Round()));
 	}
 #endif
 	data->geometry = element->GetRenderManager()->MakeGeometry(std::move(mesh));

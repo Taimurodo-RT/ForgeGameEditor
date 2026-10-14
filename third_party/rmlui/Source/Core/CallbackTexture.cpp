@@ -13,6 +13,13 @@ void CallbackTexture::Release()
 	}
 }
 
+// Forge: see the header.
+void CallbackTexture::Regenerate()
+{
+	if (resource_handle != StableVectorIndex::Invalid)
+		RenderManagerAccess::RegenerateCallbackTexture(render_manager, resource_handle);
+}
+
 Rml::CallbackTexture::operator Texture() const
 {
 	return Texture(render_manager, resource_handle);

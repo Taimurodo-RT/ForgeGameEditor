@@ -83,8 +83,11 @@ void ElementImage::EnsureSourceLoaded()
 
 void ElementImage::OnRender()
 {
+	// Forge: an SVG picture under transforms is made at their scale (see PictureScale), again when that changes.
+	const bool rescaled = !svg_path.empty() && picture_scale.Update(PictureScale::Of(this));
+
 	// Regenerate the geometry if required (this will be set if 'rect' changes but does not result in a resize).
-	if (geometry_dirty)
+	if (geometry_dirty || rescaled)
 		GenerateGeometry();
 
 	// Forge: an SVG picture's texture is the box's size, so its pixels go onto whole pixels of the window.
@@ -94,6 +97,14 @@ void ElementImage::OnRender()
 		return;
 	}
 	geometry.Render(GetAbsoluteOffset(BoxArea::Border), texture);
+}
+
+// Forge: see the header.
+void ElementImage::DirtyPictures()
+{
+	Element::DirtyPictures();
+	texture_dirty = true;
+	DirtyLayout();
 }
 
 void ElementImage::OnAttributeChange(const ElementAttributes& changed_attributes)
@@ -201,7 +212,7 @@ void ElementImage::GenerateGeometry()
 	if (!svg_path.empty() && rect_source == RectSource::None)
 	{
 		const Vector2i size(render_box.GetFillSize().Round());
-		svg = SVG::SVGCache::GetHandle(svg_path, this, size);
+		svg = SVG::SVGCache::GetHandle(svg_path, this, Vector2i((Vector2f(size) * picture_scale.Raster()).Round()));
 		if (svg)
 		{
 			MeshUtilities::GenerateQuad(mesh, Vector2f(0), Vector2f(size), quad_colour, Vector2f(0), Vector2f(1));
