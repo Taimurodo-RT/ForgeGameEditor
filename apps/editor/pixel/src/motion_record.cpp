@@ -1591,10 +1591,11 @@ bool same_value(lua_State* T, int a, int b) {
 
 enum class Reach { Ok, TooMuch, Thread };
 
-// Pushes the guard's tables and walks from the function at fn: the tables, functions and buffers reachable through
-// upvalues, environments, tables' keys, values and metatables (the sandbox's globals and libraries are read-only
-// already). Remembers each Luau function's upvalues and each buffer's bytes, then makes the tables read-only. A
-// coroutine's state cannot be kept, so one reachable is refused.
+// Pushes the guard's tables and walks from the function at fn: the tables, functions, buffers and userdata reachable
+// through upvalues, environments, tables' keys, values and metatables (the sandbox's globals and libraries are
+// read-only already). Remembers each function's upvalues (a C function keeps its state there too: string.gmatch its
+// place) and each buffer's bytes, then makes the tables read-only. A coroutine's state cannot be kept, so one
+// reachable is refused. Modules are not reached by require (it refuses inside a binding), only through upvalues.
 Reach guard_open(lua_State* T, int fn, int globals, Guard& g) {
     lua_newtable(T);
     g.seen = lua_gettop(T);
@@ -1619,7 +1620,7 @@ Reach guard_open(lua_State* T, int fn, int globals, Guard& g) {
         }
         lua_pushvalue(T, v);
         lua_rawget(T, g.seen);
-        const bool skip = (type != LUA_TTABLE && type != LUA_TFUNCTION && type != LUA_TBUFFER) ||
+        const bool skip = (type != LUA_TTABLE && type != LUA_TFUNCTION && type != LUA_TBUFFER && type != LUA_TUSERDATA) ||
                           lua_rawequal(T, v, globals) || !lua_isnil(T, -1);
         lua_pop(T, 1);
         if (skip) {
@@ -1651,9 +1652,8 @@ Reach guard_open(lua_State* T, int fn, int globals, Guard& g) {
             lua_pushvalue(T, v);
             lua_pushlstring(T, static_cast<const char*>(bytes), size);
             lua_rawset(T, g.closures);
-        } else if (lua_iscfunction(T, v)) {
-            // Its upvalues only lead on (coroutine.wrap holds its coroutine there); Luau code cannot set them.
-            for (int i = 1; lua_getupvalue(T, v, i); ++i) lua_rawseti(T, work, ++n);
+        } else if (type == LUA_TUSERDATA) {
+            if (lua_getmetatable(T, v)) lua_rawseti(T, work, ++n); // newproxy(true)'s, for one
         } else {
             lua_newtable(T);
             const int vals = lua_gettop(T);

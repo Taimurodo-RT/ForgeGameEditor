@@ -209,6 +209,11 @@ bool load_module(PoseScript::Impl& im, std::string_view name, u32& file) {
 int api_require(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     PoseScript::Impl& im = impl_of(L);
+    // A module lives as long as the run it was loaded in, longer than a frame and shorter than a recording's bindings:
+    // a binding takes it from the code around it, as an upvalue its guard looks after.
+    if (im.binding_depth > 0)
+        luaL_error(L, "require(\"%s\") внутри связи: модуль живёт дольше кадра, возьмите его в начале кода или клипа "
+                      "(local m = require(\"%s\")) и зовите из связи", name, name);
     for (const char* c = name; *c; ++c)
         if (*c == '/' || *c == '\\' || *c == ':' || *c == '.' || static_cast<u8>(*c) < 0x20)
             luaL_error(L, "require(\"%s\"): имя модуля — без папок и точек, как «движения»", name);
@@ -301,9 +306,12 @@ PoseScript::Impl::Impl() {
     lua_callbacks(L)->userdata = this;
     lua_callbacks(L)->interrupt = &on_interrupt;
     luaL_openlibs(L);
-    // No clock and no chance but the frame's rng: the pose is a function of time.
-    lua_pushnil(L);
-    lua_setglobal(L, "os");
+    // No clock and no chance but the frame's rng: the pose is a function of time. No heap size (gcinfo) either, and no
+    // getfenv and setfenv, through which a function would change its own environment or reach its thread's.
+    for (const char* name : {"os", "gcinfo", "getfenv", "setfenv"}) {
+        lua_pushnil(L);
+        lua_setglobal(L, name);
+    }
     lua_getglobal(L, "math");
     lua_pushnil(L);
     lua_setfield(L, -2, "random");

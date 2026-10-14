@@ -866,6 +866,84 @@ wait(1))"));
     CHECK(pose_at(late, late_rec, 0.5, "a").x == 5);
 }
 
+TEST_CASE("Motion clip: a binding keeps nothing through require, its environment or a library") {
+    const std::string kept = "у связи нет памяти между кадрами, она считает кадр только из времени и значений частей";
+    // The review's module counting in a local, one counting in its own table, one with nothing to keep.
+    auto with_modules = [](std::string_view body) {
+        PoseScript s;
+        s.set_module_reader([](std::string_view name, std::string& text, std::string& why) {
+            if (name == "counter") text = "local count = 0\nreturn { bump = function() count += 1 return count end }";
+            else if (name == "tally") text = "local M = { n = 0 }\nfunction M.bump()\n  M.n += 1\n  return M.n\nend\nreturn M";
+            else if (name == "calc") text = "return { double = function(v) return v * 2 end }";
+            else return why = "нет", false;
+            return true;
+        });
+        const bool loaded = s.load(clip_of(body));
+        INFO(s.error());
+        REQUIRE(loaded);
+        return s;
+    };
+    // At 0.5, 0.1 and 0.5 again, as the review read it (1, 2, 3 before): refused each time, with the same words.
+    auto refused = [](PoseScript& s, const Recording& rec) {
+        std::string first;
+        for (f64 t : {0.5, 0.1, 0.5}) {
+            Pose pose;
+            CHECK_FALSE(s.frame(rec, nullptr, t, {}, 1, pose));
+            CHECK(pose.parts.empty());
+            if (first.empty()) first = s.error();
+            CHECK(s.error() == first);
+        }
+        return first;
+    };
+    const std::string from_require = "внутри связи: модуль живёт дольше кадра, возьмите его в начале кода или клипа "
+                                     "(local m = require(\"counter\")) и зовите из связи";
+    // require in the binding: the module loaded there the first time, or loaded by the clip before.
+    PoseScript first_load = with_modules("local a = part('a')\na.x(function() return require(\"counter\").bump() end)\nwait(1)");
+    const Recording first_rec = recorded(first_load);
+    CHECK(refused(first_load, first_rec) == "строка 3: require(\"counter\") " + from_require);
+    PoseScript cached = with_modules("local a = part('a')\nrequire(\"counter\")\na.x(function() return require(\"counter\").bump() end)\nwait(1)");
+    const Recording cached_rec = recorded(cached);
+    CHECK(refused(cached, cached_rec) == "строка 4: require(\"counter\") " + from_require);
+    // Read while the clip records: the recording is refused there.
+    PoseScript while_recording =
+        with_modules("local a = part('a')\na.x(function() return require(\"counter\").bump() end)\nlog(a.x())\nwait(1)");
+    CHECK(record_error(while_recording) == "строка 3: require(\"counter\") " + from_require);
+    // A module taken before: what it keeps in a local or in its own table is refused as the clip's own would be.
+    PoseScript held = with_modules("local a = part('a')\nlocal counter = require(\"counter\")\na.x(function() return counter.bump() end)\nwait(1)");
+    const Recording held_rec = recorded(held);
+    CHECK(refused(held, held_rec) == "строка 4: связь меняет переменную или буфер вне себя: " + kept);
+    PoseScript table = with_modules("local a = part('a')\nlocal tally = require(\"tally\")\na.x(function() return tally.bump() end)\nwait(1)");
+    const Recording table_rec = recorded(table);
+    CHECK(refused(table, table_rec) == "tally.luau, строка 3: связь меняет таблицу или глобальную переменную вне себя: " + kept);
+    // One that keeps nothing serves the binding at any t, in any order.
+    PoseScript pure = with_modules("local a = part('a')\nlocal calc = require(\"calc\")\na.x(function() return calc.double(now()) end)\nwait(1)");
+    const Recording pure_rec = recorded(pure);
+    CHECK(pose_at(pure, pure_rec, 0.5, "a").x == doctest::Approx(1));
+    CHECK(pose_at(pure, pure_rec, 0.1, "a").x == doctest::Approx(0.2));
+    CHECK(pose_at(pure, pure_rec, 0.5, "a").x == doctest::Approx(1));
+
+    // An iterator of the string library keeps its place in itself: refused as a local is.
+    PoseScript digits = script_of(clip_of("local a = part('a')\nlocal next_digit = string.gmatch('1 2 3 4 5', '%d')\n"
+                                          "a.x(function() return tonumber(next_digit()) end)\nwait(1)"));
+    const Recording digits_rec = recorded(digits);
+    CHECK(refused(digits, digits_rec) == "строка 4: связь меняет переменную или буфер вне себя: " + kept);
+    // A userdata's metatable is a table it reaches.
+    PoseScript proxy = script_of(clip_of("local a = part('a')\nlocal u = newproxy(true)\na.x(function()\n"
+                                         "  local m = getmetatable(u)\n  m.n = (m.n or 0) + 1\n  return m.n\nend)\nwait(1)"));
+    const Recording proxy_rec = recorded(proxy);
+    CHECK(refused(proxy, proxy_rec) == "строка 6: связь меняет таблицу или глобальную переменную вне себя: " + kept);
+    // Its own environment, set from inside it, and the thread's: the code has no getfenv and setfenv, nor gcinfo, the
+    // heap's size.
+    PoseScript env = script_of(clip_of("local a = part('a')\na.x(function()\n  local e = getfenv(1)\n"
+                                       "  if rawget(e, 'seen') then return 2 end\n"
+                                       "  setfenv(1, setmetatable({ seen = true }, { __index = e }))\n  return 1\nend)\nwait(1)"));
+    const Recording env_rec = recorded(env);
+    CHECK(refused(env, env_rec) == "строка 4: getfenv — не функция (nil)");
+    PoseScript none = script_of(clip_of("local a = part('a')\na.x(function() return (getfenv or setfenv or gcinfo) and 1 or 0 end)\nwait(1)"));
+    const Recording none_rec = recorded(none);
+    CHECK(pose_at(none, none_rec, 0.5, "a").x == 0);
+}
+
 TEST_CASE("Motion clip: tween, save and restore, rest") {
     PoseScript s = script_of(clip_of(R"(local a = part("a")
 tween(0.5, function(k) a.x(10 * k) a.y(k * k) end)
