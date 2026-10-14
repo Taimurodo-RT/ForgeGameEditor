@@ -6,7 +6,8 @@ add_library(forge_vector STATIC
   src/ease.cpp
   src/path.cpp
   src/morph.cpp
-  src/svg.cpp)
+  src/svg.cpp
+  src/svg_shape.cpp)
 add_library(forge::vector ALIAS forge_vector)
 target_include_directories(forge_vector PUBLIC include)
 target_link_libraries(forge_vector PUBLIC forge::core)
