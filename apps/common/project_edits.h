@@ -165,6 +165,17 @@ struct ProjectEdits {
     std::string vs_screen, vs_picture_file, vs_picture_svg, vs_frame_file, vs_frame_svg;
     forge::u32 vs_picture = 0, vs_frame = 0, vs_frame_size = 0, vs_frame_slice = 0;
     std::vector<int> vs_picture_box, vs_frame_box;
+    // A live SVG picture (step 4 of docs/models/вектор-модель.md; the editor's self-test vector-live), for the module
+    // slice's scene project. On the screen vl_screen the layers vl_layer (named vl_layer_name) and vl_other show the
+    // game's file vl_file, which says vl_svg byte for byte; vl_layer_box, vl_other_box: their boxes on the screen's page
+    // (x, y, w, h). The author's own scheme of the thing vl_thing: at the start the part vl_color_part of the layer named
+    // vl_layer_name takes the colour vl_color; each step its part vl_part morphs into vl_target by k = ease("smooth", the
+    // world's time). Once k is 1 that layer is drawn as lunasvg draws vl_end (the file with the part made the other shape
+    // and coloured), the other as lunasvg draws the file. The game at any size: the screen fitted onto it, the pictures
+    // rasterized at the fit's scale.
+    std::string vl_screen, vl_file, vl_svg, vl_layer_name, vl_thing, vl_part, vl_target, vl_color_part, vl_color, vl_end;
+    forge::u32 vl_layer = 0, vl_other = 0;
+    std::vector<int> vl_layer_box, vl_other_box;
 };
 
 // False (error says why) when the file cannot be read.

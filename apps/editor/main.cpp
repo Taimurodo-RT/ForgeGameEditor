@@ -2048,7 +2048,10 @@ struct Options {
     // window's event of a display's scale; then games of the catalog's «Платформер»: A's «Ресурсы» take SVG files dropped
     // in and its «Интерфейс» puts two of them on the HUD, undone, done again and saved, by "ui-scale-a"; A opened again
     // from another working folder, checked, played, an SVG changed in «Ресурсы» and brought in by F5, by "ui-scale-a-again";
-    // the mouse on the canvas and a long list of «Ресурсы» at the display's scales 1, 1.5 and 2 in C, by "ui-scale-b").
+    // the mouse on the canvas and a long list of «Ресурсы» at the display's scales 1, 1.5 and 2 in C, by "ui-scale-b");
+    // "vector-live" (a live SVG picture: a game of the catalog's «Платформер» whose HUD shows an SVG from «Ресурсы» twice
+    // and whose own scheme of a thing morphs and colours parts of one of them, made by "vector-live-a", opened again from
+    // another working folder and played at the screen's size, twice it and half it by "vector-live-a-again").
     std::string self_part;
     // offscreen: a window of the game's menu shown ("game-menu", "new-game"), for screenshots.
     std::string window;
@@ -2289,6 +2292,9 @@ public:
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
         if (part == "ui-scale-a-again") return frame < 3 || ui_scale_again_step();
         if (part == "ui-scale-b") return frame < 3 || ui_scale_b_step();
+        if (part == "vector-live") return frame < 3 || vector_live_step();
+        if (part == "vector-live-a") return frame < 3 || vector_live_a_step();
+        if (part == "vector-live-a-again") return frame < 3 || vector_live_again_step();
         if (part == "input-a") return frame < 3 || input_a_step();
         if (part == "input-a-again") return frame < 3 || input_again_step();
         switch (frame) {
@@ -18677,6 +18683,363 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
         return true;
     }
 
+    // --self-test vector-live (step 4 of docs/models/вектор-модель.md, a live SVG picture): «Живые А» and «Живые Б» made of
+    // the catalog's «Платформер». In an editor for A, started from another folder (vector-live-a): «лицо.svg», its parts
+    // named in Russian, dropped into «Ресурсы»; on the HUD in «Интерфейс» two picture layers of it, «Лицо» and «Лицо 2»,
+    // placed and named in «Простой»; in «Логика» the own scheme of «Табличка»: at the start the eyes of «Лицо» go green,
+    // each step its mouth morphs into the smile by «Плавность» of the world's time; a field undone and done again; Ctrl+S.
+    // A opened again from another working folder (vector-live-a-again): the layers and the scheme as saved; «Играть со
+    // стартового» at the screen's own size, twice it and half it: the game does what the scheme says to «Лицо» and nothing to
+    // «Лицо 2» (scene project with --edits vl_*). The template and B: the same bytes before and after.
+    static constexpr const char* kVlFace = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<rect width="64" height="64" fill="#203048"/>
+<circle id="голова" cx="32" cy="32" r="28" fill="#f0c040"/>
+<g id="глаза" fill="#202020"><circle cx="22" cy="24" r="4"/><circle cx="42" cy="24" r="4" fill="#303030"/></g>
+<path id="рот" d="M20 44 L44 44 L44 48 L20 48 Z" fill="#a02020"/>
+<path id="улыбка" d="M18 40 C24 54 40 54 46 40 Z" fill="#ff4040" display="none"/>
+</svg>
+)svg";
+    static constexpr const char* kVlGreen = "#00aa00";
+    static std::filesystem::path vl_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_живой svg"); }
+    static std::filesystem::path vl_mine(const char* title) { return vl_root() / utf8_path("Мои игры") / utf8_path(title); }
+    // «лицо.svg» as «Лицо» must show it once the morph is done: the mouth the smile's shape and colour, the eyes green.
+    static std::string vl_end() {
+        std::string s = kVlFace;
+        auto put = [&](const std::string& from, const std::string& to) {
+            const usize at = s.find(from);
+            if (at != std::string::npos) s.replace(at, from.size(), to);
+        };
+        put(R"(<g id="глаза" fill="#202020">)", std::string(R"(<g id="глаза" fill=")") + kVlGreen + "\">");
+        put(R"(r="4" fill="#303030")", std::string(R"(r="4" fill=")") + kVlGreen + "\"");
+        put(R"(d="M20 44 L44 44 L44 48 L20 48 Z" fill="#a02020")", R"(d="M18 40 C24 54 40 54 46 40 Z" fill="#ff4040")");
+        return s;
+    }
+    // Where the layers go in «Простой»: x, y, w, h on the HUD (whole pixels at the screen's size and at twice it).
+    static constexpr int kVlFaceBox[4] = {100, 400, 160, 160}, kVlFace2Box[4] = {400, 400, 96, 96};
+
+    bool vector_live_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = vl_mine("Живые А"), b = vl_mine("Живые Б");
+        fs::remove_all(vl_root(), ec);
+        fs::create_directories(a.parent_path(), ec);
+        const auto tmpl_before = tp_template();
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto platformer = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "platformer"; });
+        for (const auto& [title, folder] : {std::pair{"Живые Б", b}, std::pair{"Живые А", a}}) {
+            fs::path made;
+            check(platformer != all.end() && pj::create(*platformer, editor_modules(), a.parent_path(), title, made, &error) && lvl_same(made, folder),
+                  std::string("«") + title + "» made of «Платформер» " + error);
+            fs::remove_all(play_folder(folder), ec);
+        }
+        const auto b_before = pj_tree(b);
+        const fs::path outside = vl_root() / utf8_path("снаружи"), elsewhere = vl_root() / utf8_path("другая папка");
+        fs::create_directories(outside, ec);
+        fs::create_directories(elsewhere, ec);
+        const std::string exe = path_to_utf8(editor_exe());
+        int code = pj_run({exe, "--project", path_to_utf8(a / "project.forge"), "--self-test", "vector-live-a"}, outside);
+        check(code == 0, "«лицо.svg» dropped into «Ресурсы»; on the HUD two layers of it, placed and named; the own scheme of «Табличка» "
+                         "morphs the mouth of «Лицо» by «Плавность» of the world's time and colours its eyes; a field undone and done "
+                         "again; Ctrl+S (vector-live-a: exit " + std::to_string(code) + ")");
+        code = pj_run({exe, "--project", path_to_utf8(a / "project.forge"), "--self-test", "vector-live-a-again"}, elsewhere);
+        check(code == 0, "opened again from another working folder: the layers and the scheme as saved; played at the screen's size, "
+                         "twice it and half it, the game draws «Лицо» as the scheme says and «Лицо 2» as the file (vector-live-a-again: exit " +
+                             std::to_string(code) + ")");
+        const std::vector<u8> asset = tg_bytes(a / "assets" / utf8_path("лицо.svg")), copy = tg_bytes(a / "game" / "pictures" / utf8_path("лицо.svg"));
+        check(std::string(asset.begin(), asset.end()) == kVlFace && std::string(copy.begin(), copy.end()) == kVlFace,
+              "«Ресурсы» of A and its game: «лицо.svg» as dropped");
+        logic::Logic file;
+        const logic::ThingScheme* own = file.load(a / "game" / "logic.json") ? file.scheme_for("sign") : nullptr;
+        check(own && own->graph.find("api.ui.svg_morph") != std::string::npos && own->graph.find("api.ui.svg_color") != std::string::npos &&
+                  own->graph.find("улыбка") != std::string::npos,
+              "A's logic.json: the own scheme of «Табличка» with the morph and the colour");
+        check(tp_template() == tmpl_before, "the template byte for byte as before");
+        check(pj_tree(b) == b_before, "«Живые Б» byte for byte as before");
+        return false;
+    }
+
+    // In an editor for «Живые А» (--self-test vector-live-a).
+    int vla_step_ = 0, vla_n_ = 0;
+    u32 vla_layers_[2] = {0, 0}, vla_scheme_ = 0;
+    u32 vla_nodes_[4] = {0, 0, 0, 0}; // morph, ease, world's time, colour
+    static constexpr const char* kVlaDefs[4] = {"api.ui.svg_morph", "api.ease", "api.now", "api.ui.svg_color"};
+    static constexpr const char* kVlaSearch[4] = {"морфинг части", "плавность", "время мира", "цвет части"};
+    bool vector_live_a_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        const fs::path a = pjw().config().root, outside = vl_root() / utf8_path("снаружи");
+        const fs::path html = a / "game" / "ui" / "hud.html";
+        const bool idle = !as().busy() && !as().looking();
+        const std::string face_pick = "add:" + path_to_utf8(as().abs("лицо.svg"));
+        switch (vla_step_) {
+        case 0:
+            check(pjw().config().title == "Живые А" && lvl_same(as().root(), a / "assets"), "the editor has «Живые А» open, its «Ресурсы» in assets/");
+            check(write_file_atomic(outside / utf8_path("лицо.svg"), {reinterpret_cast<const u8*>(kVlFace), std::strlen(kVlFace)}),
+                  "«лицо.svg» drawn elsewhere");
+            check(click_tab(10) && ed_.tab() == "assets", "a click on «Ресурсы»");
+            break;
+        case 1:
+            if (hold(idle && as().record_count() > 0, "«Ресурсы» looked at")) return true;
+            drop(outside / utf8_path("лицо.svg"));
+            break;
+        case 2: {
+            const assets::AssetRecord* rec = as().record_of(as().abs("лицо.svg"));
+            if (hold(idle && rec && as().selection() == std::vector<std::string>{"лицо.svg"}, "the dropped SVG indexed")) return true;
+            check(rec && rec->type == "svg" && usa_text(as().abs("лицо.svg")) == kVlFace, "«лицо.svg» in «Ресурсы», an SVG, byte for byte as dropped");
+            check(click_tab(8) && ed_.tab() == "ui", "a click on «Интерфейс»");
+            break;
+        }
+        case 3:
+            if (hold(shown("ue-mode-simple") || ue().simple(), "«Интерфейс» laid out")) return true;
+            check(ue().opened() == "hud", "the screen open: the HUD (" + ue().opened() + ")");
+            if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            break;
+        // Two picture layers of «лицо.svg»: the first from «Ресурсы», the second of the game's copy.
+        case 4:
+            if (hold(shown("ue-block-picture"), "«Простой» laid out")) return true;
+            check(click("ue-block-picture"), "«Картинка»");
+            vla_layers_[vla_n_] = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            check(ue_node(vla_layers_[vla_n_]) && d::block_of(*ue_node(vla_layers_[vla_n_])) == d::Block::Picture &&
+                      (vla_n_ == 0 || vla_layers_[1] != vla_layers_[0]),
+                  "a picture layer of its own");
+            break;
+        case 5:
+            if (hold(shown("ue-s-picture"), "its «Картинка»")) return true;
+            check(ue_open("ue-s-picture"), "a click opens its «Картинка»");
+            break;
+        case 6:
+            usa_scroll_to("ue-s-picture", vla_n_ == 0 ? face_pick : "pictures/лицо.svg");
+            break;
+        case 7:
+            check(ue_option("ue-s-picture", vla_n_ == 0 ? face_pick : "pictures/лицо.svg"),
+                  vla_n_ == 0 ? "a click on «лицо — из «Ресурсов»»" : "a click on the game's «лицо»");
+            break;
+        case 8: {
+            const u32 id = vla_layers_[vla_n_];
+            if (hold(usa_fill(id) == "pictures/лицо.svg", "the layer's picture")) return true;
+            check(usa_text(a / "game" / "pictures" / utf8_path("лицо.svg")) == kVlFace, "the game's copy as written: the SVG");
+            const int* box = vla_n_ == 0 ? kVlFaceBox : kVlFace2Box;
+            const char* name = vla_n_ == 0 ? "Лицо" : "Лицо 2";
+            check(ue_type("ue-s-x", std::to_string(box[0])) && ue_type("ue-s-y", std::to_string(box[1])) && ue_type("ue-s-w", std::to_string(box[2])) &&
+                      ue_type("ue-s-h", std::to_string(box[3])),
+                  "its place and size typed in «Простой»");
+            check(ue_type("ue-s-name", name), std::string("named «") + name + "»");
+            const d::Node* n = ue_node(id);
+            check(n && n->name == name && static_cast<int>(n->x) == box[0] && static_cast<int>(n->y) == box[1] && static_cast<int>(n->w) == box[2] &&
+                      static_cast<int>(n->h) == box[3],
+                  std::string("«") + name + "» where it was put");
+            if (vla_n_++ == 0) {
+                vla_step_ = 4; // the second layer
+                return true;
+            }
+            const std::string page = usa_text(html);
+            check(page.find("title=\"Лицо\"") != std::string::npos && page.find("title=\"Лицо 2\"") != std::string::npos,
+                  "hud.html: the layers by their names");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        // «Логика»: the own scheme of «Табличка».
+        case 9:
+            if (wait(2)) return true;
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        case 10:
+            if (wait(2)) return true;
+            check(click("sc-own-add") && lg().scheme().picking(), "«+ Своя схема вещи» lists the things");
+            break;
+        case 11: {
+            if (wait(2)) return true;
+            check(shown("sc-choice-sign") && click("sc-choice-sign"), "«Табличка» picked");
+            const logic::ThingScheme* own = lg().links().scheme_for("sign");
+            vla_scheme_ = own ? own->id : 0;
+            check(vla_scheme_ != 0, "«Табличка» has a scheme of its own");
+            vla_n_ = 0;
+            break;
+        }
+        // Four nodes from its list: «Морфинг части картинки», «Плавность», «Время мира», «Цвет части картинки».
+        case 12:
+            if (wait(2)) return true;
+            check(click("sc-add-" + std::to_string(vla_scheme_)) && lg().scheme().palette_open(), "«+ Нода» on its frame");
+            lg().scheme().set_search(kVlaSearch[vla_n_]);
+            break;
+        case 13: {
+            if (wait(2)) return true;
+            const script::Graph* g = lg().scheme().graph(vla_scheme_);
+            const usize before = g ? g->nodes.size() : 0;
+            check(click(std::string("sc-pal-") + kVlaDefs[vla_n_]) && !lg().scheme().palette_open(), std::string(kVlaDefs[vla_n_]) + " added");
+            g = lg().scheme().graph(vla_scheme_);
+            for (const script::GraphNode& n : g ? g->nodes : std::vector<script::GraphNode>{})
+                if (n.def == kVlaDefs[vla_n_]) vla_nodes_[vla_n_] = n.uid;
+            check(g && g->nodes.size() == before + 1 && vla_nodes_[vla_n_], "one node more");
+            if (++vla_n_ < 4) {
+                vla_step_ = 12;
+                return true;
+            }
+            break;
+        }
+        // Wired with the mouse: «При старте» → colour, «Каждый шаг» → morph, the world's time → «Плавность» → its share.
+        case 14: {
+            if (wait(2)) return true;
+            const script::Graph* g = lg().scheme().graph(vla_scheme_);
+            u32 start = 0, tick = 0;
+            for (const script::GraphNode& n : g ? g->nodes : std::vector<script::GraphNode>{}) {
+                if (n.def == "std.event.start") start = n.uid;
+                if (n.def == "std.event.tick") tick = n.uid;
+            }
+            const std::string s = "sc-pin-" + std::to_string(vla_scheme_) + "-";
+            auto pin = [&](u32 node, const char* side) { return s + std::to_string(node) + side; };
+            check(start && tick && click(pin(tick, "-o-next")) && click(pin(vla_nodes_[0], "-i-in")), "«Каждый шаг» → «Морфинг части картинки»");
+            check(click(pin(start, "-o-next")) && click(pin(vla_nodes_[3], "-i-in")), "«При старте» → «Цвет части картинки»");
+            check(click(pin(vla_nodes_[2], "-o-seconds")) && click(pin(vla_nodes_[1], "-i-t")), "«Время мира» → t of «Плавность»");
+            check(click(pin(vla_nodes_[1], "-o-value")) && click(pin(vla_nodes_[0], "-i-k")), "«Плавность» → «Доля» of the morph");
+            g = lg().scheme().graph(vla_scheme_);
+            check(g && g->links.size() == 4, "four wires: " + std::to_string(g ? g->links.size() : 0));
+            break;
+        }
+        // Its fields typed: which screen, layer and parts.
+        case 15: {
+            if (wait(2)) return true;
+            const std::string f = "sc-field-" + std::to_string(vla_scheme_) + "-";
+            auto type = [&](u32 node, const char* param, const std::string& value) {
+                return ue_type((f + std::to_string(node) + "-" + param).c_str(), value);
+            };
+            check(type(vla_nodes_[0], "screen", "hud") && type(vla_nodes_[0], "layer", "Лицо") && type(vla_nodes_[0], "part", "рот") &&
+                      type(vla_nodes_[0], "target", "улыбка"),
+                  "the morph: «hud», «Лицо», «рот» into «улыбка»");
+            check(type(vla_nodes_[3], "screen", "hud") && type(vla_nodes_[3], "layer", "Лицо") && type(vla_nodes_[3], "part", "глаза") &&
+                      type(vla_nodes_[3], "color", kVlGreen),
+                  std::string("the colour: «hud», «Лицо», «глаза», ") + kVlGreen);
+            SchemeView& sc = lg().scheme();
+            auto value = [&](u32 node, const char* param) {
+                const script::GraphNode* n = sc.graph(vla_scheme_) ? sc.graph(vla_scheme_)->find(node) : nullptr;
+                return n && n->value(param) ? *n->value(param) : std::string();
+            };
+            check(value(vla_nodes_[3], "color") == kVlGreen, "kept on the node");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(value(vla_nodes_[3], "color") != kVlGreen, "Ctrl+Z: the colour not typed");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(value(vla_nodes_[3], "color") == kVlGreen, "Ctrl+Y: typed again");
+            for (u32 node : vla_nodes_) check(sc.node_problem(vla_scheme_, node).empty(), "node " + std::to_string(node) + " works");
+            check(lg().problem_of(vla_scheme_).empty(), "the scheme works: " + lg().problem_of(vla_scheme_));
+            logic::Logic file;
+            const logic::ThingScheme* own = file.load(ed_.logic_file) ? file.scheme_for("sign") : nullptr;
+            check(own && own->graph.find("api.ui.svg_morph") != std::string::npos && own->graph.find(kVlGreen) != std::string::npos,
+                  "logic.json keeps it");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            break;
+        }
+        case 16:
+            check(ed_.unsaved().empty(), "Ctrl+S: nothing left unsaved");
+            return false;
+        default: return false;
+        }
+        ++vla_step_;
+        return true;
+    }
+
+    // In an editor for «Живые А» from another working folder (--self-test vector-live-a-again).
+    int vlg_step_ = 0;
+    u32 vlg_layers_[2] = {0, 0};
+    edits::ProjectEdits vlg_edits() {
+        edits::ProjectEdits e;
+        e.vl_screen = "hud";
+        e.vl_file = "pictures/лицо.svg";
+        e.vl_svg = kVlFace;
+        e.vl_layer = vlg_layers_[0];
+        e.vl_other = vlg_layers_[1];
+        e.vl_layer_name = "Лицо";
+        e.vl_thing = "sign";
+        e.vl_part = "рот";
+        e.vl_target = "улыбка";
+        e.vl_color_part = "глаза";
+        e.vl_color = kVlGreen;
+        e.vl_end = vl_end();
+        e.vl_layer_box.assign(std::begin(kVlFaceBox), std::end(kVlFaceBox));
+        e.vl_other_box.assign(std::begin(kVlFace2Box), std::end(kVlFace2Box));
+        return e;
+    }
+    bool vector_live_again_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        const fs::path a = pjw().config().root;
+        switch (vlg_step_) {
+        case 0:
+            check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), vl_root() / utf8_path("снаружи")),
+                  "from another working folder: " + path_to_utf8(fs::current_path()));
+            check(pjw().config().title == "Живые А", "the editor has «Живые А» open");
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        case 1: {
+            if (hold(ue().page() != nullptr && ue().opened() == "hud", "«Интерфейс» has the HUD open")) return true;
+            auto visit = [&](auto&& self, const d::Node& n) -> void {
+                for (const d::Paint& p : n.fills)
+                    if (p.kind == d::PaintKind::Image && p.image == "pictures/лицо.svg") {
+                        if (n.name == "Лицо") vlg_layers_[0] = n.id;
+                        if (n.name == "Лицо 2") vlg_layers_[1] = n.id;
+                    }
+                for (const d::Node& c : n.children) self(self, c);
+            };
+            visit(visit, ue().screen().root);
+            check(vlg_layers_[0] && vlg_layers_[1], "the HUD as saved: «Лицо» and «Лицо 2», both of «лицо.svg»");
+            for (int i = 0; i < 2; ++i) {
+                const d::Node* n = ue_node(vlg_layers_[i]);
+                const int* box = i == 0 ? kVlFaceBox : kVlFace2Box;
+                check(n && static_cast<int>(n->x) == box[0] && static_cast<int>(n->y) == box[1] && static_cast<int>(n->w) == box[2] &&
+                          static_cast<int>(n->h) == box[3],
+                      std::string(i == 0 ? "«Лицо»" : "«Лицо 2»") + " where it was put");
+            }
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        case 2:
+            if (wait(2)) return true;
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»"); // its schemes are read as they are shown
+            break;
+        case 3: {
+            if (wait(2)) return true;
+            const logic::ThingScheme* own = lg().links().scheme_for("sign");
+            check(own != nullptr, "«Табличка» has its own scheme");
+            const script::Graph* g = own ? lg().scheme().graph(own->id) : nullptr;
+            std::map<std::string, const script::GraphNode*> by_def;
+            for (const script::GraphNode& n : g ? g->nodes : std::vector<script::GraphNode>{}) by_def[n.def] = &n;
+            auto value = [&](const char* def, const char* param) {
+                const auto it = by_def.find(def);
+                return it != by_def.end() && it->second->value(param) ? *it->second->value(param) : std::string();
+            };
+            check(value("api.ui.svg_morph", "layer") == "Лицо" && value("api.ui.svg_morph", "part") == "рот" &&
+                      value("api.ui.svg_morph", "target") == "улыбка" && value("api.ui.svg_color", "color") == kVlGreen &&
+                      by_def.count("api.ease") && by_def.count("api.now") && g && g->links.size() == 4,
+                  "as saved: the morph, «Плавность», «Время мира», the colour, four wires");
+            check(own && lg().problem_of(own->id).empty(), "it works");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 4:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 5: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = vlg_edits();
+            // At the screen's size, twice it and half it: the pictures rasterized at the fit's scale 1, 2 and 0.5.
+            for (const char* size : {"1920x1080", "3840x2160", "960x540"}) {
+                const int code = tg_play(&e, "ожидания живые.json", vl_root(), "project", {"--size", size});
+                check(code == 0, std::string("the game at ") + size + ": «Лицо» as the scheme says, halfway and at the end, «Лицо 2» as the file (exit " +
+                                     std::to_string(code) + ")");
+            }
+            return false;
+        }
+        default: return false;
+        }
+        ++vlg_step_;
+        return true;
+    }
+
     // --self-test input: the games made; A in an editor of its own, then again from another working folder; the
     // template and B compared byte for byte.
     bool input_step() {
@@ -23824,7 +24187,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                             options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0 ||
                             options.self_part.rfind("input-", 0) == 0 || options.self_part.rfind("rpg-template-", 0) == 0 ||
                             options.self_part.rfind("match3-template-", 0) == 0 || options.self_part.rfind("images-", 0) == 0 ||
-                            options.self_part.rfind("pixel-", 0) == 0 || options.self_part.rfind("ui-scale-", 0) == 0;
+                            options.self_part.rfind("pixel-", 0) == 0 || options.self_part.rfind("ui-scale-", 0) == 0 ||
+                            options.self_part.rfind("vector-live-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -24364,7 +24728,8 @@ int main(int argc, char** argv) {
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
-                                         "ui-scale-a", "ui-scale-a-again", "ui-scale-b"};
+                                         "ui-scale-a", "ui-scale-a-again", "ui-scale-b", "vector-live", "vector-live-a",
+                                         "vector-live-a-again"};
     if (!app.options.self_part.empty() &&
         std::none_of(std::begin(kParts), std::end(kParts), [&](const char* p) { return app.options.self_part == p; })) {
         FORGE_ERROR("--self-test: no part «%s» (new-game, opened-game, ready, two-games and its parts two-games-a, two-games-a-again, "
@@ -24374,7 +24739,7 @@ int main(int argc, char** argv) {
                     "animation-a-again, pixel and its parts pixel-a, pixel-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
-                    "and its parts ui-scale-a, ui-scale-a-again, ui-scale-b)",
+                    "and its parts ui-scale-a, ui-scale-a-again, ui-scale-b, vector-live and its parts vector-live-a, vector-live-a-again)",
                     app.options.self_part.c_str());
         return 2;
     }

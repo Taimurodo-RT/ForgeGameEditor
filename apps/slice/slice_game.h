@@ -222,6 +222,9 @@ public:
     const SliceSounds& sounds() const { return sounds_; }
     SliceSounds& sounds() { return sounds_; }
     const forge::sim::SimStats* sim_stats() const;
+    // The level's scripts: the world time they see (forge.now) and the errors they made, "script: line: message" each.
+    f64 script_time() const;
+    std::vector<std::string> script_errors() const;
     // Links («Ключ открывает Дверь»): the last hint said to the hero, the
     // hero's hearts, the door nearest to a point (NaN-free: false when none).
     const std::string& last_hint() const { return last_hint_; }

@@ -62,6 +62,10 @@ of the template «Платформер», at the screen's own size (--size 1920x
 working folder, with `--edits` of the SVG pictures the author put on its HUD from «Ресурсы»:
 the game's own copies, the picture as the author changed it last (F5), drawn as lunasvg draws
 them at their size on screen, the frame's corners and edges too. And when
+`forge_editor --self-test vector-live` has made it (step 4), «Живые А» of the same template,
+at the screen's size and from another working folder, with `--edits` of the live picture:
+the author's own scheme of «Табличка» morphs a part of an SVG picture on the HUD and colours
+another, halfway and at the end drawn as lunasvg draws the file so changed. And when
 `forge_editor --self-test modules` has made them (step 14.3a), «Старая игра» (a
 game from before step 14.3: no project.forge, game.json without "module") plays as
 «Старая шахта», and the saves of two modules meet in one player's folder, each run
@@ -150,6 +154,10 @@ def main() -> int:
     vectors_edits = vectors / "ожидания векторы.json"
     if not vectors_edits.is_file():
         print(f"нет {vectors_edits}: картинки SVG автора не играются (forge_editor --self-test ui-scale их делает)", flush=True)
+    live = Path(tempfile.gettempdir()) / "forge_editor_живой svg"
+    live_edits = live / "ожидания живые.json"
+    if not live_edits.is_file():
+        print(f"нет {live_edits}: живая картинка автора не играется (forge_editor --self-test vector-live её делает)", flush=True)
     going = (levels / "ожидания переход.json").is_file() and (levels / "ожидания продолжить.json").is_file()
     if not going:
         print(f"нет {levels / 'ожидания переход.json'}: переходы между уровнями не играются (forge_editor --self-test levels их делает)", flush=True)
@@ -221,6 +229,13 @@ def main() -> int:
                 data = str(vectors / "Мои игры" / "Векторы А" / "game")
                 failed += run([str(exe), "--test", "--scene", "project", "--play", "--data", data, "--user", str(user),
                                "--size", "1920x1080", "--edits", str(vectors_edits)], str(elsewhere)) != 0
+            if live_edits.is_file():
+                # «Живые А»: the author's scheme changes a picture on its HUD as the game goes, from another working folder.
+                user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))
+                elsewhere = Path(tempfile.mkdtemp(prefix="forge_author_game_cwd_"))
+                data = str(live / "Мои игры" / "Живые А" / "game")
+                failed += run([str(exe), "--test", "--scene", "project", "--play", "--data", data, "--user", str(user),
+                               "--size", "1920x1080", "--edits", str(live_edits)], str(elsewhere)) != 0
             if going:
                 # Through the links, saved; then «Продолжить» by another run, from another working folder.
                 user = Path(tempfile.mkdtemp(prefix="forge_author_game_user_"))

@@ -89,7 +89,9 @@
 #include "forge/render/offscreen.h"
 #include "forge/world/region_store.h"
 #include "forge/script/graph.h"
+#include "forge/ui/live_svg.h"
 #include "forge/ui/ui.h"
+#include "forge/vector/ease.h"
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
@@ -97,6 +99,7 @@
 #include <RmlUi/Core/SystemInterface.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/PictureScale.h>
 #include <RmlUi/Core/Transform.h>
 #include <RmlUi/Core/TransformPrimitive.h>
 
@@ -512,6 +515,9 @@ private:
     // its title and links, with the hero where the editor said, and keeps the player's files where it was told.
     void build_project(Shell& s) {
         SliceGame& g = g_;
+        // A live picture's scheme runs on the world's time from the game's start: its morph is halfway only in the first
+        // second, so it is looked at before the rest.
+        if (project_has_edits && project_edits_error.empty() && !project_edits.vl_screen.empty()) build_live_edits(s);
         steps_.push_back({"игра из папки автора", 5, [&s, this](u32 f) {
             if (f < 2) return false;
             std::error_code ec;
@@ -8129,6 +8135,142 @@ private:
                                   std::to_string(bw) + " × " + std::to_string(bh) + (l.frame ? ": углы, края без швов, середина" : "") +
                                   " (канал расходится самое большее на " + std::to_string(d) + ")");
             }
+            return true;
+        }});
+    }
+
+    // A live SVG picture (--edits vl_*, the editor's self-test vector-live): the author's own scheme of a thing changes
+    // the parts of a layer's picture by their id, the layer next to it showing the same file keeps it. Halfway through the
+    // morph its share is ease("smooth", the world's time) and the picture neither shape; once it is 1, the layer is drawn
+    // as lunasvg draws the file with the part made the other shape and the other part coloured, at the layer's size on the
+    // player's screen: the screen fitted onto the game's window, the pictures rasterized at the fit's scale.
+    void build_live_edits(Shell& s) {
+        struct Seen {
+            Rml::Element *layer = nullptr, *other = nullptr;
+            std::vector<u8> layer_px, other_px; // the two layers as drawn on the player's screen
+            int x = 0, y = 0, w = 0, h = 0, ox = 0, oy = 0, ow = 0, oh = 0;
+            f32 scale = 0;
+            bool halfway = false;
+            u32 since = 0; // the step's frame the morph was still going
+        };
+        auto seen = std::make_shared<Seen>();
+        // The layers where the player sees them, read from a frame of the game.
+        auto look = [&s, this, seen]() {
+            const ProjectEdits& e = project_edits;
+            Seen& v = *seen;
+            v.layer = layer(s, e.vl_screen, e.vl_layer);
+            v.other = layer(s, e.vl_screen, e.vl_other);
+            Rml::Element* root = v.layer;
+            while (root && !root->HasAttribute("forge-screen")) root = root->GetParentNode();
+            if (!check_ok(v.layer && v.other && root && e.vl_layer_box.size() == 4 && e.vl_other_box.size() == 4,
+                          "слои n" + std::to_string(e.vl_layer) + " и n" + std::to_string(e.vl_other) + " на экране «" + e.vl_screen + "»"))
+                return false;
+            f32 pw = 1920, ph = 1080;
+            std::sscanf(root->GetAttribute<Rml::String>("forge-size", "").c_str(), "%f %f", &pw, &ph);
+            const Rml::Vector2i size = s.context()->GetDimensions();
+            const game::ScreenFit fit = game::fit_screen(root->GetAttribute<Rml::String>("forge-fit", ""), pw, ph, static_cast<f32>(size.x),
+                                                         static_cast<f32>(size.y));
+            v.scale = fit.sx;
+            std::vector<u8> px;
+            u32 fw = 0, fh = 0;
+            if (!check_ok(frame_pixels(s, px, fw, fh), "кадр игры снят")) return false;
+            auto cut = [&](Rml::Element* el, const std::vector<int>& box, int& x, int& y, int& w, int& h, std::vector<u8>& out) {
+                const Rml::Vector2f at = el->GetAbsoluteOffset(Rml::BoxArea::Border) - root->GetAbsoluteOffset(Rml::BoxArea::Border);
+                const Rml::Vector2f sz = el->GetBox().GetSize(Rml::BoxArea::Border);
+                if (!check_ok(std::lround(at.x) == box[0] && std::lround(at.y) == box[1] && std::lround(sz.x) == box[2] && std::lround(sz.y) == box[3],
+                              "слой n" + el->GetId().substr(1) + " там, где его поставил автор: " + std::to_string(std::lround(at.x)) + ", " +
+                                  std::to_string(std::lround(at.y)) + ", " + std::to_string(std::lround(sz.x)) + " × " + std::to_string(std::lround(sz.y))))
+                    return false;
+                const f32 x0 = game::fit_to_view_x(fit, at.x), y0 = game::fit_to_view_y(fit, at.y);
+                const f32 x1 = game::fit_to_view_x(fit, at.x + sz.x), y1 = game::fit_to_view_y(fit, at.y + sz.y);
+                x = static_cast<int>(std::lround(x0));
+                y = static_cast<int>(std::lround(y0));
+                w = static_cast<int>(std::lround(x1)) - x;
+                h = static_cast<int>(std::lround(y1)) - y;
+                // On whole pixels of the window (a fit whose scale takes the layer there): what lunasvg draws can be laid on it.
+                if (!check_ok(std::fabs(x0 - std::round(x0)) < 0.01f && std::fabs(y0 - std::round(y0)) < 0.01f && std::fabs(x1 - std::round(x1)) < 0.01f &&
+                                  std::fabs(y1 - std::round(y1)) < 0.01f && x >= 0 && y >= 0 && x + w <= static_cast<int>(fw) && y + h <= static_cast<int>(fh),
+                              "слой на целых пикселях окна " + std::to_string(fw) + " × " + std::to_string(fh)))
+                    return false;
+                out.clear();
+                for (int j = y; j < y + h; ++j)
+                    out.insert(out.end(), px.begin() + (static_cast<std::ptrdiff_t>(j) * fw + x) * 4, px.begin() + (static_cast<std::ptrdiff_t>(j) * fw + x + w) * 4);
+                return true;
+            };
+            return cut(v.layer, e.vl_layer_box, v.x, v.y, v.w, v.h, v.layer_px) && cut(v.other, e.vl_other_box, v.ox, v.oy, v.ow, v.oh, v.other_px);
+        };
+        // Pixels whose colour (r, g, b) is off by more than 8.
+        auto off = [](const std::vector<u8>& a, const std::vector<u8>& b) {
+            if (a.size() != b.size()) return 1 << 30;
+            int n = 0;
+            for (usize i = 0; i < a.size(); i += 4)
+                for (usize c = 0; c < 3; ++c)
+                    if (std::abs(int(a[i + c]) - int(b[i + c])) > 8) {
+                        ++n;
+                        break;
+                    }
+            return n;
+        };
+        steps_.push_back({"живая картинка: морфинг на полпути", 120, [&s, this, seen, look, off](u32 f) {
+            const ProjectEdits& e = project_edits;
+            const f64 t = g_.script_time();
+            if (f < 10 || t < 0.4) return false; // the screen shown, the scheme a few steps on
+            Seen& v = *seen;
+            check(s.screens().shown(e.vl_screen), "экран «" + e.vl_screen + "» показан");
+            std::vector<u8> bytes;
+            read_file(s.game_dir() / utf8_path(e.vl_file), bytes);
+            check(std::string(bytes.begin(), bytes.end()) == e.vl_svg, "«" + e.vl_file + "» игры байт в байт тот, что автор дал «Ресурсам»");
+            if (!look()) return true;
+            const forge::ui::SvgPart* part = forge::ui::svg_part(v.layer, e.vl_part);
+            const f64 want = vector::ease(vector::Ease::Smooth, t);
+            if (check_ok(part != nullptr, "часть «" + e.vl_part + "» слоя «" + e.vl_layer_name + "» сказана схемой «" + e.vl_thing + "»")) {
+                char line[160];
+                std::snprintf(line, sizeof(line), "доля морфинга %.6f = ease(smooth, %.4f) = %.6f", part->k, t, want);
+                check(part->morph == e.vl_target && std::fabs(part->k - want) < 1e-9 && part->k > 0.05 && part->k < 0.95,
+                      "«" + e.vl_part + "» в «" + e.vl_target + "»: " + line);
+            }
+            const forge::ui::SvgPart* coloured = forge::ui::svg_part(v.layer, e.vl_color_part);
+            check(coloured && coloured->fill == e.vl_color, "«" + e.vl_color_part + "» цвета " + e.vl_color + " с самого начала");
+            check(!forge::ui::svg_part(v.other, e.vl_part) && !forge::ui::svg_part(v.other, e.vl_color_part), "второй слой схема не трогала");
+            const std::vector<u8> file = svg_pixels(e.vl_svg, v.w, v.h), end = svg_pixels(e.vl_end, v.w, v.h);
+            const int from_file = off(v.layer_px, file), from_end = off(v.layer_px, end);
+            check(from_file > 20 && from_end > 20, "на полпути картинка ни та, ни другая: отличается от файла в " + std::to_string(from_file) +
+                                                     " пикселях, от конца в " + std::to_string(from_end));
+            FORGE_INFO("self-test: живая картинка на полпути: доля %.4f при %.3f с, от файла %d, от конца %d пикселей",
+                       part ? part->k : -1.0, t, from_file, from_end);
+            v.halfway = true;
+            return true;
+        }});
+        steps_.push_back({"живая картинка: морфинг закончен", 400, [&s, this, seen, look, off](u32 f) {
+            const ProjectEdits& e = project_edits;
+            Seen& v = *seen;
+            if (g_.script_time() < 1.0) {
+                v.since = f;
+                return false;
+            }
+            if (f < v.since + 2 * Rml::PictureScale::kStill) return false; // k at 1, the raster made at the scale that holds
+            if (!check_ok(v.halfway, "морфинг виден на полпути") || !look()) return true;
+            const forge::ui::SvgPart* part = forge::ui::svg_part(v.layer, e.vl_part);
+            check(part && part->k == 1.0, "доля морфинга 1");
+            check(v.layer->GetPictureScale() == v.scale && v.other->GetPictureScale() == v.scale,
+                  "картинки слоёв растрированы в масштабе экрана на окне игры: " + std::to_string(v.layer->GetPictureScale()) + " при " +
+                      std::to_string(v.scale));
+            const int d = off(v.layer_px, svg_pixels(e.vl_end, v.w, v.h));
+            const int allowed = 4 + v.w * v.h / 400;
+            check(d <= allowed, "«" + e.vl_layer_name + "» нарисован, как lunasvg рисует файл с «" + e.vl_part + "» в форме «" + e.vl_target + "» и «" +
+                                    e.vl_color_part + "» цвета " + e.vl_color + " в " + std::to_string(v.w) + " × " + std::to_string(v.h) + ": " +
+                                    std::to_string(d) + " пикселей расходятся больше чем на 8 (можно " + std::to_string(allowed) + ")");
+            const int same = pixels_diff(v.other_px, svg_pixels(e.vl_svg, v.ow, v.oh), true);
+            check(same <= 2, "второй слой — файл как есть, как его рисует lunasvg в " + std::to_string(v.ow) + " × " + std::to_string(v.oh) +
+                                 " (канал расходится самое большее на " + std::to_string(same) + ")");
+            FORGE_INFO("self-test: живая картинка в конце: масштаб растра %.3f, %d × %d, расходятся %d пикселей; второй слой — %d",
+                       v.layer->GetPictureScale(), v.w, v.h, d, same);
+            const std::vector<std::string> errors = g_.script_errors(), problems = s.screens().svg_problems();
+            std::string said;
+            for (const std::string& l : errors) said += " [" + l + "]";
+            for (const std::string& l : problems) said += " [" + l + "]";
+            check(errors.empty() && problems.empty(), "ни ошибок скриптов, ни непонятых частей картинки:" + said);
+            check(s.data_errors().empty(), "данные игры читаются без ошибок");
             return true;
         }});
     }

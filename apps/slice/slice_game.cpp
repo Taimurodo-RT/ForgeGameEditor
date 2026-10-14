@@ -391,6 +391,18 @@ public:
         if (s_.screens().shown(name)) opened_.insert(std::string(name));
         else opened_.erase(std::string(name));
     }
+    bool svg(std::string_view what, std::string_view screen, std::string_view layer, std::string_view part, f64 x, f64 y,
+             std::string_view text, std::string* why) override {
+        game::ScreenSvg c;
+        c.what = std::string(what);
+        c.screen = std::string(screen);
+        c.layer = std::string(layer);
+        c.part = std::string(part);
+        c.x = x;
+        c.y = y;
+        c.text = std::string(text);
+        return s_.screens().svg(c, why);
+    }
 
 private:
     game::Shell& s_;
@@ -1629,6 +1641,16 @@ std::string SliceGame::location() const { return hero_alive() ? place_name(hero_
 u32 SliceGame::entities() const { return level_ ? level_->scene->stats().entities : 0; }
 f64 SliceGame::inventory(const char* item) const { return inv(item); }
 const SimStats* SliceGame::sim_stats() const { return level_ ? &level_->sim->stats() : nullptr; }
+
+f64 SliceGame::script_time() const { return level_ && level_->scripts ? level_->scripts->world_time() : 0; }
+
+std::vector<std::string> SliceGame::script_errors() const {
+    std::vector<std::string> out;
+    if (level_ && level_->scripts)
+        for (const script::ScriptError& e : level_->scripts->errors())
+            out.push_back(e.script + ": " + std::to_string(e.line) + ": " + e.message);
+    return out;
+}
 
 u32 SliceGame::count_npcs() const {
     u32 n = 0;

@@ -153,6 +153,20 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("vs_frame_slice", &forge::edits::ProjectEdits::vs_frame_slice);
     t.field("vs_picture_box", &forge::edits::ProjectEdits::vs_picture_box);
     t.field("vs_frame_box", &forge::edits::ProjectEdits::vs_frame_box);
+    t.field("vl_screen", &forge::edits::ProjectEdits::vl_screen);
+    t.field("vl_file", &forge::edits::ProjectEdits::vl_file);
+    t.field("vl_svg", &forge::edits::ProjectEdits::vl_svg);
+    t.field("vl_layer_name", &forge::edits::ProjectEdits::vl_layer_name);
+    t.field("vl_thing", &forge::edits::ProjectEdits::vl_thing);
+    t.field("vl_part", &forge::edits::ProjectEdits::vl_part);
+    t.field("vl_target", &forge::edits::ProjectEdits::vl_target);
+    t.field("vl_color_part", &forge::edits::ProjectEdits::vl_color_part);
+    t.field("vl_color", &forge::edits::ProjectEdits::vl_color);
+    t.field("vl_end", &forge::edits::ProjectEdits::vl_end);
+    t.field("vl_layer", &forge::edits::ProjectEdits::vl_layer);
+    t.field("vl_other", &forge::edits::ProjectEdits::vl_other);
+    t.field("vl_layer_box", &forge::edits::ProjectEdits::vl_layer_box);
+    t.field("vl_other_box", &forge::edits::ProjectEdits::vl_other_box);
 }
 
 namespace forge::edits {
