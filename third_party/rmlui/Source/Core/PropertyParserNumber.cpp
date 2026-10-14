@@ -7,7 +7,10 @@ struct PropertyParserNumberData {
 	const UnorderedMap<String, Unit> unit_string_map = {
 		{"", Unit::NUMBER},
 		{"%", Unit::PERCENT},
-		{"px", Unit::PX},
+		// Forge: px is a logical pixel, scaled by the context's dp-ratio like dp; devpx is a device pixel, for lengths measured
+		// on the screen (boxes, the mouse) and written back into styles.
+		{"px", Unit::DP},
+		{"devpx", Unit::PX},
 		{"dp", Unit::DP},
 		{"x", Unit::X},
 		{"vw", Unit::VW},

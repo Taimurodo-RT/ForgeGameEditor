@@ -39,7 +39,10 @@ struct UiConfig {
     u32 msaa = 2;              // edge smoothing, falls back to what the GPU supports
     bool hot_reload = true;    // watch the folder for changes
     bool debugger = true;      // F8 opens RmlUi's inspector; a beacon shows UI warnings
-    f32 dp_ratio = 1.0f;       // UI scale (1 = 100%)
+    // A px of a style is this many pixels of the window (the dp-ratio): the display's scale (the window's, from the
+    // system) times scale. display_scale above 0 stands for the system's (tests, --ui-scale).
+    f32 scale = 1.0f; // the game's «Масштаб интерфейса» (1 = 100%)
+    f32 display_scale = 0.0f;
 };
 
 // What happened during the last update(): for status lines and tests.
@@ -78,6 +81,8 @@ public:
     // Waits for the GPU: for a click (the colour picker's eyedropper), not
     // for every frame.
     bool read_pixel(Rml::Context* context, u32 x, u32 y, u8 rgba[4]);
+    // A w × h rectangle of it, rows top to bottom (the self-test compares pictures drawn at a scale with references).
+    bool read_pixels(Rml::Context* context, u32 x, u32 y, u32 w, u32 h, std::vector<u8>& rgba);
     // A context's own clock (seconds), for showing a moment of its movements
     // (the editor's timeline): while it is set the context's animations see
     // this time, not the wall clock's. Moving it forward plays the way between
@@ -95,6 +100,20 @@ public:
     void set_active(Rml::Context* context, bool active);
     // Removes a context made by create_context with its documents.
     void destroy_context(Rml::Context* context);
+
+    // The scale of the UI: a px of a style is dp_ratio() pixels of the window, the display's scale times scale().
+    // Contexts made by create_context follow it as it changes (the window moved to another display, the player's
+    // choice), unless pin_dp_ratio gave them one of their own.
+    f32 dp_ratio() const;
+    f32 display_scale() const;
+    f32 scale() const;
+    void set_scale(f32 scale);
+    // The display's scale taken instead of the system's (a test: the window moved to a display of another scale, which a
+    // machine with one display cannot do). As the system's is, it is taken when the window says the display's scale
+    // changed (SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED to handle_event), not before; 0: the system's again.
+    void stand_in_display_scale(f32 scale);
+    // A context drawn at a dp-ratio of its own (a page of the game shown at its design size).
+    void pin_dp_ratio(Rml::Context* context, f32 dp_ratio);
 
     // Feeds an SDL event to the context. True when the UI used it (the mouse
     // is over UI, a text field has focus), so the game or editor should not.

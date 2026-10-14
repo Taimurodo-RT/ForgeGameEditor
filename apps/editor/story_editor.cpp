@@ -1656,11 +1656,14 @@ void StoryEditor::step_quest(const std::string& quest, int dir) {
 }
 
 void StoryEditor::place_menu(Rml::Event& ev) {
+    // In the tab's px: the mouse and the boxes are pixels of the window, dp-ratio to a px.
     Rml::Element* root = ev.GetCurrentElement()->GetOwnerDocument()->GetElementById("story");
-    const Rml::Vector2f at = root ? root->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f(0, 0);
-    const Rml::Vector2f size = root ? root->GetBox().GetSize(Rml::BoxArea::Border) : Rml::Vector2f(1200, 800);
-    m_menu_x_ = std::clamp(ev.GetParameter<float>("mouse_x", 0) - at.x, 8.0f, std::max(8.0f, size.x - 380));
-    m_menu_y_ = std::clamp(ev.GetParameter<float>("mouse_y", 0) - at.y + 12, 8.0f, std::max(8.0f, size.y - 440));
+    const Rml::Context* context = ev.GetCurrentElement()->GetContext();
+    const f32 dp = context ? context->GetDensityIndependentPixelRatio() : 1.0f;
+    const Rml::Vector2f at = (root ? root->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f(0, 0)) / dp;
+    const Rml::Vector2f size = root ? root->GetBox().GetSize(Rml::BoxArea::Border) / dp : Rml::Vector2f(1200, 800);
+    m_menu_x_ = std::clamp(ev.GetParameter<float>("mouse_x", 0) / dp - at.x, 8.0f, std::max(8.0f, size.x - 380));
+    m_menu_y_ = std::clamp(ev.GetParameter<float>("mouse_y", 0) / dp - at.y + 12, 8.0f, std::max(8.0f, size.y - 440));
     if (model_) {
         model_.DirtyVariable("st_menu_x");
         model_.DirtyVariable("st_menu_y");

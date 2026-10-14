@@ -244,6 +244,9 @@ private:
     std::string images_[2][3]; // the pictures shown now and before: vector, pixel big, pixel 1:1
     u64 image_serial_ = 0;
     f32 view_x_ = 0, view_y_ = 0, view_w_ = 0, view_h_ = 0; // the vector view on screen (context pixels)
+    // The views are drawn at their size in pixels of the window: 288 px of the style, dp_ pixels each.
+    f32 dp_ = 1;
+    u32 view_px() const;
     bool dragging_ = false, drag_moved_ = false;
     pixel::PixelDoc drag_doc_; // the file's, while a pivot is dragged
 

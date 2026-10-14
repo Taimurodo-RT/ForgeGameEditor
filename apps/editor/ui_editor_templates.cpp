@@ -109,7 +109,7 @@ void UiEditor::draw_picture(TemplatePicture& p, const d::Template& t) {
     p.image = "ui-tpl-" + std::to_string(++picture_serial_);
     p.context = ui_->create_context("ue-" + p.image, kTemplateThumbW, kTemplateThumbH);
     if (!p.context) return;
-    p.context->SetDensityIndependentPixelRatio(1.0f);
+    ui_->pin_dp_ratio(p.context, 1.0f);
     ui_->set_offscreen(p.context, p.image);
     p.page = std::make_unique<game::GameScreens>();
     p.page->set_items(tpl_.items);

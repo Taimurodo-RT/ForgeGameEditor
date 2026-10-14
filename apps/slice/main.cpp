@@ -65,6 +65,7 @@
 
 #include "slice_art.h"
 #include "project_edits.h"
+#include "svg_reference.h"
 #include "slice_game.h"
 #include "slice_level.h"
 #include "slice_module.h"
@@ -121,6 +122,10 @@ using namespace forge::game;
 using namespace slice;
 using forge::edits::ProjectEdits;
 using forge::edits::read_edits;
+using forge::edits::hex_color;
+using forge::edits::pixels_diff;
+using forge::edits::svg_frame;
+using forge::edits::svg_pixels;
 
 namespace {
 
@@ -1603,6 +1608,7 @@ private:
         if (!project_edits.tp_hero.empty()) build_template_edits(s);
         if (!project_edits.an_of.empty()) build_anim_edits(s);
         if (!project_edits.in_action.empty()) build_input_edits(s);
+        if (!project_edits.vs_screen.empty()) build_vector_edits(s);
         if (project_edits.object.empty() && !project_edits.absent) return;
         if (project_edits.absent) {
             steps_.push_back({"в этой игре ничего из другой игры того же шаблона", 5, [&s, &g, this](u32 f) {
@@ -1951,15 +1957,16 @@ private:
             if (f == 0) {
                 const Rml::Vector2i size = s.context()->GetDimensions();
                 const std::string dims = std::to_string(size.x) + " " + std::to_string(size.y);
-                // The window's button stands where the menu's is: a press there goes to the one on top.
+                // The window's button stands where the menu's is: a press there goes to the one on top. No margin around
+                // the body, as the pages the editor writes (the scale of the UI checks the window's place on screen below).
                 const std::string place = "position: absolute; left: 300px; top: 200px; width: 200px; height: 60px;";
                 const std::string menu =
-                    "<html><head><style>body, #m-root { pointer-events: none; } #m-root > div { pointer-events: auto; }</style></head>"
+                    "<html><head><style>body { margin: 0; } body, #m-root { pointer-events: none; } #m-root > div { pointer-events: auto; }</style></head>"
                     "<body><div id=\"m-root\" forge-screen=\"menu\" forge-size=\"" + dims + "\">"
                     "<div id=\"m-open\" style=\"" + place + " background: #335;\" "
                     "forge-click=\"[[&quot;show&quot;,&quot;тест_из_меню&quot;]]\">Об игре</div></div></body></html>";
                 const std::string window =
-                    "<html><head><style>body, #w-root { pointer-events: none; } #w-root > div { pointer-events: auto; }</style></head>"
+                    "<html><head><style>body { margin: 0; } body, #w-root { pointer-events: none; } #w-root > div { pointer-events: auto; }</style></head>"
                     "<body><div id=\"w-root\" forge-screen=\"command\" forge-size=\"" + dims + "\">"
                     "<div id=\"w-back\" style=\"" + place + " background: #533;\" "
                     "forge-click=\"[[&quot;menu&quot;,&quot;&quot;]]\">В главное меню</div></div></body></html>";
@@ -1996,6 +2003,137 @@ private:
                 return true;
             }
             return false;
+        }});
+        // «Размер интерфейса» (step 3 of docs/models/вектор-модель.md): the shell's own menu grows with it; a page the
+        // author designed keeps its place and size on the screen (its fit counts in the page's pixels).
+        steps_.push_back({"размер интерфейса 150 % и снова 100 %", 12, [&s, this](u32 f) {
+            static Rml::Vector2f menu1, back_at1, back1;
+            auto box = [&s](const char* id, Rml::Vector2f& at, Rml::Vector2f& size) {
+                Rml::Element* e = s.find_element(id);
+                if (!e) return false;
+                at = e->GetAbsoluteOffset(Rml::BoxArea::Border);
+                size = e->GetBox().GetSize(Rml::BoxArea::Border);
+                return size.x > 0 && size.y > 0;
+            };
+            auto near = [](Rml::Vector2f a, Rml::Vector2f b) { return std::fabs(a.x - b.x) <= 1.5f && std::fabs(a.y - b.y) <= 1.5f; };
+            auto said = [](Rml::Vector2f v) { return std::to_string(std::lround(v.x)) + " × " + std::to_string(std::lround(v.y)); };
+            // Where the window's button is on the player's screen (its page is scaled by its fit): a point of the screen
+            // just inside the box it had at 100 % falls on it at each corner, one just outside on each side does not.
+            auto same_place = [&s]() {
+                auto hit = [&s](f32 x, f32 y) {
+                    Rml::Element* e = s.find_element("w-back");
+                    Rml::Vector2f p{x, y};
+                    if (!e || !e->Project(p)) return false;
+                    const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
+                    return p.x >= at.x && p.y >= at.y && p.x <= at.x + size.x && p.y <= at.y + size.y;
+                };
+                const Rml::Vector2f a = back_at1, b = back_at1 + back1, m = back_at1 + back1 * 0.5f;
+                return hit(a.x + 2, a.y + 2) && hit(b.x - 2, a.y + 2) && hit(a.x + 2, b.y - 2) && hit(b.x - 2, b.y - 2) && !hit(a.x - 2, m.y) &&
+                       !hit(b.x + 2, m.y) && !hit(m.x, a.y - 2) && !hit(m.x, b.y + 2);
+            };
+            Rml::Vector2f menu, unused;
+            if (f == 0) {
+                const bool ok = s.ui().dp_ratio() == 1.0f && box("menu-new", unused, menu1) && box("w-back", back_at1, back1) && same_place();
+                check(ok, "при 100 %: «Новая игра» меню " + said(menu1) + ", кнопка окна автора " + said(back1) + " в " + said(back_at1));
+                Settings bigger = s.settings();
+                bigger.ui_scale = 1.5f;
+                s.apply_settings(bigger);
+            }
+            if (f == 3) {
+                check(s.ui().dp_ratio() == 1.5f && s.context()->GetDensityIndependentPixelRatio() == 1.5f, "интерфейс в 1,5 раза крупнее");
+                const bool grown = box("menu-new", unused, menu) && near(menu, menu1 * 1.5f);
+                check(grown, "«Новая игра» меню выросла: " + said(menu) + ", было " + said(menu1));
+                check(same_place(), "окно автора на экране там же и того же размера: его страница вписана в экран, как была");
+                check(game::load_settings(s.user_folder()).ui_scale == 1.5f, "settings.json помнит 150 %");
+                Settings back_to = s.settings();
+                back_to.ui_scale = 1.0f;
+                s.apply_settings(back_to);
+            }
+            if (f < 6) return false;
+            const bool back = s.ui().dp_ratio() == 1.0f && box("menu-new", unused, menu) && near(menu, menu1) && same_place();
+            check(back, "снова 100 %: «Новая игра» " + said(menu) + ", окно на месте");
+            return true;
+        }});
+        // The window on a display of another scale: the system says so by the window's event (SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
+        // and the UI takes the display's scale then, not before. The test stands in for the display's scale (one display
+        // cannot be left for another here); the event goes the window's own way, through the shell. The mouse finds the
+        // author's window and the menu's button where they are drawn.
+        steps_.push_back({"окно на экране масштаба 2 по событию окна и снова на 1", 12, [&s, this](u32 f) {
+            static Rml::Vector2f menu_at1, menu1, back_at1, back1;
+            // An element's box on the player's screen. The author's page is fitted to the screen by a transform, which
+            // Project undoes; the fit only scales and moves, so where two points of the screen land tells it.
+            auto box = [&s](const char* id, Rml::Vector2f& at, Rml::Vector2f& size) {
+                Rml::Element* e = s.find_element(id);
+                if (!e) return false;
+                Rml::Vector2f a{0, 0}, b{1000, 1000};
+                if (!e->Project(a) || !e->Project(b) || b.x == a.x || b.y == a.y) return false;
+                auto screen = [&](Rml::Vector2f p) { return Rml::Vector2f{(p.x - a.x) * 1000.0f / (b.x - a.x), (p.y - a.y) * 1000.0f / (b.y - a.y)}; };
+                const Rml::Vector2f page_at = e->GetAbsoluteOffset(Rml::BoxArea::Border);
+                at = screen(page_at);
+                size = screen(page_at + e->GetBox().GetSize(Rml::BoxArea::Border)) - at;
+                return size.x > 0 && size.y > 0;
+            };
+            auto near = [](Rml::Vector2f a, Rml::Vector2f b) { return std::fabs(a.x - b.x) <= 1.5f && std::fabs(a.y - b.y) <= 1.5f; };
+            auto said = [](Rml::Vector2f v) { return std::to_string(std::lround(v.x)) + " × " + std::to_string(std::lround(v.y)); };
+            // The element under the mouse at a point of the player's screen, as RmlUi finds it for a click.
+            auto under = [&s](Rml::Vector2f p, const char* id) {
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_MOUSE_MOTION;
+                ev.motion.x = p.x;
+                ev.motion.y = p.y;
+                s.handle_event(ev);
+                for (Rml::Element* h = s.context()->GetHoverElement(); h; h = h->GetParentNode())
+                    if (h->GetId() == id) return true;
+                return false;
+            };
+            // The author's window lies under the game's own menu (GameScreens::restack), so the mouse there goes to the
+            // menu. Whether a point of the screen is on its button is asked as the context asks it for the mouse: the
+            // point taken into the page through its transform, then the box. Just inside each corner: on it; just outside
+            // each side: not.
+            auto back_where_it_was = [&s]() {
+                auto on = [&s](f32 x, f32 y) {
+                    Rml::Element* e = s.find_element("w-back");
+                    Rml::Vector2f p{x, y};
+                    return e && e->Project(p) && e->IsPointWithinElement(p);
+                };
+                const Rml::Vector2f a = back_at1, b = back_at1 + back1, m = back_at1 + back1 * 0.5f;
+                return on(a.x + 2, a.y + 2) && on(b.x - 2, a.y + 2) && on(a.x + 2, b.y - 2) && on(b.x - 2, b.y - 2) && on(m.x, m.y) &&
+                       !on(a.x - 2, m.y) && !on(b.x + 2, m.y) && !on(m.x, a.y - 2) && !on(m.x, b.y + 2);
+            };
+            auto window_event = [&s]() {
+                SDL_Event ev{};
+                ev.type = SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED;
+                s.handle_event(ev);
+            };
+            Rml::Vector2f at, size;
+            if (f == 0) {
+                const bool ok = s.ui().dp_ratio() == 1.0f && box("menu-new", menu_at1, menu1) && box("w-back", back_at1, back1) &&
+                                back_where_it_was() && under(menu_at1 + menu1 * 0.5f, "menu-new");
+                check(ok, "дисплей 1: «Новая игра» " + said(menu1) + ", мышь в её середине попадает в неё; кнопка окна автора " + said(back1) + " в " +
+                              said(back_at1));
+                s.ui().stand_in_display_scale(2.0f);
+            }
+            if (f == 3) {
+                check(s.ui().dp_ratio() == 1.0f && s.context()->GetDensityIndependentPixelRatio() == 1.0f,
+                      "у дисплея масштаб 2, окно ещё не сказало: интерфейс в 1");
+                window_event();
+            }
+            if (f == 6) {
+                check(s.ui().display_scale() == 2.0f && s.ui().dp_ratio() == 2.0f && s.context()->GetDensityIndependentPixelRatio() == 2.0f,
+                      "окно сказало о масштабе дисплея: интерфейс в 2");
+                const bool grown = box("menu-new", at, size) && near(size, menu1 * 2.0f);
+                check(grown && under(at + size * 0.5f, "menu-new") && !near(at + size * 0.5f, menu_at1 + menu1 * 0.5f),
+                      "«Новая игра» вдвое больше: " + said(size) + " в " + said(at) + ", было " + said(menu1) + "; мышь в её новой середине попадает в неё");
+                const bool back = box("w-back", at, size) && near(at, back_at1) && near(size, back1) && back_where_it_was();
+                check(back, "окно автора там же и того же размера (" + said(size) + " в " + said(at) + "), точка экрана на его кнопке, как была");
+                s.ui().stand_in_display_scale(1.0f);
+                window_event();
+            }
+            if (f < 9) return false;
+            check(s.ui().dp_ratio() == 1.0f && box("menu-new", at, size) && near(size, menu1) && near(at, menu_at1) && under(at + size * 0.5f, "menu-new") &&
+                      back_where_it_was(),
+                  "снова дисплей 1 по событию окна: «Новая игра» " + said(size) + ", мышь попадает в неё, окно автора на месте");
+            return true;
         }});
         steps_.push_back({"меню", 30, [&s, &g, this](u32 f) {
             if (f < 5) return false;
@@ -7941,6 +8079,58 @@ private:
             if (!check_ok(sc != SDL_SCANCODE_UNKNOWN, "клавиша «" + k + "»")) continue;
             push_jump(s, "клавиша автора — прыжок", sc, true, k + " (её дал автор)");
         }
+    }
+
+    // SVG pictures of «Ресурсы» the author put on a screen of «Интерфейс» (--edits vs_*, the editor's self-test ui-scale):
+    // the game's own copies, each layer where the author put it and drawn as lunasvg draws the copy at its size on the
+    // player's screen: the picture whole (its currentColor the layer's colour), the frame's corners pixel for pixel and
+    // its edges and middle without seams. The screen at its own size (--size): one pixel of the page is one of the frame.
+    void build_vector_edits(Shell& s) {
+        steps_.push_back({"картинки SVG автора на экране игры", 40, [&s, this](u32 f) {
+            if (f < 30) return false; // the screen shown, its pictures drawn
+            const ProjectEdits& e = project_edits;
+            check(s.screens().shown(e.vs_screen), "экран «" + e.vs_screen + "» показан");
+            const Rml::Vector2i size = s.context()->GetDimensions();
+            if (!check_ok(size.x == 1920 && size.y == 1080 && s.ui().dp_ratio() == 1.0f,
+                          "игра в размере экрана 1920 × 1080 при масштабе 1: " + std::to_string(size.x) + " × " + std::to_string(size.y)))
+                return true;
+            std::vector<u8> px;
+            u32 w = 0, h = 0;
+            if (!check_ok(frame_pixels(s, px, w, h) && w == 1920 && h == 1080, "кадр игры снят")) return true;
+            struct Layer {
+                u32 id;
+                const std::string &file, &svg;
+                const std::vector<int>& box;
+                bool frame;
+            };
+            for (const Layer& l : {Layer{e.vs_picture, e.vs_picture_file, e.vs_picture_svg, e.vs_picture_box, false},
+                                   Layer{e.vs_frame, e.vs_frame_file, e.vs_frame_svg, e.vs_frame_box, true}}) {
+                std::vector<u8> bytes;
+                read_file(s.game_dir() / utf8_path(l.file), bytes);
+                check(std::string(bytes.begin(), bytes.end()) == l.svg, "«" + l.file + "» игры байт в байт тот, что автор дал «Ресурсам»");
+                Rml::Element* el = layer(s, e.vs_screen, l.id);
+                if (!check_ok(el && l.box.size() == 4, "слой n" + std::to_string(l.id) + " на экране")) continue;
+                const Rml::Vector2f at = el->GetAbsoluteOffset(Rml::BoxArea::Border).Round(), sz = el->GetBox().GetSize(Rml::BoxArea::Border).Round();
+                const int x = static_cast<int>(at.x), y = static_cast<int>(at.y), bw = static_cast<int>(sz.x), bh = static_cast<int>(sz.y);
+                const std::string where = std::to_string(x) + ", " + std::to_string(y) + ", " + std::to_string(bw) + " × " + std::to_string(bh);
+                if (!check_ok(x == l.box[0] && y == l.box[1] && bw == l.box[2] && bh == l.box[3] && x >= 0 && y >= 0 &&
+                                  x + bw <= static_cast<int>(w) && y + bh <= static_cast<int>(h),
+                              "слой n" + std::to_string(l.id) + " там, где его поставил автор: " + where))
+                    continue;
+                std::vector<u8> drawn;
+                for (int j = y; j < y + bh; ++j)
+                    drawn.insert(drawn.end(), px.begin() + (static_cast<std::ptrdiff_t>(j) * w + x) * 4,
+                                 px.begin() + (static_cast<std::ptrdiff_t>(j) * w + x + bw) * 4);
+                const Rml::Colourb c = el->GetComputedValues().color();
+                const std::vector<u8> want = l.frame ? svg_frame(l.svg, static_cast<int>(e.vs_frame_size), static_cast<int>(e.vs_frame_slice), bw, bh)
+                                                     : svg_pixels(l.svg, bw, bh, hex_color(c.red, c.green, c.blue));
+                const int d = pixels_diff(drawn, want, true);
+                check(d <= 2, std::string(l.frame ? "рамка из «" : "картинка «") + l.file + "» нарисована, как её рисует lunasvg в " +
+                                  std::to_string(bw) + " × " + std::to_string(bh) + (l.frame ? ": углы, края без швов, середина" : "") +
+                                  " (канал расходится самое большее на " + std::to_string(d) + ")");
+            }
+            return true;
+        }});
     }
 
     void build_template(Shell& s, bool continued) {

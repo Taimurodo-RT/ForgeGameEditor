@@ -769,10 +769,11 @@ bool LogicEditor::thing_at(const std::string& id, f32& x, f32& y) const {
 }
 
 void LogicEditor::update(Rml::Context* context) {
+    if (context) dp_ = context->GetDensityIndependentPixelRatio();
     // The board's size, so the picker stays on it.
     for (int i = 0; context && i < context->GetNumDocuments(); ++i)
         if (Rml::Element* board = context->GetDocument(i)->GetElementById("lg-board")) {
-            const f32 w = board->GetClientWidth(), h = board->GetClientHeight();
+            const f32 w = board->GetClientWidth() / dp_, h = board->GetClientHeight() / dp_;
             if (w != board_w_ || h != board_h_) {
                 board_w_ = w;
                 board_h_ = h;
@@ -1468,7 +1469,7 @@ bool LogicEditor::handle_event(const SDL_Event& e, f32 density, bool) {
     if (mode_ == "scheme" && scheme_.handle_event(e, density)) return true;
     if (!grabbing_) return false;
     if (e.type == SDL_EVENT_MOUSE_MOTION) {
-        const f32 dx = e.motion.x * density - grab_mx_, dy = e.motion.y * density - grab_my_;
+        const f32 dx = (e.motion.x * density - grab_mx_) / dp_, dy = (e.motion.y * density - grab_my_) / dp_;
         if (!dragged_ && std::hypot(dx, dy) > 4) dragged_ = true;
         if (!dragged_) return true;
         if (grab_id_.empty()) {

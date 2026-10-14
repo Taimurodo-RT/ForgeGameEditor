@@ -92,6 +92,10 @@ public:
 	/// This will use the document path where the 'decorator' property was declared to locate relative files, if available.
 	Texture GetTexture(const String& filename) const;
 
+	/// Forge: the path of a file named in the decorator, found as GetTexture finds it (relative to the document where the
+	/// property was declared); data URIs and their keys stay as they are.
+	String ResolvePath(const String& filename) const;
+
 	/// Get the render manager for the decorator being instanced.
 	RenderManager& GetRenderManager() const;
 

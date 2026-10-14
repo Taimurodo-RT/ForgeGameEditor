@@ -116,6 +116,9 @@ struct ShellConfig {
     // Running from the source tree: UI files reload when saved, F8 inspects
     // the UI. Off in a packaged game.
     bool dev = true;
+    // The display's scale the UI is drawn at, times the player's «Масштаб интерфейса»; 0: the window's, from the
+    // system (above 0: tests and --ui-scale).
+    f32 display_scale = 0.0f;
 };
 
 enum class Screen : u8 { Main, Playing, Paused, Slots, Settings, Journal, Loading };

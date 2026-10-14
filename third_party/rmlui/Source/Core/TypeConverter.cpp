@@ -23,8 +23,9 @@ bool TypeConverter<Unit, String>::Convert(const Unit& src, String& dest)
 	case Unit::NUMBER:  dest = "";    return true;
 	case Unit::PERCENT: dest = "%";   return true;
 
-	case Unit::PX:      dest = "px";  return true;
-	case Unit::DP:      dest = "dp";  return true;
+	// Forge: px is read as a logical pixel (Unit::DP), devpx as a device pixel (Unit::PX).
+	case Unit::PX:      dest = "devpx"; return true;
+	case Unit::DP:      dest = "px";  return true;
 	case Unit::VW:      dest = "vw";  return true;
 	case Unit::VH:      dest = "vh";  return true;
 	case Unit::X:       dest = "x";   return true;

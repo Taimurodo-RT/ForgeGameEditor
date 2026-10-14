@@ -1,5 +1,6 @@
 #include "forge/assets/asset_pipeline.h"
 #include "forge/assets/image.h"
+#include "forge/assets/svg.h"
 
 #include "forge/data/binary.h"
 
@@ -81,6 +82,20 @@ public:
     void cook(const CookInput& in, CookOutput& out) const override { out.cooked.assign(in.source.begin(), in.source.end()); }
 };
 
+// SVG goes to the game as written, and lunasvg draws it there at the size it is shown (step 3 of
+// docs/models/вектор-модель.md); what lunasvg leaves out is named in one line.
+class SvgImporter final : public Importer {
+public:
+    const char* name() const override { return "svg"; }
+    u32 version() const override { return 1; }
+    bool handles(std::string_view ext) const override { return ext == ".svg"; }
+    void cook(const CookInput& in, CookOutput& out) const override {
+        out.cooked.assign(in.source.begin(), in.source.end());
+        const std::string line = svg_gaps_line({reinterpret_cast<const char*>(in.source.data()), in.source.size()});
+        if (!line.empty()) out.notes.push_back(line);
+    }
+};
+
 // Anything without a dedicated importer is stored as is, so it is still
 // indexed, searchable and shipped with the game.
 class CopyImporter final : public Importer {
@@ -96,6 +111,7 @@ public:
 void AssetPipeline::add_default_importers() {
     add_importer(std::make_unique<ImageImporter>());
     add_importer(std::make_unique<AudioImporter>());
+    add_importer(std::make_unique<SvgImporter>());
     add_importer(std::make_unique<CopyImporter>()); // last: catches everything
 }
 

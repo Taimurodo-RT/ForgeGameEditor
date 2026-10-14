@@ -156,6 +156,15 @@ struct ProjectEdits {
     // «Рубин»'s picture drawn with the picker's colours, "x y r g b a" each (alpha and all).
     std::vector<int> im_ruby, im_chip_rgb, im_at, im_px;
     std::string im_chip, im_chip_name;
+    // SVG pictures of «Ресурсы» the author put on a screen of «Интерфейс» (the editor's self-test ui-scale), for the module
+    // slice's scene project. vs_screen: the screen (its file's name). vs_picture: its layer filled by the game's own file
+    // vs_picture_file, which says vs_picture_svg byte for byte; vs_frame: its layer framed (border-image) by vs_frame_file,
+    // saying vs_frame_svg, its slice vs_frame_slice of the picture drawn at vs_frame_size × vs_frame_size. vs_picture_box,
+    // vs_frame_box: their boxes on the screen's page (x, y, w, h). The game runs at the screen's own size (--size), so each
+    // must be drawn as lunasvg draws its file at that size: the picture whole, the frame's corners and edges.
+    std::string vs_screen, vs_picture_file, vs_picture_svg, vs_frame_file, vs_frame_svg;
+    forge::u32 vs_picture = 0, vs_frame = 0, vs_frame_size = 0, vs_frame_slice = 0;
+    std::vector<int> vs_picture_box, vs_frame_box;
 };
 
 // False (error says why) when the file cannot be read.

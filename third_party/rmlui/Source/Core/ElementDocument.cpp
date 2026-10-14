@@ -621,11 +621,12 @@ static bool UpdateMarkerShape(Element* item, Element* marker, const String& shap
 		if (marker->GetAttribute<String>("forge-shape", "") == key)
 			return false;
 		const String colour_text = CreateString("rgba(%d,%d,%d,%g)", colour.red, colour.green, colour.blue, colour.alpha / 255.0);
-		marker->SetProperty("width", CreateString("%dpx", size));
-		marker->SetProperty("height", CreateString("%dpx", size));
-		marker->SetProperty("margin-left", CreateString("%dpx", -(offset + 7)));
-		marker->SetProperty("margin-right", CreateString("%dpx", offset + 7 - size));
-		marker->SetProperty("vertical-align", CreateString("%dpx", lift));
+		// The font's metrics are device pixels (devpx); px is a logical pixel.
+		marker->SetProperty("width", CreateString("%ddevpx", size));
+		marker->SetProperty("height", CreateString("%ddevpx", size));
+		marker->SetProperty("margin-left", CreateString("%ddevpx", -(offset + 7)));
+		marker->SetProperty("margin-right", CreateString("%ddevpx", offset + 7 - size));
+		marker->SetProperty("vertical-align", CreateString("%ddevpx", lift));
 		marker->SetProperty("box-sizing", "border-box");
 		marker->SetProperty("font-size", "0px");
 		marker->SetProperty("overflow", "hidden"); // so its baseline is its bottom edge

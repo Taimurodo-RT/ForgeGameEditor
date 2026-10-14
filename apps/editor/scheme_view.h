@@ -269,6 +269,8 @@ private:
     u32 drag_link_ = 0, drag_node_ = 0;
     f32 grab_mx_ = 0, grab_my_ = 0, grab_x_ = 0, grab_y_ = 0;
     f32 mouse_x_ = 0, mouse_y_ = 0; // over the pane
+    // Everything here is px of the style, dp_ pixels of the window each (the mouse and the pane's box are divided).
+    f32 dp_ = 1;
     f32 screen_x_ = 0, screen_y_ = 0; // the mouse on screen, last seen
     f32 pan_x_ = 0, pan_y_ = 0;
     f32 cull_x_ = 0, cull_y_ = 0; // the pan when the view was last drawn

@@ -1588,12 +1588,14 @@ u32 SchemeView::frame_at(f32 sx, f32 sy) const {
 
 void SchemeView::update(Rml::Context* context) {
     context_ = context;
+    // The schemes are laid out in px of the style; the pane's box and the mouse are pixels of the window.
+    if (context) dp_ = context->GetDensityIndependentPixelRatio();
     for (int i = 0; context && i < context->GetNumDocuments(); ++i)
         if (Rml::Element* pane = context->GetDocument(i)->GetElementById("lg-scheme")) {
-            const Rml::Vector2f at = pane->GetAbsoluteOffset(Rml::BoxArea::Padding);
+            const Rml::Vector2f at = pane->GetAbsoluteOffset(Rml::BoxArea::Padding) / dp_;
             pane_x_ = at.x;
             pane_y_ = at.y;
-            const f32 w = pane->GetClientWidth(), h = pane->GetClientHeight();
+            const f32 w = pane->GetClientWidth() / dp_, h = pane->GetClientHeight() / dp_;
             if (w != pane_w_ || h != pane_h_) {
                 pane_w_ = w;
                 pane_h_ = h;
@@ -1608,15 +1610,15 @@ bool SchemeView::handle_event(const SDL_Event& e, f32 density) {
     // Where the mouse is (the document's event parameters are in the moved
     // world's own coordinates under the nodes).
     if (e.type == SDL_EVENT_MOUSE_MOTION) {
-        screen_x_ = e.motion.x * density;
-        screen_y_ = e.motion.y * density;
+        screen_x_ = e.motion.x * density / dp_;
+        screen_y_ = e.motion.y * density / dp_;
     } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
-        screen_x_ = e.button.x * density;
-        screen_y_ = e.button.y * density;
+        screen_x_ = e.button.x * density / dp_;
+        screen_y_ = e.button.y * density / dp_;
     }
     if (drag_ == Drag::None) return false;
     if (e.type == SDL_EVENT_MOUSE_MOTION) {
-        const f32 mx = e.motion.x * density, my = e.motion.y * density;
+        const f32 mx = screen_x_, my = screen_y_;
         const f32 dx = mx - grab_mx_, dy = my - grab_my_;
         if (!dragged_ && std::hypot(dx, dy) > 4) dragged_ = true;
         if (!dragged_) return true;

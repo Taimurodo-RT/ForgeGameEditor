@@ -46,7 +46,7 @@ public:
 
     // Each frame while the tab is open. False when the dock is not on screen.
     bool update(Rml::Context* context);
-    // Panel header drags and splitters; x, y in pixels. True when used.
+    // Panel header drags and splitters; x, y in pixels of the window. True when used.
     bool mouse_move(f32 x, f32 y);
     bool mouse_down() const { return busy(); }
     bool mouse_up();
@@ -55,13 +55,14 @@ public:
     void reset();
     editor::DockLayout& layout() { return dock_; }
     const std::vector<std::string>& panel_ids() const { return ids_; }
-    // The view's rectangle on screen.
-    f32 view_x() const { return dock_x_ + view_.x; }
-    f32 view_y() const { return dock_y_ + view_.y; }
-    f32 view_w() const { return std::max(0.0f, view_.w); }
-    f32 view_h() const { return std::max(0.0f, view_.h); }
-    f32 x() const { return dock_x_; }
-    f32 y() const { return dock_y_; }
+    // The view's rectangle on screen, in pixels of the window. The dock itself is laid out in px of the UI (its
+    // frames, gaps and headers are the style's sizes), dp-ratio pixels each.
+    f32 view_x() const { return (dock_x_ + view_.x) * dp_; }
+    f32 view_y() const { return (dock_y_ + view_.y) * dp_; }
+    f32 view_w() const { return std::max(0.0f, view_.w) * dp_; }
+    f32 view_h() const { return std::max(0.0f, view_.h) * dp_; }
+    f32 x() const { return dock_x_ * dp_; }
+    f32 y() const { return dock_y_ * dp_; }
 
 private:
     struct Tab {
@@ -96,7 +97,8 @@ private:
     editor::DockLayout dock_;
     Rml::DataModelHandle model_;
 
-    f32 dock_x_ = 0, dock_y_ = 0, dock_w_ = 0, dock_h_ = 0;
+    f32 dock_x_ = 0, dock_y_ = 0, dock_w_ = 0, dock_h_ = 0; // px
+    f32 dp_ = 1;                                           // the context's dp-ratio
     editor::DockRect view_{};
     u64 applied_version_ = 0;
     f32 mouse_x_ = 0, mouse_y_ = 0;

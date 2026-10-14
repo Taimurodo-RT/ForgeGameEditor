@@ -128,7 +128,9 @@ TEST_CASE("Pixel svg: the outline as written") {
     REQUIRE(svg.error.empty());
     REQUIRE(svg.elements.size() == 4);
     CHECK(svg.elements[0].tag == "svg");
+    CHECK(svg.elements[0].prefix == "svg");
     CHECK(svg.elements[1].tag == "g");
+    CHECK(svg.elements[2].prefix.empty());
     CHECK(svg.elements[1].id == "a&b");
     CHECK(svg.elements[1].line == 5);
     CHECK(svg.elements[1].property("fill") == "red"); // style wins over the attribute

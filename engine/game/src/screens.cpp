@@ -151,6 +151,7 @@ struct GameScreens::Page {
     bool visible = false; // on screen now
     u64 order = 0;        // when it was shown (Esc closes the newest)
     int fit_w = -1, fit_h = -1;
+    f32 fit_dp = 0;            // the context's dp-ratio fit() saw
     std::string fit_transform; // the scale fit() gives the root
     f32 design_w = 1920, design_h = 1080; // the root's size in the page's pixels
     // How it comes and goes (forge-appear): the movement under way.
@@ -382,7 +383,10 @@ struct GameScreens::Impl : Rml::EventListener {
                 else e->SetProperty("visibility", "hidden");
             }
         }
-        const f32 W = l.box->GetClientWidth(), H = l.box->GetClientHeight();
+        // The cells are placed in the page's px; the box's size and scroll are pixels of the window, dp-ratio to a px.
+        const Rml::Context* box_context = l.box->GetContext();
+        const f32 dp = box_context ? box_context->GetDensityIndependentPixelRatio() : 1.0f;
+        const f32 W = l.box->GetClientWidth() / dp, H = l.box->GetClientHeight() / dp;
         const f32 step_x = l.cw + l.gap, step_y = l.ch + l.gap;
         const i64 cols = std::max<i64>(1, static_cast<i64>((W - l.cx + l.gap) / step_x));
         const i64 lines = (n + cols - 1) / cols;
@@ -393,7 +397,7 @@ struct GameScreens::Impl : Rml::EventListener {
             std::snprintf(buf, sizeof(buf), "%.2fpx", static_cast<double>(height));
             l.content->SetProperty("height", buf);
         }
-        const f32 scroll = l.box->GetScrollTop();
+        const f32 scroll = l.box->GetScrollTop() / dp;
         i64 first = std::max<i64>(0, static_cast<i64>(std::floor((scroll - l.cy) / step_y)));
         i64 last = std::min<i64>(lines - 1, static_cast<i64>(std::floor((scroll + H - l.cy) / step_y)));
         if (H <= 0) last = std::min<i64>(lines - 1, first); // not laid out yet: one line
@@ -571,11 +575,16 @@ struct GameScreens::Impl : Rml::EventListener {
         });
     }
 
+    // w × h: the view in pixels of the window. The page is laid out in its px, dp-ratio pixels each: it is fitted to
+    // the view in px, so it fills the same part of the screen at any scale of the UI.
     void fit(Page& p, int w, int h) {
-        if (!p.root || (p.fit_w == w && p.fit_h == h)) return;
+        const Rml::Context* page_context = p.doc ? p.doc->GetContext() : nullptr;
+        const f32 dp = page_context ? page_context->GetDensityIndependentPixelRatio() : 1.0f;
+        if (!p.root || (p.fit_w == w && p.fit_h == h && p.fit_dp == dp)) return;
         p.fit_w = w;
         p.fit_h = h;
-        const ScreenFit f = fit_screen(p.fit, p.width, p.height, static_cast<f32>(w), static_cast<f32>(h));
+        p.fit_dp = dp;
+        const ScreenFit f = fit_screen(p.fit, p.width, p.height, static_cast<f32>(w) / dp, static_cast<f32>(h) / dp);
         apply_screen_fit(p.root, f, p.fit == "fit" ? p.bars : std::string());
         p.design_w = f.width;
         p.design_h = f.height;

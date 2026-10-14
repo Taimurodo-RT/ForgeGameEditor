@@ -318,6 +318,8 @@ bool DecoratorTiledInstancer::GetTileProperties(DecoratorTiled::Tile* tiles, Tex
 			String uri;
 			tile.vector_image = (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".svg") == 0) || StringUtilities::StartsWith(lower, "data:image/svg") ||
 				(DataUri::Lookup(texture_name, uri) && StringUtilities::StartsWith(StringUtilities::ToLower(uri), "data:image/svg"));
+			if (tile.vector_image)
+				tile.vector_path = instancer_interface.ResolvePath(texture_name);
 		}
 
 		if (ids.fit != PropertyId::Invalid)
@@ -356,7 +358,9 @@ bool DecoratorTiledInstancer::GetTileProperties(DecoratorTiled::Tile* tiles, Tex
 				{
 					align = LengthPercentage(LengthPercentage::Percentage, property.Get<float>());
 				}
-				else if (property.unit == Unit::PX)
+				// Forge: px is read as a logical pixel (Unit::DP). A decorator is shared by every context, so its offset is
+				// drawn as device pixels at any dp-ratio.
+				else if (property.unit == Unit::PX || property.unit == Unit::DP)
 				{
 					align = LengthPercentage(LengthPercentage::Length, property.Get<float>());
 				}

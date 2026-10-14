@@ -93,8 +93,8 @@ void DockView::bind(Rml::DataModelConstructor& model) {
     model.BindEventCallback(p + "dock_grab", [this](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& a) {
         grab_panel_ = a.empty() ? std::string() : a[0].Get<Rml::String>();
         dragging_ = false;
-        grab_x_ = ev.GetParameter<float>("mouse_x", mouse_x_);
-        grab_y_ = ev.GetParameter<float>("mouse_y", mouse_y_);
+        grab_x_ = ev.GetParameter<float>("mouse_x", mouse_x_ * dp_) / dp_;
+        grab_y_ = ev.GetParameter<float>("mouse_y", mouse_y_ * dp_) / dp_;
     });
     model.BindEventCallback(p + "dock_split", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
         grab_splitter_ = a.empty() ? -1 : a[0].Get<int>();
@@ -114,9 +114,12 @@ bool DockView::update(Rml::Context* context) {
         view_ = {};
         return false;
     }
-    const Rml::Vector2f at = area->GetAbsoluteOffset(Rml::BoxArea::Content);
-    const Rml::Vector2f size = area->GetBox().GetSize(Rml::BoxArea::Content);
-    const bool moved = at.x != dock_x_ || at.y != dock_y_ || size.x != dock_w_ || size.y != dock_h_;
+    // The area's box is in pixels of the window; the dock works in px.
+    const f32 dp = context->GetDensityIndependentPixelRatio();
+    const Rml::Vector2f at = area->GetAbsoluteOffset(Rml::BoxArea::Content) / dp;
+    const Rml::Vector2f size = area->GetBox().GetSize(Rml::BoxArea::Content) / dp;
+    const bool moved = at.x != dock_x_ || at.y != dock_y_ || size.x != dock_w_ || size.y != dock_h_ || dp != dp_;
+    dp_ = dp;
     dock_x_ = at.x;
     dock_y_ = at.y;
     dock_w_ = size.x;
@@ -157,6 +160,8 @@ bool DockView::update(Rml::Context* context) {
 }
 
 bool DockView::mouse_move(f32 x, f32 y) {
+    x /= dp_;
+    y /= dp_;
     mouse_x_ = x;
     mouse_y_ = y;
     if (grab_splitter_ >= 0) {

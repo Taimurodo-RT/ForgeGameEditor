@@ -8,9 +8,11 @@
 //                                    outlined, or filled with fill="true";
 //                                    its colour is the element's `color`
 //
-// Lines are in the element's pixels from its top left corner. A source says
-// when its lines changed (version); the element builds its mesh again only
-// then.
+// Lines are in the element's pixels from its top left corner: pixels of the
+// window (devpx), as its box is measured, or px of the style with
+// points="px" (a node graph laid out in px); a line's width is in px
+// (dp-ratio pixels each). A source says when its lines changed (version);
+// the element builds its mesh again only then.
 
 #include "forge/core/types.h"
 
@@ -22,7 +24,7 @@ namespace forge::ui {
 struct Line {
     std::vector<f32> points; // x0, y0, x1, y1…
     u32 color = 0xffffffffu; // RGBA, red in the high byte
-    f32 width = 2;
+    f32 width = 2; // px
 };
 
 class LineSource {

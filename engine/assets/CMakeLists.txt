@@ -3,8 +3,9 @@ add_library(forge_assets STATIC
   src/asset_database.cpp
   src/asset_pipeline.cpp
   src/importers.cpp
+  src/svg.cpp
   src/image_edit.cpp)
 add_library(forge::assets ALIAS forge_assets)
 target_include_directories(forge_assets PUBLIC include)
-target_link_libraries(forge_assets PUBLIC forge::data PRIVATE sqlite3 xxhash_headers stb_headers webp_codec)
+target_link_libraries(forge_assets PUBLIC forge::data PRIVATE forge::vector sqlite3 xxhash_headers stb_headers webp_codec lunasvg::lunasvg)
 forge_target_defaults(forge_assets)

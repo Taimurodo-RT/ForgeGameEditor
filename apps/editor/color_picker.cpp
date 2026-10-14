@@ -330,20 +330,22 @@ bool ColorPicker::place(Rml::Context* context) {
     if (!state_.open || !p || !context || p->GetComputedValues().display() == Rml::Style::Display::None) return false;
     const Rml::Vector2f size = p->GetBox().GetSize(Rml::BoxArea::Border);
     if (size.x <= 0 || size.y <= 0) return false; // not laid out yet
+    // Boxes and the window are in its pixels (devpx); the gaps are px of the UI, dp-ratio pixels each.
     const Rml::Vector2i window = context->GetDimensions();
-    const f32 W = static_cast<f32>(window.x), H = static_cast<f32>(window.y), m = 8;
-    f32 x = state_.ax - size.x - 12;
-    if (x < m) x = state_.ax + state_.aw + 12;
+    const f32 dp = context->GetDensityIndependentPixelRatio();
+    const f32 W = static_cast<f32>(window.x), H = static_cast<f32>(window.y), m = 8 * dp;
+    f32 x = state_.ax - size.x - 12 * dp;
+    if (x < m) x = state_.ax + state_.aw + 12 * dp;
     x = std::clamp(x, m, std::max(m, W - size.x - m));
-    f32 y = std::clamp(state_.ay + state_.ah * 0.5f - 60, m, std::max(m, H - size.y - m));
-    const f32 tall = std::max(120.0f, H - 2 * m);
+    f32 y = std::clamp(state_.ay + state_.ah * 0.5f - 60 * dp, m, std::max(m, H - size.y - m));
+    const f32 tall = std::max(120.0f * dp, H - 2 * m);
     if (x != state_.left || y != state_.top || p->GetProperty<float>("max-height") != tall ||
         p->GetComputedValues().visibility() != Rml::Style::Visibility::Visible) {
         state_.left = x;
         state_.top = y;
-        p->SetProperty("left", std::to_string(static_cast<int>(x)) + "px");
-        p->SetProperty("top", std::to_string(static_cast<int>(y)) + "px");
-        p->SetProperty("max-height", std::to_string(static_cast<int>(tall)) + "px");
+        p->SetProperty("left", std::to_string(static_cast<int>(x)) + "devpx");
+        p->SetProperty("top", std::to_string(static_cast<int>(y)) + "devpx");
+        p->SetProperty("max-height", std::to_string(static_cast<int>(tall)) + "devpx");
         p->SetProperty("visibility", "visible"); // shown once it stands in its place
         return true;
     }

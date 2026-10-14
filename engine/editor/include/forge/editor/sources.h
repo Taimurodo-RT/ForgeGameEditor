@@ -128,8 +128,8 @@ std::string hash_of(std::span<const u8> bytes);
 bool same_name(std::string_view a, std::string_view b);
 
 // Whether the game can take these bytes as a file of that folder: a picture of
-// "pictures" decodes, a sound of "sounds" decodes (WAV, OGG); a file of any
-// other folder is taken as it is. why: what is wrong.
+// "pictures" decodes or is an SVG lunasvg reads, a sound of "sounds" decodes
+// (WAV, OGG); a file of any other folder is taken as it is. why: what is wrong.
 bool usable(std::string_view folder, std::span<const u8> bytes, std::string* why = nullptr);
 
 } // namespace forge::editor::sources

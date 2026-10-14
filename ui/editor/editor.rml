@@ -275,7 +275,7 @@
                 <div class="viewport-label row gap-2"><icon name="landscape" class="s"/><span>{{ lv_mode_name }} · {{ lv_place }}</span><span id="lt-view-preview" data-if="lv_lt_previewing">· просмотр {{ lv_lt_preview }}, в уровне {{ lv_lt_time }}</span></div>
                 <div data-if="lv_mode == 'zones'">
                     <div data-for="l : lv_zn_labels" class="zn-label" data-class-selected="l.selected" data-class-spawn="l.spawn" data-attr-id="'zn-label-' + l.id"
-                         data-style-left="l.x + 'px'" data-style-top="l.y + 'px'">{{ l.name }}</div>
+                         data-style-left="l.x + 'devpx'" data-style-top="l.y + 'devpx'">{{ l.name }}</div>
                 </div>
             </div>
 
@@ -1024,7 +1024,7 @@
 
             <!-- «Схема»: each link a frame with its node graph (scheme_view.h) -->
             <div id="lg-scheme" class="lg-scheme grow" data-if="lg_mode == 'scheme'" data-event-mousedown="sc_down">
-                <lines id="sc-grid" source="sc-grid" class="sc-lines"/>
+                <lines id="sc-grid" source="sc-grid" points="px" class="sc-lines"/>
                 <div class="lg-empty muted" data-if="sc_frames.size == 0">Связей пока нет. Их проще всего сделать в режиме «Связи». А вещь может что-то делать и сама по себе: «Своя схема вещи».</div>
                 <div id="sc-world" class="sc-world" data-style-left="sc_pan_x + 'px'" data-style-top="sc_pan_y + 'px'" data-style-transform="'translate(' + sc_slide_x + 'px, ' + sc_slide_y + 'px)'">
                 <div data-for="f : sc_frames" class="sc-frame" data-attr-id="'sc-frame-' + f.id" data-class-selected="f.selected" data-class-lit="f.lit" data-class-custom="f.custom" data-class-own="f.own"
@@ -1042,7 +1042,7 @@
                     </div>
                     <div class="sc-note" data-if="f.note != ''">{{ f.note }}</div>
                 </div>
-                <lines id="sc-wires" source="sc-wires" class="sc-lines"/>
+                <lines id="sc-wires" source="sc-wires" points="px" class="sc-lines"/>
                 <div data-for="n : sc_nodes" data-attr-class="'sc-node ' + n.tone + (n.hidden ? ' hidden' : '') + (n.selected ? ' selected' : '') + (n.lit ? ' lit' : '') + (n.problem != '' ? (n.warning ? ' warn' : ' bad') : '')"
                      data-attr-id="'sc-node-' + n.id" data-style-left="n.x + 'px'" data-style-top="n.y + 'px'" data-style-width="n.w + 'px'" data-style-height="n.h + 'px'"
                      data-attr-title="n.problem != '' ? n.problem : n.help" data-event-mousedown="sc_node_down(n.link, n.uid)" data-event-click="sc_node(n.link, n.uid)">
@@ -1411,7 +1411,7 @@
                     </div>
                 </div>
                 <div id="im-canvas" class="im-canvas grow">
-                    <img id="im-canvas-img" data-if="im_has && im_canvas != ''" data-attr-src="im_canvas" data-style-width="im_canvas_w + 'px'" data-style-height="im_canvas_h + 'px'"/>
+                    <img id="im-canvas-img" data-if="im_has && im_canvas != ''" data-attr-src="im_canvas" data-style-width="im_canvas_w + 'devpx'" data-style-height="im_canvas_h + 'devpx'"/>
                     <div class="im-empty" data-if="!im_has">Выберите картинку слева или «Открыть в редакторе изображений» в «Ресурсах»</div>
                 </div>
                 <div id="im-status" class="im-status">{{ im_status }}</div>
@@ -1913,36 +1913,36 @@
             <div id="ue-stage" class="ue-stage grow">
                 <div class="ue-corner"/>
                 <div id="ue-ruler-x" class="ue-ruler ue-ruler-x" title="Тяните вниз: направляющая">
-                    <div class="ue-ruler-sel" data-if="ue_handles" data-style-left="ue_sel_box.x + 'px'" data-style-width="ue_sel_box.w + 'px'"/>
+                    <div class="ue-ruler-sel" data-if="ue_handles" data-style-left="ue_sel_box.x + 'devpx'" data-style-width="ue_sel_box.w + 'devpx'"/>
                     <lines class="ue-ruler-lines" source="ue-ruler-x"/>
-                    <div data-for="t : ue_ticks_x" class="ue-tick-x" data-style-left="(t.at + 3) + 'px'">{{ t.label }}</div>
+                    <div data-for="t : ue_ticks_x" class="ue-tick-x" data-style-left="(t.at + 3 * ue_dp) + 'devpx'">{{ t.label }}</div>
                 </div>
                 <div id="ue-ruler-y" class="ue-ruler ue-ruler-y" title="Тяните вправо: направляющая">
-                    <div class="ue-ruler-sel" data-if="ue_handles" data-style-top="ue_sel_box.y + 'px'" data-style-height="ue_sel_box.h + 'px'"/>
+                    <div class="ue-ruler-sel" data-if="ue_handles" data-style-top="ue_sel_box.y + 'devpx'" data-style-height="ue_sel_box.h + 'devpx'"/>
                     <lines class="ue-ruler-lines" source="ue-ruler-y"/>
-                    <div data-for="t : ue_ticks_y" class="ue-tick-y" data-style-top="(t.at - 3) + 'px'">{{ t.label }}</div>
+                    <div data-for="t : ue_ticks_y" class="ue-tick-y" data-style-top="(t.at - 3 * ue_dp) + 'devpx'">{{ t.label }}</div>
                 </div>
                 <div id="ue-canvas" class="ue-canvas" data-class-drawing="ue_tool != 'select'">
                     <div id="ue-view-note" class="ue-view-note" data-if="ue_view_note != ''">{{ ue_view_note }}</div>
-                    <div class="ue-frame-label" data-style-left="ue_frame_label.x + 'px'" data-style-top="ue_frame_label.y + 'px'" data-event-click="ue_select_screen">{{ ue_frame_label.text }}</div>
-                    <div class="ue-frame-shadow" data-style-left="ue_frame.x + 'px'" data-style-top="ue_frame.y + 'px'" data-style-width="ue_frame.w + 'px'" data-style-height="ue_frame.h + 'px'"/>
-                    <img id="ue-screen" class="ue-screen" src="/gpu/ui-screen" data-style-left="ue_frame.x + 'px'" data-style-top="ue_frame.y + 'px'" data-style-width="ue_frame.w + 'px'" data-style-height="ue_frame.h + 'px'"/>
-                    <div data-for="g : ue_guides_x" class="ue-guide-x" data-style-left="g.x + 'px'"><span/></div>
-                    <div data-for="g : ue_guides_y" class="ue-guide-y" data-style-top="g.y + 'px'"><span/></div>
-                    <div id="ue-hover" class="ue-hover" data-if="ue_hovering" data-style-left="ue_hover.x + 'px'" data-style-top="ue_hover.y + 'px'" data-style-width="ue_hover.w + 'px'" data-style-height="ue_hover.h + 'px'"/>
-                    <div id="ue-drop" class="ue-drop" data-if="ue_dropping" data-style-left="ue_drop.x + 'px'" data-style-top="ue_drop.y + 'px'" data-style-width="ue_drop.w + 'px'" data-style-height="ue_drop.h + 'px'"><div id="ue-drop-label" class="ue-drop-label">{{ ue_drop_label }}</div></div>
-                    <div id="ue-safe" class="ue-safe" data-if="ue_has_safe" data-style-left="ue_safe.x + 'px'" data-style-top="ue_safe.y + 'px'" data-style-width="ue_safe.w + 'px'" data-style-height="ue_safe.h + 'px'"/>
-                    <div data-for="b : ue_selected" class="ue-picked" data-style-left="b.x + 'px'" data-style-top="b.y + 'px'" data-style-width="b.w + 'px'" data-style-height="b.h + 'px'"><span/></div>
-                    <div id="ue-selection" class="ue-selection" data-if="ue_handles" data-style-left="ue_sel_box.x + 'px'" data-style-top="ue_sel_box.y + 'px'" data-style-width="ue_sel_box.w + 'px'" data-style-height="ue_sel_box.h + 'px'">
-                        <div class="ue-handle tl"/><div class="ue-handle t" data-if="ue_sel_box.w >= 24"/><div class="ue-handle tr"/><div class="ue-handle r" data-if="ue_sel_box.h >= 24"/>
-                        <div class="ue-handle br"/><div class="ue-handle b" data-if="ue_sel_box.w >= 24"/><div class="ue-handle bl"/><div class="ue-handle l" data-if="ue_sel_box.h >= 24"/>
+                    <div class="ue-frame-label" data-style-left="ue_frame_label.x + 'devpx'" data-style-top="ue_frame_label.y + 'devpx'" data-event-click="ue_select_screen">{{ ue_frame_label.text }}</div>
+                    <div class="ue-frame-shadow" data-style-left="ue_frame.x + 'devpx'" data-style-top="ue_frame.y + 'devpx'" data-style-width="ue_frame.w + 'devpx'" data-style-height="ue_frame.h + 'devpx'"/>
+                    <img id="ue-screen" class="ue-screen" src="/gpu/ui-screen" data-style-left="ue_frame.x + 'devpx'" data-style-top="ue_frame.y + 'devpx'" data-style-width="ue_frame.w + 'devpx'" data-style-height="ue_frame.h + 'devpx'"/>
+                    <div data-for="g : ue_guides_x" class="ue-guide-x" data-style-left="g.x + 'devpx'"><span/></div>
+                    <div data-for="g : ue_guides_y" class="ue-guide-y" data-style-top="g.y + 'devpx'"><span/></div>
+                    <div id="ue-hover" class="ue-hover" data-if="ue_hovering" data-style-left="ue_hover.x + 'devpx'" data-style-top="ue_hover.y + 'devpx'" data-style-width="ue_hover.w + 'devpx'" data-style-height="ue_hover.h + 'devpx'"/>
+                    <div id="ue-drop" class="ue-drop" data-if="ue_dropping" data-style-left="ue_drop.x + 'devpx'" data-style-top="ue_drop.y + 'devpx'" data-style-width="ue_drop.w + 'devpx'" data-style-height="ue_drop.h + 'devpx'"><div id="ue-drop-label" class="ue-drop-label">{{ ue_drop_label }}</div></div>
+                    <div id="ue-safe" class="ue-safe" data-if="ue_has_safe" data-style-left="ue_safe.x + 'devpx'" data-style-top="ue_safe.y + 'devpx'" data-style-width="ue_safe.w + 'devpx'" data-style-height="ue_safe.h + 'devpx'"/>
+                    <div data-for="b : ue_selected" class="ue-picked" data-style-left="b.x + 'devpx'" data-style-top="b.y + 'devpx'" data-style-width="b.w + 'devpx'" data-style-height="b.h + 'devpx'"><span/></div>
+                    <div id="ue-selection" class="ue-selection" data-if="ue_handles" data-style-left="ue_sel_box.x + 'devpx'" data-style-top="ue_sel_box.y + 'devpx'" data-style-width="ue_sel_box.w + 'devpx'" data-style-height="ue_sel_box.h + 'devpx'">
+                        <div class="ue-handle tl"/><div class="ue-handle t" data-if="ue_sel_box.w >= 24 * ue_dp"/><div class="ue-handle tr"/><div class="ue-handle r" data-if="ue_sel_box.h >= 24 * ue_dp"/>
+                        <div class="ue-handle br"/><div class="ue-handle b" data-if="ue_sel_box.w >= 24 * ue_dp"/><div class="ue-handle bl"/><div class="ue-handle l" data-if="ue_sel_box.h >= 24 * ue_dp"/>
                         <div class="ue-size">{{ ue_size_label }}</div>
                     </div>
-                    <div class="ue-marquee" data-if="ue_marqueeing" data-style-left="ue_marquee.x + 'px'" data-style-top="ue_marquee.y + 'px'" data-style-width="ue_marquee.w + 'px'" data-style-height="ue_marquee.h + 'px'"/>
+                    <div class="ue-marquee" data-if="ue_marqueeing" data-style-left="ue_marquee.x + 'devpx'" data-style-top="ue_marquee.y + 'devpx'" data-style-width="ue_marquee.w + 'devpx'" data-style-height="ue_marquee.h + 'devpx'"/>
                     <lines class="ue-overlay" source="ue-overlay"/>
-                    <div data-for="m : ue_measures" class="ue-measure" data-style-left="m.x + 'px'" data-style-top="m.y + 'px'">{{ m.text }}</div>
+                    <div data-for="m : ue_measures" class="ue-measure" data-style-left="m.x + 'devpx'" data-style-top="m.y + 'devpx'">{{ m.text }}</div>
                     <!-- The panel over the selected layer (13.10), «Полный». C++: UiEditor::refresh_overlay (where), ue_fpick/ue_ftext/ue_fcommit/ue_fset. -->
-                    <div id="ue-float" class="ue-float ue-panel column" data-if="ue_float != ''" data-class-ue-float-text="ue_float == 'text'" data-class-ue-float-button="ue_float == 'button'" data-style-left="ue_float_x + 'px'" data-style-top="ue_float_y + 'px'">
+                    <div id="ue-float" class="ue-float ue-panel column" data-if="ue_float != ''" data-class-ue-float-text="ue_float == 'text'" data-class-ue-float-button="ue_float == 'button'" data-style-left="ue_float_x + 'devpx'" data-style-top="ue_float_y + 'devpx'">
                         <div class="ue-float-row row" data-if="ue_float == 'text'">
                             <select id="ue-f-family" class="ue-select grow" title="Шрифт" data-value="ue_p.family" data-event-change="ue_fpick('family')">
                                 <option value="">Как у экрана</option>
@@ -2763,7 +2763,7 @@
 
         <!-- «Создать +» and the right button's menus (13.8). C++: UiEditor::open_menu, create, the ue_menu_do actions. -->
         <div class="as-backdrop" data-if="ue_menu != ''" data-event-mousedown="ue_menu_close"/>
-        <div id="ue-create-menu" class="as-menu menu-list ue-menu ue-create-menu" data-if="ue_menu == 'create'" data-style-left="ue_menu_x + 'px'" data-style-top="ue_menu_y + 'px'">
+        <div id="ue-create-menu" class="as-menu menu-list ue-menu ue-create-menu" data-if="ue_menu == 'create'" data-style-left="ue_menu_x + 'devpx'" data-style-top="ue_menu_y + 'devpx'">
             <div id="ue-new-template" class="menu-item" title="Готовые сетки, формы, карточки и списки" data-event-click="ue_tpl_open('construction')"><icon name="auto_awesome_mosaic"/><span class="label">Из шаблонов…</span></div>
             <div class="divider"/>
             <div class="ue-menu-group row"><icon class="s" name="interests"/><span>Элементы</span></div>
@@ -2782,7 +2782,7 @@
             <div data-for="c : ue_components" class="menu-item" data-attr-id="'ue-new-comp-' + it_index" title="Копия компонента: меняется вместе с ним" data-event-click="ue_place(c.name)"><icon data-attr-name="c.icon"/><span class="label">{{ c.name }}</span></div>
             <div id="ue-create-no-comps" class="ue-menu-note" data-if="ue_components.size == 0">Пока нет. Правая кнопка по кнопке → «Сделать компонентом».</div>
         </div>
-        <div id="ue-ctx" class="as-menu menu-list ue-menu" data-if="ue_menu == 'layer' || ue_menu == 'empty'" data-style-left="ue_menu_x + 'px'" data-style-top="ue_menu_y + 'px'">
+        <div id="ue-ctx" class="as-menu menu-list ue-menu" data-if="ue_menu == 'layer' || ue_menu == 'empty'" data-style-left="ue_menu_x + 'devpx'" data-style-top="ue_menu_y + 'devpx'">
             <div data-if="ue_menu == 'layer'">
                 <div id="ue-ctx-cut" class="menu-item" data-event-click="ue_menu_do('cut')"><icon name="content_cut"/><span class="label">Вырезать</span><span class="trailing">Ctrl+X</span></div>
                 <div id="ue-ctx-copy" class="menu-item" data-event-click="ue_menu_do('copy')"><icon name="content_copy"/><span class="label">Копировать</span><span class="trailing">Ctrl+C</span></div>
@@ -3047,6 +3047,7 @@
                     <div class="info row"><span class="key">Размер</span><span class="value">{{ as_sel_size }}</span></div>
                     <div class="info row" data-if="as_sel_dims != ''"><span class="key">Картинка</span><span class="value">{{ as_sel_dims }}</span></div>
                     <div class="info row" data-if="as_sel_extra != ''"><span class="key">Звук</span><span class="value">{{ as_sel_extra }}</span></div>
+                    <div id="as-sel-note" class="info row" data-if="as_sel_note != ''"><span class="key">В игре</span><span class="value note">{{ as_sel_note }}</span></div>
                     <div class="info row" data-if="as_sel_date != ''"><span class="key">Изменён</span><span class="value">{{ as_sel_date }}</span></div>
                     <div class="info row" data-if="as_sel_path != ''"><span class="key">Где</span><span class="value path">{{ as_sel_path }}</span></div>
                     <div class="prop row gap-2" data-if="as_sel_count == 1 && !as_sel_dir">
@@ -3166,7 +3167,7 @@
         </div>
 
         <!-- The right-click menu: for the chosen files, or (nothing chosen) for the open folder. -->
-        <div id="as-ctx" class="as-menu ctx menu-list" data-if="as_menu == 'ctx'" data-style-left="as_ctx_x + 'px'" data-style-top="as_ctx_y + 'px'">
+        <div id="as-ctx" class="as-menu ctx menu-list" data-if="as_menu == 'ctx'" data-style-left="as_ctx_x + 'devpx'" data-style-top="as_ctx_y + 'devpx'">
             <div data-if="as_sel_count > 0">
                 <div id="ctx-open" class="menu-item strong" data-if="as_sel_count == 1 && as_sel_dir" data-event-click="as_open_selected"><icon name="folder_open"/><span class="label">Открыть</span><span class="trailing">Enter</span></div>
                 <div class="menu-item strong" data-if="as_sel_count == 1 && as_sel_wav" data-event-click="as_open_selected"><icon name="play_arrow"/><span class="label">Слушать</span></div>
