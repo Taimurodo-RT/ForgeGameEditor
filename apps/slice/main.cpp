@@ -3280,7 +3280,7 @@ private:
                     "<div class=\"cell\" forge-show-if=\"item.count &gt; 1\"><div forge-text=\"{item.name}\">?</div></div>\n  </div>"
                     "</div></body></html>";
                 // At the game's own ui/ (not written there): item.icon finds ../pictures/ as a game screen does.
-                check(sc.load_page(s.context(), "тест_сумка", page, path_to_utf8(s.game_dir() / "ui" / "тест_сумка.html")),
+                check(sc.load_page(s.context(), "тест_сумка", page, path_to_utf8(s.game_dir() / "ui" / utf8_path("тест_сумка.html"))),
                       "экран со списками строится");
                 sc.show("тест_сумка", true);
                 s.on_message = [](const std::string& m) { said.push_back(m); };
