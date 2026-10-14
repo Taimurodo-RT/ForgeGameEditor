@@ -130,6 +130,7 @@ struct PoseScript::Impl : BindingEval {
     const Rig* rig = nullptr;
     Pose* pose = nullptr;
     u64 rng = 1;
+    u64 seed = 1; // the character's: a binding's chance is the seed's, its frame's and its own
     u64 budget_ns = 100'000'000;
     u64 start_ns = 0;
     u32 interrupts = 0;

@@ -745,6 +745,127 @@ b.x(function() return b.x() + 1 end))"));
     CHECK(pose.parts.empty());
 }
 
+TEST_CASE("Motion clip: a binding is a function of time, whatever frames were read before") {
+    const std::string src = clip_of(R"(local a, b, c = part("a"), part("b"), part("c")
+a.x(function() return rng() end)
+b.x(function() return a.x() - a.x() end)
+c.x(function() return a.x() * 2 + rng(1, 6) end)
+log(a.x(), rng())
+wait(1))");
+    PoseScript s = script_of(src);
+    const Recording rec = recorded(s);
+    auto frame_at = [&](PoseScript& script, const Recording& r, f64 t) {
+        Pose pose;
+        const bool ok = script.frame(r, nullptr, t, {}, 1, pose);
+        INFO(script.error());
+        REQUIRE(ok);
+        return std::vector<f64>{pose.parts["a"].x, pose.parts["b"].x, pose.parts["c"].x};
+    };
+    const std::vector<f64> half = frame_at(s, rec, 0.5);
+    CHECK(half[0] >= 0);
+    CHECK(half[0] < 1);
+    CHECK(half[1] == 0); // a.x read twice in one frame: the same value
+    const f64 die = half[2] - 2 * half[0];
+    CHECK(die == std::floor(die));
+    CHECK(die >= 1);
+    CHECK(die <= 6);
+    // The same t again; back to 0.1 and to 0.5 again; the frames in another order.
+    CHECK(frame_at(s, rec, 0.5) == half);
+    const std::vector<f64> early = frame_at(s, rec, 0.1);
+    CHECK(early[0] != half[0]);
+    CHECK(frame_at(s, rec, 0.5) == half);
+    CHECK(frame_at(s, rec, 0.1) == early);
+    // The recording read it too, and it is the same there: a.x at 0 and the clip's own chance after it untouched.
+    REQUIRE(rec.log.size() == 1);
+    PoseScript plain = script_of(clip_of("log(0, rng())\nwait(1)"));
+    const Recording plain_rec = recorded(plain);
+    REQUIRE(plain_rec.log.size() == 1);
+    CHECK(rec.log[0].text.substr(rec.log[0].text.find('\t')) == plain_rec.log[0].text.substr(plain_rec.log[0].text.find('\t')));
+    // A new script of the same code, recorded again, its first frames the other way round.
+    PoseScript again = script_of(src);
+    const Recording rec2 = recorded(again);
+    CHECK(frame_at(again, rec2, 0.1) == early);
+    CHECK(frame_at(again, rec2, 0.5) == half);
+    // Another seed is another chance.
+    Pose other;
+    REQUIRE(s.frame(rec, nullptr, 0.5, {}, 2, other));
+    CHECK(other.parts["a"].x != half[0]);
+}
+
+TEST_CASE("Motion clip: a binding that keeps something between frames is refused at its line") {
+    auto refused = [](std::string_view body, f64 t) {
+        PoseScript s = script_of(clip_of(body));
+        const Recording rec = recorded(s);
+        Pose pose;
+        CHECK_FALSE(s.frame(rec, nullptr, t, {}, 1, pose));
+        CHECK(pose.parts.empty());
+        // And again: the same answer, not a count.
+        CHECK_FALSE(s.frame(rec, nullptr, t, {}, 1, pose));
+        return s.error();
+    };
+    const std::string kept = "у связи нет памяти между кадрами, она считает кадр только из времени и значений частей";
+    // A local of the clip counted up, as the review's probe did: 1, 2, 3 at 0.5, 0.1, 0.5 before.
+    CHECK(refused("local a = part('a')\nlocal count = 0\na.x(function() count += 1 return count end)\nwait(1)", 0.5) ==
+          "строка 4: связь меняет переменную или буфер вне себя: " + kept);
+    // Through a function it calls.
+    CHECK(refused("local a = part('a')\nlocal count = 0\nlocal function bump() count += 1 return count end\n"
+                  "a.x(function() return bump() end)\nwait(1)",
+                  0.5) == "строка 5: связь меняет переменную или буфер вне себя: " + kept);
+    // A table of the clip, and a global: at the line that writes.
+    CHECK(refused("local a = part('a')\nlocal seen = {}\na.x(function()\n  seen[#seen + 1] = now()\n  return #seen\nend)\nwait(1)",
+                  0.5) == "строка 5: связь меняет таблицу или глобальную переменную вне себя: " + kept);
+    CHECK(refused("local a = part('a')\na.x(function()\n  n = (n or 0) + 1\n  return n\nend)\nwait(1)", 0.5) ==
+          "строка 4: связь меняет таблицу или глобальную переменную вне себя: " + kept);
+    // A buffer's bytes; a coroutine, whose steps cannot be put back.
+    CHECK(refused("local a = part('a')\nlocal b = buffer.create(1)\n"
+                  "a.x(function() buffer.writeu8(b, 0, buffer.readu8(b, 0) + 1) return buffer.readu8(b, 0) end)\nwait(1)",
+                  0.5) == "строка 4: связь меняет переменную или буфер вне себя: " + kept);
+    CHECK(refused("local a = part('a')\nlocal gen = coroutine.wrap(function() local i = 0 while true do i += 1 coroutine.yield(i) end end)\n"
+                  "a.x(function() return gen() end)\nwait(1)",
+                  0.5) == "строка 4: связь держит сопрограмму (coroutine), а её ход между кадрами не повторить: " + kept);
+    // Its own locals, tables and calls are its own.
+    PoseScript own = script_of(clip_of(R"(local a, b = part("a"), part("b")
+local function twice(v) local t = { v } t[2] = v return t[1] + t[2] end
+b.x(1)
+a.x(function() local t = {} t.k = now() return twice(t.k) + b.x() end)
+wait(1))"));
+    const Recording own_rec = recorded(own);
+    CHECK(pose_at(own, own_rec, 0.5, "a").x == 2);
+    CHECK(pose_at(own, own_rec, 0.5, "a").x == 2);
+    // Read while the clip records, then the clip goes on writing what the binding reads.
+    PoseScript read = script_of(clip_of(R"(local a = part("a")
+local st = { v = 1 }
+a.x(function() return st.v end)
+log(a.x())
+st.v = 3
+g = 4
+wait(1))"));
+    const Recording read_rec = recorded(read);
+    REQUIRE(read_rec.log.size() == 1);
+    CHECK(read_rec.log[0].text == "1");
+    CHECK(pose_at(read, read_rec, 0.5, "a").x == 3);
+
+    // Refused where it would change something, and the frames elsewhere as if it never ran.
+    PoseScript s = script_of(clip_of(R"(local a, b = part("a"), part("b")
+local level, seen = 1, { 1 }
+a.x(function() if now() > 0.5 then level = 5 end return level end)
+b.x(function() if now() > 0.5 then seen[1] = 7 end return seen[1] end)
+wait(1))"));
+    const Recording rec = recorded(s);
+    CHECK(pose_at(s, rec, 0.25, "a").x == 1);
+    Pose pose;
+    CHECK_FALSE(s.frame(rec, nullptr, 0.75, {}, 1, pose));
+    CHECK(s.error() == "строка 4: связь меняет переменную или буфер вне себя: " + kept);
+    CHECK(pose_at(s, rec, 0.25, "a").x == 1);
+    CHECK(pose_at(s, rec, 0.25, "b").x == 1);
+
+    // What the clip changes itself after making the binding, the binding reads: the value the recording ended with.
+    PoseScript late = script_of(clip_of("local a = part('a')\nlocal h = 2\na.x(function() return h end)\nh = 5\nwait(1)"));
+    const Recording late_rec = recorded(late);
+    CHECK(pose_at(late, late_rec, 0.5, "a").x == 5);
+    CHECK(pose_at(late, late_rec, 0.5, "a").x == 5);
+}
+
 TEST_CASE("Motion clip: tween, save and restore, rest") {
     PoseScript s = script_of(clip_of(R"(local a = part("a")
 tween(0.5, function(k) a.x(10 * k) a.y(k * k) end)

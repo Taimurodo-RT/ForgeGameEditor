@@ -4,7 +4,8 @@
 // runs once and leaves blocks on tracks («часть · свойство»), each block made by one call of the code. A frame is then
 // read from the tracks at any time t at once: the block of the track that started last at t or before decides, an
 // earlier one still running is cut (as a key on a timeline). Bindings (eye.x(function() … end)) are the script's
-// functions, asked for their value at t.
+// functions, asked for their value at t: functions of t and the parts' values, the same whatever was read before, so
+// one that would keep something between frames is refused at its line.
 //
 // Times are seconds from the clip's start, rounded to nanoseconds as they are summed, so 0.1 three times is 0.3.
 

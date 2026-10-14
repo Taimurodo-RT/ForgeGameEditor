@@ -669,6 +669,7 @@ bool PoseScript::frame(const Recording& rec, const Rig* rig, f64 t, const std::m
     }
     std::string why;
     im.active = T;
+    im.seed = seed;
     im.frame_rec = &rec;
     im.frame_t = t;
     im.mode = Impl::Mode::Frame;

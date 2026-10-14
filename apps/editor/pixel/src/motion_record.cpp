@@ -1517,6 +1517,7 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
     im.mode = Mode::Record;
     im.rig = rig;
     im.rng = frame_seed(seed, 0, clip);
+    im.seed = seed;
     const u64 budget = im.budget_ns;
     im.budget_ns = budget * 10;
     im.begin_call();
@@ -1568,6 +1569,166 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
     return ok;
 }
 
+namespace {
+
+// A binding is a function of time and the parts' values (docs/models/движение-модель.md, «Как считается кадр»): the
+// same t gives the same frame whatever frames were read before, in this script or a new one. It is kept so while it
+// runs: every table it can reach outside itself (through its upvalues, the functions it can call, its globals) is
+// read-only, every upvalue it could set is looked at after it and put back. What would change is refused at its line.
+constexpr int kMaxReach = 4096;
+constexpr const char* kStateless = "у связи нет памяти между кадрами, она считает кадр только из времени и значений частей";
+
+struct Guard {
+    int seen = 0, closures = 0, frozen = 0; // stack indices of its tables
+    int frozen_n = 0;
+};
+
+bool same_value(lua_State* T, int a, int b) {
+    if (lua_rawequal(T, a, b)) return true;
+    return lua_type(T, a) == LUA_TNUMBER && lua_type(T, b) == LUA_TNUMBER && std::isnan(lua_tonumber(T, a)) &&
+           std::isnan(lua_tonumber(T, b));
+}
+
+enum class Reach { Ok, TooMuch, Thread };
+
+// Pushes the guard's tables and walks from the function at fn: the tables, functions and buffers reachable through
+// upvalues, environments, tables' keys, values and metatables (the sandbox's globals and libraries are read-only
+// already). Remembers each Luau function's upvalues and each buffer's bytes, then makes the tables read-only. A
+// coroutine's state cannot be kept, so one reachable is refused.
+Reach guard_open(lua_State* T, int fn, int globals, Guard& g) {
+    lua_newtable(T);
+    g.seen = lua_gettop(T);
+    lua_newtable(T);
+    g.closures = lua_gettop(T);
+    lua_newtable(T);
+    g.frozen = lua_gettop(T);
+    lua_newtable(T);
+    const int work = lua_gettop(T);
+    int n = 0, count = 0;
+    lua_pushvalue(T, fn);
+    lua_rawseti(T, work, ++n);
+    while (n > 0) {
+        lua_rawgeti(T, work, n);
+        lua_pushnil(T);
+        lua_rawseti(T, work, n--);
+        const int v = lua_gettop(T);
+        const int type = lua_type(T, v);
+        if (type == LUA_TTHREAD) {
+            lua_settop(T, work - 1);
+            return Reach::Thread;
+        }
+        lua_pushvalue(T, v);
+        lua_rawget(T, g.seen);
+        const bool skip = (type != LUA_TTABLE && type != LUA_TFUNCTION && type != LUA_TBUFFER) ||
+                          lua_rawequal(T, v, globals) || !lua_isnil(T, -1);
+        lua_pop(T, 1);
+        if (skip) {
+            lua_pop(T, 1);
+            continue;
+        }
+        if (++count > kMaxReach) {
+            lua_settop(T, work - 1);
+            return Reach::TooMuch;
+        }
+        lua_pushvalue(T, v);
+        lua_pushboolean(T, 1);
+        lua_rawset(T, g.seen);
+        if (type == LUA_TTABLE) {
+            if (!lua_getreadonly(T, v)) {
+                lua_pushvalue(T, v);
+                lua_rawseti(T, g.frozen, ++g.frozen_n);
+            }
+            lua_pushnil(T);
+            while (lua_next(T, v)) {
+                lua_rawseti(T, work, ++n);
+                lua_pushvalue(T, -1);
+                lua_rawseti(T, work, ++n);
+            }
+            if (lua_getmetatable(T, v)) lua_rawseti(T, work, ++n);
+        } else if (type == LUA_TBUFFER) {
+            usize size = 0;
+            const void* bytes = lua_tobuffer(T, v, &size);
+            lua_pushvalue(T, v);
+            lua_pushlstring(T, static_cast<const char*>(bytes), size);
+            lua_rawset(T, g.closures);
+        } else if (lua_iscfunction(T, v)) {
+            // Its upvalues only lead on (coroutine.wrap holds its coroutine there); Luau code cannot set them.
+            for (int i = 1; lua_getupvalue(T, v, i); ++i) lua_rawseti(T, work, ++n);
+        } else {
+            lua_newtable(T);
+            const int vals = lua_gettop(T);
+            int i = 1;
+            for (; lua_getupvalue(T, v, i); ++i) {
+                lua_pushvalue(T, -1);
+                lua_rawseti(T, work, ++n);
+                lua_rawseti(T, vals, i);
+            }
+            lua_pushinteger(T, i - 1);
+            lua_setfield(T, vals, "n");
+            lua_pushvalue(T, v);
+            lua_insert(T, -2);
+            lua_rawset(T, g.closures);
+            lua_getfenv(T, v);
+            lua_rawseti(T, work, ++n);
+        }
+        lua_pop(T, 1);
+    }
+    lua_pop(T, 1); // work
+    for (int i = 1; i <= g.frozen_n; ++i) {
+        lua_rawgeti(T, g.frozen, i);
+        lua_setreadonly(T, -1, 1);
+        lua_pop(T, 1);
+    }
+    return Reach::Ok;
+}
+
+// Makes the tables writable again and puts back every upvalue and buffer the call changed; false when one changed.
+// Leaves the stack as it was below the guard's tables.
+bool guard_close(lua_State* T, Guard& g) {
+    for (int i = 1; i <= g.frozen_n; ++i) {
+        lua_rawgeti(T, g.frozen, i);
+        lua_setreadonly(T, -1, 0);
+        lua_pop(T, 1);
+    }
+    bool same = true;
+    lua_pushnil(T);
+    while (lua_next(T, g.closures)) {
+        const int vals = lua_gettop(T), fn = vals - 1;
+        if (lua_isbuffer(T, fn)) {
+            usize size = 0, was_size = 0;
+            void* bytes = lua_tobuffer(T, fn, &size);
+            const char* was = lua_tolstring(T, vals, &was_size);
+            if (size == was_size && size > 0 && std::memcmp(bytes, was, size) != 0) {
+                same = false;
+                std::memcpy(bytes, was, size);
+            }
+            lua_pop(T, 1);
+            continue;
+        }
+        lua_getfield(T, vals, "n");
+        const int count = static_cast<int>(lua_tointeger(T, -1));
+        lua_pop(T, 1);
+        for (int i = 1; i <= count; ++i) {
+            lua_rawgeti(T, vals, i);
+            lua_getupvalue(T, fn, i);
+            if (same_value(T, -1, -2)) {
+                lua_pop(T, 2);
+            } else {
+                same = false;
+                lua_pop(T, 1);
+                lua_setupvalue(T, fn, i);
+            }
+        }
+        lua_pop(T, 1);
+    }
+    lua_remove(T, g.frozen);
+    lua_remove(T, g.closures);
+    lua_remove(T, g.seen);
+    return same;
+}
+
+} // namespace
+
 bool PoseScript::Impl::eval(const Recording& rec, i32 binding, Prop prop, f64 t, PropValue& out, std::string& why) {
     int table = LUA_NOREF;
     if (motion && motion->rec == &rec) {
@@ -1580,27 +1741,63 @@ bool PoseScript::Impl::eval(const Recording& rec, i32 binding, Prop prop, f64 t,
     if (binding_depth >= kMaxBindingDepth) return why = "связи ссылаются друг на друга по кругу", false;
     lua_State* T = active;
     if (!T) return why = "связь некому посчитать", false;
+    if (!lua_checkstack(T, 32)) return why = "связи не хватило стека", false;
     lua_getref(T, table);
     lua_rawgeti(T, -1, binding + 1);
     lua_remove(T, -2);
+    const int fn = lua_gettop(T);
+    // Where it is written, for what it is refused.
+    lua_Debug ar{};
+    std::string at;
+    if (lua_getinfo(T, -1, "s", &ar) && ar.short_src[0] && ar.linedefined > 0)
+        at = std::string(ar.short_src) + ":" + std::to_string(ar.linedefined) + ": ";
+    lua_pushvalue(L, LUA_GLOBALSINDEX);
+    lua_xmove(L, T, 1);
+    const int globals = lua_gettop(T);
+    Guard guard;
+    const Reach reach = guard_open(T, fn, globals, guard);
+    if (reach != Reach::Ok) {
+        lua_settop(T, fn - 1);
+        if (reach == Reach::Thread)
+            return why = at + "связь держит сопрограмму (coroutine), а её ход между кадрами не повторить: " + kStateless, false;
+        return why = at + "связь видит больше " + std::to_string(kMaxReach) + " таблиц, функций и буферов: передайте ей только нужное",
+               false;
+    }
+    lua_pushvalue(T, fn);
     const Mode was_mode = mode;
     const Recording* was_rec = frame_rec;
     const f64 was_t = frame_t;
     const i32 was_site = site;
+    const u64 was_rng = rng;
     mode = Mode::Frame;
     frame_rec = &rec;
     frame_t = t;
+    // Its chance: the seed's, the time's and its own, not what was drawn before it.
+    rng = frame_seed(seed ^ (0x9E3779B97F4A7C15ull * static_cast<u64>(binding + 1)), t, rec.clip);
     ++binding_depth;
     const int status = lua_pcall(T, 0, 1, 0);
     --binding_depth;
     mode = was_mode;
     frame_rec = was_rec;
     frame_t = was_t;
+    rng = was_rng;
+    lua_insert(T, guard.seen); // the result or the error below the guard's tables
+    ++guard.seen, ++guard.closures, ++guard.frozen;
+    const bool same = guard_close(T, guard);
+    lua_replace(T, fn); // over the function, the globals above it
+    lua_settop(T, fn);
     if (status != LUA_OK) {
         const char* m = lua_tostring(T, -1);
         why = m ? m : "ошибка без текста";
         lua_pop(T, 1);
+        const std::string kWrite = "attempt to modify a readonly table";
+        if (why.size() >= kWrite.size() && why.compare(why.size() - kWrite.size(), kWrite.size(), kWrite) == 0)
+            why = why.substr(0, why.size() - kWrite.size()) + "связь меняет таблицу или глобальную переменную вне себя: " + kStateless;
         return false;
+    }
+    if (!same) {
+        lua_pop(T, 1);
+        return why = at + "связь меняет переменную или буфер вне себя: " + kStateless, false;
     }
     site = was_site;
     out = {};
