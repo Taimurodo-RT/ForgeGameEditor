@@ -8,6 +8,10 @@
 
 namespace Rml {
 
+namespace SVG {
+	struct SVGData;
+}
+
 /**
     The 'img' element can render images and sprites.
 
@@ -96,6 +100,11 @@ private:
 	// The geometry used to render this element.
 	Geometry geometry;
 	bool geometry_dirty;
+
+	// Forge: an SVG picture is drawn from a texture of its own, rasterized at the content box's size in pixels of the window
+	// (see SVG::SVGCache); 'texture' still gives its intrinsic size. Both are empty for other images.
+	String svg_path;
+	SharedPtr<SVG::SVGData> svg;
 };
 
 } // namespace Rml

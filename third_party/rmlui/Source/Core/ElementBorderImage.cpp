@@ -1,5 +1,6 @@
 #include "ElementBorderImage.h"
 #include "../../Include/RmlUi/Core/ComputedValues.h"
+#include "../../Include/RmlUi/Core/Core.h"
 #include "../../Include/RmlUi/Core/DataUri.h"
 #include "../../Include/RmlUi/Core/Element.h"
 #include "../../Include/RmlUi/Core/ElementDocument.h"
@@ -9,9 +10,13 @@
 #include "../../Include/RmlUi/Core/Property.h"
 #include "../../Include/RmlUi/Core/RenderManager.h"
 #include "../../Include/RmlUi/Core/StringUtilities.h"
+#include "../../Include/RmlUi/Core/SystemInterface.h"
 #include "BackgroundPlacement.h"
 #include <cmath>
 #include <cstdlib>
+#ifdef RMLUI_SVG_PLUGIN
+	#include "../SVG/SVGCache.h"
+#endif
 
 namespace Rml {
 
@@ -129,6 +134,10 @@ bool ElementBorderImage::Instance(Element* element)
 		document_path = document->GetSourceURL();
 	texture = render_manager->LoadTexture(path, document_path);
 	active = (bool)texture;
+#ifdef RMLUI_SVG_PLUGIN
+	if (active && SVG::SVGCache::IsSVG(path))
+		GetSystemInterface()->JoinPath(svg_path, StringUtilities::Replace(document_path, '|', ':'), path);
+#endif
 	return active;
 }
 
@@ -137,6 +146,8 @@ void ElementBorderImage::Release()
 	geometry = Geometry();
 	texture = Texture();
 	active = false;
+	svg_path.clear();
+	svg.reset();
 }
 
 void ElementBorderImage::Generate(Element* element)
@@ -221,10 +232,48 @@ void ElementBorderImage::Generate(Element* element)
 	const Repeat repeat_y = ToRepeat(repeat_tokens.size() >= 2 ? repeat_tokens[1] : repeat_tokens.empty() ? String() : repeat_tokens[0]);
 
 	// Columns and rows: picture pixels (x0..x3) and destination pixels (d0..d3).
-	const float sx[4] = {0.f, slice[3], image.x - slice[1], image.x};
-	const float sy[4] = {0.f, slice[0], image.y - slice[2], image.y};
-	const float dx[4] = {0.f, width[3], area.x - width[1], area.x};
-	const float dy[4] = {0.f, width[0], area.y - width[2], area.y};
+	float sx[4] = {0.f, slice[3], image.x - slice[1], image.x};
+	float sy[4] = {0.f, slice[0], image.y - slice[2], image.y};
+	float dx[4] = {0.f, width[3], area.x - width[1], area.x};
+	float dy[4] = {0.f, width[0], area.y - width[2], area.y};
+	Vector2f origin = area_origin;
+	Vector2f texture_size = image; // the size texture coordinates divide by
+
+	svg.reset();
+#ifdef RMLUI_SVG_PLUGIN
+	// An SVG picture: rasterized at the scale of a corner (its border width over its slice), every boundary rounded to whole
+	// pixels, both in the raster and on screen (Render rounds the element's offset), so the corners are drawn pixel for pixel
+	// and the parts meet without seams.
+	if (!svg_path.empty())
+	{
+		float scale = 0.f;
+		for (int i : {3, 0, 1, 2})
+			if (scale <= 0.f && slice[i] > 0.f && width[i] > 0.f)
+				scale = width[i] / slice[i];
+		if (scale <= 0.f)
+			scale = Math::Min(area.x / image.x, area.y / image.y);
+		const Vector2i raster = Math::Max(Vector2i((image * scale).Round()), Vector2i(1));
+		const float rx[4] = {0.f, Math::Round(slice[3] * scale), float(raster.x) - Math::Round(slice[1] * scale), float(raster.x)};
+		const float ry[4] = {0.f, Math::Round(slice[0] * scale), float(raster.y) - Math::Round(slice[2] * scale), float(raster.y)};
+		const Vector2f end = (area_origin + area).Round();
+		origin = area_origin.Round();
+		const Vector2f rounded_area = end - origin;
+		const float ex[4] = {0.f, Math::Round(width[3]), rounded_area.x - Math::Round(width[1]), rounded_area.x};
+		const float ey[4] = {0.f, Math::Round(width[0]), rounded_area.y - Math::Round(width[2]), rounded_area.y};
+		svg = SVG::SVGCache::GetHandle(svg_path, element, raster);
+		if (svg)
+		{
+			for (int i = 0; i < 4; i++)
+			{
+				sx[i] = rx[i];
+				sy[i] = ry[i];
+				dx[i] = ex[i];
+				dy[i] = ey[i];
+			}
+			texture_size = Vector2f(raster);
+		}
+	}
+#endif
 
 	const ComputedValues& computed = element->GetComputedValues();
 	const ColourbPremultiplied colour = computed.image_color().ToPremultiplied(computed.opacity());
@@ -259,9 +308,9 @@ void ElementBorderImage::Generate(Element* element)
 				const float ix = (col == 1 && repeat_x != Repeat::Stretch ? Math::Min(0.5f, src_w * 0.25f) : 0.f);
 				const float iy = (row == 1 && repeat_y != Repeat::Stretch ? Math::Min(0.5f, src_h * 0.25f) : 0.f);
 				const float u0 = sx[col] + ix, u1 = sx[col + 1] - ix, v0 = sy[row] + iy, v1 = sy[row + 1] - iy;
-				const Vector2f uv0((u0 + x.t0 * (u1 - u0)) / image.x, (v0 + y.t0 * (v1 - v0)) / image.y);
-				const Vector2f uv1((u0 + x.t1 * (u1 - u0)) / image.x, (v0 + y.t1 * (v1 - v0)) / image.y);
-				MeshUtilities::GenerateQuad(mesh, area_origin + Vector2f(dx[col] + x.pos, dy[row] + y.pos), Vector2f(x.size, y.size), colour, uv0, uv1);
+				const Vector2f uv0((u0 + x.t0 * (u1 - u0)) / texture_size.x, (v0 + y.t0 * (v1 - v0)) / texture_size.y);
+				const Vector2f uv1((u0 + x.t1 * (u1 - u0)) / texture_size.x, (v0 + y.t1 * (v1 - v0)) / texture_size.y);
+				MeshUtilities::GenerateQuad(mesh, origin + Vector2f(dx[col] + x.pos, dy[row] + y.pos), Vector2f(x.size, y.size), colour, uv0, uv1);
 			}
 	};
 	for (int row = 0; row < 3; row++)
@@ -275,7 +324,9 @@ void ElementBorderImage::Generate(Element* element)
 
 void ElementBorderImage::Render(Element* element)
 {
-	if (active && geometry)
+	if (active && geometry && svg)
+		geometry.Render(element->GetAbsoluteOffset(BoxArea::Border).Round(), svg->texture);
+	else if (active && geometry)
 		geometry.Render(element->GetAbsoluteOffset(BoxArea::Border), texture);
 }
 

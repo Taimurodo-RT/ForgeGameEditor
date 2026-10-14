@@ -155,6 +155,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
 set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
 set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+# The SVG plugin (third_party/rmlui/Source/SVG, on the lunasvg fetched above): SVG pictures drawn at their size on screen.
+set(RMLUI_SVG_PLUGIN ON CACHE BOOL "" FORCE)
 # RmlUi looks for an installed FreeType; it gets the one fetched above instead.
 set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON)
 FetchContent_MakeAvailable(SDL3 tracy yyjson xxhash stb libwebp glslang spirv_cross flecs box2d luau freetype lunasvg thorvg harfbuzz)

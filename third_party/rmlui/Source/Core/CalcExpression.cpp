@@ -54,7 +54,8 @@ namespace {
 		{"rad", DEG, 57.29577951f},
 		{"grad", DEG, 0.9f},
 		{"turn", DEG, 360.f},
-		{"px", PX, 1.f},
+		{"devpx", PX, 1.f}, // Forge: a device pixel; px is a logical one, like dp
+		{"px", DP, 1.f},
 		{"em", EM, 1.f},
 		{"ex", EM, 0.5f},
 		{"ch", EM, 0.5f},
@@ -485,7 +486,8 @@ bool ContainsMath(const String& value)
 
 bool Fold(const String& value, String& out_value, bool& out_unresolved)
 {
-	static const char* suffix[CHANNEL_COUNT] = {"", "px", "%", "em", "rem", "vw", "vh", nullptr, nullptr, "dp", "deg", "s"};
+	// Forge: px is a logical pixel, so the device pixel channel folds to devpx.
+	static const char* suffix[CHANNEL_COUNT] = {"", "devpx", "%", "em", "rem", "vw", "vh", nullptr, nullptr, "px", "deg", "s"};
 
 	out_value.clear();
 	out_unresolved = false;

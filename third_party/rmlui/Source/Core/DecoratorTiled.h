@@ -88,6 +88,8 @@ public:
 
 		// Forge: the image is an SVG picture, which has no intrinsic size in CSS backgrounds.
 		bool vector_image = false;
+		// Forge: the SVG picture's path, found as its texture was; it is drawn from a texture of the tile's size on screen.
+		String vector_path;
 	};
 
 protected:

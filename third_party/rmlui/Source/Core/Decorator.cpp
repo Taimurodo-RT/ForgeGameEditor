@@ -1,7 +1,10 @@
 #include "../../Include/RmlUi/Core/Decorator.h"
+#include "../../Include/RmlUi/Core/Core.h"
 #include "../../Include/RmlUi/Core/PropertyDefinition.h"
 #include "../../Include/RmlUi/Core/RenderManager.h"
+#include "../../Include/RmlUi/Core/StringUtilities.h"
 #include "../../Include/RmlUi/Core/StyleSheet.h"
+#include "../../Include/RmlUi/Core/SystemInterface.h"
 #include "../../Include/RmlUi/Core/Texture.h"
 #include <algorithm>
 
@@ -67,6 +70,15 @@ Texture DecoratorInstancerInterface::GetTexture(const String& filename) const
 	}
 
 	return render_manager.LoadTexture(filename, property_source->path);
+}
+
+String DecoratorInstancerInterface::ResolvePath(const String& filename) const
+{
+	String path;
+	if (!filename.empty() && filename[0] == '?')
+		return filename;
+	GetSystemInterface()->JoinPath(path, property_source ? StringUtilities::Replace(property_source->path, '|', ':') : String(), filename);
+	return path;
 }
 
 RenderManager& DecoratorInstancerInterface::GetRenderManager() const

@@ -1,13 +1,19 @@
 #include "ElementImage.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
+#include "../../../Include/RmlUi/Core/Core.h"
 #include "../../../Include/RmlUi/Core/ElementDocument.h"
 #include "../../../Include/RmlUi/Core/ElementUtilities.h"
 #include "../../../Include/RmlUi/Core/MeshUtilities.h"
 #include "../../../Include/RmlUi/Core/PropertyIdSet.h"
+#include "../../../Include/RmlUi/Core/StringUtilities.h"
 #include "../../../Include/RmlUi/Core/StyleSheet.h"
+#include "../../../Include/RmlUi/Core/SystemInterface.h"
 #include "../../../Include/RmlUi/Core/Texture.h"
 #include "../../../Include/RmlUi/Core/URL.h"
 #include "../TextureDatabase.h"
+#ifdef RMLUI_SVG_PLUGIN
+	#include "../../SVG/SVGCache.h"
+#endif
 
 namespace Rml {
 
@@ -81,6 +87,12 @@ void ElementImage::OnRender()
 	if (geometry_dirty)
 		GenerateGeometry();
 
+	// Forge: an SVG picture's texture is the box's size, so its pixels go onto whole pixels of the window.
+	if (svg)
+	{
+		geometry.Render(GetAbsoluteOffset(BoxArea::Content).Round(), svg->texture);
+		return;
+	}
 	geometry.Render(GetAbsoluteOffset(BoxArea::Border), texture);
 }
 
@@ -125,6 +137,9 @@ void ElementImage::OnPropertyChange(const PropertyIdSet& changed_properties)
 	Element::OnPropertyChange(changed_properties);
 
 	if (changed_properties.Contains(PropertyId::ImageColor) || changed_properties.Contains(PropertyId::Opacity))
+		geometry_dirty = true;
+	// Forge: an SVG picture may draw in the text's colour (currentColor).
+	if (!svg_path.empty() && changed_properties.Contains(PropertyId::Color))
 		geometry_dirty = true;
 }
 
@@ -180,6 +195,24 @@ void ElementImage::GenerateGeometry()
 	const ColourbPremultiplied quad_colour = computed.image_color().ToPremultiplied(computed.opacity());
 	const RenderBox render_box = GetRenderBox(BoxArea::Content);
 
+#ifdef RMLUI_SVG_PLUGIN
+	// Forge: an SVG picture rasterized at the box's size, in whole pixels (drawn at the content box's corner, see OnRender).
+	svg.reset();
+	if (!svg_path.empty() && rect_source == RectSource::None)
+	{
+		const Vector2i size(render_box.GetFillSize().Round());
+		svg = SVG::SVGCache::GetHandle(svg_path, this, size);
+		if (svg)
+		{
+			MeshUtilities::GenerateQuad(mesh, Vector2f(0), Vector2f(size), quad_colour, Vector2f(0), Vector2f(1));
+			if (RenderManager* render_manager = GetRenderManager())
+				geometry = render_manager->MakeGeometry(std::move(mesh));
+			geometry_dirty = false;
+			return;
+		}
+	}
+#endif
+
 	MeshUtilities::GenerateQuad(mesh, render_box.GetFillOffset(), render_box.GetFillSize(), quad_colour, texcoords[0], texcoords[1]);
 
 	if (RenderManager* render_manager = GetRenderManager())
@@ -193,6 +226,8 @@ bool ElementImage::LoadTexture()
 	texture_dirty = false;
 	geometry_dirty = true;
 	dimensions_scale = 1.0f;
+	svg_path.clear(); // Forge
+	svg.reset();
 
 	RenderManager* render_manager = GetRenderManager();
 	if (!render_manager)
@@ -253,6 +288,12 @@ bool ElementImage::LoadTexture()
 		texture = render_manager->LoadTexture(source_name, source_url.GetPath());
 
 		dimensions_scale = dp_ratio;
+
+#ifdef RMLUI_SVG_PLUGIN
+		// Forge: SVG pictures are found as LoadTexture finds them, and drawn at their box's size (GenerateGeometry).
+		if (SVG::SVGCache::IsSVG(source_name))
+			GetSystemInterface()->JoinPath(svg_path, StringUtilities::Replace(source_url.GetPath(), '|', ':'), source_name);
+#endif
 	}
 
 	return true;
