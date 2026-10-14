@@ -12,13 +12,18 @@ namespace slice {
 using namespace forge;
 namespace fs = std::filesystem;
 
-bool hero_frames_ok(u32 frames, u32 width, std::string* why) {
-    if (frames != 1 && frames != 4) {
-        if (why) *why = "кадров в картинке " + std::to_string(frames) + ", а у героя их 4 (стоит, шаг, шаг, в воздухе) или 1";
+bool hero_frames_ok(u32 frames, u32 width, bool animated, std::string* why) {
+    if (frames != 1 && frames != 4 && !animated) {
+        if (why)
+            *why = "кадров в картинке " + std::to_string(frames) +
+                   ", а у героя их 4 (стоит, шаг, шаг, в воздухе) или 1; другое число — когда у него есть свои анимации (вкладка «Анимация»)";
         return false;
     }
-    if (width % frames != 0) {
-        if (why) *why = "ширина картинки " + std::to_string(width) + " не делится на 4 кадра";
+    if (frames == 0 || width % frames != 0) {
+        const u32 d = frames % 10, h = frames % 100;
+        if (why)
+            *why = "ширина картинки " + std::to_string(width) + " не делится на " + std::to_string(frames) +
+                   (d == 1 && h != 11 ? " кадр" : d >= 2 && d <= 4 && (h < 12 || h > 14) ? " кадра" : " кадров");
         return false;
     }
     return true;
@@ -39,7 +44,7 @@ bool hero_picture_ok(const objects::Library& library, const objects::Template& t
         if (why) *why = "картинка " + t.picture + " не читается";
         return false;
     }
-    return hero_frames_ok(t.frames, image.width, why);
+    return hero_frames_ok(t.frames, image.width, !t.animations.empty(), why);
 }
 
 const char* pose_id(Pose pose) {
@@ -198,7 +203,7 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
         if (w.hero) {
             const objects::Template* t = library.find(w.key);
             std::string why;
-            if (!hero_frames_ok(w.frames, d.file_width, &why))
+            if (!hero_frames_ok(w.frames, d.file_width, t && !t->animations.empty(), &why))
                 FORGE_WARN("картинка героя %s: %s, герой рисуется как прежде", path_to_utf8(w.file).c_str(), why.c_str());
             else if (t) {
                 ++heroes;

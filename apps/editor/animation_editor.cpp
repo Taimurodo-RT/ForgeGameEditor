@@ -154,6 +154,7 @@ void AnimationEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("an_own", &m_own_);
     model.Bind("an_loop", &m_loop_);
     model.Bind("an_playing", &m_playing_);
+    model.Bind("an_mode", &m_mode_);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) { fn(args); });
@@ -182,6 +183,7 @@ void AnimationEditor::bind(Rml::DataModelConstructor& model) {
         if (const objects::Template* t = selected()) set_frames(static_cast<int>(t->frames) + 1);
     });
     on("an_play", [this](const Rml::VariantList&) { play(!playing_); });
+    on("an_set_mode", [this, arg_str](const Rml::VariantList& a) { set_mode(arg_str(a, 0)); });
     on("an_step", [this, arg_int](const Rml::VariantList& a) { step(arg_int(a, 0) < 0 ? -1 : 1); });
 }
 
@@ -219,6 +221,15 @@ bool AnimationEditor::handle_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     return false;
+}
+
+bool AnimationEditor::set_mode(const std::string& mode) {
+    if (mode == mode_ || (mode != "frames" && mode != "pixel")) return false;
+    mode_ = mode;
+    m_mode_ = mode;
+    dirty("an_mode");
+    if (mode == "frames") built_ = 0; // what «Пиксельные» gave a template is seen at once
+    return true;
 }
 
 void AnimationEditor::undo() {

@@ -31,6 +31,10 @@ coin and a bridge on «Луг», the exit's link and the win window's title. And
 `forge_editor --self-test animation` has made it (the tab «Анимация»), «Анимация А» of
 the same template with `--edits` of the animations the author made: the hero's walk
 and jump, the beetle's walk, the flag's two frames, drawn so. And when
+`forge_editor --self-test pixel` has made it («Пиксельные» of the tab «Анимация»),
+«Пиксельные А» of the same template with `--edits` of the hero's animations as given
+from a baked vector character: its 12 frames, standing by 1–4 and walking by 5–12,
+drawn so. And when
 `forge_editor --self-test input` has made it (the tab «Ввод»), «Ввод А» of the same
 template with `--edits` of the keys the author gave its actions: the hero jumps on K
 and W, not on the space. And when `forge_editor --self-test rpg-template` has made it
@@ -115,6 +119,11 @@ def main() -> int:
         plays += [(animation / "Мои игры" / "Анимация А", animation / "ожидания анимации.json", False)]
     else:
         print(f"нет {animation / 'ожидания анимации.json'}: анимации автора не играются (forge_editor --self-test animation их делает)", flush=True)
+    pixel = Path(tempfile.gettempdir()) / "forge_editor_пиксельные"
+    if (pixel / "ожидания пиксельные.json").is_file():
+        plays += [(pixel / "Мои игры" / "Пиксельные А", pixel / "ожидания пиксельные.json", False)]
+    else:
+        print(f"нет {pixel / 'ожидания пиксельные.json'}: запечённый герой автора не играется (forge_editor --self-test pixel его делает)", flush=True)
     keys = Path(tempfile.gettempdir()) / "forge_editor_ввод"
     if (keys / "ожидания ввода.json").is_file():
         plays += [(keys / "Мои игры" / "Ввод А", keys / "ожидания ввода.json", False)]

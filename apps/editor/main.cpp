@@ -39,6 +39,7 @@
 // with a project.forge was made of a template of games/templates.json.
 
 #include "animation_editor.h"
+#include "pixel_editor.h"
 #include "image_editor.h"
 #include "input_editor.h"
 #include "asset_library.h"
@@ -377,6 +378,8 @@ public:
     AssetLibrary assets;
     // «Изображения»: pictures of «Ресурсы» edited pixel by pixel; written into their files only when saved.
     ImageEditor image_tab{assets};
+    // «Пиксельные» of «Анимация»: vector characters of «Ресурсы» baked into pictures for templates; the tab's history.
+    PixelEditor pixel_tab{assets, level_module, anim_tab.history()};
     // The game that is open and the ways to another («Новая игра из шаблона…», «Открыть игру…»); set before init.
     ProjectWindow projects;
     ProjectConfig project_config;
@@ -515,6 +518,18 @@ public:
         story_tab.init(ui_, story_dir);
         anim_tab.template_icon = [this](const objects::Template& t) { return objects_tab.template_icon(t); };
         anim_tab.init(ui_);
+        pixel_tab.template_icon = anim_tab.template_icon;
+        pixel_tab.game_colors = [this] {
+            std::vector<pixel::Rgba8> out;
+            for (const editor::design::NamedColor& c : ui_tab.library().colors) out.push_back({c.color.r, c.color.g, c.color.b, c.color.a});
+            return out;
+        };
+        pixel_tab.game_copy = [this](const Guid& id) {
+            for (const editor::sources::Entry& e : sources.entries())
+                if (e.asset == id && e.file.rfind("pictures/", 0) == 0) return e.file.substr(9);
+            return std::string();
+        };
+        pixel_tab.init(ui_);
         // «Ввод»: the module's actions, then the shell's; what the author changed is the game's input.json.
         input_tab.open(input_file, module.actions, module.name);
         if (!assets.init(ui_, assets_config)) return false;
@@ -527,11 +542,13 @@ public:
             return copy_from_assets(source, folder);
         };
         objects_tab.copy_in = copy_in;
+        pixel_tab.copy_in = copy_in;
         ui_tab.copy_in = copy_in;
         level.copy_in = copy_in;
         assets.on_index = [this] {
             sync_sources();
             image_tab.files_changed();
+            pixel_tab.indexed();
         };
         // «Изображения»: the templates a picture draws are those whose picture is its copy in the game; a picture
         // written there is looked at by «Ресурсы» at once (the copies follow it).
@@ -827,6 +844,17 @@ public:
         open_tab("animation");
         return found;
     }
+    // «В «Пиксельные»» of «Ресурсы» on an SVG: «Анимация» in «Пиксельные» on the character made of it (a new one when
+    // none is).
+    bool pixelize_selected_asset() {
+        if (assets.selection().size() != 1) return false;
+        anim_tab.set_mode("pixel");
+        m_tab_title_ = "Анимация";
+        m_tab_icon_ = "movie";
+        for (const char* name : {"tab_title", "tab_icon"}) model_.DirtyVariable(name);
+        open_tab("animation");
+        return pixel_tab.from_svg(assets.selection().front());
+    }
     // «Открыть в редакторе изображений» of «Ресурсы»: the tab «Изображения» on the picture chosen there.
     bool edit_selected_image() {
         if (assets.selection().size() != 1) return false;
@@ -1000,7 +1028,10 @@ public:
         if (m_tab_ == "objects") objects_tab.update(context_);
         if (m_tab_ == "logic") logic_tab.update(context_);
         if (m_tab_ == "story") story_tab.update(context_);
-        if (m_tab_ == "animation") anim_tab.update(dt);
+        if (m_tab_ == "animation") {
+            if (anim_tab.mode() == "pixel") pixel_tab.update(dt, context_);
+            else anim_tab.update(dt);
+        }
         image_tab.update(m_tab_ == "images" ? context_ : nullptr);
         ui_tab.set_shown(m_tab_ == "ui");
         if (m_tab_ == "ui") ui_tab.update(context_);
@@ -1087,7 +1118,8 @@ public:
         if (m_tab_ == "logic") return logic_tab.handle_event(e, density, ui_used) || ui_used;
         if (m_tab_ == "story") return story_tab.handle_event(e) || ui_used;
         if (m_tab_ == "images") return image_tab.handle_event(e, density, ui_used, context_) || ui_used;
-        if (m_tab_ == "animation" || m_tab_ == "input") return ui_used;
+        if (m_tab_ == "animation") return (anim_tab.mode() == "pixel" && pixel_tab.handle_event(e, density, context_)) || ui_used;
+        if (m_tab_ == "input") return ui_used;
         if (m_tab_ == "ui") return ui_tab.handle_event(e, density, context_) || ui_used;
         switch (e.type) {
         case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -1268,6 +1300,7 @@ private:
         // «Сделать анимацию» of «Ресурсы»: the tab «Анимация» on the template drawn with the game's copy of the picture.
         on("an_from_asset", [this](Rml::Event&, const Rml::VariantList&) { animate_selected_asset(); });
         on("im_from_asset", [this](Rml::Event&, const Rml::VariantList&) { edit_selected_image(); });
+        on("px_from_asset", [this](Rml::Event&, const Rml::VariantList&) { pixelize_selected_asset(); });
         on("add_object", [this](Rml::Event&, const Rml::VariantList&) { add_object(); });
         on("delete_selection", [this](Rml::Event&, const Rml::VariantList&) { delete_selection(); });
         on("expand_all", [this](Rml::Event&, const Rml::VariantList& a) {
@@ -1328,6 +1361,7 @@ private:
         logic_tab.bind(model);
         story_tab.bind(model);
         anim_tab.bind(model);
+        pixel_tab.bind(model);
         image_tab.bind(model);
         input_tab.bind(model);
         ui_tab.bind(model);
@@ -1340,6 +1374,7 @@ private:
         logic_tab.set_model(model_);
         story_tab.set_model(model_);
         anim_tab.set_model(model_);
+        pixel_tab.set_model(model_);
         image_tab.set_model(model_);
         input_tab.set_model(model_);
         ui_tab.set_model(model_);
@@ -1519,7 +1554,7 @@ private:
         } else if (m_tab_ == "story") {
             set(m_status_, story_tab.status(), "status");
         } else if (m_tab_ == "animation") {
-            set(m_status_, anim_tab.status(), "status");
+            set(m_status_, anim_tab.mode() == "pixel" ? pixel_tab.status() : anim_tab.status(), "status");
         } else if (m_tab_ == "images") {
             set(m_status_, image_tab.status(), "status");
         } else if (m_tab_ == "input") {
@@ -1747,7 +1782,7 @@ private:
         if (m_tab_ == "objects") return objects_tab.handle_key(k);
         if (m_tab_ == "logic") return logic_tab.handle_key(k);
         if (m_tab_ == "story") return story_tab.handle_key(k);
-        if (m_tab_ == "animation") return anim_tab.handle_key(k);
+        if (m_tab_ == "animation") return anim_tab.mode() == "pixel" ? pixel_tab.handle_key(k) : anim_tab.handle_key(k);
         if (m_tab_ == "images") return image_tab.handle_key(k);
         if (m_tab_ == "input") return false;
         if (m_tab_ == "ui") return ui_tab.handle_key(k);
@@ -1987,7 +2022,9 @@ struct Options {
     // "modules" (step 14.3a: the editor of a game's module, from the registry; a game of the test module «Проба» opened
     // by "modules-probe" in an editor of its own, a game from before step 14.3 by "modules-old", the games refused);
     // "animation" (the tab «Анимация»: two games of the catalog's «Платформер», animations of A made in the tab by
-    // "animation-a", opened again and played by "animation-a-again"); "input" (the tab «Ввод»: the same, the keys of
+    // "animation-a", opened again and played by "animation-a-again"); "pixel" (its «Пиксельные»: two games of the
+    // catalog's «Платформер», a vector character of A's «Ресурсы» posed, baked and given to «Герой» by "pixel-a", opened
+    // again from another working folder and played by "pixel-a-again"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2224,6 +2261,9 @@ public:
         if (part == "animation") return frame < 3 || animation_step();
         if (part == "animation-a") return frame < 3 || animation_a_step();
         if (part == "animation-a-again") return frame < 3 || animation_again_step();
+        if (part == "pixel") return frame < 3 || pixel_step();
+        if (part == "pixel-a") return frame < 3 || pixel_a_step();
+        if (part == "pixel-a-again") return frame < 3 || pixel_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "input-a") return frame < 3 || input_a_step();
         if (part == "input-a-again") return frame < 3 || input_again_step();
@@ -16635,10 +16675,14 @@ private:
                       element_text("an-mode-frames").find("Покадровая") != std::string::npos,
                   "the modes: «Покадровая» chosen");
             for (const auto& [m, name] : {std::pair{"an-mode-skeleton", "Скелетная"}, std::pair{"an-mode-scene", "Сцена"},
-                                          std::pair{"an-mode-ui", "Интерфейс"}, std::pair{"an-mode-pixel", "Пиксельные"}})
+                                          std::pair{"an-mode-ui", "Интерфейс"}})
                 check(shown(m) && pj_class(m, "soon") && !pj_class(m, "selected") && element_text(m).find(name) != std::string::npos &&
                           element_text(m).find("появится") != std::string::npos,
                       std::string("«") + name + "»: «появится»");
+            check(shown("an-mode-pixel") && !pj_class("an-mode-pixel", "soon") && !pj_class("an-mode-pixel", "selected") &&
+                      element_text("an-mode-pixel").find("Пиксельные") != std::string::npos &&
+                      element_text("an-mode-pixel").find("появится") == std::string::npos,
+                  "«Пиксельные» is there to choose (--self-test pixel)");
             check(an_pick("beetle"), "a click on «Жук»");
             break;
         }
@@ -16898,6 +16942,725 @@ private:
         default: break;
         }
         ++an_step_;
+        return true;
+    }
+
+    // --- «Пиксельные» (step 2 of docs/models/вектор-модель.md) ----------------------------------------------------
+    // --self-test pixel: «Пиксельные А» and «Пиксельные Б» made of the catalog's «Платформер». The editor for A
+    // (pixel-a), in «Анимация» → «Пиксельные» with the mouse and the keys: a character made of «персонажи/Ёжик.svg»
+    // (its «.pixel.json» and «.luau» beside it, one step); the author's script of standing and walking, read again when
+    // its file changes; the frame 32 × 64; «Идёт» of 8 frames thirty a second; the clock (Space, ← and →, the keys of
+    // the clips, a frame chosen, «Калька»); the pixel view exactly the frame as the files bake it apart from the tab,
+    // of the SVG's colours (and of the game's), no pixel half transparent; a leg chosen on the vector and its pivot
+    // dragged to the hip in the pose shown; a parameter and the seed typed; a script that does not compile (its line,
+    // the views on the last pose) and one that moves a part the SVG has not; an SVG with what ThorVG does not draw,
+    // named; «Запечь» (the strip, its .meta, the bake in the file); a picture painted after it, not baked over without
+    // asking; «Отдать шаблону…» «Герой»: the picture, 12 frames, «Стоит» and «Идёт» as baked; each step undone and
+    // done again; «Пиксельный персонаж» of «Ресурсы» on the SVG. pixel-a-again, from another working folder: the same
+    // file and frames; «Играть со стартового»: the game plays the hero by the baked frames (scene project with
+    // --edits). The template and B: the same bytes; A's game has the picture, not what it was made of.
+    int px_step_ = 0;
+    std::map<std::string, std::vector<u8>> px_tmpl_, px_b_;
+    std::vector<u8> px_doc0_, px_script0_, px_png_, px_png_edited_, px_meta_, px_doc_baked_, px_hero0_, px_hero1_;
+    std::string px_svg_id_;
+    assets::CookedTexture px_shown_, px_vec_;
+    PixelEditor& px() { return ed_.pixel_tab; }
+    static std::filesystem::path px_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_пиксельные"); }
+    static std::filesystem::path px_mine(const char* title) { return px_root() / utf8_path("Мои игры") / utf8_path(title); }
+    // A click on an element of the tab's right column, scrolled to first as a person scrolls to it.
+    bool px_click(const std::string& id) { return ue_press(id); }
+    // The author's drawing: a hedgehog of 32 × 64 (the hero's frame), its legs, its torso with the head, a mouth and the
+    // open mouth it morphs into (hidden; of the same colour, so the frames keep the SVG's four).
+    static constexpr const char* kPxHedgehog = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 64" width="32" height="64">
+  <g id="body">
+    <rect id="leg_l" x="9" y="44" width="5" height="18" fill="#40306a"/>
+    <rect id="leg_r" x="18" y="44" width="5" height="18" fill="#40306a"/>
+    <g id="torso">
+      <rect x="7" y="24" width="18" height="22" fill="#d04a30"/>
+      <g id="head">
+        <circle cx="16" cy="14" r="9" fill="#f0c090"/>
+        <path id="mouth" d="M12 18 L20 18 L20 19.5 L12 19.5 Z" fill="#401010"/>
+        <path id="mouth_open" d="M12 17 L20 17 L20 21 L12 21 Z" fill="#401010" style="display:none"/>
+      </g>
+    </g>
+  </g>
+</svg>
+)svg";
+    // A drawing with what ThorVG does not draw: a text and a picture put in.
+    static constexpr const char* kPxLabel = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect id="plate" x="2" y="8" width="28" height="16" fill="#3060c0"/>
+  <text id="label" x="4" y="20" font-size="8">Привет</text>
+  <image id="photo" x="0" y="0" width="8" height="8"/>
+</svg>
+)svg";
+    // The author's pose: standing, the torso bobs; walking, the legs swing round their pivots, the body bobs and the
+    // mouth opens. Eight frames thirty a second are one step of each leg (speed 3.75).
+    static constexpr const char* kPxWalk = R"lua(-- «Ёжик»: стоит, качаясь, и идёт, переставляя ноги; на шаге открывает рот.
+return {
+  params = { speed = 3.75, step = 25 },
+  pose = function(t, p, rng, clip)
+    local s = math.sin(t * p.speed * 2 * math.pi)
+    if clip == "walk" then
+      part("leg_l"):set{ rot = p.step * s }
+      part("leg_r"):set{ rot = -p.step * s }
+      part("body"):set{ y = -math.abs(s) }
+      shape("mouth"):morph("mouth_open", ease("smooth", math.abs(s)))
+    else
+      part("torso"):set{ y = -math.abs(s) }
+    end
+  end,
+}
+)lua";
+    static constexpr const char* kPxTypo = R"lua(-- «Ёжик»: опечатка в третьей строке.
+return {
+  params = { speed = 3.75, step = = 25 },
+  pose = function(t, p, rng, clip) end,
+}
+)lua";
+    static constexpr const char* kPxTail = R"lua(return {
+  params = { speed = 3.75, step = 25 },
+  pose = function(t, p, rng, clip)
+    part("tail"):set{ rot = 10 }
+  end,
+}
+)lua";
+    static inline const std::vector<pixel::Rgba8> kPxColors = {{0x40, 0x30, 0x6a, 255}, {0xd0, 0x4a, 0x30, 255}, {0xf0, 0xc0, 0x90, 255},
+                                                                {0x40, 0x10, 0x10, 255}};
+    static bool px_same(const assets::CookedTexture& a, const assets::CookedTexture& b) {
+        return !a.rgba8.empty() && a.width == b.width && a.height == b.height && a.rgba8 == b.rgba8;
+    }
+    // Frame k of a strip of frames fw wide.
+    static assets::CookedTexture px_cut(const assets::CookedTexture& strip, u32 fw, u32 k) {
+        assets::CookedTexture out;
+        if (fw == 0 || (k + 1) * fw > strip.width) return out;
+        out.width = fw;
+        out.height = strip.height;
+        out.rgba8.resize(static_cast<usize>(fw) * strip.height * 4);
+        for (u32 y = 0; y < strip.height; ++y)
+            std::copy_n(&strip.rgba8[(static_cast<usize>(y) * strip.width + static_cast<usize>(k) * fw) * 4], static_cast<usize>(fw) * 4,
+                        &out.rgba8[static_cast<usize>(y) * fw * 4]);
+        return out;
+    }
+    // "" when every pixel is whole (alpha 0 or 255) and, opaque, one of the colours; else what is not so.
+    static std::string px_off_palette(const assets::CookedTexture& t, const std::vector<pixel::Rgba8>& colors) {
+        u32 half = 0, other = 0, opaque = 0;
+        for (usize i = 0; i + 3 < t.rgba8.size(); i += 4) {
+            const u8 alpha = t.rgba8[i + 3];
+            if (alpha != 0 && alpha != 255) ++half;
+            if (alpha != 255) continue;
+            ++opaque;
+            const auto same = [&](const pixel::Rgba8& c) { return c.r == t.rgba8[i] && c.g == t.rgba8[i + 1] && c.b == t.rgba8[i + 2]; };
+            if (std::none_of(colors.begin(), colors.end(), same)) ++other;
+        }
+        if (!half && !other && opaque) return {};
+        return "полупрозрачных " + std::to_string(half) + ", чужих цветов " + std::to_string(other) + ", непрозрачных " + std::to_string(opaque);
+    }
+    // Frame k of the open character's clip as the files on disk bake it, made apart from the tab (a rig, a script and a
+    // file of its own), and the vector in that pose as the view draws it.
+    struct PxRef {
+        assets::CookedTexture px, vec;
+    };
+    bool px_ref(const std::string& state, u32 k, PxRef& out, std::string& why, const std::vector<pixel::Rgba8>& colors = {}) {
+        namespace fs = std::filesystem;
+        const fs::path doc_file = as().abs(px().opened());
+        std::vector<u8> bytes, svg, lua;
+        pixel::PixelDoc doc;
+        if (!read_file(doc_file, bytes) || !pixel::read_pixel_doc({reinterpret_cast<const char*>(bytes.data()), bytes.size()}, doc, why))
+            return why = "«.pixel.json» не читается " + why, false;
+        const std::optional<Guid> id = Guid::parse(doc.svg);
+        const assets::AssetRecord* r = id ? as().find_id(*id) : nullptr;
+        if (!r || !read_file(as().abs(r->path), svg) || !read_file(doc_file.parent_path() / utf8_path(doc.script), lua))
+            return why = "рисунок или скрипт не читаются", false;
+        pixel::Rig rig;
+        pixel::PoseScript script;
+        if (!rig.load({reinterpret_cast<const char*>(svg.data()), svg.size()}, why)) return false;
+        if (!script.load({reinterpret_cast<const char*>(lua.data()), lua.size()})) return why = script.error(), false;
+        pixel::apply_pivots(rig, doc);
+        const auto c = std::find_if(doc.clips.begin(), doc.clips.end(), [&](const pixel::ClipSpec& x) { return x.state == state; });
+        if (c == doc.clips.end()) return why = "нет клипа «" + state + "»", false;
+        if (!pixel::bake_frame(rig, script, doc, *c, k, pixel::bake_options(doc, colors), out.px, why)) return false;
+        pixel::Pose pose;
+        if (!pixel::frame_pose(script, rig, doc, *c, k, pose, why) || !rig.pose(pose, why)) return false;
+        out.vec = rig.draw(288, 288);
+        return true;
+    }
+
+    // --self-test pixel: the games made; A in an editor of its own, then again from another working folder; the
+    // template and B compared byte for byte.
+    bool pixel_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = px_mine("Пиксельные А"), b = px_mine("Пиксельные Б");
+        fs::remove_all(px_root(), ec);
+        fs::create_directories(px_root() / utf8_path("Мои игры"), ec);
+        px_tmpl_ = tp_template();
+        tg_snap("шаблон до", px_tmpl_, px_root());
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto platformer = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "platformer"; });
+        for (const auto& [title, folder] : {std::pair{"Пиксельные Б", b}, std::pair{"Пиксельные А", a}}) {
+            fs::path made;
+            check(platformer != all.end() && pj::create(*platformer, editor_modules(), px_root() / utf8_path("Мои игры"), title, made, &error) &&
+                      lvl_same(made, folder),
+                  std::string("«") + title + "» made of «Платформер» " + error);
+            fs::remove_all(play_folder(folder), ec);
+        }
+        px_b_ = pj_tree(b);
+        tg_snap("Пиксельные Б до", px_b_, px_root());
+        const std::string exe = path_to_utf8(editor_exe()), project = path_to_utf8(a / "project.forge");
+        const fs::path one = px_root() / utf8_path("первая папка"), two = px_root() / utf8_path("вторая папка");
+        fs::create_directories(one, ec);
+        fs::create_directories(two, ec);
+        int code = pj_run({exe, "--project", project, "--self-test", "pixel-a"}, one);
+        check(code == 0, "«Ёжик» made of an SVG in «Пиксельные», posed by its script, its pivot dragged, baked and given to «Герой» with the "
+                         "mouse and the keys, each step undone and done again (pixel-a: exit " + std::to_string(code) + ")");
+        code = pj_run({exe, "--project", project, "--self-test", "pixel-a-again"}, two);
+        check(code == 0, "opened again elsewhere: the same character and frames; the game plays the hero by them (pixel-a-again: exit " +
+                             std::to_string(code) + ")");
+        const auto tmpl = tp_template(), btree = pj_tree(b);
+        check(tg_snap("шаблон после", tmpl, px_root()) == tg_digest(px_tmpl_) && tmpl == px_tmpl_, "the template byte for byte as before");
+        check(tg_snap("Пиксельные Б после", btree, px_root()) == tg_digest(px_b_) && btree == px_b_, "«Пиксельные Б» byte for byte as before");
+        // A's game has the baked picture and none of what it was made of; «Ресурсы» have all of it.
+        std::string made_of;
+        for (const auto& [path, bytes] : pj_tree(a / "game"))
+            if (path.ends_with(".svg") || path.ends_with(".pixel.json") || path.find("Ёжик.luau") != std::string::npos ||
+                path.find("Надпись") != std::string::npos)
+                made_of += " " + path;
+        const fs::path chars = a / "assets" / utf8_path("персонажи");
+        check(made_of.empty() && fs::exists(a / "game" / "pictures" / utf8_path("Ёжик.png"), ec) && fs::exists(chars / utf8_path("Ёжик.svg"), ec) &&
+                  fs::exists(chars / utf8_path("Ёжик.luau"), ec) && fs::exists(chars / utf8_path("Ёжик.pixel.json"), ec) &&
+                  fs::exists(chars / utf8_path("Ёжик.png.meta"), ec),
+              "A's game: «pictures/Ёжик.png», not the SVG, the script or the «.pixel.json» (they are in «Ресурсы»):" + made_of);
+        check(tg_naming(b, {"Ёжик"}).empty(), "nothing of «Ёжик» in B: " + tg_naming(b, {"Ёжик"}));
+        return false;
+    }
+
+    // In an editor for «Пиксельные А» (--self-test pixel-a).
+    bool pixel_a_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root, game = a / "game";
+        objects::Library& lib = an().library();
+        const bool idle = !as().busy() && !as().looking();
+        const std::string svg = "персонажи/Ёжик.svg", doc = "персонажи/Ёжик.pixel.json", lua = "персонажи/Ёжик.luau", png = "персонажи/Ёжик.png",
+                          meta = "персонажи/Ёжик.png.meta", label_doc = "персонажи/Надпись.pixel.json";
+        const pixel::PixelDoc& d = px().doc();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto there = [&](const std::string& rel) {
+            std::error_code ec;
+            return fs::exists(as().abs(rel), ec);
+        };
+        // A file put into «Ресурсы» by another program (Inkscape, a text editor).
+        auto put = [&](const std::string& rel, const char* text) {
+            std::error_code ec;
+            fs::create_directories(as().abs(rel).parent_path(), ec);
+            return write_file_atomic(as().abs(rel), {reinterpret_cast<const u8*>(text), std::strlen(text)});
+        };
+        auto step_label = [&] { return an().history().undo_label(); };
+        switch (px_step_) {
+        case 0: {
+            check(pjw().config().title == "Пиксельные А" && lvl_same(ed_.game_dir, game) && lvl_same(as().root(), a / "assets"),
+                  "the editor has «Пиксельные А» open, its «Ресурсы» in assets/");
+            check(lib.templates().size() == 8 && lib.find("hero_look") && lib.find("hero_look")->picture == "герой.png" &&
+                      lib.find("hero_look")->frames == 4 && lib.find("hero_look")->animations.empty(),
+                  "the template's 8 objects; «Герой» draws «герой.png» of 4 frames, no animations of its own");
+            check(put(svg, kPxHedgehog) && put("персонажи/Надпись.svg", kPxLabel), "«персонажи/Ёжик.svg» and «персонажи/Надпись.svg» drawn elsewhere");
+            as().refresh();
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1: {
+            if (hold(shown("an-mode-pixel") && shown("an-tpl-0"), "the tab is laid out")) return true;
+            check(an().mode() == "frames" && pj_class("an-mode-frames", "selected") && !pj_class("an-mode-pixel", "selected"),
+                  "«Покадровая» as the tab opens");
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "a click on «Пиксельные»");
+            break;
+        }
+        case 2: {
+            if (hold(idle && as().record_of(as().abs(svg)) && px().svgs().size() == 2 && shown("px-svg-1"), "the SVGs listed")) return true;
+            check(px().svgs() == std::vector<std::string>{svg, "персонажи/Надпись.svg"} && px().listed().empty() && !px().has() &&
+                      element_text("px-svg-0").find("Ёжик.svg") != std::string::npos && pj_class("an-mode-pixel", "selected") && !shown("an-tpl-0"),
+                  "«Пиксельные»: no character yet; new of «Ёжик.svg» or «Надпись.svg»; «Покадровая»'s list hidden");
+            check(px().status() == "Пиксельные: векторных персонажей пока нет", "the status line: " + px().status());
+            if (const assets::AssetRecord* r = as().record_of(as().abs(svg))) px_svg_id_ = r->id.to_string();
+            check(pj_click("px-svg-0"), "a click on «Ёжик.svg»");
+            break;
+        }
+        case 3: {
+            check(px().has() && px().opened() == doc && there(doc) && there(lua) && d.svg == px_svg_id_ && d.script == "Ёжик.luau" &&
+                      d.frame_w == 32 && d.frame_h == 32 && d.clips == std::vector<pixel::ClipSpec>{{"stand", 4, 10, true}} && d.picture.empty(),
+                  "«Ёжик.pixel.json» and «Ёжик.luau» beside the SVG: its Guid, the script, 32 × 32, «Стоит» of 4 frames 10 a second");
+            const std::vector<u8> script = file(lua);
+            const std::string text(script.begin(), script.end());
+            check(text.rfind("-- Поза персонажа «Ёжик» (Ёжик.svg)", 0) == 0 && text.find("part(\"body\"):set{ y = -p.bob * math.abs(s) }") != std::string::npos,
+                  "the script it starts with: its comments, «body» bobs");
+            check(step_label() == "Пиксельные: «Ёжик» из «Ёжик.svg»" && px().problem().empty(),
+                  "one step: " + step_label() + "; no problem: " + px().problem());
+            std::string parts;
+            for (const pixel::Part& p : px().rig().parts()) parts += (parts.empty() ? "" : " ") + p.id;
+            check(parts == "body leg_l leg_r torso head mouth mouth_open", "its parts as they nest: " + parts);
+            px_doc0_ = file(doc);
+            px_script0_ = script;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!there(doc) && !there(lua) && !px().has(), "Ctrl+Z: neither file");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(px().has() && file(doc) == px_doc0_ && file(lua) == px_script0_, "Ctrl+Y: both again, byte for byte");
+            break;
+        }
+        case 4: {
+            if (hold(shown("px-vector-img") && shown("px-pixel-img") && shown("px-part-leg_l") && px().vector_view().width == 288 &&
+                         px().pixel_frame().width == 32,
+                     "the views shown"))
+                return true;
+            check(px().pixel_frame().height == 32 && px().vector_view().height == 288 && element_text("px-total") == "в картинке 4 кадра из 32",
+                  "the vector 288 × 288, the pixel frame 32 × 32; «" + element_text("px-total") + "»");
+            check(put(lua, kPxWalk), "the author's «Ёжик.luau»: standing and walking");
+            const bool typed = ue_type("px-fh", "64");
+            check(typed && d.frame_w == 32 && d.frame_h == 64 && step_label() == "«Ёжик»: кадр 32 × 64", "«Кадр» 32 × 64 typed: " + step_label());
+            break;
+        }
+        case 5: {
+            if (hold(shown("px-param-step") && shown("px-param-speed"), "the script read again")) return true;
+            check(input_value("px-param-speed") == "3,75" && input_value("px-param-step") == "25" && px().problem().empty(),
+                  "its parameters: speed 3,75, step 25");
+            check(px().pixel_frame().width == 32 && px().pixel_frame().height == 64, "the pixel frame 32 × 64");
+            const bool clicked = px_click("px-state-walk");
+            check(clicked && px().clip() == "walk" && d.clips.size() == 2 && d.clips[1] == pixel::ClipSpec{"walk", 4, 10, true} &&
+                      step_label() == "«Ёжик»: клип «Идёт»",
+                  "a click on «Идёт»: its clip, 4 frames 10 a second: " + step_label());
+            break;
+        }
+        case 6: {
+            if (hold(shown("px-clip-more") && shown("px-fps-10"), "the clip's settings")) return true;
+            for (int i = 0; i < 4; ++i) px_click("px-clip-more");
+            check(d.clips.size() == 2 && d.clips[1].frames == 8 && step_label() == "«Ёжик»: «Идёт» 8 кадров", "+ four times: 8 frames: " + step_label());
+            const bool clicked = px_click("px-fps-10");
+            check(clicked && element_text("px-fps-10") == "30" && d.clips[1].fps == 30.0f && step_label() == "«Ёжик»: «Идёт» 30 к/с", "«30»: " + step_label());
+            break;
+        }
+        case 7: {
+            check(px().status().rfind("Пиксельные: «Ёжик» · кадр 32 × 64 · «Идёт» ", 0) == 0 &&
+                      px().status().ends_with(" из 8 · 30 к/с · играет") && pj_class("px-fps-10", "selected") &&
+                      element_text("px-total") == "в картинке 12 кадров из 32",
+                  "the status line: " + px().status());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d.clips[1].fps == 10.0f, "Ctrl+Z: 10 a second");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(d.clips[1].fps == 30.0f, "Ctrl+Y: 30");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(!px().playing() && px().status().ends_with("пауза"), "Space: it stops");
+            px().set_frame(6);
+            key(SDLK_RIGHT, SDL_KMOD_NONE);
+            check(px().frame() == 7, "→: frame 8");
+            key(SDLK_RIGHT, SDL_KMOD_NONE);
+            check(px().frame() == 0, "→: frame 1 (it repeats)");
+            key(SDLK_LEFT, SDL_KMOD_NONE);
+            check(px().frame() == 7, "←: frame 8");
+            key(SDLK_1, SDL_KMOD_NONE);
+            check(px().clip() == "stand" && px().frame() == 0, "key 1: «Стоит»");
+            key(SDLK_2, SDL_KMOD_NONE);
+            check(px().clip() == "walk", "key 2: «Идёт»");
+            check(px_click("px-frame-2") && px().frame() == 2 && !px().playing(), "a click on frame 3 of the clip");
+            break;
+        }
+        case 8: {
+            if (wait(2)) return true;
+            PxRef ref;
+            std::string why;
+            const bool made = px_ref("walk", 2, ref, why);
+            check(made && px_same(px().pixel_frame(), ref.px) && px_same(px().vector_view(), ref.vec),
+                  "frame 3 of «Идёт»: the pixels the files bake, made apart from the tab; the vector in that pose " + why);
+            check(px_off_palette(px().pixel_frame(), kPxColors).empty(), "the SVG's colours, no pixel half transparent: " + px_off_palette(px().pixel_frame(), kPxColors));
+            check(element_text("px-frame-label") == "Идёт · кадр 3 из 8", "«" + element_text("px-frame-label") + "»");
+            px_shown_ = px().pixel_frame();
+            check(px_click("px-onion") && px().onion(), "«Калька» on");
+            break;
+        }
+        case 9: {
+            if (wait(2)) return true;
+            const assets::CookedTexture& f = px().pixel_frame();
+            u32 faint = 0;
+            for (usize i = 3; i < f.rgba8.size(); i += 4) faint += f.rgba8[i] != 0 && f.rgba8[i] != 255;
+            check(!px_same(f, px_shown_) && faint > 0, "«Калька»: frames 2 and 4 faint under it (" + std::to_string(faint) + " pixels)");
+            check(px_click("px-onion") && !px().onion(), "«Калька» off");
+            break;
+        }
+        // A leg chosen on the vector, its pivot dragged to the hip in the pose shown.
+        case 10: {
+            if (wait(2)) return true;
+            check(px_same(px().pixel_frame(), px_shown_), "the frame alone again");
+            f32 x = 0, y = 0;
+            check(px().screen_of(px().posed_pivot("leg_l"), x, y), "the vector view is laid out");
+            left_click(x, y);
+            check(px().part() == "leg_l", "a click on the left leg as it stands in the pose: «leg_l»");
+            break;
+        }
+        case 11: {
+            if (wait(2)) return true;
+            const pixel::Rig& rig = px().rig();
+            const i32 leg = rig.part("leg_l");
+            check(pj_class("px-part-leg_l", "selected") && rig.pivot(leg) == vector::Point{11.5, 53}, "«leg_l» chosen in the list; its pivot its middle");
+            const pixel::Affine carried = rig.carried(leg);
+            const vector::Point from = px().posed_pivot("leg_l"), to = carried.apply({11.5, 44});
+            f32 x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+            check(px().screen_of(from, x0, y0) && px().screen_of(to, x1, y1), "the pivot and the hip on screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, x0, y0);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0);
+            for (int i = 1; i <= 5; ++i)
+                mouse(SDL_EVENT_MOUSE_MOTION, x0 + (x1 - x0) * static_cast<f32>(i) / 5, y0 + (y1 - y0) * static_cast<f32>(i) / 5);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x1, y1);
+            const auto it = d.pivots.find("leg_l");
+            check(it != d.pivots.end() && it->second == vector::Point{11.5, 44} && d.pivots.size() == 1 &&
+                      step_label() == "«Ёжик»: опорная точка «leg_l» 11,5; 44",
+                  "dragged to the hip in the pose shown: 11,5; 44 at rest in the file, one step (" + step_label() + ")");
+            const vector::Point now = px().posed_pivot("leg_l");
+            check(std::fabs(now.x - to.x) < 1e-3 && std::fabs(now.y - to.y) < 1e-3, "it stands where it was let go");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d.pivots.empty() && px().rig().pivot(leg) == vector::Point{11.5, 53}, "Ctrl+Z: the leg's middle again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(d.pivots.size() == 1 && px().rig().pivot(leg) == vector::Point{11.5, 44}, "Ctrl+Y: the hip");
+            break;
+        }
+        // A parameter and the seed typed.
+        case 12: {
+            if (wait(2)) return true;
+            PxRef ref;
+            std::string why;
+            check(px_ref("walk", 2, ref, why) && px_same(px().pixel_frame(), ref.px) && !px_same(px().pixel_frame(), px_shown_),
+                  "the legs turn round the hip now, as the files bake it " + why);
+            px_shown_ = px().pixel_frame();
+            bool typed = ue_type("px-param-step", "30");
+            check(typed && d.params == std::map<std::string, f64>{{"step", 30.0}} && step_label() == "«Ёжик»: step = 30",
+                  "«step» 30 typed: in the file, one step: " + step_label());
+            typed = ue_type("px-seed", "7");
+            check(typed && d.seed == 7 && step_label() == "«Ёжик»: seed 7", "seed 7 typed: " + step_label());
+            break;
+        }
+        case 13: {
+            if (wait(2)) return true;
+            PxRef ref;
+            std::string why;
+            check(px_ref("walk", 2, ref, why) && px_same(px().pixel_frame(), ref.px) && !px_same(px().pixel_frame(), px_shown_) &&
+                      input_value("px-param-step") == "30",
+                  "a wider step, as the files bake it " + why);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d.params.empty() && d.seed == 1, "Ctrl+Z twice: «step» as the script has it, seed 1");
+            const std::string before = step_label();
+            const bool clicked = px_click("px-palette-game");
+            check(clicked && !d.game_palette && step_label() == before &&
+                      px().note() == "В игре пока нет своих цветов: их задают в «Интерфейсе», «Компоненты» → «Цвета игры»",
+                  "«Цвета игры» of a game without its colours: «" + px().note() + "», nothing changed");
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        }
+        // The game's colours made in «Интерфейс», then the frame in them; an outline.
+        case 14: {
+            if (hold(shown("ue-library"), "its screens are listed")) return true;
+            check(ue().open_library(), "«Компоненты»: the game's colours");
+            ue().select({});
+            const char* const named[][2] = {{"Ночь", "#28203C"}, {"Кирпич", "#B84A2C"}, {"Песок", "#E8C48C"}, {"Уголь", "#301010"}};
+            bool made = true;
+            for (usize i = 0; i < std::size(named); ++i)
+                made = made && ue().set_property("color.add", "") && ue().set_property("color." + std::to_string(i) + ".name", named[i][0]) &&
+                       ue().set_property("color." + std::to_string(i) + ".color", named[i][1]);
+            check(made && ue().library().colors.size() == 4, "four colours of the game: «Ночь», «Кирпич», «Песок», «Уголь»");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        case 15: {
+            if (hold(ed_.tab() == "animation" && shown("px-palette-game") && shown("px-vector-img"), "«Пиксельные» again")) return true;
+            const bool clicked = px_click("px-palette-game");
+            check(clicked && d.game_palette && step_label() == "«Ёжик»: цвета игры", "«Цвета игры»: " + step_label());
+            break;
+        }
+        case 16: {
+            if (wait(2)) return true;
+            const std::vector<pixel::Rgba8> colors = px().game_colors ? px().game_colors() : std::vector<pixel::Rgba8>{};
+            PxRef ref;
+            std::string why;
+            check(colors.size() == 4 && px_ref("walk", 2, ref, why, colors) && px_same(px().pixel_frame(), ref.px) &&
+                      px_off_palette(px().pixel_frame(), colors).empty() && !px_same(px().pixel_frame(), px_shown_),
+                  "each pixel the nearest of the game's " + std::to_string(colors.size()) + " colours, as the files bake it " + why +
+                      px_off_palette(px().pixel_frame(), colors));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!d.game_palette, "Ctrl+Z: the SVG's colours");
+            const bool clicked = px_click("px-outline");
+            check(clicked && d.outline && step_label() == "«Ёжик»: контур", "«Контур в 1 пиксель»: " + step_label());
+            break;
+        }
+        case 17: {
+            if (wait(2)) return true;
+            PxRef ref;
+            std::string why;
+            u32 dark = 0;
+            const assets::CookedTexture& f = px().pixel_frame();
+            for (usize i = 0; i + 3 < f.rgba8.size(); i += 4) dark += f.rgba8[i] == 0 && f.rgba8[i + 1] == 0 && f.rgba8[i + 2] == 0 && f.rgba8[i + 3] == 255;
+            check(px_ref("walk", 2, ref, why) && px_same(f, ref.px) && dark > 40, "a black outline round the figure (" + std::to_string(dark) + " pixels) " + why);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!d.outline, "Ctrl+Z: no outline");
+            break;
+        }
+        // A script that does not compile, then one that moves a part the SVG has not: the reason, the views stay.
+        case 18: {
+            if (wait(2)) return true;
+            check(px_same(px().pixel_frame(), px_shown_), "the frame as before");
+            px_vec_ = px().vector_view();
+            check(put(lua, kPxTypo), "a typo in «Ёжик.luau»");
+            break;
+        }
+        case 19: {
+            if (hold(px().error_line() != 0, "the script read again")) return true;
+            if (wait(2)) return true;
+            check(px().error_line() == 3 && px().problem().rfind("Скрипт «Ёжик.luau»: строка 3", 0) == 0 &&
+                      px().problem().ends_with("(показана последняя удачная поза)") && element_text("px-problem") == px().problem() &&
+                      px().status().find("есть ошибка") != std::string::npos,
+                  "its line said: «" + px().problem() + "»");
+            check(px_same(px().pixel_frame(), px_shown_) && px_same(px().vector_view(), px_vec_), "the views on the last pose that worked");
+            check(put(lua, kPxTail), "a script that moves «tail»");
+            break;
+        }
+        case 20: {
+            if (hold(px().problem().find("«tail»") != std::string::npos, "the script read again")) return true;
+            check(px().problem() == "Скрипт «Ёжик.luau»: клип «walk», кадр 3: строка 4: в SVG нет части «tail»" && px().error_line() == 4,
+                  "the part it names: «" + px().problem() + "»");
+            check(px_same(px().pixel_frame(), px_shown_), "the views stay");
+            const bool clicked = px_click("px-bake");
+            check(clicked && px().note() == "Не запеклось: клип «stand», кадр 1: строка 4: в SVG нет части «tail»" && !there(png),
+                  "«Запечь»: «" + px().note() + "», nothing written");
+            check(put(lua, kPxWalk), "the script as it was");
+            break;
+        }
+        case 21: {
+            if (hold(px().problem().empty(), "the script read again")) return true;
+            if (wait(2)) return true;
+            check(px_same(px().pixel_frame(), px_shown_) && px().error_line() == 0 && !shown("px-problem"), "no problem; the frame as before");
+            check(pj_click("px-svg-1"), "a click on «Надпись.svg»");
+            break;
+        }
+        case 22: {
+            check(px().opened() == label_doc && px().has() &&
+                      px().problem().find("«label»: текст <text> в этой версии не рисуется — переведите его в кривые") != std::string::npos &&
+                      px().problem().find("«photo»: вставленные картинки <image> в этой версии не рисуются") != std::string::npos,
+                  "«Надпись»: what ThorVG does not draw, named: " + px().problem());
+            break;
+        }
+        case 23: {
+            if (hold(idle && px().listed().size() == 2 && shown("px-doc-1"), "both characters listed")) return true;
+            check(px().listed() == std::vector<std::string>{doc, label_doc} && pj_class("px-doc-1", "selected"), "the list: «Ёжик», «Надпись» (open)");
+            key(SDLK_UP, SDL_KMOD_NONE);
+            check(px().opened() == doc && px().problem().empty() && d.pivots.size() == 1 && d.clips.size() == 2, "↑: «Ёжик» again, as it was");
+            key(SDLK_2, SDL_KMOD_NONE);
+            break;
+        }
+        // «Запечь»: every clip, frame by frame, into one picture of «Ресурсы».
+        case 24: {
+            if (hold(idle, "«Ресурсы» looked at the files")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            const std::vector<u8> bytes = file(png);
+            assets::CookedTexture strip;
+            check(!bytes.empty() && assets::decode_image(bytes, strip) && strip.width == 32 * 12 && strip.height == 64,
+                  "«Ёжик.png» beside it: 12 frames of 32 × 64");
+            const std::vector<u8> m = file(meta);
+            check(!d.picture.empty() && std::string(m.begin(), m.end()).find(d.picture) != std::string::npos, "its «.meta»: the Guid the file names, " + d.picture);
+            check(d.strip == std::vector<pixel::StripClip>{{"stand", 0, 4, 10, true}, {"walk", 4, 8, 30, true}} && d.hash == editor::sources::hash_of(bytes),
+                  "in the file: what the picture holds («Стоит» 1–4, «Идёт» 5–12) and its hash");
+            std::string bad;
+            for (const auto& [state, first, n] : {std::tuple{"stand", 0u, 4u}, std::tuple{"walk", 4u, 8u}})
+                for (u32 k = 0; k < n; ++k) {
+                    PxRef ref;
+                    std::string why;
+                    if (!px_ref(state, k, ref, why) || !px_same(px_cut(strip, 32, first + k), ref.px)) bad += " " + std::string(state) + " " + std::to_string(k + 1) + why;
+                }
+            check(bad.empty(), "every frame as the files bake it apart from the tab;" + bad);
+            check(px_off_palette(strip, kPxColors).empty(), "the SVG's colours, whole pixels: " + px_off_palette(strip, kPxColors));
+            check(step_label() == "«Ёжик»: запечено в «Ёжик.png», 12 кадров" && px().note() == "Запечено: «Ёжик.png», 12 кадров 32 × 64.",
+                  "one step: " + step_label() + "; «" + px().note() + "»");
+            px_png_ = bytes;
+            px_meta_ = m;
+            px_doc_baked_ = file(doc);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!there(png) && !there(meta) && d.picture.empty() && d.strip.empty() && d.hash.empty(), "Ctrl+Z: no picture, no bake in the file");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(png) == px_png_ && file(meta) == px_meta_ && file(doc) == px_doc_baked_, "Ctrl+Y: all three byte for byte");
+            break;
+        }
+        // The picture painted after the bake: not baked over without asking.
+        case 25: {
+            if (hold(idle && as().record_of(as().abs(png)), "the picture indexed")) return true;
+            const assets::AssetRecord* r = as().record_of(as().abs(png));
+            check(r && r->id.to_string() == d.picture && px().picture() == png && !px().edited() && !shown("px-edited") &&
+                      element_text("px-picture") == "Картинка: " + png,
+                  "«Ресурсы» know it by the Guid the file names, «Картинка: " + px().picture() + "»; not edited");
+            assets::CookedTexture t;
+            check(assets::decode_image(px_png_, t), "the picture reads");
+            for (u32 y = 0; y < 4; ++y)
+                for (u32 x = 0; x < 4; ++x) {
+                    u8* p = &t.rgba8[(static_cast<usize>(y) * t.width + x) * 4];
+                    p[0] = 255, p[1] = 255, p[2] = 0, p[3] = 255;
+                }
+            check(assets::encode_image(t, ".png", px_png_edited_) && write_file_atomic(as().abs(png), px_png_edited_),
+                  "another program paints a corner of «Ёжик.png»");
+            as().refresh();
+            break;
+        }
+        case 26: {
+            if (hold(idle && px().edited() && shown("px-edited"), "the painting seen")) return true;
+            bool clicked = px_click("px-bake");
+            check(clicked && px().note() == "Картинку «Ёжик.png» правили после запекания: новое запекание заменит правки" && file(png) == px_png_edited_,
+                  "«Запечь»: «" + px().note() + "», the painting kept");
+            clicked = px_click("px-bake-over");
+            check(clicked && file(png) == px_png_ && !px().edited() && step_label() == "«Ёжик»: запечено в «Ёжик.png», 12 кадров",
+                  "«Запечь всё равно»: the strip as baked; " + step_label());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(png) == px_png_edited_ && px().edited(), "Ctrl+Z: the painting back, said again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(png) == px_png_ && file(doc) == px_doc_baked_ && !px().edited(), "Ctrl+Y: baked over, byte for byte");
+            break;
+        }
+        // «Отдать шаблону…» «Герой».
+        case 27: {
+            if (hold(idle && shown("px-give-open") && !pj_class("px-give-open", "disabled"), "«Отдать шаблону…» may be clicked")) return true;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
+            break;
+        }
+        case 28: {
+            if (hold(shown("px-tpl-7"), "the templates listed")) return true;
+            const auto& l = px().templates();
+            std::string names;
+            for (u64 k : l) names += (names.empty() ? "" : ", ") + lib.find(k)->name;
+            check(names == "Герой, Ёж, Жук, Монетка, Ряд шипов, Указатель, Флаг, Шипы", "the game's templates by the alphabet: " + names);
+            const std::string row = "px-tpl-" + std::to_string(std::find(l.begin(), l.end(), lib.find("hero_look")->key) - l.begin());
+            check(element_text(row.c_str()).find("сыграет: Стоит, Идёт") != std::string::npos, "«Герой» will play «Стоит» and «Идёт»");
+            px_hero0_ = an_file("hero_look");
+            check(px_click(row), "a click on «Герой»");
+            break;
+        }
+        case 29: {
+            const objects::Template* t = lib.find("hero_look");
+            const objects::Clip stand{{0, 1, 2, 3}, 10, true}, walk{{4, 5, 6, 7, 8, 9, 10, 11}, 30, true};
+            check(t && t->picture == "Ёжик.png" && t->frames == 12 && t->animations.size() == 2 && an_is("hero_look", "stand", stand) &&
+                      an_is("hero_look", "walk", walk) && objects::read_template(t->file)->frames == 12,
+                  "«Герой»: «Ёжик.png», 12 frames, «Стоит» by 1–4 ten a second and «Идёт» by 5–12 thirty; in its file");
+            const editor::sources::Entry* copy = ed_.sources.of_file("pictures/Ёжик.png");
+            check(tg_bytes(game / "pictures" / utf8_path("Ёжик.png")) == px_png_ && copy && copy->asset.to_string() == d.picture,
+                  "the game's «pictures/Ёжик.png»: the baked picture, a copy of its asset");
+            check(px().note() == "«Герой» рисует «Ёжик.png», 12 кадров, анимации: «Стоит», «Идёт»." && !px().giving() &&
+                      step_label() == "«Герой»: картинка «Ёжик.png» из «Ёжик»",
+                  "«" + px().note() + "», one step: " + step_label());
+            px_hero1_ = an_file("hero_look");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("hero_look")) == an_lf(px_hero0_) && lib.find("hero_look")->picture == "герой.png" && lib.find("hero_look")->frames == 4,
+                  "Ctrl+Z: «Герой» as in the template, its file byte for byte (line ends aside)");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("hero_look") == px_hero1_ && lib.find("hero_look")->frames == 12, "Ctrl+Y: given again");
+            break;
+        }
+        // «Пиксельный персонаж» of «Ресурсы» on the SVG: the character made of it.
+        case 30: {
+            if (hold(shown("px-tpl-0") == false, "the list closed")) return true;
+            key(SDLK_DOWN, SDL_KMOD_NONE);
+            check(px().opened() == label_doc, "↓: «Надпись»");
+            check(click_tab(10), "«Ресурсы»");
+            break;
+        }
+        case 31: {
+            if (hold(idle && ed_.tab() == "assets" && as().record_of(as().abs(svg)), "«Ресурсы» are indexed")) return true;
+            as().open_folder("персонажи");
+            click_row(svg);
+            break;
+        }
+        case 32: {
+            if (hold(shown("as-pixel") && as().selection() == std::vector<std::string>{svg}, "«Ёжик.svg» chosen")) return true;
+            check(element_text("as-pixel").find("Пиксельный персонаж") != std::string::npos, "an SVG: «Пиксельный персонаж»");
+            check(click_id("as-pixel") && ed_.tab() == "animation" && an().mode() == "pixel" && px().opened() == doc && !there("персонажи/Ёжик 2.pixel.json"),
+                  "«Пиксельный персонаж»: «Пиксельные» on «Ёжик», the one made of it; nothing new");
+            break;
+        }
+        case 33: {
+            if (hold(shown("px-vector-img"), "«Ёжик» shown")) return true;
+            key(SDLK_2, SDL_KMOD_NONE);
+            break;
+        }
+        case 34: {
+            if (hold(shown("px-frame-7"), "«Идёт»'s frames")) return true;
+            px().play(false);
+            px().set_frame(2); // for a screenshot: «Идёт» at frame 3, paused, the leg chosen
+            const assets::AssetRecord* r = as().record_of(as().abs(png));
+            check(px().select_part("leg_l") && px().clip() == "walk" && px().frame() == 2 && r && d.picture == r->id.to_string(),
+                  "«Ёжик», «Идёт», frame 3, «leg_l» chosen; baked");
+            return false;
+        }
+        default: break;
+        }
+        ++px_step_;
+        return true;
+    }
+
+    // In an editor for «Пиксельные А» from another working folder (--self-test pixel-a-again).
+    bool pixel_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const pixel::PixelDoc& d = px().doc();
+        switch (px_step_) {
+        case 0: {
+            check(!lvl_same(fs::current_path(), a), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            const objects::Template* t = an().library().find("hero_look");
+            check(t && t->picture == "Ёжик.png" && t->frames == 12 && an_is("hero_look", "stand", {{0, 1, 2, 3}, 10, true}) &&
+                      an_is("hero_look", "walk", {{4, 5, 6, 7, 8, 9, 10, 11}, 30, true}),
+                  "«Герой» as given: «Ёжик.png», 12 frames, «Стоит» and «Идёт»");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && px().listed().size() == 2 && shown("px-doc-0"), "the characters listed")) return true;
+            check(element_text("px-doc-0").find("32 × 64 · 2 клипа") != std::string::npos, "«Ёжик»: 32 × 64, 2 clips");
+            check(pj_click("px-doc-0") && px().opened() == "персонажи/Ёжик.pixel.json", "a click on «Ёжик»");
+            break;
+        case 3:
+            if (hold(shown("px-vector-img"), "«Ёжик» shown")) return true;
+            check(d.frame_w == 32 && d.frame_h == 64 && d.clips == std::vector<pixel::ClipSpec>{{"stand", 4, 10, true}, {"walk", 8, 30, true}} &&
+                      d.pivots == std::map<std::string, vector::Point>{{"leg_l", {11.5, 44}}} && d.strip.size() == 2 &&
+                      px().picture() == "персонажи/Ёжик.png" && !px().edited() && px().problem().empty(),
+                  "the same file: 32 × 64, the clips, the hip, the bake; the picture as baked");
+            key(SDLK_2, SDL_KMOD_NONE);
+            break;
+        case 4:
+            if (hold(shown("px-frame-7"), "«Идёт»'s frames")) return true;
+            check(px_click("px-frame-5") && px().frame() == 5 && px().clip() == "walk", "frame 6 of «Идёт»");
+            break;
+        case 5: {
+            if (wait(2)) return true;
+            PxRef ref;
+            std::string why;
+            assets::CookedTexture strip;
+            check(px_ref("walk", 5, ref, why) && px_same(px().pixel_frame(), ref.px), "the frame as the files bake it " + why);
+            check(assets::decode_image(tg_bytes(as().abs("персонажи/Ёжик.png")), strip) && px_same(px_cut(strip, 32, 4 + 5), ref.px),
+                  "and as the picture holds it");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 6:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 7: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = an_edits();
+            const int code = tg_play(&e, "ожидания пиксельные.json", px_root());
+            check(code == 0, "the game plays the hero by the baked frames: it stands by 1–4, walks by 5–12 (exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++px_step_;
         return true;
     }
 
@@ -22109,7 +22872,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                             options.self_part.rfind("levels-", 0) == 0 || options.self_part.rfind("platformer-", 0) == 0 ||
                             options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0 ||
                             options.self_part.rfind("input-", 0) == 0 || options.self_part.rfind("rpg-template-", 0) == 0 ||
-                            options.self_part.rfind("match3-template-", 0) == 0 || options.self_part.rfind("images-", 0) == 0;
+                            options.self_part.rfind("match3-template-", 0) == 0 || options.self_part.rfind("images-", 0) == 0 ||
+                            options.self_part.rfind("pixel-", 0) == 0;
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -22637,7 +23401,8 @@ int main(int argc, char** argv) {
                                          "two-games-b",  "levels",          "levels-a",   "levels-again", "levels-go",         "levels-go-again",
                                          "platformer",   "platformer-a",    "platformer-a-again", "platformer-template",
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
-                                         "animation",    "animation-a",     "animation-a-again", "input", "input-a", "input-a-again",
+                                         "animation",    "animation-a",     "animation-a-again", "pixel", "pixel-a", "pixel-a-again",
+                                         "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b"};
@@ -22647,7 +23412,7 @@ int main(int argc, char** argv) {
                     "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again, platformer and its parts "
                     "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
-                    "animation-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
+                    "animation-a-again, pixel and its parts pixel-a, pixel-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b)",
                     app.options.self_part.c_str());

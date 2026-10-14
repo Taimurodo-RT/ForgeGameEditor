@@ -1281,7 +1281,7 @@ private:
         SliceGame& g = g_;
         struct Look {
             u32 looks = 0, bad = 0;
-            std::array<u32, objects::kMaxClipFrames> seen{};
+            std::array<u32, objects::kMaxFrames> seen{}; // by frame of the strip
             std::string first_bad;
             u64 longest = 0; // ticks into the pose, the most looked at
         };
@@ -8459,8 +8459,23 @@ private:
                           slice::hero_picture_ok(lib, *lib.find("a_hero")) && slice::hero_picture_ok(lib, *lib.find("hero_look")) &&
                           !slice::hero_picture_ok(lib, *lib.find("aa_hero")),
                       "правило героя для редактора то же: «" + why0 + "», «" + why1 + "»");
+                // «aa_hero»'s 2 frames with an animation of its own: a hero's picture now, as «Пиксельные» bakes strips of
+                // any length; drawn by «a_hero» still, the first by id.
+                {
+                    const std::string aa_text = "{\"id\": \"aa_hero\", \"name\": \"aa_hero\", \"kind\": \"hero\", \"picture\": \"герой.png\", "
+                                             "\"frames\": 2, \"animations\": {\"walk\": {\"frames\": [0, 1], \"fps\": 10}}}\n";
+                    check(write_file_atomic(dir / "objects" / "aa_hero.object.json", {reinterpret_cast<const u8*>(aa_text.data()), aa_text.size()}),
+                          "у «aa_hero» своя анимация «Идёт»");
+                    lib.reload_templates();
+                    pics.update(lib, base, sheet);
+                    std::string why2;
+                    check(slice::hero_picture_ok(lib, *lib.find("aa_hero"), &why2) && pics.hero() == pics.of(lib.find("a_hero")->key) &&
+                              pics.of(lib.find("aa_hero")->key)->frames == 2 && why0.find("другое число — когда у него есть свои анимации") != std::string::npos,
+                          "2 кадра с анимацией — тоже картинка героя; рисует «a_hero», первый по id; без анимаций: «" + why0 + "» " + why2);
+                }
                 // Strips at the sheet's limits, each frame its own colour: 8 frames of 32 and 4 of 256 (a frame as wide as
-                // a picture may be), and 8 frames of 256 × 512 scaled down to 128 × 256; on a sheet as narrow as it gets
+                // a picture may be), 8 frames of 256 × 512 scaled down to 128 × 256 and 32 of 16, as many as a picture may
+                // have (objects::kMaxFrames, «Пиксельные» bakes a character's clips so); on a sheet as narrow as it gets
                 // (no drawn frames: kMaxSide + 2) and on one 512 wide. Every frame inside the sheet, apart from the
                 // others, all of its pixels its frame's colour.
                 struct Strip {
@@ -8470,7 +8485,8 @@ private:
                 };
                 const Strip strips[] = {{"strip8", "полоса8.png", 256, 32, 8, 32, 32},
                                         {"strip4", "полоса4.png", 1024, 64, 4, 256, 64},
-                                        {"strip8_big", "полоса8_большая.png", 2048, 512, 8, 128, 256}};
+                                        {"strip8_big", "полоса8_большая.png", 2048, 512, 8, 128, 256},
+                                        {"strip32", "полоса32.png", 512, 16, objects::kMaxFrames, 16, 16}};
                 bool written = true;
                 for (const Strip& p : strips) {
                     written &= strip_png(p.file, p.w, p.h, p.frames, colour);
