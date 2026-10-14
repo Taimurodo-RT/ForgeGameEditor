@@ -176,6 +176,12 @@ foreach(t rmlui_core rmlui_debugger)
   set_target_properties(${t} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dirs}")
 endforeach()
 
+# The pixel editor reads Luau's syntax tree (code_sites.cpp); its C++ headers are not ours to fix either.
+foreach(t Luau.Ast Luau.Common)
+  get_target_property(dirs ${t} INTERFACE_INCLUDE_DIRECTORIES)
+  set_target_properties(${t} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dirs}")
+endforeach()
+
 # Luau also defines its type checker and tools; the engine needs none of them.
 foreach(t Luau.Analysis Luau.Config Luau.EqSat Luau.Require Luau.RequireNavigator Luau.CLI.lib Luau.Bytecode.Analysis)
   if(TARGET ${t})

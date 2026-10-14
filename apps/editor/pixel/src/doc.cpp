@@ -97,6 +97,29 @@ bool read_root(yyjson_val* root, PixelDoc& d, std::string& why) {
             d.clips.push_back(std::move(c));
         }
     }
+    for (const bool wait : {true, false}) {
+        const char* field = wait ? "waits" : "durations";
+        yyjson_val* v = yyjson_obj_get(root, field);
+        if (!v) continue;
+        const std::string form = std::string(field) + ": нужен объект {\"клип\": {\"имя\": секунды}}";
+        if (!yyjson_is_obj(v)) return why = form, false;
+        usize i, n;
+        yyjson_val *clip, *names;
+        yyjson_obj_foreach(v, i, n, clip, names) {
+            if (!yyjson_is_obj(names)) return why = form, false;
+            std::map<std::string, f64>& m = wait ? d.lengths[yyjson_get_str(clip)].waits : d.lengths[yyjson_get_str(clip)].durations;
+            usize j, k;
+            yyjson_val *name, *len;
+            yyjson_obj_foreach(names, j, k, name, len) {
+                f64 s = 0;
+                if (!number(len, s) || s < 0)
+                    return why = std::string(field) + "." + yyjson_get_str(clip) + "." + yyjson_get_str(name) +
+                                 ": нужно число секунд не меньше 0",
+                           false;
+                m[yyjson_get_str(name)] = s;
+            }
+        }
+    }
     if (yyjson_val* v = yyjson_obj_get(root, "bake")) {
         if (!yyjson_is_obj(v)) return why = "bake: нужен объект", false;
         if (yyjson_val* p = yyjson_obj_get(v, "palette")) {
@@ -191,6 +214,18 @@ std::string write_pixel_doc(const PixelDoc& d) {
         yyjson_mut_obj_add(clips, yyjson_mut_strcpy(doc, c.state.c_str()), o);
     }
     yyjson_mut_obj_add_val(doc, root, "clips", clips);
+    // Only when some clip has them: a file of a character without time events stays as it was.
+    for (const bool wait : {true, false}) {
+        yyjson_mut_val* field = yyjson_mut_obj(doc);
+        for (const auto& [clip, l] : d.lengths) {
+            const std::map<std::string, f64>& m = wait ? l.waits : l.durations;
+            if (m.empty()) continue;
+            yyjson_mut_val* names = yyjson_mut_obj(doc);
+            for (const auto& [name, s] : m) yyjson_mut_obj_add(names, yyjson_mut_strcpy(doc, name.c_str()), yyjson_mut_real(doc, s));
+            yyjson_mut_obj_add(field, yyjson_mut_strcpy(doc, clip.c_str()), names);
+        }
+        if (yyjson_mut_obj_size(field) > 0) yyjson_mut_obj_add_val(doc, root, wait ? "waits" : "durations", field);
+    }
     yyjson_mut_val* bake = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_str(doc, bake, "palette", d.game_palette ? "game" : "svg");
     if (d.outline) yyjson_mut_obj_add_strcpy(doc, bake, "outline", hex(d.outline_color).c_str());

@@ -4,6 +4,7 @@
 add_library(forge_vector STATIC
   src/trig.cpp
   src/ease.cpp
+  src/timing.cpp
   src/path.cpp
   src/morph.cpp
   src/svg.cpp

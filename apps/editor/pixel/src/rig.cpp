@@ -520,15 +520,23 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         const Affine local = inverse(r.parent_global) * a * r.parent_global * from_tvg(r.rest_local);
         r.paint->transform(to_tvg(local));
         r.paint->opacity(to_u8(r.paint->opacity() / 255.0 * std::clamp(pp.opacity, 0.0, 1.0)));
-        if (pp.has_fill)
+        const f64 fk = std::isfinite(pp.fill_k) ? std::clamp(pp.fill_k, 0.0, 1.0) : 1.0;
+        if (pp.has_fill && fk > 0)
             for (i32 li : r.leaves) {
                 Leaf& l = m.leaves[static_cast<usize>(li)];
                 u8 cr, cg, cb, ca = 0;
                 const bool grad = l.shape->fill() != nullptr;
                 if (!grad) l.shape->fill(&cr, &cg, &cb, &ca);
                 if (!grad && ca == 0) continue; // a shape without a fill stays without one
+                if (grad && fk < 0.5) continue; // a gradient does not mix: it changes halfway
                 const u8 base = grad ? 255 : ca;
-                l.shape->fill(pp.fill.r, pp.fill.g, pp.fill.b, static_cast<u8>((base * pp.fill.a + 127) / 255));
+                const u8 fa = static_cast<u8>((base * pp.fill.a + 127) / 255);
+                if (grad || fk >= 1) {
+                    l.shape->fill(pp.fill.r, pp.fill.g, pp.fill.b, fa);
+                } else {
+                    auto lerp = [fk](u8 c0, u8 c1) { return static_cast<u8>(std::lround(c0 + (c1 - c0) * fk)); };
+                    l.shape->fill(lerp(cr, pp.fill.r), lerp(cg, pp.fill.g), lerp(cb, pp.fill.b), lerp(ca, fa));
+                }
                 l.look_changed = true;
             }
     }

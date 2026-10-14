@@ -53,6 +53,7 @@ struct PartPose {
     f64 opacity = 1;        // times its own
     bool has_fill = false;  // the fill of the part (every shape of a group) becomes `fill`
     Rgba8 fill;
+    f64 fill_k = 1;         // how far: 0 its own colour, 1 `fill` (a gradient takes it from 0.5 on)
 };
 
 // A shape morphed into another element of the same SVG (it may be hidden): k = 0 is the shape, 1 the target.
