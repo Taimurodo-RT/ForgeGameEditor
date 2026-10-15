@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <set>
 #include <string>
@@ -690,8 +691,9 @@ TEST_CASE("Pixel script: errors name their line") {
     CHECK_FALSE(syntax.load("return {\n pose = function(t)\n  part('head'):set{ x = }\n end }"));
     CHECK(syntax.error_line() == 3);
     CHECK(syntax.error().rfind("строка 3: ", 0) == 0);
-    load_error("return 5", "скрипт позы должен вернуть таблицу: return { params = {…}, pose = function(t, p, rng, clip) … end }");
-    load_error("return { params = {} }", "в таблице скрипта нет pose = function(t, p, rng, clip) … end");
+    load_error("return 5", "скрипт должен вернуть таблицу: return { params = {…}, clips = { walk = function(p) … end } }");
+    load_error("return { params = {} }",
+               "в таблице скрипта нет ни clips = { walk = function(p) … end }, ни pose = function(t, p, rng, clip) … end");
     load_error("return { params = { speed = 'fast' }, pose = function() end }", "params.speed: параметр — число (скорость, длина шага…)");
     load_error("return { params = 5, pose = function() end }", "params должен быть таблицей: params = { speed = 1 }");
     load_error("\n\nerror('сломано')\nreturn {}", "строка 3: сломано");
@@ -710,7 +712,7 @@ TEST_CASE("Pixel script: errors name their line") {
     pose_error("part('head'):set{ fill = 'teal-ish' }", "строка 2: part(\"head\"):set — fill: нужен цвет \"#rrggbb\"");
     pose_error("shape('body'):morph('head', 1)", "строка 2: «body» — группа, морфинг бывает только у фигуры");
     pose_error("shape('mouth'):morph('nope', 1)", "строка 2: в SVG нет фигуры «nope»");
-    pose_error("local x = ease('fast', 1)", "строка 2: ease: нет слова «fast» (smooth, linear, in, out, back, bounce, elastic)");
+    pose_error("local x = ease('fast', 1)", "строка 2: ease: нет слова «fast» (smooth, linear, in, out, back, bounce, elastic, in_sine … in_out_bounce)");
     pose_error("local x = nil + 1", "строка 2: attempt to perform arithmetic (add) on nil and number");
 
     // An endless loop stops at the budget, at its line.
@@ -736,6 +738,8 @@ TEST_CASE("Pixel doc: .pixel.json read, written and read back") {
     "walk": {"frames": 8, "fps": 12, "loop": true},
     "stand": {"frames": 4, "fps": 6, "loop": false}
   },
+  "waits": {"jump": {"отрыв": 0.18, "приземление": 0}},
+  "durations": {"spin": {"оборот": 0.6}},
   "bake": {"palette": "svg", "outline": null, "picture": "aa"}
 })json";
     PixelDoc d;
@@ -753,6 +757,10 @@ TEST_CASE("Pixel doc: .pixel.json read, written and read back") {
     CHECK_FALSE(d.game_palette);
     CHECK_FALSE(d.outline);
     CHECK(d.picture == "aa");
+    REQUIRE(d.lengths.size() == 2);
+    CHECK(d.lengths.at("jump").waits == std::map<std::string, f64>{{"отрыв", 0.18}, {"приземление", 0}});
+    CHECK(d.lengths.at("jump").durations.empty());
+    CHECK(d.lengths.at("spin").durations.at("оборот") == 0.6);
 
     d.game_palette = true;
     d.outline = true;
@@ -765,6 +773,11 @@ TEST_CASE("Pixel doc: .pixel.json read, written and read back") {
     REQUIRE(read_pixel_doc(text, back, why));
     CHECK(back == d);
     CHECK(text.find("\"outline\": \"#102030\"") != std::string::npos);
+    // Without time events the file has neither field.
+    d.lengths.clear();
+    const std::string plain = write_pixel_doc(d);
+    CHECK(plain.find("waits") == std::string::npos);
+    CHECK(plain.find("durations") == std::string::npos);
 
     const std::pair<const char*, const char*> bad[] = {
         {"[1]", "в файле не объект JSON"},
@@ -777,6 +790,8 @@ TEST_CASE("Pixel doc: .pixel.json read, written and read back") {
         {"{\"clips\": {\"walk\": {\"frames\": 33}}}", "clips.walk.frames: нужно целое от 1 до 32"},
         {"{\"clips\": {\"walk\": {\"fps\": 0}}}", "clips.walk.fps: нужно число больше 0 и не больше 60"},
         {"{\"clips\": {\"walk\": {\"loop\": 1}}}", "clips.walk.loop: нужно true или false"},
+        {"{\"waits\": {\"jump\": {\"отрыв\": -1}}}", "waits.jump.отрыв: нужно число секунд не меньше 0"},
+        {"{\"durations\": {\"spin\": 0.6}}", "durations: нужен объект {\"клип\": {\"имя\": секунды}}"},
         {"{\"bake\": {\"palette\": \"gold\"}}", "bake.palette: \"svg\" (цвета рисунка) или \"game\" (цвета игры)"},
         {"{\"bake\": {\"outline\": \"thick\"}}", "bake.outline: null или цвет \"#rrggbb\""},
         {"{\"bake\": {\"strip\": {\"walk\": {\"first\": 30, \"frames\": 4, \"fps\": 10, \"loop\": true}}}}",

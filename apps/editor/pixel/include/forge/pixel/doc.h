@@ -10,13 +10,16 @@
 //     "params": {"speed": 1.0},
 //     "pivots": {"leg_l": [29.5, 41]},
 //     "clips": {"stand": {"frames": 4, "fps": 6, "loop": true}, "walk": {"frames": 8, "fps": 12, "loop": true}},
+//     "waits": {"jump": {"отрыв": 0.18}}, "durations": {"spin": {"оборот": 0.6}},
 //     "bake": {"palette": "svg", "outline": null, "picture": "<Guid of the baked picture>", "hash": "<its bytes>",
 //              "strip": {"stand": {"first": 0, "frames": 4, "fps": 6, "loop": true}, "walk": {"first": 4, …}}}
 //   }
 //
 // "strip" is what the picture holds, as it was baked: «Отдать шаблону…» gives the template these animations, whatever
-// the clips became since.
+// the clips became since. "waits" and "durations" are the lengths of the code's wait_until and duration by clip and
+// name (step 1 of docs/models/движение-модель.md): dragged on the timeline, they live here, not in the code.
 
+#include "forge/pixel/motion.h"
 #include "forge/pixel/rig.h"
 
 #include <map>
@@ -55,6 +58,7 @@ struct PixelDoc {
     std::map<std::string, f64> params;           // values over the script's own
     std::map<std::string, vector::Point> pivots; // by part, in picture units
     std::vector<ClipSpec> clips;                 // in the strip's order
+    std::map<std::string, MotionLengths> lengths; // by clip of the code: "waits" and "durations"
     bool game_palette = false;                   // "palette": "game" (the game's colours) or "svg"
     bool outline = false;
     Rgba8 outline_color{0, 0, 0, 255};
