@@ -63,10 +63,7 @@ private:
         take(now.about, to.about, from.about);
         take(now.values, to.values, from.values);
         take(now.picture, to.picture, from.picture);
-        take(now.frames, to.frames, from.frames);
-        take(now.animations, to.animations, from.animations);
-        take(now.frames_over, to.frames_over, from.frames_over); // set aside past the game's limit: the author's frames now, or back
-        take(now.animations_over, to.animations_over, from.animations_over);
+        objects::take_look(now, to, from); // its frames and animations as the file has them, set aside by the limit as it is now
         take(now.file, to.file, from.file);
         return now;
     }

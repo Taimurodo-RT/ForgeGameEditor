@@ -349,15 +349,20 @@ TEST_CASE("the game's frame limit: game.json, templates and animations past it, 
     CHECK(again == "{\n  \"title\": \"Ёжик\",\n  \"org\": \"Forge\",\n  \"zoom\": 32,\n  \"module\": \"slice\",\n  \"frame_limit\": 128\n}\n");
     CHECK_FALSE(with_frame_limit("[1]", 80, out));
     CHECK_FALSE(with_frame_limit("{", 80, out));
-    // Each game of the catalog: the field is one line more, before the last brace; the rest byte for byte.
+    // Lines ending in CR LF (a checkout on Windows) stay so, a line break inside a string stays one escape.
+    REQUIRE(with_frame_limit("{\r\n  \"title\": \"Ёжик\\nи ёж\",\r\n  \"zoom\": 32\r\n}\r\n", 80, out));
+    CHECK(out == "{\r\n  \"title\": \"Ёжик\\nи ёж\",\r\n  \"zoom\": 32,\r\n  \"frame_limit\": 80\r\n}\r\n");
+    // Each game of the catalog: the field is one line more, before the last brace; the rest byte for byte, line ends
+    // as checked out.
     for (const char* game : {"slice", "platformer", "rpg", "match3"}) {
         std::vector<u8> bytes;
         REQUIRE(read_file(fs::path(FORGE_SOURCE_DIR) / "games" / game / "game.json", bytes));
         const std::string text(bytes.begin(), bytes.end());
-        REQUIRE(text.ends_with("\"\n}\n"));
+        const std::string nl = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+        REQUIRE(text.ends_with("\"" + nl + "}" + nl));
         std::string with;
         REQUIRE(with_frame_limit(text, 64, with));
-        CHECK_MESSAGE(with == text.substr(0, text.size() - 3) + ",\n  \"frame_limit\": 64\n}\n", game);
+        CHECK_MESSAGE(with == text.substr(0, text.size() - 1 - 2 * nl.size()) + "," + nl + "  \"frame_limit\": 64" + nl + "}" + nl, game);
     }
 
     // A library of a game of limit 4: a picture of more frames reads as one, said; an animation longer does not read.
@@ -521,6 +526,141 @@ TEST_CASE("a template past the game's frame limit keeps its file's frames and an
     CHECK(now.find("\"frames\": 3,") != std::string::npos);
     CHECK(now.find("\"frames\": 6") == std::string::npos);
     CHECK(now.find("\"walk\": {\"frames\": [0, 1, 2], \"fps\": 8}") != std::string::npos);
+}
+
+// What a library holds of its templates against what reading their files again at its limit gives: "" when the same.
+static std::string unlike_reread(const Library& lib) {
+    Library again;
+    again.set_frame_limit(lib.frame_limit());
+    if (!again.load(lib.kinds_file(), lib.folder())) return "not read again";
+    if (again.templates().size() != lib.templates().size()) return "another number of templates";
+    for (const Template& t : lib.templates()) {
+        const Template* r = again.find(t.key);
+        if (!r) return t.id + ": not read again";
+        if (r->name != t.name || r->frames != t.frames || r->frames_over != t.frames_over || r->animations != t.animations ||
+            r->animations_over != t.animations_over)
+            return t.id + ": frames " + std::to_string(t.frames) + "/" + std::to_string(t.frames_over) + ", read again " +
+                   std::to_string(r->frames) + "/" + std::to_string(r->frames_over) + "; animations " + std::to_string(t.animations.size()) +
+                   "/" + std::to_string(t.animations_over.size()) + ", read again " + std::to_string(r->animations.size()) + "/" +
+                   std::to_string(r->animations_over.size());
+    }
+    if (again.read_notes() != lib.read_notes()) return "said otherwise when read again";
+    return {};
+}
+
+TEST_CASE("a template put back after the game's frame limit changed is what reading its file again gives") {
+    const auto dir = temp_folder("forge_objects_frame_limit_put_test");
+    write_text(dir / "kinds.json", kKinds);
+    write_text(dir / "objects" / "ezhik.object.json",
+               R"({"id": "ezhik", "name": "Ёжик", "kind": "pickup", "picture": "ёжик.png", "frames": 6,
+                   "animations": {"walk": {"frames": [0, 1, 2, 3, 4, 5], "fps": 12}, "stand": {"frames": [0, 1], "fps": 4}}, "values": {}})");
+    const fs::path file = dir / "objects" / "ezhik.object.json";
+    const Clip walk{{0, 1, 2, 3, 4, 5}, 12, true}, stand{{0, 1}, 4, true};
+    const std::string note = "шаблон «Ёжик» (ezhik.object.json): кадров 6 больше предела игры 4, читается одной картинкой";
+    Library lib;
+    lib.set_frame_limit(8);
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    const Template at8 = *lib.find("ezhik"); // a step of a tab's history made at 8
+    CHECK(at8.frames == 6);
+    CHECK(at8.frames_over == 0);
+    CHECK(unlike_reread(lib).empty());
+    REQUIRE(lib.put(at8)); // the file as the editor writes it
+    std::vector<u8> six;
+    REQUIRE(read_file(file, six));
+
+    // The limit made 4 (Ctrl+Z of «Предел кадров» in «Анимация»): set aside and said.
+    lib.set_frame_limit(4);
+    lib.reload_templates();
+    const Template at4 = *lib.find("ezhik");
+    CHECK(at4.frames == 1);
+    CHECK(at4.frames_over == 6);
+    CHECK(at4.animations_over.count("walk") == 1);
+    REQUIRE(lib.read_notes().size() == 1);
+    CHECK(lib.read_notes()[0] == note);
+    CHECK(unlike_reread(lib).empty());
+
+    // The template as a step made at 8 has it, put back at 4 (Ctrl+Y in «Объекты»): set aside as reading gives, said,
+    // its file all of it.
+    REQUIRE(lib.put(at8));
+    const Template* t = lib.find("ezhik");
+    CHECK(t->frames == 1);
+    CHECK(t->frames_over == 6);
+    CHECK(t->animations.count("walk") == 0);
+    REQUIRE(t->animations_over.count("walk") == 1);
+    CHECK(t->animations_over.at("walk") == walk);
+    REQUIRE(t->animations.count("stand") == 1);
+    CHECK(t->animations.at("stand") == stand);
+    REQUIRE(lib.read_notes().size() == 1);
+    CHECK(lib.read_notes()[0] == note);
+    std::vector<u8> bytes;
+    REQUIRE(read_file(file, bytes));
+    CHECK(bytes == six);
+    CHECK_MESSAGE(unlike_reread(lib).empty(), unlike_reread(lib));
+
+    // Back up to 8, and the template as a step made at 4 has it put back: all of it read, nothing said.
+    lib.set_frame_limit(8);
+    lib.reload_templates();
+    REQUIRE(lib.put(at4));
+    t = lib.find("ezhik");
+    CHECK(t->frames == 6);
+    CHECK(t->frames_over == 0);
+    REQUIRE(t->animations.count("walk") == 1);
+    CHECK(t->animations.at("walk") == walk);
+    CHECK(t->animations_over.empty());
+    CHECK(lib.read_notes().empty());
+    REQUIRE(read_file(file, bytes));
+    CHECK(bytes == six);
+    CHECK_MESSAGE(unlike_reread(lib).empty(), unlike_reread(lib));
+
+    // A step onto the template as it is now: only what it changed, as the file has it.
+    Template now = *lib.find("ezhik");
+    now.frames = 2; // another tab's history chose 2 since
+    Template from = at8, to = at8;
+    to.animations.erase("stand"); // this step: «stand» as in the game
+    take_look(now, to, from);
+    CHECK(now.frames == 2);
+    CHECK(now.animations.count("stand") == 0);
+    CHECK(now.animations.count("walk") == 1);
+    // A step of 1 set aside → 2 of the author's, undone at 8: the 6 of the file back, read; at 4 set aside again.
+    Template chose = at4;
+    chose.frames = 2;
+    chose.frames_over = 0;
+    now = *lib.find("ezhik");
+    now.frames = 2;
+    take_look(now, at4, chose);
+    CHECK(now.frames == 6);
+    CHECK(now.frames_over == 0);
+    REQUIRE(lib.put(now));
+    CHECK(lib.find("ezhik")->frames == 6);
+    CHECK_MESSAGE(unlike_reread(lib).empty(), unlike_reread(lib));
+    lib.set_frame_limit(4);
+    lib.reload_templates();
+    now = *lib.find("ezhik");
+    take_look(now, chose, at4);
+    CHECK(now.frames == 2);
+    REQUIRE(lib.put(now));
+    CHECK(lib.find("ezhik")->frames == 2);
+    CHECK(lib.read_notes().empty());
+    CHECK_MESSAGE(unlike_reread(lib).empty(), unlike_reread(lib));
+    now = *lib.find("ezhik");
+    take_look(now, at4, chose);
+    REQUIRE(lib.put(now));
+    CHECK(lib.find("ezhik")->frames == 1);
+    CHECK(lib.find("ezhik")->frames_over == 6);
+    CHECK(lib.read_notes() == std::vector<std::string>{note});
+    REQUIRE(read_file(file, bytes));
+    CHECK(bytes == six);
+    CHECK_MESSAGE(unlike_reread(lib).empty(), unlike_reread(lib));
+
+    // Renamed, the note names it as reading would; taken away, nothing said.
+    Template renamed = *lib.find("ezhik");
+    renamed.name = "Ёжик лесной";
+    REQUIRE(lib.put(renamed));
+    CHECK(lib.read_notes() ==
+          std::vector<std::string>{"шаблон «Ёжик лесной» (ezhik.object.json): кадров 6 больше предела игры 4, читается одной картинкой"});
+    CHECK_MESSAGE(unlike_reread(lib).empty(), unlike_reread(lib));
+    REQUIRE(lib.remove(renamed.key));
+    CHECK(lib.read_notes().empty());
 }
 
 TEST_CASE("a kind may be one whose templates are not put on levels") {

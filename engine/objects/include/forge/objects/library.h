@@ -151,7 +151,8 @@ inline constexpr u32 kMaxFrameLimit = kMaxStripWidth;
 // why in words, when game.json does not read or the field is not a whole number of 1..kMaxFrameLimit.
 bool read_frame_limit(const std::filesystem::path& game_dir, u32& limit, std::string* why = nullptr);
 // game.json's text with "frame_limit" set to limit (a new field goes last), the other fields as they were and in their
-// order, laid out as the editor writes game.json. False when the text is not a JSON object.
+// order, laid out as the editor writes game.json, its lines ending as they did (CR LF when the text has them, as a
+// checkout on Windows gives). False when the text is not a JSON object.
 bool with_frame_limit(std::string_view json, u32 limit, std::string& out);
 
 // An animation of a template's picture in one state the game's module names ("walk"): which frames of its strip show
@@ -197,10 +198,11 @@ struct Template {
     // Its own animations of the picture, by the state of the module's they play in ("stand", "walk"). States the
     // module does not know stay as they are read.
     std::map<std::string, Clip> animations;
-    // What its file says past the game's frame limit (Library::reload_templates), set aside: the game and the tabs see
-    // one picture (frames 1) and no such animation, but a save writes them back as they were (file_frames,
-    // file_animations), and a higher limit reads them again. frames_over: the file's frames when the picture reads as
-    // one, 0 when none were set aside; animations_over: the file's animations longer than the limit, by state.
+    // What its file says past the game's frame limit, set aside by the library whenever it reads or puts the template
+    // (Library::reload_templates, Library::put): the game and the tabs see one picture (frames 1) and no such
+    // animation, but a save writes them back as they were (file_frames, file_animations), and a higher limit reads them
+    // again. frames_over: the file's frames when the picture reads as one, 0 when none were set aside; animations_over:
+    // the file's animations longer than the limit, by state.
     u32 frames_over = 0;
     std::map<std::string, Clip> animations_over;
     std::filesystem::path file;
@@ -238,11 +240,12 @@ public:
 
     // The game's frame limit (read_frame_limit): set before load. A template whose picture has more frames than it reads
     // as one picture, and an animation longer than it does not read, each said in the log (and the first in
-    // read_notes). kDefaultFrameLimit unless set.
+    // read_notes). The same when a template is put (an undo of a tab's step after the limit changed in another): what
+    // the library holds is what reading its files again gives. kDefaultFrameLimit unless set.
     u32 frame_limit() const { return frame_limit_; }
     void set_frame_limit(u32 limit) { frame_limit_ = limit; }
-    // What reading the templates said beyond a file that does not read: «шаблон «Ёжик» (ezhik.object.json): кадров 80
-    // больше предела игры 64, читается одной картинкой».
+    // The templates whose picture reads as one past the limit, as they are now, in the list's order: «шаблон «Ёжик»
+    // (ezhik.object.json): кадров 80 больше предела игры 64, читается одной картинкой».
     const std::vector<std::string>& read_notes() const { return read_notes_; }
 
     // Reads the kinds and every template in the folder (which may be
@@ -295,7 +298,9 @@ public:
     // under a name not taken yet ("Монетка 2" when "Монетка" is).
     std::optional<Template> make(const KindDef& kind, const Preset* preset, std::string_view name) const;
     // Adds a template or replaces the one with its key. Undo of any template
-    // edit puts the whole old template back through this.
+    // edit puts the whole old template back through this. Its frames and
+    // animations past the game's frame limit are set aside as reading its
+    // file would (reload_templates); its file gets them all.
     bool put(Template t, std::string* error = nullptr);
     bool remove(u64 key);
     // --- what a template is made of ---
@@ -361,6 +366,11 @@ public:
 
 private:
     void sort_templates();
+    // Its frames and animations by the game's limit, from what its file has: past it set aside, within it read; what is
+    // newly set aside said in the log.
+    void fit(Template& t) const;
+    // read_notes of the templates as they are now.
+    void note_limits();
     bool write(const Template& t, std::string* error) const;
     void on_unpacked(scene::Scene& scene, flecs::entity e) const;
 
@@ -387,6 +397,10 @@ std::string template_json(const Template& t);
 u32 values_rev(const std::vector<std::pair<std::string, std::string>>& values);
 // What copies compare: the values and the blocks.
 u32 template_rev(const Template& t);
+// A step of a tab's history on a template (from → to), put onto the template as it is now, so a step of another tab's
+// history on it stays: its frames and its animations each where this step changed them, as the file has them (set aside
+// past the game's limit included). Library::put sets aside again by the limit as it is then.
+void take_look(Template& now, const Template& to, const Template& from);
 
 } // namespace forge::objects
 

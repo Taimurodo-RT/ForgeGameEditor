@@ -2046,7 +2046,8 @@ struct Options {
     // card, the limit typed and undone, past it refused, game.json that cannot be written refused, by "frame-limit-a";
     // opened again and the flag played by its 64 frames by "frame-limit-a-again"; at 63 by hand the flag of 64 frames
     // renamed and its frames chosen, its file keeping what is past the limit, by "frame-limit-a-low"; opened again at 63
-    // and 64 typed by "frame-limit-a-low-again"); "input" (the tab «Ввод»: the same, the keys of
+    // and 64 typed by "frame-limit-a-low-again"; the limit and the flag's frames changed and undone by turns in the
+    // histories of «Анимация» and «Объекты» by "frame-limit-a-cross"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2311,6 +2312,7 @@ public:
         if (part == "frame-limit-a-again") return frame < 3 || frame_limit_again_step();
         if (part == "frame-limit-a-low") return frame < 3 || frame_limit_low_step();
         if (part == "frame-limit-a-low-again") return frame < 3 || frame_limit_low_again_step();
+        if (part == "frame-limit-a-cross") return frame < 3 || frame_limit_cross_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -17769,7 +17771,9 @@ return {
     // picture and says so in its log, game.json back to 70. Then 63 by hand: frame-limit-a-low from a third working
     // folder, «Флаг» one picture and said by the editor and «Проверить», renamed in «Объекты», its frames chosen there
     // and in «Покадровая», «Покой» its own and «Как в игре»: its file keeps the 64 frames and «Покой» but for what the
-    // author chose, byte for byte; frame-limit-a-low-again from a fourth, still said; 64 typed gives them back. The
+    // author chose, byte for byte; frame-limit-a-low-again from a fourth, still said; 64 typed gives them back.
+    // frame-limit-a-cross from a fifth: the limit and «Покой» in the history of «Анимация», the flag's frames in that
+    // of «Объекты», undone and done again by turns, the library after each step what reading the files again gives. The
     // template and B: the same bytes.
     int fl_step_ = 0;
     std::map<std::string, std::vector<u8>> fl_tmpl_, fl_b_;
@@ -17894,6 +17898,16 @@ return {
                          "again, Ctrl+Z and Ctrl+Y (frame-limit-a-low-again: exit " +
                              std::to_string(code) + ")");
         check(tg_bytes(renamed) == std::vector<u8>(kept.begin(), kept.end()), "its file as renamed, byte for byte: the limit read, not written");
+        // At 64: the limit and the flag's frames changed in the histories of two tabs, undone and done again by turns.
+        const fs::path five = fl_root() / utf8_path("пятая папка");
+        fs::create_directories(five, ec);
+        const std::vector<u8> json64 = tg_bytes(json);
+        code = pj_run({exe, "--project", project, "--self-test", "frame-limit-a-cross"}, five);
+        check(code == 0, "the limit in «Анимация», the flag's frames in «Объекты», undone and done again by turns: after each step what "
+                         "reading the files again gives (frame-limit-a-cross: exit " +
+                             std::to_string(code) + ")");
+        check(tg_bytes(renamed) == std::vector<u8>(kept.begin(), kept.end()) && tg_bytes(json) == json64,
+              "all undone: its file as renamed and game.json byte for byte as they were");
         std::string last = text;
         if (at != std::string::npos) last.replace(at + 15, 2, "64");
         const auto tmpl = tp_template(), btree = pj_tree(b);
@@ -18487,6 +18501,207 @@ return {
             check(lib.frame_limit() == 64 && whole() && lib.read_notes().empty(), "Ctrl+Y: 64, its 64 frames and «Покой»");
             const objects::Template* t = lib.find("flag");
             check(t && tg_bytes(t->file) == fl_flag0_, "its file as it was: the limit is read, the template not written");
+            return false;
+        }
+        default: break;
+        }
+        ++fl_step_;
+        return true;
+    }
+
+    // What the editor's library holds of the game's templates against what reading their files again at game.json's
+    // limit gives, as another editor or the game opening it would: "" when the same, what is set aside and said too.
+    std::string fl_reread() {
+        const objects::Library& lib = an().library();
+        u32 limit = 0;
+        if (!objects::read_frame_limit(pjw().config().root / "game", limit)) return "game.json does not read";
+        if (limit != lib.frame_limit()) return "the limit " + std::to_string(lib.frame_limit()) + ", game.json " + std::to_string(limit);
+        objects::Library again;
+        again.set_frame_limit(limit);
+        if (!again.load(lib.kinds_file(), lib.folder())) return "not read again";
+        if (again.templates().size() != lib.templates().size()) return "another number of templates read again";
+        auto idle = [](const std::map<std::string, objects::Clip>& m) {
+            const auto it = m.find("idle");
+            return it == m.end() ? std::string("-") : std::to_string(it->second.frames.size());
+        };
+        for (const objects::Template& t : lib.templates()) {
+            const objects::Template* r = again.find(t.key);
+            if (!r) return t.id + " not read again";
+            if (r->name != t.name || r->picture != t.picture || r->frames != t.frames || r->frames_over != t.frames_over ||
+                r->animations != t.animations || r->animations_over != t.animations_over)
+                return t.id + ": frames " + std::to_string(t.frames) + " set aside " + std::to_string(t.frames_over) + " «Покой» " +
+                       idle(t.animations) + "/" + idle(t.animations_over) + ", read again " + std::to_string(r->frames) + " set aside " +
+                       std::to_string(r->frames_over) + " «Покой» " + idle(r->animations) + "/" + idle(r->animations_over);
+        }
+        if (again.read_notes() != lib.read_notes()) return "said otherwise when read again";
+        return {};
+    }
+
+    // In an editor for «Предел А» at 64 from a fifth working folder (--self-test frame-limit-a-cross): the limit and
+    // «Покой» change in the history of «Анимация», «Кадров в картинке» of «Флаг шкалы» in the history of «Объекты»; each
+    // undone and done again by turns. After every step the library is what reading the files again gives (fl_reread):
+    // 65 frames are one picture at 64 and said, read at 128; «Покой» as the author left it; a step undone in one tab
+    // leaves what the other changed. At the end every step is undone: game.json and the flag's file byte for byte as at
+    // the start.
+    bool frame_limit_cross_step() {
+        namespace fs = std::filesystem;
+        const fs::path json = pjw().config().root / "game" / "game.json";
+        objects::Library& lib = an().library();
+        const char* note = "шаблон «Флаг шкалы» (Флаг шкалы.object.json): кадров 65 больше предела игры 64, читается одной картинкой";
+        // The flag as the game and the tabs see it: frames, frames set aside, the length of «Покой»; its file the same
+        // as one (the frames set aside, else the frames).
+        auto is = [&](u32 limit, u32 frames, u32 over, usize idle) {
+            const objects::Template* t = lib.find("flag");
+            const std::optional<objects::Template> f = t ? objects::read_template(t->file) : std::nullopt;
+            const auto it = t ? t->animations.find("idle") : decltype(t->animations)::const_iterator{};
+            const auto fit = f ? f->animations.find("idle") : decltype(f->animations)::const_iterator{};
+            return lib.frame_limit() == limit && t && t->frames == frames && t->frames_over == over && it != t->animations.end() &&
+                   it->second.frames.size() == idle && t->animations_over.empty() && f && f->frames == (over ? over : frames) &&
+                   fit != f->animations.end() && fit->second == it->second;
+        };
+        auto reread = [&](const std::string& what) {
+            const std::string differs = fl_reread();
+            check(differs.empty(), what + ": the library as reading the files again gives; " + differs);
+        };
+        auto look = [&] {
+            const objects::Template* t = lib.find("flag");
+            return t ? "limit " + std::to_string(lib.frame_limit()) + ", frames " + std::to_string(t->frames) + " set aside " + std::to_string(t->frames_over)
+                     : std::string("no flag");
+        };
+        switch (fl_step_) {
+        case 0: {
+            check(is(64, 64, 0, 64) && lib.read_notes().empty(), "opened at 64 from a fifth folder: «Флаг шкалы» 64 frames and «Покой» of 64; " + look());
+            reread("opened");
+            fl_json0_ = tg_bytes(json);
+            fl_flag0_ = tg_bytes(lib.find("flag")->file);
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && px().listed().size() == 1 && shown("px-doc-0"), "the character listed")) return true;
+            check(pj_click("px-doc-0") && px().opened() == "персонажи/Шкала.pixel.json", "a click on «Шкала»");
+            break;
+        // «Анимация»: «Предел кадров» 128, then a 65th frame of «Покой» in «Покадровая».
+        case 3: {
+            if (hold(!as().busy() && !as().looking() && shown("px-limit") && input_value("px-limit") == "64", "«Предел кадров» 64")) return true;
+            const bool typed = ue_type("px-limit", "128");
+            check(typed && is(128, 64, 0, 64) && an().history().undo_label() == "Предел кадров 128", "«Предел кадров» 128: one step; " + look());
+            reread("128");
+            check(pj_click("an-mode-frames") && an().mode() == "frames", "«Покадровая»");
+            break;
+        }
+        case 4:
+            if (hold(shown("an-tpl-0"), "«Покадровая»'s list")) return true;
+            check(an_pick("flag"), "a click on «Флаг шкалы»");
+            break;
+        case 5: {
+            if (hold(an().selected() && an().selected()->id == "flag" && shown("an-state-idle") && shown("an-frame-5"), "«Флаг шкалы» shown, its strip"))
+                return true;
+            bool clicked = pj_click("an-state-idle");
+            check(clicked && an().state() == "idle" && an().own(), "«Покой»: the author's 64 frames");
+            clicked = pj_click("an-frame-5");
+            check(clicked && is(128, 64, 0, 65), "a 65th frame of «Покой» at 128: in its file too; " + look());
+            reread("«Покой» of 65");
+            check(click_tab(2) && ed_.tab() == "objects", "«Объекты»");
+            break;
+        }
+        // «Объекты»: «Кадров в картинке» 65.
+        case 6: {
+            if (wait(2)) return true;
+            const objects::Template* t = lib.find("flag");
+            if (t) ol().select(t->key);
+            check(t && ol().selected() == t, "«Флаг шкалы» chosen");
+            break;
+        }
+        case 7:
+            if (hold(shown("ol-open-link"), "«Открыть редактор» of «Флаг шкалы»")) return true;
+            check(pj_click("ol-open-link"), "«Открыть редактор»");
+            break;
+        case 8: {
+            if (hold(shown("ol-frames-more") && element_text("ol-frames-n") == "64", "its «Кадров в картинке»: 64")) return true;
+            const bool clicked = pj_click("ol-frames-more");
+            check(clicked && is(128, 65, 0, 65) && ol().history().undo_label() == "«Флаг шкалы»: кадров в картинке 65",
+                  "«Кадров в картинке» + at 128: 65, in its file too; " + ol().history().undo_label());
+            reread("65 frames");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        // «Анимация»: Ctrl+Z twice. «Покой» back to 64, the 65 frames «Объекты» chose stay; the limit 64: they are one
+        // picture, said, as reading gives.
+        case 9: {
+            if (hold(ed_.tab() == "animation" && shown("an-mode-frames"), "«Анимация»")) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 65, 0, 64), "«Анимация» Ctrl+Z: «Покой» of 64, the 65 frames of «Объекты» stay; " + look());
+            reread("«Покой» undone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(64, 1, 65, 64) && tg_bytes(json) == fl_json0_ && fl_said(note),
+                  "«Анимация» Ctrl+Z: 64, game.json as it was; the 65 frames one picture and said, kept in its file; " + look());
+            reread("the limit undone");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Объекты»: Ctrl+Z and Ctrl+Y at 64 (the step chose 65 at 128): 64 frames, then 65 set aside, as reading gives.
+        // Then 2 chosen there.
+        case 10: {
+            if (hold(ed_.tab() == "objects" && shown("ol-frames-more") && element_text("ol-frames-n") == "1", "«Объекты», «Кадров в картинке» 1"))
+                return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(64, 64, 0, 64) && tg_bytes(lib.find("flag")->file) == fl_flag0_ && lib.read_notes().empty(),
+                  "«Объекты» Ctrl+Z at 64: 64 frames, its file byte for byte as at the start, nothing said; " + look());
+            reread("65 undone at 64");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(is(64, 1, 65, 64) && fl_said(note), "«Объекты» Ctrl+Y at 64: the 65 frames one picture and said, as reading gives; " + look());
+            reread("65 again at 64");
+            break;
+        }
+        case 11: {
+            if (hold(shown("ol-frames-more") && element_text("ol-frames-n") == "1", "its «Кадров в картинке»: 1")) return true;
+            const bool clicked = pj_click("ol-frames-more");
+            check(clicked && is(64, 2, 0, 64) && lib.read_notes().empty(), "«Кадров в картинке» + at 64: 2 of the author's, nothing said; " + look());
+            reread("2 at 64");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        // «Анимация»: Ctrl+Y twice. 128 and «Покой» of 65 again; the 2 frames of «Объекты» stay.
+        case 12: {
+            if (hold(ed_.tab() == "animation" && shown("an-mode-frames"), "«Анимация»")) return true;
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(is(128, 2, 0, 64), "«Анимация» Ctrl+Y: 128, the 2 frames stay; " + look());
+            reread("the limit again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(is(128, 2, 0, 65), "«Анимация» Ctrl+Y: «Покой» of 65 again, the 2 frames stay; " + look());
+            reread("«Покой» again");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Объекты»: Ctrl+Z at 128 of the step that chose 2 where 65 were set aside: the 65 of the file read; Ctrl+Z
+        // again, 64. «Покой» of 65 stays.
+        case 13: {
+            if (hold(ed_.tab() == "objects" && shown("ol-frames-more") && element_text("ol-frames-n") == "2", "«Объекты», «Кадров в картинке» 2"))
+                return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 65, 0, 65) && lib.read_notes().empty(), "«Объекты» Ctrl+Z at 128: the 65 frames read, «Покой» of 65 stays; " + look());
+            reread("2 undone at 128");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 64, 0, 65), "«Объекты» Ctrl+Z: 64 frames, «Покой» of 65 stays; " + look());
+            reread("65 undone at 128");
+            check(pj_click("ol-back"), "«К библиотеке»");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        // «Анимация»: Ctrl+Z twice, everything undone: game.json and the flag's file byte for byte as at the start.
+        case 14: {
+            if (hold(ed_.tab() == "animation" && shown("an-mode-frames"), "«Анимация»")) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 64, 0, 64), "«Анимация» Ctrl+Z: «Покой» of 64; " + look());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(64, 64, 0, 64) && lib.read_notes().empty() && tg_bytes(json) == fl_json0_ && tg_bytes(lib.find("flag")->file) == fl_flag0_,
+                  "«Анимация» Ctrl+Z: 64; game.json and its file byte for byte as at the start; " + look());
+            reread("all undone");
             return false;
         }
         default: break;
@@ -25741,7 +25956,7 @@ int main(int argc, char** argv) {
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
                                          "animation",    "animation-a",     "animation-a-again", "pixel", "pixel-a", "pixel-a-again",
                                          "frame-limit", "frame-limit-a", "frame-limit-a-again", "frame-limit-a-low", "frame-limit-a-low-again",
-                                         "input", "input-a", "input-a-again",
+                                         "frame-limit-a-cross", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",

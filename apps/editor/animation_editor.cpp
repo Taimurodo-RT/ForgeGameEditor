@@ -18,8 +18,8 @@ namespace {
 constexpr u32 kThumbPx = 72;    // a frame in the strip
 constexpr u32 kPreviewPx = 240; // the frame playing
 
-// Puts a template's frames and animations back as they were, onto the template as it is now: the tab «Объекты»
-// changes its other fields in a history of its own.
+// Puts a template's frames or animations back as they were, onto the template as it is now: the tab «Объекты»
+// changes it in a history of its own, and what this step did not change stays as that history left it.
 class AnimCommand final : public editor::Command {
 public:
     struct Look {
@@ -32,19 +32,24 @@ public:
     };
     AnimCommand(objects::Library& lib, u64 key, Look before, Look after, std::string label)
         : lib_(lib), key_(key), before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
-    void apply(editor::Document&) override { set(after_); }
-    void revert(editor::Document&) override { set(before_); }
+    void apply(editor::Document&) override { set(after_, before_); }
+    void revert(editor::Document&) override { set(before_, after_); }
     std::string label() const override { return label_; }
 
 private:
-    void set(const Look& to) {
+    static objects::Template as_template(const Look& l) {
+        objects::Template t;
+        t.frames = l.frames;
+        t.animations = l.animations;
+        t.frames_over = l.frames_over;
+        t.animations_over = l.animations_over;
+        return t;
+    }
+    void set(const Look& to, const Look& from) {
         const objects::Template* now = lib_.find(key_);
         if (!now) return;
         objects::Template t = *now;
-        t.frames = to.frames;
-        t.animations = to.animations;
-        t.frames_over = to.frames_over;
-        t.animations_over = to.animations_over;
+        objects::take_look(t, as_template(to), as_template(from));
         std::string error;
         if (!lib_.put(std::move(t), &error)) FORGE_ERROR("Шаблон «%s»: %s", now->name.c_str(), error.c_str());
     }

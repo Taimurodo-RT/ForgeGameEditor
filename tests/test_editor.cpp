@@ -282,6 +282,21 @@ TEST_CASE("editor undo: a command that fails changes nothing, and the history st
     CHECK(a.value == 5);
     CHECK(b.value == 0);
     CHECK(history.redo_label() == "Два сразу");
+    a.refuse = false;
+    b.refuse = true;
+    CHECK_FALSE(history.redo()); // a done, then b refuses: a taken back
+    CHECK(a.value == 5);
+    CHECK(b.value == 0);
+    CHECK(history.redo_label() == "Два сразу");
+    b.refuse = false;
+    CHECK(history.redo());
+    CHECK(a.value == 7);
+    CHECK(b.value == 8);
+    a.refuse = true;
+    CHECK_FALSE(history.undo()); // b undone, then a refuses: b done again
+    CHECK(a.value == 7);
+    CHECK(b.value == 8);
+    CHECK(history.undo_label() == "Два сразу");
 }
 
 TEST_CASE("editor play: Stop restores the scene, play-time edits are not recorded") {
