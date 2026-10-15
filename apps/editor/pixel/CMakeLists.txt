@@ -6,6 +6,8 @@ add_library(forge_editor_pixel STATIC
   src/script.cpp
   src/doc.cpp
   src/bake.cpp
+  src/clip_cut.cpp
+  src/timeline.cpp
   src/motion.cpp
   src/motion_edit.cpp
   src/motion_record.cpp)

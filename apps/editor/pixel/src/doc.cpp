@@ -94,6 +94,12 @@ bool read_root(yyjson_val* root, PixelDoc& d, std::string& why) {
                 if (!yyjson_is_bool(f)) return why = "clips." + name + ".loop: нужно true или false", false;
                 c.loop = yyjson_get_bool(f);
             }
+            if (yyjson_val* r = yyjson_obj_get(val, "range")) {
+                if (!yyjson_is_arr(r) || yyjson_arr_size(r) != 2 || !number(yyjson_arr_get(r, 0), c.from) ||
+                    !number(yyjson_arr_get(r, 1), c.to) || c.from < 0 || c.to <= c.from || c.to > kMaxRange)
+                    return why = "clips." + name + ".range: нужно [от, до] в секундах, 0 ≤ от < до ≤ " + std::to_string(static_cast<u32>(kMaxRange)), false;
+                c.ranged = true;
+            }
             d.clips.push_back(std::move(c));
         }
     }
@@ -211,6 +217,12 @@ std::string write_pixel_doc(const PixelDoc& d) {
         yyjson_mut_obj_add_uint(doc, o, "frames", c.frames);
         yyjson_mut_obj_add_real(doc, o, "fps", c.fps);
         yyjson_mut_obj_add_bool(doc, o, "loop", c.loop);
+        if (c.ranged) {
+            yyjson_mut_val* r = yyjson_mut_arr(doc);
+            yyjson_mut_arr_add_real(doc, r, c.from);
+            yyjson_mut_arr_add_real(doc, r, c.to);
+            yyjson_mut_obj_add_val(doc, o, "range", r);
+        }
         yyjson_mut_obj_add(clips, yyjson_mut_strcpy(doc, c.state.c_str()), o);
     }
     yyjson_mut_obj_add_val(doc, root, "clips", clips);

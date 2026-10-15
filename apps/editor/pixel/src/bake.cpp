@@ -17,8 +17,9 @@ std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc) {
 }
 
 bool frame_pose(PoseScript& script, const Rig& rig, const PixelDoc& doc, const ClipSpec& clip, u32 k, Pose& out, std::string& why) {
-    const f64 t = clip.fps > 0 ? k / static_cast<f64>(clip.fps) : 0;
-    if (script.pose(rig, t, clip.state, doc.params, doc.seed, out)) return true;
+    ClipCut cut;
+    std::string ignore;
+    if (cut_clip(script, rig, doc, clip, cut, ignore) && script.pose(rig, cut.time(k), clip.state, doc.params, doc.seed, out)) return true;
     why = "клип «" + clip.state + "», кадр " + std::to_string(k + 1) + ": " + script.error();
     return false;
 }
@@ -49,15 +50,21 @@ bool bake_frame(Rig& rig, PoseScript& script, const PixelDoc& doc, const ClipSpe
 bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOptions& options, u32 frame_limit, Strip& out,
                 std::string& why) {
     out = {};
-    for (const ClipSpec& c : doc.clips) out.frames += c.frames;
+    std::vector<ClipCut> cuts(doc.clips.size());
+    for (usize i = 0; i < doc.clips.size(); ++i) {
+        if (!cut_clip(script, rig, doc, doc.clips[i], cuts[i], why)) return false;
+        out.frames += cuts[i].frames;
+    }
     if (out.frames == 0) {
         why = "нет ни одного клипа с кадрами";
         return false;
     }
     if (out.frames > frame_limit) {
         const u32 d = out.frames % 10, h = out.frames % 100;
+        const u32 over = out.frames - frame_limit, od = over % 10, oh = over % 100;
         why = "в клипах " + std::to_string(out.frames) + (d == 1 && h != 11 ? " кадр" : d >= 2 && d <= 4 && (h < 12 || h > 14) ? " кадра" : " кадров") +
-              ", а предел игры " + std::to_string(frame_limit) + ": уберите кадры у клипов или поднимите «Предел кадров»";
+              ", а предел игры " + std::to_string(frame_limit) + (od == 1 && oh != 11 ? ", лишний " : ", лишних ") + std::to_string(over) +
+              ": уберите кадры у клипов, сузьте диапазоны или поднимите «Предел кадров»";
         out = {};
         return false;
     }
@@ -73,9 +80,10 @@ bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOpt
     out.picture.rgba8.assign(static_cast<usize>(out.picture.width) * h * 4, 0);
     u32 at = 0;
     bool ok = true;
-    for (const ClipSpec& c : doc.clips) {
-        out.clips.push_back({c.state, at, c.frames, c.fps, c.loop});
-        for (u32 k = 0; k < c.frames && ok; ++k, ++at) {
+    for (usize i = 0; i < doc.clips.size(); ++i) {
+        const ClipSpec& c = doc.clips[i];
+        out.clips.push_back({c.state, at, cuts[i].frames, c.fps, c.loop});
+        for (u32 k = 0; k < cuts[i].frames && ok; ++k, ++at) {
             assets::CookedTexture frame;
             ok = bake_frame(rig, script, doc, c, k, options, frame, why);
             if (!ok) break;

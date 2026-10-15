@@ -29,6 +29,7 @@
 #include "forge/pixel/motion.h"
 #include "forge/pixel/rig.h"
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -45,6 +46,9 @@ struct ScriptParam {
 
 // require("name"): the text of the project's animations/name.luau; false with why (Russian) when there is none.
 using ModuleReader = std::function<bool(std::string_view name, std::string& text, std::string& why)>;
+// The reader of a game's code (step 3 of docs/models/движение-модель.md): animations/name.luau in the game's folder
+// (beside its game.json). A name with a folder in it is refused.
+ModuleReader animations_reader(std::filesystem::path game_dir);
 
 class PoseScript {
 public:
@@ -84,6 +88,11 @@ public:
     bool pose(const Rig& rig, f64 t, std::string_view clip, const std::map<std::string, f64>& values, u64 seed, Pose& out);
     // The lengths pose() records `clip` with.
     void set_lengths(std::string_view clip, const MotionLengths& lengths);
+    // The recording of clip `clip` that pose() reads, made when the code, the values, the seed or its lengths changed
+    // and kept until they change again (or forget()); null with error() when the code has no such clip or it fails.
+    const Recording* recording(const Rig& rig, std::string_view clip, const std::map<std::string, f64>& values, u64 seed);
+    // The recordings kept are made again on the next pose() or recording(): a module the code requires changed.
+    void forget();
 
     // Why the last load, record, frame or pose failed: "строка N: …" when it has a line of the script,
     // "движения.luau, строка N: …" for a module.

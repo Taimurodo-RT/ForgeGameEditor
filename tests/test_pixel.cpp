@@ -883,13 +883,13 @@ TEST_CASE("Pixel bake: the clips' frames side by side, frame k at t = k / fps") 
     CHECK(strip.frames == 64);
     doc.clips[1].frames = 25;
     CHECK_FALSE(bake_strip(rig, s, doc, {}, kLimit, strip, why));
-    CHECK(why == "в клипах 65 кадров, а предел игры 64: уберите кадры у клипов или поднимите «Предел кадров»");
+    CHECK(why == "в клипах 65 кадров, а предел игры 64, лишний 1: уберите кадры у клипов, сузьте диапазоны или поднимите «Предел кадров»");
     CHECK(strip.picture.rgba8.empty());
     CHECK(bake_strip(rig, s, doc, {}, 65, strip, why));
     CHECK(strip.frames == 65);
     doc.clips = {{"stand", 2, 10, true}, {"walk", 1, 10, true}};
     CHECK_FALSE(bake_strip(rig, s, doc, {}, 2, strip, why));
-    CHECK(why == "в клипах 3 кадра, а предел игры 2: уберите кадры у клипов или поднимите «Предел кадров»");
+    CHECK(why == "в клипах 3 кадра, а предел игры 2, лишний 1: уберите кадры у клипов, сузьте диапазоны или поднимите «Предел кадров»");
     // As wide as a texture may be on any video card, and not a pixel wider: 64 frames of 256 fill it exactly.
     const u32 fw = doc.frame_w, fh = doc.frame_h;
     doc.frame_w = kMaxFrameSide;
