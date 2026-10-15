@@ -130,24 +130,31 @@ RefreshReport AssetPipeline::refresh() {
             if (ec) break;
             const fs::path& p = it->path();
             const std::string filename = path_to_utf8(p.filename());
+            // The editor writes and deletes files while this runs on its own thread: a file listed a moment ago
+            // may be gone when it is asked its size or time. It is skipped; the next refresh sees the folder as it is.
+            std::error_code fe;
             if (!filename.empty() && filename[0] == '.') { // hidden files and folders (.git, .DS_Store)
-                if (it->is_directory()) it.disable_recursion_pending();
+                if (it->is_directory(fe)) it.disable_recursion_pending();
                 continue;
             }
-            if (!it->is_regular_file()) continue;
+            if (!it->is_regular_file(fe)) continue;
             const std::string ext = lower_extension(p);
             if (ext == kMetaExtension) {
+                const auto time = it->last_write_time(fe);
+                if (fe) continue;
                 std::string source = relative(p);
                 source.resize(source.size() - std::strlen(kMetaExtension));
-                meta_mtimes[source] = static_cast<i64>(it->last_write_time().time_since_epoch().count());
+                meta_mtimes[source] = static_cast<i64>(time.time_since_epoch().count());
                 continue;
             }
             if (ext == ".tmp") continue;
             Entry e;
             e.abs = p;
             e.rel = relative(p);
-            e.size = it->file_size();
-            e.mtime = static_cast<i64>(it->last_write_time().time_since_epoch().count());
+            e.size = it->file_size(fe);
+            if (fe) continue;
+            e.mtime = static_cast<i64>(it->last_write_time(fe).time_since_epoch().count());
+            if (fe) continue;
             e.importer = importer_for(p);
             if (e.importer) entries.push_back(std::move(e));
         }
