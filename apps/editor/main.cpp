@@ -17990,7 +17990,7 @@ return {
         }
         // 64 frames, the limit; «+» past it refused and said.
         case 5: {
-            if (hold(shown("px-fps-10") && shown("px-clip-more"), "the clip's settings")) return true;
+            if (hold(shown("px-fps-10") && shown("px-clip-more") && shown("px-state-walk"), "the clip's settings")) return true;
             bool clicked = px_click("px-fps-10");
             check(clicked && d.clips[0].fps == 30.0f && step_label() == "«Шкала»: «Покой» 30 к/с", "«30»: " + step_label());
             const bool set = px().set_clip_frames(64);
@@ -18001,6 +18001,11 @@ return {
             check(clicked && d.clips[0].frames == 64 && file(doc) == was && step_label() == before &&
                       px().note() == "Во всех клипах вместе не больше 64 кадров: это предел игры («Предел кадров» ниже)",
                   "«+» at 64: «" + px().note() + "», the file as it was");
+            // A new clip at 64: refused, said, nothing written.
+            clicked = px_click("px-state-walk");
+            check(clicked && d.clips.size() == 1 && px().clip() == "idle" && file(doc) == was && step_label() == before &&
+                      px().note() == "В клипах уже 64 кадра: это предел игры («Предел кадров» ниже)",
+                  "a click on «Идёт» at 64: no new clip, «" + px().note() + "», the file as it was");
             break;
         }
         // «Запечь»: 16384 × 256, every frame its number; into the video card and back.
