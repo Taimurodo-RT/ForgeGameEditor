@@ -1336,21 +1336,26 @@ private:
         };
         // One look: the frame the game says it drew (frame of the strip) against the author's (want), and the screen
         // there (a box of w × h tiles around x, y) against the picture's strip.
-        auto look = [&s, &g, this](Look& l, const std::string& what, const std::string& of, u32 said, u32 want, u64 into, f64 x, f64 y, f64 w, f64 h) {
+        // The templates' strips as their files have them, read once (a strip of 64 frames of 256 is 16 MB of pixels).
+        auto strips = std::make_shared<std::map<std::string, assets::CookedTexture>>();
+        auto look = [&s, &g, this, strips](Look& l, const std::string& what, const std::string& of, u32 said, u32 want, u64 into, f64 x, f64 y, f64 w,
+                                           f64 h) {
             ++l.looks;
             l.longest = std::max(l.longest, into);
             std::string bad;
             const Pictures::Picture* pic = g.picture_of(of);
-            assets::CookedTexture strip;
             std::vector<u8> bytes, px;
             u32 sw = 0, sh = 0;
             const objects::Template* t = g.library().find(of);
+            if (t && !strips->count(of) && read_file(g.library().picture_file(*t), bytes) && !assets::decode_image(bytes, (*strips)[of])) strips->erase(of);
+            const auto read = strips->find(of);
             if (said != want) bad = "игра рисует кадр " + std::to_string(said + 1) + ", а по анимации автора " + std::to_string(want + 1);
-            else if (!pic || !t || !read_file(g.library().picture_file(*t), bytes) || !assets::decode_image(bytes, strip) || !frame_pixels(s, px, sw, sh))
+            else if (!pic || !t || read == strips->end() || !frame_pixels(s, px, sw, sh))
                 bad = "картинка или кадр экрана не читаются";
             else {
                 f64 mine = 0, other = 0;
                 u32 rival = 0;
+                const assets::CookedTexture& strip = read->second;
                 for (u32 k = 0; k < pic->frames; ++k) {
                     const Match m = drawn_frame(px, sw, sh, g.camera(), x, y, w, h, strip, pic->frames, 3, 40, static_cast<i32>(k));
                     if (k == want) mine = m.score;

@@ -34,6 +34,9 @@ and jump, the beetle's walk, the flag's two frames, drawn so. And when
 `forge_editor --self-test pixel` has made it («Пиксельные» of the tab «Анимация»),
 «Пиксельные А» of the same template with `--edits` of the hero's animations as given
 from a baked vector character: its 12 frames, standing by 1–4 and walking by 5–12,
+drawn so. And when `forge_editor --self-test frame-limit` has made it (step 2 of the
+motion model), «Предел А» of the same template, its game.json's "frame_limit" 64, with
+`--edits` of the flag's animation as given: all 64 frames of 256 of its strip, each
 drawn so. And when
 `forge_editor --self-test input` has made it (the tab «Ввод»), «Ввод А» of the same
 template with `--edits` of the keys the author gave its actions: the hero jumps on K
@@ -135,6 +138,11 @@ def main() -> int:
         plays += [(pixel / "Мои игры" / "Пиксельные А", pixel / "ожидания пиксельные.json", False)]
     else:
         print(f"нет {pixel / 'ожидания пиксельные.json'}: запечённый герой автора не играется (forge_editor --self-test pixel его делает)", flush=True)
+    limit = Path(tempfile.gettempdir()) / "forge_editor_предел"
+    if (limit / "ожидания предел.json").is_file():
+        plays += [(limit / "Мои игры" / "Предел А", limit / "ожидания предел.json", False)]
+    else:
+        print(f"нет {limit / 'ожидания предел.json'}: 64 кадра флага автора не играются (forge_editor --self-test frame-limit их делает)", flush=True)
     keys = Path(tempfile.gettempdir()) / "forge_editor_ввод"
     if (keys / "ожидания ввода.json").is_file():
         plays += [(keys / "Мои игры" / "Ввод А", keys / "ожидания ввода.json", False)]

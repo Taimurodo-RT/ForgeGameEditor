@@ -11,6 +11,7 @@
 #include "forge/game/shell.h"
 #include "forge/level/levels.h"
 #include "forge/level/own_tiles.h"
+#include "forge/objects/library.h"
 
 #include "match3_level.h"
 #include "rpg_level.h"
@@ -18,6 +19,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <span>
@@ -779,6 +781,75 @@ TEST_CASE("project: the catalog's «Три в ряд» makes a game of the modul
             CHECK_MESSAGE(same, "its picture is cell ", i, " of the template's tiles.png");
             if (i < 2) CHECK_MESSAGE(opaque, "the cells are opaque all over (the brief)");
         }
+    }
+}
+
+// The game's frame limit (step 2 of docs/models/движение-модель.md) as the modules «RPG сверху» and «Три в ряд» read
+// their objects and as «Проверить» reads the game: a picture of more frames is one picture, said; a limit that is no
+// whole number of 1..16384 is no game.
+TEST_CASE("project: the modules rpg and match3 read their objects by the game's frame limit, as «Проверить» does") {
+    rpg_components();
+    match3_components();
+    const fs::path games = utf8_path(FORGE_SOURCE_DIR) / "games";
+    const fs::path root = fresh("forge_tests_проект_предел");
+    auto limited = [&](const char* from, const char* limit) {
+        const fs::path game = root / from;
+        fs::remove_all(game);
+        fs::copy(games / from, game, fs::copy_options::recursive);
+        std::string json;
+        REQUIRE(objects::with_frame_limit(text_of(game / "game.json"), 1, json));
+        const usize at = json.rfind("\"frame_limit\": 1");
+        REQUIRE(at != std::string::npos);
+        put(game / "game.json", json.replace(at, std::strlen("\"frame_limit\": 1"), std::string("\"frame_limit\": ") + limit));
+        return game;
+    };
+    const Module rpg_module{"rpg", "RPG сверху", games / "modules" / "rpg", {"pick", "reach"}};
+    std::string error;
+    {
+        const fs::path game = limited("rpg", "2");
+        rpg::RpgLevel level;
+        REQUIRE_MESSAGE(level.load_objects(game, &error), error);
+        const objects::Library& lib = *level.library();
+        CHECK(lib.frame_limit() == 2);
+        REQUIRE(lib.find("hero_look"));
+        CHECK(lib.find("hero_look")->frames == 1); // 3 in its file
+        REQUIRE(lib.find("dog"));
+        CHECK(lib.find("dog")->frames == 2);
+        REQUIRE(lib.read_notes().size() == 1);
+        CHECK(lib.read_notes()[0] == "шаблон «Герой» (hero_look.object.json): кадров 3 больше предела игры 2, читается одной картинкой");
+        const std::vector<std::string> problems = game_problems(game, &rpg_module);
+        CHECK(std::find(problems.begin(), problems.end(), lib.read_notes()[0]) != problems.end());
+    }
+    {
+        rpg::RpgLevel level;
+        CHECK(level.load_objects(games / "rpg", &error));
+        CHECK(level.library()->frame_limit() == objects::kDefaultFrameLimit);
+        CHECK(level.library()->find("hero_look")->frames == 3);
+        CHECK(level.library()->read_notes().empty());
+    }
+    {
+        const fs::path game = limited("match3", "3");
+        match3::Match3Level level;
+        REQUIRE_MESSAGE(level.load_objects(game, &error), error);
+        const objects::Library& lib = *level.library();
+        CHECK(lib.frame_limit() == 3);
+        REQUIRE(lib.find("ruby"));
+        CHECK(lib.find("ruby")->frames == 1); // 4 in its file
+        CHECK(lib.read_notes().size() == 6);   // six gems
+    }
+    for (const char* from : {"rpg", "match3"}) {
+        INFO(from);
+        const fs::path game = limited(from, "0");
+        error.clear();
+        if (std::string(from) == "rpg") {
+            rpg::RpgLevel level;
+            CHECK_FALSE(level.load_objects(game, &error));
+            CHECK(game_problems(game, &rpg_module) == std::vector<std::string>{"game.json: frame_limit — нужно целое от 1 до 16384"});
+        } else {
+            match3::Match3Level level;
+            CHECK_FALSE(level.load_objects(game, &error));
+        }
+        CHECK(error == "game.json: frame_limit — нужно целое от 1 до 16384");
     }
 }
 
