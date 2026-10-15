@@ -1,7 +1,7 @@
-// The tab of «Пиксельные» as numbers (step 3 of docs/models/движение-модель.md, part 3а «Код и время»): a clip cut
+// The tab of «Векторная» as numbers (step 3 of docs/models/движение-модель.md, part 3а «Код и время»): a clip cut
 // into frames by its range, its fps and «Повторять»; the range in .pixel.json; the strip baked by range; a flag of a
 // time event dragged with Shift and without; the timeline's scale and ruler; a block's words and a call's lines and
-// characters; require of the game's animations/ folder.
+// characters; require of the game's animations/ folder; the picture the code draws (its draw section).
 
 #include "forge/core/file.h"
 #include "forge/core/path.h"
@@ -9,6 +9,7 @@
 #include "forge/pixel/clip_cut.h"
 #include "forge/pixel/code_sites.h"
 #include "forge/pixel/doc.h"
+#include "forge/pixel/draw.h"
 #include "forge/pixel/rig.h"
 #include "forge/pixel/script.h"
 #include "forge/pixel/timeline.h"
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <random>
 #include <string>
@@ -339,6 +341,13 @@ TEST_CASE("Motion tab: the timeline's scale, its moves and the ruler") {
     v.zoom(0.001, 600); // all of it at least
     CHECK(v.per_second() == 200);
     CHECK(v.start == 0);
+    // At the UI's scale 2 the points are window pixels: 64 pixels of the UI a frame are 128 of them.
+    v.dp = 2;
+    v.zoom(100, 0);
+    CHECK(v.most() == 1536);
+    CHECK(v.per_second() == 1536);
+    v.zoom(0.001, 0);
+    v.dp = 1;
     // A clip so short it fits nearer than 64 points a frame: it stays fitted.
     TimeView s;
     s.width = 600;
@@ -431,6 +440,27 @@ TEST_CASE("Motion tab: a block's words, a call's lines and characters, the call 
     CHECK(n.sites()[static_cast<usize>(outer)].name == "x");
     CHECK(site_at(sites, static_cast<u32>(code.find("local"))) == -1);
 
+    // The panel's text of a file with "\r\n" and a tab, back as it was; its characters and the file's bytes.
+    const std::string windows = "local a = 1\r\n\ta.x(\"ё\", 2)\r\nwait(1)\r\n";
+    bool crlf = false;
+    const std::string panel = panel_text(windows, crlf);
+    CHECK(crlf);
+    CHECK(panel == "local a = 1\n    a.x(\"ё\", 2)\nwait(1)\n");
+    const std::string mostly_lf = panel_text("a\nb\r\nc\n", crlf);
+    CHECK_FALSE(crlf);
+    CHECK(file_text(mostly_lf, crlf) == "a\nb\nc\n"); // mostly "\n": written with "\n"
+    CHECK(file_text("local a = 1\n    a.x\n", true) == "local a = 1\r\n    a.x\r\n");
+    const u32 ax = static_cast<u32>(windows.find("a.x"));
+    CHECK(panel_char(windows, ax) == 16); // 11 + "\n" + 4 spaces of the tab
+    CHECK(file_byte(windows, 16) == ax);
+    CHECK(file_byte(windows, 13) == windows.find('\t')); // inside the tab's spaces: the tab
+    CHECK(panel_char(windows, static_cast<u32>(windows.find("wait"))) == 28); // "ё" one character, two bytes
+    CHECK(file_byte(windows, 1000) == windows.size());
+    CHECK(line_char(panel, 1) == 0);
+    CHECK(line_char(panel, 2) == 12);
+    CHECK(line_char(panel, 3) == 28);
+    CHECK(line_char(panel, 99) == 36);
+
     // «Другое зерно»: another, below a million, the same each time.
     CHECK(other_seed(1) == other_seed(1));
     CHECK(other_seed(1) != 1);
@@ -472,4 +502,196 @@ return { clips = { c = function(p) m.up(part("a")) end } })"));
     CHECK(folder.error() == "строка 1: require(\"../moves\"): имя модуля — без папок и точек, как «движения»");
     CHECK(s.recording(rig, "d", {}, 1) == nullptr);
     CHECK(s.error() == "в коде нет клипа «d»: clips = { d = function(p) … end }");
+}
+
+namespace {
+
+// A drawing of the code, REQUIREd to work.
+Drawing drawing_of(PoseScript& s, const std::map<std::string, f64>& values = {}, u64 seed = 1) {
+    Drawing d;
+    const bool ok = s.draw(values, seed, d);
+    INFO(s.error());
+    REQUIRE(ok);
+    return d;
+}
+
+// Why the draw of this code fails, "" when it draws (or loads not at all: then why it does not load).
+std::string draw_error(std::string_view source) {
+    PoseScript s;
+    if (!s.load(source)) return "не загружен: " + s.error();
+    Drawing d;
+    return s.draw({}, 1, d) ? std::string() : s.error();
+}
+
+std::string with_draw(std::string_view body) {
+    return "return {\n  clips = { stand = function(p) wait(0.1) end },\n  draw = function(p, rng)\n" + std::string(body) + "\n  end,\n}\n";
+}
+
+} // namespace
+
+TEST_CASE("Motion tab: draw — every shape and group as the text of an SVG, byte for byte") {
+    PoseScript s = script_of(R"lua(return {
+  clips = { stand = function(p) wait(0.1) end },
+  draw = function(p, rng)
+    canvas(32, 24)
+    group("body", { x = 1, y = 2, rot = 5, scale = 2, fill = "#f00" }, function()
+      rect("torso", { x = 10, y = 14, w = 12, h = 11, r = 3, fill = "#4a7bd0", pivot = { 16, 14 } })
+      circle("head", { x = 16, y = 9, r = 6, stroke = "navy", stroke_width = 0.5 })
+      group("face", function()
+        ellipse("eye", { x = 18, y = 8, rx = 1, ry = 1.5, opacity = 0.5 })
+      end)
+    end)
+    line("stick", { x1 = 0, y1 = 0, x2 = 4, y2 = 4 })
+    poly({ points = { 0, 0, 8, 0, 4, 6 }, fill = "rgb(0, 128, 0)" })
+    path("рот_открыт", { d = "M 15 11 L 19 11 L 17 13 Z", fill = "none", hidden = true })
+  end,
+})lua");
+    CHECK(s.has_draw());
+    const Drawing d = drawing_of(s);
+    CHECK(d.canvas);
+    CHECK(d.width == 32);
+    CHECK(d.height == 24);
+    REQUIRE(d.shapes.size() == 8);
+    CHECK(d.shapes[0].kind == DrawShape::Kind::Group);
+    CHECK(d.shapes[0].line == 5);
+    CHECK(d.shapes[1].parent == 0);
+    CHECK(d.shapes[1].line == 6);
+    CHECK(d.shapes[3].parent == 0);
+    CHECK(d.shapes[4].parent == 3);
+    CHECK(d.shapes[5].parent == -1);
+    CHECK(d.shapes[6].id.empty());
+    CHECK(d.shapes[7].line == 14);
+    const std::string svg = drawing_svg(d, 99, 99);
+    CHECK(svg == R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">
+  <g id="body" transform="translate(1 2) rotate(5) scale(2)" fill="#ff0000">
+    <rect id="torso" x="10" y="14" width="12" height="11" rx="3" fill="#4a7bd0"/>
+    <circle id="head" cx="16" cy="9" r="6" stroke="#000080" stroke-width="0.5"/>
+    <g id="face">
+      <ellipse id="eye" cx="18" cy="8" rx="1" ry="1.5" opacity="0.5"/>
+    </g>
+  </g>
+  <line id="stick" x1="0" y1="0" x2="4" y2="4" stroke="#000000"/>
+  <polygon points="0,0 8,0 4,6" fill="#008000"/>
+  <path id="рот_открыт" d="M 15 11 L 19 11 L 17 13 Z" fill="none" display="none"/>
+</svg>
+)svg");
+    // The same code, values and seed: the same drawing.
+    CHECK(drawing_of(s) == d);
+
+    // The rig of it: the ids are its parts, nested as drawn; the drawing's pivot, under the file's.
+    Rig rig;
+    std::string why;
+    REQUIRE(rig.load(svg, why));
+    CHECK(rig.width() == 32);
+    CHECK(rig.height() == 24);
+    for (const char* id : {"body", "torso", "head", "face", "eye", "stick", "рот_открыт"}) CHECK(rig.part(id) >= 0);
+    const i32 eye = rig.part("eye");
+    REQUIRE(eye >= 0);
+    CHECK(rig.parts()[static_cast<usize>(eye)].parent == rig.part("face"));
+    CHECK(rig.parts()[static_cast<usize>(rig.part("face"))].parent == rig.part("body"));
+    PixelDoc doc;
+    apply_pivots(rig, doc, &d);
+    CHECK(rig.pivot(rig.part("torso")).x == 16);
+    CHECK(rig.pivot(rig.part("torso")).y == 14);
+    const Part& head = rig.parts()[static_cast<usize>(rig.part("head"))];
+    CHECK(rig.pivot(rig.part("head")).x == (head.x0 + head.x1) / 2);
+    doc.pivots["torso"] = {3, 4};
+    apply_pivots(rig, doc, &d);
+    CHECK(rig.pivot(rig.part("torso")).x == 3);
+    doc.pivots.clear();
+    apply_pivots(rig, doc, &d);
+    CHECK(rig.pivot(rig.part("torso")).x == 16);
+    apply_pivots(rig, doc);
+    CHECK(rig.pivot(rig.part("torso")).x != 16);
+}
+
+TEST_CASE("Motion tab: draw — the frame's size without canvas, parameters and the seed, baked") {
+    // p.x is not declared: nil, so x is missing.
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = p.x, y = 0, w = 2, h = 2 }))")) == "строка 4: rect «a»: нет x");
+    PoseScript declared = script_of("return {\n  params = { x = 2 },\n  clips = { stand = function(p) wait(0.1) end },\n"
+                                    "  draw = function(p, rng)\n    rect(\"a\", { x = p.x, y = 0, w = 2, h = 2, fill = \"#ff0000\" })\n"
+                                    "    rect(\"b\", { x = 0, y = 4, w = rng(1, 1000) / 1000, h = 1 })\n  end,\n}\n");
+    const Drawing two = drawing_of(declared);
+    CHECK_FALSE(two.canvas);
+    CHECK(drawing_svg(two, 40, 30).rfind(R"(<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30" viewBox="0 0 40 30">)", 0) == 0);
+    CHECK(two.shapes[0].x == 2);
+    CHECK(drawing_of(declared, {{"x", 5}}).shapes[0].x == 5);
+    CHECK(drawing_of(declared, {}, 7) == drawing_of(declared, {}, 7));
+    CHECK(drawing_of(declared, {}, 7).shapes[1].w != drawing_of(declared, {}, 8).shapes[1].w);
+
+    // Baked from the drawing: the frame is the picture's units, so the square is at its pixels.
+    Rig rig;
+    std::string why;
+    REQUIRE(rig.load(drawing_svg(two, 8, 8), why));
+    PixelDoc doc;
+    doc.frame_w = doc.frame_h = 8;
+    doc.clips = {spec("stand", 1, 10, true)};
+    apply_pivots(rig, doc, &two);
+    assets::CookedTexture frame;
+    REQUIRE(bake_frame(rig, declared, doc, doc.clips[0], 0, bake_options(doc, {}), frame, why));
+    REQUIRE(frame.width == 8);
+    auto px = [&](u32 x, u32 y) { return frame.rgba8[(static_cast<usize>(y) * 8 + x) * 4]; };
+    CHECK(px(2, 0) == 255);
+    CHECK(px(3, 1) == 255);
+    CHECK(frame.rgba8[(0 * 8 + 2) * 4 + 3] == 255);
+    CHECK(frame.rgba8[(3 * 8 + 6) * 4 + 3] == 0);
+}
+
+TEST_CASE("Motion tab: draw — errors with their line") {
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, h = 3 }))")) == "строка 4: rect «a»: нет w");
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, w = -1, h = 3 }))")) == "строка 4: rect «a»: w не меньше 0");
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, w = "4", h = 3 }))")) == "строка 4: rect «a»: w — число");
+    CHECK(draw_error(with_draw(R"(    circle("a", { x = 1, y = 2, r = 1, fill = "blu" }))")) ==
+          "строка 4: circle «a»: fill: цвет «blu» не читается (#rgb, #rrggbb, rgb(r, g, b), имя вроде red или \"none\")");
+    CHECK(draw_error(with_draw("    rect(\"a\", { x = 1, y = 2, w = 1, h = 1 })\n    circle(\"a\", { x = 1, y = 2, r = 1 })")) ==
+          "строка 5: circle «a»: id «a» уже есть в рисунке");
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, widht = 1, h = 1 }))")) ==
+          "строка 4: rect «a»: поля «widht» нет (есть x, y, w, h, r, fill, stroke, stroke_width, opacity, hidden, pivot)");
+    CHECK(draw_error(with_draw("    rect(\"a\", { x = 1, y = 2, w = 1, h = 1 })\n    canvas(8, 8)")) == "строка 5: canvas — до первой фигуры");
+    CHECK(draw_error(with_draw("    canvas(8, 8)\n    canvas(8, 8)")) == "строка 5: canvas — один раз");
+    CHECK(draw_error(with_draw("    canvas(0, 8)")) == "строка 4: canvas(w, h): w и h больше 0");
+    CHECK(draw_error(with_draw(R"(    rect("1a", { x = 1, y = 2, w = 1, h = 1 }))")) == "строка 4: rect: id «1a» — буквы, цифры, _ и -, не с цифры и не с -");
+    CHECK(draw_error(with_draw(R"(    rect("a b", { x = 1, y = 2, w = 1, h = 1 }))")) == "строка 4: rect: id «a b» — буквы, цифры, _ и -, не с цифры и не с -");
+    CHECK(draw_error(with_draw(R"(    rect("a"))")) == "строка 4: rect «a»: поля таблицей: rect(\"id\", { x, y, w, h, r })");
+    CHECK(draw_error(with_draw(R"(    group("g", { x = 1 }))")) == "строка 4: group «g»: последним идёт функция: group(\"body\", function() … end)");
+    CHECK(draw_error(with_draw(R"(    rect({ x = 1, y = 2, w = 1, h = 1, pivot = { 1, 1 } }))")) ==
+          "строка 4: rect: pivot у фигуры без id: опорная точка бывает у части");
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, w = 1, h = 1, pivot = { 1 } }))")) ==
+          "строка 4: rect «a»: pivot — два числа: pivot = { 16, 14 }");
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, w = 1, h = 1, opacity = 2 }))")) == "строка 4: rect «a»: opacity от 0 до 1");
+    CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, w = 1, h = 1, hidden = 1 }))")) == "строка 4: rect «a»: hidden — true или false");
+    CHECK(draw_error(with_draw(R"(    poly("a", { points = { 0, 0, 1, 1 } }))")) == "строка 4: poly «a»: points — пары чисел x, y, не меньше трёх точек");
+    CHECK(draw_error(with_draw(R"(    path("a", { d = "M 0 0 Q" }))")).rfind("строка 4: path «a»: d не читается: ", 0) == 0);
+    CHECK(draw_error(with_draw(R"(    part("a"))")) == "строка 4: part — в клипах и pose: в draw частей ещё нет, их рисуют rect, circle, group …");
+    CHECK(draw_error(with_draw("    local x = 1")) == "draw ничего не нарисовал: rect, circle, ellipse, line, poly, path, group");
+    CHECK(draw_error(with_draw("    group(\"g\", function()\n      rect(\"a\", { x = nil + 1 })\n    end)")).rfind("строка 5: ", 0) == 0);
+    CHECK(draw_error("return { clips = { stand = function(p) wait(0.1) end }, draw = 3 }") ==
+          "не загружен: draw должна быть функцией: draw = function(p, rng) … end");
+
+    // Drawing in a clip, a clip's call in draw.
+    PoseScript s = script_of("return {\n  clips = { stand = function(p)\n    rect(\"a\", { x = 0, y = 0, w = 1, h = 1 })\n  end },\n}\n");
+    Rig rig = square();
+    Recording rec;
+    CHECK_FALSE(s.record(&rig, "stand", {}, 1, {}, rec));
+    CHECK(s.error() == "строка 3: rect рисует только внутри draw = function(p, rng) … end");
+    CHECK(draw_error(with_draw("    wait(1)")) == "строка 4: wait — внутри функции клипа: clips = { walk = function(p) … end }");
+    PoseScript none = script_of("return { clips = { stand = function(p) wait(0.1) end } }");
+    Drawing d;
+    CHECK_FALSE(none.has_draw());
+    CHECK_FALSE(none.draw({}, 1, d));
+    CHECK(none.error() == "в коде нет draw = function(p, rng) … end");
+}
+
+TEST_CASE("Motion tab: a character the code draws has no svg in .pixel.json") {
+    PixelDoc doc;
+    doc.script = "Персонаж.luau";
+    doc.clips = {spec("stand", 4, 10, true)};
+    const std::string text = write_pixel_doc(doc);
+    CHECK(text.find("\"svg\":") == std::string::npos);
+    PixelDoc back;
+    std::string why;
+    REQUIRE(read_pixel_doc(text, back, why));
+    CHECK(back == doc);
+    doc.svg = "d2ca8023-0301-43dd-9e28-f01cae144e16";
+    CHECK(write_pixel_doc(doc).find("\"svg\": \"d2ca8023-0301-43dd-9e28-f01cae144e16\"") != std::string::npos);
 }

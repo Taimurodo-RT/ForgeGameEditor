@@ -1,6 +1,6 @@
 #pragma once
 
-// Where each call of a character's code is («Пиксельные», step 1 of docs/models/движение-модель.md). The Luau parser
+// Where each call of a character's code is («Векторная», step 1 of docs/models/движение-модель.md). The Luau parser
 // finds every call with its arguments; the code is run instrumented, so the recording knows which call made each
 // block; a mouse edit rewrites only the characters of one argument and leaves the rest of the file byte for byte.
 //

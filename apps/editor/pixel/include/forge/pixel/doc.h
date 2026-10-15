@@ -16,6 +16,7 @@
 //              "strip": {"stand": {"first": 0, "frames": 4, "fps": 6, "loop": true}, "walk": {"first": 4, …}}}
 //   }
 //
+// "svg" is not there when the code draws the picture (its draw section, draw.h).
 // "range" is the part of a clip of the code baked (step 3 of docs/models/движение-модель.md), only when it is not all of
 // it; such a clip's "frames" are counted from it (clip_cut.h), the file keeps them as they were last counted.
 // "strip" is what the picture holds, as it was baked: «Отдать шаблону…» gives the template these animations, whatever
@@ -62,7 +63,7 @@ struct StripClip {
 };
 
 struct PixelDoc {
-    std::string svg;    // the Guid of the SVG in «Ресурсы»
+    std::string svg;    // the Guid of the SVG in «Ресурсы»; empty when the code draws the picture
     std::string script; // the pose script's file, beside this one
     u32 frame_w = 32, frame_h = 32;
     u64 seed = 1;

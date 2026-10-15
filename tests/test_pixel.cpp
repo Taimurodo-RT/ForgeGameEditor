@@ -1,4 +1,4 @@
-// «Пиксельные» (step 2 of docs/models/вектор-модель.md): the SVG read as written, a character posed and drawn by
+// «Векторная» (step 2 of docs/models/вектор-модель.md): the SVG read as written, a character posed and drawn by
 // ThorVG, and its frames baked into pixel art. lunasvg, which draws SVG in the interface, is the second opinion: a pose
 // must draw as the same SVG with the pose written as SVG transforms.
 
@@ -406,7 +406,7 @@ TEST_CASE("Pixel rig: what a pose cannot do is named, the rest of it is done") {
     pose.parts["nope"] = moved(5, 0);
     pose.parts["body"] = moved(3, 0);
     CHECK_FALSE(rig.pose(pose, why));
-    CHECK(why == "в SVG нет части «nope»");
+    CHECK(why == "в рисунке нет части «nope»");
     f64 b[4];
     rig.bounds(rig.part("torso"), 64, 64, b);
     CHECK(std::abs(b[0] - 27) < 1e-3); // the body moved all the same
@@ -419,8 +419,8 @@ TEST_CASE("Pixel rig: what a pose cannot do is named, the rest of it is done") {
         CHECK(w == expected);
     };
     morph_error("body", "head", "морфинг: «body» — группа, морфинг бывает только у фигуры");
-    morph_error("nope", "head", "морфинг: в SVG нет фигуры «nope»");
-    morph_error("mouth", "nope", "морфинг «mouth»: в SVG нет фигуры «nope»");
+    morph_error("nope", "head", "морфинг: в рисунке нет фигуры «nope»");
+    morph_error("mouth", "nope", "морфинг «mouth»: в рисунке нет фигуры «nope»");
     morph_error("mouth", "head", "морфинг «mouth» в «head»: у фигур разные transform, их точки не в одних координатах");
 
     Pose nan;
@@ -709,12 +709,12 @@ TEST_CASE("Pixel script: errors name their line") {
         CHECK(s.error_line() == 2);
         CHECK(p.parts.empty());
     };
-    pose_error("part('nope'):set{ x = 1 }", "строка 2: в SVG нет части «nope»");
+    pose_error("part('nope'):set{ x = 1 }", "строка 2: в рисунке нет части «nope»");
     pose_error("part('head'):set{ spin = 1 }", "строка 2: part(\"head\"):set — поля «spin» нет (есть x, y, rot, scale, sx, sy, opacity, fill)");
     pose_error("part('head'):set{ x = 'left' }", "строка 2: part(\"head\"):set — x: нужно число");
     pose_error("part('head'):set{ fill = 'teal-ish' }", "строка 2: part(\"head\"):set — fill: нужен цвет \"#rrggbb\"");
     pose_error("shape('body'):morph('head', 1)", "строка 2: «body» — группа, морфинг бывает только у фигуры");
-    pose_error("shape('mouth'):morph('nope', 1)", "строка 2: в SVG нет фигуры «nope»");
+    pose_error("shape('mouth'):morph('nope', 1)", "строка 2: в рисунке нет фигуры «nope»");
     pose_error("local x = ease('fast', 1)", "строка 2: ease: нет слова «fast» (smooth, linear, in, out, back, bounce, elastic, in_sine … in_out_bounce)");
     pose_error("local x = nil + 1", "строка 2: attempt to perform arithmetic (add) on nil and number");
 
@@ -875,7 +875,7 @@ TEST_CASE("Pixel bake: the clips' frames side by side, frame k at t = k / fps") 
     // A frame that fails names its clip and frame; nothing is baked.
     PoseScript broken = script_of("return { pose = function(t, p, rng, clip)\n if t > 0.1 then part('nope'):set{} end\nend }");
     CHECK_FALSE(bake_strip(rig, broken, doc, {}, kLimit, strip, why));
-    CHECK(why == "клип «stand», кадр 2: строка 2: в SVG нет части «nope»");
+    CHECK(why == "клип «stand», кадр 2: строка 2: в рисунке нет части «nope»");
     CHECK(strip.picture.rgba8.empty());
     // As many frames as the game's limit, and not one more: 64 without its own, or the game's.
     doc.clips = {{"stand", 40, 10, true}, {"walk", 24, 10, true}};

@@ -11,7 +11,7 @@ f64 TimeView::fit() const {
     return std::max(1e-9, width) / shown;
 }
 
-f64 TimeView::most() const { return kMostPerFrame * std::max(1e-3f, fps); }
+f64 TimeView::most() const { return kMostPerFrame * std::max(1e-3f, fps) * std::max(1e-3, dp); }
 
 void TimeView::zoom(f64 factor, f64 at_x) {
     if (!(factor > 0) || !std::isfinite(factor)) return;
@@ -73,6 +73,8 @@ std::string hex(Rgba8 c) {
     return buf;
 }
 
+} // namespace
+
 std::string value_words(Prop p, const PropValue& v) {
     if (p == Prop::Fill) {
         if (v.v <= 0) return "свой цвет";
@@ -84,8 +86,6 @@ std::string value_words(Prop p, const PropValue& v) {
     }
     return format_number(v.v);
 }
-
-} // namespace
 
 std::string block_words(const Recording&, const Block& b) {
     const std::string prop = prop_word(b.prop);
@@ -133,6 +133,69 @@ u32 byte_index(std::string_view source, u32 character) {
             ++n;
         }
     return static_cast<u32>(source.size());
+}
+
+namespace {
+
+// How many characters of the panel byte i of the file is: a UTF-8 continuation byte and "\r" none, a tab kTabSpaces.
+u32 panel_width(std::string_view file, usize i) {
+    const u8 c = static_cast<u8>(file[i]);
+    if ((c & 0xC0) == 0x80 || c == '\r') return 0;
+    return c == '\t' ? kTabSpaces : 1;
+}
+
+} // namespace
+
+std::string panel_text(std::string_view file, bool& crlf) {
+    usize pairs = 0, bare = 0;
+    std::string out;
+    out.reserve(file.size());
+    for (usize i = 0; i < file.size(); ++i) {
+        const char c = file[i];
+        if (c == '\r') continue;
+        if (c == '\n') ++(i > 0 && file[i - 1] == '\r' ? pairs : bare);
+        if (c == '\t') out.append(kTabSpaces, ' ');
+        else out += c;
+    }
+    crlf = pairs > bare;
+    return out;
+}
+
+std::string file_text(std::string_view panel, bool crlf) {
+    if (!crlf) return std::string(panel);
+    std::string out;
+    out.reserve(panel.size() + panel.size() / 16);
+    for (const char c : panel) {
+        if (c == '\n') out += '\r';
+        out += c;
+    }
+    return out;
+}
+
+u32 panel_char(std::string_view file, u32 byte) {
+    u32 n = 0;
+    for (usize i = 0; i < file.size() && i < byte; ++i) n += panel_width(file, i);
+    return n;
+}
+
+u32 file_byte(std::string_view file, u32 character) {
+    u32 n = 0;
+    for (usize i = 0; i < file.size(); ++i) {
+        const u32 w = panel_width(file, i);
+        if (w == 0) continue;
+        if (n + w > character) return static_cast<u32>(i);
+        n += w;
+    }
+    return static_cast<u32>(file.size());
+}
+
+u32 line_char(std::string_view text, u32 line) {
+    u32 n = 0, at = 1;
+    for (usize i = 0; i < text.size() && at < line; ++i) {
+        if ((static_cast<u8>(text[i]) & 0xC0) != 0x80) ++n;
+        if (text[i] == '\n') ++at;
+    }
+    return n;
 }
 
 i32 site_at(const CodeSites& code, u32 at) {

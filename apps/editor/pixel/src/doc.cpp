@@ -193,7 +193,8 @@ std::string write_pixel_doc(const PixelDoc& d) {
     yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
     yyjson_mut_val* root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
-    yyjson_mut_obj_add_strcpy(doc, root, "svg", d.svg.c_str());
+    // A character the code draws has no SVG (draw.h).
+    if (!d.svg.empty()) yyjson_mut_obj_add_strcpy(doc, root, "svg", d.svg.c_str());
     yyjson_mut_obj_add_strcpy(doc, root, "script", d.script.c_str());
     yyjson_mut_val* frame = yyjson_mut_arr(doc);
     yyjson_mut_arr_add_uint(doc, frame, d.frame_w);

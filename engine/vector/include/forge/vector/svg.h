@@ -1,7 +1,7 @@
 #pragma once
 
 // The outline of an SVG file as written: its elements, their ids and attributes, and how they nest. Nothing here
-// draws. «Пиксельные» read it for what ThorVG does not draw and for the shapes a pose script morphs into (step 2 of
+// draws. «Векторная» read it for what ThorVG does not draw and for the shapes a pose script morphs into (step 2 of
 // docs/models/вектор-модель.md); «Ресурсы» for what lunasvg does not draw (step 3).
 
 #include "forge/core/types.h"

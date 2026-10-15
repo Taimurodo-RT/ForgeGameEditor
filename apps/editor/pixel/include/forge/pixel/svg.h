@@ -1,7 +1,7 @@
 #pragma once
 
 // What ThorVG does not draw in an SVG, and the shapes a pose script morphs into, which are often hidden, so ThorVG
-// never builds them («Пиксельные», step 2 of docs/models/вектор-модель.md). The outline itself is forge::vector's.
+// never builds them («Векторная», step 2 of docs/models/вектор-модель.md). The outline itself is forge::vector's.
 
 #include "forge/core/types.h"
 #include "forge/vector/path.h"

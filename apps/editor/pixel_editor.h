@@ -1,6 +1,6 @@
 #pragma once
 
-// «Пиксельные» of the tab «Анимация» (step 2 of docs/models/вектор-модель.md): a vector character of «Ресурсы» posed
+// «Векторная» of the tab «Анимация» (step 2 of docs/models/вектор-модель.md): a vector character of «Ресурсы» posed
 // by its script and baked into a strip of pixel frames for a template of the game.
 //
 // The left column lists the project's «*.pixel.json» (name, frame size, clips) and the SVGs a new one can be made of
@@ -18,12 +18,20 @@
 // baked over without asking. «Отдать шаблону…» gives a template of the game the picture, «Кадров в картинке» and an
 // animation for each baked clip of a state it plays. The script and the SVG are read again when their files change on
 // disk; a script that fails says its line, and the views stay on the last pose that worked.
+//
+// Step 3 of docs/models/движение-модель.md («Вкладка», part 3а «Код и время»): the parts' tree goes left under the
+// characters; the script is in a code panel (line numbers, Ctrl+S saves it as one step, Ctrl+Z and Ctrl+Y undo the
+// typing since then) with the console under it (log lines at their time, errors with their line, the tab's
+// warnings); the player and the timeline go along the bottom: the clips' chips, a ruler of frames and seconds zoomed
+// round the mouse, the range of a clip of the code played and baked, the time events' flags dragged by frames into the
+// file, marks, pauses and the tracks' blocks of the recording, each lit in the code. A block's info is on the right.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
 #include "forge/objects/library.h"
 #include "forge/pixel/bake.h"
+#include "forge/pixel/timeline.h"
 #include "forge/ui/ui.h"
 
 #include "object_library.h"
@@ -33,6 +41,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -51,7 +60,11 @@ public:
     // Each frame while the mode is shown: files looked at, the clock, the views.
     void update(f64 dt, Rml::Context* context);
     bool handle_event(const SDL_Event& e, f32 density, Rml::Context* context);
+    // The wheel over the timeline, before the UI scrolls anything under it: zoom round the mouse, with Shift along.
+    bool wheel(const SDL_Event& e, f32 density, Rml::Context* context);
     bool handle_key(const SDL_KeyboardEvent& k);
+    // Keys while the code panel has the keyboard (main asks first): Ctrl+S, Ctrl+Z, Ctrl+Y, Tab.
+    bool panel_key(const SDL_KeyboardEvent& k, Rml::Context* context);
     std::string status() const;
 
     // main wires these.
@@ -70,7 +83,10 @@ public:
     // The SVGs a character can be made of, by path; a new one beside it (one step): «Имя.pixel.json», «Имя.luau».
     const std::vector<std::string>& svgs() const { return svgs_; }
     bool create(const std::string& svg_rel);
-    // «В «Пиксельные»» of «Ресурсы» on an SVG: the character made of it when there is one, else a new one.
+    // «Новый»: a character the code draws (its draw section, forge/pixel/draw.h), «персонажи/Персонаж.pixel.json» and
+    // «Персонаж.luau» in «Ресурсы» («Персонаж 2» … when taken), one step.
+    bool create_drawn();
+    // «Векторный персонаж» of «Ресурсы» on an SVG: the character made of it when there is one, else a new one.
     bool from_svg(const std::string& svg_rel);
     // Reads the files of the character again (after Ctrl+Z, or when they changed on disk).
     void reload();
@@ -81,6 +97,9 @@ public:
 
     const pixel::PixelDoc& doc() const { return doc_; }
     const pixel::Rig& rig() const { return rig_; }
+    // Whether the picture is the code's (draw), and the text of the SVG the rig was made of (the file's or the drawing's).
+    bool drawn() const { return drawn_; }
+    const std::string& picture_svg() const { return svg_text_; }
     // Why the character does not show or the pose fails: empty when all is well.
     const std::string& problem() const { return problem_; }
     u32 error_line() const { return error_line_; }
@@ -119,7 +138,8 @@ public:
     // The states a clip may be for: the module's, over the game's templates.
     const std::vector<level::LevelModule::AnimState>& states() const { return states_; }
 
-    // The clock: playing or not, a frame back or forward (it stops), a frame chosen, the frames either side.
+    // The clock: playing or not, a frame back or forward (it stops), a frame chosen, the frames either side. Frames are
+    // the whole clip's by its fps (frame k at k / fps; of the code without «Повторять» one more, the last at its end).
     void play(bool on);
     bool playing() const { return playing_; }
     void step(int frames);
@@ -127,6 +147,98 @@ public:
     u32 frame() const { return frame_; }
     void set_onion(bool on);
     bool onion() const { return onion_; }
+    // The playhead: the moment of the clip shown, seconds (a frame's moment, or the range's when it plays).
+    f64 time() const { return t_; }
+    // Shift+← and Shift+→: the range's start and end (the first and the last frame of a clip of pose(t)).
+    void to_start();
+    void to_end();
+    // The player: speed ×0.25 … ×2 (kSpeeds), the preview repeating (L; not «Повторять» of the clip), the frames a
+    // second it shows in fact. None of them is written into files.
+    static constexpr f32 kSpeeds[] = {0.25f, 0.5f, 1, 1.5f, 2};
+    void set_speed(f32 speed);
+    f32 speed() const { return speed_; }
+    void set_loop_view(bool on);
+    bool loop_view() const { return loop_view_; }
+    f64 shown_fps() const { return shown_fps_; }
+
+    // --- the clip on the timeline (part 3а) ---
+    // The selected clip as it plays and bakes (its range), and all of it (the frames «кадр 3 из 8» counts).
+    const pixel::ClipCut& cut() const { return cut_; }
+    const pixel::ClipCut& whole() const { return whole_; }
+    // The frames of each clip as baked now (by its range for the code), and their sum.
+    u32 clip_frames(const std::string& state) const;
+    u32 total_frames() const;
+    // The range of the selected clip of the code: [from, to] (one step; all of the clip: "range" leaves the file). B and
+    // N: its start or end at the playhead. The middle button on a clip's chip: all of that clip.
+    bool set_range(f64 from, f64 to);
+    bool range_start_here();
+    bool range_end_here();
+    bool whole_range(const std::string& state);
+    // The recording on the timeline (the selected clip of the code; null for pose(t) alone) and whether it is the last
+    // that worked while the code fails now (its blocks faint).
+    const pixel::Recording* recording() const { return rec_ok_ ? &rec_ : nullptr; }
+    bool stale() const { return rec_stale_; }
+    // The timeline's view: its width in the window's pixels, its scale and start. F: the playhead in the middle.
+    const pixel::TimeView& view() const { return tv_; }
+    void zoom(f64 factor, f32 at_x);
+    void pan(f32 dx);
+    void center_playhead();
+    // A time event's flag to moment `to` (by frames; with only_this the next event gives up as much): its lengths in
+    // the file, one step.
+    bool set_flag(usize event, f64 to, bool only_this);
+    // A block of the recording: selected (the inspector, its call's lines lit), its call's text selected in the panel
+    // (a double click). The blocks of the call the panel's caret is in.
+    bool select_block(i32 index);
+    i32 block() const { return block_; }
+    bool block_to_code(i32 index);
+    const std::vector<i32>& caret_blocks() const { return caret_blocks_; }
+    // A time event's line in the panel (a double click on its flag); the playhead on its flag (the middle button).
+    bool flag_to_code(usize event);
+    void playhead_to_flag(usize event);
+    // Where a moment of the clip is on the timeline, the window's pixels; false when it is not laid out.
+    bool timeline_x(f64 t, f32& x) const;
+
+    // --- the code panel and the console (part 3а) ---
+    // The panel's text: the script as a text field shows it (pixel::panel_text). Not saved while it is not the file's.
+    const std::string& code() const { return code_; }
+    bool code_unsaved() const { return has_ && code_ != code_disk_; }
+    // The panel's text as typed (its change event): a step of the typing history, letters typed on one after another
+    // one step.
+    void code_typed(const std::string& text);
+    // Ctrl+S in the panel, «Сохранить»: the script written as the panel has it, one step of the tab's history (the
+    // counted frames of the clips into the «.pixel.json» in the same step). False when there is nothing to save.
+    bool save_code();
+    // Ctrl+Z, Ctrl+Y in the panel: the typing since the last save.
+    bool code_undo();
+    bool code_redo();
+    usize typing_steps() const { return typing_at_; }
+    // The script changed on disk while the panel had unsaved text: «Взять с диска» takes the file's, «Оставить мой»
+    // keeps the panel's (the next save writes it).
+    bool code_conflict() const { return code_conflict_; }
+    void take_disk_code();
+    void keep_my_code();
+    // What closing the game or the editor would lose; the panel saved (save_unsaved of main).
+    std::vector<std::string> unsaved() const;
+    bool save_all(std::string& error);
+    struct ConsoleLine {
+        std::string text;
+        u32 line = 0; // of the character's script; 0 for none
+        bool error = false, warn = false;
+    };
+    const std::vector<ConsoleLine>& console() const { return console_; }
+    // Line `line` of the script: the panel's caret at its start, the panel taking the keyboard.
+    bool goto_line(u32 line);
+    // The panel's selection (characters), as it is now.
+    bool code_selection(u32& from, u32& to) const;
+    // The lines the gutter lights for the block selected (1-based), and the error's line.
+    u32 lit_first() const { return lit_first_; }
+    u32 lit_last() const { return lit_last_; }
+
+    // «Другое зерно» (one step): pixel::other_seed of the file's.
+    bool other_seed();
+    // «Снимок кадра» (one step): the pixel frame at the playhead as it bakes, a PNG of «Ресурсы» beside the
+    // «.pixel.json»: «Ёжик walk 5.png», «Ёжик walk 5 (2).png» when that is taken. Its path, "" when none was made.
+    std::string snapshot();
 
     // Baking: frame size, the game's colours or the SVG's, the outline and its colour.
     bool set_frame_size(u32 w, u32 h);
@@ -181,6 +293,44 @@ private:
     struct FrameCell {
         int index = 0;
         bool shown = false;
+        Rml::String style, label;
+    };
+    struct Tick {
+        Rml::String style, label;
+    };
+    struct FlagRow {
+        int index = 0;
+        Rml::String style, trail, label, title;
+    };
+    struct MarkRow {
+        int index = 0;
+        Rml::String style, title;
+        bool sound = false, span = false;
+    };
+    struct PauseRow {
+        int index = 0;
+        Rml::String style, label, title;
+    };
+    struct TrackRow {
+        Rml::String label, style;
+    };
+    struct BlockRow {
+        int index = 0;
+        Rml::String style, label, title;
+        bool selected = false, lit = false, module = false;
+    };
+    struct LineRow {
+        int n = 0;
+        bool lit = false, error = false;
+    };
+    struct ConsoleRow {
+        Rml::String text;
+        int line = 0;
+        bool error = false, warn = false;
+    };
+    struct SpeedChip {
+        Rml::String label;
+        bool selected = false;
     };
     struct FpsChip {
         Rml::String label;
@@ -199,6 +349,10 @@ private:
     const pixel::ClipSpec* selected_clip() const;
     // The file's new text (one step of the history).
     bool change(const pixel::PixelDoc& after, std::string label);
+    // A character about to be made: open, empty, until the command writes its files.
+    void open_new(const std::filesystem::path& doc_file);
+    // The picture: the code's drawing when the script has draw, else the SVG of the file.
+    void load_picture();
     void load_svg();
     void load_script();
     void rebuild_list();
@@ -211,6 +365,29 @@ private:
     vector::Point view_to_picture(f32 x, f32 y) const;
     std::filesystem::path script_file() const;
     std::string name() const;
+    // Part 3а (pixel_motion.cpp).
+    void bind_motion(Rml::DataModelConstructor& model);
+    const pixel::MotionLengths& lengths_now(const std::string& state) const; // the file's, or the flag's being dragged
+    bool pose_at(const pixel::ClipSpec& c, f64 t, u32 k, pixel::Pose& out, std::string& why);
+    void recount();          // the cuts, the clips' frames, the recording of the selected clip
+    void sync_time();        // frame_ of t_, the labels
+    void place_head();       // the playhead's place on the timeline
+    void lay_timeline();     // the timeline's rows from the recording and the view
+    void rebuild_console();
+    void forget_character(); // the player, the timeline and the panel as for a character just opened
+    void rebuild_gutter();
+    void adopt_code(const std::string& file_text); // the script read: the panel takes it, keeps its own or asks
+    void set_panel(const std::string& text, i32 caret); // the panel's field to this text (no typing step)
+    Rml::Element* element(const char* id) const;
+    void watch_modules();
+    bool modules_changed();
+    void update_caret();
+    void update_timeline_box();
+    u32 frame_of(f64 t) const; // the frame of the whole clip at moment t
+    void timeline_press(f32 x, f32 y, Rml::Element* over, bool middle);
+    void timeline_drag(f32 x);
+    void timeline_release();
+    f64 snap(f64 t) const; // to the nearest frame of the clip
     std::string state_name(const std::string& id) const; // «Идёт» of "walk"; the id when no template plays it
     void dirty(const char* var) {
         if (model_) model_.DirtyVariable(var);
@@ -240,12 +417,17 @@ private:
     std::string svg_text_, script_text_; // what the rig and the script were made of
     std::string svg_problem_, script_problem_, doc_problem_, pose_problem_, problem_, note_;
     u32 error_line_ = 0;
+    // A picture the code draws: the drawing the rig was made of, why it is not drawn now (its line), a note that the
+    // file's SVG is not used.
+    bool drawn_ = false;
+    pixel::Drawing drawing_;
+    std::string draw_problem_, picture_note_;
+    u32 draw_line_ = 0;
     std::string part_, clip_;
     bool edited_ = false, giving_ = false;
 
     // The clock and the views.
     bool playing_ = true, onion_ = false;
-    f64 time_ = 0;
     u32 frame_ = 0;
     bool view_dirty_ = true;
     assets::CookedTexture vector_, frame_px_;
@@ -258,6 +440,53 @@ private:
     bool dragging_ = false, drag_moved_ = false;
     pixel::PixelDoc drag_doc_; // the file's, while a pivot is dragged
 
+    // Part 3а: the player.
+    f64 t_ = 0;          // the playhead
+    f64 play_clock_ = 0; // seconds into the range while it plays
+    f32 speed_ = 1;
+    bool loop_view_ = true;
+    f64 shown_fps_ = 0, fps_clock_ = 0;
+    u32 fps_frames_ = 0;
+    pixel::ClipCut cut_, whole_;
+    std::map<std::string, u32> clip_frames_;
+    // The recording on the timeline, the last that worked.
+    pixel::Recording rec_;
+    bool rec_ok_ = false, rec_stale_ = false;
+    std::string rec_clip_;
+    std::string rec_error_;             // why the selected clip of the code does not record now
+    u32 rec_error_line_ = 0;
+    std::vector<std::string> warnings_; // the tab's: a range cut, a length of an event the code has not
+    std::vector<Watched> modules_;      // animations/*.luau the recording required
+    // The timeline.
+    pixel::TimeView tv_;
+    f32 tl_x_ = 0, tl_y_ = 0, tl_w_ = 0, tl_h_ = 0; // its time area on screen (context pixels)
+    f32 tl_laid_w_ = -1;
+    i32 block_ = -1;
+    std::vector<i32> caret_blocks_;
+    enum class Drag : u8 { None, Ruler, From, To, Flag };
+    Drag tl_drag_ = Drag::None;
+    usize drag_event_ = 0;
+    bool drag_only_ = false;
+    pixel::MotionLengths drag_lengths_, drag_base_lengths_;
+    pixel::Recording drag_rec_;
+    f64 drag_from_ = 0, drag_to_ = 0;
+    bool shift_ = false;
+    // The code panel.
+    std::string code_, code_disk_; // the panel's text, and the file's as the panel shows it
+    bool code_crlf_ = false, code_conflict_ = false;
+    std::string script_panel_; // what script_ was loaded from, as the panel shows it
+    struct Typing {
+        std::string before, after;
+        u32 at = 0, removed = 0, inserted = 0; // bytes of the change in `before`
+    };
+    std::vector<Typing> typing_;
+    usize typing_at_ = 0;
+    bool typing_open_ = false; // the last step takes the next letter typed after it
+    u32 typing_end_ = 0;
+    u32 lit_first_ = 0, lit_last_ = 0, caret_ = ~0u;
+    std::vector<ConsoleLine> console_;
+    Rml::Context* context_ = nullptr;
+
     std::vector<Row> m_list_;
     std::vector<SvgRow> m_svgs_;
     std::vector<PartRow> m_parts_;
@@ -266,6 +495,19 @@ private:
     std::vector<FrameCell> m_frames_;
     std::vector<FpsChip> m_fps_;
     std::vector<TemplateRow> m_templates_;
+    std::vector<Tick> m_ticks_;
+    std::vector<FlagRow> m_flags_;
+    std::vector<MarkRow> m_marks_;
+    std::vector<PauseRow> m_pauses_;
+    std::vector<TrackRow> m_tracks_;
+    std::vector<BlockRow> m_blocks_;
+    std::vector<LineRow> m_lines_;
+    std::vector<ConsoleRow> m_console_;
+    std::vector<SpeedChip> m_speeds_;
+    Rml::String m_time_, m_shown_fps_, m_head_, m_range_, m_range_from_, m_range_to_, m_more_blocks_, m_tracks_height_, m_code_name_,
+        m_inspector_, m_inspector_call_, m_clip_cut_;
+    bool m_code_unsaved_ = false, m_code_conflict_ = false, m_has_range_ = false, m_loop_view_ = true, m_stale_ = false,
+         m_has_rec_ = false, m_code_clip_ = false, m_has_block_ = false;
     Rml::String m_name_, m_vector_, m_pixel_, m_one_, m_problem_, m_note_, m_frame_label_, m_clip_name_, m_seed_, m_fw_, m_fh_,
         m_outline_color_, m_picture_, m_size_, m_total_, m_limit_;
     int m_clip_frames_ = 0;

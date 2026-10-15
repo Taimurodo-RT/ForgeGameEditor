@@ -139,11 +139,11 @@ struct KindDef {
 };
 
 // The game's frame limit: the most frames a template's picture may be cut into, an animation may show in a row, and
-// «Пиксельные» may bake of all clips together. One number of the game, "frame_limit" in its game.json, this one
+// «Векторная» may bake of all clips together. One number of the game, "frame_limit" in its game.json, this one
 // without it (docs/models/движение-модель.md, «Предел кадров»).
 inline constexpr u32 kDefaultFrameLimit = 64;
 // The widest strip, in pixels: the side of a texture SDL GPU promises on any video card (MAX_2D_DIMENSION in
-// SDL_gpu.c). 64 frames of 256, the largest frame «Пиксельные» bakes, are exactly that wide.
+// SDL_gpu.c). 64 frames of 256, the largest frame «Векторная» bakes, are exactly that wide.
 inline constexpr u32 kMaxStripWidth = 16384;
 // The highest limit a game may set: that many frames of one pixel make the widest strip.
 inline constexpr u32 kMaxFrameLimit = kMaxStripWidth;

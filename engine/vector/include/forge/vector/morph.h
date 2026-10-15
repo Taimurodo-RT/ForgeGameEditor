@@ -2,7 +2,7 @@
 
 // The morph: one shape turning into another (step 1 of the vector model, docs/models/вектор-модель.md). A pair is
 // prepared once, then mixed at any k for each frame: k = 0 is the first shape, k = 1 the second, between them a shape
-// on the way. The interface, «Пиксельные» and a game's own scenes use the same pair; whoever draws takes the points
+// on the way. The interface, «Векторная» and a game's own scenes use the same pair; whoever draws takes the points
 // (ThorVG) or `d` (lunasvg).
 //
 //   const vector::Morph pair = vector::prepare(closed_mouth, open_mouth);

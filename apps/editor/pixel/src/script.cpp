@@ -152,7 +152,7 @@ int api_shape_morph(lua_State* L) {
     if (!std::isfinite(k)) luaL_error(L, "shape(\"%s\"):morph — k не число", id);
     PoseScript::Impl& im = impl_of(L);
     if (!im.pose) luaL_error(L, "shape(…):morph работает только внутри pose (в клипе — part(…):morph(цель, с))");
-    if (im.rig && im.rig->outline().find(target) < 0) luaL_error(L, "в SVG нет фигуры «%s»", target);
+    if (im.rig && im.rig->outline().find(target) < 0) luaL_error(L, "в рисунке нет фигуры «%s»", target);
     ShapeMorph& m = im.pose->morphs[id];
     m.target = target;
     m.k = k;
@@ -165,7 +165,7 @@ int api_shape(lua_State* L) {
     PoseScript::Impl& im = impl_of(L);
     if (im.rig) {
         const i32 p = im.rig->part(id);
-        if (p < 0) luaL_error(L, "в SVG нет фигуры «%s»", id);
+        if (p < 0) luaL_error(L, "в рисунке нет фигуры «%s»", id);
         if (!im.rig->parts()[static_cast<usize>(p)].shape) luaL_error(L, "«%s» — группа, морфинг бывает только у фигуры", id);
     }
     lua_newtable(L);
@@ -423,6 +423,7 @@ PoseScript::Impl::Impl() {
     lua_setmetatable(L, -2);
     lua_setglobal(L, "ease");
     register_motion_api(L);
+    register_draw_api(L);
 
     // __fc and __fm, through which the instrumented code calls.
     lua_CompileOptions opts{};
@@ -589,6 +590,7 @@ bool PoseScript::load(std::string_view source) {
     im.params.clear();
     im.clips.clear();
     im.has_pose = false;
+    im.has_draw = false;
     im.error.clear();
     im.error_line = 0;
     im.cache.clear();
@@ -607,6 +609,15 @@ bool PoseScript::load(std::string_view source) {
     lua_pop(T, 1);
     if (bad_pose) {
         im.fail("pose должна быть функцией: pose = function(t, p, rng, clip) … end");
+        lua_pop(im.L, 1);
+        return false;
+    }
+    lua_getfield(T, -1, "draw");
+    im.has_draw = lua_isfunction(T, -1);
+    const bool bad_draw = !lua_isnil(T, -1) && !im.has_draw;
+    lua_pop(T, 1);
+    if (bad_draw) {
+        im.fail("draw должна быть функцией: draw = function(p, rng) … end");
         lua_pop(im.L, 1);
         return false;
     }

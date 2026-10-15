@@ -17,6 +17,9 @@
 //     pose = function(t, p, rng, clip)           -- on top: t is seconds from the clip's start
 //       part("head"):set{ rot = 2 * math.sin(t * 8) }
 //     end,
+//     draw = function(p, rng)                    -- the picture, when the code draws it (draw.h)
+//       rect("body", { x = 10, y = 14, w = 12, h = 11, fill = "#4a7bd0" })
+//     end,
 //   }
 //
 // A clip is recorded once (motion.h): its function runs with no clock, each transition leaves a block on a track and
@@ -38,6 +41,8 @@
 #include <vector>
 
 namespace forge::pixel {
+
+struct Drawing;
 
 struct ScriptParam {
     std::string name;
@@ -66,6 +71,8 @@ public:
     // The clips the module's `clips` table has, by name; whether it has pose.
     const std::vector<std::string>& clips() const;
     bool has_pose() const;
+    // Whether it has draw = function(p, rng) … end: the character's picture is the code's (draw.h).
+    bool has_draw() const;
     // Every call of the loaded code and the clip functions: what SiteRef file 0 points into.
     const CodeSites& code() const;
     // The calls of a module a recording required (SiteRef files past 0, by Recording::files); null when not read.
@@ -81,6 +88,10 @@ public:
     // The pose at t of a recording of this script: its tracks, its bindings, then pose(t, …) on top. False with error().
     bool frame(const Recording& rec, const Rig* rig, f64 t, const std::map<std::string, f64>& values, u64 seed,
                Pose& out);
+
+    // Runs draw: the declared parameters with `values` over them, rng from `seed` alone. False with error(), the line
+    // of the call that failed in error_line().
+    bool draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out);
 
     // The pose at t for clip `clip`: a clip of `clips` recorded (kept until the code, the values, the seed or its
     // lengths change) and read at t, pose(t, …) on top; or pose alone. Parts and shapes are checked against the rig.

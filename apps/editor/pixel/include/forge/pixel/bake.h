@@ -6,6 +6,7 @@
 
 #include "forge/pixel/clip_cut.h"
 #include "forge/pixel/doc.h"
+#include "forge/pixel/draw.h"
 #include "forge/pixel/rig.h"
 #include "forge/pixel/script.h"
 
@@ -14,9 +15,9 @@
 
 namespace forge::pixel {
 
-// The pivots of the file put on the rig, every other part's the middle of its rest bounds again; the ids of the file it
-// has no part for, in order.
-std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc);
+// The pivots of the file put on the rig, every other part's the one the code's drawing gives it (draw.h) or the middle
+// of its rest bounds again; the ids of the file it has no part for, in order.
+std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc, const Drawing* drawn = nullptr);
 
 // The pose of frame k of a clip. False with why: "клип «walk», кадр 3: строка 5: …".
 bool frame_pose(PoseScript& script, const Rig& rig, const PixelDoc& doc, const ClipSpec& clip, u32 k, Pose& out, std::string& why);

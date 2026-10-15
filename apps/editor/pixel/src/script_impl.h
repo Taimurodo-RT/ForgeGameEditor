@@ -4,6 +4,7 @@
 // of the code with their calls, and the recording under way.
 
 #include "forge/pixel/code_sites.h"
+#include "forge/pixel/draw.h"
 #include "forge/pixel/motion.h"
 #include "forge/pixel/script.h"
 
@@ -11,6 +12,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -116,11 +118,12 @@ struct PoseScript::Impl : BindingEval {
     std::vector<ScriptParam> params;
     std::vector<std::string> clips;
     bool has_pose = false;
+    bool has_draw = false;
     std::string error;
     u32 error_line = 0;
     bool ok = false;
 
-    enum class Mode : u8 { None, Load, Pose, Record, Frame };
+    enum class Mode : u8 { None, Load, Pose, Record, Frame, Draw };
     Mode mode = Mode::None;
     i32 site = -1; // the call running now (its id)
     ModuleReader reader;
@@ -136,6 +139,12 @@ struct PoseScript::Impl : BindingEval {
     u32 interrupts = 0;
     bool in_call = false, timed_out = false;
     lua_State* active = nullptr; // the thread bindings run on
+
+    // Drawing (draw.cpp): the drawing under way, its ids so far, the groups the call is inside.
+    Drawing* drawing = nullptr;
+    std::set<std::string> drawn_ids;
+    std::vector<i32> groups;
+    std::string draw_error; // a drawing call's, until it is raised
 
     // Recording.
     std::unique_ptr<MotionState> motion;
@@ -179,6 +188,9 @@ PoseScript::Impl& impl_of(lua_State* L);
 // The value at idx as tostring gives it, pushed: a table, function, userdata, coroutine or buffer without __tostring by
 // its kind alone, as "table". Its address changes from run to run and frame to frame, and a pose is a function of time.
 const char* value_text(lua_State* L, int idx, size_t* len);
+
+// draw.cpp: the drawing functions of Luau (canvas, rect, circle, ellipse, line, poly, path, group).
+void register_draw_api(lua_State* L);
 
 // motion_record.cpp: the clip functions of Luau (part, all, wait …) and the recording.
 void register_motion_api(lua_State* L);

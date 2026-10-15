@@ -25,7 +25,7 @@ using forge::usize;
 
 // Whether a picture of `frames` frames (Template::frames) `width` pixels wide can be the hero's: four frames its width
 // divides (stands, step, step, in the air), or one; any number its width divides when the template has animations of
-// its own (`animated`: «Пиксельные» bakes a strip of the clips), a state without one showing frame 1. why: what is
+// its own (`animated`: «Векторная» bakes a strip of the clips), a state without one showing frame 1. why: what is
 // wrong otherwise, for the log and the editor.
 bool hero_frames_ok(u32 frames, u32 width, bool animated, std::string* why = nullptr);
 // The same of a template, its picture read: a template of kind «Герой» (block hero) with a picture that reads and
@@ -64,7 +64,7 @@ public:
     // The largest side a frame keeps in the sheet; bigger ones are scaled down.
     static constexpr u32 kMaxSide = 256;
     // The narrowest the sheet is: 7 frames of kMaxSide to a shelf, a pixel either side of each, so a strip of 64 such
-    // frames (the frame limit of a game without "frame_limit", «Пиксельные»'s largest frame) takes 10 shelves.
+    // frames (the frame limit of a game without "frame_limit", «Векторная»'s largest frame) takes 10 shelves.
     static constexpr u32 kSheetWidth = 2048;
     // The highest the sheet grows; pictures past it are left out (and a warning).
     static constexpr u32 kMaxHeight = 8192;

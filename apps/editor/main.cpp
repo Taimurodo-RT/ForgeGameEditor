@@ -91,6 +91,7 @@
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
+#include <RmlUi/Core/Elements/ElementFormControlTextArea.h>
 #include <lunasvg.h>
 #include <SDL3/SDL.h>
 // On Windows the arguments as UTF-8 (from the wide command line): «--project» of a game in a folder with Cyrillic
@@ -383,7 +384,7 @@ public:
     AssetLibrary assets;
     // «Изображения»: pictures of «Ресурсы» edited pixel by pixel; written into their files only when saved.
     ImageEditor image_tab{assets};
-    // «Пиксельные» of «Анимация»: vector characters of «Ресурсы» baked into pictures for templates; the tab's history.
+    // «Векторная» of «Анимация»: vector characters of «Ресурсы» baked into pictures for templates; the tab's history.
     PixelEditor pixel_tab{assets, level_module, anim_tab.history()};
     // The game that is open and the ways to another («Новая игра из шаблона…», «Открыть игру…»); set before init.
     ProjectWindow projects;
@@ -861,7 +862,7 @@ public:
         open_tab("animation");
         return found;
     }
-    // «В «Пиксельные»» of «Ресурсы» on an SVG: «Анимация» in «Пиксельные» on the character made of it (a new one when
+    // «Векторный персонаж» of «Ресурсы» on an SVG: «Анимация» in «Векторная» on the character made of it (a new one when
     // none is).
     bool pixelize_selected_asset() {
         if (assets.selection().size() != 1) return false;
@@ -921,6 +922,7 @@ public:
         if (level.dirty()) out.push_back("Уровень: правки не сохранены (при закрытии редактор сохраняет его сам)");
         if (history.dirty()) out.push_back("«Сцена»: правки не сохранены (при закрытии они теряются)");
         for (std::string& line : image_tab.unsaved()) out.push_back(std::move(line));
+        for (std::string& line : pixel_tab.unsaved()) out.push_back(std::move(line));
         return out;
     }
     bool save_unsaved(std::string& error) {
@@ -932,12 +934,13 @@ public:
             error = "«Сцена» не записана в " + path_to_utf8(scene_path);
             return false;
         }
-        return image_tab.save_all(error);
+        return image_tab.save_all(error) && pixel_tab.save_all(error);
     }
-    // The window is closed: with pictures of «Изображения» not saved, the window about unsaved changes asks first
-    // (false: not now). The level saves itself on closing, as before.
+    // The window is closed: with pictures of «Изображения» or the code of «Векторная» not saved, the window about unsaved
+    // changes asks first (false: not now). The level saves itself on closing, as before.
     bool quit_request() {
-        if (image_tab.unsaved().empty() || projects.shown()) return image_tab.unsaved().empty();
+        const bool clean = image_tab.unsaved().empty() && pixel_tab.unsaved().empty();
+        if (clean || projects.shown()) return clean;
         projects.ask_close(unsaved(), [this](std::string& error) { return save_unsaved(error); }, [this](bool drop) {
             // «Не сохранять»: nothing is written on closing, the level neither (as when another game opens).
             discarding = discarding_images = drop;
@@ -1121,8 +1124,15 @@ public:
             level.cancel_level_name();
             return true;
         }
+        // The code panel of «Векторная» has its own Ctrl+S, Ctrl+Z, Ctrl+Y and Tab while it has the keyboard.
+        if (e.type == SDL_EVENT_KEY_DOWN && m_tab_ == "animation" && anim_tab.mode() == "pixel" && context_ && context_->GetFocusElement() &&
+            context_->GetFocusElement()->GetId() == "px-code-text" && pixel_tab.panel_key(e.key, context_))
+            return true;
         // Keys first, unless a text field has the keyboard.
         if (e.type == SDL_EVENT_KEY_DOWN && !text_focus() && handle_key(e.key)) return true;
+        // The wheel over the timeline of «Векторная» zooms it, before the UI scrolls what is under the mouse.
+        if (e.type == SDL_EVENT_MOUSE_WHEEL && m_tab_ == "animation" && anim_tab.mode() == "pixel" && pixel_tab.wheel(e, density, context_))
+            return true;
 
         // Back from another program: «Ресурсы» looks at its files again, so «Изображения» sees a picture changed there.
         if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED && m_tab_ == "images") assets.refresh();
@@ -2039,7 +2049,7 @@ struct Options {
     // "modules" (step 14.3a: the editor of a game's module, from the registry; a game of the test module «Проба» opened
     // by "modules-probe" in an editor of its own, a game from before step 14.3 by "modules-old", the games refused);
     // "animation" (the tab «Анимация»: two games of the catalog's «Платформер», animations of A made in the tab by
-    // "animation-a", opened again and played by "animation-a-again"); "pixel" (its «Пиксельные»: two games of the
+    // "animation-a", opened again and played by "animation-a-again"); "pixel" (its «Векторная»: two games of the
     // catalog's «Платформер», a vector character of A's «Ресурсы» posed, baked and given to «Герой» by "pixel-a", opened
     // again from another working folder and played by "pixel-a-again"); "frame-limit" (step 2 of the motion model: the
     // game's frame limit, in two games of the catalog's «Платформер»: 64 frames of 256 baked, read back from the video
@@ -2047,7 +2057,10 @@ struct Options {
     // opened again and the flag played by its 64 frames by "frame-limit-a-again"; at 63 by hand the flag of 64 frames
     // renamed and its frames chosen, its file keeping what is past the limit, by "frame-limit-a-low"; opened again at 63
     // and 64 typed by "frame-limit-a-low-again"; the limit and the flag's frames changed and undone by turns in the
-    // histories of «Анимация» and «Объекты» by "frame-limit-a-cross"); "input" (the tab «Ввод»: the same, the keys of
+    // histories of «Анимация» and «Объекты» by "frame-limit-a-cross"); "pixel-motion" (part 3а of step 3 of the motion
+    // model, the code and the time of «Векторная»: in a game of the catalog's «Платформер» a character's clip typed into
+    // the code panel, played, ranged, its flags dragged and its blocks lit in the code, baked by its range, by
+    // "pixel-motion-a"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2313,6 +2326,8 @@ public:
         if (part == "frame-limit-a-low") return frame < 3 || frame_limit_low_step();
         if (part == "frame-limit-a-low-again") return frame < 3 || frame_limit_low_again_step();
         if (part == "frame-limit-a-cross") return frame < 3 || frame_limit_cross_step();
+        if (part == "pixel-motion") return frame < 3 || pixel_motion_step();
+        if (part == "pixel-motion-a") return frame < 3 || pixel_motion_a_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -16770,9 +16785,9 @@ private:
                           element_text(m).find("появится") != std::string::npos,
                       std::string("«") + name + "»: «появится»");
             check(shown("an-mode-pixel") && !pj_class("an-mode-pixel", "soon") && !pj_class("an-mode-pixel", "selected") &&
-                      element_text("an-mode-pixel").find("Пиксельные") != std::string::npos &&
+                      element_text("an-mode-pixel").find("Векторная") != std::string::npos &&
                       element_text("an-mode-pixel").find("появится") == std::string::npos,
-                  "«Пиксельные» is there to choose (--self-test pixel)");
+                  "«Векторная» is there to choose (--self-test pixel)");
             check(an_pick("beetle"), "a click on «Жук»");
             break;
         }
@@ -17035,9 +17050,9 @@ private:
         return true;
     }
 
-    // --- «Пиксельные» (step 2 of docs/models/вектор-модель.md) ----------------------------------------------------
+    // --- «Векторная» (step 2 of docs/models/вектор-модель.md) ----------------------------------------------------
     // --self-test pixel: «Пиксельные А» and «Пиксельные Б» made of the catalog's «Платформер». The editor for A
-    // (pixel-a), in «Анимация» → «Пиксельные» with the mouse and the keys: a character made of «персонажи/Ёжик.svg»
+    // (pixel-a), in «Анимация» → «Векторная» with the mouse and the keys: a character made of «персонажи/Ёжик.svg»
     // (its «.pixel.json» and «.luau» beside it, one step); the author's script of standing and walking, read again when
     // its file changes; the frame 32 × 64; «Идёт» of 8 frames thirty a second; the clock (Space, ← and →, the keys of
     // the clips, a frame chosen, «Калька»); the pixel view exactly the frame as the files bake it apart from the tab,
@@ -17046,7 +17061,7 @@ private:
     // the views on the last pose) and one that moves a part the SVG has not; an SVG with what ThorVG does not draw,
     // named; «Запечь» (the strip, its .meta, the bake in the file); a picture painted after it, not baked over without
     // asking; «Отдать шаблону…» «Герой»: the picture, 12 frames, «Стоит» and «Идёт» as baked; each step undone and
-    // done again; «Пиксельный персонаж» of «Ресурсы» on the SVG. pixel-a-again, from another working folder: the same
+    // done again; «Векторный персонаж» of «Ресурсы» on the SVG. pixel-a-again, from another working folder: the same
     // file and frames; «Играть со стартового»: the game plays the hero by the baked frames (scene project with
     // --edits). The template and B: the same bytes; A's game has the picture, not what it was made of.
     int px_step_ = 0;
@@ -17204,7 +17219,7 @@ return {
         fs::create_directories(one, ec);
         fs::create_directories(two, ec);
         int code = pj_run({exe, "--project", project, "--self-test", "pixel-a"}, one);
-        check(code == 0, "«Ёжик» made of an SVG in «Пиксельные», posed by its script, its pivot dragged, baked and given to «Герой» with the "
+        check(code == 0, "«Ёжик» made of an SVG in «Векторная», posed by its script, its pivot dragged, baked and given to «Герой» with the "
                          "mouse and the keys, each step undone and done again (pixel-a: exit " + std::to_string(code) + ")");
         code = pj_run({exe, "--project", project, "--self-test", "pixel-a-again"}, two);
         check(code == 0, "opened again elsewhere: the same character and frames; the game plays the hero by them (pixel-a-again: exit " +
@@ -17264,15 +17279,15 @@ return {
             if (hold(shown("an-mode-pixel") && shown("an-tpl-0"), "the tab is laid out")) return true;
             check(an().mode() == "frames" && pj_class("an-mode-frames", "selected") && !pj_class("an-mode-pixel", "selected"),
                   "«Покадровая» as the tab opens");
-            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "a click on «Пиксельные»");
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "a click on «Векторная»");
             break;
         }
         case 2: {
             if (hold(idle && as().record_of(as().abs(svg)) && px().svgs().size() == 2 && shown("px-svg-1"), "the SVGs listed")) return true;
             check(px().svgs() == std::vector<std::string>{svg, "персонажи/Надпись.svg"} && px().listed().empty() && !px().has() &&
                       element_text("px-svg-0").find("Ёжик.svg") != std::string::npos && pj_class("an-mode-pixel", "selected") && !shown("an-tpl-0"),
-                  "«Пиксельные»: no character yet; new of «Ёжик.svg» or «Надпись.svg»; «Покадровая»'s list hidden");
-            check(px().status() == "Пиксельные: векторных персонажей пока нет", "the status line: " + px().status());
+                  "«Векторная»: no character yet; new of «Ёжик.svg» or «Надпись.svg»; «Покадровая»'s list hidden");
+            check(px().status() == "Векторная: персонажей пока нет", "the status line: " + px().status());
             if (const assets::AssetRecord* r = as().record_of(as().abs(svg))) px_svg_id_ = r->id.to_string();
             check(pj_click("px-svg-0"), "a click on «Ёжик.svg»");
             break;
@@ -17285,7 +17300,7 @@ return {
             const std::string text(script.begin(), script.end());
             check(text.rfind("-- Поза персонажа «Ёжик» (Ёжик.svg)", 0) == 0 && text.find("part(\"body\"):set{ y = -p.bob * math.abs(s) }") != std::string::npos,
                   "the script it starts with: its comments, «body» bobs");
-            check(step_label() == "Пиксельные: «Ёжик» из «Ёжик.svg»" && px().problem().empty(),
+            check(step_label() == "Векторная: «Ёжик» из «Ёжик.svg»" && px().problem().empty(),
                   "one step: " + step_label() + "; no problem: " + px().problem());
             std::string parts;
             for (const pixel::Part& p : px().rig().parts()) parts += (parts.empty() ? "" : " ") + p.id;
@@ -17330,7 +17345,7 @@ return {
             break;
         }
         case 7: {
-            check(px().status().rfind("Пиксельные: «Ёжик» · кадр 32 × 64 · «Идёт» ", 0) == 0 &&
+            check(px().status().rfind("Векторная: «Ёжик» · кадр 32 × 64 · «Идёт» ", 0) == 0 &&
                       px().status().ends_with(" из 8 · 30 к/с · играет") && pj_class("px-fps-10", "selected") &&
                       element_text("px-total") == "в картинке 12 кадров из 64",
                   "the status line: " + px().status());
@@ -17460,7 +17475,7 @@ return {
             break;
         }
         case 15: {
-            if (hold(ed_.tab() == "animation" && shown("px-palette-game") && shown("px-vector-img"), "«Пиксельные» again")) return true;
+            if (hold(ed_.tab() == "animation" && shown("px-palette-game") && shown("px-vector-img"), "«Векторная» again")) return true;
             const bool clicked = px_click("px-palette-game");
             check(clicked && d.game_palette && step_label() == "«Ёжик»: цвета игры", "«Цвета игры»: " + step_label());
             break;
@@ -17513,11 +17528,11 @@ return {
         }
         case 20: {
             if (hold(px().problem().find("«tail»") != std::string::npos, "the script read again")) return true;
-            check(px().problem() == "Скрипт «Ёжик.luau»: клип «walk», кадр 3: строка 4: в SVG нет части «tail»" && px().error_line() == 4,
+            check(px().problem() == "Скрипт «Ёжик.luau»: клип «walk», кадр 3: строка 4: в рисунке нет части «tail»" && px().error_line() == 4,
                   "the part it names: «" + px().problem() + "»");
             check(px_same(px().pixel_frame(), px_shown_), "the views stay");
             const bool clicked = px_click("px-bake");
-            check(clicked && px().note() == "Не запеклось: клип «stand», кадр 1: строка 4: в SVG нет части «tail»" && !there(png),
+            check(clicked && px().note() == "Не запеклось: клип «stand», кадр 1: строка 4: в рисунке нет части «tail»" && !there(png),
                   "«Запечь»: «" + px().note() + "», nothing written");
             check(put(lua, kPxWalk), "the script as it was");
             break;
@@ -17647,7 +17662,7 @@ return {
             check(an_file("hero_look") == px_hero1_ && lib.find("hero_look")->frames == 12, "Ctrl+Y: given again");
             break;
         }
-        // «Пиксельный персонаж» of «Ресурсы» on the SVG: the character made of it.
+        // «Векторный персонаж» of «Ресурсы» on the SVG: the character made of it.
         case 30: {
             if (hold(shown("px-tpl-0") == false, "the list closed")) return true;
             key(SDLK_DOWN, SDL_KMOD_NONE);
@@ -17663,9 +17678,9 @@ return {
         }
         case 32: {
             if (hold(shown("as-pixel") && as().selection() == std::vector<std::string>{svg}, "«Ёжик.svg» chosen")) return true;
-            check(element_text("as-pixel").find("Пиксельный персонаж") != std::string::npos, "an SVG: «Пиксельный персонаж»");
+            check(element_text("as-pixel").find("Векторный персонаж") != std::string::npos, "an SVG: «Векторный персонаж»");
             check(click_id("as-pixel") && ed_.tab() == "animation" && an().mode() == "pixel" && px().opened() == doc && !there("персонажи/Ёжик 2.pixel.json"),
-                  "«Пиксельный персонаж»: «Пиксельные» on «Ёжик», the one made of it; nothing new");
+                  "«Векторный персонаж»: «Векторная» on «Ёжик», the one made of it; nothing new");
             break;
         }
         case 33: {
@@ -17705,7 +17720,7 @@ return {
         }
         case 1:
             if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
-            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
             break;
         case 2:
             if (hold(!as().busy() && !as().looking() && px().listed().size() == 2 && shown("px-doc-0"), "the characters listed")) return true;
@@ -17756,7 +17771,7 @@ return {
 
     // --- «Предел кадров» (step 2 of docs/models/движение-модель.md) ---------------------------------------------------
     // --self-test frame-limit: «Предел А» and «Предел Б» made of the catalog's «Платформер». The editor for A
-    // (frame-limit-a), in «Анимация» → «Пиксельные» with the mouse and the keys: a character of 256 × 256 whose frames
+    // (frame-limit-a), in «Анимация» → «Векторная» with the mouse and the keys: a character of 256 × 256 whose frames
     // show their number in six cells, its one clip «Покой» of 64 frames, the limit of a game without "frame_limit"; «+»
     // past it refused and said; «Запечь»: a strip 16384 wide, each frame its number and as the files bake it apart from
     // the tab, uploaded into the video card and read back byte for byte; «Предел кадров» 65 typed (game.json: that field
@@ -17962,7 +17977,7 @@ return {
         }
         case 1: {
             if (hold(shown("an-mode-pixel") && shown("an-tpl-0"), "the tab is laid out")) return true;
-            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "a click on «Пиксельные»");
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "a click on «Векторная»");
             break;
         }
         case 2: {
@@ -18070,7 +18085,7 @@ return {
         // The field shows the limit as it is; written again, undo and redo go; redo refused the same way.
         case 8: {
             if (hold(input_value("px-limit") == "65" && element_text("px-total") == "в картинке 64 кадра из 65" &&
-                         logged("Пиксельные: game.json не записывается: предел кадров остался 65"),
+                         logged("Векторная: game.json не записывается: предел кадров остался 65"),
                      "the field shows 65 again; the log says why 66 was not taken"))
                 return true;
             std::error_code ec;
@@ -18092,7 +18107,7 @@ return {
         // At 65 a 65th frame goes; its strip of 16640 does not bake.
         case 9: {
             if (hold(element_text("px-total") == "в картинке 64 кадра из 65" && input_value("px-limit") == "65" &&
-                         logged("Пиксельные: game.json не записывается: предел кадров остался 64"),
+                         logged("Векторная: game.json не записывается: предел кадров остался 64"),
                      "the limit shown; the log says why Ctrl+Y was not done while game.json could not be written"))
                 return true;
             const bool clicked = px_click("px-clip-more");
@@ -18203,8 +18218,8 @@ return {
             break;
         }
         case 20: {
-            const char* const said[] = {"«Флаг»: кадров в картинке не больше 64, это предел игры (поле «Предел кадров» в «Пиксельных»)",
-                                        "Анимация: кадров в ней не больше 64, это предел игры (поле «Предел кадров» в «Пиксельных»)"};
+            const char* const said[] = {"«Флаг»: кадров в картинке не больше 64, это предел игры (поле «Предел кадров» в «Векторной»)",
+                                        "Анимация: кадров в ней не больше 64, это предел игры (поле «Предел кадров» в «Векторной»)"};
             if (hold(logged(said[0]) && logged(said[1]), "the log said both")) return true;
             usize times = 0;
             for (const LogLine& l : ed_.log_lines()) times += l.text.find(said[0]) != std::string::npos;
@@ -18238,7 +18253,7 @@ return {
         }
         case 1:
             if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
-            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
             break;
         case 2:
             if (hold(!as().busy() && !as().looking() && px().listed().size() == 1 && shown("px-doc-0"), "the character listed")) return true;
@@ -18458,7 +18473,7 @@ return {
         }
         case 1:
             if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
-            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
             break;
         case 2:
             if (hold(!as().busy() && !as().looking() && px().listed().size() == 1 && shown("px-doc-0"), "the character listed")) return true;
@@ -18584,7 +18599,7 @@ return {
         }
         case 1:
             if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
-            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
             break;
         case 2:
             if (hold(!as().busy() && !as().looking() && px().listed().size() == 1 && shown("px-doc-0"), "the character listed")) return true;
@@ -18712,6 +18727,980 @@ return {
         default: break;
         }
         ++fl_step_;
+        return true;
+    }
+
+    // --- «Векторная»: the code and the time (part 3а of step 3 of docs/models/движение-модель.md) ------------------
+    // --self-test pixel-motion: «Движение А» and «Движение Б» made of the catalog's «Платформер». The editor for A
+    // (pixel-motion-a), in «Анимация» → «Векторная» with the mouse and the keys: «Ёжик» made of an SVG, the game's
+    // module «animations/движения.luau» written by another program; the clip «В воздухе» typed into the code panel key by
+    // key (Tab for the indent) over the script it started with, the typing undone and done again by Ctrl+Z and Ctrl+Y in
+    // the panel, Ctrl+S: the file what was typed byte for byte, the clip's blocks (the module's named), flags, mark and
+    // pause on the timeline, its log in the console; a line that does not compile saved: its line in the console, a click
+    // on it puts the panel there, the timeline faint on the last recording; Ctrl+Z and Ctrl+Y out of the panel undo and
+    // redo the saves byte for byte; the player (Space, ← and →, Shift+← and Shift+→, L, the speeds, the frames a second
+    // shown) and the timeline (the wheel round the mouse to both its ends, Shift+wheel, F, B, N, the middle button on the
+    // clip's chip), the range in the .pixel.json; the flags dragged without Shift and with it, the .pixel.json as expected
+    // each time, Ctrl+Z and Ctrl+Y byte for byte, a double click to the line, the middle button for the playhead; a block
+    // clicked lights its call's lines, a double click selects the call, the caret in a call lights its blocks, a block of
+    // the module not to the code; «Запечь» by the range: every frame as the library bakes the files apart from the tab;
+    // «Другое зерно» and «Снимок кадра» (twice), each undone and done again; the module changed on disk records again; the
+    // script changed outside: the panel takes it, and with the panel unsaved the bar, «Оставить мой», «Взять с диска»;
+    // «Новый»: «Персонаж» drawn by its code (the files byte for byte, its .pixel.json without svg, its parts the draw's
+    // ids, the picture the library's drawing of the same code), a second «Новый» undone, a shape typed and saved, a
+    // drawing that fails (its line in the console, the picture as it was), a parameter drawing it again, baked as the
+    // library bakes the files, every step undone to before «Новый» and done again byte for byte; the window closed with
+    // the panel unsaved asks. The template and B: the same bytes.
+    int mo_step_ = 0, mo_draw_ = 0;
+    std::map<std::string, std::vector<u8>> mo_tmpl_, mo_b_;
+    std::vector<u8> mo_lua0_, mo_bad_, mo_air_, mo_ranged_, mo_whole_, mo_flag1_, mo_flag2_, mo_seeded_, mo_shot_, mo_shot_meta_;
+    std::string mo_mine_, mo_drawn_svg_;
+    std::map<std::string, std::vector<u8>> mo_drawn_;
+    u64 mo_seed_ = 0;
+    f64 mo_start_ = 0;
+    static std::filesystem::path mo_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_движение"); }
+    static std::filesystem::path mo_mine(const char* title) { return mo_root() / utf8_path("Мои игры") / utf8_path(title); }
+    // The game's own module of motions, written by another program.
+    static constexpr const char* kMoModule = R"lua(-- Общие движения игры: кивок.
+return {
+  nod = function(h, s)
+    h.rot(8, s):to(0, s)
+  end,
+}
+)lua";
+    // The author's code, typed into the panel: standing by pose(t), the jump «В воздухе» by steps (1,1 s): crouched,
+    // the take-off waited for, up, the top waited for, down, a pause, the module's nod, a line of the log.
+    static constexpr const char* kMoJump = R"lua(-- «Ёжик»: стоит, качаясь, и прыгает по шагам.
+local m = require("движения")
+
+return {
+  params = { height = 6 },
+  pose = function(t, p, rng, clip)
+    if clip == "stand" then
+      part("torso"):set{ y = -math.abs(math.sin(t * 8)) }
+    end
+  end,
+  clips = {
+    air = function(p)
+      local body = part("body")
+      body.y(2, 0.1)
+      wait_until("отрыв", 0.15)
+      emit("отрыв")
+      body.y(-p.height, 0.25, "out_quad")
+      wait_until("вершина", 0.1)
+      body.y(0, 0.2, "in_quad")
+      wait(0.1)
+      m.nod(part("head"), 0.1)
+      log("приземлился")
+    end,
+  },
+}
+)lua";
+    // The code «Новый» starts «Персонаж» with in a game of «Платформер» (its first state «Стоит», stand).
+    static constexpr const char* kMoDrawn = R"lua(-- «Персонаж»: рисунок и движение кодом. draw рисует части фигурами: rect, circle, ellipse, line, poly, path и
+-- group (часть с частями внутри); clips двигает их: part("body").y(значение, секунды, "сглаживание").
+-- Изменения видны после сохранения (Ctrl+S).
+return {
+  params = { bob = 1 },
+  draw = function(p, rng)
+    canvas(32, 32)
+    group("body", function()
+      rect("torso", { x = 10, y = 14, w = 12, h = 11, r = 3, fill = "#4a7bd0" })
+      circle("head", { x = 16, y = 9, r = 6, fill = "#f0c090" })
+      circle("eye", { x = 18, y = 8, r = 1, fill = "#202020" })
+    end)
+    rect("leg_l", { x = 11, y = 25, w = 4, h = 6, fill = "#303040", pivot = { 13, 25 } })
+    rect("leg_r", { x = 17, y = 25, w = 4, h = 6, fill = "#303040", pivot = { 19, 25 } })
+  end,
+  clips = {
+    stand = function(p)
+      part("body").y(-p.bob, 0.4, "in_out_sine"):to(0, 0.4, "in_out_sine")
+    end,
+  },
+}
+)lua";
+    Rml::ElementFormControlTextArea* mo_panel() { return rmlui_dynamic_cast<Rml::ElementFormControlTextArea*>(ed_.find_element("px-code-text")); }
+    bool mo_panel_keys() { return mo_panel() && ed_.context()->GetFocusElement() == mo_panel(); }
+    // Typed into the field that has the keyboard as from the keyboard: a key a letter, Enter at a line's end, Tab for two
+    // spaces at a line's start.
+    void mo_type(std::string_view text) {
+        bool line_start = true;
+        for (usize i = 0; i < text.size();) {
+            if (text[i] == '\n') {
+                key(SDLK_RETURN, SDL_KMOD_NONE);
+                ++i;
+                line_start = true;
+                continue;
+            }
+            if (line_start && i + 1 < text.size() && text[i] == ' ' && text[i + 1] == ' ') {
+                key(SDLK_TAB, SDL_KMOD_NONE);
+                i += 2;
+                continue;
+            }
+            line_start = false;
+            usize n = 1;
+            while (i + n < text.size() && (static_cast<u8>(text[i + n]) & 0xC0) == 0x80) ++n;
+            const std::string letter(text.substr(i, n));
+            SDL_Event t{};
+            t.type = SDL_EVENT_TEXT_INPUT;
+            t.text.text = letter.c_str();
+            ed_.handle_event(t);
+            i += n;
+        }
+    }
+    // The panel's caret at character `at` (a click there), or its text from `from` to `to` selected (dragged over).
+    bool mo_select(u32 from, u32 to) {
+        Rml::ElementFormControlTextArea* p = mo_panel();
+        if (!p) return false;
+        p->Focus();
+        p->SetSelectionRange(static_cast<int>(from), static_cast<int>(to));
+        return true;
+    }
+    bool mo_caret(u32 at) { return mo_select(at, at); }
+    // The character of the panel's text where `what` begins (as the field counts them).
+    static u32 mo_char(const std::string& text, const std::string& what) {
+        const usize at = text.find(what);
+        return at == std::string::npos ? 0 : pixel::panel_char(text, static_cast<u32>(at));
+    }
+    static u32 mo_letters(std::string_view text) {
+        return static_cast<u32>(std::count_if(text.begin(), text.end(), [](char c) { return (static_cast<u8>(c) & 0xC0) != 0x80; }));
+    }
+    void mo_button(SDL_EventType type, f32 x, f32 y, u8 button) {
+        SDL_Event e{};
+        e.type = type;
+        e.button.x = x;
+        e.button.y = y;
+        e.button.button = button;
+        e.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+        ed_.handle_event(e);
+    }
+    // The middle button pressed and let go on the middle of an element.
+    bool mo_middle(const char* id) {
+        f32 x = 0, y = 0;
+        if (!element_center(id, x, y)) return false;
+        mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+        mo_button(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y, SDL_BUTTON_MIDDLE);
+        mo_button(SDL_EVENT_MOUSE_BUTTON_UP, x, y, SDL_BUTTON_MIDDLE);
+        return true;
+    }
+    // A double click on the middle of an element.
+    bool mo_double(const char* id) {
+        f32 x = 0, y = 0;
+        if (!element_center(id, x, y)) return false;
+        left_click(x, y);
+        left_click(x, y);
+        return true;
+    }
+    // The wheel turned over a point of the window: notches away from the author (up) or towards them.
+    void mo_wheel(f32 x, f32 y, f32 notches) {
+        mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_WHEEL;
+        e.wheel.y = notches;
+        e.wheel.mouse_x = x;
+        e.wheel.mouse_y = y;
+        e.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+        ed_.handle_event(e);
+    }
+    // Shift held down or let go, as the keyboard says it.
+    void mo_shift(bool down) {
+        SDL_Event e{};
+        e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        e.key.key = SDLK_LSHIFT;
+        e.key.mod = down ? SDL_KMOD_LSHIFT : SDL_KMOD_NONE;
+        e.key.down = down;
+        ed_.handle_event(e);
+    }
+    // An element of the timeline (a flag) taken at the moment `from` of its row and dragged by the mouse to `to`.
+    bool mo_drag(const char* id, f64 from, f64 to) {
+        f32 x0 = 0, x1 = 0, x = 0, y = 0;
+        if (!px().timeline_x(from, x0) || !px().timeline_x(to, x1) || !element_center(id, x, y)) return false;
+        x0 += 1;
+        mouse(SDL_EVENT_MOUSE_MOTION, x0, y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y);
+        for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x0 + (x1 - x0) * static_cast<f32>(i) / 4, y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x1, y);
+        return true;
+    }
+    // Frame k of a clip as the files on disk bake it, made apart from the tab: a rig, a script with the game's modules
+    // and a file of its own; by the clip's range, or all of the clip with `whole`.
+    bool mo_ref(const std::string& state, u32 k, assets::CookedTexture& out, std::string& why, bool whole = false) {
+        namespace fs = std::filesystem;
+        const fs::path doc_file = as().abs(px().opened());
+        std::vector<u8> bytes, svg, lua;
+        pixel::PixelDoc doc;
+        if (!read_file(doc_file, bytes) || !pixel::read_pixel_doc({reinterpret_cast<const char*>(bytes.data()), bytes.size()}, doc, why))
+            return why = "«.pixel.json» не читается " + why, false;
+        if (!read_file(doc_file.parent_path() / utf8_path(doc.script), lua)) return why = "скрипт не читается", false;
+        pixel::Rig rig;
+        pixel::PoseScript script;
+        script.set_module_reader(pixel::animations_reader(pjw().config().root / "game"));
+        if (!script.load({reinterpret_cast<const char*>(lua.data()), lua.size()})) return why = script.error(), false;
+        // The picture: the code's drawing, or the SVG of the file.
+        pixel::Drawing drawing;
+        if (script.has_draw()) {
+            if (!script.draw(doc.params, doc.seed, drawing)) return why = script.error(), false;
+            const std::string text = pixel::drawing_svg(drawing, doc.frame_w, doc.frame_h);
+            svg.assign(text.begin(), text.end());
+        } else {
+            const std::optional<Guid> id = Guid::parse(doc.svg);
+            const assets::AssetRecord* r = id ? as().find_id(*id) : nullptr;
+            if (!r || !read_file(as().abs(r->path), svg)) return why = "рисунок не читается", false;
+        }
+        if (!rig.load({reinterpret_cast<const char*>(svg.data()), svg.size()}, why)) return false;
+        pixel::apply_pivots(rig, doc, script.has_draw() ? &drawing : nullptr);
+        const auto c = std::find_if(doc.clips.begin(), doc.clips.end(), [&](const pixel::ClipSpec& x) { return x.state == state; });
+        if (c == doc.clips.end()) return why = "нет клипа «" + state + "»", false;
+        pixel::ClipSpec spec = *c;
+        if (whole) spec.ranged = false, spec.from = spec.to = 0;
+        return pixel::bake_frame(rig, script, doc, spec, k, pixel::bake_options(doc, {}), out, why);
+    }
+
+    // --self-test pixel-motion: the games made; A in an editor of its own; the template and B compared byte for byte.
+    bool pixel_motion_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = mo_mine("Движение А"), b = mo_mine("Движение Б");
+        fs::remove_all(mo_root(), ec);
+        fs::create_directories(mo_root() / utf8_path("Мои игры"), ec);
+        mo_tmpl_ = tp_template();
+        tg_snap("шаблон до", mo_tmpl_, mo_root());
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto platformer = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "platformer"; });
+        for (const auto& [title, folder] : {std::pair{"Движение Б", b}, std::pair{"Движение А", a}}) {
+            fs::path made;
+            check(platformer != all.end() && pj::create(*platformer, editor_modules(), mo_root() / utf8_path("Мои игры"), title, made, &error) &&
+                      lvl_same(made, folder),
+                  std::string("«") + title + "» made of «Платформер» " + error);
+            fs::remove_all(play_folder(folder), ec);
+        }
+        mo_b_ = pj_tree(b);
+        tg_snap("Движение Б до", mo_b_, mo_root());
+        const std::string exe = path_to_utf8(editor_exe()), project = path_to_utf8(a / "project.forge");
+        const fs::path one = mo_root() / utf8_path("первая папка");
+        fs::create_directories(one, ec);
+        const int code = pj_run({exe, "--project", project, "--self-test", "pixel-motion-a"}, one);
+        check(code == 0, "«Ёжик»'s jump typed into the code panel and saved, its recording on the timeline, the player, the range, the flags, "
+                         "the blocks lit in the code, baked by its range, the seed and a snapshot; «Персонаж» drawn by its code; with the "
+                         "mouse and the keys (pixel-motion-a: exit " + std::to_string(code) + ")");
+        const auto tmpl = tp_template(), btree = pj_tree(b);
+        check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
+        check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
+        check(tg_naming(b, {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau"}).empty(), "nothing of «Ёжик» or «Персонаж» in B: " + tg_naming(b, {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau"}));
+        const fs::path chars = a / "assets" / utf8_path("персонажи");
+        check(fs::exists(a / "game" / "animations" / utf8_path("движения.luau"), ec) && fs::exists(chars / utf8_path("Ёжик.luau"), ec) &&
+                  fs::exists(chars / utf8_path("Персонаж.luau"), ec) && fs::exists(chars / utf8_path("Персонаж.png"), ec) &&
+                  !fs::exists(chars / utf8_path("Персонаж 2.luau"), ec),
+              "A: the game's module in its animations/, «Ёжик.luau», «Персонаж.luau» and its picture in «Ресурсы», no «Персонаж 2»");
+        return false;
+    }
+
+    // «Новый» in pixel-motion-a: «Персонаж», drawn by its code; at the end «Ёжик» open again.
+    bool pixel_draw_step() {
+        namespace fs = std::filesystem;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string ddoc = "персонажи/Персонаж.pixel.json", dlua = "персонажи/Персонаж.luau", dpng = "персонажи/Персонаж.png",
+                          doc2 = "персонажи/Персонаж 2.pixel.json", lua2 = "персонажи/Персонаж 2.luau", hedgehog = "персонажи/Ёжик.pixel.json";
+        const std::string drawn = kMoDrawn, made = "Векторная: «Персонаж» — новый, рисунок кодом";
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto there = [&](const std::string& rel) {
+            std::error_code ec;
+            return fs::exists(as().abs(rel), ec);
+        };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        auto ids = [&] {
+            std::vector<std::string> out;
+            for (const pixel::Part& p : px().rig().parts()) out.push_back(p.id);
+            return out;
+        };
+        auto line_of = [](const std::string& text, const std::string& what) {
+            const usize at = text.find(what);
+            return at == std::string::npos ? 0u : static_cast<u32>(std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(at), '\n')) + 1;
+        };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        // As «Новый» writes it: the clip of the first state, 0,8 s at 10 frames a second, repeated.
+        pixel::PixelDoc first;
+        first.script = "Персонаж.luau";
+        first.clips = {{"stand", 8, 10, true}};
+        const std::string first_text = pixel::write_pixel_doc(first);
+        // A shape typed into the group «body», then one that does not draw.
+        const std::string group_end = "    end)\n    rect(\"leg_l\"";
+        const std::string nose_line = "      circle(\"nose\", { x = 21, y = 10, r = p.bob, fill = \"#d04a30\" })\n";
+        std::string nosed = drawn;
+        nosed.insert(nosed.find(group_end), nose_line);
+        const std::string bad_line = "      rect(\"bad\", { x = 1, y = 1, h = 2 })\n";
+        std::string bad = nosed;
+        bad.insert(bad.find(group_end), bad_line);
+        const u32 bad_at = line_of(bad, "rect(\"bad\"");
+        switch (mo_draw_) {
+        case 0: {
+            if (hold(idle && shown("px-new"), "«Новый» is there")) return true;
+            check(element_text("px-new").find("Новый") != std::string::npos && element_text("px-new").find("рисунок кодом") != std::string::npos,
+                  "«Новый · рисунок кодом» among the characters");
+            check(px_click("px-new") && px().opened() == ddoc && px().has() && px().drawn(), "«Новый»: «Персонаж», its picture drawn by its code");
+            check(file(dlua) == bytes(drawn) && file(ddoc) == bytes(first_text) && first_text.find("\"svg\":") == std::string::npos && step_label() == made,
+                  "«Персонаж.luau» and «Персонаж.pixel.json» byte for byte, no svg in it; one step: " + step_label());
+            pixel::PoseScript s;
+            pixel::Drawing dr;
+            check(s.load(drawn) && s.draw({}, 1, dr) && px().picture_svg() == pixel::drawing_svg(dr, 32, 32), "the picture: the library's drawing of the same code");
+            check(ids() == std::vector<std::string>{"body", "torso", "head", "eye", "leg_l", "leg_r"}, "its parts are the draw's ids, in its order");
+            const auto leg = px().rig().pivot(px().rig().part("leg_l"));
+            check(leg.x == 13 && leg.y == 25, "«leg_l» turns round the pivot the code gives it");
+            mo_drawn_svg_ = px().picture_svg();
+            break;
+        }
+        case 1: {
+            if (hold(shown("px-part-leg_l") && shown("px-part-eye"), "the parts' tree")) return true;
+            check(px().status().rfind("Векторная: «Персонаж» · кадр 32 × 32 · «Стоит» ", 0) == 0 && px().problem().empty(), "the status line: " + px().status());
+            check(px_click("px-new") && px().opened() == doc2 && there(doc2) && there(lua2), "«Новый» again: «Персонаж 2»");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!there(doc2) && !there(lua2) && file(dlua) == bytes(drawn) && file(ddoc) == bytes(first_text) && step_label() == made,
+                  "Ctrl+Z: «Персонаж 2» gone, «Персонаж» as it was");
+            break;
+        }
+        case 2: {
+            if (hold(idle && listed_at(ddoc) >= 0 && shown("px-doc-" + std::to_string(listed_at(ddoc))), "«Персонаж» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(ddoc))) && px().opened() == ddoc && px().drawn(), "a click on «Персонаж»");
+            break;
+        }
+        case 3: {
+            if (hold(px().code() == drawn && shown("px-part-leg_l"), "its code in the panel")) return true;
+            check(mo_caret(mo_char(drawn, group_end)), "the caret before the group's end");
+            mo_type(nose_line);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(dlua) == bytes(nosed) && step_label() == "«Персонаж»: код «Персонаж.luau» сохранён", "Ctrl+S: the file as typed; " + step_label());
+            const i32 nose = px().rig().part("nose");
+            check(nose >= 0 && px().rig().parts()[static_cast<usize>(nose)].parent == px().rig().part("body") && px().picture_svg() != mo_drawn_svg_,
+                  "«nose» drawn, a part of «body»");
+            mo_drawn_svg_ = px().picture_svg();
+            break;
+        }
+        case 4: {
+            if (hold(shown("px-part-nose"), "«nose» in the tree")) return true;
+            check(mo_caret(mo_char(nosed, group_end)), "the caret before the group's end");
+            mo_type(bad_line);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(dlua) == bytes(bad), "a rect without w typed and saved");
+            break;
+        }
+        case 5: {
+            if (hold(shown("px-console-0"), "the console")) return true;
+            const std::vector<PixelEditor::ConsoleLine>& c = px().console();
+            const std::string said = "Рисунок «Персонаж.luau»: строка " + std::to_string(bad_at) + ": rect «bad»: нет w (показан прежний)";
+            check(!c.empty() && c[0].error && c[0].line == bad_at && c[0].text == said && pj_class("px-console-0", "error"),
+                  "the console: «" + (c.empty() ? std::string() : c[0].text) + "»");
+            check(px().picture_svg() == mo_drawn_svg_ && px().rig().part("bad") < 0 && px().rig().part("nose") >= 0, "the picture as it was");
+            check(away() && px_click("px-console-0") && mo_panel_keys(), "a click on the console's line: the panel has the keyboard");
+            u32 from = 0, to = 0;
+            const u32 at = pixel::line_char(px().code(), bad_at);
+            check(px().code_selection(from, to) && from == at && to == at, "its caret at the start of that line");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(dlua) == bytes(nosed) && px().problem().empty() && px().picture_svg() == mo_drawn_svg_, "Ctrl+Z: the nose's code, drawn");
+            break;
+        }
+        case 6: {
+            if (hold(shown("px-param-bob") && !shown("px-console-0"), "the console clear")) return true;
+            check(ue_type("px-param-bob", "2") && px().doc().params == std::map<std::string, f64>{{"bob", 2.0}} && step_label() == "«Персонаж»: bob = 2",
+                  "«bob» 2 typed: " + step_label());
+            check(px().picture_svg().find("<circle id=\"nose\" cx=\"21\" cy=\"10\" r=\"2\"") != std::string::npos, "the nose drawn again, as big as «bob»");
+            break;
+        }
+        case 7: {
+            if (hold(idle, "«Ресурсы» looked at the files")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            const std::vector<u8> b = file(dpng);
+            assets::CookedTexture strip;
+            check(!b.empty() && assets::decode_image(b, strip) && strip.width == 32 * 8 && strip.height == 32, "«Персонаж.png»: 8 frames of 32 × 32");
+            check(px().doc().strip == std::vector<pixel::StripClip>{{"stand", 0, 8, 10, true}} && step_label() == "«Персонаж»: запечено в «Персонаж.png», 8 кадров",
+                  "«Стоит» 1–8: " + step_label());
+            std::string wrong;
+            for (u32 k = 0; k < 8; ++k) {
+                assets::CookedTexture ref;
+                std::string why;
+                if (!mo_ref("stand", k, ref, why) || !px_same(px_cut(strip, 32, k), ref)) wrong += " " + std::to_string(k + 1) + why;
+            }
+            check(wrong.empty(), "every frame as the library bakes the files apart from the tab;" + wrong);
+            for (const std::string& rel : {dlua, ddoc, dpng}) mo_drawn_[rel] = file(rel);
+            break;
+        }
+        case 8: {
+            if (hold(idle, "«Ресурсы» looked at the files")) return true;
+            check(away(), "out of the panel");
+            for (int i = 0; i < 3; ++i) key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(dlua) == bytes(drawn) && file(ddoc) == bytes(first_text) && !there(dpng) && step_label() == made,
+                  "Ctrl+Z three times: the bake, «bob», the nose undone, as «Новый» made it");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!there(dlua) && !there(ddoc) && !there(dpng) && there(hedgehog), "Ctrl+Z: before «Новый», «Ёжик» still there");
+            for (int i = 0; i < 4; ++i) key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(dlua) == mo_drawn_.at(dlua) && file(ddoc) == mo_drawn_.at(ddoc) && file(dpng) == mo_drawn_.at(dpng),
+                  "Ctrl+Y four times: «Персонаж» baked again, byte for byte");
+            break;
+        }
+        case 9: {
+            if (hold(idle && listed_at(hedgehog) >= 0 && shown("px-doc-" + std::to_string(listed_at(hedgehog))), "«Ёжик» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(hedgehog))) && px().opened() == hedgehog && !px().drawn(), "«Ёжик» again, its SVG");
+            mo_draw_ = -1;
+            return true;
+        }
+        default: break;
+        }
+        ++mo_draw_;
+        return true;
+    }
+
+    // In an editor for «Движение А» (--self-test pixel-motion-a).
+    bool pixel_motion_a_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root, game = a / "game", module = game / "animations" / utf8_path("движения.luau");
+        const bool idle = !as().busy() && !as().looking();
+        const std::string svg = "персонажи/Ёжик.svg", doc = "персонажи/Ёжик.pixel.json", lua = "персонажи/Ёжик.luau", png = "персонажи/Ёжик.png",
+                          shot = "персонажи/Ёжик air 19.png", shot2 = "персонажи/Ёжик air 19 (2).png";
+        const pixel::PixelDoc& d = px().doc();
+        const pixel::Recording* rec = px().recording();
+        const std::string jump = kMoJump;
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto there = [&](const std::string& rel) {
+            std::error_code ec;
+            return fs::exists(as().abs(rel), ec);
+        };
+        // A file written by another program (a text editor).
+        auto put = [&](const fs::path& f, std::string_view text) {
+            std::error_code ec;
+            fs::create_directories(f.parent_path(), ec);
+            return write_file_atomic(f, {reinterpret_cast<const u8*>(text.data()), text.size()});
+        };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        // The .pixel.json of a step before, changed as this step should change it, written as the library writes it.
+        auto read_doc = [](const std::vector<u8>& b) {
+            pixel::PixelDoc out;
+            std::string why;
+            pixel::read_pixel_doc({reinterpret_cast<const char*>(b.data()), b.size()}, out, why);
+            return out;
+        };
+        auto written = [](const pixel::PixelDoc& x) {
+            const std::string s = pixel::write_pixel_doc(x);
+            return std::vector<u8>(s.begin(), s.end());
+        };
+        auto air_of = [](pixel::PixelDoc& x) -> pixel::ClipSpec& {
+            for (pixel::ClipSpec& c : x.clips)
+                if (c.state == "air") return c;
+            return x.clips.front();
+        };
+        // The block of the recording that takes a part's property to a value: its index, -1 when none.
+        auto block_of = [&](const char* part_id, pixel::Prop prop, f64 to) -> i32 {
+            if (!rec) return -1;
+            for (usize i = 0; i < rec->blocks.size(); ++i) {
+                const pixel::Block& b = rec->blocks[i];
+                if (b.part < rec->parts.size() && rec->parts[b.part] == part_id && b.prop == prop && std::fabs(b.value.v - to) < 1e-9)
+                    return static_cast<i32>(i);
+            }
+            return -1;
+        };
+        auto gutter = [&](u32 line, const char* cls) {
+            Rml::Element* lines = ed_.find_element("px-code-lines");
+            return lines && line >= 1 && static_cast<int>(line) <= lines->GetNumChildren() && lines->GetChild(static_cast<int>(line) - 1)->IsClassSet(cls);
+        };
+        auto near = [](f64 x, f64 y) { return std::fabs(x - y) < 1e-6; };
+        // Out of the panel: a click on the player's time.
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        auto console_has = [&](const std::string& text, u32 line) {
+            for (const PixelEditor::ConsoleLine& l : px().console())
+                if (l.text == text && l.line == line) return true;
+            return false;
+        };
+        switch (mo_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && lvl_same(ed_.game_dir, game) && lvl_same(as().root(), a / "assets"),
+                  "the editor has «Движение А» open, its «Ресурсы» in assets/");
+            check(put(as().abs(svg), kPxHedgehog) && put(module, kMoModule), "«персонажи/Ёжик.svg» drawn elsewhere, the game's «animations/движения.luau» written");
+            as().refresh();
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1: {
+            if (hold(shown("an-mode-pixel") && shown("an-tpl-0"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "a click on «Векторная»");
+            break;
+        }
+        case 2: {
+            if (hold(idle && as().record_of(as().abs(svg)) && px().svgs().size() == 1 && shown("px-svg-0"), "the SVG listed")) return true;
+            check(pj_click("px-svg-0") && px().opened() == doc && px().has() && there(lua), "a click on «Ёжик.svg»: «Ёжик.pixel.json» and «Ёжик.luau» beside it");
+            break;
+        }
+        // The code panel: the script it starts with; the jump typed over it key by key.
+        case 3: {
+            if (hold(shown("px-code-text") && shown("px-vector-img") && px().pixel_frame().width == 32, "the code panel and the views")) return true;
+            mo_lua0_ = file(lua);
+            bool crlf = false;
+            const std::string start = pixel::panel_text(std::string(mo_lua0_.begin(), mo_lua0_.end()), crlf);
+            check(px().code() == start && !px().code_unsaved() && element_text("px-code-name") == "Ёжик.luau" && !shown("px-code-unsaved") &&
+                      ue_field("px-code-text") == start,
+                  "the panel: «Ёжик.luau» as on disk, saved");
+            check(px().console().empty() && !px().recording() && shown("px-tl-panel"), "the console empty; «Стоит» of pose(t): no recording");
+            const bool typed = ue_type("px-fh", "64");
+            check(typed && d.frame_h == 64 && step_label() == "«Ёжик»: кадр 32 × 64", "«Кадр» 32 × 64 typed: " + step_label());
+            check(mo_select(0, mo_letters(start)), "all of its text selected in the panel");
+            mo_type(jump);
+            check(px().code() == jump && ue_field("px-code-text") == jump && px().code_unsaved() && file(lua) == mo_lua0_ &&
+                      step_label() == "«Ёжик»: кадр 32 × 64" && px().typing_steps() > 20,
+                  "the jump typed over it key by key (" + std::to_string(px().typing_steps()) + " steps of typing): not written, no step of the tab");
+            const usize steps = px().typing_steps();
+            mo_type("мусор");
+            check(px().code() == jump + "мусор" && px().typing_steps() == steps + 1, "«мусор» typed after it: one step of typing");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(px().code() == jump && ue_field("px-code-text") == jump && px().typing_steps() == steps && mo_panel_keys(), "Ctrl+Z in the panel: the word gone");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(px().code() == jump + "мусор" && px().typing_steps() == steps + 1, "Ctrl+Y: the word again");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(px().code() == jump.substr(0, jump.size() - 1), "Ctrl+Z twice: the last Enter undone too");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(px().code() == jump && file(lua) == mo_lua0_ && step_label() == "«Ёжик»: кадр 32 × 64", "Ctrl+Y: the jump as typed; the file as it was");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(jump) && !px().code_unsaved() && px().typing_steps() == 0 && step_label() == "«Ёжик»: код «Ёжик.luau» сохранён",
+                  "Ctrl+S in the panel: the file what was typed, byte for byte; one step: " + step_label());
+            break;
+        }
+        // «В воздухе» from the code: its recording on the timeline.
+        case 4: {
+            if (hold(shown("px-param-height") && !shown("px-code-unsaved"), "the script read again")) return true;
+            check(px().problem().empty() && input_value("px-param-height") == "6" && d.clips == std::vector<pixel::ClipSpec>{{"stand", 4, 10, true}},
+                  "its parameter height 6; «Стоит» as it was: " + px().problem());
+            check(away() && !shown("px-clip-cut"), "out of the panel; «Стоит» of pose(t) has «Кадров»");
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            const bool clicked = px_click("px-state-air");
+            check(clicked && px().clip() == "air" && d.clips.size() == 2 && d.clips[1] == pixel::ClipSpec{"air", 11, 10, true} &&
+                      step_label() == "«Ёжик»: клип «В воздухе»",
+                  "a click on «В воздухе»: its clip of the code, 11 frames counted at 10 a second: " + step_label());
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        }
+        case 5: {
+            if (hold(shown("px-fps-10") && shown("px-block-0"), "the clip's settings and its blocks")) return true;
+            const bool clicked = px_click("px-fps-10");
+            check(clicked && element_text("px-fps-10") == "30" && d.clips[1] == pixel::ClipSpec{"air", 33, 30, true} && step_label() == "«Ёжик»: «В воздухе» 30 к/с",
+                  "«30»: 33 frames counted: " + step_label());
+            check(rec && near(rec->length, 1.1) && rec->files == std::vector<std::string>{"", "движения"} && rec->events.size() == 2 && rec->marks.size() == 1 &&
+                      rec->pauses.size() == 1 && rec->blocks.size() == 5,
+                  "the recording: 1,1 s, the module required, two events, a mark, a pause, five blocks");
+            check(rec && rec->events[0].name == "отрыв" && near(rec->events[0].start, 0.1) && near(rec->events[0].length, 0.15) && rec->events[1].name == "вершина" &&
+                      near(rec->events[1].start, 0.5) && near(rec->events[1].length, 0.1) && near(rec->marks[0].time, 0.25) && near(rec->pauses[0].start, 0.8),
+                  "«отрыв» 0,1 + 0,15 s, «вершина» 0,5 + 0,1 s, emit at 0,25 s, wait at 0,8 s");
+            check(block_of("body", pixel::Prop::Y, 2) >= 0 && block_of("body", pixel::Prop::Y, -6) >= 0 && block_of("body", pixel::Prop::Y, 0) >= 0 &&
+                      block_of("head", pixel::Prop::Rot, 8) >= 0 && rec->blocks[static_cast<usize>(block_of("head", pixel::Prop::Rot, 8))].site.file == 1,
+                  "the blocks: body · y to 2, −6 and 0; head · rot to 8 from the module");
+            check(px().whole().frames == 33 && px().cut().frames == 33 && !px().cut().cut && px().frame() == 0 && !px().playing(), "33 frames, at the first, paused");
+            break;
+        }
+        case 6: {
+            if (wait(2)) return true;
+            check(element_text("px-frame-label") == "В воздухе · кадр 1 из 33" && element_text("px-time") == "0 из 1,1 с",
+                  "«" + element_text("px-frame-label") + "», «" + element_text("px-time") + "»");
+            check(element_text("px-flag-0").find("отрыв 0,15 с") != std::string::npos && element_text("px-flag-1").find("вершина 0,1 с") != std::string::npos &&
+                      shown("px-mark-0") && element_text("px-pause-0") == "wait 0,1",
+                  "the flags «отрыв 0,15 с» and «вершина 0,1 с», the mark, the pause «wait 0,1»");
+            const i32 nod = block_of("head", pixel::Prop::Rot, 8);
+            check(element_text(("px-block-" + std::to_string(nod)).c_str()).find("движения") != std::string::npos && pj_class(("px-block-" + std::to_string(nod)).c_str(), "module"),
+                  "the module's block named: «" + element_text(("px-block-" + std::to_string(nod)).c_str()) + "»");
+            check(console_has("1,1 с: приземлился", 22), "the console: the log at its time, its line");
+            check(element_text("px-clip-cut").find("33 кадра") != std::string::npos, "«" + element_text("px-clip-cut") + "»");
+            // A line that does not compile, saved.
+            const u32 at = mo_char(jump, "body.y(-p.height, 0.25") + mo_letters("body.y(-p.height, 0.25");
+            check(mo_caret(at), "the caret after 0.25 on line 17");
+            mo_type(" +");
+            const std::string bad = px().code();
+            check(bad.find("body.y(-p.height, 0.25 +, \"out_quad\")") != std::string::npos, "« +» typed");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            mo_bad_ = bytes(bad);
+            check(file(lua) == mo_bad_ && step_label() == "«Ёжик»: код «Ёжик.luau» сохранён", "Ctrl+S: written as it is: " + step_label());
+            break;
+        }
+        case 7: {
+            if (hold(px().stale() && pj_class("px-tl", "stale") && shown("px-console-0"), "the timeline faint")) return true;
+            const std::vector<PixelEditor::ConsoleLine>& c = px().console();
+            check(!c.empty() && c[0].error && c[0].line == 17 && c[0].text.rfind("Скрипт «Ёжик.luau»: строка 17: ", 0) == 0 &&
+                      c[0].text.ends_with(" (показана последняя удачная поза)") && pj_class("px-console-0", "error") && gutter(17, "error"),
+                  "the console: «" + (c.empty() ? std::string() : c[0].text) + "»; line 17 marked");
+            check(rec && rec->blocks.size() == 5 && px().whole().frames == 33 && shown("px-block-0"), "the last recording on the timeline, faint");
+            check(away() && px_click("px-console-0") && mo_panel_keys(), "a click on the console's line: the panel has the keyboard");
+            u32 from = 0, to = 0;
+            const u32 line17 = pixel::line_char(px().code(), 17);
+            check(px().code_selection(from, to) && from == line17 && to == line17, "its caret at the start of line 17");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(px().code() == std::string(mo_bad_.begin(), mo_bad_.end()) && step_label() == "«Ёжик»: код «Ёжик.luau» сохранён",
+                  "Ctrl+Z in the panel: nothing typed since the save, nothing undone");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(jump) && px().code() == jump && !px().stale() && px().problem().empty(), "Ctrl+Z out of the panel: the save undone, the jump");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(lua) == mo_bad_ && px().stale() && px().code() == std::string(mo_bad_.begin(), mo_bad_.end()), "Ctrl+Y: the line again");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(jump) && !px().stale() && !px().code_unsaved() && rec && rec->blocks.size() == 5, "Ctrl+Z: the jump, byte for byte");
+            mo_air_ = file(doc);
+            break;
+        }
+        // The player: the frames, the range's ends, the speeds, the repeating view.
+        case 8: {
+            if (hold(!pj_class("px-tl", "stale") && px().console().size() == 1, "the timeline as it was")) return true;
+            check(!mo_panel_keys() && px().frame() == 0, "the keys for the player");
+            key(SDLK_RIGHT, SDL_KMOD_NONE);
+            check(px().frame() == 1 && near(px().time(), 1 / 30.0), "→: frame 2");
+            key(SDLK_LEFT, SDL_KMOD_NONE);
+            key(SDLK_LEFT, SDL_KMOD_NONE);
+            check(px().frame() == 32 && near(px().time(), 32 / 30.0), "← twice: frame 33 (the clip repeats)");
+            key(SDLK_RIGHT, SDL_KMOD_NONE);
+            check(px().frame() == 0, "→: frame 1");
+            key(SDLK_RIGHT, SDL_KMOD_SHIFT);
+            check(px().frame() == 32 && !px().playing(), "Shift+→: the range's end, frame 33");
+            key(SDLK_LEFT, SDL_KMOD_SHIFT);
+            check(px().frame() == 0 && px().time() == 0, "Shift+←: its start");
+            check(px().speed() == 1 && px().loop_view() && pj_class("px-speed-2", "selected"), "×1, «По кругу» as the tab opens");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(px().playing(), "Space: it plays");
+            break;
+        }
+        case 9: {
+            if (wait(31)) return true;
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(!px().playing() && px().frame() == 15 && near(px().time(), 0.5), "31 frames of the window later, Space: frame 16 at 0,5 s");
+            check(px_click("px-speed-1") && px().speed() == 0.5f, "«×0,5»");
+            key(SDLK_LEFT, SDL_KMOD_SHIFT);
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        }
+        case 10: {
+            if (wait(31)) return true;
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(px().frame() == 7 && pj_class("px-speed-1", "selected") && !pj_class("px-speed-2", "selected"),
+                  "at ×0,5 the same while: frame 8 (" + std::to_string(px().frame() + 1) + "), «×0,5» lit");
+            check(px_click("px-speed-4") && px().speed() == 2.0f, "«×2»");
+            key(SDLK_L, SDL_KMOD_NONE);
+            check(!px().loop_view(), "L: not «По кругу»");
+            key(SDLK_LEFT, SDL_KMOD_SHIFT);
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        }
+        case 11: {
+            if (wait(70)) return true;
+            check(!px().playing() && px().frame() == 32 && near(px().time(), 32 / 30.0), "×2 not round: it stops at the range's last frame");
+            key(SDLK_L, SDL_KMOD_NONE);
+            check(px().loop_view() && px_click("px-speed-2") && px().speed() == 1.0f, "L: «По кругу»; «×1»");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        }
+        case 12: {
+            if (wait(130)) return true;
+            check(px().playing() && px().shown_fps() >= 29 && px().shown_fps() <= 31 && element_text("px-shown-fps").ends_with(" к/с"),
+                  "playing round: the frames a second shown in fact «" + element_text("px-shown-fps") + "»");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(!px().playing(), "Space: it stops");
+            break;
+        }
+        // The timeline: the wheel round the mouse, Shift+wheel along, F, both ends of the scale.
+        case 13: {
+            if (wait(2)) return true;
+            f32 x = 0, y = 0, x2 = 0, rx = 0;
+            const pixel::TimeView& v = px().view();
+            check(element_center("px-ruler", rx, y) && px().timeline_x(0.5, x), "the ruler on screen");
+            const f64 fit = v.fit();
+            check(near(v.per_second(), fit) && v.start == 0 && near(v.most(), 64 * 30.0) && fit < v.most(), "all of the clip in the timeline's width");
+            mo_wheel(x, y, 1);
+            check(near(v.per_second(), fit * 1.25) && px().timeline_x(0.5, x2) && std::fabs(x2 - x) < 0.01f, "the wheel: 1,25 times nearer, 0,5 s under the mouse");
+            mo_start_ = v.start;
+            mo_shift(true);
+            mo_wheel(x, y, -1);
+            mo_shift(false);
+            check(near(v.start, mo_start_ + 40 / v.per_second()) && near(v.per_second(), fit * 1.25), "Shift+wheel: 40 points later, the scale as it was");
+            check(px_click("px-frame-18") && px().frame() == 18, "a click on frame 19 of the ruler");
+            key(SDLK_F, SDL_KMOD_NONE);
+            check(std::fabs(v.x(px().time()) - v.width / 2) < 0.5, "F: the playhead in the middle");
+            for (int i = 0; i < 12; ++i) mo_wheel(x, y, 1);
+            check(near(v.per_second(), v.most()), "the wheel on: 64 points a frame at most");
+            for (int i = 0; i < 12; ++i) mo_wheel(x, y, -1);
+            check(near(v.per_second(), fit) && v.start == 0, "the wheel back: all of the clip at least");
+            break;
+        }
+        // The range: B and N at the playhead, the middle button on the clip's chip all of it; the .pixel.json each time.
+        case 14: {
+            if (wait(2)) return true;
+            check(px_click("px-frame-9") && px().frame() == 9 && near(px().time(), 0.3), "frame 10: 0,3 s");
+            key(SDLK_B, SDL_KMOD_NONE);
+            check(step_label() == "«Ёжик»: «В воздухе» с 0,3 по 1,1 с" && px().cut().frames == 24 && near(px().cut().from, 0.3), "B: " + step_label() + ", 24 frames");
+            check(px_click("px-frame-24") && px().frame() == 24, "frame 25: 0,8 s");
+            key(SDLK_N, SDL_KMOD_NONE);
+            pixel::PixelDoc expect = read_doc(mo_air_);
+            pixel::ClipSpec& air = air_of(expect);
+            air.ranged = true, air.from = 0.3, air.to = 0.8, air.frames = 15;
+            mo_ranged_ = file(doc);
+            const std::string text(mo_ranged_.begin(), mo_ranged_.end());
+            const std::vector<u8> want = written(expect);
+            pixel::PixelDoc back = read_doc(mo_ranged_);
+            const pixel::ClipSpec& read = air_of(back);
+            check(step_label() == "«Ёжик»: «В воздухе» с 0,3 по 0,8 с" && px().cut().frames == 15 && mo_ranged_ == want &&
+                      text.find("\"range\": [") != std::string::npos && read.ranged && read.from == 0.3 && read.to == 0.8,
+                  "N: " + step_label() + ", 15 frames; the .pixel.json with «\"range\": [0.3, 0.8]» and its frames, nothing else" +
+                      (mo_ranged_ == want ? std::string() : "\n" + text + "\nwanted\n" + std::string(want.begin(), want.end())));
+            key(SDLK_LEFT, SDL_KMOD_SHIFT);
+            check(near(px().time(), 0.3), "Shift+←: the range's start");
+            key(SDLK_RIGHT, SDL_KMOD_SHIFT);
+            check(near(px().time(), 0.3 + 14 / 30.0), "Shift+→: its last frame");
+            check(mo_middle("px-state-air") && step_label() == "«Ёжик»: «В воздухе» весь клип" && file(doc) == mo_air_ && px().cut().frames == 33,
+                  "the middle button on «В воздухе»: all of the clip, the .pixel.json without the range byte for byte: " + step_label());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(doc) == mo_ranged_ && px().cut().frames == 15, "Ctrl+Z: the range again, byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(doc) == mo_air_ && px().cut().frames == 33, "Ctrl+Y: all of the clip");
+            break;
+        }
+        // The flags: dragged by frames without Shift and with it; the .pixel.json as expected after each.
+        case 15: {
+            if (wait(2)) return true;
+            check(mo_drag("px-flag-0", 0.25, 0.4), "«отрыв» dragged from 0,25 s to 0,4 s");
+            pixel::PixelDoc expect = read_doc(mo_air_);
+            expect.lengths["air"].waits = {{"отрыв", 0.3}};
+            air_of(expect).frames = 38;
+            mo_flag1_ = file(doc);
+            check(step_label() == "«Ёжик»: «отрыв» 0,3 с" && mo_flag1_ == written(expect) && rec && near(rec->length, 1.25) && near(rec->events[1].start, 0.65) &&
+                      px().whole().frames == 38,
+                  "one step: " + step_label() + "; its length in the file, the clip 1,25 s, «вершина» later with it");
+            break;
+        }
+        case 16: {
+            if (wait(2)) return true;
+            mo_shift(true);
+            const bool dragged = mo_drag("px-flag-0", 0.4, 0.5);
+            mo_shift(false);
+            pixel::PixelDoc expect = read_doc(mo_flag1_);
+            expect.lengths["air"].waits = {{"отрыв", 0.4}, {"вершина", 0}};
+            mo_flag2_ = file(doc);
+            check(dragged && step_label() == "«Ёжик»: «отрыв» 0,4 с, «вершина» 0 с" && mo_flag2_ == written(expect) && rec && near(rec->length, 1.25) &&
+                      near(rec->events[1].start + rec->events[1].length, 0.75),
+                  "with Shift: " + step_label() + "; «вершина» gave up as much, its flag where it was");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(doc) == mo_flag1_, "Ctrl+Z: as after the first, byte for byte");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(doc) == mo_air_ && rec && near(rec->length, 1.1), "Ctrl+Z: no lengths in the file, 1,1 s");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(doc) == mo_flag2_, "Ctrl+Y twice: byte for byte");
+            break;
+        }
+        case 17: {
+            if (wait(2)) return true;
+            check(mo_middle("px-flag-1") && near(px().time(), 0.75), "the middle button on «вершина»: the playhead on it");
+            check(mo_double("px-flag-0") && mo_panel_keys(), "a double click on «отрыв»: the panel");
+            u32 from = 0, to = 0;
+            const u32 line15 = pixel::line_char(px().code(), 15);
+            check(px().code_selection(from, to) && from == line15 && to == line15, "its caret at the start of line 15, wait_until(\"отрыв\")");
+            check(away(), "out of the panel");
+            break;
+        }
+        // The blocks: a click lights the call's lines, a double click selects the call, the caret in a call lights them.
+        case 18: {
+            if (wait(2)) return true;
+            const i32 up = block_of("body", pixel::Prop::Y, -6);
+            const std::string id = "px-block-" + std::to_string(up);
+            check(up >= 0 && px_click(id) && px().block() == up && px().lit_first() == 17 && px().lit_last() == 17, "a click on «y → -6»: line 17 lit");
+            break;
+        }
+        case 19: {
+            if (wait(2)) return true;
+            const i32 up = block_of("body", pixel::Prop::Y, -6);
+            const std::string id = "px-block-" + std::to_string(up);
+            check(gutter(17, "lit") && !gutter(16, "lit") && pj_class(id.c_str(), "selected") && shown("px-inspector") &&
+                      element_text("px-inspector-text").rfind("body · y", 0) == 0 && element_text("px-inspector-call").rfind("строка 17: body.y(-p.height, 0.25, ", 0) == 0,
+                  "its line lit in the gutter; the inspector: «" + element_text("px-inspector-call") + "»");
+            check(away() && mo_double(id.c_str()) && mo_panel_keys(), "a double click on it: the panel");
+            u32 from = 0, to = 0;
+            const std::string call = "body.y(-p.height, 0.25, \"out_quad\")";
+            const u32 at = mo_char(jump, call);
+            check(px().code_selection(from, to) && from == at && to == at + mo_letters(call), "the call's text selected");
+            check(mo_caret(mo_char(jump, "body.y(2, 0.1)") + 3), "the caret in body.y(2, 0.1)");
+            break;
+        }
+        case 20: {
+            if (wait(2)) return true;
+            const i32 down = block_of("body", pixel::Prop::Y, 2);
+            check(px().caret_blocks() == std::vector<i32>{down} && pj_class(("px-block-" + std::to_string(down)).c_str(), "lit"), "its block lit");
+            check(away(), "out of the panel");
+            const i32 nod = block_of("head", pixel::Prop::Rot, 8);
+            const std::string id = "px-block-" + std::to_string(nod);
+            check(px_click(id) && px().block() == nod && px().lit_first() == 0, "a click on the module's block: no line of the panel lit");
+            check(away() && mo_double(id.c_str()) && !mo_panel_keys() && px().note() == "Блок из модуля «движения»: его код — animations/движения.luau, не в панели",
+                  "a double click: «" + px().note() + "»");
+            break;
+        }
+        case 21: {
+            if (wait(2)) return true;
+            check(element_text("px-inspector-text").find("из модуля «движения» (animations/движения.luau)") != std::string::npos &&
+                      element_text("px-inspector-call") == "движения.luau, строка 4",
+                  "the inspector: the module and its line «" + element_text("px-inspector-call") + "»");
+            // The range baked: B at 0,2 s, N at 0,7 s, «Запечь».
+            check(px_click("px-frame-6") && px().frame() == 6, "frame 7: 0,2 s");
+            key(SDLK_B, SDL_KMOD_NONE);
+            check(px_click("px-frame-21") && px().frame() == 21, "frame 22: 0,7 s");
+            key(SDLK_N, SDL_KMOD_NONE);
+            check(step_label() == "«Ёжик»: «В воздухе» с 0,2 по 0,7 с" && px().cut().frames == 15 && px().total_frames() == 19, "B, N: " + step_label());
+            break;
+        }
+        case 22: {
+            if (hold(idle, "«Ресурсы» looked at the files")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            const std::vector<u8> b = file(png);
+            assets::CookedTexture strip;
+            check(!b.empty() && assets::decode_image(b, strip) && strip.width == 32 * 19 && strip.height == 64, "«Ёжик.png»: 19 frames of 32 × 64");
+            check(d.strip == std::vector<pixel::StripClip>{{"stand", 0, 4, 10, true}, {"air", 4, 15, 30, true}} &&
+                      step_label() == "«Ёжик»: запечено в «Ёжик.png», 19 кадров",
+                  "«Стоит» 1–4, «В воздухе» by its range 5–19: " + step_label());
+            std::string bad;
+            for (const auto& [state, first, n] : {std::tuple{"stand", 0u, 4u}, std::tuple{"air", 4u, 15u}})
+                for (u32 k = 0; k < n; ++k) {
+                    assets::CookedTexture ref;
+                    std::string why;
+                    if (!mo_ref(state, k, ref, why) || !px_same(px_cut(strip, 32, first + k), ref)) bad += " " + std::string(state) + " " + std::to_string(k + 1) + why;
+                }
+            check(bad.empty(), "every frame as the library bakes the files apart from the tab;" + bad);
+            assets::CookedTexture last;
+            std::string why;
+            check(mo_ref("air", 20, last, why, true) && px_same(px_cut(strip, 32, 18), last),
+                  "repeated, the range's last frame is the clip's at 0,2 + 14/30 s (its frame 21), not at 0,7 s " + why);
+            break;
+        }
+        // «Другое зерно», «Снимок кадра».
+        case 23: {
+            if (hold(idle, "«Ресурсы» looked at the files")) return true;
+            mo_seed_ = d.seed;
+            const std::vector<u8> was = file(doc);
+            check(px_click("px-seed-other") && d.seed == pixel::other_seed(mo_seed_) && d.seed != mo_seed_ &&
+                      step_label() == "«Ёжик»: другое зерно " + std::to_string(d.seed),
+                  "«Другое зерно»: " + step_label());
+            mo_seeded_ = file(doc);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d.seed == mo_seed_ && file(doc) == was, "Ctrl+Z: the seed as it was, byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(doc) == mo_seeded_, "Ctrl+Y: the other one");
+            break;
+        }
+        case 24: {
+            if (hold(idle, "«Ресурсы» looked at the files")) return true;
+            check(px_click("px-frame-18") && px().frame() == 18 && near(px().time(), 0.6), "frame 19: 0,6 s");
+            check(px_click("px-snapshot") && there(shot) && step_label() == "«Ёжик»: снимок «Ёжик air 19.png»", "«Снимок кадра»: " + step_label());
+            mo_shot_ = file(shot);
+            mo_shot_meta_ = file(shot + ".meta");
+            assets::CookedTexture t, ref;
+            std::string why;
+            check(assets::decode_image(mo_shot_, t) && mo_ref("air", 18, ref, why, true) && px_same(t, ref), "the frame at 0,6 s as it bakes " + why);
+            check(!mo_shot_meta_.empty(), "its «.meta»");
+            break;
+        }
+        case 25: {
+            if (hold(idle, "«Ресурсы» looked at the files")) return true;
+            assets::CookedTexture t;
+            check(assets::decode_image(mo_shot_, t) && px_same(t, px().pixel_frame()), "as the pixel view shows it");
+            check(px_click("px-snapshot") && there(shot2) && file(shot2) == mo_shot_ && step_label() == "«Ёжик»: снимок «Ёжик air 19 (2).png»",
+                  "again: «Ёжик air 19 (2).png», " + step_label());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!there(shot2) && !there(shot2 + ".meta") && there(shot), "Ctrl+Z: the second gone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!there(shot) && !there(shot + ".meta"), "Ctrl+Z: the first gone");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(shot) == mo_shot_ && file(shot + ".meta") == mo_shot_meta_, "Ctrl+Y: it again, byte for byte");
+            // The module changed on disk: the recording again.
+            const std::string nod12 = std::string(kMoModule).replace(std::string(kMoModule).find("rot(8"), 5, "rot(12");
+            check(put(module, nod12), "«движения.luau» changed in another program: a nod of 12");
+            break;
+        }
+        case 26: {
+            if (hold(block_of("head", pixel::Prop::Rot, 12) >= 0, "the recording made again")) return true;
+            check(block_of("head", pixel::Prop::Rot, 8) < 0 && !px().stale(), "the module read again: head · rot to 12");
+            // The script changed outside, nothing unsaved: the panel takes it.
+            std::string higher = jump;
+            higher.replace(higher.find("height = 6"), 10, "height = 7");
+            check(put(as().abs(lua), higher), "«Ёжик.luau» changed in another program");
+            mo_mine_ = higher;
+            break;
+        }
+        case 27: {
+            if (hold(px().code() == mo_mine_ && input_value("px-param-height") == "7", "the panel takes it")) return true;
+            check(!px().code_conflict() && !px().code_unsaved() && !shown("px-code-conflict"), "no bar; height 7");
+            // Unsaved, and changed outside: the bar; «Оставить мой».
+            check(mo_caret(mo_char(mo_mine_, "\nlocal m")), "the caret at the end of line 1");
+            mo_type("!");
+            check(px().code_unsaved(), "a letter typed: not saved");
+            std::string other = mo_mine_;
+            other.replace(other.find("height = 7"), 10, "height = 8");
+            check(put(as().abs(lua), other), "changed in another program again");
+            break;
+        }
+        case 28: {
+            if (hold(px().code_conflict() && shown("px-code-conflict"), "the bar")) return true;
+            check(shown("px-code-unsaved"), "«не сохранён»");
+            check(element_text("px-code-conflict").find("изменён на диске") != std::string::npos && px().code().find("прыгает по шагам.!") != std::string::npos,
+                  "«Ёжик.luau» изменён на диске; the panel as typed");
+            check(px_click("px-code-keep") && !px().code_conflict() && px().code_unsaved() && px().code().find("прыгает по шагам.!") != std::string::npos,
+                  "«Оставить мой»: the panel kept");
+            const std::string mine = px().code();
+            check(mo_caret(0), "the panel");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(mine) && !px().code_unsaved(), "Ctrl+S: the panel's text written");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) != bytes(mine) && px().code().find("height = 8") != std::string::npos && !px().code_unsaved() && !px().code_conflict(),
+                  "Ctrl+Z: what the other program wrote, in the panel");
+            // Unsaved again, changed outside again: «Взять с диска».
+            check(mo_caret(0), "the panel");
+            mo_type("?");
+            mo_mine_ = jump;
+            check(put(as().abs(lua), jump), "the jump written by another program");
+            break;
+        }
+        case 29: {
+            if (hold(px().code_conflict() && shown("px-code-take"), "the bar")) return true;
+            check(px_click("px-code-take") && px().code() == jump && !px().code_unsaved() && !px().code_conflict(), "«Взять с диска»: the jump in the panel, saved");
+            break;
+        }
+        case 30: {
+            // «Новый»: a character the code draws; then «Ёжик» again.
+            if (mo_draw_ >= 0) return pixel_draw_step();
+            if (wait(2)) return true;
+            check(!shown("px-code-unsaved") && !shown("px-code-conflict") && ue_field("px-code-text") == jump, "no bar, no «не сохранён»");
+            // The window closed with the panel unsaved.
+            check(mo_caret(0), "the panel");
+            mo_type("-");
+            check(px().code_unsaved() && !ed_.quit_request(), "a letter typed; the window's close asks first");
+            break;
+        }
+        case 31: {
+            check(pjw().view() == "unsaved" && element_text("pj-unsaved").find("Ёжик.luau") != std::string::npos,
+                  "«Закрыть редактор»: " + element_text("pj-unsaved"));
+            check(pj_click("pj-stay"), "«Отмена»");
+            break;
+        }
+        case 32: {
+            check(pjw().view().empty() && !ed_.quit_asked && px().code_unsaved() && file(lua) == bytes(jump), "the editor stays, the panel unsaved");
+            check(!ed_.quit_request(), "the window's close asks again");
+            break;
+        }
+        case 33: {
+            check(pjw().view() == "unsaved" && pj_click("pj-save"), "«Сохранить»");
+            check(file(lua) == bytes("-" + jump) && !px().code_unsaved() && ed_.quit_asked, "the panel's text written, the editor closes");
+            return false;
+        }
+        default: break;
+        }
+        ++mo_step_;
         return true;
     }
 
@@ -23847,7 +24836,7 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
                 // The game's frame limit (its game.json names none: 64): «+» at it refused and said.
                 check(im().set_frames(64) && im().frames() == 64, "its own number of frames: 64");
                 const bool past = im_press("im-frames-more");
-                check(past && im().frames() == 64 && im().note() == "Кадров не больше 64: это предел игры (поле «Предел кадров» в «Пиксельных»)",
+                check(past && im().frames() == 64 && im().note() == "Кадров не больше 64: это предел игры (поле «Предел кадров» в «Векторной»)",
                       "«Кадров в картинке» + at 64: still 64, the game's limit said: " + im().note());
                 check(im().set_frames(1) && im().frames() == 1, "back to 1 frame");
                 check(im_press("im-frames-more") && im().frames() == 2, "«Кадров в картинке»: 2");
@@ -25422,7 +26411,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                             options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0 ||
                             options.self_part.rfind("input-", 0) == 0 || options.self_part.rfind("rpg-template-", 0) == 0 ||
                             options.self_part.rfind("match3-template-", 0) == 0 || options.self_part.rfind("images-", 0) == 0 ||
-                            options.self_part.rfind("pixel-", 0) == 0 || options.self_part.rfind("frame-limit-", 0) == 0 ||
+                            (options.self_part.rfind("pixel-", 0) == 0 && options.self_part != "pixel-motion") ||
+                            options.self_part.rfind("frame-limit-", 0) == 0 ||
                             options.self_part.rfind("ui-scale-", 0) == 0 ||
                             options.self_part.rfind("vector-live-", 0) == 0;
         OpenGame game;
@@ -25961,7 +26951,7 @@ int main(int argc, char** argv) {
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
                                          "animation",    "animation-a",     "animation-a-again", "pixel", "pixel-a", "pixel-a-again",
                                          "frame-limit", "frame-limit-a", "frame-limit-a-again", "frame-limit-a-low", "frame-limit-a-low-again",
-                                         "frame-limit-a-cross", "input", "input-a", "input-a-again",
+                                         "frame-limit-a-cross", "pixel-motion", "pixel-motion-a", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -25974,6 +26964,7 @@ int main(int argc, char** argv) {
                     "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
                     "animation-a-again, pixel and its parts pixel-a, pixel-a-again, frame-limit and its parts frame-limit-a, frame-limit-a-again, "
+                    "frame-limit-a-low, frame-limit-a-low-again, frame-limit-a-cross, pixel-motion and its part pixel-motion-a, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "

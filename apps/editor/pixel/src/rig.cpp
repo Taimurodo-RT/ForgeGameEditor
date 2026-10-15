@@ -431,7 +431,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
     for (const auto& [id, morph] : pose.morphs) {
         const i32 pi = part(id);
         if (pi < 0) {
-            fail("морфинг: в SVG нет фигуры «" + id + "»");
+            fail("морфинг: в рисунке нет фигуры «" + id + "»");
             continue;
         }
         const PartRec& r = m.recs[static_cast<usize>(pi)];
@@ -441,7 +441,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         }
         const i32 ti = m.outline.find(morph.target);
         if (ti < 0) {
-            fail("морфинг «" + id + "»: в SVG нет фигуры «" + morph.target + "»");
+            fail("морфинг «" + id + "»: в рисунке нет фигуры «" + morph.target + "»");
             continue;
         }
         if (!std::isfinite(morph.k)) {
@@ -498,7 +498,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
     for (const auto& [id, pp] : pose.parts) {
         const i32 pi = part(id);
         if (pi < 0) {
-            fail("в SVG нет части «" + id + "»");
+            fail("в рисунке нет части «" + id + "»");
             continue;
         }
         const f64 nums[] = {pp.x, pp.y, pp.rot, pp.scale, pp.sx, pp.sy, pp.opacity};

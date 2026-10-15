@@ -4,11 +4,15 @@
 
 namespace forge::pixel {
 
-std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc) {
-    // A part the file has no pivot for turns round the middle of its rest bounds, whatever was set before (Ctrl+Z).
+std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc, const Drawing* drawn) {
+    // A part the file has no pivot for turns round the drawing's or the middle of its rest bounds, whatever was set
+    // before (Ctrl+Z).
     for (const Part& p : rig.parts()) {
         const auto it = doc.pivots.find(p.id);
-        rig.set_pivot(p.id, it != doc.pivots.end() ? it->second : vector::Point{(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2});
+        vector::Point at{(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2};
+        if (it != doc.pivots.end()) at = it->second;
+        else if (drawn) drawn_pivot(*drawn, p.id, at);
+        rig.set_pivot(p.id, at);
     }
     std::vector<std::string> missing;
     for (const auto& [id, at] : doc.pivots)

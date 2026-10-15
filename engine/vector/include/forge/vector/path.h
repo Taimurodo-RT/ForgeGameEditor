@@ -1,7 +1,7 @@
 #pragma once
 
 // Vector shapes as paths, for the morph and for whoever draws them (step 1 of the vector model,
-// docs/models/вектор-модель.md). Nothing is drawn here: ThorVG in «Пиксельные», lunasvg in the interface, or a GPU
+// docs/models/вектор-модель.md). Nothing is drawn here: ThorVG in «Векторная», lunasvg in the interface, or a GPU
 // layer later draws what comes out.
 //
 // A path is contours of cubic Bézier curves. What SVG writes as lines, quadratic curves and arcs is read as cubics,

@@ -405,11 +405,11 @@ TEST_CASE("the game's frame limit: game.json, templates and animations past it, 
     REQUIRE(low.load(low_dir / "kinds.json", low_dir / "objects"));
     std::string error;
     CHECK_FALSE(low.copy_from(lib, *lib.find("ezhik"), &error));
-    CHECK(error == "кадров в картинке 6, а предел этой игры 5 (поле «Предел кадров» в «Пиксельных»)");
+    CHECK(error == "кадров в картинке 6, а предел этой игры 5 (поле «Предел кадров» в «Векторной»)");
     Template kot = *lib.find("kot");
     kot.animations["walk"] = {{0, 1, 2, 3, 2, 1}, 10, true};
     CHECK_FALSE(low.copy_from(lib, kot, &error));
-    CHECK(error == "кадров в анимации «walk» 6, а предел этой игры 5 (поле «Предел кадров» в «Пиксельных»)");
+    CHECK(error == "кадров в анимации «walk» 6, а предел этой игры 5 (поле «Предел кадров» в «Векторной»)");
     CHECK_FALSE(fs::exists(low_dir / "objects"));
     kot.animations.erase("walk");
     write_text(lib.pictures_folder() / utf8_path("кот.png"), "not really a png");
@@ -515,7 +515,7 @@ TEST_CASE("a template past the game's frame limit keeps its file's frames and an
     REQUIRE(five.load(up_dir / "kinds.json", up_dir / "five_objects"));
     std::string error;
     CHECK_FALSE(five.copy_from(lib, *lib.find("ezhik"), &error));
-    CHECK(error == "кадров в картинке 6, а предел этой игры 5 (поле «Предел кадров» в «Пиксельных»)");
+    CHECK(error == "кадров в картинке 6, а предел этой игры 5 (поле «Предел кадров» в «Векторной»)");
 
     // The author's own number of frames, and an animation of their own for that state, are what the file gets.
     Template own = *lib.find("ezhik");
