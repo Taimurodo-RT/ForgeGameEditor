@@ -63,8 +63,7 @@ private:
         take(now.about, to.about, from.about);
         take(now.values, to.values, from.values);
         take(now.picture, to.picture, from.picture);
-        take(now.frames, to.frames, from.frames);
-        take(now.animations, to.animations, from.animations);
+        objects::take_look(now, to, from); // its frames and animations as the file has them, set aside by the limit as it is now
         take(now.file, to.file, from.file);
         return now;
     }
@@ -1029,10 +1028,15 @@ bool ObjectLibrary::set_picture(const std::filesystem::path& source) {
 bool ObjectLibrary::set_frames(int n) {
     const objects::Template* t = selected();
     if (!t || showing_shared() || t->picture.empty()) return false;
-    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(objects::kMaxFrames)));
+    const u32 limit = library().frame_limit();
+    if (n > static_cast<int>(limit))
+        FORGE_WARN("«%s»: кадров в картинке не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)",
+                   t->name.c_str(), limit);
+    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit)));
     if (frames == t->frames) return false;
     objects::Template after = *t;
     after.frames = frames;
+    after.frames_over = 0; // the frames past the game's limit its file had: the author's number now
     change(std::move(after), "«" + t->name + "»: кадров в картинке " + std::to_string(frames));
     history_.seal();
     return true;

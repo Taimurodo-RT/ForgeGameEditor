@@ -16,6 +16,10 @@
 //
 // While the game runs (Play), recording is off: commands still apply, but the
 // history does not change; the scene snapshot taken at Play is restored on Stop.
+//
+// A command that can fail (a file it cannot write) says so with failed() after
+// apply or revert, having changed nothing: the history then stays where it was
+// (execute records nothing, undo and redo do not move).
 
 #include "forge/core/types.h"
 
@@ -41,6 +45,8 @@ public:
     virtual bool try_merge(const Command& /*next*/) { return false; }
     // False for commands that do not change saved data (selection).
     virtual bool changes_document() const { return true; }
+    // True when the last apply or revert could not be done and changed nothing.
+    virtual bool failed() const { return false; }
 };
 
 class UndoStack {
@@ -50,11 +56,14 @@ public:
     UndoStack(const UndoStack&) = delete;
     UndoStack& operator=(const UndoStack&) = delete;
 
-    // Applies the command and records it (unless recording is off).
-    void execute(std::unique_ptr<Command> command);
+    // Applies the command and records it (unless recording is off). False when
+    // the command failed: nothing changed, nothing recorded.
+    bool execute(std::unique_ptr<Command> command);
     // The next command never merges into the newest entry.
     void seal() { sealed_ = true; }
 
+    // False when there is nothing to undo (redo) or the command failed: the
+    // history is where it was.
     bool undo();
     bool redo();
     bool can_undo() const { return cursor_ > 0; }

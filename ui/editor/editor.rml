@@ -1337,6 +1337,10 @@
                     <span>×</span>
                     <input id="px-fh" type="text" class="small number" data-attr-value="px_fh" data-event-change="px_size('h', ev.value, ev.linebreak)" data-event-blur="px_size_commit('h')"/>
                 </div>
+                <div class="px-field row">
+                    <span class="grow" title="Не больше стольких кадров в картинке шаблона, в анимации и во всех клипах полосы. Число игры: game.json">Предел кадров</span>
+                    <input id="px-limit" type="text" class="small number" data-attr-value="px_limit" data-event-change="px_limit(ev.value, ev.linebreak)" data-event-blur="px_limit_commit"/>
+                </div>
                 <div class="an-fps row">
                     <div id="px-palette-svg" class="an-chip" data-class-selected="!px_game_palette" title="Цвета самого рисунка" data-event-click="px_palette(0)">Цвета рисунка</div>
                     <div id="px-palette-game" class="an-chip" data-class-selected="px_game_palette" title="Каждый пиксель — ближайший из «Цветов игры» («Интерфейс»)" data-event-click="px_palette(1)">Цвета игры</div>

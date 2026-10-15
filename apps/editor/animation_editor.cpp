@@ -18,27 +18,38 @@ namespace {
 constexpr u32 kThumbPx = 72;    // a frame in the strip
 constexpr u32 kPreviewPx = 240; // the frame playing
 
-// Puts a template's frames and animations back as they were, onto the template as it is now: the tab «Объекты»
-// changes its other fields in a history of its own.
+// Puts a template's frames or animations back as they were, onto the template as it is now: the tab «Объекты»
+// changes it in a history of its own, and what this step did not change stays as that history left it.
 class AnimCommand final : public editor::Command {
 public:
     struct Look {
         u32 frames = 1;
         std::map<std::string, objects::Clip> animations;
+        // What the file had past the game's frame limit (objects::Template): a change of the frames or of that state's
+        // animation replaces it, undo brings it back.
+        u32 frames_over = 0;
+        std::map<std::string, objects::Clip> animations_over;
     };
     AnimCommand(objects::Library& lib, u64 key, Look before, Look after, std::string label)
         : lib_(lib), key_(key), before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
-    void apply(editor::Document&) override { set(after_); }
-    void revert(editor::Document&) override { set(before_); }
+    void apply(editor::Document&) override { set(after_, before_); }
+    void revert(editor::Document&) override { set(before_, after_); }
     std::string label() const override { return label_; }
 
 private:
-    void set(const Look& to) {
+    static objects::Template as_template(const Look& l) {
+        objects::Template t;
+        t.frames = l.frames;
+        t.animations = l.animations;
+        t.frames_over = l.frames_over;
+        t.animations_over = l.animations_over;
+        return t;
+    }
+    void set(const Look& to, const Look& from) {
         const objects::Template* now = lib_.find(key_);
         if (!now) return;
         objects::Template t = *now;
-        t.frames = to.frames;
-        t.animations = to.animations;
+        objects::take_look(t, as_template(to), as_template(from));
         std::string error;
         if (!lib_.put(std::move(t), &error)) FORGE_ERROR("Шаблон «%s»: %s", now->name.c_str(), error.c_str());
     }
@@ -302,7 +313,9 @@ objects::Clip AnimationEditor::clip() const {
     const auto st = std::find_if(states_.begin(), states_.end(), [&](const auto& s) { return s.id == state_; });
     if (!t || st == states_.end()) return {{0}, 10, true};
     const auto it = t->animations.find(state_);
-    if (it != t->animations.end() && objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames).empty()) return it->second;
+    if (it != t->animations.end() &&
+        objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames, module_.library()->frame_limit()).empty())
+        return it->second;
     return st->rule;
 }
 
@@ -315,16 +328,18 @@ std::string AnimationEditor::problem() const {
     const objects::Template* t = selected();
     if (!t) return {};
     const auto it = t->animations.find(state_);
-    return it == t->animations.end() ? std::string() : objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames);
+    return it == t->animations.end() ? std::string()
+                                     : objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames, module_.library()->frame_limit());
 }
 
 bool AnimationEditor::change_state(std::optional<objects::Clip> to, std::string label) {
     const objects::Template* t = selected();
     if (!t || state_.empty()) return false;
-    AnimCommand::Look before{t->frames, t->animations}, after = before;
+    AnimCommand::Look before{t->frames, t->animations, t->frames_over, t->animations_over}, after = before;
     if (to) after.animations[state_] = std::move(*to);
     else after.animations.erase(state_);
-    if (after.animations == before.animations) return false;
+    after.animations_over.erase(state_);
+    if (after.animations == before.animations && after.animations_over == before.animations_over) return false;
     history_.execute(std::make_unique<AnimCommand>(library(), selected_, std::move(before), std::move(after), std::move(label)));
     history_.seal();
     rebuild(); // the views and the frames cut at once: the next click finds them as the file has it
@@ -338,8 +353,8 @@ bool AnimationEditor::add_frame(u32 frame) {
     if (!t || frame >= std::max(1u, cut_frames_)) return false;
     objects::Clip c = own() ? t->animations.at(state_) : clip();
     if (!own()) c.frames.clear(); // a new animation of its own begins with the frame clicked
-    if (c.frames.size() >= objects::kMaxClipFrames) {
-        FORGE_WARN("Анимация: кадров в ней не больше %u", objects::kMaxClipFrames);
+    if (const u32 limit = library().frame_limit(); c.frames.size() >= limit) {
+        FORGE_WARN("Анимация: кадров в ней не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)", limit);
         return false;
     }
     c.frames.push_back(frame);
@@ -380,10 +395,15 @@ bool AnimationEditor::reset_state() {
 bool AnimationEditor::set_frames(int n) {
     const objects::Template* t = selected();
     if (!t) return false;
-    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(objects::kMaxFrames)));
+    const u32 limit = library().frame_limit();
+    if (n > static_cast<int>(limit))
+        FORGE_WARN("«%s»: кадров в картинке не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)",
+                   t->name.c_str(), limit);
+    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit)));
     if (frames == t->frames) return false;
-    AnimCommand::Look before{t->frames, t->animations}, after = before;
+    AnimCommand::Look before{t->frames, t->animations, t->frames_over, t->animations_over}, after = before;
     after.frames = frames;
+    after.frames_over = 0;
     history_.execute(std::make_unique<AnimCommand>(library(), selected_, std::move(before), std::move(after),
                                                    "«" + t->name + "»: кадров в картинке " + std::to_string(frames)));
     history_.seal();
@@ -498,7 +518,8 @@ void AnimationEditor::rebuild() {
     for (const auto& st : states_) {
         const auto it = t->animations.find(st.id);
         const bool mine = it != t->animations.end();
-        const std::string why = mine ? objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames) : std::string();
+        const std::string why =
+            mine ? objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames, lib.frame_limit()) : std::string();
         const objects::Clip& c = mine && why.empty() ? it->second : st.rule;
         m_states_.push_back({st.id, st.name, frames_words(mine ? it->second : st.rule), fps_words(c.fps) + " к/с", why, mine, c.loop, st.id == state_});
         if (st.id == state_) m_state_name_ = st.name;

@@ -293,9 +293,13 @@ std::vector<std::string> game_problems(const fs::path& game, const Module* modul
         lib.set_pictures_folder(game / "pictures");
         lib.set_sounds_folder(game / "sounds");
         std::string error;
+        u32 limit = objects::kDefaultFrameLimit;
+        if (!objects::read_frame_limit(game, limit, &error)) out.push_back(error);
+        lib.set_frame_limit(limit);
         if (!lib.load(kinds, objects, &error)) {
             out.push_back("виды объектов не читаются: " + error);
         } else {
+            for (const std::string& note : lib.read_notes()) out.push_back(note);
             for (fs::directory_iterator it(objects, ec), end; !ec && it != end; it.increment(ec)) {
                 const std::string name = path_to_utf8(it->path().filename());
                 if (!it->is_regular_file(ec) || !name.ends_with(".object.json")) continue;
@@ -556,6 +560,7 @@ Found find(const fs::path& path, const std::vector<Module>& modules, Game& out, 
         if (id != out.description.module)
             return broken("project.forge называет модуль «" + out.description.module + "», а game/game.json — «" + id + "»" +
                           (named == forge::game::GameModule::Old ? std::string(" (в game.json модуль не назван)") : std::string()));
+        if (u32 limit = 0; !objects::read_frame_limit(out.game, limit, &why)) return broken("игра: " + why);
         out.described = true;
     } else if (fs::is_regular_file(out.game / "game.json", ec)) {
         // Every game before step 14 is one of «Старая шахта»: its game.json names no module, or "slice".
@@ -564,6 +569,7 @@ Found find(const fs::path& path, const std::vector<Module>& modules, Game& out, 
         if (id != forge::game::kOldGameModule)
             return broken("у игры нет project.forge, а game/game.json называет модуль «" + id +
                           "»: такая игра открывается только со своим project.forge");
+        if (u32 limit = 0; !objects::read_frame_limit(out.game, limit, &why)) return broken("игра: " + why);
         out.description.module = id;
     } else {
         if (error) *error = "в папке " + shown(root) + " нет игры Forge (нет project.forge)";

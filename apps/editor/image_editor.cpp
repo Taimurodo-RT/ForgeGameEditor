@@ -790,7 +790,11 @@ std::string ImageEditor::frames_from() const {
 }
 
 bool ImageEditor::set_frames(u32 n) {
-    if (!current_ || n < 1 || n > 64) return false;
+    if (!current_ || n < 1) return false;
+    if (const u32 limit = frame_limit ? frame_limit() : 64; n > limit) {
+        say("Кадров не больше " + std::to_string(limit) + ": это предел игры (поле «Предел кадров» в «Пиксельных»)");
+        return false;
+    }
     if ((current_->view_only && users_of_file && !users_of_file(current_->game_file).empty()) ||
         (users_of && !current_->id.is_null() && !users_of(current_->id).empty())) {
         say("Число кадров задаёт «Кадров в картинке» шаблона в «Объектах»: " + frames_from());
@@ -1734,7 +1738,7 @@ void ImageEditor::rebuild_panels() {
     // The areas: the whole picture, then each frame of a strip that divides.
     std::vector<AreaChip> areas{{"Вся картинка", -1, p->area < 0}};
     if (n > 1 && p->image.width % n == 0)
-        for (u32 i = 0; i < n && i < 64; ++i) areas.push_back({"Кадр " + std::to_string(i + 1), static_cast<int>(i), p->area == static_cast<int>(i)});
+        for (u32 i = 0; i < n; ++i) areas.push_back({"Кадр " + std::to_string(i + 1), static_cast<int>(i), p->area == static_cast<int>(i)});
     auto same_area = [](const AreaChip& a, const AreaChip& b) { return a.label == b.label && a.frame == b.frame && a.selected == b.selected; };
     if (!std::equal(areas.begin(), areas.end(), m_areas_.begin(), m_areas_.end(), same_area)) {
         m_areas_ = std::move(areas);

@@ -349,7 +349,8 @@ std::vector<level::LevelModule::AnimState> anim_states_of(const objects::Library
 }
 
 objects::Clip clip_of(const objects::Library& library, const objects::Template& t, std::string_view state) {
-    if (auto it = t.animations.find(std::string(state)); it != t.animations.end() && objects::clip_problem(it->second, t.frames).empty())
+    if (auto it = t.animations.find(std::string(state));
+        it != t.animations.end() && objects::clip_problem(it->second, t.frames, library.frame_limit()).empty())
         return it->second;
     for (const level::LevelModule::AnimState& s : anim_states_of(library, t))
         if (s.id == state) return s.rule;
@@ -524,6 +525,9 @@ RpgLevel::RpgLevel() : gen_(std::make_shared<world::EmptyGenerator>()) {
 RpgLevel::~RpgLevel() = default;
 
 bool RpgLevel::load_objects(const fs::path& game_dir, std::string* error) {
+    u32 limit = objects::kDefaultFrameLimit;
+    if (!objects::read_frame_limit(game_dir, limit, error)) return false;
+    library_.set_frame_limit(limit);
     return library_.load(game_dir / "kinds.json", game_dir / "objects", error);
 }
 

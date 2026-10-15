@@ -46,21 +46,28 @@ bool bake_frame(Rig& rig, PoseScript& script, const PixelDoc& doc, const ClipSpe
     return true;
 }
 
-bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOptions& options, Strip& out, std::string& why) {
+bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOptions& options, u32 frame_limit, Strip& out,
+                std::string& why) {
     out = {};
     for (const ClipSpec& c : doc.clips) out.frames += c.frames;
     if (out.frames == 0) {
         why = "нет ни одного клипа с кадрами";
         return false;
     }
-    if (out.frames > kMaxStripFrames) {
+    if (out.frames > frame_limit) {
         const u32 d = out.frames % 10, h = out.frames % 100;
         why = "в клипах " + std::to_string(out.frames) + (d == 1 && h != 11 ? " кадр" : d >= 2 && d <= 4 && (h < 12 || h > 14) ? " кадра" : " кадров") +
-              ", в картинке игры их не больше " + std::to_string(kMaxStripFrames) + ": уберите кадры у клипов";
+              ", а предел игры " + std::to_string(frame_limit) + ": уберите кадры у клипов или поднимите «Предел кадров»";
         out = {};
         return false;
     }
     const u32 w = doc.frame_w, h = doc.frame_h;
+    if (static_cast<u64>(w) * out.frames > kMaxStripWidth) {
+        why = "полоса " + std::to_string(static_cast<u64>(w) * out.frames) + " точек шире " + std::to_string(kMaxStripWidth) +
+              ": столько видеокарта не возьмёт, уменьшите кадр или число кадров";
+        out = {};
+        return false;
+    }
     out.picture.width = w * out.frames;
     out.picture.height = h;
     out.picture.rgba8.assign(static_cast<usize>(out.picture.width) * h * 4, 0);

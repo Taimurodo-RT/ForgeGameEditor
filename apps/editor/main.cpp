@@ -449,6 +449,9 @@ public:
         projects.theme = [this] { return pending_theme_.empty() ? theme_ : pending_theme_; };
         level_module.library()->set_pictures_folder(pictures_folder);
         level_module.library()->set_sounds_folder(sounds_folder);
+        // The game's frame limit (game.json; the game was opened only when it reads).
+        if (u32 limit = objects::kDefaultFrameLimit; objects::read_frame_limit(game_dir, limit))
+            level_module.library()->set_frame_limit(limit);
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         // «Логика» reads the verbs with the module's events, as the game does.
@@ -541,6 +544,7 @@ public:
                 if (e.asset == id && e.file.rfind("pictures/", 0) == 0) return e.file.substr(9);
             return std::string();
         };
+        pixel_tab.game_dir = game_dir;
         pixel_tab.init(ui_);
         // «Ввод»: the module's actions, then the shell's; what the author changed is the game's input.json.
         input_tab.open(input_file, module.actions, module.name);
@@ -580,6 +584,7 @@ public:
         image_tab.written = [this] { assets.refresh(); };
         // The game's own pictures (in its pictures/, not copies of «Ресурсы») are shown there for viewing.
         image_tab.game_dir = game_dir;
+        image_tab.frame_limit = [this] { return level_module.library()->frame_limit(); };
         image_tab.copy_from = [this](const std::string& file) {
             const editor::sources::Entry* e = sources.of_file(file);
             if (!e) return std::string();
@@ -2036,7 +2041,13 @@ struct Options {
     // "animation" (the tab «Анимация»: two games of the catalog's «Платформер», animations of A made in the tab by
     // "animation-a", opened again and played by "animation-a-again"); "pixel" (its «Пиксельные»: two games of the
     // catalog's «Платформер», a vector character of A's «Ресурсы» posed, baked and given to «Герой» by "pixel-a", opened
-    // again from another working folder and played by "pixel-a-again"); "input" (the tab «Ввод»: the same, the keys of
+    // again from another working folder and played by "pixel-a-again"); "frame-limit" (step 2 of the motion model: the
+    // game's frame limit, in two games of the catalog's «Платформер»: 64 frames of 256 baked, read back from the video
+    // card, the limit typed and undone, past it refused, game.json that cannot be written refused, by "frame-limit-a";
+    // opened again and the flag played by its 64 frames by "frame-limit-a-again"; at 63 by hand the flag of 64 frames
+    // renamed and its frames chosen, its file keeping what is past the limit, by "frame-limit-a-low"; opened again at 63
+    // and 64 typed by "frame-limit-a-low-again"; the limit and the flag's frames changed and undone by turns in the
+    // histories of «Анимация» and «Объекты» by "frame-limit-a-cross"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2296,6 +2307,12 @@ public:
         if (part == "pixel") return frame < 3 || pixel_step();
         if (part == "pixel-a") return frame < 3 || pixel_a_step();
         if (part == "pixel-a-again") return frame < 3 || pixel_again_step();
+        if (part == "frame-limit") return frame < 3 || frame_limit_step();
+        if (part == "frame-limit-a") return frame < 3 || frame_limit_a_step();
+        if (part == "frame-limit-a-again") return frame < 3 || frame_limit_again_step();
+        if (part == "frame-limit-a-low") return frame < 3 || frame_limit_low_step();
+        if (part == "frame-limit-a-low-again") return frame < 3 || frame_limit_low_again_step();
+        if (part == "frame-limit-a-cross") return frame < 3 || frame_limit_cross_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -13092,6 +13109,36 @@ private:
         SDL_DestroyProcess(p);
         return code;
     }
+    // As pj_run, and what the process said (its log, both streams) in said.
+    static int pj_run_said(const std::vector<std::string>& args, const std::filesystem::path& cwd, std::string& said) {
+        std::vector<const char*> argv;
+        for (const std::string& a : args) argv.push_back(a.c_str());
+        argv.push_back(nullptr);
+        const std::string at = path_to_utf8(cwd);
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argv.data());
+        SDL_SetStringProperty(props, SDL_PROP_PROCESS_CREATE_WORKING_DIRECTORY_STRING, at.c_str());
+        SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_NULL);
+        SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_APP);
+        SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_STDERR_TO_STDOUT_BOOLEAN, true);
+        SDL_Process* p = SDL_CreateProcessWithProperties(props);
+        SDL_DestroyProperties(props);
+        said.clear();
+        if (!p) {
+            FORGE_ERROR("self-test: %s did not start: %s", args[0].c_str(), SDL_GetError());
+            return -1;
+        }
+        int code = -1;
+        usize size = 0;
+        if (void* out = SDL_ReadProcess(p, &size, &code)) {
+            said.assign(static_cast<const char*>(out), size);
+            SDL_free(out);
+        } else {
+            code = -1;
+        }
+        SDL_DestroyProcess(p);
+        return code;
+    }
 
     std::filesystem::path ng_root_, ng_scene_;
     std::map<std::string, std::vector<u8>> ng_template_, ng_level_;
@@ -13615,9 +13662,9 @@ private:
     // «Играть» starts forge_game, which draws the probe's colour), and a game from before step 14.3 (modules-old: no
     // project.forge, game.json without "module" and with CRLF: «Старая шахта», played, game.json not touched). Then
     // games this editor cannot open (a module it has not, project.forge and game.json naming different modules, an empty
-    // module, one that is a number, a folder from before naming another module) refused before anything is written,
-    // this game and its undo as they were; an editor started for one says why; the launcher and its old name
-    // forge_slice refuse them too, and the probe for a player, and run the probe for a test.
+    // module, one that is a number, a frame limit of 0, a folder from before naming another module) refused before
+    // anything is written, this game and its undo as they were; an editor started for one says why; the launcher and its
+    // old name forge_slice refuse them too, and the probe for a player, and run the probe for a test.
     int md_step_ = 0;
     std::map<std::string, std::vector<u8>> md_old_, md_broken_;
     std::filesystem::path md_scene_;
@@ -13637,6 +13684,7 @@ private:
                 {md_game("Не тот модуль") / "project.forge", "project.forge называет модуль «probe», а game/game.json — «slice»"},
                 {md_game("Пустой модуль") / "project.forge", "в game.json пустой «module»"},
                 {md_game("Модуль числом") / "project.forge", "в game.json «module» — не строка"},
+                {md_game("Предел нулём") / "project.forge", "game.json: frame_limit — нужно целое от 1 до 16384"},
                 {md_game("Старая чужая"), "у игры нет project.forge, а game/game.json называет модуль «probe»"}};
     }
     // A pixel of a PNG the game wrote (--screenshot), r g b; false when it cannot be read.
@@ -13760,8 +13808,10 @@ private:
                       md_put(md_game("Пустой модуль") / "game" / "game.json", R"({"title": "Пустой модуль", "module": ""})") &&
                       md_put(md_game("Модуль числом") / "project.forge", R"({"forge_project": 1, "module": "slice"})") &&
                       md_put(md_game("Модуль числом") / "game" / "game.json", R"({"title": "Модуль числом", "module": 5})") &&
+                      md_put(md_game("Предел нулём") / "project.forge", R"({"forge_project": 1, "module": "slice"})") &&
+                      md_put(md_game("Предел нулём") / "game" / "game.json", R"({"title": "Предел нулём", "module": "slice", "frame_limit": 0})") &&
                       md_put(md_game("Старая чужая") / "game" / "game.json", R"({"title": "Старая чужая", "module": "probe"})"),
-                  "five games this editor cannot open");
+                  "six games this editor cannot open");
             md_broken_ = pj_tree(md_root() / utf8_path("Мои игры"));
             // This game with a change not saved: it must stay, with its undo.
             md_config_ = pjw().config();
@@ -13794,12 +13844,12 @@ private:
             const std::string text(said.begin(), said.end());
             check(code != 0 && text.rfind("failed: ", 0) == 0 && pj_has(text, "игре нужен модуль «nope»"),
                   "an editor started for «Нет модуля» says why (exit " + std::to_string(code) + "): " + text);
-            // The launcher, by both names: a module it has not, a module that is none, the probe for a player — refused,
-            // nothing written; the probe for a test — run, its colour on the screen.
+            // The launcher, by both names: a module it has not, a module that is none, a frame limit of 0, the probe for a
+            // player — refused, nothing written; the probe for a test — run, its colour on the screen.
             const fs::path shot = md_root() / utf8_path("кадр пробы.png"), refused = md_root() / utf8_path("кадр отказа.png");
             const std::string game_exe = path_to_utf8(utf8_path(FORGE_GAME_EXE)), slice_exe = path_to_utf8(utf8_path(FORGE_SLICE_EXE));
             for (const std::string& launcher : {game_exe, slice_exe}) {
-                for (const char* bad : {"Нет модуля", "Пустой модуль", "Модуль числом"}) {
+                for (const char* bad : {"Нет модуля", "Пустой модуль", "Модуль числом", "Предел нулём"}) {
                     fs::remove(refused, ec); // each run on its own: a frame one left behind is not the next one's
                     const int c = pj_run({launcher, "--test", "--data", path_to_utf8(md_game(bad) / "game"), "--screenshot", path_to_utf8(refused)}, other);
                     check(c == 1 && !fs::exists(refused, ec), std::string("the launcher refuses «") + bad + "» (exit " + std::to_string(c) + "): " + launcher);
@@ -17253,7 +17303,7 @@ return {
                          px().pixel_frame().width == 32,
                      "the views shown"))
                 return true;
-            check(px().pixel_frame().height == 32 && px().vector_view().height == 288 && element_text("px-total") == "в картинке 4 кадра из 32",
+            check(px().pixel_frame().height == 32 && px().vector_view().height == 288 && element_text("px-total") == "в картинке 4 кадра из 64",
                   "the vector 288 × 288, the pixel frame 32 × 32; «" + element_text("px-total") + "»");
             check(put(lua, kPxWalk), "the author's «Ёжик.luau»: standing and walking");
             const bool typed = ue_type("px-fh", "64");
@@ -17282,7 +17332,7 @@ return {
         case 7: {
             check(px().status().rfind("Пиксельные: «Ёжик» · кадр 32 × 64 · «Идёт» ", 0) == 0 &&
                       px().status().ends_with(" из 8 · 30 к/с · играет") && pj_class("px-fps-10", "selected") &&
-                      element_text("px-total") == "в картинке 12 кадров из 32",
+                      element_text("px-total") == "в картинке 12 кадров из 64",
                   "the status line: " + px().status());
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(d.clips[1].fps == 10.0f, "Ctrl+Z: 10 a second");
@@ -17701,6 +17751,967 @@ return {
         default: break;
         }
         ++px_step_;
+        return true;
+    }
+
+    // --- «Предел кадров» (step 2 of docs/models/движение-модель.md) ---------------------------------------------------
+    // --self-test frame-limit: «Предел А» and «Предел Б» made of the catalog's «Платформер». The editor for A
+    // (frame-limit-a), in «Анимация» → «Пиксельные» with the mouse and the keys: a character of 256 × 256 whose frames
+    // show their number in six cells, its one clip «Покой» of 64 frames, the limit of a game without "frame_limit"; «+»
+    // past it refused and said; «Запечь»: a strip 16384 wide, each frame its number and as the files bake it apart from
+    // the tab, uploaded into the video card and read back byte for byte; «Предел кадров» 65 typed (game.json: that field
+    // only, Ctrl+Z and Ctrl+Y byte for byte); game.json that cannot be written: 66, Ctrl+Z and Ctrl+Y refused and said,
+    // the file, the limit, the templates, the field and the history as they were; a 65th frame, its strip of 16640 not
+    // baked; the limit below the frames
+    // taken, 0 and 16385 refused; 64 typed; «Отдать шаблону…» «Флаг» (64 frames, «Покой» by all of them); in
+    // «Покадровая» «Кадров в картинке» + and a 65th frame of «Покой» refused and said, and «Кадров в картинке» + in
+    // «Объекты». Then the author makes the limit 70 in game.json by hand. frame-limit-a-again, from another working
+    // folder: the limit 70 read when the game opens, the flag as left; «Играть со стартового»: the game plays the flag by
+    // every one of its 64 frames (scene project with --edits); game.json made 63 by hand, the game reads the flag as one
+    // picture and says so in its log, game.json back to 70. Then 63 by hand: frame-limit-a-low from a third working
+    // folder, «Флаг» one picture and said by the editor and «Проверить», renamed in «Объекты», its frames chosen there
+    // and in «Покадровая», «Покой» its own and «Как в игре»: its file keeps the 64 frames and «Покой» but for what the
+    // author chose, byte for byte; frame-limit-a-low-again from a fourth, still said; 64 typed gives them back.
+    // frame-limit-a-cross from a fifth: the limit and «Покой» in the history of «Анимация», the flag's frames in that
+    // of «Объекты», undone and done again by turns, the library after each step what reading the files again gives. The
+    // template and B: the same bytes.
+    int fl_step_ = 0;
+    std::map<std::string, std::vector<u8>> fl_tmpl_, fl_b_;
+    std::vector<u8> fl_json0_, fl_json65_, fl_png_, fl_flag0_, fl_renamed_;
+    static std::filesystem::path fl_root() { return std::filesystem::temp_directory_path() / utf8_path("forge_editor_предел"); }
+    static std::filesystem::path fl_mine(const char* title) { return fl_root() / utf8_path("Мои игры") / utf8_path(title); }
+    // A folder where game.json's new copy is written first (write_file_atomic): game.json cannot be written.
+    std::filesystem::path fl_block() { return pjw().config().root / "game" / "game.json.tmp"; }
+    // The author's drawing: a plate of six cells, three over three, on a frame of 256 × 256 whose lowest quarter is
+    // empty (the game draws a still thing's picture down into the ground's shadow there).
+    static constexpr const char* kFlScale = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect id="plate" x="0" y="0" width="256" height="192" fill="#f0e8d0"/>
+  <rect id="c0" x="8" y="8" width="76" height="84" fill="#203040"/>
+  <rect id="c1" x="90" y="8" width="76" height="84" fill="#203040"/>
+  <rect id="c2" x="172" y="8" width="76" height="84" fill="#203040"/>
+  <rect id="c3" x="8" y="100" width="76" height="84" fill="#203040"/>
+  <rect id="c4" x="90" y="100" width="76" height="84" fill="#203040"/>
+  <rect id="c5" x="172" y="100" width="76" height="84" fill="#203040"/>
+</svg>
+)svg";
+    // Its pose: frame k (t = k / fps) shows k in the cells, bit i dark in cell i.
+    static constexpr const char* kFlBits = R"lua(-- «Шкала»: кадр k показывает своё число шестью клетками, бит i — тёмная клетка c<i>.
+return {
+  params = { fps = 30 },
+  pose = function(t, p, rng, clip)
+    local k = math.floor(t * p.fps + 0.5)
+    for i = 0, 5 do
+      part("c" .. i):set{ fill = (math.floor(k / 2 ^ i) % 2 == 1) and "#203040" or "#f0e8d0" }
+    end
+  end,
+}
+)lua";
+    // The frames of a strip of «Шкала» that do not show their number: "" when each does (the plate light, cell i dark
+    // when bit i of the frame's number is, under the plate nothing).
+    static std::string fl_numbers(const assets::CookedTexture& strip, u32 frames) {
+        static constexpr u8 kDark[3] = {0x20, 0x30, 0x40}, kLight[3] = {0xf0, 0xe8, 0xd0};
+        static constexpr u32 kCell[6][2] = {{8, 8}, {90, 8}, {172, 8}, {8, 100}, {90, 100}, {172, 100}};
+        std::string wrong;
+        for (u32 k = 0; k < frames; ++k) {
+            auto is = [&](u32 x, u32 y, const u8 (&c)[3]) {
+                const usize at = (static_cast<usize>(y) * strip.width + static_cast<usize>(k) * 256 + x) * 4;
+                return at + 3 < strip.rgba8.size() && strip.rgba8[at] == c[0] && strip.rgba8[at + 1] == c[1] && strip.rgba8[at + 2] == c[2] &&
+                       strip.rgba8[at + 3] == 255;
+            };
+            const usize under = (static_cast<usize>(250) * strip.width + static_cast<usize>(k) * 256 + 128) * 4;
+            bool right = is(2, 2, kLight) && is(253, 189, kLight) && under + 3 < strip.rgba8.size() && strip.rgba8[under + 3] == 0;
+            for (u32 i = 0; i < 6; ++i) right = right && is(kCell[i][0] + 38, kCell[i][1] + 42, (k >> i) & 1 ? kDark : kLight);
+            if (!right) wrong += " " + std::to_string(k + 1);
+        }
+        return wrong;
+    }
+
+    // --self-test frame-limit: the games made; A in an editor of its own, then again from another working folder; the
+    // template and B compared byte for byte.
+    bool frame_limit_step() {
+        namespace fs = std::filesystem;
+        namespace pj = editor::project;
+        std::error_code ec;
+        const fs::path a = fl_mine("Предел А"), b = fl_mine("Предел Б");
+        fs::remove_all(fl_root(), ec);
+        fs::create_directories(fl_root() / utf8_path("Мои игры"), ec);
+        fl_tmpl_ = tp_template();
+        tg_snap("шаблон до", fl_tmpl_, fl_root());
+        std::vector<pj::Template> all;
+        std::string error;
+        check(pj::read_catalog(utf8_path(FORGE_GAMES_DIR) / "templates.json", all, &error), "the catalog reads " + error);
+        const auto platformer = std::find_if(all.begin(), all.end(), [](const pj::Template& t) { return t.id == "platformer"; });
+        for (const auto& [title, folder] : {std::pair{"Предел Б", b}, std::pair{"Предел А", a}}) {
+            fs::path made;
+            check(platformer != all.end() && pj::create(*platformer, editor_modules(), fl_root() / utf8_path("Мои игры"), title, made, &error) &&
+                      lvl_same(made, folder),
+                  std::string("«") + title + "» made of «Платформер» " + error);
+            fs::remove_all(play_folder(folder), ec);
+        }
+        fl_b_ = pj_tree(b);
+        tg_snap("Предел Б до", fl_b_, fl_root());
+        const std::string exe = path_to_utf8(editor_exe()), project = path_to_utf8(a / "project.forge");
+        const fs::path one = fl_root() / utf8_path("первая папка"), two = fl_root() / utf8_path("вторая папка");
+        fs::create_directories(one, ec);
+        fs::create_directories(two, ec);
+        int code = pj_run({exe, "--project", project, "--self-test", "frame-limit-a"}, one);
+        check(code == 0, "64 frames of 256 baked into a strip 16384 wide, read back from the video card; the limit 65 typed, a strip 16640 wide "
+                         "refused; «Флаг» given the 64 frames; past the limit refused in «Покадровая» (frame-limit-a: exit " +
+                             std::to_string(code) + ")");
+        // Between the two: the author makes the limit 70 in game.json by hand; the next editor reads it when it opens.
+        const fs::path json = a / "game" / "game.json";
+        std::vector<u8> bytes;
+        std::string text = read_file(json, bytes) ? std::string(bytes.begin(), bytes.end()) : std::string();
+        check(text.ends_with(",\n  \"frame_limit\": 64\n}\n") && fs::exists(a / "game" / "pictures" / utf8_path("Шкала.png"), ec),
+              "A's game: «frame_limit»: 64 last in game.json, «pictures/Шкала.png»");
+        if (text.ends_with("64\n}\n")) text.replace(text.size() - 5, 2, "70");
+        check(text.ends_with(",\n  \"frame_limit\": 70\n}\n") && write_file_atomic(json, {reinterpret_cast<const u8*>(text.data()), text.size()}),
+              "game.json: «frame_limit» 70 written by hand");
+        code = pj_run({exe, "--project", project, "--self-test", "frame-limit-a-again"}, two);
+        check(code == 0, "opened again elsewhere: the limit 70 read, «Флаг» as left; the game plays the flag by its 64 frames, at 63 as one picture "
+                         "(frame-limit-a-again: exit " +
+                             std::to_string(code) + ")");
+        // Then 63 by hand: «Флаг» of 64 frames is one picture in the editor too; renamed in «Объекты», its file keeps
+        // the frames and «Покой»; opened again at 63 it is still said, and 64 typed gives it back.
+        const fs::path flag = a / "game" / "objects" / "flag.object.json", renamed = a / "game" / "objects" / utf8_path("Флаг шкалы.object.json");
+        const std::vector<u8> given = tg_bytes(flag);
+        std::string low = text;
+        const usize at = low.rfind("\"frame_limit\": 70");
+        if (at != std::string::npos) low.replace(at + 15, 2, "63");
+        check(at != std::string::npos && low.ends_with(",\n  \"frame_limit\": 63\n}\n") &&
+                  write_file_atomic(json, {reinterpret_cast<const u8*>(low.data()), low.size()}),
+              "game.json: «frame_limit» 63 written by hand");
+        const fs::path three = fl_root() / utf8_path("третья папка"), four = fl_root() / utf8_path("четвёртая папка");
+        fs::create_directories(three, ec);
+        fs::create_directories(four, ec);
+        code = pj_run({exe, "--project", project, "--self-test", "frame-limit-a-low"}, three);
+        check(code == 0, "at 63 «Флаг» is one picture, said; renamed in «Объекты», its file keeps the 64 frames and «Покой» (frame-limit-a-low: exit " +
+                             std::to_string(code) + ")");
+        std::string kept(given.begin(), given.end());
+        const std::string was = "\"name\": \"Флаг\"";
+        const usize name = kept.find(was);
+        if (name != std::string::npos) kept.replace(name, was.size(), "\"name\": \"Флаг шкалы\"");
+        check(!given.empty() && name != std::string::npos && tg_bytes(renamed) == std::vector<u8>(kept.begin(), kept.end()) && !fs::exists(flag, ec),
+              "«Флаг шкалы.object.json»: the flag's file as it was given, byte for byte, but the name");
+        code = pj_run({exe, "--project", project, "--self-test", "frame-limit-a-low-again"}, four);
+        check(code == 0, "opened again at 63: still one picture and said; the strip of 64 not given; 64 typed: its 64 frames and «Покой» "
+                         "again, Ctrl+Z and Ctrl+Y (frame-limit-a-low-again: exit " +
+                             std::to_string(code) + ")");
+        check(tg_bytes(renamed) == std::vector<u8>(kept.begin(), kept.end()), "its file as renamed, byte for byte: the limit read, not written");
+        // At 64: the limit and the flag's frames changed in the histories of two tabs, undone and done again by turns.
+        const fs::path five = fl_root() / utf8_path("пятая папка");
+        fs::create_directories(five, ec);
+        const std::vector<u8> json64 = tg_bytes(json);
+        code = pj_run({exe, "--project", project, "--self-test", "frame-limit-a-cross"}, five);
+        check(code == 0, "the limit in «Анимация», the flag's frames in «Объекты», undone and done again by turns: after each step what "
+                         "reading the files again gives (frame-limit-a-cross: exit " +
+                             std::to_string(code) + ")");
+        check(tg_bytes(renamed) == std::vector<u8>(kept.begin(), kept.end()) && tg_bytes(json) == json64,
+              "all undone: its file as renamed and game.json byte for byte as they were");
+        std::string last = text;
+        if (at != std::string::npos) last.replace(at + 15, 2, "64");
+        const auto tmpl = tp_template(), btree = pj_tree(b);
+        check(tg_snap("шаблон после", tmpl, fl_root()) == tg_digest(fl_tmpl_) && tmpl == fl_tmpl_, "the template byte for byte as before");
+        check(tg_snap("Предел Б после", btree, fl_root()) == tg_digest(fl_b_) && btree == fl_b_, "«Предел Б» byte for byte as before");
+        check(tg_bytes(json) == std::vector<u8>(last.begin(), last.end()), "A's game.json as the author left it, «frame_limit» 64 typed last");
+        check(tg_naming(b, {"Шкала", "frame_limit"}).empty(), "nothing of it in B: " + tg_naming(b, {"Шкала", "frame_limit"}));
+        return false;
+    }
+
+    // In an editor for «Предел А» (--self-test frame-limit-a).
+    bool frame_limit_a_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root, game = a / "game", json = game / "game.json";
+        objects::Library& lib = an().library();
+        const bool idle = !as().busy() && !as().looking();
+        const std::string svg = "персонажи/Шкала.svg", doc = "персонажи/Шкала.pixel.json", lua = "персонажи/Шкала.luau", png = "персонажи/Шкала.png";
+        const pixel::PixelDoc& d = px().doc();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto put = [&](const std::string& rel, const char* text) {
+            std::error_code ec;
+            fs::create_directories(as().abs(rel).parent_path(), ec);
+            return write_file_atomic(as().abs(rel), {reinterpret_cast<const u8*>(text), std::strlen(text)});
+        };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto logged = [&](const std::string& line) {
+            for (const LogLine& l : ed_.log_lines())
+                if (l.text.find(line) != std::string::npos) return true;
+            return false;
+        };
+        // game.json as the field writes it: the template's with «frame_limit» last.
+        auto json_with = [&](u32 limit) {
+            const std::string was(fl_json0_.begin(), fl_json0_.end());
+            return was.substr(0, was.size() - 3) + ",\n  \"frame_limit\": " + std::to_string(limit) + "\n}\n";
+        };
+        auto json_now = [&] {
+            const std::vector<u8> bytes = tg_bytes(json);
+            return std::string(bytes.begin(), bytes.end());
+        };
+        switch (fl_step_) {
+        case 0: {
+            check(pjw().config().title == "Предел А" && lvl_same(ed_.game_dir, game) && lvl_same(as().root(), a / "assets"),
+                  "the editor has «Предел А» open, its «Ресурсы» in assets/");
+            fl_json0_ = tg_bytes(json);
+            const std::string text(fl_json0_.begin(), fl_json0_.end());
+            check(text.ends_with("\"\n}\n") && text.find("frame_limit") == std::string::npos && lib.frame_limit() == 64,
+                  "game.json without «frame_limit»: the limit 64");
+            check(put(svg, kFlScale), "«персонажи/Шкала.svg» drawn elsewhere");
+            as().refresh();
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1: {
+            if (hold(shown("an-mode-pixel") && shown("an-tpl-0"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "a click on «Пиксельные»");
+            break;
+        }
+        case 2: {
+            if (hold(idle && as().record_of(as().abs(svg)) && px().svgs().size() == 1 && shown("px-svg-0"), "the SVG listed")) return true;
+            check(pj_click("px-svg-0") && px().opened() == doc && px().has(), "a click on «Шкала.svg»: «Шкала.pixel.json» beside it");
+            check(put(lua, kFlBits), "the author's «Шкала.luau»: each frame its number in the cells");
+            break;
+        }
+        case 3: {
+            if (hold(shown("px-param-fps") && shown("px-limit") && shown("px-clip-remove"), "the script read again")) return true;
+            check(input_value("px-limit") == "64" && px().problem().empty(), "«Предел кадров» 64; no problem: " + px().problem());
+            const bool typed = ue_type("px-fw", "256") && ue_type("px-fh", "256");
+            check(typed && d.frame_w == 256 && d.frame_h == 256 && step_label() == "«Шкала»: кадр 256 × 256", "«Кадр» 256 × 256 typed: " + step_label());
+            const bool clicked = px_click("px-clip-remove");
+            check(clicked && d.clips.empty() && step_label() == "«Шкала»: клип «Стоит» убран", "«Стоит» taken away: " + step_label());
+            break;
+        }
+        case 4: {
+            if (hold(shown("px-state-idle"), "the states")) return true;
+            const bool clicked = px_click("px-state-idle");
+            check(clicked && px().clip() == "idle" && d.clips == std::vector<pixel::ClipSpec>{{"idle", 4, 10, true}} &&
+                      step_label() == "«Шкала»: клип «Покой»",
+                  "a click on «Покой»: its clip, 4 frames 10 a second: " + step_label());
+            break;
+        }
+        // 64 frames, the limit; «+» past it refused and said.
+        case 5: {
+            if (hold(shown("px-fps-10") && shown("px-clip-more") && shown("px-state-walk"), "the clip's settings")) return true;
+            bool clicked = px_click("px-fps-10");
+            check(clicked && d.clips[0].fps == 30.0f && step_label() == "«Шкала»: «Покой» 30 к/с", "«30»: " + step_label());
+            const bool set = px().set_clip_frames(64);
+            check(set && d.clips[0].frames == 64 && step_label() == "«Шкала»: «Покой» 64 кадра", "64 frames, one step: " + step_label());
+            const std::vector<u8> was = file(doc);
+            const std::string before = step_label();
+            clicked = px_click("px-clip-more");
+            check(clicked && d.clips[0].frames == 64 && file(doc) == was && step_label() == before &&
+                      px().note() == "Во всех клипах вместе не больше 64 кадров: это предел игры («Предел кадров» ниже)",
+                  "«+» at 64: «" + px().note() + "», the file as it was");
+            // A new clip at 64: refused, said, nothing written.
+            clicked = px_click("px-state-walk");
+            check(clicked && d.clips.size() == 1 && px().clip() == "idle" && file(doc) == was && step_label() == before &&
+                      px().note() == "В клипах уже 64 кадра: это предел игры («Предел кадров» ниже)",
+                  "a click on «Идёт» at 64: no new clip, «" + px().note() + "», the file as it was");
+            break;
+        }
+        // «Запечь»: 16384 × 256, every frame its number; into the video card and back.
+        case 6: {
+            if (hold(idle && element_text("px-total") == "в картинке 64 кадра из 64", "«в картинке 64 кадра из 64»")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            const std::vector<u8> bytes = file(png);
+            assets::CookedTexture strip;
+            check(!bytes.empty() && assets::decode_image(bytes, strip) && strip.width == 16384 && strip.height == 256,
+                  "«Шкала.png»: 64 frames of 256 × 256, 16384 wide");
+            check(d.strip == std::vector<pixel::StripClip>{{"idle", 0, 64, 30, true}} && px().note() == "Запечено: «Шкала.png», 64 кадра 256 × 256." &&
+                      step_label() == "«Шкала»: запечено в «Шкала.png», 64 кадра",
+                  "in the file: «Покой» 1–64; «" + px().note() + "», one step: " + step_label());
+            const std::string wrong = fl_numbers(strip, 64);
+            check(wrong.empty(), "each frame shows its number in the cells; not:" + wrong);
+            std::string bad;
+            for (u32 k : {0u, 1u, 31u, 62u, 63u}) {
+                PxRef ref;
+                std::string why;
+                if (!px_ref("idle", k, ref, why) || !px_same(px_cut(strip, 256, k), ref.px)) bad += " " + std::to_string(k + 1) + why;
+            }
+            check(bad.empty(), "frames 1, 2, 32, 63 and 64 as the files bake them apart from the tab;" + bad);
+            // The whole strip into the video card and back: the side SDL GPU promises on any card (Linux, Windows).
+            std::vector<u8> back;
+            SDL_GPUCommandBuffer* cmd = frame_device ? SDL_AcquireGPUCommandBuffer(frame_device) : nullptr;
+            SDL_GPUTexture* tex = cmd ? render::create_texture_rgba8(frame_device, cmd, strip.rgba8.data(), strip.width, strip.height) : nullptr;
+            const bool sent = cmd && SDL_SubmitGPUCommandBuffer(cmd);
+            check(tex && sent && render::read_pixels(frame_device, tex, strip.width, strip.height, back) && back == strip.rgba8,
+                  "the strip 16384 × 256 uploaded into the video card and read back byte for byte");
+            if (tex) SDL_ReleaseGPUTexture(frame_device, tex);
+            fl_png_ = bytes;
+            break;
+        }
+        // «Предел кадров» 65: game.json gets that field only; Ctrl+Z and Ctrl+Y byte for byte.
+        case 7: {
+            if (hold(idle && as().record_of(as().abs(png)), "the picture indexed")) return true;
+            const bool typed = ue_type("px-limit", "65");
+            check(typed && lib.frame_limit() == 65 && json_now() == json_with(65) && step_label() == "Предел кадров 65",
+                  "«Предел кадров» 65 typed: game.json as it was and «frame_limit»: 65 last; one step: " + step_label());
+            fl_json65_ = tg_bytes(json);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(tg_bytes(json) == fl_json0_ && lib.frame_limit() == 64, "Ctrl+Z: game.json byte for byte as it was, the limit 64");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(tg_bytes(json) == fl_json65_ && lib.frame_limit() == 65, "Ctrl+Y: 65, byte for byte");
+            // game.json that cannot be written (a folder where its new copy goes: refused on Linux and Windows alike):
+            // 66 typed is refused and said, the file, the limit, the templates and the history as they were.
+            std::error_code ec;
+            check(fs::create_directory(fl_block(), ec), "game.json kept from being written");
+            const usize at = an().history().cursor();
+            const u64 read = lib.version(); // the templates not read again
+            const bool refused = ue_type("px-limit", "66");
+            check(refused && tg_bytes(json) == fl_json65_ && lib.frame_limit() == 65 && lib.version() == read &&
+                      an().history().cursor() == at && step_label() == "Предел кадров 65" && an().history().redo_label().empty() &&
+                      px().note() == "game.json не записывается: предел кадров остался 65",
+                  "66 typed, game.json not written: «" + px().note() + "», the file, the limit 65 and the history as they were: " + step_label());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(tg_bytes(json) == fl_json65_ && lib.frame_limit() == 65 && lib.version() == read && an().history().cursor() == at &&
+                      step_label() == "Предел кадров 65" && px().note() == "game.json не записывается: предел кадров остался 65",
+                  "Ctrl+Z, game.json not written: refused, 65 and the step still to undo: " + step_label());
+            break;
+        }
+        // The field shows the limit as it is; written again, undo and redo go; redo refused the same way.
+        case 8: {
+            if (hold(input_value("px-limit") == "65" && element_text("px-total") == "в картинке 64 кадра из 65" &&
+                         logged("Пиксельные: game.json не записывается: предел кадров остался 65"),
+                     "the field shows 65 again; the log says why 66 was not taken"))
+                return true;
+            std::error_code ec;
+            check(fs::remove(fl_block(), ec), "game.json may be written again");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(tg_bytes(json) == fl_json0_ && lib.frame_limit() == 64, "Ctrl+Z: 64, game.json byte for byte as it was");
+            check(fs::create_directory(fl_block(), ec), "game.json kept from being written again");
+            const usize at = an().history().cursor();
+            const u64 read = lib.version();
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(tg_bytes(json) == fl_json0_ && lib.frame_limit() == 64 && lib.version() == read && an().history().cursor() == at &&
+                      an().history().redo_label() == "Предел кадров 65" && px().note() == "game.json не записывается: предел кадров остался 64",
+                  "Ctrl+Y, game.json not written: «" + px().note() + "», 64 and the step still to redo: " + an().history().redo_label());
+            check(fs::remove(fl_block(), ec), "game.json may be written");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(tg_bytes(json) == fl_json65_ && lib.frame_limit() == 65 && step_label() == "Предел кадров 65", "Ctrl+Y: 65, byte for byte");
+            break;
+        }
+        // At 65 a 65th frame goes; its strip of 16640 does not bake.
+        case 9: {
+            if (hold(element_text("px-total") == "в картинке 64 кадра из 65" && input_value("px-limit") == "65" &&
+                         logged("Пиксельные: game.json не записывается: предел кадров остался 64"),
+                     "the limit shown; the log says why Ctrl+Y was not done while game.json could not be written"))
+                return true;
+            const bool clicked = px_click("px-clip-more");
+            check(clicked && d.clips[0].frames == 65 && step_label() == "«Шкала»: «Покой» 65 кадров", "«+»: 65 frames: " + step_label());
+            break;
+        }
+        case 10: {
+            if (hold(idle, "«Ресурсы» looked at the file")) return true;
+            const std::string before = step_label();
+            const std::vector<u8> was = file(doc);
+            const bool clicked = px_click("px-bake");
+            check(clicked && px().note() == "Не запеклось: полоса 16640 точек шире 16384: столько видеокарта не возьмёт, уменьшите кадр или число кадров" &&
+                      file(png) == fl_png_ && file(doc) == was && step_label() == before,
+                  "«Запечь»: «" + px().note() + "», the picture and the file as they were");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(d.clips[0].frames == 64, "Ctrl+Z: 64 frames");
+            break;
+        }
+        // Below the frames taken, 0 and past 16384: refused, game.json as it was; then 64.
+        case 11: {
+            if (wait(2)) return true;
+            bool typed = ue_type("px-limit", "63");
+            check(typed && px().note() == "у «Шкала» в клипах 64 кадра: предел не ниже 64" && tg_bytes(json) == fl_json65_ && lib.frame_limit() == 65,
+                  "63: «" + px().note() + "», game.json as it was");
+            typed = ue_type("px-limit", "0");
+            check(typed && px().note() == "Предел кадров — целое от 1 до 16384" && tg_bytes(json) == fl_json65_, "0: «" + px().note() + "»");
+            typed = ue_type("px-limit", "16385");
+            check(typed && px().note() == "Предел кадров — целое от 1 до 16384" && tg_bytes(json) == fl_json65_, "16385: «" + px().note() + "»");
+            typed = ue_type("px-limit", "64");
+            check(typed && lib.frame_limit() == 64 && json_now() == json_with(64) && step_label() == "Предел кадров 64",
+                  "64 typed: «frame_limit»: 64 in game.json; " + step_label());
+            break;
+        }
+        // «Отдать шаблону…» «Флаг».
+        case 12: {
+            if (hold(idle && input_value("px-limit") == "64" && shown("px-give-open") && !pj_class("px-give-open", "disabled"),
+                     "«Отдать шаблону…» may be clicked"))
+                return true;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
+            break;
+        }
+        case 13: {
+            if (hold(shown("px-tpl-7"), "the templates listed")) return true;
+            const auto& l = px().templates();
+            const std::string row = "px-tpl-" + std::to_string(std::find(l.begin(), l.end(), lib.find("flag")->key) - l.begin());
+            check(element_text(row.c_str()).find("сыграет: Покой") != std::string::npos, "«Флаг» will play «Покой»");
+            fl_flag0_ = an_file("flag");
+            check(px_click(row), "a click on «Флаг»");
+            break;
+        }
+        case 14: {
+            const objects::Template* t = lib.find("flag");
+            objects::Clip all{{}, 30, true};
+            for (u32 k = 0; k < 64; ++k) all.frames.push_back(k);
+            check(t && t->picture == "Шкала.png" && t->frames == 64 && t->animations.size() == 1 && an_is("flag", "idle", all) &&
+                      objects::read_template(t->file)->frames == 64,
+                  "«Флаг»: «Шкала.png», 64 frames, «Покой» by all of them thirty a second; in its file");
+            check(tg_bytes(game / "pictures" / utf8_path("Шкала.png")) == fl_png_, "the game's «pictures/Шкала.png»: the strip as baked");
+            check(px().note() == "«Флаг» рисует «Шкала.png», 64 кадра, анимации: «Покой»." && step_label() == "«Флаг»: картинка «Шкала.png» из «Шкала»",
+                  "«" + px().note() + "», one step: " + step_label());
+            const std::vector<u8> given = an_file("flag");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("flag")) == an_lf(fl_flag0_), "Ctrl+Z: «Флаг» as in the template (line ends aside)");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("flag") == given && lib.find("flag")->frames == 64, "Ctrl+Y: given again");
+            check(pj_click("an-mode-frames") && an().mode() == "frames", "«Покадровая»");
+            break;
+        }
+        // «Покадровая»: past the limit refused and said, the file as it was.
+        case 15: {
+            if (hold(shown("an-tpl-0"), "«Покадровая»'s list")) return true;
+            check(an_pick("flag"), "a click on «Флаг»");
+            break;
+        }
+        case 16: {
+            if (hold(an().selected() && an().selected()->id == "flag" && shown("an-state-idle") && shown("an-frame-5"), "«Флаг» shown, its strip"))
+                return true;
+            fl_flag0_ = an_file("flag");
+            const std::string before = step_label();
+            bool clicked = pj_click("an-frames-more");
+            check(clicked && lib.find("flag")->frames == 64 && an_file("flag") == fl_flag0_ && step_label() == before,
+                  "«Кадров в картинке» + at 64: still 64, the file as it was");
+            clicked = pj_click("an-state-idle");
+            check(clicked && an().state() == "idle" && an().own(), "«Покой»: the author's 64 frames");
+            clicked = pj_click("an-frame-5");
+            check(clicked && an_file("flag") == fl_flag0_ && step_label() == before, "a 65th frame of «Покой»: not added, the file as it was");
+            break;
+        }
+        // «Объекты»: its «Кадров в картинке» + at the limit, the same.
+        case 17: {
+            check(click_tab(2) && ed_.tab() == "objects", "«Объекты»");
+            const objects::Template* flag = lib.find("flag");
+            if (flag) ol().select(flag->key);
+            check(flag && ol().selected() == flag, "«Флаг» chosen");
+            break;
+        }
+        case 18:
+            if (hold(shown("ol-open-link"), "«Открыть редактор» of «Флаг»")) return true;
+            check(pj_click("ol-open-link"), "«Открыть редактор»");
+            break;
+        case 19: {
+            if (hold(shown("ol-frames-more") && element_text("ol-frames-n") == "64", "its «Кадров в картинке»: 64")) return true;
+            const std::string before = ol().history().undo_label();
+            const bool clicked = pj_click("ol-frames-more");
+            check(clicked && lib.find("flag")->frames == 64 && an_file("flag") == fl_flag0_ && ol().history().undo_label() == before,
+                  "«Объекты»: «Кадров в картинке» + at 64: still 64, the file as it was");
+            check(pj_click("ol-back"), "«К библиотеке»");
+            break;
+        }
+        case 20: {
+            const char* const said[] = {"«Флаг»: кадров в картинке не больше 64, это предел игры (поле «Предел кадров» в «Пиксельных»)",
+                                        "Анимация: кадров в ней не больше 64, это предел игры (поле «Предел кадров» в «Пиксельных»)"};
+            if (hold(logged(said[0]) && logged(said[1]), "the log said both")) return true;
+            usize times = 0;
+            for (const LogLine& l : ed_.log_lines()) times += l.text.find(said[0]) != std::string::npos;
+            check(times == 2, "«Кадров в картинке» past the limit said by «Анимация» and «Объекты»: " + std::to_string(times) + " times");
+            check(an_file("flag") == fl_flag0_ && lib.find("flag")->frames == 64, "the log says the game's limit and where it changes, each time");
+            return false;
+        }
+        default: break;
+        }
+        ++fl_step_;
+        return true;
+    }
+
+    // In an editor for «Предел А» from another working folder (--self-test frame-limit-a-again).
+    bool frame_limit_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        switch (fl_step_) {
+        case 0: {
+            check(!lvl_same(fs::current_path(), a), "from a working folder of another place: " + path_to_utf8(fs::current_path()));
+            std::vector<u8> json;
+            check(read_file(a / "game" / "game.json", json) && std::string(json.begin(), json.end()).ends_with(",\n  \"frame_limit\": 70\n}\n") &&
+                      an().library().frame_limit() == 70,
+                  "game.json: «frame_limit»: 70, as the author wrote it by hand, the limit read when the game opened");
+            objects::Clip all{{}, 30, true};
+            for (u32 k = 0; k < 64; ++k) all.frames.push_back(k);
+            const objects::Template* t = an().library().find("flag");
+            check(t && t->picture == "Шкала.png" && t->frames == 64 && an_is("flag", "idle", all), "«Флаг» as given: «Шкала.png», 64 frames, «Покой»");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && px().listed().size() == 1 && shown("px-doc-0"), "the character listed")) return true;
+            check(pj_click("px-doc-0") && px().opened() == "персонажи/Шкала.pixel.json", "a click on «Шкала»");
+            break;
+        case 3:
+            if (hold(shown("px-limit") && shown("px-total"), "«Шкала» shown")) return true;
+            check(input_value("px-limit") == "70" && element_text("px-total") == "в картинке 64 кадра из 70" && !px().edited(),
+                  "«Предел кадров» 70, «" + element_text("px-total") + "», the picture as baked");
+            check(click_tab(0), "«Уровень»");
+            break;
+        case 4:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 5: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = an_edits();
+            const int code = tg_play(&e, "ожидания предел.json", fl_root());
+            check(code == 0, "the game plays the flag by its 64 frames, each on the screen as baked (exit " + std::to_string(code) + ")");
+            // The game reads the limit itself: game.json says 63, written by hand as an author may, and «Флаг» of 64
+            // frames is one picture there, said in the game's log; then game.json as it was.
+            const fs::path json = a / "game" / "game.json";
+            const std::vector<u8> was = tg_bytes(json);
+            std::string lower(was.begin(), was.end());
+            const std::string field = "\"frame_limit\": 70";
+            const usize at = lower.rfind(field);
+            check(at != std::string::npos, "«frame_limit»: 70 in game.json");
+            if (at == std::string::npos) return false;
+            lower.replace(at, field.size(), "\"frame_limit\": 63");
+            check(write_file_atomic(json, {reinterpret_cast<const u8*>(lower.data()), lower.size()}), "game.json: 63 written by hand");
+            std::vector<std::string> args = lv().last_play();
+            for (const char* more : {"--test", "--scene", "project"}) args.push_back(more);
+            std::string said;
+            const int low = pj_run_said(args, fs::current_path(), said);
+            const char* note = "шаблон «Флаг» (flag.object.json): кадров 64 больше предела игры 63, читается одной картинкой";
+            check(low == 0 && pj_has(said, note), "the game of limit 63 reads «Флаг» as one picture and says so (exit " + std::to_string(low) +
+                                                      "): " + (pj_has(said, note) ? std::string(note) : said.substr(0, 2000)));
+            check(write_file_atomic(json, was) && tg_bytes(json) == was, "game.json as it was, byte for byte");
+            return false;
+        }
+        default: break;
+        }
+        ++fl_step_;
+        return true;
+    }
+
+    // The flag's 64 frames and «Покой» thirty a second, as given.
+    static objects::Clip fl_all() {
+        objects::Clip all{{}, 30, true};
+        for (u32 k = 0; k < 64; ++k) all.frames.push_back(k);
+        return all;
+    }
+    // What the editor and «Проверить» say of a template past the game's limit.
+    bool fl_said(const std::string& note) {
+        namespace pj = editor::project;
+        const std::vector<std::string>& notes = an().library().read_notes();
+        const std::vector<std::string> problems = pj::game_problems(pjw().config().root / "game", pj::find_module(editor_modules(), "slice"));
+        return std::find(notes.begin(), notes.end(), note) != notes.end() && std::find(problems.begin(), problems.end(), note) != problems.end();
+    }
+
+    // In an editor for «Предел А» whose game.json the author made 63 by hand (--self-test frame-limit-a-low): «Флаг» of
+    // 64 frames is one picture here and said; renamed in «Объекты» (F2, typed, Enter), its file keeps the 64 frames and
+    // «Покой»; Ctrl+Z and Ctrl+Y the same. Its «Кадров в картинке» 2 and then 1 chosen, in «Объекты» and in
+    // «Покадровая»: the file gets 1; undone twice, the 64 again. «Покой» of its own and then «Как в игре»: the 64 set
+    // aside for it go; undone twice, back.
+    bool frame_limit_low_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root, dir = a / "game" / "objects";
+        objects::Library& lib = an().library();
+        const fs::path flag = dir / "flag.object.json", renamed = dir / utf8_path("Флаг шкалы.object.json");
+        switch (fl_step_) {
+        case 0: {
+            check(!lvl_same(fs::current_path(), a) && lib.frame_limit() == 63, "game.json: «frame_limit»: 63 by hand, read when the game opened");
+            const objects::Template* t = lib.find("flag");
+            check(t && t->picture == "Шкала.png" && t->frames == 1 && t->animations.count("idle") == 0,
+                  "«Флаг» is one picture in this game, without «Покой»");
+            const std::optional<objects::Template> file = t ? objects::read_template(t->file) : std::nullopt;
+            check(file && file->frames == 64 && file->animations.count("idle") && file->animations.at("idle") == fl_all(),
+                  "its file: 64 frames and «Покой» as given");
+            const char* note = "шаблон «Флаг» (flag.object.json): кадров 64 больше предела игры 63, читается одной картинкой";
+            check(fl_said(note), std::string("the editor and «Проверить» say: ") + note);
+            fl_flag0_ = tg_bytes(flag);
+            check(click_tab(2) && ed_.tab() == "objects", "«Объекты»");
+            break;
+        }
+        case 1: {
+            if (wait(2)) return true;
+            const objects::Template* t = lib.find("flag");
+            if (t) ol().select(t->key);
+            check(t && ol().selected() == t, "«Флаг» chosen");
+            key(SDLK_F2, SDL_KMOD_NONE);
+            check(ol().renaming(), "F2: its name to type");
+            break;
+        }
+        case 2: {
+            Rml::Element* focus = ed_.context()->GetFocusElement();
+            if (hold(shown("ol-name-field") && focus && focus->GetId() == "ol-name-field", "the name field is laid out and focused")) return true;
+            check(ue_type_here("Флаг шкалы"), "«Флаг шкалы» typed, Enter");
+            std::string kept(fl_flag0_.begin(), fl_flag0_.end());
+            const std::string was = "\"name\": \"Флаг\"";
+            const usize at = kept.find(was);
+            if (at != std::string::npos) kept.replace(at, was.size(), "\"name\": \"Флаг шкалы\"");
+            fl_renamed_.assign(kept.begin(), kept.end());
+            const std::vector<u8>& renamed_bytes = fl_renamed_;
+            std::error_code ec;
+            const objects::Template* t = lib.find("flag");
+            check(at != std::string::npos && t && t->name == "Флаг шкалы" && lvl_same(t->file, renamed) && tg_bytes(renamed) == renamed_bytes &&
+                      !fs::exists(flag, ec),
+                  "renamed, its file too: byte for byte as it was but the name, the 64 frames and «Покой» kept");
+            check(t && t->frames == 1 && t->animations.count("idle") == 0, "still one picture in this game");
+            check(ol().history().undo_label() == "Переименовать: Флаг", "one step: " + ol().history().undo_label());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            t = lib.find("flag");
+            check(t && t->name == "Флаг" && tg_bytes(flag) == fl_flag0_ && !fs::exists(renamed, ec), "Ctrl+Z: «Флаг», its file byte for byte as it was");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            t = lib.find("flag");
+            check(t && t->name == "Флаг шкалы" && tg_bytes(renamed) == renamed_bytes && !fs::exists(flag, ec), "Ctrl+Y: «Флаг шкалы» again, byte for byte");
+            break;
+        }
+        // Its own number of frames, chosen: what the file gets; undone, the 64 set aside come back.
+        case 3:
+            if (hold(shown("ol-open-link"), "«Открыть редактор» of «Флаг шкалы»")) return true;
+            check(pj_click("ol-open-link"), "«Открыть редактор»");
+            break;
+        case 4: {
+            if (hold(shown("ol-frames-more") && element_text("ol-frames-n") == "1", "its «Кадров в картинке»: 1")) return true;
+            auto in_file = [&]() -> u32 {
+                const std::optional<objects::Template> f = objects::read_template(renamed);
+                return f ? f->frames : 0;
+            };
+            bool clicked = pj_click("ol-frames-more");
+            const objects::Template* t = lib.find("flag");
+            check(clicked && t && t->frames == 2 && in_file() == 2 && ol().history().undo_label() == "«Флаг шкалы»: кадров в картинке 2",
+                  "«Кадров в картинке» +: 2, in its file too; " + ol().history().undo_label());
+            clicked = pj_click("ol-frames-less");
+            t = lib.find("flag");
+            check(clicked && t && t->frames == 1 && in_file() == 1 && ol().history().undo_label() == "«Флаг шкалы»: кадров в картинке 1",
+                  "«Кадров в картинке» −: 1 as the author chose, in its file too; " + ol().history().undo_label());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(in_file() == 2, "Ctrl+Z: 2");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            t = lib.find("flag");
+            check(t && t->frames == 1 && tg_bytes(renamed) == fl_renamed_, "Ctrl+Z: its file as renamed, the 64 frames set aside back, byte for byte");
+            check(pj_click("ol-back"), "«К библиотеке»");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        // «Покадровая» the same; «Покой» of its own and then «Как в игре»: the 64 frames set aside for it go, undone
+        // they come back.
+        case 5:
+            if (hold(shown("an-mode-frames"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-frames") && an().mode() == "frames", "«Покадровая»");
+            break;
+        case 6:
+            if (hold(shown("an-tpl-0"), "«Покадровая»'s list")) return true;
+            check(an_pick("flag"), "a click on «Флаг шкалы»");
+            break;
+        case 7: {
+            if (hold(an().selected() && an().selected()->id == "flag" && shown("an-state-idle") && shown("an-frames-more") && shown("an-frame-0"),
+                     "«Флаг шкалы» shown, its strip"))
+                return true;
+            auto in_file = [&] { return objects::read_template(renamed); };
+            bool clicked = pj_click("an-frames-more");
+            check(clicked && lib.find("flag")->frames == 2 && in_file() && in_file()->frames == 2, "«Кадров в картинке» +: 2, in its file too");
+            clicked = pj_click("an-frames-less");
+            check(clicked && lib.find("flag")->frames == 1 && in_file() && in_file()->frames == 1, "«Кадров в картинке» −: 1 as the author chose, in its file too");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(tg_bytes(renamed) == fl_renamed_, "Ctrl+Z twice: its file as renamed, the 64 frames back, byte for byte");
+            clicked = pj_click("an-state-idle");
+            check(clicked && an().state() == "idle" && !an().own(), "«Покой»: none of its own in this game");
+            clicked = pj_click("an-frame-0");
+            check(clicked && an().own() && in_file() && in_file()->animations.count("idle") && in_file()->animations.at("idle") != fl_all(),
+                  "a frame of «Покой»: its own now, in its file instead of the 64");
+            clicked = pj_click("an-reset");
+            check(clicked && !an().own() && in_file() && in_file()->animations.count("idle") == 0 && in_file()->frames == 64,
+                  "«Как в игре»: «Покой» by the game's rule, the 64 of it set aside gone from its file; its 64 frames stay");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(tg_bytes(renamed) == fl_renamed_ && lib.find("flag")->frames == 1, "Ctrl+Z twice: its file as renamed, «Покой» of 64 back, byte for byte");
+            return false;
+        }
+        default: break;
+        }
+        ++fl_step_;
+        return true;
+    }
+
+    // In an editor for «Предел А» opened again at 63 from a fourth working folder (--self-test frame-limit-a-low-again):
+    // «Флаг шкалы» is still one picture and said; «Отдать шаблону…» the strip of 64 refused; «Предел кадров» 64 typed
+    // gives it its 64 frames and «Покой»; Ctrl+Z and Ctrl+Y.
+    bool frame_limit_low_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        objects::Library& lib = an().library();
+        const char* note = "шаблон «Флаг шкалы» (Флаг шкалы.object.json): кадров 64 больше предела игры 63, читается одной картинкой";
+        auto one = [&] {
+            const objects::Template* t = lib.find("flag");
+            return t && t->name == "Флаг шкалы" && t->frames == 1 && t->animations.count("idle") == 0;
+        };
+        auto whole = [&] {
+            const objects::Template* t = lib.find("flag");
+            return t && t->frames == 64 && an_is("flag", "idle", fl_all()) && t->frames_over == 0 && t->animations_over.empty();
+        };
+        switch (fl_step_) {
+        case 0: {
+            check(!lvl_same(fs::current_path(), a) && lib.frame_limit() == 63, "opened again elsewhere: the limit 63");
+            check(one(), "«Флаг шкалы» is one picture, without «Покой»");
+            check(fl_said(note), std::string("still said by the editor and «Проверить»: ") + note);
+            const objects::Template* t = lib.find("flag");
+            fl_flag0_ = t ? tg_bytes(t->file) : std::vector<u8>{};
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && px().listed().size() == 1 && shown("px-doc-0"), "the character listed")) return true;
+            check(pj_click("px-doc-0") && px().opened() == "персонажи/Шкала.pixel.json", "a click on «Шкала»");
+            break;
+        // «Отдать шаблону…» the strip of 64 baked at 64: refused, nothing written.
+        case 3:
+            if (hold(!as().busy() && !as().looking() && shown("px-limit") && input_value("px-limit") == "63" && shown("px-give-open") &&
+                         !pj_class("px-give-open", "disabled"),
+                     "«Предел кадров» 63, «Отдать шаблону…» may be clicked"))
+                return true;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
+            break;
+        case 4: {
+            if (hold(shown("px-tpl-0"), "the templates listed")) return true;
+            const auto& l = px().templates();
+            const objects::Template* t = lib.find("flag");
+            const std::string row = "px-tpl-" + std::to_string(t ? std::find(l.begin(), l.end(), t->key) - l.begin() : 0);
+            const fs::path png = a / "game" / "pictures" / utf8_path("Шкала.png");
+            const std::vector<u8> picture = tg_bytes(png);
+            const std::string step = an().history().undo_label();
+            const bool clicked = px_click(row);
+            check(clicked && px().note() == "В «Шкала.png» 64 кадра, а предел игры 63: поднимите «Предел кадров» или уберите кадры у клипов и запеките снова" &&
+                      one() && tg_bytes(lib.find("flag")->file) == fl_flag0_ && tg_bytes(png) == picture && an().history().undo_label() == step,
+                  "a click on «Флаг шкалы»: «" + px().note() + "», its file, the game's picture and the history as they were");
+            check(px_click("px-give-open") && !px().giving(), "«Отдать шаблону…» closed");
+            break;
+        }
+        case 5: {
+            if (hold(shown("px-limit") && input_value("px-limit") == "63", "«Предел кадров» 63")) return true;
+            const fs::path json = a / "game" / "game.json";
+            const std::vector<u8> was = tg_bytes(json);
+            const bool typed = ue_type("px-limit", "64");
+            std::string want(was.begin(), was.end());
+            const usize at = want.rfind("\"frame_limit\": 63");
+            if (at != std::string::npos) want.replace(at + 15, 2, "64");
+            check(typed && lib.frame_limit() == 64 && at != std::string::npos && tg_bytes(json) == std::vector<u8>(want.begin(), want.end()) &&
+                      an().history().undo_label() == "Предел кадров 64",
+                  "«Предел кадров» 64 typed: game.json that field only; one step: " + an().history().undo_label());
+            check(whole(), "«Флаг шкалы»: its 64 frames and «Покой» again, as its file has them");
+            check(lib.read_notes().empty(), "nothing said at 64");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(lib.frame_limit() == 63 && tg_bytes(json) == was && one() && fl_said(note), "Ctrl+Z: 63, one picture and said again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(lib.frame_limit() == 64 && whole() && lib.read_notes().empty(), "Ctrl+Y: 64, its 64 frames and «Покой»");
+            const objects::Template* t = lib.find("flag");
+            check(t && tg_bytes(t->file) == fl_flag0_, "its file as it was: the limit is read, the template not written");
+            return false;
+        }
+        default: break;
+        }
+        ++fl_step_;
+        return true;
+    }
+
+    // What the editor's library holds of the game's templates against what reading their files again at game.json's
+    // limit gives, as another editor or the game opening it would: "" when the same, what is set aside and said too.
+    std::string fl_reread() {
+        const objects::Library& lib = an().library();
+        u32 limit = 0;
+        if (!objects::read_frame_limit(pjw().config().root / "game", limit)) return "game.json does not read";
+        if (limit != lib.frame_limit()) return "the limit " + std::to_string(lib.frame_limit()) + ", game.json " + std::to_string(limit);
+        objects::Library again;
+        again.set_frame_limit(limit);
+        if (!again.load(lib.kinds_file(), lib.folder())) return "not read again";
+        if (again.templates().size() != lib.templates().size()) return "another number of templates read again";
+        auto idle = [](const std::map<std::string, objects::Clip>& m) {
+            const auto it = m.find("idle");
+            return it == m.end() ? std::string("-") : std::to_string(it->second.frames.size());
+        };
+        for (const objects::Template& t : lib.templates()) {
+            const objects::Template* r = again.find(t.key);
+            if (!r) return t.id + " not read again";
+            if (r->name != t.name || r->picture != t.picture || r->frames != t.frames || r->frames_over != t.frames_over ||
+                r->animations != t.animations || r->animations_over != t.animations_over)
+                return t.id + ": frames " + std::to_string(t.frames) + " set aside " + std::to_string(t.frames_over) + " «Покой» " +
+                       idle(t.animations) + "/" + idle(t.animations_over) + ", read again " + std::to_string(r->frames) + " set aside " +
+                       std::to_string(r->frames_over) + " «Покой» " + idle(r->animations) + "/" + idle(r->animations_over);
+        }
+        if (again.read_notes() != lib.read_notes()) return "said otherwise when read again";
+        return {};
+    }
+
+    // In an editor for «Предел А» at 64 from a fifth working folder (--self-test frame-limit-a-cross): the limit and
+    // «Покой» change in the history of «Анимация», «Кадров в картинке» of «Флаг шкалы» in the history of «Объекты»; each
+    // undone and done again by turns. After every step the library is what reading the files again gives (fl_reread):
+    // 65 frames are one picture at 64 and said, read at 128; «Покой» as the author left it; a step undone in one tab
+    // leaves what the other changed. At the end every step is undone: game.json and the flag's file byte for byte as at
+    // the start.
+    bool frame_limit_cross_step() {
+        namespace fs = std::filesystem;
+        const fs::path json = pjw().config().root / "game" / "game.json";
+        objects::Library& lib = an().library();
+        const char* note = "шаблон «Флаг шкалы» (Флаг шкалы.object.json): кадров 65 больше предела игры 64, читается одной картинкой";
+        // The flag as the game and the tabs see it: frames, frames set aside, the length of «Покой»; its file the same
+        // as one (the frames set aside, else the frames).
+        auto is = [&](u32 limit, u32 frames, u32 over, usize idle) {
+            const objects::Template* t = lib.find("flag");
+            const std::optional<objects::Template> f = t ? objects::read_template(t->file) : std::nullopt;
+            const auto it = t ? t->animations.find("idle") : decltype(t->animations)::const_iterator{};
+            const auto fit = f ? f->animations.find("idle") : decltype(f->animations)::const_iterator{};
+            return lib.frame_limit() == limit && t && t->frames == frames && t->frames_over == over && it != t->animations.end() &&
+                   it->second.frames.size() == idle && t->animations_over.empty() && f && f->frames == (over ? over : frames) &&
+                   fit != f->animations.end() && fit->second == it->second;
+        };
+        auto reread = [&](const std::string& what) {
+            const std::string differs = fl_reread();
+            check(differs.empty(), what + ": the library as reading the files again gives; " + differs);
+        };
+        auto look = [&] {
+            const objects::Template* t = lib.find("flag");
+            return t ? "limit " + std::to_string(lib.frame_limit()) + ", frames " + std::to_string(t->frames) + " set aside " + std::to_string(t->frames_over)
+                     : std::string("no flag");
+        };
+        switch (fl_step_) {
+        case 0: {
+            check(is(64, 64, 0, 64) && lib.read_notes().empty(), "opened at 64 from a fifth folder: «Флаг шкалы» 64 frames and «Покой» of 64; " + look());
+            reread("opened");
+            fl_json0_ = tg_bytes(json);
+            fl_flag0_ = tg_bytes(lib.find("flag")->file);
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Пиксельные»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && px().listed().size() == 1 && shown("px-doc-0"), "the character listed")) return true;
+            check(pj_click("px-doc-0") && px().opened() == "персонажи/Шкала.pixel.json", "a click on «Шкала»");
+            break;
+        // «Анимация»: «Предел кадров» 128, then a 65th frame of «Покой» in «Покадровая».
+        case 3: {
+            if (hold(!as().busy() && !as().looking() && shown("px-limit") && input_value("px-limit") == "64", "«Предел кадров» 64")) return true;
+            const bool typed = ue_type("px-limit", "128");
+            check(typed && is(128, 64, 0, 64) && an().history().undo_label() == "Предел кадров 128", "«Предел кадров» 128: one step; " + look());
+            reread("128");
+            check(pj_click("an-mode-frames") && an().mode() == "frames", "«Покадровая»");
+            break;
+        }
+        case 4:
+            if (hold(shown("an-tpl-0"), "«Покадровая»'s list")) return true;
+            check(an_pick("flag"), "a click on «Флаг шкалы»");
+            break;
+        case 5: {
+            if (hold(an().selected() && an().selected()->id == "flag" && shown("an-state-idle") && shown("an-frame-5"), "«Флаг шкалы» shown, its strip"))
+                return true;
+            bool clicked = pj_click("an-state-idle");
+            check(clicked && an().state() == "idle" && an().own(), "«Покой»: the author's 64 frames");
+            clicked = pj_click("an-frame-5");
+            check(clicked && is(128, 64, 0, 65), "a 65th frame of «Покой» at 128: in its file too; " + look());
+            reread("«Покой» of 65");
+            check(click_tab(2) && ed_.tab() == "objects", "«Объекты»");
+            break;
+        }
+        // «Объекты»: «Кадров в картинке» 65.
+        case 6: {
+            if (wait(2)) return true;
+            const objects::Template* t = lib.find("flag");
+            if (t) ol().select(t->key);
+            check(t && ol().selected() == t, "«Флаг шкалы» chosen");
+            break;
+        }
+        case 7:
+            if (hold(shown("ol-open-link"), "«Открыть редактор» of «Флаг шкалы»")) return true;
+            check(pj_click("ol-open-link"), "«Открыть редактор»");
+            break;
+        case 8: {
+            if (hold(shown("ol-frames-more") && element_text("ol-frames-n") == "64", "its «Кадров в картинке»: 64")) return true;
+            const bool clicked = pj_click("ol-frames-more");
+            check(clicked && is(128, 65, 0, 65) && ol().history().undo_label() == "«Флаг шкалы»: кадров в картинке 65",
+                  "«Кадров в картинке» + at 128: 65, in its file too; " + ol().history().undo_label());
+            reread("65 frames");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        // «Анимация»: Ctrl+Z twice. «Покой» back to 64, the 65 frames «Объекты» chose stay; the limit 64: they are one
+        // picture, said, as reading gives.
+        case 9: {
+            if (hold(ed_.tab() == "animation" && shown("an-mode-frames"), "«Анимация»")) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 65, 0, 64), "«Анимация» Ctrl+Z: «Покой» of 64, the 65 frames of «Объекты» stay; " + look());
+            reread("«Покой» undone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(64, 1, 65, 64) && tg_bytes(json) == fl_json0_ && fl_said(note),
+                  "«Анимация» Ctrl+Z: 64, game.json as it was; the 65 frames one picture and said, kept in its file; " + look());
+            reread("the limit undone");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Объекты»: Ctrl+Z and Ctrl+Y at 64 (the step chose 65 at 128): 64 frames, then 65 set aside, as reading gives.
+        // Then 2 chosen there.
+        case 10: {
+            if (hold(ed_.tab() == "objects" && shown("ol-frames-more") && element_text("ol-frames-n") == "1", "«Объекты», «Кадров в картинке» 1"))
+                return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(64, 64, 0, 64) && tg_bytes(lib.find("flag")->file) == fl_flag0_ && lib.read_notes().empty(),
+                  "«Объекты» Ctrl+Z at 64: 64 frames, its file byte for byte as at the start, nothing said; " + look());
+            reread("65 undone at 64");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(is(64, 1, 65, 64) && fl_said(note), "«Объекты» Ctrl+Y at 64: the 65 frames one picture and said, as reading gives; " + look());
+            reread("65 again at 64");
+            break;
+        }
+        case 11: {
+            if (hold(shown("ol-frames-more") && element_text("ol-frames-n") == "1", "its «Кадров в картинке»: 1")) return true;
+            const bool clicked = pj_click("ol-frames-more");
+            check(clicked && is(64, 2, 0, 64) && lib.read_notes().empty(), "«Кадров в картинке» + at 64: 2 of the author's, nothing said; " + look());
+            reread("2 at 64");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        // «Анимация»: Ctrl+Y twice. 128 and «Покой» of 65 again; the 2 frames of «Объекты» stay.
+        case 12: {
+            if (hold(ed_.tab() == "animation" && shown("an-mode-frames"), "«Анимация»")) return true;
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(is(128, 2, 0, 64), "«Анимация» Ctrl+Y: 128, the 2 frames stay; " + look());
+            reread("the limit again");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(is(128, 2, 0, 65), "«Анимация» Ctrl+Y: «Покой» of 65 again, the 2 frames stay; " + look());
+            reread("«Покой» again");
+            check(click_tab(2), "«Объекты»");
+            break;
+        }
+        // «Объекты»: Ctrl+Z at 128 of the step that chose 2 where 65 were set aside: the 65 of the file read; Ctrl+Z
+        // again, 64. «Покой» of 65 stays.
+        case 13: {
+            if (hold(ed_.tab() == "objects" && shown("ol-frames-more") && element_text("ol-frames-n") == "2", "«Объекты», «Кадров в картинке» 2"))
+                return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 65, 0, 65) && lib.read_notes().empty(), "«Объекты» Ctrl+Z at 128: the 65 frames read, «Покой» of 65 stays; " + look());
+            reread("2 undone at 128");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 64, 0, 65), "«Объекты» Ctrl+Z: 64 frames, «Покой» of 65 stays; " + look());
+            reread("65 undone at 128");
+            check(pj_click("ol-back"), "«К библиотеке»");
+            check(click_tab(3), "«Анимация»");
+            break;
+        }
+        // «Анимация»: Ctrl+Z twice, everything undone: game.json and the flag's file byte for byte as at the start.
+        case 14: {
+            if (hold(ed_.tab() == "animation" && shown("an-mode-frames"), "«Анимация»")) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(128, 64, 0, 64), "«Анимация» Ctrl+Z: «Покой» of 64; " + look());
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(is(64, 64, 0, 64) && lib.read_notes().empty() && tg_bytes(json) == fl_json0_ && tg_bytes(lib.find("flag")->file) == fl_flag0_,
+                  "«Анимация» Ctrl+Z: 64; game.json and its file byte for byte as at the start; " + look());
+            reread("all undone");
+            return false;
+        }
+        default: break;
+        }
+        ++fl_step_;
         return true;
     }
 
@@ -22833,6 +23844,12 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
                 const bool zoomed = im_press("im-zoom-in") && im().zoom() > z;
                 const u32 in = im().zoom();
                 check(zoomed && im_press("im-fit") && im().zoom() == z, "«+» zooms in (" + std::to_string(z) + " → " + std::to_string(in) + "), «Вписать» back");
+                // The game's frame limit (its game.json names none: 64): «+» at it refused and said.
+                check(im().set_frames(64) && im().frames() == 64, "its own number of frames: 64");
+                const bool past = im_press("im-frames-more");
+                check(past && im().frames() == 64 && im().note() == "Кадров не больше 64: это предел игры (поле «Предел кадров» в «Пиксельных»)",
+                      "«Кадров в картинке» + at 64: still 64, the game's limit said: " + im().note());
+                check(im().set_frames(1) && im().frames() == 1, "back to 1 frame");
                 check(im_press("im-frames-more") && im().frames() == 2, "«Кадров в картинке»: 2");
                 im_sub_ = 1;
                 return true;
@@ -24405,7 +25422,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                             options.self_part.rfind("modules-", 0) == 0 || options.self_part.rfind("animation-", 0) == 0 ||
                             options.self_part.rfind("input-", 0) == 0 || options.self_part.rfind("rpg-template-", 0) == 0 ||
                             options.self_part.rfind("match3-template-", 0) == 0 || options.self_part.rfind("images-", 0) == 0 ||
-                            options.self_part.rfind("pixel-", 0) == 0 || options.self_part.rfind("ui-scale-", 0) == 0 ||
+                            options.self_part.rfind("pixel-", 0) == 0 || options.self_part.rfind("frame-limit-", 0) == 0 ||
+                            options.self_part.rfind("ui-scale-", 0) == 0 ||
                             options.self_part.rfind("vector-live-", 0) == 0;
         OpenGame game;
         bool ready = true;
@@ -24942,7 +25960,8 @@ int main(int argc, char** argv) {
                                          "platformer",   "platformer-a",    "platformer-a-again", "platformer-template",
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
                                          "animation",    "animation-a",     "animation-a-again", "pixel", "pixel-a", "pixel-a-again",
-                                         "input", "input-a", "input-a-again",
+                                         "frame-limit", "frame-limit-a", "frame-limit-a-again", "frame-limit-a-low", "frame-limit-a-low-again",
+                                         "frame-limit-a-cross", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -24954,7 +25973,8 @@ int main(int argc, char** argv) {
                     "two-games-b, levels and its parts levels-a, levels-again, levels-go, levels-go-again, platformer and its parts "
                     "platformer-a, platformer-a-again, platformer-template and its parts platformer-template-a, "
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
-                    "animation-a-again, pixel and its parts pixel-a, pixel-a-again, input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
+                    "animation-a-again, pixel and its parts pixel-a, pixel-a-again, frame-limit and its parts frame-limit-a, frame-limit-a-again, "
+                    "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
                     "and its parts ui-scale-a, ui-scale-a-again, ui-scale-b, vector-live and its parts vector-live-a, vector-live-a-again)",

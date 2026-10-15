@@ -95,6 +95,8 @@ public:
     std::function<std::string(const std::string& game_file)> copy_from;
     // The templates drawn with a file of the game ("pictures/рубин.png").
     std::function<std::vector<User>(const std::string& game_file)> users_of_file;
+    // The game's frame limit (game.json): the tab's own number of frames is not above it. 64 when not given.
+    std::function<u32()> frame_limit;
 
     // --- actions (the buttons, the mouse, the keys, the self-test) ---
     // A picture of «Ресурсы» (its file); false when it is none or does not read (note() says why). A file of the
@@ -160,6 +162,7 @@ public:
     // The strip's frames: the «Кадров в картинке» of a template drawn with the picture, else the tab's own number.
     u32 frames() const;
     std::string frames_from() const;
+    // The tab's own number (1..frame_limit; above it, false and note() says the limit and where it changes).
     bool set_frames(u32 n);
     // The mouse on the picture, in its pixels: what the tool does from press to release (one step).
     void press(i32 x, i32 y, bool secondary = false, bool shift = false, bool alt = false);

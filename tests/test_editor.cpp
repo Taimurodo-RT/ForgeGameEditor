@@ -187,6 +187,118 @@ TEST_CASE("editor undo: groups, redo branch, limit, dirty flag") {
     CHECK(history.size() == 5);
 }
 
+namespace {
+
+// A value written somewhere that may refuse it (a file that cannot be written): when it does, nothing changes.
+struct Stored {
+    int value = 0;
+    bool refuse = false;
+};
+class StoreValue final : public forge::editor::Command {
+public:
+    StoreValue(Stored& to, int before, int after) : to_(to), before_(before), after_(after) {}
+    void apply(forge::editor::Document&) override { put(after_); }
+    void revert(forge::editor::Document&) override { put(before_); }
+    std::string label() const override { return "Значение " + std::to_string(after_); }
+    bool failed() const override { return failed_; }
+
+private:
+    void put(int v) {
+        failed_ = to_.refuse;
+        if (!failed_) to_.value = v;
+    }
+    Stored& to_;
+    int before_, after_;
+    bool failed_ = false;
+};
+
+} // namespace
+
+TEST_CASE("editor undo: a command that fails changes nothing, and the history stays where it was") {
+    Document doc;
+    UndoStack history(doc);
+    Stored stored;
+    // Done: refused, not recorded.
+    stored.refuse = true;
+    CHECK_FALSE(history.execute(std::make_unique<StoreValue>(stored, 0, 1)));
+    CHECK(stored.value == 0);
+    CHECK(history.size() == 0);
+    CHECK_FALSE(history.dirty());
+    stored.refuse = false;
+    CHECK(history.execute(std::make_unique<StoreValue>(stored, 0, 1)));
+    CHECK(stored.value == 1);
+    CHECK(history.undo_label() == "Значение 1");
+    const forge::u64 version = history.version();
+    // Undone: refused, the step still there to undo.
+    stored.refuse = true;
+    CHECK_FALSE(history.undo());
+    CHECK(stored.value == 1);
+    CHECK(history.cursor() == 1);
+    CHECK(history.undo_label() == "Значение 1");
+    CHECK(history.version() == version);
+    CHECK(history.dirty());
+    stored.refuse = false;
+    CHECK(history.undo());
+    CHECK(stored.value == 0);
+    CHECK(history.cursor() == 0);
+    // Redone: refused, the step still there to redo.
+    stored.refuse = true;
+    CHECK_FALSE(history.redo());
+    CHECK(stored.value == 0);
+    CHECK(history.cursor() == 0);
+    CHECK(history.redo_label() == "Значение 1");
+    stored.refuse = false;
+    CHECK(history.redo());
+    CHECK(stored.value == 1);
+    // In a group: a part that fails is not added, the parts done stay; undone or redone, a part that fails takes
+    // back the parts already turned, and the group stays where it was.
+    Stored a, b;
+    b.refuse = true;
+    history.begin_group("Оба");
+    CHECK(history.execute(std::make_unique<StoreValue>(a, 0, 5)));
+    CHECK_FALSE(history.execute(std::make_unique<StoreValue>(b, 0, 6)));
+    history.end_group();
+    CHECK(a.value == 5);
+    CHECK(b.value == 0);
+    CHECK(history.undo_label() == "Значение 5"); // a group of one part is that part
+    b.refuse = false;
+    history.begin_group("Два сразу");
+    history.execute(std::make_unique<StoreValue>(a, 5, 7));
+    history.execute(std::make_unique<StoreValue>(b, 0, 8));
+    history.end_group();
+    CHECK(a.value == 7);
+    CHECK(b.value == 8);
+    b.refuse = true;
+    CHECK_FALSE(history.undo()); // b refuses: a is put back as it was, the group stays done
+    CHECK(a.value == 7);
+    CHECK(b.value == 8);
+    CHECK(history.undo_label() == "Два сразу");
+    b.refuse = false;
+    CHECK(history.undo());
+    CHECK(a.value == 5);
+    CHECK(b.value == 0);
+    a.refuse = true;
+    CHECK_FALSE(history.redo()); // a refuses first: nothing done
+    CHECK(a.value == 5);
+    CHECK(b.value == 0);
+    CHECK(history.redo_label() == "Два сразу");
+    a.refuse = false;
+    b.refuse = true;
+    CHECK_FALSE(history.redo()); // a done, then b refuses: a taken back
+    CHECK(a.value == 5);
+    CHECK(b.value == 0);
+    CHECK(history.redo_label() == "Два сразу");
+    b.refuse = false;
+    CHECK(history.redo());
+    CHECK(a.value == 7);
+    CHECK(b.value == 8);
+    a.refuse = true;
+    CHECK_FALSE(history.undo()); // b undone, then a refuses: b done again
+    CHECK(a.value == 7);
+    CHECK(b.value == 8);
+    CHECK(history.undo_label() == "Два сразу");
+}
+
 TEST_CASE("editor play: Stop restores the scene, play-time edits are not recorded") {
     Document doc;
     UndoStack history(doc);

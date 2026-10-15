@@ -61,9 +61,11 @@ public:
         // Its frame of the sheet in a pose, `ticks` after the pose began.
         u32 at(Pose pose, u64 ticks) const { return frame + forge::objects::clip_frame(clips[static_cast<usize>(pose)], ticks); }
     };
-    // The largest side a frame keeps in the sheet; bigger ones are scaled down. The sheet is at least kMaxSide + 2
-    // wide, so any frame fits on a shelf of its own with a pixel either side.
+    // The largest side a frame keeps in the sheet; bigger ones are scaled down.
     static constexpr u32 kMaxSide = 256;
+    // The narrowest the sheet is: 7 frames of kMaxSide to a shelf, a pixel either side of each, so a strip of 64 such
+    // frames (the frame limit of a game without "frame_limit", «Пиксельные»'s largest frame) takes 10 shelves.
+    static constexpr u32 kSheetWidth = 2048;
     // The highest the sheet grows; pictures past it are left out (and a warning).
     static constexpr u32 kMaxHeight = 8192;
 

@@ -6,17 +6,34 @@ namespace forge::editor {
 
 // A group is recorded as one command that applies its parts in order and
 // reverts them in reverse.
+// A part that fails takes back the parts done before it: the group did nothing.
 struct UndoStack::Group final : Command {
     std::string text;
     std::vector<std::unique_ptr<Command>> parts;
     bool sealed = true;
+    bool failed_ = false;
 
     void apply(Document& doc) override {
-        for (auto& c : parts) c->apply(doc);
+        failed_ = false;
+        for (usize i = 0; i < parts.size(); ++i) {
+            parts[i]->apply(doc);
+            if (!parts[i]->failed()) continue;
+            for (usize j = i; j-- > 0;) parts[j]->revert(doc);
+            failed_ = true;
+            return;
+        }
     }
     void revert(Document& doc) override {
-        for (auto it = parts.rbegin(); it != parts.rend(); ++it) (*it)->revert(doc);
+        failed_ = false;
+        for (usize i = parts.size(); i-- > 0;) {
+            parts[i]->revert(doc);
+            if (!parts[i]->failed()) continue;
+            for (usize j = i + 1; j < parts.size(); ++j) parts[j]->apply(doc);
+            failed_ = true;
+            return;
+        }
     }
+    bool failed() const override { return failed_; }
     std::string label() const override { return text; }
     bool changes_document() const override {
         for (const auto& c : parts)
@@ -39,18 +56,20 @@ bool merge_into(Command* last, const Command& next) {
 
 } // namespace
 
-void UndoStack::execute(std::unique_ptr<Command> command) {
-    if (!command) return;
+bool UndoStack::execute(std::unique_ptr<Command> command) {
+    if (!command) return false;
     command->apply(doc_);
-    if (!recording_) return;
+    if (command->failed()) return false;
+    if (!recording_) return true;
     if (!groups_.empty()) {
         Group& group = *groups_.back();
-        if (!group.sealed && !group.parts.empty() && merge_into(group.parts.back().get(), *command)) return;
+        if (!group.sealed && !group.parts.empty() && merge_into(group.parts.back().get(), *command)) return true;
         group.parts.push_back(std::move(command));
         group.sealed = false;
-        return;
+        return true;
     }
     record(std::move(command));
+    return true;
 }
 
 void UndoStack::record(std::unique_ptr<Command> command) {
@@ -81,7 +100,10 @@ void UndoStack::record(std::unique_ptr<Command> command) {
 
 bool UndoStack::undo() {
     if (!groups_.empty() || cursor_ == 0) return false;
-    entries_[--cursor_]->revert(doc_);
+    Command& c = *entries_[cursor_ - 1];
+    c.revert(doc_);
+    if (c.failed()) return false;
+    --cursor_;
     sealed_ = true;
     ++version_;
     return true;
@@ -89,7 +111,10 @@ bool UndoStack::undo() {
 
 bool UndoStack::redo() {
     if (!groups_.empty() || cursor_ >= entries_.size()) return false;
-    entries_[cursor_++]->apply(doc_);
+    Command& c = *entries_[cursor_];
+    c.apply(doc_);
+    if (c.failed()) return false;
+    ++cursor_;
     sealed_ = true;
     ++version_;
     return true;

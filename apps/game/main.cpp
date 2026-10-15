@@ -18,6 +18,7 @@
 #include "forge/core/path.h"
 #include "forge/game/game_module.h"
 #include "forge/game/runner.h"
+#include "forge/objects/library.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h> // the window-only entry point on Windows, and the arguments in UTF-8
@@ -55,6 +56,8 @@ int main(int argc, char** argv) {
     std::string id, error;
     const game::GameModule found = game::game_module(data, id, &error);
     if (found == game::GameModule::Broken) return refuse(error);
+    // The game's frame limit: one game.json says wrong is refused here, before its module reads the objects.
+    if (u32 limit = 0; !objects::read_frame_limit(data, limit, &error)) return refuse(error);
     const modules::ModuleDef* module = registry.find(id);
     if (!module) return refuse(modules::missing_module(id));
     FORGE_INFO("Игра %s: модуль «%s»%s", path_to_utf8(data).c_str(), id.c_str(),

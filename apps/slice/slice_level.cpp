@@ -138,6 +138,9 @@ void setup_cells(sim::CollisionRules& rules, sim::CellSim& cells) {
 }
 
 bool load_objects(objects::Library& library, const std::filesystem::path& game_dir, std::string* error) {
+    u32 limit = objects::kDefaultFrameLimit;
+    if (!objects::read_frame_limit(game_dir, limit, error)) return false;
+    library.set_frame_limit(limit);
     const bool ok = library.load(game_dir / "kinds.json", game_dir / "objects", error);
     if (ok) FORGE_INFO("Объекты: видов %zu, шаблонов %zu", library.kinds().size(), library.templates().size());
     return ok;

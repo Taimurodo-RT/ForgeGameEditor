@@ -315,14 +315,21 @@ std::optional<Clip> read_clip(yyjson_val* v, std::string& why) {
             why = "кадр не номер";
             return std::nullopt;
         }
-        clip.frames.push_back(static_cast<u32>(std::min<u64>(yyjson_get_uint(f), 1000)));
+        clip.frames.push_back(static_cast<u32>(std::min<u64>(yyjson_get_uint(f), kMaxFrameLimit)));
     }
     yyjson_val* fps = yyjson_obj_get(v, "fps");
     clip.fps = yyjson_is_num(fps) ? static_cast<f32>(yyjson_get_num(fps)) : 0;
     if (yyjson_val* loop = yyjson_obj_get(v, "loop"); yyjson_is_bool(loop)) clip.loop = yyjson_get_bool(loop);
-    why = clip_problem(clip, 1000);
+    // Read knowing no game: the game's limit and the picture's frames are the library's to check.
+    why = clip_problem(clip, kMaxFrameLimit, kMaxFrameLimit);
     if (!why.empty()) return std::nullopt;
     return clip;
+}
+
+// What the library says of a template whose picture reads as one past the game's limit.
+std::string over_note(const Template& t, u32 limit) {
+    return "шаблон «" + t.name + "» (" + path_to_utf8(t.file.filename()) + "): кадров " + std::to_string(t.frames_over) +
+           " больше предела игры " + std::to_string(limit) + ", читается одной картинкой";
 }
 
 // 10, 7.5.
@@ -358,7 +365,7 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     t.picture = text_of(yyjson_obj_get(root, "picture"));
     if (yyjson_val* frames = yyjson_obj_get(root, "frames"); yyjson_is_uint(frames) || yyjson_is_sint(frames)) {
         const i64 n = yyjson_get_sint(frames);
-        t.frames = n >= 1 && n <= kMaxFrames ? static_cast<u32>(n) : 1;
+        t.frames = n >= 1 && n <= kMaxFrameLimit ? static_cast<u32>(n) : 1;
     }
     if (yyjson_val* anims = yyjson_obj_get(root, "animations"); yyjson_is_obj(anims)) {
         yyjson_obj_iter it = yyjson_obj_iter_with(anims);
@@ -385,6 +392,25 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     return t;
 }
 
+u32 Template::file_frames() const { return frames == 1 && frames_over > 1 ? frames_over : frames; }
+
+std::map<std::string, Clip> Template::file_animations() const {
+    std::map<std::string, Clip> out = animations;
+    for (const auto& [state, clip] : animations_over) out.emplace(state, clip); // one of its own for the state wins
+    return out;
+}
+
+void take_look(Template& now, const Template& to, const Template& from) {
+    if (to.file_frames() != from.file_frames()) {
+        now.frames = to.file_frames();
+        now.frames_over = 0;
+    }
+    if (std::map<std::string, Clip> animations = to.file_animations(); animations != from.file_animations()) {
+        now.animations = std::move(animations);
+        now.animations_over.clear();
+    }
+}
+
 std::string template_json(const Template& t) {
     std::string s = "{\n";
     s += "  \"id\": " + json_text(t.id) + ",\n";
@@ -393,11 +419,12 @@ std::string template_json(const Template& t) {
     if (!t.genre.empty()) s += "  \"genre\": " + json_text(t.genre) + ",\n";
     if (!t.about.empty()) s += "  \"about\": " + json_text(t.about) + ",\n";
     if (!t.picture.empty()) s += "  \"picture\": " + json_text(t.picture) + ",\n";
-    if (t.frames != 1) s += "  \"frames\": " + std::to_string(t.frames) + ",\n";
-    if (!t.animations.empty()) {
+    // Past the game's frame limit as the file had it: a save of anything else keeps it.
+    if (const u32 frames = t.file_frames(); frames != 1) s += "  \"frames\": " + std::to_string(frames) + ",\n";
+    if (const std::map<std::string, Clip> animations = t.file_animations(); !animations.empty()) {
         s += "  \"animations\": {";
         bool first = true;
-        for (const auto& [state, clip] : t.animations) {
+        for (const auto& [state, clip] : animations) {
             s += (first ? "\n    " : ",\n    ") + json_text(state) + ": {\"frames\": [";
             for (usize i = 0; i < clip.frames.size(); ++i) s += (i ? ", " : "") + std::to_string(clip.frames[i]);
             s += "], \"fps\": " + fps_text(clip.fps);
@@ -427,15 +454,72 @@ u32 template_rev(const Template& t) {
     return (values_rev(t.values) ^ static_cast<u32>(h ^ (h >> 32))) | 1u;
 }
 
+bool read_frame_limit(const fs::path& game_dir, u32& limit, std::string* why) {
+    limit = kDefaultFrameLimit;
+    std::error_code ec;
+    const fs::path file = game_dir / "game.json";
+    if (!fs::exists(file, ec)) return true;
+    std::vector<u8> bytes;
+    if (!read_file(file, bytes)) {
+        if (why) *why = "game.json не читается";
+        return false;
+    }
+    yyjson_doc* doc = yyjson_read(reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0);
+    yyjson_val* root = doc ? yyjson_doc_get_root(doc) : nullptr;
+    if (!yyjson_is_obj(root)) {
+        yyjson_doc_free(doc);
+        if (why) *why = "game.json не читается";
+        return false;
+    }
+    yyjson_val* v = yyjson_obj_get(root, "frame_limit");
+    const bool whole = v && (yyjson_is_uint(v) || yyjson_is_sint(v));
+    const i64 n = whole ? yyjson_get_sint(v) : 0;
+    yyjson_doc_free(doc);
+    if (!v) return true;
+    if (!whole || n < 1 || n > static_cast<i64>(kMaxFrameLimit)) {
+        if (why) *why = "game.json: frame_limit — нужно целое от 1 до " + std::to_string(kMaxFrameLimit);
+        return false;
+    }
+    limit = static_cast<u32>(n);
+    return true;
+}
+
+bool with_frame_limit(std::string_view json, u32 limit, std::string& out) {
+    yyjson_doc* doc = yyjson_read(json.data(), json.size(), 0);
+    if (!doc || !yyjson_is_obj(yyjson_doc_get_root(doc))) {
+        yyjson_doc_free(doc);
+        return false;
+    }
+    yyjson_mut_doc* mut = yyjson_doc_mut_copy(doc, nullptr);
+    yyjson_doc_free(doc);
+    yyjson_mut_val* root = yyjson_mut_doc_get_root(mut);
+    yyjson_mut_val* value = yyjson_mut_uint(mut, limit);
+    if (yyjson_mut_obj_get(root, "frame_limit")) yyjson_mut_obj_replace(root, yyjson_mut_str(mut, "frame_limit"), value);
+    else yyjson_mut_obj_add_val(mut, root, "frame_limit", value);
+    usize len = 0;
+    char* text = yyjson_mut_write(mut, YYJSON_WRITE_PRETTY_TWO_SPACES | YYJSON_WRITE_NEWLINE_AT_END, &len);
+    yyjson_mut_doc_free(mut);
+    if (!text) return false;
+    out.clear();
+    // Lines as the file had them: yyjson writes LF only, and a line break inside a string is written as \n.
+    const bool crlf = json.find("\r\n") != std::string_view::npos;
+    for (usize i = 0; i < len; ++i) {
+        if (crlf && text[i] == '\n') out += '\r';
+        out += text[i];
+    }
+    free(text);
+    return true;
+}
+
 u32 clip_ticks(f32 fps) {
     for (f32 f : kClipFps)
         if (std::fabs(f - fps) < 1e-4f) return static_cast<u32>(std::lround(60.0 / f));
     return 0;
 }
 
-std::string clip_problem(const Clip& clip, u32 frames) {
+std::string clip_problem(const Clip& clip, u32 frames, u32 limit) {
     if (clip.frames.empty()) return "нет кадров";
-    if (clip.frames.size() > kMaxClipFrames) return "кадров больше " + std::to_string(kMaxClipFrames);
+    if (clip.frames.size() > limit) return "кадров больше " + std::to_string(limit) + ", предела игры";
     for (u32 f : clip.frames)
         if (f >= frames) return "кадра " + std::to_string(f + 1) + " нет в картинке из " + std::to_string(frames);
     if (clip_ticks(clip.fps) == 0) return "кадров в секунду " + fps_text(clip.fps) + " нет в списке";
@@ -571,6 +655,7 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
 
 void Library::reload_templates() {
     templates_.clear();
+    read_notes_.clear();
     ++version_;
     std::error_code ec;
     for (fs::directory_iterator it(folder_, ec), end; !ec && it != end; it.increment(ec)) {
@@ -587,6 +672,7 @@ void Library::reload_templates() {
             continue;
         }
         if (!kind(t->kind)) FORGE_WARN("Шаблон %s: нет вида «%s»", name.c_str(), t->kind.c_str());
+        fit(*t);
         // Blocks renamed since the template was written.
         for (std::string& id : t->blocks) {
             if (block(id)) continue;
@@ -599,6 +685,40 @@ void Library::reload_templates() {
         templates_.push_back(std::move(*t));
     }
     sort_templates();
+    note_limits();
+}
+
+// The game's frame limit: a picture of more frames is one picture, as any wrong number of frames reads, but said; an
+// animation longer than the limit does not play (the state is drawn by the game's rule). Both are set aside, not lost:
+// a save of the template writes them back as the file had them. Each from what the file has, so a template put back
+// after the limit changed is what reading its file gives: a higher limit reads them again.
+void Library::fit(Template& t) const {
+    const std::string name = path_to_utf8(t.file.filename());
+    const u32 frames = t.file_frames();
+    if (frames > frame_limit_) {
+        const bool said = t.frames <= frame_limit_; // set aside already
+        t.frames = 1;
+        t.frames_over = frames;
+        if (!said) FORGE_WARN("%s (frame_limit в game.json)", over_note(t, frame_limit_).c_str());
+    } else {
+        t.frames = frames;
+        t.frames_over = 0;
+    }
+    for (const auto& [state, clip] : t.animations)
+        if (clip.frames.size() > frame_limit_)
+            FORGE_WARN("%s: анимация «%s» не читается (кадров %zu больше предела игры %u, frame_limit в game.json), это состояние "
+                       "рисуется по правилу игры",
+                       name.c_str(), state.c_str(), clip.frames.size(), frame_limit_);
+    std::map<std::string, Clip> all = t.file_animations();
+    t.animations.clear();
+    t.animations_over.clear();
+    for (auto& [state, clip] : all) (clip.frames.size() <= frame_limit_ ? t.animations : t.animations_over).emplace(state, std::move(clip));
+}
+
+void Library::note_limits() {
+    read_notes_.clear();
+    for (const Template& t : templates_)
+        if (t.frames_over) read_notes_.push_back(over_note(t, frame_limit_));
 }
 
 void Library::picture_changed(std::string_view name) {
@@ -717,7 +837,27 @@ std::optional<Template> Library::copy_from(const Library& from, const Template& 
         if (error) *error = "в этой игре нет вида «" + t.kind + "»";
         return std::nullopt;
     }
+    // As its file has them: what another game set aside past its own limit counts too.
+    const u32 frames = t.file_frames();
+    const std::map<std::string, Clip> animations = t.file_animations();
+    if (frames > frame_limit_) {
+        if (error)
+            *error = "кадров в картинке " + std::to_string(frames) + ", а предел этой игры " + std::to_string(frame_limit_) +
+                     " (поле «Предел кадров» в «Пиксельных»)";
+        return std::nullopt;
+    }
+    for (const auto& [state, clip] : animations)
+        if (clip.frames.size() > frame_limit_) {
+            if (error)
+                *error = "кадров в анимации «" + state + "» " + std::to_string(clip.frames.size()) + ", а предел этой игры " +
+                         std::to_string(frame_limit_) + " (поле «Предел кадров» в «Пиксельных»)";
+            return std::nullopt;
+        }
     Template out = t;
+    out.frames = frames;
+    out.animations = animations;
+    out.frames_over = 0;
+    out.animations_over.clear();
     out.key = fnv1a(out.id);
     const Template* here = find(out.key);
     if (here) {
@@ -760,8 +900,8 @@ std::optional<Template> Library::copy_from(const Library& from, const Template& 
 bool Library::same_as(const Library& from, const Template& t) const {
     const Template* here = find(fnv1a(t.id));
     if (!here || here->name != t.name || here->about != t.about || here->genre != t.genre || here->kind != t.kind ||
-        here->rev != t.rev || here->picture.empty() != t.picture.empty() || here->frames != t.frames ||
-        here->animations != t.animations)
+        here->rev != t.rev || here->picture.empty() != t.picture.empty() || here->file_frames() != t.file_frames() ||
+        here->file_animations() != t.file_animations())
         return false;
     if (!t.picture.empty() && !same_file(picture_file(*here), from.picture_file(t))) return false;
     for (const PropDef* prop : from.props_of(t)) {
@@ -785,6 +925,7 @@ bool Library::put(Template t, std::string* error) {
     auto stamp = picture_stamps_.find(t.picture);
     t.picture_stamp = stamp == picture_stamps_.end() ? 0 : stamp->second;
     if (t.file.empty()) t.file = folder_ / utf8_path(file_stem(t.name) + std::string(kExtension));
+    fit(t);
     if (!write(t, error)) return false;
     auto it = std::find_if(templates_.begin(), templates_.end(), [&](const Template& o) { return o.key == t.key; });
     if (it != templates_.end()) {
@@ -797,6 +938,7 @@ bool Library::put(Template t, std::string* error) {
         templates_.push_back(std::move(t));
     }
     sort_templates();
+    note_limits();
     ++version_;
     return true;
 }
@@ -807,6 +949,7 @@ bool Library::remove(u64 key) {
     std::error_code ec;
     fs::remove(it->file, ec);
     templates_.erase(it);
+    note_limits();
     ++version_;
     return true;
 }

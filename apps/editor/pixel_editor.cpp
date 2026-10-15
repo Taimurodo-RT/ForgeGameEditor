@@ -24,7 +24,8 @@ namespace fs = std::filesystem;
 
 namespace forge::editor_app {
 
-static_assert(pixel::kMaxStripFrames == objects::kMaxFrames, "a baked strip is a picture of the game");
+static_assert(pixel::kMaxStripWidth == objects::kMaxStripWidth && pixel::kMaxStripFrames == objects::kMaxFrameLimit,
+              "a baked strip is a picture of the game");
 
 namespace {
 
@@ -64,6 +65,44 @@ private:
     std::string label_;
 };
 
+// game.json with another "frame_limit", written at once (Ctrl+Z writes the file back byte for byte), and the library
+// reading its templates by it. game.json that cannot be written (read-only, held by another program) changes nothing:
+// the file, the limit, the templates and the fields stay as they are, the step is not done (failed: the history stays
+// where it was), and the reason is said under the fields and in the log.
+class LimitCommand final : public editor::Command {
+public:
+    struct Side {
+        std::vector<u8> bytes;
+        u32 limit = objects::kDefaultFrameLimit;
+    };
+    LimitCommand(PixelEditor& editor, objects::Library& lib, fs::path file, Side before, Side after, std::string label)
+        : editor_(editor), lib_(lib), file_(std::move(file)), before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
+    void apply(editor::Document&) override { put(after_); }
+    void revert(editor::Document&) override { put(before_); }
+    std::string label() const override { return label_; }
+    bool failed() const override { return failed_; }
+
+private:
+    void put(const Side& to) {
+        failed_ = !write_file_atomic(file_, to.bytes);
+        if (failed_) {
+            const std::string why = "game.json не записывается: предел кадров остался " + std::to_string(lib_.frame_limit());
+            FORGE_ERROR("Пиксельные: %s (%s)", why.c_str(), path_to_utf8(file_).c_str());
+            editor_.refused(why);
+            return;
+        }
+        lib_.set_frame_limit(to.limit);
+        lib_.reload_templates();
+        editor_.reload();
+    }
+    PixelEditor& editor_;
+    objects::Library& lib_;
+    fs::path file_;
+    Side before_, after_;
+    std::string label_;
+    bool failed_ = false;
+};
+
 // A template's picture, frames and animations as they were, onto the template as it is now.
 class GiveCommand final : public editor::Command {
 public:
@@ -71,6 +110,9 @@ public:
         std::string picture;
         u32 frames = 1;
         std::map<std::string, objects::Clip> animations;
+        // What the file had past the game's frame limit (objects::Template): a picture given replaces it, undo brings it back.
+        u32 frames_over = 0;
+        std::map<std::string, objects::Clip> animations_over;
     };
     GiveCommand(objects::Library& lib, u64 key, Look before, Look after, std::string label)
         : lib_(lib), key_(key), before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
@@ -86,6 +128,8 @@ private:
         t.picture = to.picture;
         t.frames = to.frames;
         t.animations = to.animations;
+        t.frames_over = to.frames_over;
+        t.animations_over = to.animations_over;
         std::string error;
         if (!lib_.put(std::move(t), &error)) FORGE_ERROR("Шаблон «%s»: %s", now->name.c_str(), error.c_str());
     }
@@ -320,6 +364,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("px_picture", &m_picture_);
     model.Bind("px_size", &m_size_);
     model.Bind("px_total", &m_total_);
+    model.Bind("px_limit", &m_limit_);
     model.Bind("px_clip_frames", &m_clip_frames_);
     model.Bind("px_has", &m_has_);
     model.Bind("px_has_clip", &m_has_clip_);
@@ -383,6 +428,19 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     });
     on("px_seed_commit", [seed, field](Rml::Event& ev, const Rml::VariantList&) {
         if (auto text = field(ev)) seed(*text);
+    });
+    auto limit = [this](const std::string& text) {
+        if (text == m_limit_) return; // the field left as it shows
+        char* end = nullptr;
+        const unsigned long long v = std::strtoull(text.c_str(), &end, 10);
+        const bool whole = !text.empty() && text[0] != '-' && end && *end == '\0';
+        set_frame_limit(whole ? static_cast<u32>(std::min<unsigned long long>(v, objects::kMaxFrameLimit + 1ull)) : 0);
+    };
+    on("px_limit", [limit, arg_str, arg_enter](Rml::Event&, const Rml::VariantList& a) {
+        if (arg_enter(a, 1)) limit(arg_str(a, 0));
+    });
+    on("px_limit_commit", [limit, field](Rml::Event& ev, const Rml::VariantList&) {
+        if (auto text = field(ev)) limit(*text);
     });
     on("px_state", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         const std::string id = arg_str(a, 0);
@@ -862,6 +920,59 @@ bool PixelEditor::set_param(const std::string& name_, f64 value) {
     return change(after, "«" + name() + "»: " + name_ + " = " + number_words(value));
 }
 
+u32 PixelEditor::frame_limit() const {
+    const objects::Library* lib = module_.library();
+    return lib ? lib->frame_limit() : objects::kDefaultFrameLimit;
+}
+
+bool PixelEditor::set_frame_limit(u32 n) {
+    objects::Library* lib = module_.library();
+    auto refuse = [&](std::string why) {
+        note_ = std::move(why);
+        rebuild(); // the field shows the limit again
+        return false;
+    };
+    if (!lib) return false;
+    if (n < 1 || n > objects::kMaxFrameLimit) return refuse("Предел кадров — целое от 1 до " + std::to_string(objects::kMaxFrameLimit));
+    const u32 was = lib->frame_limit();
+    if (n == was) return refuse("");
+    // Not below what the game takes already: who takes the most.
+    u32 most = 0;
+    std::string whose;
+    auto take = [&](u32 frames, std::string who) {
+        if (frames <= most) return;
+        most = frames;
+        whose = std::move(who);
+    };
+    for (const objects::Template& t : lib->templates()) {
+        take(t.frames, "у «" + t.name + "»");
+        for (const auto& [state, clip] : t.animations)
+            take(static_cast<u32>(clip.frames.size()), "у «" + t.name + "» в «" + state_name(state) + "»");
+    }
+    if (has_) {
+        u32 total = 0;
+        for (const pixel::ClipSpec& c : doc_.clips) total += c.frames;
+        take(total, "у «" + name() + "» в клипах");
+    }
+    if (n < most) return refuse(whose + " " + count_words(most, "кадр", "кадра", "кадров") + ": предел не ниже " + std::to_string(most));
+    const fs::path file = game_dir / "game.json";
+    const std::optional<std::vector<u8>> before = game_dir.empty() ? std::nullopt : bytes_of(file);
+    std::string after;
+    if (!before || !objects::with_frame_limit({reinterpret_cast<const char*>(before->data()), before->size()}, n, after))
+        return refuse("game.json игры не читается: предел кадров не записан");
+    note_.clear();
+    if (!history_.execute(std::make_unique<LimitCommand>(*this, *lib, file, LimitCommand::Side{*before, was},
+                                                         LimitCommand::Side{text_bytes(after), n}, "Предел кадров " + std::to_string(n))))
+        return false; // said by the step itself
+    history_.seal();
+    return true;
+}
+
+void PixelEditor::refused(std::string why) {
+    note_ = std::move(why);
+    rebuild(); // the fields show things as they are
+}
+
 bool PixelEditor::set_seed(u64 seed) {
     pixel::PixelDoc after = doc_;
     after.seed = seed;
@@ -891,13 +1002,14 @@ bool PixelEditor::add_clip(const std::string& state) {
     if (std::any_of(doc_.clips.begin(), doc_.clips.end(), [&](const auto& c) { return c.state == state; })) return select_clip(state);
     u32 total = 0;
     for (const pixel::ClipSpec& c : doc_.clips) total += c.frames;
-    if (total >= pixel::kMaxStripFrames) {
-        note_ = "В клипах уже " + std::to_string(total) + " кадра: больше в картинку игры не войдёт";
+    const u32 limit = frame_limit();
+    if (total >= limit) {
+        note_ = "В клипах уже " + count_words(total, "кадр", "кадра", "кадров") + ": это предел игры («Предел кадров» ниже)";
         rebuild();
         return false;
     }
     pixel::PixelDoc after = doc_;
-    after.clips.push_back({state, std::min(kNewClipFrames, pixel::kMaxStripFrames - total), kNewClipFps, true});
+    after.clips.push_back({state, std::min(kNewClipFrames, limit - total), kNewClipFps, true});
     clip_ = state;
     time_ = 0;
     frame_ = 0;
@@ -920,14 +1032,13 @@ bool PixelEditor::set_clip_frames(int n) {
     u32 others = 0;
     for (const pixel::ClipSpec& x : doc_.clips)
         if (x.state != c->state) others += x.frames;
-    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(pixel::kMaxStripFrames - std::min(others, pixel::kMaxStripFrames - 1))));
-    if (frames == c->frames) {
-        if (n > static_cast<int>(frames)) {
-            note_ = "Во всех клипах вместе не больше " + std::to_string(pixel::kMaxStripFrames) + " кадров: столько берёт картинка игры";
-            rebuild();
-        }
-        return false;
+    const u32 limit = frame_limit();
+    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit - std::min(others, limit - 1))));
+    if (n > static_cast<int>(frames)) {
+        note_ = "Во всех клипах вместе не больше " + count_words(limit, "кадра", "кадров", "кадров") + ": это предел игры («Предел кадров» ниже)";
+        rebuild();
     }
+    if (frames == c->frames) return false;
     pixel::PixelDoc after = doc_;
     for (pixel::ClipSpec& x : after.clips)
         if (x.state == c->state) x.frames = frames;
@@ -1046,7 +1157,7 @@ bool PixelEditor::bake(bool over_edits) {
     const std::vector<pixel::Rgba8> colors = doc_.game_palette && game_colors ? game_colors() : std::vector<pixel::Rgba8>{};
     pixel::Strip strip;
     std::string why;
-    if (!pixel::bake_strip(rig_, script_, doc_, pixel::bake_options(doc_, colors), strip, why)) {
+    if (!pixel::bake_strip(rig_, script_, doc_, pixel::bake_options(doc_, colors), frame_limit(), strip, why)) {
         view_dirty_ = true; // the rig is at rest now
         return refuse("Не запеклось: " + why);
     }
@@ -1123,16 +1234,20 @@ bool PixelEditor::give(u64 key) {
     const std::string pic = picture();
     if (pic.empty() || doc_.strip.empty()) return refuse("Сначала «Запечь»: картинки персонажа ещё нет");
     if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: отдайте через миг");
-    const std::string copied = copy_into(assets_.abs(pic), lib->pictures_folder(), "картинка", copy_in);
-    if (copied.empty()) return refuse("Картинка «" + pic + "» не скопировалась в игру");
     u32 frames = 0;
     for (const pixel::StripClip& c : doc_.strip) frames = std::max(frames, c.first + c.frames);
+    // Baked under a higher limit: the game would read it as one picture.
+    if (frames > lib->frame_limit())
+        return refuse("В «" + path_to_utf8(utf8_path(pic).filename()) + "» " + count_words(frames, "кадр", "кадра", "кадров") +
+                      ", а предел игры " + std::to_string(lib->frame_limit()) + ": поднимите «Предел кадров» или уберите кадры у клипов и запеките снова");
+    const std::string copied = copy_into(assets_.abs(pic), lib->pictures_folder(), "картинка", copy_in);
+    if (copied.empty()) return refuse("Картинка «" + pic + "» не скопировалась в игру");
     // The states the template plays, as it will be drawn.
     objects::Template probe = *t;
     probe.picture = copied;
     probe.frames = frames;
     const std::vector<level::LevelModule::AnimState> plays = module_.anim_states(*lib, probe);
-    GiveCommand::Look before{t->picture, t->frames, t->animations}, after{copied, frames, {}};
+    GiveCommand::Look before{t->picture, t->frames, t->animations, t->frames_over, t->animations_over}, after{copied, frames, {}, 0, {}};
     std::string given, left;
     for (const pixel::StripClip& c : doc_.strip) {
         const auto st = std::find_if(plays.begin(), plays.end(), [&](const auto& s) { return s.id == c.state; });
@@ -1140,7 +1255,7 @@ bool PixelEditor::give(u64 key) {
         for (u32 f = 0; f < c.frames; ++f) clip.frames.push_back(c.first + f);
         clip.fps = c.fps;
         clip.loop = c.loop;
-        const std::string why = st == plays.end() ? std::string("его шаблон не играет") : objects::clip_problem(clip, frames);
+        const std::string why = st == plays.end() ? std::string("его шаблон не играет") : objects::clip_problem(clip, frames, lib->frame_limit());
         if (!why.empty()) {
             left += (left.empty() ? "" : ", ") + ("«" + state_name(c.state) + "» (" + why + ")");
             continue;
@@ -1148,7 +1263,8 @@ bool PixelEditor::give(u64 key) {
         after.animations[c.state] = std::move(clip);
         given += (given.empty() ? "" : ", ") + ("«" + st->name + "»");
     }
-    if (after.picture == before.picture && after.frames == before.frames && after.animations == before.animations) {
+    if (after.picture == before.picture && after.frames == before.frames && after.animations == before.animations &&
+        before.frames_over == 0 && before.animations_over.empty()) {
         note_ = "«" + t->name + "» уже рисует эту картинку так";
         giving_ = false;
         rebuild();
@@ -1377,7 +1493,8 @@ void PixelEditor::rebuild() {
     if (c)
         for (u32 k = 0; k < c->frames; ++k) m_frames_.push_back({static_cast<int>(k), k == frame_});
     m_frame_label_ = c ? "кадр " + std::to_string(frame_ + 1) + " из " + std::to_string(c->frames) : std::string("клипа нет: поза покоя");
-    m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(pixel::kMaxStripFrames);
+    m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(frame_limit());
+    m_limit_ = std::to_string(frame_limit());
     m_fw_ = std::to_string(doc_.frame_w);
     m_fh_ = std::to_string(doc_.frame_h);
     m_size_ = std::to_string(doc_.frame_w) + " × " + std::to_string(doc_.frame_h);
@@ -1417,7 +1534,7 @@ void PixelEditor::rebuild() {
     m_playing_ = playing_;
     m_onion_ = onion_;
     for (const char* var : {"px_list", "px_parts", "px_params", "px_states", "px_frames", "px_fps", "px_templates", "px_name", "px_note", "px_frame_label", "px_clip_name", "px_seed", "px_fw", "px_fh", "px_outline_color", "px_picture", "px_size",
-                            "px_total", "px_clip_frames", "px_has", "px_has_clip", "px_playing", "px_onion", "px_game_palette", "px_outline",
+                            "px_total", "px_limit", "px_clip_frames", "px_has", "px_has_clip", "px_playing", "px_onion", "px_game_palette", "px_outline",
                             "px_clip_loop", "px_giving", "px_can_give"})
         dirty(var);
 }

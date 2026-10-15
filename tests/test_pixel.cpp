@@ -26,6 +26,9 @@ using namespace forge::pixel;
 
 namespace {
 
+// A game without a frame limit of its own (objects::kDefaultFrameLimit).
+constexpr u32 kLimit = 64;
+
 // A character: a body with a torso, an arm inside a scaled group and a head with a stroke; a mouth beside it and the
 // open mouth hidden.
 const char* kHero = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
@@ -786,18 +789,18 @@ TEST_CASE("Pixel doc: .pixel.json read, written and read back") {
         {"{\"seed\": -1}", "seed: нужно целое число от 0"},
         {"{\"params\": {\"a\": \"b\"}}", "params.a: нужно число"},
         {"{\"pivots\": {\"leg\": [1]}}", "pivots.leg: нужна точка [x, y]"},
-        {"{\"clips\": {\"walk\": {\"frames\": 0}}}", "clips.walk.frames: нужно целое от 1 до 32"},
-        {"{\"clips\": {\"walk\": {\"frames\": 33}}}", "clips.walk.frames: нужно целое от 1 до 32"},
+        {"{\"clips\": {\"walk\": {\"frames\": 0}}}", "clips.walk.frames: нужно целое от 1 до 16384"},
+        {"{\"clips\": {\"walk\": {\"frames\": 16385}}}", "clips.walk.frames: нужно целое от 1 до 16384"},
         {"{\"clips\": {\"walk\": {\"fps\": 0}}}", "clips.walk.fps: нужно число больше 0 и не больше 60"},
         {"{\"clips\": {\"walk\": {\"loop\": 1}}}", "clips.walk.loop: нужно true или false"},
         {"{\"waits\": {\"jump\": {\"отрыв\": -1}}}", "waits.jump.отрыв: нужно число секунд не меньше 0"},
         {"{\"durations\": {\"spin\": 0.6}}", "durations: нужен объект {\"клип\": {\"имя\": секунды}}"},
         {"{\"bake\": {\"palette\": \"gold\"}}", "bake.palette: \"svg\" (цвета рисунка) или \"game\" (цвета игры)"},
         {"{\"bake\": {\"outline\": \"thick\"}}", "bake.outline: null или цвет \"#rrggbb\""},
-        {"{\"bake\": {\"strip\": {\"walk\": {\"first\": 30, \"frames\": 4, \"fps\": 10, \"loop\": true}}}}",
-         "bake.strip.walk: нужно {\"first\": 0, \"frames\": 4, \"fps\": 10, \"loop\": true} в пределах 32 кадров"},
+        {"{\"bake\": {\"strip\": {\"walk\": {\"first\": 16382, \"frames\": 4, \"fps\": 10, \"loop\": true}}}}",
+         "bake.strip.walk: нужно {\"first\": 0, \"frames\": 4, \"fps\": 10, \"loop\": true} в пределах 16384 кадров"},
         {"{\"bake\": {\"strip\": {\"walk\": {\"first\": 0, \"frames\": 4, \"fps\": 10}}}}",
-         "bake.strip.walk: нужно {\"first\": 0, \"frames\": 4, \"fps\": 10, \"loop\": true} в пределах 32 кадров"},
+         "bake.strip.walk: нужно {\"first\": 0, \"frames\": 4, \"fps\": 10, \"loop\": true} в пределах 16384 кадров"},
     };
     for (const auto& [text_bad, expected] : bad) {
         PixelDoc x;
@@ -828,7 +831,7 @@ TEST_CASE("Pixel bake: the clips' frames side by side, frame k at t = k / fps") 
 
     Strip strip;
     std::string why;
-    REQUIRE(bake_strip(rig, s, doc, {}, strip, why));
+    REQUIRE(bake_strip(rig, s, doc, {}, kLimit, strip, why));
     CHECK(strip.frames == 5);
     CHECK(strip.picture.width == 24 * 5);
     CHECK(strip.picture.height == 20);
@@ -866,23 +869,42 @@ TEST_CASE("Pixel bake: the clips' frames side by side, frame k at t = k / fps") 
     // The game's colours when the file says so.
     doc.game_palette = true;
     const BakeOptions game = bake_options(doc, {{255, 255, 255, 255}, {0, 0, 0, 255}});
-    REQUIRE(bake_strip(rig, s, doc, game, strip, why));
+    REQUIRE(bake_strip(rig, s, doc, game, kLimit, strip, why));
     for (u32 c : colours(strip.picture)) CHECK((c == 0xffffff || c == 0));
 
     // A frame that fails names its clip and frame; nothing is baked.
     PoseScript broken = script_of("return { pose = function(t, p, rng, clip)\n if t > 0.1 then part('nope'):set{} end\nend }");
-    CHECK_FALSE(bake_strip(rig, broken, doc, {}, strip, why));
+    CHECK_FALSE(bake_strip(rig, broken, doc, {}, kLimit, strip, why));
     CHECK(why == "клип «stand», кадр 2: строка 2: в SVG нет части «nope»");
     CHECK(strip.picture.rgba8.empty());
-    // As many frames as a picture of the game may have, and not one more.
-    doc.clips = {{"stand", 20, 10, true}, {"walk", 12, 10, true}};
-    CHECK(bake_strip(rig, s, doc, {}, strip, why));
-    CHECK(strip.frames == 32);
-    doc.clips[1].frames = 13;
-    CHECK_FALSE(bake_strip(rig, s, doc, {}, strip, why));
-    CHECK(why == "в клипах 33 кадра, в картинке игры их не больше 32: уберите кадры у клипов");
+    // As many frames as the game's limit, and not one more: 64 without its own, or the game's.
+    doc.clips = {{"stand", 40, 10, true}, {"walk", 24, 10, true}};
+    CHECK(bake_strip(rig, s, doc, {}, kLimit, strip, why));
+    CHECK(strip.frames == 64);
+    doc.clips[1].frames = 25;
+    CHECK_FALSE(bake_strip(rig, s, doc, {}, kLimit, strip, why));
+    CHECK(why == "в клипах 65 кадров, а предел игры 64: уберите кадры у клипов или поднимите «Предел кадров»");
     CHECK(strip.picture.rgba8.empty());
+    CHECK(bake_strip(rig, s, doc, {}, 65, strip, why));
+    CHECK(strip.frames == 65);
+    doc.clips = {{"stand", 2, 10, true}, {"walk", 1, 10, true}};
+    CHECK_FALSE(bake_strip(rig, s, doc, {}, 2, strip, why));
+    CHECK(why == "в клипах 3 кадра, а предел игры 2: уберите кадры у клипов или поднимите «Предел кадров»");
+    // As wide as a texture may be on any video card, and not a pixel wider: 64 frames of 256 fill it exactly.
+    const u32 fw = doc.frame_w, fh = doc.frame_h;
+    doc.frame_w = kMaxFrameSide;
+    doc.frame_h = 4;
+    doc.clips = {{"stand", 64, 10, true}};
+    REQUIRE(bake_strip(rig, s, doc, {}, kLimit, strip, why));
+    CHECK(strip.picture.width == kMaxStripWidth);
+    CHECK(strip.picture.width == 16384);
+    doc.clips[0].frames = 65;
+    CHECK_FALSE(bake_strip(rig, s, doc, {}, 65, strip, why));
+    CHECK(why == "полоса 16640 точек шире 16384: столько видеокарта не возьмёт, уменьшите кадр или число кадров");
+    CHECK(strip.picture.rgba8.empty());
+    doc.frame_w = fw;
+    doc.frame_h = fh;
     doc.clips.clear();
-    CHECK_FALSE(bake_strip(rig, s, doc, {}, strip, why));
+    CHECK_FALSE(bake_strip(rig, s, doc, {}, kLimit, strip, why));
     CHECK(why == "нет ни одного клипа с кадрами");
 }
