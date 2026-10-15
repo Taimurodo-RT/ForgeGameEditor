@@ -302,7 +302,9 @@ objects::Clip AnimationEditor::clip() const {
     const auto st = std::find_if(states_.begin(), states_.end(), [&](const auto& s) { return s.id == state_; });
     if (!t || st == states_.end()) return {{0}, 10, true};
     const auto it = t->animations.find(state_);
-    if (it != t->animations.end() && objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames).empty()) return it->second;
+    if (it != t->animations.end() &&
+        objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames, module_.library()->frame_limit()).empty())
+        return it->second;
     return st->rule;
 }
 
@@ -315,7 +317,8 @@ std::string AnimationEditor::problem() const {
     const objects::Template* t = selected();
     if (!t) return {};
     const auto it = t->animations.find(state_);
-    return it == t->animations.end() ? std::string() : objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames);
+    return it == t->animations.end() ? std::string()
+                                     : objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames, module_.library()->frame_limit());
 }
 
 bool AnimationEditor::change_state(std::optional<objects::Clip> to, std::string label) {
@@ -338,8 +341,8 @@ bool AnimationEditor::add_frame(u32 frame) {
     if (!t || frame >= std::max(1u, cut_frames_)) return false;
     objects::Clip c = own() ? t->animations.at(state_) : clip();
     if (!own()) c.frames.clear(); // a new animation of its own begins with the frame clicked
-    if (c.frames.size() >= objects::kMaxClipFrames) {
-        FORGE_WARN("Анимация: кадров в ней не больше %u", objects::kMaxClipFrames);
+    if (const u32 limit = library().frame_limit(); c.frames.size() >= limit) {
+        FORGE_WARN("Анимация: кадров в ней не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)", limit);
         return false;
     }
     c.frames.push_back(frame);
@@ -380,7 +383,11 @@ bool AnimationEditor::reset_state() {
 bool AnimationEditor::set_frames(int n) {
     const objects::Template* t = selected();
     if (!t) return false;
-    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(objects::kMaxFrames)));
+    const u32 limit = library().frame_limit();
+    if (n > static_cast<int>(limit))
+        FORGE_WARN("«%s»: кадров в картинке не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)",
+                   t->name.c_str(), limit);
+    const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit)));
     if (frames == t->frames) return false;
     AnimCommand::Look before{t->frames, t->animations}, after = before;
     after.frames = frames;
@@ -498,7 +505,8 @@ void AnimationEditor::rebuild() {
     for (const auto& st : states_) {
         const auto it = t->animations.find(st.id);
         const bool mine = it != t->animations.end();
-        const std::string why = mine ? objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames) : std::string();
+        const std::string why =
+            mine ? objects::clip_problem(it->second, cut_frames_ ? cut_frames_ : t->frames, lib.frame_limit()) : std::string();
         const objects::Clip& c = mine && why.empty() ? it->second : st.rule;
         m_states_.push_back({st.id, st.name, frames_words(mine ? it->second : st.rule), fps_words(c.fps) + " к/с", why, mine, c.loop, st.id == state_});
         if (st.id == state_) m_state_name_ = st.name;

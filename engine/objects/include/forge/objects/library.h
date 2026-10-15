@@ -138,9 +138,21 @@ struct KindDef {
     const PropDef* prop(std::string_view prop_id) const;
 };
 
-// The most frames a template's picture may be cut into: room for a character's clips side by side (four standing and
-// eight walking, more), as «Пиксельные» bakes them (docs/models/вектор-модель.md, step 2).
-inline constexpr u32 kMaxFrames = 32;
+// The game's frame limit: the most frames a template's picture may be cut into, an animation may show in a row, and
+// «Пиксельные» may bake of all clips together. One number of the game, "frame_limit" in its game.json, this one
+// without it (docs/models/движение-модель.md, «Предел кадров»).
+inline constexpr u32 kDefaultFrameLimit = 64;
+// The widest strip, in pixels: the side of a texture SDL GPU promises on any video card (MAX_2D_DIMENSION in
+// SDL_gpu.c). 64 frames of 256, the largest frame «Пиксельные» bakes, are exactly that wide.
+inline constexpr u32 kMaxStripWidth = 16384;
+// The highest limit a game may set: that many frames of one pixel make the widest strip.
+inline constexpr u32 kMaxFrameLimit = kMaxStripWidth;
+// The game's limit from game_dir/game.json: kDefaultFrameLimit without the field (or without the file). False, with
+// why in words, when game.json does not read or the field is not a whole number of 1..kMaxFrameLimit.
+bool read_frame_limit(const std::filesystem::path& game_dir, u32& limit, std::string* why = nullptr);
+// game.json's text with "frame_limit" set to limit (a new field goes last), the other fields as they were and in their
+// order, laid out as the editor writes game.json. False when the text is not a JSON object.
+bool with_frame_limit(std::string_view json, u32 limit, std::string& out);
 
 // An animation of a template's picture in one state the game's module names ("walk"): which frames of its strip show
 // one after another, how many a second, and whether it starts over (else it stays on its last frame). A template
@@ -152,16 +164,14 @@ struct Clip {
 
     bool operator==(const Clip&) const = default;
 };
-// The most frames one animation shows in a row.
-inline constexpr u32 kMaxClipFrames = 32;
 // The frames a second an animation may have: each divides the game's 60 ticks a second, so a frame shows a whole
 // number of ticks and an animation keeps time exactly.
 inline constexpr f32 kClipFps[] = {2, 3, 4, 5, 6, 7.5f, 10, 12, 15, 20, 30};
 // The ticks (60 a second) one frame shows; 0 when fps is none of kClipFps.
 u32 clip_ticks(f32 fps);
-// Why the animation cannot play on a picture of `frames` frames: no frames, too many, a frame past the strip, fps not
-// of the list. Empty: it can.
-std::string clip_problem(const Clip& clip, u32 frames);
+// Why the animation cannot play on a picture of `frames` frames in a game of that frame limit: no frames, more than the
+// limit, a frame past the strip, fps not of the list. Empty: it can.
+std::string clip_problem(const Clip& clip, u32 frames, u32 limit);
 // The frame of the strip it shows `ticks` ticks after its state began (of one that can play).
 u32 clip_frame(const Clip& clip, u64 ticks);
 
@@ -180,7 +190,8 @@ struct Template {
     // Its own picture: a file name in the library's pictures folder
     // ("coin.png"); empty: the game draws its usual one.
     std::string picture;
-    // How many frames the picture is: a strip of that many equal frames side by side (1..kMaxFrames; 1: the picture as it is).
+    // How many frames the picture is: a strip of that many equal frames side by side (1..the game's frame limit; 1: the
+    // picture as it is).
     // Which one shows is the game's: the hero's four (stands, step, step, in the air), a walker's two.
     u32 frames = 1;
     // Its own animations of the picture, by the state of the module's they play in ("stand", "walk"). States the
@@ -214,6 +225,15 @@ public:
     ~Library();
     Library(const Library&) = delete;
     Library& operator=(const Library&) = delete;
+
+    // The game's frame limit (read_frame_limit): set before load. A template whose picture has more frames than it reads
+    // as one picture, and an animation longer than it does not read, each said in the log (and the first in
+    // read_notes). kDefaultFrameLimit unless set.
+    u32 frame_limit() const { return frame_limit_; }
+    void set_frame_limit(u32 limit) { frame_limit_ = limit; }
+    // What reading the templates said beyond a file that does not read: «шаблон «Ёжик» (ezhik.object.json): кадров 80
+    // больше предела игры 64, читается одной картинкой».
+    const std::vector<std::string>& read_notes() const { return read_notes_; }
 
     // Reads the kinds and every template in the folder (which may be
     // missing: no templates yet). False when the kinds cannot be read.
@@ -292,8 +312,9 @@ public:
     // A template of another library as it would be here: the same id (so
     // the same object), its file here (the one it already has, else a new
     // one), its picture and sounds copied into this library's folders. Not
-    // stored: give it to put(). Empty when this library has no such kind
-    // or the picture cannot be copied.
+    // stored: give it to put(). Empty when this library has no such kind,
+    // its picture has more frames than this game's limit, or the picture
+    // cannot be copied.
     std::optional<Template> copy_from(const Library& from, const Template& t, std::string* error = nullptr) const;
     // This library's template with t's id, when it is the same as t (name,
     // note, genre, kind, blocks, values, picture and sounds).
@@ -344,10 +365,13 @@ private:
     u64 version_ = 1;
     std::unordered_map<std::string, u32> picture_stamps_; // by picture name: how many times it changed
     u32 stamps_ = 0;
+    u32 frame_limit_ = kDefaultFrameLimit;
+    std::vector<std::string> read_notes_;
     AdoptFn adopt_;
 };
 
-// Parses and writes template files (exposed for tests and tools).
+// Parses and writes template files (exposed for tests and tools). Reading knows no game: frames of 1..kMaxFrameLimit
+// read as written (what is not reads as one), the game's limit is the library's.
 std::optional<Template> read_template(const std::filesystem::path& file, std::string* error = nullptr);
 std::string template_json(const Template& t);
 u32 values_rev(const std::vector<std::pair<std::string, std::string>>& values);

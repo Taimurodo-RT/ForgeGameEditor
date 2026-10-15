@@ -59,6 +59,7 @@ public:
     std::function<std::vector<pixel::Rgba8>()> game_colors;          // «Цвета игры»
     std::function<std::string(const objects::Template&)> template_icon;
     std::function<std::string(const Guid&)> game_copy;               // the game's picture copied from that asset, or ""
+    std::filesystem::path game_dir;                                  // its game.json holds «Предел кадров»
 
     // --- the characters (buttons, keys, the self-test) ---
     // The «.pixel.json» of the project, by path in «Ресурсы».
@@ -130,6 +131,11 @@ public:
     bool set_game_palette(bool on);
     bool set_outline(bool on);
     bool set_outline_color(const std::string& text);
+    // «Предел кадров» of the game ("frame_limit" of game.json, docs/models/движение-модель.md): one step that writes
+    // only that field of game.json and has the library read its templates by it. Refused, note() saying why, outside
+    // 1..16384 or below what the game's templates, their animations or the open character's clips already take.
+    u32 frame_limit() const;
+    bool set_frame_limit(u32 n);
     // «Запечь» (one step). A picture changed since it was baked is baked over only with over_edits: without, false and
     // edited() is true.
     bool bake(bool over_edits = false);
@@ -259,7 +265,7 @@ private:
     std::vector<FpsChip> m_fps_;
     std::vector<TemplateRow> m_templates_;
     Rml::String m_name_, m_vector_, m_pixel_, m_one_, m_problem_, m_note_, m_frame_label_, m_clip_name_, m_seed_, m_fw_, m_fh_,
-        m_outline_color_, m_picture_, m_size_, m_total_;
+        m_outline_color_, m_picture_, m_size_, m_total_, m_limit_;
     int m_clip_frames_ = 0;
     bool m_has_ = false, m_has_clip_ = false, m_playing_ = true, m_onion_ = false, m_game_palette_ = false, m_outline_ = false,
          m_clip_loop_ = true, m_edited_ = false, m_giving_ = false, m_can_give_ = false;

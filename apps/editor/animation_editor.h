@@ -82,7 +82,7 @@ public:
     bool set_fps(f32 fps);
     bool set_loop(bool on);
     bool reset_state();
-    // «Кадров в картинке» of the selected template (1..kMaxFrames).
+    // «Кадров в картинке» of the selected template (1..the game's frame limit; past it, said in the log).
     bool set_frames(int n);
     // The preview: playing or not, a frame back or forward (it stops), the ticks of its clock (60 a second) and the
     // frame of the strip it shows now.

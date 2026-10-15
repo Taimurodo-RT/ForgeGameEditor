@@ -315,12 +315,13 @@ std::optional<Clip> read_clip(yyjson_val* v, std::string& why) {
             why = "кадр не номер";
             return std::nullopt;
         }
-        clip.frames.push_back(static_cast<u32>(std::min<u64>(yyjson_get_uint(f), 1000)));
+        clip.frames.push_back(static_cast<u32>(std::min<u64>(yyjson_get_uint(f), kMaxFrameLimit)));
     }
     yyjson_val* fps = yyjson_obj_get(v, "fps");
     clip.fps = yyjson_is_num(fps) ? static_cast<f32>(yyjson_get_num(fps)) : 0;
     if (yyjson_val* loop = yyjson_obj_get(v, "loop"); yyjson_is_bool(loop)) clip.loop = yyjson_get_bool(loop);
-    why = clip_problem(clip, 1000);
+    // Read knowing no game: the game's limit and the picture's frames are the library's to check.
+    why = clip_problem(clip, kMaxFrameLimit, kMaxFrameLimit);
     if (!why.empty()) return std::nullopt;
     return clip;
 }
@@ -358,7 +359,7 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
     t.picture = text_of(yyjson_obj_get(root, "picture"));
     if (yyjson_val* frames = yyjson_obj_get(root, "frames"); yyjson_is_uint(frames) || yyjson_is_sint(frames)) {
         const i64 n = yyjson_get_sint(frames);
-        t.frames = n >= 1 && n <= kMaxFrames ? static_cast<u32>(n) : 1;
+        t.frames = n >= 1 && n <= kMaxFrameLimit ? static_cast<u32>(n) : 1;
     }
     if (yyjson_val* anims = yyjson_obj_get(root, "animations"); yyjson_is_obj(anims)) {
         yyjson_obj_iter it = yyjson_obj_iter_with(anims);
@@ -427,15 +428,66 @@ u32 template_rev(const Template& t) {
     return (values_rev(t.values) ^ static_cast<u32>(h ^ (h >> 32))) | 1u;
 }
 
+bool read_frame_limit(const fs::path& game_dir, u32& limit, std::string* why) {
+    limit = kDefaultFrameLimit;
+    std::error_code ec;
+    const fs::path file = game_dir / "game.json";
+    if (!fs::exists(file, ec)) return true;
+    std::vector<u8> bytes;
+    if (!read_file(file, bytes)) {
+        if (why) *why = "game.json не читается";
+        return false;
+    }
+    yyjson_doc* doc = yyjson_read(reinterpret_cast<const char*>(bytes.data()), bytes.size(), 0);
+    yyjson_val* root = doc ? yyjson_doc_get_root(doc) : nullptr;
+    if (!yyjson_is_obj(root)) {
+        yyjson_doc_free(doc);
+        if (why) *why = "game.json не читается";
+        return false;
+    }
+    yyjson_val* v = yyjson_obj_get(root, "frame_limit");
+    const bool whole = v && (yyjson_is_uint(v) || yyjson_is_sint(v));
+    const i64 n = whole ? yyjson_get_sint(v) : 0;
+    yyjson_doc_free(doc);
+    if (!v) return true;
+    if (!whole || n < 1 || n > static_cast<i64>(kMaxFrameLimit)) {
+        if (why) *why = "game.json: frame_limit — нужно целое от 1 до " + std::to_string(kMaxFrameLimit);
+        return false;
+    }
+    limit = static_cast<u32>(n);
+    return true;
+}
+
+bool with_frame_limit(std::string_view json, u32 limit, std::string& out) {
+    yyjson_doc* doc = yyjson_read(json.data(), json.size(), 0);
+    if (!doc || !yyjson_is_obj(yyjson_doc_get_root(doc))) {
+        yyjson_doc_free(doc);
+        return false;
+    }
+    yyjson_mut_doc* mut = yyjson_doc_mut_copy(doc, nullptr);
+    yyjson_doc_free(doc);
+    yyjson_mut_val* root = yyjson_mut_doc_get_root(mut);
+    yyjson_mut_val* value = yyjson_mut_uint(mut, limit);
+    if (yyjson_mut_obj_get(root, "frame_limit")) yyjson_mut_obj_replace(root, yyjson_mut_str(mut, "frame_limit"), value);
+    else yyjson_mut_obj_add_val(mut, root, "frame_limit", value);
+    usize len = 0;
+    char* text = yyjson_mut_write(mut, YYJSON_WRITE_PRETTY_TWO_SPACES | YYJSON_WRITE_NEWLINE_AT_END, &len);
+    yyjson_mut_doc_free(mut);
+    if (!text) return false;
+    out.assign(text, len);
+    free(text);
+    return true;
+}
+
 u32 clip_ticks(f32 fps) {
     for (f32 f : kClipFps)
         if (std::fabs(f - fps) < 1e-4f) return static_cast<u32>(std::lround(60.0 / f));
     return 0;
 }
 
-std::string clip_problem(const Clip& clip, u32 frames) {
+std::string clip_problem(const Clip& clip, u32 frames, u32 limit) {
     if (clip.frames.empty()) return "нет кадров";
-    if (clip.frames.size() > kMaxClipFrames) return "кадров больше " + std::to_string(kMaxClipFrames);
+    if (clip.frames.size() > limit) return "кадров больше " + std::to_string(limit) + ", предела игры";
     for (u32 f : clip.frames)
         if (f >= frames) return "кадра " + std::to_string(f + 1) + " нет в картинке из " + std::to_string(frames);
     if (clip_ticks(clip.fps) == 0) return "кадров в секунду " + fps_text(clip.fps) + " нет в списке";
@@ -571,6 +623,7 @@ bool Library::load(const fs::path& kinds_file, const fs::path& folder, std::stri
 
 void Library::reload_templates() {
     templates_.clear();
+    read_notes_.clear();
     ++version_;
     std::error_code ec;
     for (fs::directory_iterator it(folder_, ec), end; !ec && it != end; it.increment(ec)) {
@@ -587,6 +640,24 @@ void Library::reload_templates() {
             continue;
         }
         if (!kind(t->kind)) FORGE_WARN("Шаблон %s: нет вида «%s»", name.c_str(), t->kind.c_str());
+        // The game's frame limit: a picture of more frames is one picture, as any wrong number of frames reads, but
+        // said; an animation longer than the limit does not play (the state is drawn by the game's rule).
+        if (t->frames > frame_limit_) {
+            read_notes_.push_back("шаблон «" + t->name + "» (" + name + "): кадров " + std::to_string(t->frames) + " больше предела игры " +
+                                  std::to_string(frame_limit_) + ", читается одной картинкой");
+            FORGE_WARN("%s (frame_limit в game.json)", read_notes_.back().c_str());
+            t->frames = 1;
+        }
+        for (auto it = t->animations.begin(); it != t->animations.end();) {
+            if (it->second.frames.size() <= frame_limit_) {
+                ++it;
+                continue;
+            }
+            FORGE_WARN("%s: анимация «%s» не читается (кадров %zu больше предела игры %u, frame_limit в game.json), это состояние "
+                       "рисуется по правилу игры",
+                       name.c_str(), it->first.c_str(), it->second.frames.size(), frame_limit_);
+            it = t->animations.erase(it);
+        }
         // Blocks renamed since the template was written.
         for (std::string& id : t->blocks) {
             if (block(id)) continue;
@@ -717,6 +788,19 @@ std::optional<Template> Library::copy_from(const Library& from, const Template& 
         if (error) *error = "в этой игре нет вида «" + t.kind + "»";
         return std::nullopt;
     }
+    if (t.frames > frame_limit_) {
+        if (error)
+            *error = "кадров в картинке " + std::to_string(t.frames) + ", а предел этой игры " + std::to_string(frame_limit_) +
+                     " (поле «Предел кадров» в «Пиксельных»)";
+        return std::nullopt;
+    }
+    for (const auto& [state, clip] : t.animations)
+        if (clip.frames.size() > frame_limit_) {
+            if (error)
+                *error = "кадров в анимации «" + state + "» " + std::to_string(clip.frames.size()) + ", а предел этой игры " +
+                         std::to_string(frame_limit_) + " (поле «Предел кадров» в «Пиксельных»)";
+            return std::nullopt;
+        }
     Template out = t;
     out.key = fnv1a(out.id);
     const Template* here = find(out.key);

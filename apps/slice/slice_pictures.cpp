@@ -170,7 +170,7 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
     };
     std::vector<Place> places;
     std::vector<std::pair<u64, Picture>> made;
-    const u32 width = std::max(base.width, kMaxSide + 2);
+    const u32 width = std::max(base.width, kSheetWidth);
     u32 x = 1, y = base.height + 1, shelf = 0;
     std::string hero_id;
     u32 heroes = 0;
@@ -246,7 +246,8 @@ void Pictures::set_clips(const objects::Library& library) {
             picture.clips[i] = pose_rule(mover, pose, picture.frames);
             if (!t) continue;
             const auto own = t->animations.find(pose_id(pose));
-            if (own != t->animations.end() && objects::clip_problem(own->second, picture.frames).empty()) picture.clips[i] = own->second;
+            if (own != t->animations.end() && objects::clip_problem(own->second, picture.frames, library.frame_limit()).empty())
+                picture.clips[i] = own->second;
         }
     }
 }

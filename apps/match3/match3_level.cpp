@@ -499,6 +499,9 @@ Match3Level::Match3Level() : gen_(std::make_shared<world::EmptyGenerator>()) {
 Match3Level::~Match3Level() = default;
 
 bool Match3Level::load_objects(const fs::path& game_dir, std::string* error) {
+    u32 limit = objects::kDefaultFrameLimit;
+    if (!objects::read_frame_limit(game_dir, limit, error)) return false;
+    library_.set_frame_limit(limit);
     return library_.load(game_dir / "kinds.json", game_dir / "objects", error);
 }
 

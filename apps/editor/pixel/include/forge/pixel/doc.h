@@ -30,8 +30,11 @@
 namespace forge::pixel {
 
 inline constexpr u32 kMaxFrameSide = 256;
-// Frames in the baked strip, all clips together: as many as a picture of the game may have (objects::kMaxFrames).
-inline constexpr u32 kMaxStripFrames = 32;
+// The widest baked strip, in pixels: the side of a texture SDL GPU promises on any video card (objects::kMaxStripWidth).
+inline constexpr u32 kMaxStripWidth = 16384;
+// Frames in a strip, all clips together, as a file may say: as many one-pixel frames as the widest strip holds. The
+// game's own frame limit is lower (objects::kDefaultFrameLimit unless its game.json says), and baking keeps to it.
+inline constexpr u32 kMaxStripFrames = kMaxStripWidth;
 
 struct ClipSpec {
     std::string state; // the animation state it plays ("walk"), its key in "clips"

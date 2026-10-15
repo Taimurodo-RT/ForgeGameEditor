@@ -1292,7 +1292,7 @@ private:
         SliceGame& g = g_;
         struct Look {
             u32 looks = 0, bad = 0;
-            std::array<u32, objects::kMaxFrames> seen{}; // by frame of the strip
+            std::vector<u32> seen = std::vector<u32>(objects::kMaxFrameLimit); // by frame of the strip
             std::string first_bad;
             u64 longest = 0; // ticks into the pose, the most looked at
         };
@@ -8964,10 +8964,11 @@ private:
                           "2 кадра с анимацией — тоже картинка героя; рисует «a_hero», первый по id; без анимаций: «" + why0 + "» " + why2);
                 }
                 // Strips at the sheet's limits, each frame its own colour: 8 frames of 32 and 4 of 256 (a frame as wide as
-                // a picture may be), 8 frames of 256 × 512 scaled down to 128 × 256 and 32 of 16, as many as a picture may
-                // have (objects::kMaxFrames, «Пиксельные» bakes a character's clips so); on a sheet as narrow as it gets
-                // (no drawn frames: kMaxSide + 2) and on one 512 wide. Every frame inside the sheet, apart from the
-                // others, all of its pixels its frame's colour.
+                // a picture may be), 8 frames of 256 × 512 scaled down to 128 × 256, 64 of 16 and 64 of 256, as many as a
+                // picture has in a game without "frame_limit" (objects::kDefaultFrameLimit; «Пиксельные» bakes 64 frames of
+                // 256 at most so): 7 of 256 to a shelf, 10 shelves. On a sheet as narrow as it gets (no drawn frames:
+                // kSheetWidth) and on one wider. Every frame inside the sheet, apart from the others, all of its pixels its
+                // frame's colour.
                 struct Strip {
                     const char* id;
                     const char* file;
@@ -8976,7 +8977,8 @@ private:
                 const Strip strips[] = {{"strip8", "полоса8.png", 256, 32, 8, 32, 32},
                                         {"strip4", "полоса4.png", 1024, 64, 4, 256, 64},
                                         {"strip8_big", "полоса8_большая.png", 2048, 512, 8, 128, 256},
-                                        {"strip32", "полоса32.png", 512, 16, objects::kMaxFrames, 16, 16}};
+                                        {"strip64", "полоса64.png", 1024, 16, objects::kDefaultFrameLimit, 16, 16},
+                                        {"strip64_big", "полоса64_большая.png", 16384, 256, objects::kDefaultFrameLimit, 256, 256}};
                 bool written = true;
                 for (const Strip& p : strips) {
                     written &= strip_png(p.file, p.w, p.h, p.frames, colour);
@@ -8988,16 +8990,16 @@ private:
                 if (!check_ok(written, "полосы записаны")) return true;
                 lib.reload_templates();
                 demo::SheetImage wide;
-                wide.width = 512;
+                wide.width = Pictures::kSheetWidth + 512;
                 wide.height = 32;
-                wide.rgba.assign(512 * 32 * 4, 255);
-                wide.frames = {{0, 0, 512, 32}};
+                wide.rgba.assign(static_cast<usize>(wide.width) * 32 * 4, 255);
+                wide.frames = {{0, 0, wide.width, 32}};
                 for (const demo::SheetImage* under : {&base, &wide}) {
                     Pictures fresh;
                     demo::SheetImage out;
                     fresh.update(lib, *under, out);
                     const std::string size = " (лист " + std::to_string(out.width) + " × " + std::to_string(out.height) + ")";
-                    check(out.width == std::max(under->width, Pictures::kMaxSide + 2), "ширина листа" + size);
+                    check(out.width == std::max(under->width, Pictures::kSheetWidth), "ширина листа" + size);
                     bool inside = true, apart = true;
                     for (usize i = under->frames.size(); i < out.frames.size(); ++i) {
                         const render::SpriteRect& r = out.frames[i];

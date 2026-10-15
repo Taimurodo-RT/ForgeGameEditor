@@ -35,6 +35,7 @@ using namespace forge;
 using namespace forge::objects;
 using namespace forge::scene;
 using namespace forge::world;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -184,21 +185,23 @@ TEST_CASE("a template's picture of frames: read, written and looked at") {
     std::optional<Template> read = read_template(coins.file);
     REQUIRE(read);
     CHECK(read->frames == 4);
-    // One frame is not written; what is not 1..32 reads as one.
+    // One frame is not written; what is not 1..16384 reads as one (the game's own limit is the library's).
     coins.frames = 1;
     REQUIRE(f.lib.put(coins));
     REQUIRE(read_file(coins.file, bytes));
     CHECK(std::string(bytes.begin(), bytes.end()).find("frames") == std::string::npos);
-    for (const char* bad : {"0", "33", "-2", "\"4\"", "2.5"}) {
+    for (const char* bad : {"0", "16385", "-2", "\"4\"", "2.5"}) {
         write_text(f.dir / "objects" / "odd.object.json",
                    std::string(R"({"id": "odd", "name": "Странный", "kind": "pickup", "picture": "x.png", "frames": )") + bad + "}");
         read = read_template(f.dir / "objects" / "odd.object.json");
         REQUIRE(read);
         CHECK_MESSAGE(read->frames == 1, bad);
     }
-    write_text(f.dir / "objects" / "odd.object.json", R"({"id": "odd", "name": "Странный", "kind": "pickup", "frames": 32})");
+    write_text(f.dir / "objects" / "odd.object.json", R"({"id": "odd", "name": "Странный", "kind": "pickup", "frames": 16384})");
     REQUIRE((read = read_template(f.dir / "objects" / "odd.object.json")));
-    CHECK(read->frames == kMaxFrames);
+    CHECK(read->frames == kMaxFrameLimit);
+    std::error_code gone;
+    fs::remove(f.dir / "objects" / "odd.object.json", gone);
     // Shared and taken back: another number of frames is another template.
     const auto shared_dir = temp_folder("forge_objects_frames_shared_test");
     Library shared;
@@ -270,11 +273,13 @@ TEST_CASE("a template's animations: read, written, timed, and why one cannot pla
     for (u64 t = 0; t < 200; ++t) CHECK(clip_frame(steps, t) == 1u + static_cast<u32>((t / 6) & 1u));
 
     // Why one cannot play: the same words in the tab and the game.
-    CHECK(clip_problem(walk, 2).empty());
-    CHECK(clip_problem(walk, 1) == "кадра 2 нет в картинке из 1");
-    CHECK(clip_problem({{}, 10, true}, 4) == "нет кадров");
-    CHECK(clip_problem({std::vector<u32>(kMaxClipFrames + 1, 0), 10, true}, 4) == "кадров больше 32");
-    CHECK(clip_problem({{0}, 8, true}, 4) == "кадров в секунду 8 нет в списке");
+    CHECK(clip_problem(walk, 2, kDefaultFrameLimit).empty());
+    CHECK(clip_problem(walk, 1, kDefaultFrameLimit) == "кадра 2 нет в картинке из 1");
+    CHECK(clip_problem({{}, 10, true}, 4, kDefaultFrameLimit) == "нет кадров");
+    CHECK(clip_problem({std::vector<u32>(kDefaultFrameLimit, 0), 10, true}, 4, kDefaultFrameLimit).empty());
+    CHECK(clip_problem({std::vector<u32>(kDefaultFrameLimit + 1, 0), 10, true}, 4, kDefaultFrameLimit) == "кадров больше 64, предела игры");
+    CHECK(clip_problem({std::vector<u32>(3, 0), 10, true}, 4, 2) == "кадров больше 2, предела игры");
+    CHECK(clip_problem({{0}, 8, true}, 4, kDefaultFrameLimit) == "кадров в секунду 8 нет в списке");
     // A file's animation that does not read: left out (the game draws that state by its rule), the others kept.
     write_text(f.dir / "objects" / "odd.object.json",
                R"({"id": "odd", "name": "Странный", "kind": "pickup", "frames": 4, "animations": {
@@ -302,6 +307,110 @@ TEST_CASE("a template's animations: read, written, timed, and why one cannot pla
     coins.animations["walk"].fps = 5;
     REQUIRE(f.lib.put(coins));
     CHECK_FALSE(shared.same_as(f.lib, coins));
+}
+
+TEST_CASE("the game's frame limit: game.json, templates and animations past it, and copies from another library") {
+    const auto dir = temp_folder("forge_objects_frame_limit_test");
+    u32 limit = 0;
+    std::string why;
+    // No game.json, or one without the field: 64.
+    REQUIRE(read_frame_limit(dir, limit, &why));
+    CHECK(limit == kDefaultFrameLimit);
+    CHECK(kDefaultFrameLimit == 64);
+    const std::string plain = "{\n  \"title\": \"Ёжик\",\n  \"org\": \"Forge\",\n  \"zoom\": 32,\n  \"module\": \"slice\"\n}\n";
+    write_text(dir / "game.json", plain);
+    limit = 0;
+    REQUIRE(read_frame_limit(dir, limit, &why));
+    CHECK(limit == 64);
+    // Its own; whole numbers of 1..16384 only.
+    write_text(dir / "game.json", R"({"title": "Ёжик", "frame_limit": 100})");
+    REQUIRE(read_frame_limit(dir, limit, &why));
+    CHECK(limit == 100);
+    for (const char* bad : {"0", "16385", "-1", "2.5", "\"64\"", "null", "true"}) {
+        INFO(bad);
+        write_text(dir / "game.json", std::string(R"({"title": "Ёжик", "frame_limit": )") + bad + "}");
+        why.clear();
+        CHECK_FALSE(read_frame_limit(dir, limit, &why));
+        CHECK(why == "game.json: frame_limit — нужно целое от 1 до 16384");
+    }
+    write_text(dir / "game.json", R"({"title": "Ёжик", "frame_limit": 16384})");
+    REQUIRE(read_frame_limit(dir, limit, &why));
+    CHECK(limit == kMaxFrameLimit);
+    write_text(dir / "game.json", "[1, 2]");
+    CHECK_FALSE(read_frame_limit(dir, limit, &why));
+    CHECK(why == "game.json не читается");
+
+    // Written: the field last, the others as they were, in their order; set again in place.
+    std::string out;
+    REQUIRE(with_frame_limit(plain, 80, out));
+    CHECK(out == "{\n  \"title\": \"Ёжик\",\n  \"org\": \"Forge\",\n  \"zoom\": 32,\n  \"module\": \"slice\",\n  \"frame_limit\": 80\n}\n");
+    std::string again;
+    REQUIRE(with_frame_limit(out, 128, again));
+    CHECK(again == "{\n  \"title\": \"Ёжик\",\n  \"org\": \"Forge\",\n  \"zoom\": 32,\n  \"module\": \"slice\",\n  \"frame_limit\": 128\n}\n");
+    CHECK_FALSE(with_frame_limit("[1]", 80, out));
+    CHECK_FALSE(with_frame_limit("{", 80, out));
+    // Each game of the catalog: the field is one line more, before the last brace; the rest byte for byte.
+    for (const char* game : {"slice", "platformer", "rpg", "match3"}) {
+        std::vector<u8> bytes;
+        REQUIRE(read_file(fs::path(FORGE_SOURCE_DIR) / "games" / game / "game.json", bytes));
+        const std::string text(bytes.begin(), bytes.end());
+        REQUIRE(text.ends_with("\"\n}\n"));
+        std::string with;
+        REQUIRE(with_frame_limit(text, 64, with));
+        CHECK_MESSAGE(with == text.substr(0, text.size() - 3) + ",\n  \"frame_limit\": 64\n}\n", game);
+    }
+
+    // A library of a game of limit 4: a picture of more frames reads as one, said; an animation longer does not read.
+    write_text(dir / "kinds.json", kKinds);
+    write_text(dir / "objects" / "ezhik.object.json",
+               R"({"id": "ezhik", "name": "Ёжик", "kind": "pickup", "picture": "ёжик.png", "frames": 6, "values": {}})");
+    write_text(dir / "objects" / "kot.object.json",
+               R"({"id": "kot", "name": "Кот", "kind": "pickup", "picture": "кот.png", "frames": 4,
+                   "animations": {"walk": {"frames": [0, 1, 2, 3, 2], "fps": 10}, "stand": {"frames": [0, 1, 2, 3], "fps": 10}}, "values": {}})");
+    std::vector<u8> ezhik_file;
+    REQUIRE(read_file(dir / "objects" / "ezhik.object.json", ezhik_file));
+    Library lib;
+    lib.set_frame_limit(4);
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    CHECK(lib.frame_limit() == 4);
+    REQUIRE(lib.find("ezhik"));
+    CHECK(lib.find("ezhik")->frames == 1);
+    REQUIRE(lib.read_notes().size() == 1);
+    CHECK(lib.read_notes()[0] == "шаблон «Ёжик» (ezhik.object.json): кадров 6 больше предела игры 4, читается одной картинкой");
+    REQUIRE(lib.find("kot"));
+    CHECK(lib.find("kot")->frames == 4);
+    CHECK(lib.find("kot")->animations.size() == 1);
+    CHECK(lib.find("kot")->animations.count("stand") == 1);
+    std::vector<u8> still;
+    REQUIRE(read_file(dir / "objects" / "ezhik.object.json", still));
+    CHECK(still == ezhik_file); // reading does not write
+    // The limit raised: read again, its frames and animations as written.
+    lib.set_frame_limit(6);
+    lib.reload_templates();
+    CHECK(lib.find("ezhik")->frames == 6);
+    CHECK(lib.find("kot")->animations.size() == 2);
+    CHECK(lib.read_notes().empty());
+
+    // Taken from a library of a higher limit into one of a lower: refused with both numbers, nothing written.
+    const auto low_dir = temp_folder("forge_objects_frame_limit_low_test");
+    write_text(low_dir / "kinds.json", kKinds);
+    Library low;
+    low.set_frame_limit(5);
+    low.set_pictures_folder(low_dir / "pictures");
+    REQUIRE(low.load(low_dir / "kinds.json", low_dir / "objects"));
+    std::string error;
+    CHECK_FALSE(low.copy_from(lib, *lib.find("ezhik"), &error));
+    CHECK(error == "кадров в картинке 6, а предел этой игры 5 (поле «Предел кадров» в «Пиксельных»)");
+    Template kot = *lib.find("kot");
+    kot.animations["walk"] = {{0, 1, 2, 3, 2, 1}, 10, true};
+    CHECK_FALSE(low.copy_from(lib, kot, &error));
+    CHECK(error == "кадров в анимации «walk» 6, а предел этой игры 5 (поле «Предел кадров» в «Пиксельных»)");
+    CHECK_FALSE(fs::exists(low_dir / "objects"));
+    kot.animations.erase("walk");
+    write_text(lib.pictures_folder() / utf8_path("кот.png"), "not really a png");
+    std::optional<Template> taken = low.copy_from(lib, kot, &error);
+    REQUIRE(taken);
+    CHECK(taken->frames == 4);
 }
 
 TEST_CASE("a kind may be one whose templates are not put on levels") {

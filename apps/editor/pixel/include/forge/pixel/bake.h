@@ -32,7 +32,9 @@ struct Strip {
     std::vector<StripClip> clips;
     u32 frames = 0;
 };
-// Every clip, frame by frame. The rig is left at rest. False with why at the first frame that fails.
-bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOptions& options, Strip& out, std::string& why);
+// Every clip, frame by frame, in a game of that frame limit. The rig is left at rest. False with why: more frames than
+// the limit, a strip wider than kMaxStripWidth, or the first frame that fails.
+bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOptions& options, u32 frame_limit, Strip& out,
+                std::string& why);
 
 } // namespace forge::pixel

@@ -449,6 +449,9 @@ public:
         projects.theme = [this] { return pending_theme_.empty() ? theme_ : pending_theme_; };
         level_module.library()->set_pictures_folder(pictures_folder);
         level_module.library()->set_sounds_folder(sounds_folder);
+        // The game's frame limit (game.json; the game was opened only when it reads).
+        if (u32 limit = objects::kDefaultFrameLimit; objects::read_frame_limit(game_dir, limit))
+            level_module.library()->set_frame_limit(limit);
         if (std::string error; !level_module.library()->load(game_dir / "kinds.json", objects_folder, &error))
             FORGE_ERROR("Объекты не загрузились: %s", error.c_str());
         // «Логика» reads the verbs with the module's events, as the game does.
@@ -541,6 +544,7 @@ public:
                 if (e.asset == id && e.file.rfind("pictures/", 0) == 0) return e.file.substr(9);
             return std::string();
         };
+        pixel_tab.game_dir = game_dir;
         pixel_tab.init(ui_);
         // «Ввод»: the module's actions, then the shell's; what the author changed is the game's input.json.
         input_tab.open(input_file, module.actions, module.name);
@@ -580,6 +584,7 @@ public:
         image_tab.written = [this] { assets.refresh(); };
         // The game's own pictures (in its pictures/, not copies of «Ресурсы») are shown there for viewing.
         image_tab.game_dir = game_dir;
+        image_tab.frame_limit = [this] { return level_module.library()->frame_limit(); };
         image_tab.copy_from = [this](const std::string& file) {
             const editor::sources::Entry* e = sources.of_file(file);
             if (!e) return std::string();
@@ -17253,7 +17258,7 @@ return {
                          px().pixel_frame().width == 32,
                      "the views shown"))
                 return true;
-            check(px().pixel_frame().height == 32 && px().vector_view().height == 288 && element_text("px-total") == "в картинке 4 кадра из 32",
+            check(px().pixel_frame().height == 32 && px().vector_view().height == 288 && element_text("px-total") == "в картинке 4 кадра из 64",
                   "the vector 288 × 288, the pixel frame 32 × 32; «" + element_text("px-total") + "»");
             check(put(lua, kPxWalk), "the author's «Ёжик.luau»: standing and walking");
             const bool typed = ue_type("px-fh", "64");
@@ -17282,7 +17287,7 @@ return {
         case 7: {
             check(px().status().rfind("Пиксельные: «Ёжик» · кадр 32 × 64 · «Идёт» ", 0) == 0 &&
                       px().status().ends_with(" из 8 · 30 к/с · играет") && pj_class("px-fps-10", "selected") &&
-                      element_text("px-total") == "в картинке 12 кадров из 32",
+                      element_text("px-total") == "в картинке 12 кадров из 64",
                   "the status line: " + px().status());
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(d.clips[1].fps == 10.0f, "Ctrl+Z: 10 a second");

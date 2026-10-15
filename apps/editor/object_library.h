@@ -126,7 +126,7 @@ public:
     CopyIn copy_in; // how a picked picture or sound goes into the game (main)
     bool set_picture(const std::filesystem::path& source);
     bool clear_picture();
-    // «Кадров в картинке»: the picture is a strip of n equal frames (1..objects::kMaxFrames).
+    // «Кадров в картинке»: the picture is a strip of n equal frames (1..the game's frame limit; past it, said in the log).
     bool set_frames(int n);
     // What the game does with t that the author would not guess, by the module's own rule (LevelModule::object_note:
     // slice's says which of several objects of kind «Герой» it draws the hero with). "" else.
