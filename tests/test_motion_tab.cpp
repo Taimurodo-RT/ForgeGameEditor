@@ -101,8 +101,10 @@ TEST_CASE("Motion tab: a clip's frames by its range, its fps and «Повтор�
     CHECK(range_frames(0.25, 0.75, 12, false) == 7);
     CHECK(range_frames(0, 0.7, 12, true) == 9); // 8.4 frames: the last one starts before the end
     CHECK(range_frames(0, 0.7, 12, false) == 10);
-    CHECK(range_frames(0, 0.1, 30, true) == 3); // 0.1 · 30 = 3.0000000000000004
+    CHECK(range_frames(0, 0.1, 30, true) == 3);
     CHECK(range_frames(0, 0.1, 30, false) == 4);
+    CHECK(range_frames(0.1, 0.8, 30, true) == 21); // (0.8 − 0.1) · 30 = 21.000000000000004: no 22nd frame for it
+    CHECK(range_frames(0.1, 0.8, 30, false) == 22);
     CHECK(range_frames(0, 0, 12, true) == 1);
     CHECK(range_frames(0, 0, 12, false) == 1);
     CHECK(range_frames(0.5, 0.25, 12, false) == 1);
@@ -130,6 +132,11 @@ TEST_CASE("Motion tab: a clip's frames by its range, its fps and «Повтор�
     CHECK(odd.frames == 10);
     CHECK(odd.time(8) == 8 / 12.0);
     CHECK(odd.time(9) == 0.7); // not 0.75: the clip stops at its end
+    // The last frame on the range's end exactly, though 0.1 + 21 / 30 is 0.7999999999999999.
+    const ClipCut hop = cut_clip(ranged(spec("jump", 4, 30, false), 0.1, 0.8), true, 1.1);
+    CHECK(hop.frames == 22);
+    CHECK(hop.time(20) == 0.1 + 20 / 30.0);
+    CHECK(hop.time(21) == 0.8);
     const ClipCut walk = cut_clip(spec("walk", 4, 12, true), true, 0.75);
     CHECK(walk.frames == 9);
     CHECK(walk.time(8) == 8 / 12.0);
@@ -338,6 +345,13 @@ TEST_CASE("Motion tab: the timeline's scale, its moves and the ruler") {
     v.zoom(100, 0); // 64 points a frame at most
     CHECK(v.per_second() == 768);
     CHECK(v.start == 1.25);
+    // Past the most round the mouse: the moment under it stays at the scale it stops at.
+    v.zoom(0.5, 300);
+    const f64 under = v.t(300);
+    v.zoom(100, 300);
+    CHECK(v.per_second() == 768);
+    CHECK(v.t(300) == doctest::Approx(under).epsilon(1e-12));
+    v.center(2);
     v.zoom(0.001, 600); // all of it at least
     CHECK(v.per_second() == 200);
     CHECK(v.start == 0);
@@ -461,7 +475,12 @@ TEST_CASE("Motion tab: a block's words, a call's lines and characters, the call 
     CHECK(line_char(panel, 3) == 28);
     CHECK(line_char(panel, 99) == 36);
 
-    // «Другое зерно»: another, below a million, the same each time.
+    // «Другое зерно»: another, below a million, the same each time; splitmix64 of the seed, as another program of the
+    // same rule counts it.
+    CHECK(other_seed(0) == 607535);
+    CHECK(other_seed(1) == 822465);
+    CHECK(other_seed(12345) == 414944);
+    CHECK(other_seed(414944) == 663005);
     CHECK(other_seed(1) == other_seed(1));
     CHECK(other_seed(1) != 1);
     CHECK(other_seed(1) < 1'000'000);
@@ -500,6 +519,16 @@ return { clips = { c = function(p) m.up(part("a")) end } })"));
     folder.set_module_reader(animations_reader(game.path));
     CHECK_FALSE(folder.load("local m = require(\"../moves\")\nreturn { clips = { c = function(p) end } }"));
     CHECK(folder.error() == "строка 1: require(\"../moves\"): имя модуля — без папок и точек, как «движения»");
+    // The reader refuses a folder by itself, whoever asks it.
+    std::string text, why;
+    const ModuleReader read = animations_reader(game.path);
+    CHECK(read("moves", text, why));
+    CHECK(text == "return { up = function(a) a.y(-3, 0.25) end }");
+    for (const char* name : {"../moves", "a/moves", "a\\moves", "c:moves", "..", "."}) {
+        why.clear();
+        CHECK_FALSE(read(name, text, why));
+        CHECK(why == "имя модуля без папок: модуль — файл animations/имя.luau в папке игры");
+    }
     CHECK(s.recording(rig, "d", {}, 1) == nullptr);
     CHECK(s.error() == "в коде нет клипа «d»: clips = { d = function(p) … end }");
 }

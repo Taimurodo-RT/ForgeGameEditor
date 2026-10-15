@@ -884,7 +884,13 @@ void PixelEditor::load_picture() {
     }
     svg_problem_.clear();
     svg_watch_ = {};
-    if (!doc_.svg.empty()) picture_note_ = "Рисунок — из draw кода «" + doc_.script + "»; рисунок SVG из «" + path_to_utf8(file_.filename()) + "» не используется";
+    // The SVG the file names is there and stays, not drawn: the code's draw is the picture.
+    if (!doc_.svg.empty()) {
+        const std::optional<Guid> id = Guid::parse(doc_.svg);
+        const assets::AssetRecord* r = id ? assets_.find_id(*id) : nullptr;
+        const std::string svg = r ? "«" + path_to_utf8(utf8_path(r->path).filename()) + "»" : "рисунок SVG из «" + path_to_utf8(file_.filename()) + "»";
+        picture_note_ = "Рисунок — из draw кода «" + doc_.script + "»; " + svg + " не используется";
+    }
     pixel::Drawing d;
     if (!script_.draw(doc_.params, doc_.seed, d)) {
         draw_problem_ = "Рисунок «" + doc_.script + "»: " + script_.error() + (rig_.loaded() ? " (показан прежний)" : "");

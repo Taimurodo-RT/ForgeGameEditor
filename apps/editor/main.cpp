@@ -19032,11 +19032,39 @@ return {
         first.script = "Персонаж.luau";
         first.clips = {{"stand", 8, 10, true}};
         const std::string first_text = pixel::write_pixel_doc(first);
-        // A shape typed into the group «body», then one that does not draw.
+        // A shape typed into the group «body» and the clip made 0,2 s longer (10 frames, not 8), then a shape that does
+        // not draw.
         const std::string group_end = "    end)\n    rect(\"leg_l\"";
         const std::string nose_line = "      circle(\"nose\", { x = 21, y = 10, r = p.bob, fill = \"#d04a30\" })\n";
+        const std::string chain = "0.4, \"in_out_sine\")\n    end,", longer = ":to(0, 0.2)";
         std::string nosed = drawn;
         nosed.insert(nosed.find(group_end), nose_line);
+        const std::string nosed_short = nosed;
+        nosed.insert(nosed.find(chain) + chain.find('\n'), longer);
+        pixel::PixelDoc ten = first;
+        ten.clips.front().frames = 10;
+        const std::string ten_text = pixel::write_pixel_doc(ten);
+        // «Ёжик» drawn by its code, the SVG of its file left aside; its parts as the clips and pose move them.
+        std::string hog_drawn = kMoJump;
+        hog_drawn.insert(hog_drawn.find("  pose = function"), R"lua(  draw = function(p, rng)
+    canvas(32, 64)
+    group("body", function()
+      rect("leg_l", { x = 9, y = 44, w = 5, h = 18, fill = "#40306a" })
+      rect("leg_r", { x = 18, y = 44, w = 5, h = 18, fill = "#40306a" })
+      group("torso", function()
+        rect({ x = 7, y = 24, w = 18, h = 22, fill = "#d04a30" })
+        group("head", function()
+          circle({ x = 16, y = 14, r = 9, fill = "#30a0f0" })
+          path("mouth", { d = "M12 18 L20 18 L20 19.5 L12 19.5 Z", fill = "#401010" })
+        end)
+      end)
+    end)
+  end,
+)lua");
+        const std::string hog_lua = "персонажи/Ёжик.luau";
+        auto put = [&](const std::string& rel, std::string_view text) {
+            return write_file_atomic(as().abs(rel), {reinterpret_cast<const u8*>(text.data()), text.size()});
+        };
         const std::string bad_line = "      rect(\"bad\", { x = 1, y = 1, h = 2 })\n";
         std::string bad = nosed;
         bad.insert(bad.find(group_end), bad_line);
@@ -19046,6 +19074,15 @@ return {
             if (hold(idle && shown("px-new"), "«Новый» is there")) return true;
             check(element_text("px-new").find("Новый") != std::string::npos && element_text("px-new").find("рисунок кодом") != std::string::npos,
                   "«Новый · рисунок кодом» among the characters");
+            // Not while the panel has code unsaved: it would be lost with «Ёжик».
+            check(mo_caret(0), "the panel");
+            mo_type("x");
+            check(px().code_unsaved() && px_click("px-new") && px().opened() == hedgehog && !there(ddoc) && !there(dlua) &&
+                      px().note() == "Код «Ёжик.luau» не сохранён: сохраните его (Ctrl+S в панели) или отмените набор (Ctrl+Z в панели), потом делайте нового",
+                  "«Новый» with «Ёжик.luau» unsaved: nothing made, «" + px().note() + "»");
+            check(mo_caret(0), "the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!px().code_unsaved() && px().code() == kMoJump, "Ctrl+Z in the panel: «Ёжик.luau» as saved");
             check(px_click("px-new") && px().opened() == ddoc && px().has() && px().drawn(), "«Новый»: «Персонаж», its picture drawn by its code");
             check(file(dlua) == bytes(drawn) && file(ddoc) == bytes(first_text) && first_text.find("\"svg\":") == std::string::npos && step_label() == made,
                   "«Персонаж.luau» and «Персонаж.pixel.json» byte for byte, no svg in it; one step: " + step_label());
@@ -19077,8 +19114,12 @@ return {
             if (hold(px().code() == drawn && shown("px-part-leg_l"), "its code in the panel")) return true;
             check(mo_caret(mo_char(drawn, group_end)), "the caret before the group's end");
             mo_type(nose_line);
+            check(mo_caret(mo_char(nosed_short, chain) + mo_letters(chain.substr(0, chain.find('\n')))), "the caret at the end of the clip's chain");
+            mo_type(longer);
             key(SDLK_S, SDL_KMOD_CTRL);
             check(file(dlua) == bytes(nosed) && step_label() == "«Персонаж»: код «Персонаж.luau» сохранён", "Ctrl+S: the file as typed; " + step_label());
+            check(file(ddoc) == bytes(ten_text) && px().doc().clips.front().frames == 10,
+                  "the same step: «Стоит» 1,0 s long, 10 frames counted into «Персонаж.pixel.json»");
             const i32 nose = px().rig().part("nose");
             check(nose >= 0 && px().rig().parts()[static_cast<usize>(nose)].parent == px().rig().part("body") && px().picture_svg() != mo_drawn_svg_,
                   "«nose» drawn, a part of «body»");
@@ -19121,11 +19162,11 @@ return {
             check(px_click("px-bake"), "«Запечь»");
             const std::vector<u8> b = file(dpng);
             assets::CookedTexture strip;
-            check(!b.empty() && assets::decode_image(b, strip) && strip.width == 32 * 8 && strip.height == 32, "«Персонаж.png»: 8 frames of 32 × 32");
-            check(px().doc().strip == std::vector<pixel::StripClip>{{"stand", 0, 8, 10, true}} && step_label() == "«Персонаж»: запечено в «Персонаж.png», 8 кадров",
-                  "«Стоит» 1–8: " + step_label());
+            check(!b.empty() && assets::decode_image(b, strip) && strip.width == 32 * 10 && strip.height == 32, "«Персонаж.png»: 10 frames of 32 × 32");
+            check(px().doc().strip == std::vector<pixel::StripClip>{{"stand", 0, 10, 10, true}} && step_label() == "«Персонаж»: запечено в «Персонаж.png», 10 кадров",
+                  "«Стоит» 1–10: " + step_label());
             std::string wrong;
-            for (u32 k = 0; k < 8; ++k) {
+            for (u32 k = 0; k < 10; ++k) {
                 assets::CookedTexture ref;
                 std::string why;
                 if (!mo_ref("stand", k, ref, why) || !px_same(px_cut(strip, 32, k), ref)) wrong += " " + std::to_string(k + 1) + why;
@@ -19139,7 +19180,7 @@ return {
             check(away(), "out of the panel");
             for (int i = 0; i < 3; ++i) key(SDLK_Z, SDL_KMOD_CTRL);
             check(file(dlua) == bytes(drawn) && file(ddoc) == bytes(first_text) && !there(dpng) && step_label() == made,
-                  "Ctrl+Z three times: the bake, «bob», the nose undone, as «Новый» made it");
+                  "Ctrl+Z three times: the bake, «bob», the nose and the longer clip undone, as «Новый» made it");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(!there(dlua) && !there(ddoc) && !there(dpng) && there(hedgehog), "Ctrl+Z: before «Новый», «Ёжик» still there");
             for (int i = 0; i < 4; ++i) key(SDLK_Y, SDL_KMOD_CTRL);
@@ -19150,6 +19191,29 @@ return {
         case 9: {
             if (hold(idle && listed_at(hedgehog) >= 0 && shown("px-doc-" + std::to_string(listed_at(hedgehog))), "«Ёжик» listed")) return true;
             check(px_click("px-doc-" + std::to_string(listed_at(hedgehog))) && px().opened() == hedgehog && !px().drawn(), "«Ёжик» again, its SVG");
+            mo_drawn_svg_ = px().picture_svg();
+            check(put(hog_lua, hog_drawn), "a draw written into «Ёжик.luau» by another program");
+            break;
+        }
+        case 10: {
+            if (hold(px().drawn() && px().code() == hog_drawn && shown("px-console-0"), "the panel takes it")) return true;
+            pixel::PoseScript s;
+            s.set_module_reader(pixel::animations_reader(pjw().config().root / "game"));
+            pixel::Drawing dr;
+            check(s.load(hog_drawn) && s.draw(px().doc().params, px().doc().seed, dr) &&
+                      px().picture_svg() == pixel::drawing_svg(dr, px().doc().frame_w, px().doc().frame_h) && px().picture_svg() != mo_drawn_svg_,
+                  "the picture is the code's drawing, not «Ёжик.svg»");
+            bool said = false;
+            for (const PixelEditor::ConsoleLine& l : px().console())
+                said = said || (l.warn && l.text == "Рисунок — из draw кода «Ёжик.luau»; «Ёжик.svg» не используется");
+            check(said && !px().doc().svg.empty(), "the console: «Рисунок — из draw кода «Ёжик.luau»; «Ёжик.svg» не используется»; the file still names it");
+            check(put(hog_lua, kMoJump), "«Ёжик.luau» as it was, by another program");
+            break;
+        }
+        case 11: {
+            if (hold(!px().drawn() && px().code() == kMoJump, "the panel takes it")) return true;
+            check(px().picture_svg() == mo_drawn_svg_ && px().problem().empty(), "the picture is «Ёжик.svg» again");
+            for (const PixelEditor::ConsoleLine& l : px().console()) check(l.text.find("не используется") == std::string::npos, "nothing said of it: " + l.text);
             mo_draw_ = -1;
             return true;
         }
@@ -19248,6 +19312,9 @@ return {
             check(px().code() == start && !px().code_unsaved() && element_text("px-code-name") == "Ёжик.luau" && !shown("px-code-unsaved") &&
                       ue_field("px-code-text") == start,
                   "the panel: «Ёжик.luau» as on disk, saved");
+            Rml::Element* panel = ed_.find_element("px-code-text");
+            check(panel && panel->GetComputedValues().white_space() == Rml::Style::WhiteSpace::Pre,
+                  "the panel's lines not wrapped: a line of the file is a line of the panel, as the gutter counts them");
             check(px().console().empty() && !px().recording() && shown("px-tl-panel"), "the console empty; «Стоит» of pose(t): no recording");
             const bool typed = ue_type("px-fh", "64");
             check(typed && d.frame_h == 64 && step_label() == "«Ёжик»: кадр 32 × 64", "«Кадр» 32 × 64 typed: " + step_label());
@@ -19462,10 +19529,24 @@ return {
             check(file(doc) == mo_ranged_ && px().cut().frames == 15, "Ctrl+Z: the range again, byte for byte");
             key(SDLK_Y, SDL_KMOD_CTRL);
             check(file(doc) == mo_air_ && px().cut().frames == 33, "Ctrl+Y: all of the clip");
+            // All of the clip again by the range's ends: no range in the file either.
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(doc) == mo_ranged_, "Ctrl+Z: 0,3 to 0,8 s again");
+            check(px_click("px-frame-0") && px().time() == 0, "frame 1");
+            key(SDLK_B, SDL_KMOD_NONE);
+            check(step_label() == "«Ёжик»: «В воздухе» с 0 по 0,8 с" && px().cut().frames == 24, "B at 0: " + step_label());
+            break;
+        }
+        case 15: {
+            if (wait(2)) return true;
+            check(shown("px-range") && shown("px-range-from") && shown("px-range-to") && shown("px-head"),
+                  "the range, its two ends and the playhead on the timeline");
+            check(mo_drag("px-range-to", 0.8, 1.1) && step_label() == "«Ёжик»: «В воздухе» весь клип" && file(doc) == mo_air_ && px().cut().frames == 33,
+                  "its end dragged to the clip's end: all of the clip, the .pixel.json without the range byte for byte: " + step_label());
             break;
         }
         // The flags: dragged by frames without Shift and with it; the .pixel.json as expected after each.
-        case 15: {
+        case 16: {
             if (wait(2)) return true;
             check(mo_drag("px-flag-0", 0.25, 0.4), "«отрыв» dragged from 0,25 s to 0,4 s");
             pixel::PixelDoc expect = read_doc(mo_air_);
@@ -19477,7 +19558,7 @@ return {
                   "one step: " + step_label() + "; its length in the file, the clip 1,25 s, «вершина» later with it");
             break;
         }
-        case 16: {
+        case 17: {
             if (wait(2)) return true;
             mo_shift(true);
             const bool dragged = mo_drag("px-flag-0", 0.4, 0.5);
@@ -19497,7 +19578,7 @@ return {
             check(file(doc) == mo_flag2_, "Ctrl+Y twice: byte for byte");
             break;
         }
-        case 17: {
+        case 18: {
             if (wait(2)) return true;
             check(mo_middle("px-flag-1") && near(px().time(), 0.75), "the middle button on «вершина»: the playhead on it");
             check(mo_double("px-flag-0") && mo_panel_keys(), "a double click on «отрыв»: the panel");
@@ -19508,14 +19589,14 @@ return {
             break;
         }
         // The blocks: a click lights the call's lines, a double click selects the call, the caret in a call lights them.
-        case 18: {
+        case 19: {
             if (wait(2)) return true;
             const i32 up = block_of("body", pixel::Prop::Y, -6);
             const std::string id = "px-block-" + std::to_string(up);
             check(up >= 0 && px_click(id) && px().block() == up && px().lit_first() == 17 && px().lit_last() == 17, "a click on «y → -6»: line 17 lit");
             break;
         }
-        case 19: {
+        case 20: {
             if (wait(2)) return true;
             const i32 up = block_of("body", pixel::Prop::Y, -6);
             const std::string id = "px-block-" + std::to_string(up);
@@ -19530,7 +19611,7 @@ return {
             check(mo_caret(mo_char(jump, "body.y(2, 0.1)") + 3), "the caret in body.y(2, 0.1)");
             break;
         }
-        case 20: {
+        case 21: {
             if (wait(2)) return true;
             const i32 down = block_of("body", pixel::Prop::Y, 2);
             check(px().caret_blocks() == std::vector<i32>{down} && pj_class(("px-block-" + std::to_string(down)).c_str(), "lit"), "its block lit");
@@ -19542,7 +19623,7 @@ return {
                   "a double click: «" + px().note() + "»");
             break;
         }
-        case 21: {
+        case 22: {
             if (wait(2)) return true;
             check(element_text("px-inspector-text").find("из модуля «движения» (animations/движения.luau)") != std::string::npos &&
                       element_text("px-inspector-call") == "движения.luau, строка 4",
@@ -19555,7 +19636,7 @@ return {
             check(step_label() == "«Ёжик»: «В воздухе» с 0,2 по 0,7 с" && px().cut().frames == 15 && px().total_frames() == 19, "B, N: " + step_label());
             break;
         }
-        case 22: {
+        case 23: {
             if (hold(idle, "«Ресурсы» looked at the files")) return true;
             check(px_click("px-bake"), "«Запечь»");
             const std::vector<u8> b = file(png);
@@ -19579,7 +19660,7 @@ return {
             break;
         }
         // «Другое зерно», «Снимок кадра».
-        case 23: {
+        case 24: {
             if (hold(idle, "«Ресурсы» looked at the files")) return true;
             mo_seed_ = d.seed;
             const std::vector<u8> was = file(doc);
@@ -19593,7 +19674,7 @@ return {
             check(file(doc) == mo_seeded_, "Ctrl+Y: the other one");
             break;
         }
-        case 24: {
+        case 25: {
             if (hold(idle, "«Ресурсы» looked at the files")) return true;
             check(px_click("px-frame-18") && px().frame() == 18 && near(px().time(), 0.6), "frame 19: 0,6 s");
             check(px_click("px-snapshot") && there(shot) && step_label() == "«Ёжик»: снимок «Ёжик air 19.png»", "«Снимок кадра»: " + step_label());
@@ -19605,7 +19686,7 @@ return {
             check(!mo_shot_meta_.empty(), "its «.meta»");
             break;
         }
-        case 25: {
+        case 26: {
             if (hold(idle, "«Ресурсы» looked at the files")) return true;
             assets::CookedTexture t;
             check(assets::decode_image(mo_shot_, t) && px_same(t, px().pixel_frame()), "as the pixel view shows it");
@@ -19622,7 +19703,7 @@ return {
             check(put(module, nod12), "«движения.luau» changed in another program: a nod of 12");
             break;
         }
-        case 26: {
+        case 27: {
             if (hold(block_of("head", pixel::Prop::Rot, 12) >= 0, "the recording made again")) return true;
             check(block_of("head", pixel::Prop::Rot, 8) < 0 && !px().stale(), "the module read again: head · rot to 12");
             // The script changed outside, nothing unsaved: the panel takes it.
@@ -19632,7 +19713,7 @@ return {
             mo_mine_ = higher;
             break;
         }
-        case 27: {
+        case 28: {
             if (hold(px().code() == mo_mine_ && input_value("px-param-height") == "7", "the panel takes it")) return true;
             check(!px().code_conflict() && !px().code_unsaved() && !shown("px-code-conflict"), "no bar; height 7");
             // Unsaved, and changed outside: the bar; «Оставить мой».
@@ -19644,7 +19725,7 @@ return {
             check(put(as().abs(lua), other), "changed in another program again");
             break;
         }
-        case 28: {
+        case 29: {
             if (hold(px().code_conflict() && shown("px-code-conflict"), "the bar")) return true;
             check(shown("px-code-unsaved"), "«не сохранён»");
             check(element_text("px-code-conflict").find("изменён на диске") != std::string::npos && px().code().find("прыгает по шагам.!") != std::string::npos,
@@ -19666,12 +19747,12 @@ return {
             check(put(as().abs(lua), jump), "the jump written by another program");
             break;
         }
-        case 29: {
+        case 30: {
             if (hold(px().code_conflict() && shown("px-code-take"), "the bar")) return true;
             check(px_click("px-code-take") && px().code() == jump && !px().code_unsaved() && !px().code_conflict(), "«Взять с диска»: the jump in the panel, saved");
             break;
         }
-        case 30: {
+        case 31: {
             // «Новый»: a character the code draws; then «Ёжик» again.
             if (mo_draw_ >= 0) return pixel_draw_step();
             if (wait(2)) return true;
@@ -19682,18 +19763,18 @@ return {
             check(px().code_unsaved() && !ed_.quit_request(), "a letter typed; the window's close asks first");
             break;
         }
-        case 31: {
+        case 32: {
             check(pjw().view() == "unsaved" && element_text("pj-unsaved").find("Ёжик.luau") != std::string::npos,
                   "«Закрыть редактор»: " + element_text("pj-unsaved"));
             check(pj_click("pj-stay"), "«Отмена»");
             break;
         }
-        case 32: {
+        case 33: {
             check(pjw().view().empty() && !ed_.quit_asked && px().code_unsaved() && file(lua) == bytes(jump), "the editor stays, the panel unsaved");
             check(!ed_.quit_request(), "the window's close asks again");
             break;
         }
-        case 33: {
+        case 34: {
             check(pjw().view() == "unsaved" && pj_click("pj-save"), "«Сохранить»");
             check(file(lua) == bytes("-" + jump) && !px().code_unsaved() && ed_.quit_asked, "the panel's text written, the editor closes");
             return false;

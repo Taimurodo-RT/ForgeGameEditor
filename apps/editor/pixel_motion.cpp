@@ -33,15 +33,17 @@ constexpr usize kMostBlocks = 2000;
 constexpr f64 kWheelPan = 40;    // logical px a notch of Shift+wheel moves the timeline
 constexpr f64 kWheelZoom = 1.25; // a notch of the wheel
 
+// Shown again by name: RmlUi's style attribute adds properties and never drops one, so «display: none;» stays until
+// another display replaces it.
 std::string place(f64 left, f64 width) {
-    char buf[96];
-    std::snprintf(buf, sizeof buf, "left: %.1fdevpx; width: %.1fdevpx;", left, std::max(0.0, width));
+    char buf[112];
+    std::snprintf(buf, sizeof buf, "display: block; left: %.1fdevpx; width: %.1fdevpx;", left, std::max(0.0, width));
     return buf;
 }
 
 std::string at_x(f64 left) {
-    char buf[64];
-    std::snprintf(buf, sizeof buf, "left: %.1fdevpx;", left);
+    char buf[80];
+    std::snprintf(buf, sizeof buf, "display: block; left: %.1fdevpx;", left);
     return buf;
 }
 

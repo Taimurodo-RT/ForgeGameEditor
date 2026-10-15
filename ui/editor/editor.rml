@@ -1294,7 +1294,7 @@
                     <div id="px-code-gutter" class="px-gutter"><div id="px-code-lines" class="px-gutter-in">
                         <div data-for="ln : px_lines" class="px-ln" data-class-lit="ln.lit" data-class-error="ln.error">{{ ln.n }}</div>
                     </div></div>
-                    <textarea id="px-code-text" class="px-code-text grow" data-event-change="px_code_changed"></textarea>
+                    <textarea id="px-code-text" class="px-code-text grow" wrap="nowrap" data-event-change="px_code_changed"></textarea>
                 </div>
                 <div class="px-console-head row"><span class="an-label grow">Консоль</span></div>
                 <div id="px-console" class="px-console column">
