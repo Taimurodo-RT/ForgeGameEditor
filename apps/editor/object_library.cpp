@@ -65,6 +65,8 @@ private:
         take(now.picture, to.picture, from.picture);
         take(now.frames, to.frames, from.frames);
         take(now.animations, to.animations, from.animations);
+        take(now.frames_over, to.frames_over, from.frames_over); // set aside past the game's limit: the author's frames now, or back
+        take(now.animations_over, to.animations_over, from.animations_over);
         take(now.file, to.file, from.file);
         return now;
     }
@@ -1037,6 +1039,7 @@ bool ObjectLibrary::set_frames(int n) {
     if (frames == t->frames) return false;
     objects::Template after = *t;
     after.frames = frames;
+    after.frames_over = 0; // the frames past the game's limit its file had: the author's number now
     change(std::move(after), "«" + t->name + "»: кадров в картинке " + std::to_string(frames));
     history_.seal();
     return true;

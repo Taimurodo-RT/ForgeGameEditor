@@ -25,6 +25,10 @@ public:
     struct Look {
         u32 frames = 1;
         std::map<std::string, objects::Clip> animations;
+        // What the file had past the game's frame limit (objects::Template): a change of the frames or of that state's
+        // animation replaces it, undo brings it back.
+        u32 frames_over = 0;
+        std::map<std::string, objects::Clip> animations_over;
     };
     AnimCommand(objects::Library& lib, u64 key, Look before, Look after, std::string label)
         : lib_(lib), key_(key), before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
@@ -39,6 +43,8 @@ private:
         objects::Template t = *now;
         t.frames = to.frames;
         t.animations = to.animations;
+        t.frames_over = to.frames_over;
+        t.animations_over = to.animations_over;
         std::string error;
         if (!lib_.put(std::move(t), &error)) FORGE_ERROR("Шаблон «%s»: %s", now->name.c_str(), error.c_str());
     }
@@ -324,10 +330,11 @@ std::string AnimationEditor::problem() const {
 bool AnimationEditor::change_state(std::optional<objects::Clip> to, std::string label) {
     const objects::Template* t = selected();
     if (!t || state_.empty()) return false;
-    AnimCommand::Look before{t->frames, t->animations}, after = before;
+    AnimCommand::Look before{t->frames, t->animations, t->frames_over, t->animations_over}, after = before;
     if (to) after.animations[state_] = std::move(*to);
     else after.animations.erase(state_);
-    if (after.animations == before.animations) return false;
+    after.animations_over.erase(state_);
+    if (after.animations == before.animations && after.animations_over == before.animations_over) return false;
     history_.execute(std::make_unique<AnimCommand>(library(), selected_, std::move(before), std::move(after), std::move(label)));
     history_.seal();
     rebuild(); // the views and the frames cut at once: the next click finds them as the file has it
@@ -389,8 +396,9 @@ bool AnimationEditor::set_frames(int n) {
                    t->name.c_str(), limit);
     const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit)));
     if (frames == t->frames) return false;
-    AnimCommand::Look before{t->frames, t->animations}, after = before;
+    AnimCommand::Look before{t->frames, t->animations, t->frames_over, t->animations_over}, after = before;
     after.frames = frames;
+    after.frames_over = 0;
     history_.execute(std::make_unique<AnimCommand>(library(), selected_, std::move(before), std::move(after),
                                                    "«" + t->name + "»: кадров в картинке " + std::to_string(frames)));
     history_.seal();

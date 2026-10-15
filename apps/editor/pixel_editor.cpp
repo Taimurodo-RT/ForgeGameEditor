@@ -66,7 +66,9 @@ private:
 };
 
 // game.json with another "frame_limit", written at once (Ctrl+Z writes the file back byte for byte), and the library
-// reading its templates by it.
+// reading its templates by it. game.json that cannot be written (read-only, held by another program) changes nothing:
+// the file, the limit, the templates and the fields stay as they are, the step is not done (failed: the history stays
+// where it was), and the reason is said under the fields and in the log.
 class LimitCommand final : public editor::Command {
 public:
     struct Side {
@@ -78,10 +80,17 @@ public:
     void apply(editor::Document&) override { put(after_); }
     void revert(editor::Document&) override { put(before_); }
     std::string label() const override { return label_; }
+    bool failed() const override { return failed_; }
 
 private:
     void put(const Side& to) {
-        if (!write_file_atomic(file_, to.bytes)) FORGE_ERROR("Пиксельные: %s не записывается", path_to_utf8(file_).c_str());
+        failed_ = !write_file_atomic(file_, to.bytes);
+        if (failed_) {
+            const std::string why = "game.json не записывается: предел кадров остался " + std::to_string(lib_.frame_limit());
+            FORGE_ERROR("Пиксельные: %s (%s)", why.c_str(), path_to_utf8(file_).c_str());
+            editor_.refused(why);
+            return;
+        }
         lib_.set_frame_limit(to.limit);
         lib_.reload_templates();
         editor_.reload();
@@ -91,6 +100,7 @@ private:
     fs::path file_;
     Side before_, after_;
     std::string label_;
+    bool failed_ = false;
 };
 
 // A template's picture, frames and animations as they were, onto the template as it is now.
@@ -100,6 +110,9 @@ public:
         std::string picture;
         u32 frames = 1;
         std::map<std::string, objects::Clip> animations;
+        // What the file had past the game's frame limit (objects::Template): a picture given replaces it, undo brings it back.
+        u32 frames_over = 0;
+        std::map<std::string, objects::Clip> animations_over;
     };
     GiveCommand(objects::Library& lib, u64 key, Look before, Look after, std::string label)
         : lib_(lib), key_(key), before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
@@ -115,6 +128,8 @@ private:
         t.picture = to.picture;
         t.frames = to.frames;
         t.animations = to.animations;
+        t.frames_over = to.frames_over;
+        t.animations_over = to.animations_over;
         std::string error;
         if (!lib_.put(std::move(t), &error)) FORGE_ERROR("Шаблон «%s»: %s", now->name.c_str(), error.c_str());
     }
@@ -946,10 +961,16 @@ bool PixelEditor::set_frame_limit(u32 n) {
     if (!before || !objects::with_frame_limit({reinterpret_cast<const char*>(before->data()), before->size()}, n, after))
         return refuse("game.json игры не читается: предел кадров не записан");
     note_.clear();
-    history_.execute(std::make_unique<LimitCommand>(*this, *lib, file, LimitCommand::Side{*before, was}, LimitCommand::Side{text_bytes(after), n},
-                                                    "Предел кадров " + std::to_string(n)));
+    if (!history_.execute(std::make_unique<LimitCommand>(*this, *lib, file, LimitCommand::Side{*before, was},
+                                                         LimitCommand::Side{text_bytes(after), n}, "Предел кадров " + std::to_string(n))))
+        return false; // said by the step itself
     history_.seal();
     return true;
+}
+
+void PixelEditor::refused(std::string why) {
+    note_ = std::move(why);
+    rebuild(); // the fields show things as they are
 }
 
 bool PixelEditor::set_seed(u64 seed) {
@@ -1213,16 +1234,20 @@ bool PixelEditor::give(u64 key) {
     const std::string pic = picture();
     if (pic.empty() || doc_.strip.empty()) return refuse("Сначала «Запечь»: картинки персонажа ещё нет");
     if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: отдайте через миг");
-    const std::string copied = copy_into(assets_.abs(pic), lib->pictures_folder(), "картинка", copy_in);
-    if (copied.empty()) return refuse("Картинка «" + pic + "» не скопировалась в игру");
     u32 frames = 0;
     for (const pixel::StripClip& c : doc_.strip) frames = std::max(frames, c.first + c.frames);
+    // Baked under a higher limit: the game would read it as one picture.
+    if (frames > lib->frame_limit())
+        return refuse("В «" + path_to_utf8(utf8_path(pic).filename()) + "» " + count_words(frames, "кадр", "кадра", "кадров") +
+                      ", а предел игры " + std::to_string(lib->frame_limit()) + ": поднимите «Предел кадров» или уберите кадры у клипов и запеките снова");
+    const std::string copied = copy_into(assets_.abs(pic), lib->pictures_folder(), "картинка", copy_in);
+    if (copied.empty()) return refuse("Картинка «" + pic + "» не скопировалась в игру");
     // The states the template plays, as it will be drawn.
     objects::Template probe = *t;
     probe.picture = copied;
     probe.frames = frames;
     const std::vector<level::LevelModule::AnimState> plays = module_.anim_states(*lib, probe);
-    GiveCommand::Look before{t->picture, t->frames, t->animations}, after{copied, frames, {}};
+    GiveCommand::Look before{t->picture, t->frames, t->animations, t->frames_over, t->animations_over}, after{copied, frames, {}, 0, {}};
     std::string given, left;
     for (const pixel::StripClip& c : doc_.strip) {
         const auto st = std::find_if(plays.begin(), plays.end(), [&](const auto& s) { return s.id == c.state; });
@@ -1238,7 +1263,8 @@ bool PixelEditor::give(u64 key) {
         after.animations[c.state] = std::move(clip);
         given += (given.empty() ? "" : ", ") + ("«" + st->name + "»");
     }
-    if (after.picture == before.picture && after.frames == before.frames && after.animations == before.animations) {
+    if (after.picture == before.picture && after.frames == before.frames && after.animations == before.animations &&
+        before.frames_over == 0 && before.animations_over.empty()) {
         note_ = "«" + t->name + "» уже рисует эту картинку так";
         giving_ = false;
         rebuild();

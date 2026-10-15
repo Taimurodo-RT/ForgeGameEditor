@@ -86,6 +86,8 @@ public:
     u32 error_line() const { return error_line_; }
     // What the last action said (a refusal, what was done).
     const std::string& note() const { return note_; }
+    // A refusal said under the fields, the fields shown as things are (a step of the history that could not be done).
+    void refused(std::string why);
 
     // Parts: the selected one, and its pivot (one step; picture units).
     bool select_part(const std::string& id);

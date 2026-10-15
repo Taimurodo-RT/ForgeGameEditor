@@ -413,6 +413,116 @@ TEST_CASE("the game's frame limit: game.json, templates and animations past it, 
     CHECK(taken->frames == 4);
 }
 
+TEST_CASE("a template past the game's frame limit keeps its file's frames and animations through a save of anything else") {
+    const auto dir = temp_folder("forge_objects_frame_limit_kept_test");
+    write_text(dir / "kinds.json", kKinds);
+    write_text(dir / "objects" / "ezhik.object.json",
+               R"({"id": "ezhik", "name": "Ёжик", "kind": "pickup", "picture": "ёжик.png", "frames": 6,
+                   "animations": {"walk": {"frames": [0, 1, 2, 3, 4, 5], "fps": 12}, "stand": {"frames": [0, 1], "fps": 4}},
+                   "about": "Бегает по лесу", "values": {}})");
+    const fs::path file = dir / "objects" / "ezhik.object.json";
+    // The file as the editor writes it, read where nothing is past the limit.
+    std::string written;
+    {
+        Library high;
+        high.set_frame_limit(64);
+        REQUIRE(high.load(dir / "kinds.json", dir / "objects"));
+        REQUIRE(high.put(*high.find("ezhik")));
+        std::vector<u8> bytes;
+        REQUIRE(read_file(file, bytes));
+        written.assign(bytes.begin(), bytes.end());
+    }
+    REQUIRE(written.find("\"frames\": 6,") != std::string::npos);
+    REQUIRE(written.find("\"walk\": {\"frames\": [0, 1, 2, 3, 4, 5], \"fps\": 12}") != std::string::npos);
+    const Clip walk{{0, 1, 2, 3, 4, 5}, 12, true};
+    const std::string note = "шаблон «Ёжик лесной» (ezhik.object.json): кадров 6 больше предела игры 4, читается одной картинкой";
+    auto file_text = [&] {
+        std::vector<u8> bytes;
+        REQUIRE(read_file(file, bytes));
+        return std::string(bytes.begin(), bytes.end());
+    };
+
+    // Limit 4: the game and the tabs see one picture and no «walk»; the file's values are set aside.
+    Library lib;
+    lib.set_frame_limit(4);
+    REQUIRE(lib.load(dir / "kinds.json", dir / "objects"));
+    REQUIRE(lib.find("ezhik"));
+    CHECK(lib.find("ezhik")->frames == 1);
+    CHECK(lib.find("ezhik")->animations.count("walk") == 0);
+    CHECK(lib.find("ezhik")->animations.count("stand") == 1);
+    CHECK(lib.read_notes().size() == 1);
+
+    // A change of something else (its name, as «Объекты» renames): the file keeps the 6 frames and «walk», byte for byte
+    // but the name.
+    Template renamed = *lib.find("ezhik");
+    renamed.name = "Ёжик лесной";
+    REQUIRE(lib.put(renamed));
+    std::string expected = written;
+    const std::string was = "\"name\": \"Ёжик\"";
+    REQUIRE(expected.find(was) != std::string::npos);
+    expected.replace(expected.find(was), was.size(), "\"name\": \"Ёжик лесной\"");
+    CHECK(file_text() == expected);
+    CHECK(lib.find("ezhik")->frames == 1); // still one picture in this game
+    CHECK(lib.find("ezhik")->animations.count("walk") == 0);
+    // And another (what it is about): the same.
+    renamed.about = "Бегает по лесу ночью";
+    REQUIRE(lib.put(renamed));
+    std::string expected2 = expected;
+    expected2.replace(expected2.find("Бегает по лесу"), std::string("Бегает по лесу").size(), "Бегает по лесу ночью");
+    CHECK(file_text() == expected2);
+
+    // Opened again at limit 4: still said, still one picture.
+    Library again;
+    again.set_frame_limit(4);
+    REQUIRE(again.load(dir / "kinds.json", dir / "objects"));
+    REQUIRE(again.read_notes().size() == 1);
+    CHECK(again.read_notes()[0] == note);
+    CHECK(again.find("ezhik")->frames == 1);
+    CHECK(again.find("ezhik")->name == "Ёжик лесной");
+    // The limit raised back: the 6 frames and «walk» as the author made them, nothing said.
+    again.set_frame_limit(6);
+    again.reload_templates();
+    CHECK(again.find("ezhik")->frames == 6);
+    REQUIRE(again.find("ezhik")->animations.count("walk") == 1);
+    CHECK(again.find("ezhik")->animations.at("walk") == walk);
+    CHECK(again.read_notes().empty());
+
+    // A library of a higher limit takes it as the file has it; one of a lower one refuses, by the file's numbers.
+    const auto up_dir = temp_folder("forge_objects_frame_limit_kept_up_test");
+    write_text(up_dir / "kinds.json", kKinds);
+    write_text(lib.pictures_folder() / utf8_path("ёжик.png"), "not really a png");
+    Library up;
+    up.set_frame_limit(8);
+    up.set_pictures_folder(up_dir / "pictures");
+    REQUIRE(up.load(up_dir / "kinds.json", up_dir / "objects"));
+    std::optional<Template> taken = up.copy_from(lib, *lib.find("ezhik"));
+    REQUIRE(taken);
+    CHECK(taken->frames == 6);
+    REQUIRE(taken->animations.count("walk") == 1);
+    CHECK(taken->animations.at("walk") == walk);
+    CHECK(taken->frames_over == 0);
+    CHECK(taken->animations_over.empty());
+    REQUIRE(up.put(*taken));
+    CHECK(up.same_as(lib, *lib.find("ezhik")));
+    Library five;
+    five.set_frame_limit(5);
+    five.set_pictures_folder(up_dir / "five");
+    REQUIRE(five.load(up_dir / "kinds.json", up_dir / "five_objects"));
+    std::string error;
+    CHECK_FALSE(five.copy_from(lib, *lib.find("ezhik"), &error));
+    CHECK(error == "кадров в картинке 6, а предел этой игры 5 (поле «Предел кадров» в «Пиксельных»)");
+
+    // The author's own number of frames, and an animation of their own for that state, are what the file gets.
+    Template own = *lib.find("ezhik");
+    own.frames = 3;
+    own.animations["walk"] = {{0, 1, 2}, 8, true};
+    REQUIRE(lib.put(own));
+    const std::string now = file_text();
+    CHECK(now.find("\"frames\": 3,") != std::string::npos);
+    CHECK(now.find("\"frames\": 6") == std::string::npos);
+    CHECK(now.find("\"walk\": {\"frames\": [0, 1, 2], \"fps\": 8}") != std::string::npos);
+}
+
 TEST_CASE("a kind may be one whose templates are not put on levels") {
     const auto dir = temp_folder("forge_objects_placed_test");
     write_text(dir / "kinds.json", R"({"kinds": [

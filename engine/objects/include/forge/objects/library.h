@@ -197,6 +197,12 @@ struct Template {
     // Its own animations of the picture, by the state of the module's they play in ("stand", "walk"). States the
     // module does not know stay as they are read.
     std::map<std::string, Clip> animations;
+    // What its file says past the game's frame limit (Library::reload_templates), set aside: the game and the tabs see
+    // one picture (frames 1) and no such animation, but a save writes them back as they were (file_frames,
+    // file_animations), and a higher limit reads them again. frames_over: the file's frames when the picture reads as
+    // one, 0 when none were set aside; animations_over: the file's animations longer than the limit, by state.
+    u32 frames_over = 0;
+    std::map<std::string, Clip> animations_over;
     std::filesystem::path file;
     u32 rev = 0; // hash of the values and blocks: copies with another rev are behind
     // Its picture file got new content under the same name (Library::picture_changed); not saved.
@@ -205,6 +211,10 @@ struct Template {
     // Changes whenever what the template looks like may change (its values
     // or its picture): names cached icons.
     u32 look() const;
+    // As its file has them: frames and animations set aside past the game's limit included, unless changed since (a
+    // picture of frames other than 1, an animation of its own for that state). What template_json writes.
+    u32 file_frames() const;
+    std::map<std::string, Clip> file_animations() const;
 
     const std::string* value(std::string_view prop) const;
 };
