@@ -19839,6 +19839,7 @@ return {
     f32 mb_x_ = 0, mb_y_ = 0; // where the mouse is held
     vector::Point mb_to_;     // where a dragged point of a part is to stand
     std::string mb_code_, mb_seen_, mb_label_;
+    std::string mb_narrow_; // a turn of the right leg typed after the nod, 4,5 points long on the timeline
     std::vector<u8> mb_doc0_;
     // The author's clip of steps (1,1 s at the start): down, a pause, up, the torso's table, the head turned at 0,3 s,
     // the left leg three times in a loop, the module's nod; «Стоит» by pose(t).
@@ -20155,8 +20156,17 @@ return {
             edited(mb_sub(mb_code_, "wait(0.1)", "wait(0.3)"), 14, "«Ёжик»: пауза 0,3 с", "the pause's end let go at 0,5 s");
             break;
         }
-        // A block without a start of its own: its left edge not taken. The inspector's fields.
+        // The pause's end dragged to before its start: no further than the start, a pause of 0.
         case 11: {
+            if (hold(rec && near(rec->length, 1.4) && px().whole().frames == 14, "recorded again: 1,4 s")) return true;
+            check(near(rec->pauses[0].start, 0.2) && near(rec->pauses[0].length, 0.3), "the pause from 0,2 s, 0,3 s long");
+            check(mb_hold_edge("px-pause-0", 0.5, 0.1, true), "its end dragged to 0,1 s");
+            mb_let_go();
+            tried(mb_sub(mb_code_, "wait(0.3)", "wait(0)"), 11, "«Ёжик»: пауза 0 с", "the pause's end not before its start: a pause of 0");
+            break;
+        }
+        // A block without a start of its own: its left edge not taken. The inspector's fields.
+        case 12: {
             if (hold(rec && near(rec->length, 1.4) && px().whole().frames == 14, "recorded again: 1,4 s")) return true;
             const i32 up = block_of("body", pixel::Prop::Y, -6);
             check(up >= 0 && near(rec->blocks[static_cast<usize>(up)].start, 0.5), "«body · y» to −6 from 0,5 s");
@@ -20167,7 +20177,7 @@ return {
             check(px_click(id_of(up)) && px().block() == up, "a click on it");
             break;
         }
-        case 12: {
+        case 13: {
             if (hold(shown("px-block-value") && shown("px-block-length") && shown("px-timing"), "the inspector's fields")) return true;
             const int quad = timing_index("out_quad");
             Rml::Element* chip = ed_.find_element("px-timing");
@@ -20177,21 +20187,23 @@ return {
                   "value −6, length 0,2, «out_quad» with its curve: «" + ue_field("px-block-value") + "», «" + ue_field("px-block-length") + "»");
             check(ue_type("px-block-value", "-6"), "−6 typed again");
             unchanged("the same value");
+            check(ue_type("px-block-value", "-6,0"), "−6,0 typed: the same number in other letters");
+            unchanged("the same number in other letters");
             check(ue_type("px-block-value", "-8"), "−8 typed");
             edited(mb_sub(mb_code_, "body.y(-p.height, 0.2", "body.y(-p.height - 2, 0.2"), 14, "«Ёжик»: body · y = -8",
                    "the value: the expression keeps itself, 2 less");
             break;
         }
-        case 13:
+        case 14:
             if (hold(ue_field("px-block-value") == "-8" && ue_field("px-block-length") == "0,2", "the fields of the new recording")) return true;
             check(ue_type("px-block-length", "0,3"), "0,3 typed into «Длина»");
             edited(mb_sub(mb_code_, "-p.height - 2, 0.2,", "-p.height - 2, 0.3,"), 15, "«Ёжик»: body · y, длина 0,3 с", "the length");
             break;
-        case 14:
+        case 15:
             if (hold(ue_field("px-block-length") == "0,3" && !px().timings_open(), "the fields of the new recording")) return true;
             check(px_click("px-timing") && px().timings_open(), "a click on «out_quad»: the list");
             break;
-        case 15: {
+        case 16: {
             if (hold(shown("px-timing-0"), "the list of timings")) return true;
             std::string wrong;
             for (usize i = 0; i <= vector::kTimingCount; ++i) {
@@ -20212,7 +20224,7 @@ return {
             break;
         }
         // The loop: one number for its three blocks.
-        case 16: {
+        case 17: {
             if (hold(!shown("px-timings") && element_text("px-timing").find("in_out_cubic") != std::string::npos && rec && near(rec->length, 1.5),
                      "the inspector of the new recording, 1,5 s"))
                 return true;
@@ -20222,7 +20234,7 @@ return {
             check(px_click(id_of(leg)) && px().block() == leg, "a click on the second");
             break;
         }
-        case 17: {
+        case 18: {
             if (hold(shown("px-block-value") && ue_field("px-block-value") == "10", "its fields")) return true;
             check(element_text("px-inspector-text").find("из цикла: 3 повтора") != std::string::npos, "«из цикла: 3 повтора»: " + element_text("px-inspector-text"));
             check(ue_type("px-block-value", "20"), "20 typed");
@@ -20230,14 +20242,14 @@ return {
             break;
         }
         // The module's block: no fields, its edge refused.
-        case 18: {
+        case 19: {
             if (hold(rec && block_of("leg_l", pixel::Prop::Rot, 20, 2) >= 0 && block_of("leg_l", pixel::Prop::Rot, 10) < 0, "all three to 20")) return true;
             const i32 nod = block_of("head", pixel::Prop::Rot, 8);
             check(nod >= 0 && rec->blocks[static_cast<usize>(nod)].site.file == 1 && near(rec->blocks[static_cast<usize>(nod)].start, 1.3), "the nod of the module at 1,3 s");
             check(px_click(id_of(nod)) && px().block() == nod, "a click on it");
             break;
         }
-        case 19: {
+        case 20: {
             const i32 nod = block_of("head", pixel::Prop::Rot, 8);
             if (hold(shown("px-block-why"), "the inspector says why")) return true;
             check(!shown("px-block-value") && !shown("px-block-length") && !shown("px-timing") && element_text("px-block-why") == kMbModule,
@@ -20250,7 +20262,7 @@ return {
             break;
         }
         // A part dragged in the vector: not before 3 points; the end of its transition, a field of its table.
-        case 20: {
+        case 21: {
             if (wait(2)) return true;
             const pixel::Rig& rig = px().rig();
             const i32 torso = rig.part("torso");
@@ -20265,19 +20277,31 @@ return {
             check(mb_hold_part("torso", torso_at, 1, -2), "dragged by 1; −2 and held");
             break;
         }
-        case 21:
+        // Space while it is held: the preview does not play the frame from under the mouse.
+        case 22:
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(px().playing(), "Space while held: playing");
+            break;
+        case 23:
+            if (wait(20)) return true;
+            check(px().frame() == 10 && mb_stands("torso", torso_at) && files_are(mb_code_, mb_frames_),
+                  "20 frames later: frame 11 still, the torso where the mouse is: frame " + std::to_string(px().frame() + 1));
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(!px().playing(), "Space: stopped");
+            break;
+        case 24:
             check(mb_stands("torso", torso_at) && files_are(mb_code_, mb_frames_), "held: the torso shown where the mouse is, nothing written yet");
             mb_let_go();
             edited(mb_sub(mb_code_, "{ x = 1 }", "{ x = 2, y = -2 }"), 15, "«Ёжик»: «torso» сдвинута на 1; -2",
                    "let go: x the end of its transition, y a field of its table");
             break;
-        case 22:
+        case 25:
             if (hold(rec && px().rig().part("torso") >= 0 && mb_value("y") == "-2", "the frame of the new code")) return true;
             check(mb_stands("torso", torso_at) && mb_value("x") == "2" && element_text("px-pv-y").find("-2") != std::string::npos,
                   "the torso stands where it was let go; «Часть «torso»»: x 2, y −2");
             check(px_click("px-frame-1") && px().frame() == 1 && near(px().time(), 0.1), "frame 2: 0,1 s, no transition of the head");
             break;
-        case 23: {
+        case 26: {
             if (wait(2)) return true;
             check(mb_hold_part("head", head_at, 1.5, -1), "the head dragged by 1,5; −1");
             mb_let_go();
@@ -20287,7 +20311,7 @@ return {
             break;
         }
         // The part's values and «К коду».
-        case 24: {
+        case 27: {
             if (hold(rec && shown("px-inspect-code") && mb_value("x") == "1,5", "the frame of the new code")) return true;
             check(px().part() == "head" && mb_stands("head", head_at) && mb_value("y") == "-1" && mb_value("rot") == "0" && mb_value("opacity") == "1" &&
                       mb_value("fill") == "свой" && mb_value("morph") == "нет",
@@ -20304,14 +20328,14 @@ return {
             check(away() && px_click("px-frame-14") && px().frame() == 14 && near(px().time(), 1.4), "frame 15: 1,4 s, the module's nod");
             break;
         }
-        case 25:
+        case 28:
             if (hold(element_text("px-inspect-call") == "из модуля «движения»", "the module named")) return true;
             check(!shown("px-inspect-code") && px().part_block() == block_of("head", pixel::Prop::Rot, 0) && px().part_block() >= 0,
                   "no «К коду»: the latest block is the module's");
             check(px_click("px-frame-5") && px().frame() == 5 && near(px().time(), 0.5), "frame 6: 0,5 s, the head turned by 10");
             break;
         // A part inside a turned one: its move in the units of what carries it.
-        case 26: {
+        case 29: {
             if (wait(2)) return true;
             const vector::Point mouth{16, 18.75};
             check(mb_hold_part("mouth", mouth, 2, 0), "the mouth dragged by 2; 0 across the picture");
@@ -20326,7 +20350,7 @@ return {
             break;
         }
         // The panel unsaved: the edge, the field and the drag save it first, a step of its own.
-        case 27: {
+        case 30: {
             if (wait(2)) return true;
             const std::string title = "правки мышью.";
             check(mo_caret(mo_char(mb_code_, title) + mo_letters(title)), "the caret after the title");
@@ -20349,13 +20373,13 @@ return {
             mb_code_ = done, mb_frames_ = 16, mb_label_ = label;
             break;
         }
-        case 28: {
+        case 31: {
             if (hold(rec && near(rec->length, 1.6) && !px().code_unsaved(), "recorded again: 1,6 s")) return true;
             const i32 up = block_of("body", pixel::Prop::Y, -8);
             check(up >= 0 && px_click(id_of(up)) && px().block() == up, "a click on «body · y» to −8");
             break;
         }
-        case 29: {
+        case 32: {
             if (hold(shown("px-block-value") && ue_field("px-block-value") == "-8", "its fields")) return true;
             check(mo_caret(mo_char(mb_code_, "Ёж") + 2), "the caret after «Ёж»");
             mo_type("!");
@@ -20376,7 +20400,7 @@ return {
             check(px_click("px-frame-11") && px().frame() == 11 && near(px().time(), 1.1), "frame 12: 1,1 s, the torso's table at its end");
             break;
         }
-        case 30: {
+        case 33: {
             if (wait(2)) return true;
             check(mo_caret(mo_char(mb_code_, "Ёж!") + 3), "the caret after «Ёж!»");
             mo_type("?");
@@ -20394,8 +20418,43 @@ return {
             mb_code_ = done, mb_label_ = label;
             break;
         }
+        // The panel unsaved and under the mouse in its recording another part: the drag is that part's.
+        case 34: {
+            if (hold(rec && mb_value("x") == "3,5", "the frame of the new code")) return true;
+            const pixel::Rig& rig = px().rig();
+            const i32 head = rig.part("head"), torso = rig.part("torso");
+            check(head >= 0 && torso >= 0, "the head and the torso");
+            // A point of the head left of and below its centre, out of the mouths' bounds, moved 8 lower: in the pose shown
+            // out of the head's bounds, in the torso's, away from its pivot.
+            vector::Point at = head >= 0 ? rig.carried(head).apply({10, 20}) : vector::Point{};
+            at.y += 8;
+            const vector::Point on_torso = torso >= 0 ? pixel::inverse(rig.carried(torso)).apply(at) : vector::Point{};
+            f32 x = 0, y = 0;
+            check(px().screen_of(at, x, y), "the point on screen");
+            left_click(x, y);
+            check(px().part() == "torso", "a click there: «" + px().part() + "»");
+            const std::string fix = "at(0.1, part(\"head\"):to({ x = 1.5, y = -1";
+            check(mo_caret(mo_char(mb_code_, fix) + mo_letters(fix)), "the caret after the head's y");
+            mo_type(" + 8");
+            const std::string typed = mb_sub(mb_code_, fix, fix + " + 8");
+            check(px().code_unsaved() && px().code() == typed, "« + 8» typed: the head 8 lower, not saved");
+            check(mb_hold_part("torso", on_torso, 1, 0), "pressed there and dragged by 1; 0");
+            mb_let_go();
+            const std::string line = "      at(1.1, part(\"head\"):to({ x = 2.5 }, 0))\n", label = "«Ёжик»: «head» сдвинута на 1; 0";
+            const std::string done = mb_sub(typed, "      at(0.5, part(\"mouth\")", line + "      at(0.5, part(\"mouth\")");
+            check(files_are(done, 16) && step_label() == label && px().part() == "head",
+                  "the panel saved; the head under the mouse in its recording, the drag the head's: " + step_label());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mb_code_, mb_frames_) && step_label() == mb_label_, "Ctrl+Z twice: the drag and the save undone");
+            check(px().screen_of(rig.carried(torso).apply(torso_at), x, y), "the torso on screen");
+            left_click(x, y);
+            check(px().part() == "torso", "a click on the torso: «" + px().part() + "»");
+            break;
+        }
         // The code with an error: none of them begins.
-        case 31: {
+        case 35: {
             if (hold(rec && mb_value("x") == "3,5", "the frame of the new code")) return true;
             const std::string call = "body.y(2, 0.3";
             check(mo_caret(mo_char(mb_code_, call) + mo_letters(call)), "the caret after 0.3");
@@ -20405,7 +20464,7 @@ return {
                   "« +» typed and saved: a line that does not compile");
             break;
         }
-        case 32: {
+        case 36: {
             if (hold(px().stale() && shown("px-console-0"), "the timeline faint")) return true;
             const std::vector<PixelEditor::ConsoleLine>& c = px().console();
             const std::string bad = mb_sub(mb_code_, "body.y(2, 0.3)", "body.y(2, 0.3 +)");
@@ -20420,10 +20479,11 @@ return {
             // Another note between: the drag's refusal is its own.
             const i32 nod = block_of("head", pixel::Prop::Rot, 8);
             mb_into_view(id_of(nod));
-            check(mo_double(id_of(nod).c_str()) && px().note().rfind("Блок из модуля «движения»", 0) == 0, "a double click on the module's block: «" + px().note() + "»");
+            const bool twice = mo_double(id_of(nod).c_str());
+            check(twice && px().note().rfind("Блок из модуля «движения»", 0) == 0, "a double click on the module's block: «" + px().note() + "»");
             break;
         }
-        case 33: {
+        case 37: {
             if (wait(2)) return true;
             const std::string bad = mb_sub(mb_code_, "body.y(2, 0.3)", "body.y(2, 0.3 +)");
             const std::string why = "Код с ошибкой: правка мышью не начнётся, пока он не записывается (строка " +
@@ -20431,11 +20491,20 @@ return {
             check(mb_hold_part("torso", torso_at, 1, 0), "the torso dragged");
             mb_let_go();
             check(px().note() == why && file(lua) == bytes(bad) && step_label() == "«Ёжик»: код «Ёжик.luau» сохранён", "the drag refused: «" + px().note() + "»");
+            const i32 nod = block_of("head", pixel::Prop::Rot, 8);
+            mb_into_view(id_of(nod));
+            const bool twice = mo_double(id_of(nod).c_str());
+            check(twice && px().note().rfind("Блок из модуля «движения»", 0) == 0, "a double click on the module's block again: «" + px().note() + "»");
+            const f64 nod_end = nod >= 0 ? rec->blocks[static_cast<usize>(nod)].start + rec->blocks[static_cast<usize>(nod)].length : 0;
+            check(nod >= 0 && mb_hold_edge(id_of(nod), nod_end, nod_end - 0.1, true), "the module's end dragged");
+            mb_let_go();
+            check(px().note() == why && file(lua) == bytes(bad) && step_label() == "«Ёжик»: код «Ёжик.luau» сохранён",
+                  "the module's edge: the code is why, not the module: «" + px().note() + "»");
             const i32 up = block_of("body", pixel::Prop::Y, -9);
             check(px_click(id_of(up)) && px().block() == up, "a click on «body · y» to −9");
             break;
         }
-        case 34: {
+        case 38: {
             if (hold(shown("px-block-why"), "the inspector says why")) return true;
             check(!shown("px-block-value") && !shown("px-block-length") && !shown("px-timing") &&
                       element_text("px-block-why") == "Код с ошибкой: блок правится, когда код снова записывается",
@@ -20447,7 +20516,7 @@ return {
             break;
         }
         // The tree's row under the mouse: its part outlined in the vector, a colour of its own; and not after.
-        case 35: {
+        case 39: {
             if (hold(!px().stale() && rec && shown("px-part-leg_r"), "the code records again")) return true;
             mb_into_view("px-part-leg_r");
             f32 x = 0, y = 0;
@@ -20455,7 +20524,7 @@ return {
             mouse(SDL_EVENT_MOUSE_MOTION, x, y);
             break;
         }
-        case 36: {
+        case 40: {
             if (hold(px().hovered_part() == "leg_r", "the row under the mouse")) return true;
             if (wait(2)) return true;
             // The leg at rest in the frame at 0 s: dashed 2 points out of its bounds.
@@ -20487,7 +20556,7 @@ return {
             mouse(SDL_EVENT_MOUSE_MOTION, x, y);
             break;
         }
-        case 37: {
+        case 41: {
             if (hold(px().hovered_part().empty(), "the mouse off the tree")) return true;
             if (wait(2)) return true;
             const assets::CookedTexture& v = px().vector_shown();
@@ -20498,7 +20567,7 @@ return {
             break;
         }
         // «Стоит» of pose(t): no recording, a drag refused.
-        case 38: {
+        case 42: {
             if (hold(!px().recording() && px().rig().part("torso") >= 0, "«Стоит» shown")) return true;
             if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
             check(mb_hold_part("torso", torso_at, 1, 0), "the torso dragged");
@@ -20510,8 +20579,59 @@ return {
             if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
             break;
         }
+        // A block narrower than both its edges' reach: the edge nearer the mouse taken.
+        case 43: {
+            if (hold(rec && near(rec->length, 1.6) && !px().playing(), "«В воздухе»'s recording")) return true;
+            // 4,5 points of the timeline in thousandths of a second: narrower than both edges' reach of 4 together.
+            f32 a = 0, b = 0;
+            const bool laid = px().timeline_x(0, a) && px().timeline_x(1, b);
+            const f64 length = std::max(0.001, std::round(4.5 / std::max(1.0, static_cast<f64>(b - a)) * 1000) / 1000);
+            char words[32];
+            std::snprintf(words, sizeof words, "%.3f", length);
+            std::string text = words;
+            while (text.back() == '0') text.pop_back();
+            mb_narrow_ = " at(0.6, part(\"leg_r\").rot(5, " + text + "))";
+            check(laid && b > a, "the timeline's points a second: " + std::to_string(b - a));
+            const std::string call = "m.nod(part(\"head\"), 0.1)";
+            check(mo_caret(mo_char(mb_code_, call) + mo_letters(call)), "the caret after the nod");
+            mo_type(mb_narrow_);
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(mb_sub(mb_code_, call, call + mb_narrow_)) && step_label() == "«Ёжик»: код «Ёжик.luau» сохранён",
+                  "a turn of the right leg " + text + " s long typed and saved");
+            break;
+        }
+        case 44: {
+            const i32 turn = block_of("leg_r", pixel::Prop::Rot, 5);
+            if (hold(rec && turn >= 0 && !px().stale(), "recorded again: the leg's turn")) return true;
+            f32 x0 = 0, x1 = 0, x = 0, y = 0, to = 0;
+            const pixel::Block& narrow = rec->blocks[static_cast<usize>(turn)];
+            const bool laid = px().timeline_x(narrow.start, x0) && px().timeline_x(narrow.start + narrow.length, x1);
+            check(laid && near(narrow.start, 0.6) && x1 - x0 > 3.5f && x1 - x0 < 7,
+                  "the turn narrower than both edges' reach: " + std::to_string(x1 - x0) + " points");
+            mb_into_view(id_of(turn));
+            check(element_center(id_of(turn), x, y) && px().timeline_x(0.7, to), "its box");
+            // 3,5 points before its end, nearer its start: the start taken, held at 0,7 s.
+            const f32 at = x1 - 3.5f;
+            mouse(SDL_EVENT_MOUSE_MOTION, at, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, at, y);
+            for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, at + (to - x0) * static_cast<f32>(i) / 4, y);
+            mb_x_ = at + (to - x0), mb_y_ = y;
+            mb_let_go();
+            const std::string call = "m.nod(part(\"head\"), 0.1)", saved = mb_sub(mb_code_, call, call + mb_narrow_);
+            const std::string moved = mb_sub(saved, "at(0.6, part(\"leg_r\")", "at(0.7, part(\"leg_r\")");
+            check(files_are(moved, 16) && step_label() == "«Ёжик»: leg_r · rot, начало 0,7 с", "its start let go at 0,7 s: " + step_label());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(saved, 16) && step_label() == "«Ёжик»: код «Ёжик.luau» сохранён", "Ctrl+Z: the start undone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mb_code_, mb_frames_) && step_label() == mb_label_, "Ctrl+Z: the turn undone");
+            break;
+        }
+        case 45:
+            if (hold(rec && block_of("leg_r", pixel::Prop::Rot, 5) < 0 && !px().stale(), "recorded again: no turn of the leg")) return true;
+            break;
         // What the tab shows, for pixel-motion-b-again: no part chosen, the mouse on the vector.
-        case 39: {
+        case 46: {
             if (hold(rec && near(rec->length, 1.6) && !px().playing(), "«В воздухе»'s recording")) return true;
             f32 x = 0, y = 0;
             check(px().screen_of({-5, 1}, x, y), "a place of the vector without a part");
@@ -20521,7 +20641,7 @@ return {
             mb_seen_.clear();
             break;
         }
-        case 40: {
+        case 47: {
             if (mb_look(mb_seen_)) return true;
             check(files_are(mb_code_, mb_frames_) && px().whole().frames == 16, "looked at: nothing written");
             mo_code_laid();
