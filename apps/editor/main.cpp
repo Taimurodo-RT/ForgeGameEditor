@@ -18857,6 +18857,25 @@ return {
         return true;
     }
     bool mo_caret(u32 at) { return mo_select(at, at); }
+    // The code panel laid out: its text as tall as its box, the numbers of the lines past the box clipped by it (the
+    // code is longer than the box).
+    void mo_code_laid() {
+        Rml::Element* gutter = ed_.find_element("px-code-gutter");
+        Rml::Element* text = ed_.find_element("px-code-text");
+        Rml::Element* lines = ed_.find_element("px-code-lines");
+        Rml::Element* box = gutter ? gutter->GetParentNode() : nullptr;
+        Rml::Element* last = nullptr; // the lowest number shown (data-for keeps a hidden one of its own)
+        for (int i = 0; lines && i < lines->GetNumChildren(); ++i)
+            if (Rml::Element* ln = lines->GetChild(i); ln->IsVisible() && (!last || ln->GetAbsoluteTop() > last->GetAbsoluteTop())) last = ln;
+        check(box && text && std::fabs(text->GetOffsetHeight() - box->GetClientHeight()) <= 1,
+              "the code as tall as its box: " + std::to_string(text ? text->GetOffsetHeight() : 0) + " of " + std::to_string(box ? box->GetClientHeight() : 0));
+        Rml::Rectanglei clip;
+        const f32 bottom = gutter ? gutter->GetAbsoluteTop() + gutter->GetOffsetHeight() : 0;
+        const bool clipped = last && Rml::ElementUtilities::GetClippingRegion(last, clip) && static_cast<f32>(clip.Bottom()) <= bottom + 1;
+        check(last && last->GetAbsoluteTop() > bottom && clipped,
+              "the last line's number below the box, clipped by it: at " + std::to_string(last ? last->GetAbsoluteTop() : 0) + ", the box to " +
+                  std::to_string(bottom) + ", clipped to " + std::to_string(clip.Bottom()));
+    }
     // The character of the panel's text where `what` begins (as the field counts them).
     static u32 mo_char(const std::string& text, const std::string& what) {
         const usize at = text.find(what);
@@ -19478,6 +19497,7 @@ return {
         // The timeline: the wheel round the mouse, Shift+wheel along, F, both ends of the scale.
         case 13: {
             if (wait(2)) return true;
+            check(px().shown_fps() == 0 && element_text("px-shown-fps").empty(), "paused: no frames a second «" + element_text("px-shown-fps") + "»");
             f32 x = 0, y = 0, x2 = 0, rx = 0;
             const pixel::TimeView& v = px().view();
             check(element_center("px-ruler", rx, y) && px().timeline_x(0.5, x), "the ruler on screen");
@@ -19757,6 +19777,7 @@ return {
             if (mo_draw_ >= 0) return pixel_draw_step();
             if (wait(2)) return true;
             check(!shown("px-code-unsaved") && !shown("px-code-conflict") && ue_field("px-code-text") == jump, "no bar, no «не сохранён»");
+            mo_code_laid();
             // The window closed with the panel unsaved.
             check(mo_caret(0), "the panel");
             mo_type("-");

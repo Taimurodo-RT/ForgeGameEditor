@@ -169,12 +169,14 @@
 .px-code-head icon { color: var(--primary); }
 .px-code-box {
     flex: 1 1 0px;
+    align-items: stretch; /* the text and its numbers as tall as the box, not centred in it as a .row */
     min-height: 120px;
     border: 1px var(--outline-variant);
     border-radius: 6px;
     background-color: var(--surface-container-lowest);
 }
-.px-gutter { position: relative; width: 36px; overflow: hidden; border-right: 1px var(--outline-variant); }
+.px-gutter { position: relative; width: 36px; overflow: hidden; clip: always; border-right: 1px var(--outline-variant); }
+/* clip: always, since RmlUi clips only a box whose scrolled content outgrows it, and the numbers are moved by their top */
 .px-gutter-in { position: absolute; left: 0px; right: 0px; top: 0px; padding-top: 6px; }
 .px-ln { height: 18px; line-height: 18px; padding-right: 6px; text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--outline); }
 .px-ln.lit { background-color: var(--secondary-container); color: var(--on-secondary-container); }
@@ -207,6 +209,7 @@
 .px-tl-panel { flex: 0 0 auto; gap: 2px; padding: var(--space-1) var(--space-2); border-radius: 6px; background-color: var(--surface-container-low); }
 .px-player { gap: var(--space-1); align-items: center; min-height: 32px; }
 .px-num { font-family: var(--font-mono); font-size: 12px; min-width: 80px; }
+#px-time, #px-shown-fps { margin-left: var(--space-2); } /* the time and the frames shown each a word of its own */
 .px-clips { gap: 4px; align-items: center; min-height: 32px; }
 .px-tl { position: relative; gap: 2px; }
 .px-tl-row { align-items: stretch; }
