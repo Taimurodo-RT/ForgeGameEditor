@@ -517,15 +517,16 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
             sync_time();
         }
     }
-    // How many frames a second the preview shows in fact.
+    // How many frames a second the preview shows in fact; paused, it shows none, and no number says so.
     fps_clock_ += dt;
-    if (fps_clock_ >= 1) {
+    if (fps_clock_ >= 1 || (!playing_ && shown_fps_ != 0)) {
         const f64 shown = playing_ ? std::round(fps_frames_ / fps_clock_) : 0;
         fps_clock_ = 0;
         fps_frames_ = 0;
-        if (shown != shown_fps_ || m_shown_fps_.empty()) {
+        const std::string words = playing_ ? number_words(shown) + " к/с" : std::string();
+        if (shown != shown_fps_ || words != m_shown_fps_) {
             shown_fps_ = shown;
-            m_shown_fps_ = number_words(shown) + " к/с";
+            m_shown_fps_ = words;
             dirty("px_shown_fps");
         }
     }
