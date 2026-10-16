@@ -32,7 +32,6 @@ static_assert(pixel::kMaxStripWidth == objects::kMaxStripWidth && pixel::kMaxStr
 
 namespace {
 
-constexpr u32 kViewPx = 288;      // the vector view, and the box the pixel frame is shown big in
 constexpr f64 kOnion = 0.3;       // how much of the frames either side «Калька» shows
 constexpr f32 kPivotReach = 10;   // how near the pivot a press takes it (view pixels)
 constexpr f32 kMoveStart = 3;     // how far a part is dragged before it moves (logical px)
@@ -357,6 +356,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("px_can_give", &m_can_give_);
     bind_motion(model);
     bind_mouse(model);
+    bind_view(model);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -515,15 +515,20 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
         play_clock_ += std::min(dt, 0.1) * speed_;
         const f64 span = cut_.frames / static_cast<f64>(cut_.fps);
         u64 k = static_cast<u64>(std::floor(play_clock_ * cut_.fps + 1e-9));
+        bool wrapped = false, ended = false;
         if (k >= cut_.frames) {
             if (loop_view_) {
                 play_clock_ = std::fmod(play_clock_, span);
                 k %= cut_.frames;
+                wrapped = true;
             } else {
                 k = cut_.frames - 1;
-                play(false);
+                ended = true;
             }
         }
+        // The marks of the frames shown since the last one sound (part 3в).
+        sound_frames(static_cast<i64>(k), wrapped);
+        if (ended) play(false);
         const f64 t = cut_.time(static_cast<u32>(k));
         if (t != t_) {
             t_ = t;
@@ -564,6 +569,9 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
         }
     }
     if (view_dirty_) redraw();
+    track_mouse(context);
+    // Without a device the preview's sounds end on time all the same.
+    if (!mixer_.has_device() && mixer_.voices() > 0) mixer_.advance(dt);
 }
 
 bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* context) {
@@ -576,11 +584,20 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
     case SDL_EVENT_WINDOW_FOCUS_LOST: shift_ = false; return false;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
         if ((e.button.button != SDL_BUTTON_LEFT && e.button.button != SDL_BUTTON_MIDDLE) || !context || !has_) return false;
-        bool vector = false, timeline = false;
+        bool vector = false, timeline = false, pixels = false;
         for (const Rml::Element* el = context->GetHoverElement(); el; el = el->GetParentNode()) {
             vector = vector || el->GetId() == "px-vector";
             timeline = timeline || el->GetId() == "px-tl";
+            pixels = pixels || el->GetId() == "px-pixel";
         }
+        mouse_x_ = e.button.x * density, mouse_y_ = e.button.y * density;
+        // Part 3в: the middle button pans the vector; picking, a click copies the colour under it.
+        if (vector && e.button.button == SDL_BUTTON_MIDDLE) {
+            panning_ = true;
+            pan_x_ = mouse_x_, pan_y_ = mouse_y_;
+            return true;
+        }
+        if (picking_ && (vector || pixels) && e.button.button == SDL_BUTTON_LEFT) return pick_click(mouse_x_, mouse_y_);
         if (timeline) {
             context_ = context;
             update_timeline_box();
@@ -594,6 +611,12 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
         return true;
     }
     case SDL_EVENT_MOUSE_MOTION:
+        mouse_x_ = e.motion.x * density, mouse_y_ = e.motion.y * density;
+        if (panning_) {
+            pan_view(mouse_x_ - pan_x_, mouse_y_ - pan_y_);
+            pan_x_ = mouse_x_, pan_y_ = mouse_y_;
+            return true;
+        }
         if (tl_drag_ != Drag::None) {
             timeline_drag(e.motion.x * density);
             return true;
@@ -602,6 +625,10 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
         drag(e.motion.x * density, e.motion.y * density);
         return true;
     case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (panning_ && e.button.button == SDL_BUTTON_MIDDLE) {
+            panning_ = false;
+            return true;
+        }
         if (tl_drag_ != Drag::None) {
             timeline_release();
             return true;
@@ -625,9 +652,22 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_B: range_start_here(); return true;
     case SDLK_N: range_end_here(); return true;
     case SDLK_ESCAPE:
-        if (!giving_) return false;
-        open_give(false);
+        if (giving_) open_give(false);
+        else if (picking_) set_picking(false);
+        else return false;
         return true;
+    // Part 3в: the vector's zoom, the grid, the point under the mouse, the eyedropper, the preview's sound.
+    case SDLK_0:
+    case SDLK_KP_0: fit_view(); return true;
+    case SDLK_EQUALS:
+    case SDLK_PLUS:
+    case SDLK_KP_PLUS: zoom_view_by(1); return true;
+    case SDLK_MINUS:
+    case SDLK_KP_MINUS: zoom_view_by(-1); return true;
+    case SDLK_APOSTROPHE: set_grid(!grid_); return true;
+    case SDLK_P: copy_coords(); return true;
+    case SDLK_I: set_picking(!picking_); return true;
+    case SDLK_M: set_sound(!sound_on_); return true;
     case SDLK_UP:
     case SDLK_DOWN: {
         if (listed_.empty()) return true;
@@ -692,7 +732,13 @@ bool PixelEditor::open(const std::string& rel) {
     giving_ = false;
     forget_character();
     vector_ = frame_px_ = vector_shown_ = {};
+    zoom_ = {};
+    mixer_.stop_all();
+    sounded_.clear();
+    sound_shown_ = -1;
+    sound_files_.clear();
     reload();
+    fit_view();
     return has_;
 }
 
@@ -861,6 +907,11 @@ void PixelEditor::check_files() {
         recount();
         view_dirty_ = true;
         rebuild();
+    } else if (sounds_changed()) {
+        // A sound appeared, changed or went: its marks, its row and the console, the code not recorded again.
+        find_sounds();
+        rebuild_console();
+        lay_timeline();
     }
 }
 
@@ -1009,12 +1060,12 @@ bool PixelEditor::set_pivot(const std::string& id, vector::Point at) {
 vector::Point PixelEditor::view_to_picture(f32 x, f32 y) const {
     if (view_w_ <= 0 || view_h_ <= 0) return {};
     const f64 vx = (x - view_x_) * kViewPx / view_w_, vy = (y - view_y_) * kViewPx / view_h_;
-    return pixel::inverse(rig_.to_pixels(kViewPx, kViewPx)).apply({vx, vy});
+    return pixel::inverse(to_view()).apply({vx, vy});
 }
 
 bool PixelEditor::screen_of(vector::Point p, f32& x, f32& y) const {
     if (view_w_ <= 0 || view_h_ <= 0 || !rig_.loaded()) return false;
-    const vector::Point v = rig_.to_pixels(kViewPx, kViewPx).apply(p);
+    const vector::Point v = to_view().apply(p);
     x = view_x_ + static_cast<f32>(v.x * view_w_ / kViewPx);
     y = view_y_ + static_cast<f32>(v.y * view_h_ / kViewPx);
     return true;
@@ -1048,12 +1099,13 @@ void PixelEditor::press(f32 x, f32 y) {
 
 std::string PixelEditor::part_at(f32 x, f32 y) {
     // The smallest part under the mouse, as it stands in the pose shown.
-    const vector::Point v = rig_.to_pixels(kViewPx, kViewPx).apply(view_to_picture(x, y));
+    const pixel::Affine view = to_view();
+    const vector::Point v = view.apply(view_to_picture(x, y));
     std::string best;
     f64 best_area = 1e300;
     for (i32 i = 0; i < static_cast<i32>(rig_.parts().size()); ++i) {
         f64 b[4];
-        rig_.bounds(i, kViewPx, kViewPx, b);
+        rig_.bounds(i, view, b);
         const f64 area = (b[2] - b[0]) * (b[3] - b[1]);
         if (v.x >= b[0] && v.x <= b[2] && v.y >= b[1] && v.y <= b[3] && area > 0 && area < best_area) {
             best_area = area;
@@ -1204,6 +1256,9 @@ bool PixelEditor::select_clip(const std::string& state) {
     frame_ = 0;
     block_ = -1;
     tv_.scale = tv_.start = 0; // all of the clip in sight
+    mixer_.stop_all();
+    sounded_.clear();
+    sound_shown_ = -1;
     if (!note_.empty() && note_ == refused_) note_.clear(); // a mouse edit's refusal was about the clip left
     recount();
     select_block(-1);
@@ -1330,7 +1385,11 @@ void PixelEditor::play(bool on) {
         play_clock_ = std::max(0.0, play_clock_);
         fps_frames_ = 0;
         fps_clock_ = 0;
+        // The frame it starts from sounds too.
+        sounded_.clear();
+        sound_shown_ = static_cast<i64>(std::floor(play_clock_ * cut_.fps + 1e-9)) - 1;
     }
+    if (!on) mixer_.stop_all();
     playing_ = on;
     m_playing_ = on;
     dirty("px_playing");
@@ -1508,6 +1567,7 @@ bool PixelEditor::give(u64 key) {
 void PixelEditor::redraw() {
     view_dirty_ = false;
     pose_problem_.clear();
+    fit_box(); // the zoom kept within the picture as it is now
     if (!has_ || !rig_.loaded()) {
         vector_ = frame_px_ = vector_shown_ = {};
         show({}, {});
@@ -1565,9 +1625,10 @@ void PixelEditor::redraw() {
     }
     // The vector, smooth; the shown pose last, so the pivot is found in it.
     std::vector<assets::CookedTexture> vec(ks.size());
+    const pixel::Affine texels = to_texels();
     for (usize i = ks.size(); i-- > 0;) {
         if (!rig_.pose(poses[i], why) && i == 0 && pose_problem_.empty()) pose_problem_ = why;
-        vec[i] = rig_.draw(view_px(), view_px());
+        vec[i] = rig_.draw(view_px(), view_px(), texels);
     }
     for (usize i = 1; i < ks.size(); ++i) {
         over_faint(vec[0], vec[i], kOnion);
@@ -1575,15 +1636,17 @@ void PixelEditor::redraw() {
     }
     frame_px_ = px[0];
     vector_ = vec[0];
+    // The grid over the picture, under the marks: its cell 8 points or more.
+    if (grid_) pixel::draw_grid(vec[0], texels, pixel::grid_step(to_view().a), static_cast<u32>(std::max<i64>(1, std::lround(dp_))));
     if (const i32 pi = rig_.part(part_); pi >= 0) {
         f64 box[4];
-        rig_.bounds(pi, view_px(), view_px(), box);
-        const vector::Point at = rig_.to_pixels(view_px(), view_px()).apply(rig_.carried(pi).apply(rig_.pivot(pi)));
+        rig_.bounds(pi, texels, box);
+        const vector::Point at = texels.apply(rig_.carried(pi).apply(rig_.pivot(pi)));
         mark(vec[0], box, at.x, at.y, std::max<i64>(1, std::lround(dp_)));
     }
     if (const i32 hi = rig_.part(hovered_); hi >= 0) {
         f64 box[4];
-        rig_.bounds(hi, view_px(), view_px(), box);
+        rig_.bounds(hi, texels, box);
         outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
     }
     vector_shown_ = vec[0];

@@ -546,6 +546,7 @@ public:
             return std::string();
         };
         pixel_tab.game_dir = game_dir;
+        pixel_tab.offscreen = level_config.offscreen; // no sound device: the preview's sounds go without one
         pixel_tab.init(ui_);
         // «Ввод»: the module's actions, then the shell's; what the author changed is the game's input.json.
         input_tab.open(input_file, module.actions, module.name);
@@ -1052,6 +1053,7 @@ public:
             if (anim_tab.mode() == "pixel") pixel_tab.update(dt, context_);
             else anim_tab.update(dt);
         }
+        if (m_tab_ != "animation" || anim_tab.mode() != "pixel") pixel_tab.away(); // its preview's sounds stop
         image_tab.update(m_tab_ == "images" ? context_ : nullptr);
         ui_tab.set_shown(m_tab_ == "ui");
         if (m_tab_ == "ui") ui_tab.update(context_);
@@ -2062,7 +2064,10 @@ struct Options {
     // the code panel, played, ranged, its flags dragged and its blocks lit in the code, baked by its range, by
     // "pixel-motion-a"; part 3б, the mouse writing into the code: the timeline's edges, the inspector's fields, a part
     // dragged in the vector, the tree's row under the mouse, by "pixel-motion-b", seen again from another working folder
-    // by "pixel-motion-b-again"); "input" (the tab «Ввод»: the same, the keys of
+    // by "pixel-motion-b-again"; part 3в, the view and the sounds: the vector zoomed and panned, its grid, the point under
+    // the mouse and the eyedropper, the sounds' files, rows and preview, a clip of the code of 64 frames baked and given to
+    // a template, by "pixel-motion-c", opened again and played in the game by "pixel-motion-c-again"); "input" (the tab
+    // «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2332,6 +2337,8 @@ public:
         if (part == "pixel-motion-a") return frame < 3 || pixel_motion_a_step();
         if (part == "pixel-motion-b") return frame < 3 || pixel_motion_b_step();
         if (part == "pixel-motion-b-again") return frame < 3 || pixel_motion_b_again_step();
+        if (part == "pixel-motion-c") return frame < 3 || pixel_motion_c_step();
+        if (part == "pixel-motion-c-again") return frame < 3 || pixel_motion_c_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -18945,18 +18952,15 @@ return {
         mouse(SDL_EVENT_MOUSE_BUTTON_UP, x1, y);
         return true;
     }
-    // Frame k of a clip as the files on disk bake it, made apart from the tab: a rig, a script with the game's modules
-    // and a file of its own; by the clip's range, or all of the clip with `whole`.
-    bool mo_ref(const std::string& state, u32 k, assets::CookedTexture& out, std::string& why, bool whole = false) {
+    // The open character as the files on disk have it, apart from the tab: its file, a rig of its picture with the
+    // pivots, a script with the game's modules.
+    bool mo_load(pixel::PixelDoc& doc, pixel::Rig& rig, pixel::PoseScript& script, std::string& why) {
         namespace fs = std::filesystem;
         const fs::path doc_file = as().abs(px().opened());
         std::vector<u8> bytes, svg, lua;
-        pixel::PixelDoc doc;
         if (!read_file(doc_file, bytes) || !pixel::read_pixel_doc({reinterpret_cast<const char*>(bytes.data()), bytes.size()}, doc, why))
             return why = "«.pixel.json» не читается " + why, false;
         if (!read_file(doc_file.parent_path() / utf8_path(doc.script), lua)) return why = "скрипт не читается", false;
-        pixel::Rig rig;
-        pixel::PoseScript script;
         script.set_module_reader(pixel::animations_reader(pjw().config().root / "game"));
         if (!script.load({reinterpret_cast<const char*>(lua.data()), lua.size()})) return why = script.error(), false;
         // The picture: the code's drawing, or the SVG of the file.
@@ -18972,6 +18976,15 @@ return {
         }
         if (!rig.load({reinterpret_cast<const char*>(svg.data()), svg.size()}, why)) return false;
         pixel::apply_pivots(rig, doc, script.has_draw() ? &drawing : nullptr);
+        return true;
+    }
+    // Frame k of a clip as the files on disk bake it, made apart from the tab (mo_load); by the clip's range, or all of
+    // the clip with `whole`.
+    bool mo_ref(const std::string& state, u32 k, assets::CookedTexture& out, std::string& why, bool whole = false) {
+        pixel::PixelDoc doc;
+        pixel::Rig rig;
+        pixel::PoseScript script;
+        if (!mo_load(doc, rig, script, why)) return false;
         const auto c = std::find_if(doc.clips.begin(), doc.clips.end(), [&](const pixel::ClipSpec& x) { return x.state == state; });
         if (c == doc.clips.end()) return why = "нет клипа «" + state + "»", false;
         pixel::ClipSpec spec = *c;
@@ -19018,10 +19031,25 @@ return {
         const int again = pj_run({exe, "--project", project, "--self-test", "pixel-motion-b-again"}, two);
         check(again == 0, "opened from another working folder: the recording and every frame as pixel-motion-b left them (pixel-motion-b-again: "
                           "exit " + std::to_string(again) + ")");
+        // Part 3в: the view and the sounds, then the whole tab to the game.
+        const fs::path three = mo_root() / utf8_path("третья папка"), four = mo_root() / utf8_path("четвёртая папка");
+        fs::create_directories(three, ec);
+        fs::create_directories(four, ec);
+        const int view = pj_run({exe, "--project", project, "--self-test", "pixel-motion-c"}, three);
+        check(view == 0, "«Шкала»: the vector zoomed, panned and fitted, a part dragged at ×3,81, the grid, the point under the mouse and the "
+                         "eyedropper; its sounds found and not, their rows and the preview sounding them; «Покой» of the code baked by its "
+                         "64 frames and given to «Флаг» (pixel-motion-c: exit " + std::to_string(view) + ")");
+        const int game = pj_run({exe, "--project", project, "--self-test", "pixel-motion-c-again"}, four);
+        check(game == 0, "opened from another working folder: the files, the recording and the sounds as pixel-motion-c left them; the game "
+                         "plays the flag by its 64 frames (pixel-motion-c-again: exit " + std::to_string(game) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
-        check(tg_naming(b, {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau"}).empty(), "nothing of «Ёжик» or «Персонаж» in B: " + tg_naming(b, {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau"}));
+        const std::vector<std::string> ours = {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau", "Шкала", "шаг.wav"};
+        check(tg_naming(b, ours).empty() && !fs::exists(b / "game" / "sounds" / utf8_path("шаг.wav"), ec),
+              "nothing of «Ёжик», «Персонаж», «Шкала» or the sounds in B: " + tg_naming(b, ours));
+        check(fs::exists(a / "game" / "sounds" / utf8_path("шаг.wav"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Шкала.png"), ec),
+              "A: the sounds in its sounds/, «pictures/Шкала.png» given to the flag");
         const fs::path chars = a / "assets" / utf8_path("персонажи");
         check(fs::exists(a / "game" / "animations" / utf8_path("движения.luau"), ec) && fs::exists(chars / utf8_path("Ёжик.luau"), ec) &&
                   fs::exists(chars / utf8_path("Персонаж.luau"), ec) && fs::exists(chars / utf8_path("Персонаж.png"), ec) &&
@@ -20707,6 +20735,765 @@ return {
         default: break;
         }
         ++mb_step_;
+        return true;
+    }
+
+    // Part 3в (pixel-motion-c, then pixel-motion-c-again): «Шкала», the plate of six cells of step 2, posed by the code of
+    // its clip «Покой»: 64 frames thirty a second, each its number in the cells, sounds at six frames (sounds/шаг.wav
+    // written here with known samples, sounds/шум.wav that does not read, «нет» without a file at first). In the vector:
+    // 0, =, −, the wheel and the middle button, each the zoom and the pan expected and the vector what the library draws
+    // at that matrix, ×16 the top, ×1 the floor and no pan there; at ×3,81 a click picks the part under the mouse, a drag
+    // writes into the code a move 3,81 times smaller than at ×1, undone; another character ×1 again. ' the grid where it
+    // is counted, and gone; the point under the mouse, P copying it, P off the vector a note; I the colours of the vector
+    // and of the frame, a click copying one without picking a part, Esc and a click picking again. The sounds: their rows,
+    // the marks and the console of the two that do not sound, a click there to the line; the wave of «шаг» as its samples
+    // give it; «нет» put in sounds/ found within half a second, the files as they were; played from the start without L:
+    // «шаг» and «нет» in their frames and only they; M: nothing; from frame 10 a sound playing, Space stopping it.
+    // «Запечь»: each of the 64 frames as the library bakes the files apart from the tab, each its number; given to
+    // «Флаг», undone and done again. pixel-motion-c-again, from another working folder: the files, the recording, the
+    // sounds and the wave the same; the game plays the flag by its 64 frames.
+    int mc_step_ = 0;
+    std::vector<u8> mc_lua_, mc_doc_, mc_flag0_;
+    std::string mc_label_;
+    f32 mc_x_ = 0, mc_y_ = 0;
+    // The author's code of «Шкала»: frame k (k / 30 s) shows k in the cells, set half a frame before it.
+    static constexpr const char* kMcScale = R"lua(-- «Шкала»: «Покой» из кода, 64 кадра по 30 в секунду. Кадр k ставит своё число шестью клетками
+-- (бит i — тёмная клетка c<i>) за полкадра до себя; в кадрах 10, 40 и 63 звучит «шаг», в 20 и 50 — «нет», в 30 — «шум».
+return {
+  clips = {
+    idle = function(p)
+      for k = 0, 63 do
+        for i = 0, 5 do
+          part("c" .. i).fill((math.floor(k / 2 ^ i) % 2 == 1) and "#203040" or "#f0e8d0")
+        end
+        if k == 10 or k == 40 or k == 63 then sound("шаг") end
+        if k == 20 or k == 50 then sound("нет") end
+        if k == 30 then sound("шум") end
+        wait(k == 0 and 1 / 60 or 1 / 30)
+      end
+    end,
+  },
+}
+)lua";
+    // A WAV of 48 kHz, 16 bits, two channels: the samples left, right, left …
+    static std::vector<u8> mc_wav(const std::vector<i16>& samples) {
+        std::vector<u8> out;
+        auto put32 = [&](u32 v) {
+            for (int i = 0; i < 4; ++i) out.push_back(static_cast<u8>(v >> (8 * i)));
+        };
+        auto put16 = [&](u16 v) {
+            out.push_back(static_cast<u8>(v));
+            out.push_back(static_cast<u8>(v >> 8));
+        };
+        auto tag = [&](const char* t) { out.insert(out.end(), t, t + 4); };
+        const u32 bytes = static_cast<u32>(samples.size() * 2);
+        tag("RIFF");
+        put32(36 + bytes);
+        tag("WAVE");
+        tag("fmt ");
+        put32(16);
+        put16(1);
+        put16(2);
+        put32(48000);
+        put32(48000 * 4);
+        put16(4);
+        put16(16);
+        tag("data");
+        put32(bytes);
+        for (i16 s : samples) put16(static_cast<u16>(s));
+        return out;
+    }
+    // «шаг»: 0,25 s, five fifths of 2400 samples each as loud as kMcLoud says, the left channel that loud up and down by
+    // turns, the right half of it.
+    static constexpr i16 kMcLoud[5] = {3277, 16384, 32767, 8192, 24576};
+    static constexpr u32 kMcStep = 12000;
+    static i16 mc_left(u32 i) {
+        const i16 a = kMcLoud[std::min<u32>(i / 2400, 4)];
+        return i % 2 ? static_cast<i16>(-a) : a;
+    }
+    static std::vector<u8> mc_step_wav() {
+        std::vector<i16> s;
+        for (u32 i = 0; i < kMcStep; ++i) {
+            s.push_back(mc_left(i));
+            s.push_back(static_cast<i16>(mc_left(i) / 2));
+        }
+        return mc_wav(s);
+    }
+    // «нет», put later without an extension: 0,1 s of a quiet square in the left channel.
+    static std::vector<u8> mc_none_wav() {
+        std::vector<i16> s;
+        for (u32 i = 0; i < 4800; ++i) {
+            s.push_back(static_cast<i16>((i / 50) % 2 ? 1000 : -1000));
+            s.push_back(0);
+        }
+        return mc_wav(s);
+    }
+    // «шум.wav»: RIFF and WAVE, nothing else.
+    static std::vector<u8> mc_noise() { return {'R', 'I', 'F', 'F', 4, 0, 0, 0, 'W', 'A', 'V', 'E'}; }
+    // The columns of «шаг»'s wave as its samples give them: column c, the moments [t0 + c·dt, t0 + (c + 1)·dt), the
+    // loudest sample there of each mark's sound (sample i of a mark at `at` sounds at at + i / 48000, those before the
+    // clip's end `end`), |s| / 32768 of both channels.
+    static std::vector<f32> mc_columns(const std::vector<f64>& ats, f64 end, f64 t0, f64 dt, usize cols) {
+        std::vector<f32> out(cols, 0);
+        for (f64 at : ats) {
+            const f64 last = std::min<f64>(kMcStep, std::ceil((end - at) * 48000 - 1e-6));
+            for (usize c = 0; c < cols; ++c) {
+                const f64 k = static_cast<f64>(c);
+                const f64 lo = std::max(0.0, std::ceil((t0 + k * dt - at) * 48000 - 1e-6));
+                const f64 hi = std::min(last, std::ceil((t0 + (k + 1) * dt - at) * 48000 - 1e-6));
+                for (f64 i = lo; i < hi; ++i) out[c] = std::max(out[c], static_cast<f32>(std::abs(mc_left(static_cast<u32>(i)))) / 32768.0f);
+            }
+        }
+        return out;
+    }
+    // «шаг»'s row as its samples give it on the timeline as it is now: its columns and its picture, white where it
+    // sounds, a column as high as it is loud (1 the row's height, the middle line where it is silent); "" when so.
+    std::string mc_wave_wrong() {
+        const pixel::Recording* rec = px().recording();
+        const std::vector<PixelEditor::SoundRow>& rows = px().sound_rows();
+        const assets::CookedTexture* img = px().wave_image(0);
+        if (!rec || rows.empty() || rows[0].name != "шаг" || !rows[0].found || !img) return "нет строки «шаг» с волной";
+        std::vector<f64> ats;
+        for (const pixel::Mark& m : rec->marks)
+            if (m.kind == pixel::Mark::Kind::Sound && m.name == "шаг") ats.push_back(m.time);
+        const usize cols = rows[0].columns.size();
+        const u32 high = static_cast<u32>(std::lround(24.0 * px().vector_view().width / 288.0));
+        if (cols == 0 || img->width != cols || img->height != high)
+            return "столбцов " + std::to_string(cols) + ", картинка " + std::to_string(img->width) + " × " + std::to_string(img->height);
+        const f64 t0 = px().view().t(0), dt = 1 / px().view().per_second();
+        const std::vector<f32> want = mc_columns(ats, rec->length, t0, dt, cols);
+        if (*std::max_element(want.begin(), want.end()) != 32767.0f / 32768.0f) return "самая громкая пятая часть «шага» не на таймлайне";
+        for (usize c = 0; c < cols; ++c)
+            if (rows[0].columns[c] != want[c])
+                return "столбец " + std::to_string(c) + ": " + std::to_string(rows[0].columns[c]) + ", а не " + std::to_string(want[c]);
+        std::vector<u8> pic(static_cast<usize>(cols) * high * 4, 0);
+        for (usize c = 0; c < cols; ++c) {
+            const f64 a = t0 + static_cast<f64>(c) * dt, b = a + dt;
+            const bool sounding = std::any_of(ats.begin(), ats.end(), [&](f64 at) { return b > at && a < std::min(rec->length, at + kMcStep / 48000.0); });
+            if (!sounding) continue;
+            const f64 half = std::max(0.5, std::min<f64>(1, want[c]) * high / 2);
+            for (u32 y = 0; y < high; ++y)
+                if (std::fabs(y + 0.5 - high / 2.0) <= half) std::fill_n(&pic[(static_cast<usize>(y) * cols + c) * 4], 4, u8{255});
+        }
+        return img->rgba8 == pic ? std::string() : std::string("картинка волны не та");
+    }
+    // The vector of frame k of «Покой» as the library draws it from the files on disk at zoom step `step`, panned by
+    // ox, oy points of the view.
+    bool mc_vector(u32 k, i32 step, f64 ox, f64 oy, assets::CookedTexture& out, std::string& why) {
+        pixel::PixelDoc doc;
+        pixel::Rig rig;
+        pixel::PoseScript script;
+        if (!mo_load(doc, rig, script, why)) return false;
+        const auto c = std::find_if(doc.clips.begin(), doc.clips.end(), [](const pixel::ClipSpec& x) { return x.state == "idle"; });
+        pixel::Pose pose;
+        if (c == doc.clips.end()) return why = "нет «Покоя»", false;
+        if (!pixel::frame_pose(script, rig, doc, *c, k, pose, why) || !rig.pose(pose, why)) return false;
+        const u32 side = px().vector_view().width;
+        const f64 s = side / 288.0, z = pixel::zoom_of(step);
+        out = rig.draw(side, side, pixel::Affine{z, 0, 0, z, ox * s, oy * s} * rig.to_pixels(side, side));
+        return true;
+    }
+    bool mc_vector_is(u32 k, i32 step, f64 ox, f64 oy) {
+        assets::CookedTexture want;
+        std::string why;
+        return mc_vector(k, step, ox, oy, want, why) && px_same(px().vector_view(), want);
+    }
+    // The view's zoom step and pan, near those given.
+    bool mc_view_is(i32 step, f64 ox, f64 oy, f64 within = 1e-9) {
+        const pixel::PictureView& v = px().picture_view();
+        return v.step == step && std::fabs(v.ox - ox) <= within && std::fabs(v.oy - oy) <= within;
+    }
+    std::string mc_view_words() {
+        const pixel::PictureView& v = px().picture_view();
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "step %d, pan %.9g; %.9g", v.step, v.ox, v.oy);
+        return buf;
+    }
+    // A point of an element's content box shown w × h: its point (x, y) of that picture on the screen.
+    bool mc_on(const char* id, f64 w, f64 h, f64 x, f64 y, f32& sx, f32& sy) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Content), size = e->GetBox().GetSize(Rml::BoxArea::Content);
+        sx = at.x + static_cast<f32>(x * size.x / w);
+        sy = at.y + static_cast<f32>(y * size.y / h);
+        return size.x > 0 && size.y > 0;
+    }
+    static std::string mc_clipboard() {
+        char* t = SDL_GetClipboardText();
+        std::string out = t ? t : "";
+        SDL_free(t);
+        return out;
+    }
+    // The middle button pressed at (x, y), moved by dx, dy in four moves and let go.
+    void mc_pan(f32 x, f32 y, f32 dx, f32 dy) {
+        mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+        mo_button(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y, SDL_BUTTON_MIDDLE);
+        for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x + dx * static_cast<f32>(i) / 4, y + dy * static_cast<f32>(i) / 4);
+        mo_button(SDL_EVENT_MOUSE_BUTTON_UP, x + dx, y + dy, SDL_BUTTON_MIDDLE);
+    }
+    // The recording of «Покой» and its sounds, a line a thing (their waves apart: they are as wide as the timeline).
+    std::string mc_recorded() {
+        std::string out = mb_recorded();
+        const pixel::Recording* rec = px().recording();
+        char buf[64];
+        if (rec)
+            for (const pixel::Mark& m : rec->marks) {
+                std::snprintf(buf, sizeof buf, "%.9g", m.time);
+                out += std::string(m.kind == pixel::Mark::Kind::Sound ? "звук " : "событие ") + m.name + " в " + buf + "\n";
+            }
+        for (const PixelEditor::SoundRow& r : px().sound_rows())
+            out += "строка звука " + r.name + (r.found ? " найден " + path_to_utf8(r.file.filename()) : " нет: " + r.why) + ", строка кода " +
+                   std::to_string(r.line) + "\n";
+        for (const PixelEditor::ConsoleLine& l : px().console()) out += "консоль " + std::to_string(l.line) + ": " + l.text + "\n";
+        return out;
+    }
+
+    // In an editor for «Движение А» after pixel-motion-b-again (--self-test pixel-motion-c).
+    bool pixel_motion_c_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root, sounds = a / "game" / "sounds";
+        const bool idle = !as().busy() && !as().looking();
+        const std::string svg = "персонажи/Шкала.svg", doc = "персонажи/Шкала.pixel.json", lua = "персонажи/Шкала.luau", png = "персонажи/Шкала.png",
+                          hedgehog = "персонажи/Ёжик.pixel.json";
+        const pixel::Recording* rec = px().recording();
+        const pixel::PixelDoc& d = px().doc();
+        objects::Library& lib = an().library();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto put = [&](const fs::path& f, std::string_view text) { return write_file_atomic(f, {reinterpret_cast<const u8*>(text.data()), text.size()}); };
+        auto put_bytes = [&](const fs::path& f, const std::vector<u8>& b) { return write_file_atomic(f, b); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        auto at_frame = [&](u32 k) {
+            key(SDLK_LEFT, SDL_KMOD_SHIFT);
+            for (u32 i = 0; i < k; ++i) key(SDLK_RIGHT, SDL_KMOD_NONE);
+            return px().frame() == k;
+        };
+        auto mark_time = [](u32 k) { return 1.0 / 60 + (k - 1) / 30.0; }; // sound() of frame k's turn
+        auto sounded = [&] {
+            std::string out;
+            for (const PixelEditor::Sounded& s : px().sounded()) out += " " + std::to_string(s.frame) + " " + s.name;
+            return out;
+        };
+        const std::string at_line = "      at(0.2, part(\"c4\"):to({ x = 2 }, 0))\n", first = "      for k = 0, 63 do";
+        const u32 none_line = mb_line(kMcScale, "sound(\"нет\")"), noise_line = mb_line(kMcScale, "sound(\"шум\")");
+        switch (mc_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            std::error_code ec;
+            fs::create_directories(sounds, ec);
+            check(!fs::exists(sounds / utf8_path("шаг.wav"), ec) && !fs::exists(sounds / utf8_path("нет"), ec), "no sounds of «Шкала» in the game yet");
+            check(put_bytes(sounds / utf8_path("шаг.wav"), mc_step_wav()) && put_bytes(sounds / utf8_path("шум.wav"), mc_noise()),
+                  "sounds/шаг.wav (48 kHz, 16 bits, two channels, known samples) and sounds/шум.wav that does not read");
+            check(put(as().abs(svg), kFlScale), "«персонажи/Шкала.svg» drawn elsewhere");
+            as().refresh();
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2: {
+            const std::vector<std::string>& l = px().svgs();
+            const auto at = std::find(l.begin(), l.end(), svg);
+            const std::string row = "px-svg-" + std::to_string(at - l.begin());
+            if (hold(idle && at != l.end() && shown(row), "«Шкала.svg» listed")) return true;
+            check(px_click(row) && px().opened() == doc && px().has(), "a click on «Шкала.svg»: «Шкала.pixel.json» beside it");
+            check(put(as().abs(lua), kMcScale), "the author's «Шкала.luau»: «Покой» of the code, its sounds");
+            break;
+        }
+        case 3: {
+            if (hold(px().code() == kMcScale && shown("px-clip-remove"), "the script read again")) return true;
+            const bool typed = ue_type("px-fw", "256") && ue_type("px-fh", "256");
+            check(typed && d.frame_w == 256 && d.frame_h == 256 && step_label() == "«Шкала»: кадр 256 × 256", "«Кадр» 256 × 256 typed: " + step_label());
+            check(px_click("px-clip-remove") && d.clips.empty() && step_label() == "«Шкала»: клип «Стоит» убран", "«Стоит» taken away: " + step_label());
+            break;
+        }
+        case 4:
+            if (hold(shown("px-state-idle"), "the states")) return true;
+            check(px_click("px-state-idle") && px().clip() == "idle" && d.clips == std::vector<pixel::ClipSpec>{{"idle", 22, 10, true}} &&
+                      step_label() == "«Шкала»: клип «Покой»",
+                  "a click on «Покой»: the clip of the code, 22 frames ten a second: " + step_label());
+            break;
+        case 5: {
+            if (hold(shown("px-fps-10") && rec && !px().stale(), "the clip's settings, its recording")) return true;
+            check(px_click("px-fps-10") && d.clips == std::vector<pixel::ClipSpec>{{"idle", 64, 30, true}} && step_label() == "«Шкала»: «Покой» 30 к/с",
+                  "«30»: 64 frames: " + step_label());
+            check(rec && rec->marks.size() == 6 && std::fabs(rec->length - (1.0 / 60 + 63 / 30.0)) < 1e-6,
+                  "recorded: six sounds, 2,1167 s: " + mc_recorded());
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        }
+        // The view at ×1, then = and −.
+        case 6: {
+            if (hold(element_text("px-total") == "в картинке 64 кадра из 64" && !px().playing(), "«в картинке 64 кадра из 64»")) return true;
+            check(away() && at_frame(6), "frame 7 by Shift+← and →");
+            mc_lua_ = file(lua);
+            mc_doc_ = file(doc);
+            mc_label_ = step_label();
+            break;
+        }
+        case 7:
+            if (wait(3)) return true;
+            check(mc_view_is(0, 0, 0) && !shown("px-zoom") && mc_vector_is(6, 0, 0, 0),
+                  "×1, fitted, no zoom said: the vector as the library draws frame 7 (" + mc_view_words() + ")");
+            key(SDLK_EQUALS, SDL_KMOD_NONE);
+            check(mc_view_is(1, -36, -36), "=: ×1,25 round the view's middle: " + mc_view_words());
+            break;
+        case 8:
+            if (wait(2)) return true;
+            check(element_text("px-zoom") == "×1,25" && mc_vector_is(6, 1, -36, -36), "«×1,25» said; the vector as the library draws it there");
+            key(SDLK_MINUS, SDL_KMOD_NONE);
+            check(mc_view_is(0, 0, 0), "−: ×1 again: " + mc_view_words());
+            break;
+        // The wheel round the mouse, the middle button.
+        case 9: {
+            if (wait(2)) return true;
+            check(!shown("px-zoom") && px().screen_of({100, 60}, mc_x_, mc_y_), "×1 not said; the point 100, 60 of the picture on the screen");
+            for (int i = 0; i < 3; ++i) mo_wheel(mc_x_, mc_y_, 1);
+            // The point stays where it was: 1,125 points of the view a unit at ×1, 1,953125 times that now.
+            const f64 ox = 112.5 * (1 - 1.953125), oy = 67.5 * (1 - 1.953125);
+            check(mc_view_is(3, ox, oy, 1e-3), "the wheel three notches up over it: ×1,95, pan " + std::to_string(ox) + "; " + std::to_string(oy) + ": " + mc_view_words());
+            f32 x = 0, y = 0;
+            check(px().screen_of({100, 60}, x, y) && std::fabs(x - mc_x_) < 0.01f && std::fabs(y - mc_y_) < 0.01f, "the point under the mouse stays under it");
+            mc_pan(mc_x_, mc_y_, 40, 30);
+            check(px().screen_of({100, 60}, x, y) && std::fabs(x - mc_x_ - 40) < 0.01f && std::fabs(y - mc_y_ - 30) < 0.01f,
+                  "the middle button dragged by 40; 30: the picture with it: " + mc_view_words());
+            break;
+        }
+        case 10: {
+            if (wait(2)) return true;
+            const pixel::PictureView& v = px().picture_view();
+            check(mc_vector_is(6, v.step, v.ox, v.oy), "the vector as the library draws it at that zoom and pan");
+            f32 cx = 0, cy = 0;
+            check(element_center("px-vector", cx, cy), "the vector's middle");
+            mc_pan(cx, cy, 400, 400);
+            check(mc_view_is(3, 0, 0), "dragged far right and down: the picture's corner at the view's, no further: " + mc_view_words());
+            mc_pan(cx, cy, -3000, -3000);
+            check(mc_view_is(3, -274.5, -274.5), "far left and up: its other corner at the view's (288 − 562,5): " + mc_view_words());
+            break;
+        }
+        case 11:
+            if (wait(2)) return true;
+            check(mc_vector_is(6, 3, -274.5, -274.5), "the vector drawn so");
+            for (int i = 0; i < 12; ++i) key(SDLK_EQUALS, SDL_KMOD_NONE);
+            check(px().picture_view().step == pixel::kZoomTop, "= twelve times: ×16 the top: " + mc_view_words());
+            break;
+        case 12:
+            if (wait(2)) return true;
+            check(element_text("px-zoom") == "×16", "«×16» said");
+            key(SDLK_0, SDL_KMOD_NONE);
+            check(mc_view_is(0, 0, 0), "0: ×1, fitted: " + mc_view_words());
+            break;
+        case 13: {
+            if (wait(2)) return true;
+            check(!shown("px-zoom") && mc_vector_is(6, 0, 0, 0), "×1 not said; the vector as at first");
+            key(SDLK_MINUS, SDL_KMOD_NONE);
+            check(mc_view_is(0, 0, 0), "− at ×1: ×1 the floor: " + mc_view_words());
+            f32 cx = 0, cy = 0;
+            check(element_center("px-vector", cx, cy), "the vector's middle");
+            mc_pan(cx, cy, 50, 50);
+            check(mc_view_is(0, 0, 0), "the middle button at ×1: no pan: " + mc_view_words());
+            for (int i = 0; i < 6; ++i) key(SDLK_EQUALS, SDL_KMOD_NONE);
+            check(mc_view_is(6, 144 * (1 - pixel::zoom_of(6)), 144 * (1 - pixel::zoom_of(6))), "= six times: ×3,81 round the middle: " + mc_view_words());
+            break;
+        }
+        // At ×3,81 a click picks c4, a drag of 2 picture units writes 2 into the code.
+        case 14: {
+            if (wait(2)) return true;
+            const pixel::PictureView& v = px().picture_view();
+            check(element_text("px-zoom") == "×3,81" && mc_vector_is(6, v.step, v.ox, v.oy), "«×3,81» said; the vector drawn so");
+            f32 x = 0, y = 0;
+            check(px().screen_of({128, 115}, x, y), "a point of c4 off its pivot on the screen");
+            left_click(x, y);
+            check(px().part() == "c4", "a click there picks c4: «" + px().part() + "»");
+            break;
+        }
+        case 15: {
+            if (wait(2)) return true;
+            check(mb_hold_part("c4", {128, 115}, 2, 0), "c4 dragged by 2; 0 picture units (8,6 points of the screen)");
+            mb_let_go();
+            const std::string moved = mb_sub(kMcScale, first, at_line + first);
+            check(file(lua) == bytes(moved) && file(doc) == mc_doc_ && step_label() == "«Шкала»: «c4» сдвинута на 2; 0",
+                  "the code: at(0.2, …{ x = 2 }…) at the top of the clip, the «.pixel.json» as it was; one step: " + step_label());
+            check(px().picture_view().step == 6, "the zoom kept after the edit: " + mc_view_words());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == mc_lua_ && file(doc) == mc_doc_ && step_label() == mc_label_, "Ctrl+Z: the code as it was");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(moved) && file(doc) == mc_doc_, "Ctrl+Y: moved again, byte for byte");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == mc_lua_ && step_label() == mc_label_, "Ctrl+Z again");
+            break;
+        }
+        // Another character: ×1; «Шкала» again: ×1.
+        case 16: {
+            if (hold(px().code() == kMcScale && rec && !px().stale(), "recorded again as it was")) return true;
+            check(px().picture_view().step == 6, "the zoom kept after Ctrl+Z: " + mc_view_words());
+            check(listed_at(hedgehog) >= 0 && px_click("px-doc-" + std::to_string(listed_at(hedgehog))) && px().opened() == hedgehog, "a click on «Ёжик»");
+            break;
+        }
+        case 17:
+            if (hold(px().code().find("Ёж") != std::string::npos && shown("px-vector-img"), "«Ёжик» shown")) return true;
+            check(mc_view_is(0, 0, 0), "another character: ×1: " + mc_view_words());
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Шкала»");
+            break;
+        // The grid.
+        case 18: {
+            if (hold(px().code() == kMcScale && rec && !px().stale() && px().clip() == "idle" && shown("px-vector-img"), "«Шкала» again")) return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(mc_view_is(0, 0, 0) && away() && at_frame(6), "×1 again; frame 7");
+            break;
+        }
+        case 19: {
+            if (wait(3)) return true;
+            f32 x = 0, y = 0;
+            check(px().screen_of({128, 230}, x, y), "a place of the vector under the plate");
+            left_click(x, y);
+            check(px().part().empty(), "a click there: no part");
+            key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
+            check(px().grid(), "': the grid");
+            break;
+        }
+        case 20: {
+            if (wait(2)) return true;
+            const u32 side = px().vector_view().width;
+            assets::CookedTexture want = px().vector_view();
+            const pixel::Affine texels = px().rig().to_pixels(side, side);
+            check(pixel::grid_step(texels.a * 288 / side) == 10, "1,125 points a unit: a line every 10 units");
+            pixel::draw_grid(want, texels, 10, static_cast<u32>(std::max<i64>(1, std::lround(side / 288.0))));
+            check(pj_class("px-grid", "selected") && px_same(px().vector_shown(), want), "the vector shown: the picture and the grid over it as counted");
+            // A line at x = 10 in column 11 (11,25), at y = 10 in row 11; between them the picture; x = 0 stronger.
+            const auto r = [&](u32 x, u32 y) { return static_cast<int>(px().vector_shown().rgba8[(static_cast<usize>(y) * side + x) * 4]); };
+            const int plate = r(5, 108), line = r(11, 108), across = r(5, 11), axis = r(0, 108);
+            check(side == 288 && plate == 0xf0 && std::abs(line - 128) < std::abs(plate - 128) && across == line && std::abs(axis - 128) < std::abs(line - 128),
+                  "the plate " + std::to_string(plate) + " between the lines, " + std::to_string(line) + " on them, " + std::to_string(axis) + " on x = 0");
+            key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
+            check(!px().grid(), "' again: no grid");
+            break;
+        }
+        // The point under the mouse; P.
+        case 21: {
+            if (wait(2)) return true;
+            check(!pj_class("px-grid", "selected") && px_same(px().vector_shown(), px().vector_view()), "the vector without the grid");
+            check(px().screen_of({12.5, 30}, mc_x_, mc_y_), "the point 12.5, 30 on the screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, mc_x_, mc_y_);
+            break;
+        }
+        case 22: {
+            if (wait(2)) return true;
+            check(px().coords() == "12.5, 30" && element_text("px-coords") == "12.5, 30", "the mouse over it: «12.5, 30»: «" + px().coords() + "»");
+            key(SDLK_P, SDL_KMOD_NONE);
+            check(mc_clipboard() == "12.5, 30" && px().note() == "Скопировано: 12.5, 30", "P: «12.5, 30» copied, «" + px().note() + "»");
+            f32 x = 0, y = 0;
+            check(element_center("px-pixel", x, y), "the pixel view");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            break;
+        }
+        case 23:
+            if (wait(2)) return true;
+            check(px().coords().empty() && element_text("px-coords").empty(), "the mouse off the vector: no point said");
+            key(SDLK_P, SDL_KMOD_NONE);
+            check(mc_clipboard() == "12.5, 30" && px().note() == "P копирует координаты под мышью: наведите её на вектор",
+                  "P there: nothing copied, «" + px().note() + "»");
+            key(SDLK_I, SDL_KMOD_NONE);
+            check(px().picking(), "I: the eyedropper");
+            break;
+        // The eyedropper: frame 7 has c1 and c2 dark, c0 light.
+        case 24:
+            if (wait(2)) return true;
+            check(pj_class("px-picking", "selected") && shown("px-picked"), "its chip lit, the colour said");
+            key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
+            check(px().grid() && px().screen_of({40.5, 50}, mc_x_, mc_y_), "the grid on; c0 where the lines x = 40 and y = 50 cross it");
+            mouse(SDL_EVENT_MOUSE_MOTION, mc_x_, mc_y_);
+            break;
+        case 25:
+            if (wait(2)) return true;
+            check(px().picked() == "#f0e8d0" && element_text("px-picked") == "#f0e8d0" && px().coords() == "40.5, 50",
+                  "over c0 in the vector: «#f0e8d0» of the picture, not of the grid: «" + px().picked() + "», at «" + px().coords() + "»");
+            check(px().vector_shown().width == 288 && px().vector_shown().rgba8[(56 * 288 + 45) * 4] != 0xf0, "the grid's lines there in the vector shown");
+            key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
+            check(!px().grid(), "the grid off");
+            check(px().screen_of({128, 50}, mc_x_, mc_y_), "c1 on the screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, mc_x_, mc_y_);
+            break;
+        // The pixel view, scrolled into sight first (the column of views scrolls).
+        case 26:
+            if (wait(2)) return true;
+            check(px().picked() == "#203040", "over c1: «#203040»: «" + px().picked() + "»");
+            mb_into_view("px-pixel-img");
+            break;
+        case 27: {
+            if (wait(2)) return true;
+            f32 x = 0, y = 0;
+            check(mc_on("px-pixel-img", 256, 256, 128.5, 50.5, x, y), "c1 in the pixel view");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            break;
+        }
+        case 28: {
+            if (wait(2)) return true;
+            check(px().picked() == "#203040", "over c1 in the pixel view: «#203040»: «" + px().picked() + "»");
+            f32 x = 0, y = 0;
+            check(mc_on("px-pixel-img", 256, 256, 128.5, 230.5, x, y), "the frame under the plate");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            break;
+        }
+        case 29:
+            if (wait(2)) return true;
+            check(px().picked() == "пусто", "nothing drawn there: «пусто»: «" + px().picked() + "»");
+            mb_into_view("px-vector-img");
+            break;
+        case 30: {
+            if (wait(2)) return true;
+            const std::string note = px().note();
+            f32 x = 0, y = 0;
+            check(px().screen_of({128, 230}, x, y) && px().screen_of({128, 50}, mc_x_, mc_y_), "the vector under the plate, c1");
+            left_click(x, y);
+            check(mc_clipboard() == "12.5, 30" && px().note() == note, "a click on nothing: nothing copied");
+            left_click(mc_x_, mc_y_);
+            check(mc_clipboard() == "#203040" && px().note() == "Скопирован цвет #203040" && px().part().empty(),
+                  "a click on c1: «#203040» copied, «" + px().note() + "», no part picked: «" + px().part() + "»");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!px().picking(), "Esc: no eyedropper");
+            break;
+        }
+        case 31:
+            if (wait(2)) return true;
+            check(!pj_class("px-picking", "selected") && !shown("px-picked"), "its chip out");
+            left_click(mc_x_, mc_y_);
+            check(px().part() == "c1", "a click on c1 picks it again: «" + px().part() + "»");
+            break;
+        // The sounds: «шаг» found, «нет» none, «шум» does not read.
+        case 32: {
+            if (hold(px().sound_rows().size() == 3 && shown("px-sound-2") && shown("px-console-1"), "the rows of the sounds")) return true;
+            const std::vector<PixelEditor::SoundRow>& rows = px().sound_rows();
+            const std::string none_why = "звук «нет» не найден: нет sounds/нет, нет.wav, нет.ogg", noise_why = "звук «шум»: sounds/шум.wav не читается (";
+            check(rows[0].name == "шаг" && rows[0].found && rows[0].file.filename() == utf8_path("шаг.wav") && rows[0].line == mb_line(kMcScale, "sound(\"шаг\")") &&
+                      rows[1].name == "нет" && !rows[1].found && rows[1].why == none_why && rows[1].line == none_line && rows[2].name == "шум" &&
+                      !rows[2].found && rows[2].why.rfind(noise_why, 0) == 0 && rows[2].line == noise_line,
+                  "the rows: «шаг» of sounds/шаг.wav, «нет» and «шум» without a sound, at their lines: " + mc_recorded());
+            check(!pj_class("px-sound-0", "missing") && pj_class("px-sound-1", "missing") && pj_class("px-sound-2", "missing") && shown("px-wave-0") &&
+                      !shown("px-wave-1") && !shown("px-wave-2"),
+                  "«нет» and «шум» red, without a wave; «шаг» its wave");
+            check(rec && rec->marks.size() == 6 && !pj_class("px-mark-0", "missing") && pj_class("px-mark-1", "missing") && pj_class("px-mark-2", "missing") &&
+                      !pj_class("px-mark-3", "missing") && pj_class("px-mark-4", "missing") && !pj_class("px-mark-5", "missing"),
+                  "the marks of «нет» (two) and «шум» red, those of «шаг» not");
+            bool times = rec != nullptr;
+            const u32 frames[6] = {10, 20, 30, 40, 50, 63};
+            for (u32 i = 0; rec && i < 6; ++i) times = times && std::fabs(rec->marks[i].time - mark_time(frames[i])) < 1e-6;
+            check(times, "the marks half a frame before frames 10, 20, 30, 40, 50, 63");
+            const std::vector<PixelEditor::ConsoleLine>& c = px().console();
+            check(c.size() == 2 && c[0].warn && c[0].line == none_line && c[0].text == "строка " + std::to_string(none_line) + ": " + none_why && c[1].warn &&
+                      c[1].line == noise_line && c[1].text.rfind("строка " + std::to_string(noise_line) + ": " + noise_why, 0) == 0,
+                  "the console: a line for each at its call: " + mc_recorded());
+            const std::string wrong = mc_wave_wrong();
+            check(wrong.empty(), "«шаг»'s wave as its samples give it: " + wrong);
+            check(away() && px_click("px-console-0") && mo_panel_keys(), "a click on «нет»'s line: the panel has the keyboard");
+            u32 from = 0, to = 0;
+            const u32 at = pixel::line_char(px().code(), none_line);
+            check(px().code_selection(from, to) && from == at && to == at, "its caret at the start of line " + std::to_string(none_line));
+            check(away(), "out of the panel");
+            check(put_bytes(sounds / utf8_path("нет"), mc_none_wav()), "sounds/нет put: a WAV without an extension");
+            break;
+        }
+        case 33: {
+            if (hold(px().sound_rows().size() == 3 && px().sound_rows()[1].found && !pj_class("px-mark-1", "missing") && !shown("px-console-1"),
+                     "«нет» found within half a second"))
+                return true;
+            const std::vector<PixelEditor::ConsoleLine>& c = px().console();
+            check(px().sound_rows()[1].file.filename() == utf8_path("нет") && !pj_class("px-sound-1", "missing") && shown("px-wave-1") && c.size() == 1 &&
+                      c[0].line == noise_line,
+                  "«нет» of sounds/нет, its wave; the console only of «шум»: " + mc_recorded());
+            check(file(lua) == mc_lua_ && file(doc) == mc_doc_ && step_label() == mc_label_, "the code and the «.pixel.json» as they were, no step");
+            // Played from the start without L.
+            key(SDLK_L, SDL_KMOD_NONE);
+            check(!px().loop_view() && at_frame(0), "L: not over again; frame 1");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(px().playing() && px().sound(), "Space: played, the sound on");
+            break;
+        }
+        case 34:
+            if (hold(!px().playing(), "played to the end")) return true;
+            check(px().frame() == 63 && sounded() == " 10 шаг 20 нет 40 шаг 50 нет 63 шаг" && px().mixer().voices() == 0,
+                  "«шаг» in frames 10, 40 and 63, «нет» in 20 and 50, «шум» not; at the end none sounding:" + sounded());
+            break;
+        case 35:
+            if (hold(px().mixer().voices() == 0, "the sounds ended")) return true;
+            key(SDLK_M, SDL_KMOD_NONE);
+            check(!px().sound() && at_frame(0), "M: the sound off; frame 1");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        case 36:
+            if (hold(!px().playing(), "played to the end")) return true;
+            check(px().frame() == 63 && sounded().empty() && px().mixer().voices() == 0, "without the sound nothing sounded:" + sounded());
+            check(px_click("px-sound") && px().sound(), "a click on «Звук»: on again");
+            break;
+        case 37:
+            if (wait(2)) return true;
+            check(away() && at_frame(10), "frame 11, the frame of the first «шаг»");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        case 38:
+            if (hold(px().frame() >= 12 || !px().playing(), "frame 13 played")) return true;
+            check(px().playing() && px().mixer().voices() == 1 && sounded() == " 10 шаг", "the frame it started from sounded: «шаг»:" + sounded());
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(!px().playing() && px().mixer().voices() == 0, "Space: paused, nothing sounding");
+            break;
+        case 39:
+            if (hold(px().mixer().voices() == 0, "the pause stops the sound")) return true;
+            check(file(lua) == mc_lua_ && file(doc) == mc_doc_ && step_label() == mc_label_, "played: nothing written, no step");
+            key(SDLK_L, SDL_KMOD_NONE);
+            check(px().loop_view(), "L: over again");
+            break;
+        // «Запечь»: 64 frames of 256 × 256, each as the library bakes the files apart from the tab.
+        case 40: {
+            if (hold(idle && element_text("px-total") == "в картинке 64 кадра из 64", "«в картинке 64 кадра из 64»")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            assets::CookedTexture strip;
+            const std::vector<u8> baked = file(png);
+            check(!baked.empty() && assets::decode_image(baked, strip) && strip.width == 16384 && strip.height == 256, "«Шкала.png»: 64 frames of 256 × 256");
+            check(d.strip == std::vector<pixel::StripClip>{{"idle", 0, 64, 30, true}} && px().note() == "Запечено: «Шкала.png», 64 кадра 256 × 256." &&
+                      step_label() == "«Шкала»: запечено в «Шкала.png», 64 кадра",
+                  "in the file: «Покой» 1–64; «" + px().note() + "», one step: " + step_label());
+            const std::string numbers = fl_numbers(strip, 64);
+            check(numbers.empty(), "each frame shows its number in the cells; not:" + numbers);
+            pixel::PixelDoc dd;
+            pixel::Rig rig;
+            pixel::PoseScript script;
+            std::string why, bad;
+            check(mo_load(dd, rig, script, why) && dd.clips.size() == 1, "the files read apart from the tab " + why);
+            for (u32 k = 0; k < 64 && dd.clips.size() == 1; ++k) {
+                assets::CookedTexture ref;
+                if (!pixel::bake_frame(rig, script, dd, dd.clips[0], k, pixel::bake_options(dd, {}), ref, why) || !px_same(px_cut(strip, 256, k), ref))
+                    bad += " " + std::to_string(k + 1) + why;
+            }
+            check(bad.empty(), "each of the 64 frames as the library bakes the files apart from the tab;" + bad);
+            break;
+        }
+        case 41:
+            if (hold(idle && as().record_of(as().abs(png)) && shown("px-give-open") && !pj_class("px-give-open", "disabled"), "the picture indexed"))
+                return true;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
+            break;
+        case 42: {
+            const auto& l = px().templates();
+            const objects::Template* flag = lib.find("flag");
+            const usize at = flag ? static_cast<usize>(std::find(l.begin(), l.end(), flag->key) - l.begin()) : l.size();
+            const std::string row = "px-tpl-" + std::to_string(at);
+            if (hold(at < l.size() && shown(row), "the templates listed")) return true;
+            check(element_text(row.c_str()).find("сыграет: Покой") != std::string::npos, "«Флаг» will play «Покой»");
+            mc_flag0_ = an_file("flag");
+            check(px_click(row), "a click on «Флаг»");
+            break;
+        }
+        case 43: {
+            const objects::Template* t = lib.find("flag");
+            objects::Clip all{{}, 30, true};
+            for (u32 k = 0; k < 64; ++k) all.frames.push_back(k);
+            check(t && t->picture == "Шкала.png" && t->frames == 64 && t->animations.size() == 1 && an_is("flag", "idle", all) &&
+                      objects::read_template(t->file)->frames == 64,
+                  "«Флаг»: «Шкала.png», 64 frames, «Покой» by all of them thirty a second; in its file");
+            check(tg_bytes(a / "game" / "pictures" / utf8_path("Шкала.png")) == file(png), "the game's «pictures/Шкала.png»: the strip as baked");
+            check(px().note() == "«Флаг» рисует «Шкала.png», 64 кадра, анимации: «Покой»." && step_label() == "«Флаг»: картинка «Шкала.png» из «Шкала»",
+                  "«" + px().note() + "», one step: " + step_label());
+            const std::vector<u8> given = an_file("flag");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("flag")) == an_lf(mc_flag0_), "Ctrl+Z: «Флаг» as before (line ends aside)");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("flag") == given && lib.find("flag")->frames == 64 && an_is("flag", "idle", all), "Ctrl+Y: given again, byte for byte");
+            break;
+        }
+        // What the tab shows and the files, beside the games, for pixel-motion-c-again.
+        case 44: {
+            if (hold(rec && !px().stale() && px().sound_rows().size() == 3 && !px().giving(), "the recording")) return true;
+            if (wait(2)) return true;
+            const std::string wrong = mc_wave_wrong();
+            check(wrong.empty(), "«шаг»'s wave as its samples give it: " + wrong);
+            const fs::path root = mo_root();
+            check(put(root / utf8_path("шкала.txt"), mc_recorded()) && put_bytes(root / utf8_path("шкала.luau"), file(lua)) &&
+                      put_bytes(root / utf8_path("шкала.pixel.json"), file(doc)) && put_bytes(root / utf8_path("шкала.png"), file(png)) &&
+                      put_bytes(root / utf8_path("флаг.json"), an_file("flag")),
+                  "what the tab shows and the files, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++mc_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-motion-c (--self-test pixel-motion-c-again).
+    bool pixel_motion_c_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root, sounds = a / "game" / "sounds";
+        const std::string doc = "персонажи/Шкала.pixel.json", lua = "персонажи/Шкала.luau", png = "персонажи/Шкала.png";
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
+        auto same = [&] {
+            return !left("шкала.luau").empty() && file(lua) == left("шкала.luau") && file(doc) == left("шкала.pixel.json") && file(png) == left("шкала.png") &&
+                   an_file("flag") == left("флаг.json") && tg_bytes(sounds / utf8_path("шаг.wav")) == mc_step_wav() &&
+                   tg_bytes(sounds / utf8_path("шум.wav")) == mc_noise() && tg_bytes(sounds / utf8_path("нет")) == mc_none_wav();
+        };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        switch (mc_step_) {
+        case 0:
+            check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), mo_root() / utf8_path("третья папка")),
+                  "from another working folder: " + path_to_utf8(fs::current_path()));
+            check(same(), "the files and the sounds as pixel-motion-c left them");
+            check(click_tab(3), "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Шкала» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Шкала»");
+            break;
+        case 3: {
+            if (hold(px().code() == kMcScale && px().clip() == "idle" && px().recording() && !px().stale() && px().sound_rows().size() == 3 &&
+                         shown("px-wave-0") && shown("px-total"),
+                     "«Шкала», its recording and its sounds"))
+                return true;
+            if (wait(3)) return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            const std::vector<u8> was = left("шкала.txt");
+            const std::string seen = mc_recorded();
+            check(!was.empty() && seen == std::string(was.begin(), was.end()), "the recording, its sounds and the console as pixel-motion-c saw them\n" + seen);
+            const std::string wrong = mc_wave_wrong();
+            check(wrong.empty(), "«шаг»'s wave as its samples give it: " + wrong);
+            check(element_text("px-total") == "в картинке 64 кадра из 64" && !px().edited(), "«" + element_text("px-total") + "», the picture as baked");
+            check(same(), "looked at: nothing written");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 4:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 5: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = an_edits();
+            const int code = tg_play(&e, "ожидания шкала.json", mo_root());
+            check(code == 0, "the game plays the flag by its 64 frames, each on the screen as baked (exit " + std::to_string(code) + ")");
+            check(same(), "played: the files as they were");
+            return false;
+        }
+        default: break;
+        }
+        ++mc_step_;
         return true;
     }
 
@@ -27957,7 +28744,8 @@ int main(int argc, char** argv) {
                                          "platformer-template-a", "platformer-template-a-again", "modules", "modules-probe", "modules-old",
                                          "animation",    "animation-a",     "animation-a-again", "pixel", "pixel-a", "pixel-a-again",
                                          "frame-limit", "frame-limit-a", "frame-limit-a-again", "frame-limit-a-low", "frame-limit-a-low-again",
-                                         "frame-limit-a-cross", "pixel-motion", "pixel-motion-a", "pixel-motion-b", "pixel-motion-b-again", "input", "input-a", "input-a-again",
+                                         "frame-limit-a-cross", "pixel-motion", "pixel-motion-a", "pixel-motion-b", "pixel-motion-b-again",
+                                         "pixel-motion-c", "pixel-motion-c-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -27971,7 +28759,7 @@ int main(int argc, char** argv) {
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
                     "animation-a-again, pixel and its parts pixel-a, pixel-a-again, frame-limit and its parts frame-limit-a, frame-limit-a-again, "
                     "frame-limit-a-low, frame-limit-a-low-again, frame-limit-a-cross, pixel-motion and its parts pixel-motion-a, pixel-motion-b, "
-                    "pixel-motion-b-again, "
+                    "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
