@@ -340,7 +340,7 @@ bool check_morph(const Impl& im, MotionState& ms, const char* id, const PropValu
     if (p >= 0 && !im.rig->parts()[static_cast<usize>(p)].shape)
         return call_error(ms, std::string("«") + id + "» — группа, морфинг бывает только у фигуры");
     if (v.v > 0 && im.rig->outline().find(v.target) < 0)
-        return call_error(ms, "в SVG нет фигуры «" + v.target + "»");
+        return call_error(ms, "в рисунке нет фигуры «" + v.target + "»");
     return true;
 }
 
@@ -1007,7 +1007,8 @@ int api_log(lua_State* L) {
 int api_part(lua_State* L) {
     const char* id = luaL_checkstring(L, 1);
     Impl& im = impl_of(L);
-    if (im.rig && im.rig->part(id) < 0) luaL_error(L, "в SVG нет части «%s»", id);
+    if (im.mode == Mode::Draw) luaL_error(L, "part — в клипах и pose: в draw частей ещё нет, их рисуют rect, circle, group …");
+    if (im.rig && im.rig->part(id) < 0) luaL_error(L, "в рисунке нет части «%s»", id);
     push_part(L, id);
     return 1;
 }
@@ -1021,6 +1022,7 @@ bool glob(const char* mask, const char* s) {
 int api_parts(lua_State* L) {
     const char* mask = lua_isnoneornil(L, 1) ? "*" : luaL_checkstring(L, 1);
     Impl& im = impl_of(L);
+    if (im.mode == Mode::Draw) luaL_error(L, "parts — в клипах и pose: в draw частей ещё нет, их рисуют rect, circle, group …");
     if (!im.rig) luaL_error(L, "parts(…): рисунка нет");
     lua_newtable(L);
     int n = 0;

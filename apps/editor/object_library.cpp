@@ -1030,7 +1030,7 @@ bool ObjectLibrary::set_frames(int n) {
     if (!t || showing_shared() || t->picture.empty()) return false;
     const u32 limit = library().frame_limit();
     if (n > static_cast<int>(limit))
-        FORGE_WARN("«%s»: кадров в картинке не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)",
+        FORGE_WARN("«%s»: кадров в картинке не больше %u, это предел игры (поле «Предел кадров» в «Векторной»)",
                    t->name.c_str(), limit);
     const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit)));
     if (frames == t->frames) return false;

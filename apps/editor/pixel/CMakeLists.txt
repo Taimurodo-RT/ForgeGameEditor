@@ -1,11 +1,14 @@
-# «Пиксельные» (step 2 of docs/models/вектор-модель.md): a vector character read from SVG, posed by a script and
+# «Векторная» (step 2 of docs/models/вектор-модель.md): a vector character read from SVG, posed by a script and
 # baked into pixel frames. ThorVG draws it, and only this library links ThorVG: games get the baked picture.
 add_library(forge_editor_pixel STATIC
   src/svg.cpp
   src/rig.cpp
   src/script.cpp
   src/doc.cpp
+  src/draw.cpp
   src/bake.cpp
+  src/clip_cut.cpp
+  src/timeline.cpp
   src/motion.cpp
   src/motion_edit.cpp
   src/motion_record.cpp)

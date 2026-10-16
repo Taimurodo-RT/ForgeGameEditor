@@ -1,4 +1,4 @@
-// Clips of «Пиксельные» written as code (step 1 of docs/models/движение-модель.md): Motion Canvas's timing functions,
+// Clips of «Векторная» written as code (step 1 of docs/models/движение-модель.md): Motion Canvas's timing functions,
 // springs and arc in engine/vector, the place of every call of the code, the recording of a clip and a frame of it, a
 // mouse edit written into the code. The expected curves come from Motion Canvas's own source
 // (packages/core/src/tweening at commit 7b91435) run under node, so a curve that drifts from theirs shows here; the
@@ -1154,7 +1154,7 @@ for _, h in parts("mouth*") do h.y(1, 0.1) end)"));
     PoseScript group = script_of(clip_of("part('body'):morph('mouth_open', 0.1)"));
     CHECK(record_error(group, {}, &rig) == "строка 2: «body» — группа, морфинг бывает только у фигуры");
     PoseScript none = script_of(clip_of("part('tail').x(1, 0.1)"));
-    CHECK(record_error(none, {}, &rig) == "строка 2: в SVG нет части «tail»");
+    CHECK(record_error(none, {}, &rig) == "строка 2: в рисунке нет части «tail»");
 
     // pose() records with the lengths set for the clip, and records again when they change.
     PoseScript w = script_of(clip_of(R"(wait_until("отрыв", 0.1)

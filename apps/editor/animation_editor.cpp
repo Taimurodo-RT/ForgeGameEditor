@@ -239,7 +239,7 @@ bool AnimationEditor::set_mode(const std::string& mode) {
     mode_ = mode;
     m_mode_ = mode;
     dirty("an_mode");
-    if (mode == "frames") built_ = 0; // what «Пиксельные» gave a template is seen at once
+    if (mode == "frames") built_ = 0; // what «Векторная» gave a template is seen at once
     return true;
 }
 
@@ -354,7 +354,7 @@ bool AnimationEditor::add_frame(u32 frame) {
     objects::Clip c = own() ? t->animations.at(state_) : clip();
     if (!own()) c.frames.clear(); // a new animation of its own begins with the frame clicked
     if (const u32 limit = library().frame_limit(); c.frames.size() >= limit) {
-        FORGE_WARN("Анимация: кадров в ней не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)", limit);
+        FORGE_WARN("Анимация: кадров в ней не больше %u, это предел игры (поле «Предел кадров» в «Векторной»)", limit);
         return false;
     }
     c.frames.push_back(frame);
@@ -397,7 +397,7 @@ bool AnimationEditor::set_frames(int n) {
     if (!t) return false;
     const u32 limit = library().frame_limit();
     if (n > static_cast<int>(limit))
-        FORGE_WARN("«%s»: кадров в картинке не больше %u, это предел игры (поле «Предел кадров» в «Пиксельных»)",
+        FORGE_WARN("«%s»: кадров в картинке не больше %u, это предел игры (поле «Предел кадров» в «Векторной»)",
                    t->name.c_str(), limit);
     const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit)));
     if (frames == t->frames) return false;

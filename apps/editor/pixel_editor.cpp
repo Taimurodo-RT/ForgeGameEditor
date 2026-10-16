@@ -1,4 +1,5 @@
 #include "pixel_editor.h"
+#include "pixel_files.h"
 
 #include "asset_library.h"
 
@@ -24,6 +25,8 @@ namespace fs = std::filesystem;
 
 namespace forge::editor_app {
 
+using namespace pixel_files;
+
 static_assert(pixel::kMaxStripWidth == objects::kMaxStripWidth && pixel::kMaxStripFrames == objects::kMaxFrameLimit,
               "a baked strip is a picture of the game");
 
@@ -34,36 +37,6 @@ constexpr f64 kOnion = 0.3;       // how much of the frames either side «Кал
 constexpr f32 kPivotReach = 10;   // how near the pivot a press takes it (view pixels)
 constexpr u32 kNewClipFrames = 4; // a clip as it is added
 constexpr f32 kNewClipFps = 10;
-
-// New contents of the character's files (none: the file is not there), written at once; Ctrl+Z writes them back.
-class PixelFiles final : public editor::Command {
-public:
-    struct File {
-        fs::path path;
-        std::optional<std::vector<u8>> before, after;
-    };
-    PixelFiles(PixelEditor& editor, AssetLibrary& assets, std::vector<File> files, std::string label)
-        : editor_(editor), assets_(assets), files_(std::move(files)), label_(std::move(label)) {}
-    void apply(editor::Document&) override { put(true); }
-    void revert(editor::Document&) override { put(false); }
-    std::string label() const override { return label_; }
-
-private:
-    void put(bool forward) {
-        for (const File& f : files_) {
-            const std::optional<std::vector<u8>>& bytes = forward ? f.after : f.before;
-            std::error_code ec;
-            if (!bytes) fs::remove(f.path, ec);
-            else if (!write_file_atomic(f.path, *bytes)) FORGE_ERROR("Пиксельные: %s не записывается", path_to_utf8(f.path).c_str());
-        }
-        editor_.reload();
-        assets_.refresh(); // «Ресурсы» and the game's copies see the files as they are now
-    }
-    PixelEditor& editor_;
-    AssetLibrary& assets_;
-    std::vector<File> files_;
-    std::string label_;
-};
 
 // game.json with another "frame_limit", written at once (Ctrl+Z writes the file back byte for byte), and the library
 // reading its templates by it. game.json that cannot be written (read-only, held by another program) changes nothing:
@@ -87,7 +60,7 @@ private:
         failed_ = !write_file_atomic(file_, to.bytes);
         if (failed_) {
             const std::string why = "game.json не записывается: предел кадров остался " + std::to_string(lib_.frame_limit());
-            FORGE_ERROR("Пиксельные: %s (%s)", why.c_str(), path_to_utf8(file_).c_str());
+            FORGE_ERROR("Векторная: %s (%s)", why.c_str(), path_to_utf8(file_).c_str());
             editor_.refused(why);
             return;
         }
@@ -139,19 +112,6 @@ private:
     std::string label_;
 };
 
-std::string number_words(f64 v) {
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%g", v);
-    std::string s = buf;
-    std::replace(s.begin(), s.end(), '.', ',');
-    return s;
-}
-
-std::string count_words(u32 n, const char* one, const char* few, const char* many) {
-    const u32 d = n % 10, h = n % 100;
-    return std::to_string(n) + " " + (d == 1 && h != 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many);
-}
-
 // A name as the alphabet orders it: Ё with Е.
 std::string alphabet_key(std::string s) {
     for (usize at = 0; (at = s.find("Ё", at)) != std::string::npos;) s.replace(at, 2, "Е");
@@ -166,31 +126,6 @@ std::string stem_of(const std::string& file_name) {
         return file_name.substr(0, file_name.size() - suffix.size());
     return path_to_utf8(utf8_path(file_name).stem());
 }
-
-// When a file was last written and how long it is; 0 when it is not there.
-i64 stamp_of(const fs::path& file) {
-    std::error_code ec;
-    const auto t = fs::last_write_time(file, ec);
-    if (ec) return 0;
-    const auto size = fs::file_size(file, ec);
-    if (ec) return 0;
-    return static_cast<i64>(t.time_since_epoch().count()) * 31 + static_cast<i64>(size) + 1;
-}
-
-bool read_text(const fs::path& file, std::string& out) {
-    std::vector<u8> bytes;
-    if (!read_file(file, bytes)) return false;
-    out.assign(bytes.begin(), bytes.end());
-    return true;
-}
-
-std::optional<std::vector<u8>> bytes_of(const fs::path& file) {
-    std::vector<u8> bytes;
-    if (!read_file(file, bytes)) return std::nullopt;
-    return bytes;
-}
-
-std::vector<u8> text_bytes(const std::string& text) { return {text.begin(), text.end()}; }
 
 // Each pixel of the frame a square of s × s.
 assets::CookedTexture bigger(const assets::CookedTexture& in, u32 s) {
@@ -276,6 +211,35 @@ std::string first_script(const std::string& stem, const std::string& svg_name, c
     return s;
 }
 
+// The code «Новый» starts a character with: its picture drawn by draw, and a clip of the game's first state in which the
+// body bobs, so the views move at once.
+std::string drawn_script(const std::string& stem, const std::string& state) {
+    bool word = !state.empty() && !(state[0] >= '0' && state[0] <= '9');
+    for (char c : state) word = word && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_');
+    const std::string key = word ? state : "[\"" + state + "\"]";
+    return "-- «" + stem + "»: рисунок и движение кодом. draw рисует части фигурами: rect, circle, ellipse, line, poly, path и\n"
+           "-- group (часть с частями внутри); clips двигает их: part(\"body\").y(значение, секунды, \"сглаживание\").\n"
+           "-- Изменения видны после сохранения (Ctrl+S).\n"
+           "return {\n"
+           "  params = { bob = 1 },\n"
+           "  draw = function(p, rng)\n"
+           "    canvas(32, 32)\n"
+           "    group(\"body\", function()\n"
+           "      rect(\"torso\", { x = 10, y = 14, w = 12, h = 11, r = 3, fill = \"#4a7bd0\" })\n"
+           "      circle(\"head\", { x = 16, y = 9, r = 6, fill = \"#f0c090\" })\n"
+           "      circle(\"eye\", { x = 18, y = 8, r = 1, fill = \"#202020\" })\n"
+           "    end)\n"
+           "    rect(\"leg_l\", { x = 11, y = 25, w = 4, h = 6, fill = \"#303040\", pivot = { 13, 25 } })\n"
+           "    rect(\"leg_r\", { x = 17, y = 25, w = 4, h = 6, fill = \"#303040\", pivot = { 19, 25 } })\n"
+           "  end,\n"
+           "  clips = {\n"
+           "    " + key + " = function(p)\n"
+           "      part(\"body\").y(-p.bob, 0.4, \"in_out_sine\"):to(0, 0.4, \"in_out_sine\")\n"
+           "    end,\n"
+           "  },\n"
+           "}\n";
+}
+
 } // namespace
 
 PixelEditor::PixelEditor(AssetLibrary& assets, level::LevelModule& module, editor::UndoStack& history)
@@ -325,6 +289,8 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     if (auto s = model.RegisterStruct<FrameCell>()) {
         s.RegisterMember("index", &FrameCell::index);
         s.RegisterMember("shown", &FrameCell::shown);
+        s.RegisterMember("style", &FrameCell::style);
+        s.RegisterMember("label", &FrameCell::label);
     }
     model.RegisterArray<std::vector<FrameCell>>();
     if (auto s = model.RegisterStruct<TemplateRow>()) {
@@ -376,6 +342,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("px_edited", &m_edited_);
     model.Bind("px_giving", &m_giving_);
     model.Bind("px_can_give", &m_can_give_);
+    bind_motion(model);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -401,6 +368,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
         const int i = arg_int(a, 0);
         if (i >= 0 && i < static_cast<int>(listed_.size())) open(listed_[static_cast<usize>(i)]);
     });
+    on("px_new", [this](Rml::Event&, const Rml::VariantList&) { create_drawn(); });
     on("px_create", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
         if (i >= 0 && i < static_cast<int>(svgs_.size())) create(svgs_[static_cast<usize>(i)]);
@@ -463,12 +431,6 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     });
     on("px_play", [this](Rml::Event&, const Rml::VariantList&) { play(!playing_); });
     on("px_step", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { step(arg_int(a, 0) < 0 ? -1 : 1); });
-    on("px_frame", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
-        if (const int i = arg_int(a, 0); i >= 0) {
-            play(false);
-            set_frame(static_cast<u32>(i));
-        }
-    });
     on("px_onion", [this](Rml::Event&, const Rml::VariantList&) { set_onion(!onion_); });
     auto size = [this](const std::string& which, const std::string& text) {
         char* end = nullptr;
@@ -509,6 +471,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
 u32 PixelEditor::view_px() const { return std::max(1u, static_cast<u32>(std::lround(kViewPx * dp_))); }
 
 void PixelEditor::update(f64 dt, Rml::Context* context) {
+    context_ = context;
     if (context && context->GetDensityIndependentPixelRatio() != dp_) {
         dp_ = context->GetDensityIndependentPixelRatio();
         view_dirty_ = true; // drawn again at the window's pixels
@@ -532,19 +495,46 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
         file_clock_ = 0;
         check_files();
     }
+    // The preview plays the range by its frames, at its speed, over again while L is on.
     const pixel::ClipSpec* c = selected_clip();
-    if (playing_ && c && !dragging_) {
-        time_ += std::min(dt, 0.1);
-        const u64 k = static_cast<u64>(std::floor(time_ * c->fps + 1e-9));
-        const u32 at = c->loop ? static_cast<u32>(k % c->frames) : static_cast<u32>(std::min<u64>(k, c->frames - 1));
-        if (at != frame_) {
-            frame_ = at;
-            view_dirty_ = true;
-            for (FrameCell& f : m_frames_) f.shown = static_cast<u32>(f.index) == frame_;
-            m_frame_label_ = "кадр " + std::to_string(frame_ + 1) + " из " + std::to_string(c->frames);
-            dirty("px_frames");
-            dirty("px_frame_label");
+    if (playing_ && c && !dragging_ && tl_drag_ == Drag::None && cut_.frames > 0) {
+        play_clock_ += std::min(dt, 0.1) * speed_;
+        const f64 span = cut_.frames / static_cast<f64>(cut_.fps);
+        u64 k = static_cast<u64>(std::floor(play_clock_ * cut_.fps + 1e-9));
+        if (k >= cut_.frames) {
+            if (loop_view_) {
+                play_clock_ = std::fmod(play_clock_, span);
+                k %= cut_.frames;
+            } else {
+                k = cut_.frames - 1;
+                play(false);
+            }
         }
+        const f64 t = cut_.time(static_cast<u32>(k));
+        if (t != t_) {
+            t_ = t;
+            ++fps_frames_;
+            sync_time();
+        }
+    }
+    // How many frames a second the preview shows in fact.
+    fps_clock_ += dt;
+    if (fps_clock_ >= 1) {
+        const f64 shown = playing_ ? std::round(fps_frames_ / fps_clock_) : 0;
+        fps_clock_ = 0;
+        fps_frames_ = 0;
+        if (shown != shown_fps_ || m_shown_fps_.empty()) {
+            shown_fps_ = shown;
+            m_shown_fps_ = number_words(shown) + " к/с";
+            dirty("px_shown_fps");
+        }
+    }
+    if (context && has_) {
+        // The panel's field shows the panel's text (made anew when the mode is shown, set by Ctrl+Z).
+        if (auto* text = rmlui_dynamic_cast<Rml::ElementFormControl*>(element("px-code-text")); text && text->GetValue() != code_)
+            text->SetValue(code_);
+        update_caret();
+        update_timeline_box();
     }
     if (context) {
         Rml::Element* view = nullptr;
@@ -562,19 +552,42 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
 
 bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* context) {
     switch (e.type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+        // Shift as the keys say (the wheel and the mouse do not): a flag dragged with it, the wheel along.
+        shift_ = e.key.key == SDLK_LSHIFT || e.key.key == SDLK_RSHIFT ? e.type == SDL_EVENT_KEY_DOWN : (e.key.mod & SDL_KMOD_SHIFT) != 0;
+        return false;
+    case SDL_EVENT_WINDOW_FOCUS_LOST: shift_ = false; return false;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
-        if (e.button.button != SDL_BUTTON_LEFT || !context || !has_) return false;
-        bool over = false;
-        for (const Rml::Element* el = context->GetHoverElement(); el && !over; el = el->GetParentNode()) over = el->GetId() == "px-vector";
-        if (!over) return false;
+        if ((e.button.button != SDL_BUTTON_LEFT && e.button.button != SDL_BUTTON_MIDDLE) || !context || !has_) return false;
+        bool vector = false, timeline = false;
+        for (const Rml::Element* el = context->GetHoverElement(); el; el = el->GetParentNode()) {
+            vector = vector || el->GetId() == "px-vector";
+            timeline = timeline || el->GetId() == "px-tl";
+        }
+        if (timeline) {
+            context_ = context;
+            update_timeline_box();
+            timeline_press(e.button.x * density, e.button.y * density, context->GetHoverElement(), e.button.button == SDL_BUTTON_MIDDLE);
+            return tl_drag_ != Drag::None;
+        }
+        if (!vector || e.button.button != SDL_BUTTON_LEFT) return false;
         press(e.button.x * density, e.button.y * density);
         return true;
     }
     case SDL_EVENT_MOUSE_MOTION:
+        if (tl_drag_ != Drag::None) {
+            timeline_drag(e.motion.x * density);
+            return true;
+        }
         if (!dragging_) return false;
         drag(e.motion.x * density, e.motion.y * density);
         return true;
     case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (tl_drag_ != Drag::None) {
+            timeline_release();
+            return true;
+        }
         if (!dragging_) return false;
         release();
         return true;
@@ -584,10 +597,15 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
 
 bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT)) return false;
+    const bool shift = (k.mod & SDL_KMOD_SHIFT) != 0;
     switch (k.key) {
     case SDLK_SPACE: play(!playing_); return true;
-    case SDLK_LEFT: step(-1); return true;
-    case SDLK_RIGHT: step(1); return true;
+    case SDLK_LEFT: shift ? to_start() : step(-1); return true;
+    case SDLK_RIGHT: shift ? to_end() : step(1); return true;
+    case SDLK_L: set_loop_view(!loop_view_); return true;
+    case SDLK_F: center_playhead(); return true;
+    case SDLK_B: range_start_here(); return true;
+    case SDLK_N: range_end_here(); return true;
     case SDLK_ESCAPE:
         if (!giving_) return false;
         open_give(false);
@@ -612,10 +630,10 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
 }
 
 std::string PixelEditor::status() const {
-    if (!has_) return listed_.empty() ? "Пиксельные: векторных персонажей пока нет" : "Пиксельные: персонаж не выбран";
-    std::string s = "Пиксельные: «" + name() + "» · кадр " + std::to_string(doc_.frame_w) + " × " + std::to_string(doc_.frame_h);
+    if (!has_) return listed_.empty() ? "Векторная: персонажей пока нет" : "Векторная: персонаж не выбран";
+    std::string s = "Векторная: «" + name() + "» · кадр " + std::to_string(doc_.frame_w) + " × " + std::to_string(doc_.frame_h);
     if (const pixel::ClipSpec* c = selected_clip()) {
-        s += " · «" + state_name(c->state) + "» " + std::to_string(frame_ + 1) + " из " + std::to_string(c->frames) + " · " + number_words(c->fps) + " к/с";
+        s += " · «" + state_name(c->state) + "» " + std::to_string(frame_ + 1) + " из " + std::to_string(whole_.frames) + " · " + number_words(c->fps) + " к/с";
     }
     if (!problem_.empty()) s += " · есть ошибка";
     return s + (playing_ ? " · играет" : " · пауза");
@@ -635,6 +653,11 @@ fs::path PixelEditor::script_file() const { return doc_.script.empty() ? fs::pat
 
 bool PixelEditor::open(const std::string& rel) {
     if (rel == rel_ && has_) return false;
+    if (code_unsaved()) {
+        note_ = "Код «" + doc_.script + "» не сохранён: сохраните его (Ctrl+S в панели) или отмените набор (Ctrl+Z в панели), потом откройте другого";
+        rebuild();
+        return false;
+    }
     rel_ = rel;
     file_ = assets_.abs(rel);
     doc_ = {};
@@ -642,21 +665,53 @@ bool PixelEditor::open(const std::string& rel) {
     script_ = {};
     svg_text_.clear();
     script_text_.clear();
+    drawn_ = false;
+    drawing_ = {};
     svg_watch_ = script_watch_ = doc_watch_ = {};
     part_.clear();
     clip_.clear();
     note_.clear();
     giving_ = false;
-    time_ = 0;
-    frame_ = 0;
-    playing_ = true;
+    forget_character();
     vector_ = frame_px_ = {};
     reload();
     return has_;
 }
 
+void PixelEditor::forget_character() {
+    t_ = play_clock_ = 0;
+    frame_ = 0;
+    playing_ = true;
+    rec_ = {};
+    rec_ok_ = rec_stale_ = false;
+    rec_clip_.clear();
+    rec_error_.clear();
+    block_ = -1;
+    caret_blocks_.clear();
+    lit_first_ = lit_last_ = 0;
+    tv_ = {};
+    tl_laid_w_ = -1;
+    code_.clear();
+    code_disk_.clear();
+    script_panel_.clear();
+    code_conflict_ = false;
+    typing_.clear();
+    typing_at_ = 0;
+    typing_open_ = false;
+    caret_ = ~0u;
+    modules_.clear();
+    m_inspector_.clear();
+    m_inspector_call_.clear();
+    m_has_block_ = false;
+}
+
 bool PixelEditor::create(const std::string& svg_rel) {
     note_.clear();
+    if (code_unsaved()) {
+        note_ = "Код «" + doc_.script + "» не сохранён: сохраните его (Ctrl+S в панели) или отмените набор (Ctrl+Z в панели), потом делайте нового";
+        rebuild();
+        return false;
+    }
     const fs::path svg = assets_.abs(svg_rel);
     const assets::AssetRecord* r = assets_.record_of(svg);
     std::string text;
@@ -686,7 +741,59 @@ bool PixelEditor::create(const std::string& svg_rel) {
     std::vector<PixelFiles::File> files;
     files.push_back({dir / utf8_path(d.script), std::nullopt, text_bytes(first_script(base, path_to_utf8(svg.filename()), probe))});
     files.push_back({doc_file, std::nullopt, text_bytes(pixel::write_pixel_doc(d))});
-    // Open it first: the command's reload reads it.
+    open_new(doc_file);
+    history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), "Векторная: «" + base + "» из «" + path_to_utf8(svg.filename()) + "»"));
+    history_.seal();
+    note_ = "Сделаны «" + base + ".pixel.json» и скрипт позы «" + base + ".luau» рядом с рисунком.";
+    rebuild();
+    return has_;
+}
+
+bool PixelEditor::create_drawn() {
+    note_.clear();
+    if (code_unsaved()) {
+        note_ = "Код «" + doc_.script + "» не сохранён: сохраните его (Ctrl+S в панели) или отмените набор (Ctrl+Z в панели), потом делайте нового";
+        rebuild();
+        return false;
+    }
+    const fs::path dir = assets_.root() / utf8_path("персонажи");
+    std::error_code ec;
+    const bool had_dir = fs::is_directory(dir, ec);
+    std::string base = "Персонаж";
+    for (int n = 2; fs::exists(dir / utf8_path(base + ".pixel.json"), ec) || fs::exists(dir / utf8_path(base + ".luau"), ec); ++n)
+        base = "Персонаж " + std::to_string(n);
+    const std::string state = states_.empty() ? std::string("stand") : states_.front().id;
+    const std::string code = drawn_script(base, state);
+    pixel::PixelDoc d;
+    d.script = base + ".luau";
+    d.clips.push_back({state, kNewClipFrames, kNewClipFps, true});
+    {
+        // The clip's frames as the tab counts them, from its recording.
+        pixel::PoseScript probe;
+        pixel::Drawing drawing;
+        pixel::Rig rig;
+        pixel::ClipCut cut;
+        std::string why;
+        if (probe.load(code) && probe.draw(d.params, d.seed, drawing) && rig.load(pixel::drawing_svg(drawing, d.frame_w, d.frame_h), why) &&
+            pixel::cut_clip(probe, rig, d, d.clips.front(), cut, why))
+            d.clips.front().frames = cut.frames;
+    }
+    const fs::path doc_file = dir / utf8_path(base + ".pixel.json");
+    std::vector<PixelFiles::File> files;
+    files.push_back({dir / utf8_path(d.script), std::nullopt, text_bytes(code)});
+    files.push_back({doc_file, std::nullopt, text_bytes(pixel::write_pixel_doc(d))});
+    open_new(doc_file);
+    // The folder it made goes with the files on Ctrl+Z.
+    history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), "Векторная: «" + base + "» — новый, рисунок кодом",
+                                                  had_dir ? fs::path() : dir));
+    history_.seal();
+    note_ = "Сделаны «" + base + ".pixel.json» и «" + base + ".luau» в «персонажи»: рисунок и движение — в коде.";
+    rebuild();
+    return has_;
+}
+
+void PixelEditor::open_new(const fs::path& doc_file) {
+    // Opened before the files are written: the command's reload reads them.
     rel_.clear();
     file_ = doc_file;
     {
@@ -699,16 +806,11 @@ bool PixelEditor::create(const std::string& svg_rel) {
     script_ = {};
     svg_text_.clear();
     script_text_.clear();
+    drawn_ = false;
+    drawing_ = {};
     part_.clear();
     clip_.clear();
-    time_ = 0;
-    frame_ = 0;
-    playing_ = true;
-    history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), "Пиксельные: «" + base + "» из «" + path_to_utf8(svg.filename()) + "»"));
-    history_.seal();
-    note_ = "Сделаны «" + base + ".pixel.json» и скрипт позы «" + base + ".luau» рядом с рисунком.";
-    rebuild();
-    return has_;
+    forget_character();
 }
 
 bool PixelEditor::from_svg(const std::string& svg_rel) {
@@ -728,12 +830,20 @@ bool PixelEditor::from_svg(const std::string& svg_rel) {
 
 void PixelEditor::check_files() {
     if (file_.empty()) return;
-    fs::path svg;
-    if (const std::optional<Guid> id = Guid::parse(doc_.svg))
+    fs::path svg; // none watched while the code draws the picture
+    if (const std::optional<Guid> id = drawn_ ? std::nullopt : Guid::parse(doc_.svg))
         if (const assets::AssetRecord* r = assets_.find_id(*id)) svg = assets_.abs(r->path);
     if (stamp_of(file_) != doc_watch_.stamp || svg != svg_watch_.file || stamp_of(svg) != svg_watch_.stamp ||
-        stamp_of(script_file()) != script_watch_.stamp)
+        stamp_of(script_file()) != script_watch_.stamp) {
+        modules_changed();
         reload();
+    } else if (modules_changed()) {
+        // A module the clip requires changed: recorded again.
+        script_.forget();
+        recount();
+        view_dirty_ = true;
+        rebuild();
+    }
 }
 
 void PixelEditor::reload() {
@@ -750,16 +860,58 @@ void PixelEditor::reload() {
     std::string why;
     if (pixel::read_pixel_doc({reinterpret_cast<const char*>(bytes->data()), bytes->size()}, d, why)) doc_ = std::move(d);
     else doc_problem_ = "«" + path_to_utf8(file_.filename()) + "»: " + why;
-    load_svg();
     load_script();
-    pixel::apply_pivots(rig_, doc_);
+    load_picture();
+    pixel::apply_pivots(rig_, doc_, drawn_ ? &drawing_ : nullptr);
     if (std::none_of(doc_.clips.begin(), doc_.clips.end(), [&](const auto& c) { return c.state == clip_; }))
         clip_ = doc_.clips.empty() ? std::string() : doc_.clips.front().state;
-    if (const pixel::ClipSpec* c = selected_clip()) frame_ = std::min(frame_, c->frames - 1);
     if (!part_.empty() && rig_.part(part_) < 0) part_.clear();
+    recount();
+    if (block_ >= 0) select_block(block_); // its info and lines from the recording as it is now
     check_edited();
     view_dirty_ = true;
     rebuild();
+}
+
+void PixelEditor::load_picture() {
+    draw_problem_.clear();
+    picture_note_.clear();
+    draw_line_ = 0;
+    drawn_ = script_.loaded() && script_.has_draw();
+    if (!drawn_) {
+        load_svg();
+        return;
+    }
+    svg_problem_.clear();
+    svg_watch_ = {};
+    // The SVG the file names is there and stays, not drawn: the code's draw is the picture.
+    if (!doc_.svg.empty()) {
+        const std::optional<Guid> id = Guid::parse(doc_.svg);
+        const assets::AssetRecord* r = id ? assets_.find_id(*id) : nullptr;
+        const std::string svg = r ? "«" + path_to_utf8(utf8_path(r->path).filename()) + "»" : "рисунок SVG из «" + path_to_utf8(file_.filename()) + "»";
+        picture_note_ = "Рисунок — из draw кода «" + doc_.script + "»; " + svg + " не используется";
+    }
+    pixel::Drawing d;
+    if (!script_.draw(doc_.params, doc_.seed, d)) {
+        draw_problem_ = "Рисунок «" + doc_.script + "»: " + script_.error() + (rig_.loaded() ? " (показан прежний)" : "");
+        draw_line_ = script_.error_line();
+        return;
+    }
+    std::string text = pixel::drawing_svg(d, doc_.frame_w, doc_.frame_h);
+    if (text == svg_text_ && rig_.loaded()) {
+        drawing_ = std::move(d);
+        return;
+    }
+    pixel::Rig fresh;
+    std::string why;
+    if (!fresh.load(text, why)) {
+        draw_problem_ = "Рисунок «" + doc_.script + "»: " + why + (rig_.loaded() ? " (показан прежний)" : "");
+        return;
+    }
+    rig_ = std::move(fresh);
+    svg_text_ = std::move(text);
+    drawing_ = std::move(d);
+    script_.forget(); // its recordings checked the parts of the picture before
 }
 
 void PixelEditor::load_svg() {
@@ -770,8 +922,9 @@ void PixelEditor::load_svg() {
     svg_watch_ = {svg, stamp_of(svg)};
     std::string text;
     if (svg.empty() || !read_text(svg, text)) {
-        svg_problem_ = !id ? "В «" + path_to_utf8(file_.filename()) + "» нет ссылки на рисунок SVG"
-                           : "Рисунка SVG этого персонажа нет в «Ресурсах» (его удалили?)";
+        svg_problem_ = id                  ? "Рисунка SVG этого персонажа нет в «Ресурсах» (его удалили?)"
+                       : script_.loaded() ? "Нет рисунка: допишите draw в код или сделайте персонажа из SVG"
+                                          : "Рисунок из кода появится, когда код «" + doc_.script + "» загрузится";
         return;
     }
     if (text == svg_text_ && rig_.loaded()) {
@@ -786,6 +939,7 @@ void PixelEditor::load_svg() {
     }
     rig_ = std::move(fresh);
     svg_text_ = std::move(text);
+    script_.forget(); // its recordings checked the parts of the picture before
     for (const std::string& line : pixel::unsupported(rig_.outline())) svg_problem_ += (svg_problem_.empty() ? "" : "\n") + line;
 }
 
@@ -796,10 +950,13 @@ void PixelEditor::load_script() {
     std::string text;
     if (file.empty() || !read_text(file, text)) {
         script_problem_ = "Скрипта позы «" + doc_.script + "» нет рядом с «" + path_to_utf8(file_.filename()) + "»";
+        adopt_code({});
         return;
     }
+    adopt_code(text);
     if (text == script_text_ && script_.loaded()) return;
     pixel::PoseScript fresh;
+    fresh.set_module_reader(pixel::animations_reader(game_dir));
     if (!fresh.load(text)) {
         script_problem_ = "Скрипт «" + doc_.script + "»: " + fresh.error() + (script_.loaded() ? " (показана последняя удачная поза)" : "");
         error_line_ = fresh.error_line();
@@ -807,6 +964,9 @@ void PixelEditor::load_script() {
     }
     script_ = std::move(fresh);
     script_text_ = std::move(text);
+    bool crlf = false;
+    script_panel_ = pixel::panel_text(script_text_, crlf);
+    caret_ = ~0u;
     error_line_ = 0;
 }
 
@@ -899,8 +1059,13 @@ void PixelEditor::release() {
 
 // --- the file ------------------------------------------------------------------------
 
-bool PixelEditor::change(const pixel::PixelDoc& after, std::string label) {
-    if (!has_ || after == doc_) return false;
+bool PixelEditor::change(const pixel::PixelDoc& changed, std::string label) {
+    if (!has_) return false;
+    // A clip of the code is written with its frames as counted from its range now.
+    pixel::PixelDoc after = changed;
+    std::string why;
+    if (script_.loaded()) pixel::count_frames(script_, rig_, after, why);
+    if (after == doc_) return false;
     std::optional<std::vector<u8>> before = bytes_of(file_);
     std::vector<u8> bytes = text_bytes(pixel::write_pixel_doc(after));
     if (before && *before == bytes) return false;
@@ -949,11 +1114,7 @@ bool PixelEditor::set_frame_limit(u32 n) {
         for (const auto& [state, clip] : t.animations)
             take(static_cast<u32>(clip.frames.size()), "у «" + t.name + "» в «" + state_name(state) + "»");
     }
-    if (has_) {
-        u32 total = 0;
-        for (const pixel::ClipSpec& c : doc_.clips) total += c.frames;
-        take(total, "у «" + name() + "» в клипах");
-    }
+    if (has_) take(total_frames(), "у «" + name() + "» в клипах");
     if (n < most) return refuse(whose + " " + count_words(most, "кадр", "кадра", "кадров") + ": предел не ниже " + std::to_string(most));
     const fs::path file = game_dir / "game.json";
     const std::optional<std::vector<u8>> before = game_dir.empty() ? std::nullopt : bytes_of(file);
@@ -990,8 +1151,12 @@ const pixel::ClipSpec* PixelEditor::selected_clip() const { return const_cast<Pi
 bool PixelEditor::select_clip(const std::string& state) {
     if (state == clip_ || std::none_of(doc_.clips.begin(), doc_.clips.end(), [&](const auto& c) { return c.state == state; })) return false;
     clip_ = state;
-    time_ = 0;
+    t_ = play_clock_ = 0;
     frame_ = 0;
+    block_ = -1;
+    tv_.scale = tv_.start = 0; // all of the clip in sight
+    recount();
+    select_block(-1);
     view_dirty_ = true;
     rebuild();
     return true;
@@ -1000,9 +1165,7 @@ bool PixelEditor::select_clip(const std::string& state) {
 bool PixelEditor::add_clip(const std::string& state) {
     if (!has_ || std::none_of(states_.begin(), states_.end(), [&](const auto& s) { return s.id == state; })) return false;
     if (std::any_of(doc_.clips.begin(), doc_.clips.end(), [&](const auto& c) { return c.state == state; })) return select_clip(state);
-    u32 total = 0;
-    for (const pixel::ClipSpec& c : doc_.clips) total += c.frames;
-    const u32 limit = frame_limit();
+    const u32 total = total_frames(), limit = frame_limit();
     if (total >= limit) {
         note_ = "В клипах уже " + count_words(total, "кадр", "кадра", "кадров") + ": это предел игры («Предел кадров» ниже)";
         rebuild();
@@ -1011,8 +1174,10 @@ bool PixelEditor::add_clip(const std::string& state) {
     pixel::PixelDoc after = doc_;
     after.clips.push_back({state, std::min(kNewClipFrames, limit - total), kNewClipFps, true});
     clip_ = state;
-    time_ = 0;
+    t_ = play_clock_ = 0;
     frame_ = 0;
+    block_ = -1;
+    tv_.scale = tv_.start = 0;
     return change(after, "«" + name() + "»: клип «" + state_name(state) + "»");
 }
 
@@ -1029,9 +1194,14 @@ bool PixelEditor::remove_clip() {
 bool PixelEditor::set_clip_frames(int n) {
     const pixel::ClipSpec* c = selected_clip();
     if (!c) return false;
+    if (cut_.code) {
+        note_ = "Кадры клипа из кода считаются по его диапазону и «кадров в секунду»";
+        rebuild();
+        return false;
+    }
     u32 others = 0;
     for (const pixel::ClipSpec& x : doc_.clips)
-        if (x.state != c->state) others += x.frames;
+        if (x.state != c->state) others += clip_frames(x.state);
     const u32 limit = frame_limit();
     const u32 frames = static_cast<u32>(std::clamp(n, 1, static_cast<int>(limit - std::min(others, limit - 1))));
     if (n > static_cast<int>(frames)) {
@@ -1042,7 +1212,7 @@ bool PixelEditor::set_clip_frames(int n) {
     pixel::PixelDoc after = doc_;
     for (pixel::ClipSpec& x : after.clips)
         if (x.state == c->state) x.frames = frames;
-    frame_ = std::min(frame_, frames - 1);
+    t_ = std::min(t_, (frames - 1) / static_cast<f64>(c->fps));
     return change(after, "«" + name() + "»: «" + state_name(c->state) + "» " + count_words(frames, "кадр", "кадра", "кадров"));
 }
 
@@ -1103,8 +1273,15 @@ bool PixelEditor::set_outline_color(const std::string& text) {
 // --- the clock ---------------------------------------------------------------------------
 
 void PixelEditor::play(bool on) {
+    // From the playhead, or the range's start when it stands outside the range.
+    if (on && !playing_) {
+        play_clock_ = t_ - cut_.from;
+        if (play_clock_ < -1e-9 || t_ > cut_.to + 1e-9) play_clock_ = 0;
+        play_clock_ = std::max(0.0, play_clock_);
+        fps_frames_ = 0;
+        fps_clock_ = 0;
+    }
     playing_ = on;
-    if (const pixel::ClipSpec* c = selected_clip()) time_ = frame_ / static_cast<f64>(c->fps);
     m_playing_ = on;
     dirty("px_playing");
 }
@@ -1112,21 +1289,16 @@ void PixelEditor::play(bool on) {
 void PixelEditor::step(int frames) {
     play(false);
     const pixel::ClipSpec* c = selected_clip();
-    if (!c) return;
-    const i64 n = c->frames, at = static_cast<i64>(frame_) + frames;
+    if (!c || whole_.frames == 0) return;
+    const i64 n = whole_.frames, at = static_cast<i64>(frame_) + frames;
     set_frame(static_cast<u32>(c->loop ? ((at % n) + n) % n : std::clamp<i64>(at, 0, n - 1)));
 }
 
 void PixelEditor::set_frame(u32 k) {
-    const pixel::ClipSpec* c = selected_clip();
-    if (!c || k >= c->frames) return;
-    frame_ = k;
-    time_ = k / static_cast<f64>(c->fps);
+    if (!selected_clip() || k >= whole_.frames) return;
+    t_ = whole_.time(k);
+    sync_time();
     view_dirty_ = true;
-    for (FrameCell& f : m_frames_) f.shown = static_cast<u32>(f.index) == frame_;
-    m_frame_label_ = "кадр " + std::to_string(frame_ + 1) + " из " + std::to_string(c->frames);
-    dirty("px_frames");
-    dirty("px_frame_label");
 }
 
 void PixelEditor::set_onion(bool on) {
@@ -1211,7 +1383,7 @@ bool PixelEditor::bake(bool over_edits) {
     note_ = "Запечено: «" + path_to_utf8(target.filename()) + "», " + count_words(strip.frames, "кадр", "кадра", "кадров") + " " +
             std::to_string(doc_.frame_w) + " × " + std::to_string(doc_.frame_h) +
             (doc_.game_palette && colors.empty() ? " (в игре нет своих цветов: в цветах рисунка)." : ".");
-    FORGE_INFO("Пиксельные: %s", note_.c_str());
+    FORGE_INFO("Векторная: %s", note_.c_str());
     rebuild();
     return true;
 }
@@ -1276,7 +1448,7 @@ bool PixelEditor::give(u64 key) {
     giving_ = false;
     note_ = "«" + t->name + "» рисует «" + copied + "», " + count_words(frames, "кадр", "кадра", "кадров") +
             (given.empty() ? ", своих анимаций нет" : ", анимации: " + given) + (left.empty() ? "" : "; не отданы: " + left) + ".";
-    FORGE_INFO("Пиксельные: %s", note_.c_str());
+    FORGE_INFO("Векторная: %s", note_.c_str());
     rebuild();
     return true;
 }
@@ -1298,20 +1470,23 @@ void PixelEditor::redraw() {
     const bool scripted = c && script_.loaded();
     std::string why;
 
-    // The frames shown: this one, and those either side for «Калька».
+    // The frames shown: the playhead's, and those either side of it for «Калька» (the whole clip's frames).
     std::vector<u32> ks{frame_};
-    if (onion_ && c && c->frames > 1) {
-        const i64 n = c->frames;
+    std::vector<f64> ts{t_};
+    if (onion_ && c && whole_.frames > 1) {
+        const i64 n = whole_.frames;
         for (i64 d : {-1, 1}) {
-            const i64 k = static_cast<i64>(frame_) + d;
-            if (c->loop) ks.push_back(static_cast<u32>(((k % n) + n) % n));
-            else if (k >= 0 && k < n) ks.push_back(static_cast<u32>(k));
+            i64 k = static_cast<i64>(frame_) + d;
+            if (c->loop) k = ((k % n) + n) % n;
+            else if (k < 0 || k >= n) continue;
+            ks.push_back(static_cast<u32>(k));
+            ts.push_back(whole_.time(static_cast<u32>(k)));
         }
     }
     std::vector<pixel::Pose> poses(ks.size());
     if (scripted)
         for (usize i = 0; i < ks.size(); ++i)
-            if (!pixel::frame_pose(script_, rig_, doc_, *c, ks[i], poses[i], why)) {
+            if (!pose_at(*c, ts[i], ks[i], poses[i], why)) {
                 pose_problem_ = "Скрипт «" + doc_.script + "»: " + why;
                 error_line_ = script_.error_line();
                 if (!vector_.rgba8.empty()) { // the views stay on the last pose that worked
@@ -1426,7 +1601,7 @@ void PixelEditor::rebuild_states() {
 
 void PixelEditor::sync_problem() {
     std::string all;
-    for (const std::string* p : {&doc_problem_, &svg_problem_, &script_problem_, &pose_problem_})
+    for (const std::string* p : {&doc_problem_, &svg_problem_, &draw_problem_, &script_problem_, &pose_problem_})
         if (!p->empty()) all += (all.empty() ? "" : "\n") + *p;
     if (all == problem_ && m_problem_ == all) return;
     problem_ = all;
@@ -1466,33 +1641,44 @@ void PixelEditor::rebuild() {
     }
     m_seed_ = std::to_string(doc_.seed);
     m_states_.clear();
-    u32 total = 0;
-    for (const pixel::ClipSpec& c : doc_.clips) total += c.frames;
+    const u32 total = total_frames();
     for (const auto& s : states_) {
         const auto c = std::find_if(doc_.clips.begin(), doc_.clips.end(), [&](const auto& x) { return x.state == s.id; });
         m_states_.push_back({s.id, s.name,
                              c == doc_.clips.end() ? std::string("нет клипа")
-                                                   : count_words(c->frames, "кадр", "кадра", "кадров") + " · " + number_words(c->fps) + " к/с" +
-                                                         (c->loop ? "" : " · без повтора"),
+                                                   : count_words(clip_frames(c->state), "кадр", "кадра", "кадров") + " · " + number_words(c->fps) +
+                                                         " к/с" + (c->loop ? "" : " · без повтора") +
+                                                         " · средняя кнопка: диапазон на весь клип",
                              c != doc_.clips.end(), s.id == clip_});
     }
     // Clips of states the game's templates do not have (another module's file): shown all the same.
     for (const pixel::ClipSpec& c : doc_.clips)
         if (std::none_of(states_.begin(), states_.end(), [&](const auto& s) { return s.id == c.state; }))
-            m_states_.push_back({c.state, c.state, count_words(c.frames, "кадр", "кадра", "кадров") + " · шаблоны игры этого не играют", true,
-                                 c.state == clip_});
+            m_states_.push_back({c.state, c.state, count_words(clip_frames(c.state), "кадр", "кадра", "кадров") + " · шаблоны игры этого не играют",
+                                 true, c.state == clip_});
     const pixel::ClipSpec* c = selected_clip();
     m_has_clip_ = c != nullptr;
     m_clip_name_.clear();
     for (const StateChip& s : m_states_)
         if (s.selected) m_clip_name_ = s.name;
-    m_clip_frames_ = c ? static_cast<int>(c->frames) : 0;
+    m_clip_frames_ = c ? static_cast<int>(clip_frames(c->state)) : 0;
     m_clip_loop_ = c ? c->loop : true;
     for (usize i = 0; i < m_fps_.size(); ++i) m_fps_[i].selected = c && std::fabs(objects::kClipFps[i] - c->fps) < 1e-4f;
-    m_frames_.clear();
-    if (c)
-        for (u32 k = 0; k < c->frames; ++k) m_frames_.push_back({static_cast<int>(k), k == frame_});
-    m_frame_label_ = c ? "кадр " + std::to_string(frame_ + 1) + " из " + std::to_string(c->frames) : std::string("клипа нет: поза покоя");
+    m_code_clip_ = c && cut_.code;
+    m_clip_cut_ = m_code_clip_ ? count_words(cut_.frames, "кадр", "кадра", "кадров") + ": с " + seconds_words(cut_.from) + " по " +
+                                     seconds_words(cut_.to) + " с" + (c->ranged ? "" : ", весь клип")
+                               : std::string();
+    m_has_rec_ = rec_ok_;
+    m_stale_ = rec_ok_ && rec_stale_;
+    m_has_range_ = m_code_clip_;
+    m_code_name_ = doc_.script;
+    m_code_unsaved_ = code_unsaved();
+    m_code_conflict_ = code_conflict_;
+    m_loop_view_ = loop_view_;
+    sync_time();
+    lay_timeline();
+    rebuild_console();
+    rebuild_gutter();
     m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(frame_limit());
     m_limit_ = std::to_string(frame_limit());
     m_fw_ = std::to_string(doc_.frame_w);
@@ -1535,7 +1721,8 @@ void PixelEditor::rebuild() {
     m_onion_ = onion_;
     for (const char* var : {"px_list", "px_parts", "px_params", "px_states", "px_frames", "px_fps", "px_templates", "px_name", "px_note", "px_frame_label", "px_clip_name", "px_seed", "px_fw", "px_fh", "px_outline_color", "px_picture", "px_size",
                             "px_total", "px_limit", "px_clip_frames", "px_has", "px_has_clip", "px_playing", "px_onion", "px_game_palette", "px_outline",
-                            "px_clip_loop", "px_giving", "px_can_give"})
+                            "px_clip_loop", "px_giving", "px_can_give", "px_code_clip", "px_clip_cut", "px_has_rec", "px_stale", "px_has_range",
+                            "px_code_name", "px_code_unsaved", "px_code_conflict", "px_loop_view"})
         dirty(var);
 }
 

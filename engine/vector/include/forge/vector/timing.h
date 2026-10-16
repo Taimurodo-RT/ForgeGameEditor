@@ -1,7 +1,7 @@
 #pragma once
 
 // Motion Canvas's timing functions, springs and arc (docs/models/движение-модель.md, step 1), for the clips of
-// «Пиксельные» and later the game's own playback of them. The formulas are theirs (packages/core/src/tweening at
+// «Векторная» and later the game's own playback of them. The formulas are theirs (packages/core/src/tweening at
 // commit 7b91435), with trig in place of Math, so the same bits come out on every system.
 //
 //   timing(Timing::OutQuad, 0.5)                       → 0.75

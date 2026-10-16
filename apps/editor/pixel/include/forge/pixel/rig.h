@@ -1,6 +1,6 @@
 #pragma once
 
-// A vector character posed and drawn by ThorVG («Пиксельные», step 2 of docs/models/вектор-модель.md). The SVG is
+// A vector character posed and drawn by ThorVG («Векторная», step 2 of docs/models/вектор-модель.md). The SVG is
 // loaded once; a pose moves its parts (elements with an id) around their pivots and morphs its shapes, always from the
 // rest pose, so any frame is drawn at once. Only the editor links this: games get the baked picture.
 //

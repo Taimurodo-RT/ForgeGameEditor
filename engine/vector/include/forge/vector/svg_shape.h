@@ -1,7 +1,7 @@
 #pragma once
 
 // The shapes of an SVG file as written, for a morph: an element's outline in its own coordinates, the look its
-// attributes give it, and whether two elements share coordinates. «Пиксельные» morph with them in a pose script
+// attributes give it, and whether two elements share coordinates. «Векторная» morph with them in a pose script
 // (step 2 of docs/models/вектор-модель.md), a live picture of the interface and a game's script on its screens
 // (step 4). Nothing here draws.
 

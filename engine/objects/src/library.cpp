@@ -843,14 +843,14 @@ std::optional<Template> Library::copy_from(const Library& from, const Template& 
     if (frames > frame_limit_) {
         if (error)
             *error = "кадров в картинке " + std::to_string(frames) + ", а предел этой игры " + std::to_string(frame_limit_) +
-                     " (поле «Предел кадров» в «Пиксельных»)";
+                     " (поле «Предел кадров» в «Векторной»)";
         return std::nullopt;
     }
     for (const auto& [state, clip] : animations)
         if (clip.frames.size() > frame_limit_) {
             if (error)
                 *error = "кадров в анимации «" + state + "» " + std::to_string(clip.frames.size()) + ", а предел этой игры " +
-                         std::to_string(frame_limit_) + " (поле «Предел кадров» в «Пиксельных»)";
+                         std::to_string(frame_limit_) + " (поле «Предел кадров» в «Векторной»)";
             return std::nullopt;
         }
     Template out = t;

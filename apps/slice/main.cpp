@@ -8954,7 +8954,7 @@ private:
                           slice::hero_picture_ok(lib, *lib.find("a_hero")) && slice::hero_picture_ok(lib, *lib.find("hero_look")) &&
                           !slice::hero_picture_ok(lib, *lib.find("aa_hero")),
                       "правило героя для редактора то же: «" + why0 + "», «" + why1 + "»");
-                // «aa_hero»'s 2 frames with an animation of its own: a hero's picture now, as «Пиксельные» bakes strips of
+                // «aa_hero»'s 2 frames with an animation of its own: a hero's picture now, as «Векторная» bakes strips of
                 // any length; drawn by «a_hero» still, the first by id.
                 {
                     const std::string aa_text = "{\"id\": \"aa_hero\", \"name\": \"aa_hero\", \"kind\": \"hero\", \"picture\": \"герой.png\", "
@@ -8970,7 +8970,7 @@ private:
                 }
                 // Strips at the sheet's limits, each frame its own colour: 8 frames of 32 and 4 of 256 (a frame as wide as
                 // a picture may be), 8 frames of 256 × 512 scaled down to 128 × 256, 64 of 16 and 64 of 256, as many as a
-                // picture has in a game without "frame_limit" (objects::kDefaultFrameLimit; «Пиксельные» bakes 64 frames of
+                // picture has in a game without "frame_limit" (objects::kDefaultFrameLimit; «Векторная» bakes 64 frames of
                 // 256 at most so): 7 of 256 to a shelf, 10 shelves. On a sheet as narrow as it gets (no drawn frames:
                 // kSheetWidth) and on one wider. Every frame inside the sheet, apart from the others, all of its pixels its
                 // frame's colour.

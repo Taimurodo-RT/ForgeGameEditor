@@ -2,6 +2,8 @@
 
 #include "script_impl.h"
 
+#include "forge/core/file.h"
+#include "forge/core/path.h"
 #include "forge/core/time.h"
 #include "forge/vector/ease.h"
 
@@ -150,7 +152,7 @@ int api_shape_morph(lua_State* L) {
     if (!std::isfinite(k)) luaL_error(L, "shape(\"%s\"):morph — k не число", id);
     PoseScript::Impl& im = impl_of(L);
     if (!im.pose) luaL_error(L, "shape(…):morph работает только внутри pose (в клипе — part(…):morph(цель, с))");
-    if (im.rig && im.rig->outline().find(target) < 0) luaL_error(L, "в SVG нет фигуры «%s»", target);
+    if (im.rig && im.rig->outline().find(target) < 0) luaL_error(L, "в рисунке нет фигуры «%s»", target);
     ShapeMorph& m = im.pose->morphs[id];
     m.target = target;
     m.k = k;
@@ -163,7 +165,7 @@ int api_shape(lua_State* L) {
     PoseScript::Impl& im = impl_of(L);
     if (im.rig) {
         const i32 p = im.rig->part(id);
-        if (p < 0) luaL_error(L, "в SVG нет фигуры «%s»", id);
+        if (p < 0) luaL_error(L, "в рисунке нет фигуры «%s»", id);
         if (!im.rig->parts()[static_cast<usize>(p)].shape) luaL_error(L, "«%s» — группа, морфинг бывает только у фигуры", id);
     }
     lua_newtable(L);
@@ -421,6 +423,7 @@ PoseScript::Impl::Impl() {
     lua_setmetatable(L, -2);
     lua_setglobal(L, "ease");
     register_motion_api(L);
+    register_draw_api(L);
 
     // __fc and __fm, through which the instrumented code calls.
     lua_CompileOptions opts{};
@@ -587,6 +590,7 @@ bool PoseScript::load(std::string_view source) {
     im.params.clear();
     im.clips.clear();
     im.has_pose = false;
+    im.has_draw = false;
     im.error.clear();
     im.error_line = 0;
     im.cache.clear();
@@ -605,6 +609,15 @@ bool PoseScript::load(std::string_view source) {
     lua_pop(T, 1);
     if (bad_pose) {
         im.fail("pose должна быть функцией: pose = function(t, p, rng, clip) … end");
+        lua_pop(im.L, 1);
+        return false;
+    }
+    lua_getfield(T, -1, "draw");
+    im.has_draw = lua_isfunction(T, -1);
+    const bool bad_draw = !lua_isnil(T, -1) && !im.has_draw;
+    lua_pop(T, 1);
+    if (bad_draw) {
+        im.fail("draw должна быть функцией: draw = function(p, rng) … end");
         lua_pop(im.L, 1);
         return false;
     }
@@ -670,6 +683,22 @@ const CodeSites* PoseScript::module_code(std::string_view name) const {
     return nullptr;
 }
 void PoseScript::set_module_reader(ModuleReader reader) { impl_->reader = std::move(reader); }
+
+ModuleReader animations_reader(std::filesystem::path game_dir) {
+    return [dir = std::move(game_dir)](std::string_view name, std::string& text, std::string& why) {
+        if (name.empty() || name.find_first_of("/\\:") != std::string_view::npos || name == "." || name == "..") {
+            why = "имя модуля без папок: модуль — файл animations/имя.luau в папке игры";
+            return false;
+        }
+        std::vector<u8> bytes;
+        if (dir.empty() || !read_file(dir / "animations" / utf8_path(std::string(name) + ".luau"), bytes)) {
+            why = "нет файла animations/" + std::string(name) + ".luau в папке игры";
+            return false;
+        }
+        text.assign(bytes.begin(), bytes.end());
+        return true;
+    };
+}
 void PoseScript::set_lengths(std::string_view clip, const MotionLengths& lengths) {
     impl_->lengths[std::string(clip)] = lengths;
 }
@@ -771,6 +800,46 @@ bool PoseScript::frame(const Recording& rec, const Rig* rig, f64 t, const std::m
     return ok;
 }
 
+const Recording* PoseScript::recording(const Rig& rig, std::string_view clip, const std::map<std::string, f64>& values, u64 seed) {
+    Impl& im = *impl_;
+    im.error.clear();
+    im.error_line = 0;
+    if (!im.ok) {
+        im.error = "скрипт позы не загружен";
+        return nullptr;
+    }
+    if (!std::binary_search(im.clips.begin(), im.clips.end(), clip)) {
+        im.error = "в коде нет клипа «" + std::string(clip) + "»: clips = { " + std::string(clip) + " = function(p) … end }";
+        return nullptr;
+    }
+    const std::string name(clip);
+    const MotionLengths& lengths = im.lengths[name];
+    // What the recording depends on besides the code: the rig, the values, the seed, the lengths.
+    std::string key = std::to_string(reinterpret_cast<uintptr_t>(&rig)) + '\n' + std::to_string(seed);
+    for (const ScriptParam& p : im.params) {
+        const auto it = values.find(p.name);
+        key += '\n' + p.name + '=' + format_number(it != values.end() ? it->second : p.value) +
+               std::to_string(it != values.end() ? std::bit_cast<u64>(it->second) : 0);
+    }
+    for (const auto& [n, v] : lengths.waits) key += "\nw" + n + '=' + std::to_string(std::bit_cast<u64>(v));
+    for (const auto& [n, v] : lengths.durations) key += "\nd" + n + '=' + std::to_string(std::bit_cast<u64>(v));
+    Impl::Cached& c = im.cache[name];
+    if (c.key != key) {
+        c.key = key;
+        c.ok = record(&rig, clip, values, seed, lengths, c.rec);
+        c.error = im.error;
+        c.error_line = im.error_line;
+    }
+    if (!c.ok) {
+        im.error = c.error;
+        im.error_line = c.error_line;
+        return nullptr;
+    }
+    return &c.rec;
+}
+
+void PoseScript::forget() { impl_->cache.clear(); }
+
 bool PoseScript::pose(const Rig& rig, f64 t, std::string_view clip, const std::map<std::string, f64>& values, u64 seed, Pose& out) {
     Impl& im = *impl_;
     out = {};
@@ -781,30 +850,8 @@ bool PoseScript::pose(const Rig& rig, f64 t, std::string_view clip, const std::m
         return false;
     }
     if (std::binary_search(im.clips.begin(), im.clips.end(), clip)) {
-        const std::string name(clip);
-        const MotionLengths& lengths = im.lengths[name];
-        // What the recording depends on besides the code: the rig, the values, the seed, the lengths.
-        std::string key = std::to_string(reinterpret_cast<uintptr_t>(&rig)) + '\n' + std::to_string(seed);
-        for (const ScriptParam& p : im.params) {
-            const auto it = values.find(p.name);
-            key += '\n' + p.name + '=' + format_number(it != values.end() ? it->second : p.value) +
-                   std::to_string(it != values.end() ? std::bit_cast<u64>(it->second) : 0);
-        }
-        for (const auto& [n, v] : lengths.waits) key += "\nw" + n + '=' + std::to_string(std::bit_cast<u64>(v));
-        for (const auto& [n, v] : lengths.durations) key += "\nd" + n + '=' + std::to_string(std::bit_cast<u64>(v));
-        Impl::Cached& c = im.cache[name];
-        if (c.key != key) {
-            c.key = key;
-            c.ok = record(&rig, clip, values, seed, lengths, c.rec);
-            c.error = im.error;
-            c.error_line = im.error_line;
-        }
-        if (!c.ok) {
-            im.error = c.error;
-            im.error_line = c.error_line;
-            return false;
-        }
-        return frame(c.rec, &rig, t, values, seed, out);
+        const Recording* rec = recording(rig, clip, values, seed);
+        return rec && frame(*rec, &rig, t, values, seed, out);
     }
     if (!im.has_pose) {
         im.error = "в коде нет клипа «" + std::string(clip) + "»: clips = { " + std::string(clip) + " = function(p) … end }";

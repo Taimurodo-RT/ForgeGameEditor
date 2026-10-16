@@ -792,7 +792,7 @@ std::string ImageEditor::frames_from() const {
 bool ImageEditor::set_frames(u32 n) {
     if (!current_ || n < 1) return false;
     if (const u32 limit = frame_limit ? frame_limit() : 64; n > limit) {
-        say("Кадров не больше " + std::to_string(limit) + ": это предел игры (поле «Предел кадров» в «Пиксельных»)");
+        say("Кадров не больше " + std::to_string(limit) + ": это предел игры (поле «Предел кадров» в «Векторной»)");
         return false;
     }
     if ((current_->view_only && users_of_file && !users_of_file(current_->game_file).empty()) ||

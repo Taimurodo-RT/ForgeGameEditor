@@ -17,6 +17,9 @@
 //     pose = function(t, p, rng, clip)           -- on top: t is seconds from the clip's start
 //       part("head"):set{ rot = 2 * math.sin(t * 8) }
 //     end,
+//     draw = function(p, rng)                    -- the picture, when the code draws it (draw.h)
+//       rect("body", { x = 10, y = 14, w = 12, h = 11, fill = "#4a7bd0" })
+//     end,
 //   }
 //
 // A clip is recorded once (motion.h): its function runs with no clock, each transition leaves a block on a track and
@@ -29,6 +32,7 @@
 #include "forge/pixel/motion.h"
 #include "forge/pixel/rig.h"
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -38,6 +42,8 @@
 
 namespace forge::pixel {
 
+struct Drawing;
+
 struct ScriptParam {
     std::string name;
     f64 value = 0; // as the script declares it
@@ -45,6 +51,9 @@ struct ScriptParam {
 
 // require("name"): the text of the project's animations/name.luau; false with why (Russian) when there is none.
 using ModuleReader = std::function<bool(std::string_view name, std::string& text, std::string& why)>;
+// The reader of a game's code (step 3 of docs/models/движение-модель.md): animations/name.luau in the game's folder
+// (beside its game.json). A name with a folder in it is refused.
+ModuleReader animations_reader(std::filesystem::path game_dir);
 
 class PoseScript {
 public:
@@ -62,6 +71,8 @@ public:
     // The clips the module's `clips` table has, by name; whether it has pose.
     const std::vector<std::string>& clips() const;
     bool has_pose() const;
+    // Whether it has draw = function(p, rng) … end: the character's picture is the code's (draw.h).
+    bool has_draw() const;
     // Every call of the loaded code and the clip functions: what SiteRef file 0 points into.
     const CodeSites& code() const;
     // The calls of a module a recording required (SiteRef files past 0, by Recording::files); null when not read.
@@ -78,12 +89,21 @@ public:
     bool frame(const Recording& rec, const Rig* rig, f64 t, const std::map<std::string, f64>& values, u64 seed,
                Pose& out);
 
+    // Runs draw: the declared parameters with `values` over them, rng from `seed` alone. False with error(), the line
+    // of the call that failed in error_line().
+    bool draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out);
+
     // The pose at t for clip `clip`: a clip of `clips` recorded (kept until the code, the values, the seed or its
     // lengths change) and read at t, pose(t, …) on top; or pose alone. Parts and shapes are checked against the rig.
     // False with error().
     bool pose(const Rig& rig, f64 t, std::string_view clip, const std::map<std::string, f64>& values, u64 seed, Pose& out);
     // The lengths pose() records `clip` with.
     void set_lengths(std::string_view clip, const MotionLengths& lengths);
+    // The recording of clip `clip` that pose() reads, made when the code, the values, the seed or its lengths changed
+    // and kept until they change again (or forget()); null with error() when the code has no such clip or it fails.
+    const Recording* recording(const Rig& rig, std::string_view clip, const std::map<std::string, f64>& values, u64 seed);
+    // The recordings kept are made again on the next pose() or recording(): a module the code requires changed.
+    void forget();
 
     // Why the last load, record, frame or pose failed: "строка N: …" when it has a line of the script,
     // "движения.luau, строка N: …" for a module.
