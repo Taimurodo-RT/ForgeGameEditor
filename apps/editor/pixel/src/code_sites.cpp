@@ -444,7 +444,9 @@ bool insert_clip_line(const CodeSites& code, std::string_view source, std::strin
     if (c->first >= 0 && c->first_line > c->header_line) {
         u32 at = static_cast<u32>(c->first);
         while (at > 0 && source[at - 1] != '\n') --at;
-        edits.push_back({at, at, indent_of(source, static_cast<u32>(c->first)) + std::string(line) + "\n"});
+        // Ended as the line above it is: a file of CRLF lines stays one.
+        const char* end = at >= 2 && source[at - 2] == '\r' ? "\r\n" : "\n";
+        edits.push_back({at, at, indent_of(source, static_cast<u32>(c->first)) + std::string(line) + end});
     } else {
         edits.push_back({c->params_end, c->params_end, " " + std::string(line)});
     }
