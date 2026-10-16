@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace forge::editor_app::pixel_files {
@@ -97,5 +98,26 @@ inline std::optional<std::vector<u8>> bytes_of(const std::filesystem::path& file
 }
 
 inline std::vector<u8> text_bytes(const std::string& text) { return {text.begin(), text.end()}; }
+
+// The words of a call's text: on one line, not longer than a line of the inspector.
+inline std::string call_words(std::string_view text) {
+    std::string out;
+    bool space = false;
+    for (const char c : text) {
+        if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+            space = !out.empty();
+            continue;
+        }
+        if (space) out += ' ';
+        space = false;
+        out += c;
+    }
+    if (out.size() > 96) {
+        usize cut = 93;
+        while (cut > 0 && (static_cast<u8>(out[cut]) & 0xC0) == 0x80) --cut;
+        out = out.substr(0, cut) + "…";
+    }
+    return out;
+}
 
 } // namespace forge::editor_app::pixel_files

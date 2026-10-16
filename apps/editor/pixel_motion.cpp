@@ -55,27 +55,6 @@ u32 utf8_length(u8 c) {
     return 4;
 }
 
-// The words of a call's text: on one line, not longer than a line of the inspector.
-std::string call_words(std::string_view text) {
-    std::string out;
-    bool space = false;
-    for (const char c : text) {
-        if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
-            space = !out.empty();
-            continue;
-        }
-        if (space) out += ' ';
-        space = false;
-        out += c;
-    }
-    if (out.size() > 96) {
-        usize cut = 93;
-        while (cut > 0 && (static_cast<u8>(out[cut]) & 0xC0) == 0x80) --cut;
-        out = out.substr(0, cut) + "…";
-    }
-    return out;
-}
-
 std::string timing_words(const pixel::Recording& rec, const pixel::Block& b) {
     if (b.to == pixel::Block::To::Binding) return "связь: функция кода в каждом кадре";
     if (b.spring) return "пружина";
@@ -567,9 +546,12 @@ void PixelEditor::lay_timeline() {
             }
             for (usize i = 0; i < r.pauses.size(); ++i) {
                 const pixel::Pause& p = r.pauses[i];
-                if (tv_.x(p.start + p.length) < 0 || tv_.x(p.start) > w) continue;
-                m_pauses_.push_back({static_cast<int>(i), span(p.start, p.start + p.length), "wait " + seconds_words(p.length),
-                                     "wait(" + seconds_words(p.length) + ") с " + seconds_words(p.start) + " с"});
+                // Its end where it is dragged to.
+                const f64 end = tl_drag_ == Drag::PauseEnd && i == drag_pause_ ? drag_edge_ : p.start + p.length;
+                if (tv_.x(end) < 0 || tv_.x(p.start) > w) continue;
+                m_pauses_.push_back({static_cast<int>(i), span(p.start, end),
+                                     "wait " + seconds_words(end - p.start),
+                                     "wait(" + seconds_words(p.length) + ") с " + seconds_words(p.start) + " с: край тянет длину по кадрам"});
             }
             // Tracks in the order of the picture's parts and of the properties.
             std::vector<usize> order(r.tracks.size());
@@ -588,9 +570,13 @@ void PixelEditor::lay_timeline() {
                 m_tracks_.push_back({(t.part < r.parts.size() ? r.parts[t.part] : std::string("?")) + " · " + pixel::prop_word(t.prop), top});
                 for (usize j = 0; j < t.blocks.size(); ++j) {
                     const pixel::Block& b = r.blocks[t.blocks[j]];
-                    const f64 end = b.to == pixel::Block::To::Binding ? (j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length)
-                                                                      : b.start + b.length;
-                    f64 x0 = tv_.x(b.start), x1 = tv_.x(end);
+                    f64 start = b.start;
+                    f64 end = b.to == pixel::Block::To::Binding ? (j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length)
+                                                                : b.start + b.length;
+                    // An edge being dragged: the end there, or all of the block from the start there.
+                    if (static_cast<i32>(t.blocks[j]) == drag_block_ && tl_drag_ == Drag::BlockEnd) end = drag_edge_;
+                    if (static_cast<i32>(t.blocks[j]) == drag_block_ && tl_drag_ == Drag::BlockStart) end += drag_edge_ - start, start = drag_edge_;
+                    f64 x0 = tv_.x(start), x1 = tv_.x(end);
                     if (x1 < 0 || x0 > w) continue;
                     if (shown >= kMostBlocks) {
                         ++more;
@@ -604,7 +590,8 @@ void PixelEditor::lay_timeline() {
                     if (b.site.file > 0 && b.site.file < r.files.size()) label += " · " + r.files[b.site.file];
                     std::string style = place(x0, x1 - x0) + " " + top;
                     m_blocks_.push_back({bi, style, label,
-                                         label + ": с " + seconds_words(b.start) + " по " + seconds_words(end) + " с; двойной щелчок — к коду",
+                                         label + ": с " + seconds_words(b.start) + " по " + seconds_words(b.to == pixel::Block::To::Binding ? end : b.start + b.length) +
+                                             " с; края тянут длину и начало по кадрам, двойной щелчок — к коду",
                                          bi == block_, std::find(caret_blocks_.begin(), caret_blocks_.end(), bi) != caret_blocks_.end(), b.site.file > 0});
                 }
             }
@@ -692,6 +679,20 @@ void PixelEditor::timeline_drag(f32 x) {
         lay_timeline();
         break;
     }
+    case Drag::BlockEnd:
+    case Drag::BlockStart:
+    case Drag::PauseEnd: {
+        // By frames of the clip; an end not before its start.
+        f64 to = edge_snap(tv_.t(x - tl_x_));
+        if (tl_drag_ == Drag::BlockEnd && drag_block_ >= 0 && drag_block_ < static_cast<i32>(rec_.blocks.size()))
+            to = std::max(to, rec_.blocks[static_cast<usize>(drag_block_)].start);
+        if (tl_drag_ == Drag::PauseEnd && drag_pause_ < rec_.pauses.size()) to = std::max(to, rec_.pauses[drag_pause_].start);
+        if (to != drag_edge_) {
+            drag_edge_ = to;
+            lay_timeline();
+        }
+        break;
+    }
     case Drag::None: break;
     }
 }
@@ -727,6 +728,20 @@ void PixelEditor::timeline_release() {
         rebuild();
         break;
     }
+    case Drag::BlockEnd:
+        if (drag_block_ >= 0 && drag_block_ < static_cast<i32>(rec_.blocks.size()) && drag_edge_ != block_end(drag_block_)) set_block_end(drag_block_, drag_edge_);
+        else lay_timeline();
+        break;
+    case Drag::BlockStart:
+        if (drag_block_ >= 0 && drag_block_ < static_cast<i32>(rec_.blocks.size()) && drag_edge_ != rec_.blocks[static_cast<usize>(drag_block_)].start)
+            set_block_start(drag_block_, drag_edge_);
+        else lay_timeline();
+        break;
+    case Drag::PauseEnd:
+        if (drag_pause_ < rec_.pauses.size() && drag_edge_ != rec_.pauses[drag_pause_].start + rec_.pauses[drag_pause_].length)
+            set_pause_end(drag_pause_, drag_edge_);
+        else lay_timeline();
+        break;
     case Drag::Ruler:
     case Drag::None: break;
     }
@@ -793,6 +808,7 @@ bool PixelEditor::select_block(i32 index) {
     m_has_block_ = index >= 0;
     for (BlockRow& r : m_blocks_) r.selected = r.index == block_;
     rebuild_gutter();
+    rebuild_inspector();
     for (const char* var : {"px_blocks", "px_inspector", "px_inspector_call", "px_has_block"}) dirty(var);
     return true;
 }
@@ -808,13 +824,18 @@ bool PixelEditor::block_to_code(i32 index) {
     if (b.site.file > 0) return refuse("Блок из модуля «" + rec_.files[b.site.file] + "»: его код — animations/" + rec_.files[b.site.file] + ".luau, не в панели");
     if (b.site.site < 0 || b.site.site >= static_cast<i32>(script_.code().sites().size())) return false;
     if (code_ != script_panel_) return refuse("Код в панели не тот, что записан: сохраните его (Ctrl+S), и блок покажет свой вызов");
+    select_call(b);
+    return true;
+}
+
+void PixelEditor::select_call(const pixel::Block& b) {
+    if (b.site.file != 0 || b.site.site < 0 || b.site.site >= static_cast<i32>(script_.code().sites().size())) return;
     const pixel::CodeSpan span = script_.code().sites()[static_cast<usize>(b.site.site)].span;
     auto* text = rmlui_dynamic_cast<Rml::ElementFormControlTextArea*>(element("px-code-text"));
-    if (!text) return false;
+    if (!text) return;
     text->Focus();
     text->SetSelectionRange(static_cast<int>(pixel::panel_char(script_text_, span.begin)), static_cast<int>(pixel::panel_char(script_text_, span.end)));
     caret_ = ~0u;
-    return true;
 }
 
 // --- the code panel ----------------------------------------------------------------------------------
@@ -888,8 +909,11 @@ bool PixelEditor::save_code() {
         rebuild();
         return false;
     }
+    return write_script(pixel::file_text(code_, code_crlf_), "«" + name() + "»: код «" + doc_.script + "» сохранён");
+}
+
+bool PixelEditor::write_script(const std::string& text, std::string label) {
     const fs::path file = script_file();
-    const std::string text = pixel::file_text(code_, code_crlf_);
     std::vector<PixelFiles::File> files;
     files.push_back({file, bytes_of(file), text_bytes(text)});
     // The clips of the code counted anew: the «.pixel.json» says how many frames they have now.
@@ -904,7 +928,7 @@ bool PixelEditor::save_code() {
     typing_at_ = 0;
     typing_open_ = false;
     code_conflict_ = false;
-    history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), "«" + name() + "»: код «" + doc_.script + "» сохранён"));
+    history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), std::move(label)));
     history_.seal();
     rebuild();
     return true;
