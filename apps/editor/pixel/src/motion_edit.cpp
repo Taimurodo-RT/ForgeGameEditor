@@ -8,11 +8,12 @@ namespace forge::pixel {
 
 namespace {
 
-// The order of parts and the mask have no value, length or start to drag: they are written in the code (parts 4а
-// and 4б).
+// The order of parts, the mask and the link have no value, length or start to drag: they are written in the code
+// (parts 4а, 4б and 4в).
 constexpr const char* kOrderInCode = "порядок частей правится в коде: to_top, to_bottom, above, below";
 constexpr const char* kMaskInCode = "маска правится в коде: mask(\"lid\"), mask(nil)";
-const char* in_code(Prop p) { return p == Prop::Mask ? kMaskInCode : kOrderInCode; }
+constexpr const char* kLinkInCode = "крепление правится в коде: attach(\"hand\"), detach()";
+const char* in_code(Prop p) { return p == Prop::Mask ? kMaskInCode : p == Prop::Link ? kLinkInCode : kOrderInCode; }
 
 // The call of s in the character's script; null with why for a module's call or none.
 const CallSite* script_call(const Recording& rec, SiteRef s, const CodeSites& code, std::string& why) {
@@ -45,9 +46,15 @@ bool number_arg(std::string_view source, const CallSite& c, i8 index, f64 old, f
     return why = "в вызове не хватает аргументов до этого", false;
 }
 
-bool has_value(const Block& b, std::string& why) {
+bool has_value(const Recording& rec, const Block& b, std::string& why) {
     switch (b.to) {
     case Block::To::Value: break;
+    case Block::To::Along: {
+        const std::string path = b.ref < rec.alongs.size() && rec.alongs[b.ref].path < rec.paths.size() ? rec.paths[rec.alongs[b.ref].path].id : "?";
+        return why = "путь правится в коде: along(\"" + path + "\", …)", false;
+    }
+    case Block::To::Snap:
+        return why = "место считается от «" + (b.ref < rec.snaps.size() ? rec.snaps[b.ref] : std::string("?")) + "»: правится в коде", false;
     case Block::To::Back: return why = "блок возвращает туда, откуда начался переход: его значения в коде нет", false;
     case Block::To::Saved: return why = "блок возвращает сохранённое save(): его значения в коде нет", false;
     case Block::To::Rest: return why = "блок возвращает в покой: его значения в коде нет", false;
@@ -61,7 +68,7 @@ bool has_value(const Block& b, std::string& why) {
 const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
     if (prop_is_call(b.prop)) return why = in_code(b.prop), nullptr;
     const CallSite* c = script_call(rec, b.site, code, why);
-    if (!c || !has_value(b, why)) return nullptr;
+    if (!c || !has_value(rec, b, why)) return nullptr;
     if (b.value_arg < 0 || static_cast<usize>(b.value_arg) >= c->args.size()) return why = "в вызове нет значения", nullptr;
     if (b.value_field && c->args[static_cast<usize>(b.value_arg)].kind != ArgKind::Table)
         return why = "значения вызова не в таблице { … }: правьте в коде", nullptr;
