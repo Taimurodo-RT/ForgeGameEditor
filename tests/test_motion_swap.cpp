@@ -16,6 +16,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <string>
@@ -468,6 +469,36 @@ swap("angry"))"));
     // A part of some drawing is the clip's; one of none is not.
     CHECK(error("part(\"brow\").x(1, 0.1)\npart(\"nope\").x(1, 0.1)") == "строка 4: в рисунке нет части «nope»");
     CHECK(error("part(\"\").x(1, 0.1)") == "строка 3: part(\"\"): у части есть имя, её id в рисунке");
+    CHECK(error("part(\"head\"):to({ [\"рисунок\"] = \"angry\" }, 0.2)").rfind("строка 3: part:to: поля «рисунок» нет (есть x, y, rot,", 0) == 0);
+    // A morph target of some drawing is the clip's too.
+    PoseScript far = script_of(hedgehog("part(\"mouth\"):morph(\"brow\", 0.2)"));
+    const Recording fr = recorded(far, &c.rig);
+    CHECK(frame(far, fr, &c.rig, 0.3).morphs.at("mouth").target == "brow");
+    // parts(…): the main picture's, then those only other drawings have, each once.
+    const std::string every_source = hedgehog("for _, q in parts(\"*\") do q.x(1, 0.1) end");
+    PoseScript every = script_of(every_source);
+    const Recording er = recorded(every, &c.rig);
+    const char* ids[] = {"face", "head", "mouth", "mouth_o", "nose", "brow"};
+    CHECK(er.blocks.size() == std::size(ids));
+    for (usize k = 0; k < std::size(ids); ++k) {
+        INFO(ids[k]);
+        CHECK(block(er, ids[k], Prop::X).start == doctest::Approx(0.1 * static_cast<f64>(k)));
+    }
+    // rest, save and restore are a part's: the drawing stays.
+    PoseScript kept = script_of(hedgehog(R"(local head = part("head")
+head:save()
+swap("angry", 0)
+head:rest(0.2)
+head:restore(0.2))"));
+    const Recording kr = recorded(kept, &c.rig);
+    usize drawing_blocks = 0;
+    for (const Block& b : kr.blocks) drawing_blocks += b.prop == Prop::Drawing;
+    CHECK(drawing_blocks == 1);
+    CHECK(kr.length == doctest::Approx(0.4));
+    CHECK(frame(kept, kr, &c.rig, 0.4).drawing == "angry");
+    // No drawing into the call of another block.
+    CHECK_FALSE(edit_value(er, block(er, "head", Prop::X), Prop::Drawing, v, every.code(), every_source, edited, why));
+    CHECK(why == "рисунок правится в коде: swap(…)");
 
     // The drawing is not a key of a table, and not a thing pose(t) gives.
     PoseScript old = script_of("return {\n  pose = function(t, state, p)\n    swap(\"angry\")\n    return {}\n  end,\n" + drawings_of() + "}\n");
@@ -760,4 +791,58 @@ TEST_CASE("Motion swap: pivots by id, one for every drawing") {
         CHECK(r.pivot(r.part("tail")).x == 2);
         CHECK(r.pivot(r.part("tail")).y == 3);
     }
+}
+
+TEST_CASE("Motion swap: a morphed pair, a drawing put again, a pivot set on the character") {
+    // The clip morphs the head into a square far off (hidden in the main picture, angry morphs to it in its own units):
+    // in a swap the head goes from that square in the old drawing to the same square in the new one, not from its shape.
+    const char* main = R"(    canvas(64, 64)
+    circle("head", { x = 32, y = 30, r = 10, fill = "#c09060" })
+    rect("far", { x = 2, y = 2, w = 8, h = 8, fill = "#c09060", hidden = true }))";
+    const char* angry = R"(      canvas(64, 64)
+      group("face", { x = 1, scale = 2 }, function()
+        circle("head", { x = 15, y = 15, r = 6, fill = "#e06040" })
+      end))";
+    Character c(code("wait(0.1)", main, drawings_of(angry, "")));
+    auto head_box = [&](const Pose& pose) {
+        std::string why;
+        const bool ok = c.rig.pose(pose, why);
+        INFO(why);
+        REQUIRE(ok);
+        std::array<f64, 4> b{};
+        c.rig.bounds(c.rig.part("head"), Affine{}, b.data());
+        return b;
+    };
+    const Pose mid = swap_pose("", "angry", 0.5);
+    Pose morphed = mid;
+    morphed.morphs["head"] = {"far", 1};
+    // At rest the pair is halfway between the two circles: (32; 30) r 10 and (31; 30) r 12.
+    const std::array<f64, 4> rest = head_box(mid);
+    CHECK(rest[0] == doctest::Approx(20.5));
+    CHECK(rest[2] == doctest::Approx(42.5));
+    const std::array<f64, 4> square = head_box(morphed);
+    for (usize i = 0; i < 4; ++i) {
+        INFO("edge ", i);
+        CHECK(square[i] == doctest::Approx(i < 2 ? 2 : 10).epsilon(0.001));
+    }
+    CHECK(head_box(mid) == rest); // the pair at rest again as before the morph
+
+    // A drawing put again: the swap goes to the new one, nothing kept from the one before.
+    const char* moved = R"(      canvas(64, 64)
+      group("face", { x = 1, scale = 2 }, function()
+        circle("head", { x = 10, y = 12, r = 5, fill = "#e06040" })
+      end))";
+    Character fresh(code("wait(0.1)", main, drawings_of(moved, "")));
+    std::string why;
+    u32 line = 0;
+    REQUIRE(add_drawings(c.rig, fresh.others, why, line));
+    CHECK(apply_pivots(c.rig, doc64(), &c.main, &fresh.others).empty());
+    same_as(c.rig, mid, fresh.rig, mid);
+    same_as(c.rig, morphed, fresh.rig, morphed);
+
+    // A pivot set on the character is every drawing's: the editor sets it so while it is dragged.
+    c.rig.set_pivot("head", {30, 31});
+    const Rig& a = *c.rig.drawing("angry");
+    CHECK(a.pivot(a.part("head")).x == 30);
+    CHECK(a.pivot(a.part("head")).y == 31);
 }

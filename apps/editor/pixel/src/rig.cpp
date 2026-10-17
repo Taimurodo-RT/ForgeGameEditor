@@ -1671,7 +1671,6 @@ void Rig::bake_alone(u32 w, u32 h, std::vector<u8>& out) {
     m.pic->transform(m.pic->transform());
 }
 
-
 void Rig::bounds(i32 part, u32 w, u32 h, f64 out[4]) { bounds(part, to_pixels(w, h), out); }
 
 void Rig::bounds(i32 part, const Affine& px, f64 out[4]) {
