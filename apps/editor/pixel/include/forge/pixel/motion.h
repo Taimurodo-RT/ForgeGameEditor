@@ -19,25 +19,46 @@
 
 namespace forge::pixel {
 
-enum class Prop : u8 { X, Y, Rot, Scale, Sx, Sy, Opacity, Fill, Morph };
-inline constexpr usize kPropCount = 9;
-// "x", "y", "rot", "scale", "sx", "sy", "opacity", "fill", "morph".
+// In the order of a part's tracks on the timeline (part 4а of the model adds skew_x … visible and the order, part 4б
+// tint … shadow_blur and the mask, part 4в the link of attach and detach).
+enum class Prop : u8 {
+    X, Y, Rot, Scale, Sx, Sy, SkewX, SkewY, Opacity, Fill, Stroke, StrokeWidth, Dash, DrawFrom, DrawTo, Visible,
+    Tint, Flash, FlashColor, Blur, Shadow, ShadowX, ShadowY, ShadowBlur, Morph, Mask, Link, Order
+};
+inline constexpr usize kPropCount = 28;
+// "x", "y", "rot", "scale", "sx", "sy", "skew_x", "skew_y", "opacity", "fill", "stroke", "stroke_width", "dash",
+// "draw_from", "draw_to", "visible", "tint", "flash", "flash_color", "blur", "shadow", "shadow_x", "shadow_y",
+// "shadow_blur", "morph", and "маска", "крепление" and "порядок" for the mask, the link and the order, which are no
+// fields of the code.
 const char* prop_word(Prop p);
 bool prop_from_word(std::string_view word, Prop& out);
-bool prop_is_number(Prop p); // all but fill and morph
+// Plain numbers: all but the colours, stroke_width (nil is its own), visible, morph, the mask and the order.
+bool prop_is_number(Prop p);
+// Colours with a share over their rest (fill, stroke, tint, flash_color, shadow).
+bool prop_is_color(Prop p);
+// Calls at a moment rather than properties (the mask, the link and the order): no length, not in save, restore and
+// rest.
+bool prop_is_call(Prop p);
 
-// A property's value. For fill and morph `v` is the share k of the colour or of the target shape over the part's own
-// (0: its own), the colour or the target beside it.
+// A property's value. For a colour, stroke_width and morph `v` is the share k of the colour, the width or the target
+// shape over the part's rest (0: the rest, its own colour, width or shape), the colour, the width `n` or the target
+// beside it. Visible is v 1 or 0. The mask: v 0 none, 1 inside the part `target`, 2 outside it. The link: v 1 carried
+// by the part `target` (attach), 0 let go (detach). The order: v is a kind of OrderStep (rig.h), `target` the neighbour
+// of above and below.
 struct PropValue {
     f64 v = 0;
     Rgba8 color;
     std::string target;
+    f64 n = 0;
     bool operator==(const PropValue&) const = default;
 };
-// At rest: 0 for x, y and rot, 1 for scale, sx, sy and opacity, k = 0 for fill and morph.
+// At rest: 1 for scale, sx, sy, opacity, draw_to and visible, k = 0 (the rest) for the colours, stroke_width and
+// morph, 0 for the rest (no mask, no link).
 PropValue rest_value(Prop p);
 // From a to b by k: exact at k = 0 and 1. A colour from none comes in at its own colour; a morph between two targets
-// goes back to the part's own shape and on to the other.
+// goes back to the part's own shape and on to the other. Two widths given go as numbers (past them too, for back and
+// elastic); from or to its own width k stays in 0 … 1, as a colour's. Visible, the mask, the link and the order change
+// at k = 1 only.
 PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k);
 
 // A call of the code: file 0 is the character's script, the others the modules it requires (Recording::files); site
@@ -60,6 +81,8 @@ struct Block {
         Saved,   // what save `ref` kept (part:restore)
         Rest,    // rest_value (part:rest)
         Binding, // the script's function `binding`, at each t
+        Along,   // x, y or rot of part:along (part 4в): along Recording::alongs[ref] by the timing
+        Snap,    // x or y of part:snap_to: `value`, where the pivot of part Recording::snaps[ref] stood at the call
     };
     To to = To::Value;
     PropValue value;
@@ -85,9 +108,11 @@ struct Block {
     SiteRef start_site;
 
     // resolve(): the value it starts from, the one it goes to, a spring's positions (1/120 s apart, the first after
-    // one step).
+    // one step). A link's carry: the matrix C of the part (PartPose::carry) is W(target) · carry while it holds,
+    // `carry` itself once let go.
     PropValue from, end;
     std::vector<f64> steps;
+    Affine carry;
 };
 
 // part:save(): the values of all a part's properties at `time`.
@@ -132,6 +157,44 @@ struct LogLine {
     std::string text;
 };
 
+// part:along("route", s, timing, { turn, from, to, relative }) (part 4в): the path, the shares of its length the part
+// goes from and to, and the part's pivot at rest, which x and y move onto the path.
+struct Along {
+    u32 path = 0; // in Recording::paths
+    f64 from = 0, to = 1;
+    bool turn = false, relative = false;
+    vector::Point pivot;
+};
+
+// A part that links or places by others (attach, snap_to of part 4в): its pivot at rest and the part it is inside,
+// for where it stands in a frame without the picture.
+struct Bone {
+    std::string id;
+    vector::Point pivot; // picture units
+    i32 parent = -1;     // in Recording::bones; -1 when only the picture is
+};
+
+// What the recording warns of (a skew past its limit, a dash with no pattern to move): a line of the console, once a
+// part, at the call of its first block.
+struct Note {
+    SiteRef site;
+    u32 line = 0; // in the site's file
+    std::string text;
+};
+
+// copies("искра", n, function(i, c) … end) (part 4г): a copy of a part of the picture, drawn from `born` to the clip's
+// end; its blocks are a part's, by its id.
+struct Copy {
+    std::string id;     // "искра[3]"
+    std::string source; // "искра"
+    u32 number = 0;     // 3: the part's copies in the clip, by their calls
+    f64 born = 0;
+    SiteRef site; // the copies(…) call
+};
+
+inline constexpr u32 kMaxCopiesCall = 64;
+inline constexpr u32 kMaxCopies = 256;
+
 struct Recording {
     std::string clip;
     f64 length = 0;                 // where the clip's own flow ends; what runs on in the background is cut there
@@ -144,6 +207,12 @@ struct Recording {
     std::vector<Mark> marks;
     std::vector<Pause> pauses;
     std::vector<LogLine> log;
+    std::vector<Note> notes;
+    std::vector<PathLine> paths;   // along's paths, each once
+    std::vector<Along> alongs;     // by Block::ref of To::Along
+    std::vector<std::string> snaps; // by Block::ref of To::Snap: the part placed by
+    std::vector<Bone> bones;       // the parts of links and snaps, with the parts they are inside, a parent before them
+    std::vector<Copy> copies;      // in the order of their calls: by number within each part
     u64 generation = 0; // the script's recording it came from: bindings are asked of that one only
 
     // resolve(): each track's blocks by start and order.
@@ -194,8 +263,19 @@ bool block_going(const Block& b, f64 t, f64 frame);
 // of the first property in Prop's order); -1 when none has.
 i32 latest_block(const Recording& rec, u32 part, f64 t);
 
-// The pose of all parts at t, from the tracks.
+// The pose of all parts at t, from the tracks: the copies born at t or before with theirs.
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why);
+
+// The point at share u of a path's length and, when angle is given, the direction of its segment there in degrees.
+// An open path holds u within 0 … 1; a closed one goes round past them, its angle on by a turn each time round.
+vector::Point path_point(const PathLine& path, f64 u, f64* angle = nullptr);
+// How bone b stands against its rest at t (after resolve), in picture units: C · W(parent) · M, where M is its own
+// move, turn, scale and skews round its pivot and C its link's carry. False with why.
+bool bone_world(const Recording& rec, u32 bone, f64 t, BindingEval* eval, Affine& out, std::string& why);
+// The same without its own move: C · W(parent).
+bool bone_frame(const Recording& rec, u32 bone, f64 t, BindingEval* eval, Affine& out, std::string& why);
+i32 bone_of(const Recording& rec, std::string_view id); // -1 for none
+i32 copy_of(const Recording& rec, std::string_view id); // its index in Recording::copies; -1 for none
 
 // The old pose(t) on top of a recorded one: moves and turns add, scales and opacity multiply, a fill or a morph the
 // script sets replaces the recorded one.

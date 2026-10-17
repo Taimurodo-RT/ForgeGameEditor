@@ -51,7 +51,11 @@ add_executable(forge_tests
   test_motion.cpp
   test_motion_tab.cpp
   test_motion_view.cpp
+  test_motion_draw.cpp
+  test_motion_effects.cpp
+  test_motion_links.cpp
+  test_motion_copies.cpp
   test_live_svg.cpp)
-target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render forge::ui forge::editor forge::game forge::level forge::objects forge::audio forge::logic forge::modules forge::input forge::vector forge_editor_pixel lunasvg::lunasvg forge_match3_rules forge_match3_lib forge_rpg_rules forge_rpg_lib doctest::doctest)
+target_link_libraries(forge_tests PRIVATE forge::core forge::data forge::assets forge::world forge::scene forge::sim forge::script forge::render forge::ui forge::editor forge::game forge::level forge::objects forge::audio forge::logic forge::modules forge::input forge::vector forge_editor_pixel lunasvg::lunasvg thorvg forge_match3_rules forge_match3_lib forge_rpg_rules forge_rpg_lib doctest::doctest)
 target_compile_definitions(forge_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME forge_tests COMMAND forge_tests)

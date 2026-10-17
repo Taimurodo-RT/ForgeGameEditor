@@ -14,6 +14,7 @@
 
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,16 +45,80 @@ struct Part {
     f64 x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 };
 
-// What a pose does to one part, from its rest. Turning and scaling are around the part's pivot; a part inside another
-// moves with it, as in SVG.
+// A skew is kept within ±kMaxSkew degrees: past them its tangent runs off to infinity.
+inline constexpr f64 kMaxSkew = 89;
+
+// What a pose does to one part, from its rest. Turning, scaling and skewing are around the part's pivot; a part inside
+// another moves with it, as in SVG. The looks (fill … visible) are of every shape of the part, a group's shapes too.
 struct PartPose {
     f64 x = 0, y = 0;       // picture units
     f64 rot = 0;            // degrees, clockwise on screen (SVG's rotate)
     f64 scale = 1, sx = 1, sy = 1;
+    f64 skew_x = 0, skew_y = 0; // degrees, SVG's skewX and skewY after the scale
     f64 opacity = 1;        // times its own
     bool has_fill = false;  // the fill of the part (every shape of a group) becomes `fill`
     Rgba8 fill;
     f64 fill_k = 1;         // how far: 0 its own colour, 1 `fill` (a gradient takes it from 0.5 on)
+    bool has_stroke = false; // the stroke colour becomes `stroke`, as the fill; a shape without one gets it
+    Rgba8 stroke;
+    f64 stroke_k = 1;
+    bool has_stroke_width = false; // the stroke width becomes `stroke_width` (picture units, 0 at least) by `stroke_width_k`
+    f64 stroke_width = 0;
+    f64 stroke_width_k = 1;
+    f64 dash = 0;           // added to each shape's own dash offset (stroke-dashoffset)
+    f64 draw_from = 0, draw_to = 1; // the share of each shape's path drawn (ThorVG's trimpath); none when from ≥ to
+    bool visible = true;
+    // Part 4б. The tint multiplies each shape's colours by white + (tint − white) · tint_k; the flash takes their red,
+    // green and blue `flash` (0 … 1) of the way to white + (flash_color − white) · flash_color_k. A part's own first,
+    // then its groups', after every part's fill and stroke.
+    bool has_tint = false;
+    Rgba8 tint;
+    f64 tint_k = 1;
+    f64 flash = 0;
+    bool has_flash_color = false;
+    Rgba8 flash_color;
+    f64 flash_color_k = 1;
+    // ThorVG's blur and drop shadow on the part's scene, in picture units however the part and its groups stand: the
+    // blur's sigma, the shadow's colour (its alpha times shadow_k), offset and sigma.
+    f64 blur = 0;
+    bool has_shadow = false;
+    Rgba8 shadow;
+    f64 shadow_k = 1;
+    f64 shadow_x = 0, shadow_y = 0, shadow_blur = 0;
+    // Drawn only inside (outside when mask_invert) the shapes of part `mask` as they stand: empty for none.
+    std::string mask;
+    bool mask_invert = false;
+    // Part 4в: carried by another part (attach). The part stands as it would and is then moved by C = W · carry in
+    // picture units, over its groups, where W is how part `carry_by` stands against its rest as drawn now (after its
+    // groups, its own move snapped, its own carry); C = carry when carry_by is empty (a link let go).
+    std::string carry_by;
+    Affine carry;
+};
+
+// What a pose's move, turn, scale and skews do to a part in picture units at rest, round its pivot:
+// T(x, y) · T(pivot) · R · S · Kx · Ky · T(−pivot), the skews held within ±kMaxSkew. x and y are rounded to multiples
+// of `snap` when it is above 0.
+Affine pose_matrix(const PartPose& pp, vector::Point pivot, f64 snap = 0);
+
+// A shape's line in picture units at rest (the path of along, part 4в): a broken line, a closed one with its first
+// point again at the end, the length from the start to each point, the angle of each segment in degrees (0 to the
+// right, clockwise more), each within 180 of the one before.
+struct PathLine {
+    std::string id;
+    std::vector<vector::Point> points;
+    std::vector<f64> lengths;
+    std::vector<f64> angles; // by segment: points.size() − 1
+    bool closed = false;
+    f64 length() const { return lengths.empty() ? 0 : lengths.back(); }
+};
+
+// A part put above or below its neighbours in its group (to_top, to_bottom, above, below of the motion), in order.
+struct OrderStep {
+    enum class Kind : u8 { Top, Bottom, Above, Below };
+    std::string part;
+    Kind kind = Kind::Top;
+    std::string other; // the neighbour of Above and Below
+    bool operator==(const OrderStep&) const = default;
 };
 
 // A shape morphed into another element of the same SVG (it may be hidden): k = 0 is the shape, 1 the target.
@@ -62,9 +127,26 @@ struct ShapeMorph {
     f64 k = 0;
 };
 
+// A copy of a part of the picture (copies, part 4г of the motion model): drawn from the part at rest, above it in its
+// group, the copies of one part by number. A pose moves it by its id, as a part.
+struct PartCopy {
+    std::string id;     // "искра[3]"
+    std::string source; // "искра"
+    u32 number = 0;     // 3: above the part's copies with smaller numbers
+    bool operator==(const PartCopy&) const = default;
+};
+
 struct Pose {
-    std::map<std::string, PartPose> parts;
+    std::map<std::string, PartPose> parts; // the picture's parts and the copies of `copies`
     std::map<std::string, ShapeMorph> morphs;
+    std::vector<OrderStep> order; // from the SVG's order, one after another
+    std::vector<PartCopy> copies; // the copies drawn: one made by an earlier pose and not here is hidden
+};
+
+// A copy the last pose drew, with its index for bounds(), carried(), matrix() and pivot().
+struct DrawnCopy {
+    std::string id;
+    i32 index = -1;
 };
 
 struct BakeOptions {
@@ -84,8 +166,9 @@ public:
     bool load(std::string_view svg, std::string& why);
     bool loaded() const;
     const SvgOutline& outline() const;
-    const std::vector<Part>& parts() const;
-    i32 part(std::string_view id) const; // -1 when no part has that id
+    // The picture's parts. The copies a pose makes are not among them: their indices come after (drawn_copies, copy).
+    std::span<const Part> parts() const;
+    i32 part(std::string_view id) const; // -1 when no part of the picture has that id
     // The picture's own size in its units (its viewBox, else width and height).
     f64 width() const;
     f64 height() const;
@@ -95,8 +178,9 @@ public:
     vector::Point pivot(i32 part) const;
 
     // Puts the picture in the pose, from the rest pose. Moves are rounded to multiples of `snap` picture units when it
-    // is above 0 (the baker's whole pixels). False with why naming the part or the morph that cannot be done; the
-    // rest of the pose is still applied.
+    // is above 0 (the baker's whole pixels). A copy is made from its part at rest the first time a pose has it and kept
+    // while the picture is loaded. False with why naming the part, the copy or the morph that cannot be done; the rest
+    // of the pose is still applied.
     bool pose(const Pose& pose, std::string& why, f64 snap = 0);
 
     // Picture units to the pixels of a w × h drawing: the picture fitted in, centred (SVG's "xMidYMid meet").
@@ -106,7 +190,7 @@ public:
     // The same with picture units going to the drawing's pixels by `px` (the view zoomed and moved).
     assets::CookedTexture draw(u32 w, u32 h, const Affine& px);
     // Pixel art: each shape drawn alone, its fill and its stroke apart; a pixel takes the exact colour of the last one
-    // (in the SVG's order) that covers at least half of it. No half-transparent pixels, no colours in between.
+    // (in the order drawn now) that covers at least half of it. No half-transparent pixels, no colours in between.
     assets::CookedTexture bake(u32 w, u32 h, const BakeOptions& options);
 
     // A part's pose bounds in the pixels of a w × h drawing (after the last pose()): x0, y0, x1, y1.
@@ -117,6 +201,21 @@ public:
     // its own move, not by its own turn and scale, which are round the pivot. The pivot stands at
     // carried(part).apply(pivot(part)); a point p of the pose is the pivot inverse(carried(part)).apply(p) (dragged).
     Affine carried(i32 part) const;
+    // A part's own matrix as the last pose() left it (from its parent's coordinates, as SVG's transform).
+    Affine matrix(i32 part) const;
+    // The copies the last pose() drew (part 4г), by index.
+    std::vector<DrawnCopy> drawn_copies() const;
+    // A copy's index once a pose made it, drawn or not; -1 for none.
+    i32 copy(std::string_view id) const;
+    // Whether two parts are neighbours in one group, the ones whose order can change against each other.
+    bool siblings(i32 a, i32 b) const;
+    // Whether any shape of a part has a dash pattern of its own.
+    bool dashed(i32 part) const;
+    // Whether a part draws any shapes (a group with display="none" has none in ThorVG).
+    bool has_shapes(i32 part) const;
+    // A shape part's line at rest in picture units, flattened (part 4в); false with why for a group, more than one
+    // contour or a line of length 0.
+    bool path_of(i32 part, PathLine& out, std::string& why) const;
 
 private:
     struct Impl;
@@ -125,5 +224,9 @@ private:
 
 // "#rgb", "#rrggbb", "rgb(r, g, b)" and a few names; false for anything else.
 bool parse_color(std::string_view text, Rgba8& out);
+// A colour of a part's property (part 4б of the motion model): what parse_color reads, or "#rrggbbaa" with its alpha.
+bool parse_part_color(std::string_view text, Rgba8& out);
+// "#rrggbb", or "#rrggbbaa" when its alpha is not full.
+std::string color_hex(const Rgba8& c);
 
 } // namespace forge::pixel

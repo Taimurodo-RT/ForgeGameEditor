@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 
@@ -33,7 +34,15 @@ using Mode = Impl::Mode;
 constexpr const char* kPartMeta = "forge.motion.part";
 constexpr const char* kPropMeta = "forge.motion.prop";
 constexpr const char* kTaskMeta = "forge.motion.task";
-constexpr Prop kHandleProps[] = {Prop::X, Prop::Y, Prop::Rot, Prop::Scale, Prop::Sx, Prop::Sy, Prop::Opacity, Prop::Fill};
+// The properties a part has as fields (body.y, { y = 2 }): all but morph, a method of its own, the mask and the order.
+constexpr Prop kHandleProps[] = {Prop::X,          Prop::Y,       Prop::Rot,     Prop::Scale,      Prop::Sx,      Prop::Sy,
+                                 Prop::SkewX,      Prop::SkewY,   Prop::Opacity, Prop::Fill,       Prop::Stroke,  Prop::StrokeWidth,
+                                 Prop::Dash,       Prop::DrawFrom, Prop::DrawTo, Prop::Visible,    Prop::Tint,    Prop::Flash,
+                                 Prop::FlashColor, Prop::Blur,    Prop::Shadow,  Prop::ShadowX,    Prop::ShadowY, Prop::ShadowBlur};
+constexpr const char* kFieldWords = "x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, dash, draw_from, draw_to, "
+                                    "visible, tint, flash, flash_color, blur, shadow, shadow_x, shadow_y, shadow_blur";
+constexpr const char* kNumberWords = "x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, dash, draw_from, draw_to, flash, blur, shadow_x, "
+                                     "shadow_y, shadow_blur";
 constexpr f64 kForever = std::numeric_limits<f64>::infinity();
 constexpr u32 kMaxIterations = 100000;
 constexpr u32 kMaxBindingDepth = 16;
@@ -207,13 +216,29 @@ bool read_value(lua_State* L, int idx, Prop p, MotionState& ms, PropValue& out) 
             return call_error(ms, std::string(prop_word(p)) + ": нужно число, а не " + luaL_typename(L, idx));
         out.v = lua_tonumber(L, idx);
         if (!std::isfinite(out.v)) return call_error(ms, std::string(prop_word(p)) + ": не число");
+        if (p == Prop::Flash && (out.v < 0 || out.v > 1)) return call_error(ms, "flash — доля от 0 до 1");
+        if ((p == Prop::Blur || p == Prop::ShadowBlur) && out.v < 0) return call_error(ms, std::string(prop_word(p)) + " — число не ниже 0");
         return true;
     }
-    if (p == Prop::Fill) {
-        if (lua_isnil(L, idx)) return true; // its own colour
+    if (prop_is_color(p)) {
+        if (lua_isnil(L, idx)) return true; // its rest
         const char* text = lua_type(L, idx) == LUA_TSTRING ? lua_tostring(L, idx) : nullptr;
-        if (!text || !parse_color(text, out.color)) return call_error(ms, "fill: нужен цвет \"#rrggbb\"");
+        if (!text || !parse_part_color(text, out.color))
+            return call_error(ms, std::string(prop_word(p)) + ": нужен цвет \"#rrggbb\" или \"#rrggbbaa\"");
         out.v = 1;
+        return true;
+    }
+    if (p == Prop::StrokeWidth) {
+        if (lua_isnil(L, idx)) return true; // its own width
+        if (lua_type(L, idx) != LUA_TNUMBER || !std::isfinite(lua_tonumber(L, idx)) || lua_tonumber(L, idx) < 0)
+            return call_error(ms, "stroke_width: нужно число не меньше 0 или nil (своя толщина)");
+        out.v = 1;
+        out.n = lua_tonumber(L, idx);
+        return true;
+    }
+    if (p == Prop::Visible) {
+        if (lua_type(L, idx) != LUA_TBOOLEAN) return call_error(ms, std::string("visible: нужно true или false, а не ") + luaL_typename(L, idx));
+        out.v = lua_toboolean(L, idx) ? 1 : 0;
         return true;
     }
     // morph: a shape of the SVG, or nil (or the part itself) for its own shape
@@ -272,10 +297,10 @@ bool read_table(lua_State* L, int idx, MotionState& ms, const char* what, MoveSt
     while (lua_next(L, idx)) {
         Prop p;
         const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : nullptr;
-        if (!key || !prop_from_word(key, p) || p == Prop::Morph) {
+        if (!key || !prop_from_word(key, p) || p == Prop::Morph || prop_is_call(p)) {
             const std::string k = key ? key : "?";
             lua_pop(L, 2);
-            return call_error(ms, std::string(what) + ": поля «" + k + "» нет (есть x, y, rot, scale, sx, sy, opacity, fill)");
+            return call_error(ms, std::string(what) + ": поля «" + k + "» нет (есть " + kFieldWords + ")");
         }
         lua_pop(L, 1);
     }
@@ -334,9 +359,23 @@ bool read_spring(lua_State* L, int idx, int tol, MotionState& ms, MoveStep& st) 
 
 SiteRef here(const Impl& im) { return im.site_ref(im.site); }
 
+// The part of the picture that a part of the clip is in the picture's checks: itself, or the part a copy is of
+// (part 4г); -1 for none.
+i32 rig_part(const Rig& rig, const Recording& rec, std::string_view id) {
+    if (const i32 c = copy_of(rec, id); c >= 0) return rig.part(rec.copies[static_cast<usize>(c)].source);
+    return rig.part(id);
+}
+
+// Why a name is no part to go by: none in the picture, or a copy, which is gone by only as c in its function.
+std::string no_part(const Recording& rec, const std::string& name) {
+    std::string why = "в рисунке нет части «" + name + "»";
+    if (copy_of(rec, name) >= 0) why += ": копию зовут только через c в copies(…)";
+    return why;
+}
+
 bool check_morph(const Impl& im, MotionState& ms, const char* id, const PropValue& v) {
     if (!im.rig) return true;
-    const i32 p = im.rig->part(id);
+    const i32 p = rig_part(*im.rig, *ms.rec, id);
     if (p >= 0 && !im.rig->parts()[static_cast<usize>(p)].shape)
         return call_error(ms, std::string("«") + id + "» — группа, морфинг бывает только у фигуры");
     if (v.v > 0 && im.rig->outline().find(v.target) < 0)
@@ -459,6 +498,7 @@ bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
             const u32 s = stack.back();
             stack.pop_back();
             for (usize p = 0; p < kPropCount; ++p) {
+                if (prop_is_call(static_cast<Prop>(p))) continue; // the mask, the link and the order are no values to go back to
                 i32 b = -1;
                 if (!add_block(im, ms, st, part, static_cast<Prop>(p), t, st.length, Block::To::Saved, nullptr, s, at, &b))
                     return false;
@@ -491,14 +531,54 @@ bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
             t = snap_time(t + longest);
             break;
         }
+        case MoveStep::Kind::Along: {
+            // x, y and, with turn, rot: along the path by the timing (part 4в).
+            const bool turn = ms.rec->alongs[static_cast<usize>(st.along)].turn;
+            for (Prop p : {Prop::X, Prop::Y, Prop::Rot}) {
+                if (p == Prop::Rot && !turn) continue;
+                i32 b = -1;
+                if (!add_block(im, ms, st, part, p, t, st.length, Block::To::Along, nullptr, static_cast<u32>(st.along), at, &b))
+                    return false;
+                note_first(p, b);
+            }
+            t = snap_time(t + st.length);
+            break;
+        }
+        case MoveStep::Kind::Snap: {
+            // Where the target's pivot stands now, by what is recorded so far; x and y to the numbers that put this
+            // part's pivot there as it stands now.
+            if (!resolve_now(im, ms)) return false;
+            const Recording& rec = *ms.rec;
+            const i32 tb = bone_of(rec, st.target), ob = bone_of(rec, ms.rec->parts[part]);
+            Affine wt, frame;
+            std::string why;
+            if (tb < 0 || ob < 0) return task_error(im, ms, st.site, "snap_to: у записи нет костей частей");
+            if (!bone_world(rec, static_cast<u32>(tb), t, &im, wt, why) || !bone_frame(rec, static_cast<u32>(ob), t, &im, frame, why))
+                return task_error(im, ms, st.site, why);
+            if (!(std::abs(frame.a * frame.d - frame.b * frame.c) > 1e-12))
+                return task_error(im, ms, st.site, "часть «" + ms.rec->parts[part] + "» сжата в точку: место для неё не посчитать");
+            const vector::Point to = inverse(frame).apply(wt.apply(rec.bones[static_cast<usize>(tb)].pivot));
+            const vector::Point pv = rec.bones[static_cast<usize>(ob)].pivot;
+            const auto ref = static_cast<u32>(ms.rec->snaps.size());
+            ms.rec->snaps.push_back(st.target);
+            for (Prop p : {Prop::X, Prop::Y}) {
+                PropValue v;
+                v.v = p == Prop::X ? to.x - pv.x : to.y - pv.y;
+                i32 b = -1;
+                if (!add_block(im, ms, st, part, p, t, st.length, Block::To::Snap, &v, ref, at, &b)) return false;
+                note_first(p, b);
+            }
+            t = snap_time(t + st.length);
+            break;
+        }
         }
     }
     end = t;
     return true;
 }
 
-// f(arg) in a context of its own from at.t: what it leaves runs from there; end is where it ends.
-bool run_function(Impl& im, lua_State* L, int fn, const f64* arg, const Place& at, f64& end) {
+// f(arg[, part]) in a context of its own from at.t: what it leaves runs from there; end is where it ends.
+bool run_function(Impl& im, lua_State* L, int fn, const f64* arg, const Place& at, f64& end, const char* part = nullptr) {
     MotionState& ms = *im.motion;
     const usize ci = ms.contexts.size();
     ms.contexts.push_back({{}, at.t, at.start_site, at.start_t});
@@ -507,6 +587,10 @@ bool run_function(Impl& im, lua_State* L, int fn, const f64* arg, const Place& a
     if (arg) {
         lua_pushnumber(L, *arg);
         n = 1;
+    }
+    if (part) {
+        push_part(L, part);
+        ++n;
     }
     if (lua_pcall(L, n, 0, 0) != LUA_OK) {
         ms.contexts.resize(ci);
@@ -728,6 +812,21 @@ bool layout(Impl& im, lua_State* L, u32 id, const Place& at_in, f64& end) {
         break;
     }
     case Task::Kind::TweenFn: ok = layout_tween(im, L, id, at, end); break;
+    case Task::Kind::Copies: {
+        // Born now; their functions go together from here, as all's (part 4г).
+        const auto n = static_cast<u32>(task.number);
+        for (u32 k = 0; k < n; ++k) ms.rec->copies[task.copy + k].born = t;
+        f64 e = t;
+        for (u32 k = 0; k < n; ++k) {
+            const f64 i = k + 1;
+            const std::string copy = ms.rec->copies[task.copy + k].id; // a copy: the function adds copies
+            f64 ce = t;
+            if (!run_function(im, L, task.fn, &i, {t, false, at.start_site, at.start_t}, ce, copy.c_str())) return false;
+            e = std::max(e, ce);
+        }
+        end = e;
+        break;
+    }
     }
     if (!ok) return false;
     end = std::isinf(end) ? end : snap_time(end);
@@ -1008,6 +1107,8 @@ int api_part(lua_State* L) {
     const char* id = luaL_checkstring(L, 1);
     Impl& im = impl_of(L);
     if (im.mode == Mode::Draw) luaL_error(L, "part — в клипах и pose: в draw частей ещё нет, их рисуют rect, circle, group …");
+    if (im.mode == Mode::Record && im.motion && copy_of(*im.motion->rec, id) >= 0)
+        luaL_error(L, "«%s» — копия: её берут в copies(…, function(i, c) … end)", id);
     if (im.rig && im.rig->part(id) < 0) luaL_error(L, "в рисунке нет части «%s»", id);
     push_part(L, id);
     return 1;
@@ -1031,6 +1132,68 @@ int api_parts(lua_State* L) {
             push_part(L, p.id.c_str());
             lua_rawseti(L, -2, ++n);
         }
+    return 1;
+}
+
+// copies("искра", n, function(i, c) … end) (part 4г): n copies of a part of the picture, numbered on from the part's
+// copies before them in the clip. The task, laid out, gives them their birth and runs the function for each.
+bool copies_task(Impl& im, lua_State* L, MotionState& ms, u32& task) {
+    std::string source;
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        source = lua_tostring(L, 1);
+    } else if (lua_istable(L, 1) && is_meta(L, 1, kPartMeta)) {
+        lua_getfield(L, 1, "id");
+        source = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+    } else {
+        return call_error(ms, "copies(\"искра\", n, функция(i, c)): первым — имя части или часть");
+    }
+    Recording& rec = *ms.rec;
+    if (const i32 c = copy_of(rec, source); c >= 0)
+        return call_error(ms, "«" + source + "» — копия, копии делают с части рисунка: copies(\"" + rec.copies[static_cast<usize>(c)].source + "\", …)");
+    if (im.rig) {
+        const i32 si = im.rig->part(source);
+        if (si < 0) return call_error(ms, "в рисунке нет части «" + source + "»");
+        if (!im.rig->has_shapes(si))
+            return call_error(ms, "у части «" + source + "» нет фигур, копиям рисовать нечего: группу с display=\"none\" ThorVG не рисует — " +
+                                      "спрячьте её в клипе: " + source + ".visible(false)");
+    }
+    if (lua_type(L, 2) != LUA_TNUMBER) return call_error(ms, "copies: вторым — число копий, целое от 1 до 64");
+    const f64 n = lua_tonumber(L, 2);
+    if (!(n >= 1 && n <= kMaxCopiesCall) || n != std::floor(n)) return call_error(ms, "copies: число копий — целое от 1 до 64");
+    if (!lua_isfunction(L, 3)) return call_error(ms, "copies: третьим — функция(i, c): её зовут для каждой копии");
+    if (lua_gettop(L) > 3) return call_error(ms, "copies: часть, число и функция — не больше");
+    if (rec.copies.size() + static_cast<usize>(n) > kMaxCopies) return call_error(ms, "в клипе больше 256 копий");
+    u32 before = 0;
+    for (const Copy& c : rec.copies) before += c.source == source;
+    std::vector<Copy> made;
+    for (u32 k = 1; k <= static_cast<u32>(n); ++k) {
+        Copy c;
+        c.number = before + k;
+        c.id = source + "[" + std::to_string(c.number) + "]";
+        c.source = source;
+        c.born = kForever; // until laid out
+        c.site = here(im);
+        if (im.rig && im.rig->part(c.id) >= 0) return call_error(ms, "копии нужно имя «" + c.id + "», а так зовут часть рисунка");
+        made.push_back(std::move(c));
+    }
+    Task t;
+    t.kind = Task::Kind::Copies;
+    t.site = here(im);
+    t.number = n;
+    t.copy = static_cast<u32>(rec.copies.size());
+    t.fn = ref_function(L, ms, 3);
+    rec.copies.insert(rec.copies.end(), made.begin(), made.end());
+    task = add_task(ms, std::move(t));
+    return true;
+}
+
+int api_copies(lua_State* L) {
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "copies");
+    u32 task = 0;
+    if (!copies_task(im, L, ms, task)) raise(L, ms);
+    push_task(L, ms, task);
     return 1;
 }
 
@@ -1080,7 +1243,8 @@ bool rest_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool sin
     if (!read_length(L, arg, ms, "rest", st.length) || !read_timing(im, L, arg + 1, ms, st)) return false;
     if (single) st.props.emplace_back(p, rest_value(p));
     else
-        for (usize i = 0; i < kPropCount; ++i) st.props.emplace_back(static_cast<Prop>(i), rest_value(static_cast<Prop>(i)));
+        for (usize i = 0; i < kPropCount; ++i)
+            if (!prop_is_call(static_cast<Prop>(i))) st.props.emplace_back(static_cast<Prop>(i), rest_value(static_cast<Prop>(i)));
     task = move_task(im, ms, id, single, p, std::move(st));
     return true;
 }
@@ -1165,14 +1329,14 @@ bool spring_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool s
     st.value_arg = 0;
     st.value_field = !single;
     if (single) {
-        if (!prop_is_number(p)) return call_error(ms, "пружина — только у чисел: x, y, rot, scale, sx, sy, opacity");
+        if (!prop_is_number(p)) return call_error(ms, std::string("пружина — только у чисел: ") + kNumberWords);
         PropValue v;
         if (!read_value(L, to, p, ms, v)) return false;
         st.props.emplace_back(p, std::move(v));
     } else {
         if (!read_table(L, to, ms, "part:spring", st)) return false;
         for (const auto& [q, v] : st.props)
-            if (!prop_is_number(q)) return call_error(ms, "пружина — только у чисел: x, y, rot, scale, sx, sy, opacity");
+            if (!prop_is_number(q)) return call_error(ms, std::string("пружина — только у чисел: ") + kNumberWords);
     }
     if (!read_spring(L, to + 1, to + 2, ms, st)) return false;
     task = move_task(im, ms, id, single, p, std::move(st));
@@ -1189,15 +1353,331 @@ int api_part_spring(lua_State* L) {
     return 1;
 }
 
+// part:to_top(), :to_bottom(), :above("body"), :below("body"): the part among its neighbours in its group, at its
+// time in the flow, with no length.
+bool order_task(Impl& im, lua_State* L, MotionState& ms, const char* id, OrderStep::Kind kind, const char* what, u32& task) {
+    MoveStep st;
+    st.site = here(im);
+    PropValue v;
+    v.v = static_cast<f64>(kind);
+    if (kind == OrderStep::Kind::Above || kind == OrderStep::Kind::Below) {
+        const char* other = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+        if (!other || lua_gettop(L) > 2) return call_error(ms, std::string(what) + "(\"body\"): одно имя соседней части");
+        v.target = other;
+        st.value_arg = 0;
+        if (im.rig) {
+            const i32 a = im.rig->part(id), b = im.rig->part(other);
+            if (b < 0) return call_error(ms, no_part(*ms.rec, v.target));
+            if (a == b) return call_error(ms, std::string(what) + ": часть «" + id + "» рядом с самой собой не поставить");
+            if (!im.rig->siblings(rig_part(*im.rig, *ms.rec, id), b)) // a copy stands among its part's neighbours
+                return call_error(ms, std::string(id) + " и " + v.target + " в разных группах: порядок меняется только среди соседей");
+        }
+    } else if (lua_gettop(L) > 1) {
+        return call_error(ms, std::string(what) + "() — без аргументов");
+    }
+    st.props.emplace_back(Prop::Order, std::move(v));
+    task = move_task(im, ms, id, true, Prop::Order, std::move(st));
+    return true;
+}
+
+int order_call(lua_State* L, OrderStep::Kind kind, const char* what) {
+    const char* id = part_id(L, 1, what);
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, what);
+    u32 task = 0;
+    if (!order_task(im, L, ms, id, kind, what, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+// eye:mask("lid"[, { invert = true }]), eye:mask(nil): a block «часть · маска» without a length (part 4б).
+bool mask_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task) {
+    MoveStep st;
+    st.site = here(im);
+    PropValue v;
+    const int n = lua_gettop(L);
+    if (n > 3) return call_error(ms, "mask(\"lid\", { invert = true }): имя части-маски и, если нужно, таблица");
+    if (!lua_isnoneornil(L, 2)) {
+        if (lua_type(L, 2) != LUA_TSTRING) return call_error(ms, "mask: нужно имя части-маски или nil (без маски)");
+        v.target = lua_tostring(L, 2);
+        v.v = 1;
+        if (!lua_isnoneornil(L, 3)) {
+            if (!lua_istable(L, 3)) return call_error(ms, "mask: второй аргумент — { invert = true } или { invert = false }");
+            lua_pushnil(L);
+            while (lua_next(L, 3)) {
+                const bool known = lua_type(L, -2) == LUA_TSTRING && std::strcmp(lua_tostring(L, -2), "invert") == 0 &&
+                                   lua_type(L, -1) == LUA_TBOOLEAN;
+                lua_pop(L, 1);
+                if (!known) {
+                    lua_pop(L, 1);
+                    return call_error(ms, "mask: второй аргумент — { invert = true } или { invert = false }");
+                }
+            }
+            lua_getfield(L, 3, "invert");
+            if (lua_toboolean(L, -1)) v.v = 2;
+            lua_pop(L, 1);
+        }
+        if (im.rig) {
+            const i32 a = im.rig->part(id), b = im.rig->part(v.target);
+            if (b < 0) return call_error(ms, no_part(*ms.rec, v.target));
+            if (a == b) return call_error(ms, std::string("часть «") + id + "» не маска сама себе");
+            if (!im.rig->has_shapes(b))
+                return call_error(ms, "у маски «" + v.target + "» нет фигур: спрячьте фигуры в ней по одной (hidden = true) или саму группу через " +
+                                          v.target + ".visible(false)");
+        }
+    } else if (n > 2 && !lua_isnil(L, 3)) {
+        return call_error(ms, "mask(nil): без маски таблица не нужна");
+    }
+    st.props.emplace_back(Prop::Mask, std::move(v));
+    task = move_task(im, ms, id, true, Prop::Mask, std::move(st));
+    return true;
+}
+
+int api_part_mask(lua_State* L) {
+    const char* id = part_id(L, 1, "mask");
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "mask");
+    u32 task = 0;
+    if (!mask_task(im, L, ms, id, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+// ---- part 4в: paths, places and links ----
+
+// The bone of a part and of the parts it is inside, a parent before it: where it stands in a frame without the
+// picture.
+i32 add_bone(MotionState& ms, const Rig& rig, i32 part) {
+    if (part < 0) return -1;
+    const std::string& id = rig.parts()[static_cast<usize>(part)].id;
+    if (const i32 b = bone_of(*ms.rec, id); b >= 0) return b;
+    const i32 parent = add_bone(ms, rig, rig.parts()[static_cast<usize>(part)].parent);
+    ms.rec->bones.push_back({id, rig.pivot(part), parent});
+    return static_cast<i32>(ms.rec->bones.size() - 1);
+}
+
+// The bone of a part of the clip: a copy's stands as its part at rest, inside the same parts (part 4г).
+i32 add_bone_of(MotionState& ms, const Rig& rig, const char* id) {
+    const i32 c = copy_of(*ms.rec, id);
+    if (c < 0) return add_bone(ms, rig, rig.part(id));
+    if (const i32 b = bone_of(*ms.rec, id); b >= 0) return b;
+    const i32 src = rig.part(ms.rec->copies[static_cast<usize>(c)].source);
+    if (src < 0) return -1;
+    const i32 parent = add_bone(ms, rig, rig.parts()[static_cast<usize>(src)].parent);
+    ms.rec->bones.push_back({id, rig.pivot(src), parent});
+    return static_cast<i32>(ms.rec->bones.size() - 1);
+}
+
+// Whether part `inner` is inside part `outer` (or is it).
+bool inside(const Rig& rig, i32 inner, i32 outer) {
+    for (i32 q = inner; q >= 0; q = rig.parts()[static_cast<usize>(q)].parent)
+        if (q == outer) return true;
+    return false;
+}
+
+bool need_rig(const Impl& im, MotionState& ms, const char* what) {
+    if (im.rig) return true;
+    return call_error(ms, std::string(what) + " — только с рисунком: он читает линии, опорные точки и группы частей");
+}
+
+// ball:along("route", 0.8, "smooth", { turn = true, from = 0, to = 1, relative = false }).
+bool along_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task) {
+    if (!need_rig(im, ms, "along")) return false;
+    MoveStep st;
+    st.kind = MoveStep::Kind::Along;
+    st.site = here(im);
+    st.length_arg = 1;
+    st.timing_arg = 2;
+    const char* path = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+    if (!path) return call_error(ms, "along(\"route\", с, сглаживание, { turn = true }): первым — имя фигуры-пути");
+    if (lua_gettop(L) > 5) return call_error(ms, "along: путь, длина, сглаживание и таблица — не больше");
+    const Rig& rig = *im.rig;
+    const i32 self = rig.part(id), pi = rig.part(path);
+    if (pi < 0)
+        return call_error(ms, std::string("в рисунке нет части-пути «") + path + "»" +
+                                  (copy_of(*ms.rec, path) >= 0 ? ": копию зовут только через c в copies(…)" : ""));
+    if (pi == self) return call_error(ms, std::string("часть «") + id + "» не идёт по себе");
+    Along al;
+    if (!lua_isnoneornil(L, 5)) {
+        if (!lua_istable(L, 5)) return call_error(ms, "along: последним — таблица { turn = true, from = 0, to = 1, relative = true }");
+        lua_pushnil(L);
+        while (lua_next(L, 5)) {
+            const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : nullptr;
+            const std::string k = key ? key : "?";
+            const bool flag = k == "turn" || k == "relative", share = k == "from" || k == "to";
+            std::string bad;
+            if (!flag && !share) bad = "along: поля «" + k + "» нет (есть turn, from, to, relative)";
+            else if (flag && lua_type(L, -1) != LUA_TBOOLEAN) bad = "along: " + k + " — true или false";
+            else if (share && (lua_type(L, -1) != LUA_TNUMBER || !(lua_tonumber(L, -1) >= 0 && lua_tonumber(L, -1) <= 1)))
+                bad = "along: from и to — доли длины пути от 0 до 1";
+            else if (k == "turn") al.turn = lua_toboolean(L, -1);
+            else if (k == "relative") al.relative = lua_toboolean(L, -1);
+            else if (k == "from") al.from = lua_tonumber(L, -1);
+            else al.to = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            if (!bad.empty()) {
+                lua_pop(L, 1);
+                return call_error(ms, bad);
+            }
+        }
+    }
+    if (!read_length(L, 3, ms, "along", st.length) || !read_timing(im, L, 4, ms, st)) return false;
+    // The path once a recording, as a broken line in picture units.
+    Recording& rec = *ms.rec;
+    al.path = static_cast<u32>(rec.paths.size());
+    for (usize i = 0; i < rec.paths.size(); ++i)
+        if (rec.paths[i].id == path) al.path = static_cast<u32>(i);
+    if (al.path == rec.paths.size()) {
+        PathLine line;
+        std::string why;
+        if (!rig.path_of(pi, line, why)) return call_error(ms, why);
+        rec.paths.push_back(std::move(line));
+    }
+    al.pivot = rig.pivot(rig_part(rig, rec, id)); // a copy's is its part's
+    st.along = static_cast<i32>(rec.alongs.size());
+    rec.alongs.push_back(al);
+    task = move_task(im, ms, id, false, Prop::X, std::move(st));
+    return true;
+}
+
+int api_part_along(lua_State* L) {
+    const char* id = part_id(L, 1, "along");
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "along");
+    u32 task = 0;
+    if (!along_task(im, L, ms, id, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+// sword:snap_to("hand_tip"[, с, сглаживание]).
+bool snap_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task) {
+    if (!need_rig(im, ms, "snap_to")) return false;
+    MoveStep st;
+    st.kind = MoveStep::Kind::Snap;
+    st.site = here(im);
+    st.length_arg = 1;
+    st.timing_arg = 2;
+    const char* target = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+    if (!target) return call_error(ms, "snap_to(\"hand_tip\", с, сглаживание): первым — имя части");
+    if (lua_gettop(L) > 4) return call_error(ms, "snap_to: часть, длина и сглаживание — не больше");
+    const Rig& rig = *im.rig;
+    const i32 self = rig.part(id), ti = rig.part(target);
+    if (ti < 0) return call_error(ms, no_part(*ms.rec, target));
+    if (ti == self) return call_error(ms, std::string("часть «") + id + "» не встанет к самой себе");
+    if (inside(rig, ti, self)) return call_error(ms, std::string("часть «") + id + "» не встанет к своей же «" + target + "»");
+    if (!read_length(L, 3, ms, "snap_to", st.length) || !read_timing(im, L, 4, ms, st)) return false;
+    add_bone(ms, rig, ti);
+    add_bone_of(ms, rig, id);
+    st.target = target;
+    task = move_task(im, ms, id, false, Prop::X, std::move(st));
+    return true;
+}
+
+int api_part_snap_to(lua_State* L) {
+    const char* id = part_id(L, 1, "snap_to");
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "snap_to");
+    u32 task = 0;
+    if (!snap_task(im, L, ms, id, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+// sword:attach("hand"), sword:detach(): a block «часть · крепление» without a length.
+bool link_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool attach, u32& task) {
+    if (!need_rig(im, ms, attach ? "attach" : "detach")) return false;
+    MoveStep st;
+    st.site = here(im);
+    PropValue v;
+    const Rig& rig = *im.rig;
+    const i32 self = rig.part(id);
+    if (!attach) {
+        if (lua_gettop(L) > 1) return call_error(ms, "detach() — без аргументов: часть отпускает то, за что держится");
+    } else {
+        const char* target = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+        if (!target || lua_gettop(L) > 2) return call_error(ms, "attach(\"hand\"): одно имя части, за которой ходить");
+        const i32 ti = rig.part(target);
+        if (ti < 0) return call_error(ms, no_part(*ms.rec, target));
+        if (ti == self) return call_error(ms, std::string("часть «") + id + "» не крепится к самой себе");
+        if (inside(rig, ti, self))
+            return call_error(ms, std::string("часть «") + id + "» не пойдёт за «" + target + "»: «" + target + "» внутри неё");
+        // A copy stands beside its part, inside the parts its part is inside (part 4г).
+        const i32 src = rig_part(rig, *ms.rec, id);
+        if (inside(rig, self >= 0 ? self : src >= 0 ? rig.parts()[static_cast<usize>(src)].parent : -1, ti))
+            return call_error(ms, std::string("часть «") + id + "» и так ходит с «" + target + "»: она внутри неё");
+        // No link round: from the target on, through the groups and the links of the whole clip, back to this part.
+        std::vector<std::pair<std::string, std::string>> links = ms.links;
+        links.emplace_back(id, target);
+        std::vector<std::string> way{id};
+        std::vector<std::string> seen;
+        auto next_of = [&](const std::string& p) {
+            std::vector<std::string> out;
+            const i32 q = rig.part(p);
+            if (q >= 0 && rig.parts()[static_cast<usize>(q)].parent >= 0) out.push_back(rig.parts()[static_cast<usize>(rig.parts()[static_cast<usize>(q)].parent)].id);
+            for (const auto& [from, to] : links)
+                if (from == p) out.push_back(to);
+            return out;
+        };
+        std::function<bool(const std::string&)> reach = [&](const std::string& p) {
+            way.push_back(p);
+            if (p == id) return true;
+            if (std::find(seen.begin(), seen.end(), p) == seen.end()) {
+                seen.push_back(p);
+                for (const std::string& n : next_of(p))
+                    if (reach(n)) return true;
+            }
+            way.pop_back();
+            return false;
+        };
+        if (reach(target)) {
+            std::string text;
+            for (const std::string& w : way) text += (text.empty() ? "" : " → ") + w;
+            return call_error(ms, "крепление по кругу: " + text);
+        }
+        ms.links.emplace_back(id, target);
+        add_bone(ms, rig, ti);
+        add_bone_of(ms, rig, id);
+        v.v = 1;
+        v.target = target;
+        st.value_arg = 0;
+    }
+    st.props.emplace_back(Prop::Link, std::move(v));
+    task = move_task(im, ms, id, true, Prop::Link, std::move(st));
+    return true;
+}
+
+int link_call(lua_State* L, bool attach) {
+    const char* what = attach ? "attach" : "detach";
+    const char* id = part_id(L, 1, what);
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, what);
+    u32 task = 0;
+    if (!link_task(im, L, ms, id, attach, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+int api_part_attach(lua_State* L) { return link_call(L, true); }
+int api_part_detach(lua_State* L) { return link_call(L, false); }
+
+int api_part_to_top(lua_State* L) { return order_call(L, OrderStep::Kind::Top, "to_top"); }
+int api_part_to_bottom(lua_State* L) { return order_call(L, OrderStep::Kind::Bottom, "to_bottom"); }
+int api_part_above(lua_State* L) { return order_call(L, OrderStep::Kind::Above, "above"); }
+int api_part_below(lua_State* L) { return order_call(L, OrderStep::Kind::Below, "below"); }
+
 // ---- Luau: properties ----
 
 void push_value(lua_State* L, Prop p, const PropValue& v) {
     if (prop_is_number(p)) {
         lua_pushnumber(L, v.v);
-    } else if (p == Prop::Fill && v.v > 0) {
-        char buf[16];
-        std::snprintf(buf, sizeof buf, "#%02x%02x%02x", v.color.r, v.color.g, v.color.b);
-        lua_pushstring(L, buf);
+    } else if (p == Prop::Visible) {
+        lua_pushboolean(L, v.v > 0);
+    } else if (p == Prop::StrokeWidth && v.v > 0) {
+        lua_pushnumber(L, v.n);
+    } else if (prop_is_color(p) && v.v > 0) {
+        const std::string hex = color_hex(v.color);
+        lua_pushlstring(L, hex.data(), hex.size());
     } else if (p == Prop::Morph && v.v > 0) {
         lua_pushlstring(L, v.target.data(), v.target.size());
     } else {
@@ -1369,6 +1849,12 @@ Task* move_of(lua_State* L, MotionState& ms, const char* what) {
     Task& t = ms.tasks[id];
     if (t.kind != Task::Kind::Move)
         luaL_error(L, "%s — только у переходов частей; после all(…) и других — отдельной строкой", what);
+    if (t.single && t.prop == Prop::Order)
+        luaL_error(L, "%s — не после to_top, to_bottom, above и below: у порядка нет длины, следующий переход — отдельной строкой", what);
+    if (t.single && t.prop == Prop::Mask)
+        luaL_error(L, "%s — не после mask: у маски нет длины, следующий переход — отдельной строкой", what);
+    if (t.single && t.prop == Prop::Link)
+        luaL_error(L, "%s — не после attach и detach: у крепления нет длины, следующий переход — отдельной строкой", what);
     if (t.laid) luaL_error(L, "%s — переход уже записан: допишите цепочку раньше, чем читаете значения", what);
     return &t;
 }
@@ -1447,7 +1933,10 @@ int index_with(lua_State* L, const char* what, const char* known) {
 }
 
 int api_part_index(lua_State* L) {
-    return index_with(L, "части", "свойства: x, y, rot, scale, sx, sy, opacity, fill; методы: to, rest, save, restore, morph, spring, set");
+    return index_with(L, "части", "свойства: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, dash, "
+                                  "draw_from, draw_to, visible, tint, flash, flash_color, blur, shadow, shadow_x, shadow_y, "
+                                  "shadow_blur; методы: to, rest, save, restore, morph, spring, set, to_top, to_bottom, above, "
+                                  "below, mask, along, snap_to, attach, detach");
 }
 int api_prop_index(lua_State* L) { return index_with(L, "свойства", "методы: rest, spring; значение — body.y()"); }
 int api_task_index(lua_State* L) { return index_with(L, "перехода", "методы: to, back, wait"); }
@@ -1478,7 +1967,10 @@ void methods_meta(lua_State* L, const char* meta, lua_CFunction index, std::init
 void register_motion_api(lua_State* L) {
     methods_meta(L, kPartMeta, &api_part_index,
                  {{"to", &api_part_to}, {"rest", &api_part_rest}, {"save", &api_part_save}, {"restore", &api_part_restore},
-                  {"morph", &api_part_morph}, {"spring", &api_part_spring}, {"set", &api_part_set}});
+                  {"morph", &api_part_morph}, {"spring", &api_part_spring}, {"set", &api_part_set}, {"to_top", &api_part_to_top},
+                  {"to_bottom", &api_part_to_bottom}, {"above", &api_part_above}, {"below", &api_part_below},
+                  {"mask", &api_part_mask}, {"along", &api_part_along}, {"snap_to", &api_part_snap_to},
+                  {"attach", &api_part_attach}, {"detach", &api_part_detach}});
     methods_meta(L, kPropMeta, &api_prop_index, {{"rest", &api_prop_rest}, {"spring", &api_prop_spring}}, &api_prop_call);
     methods_meta(L, kTaskMeta, &api_task_index, {{"to", &api_task_to}, {"back", &api_task_back}, {"wait", &api_task_wait}});
     const std::pair<const char*, lua_CFunction> globals[] = {
@@ -1489,13 +1981,50 @@ void register_motion_api(lua_State* L) {
         {"loop", &api_loop},       {"loop_for", &api_loop_for},     {"loop_until", &api_loop_until},
         {"run", &api_run},         {"spawn", &api_spawn},           {"join", &api_join},
         {"tween", &api_tween},     {"spring", &api_spring},         {"emit", &api_emit},
-        {"sound", &api_sound},     {"log", &api_log},
+        {"sound", &api_sound},     {"log", &api_log},               {"copies", &api_copies},
     };
     for (const auto& [name, fn] : globals) {
         lua_pushcfunction(L, fn, name);
         lua_setglobal(L, name);
     }
 }
+
+namespace {
+
+// What the recording warns of, once a part: a skew that goes past ±kMaxSkew (the frame holds it there; a binding's
+// value is held without a word), a dash on a part none of whose shapes has a pattern.
+void add_notes(const Impl& im, const Rig* rig, Recording& rec) {
+    std::vector<std::pair<u32, Prop>> said;
+    auto note = [&](const Block& b, Prop kind, std::string text) {
+        for (const auto& s : said)
+            if (s.first == b.part && s.second == kind) return;
+        said.emplace_back(b.part, kind);
+        const CallSite* c = im.call(b.site);
+        rec.notes.push_back({b.site, c ? c->line : 0, std::move(text)});
+    };
+    for (const Block& b : rec.blocks) {
+        const std::string& part = rec.parts[b.part];
+        if ((b.prop == Prop::SkewX || b.prop == Prop::SkewY) && b.to != Block::To::Binding) {
+            // Along the whole block: an easing that overshoots goes past where it ends.
+            constexpr int kSteps = 240;
+            f64 worst = 0;
+            for (int i = 0; i <= kSteps; ++i) {
+                PropValue v;
+                std::string why;
+                if (block_value(rec, b, b.start + b.length * i / kSteps, nullptr, v, why) && std::abs(v.v) > std::abs(worst)) worst = v.v;
+                if (b.length <= 0) break;
+            }
+            if (std::abs(worst) > kMaxSkew)
+                note(b, Prop::SkewX,
+                     "часть «" + part + "»: " + prop_word(b.prop) + " доходит до " + format_number(worst) +
+                         "°, а наклон держится в −89…89°: дальше кадр не наклоняет");
+        }
+        if (b.prop == Prop::Dash && rig && !rig->dashed(rig_part(*rig, rec, part)))
+            note(b, Prop::Dash, "часть «" + part + "»: dash, а пунктира у её фигур нет");
+    }
+}
+
+} // namespace
 
 bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, const std::map<std::string, f64>& values,
                  u64 seed, const MotionLengths& lengths, Recording& out) {
@@ -1553,6 +2082,7 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
             im.fail(why.c_str());
         }
     }
+    if (ok) add_notes(im, rig, out);
     for (const ScriptFile& f : im.files) out.files.push_back(f.name);
     for (int r : ms.refs) lua_unref(im.L, r);
     if (ok) {
@@ -1808,11 +2338,19 @@ bool PoseScript::Impl::eval(const Recording& rec, i32 binding, Prop prop, f64 t,
         good = lua_type(T, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(T, -1));
         if (good) out.v = lua_tonumber(T, -1);
         else why = at + "связь " + prop_word(prop) + " вернула не число";
-    } else if (prop == Prop::Fill && !lua_isnil(T, -1)) {
+    } else if (prop_is_color(prop) && !lua_isnil(T, -1)) {
         const char* text = lua_tostring(T, -1);
-        good = text && parse_color(text, out.color);
+        good = text && parse_part_color(text, out.color);
         if (good) out.v = 1;
-        else why = at + "связь fill вернула не цвет \"#rrggbb\"";
+        else why = at + "связь " + prop_word(prop) + " вернула не цвет \"#rrggbb\" и не \"#rrggbbaa\"";
+    } else if (prop == Prop::StrokeWidth && !lua_isnil(T, -1)) {
+        good = lua_type(T, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(T, -1));
+        if (good) out.v = 1, out.n = lua_tonumber(T, -1);
+        else why = at + "связь stroke_width вернула не число и не nil";
+    } else if (prop == Prop::Visible) {
+        good = lua_type(T, -1) == LUA_TBOOLEAN;
+        if (good) out.v = lua_toboolean(T, -1) ? 1 : 0;
+        else why = at + "связь visible вернула не true и не false";
     }
     lua_pop(T, 1);
     return good;

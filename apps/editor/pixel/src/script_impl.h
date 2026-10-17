@@ -27,9 +27,10 @@ struct ScriptFile {
     u32 base = 0;         // the id of its first call
 };
 
-// One part of a transition chain: body.y(2, 0.1), :to(…), :back(…), :wait(…), part:rest(…) …
+// One part of a transition chain: body.y(2, 0.1), :to(…), :back(…), :wait(…), part:rest(…), part:along(…),
+// part:snap_to(…) …
 struct MoveStep {
-    enum class Kind : u8 { Tween, Wait, Back, Rest, Restore, Spring, Bind };
+    enum class Kind : u8 { Tween, Wait, Back, Rest, Restore, Spring, Bind, Along, Snap };
     Kind kind = Kind::Tween;
     f64 length = 0;
     std::vector<std::pair<Prop, PropValue>> props; // Tween, Spring: where each goes; Rest, Bind: which
@@ -39,6 +40,8 @@ struct MoveStep {
     vector::Spring spring;
     f64 tolerance = 0.001;
     i32 binding = -1;
+    i32 along = -1;     // Along: in Recording::alongs
+    std::string target; // Snap: the part whose pivot it goes to
     SiteRef site;
     i8 value_arg = -1, length_arg = -1, timing_arg = -1;
     bool value_field = false;
@@ -49,7 +52,7 @@ struct MoveStep {
 struct Task {
     enum class Kind : u8 {
         Move, Wait, All, Any, Chain, Sequence, Delay, At, Spawn, Join, Loop, LoopFor, LoopUntil, Run, WaitUntil, Mark,
-        Save, TweenFn,
+        Save, TweenFn, Copies,
     };
     Kind kind = Kind::Move;
     u32 part = 0;        // Move, Save
@@ -57,7 +60,8 @@ struct Task {
     Prop prop = Prop::X;
     std::vector<MoveStep> steps;
     std::vector<u32> children; // the tasks a flow function was given; Join: the ones it waits for
-    f64 number = 0;            // seconds, or a loop's count (infinite for loop(f))
+    f64 number = 0;            // seconds, or a loop's count (infinite for loop(f)), or how many copies
+    u32 copy = 0;              // Copies: the first in Recording::copies
     i32 fn = -1;               // a function's registry ref
     std::string name;          // wait_until, loop_until, emit, sound
     Mark::Kind mark = Mark::Kind::Emit;
@@ -90,6 +94,7 @@ struct MotionState {
     std::vector<MotionContext> contexts;
     std::map<std::string, u32> parts;            // id → rec->parts
     std::map<u32, std::vector<u32>> save_stacks; // part → rec->saves
+    std::vector<std::pair<std::string, std::string>> links; // attach(…) so far, part → target: no link goes round
     u32 order = 0;
     struct Deferred {
         u32 task;
