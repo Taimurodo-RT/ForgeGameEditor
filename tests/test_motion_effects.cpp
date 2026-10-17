@@ -385,14 +385,37 @@ TEST_CASE("Motion effects: limits, overshoot, springs, save and restore, rest, b
     over.parts["head"].shadow = {0, 0, 0, 255};
     over.parts["head"].shadow_x = 2.3;
     over.parts["head"].shadow_blur = -1;
+    over.parts["torso"].has_tint = true; // shares past 1 of a tint and a shadow
+    over.parts["torso"].tint = {255, 128, 64, 255};
+    over.parts["torso"].tint_k = 1.5;
+    over.parts["band"].has_shadow = true;
+    over.parts["band"].shadow = {0, 0, 0, 0x80};
+    over.parts["band"].shadow_x = 2.3;
+    over.parts["band"].shadow_k = 2;
     REQUIRE(rig.pose(over, why));
     const assets::CookedTexture past = rig.draw(128, 128);
     Pose at = over;
     at.parts["arm"].flash = 1;
     at.parts["torso"].blur = 0;
     at.parts["head"].shadow_blur = 0;
+    at.parts["torso"].tint_k = 1;
+    at.parts["band"].shadow_k = 1;
     REQUIRE(rig.pose(at, why));
     CHECK(rig.draw(128, 128).rgba8 == past.rgba8);
+    // A shadow halfway in: half its alpha.
+    Pose half;
+    half.parts["band"].has_shadow = true;
+    half.parts["band"].shadow = {0, 0, 0, 255};
+    half.parts["band"].shadow_x = 2.3;
+    half.parts["band"].shadow_k = 0.5;
+    REQUIRE(rig.pose(half, why));
+    const assets::CookedTexture halfway = rig.draw(128, 128);
+    half.parts["band"].shadow = {0, 0, 0, 128};
+    half.parts["band"].shadow_k = 1;
+    REQUIRE(rig.pose(half, why));
+    CHECK(rig.draw(128, 128).rgba8 == halfway.rgba8);
+    REQUIRE(rig.pose({}, why));
+    CHECK(rig.draw(128, 128).rgba8 != halfway.rgba8); // the shadow is there
 
     // Springs of the new numbers; none of a colour.
     PoseScript spring = script_of(clip_of(R"(part("torso").blur:spring(2, "plop")
@@ -676,6 +699,21 @@ TEST_CASE("Motion effects: blur and shadow are ThorVG's, in picture units howeve
         CHECK(at_px(baked, 15, 19) == "#000080"); // the head's own shadow, left of it
         CHECK(at_px(baked, 25, 19) == "#e0b080");
     }
+    SUBCASE("baked: shadows as opaque as can be are off in the passes of the shapes and of the group round them") {
+        Pose pose;
+        pose.parts["body"].has_shadow = true;
+        pose.parts["body"].shadow = shade;
+        pose.parts["body"].shadow_x = 2.3, pose.parts["body"].shadow_y = 3.3;
+        pose.parts["head"].has_shadow = true;
+        pose.parts["head"].shadow = {0, 0, 0x80, 255};
+        pose.parts["head"].shadow_x = 0.3, pose.parts["head"].shadow_y = -10.3;
+        REQUIRE(rig.pose(pose, why));
+        const assets::CookedTexture baked = rig.bake(64, 64, {});
+        CHECK(at_px(baked, 24, 4) == "#000080");  // the head's shadow above it
+        CHECK(at_px(baked, 24, 13) == "#e0b080"); // the head over its shadow, not the shadow over the head
+        CHECK(alpha_at(baked, 31, 12) == 0);      // no body's shadow of the head's shadow
+        CHECK(at_px(baked, 36, 30) == "#000000"); // the body's own shadow
+    }
     // And back to rest: exactly the first picture, smooth and baked.
     REQUIRE(rig.pose({}, why));
     CHECK(rig.draw(128, 128).rgba8 == rest.rgba8);
@@ -904,7 +942,18 @@ part("arm"):mask("lids", { invert = false }))");
         CHECK(why == "маска правится в коде: mask(\"lid\"), mask(nil)");
     }
     std::string out;
+    why.clear();
     CHECK_FALSE(edit_value(rec, block(rec, "head", Prop::Mask), Prop::Mask, rest_value(Prop::Mask), s.code(), code, out, why));
+    CHECK(why == "маска правится в коде: mask(\"lid\"), mask(nil)");
+    why.clear(); // nor through another block's call
+    CHECK_FALSE(edit_value(rec, block(rec, "head", Prop::X), Prop::Mask, rest_value(Prop::Mask), s.code(), code, out, why));
+    CHECK(why == "маска правится в коде: mask(\"lid\"), mask(nil)");
+    CHECK(out.empty());
+    // A mask comes in whole at its call: halfway is still the one before.
+    PropValue lid;
+    lid.v = 1, lid.target = "lid";
+    CHECK(mix(Prop::Mask, rest_value(Prop::Mask), lid, 0.5) == rest_value(Prop::Mask));
+    CHECK(mix(Prop::Mask, rest_value(Prop::Mask), lid, 1) == lid);
 
     auto error = [&](const char* body) {
         PoseScript e = script_of(clip_of(body));
