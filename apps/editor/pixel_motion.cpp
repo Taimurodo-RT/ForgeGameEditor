@@ -16,6 +16,8 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <set>
+#include <tuple>
 
 namespace fs = std::filesystem;
 
@@ -568,13 +570,19 @@ void PixelEditor::lay_timeline() {
                                      "wait " + seconds_words(end - p.start),
                                      "wait(" + seconds_words(p.length) + ") с " + seconds_words(p.start) + " с: край тянет длину по кадрам"});
             }
-            // Tracks in the order of the picture's parts and of the properties.
+            // Tracks in the order of the picture's parts and of the properties; a copy's right after its part's, the
+            // copies by number (part 4г).
             std::vector<usize> order(r.tracks.size());
             for (usize i = 0; i < order.size(); ++i) order[i] = i;
             auto rank = [&](usize i) {
                 const pixel::Recording::Track& t = r.tracks[i];
-                const i32 p = t.part < r.parts.size() ? rig_.part(r.parts[t.part]) : -1;
-                return std::pair{p < 0 ? std::numeric_limits<i32>::max() : p, static_cast<int>(t.prop)};
+                const std::string id = t.part < r.parts.size() ? r.parts[t.part] : std::string();
+                i32 p = rig_.part(id), copy = 0;
+                if (const i32 c = pixel::copy_of(r, id); c >= 0) {
+                    p = rig_.part(r.copies[static_cast<usize>(c)].source);
+                    copy = static_cast<i32>(r.copies[static_cast<usize>(c)].number);
+                }
+                return std::tuple{p < 0 ? std::numeric_limits<i32>::max() : p, copy, static_cast<int>(t.prop)};
             };
             std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) { return rank(a) < rank(b); });
             usize shown = 0, more = 0;
@@ -802,6 +810,7 @@ bool PixelEditor::flag_to_code(usize event) {
 bool PixelEditor::select_block(i32 index) {
     if (!rec_ok_ || index < -1 || index >= static_cast<i32>(rec_.blocks.size())) return false;
     block_ = index;
+    view_dirty_ = true; // a copy's block outlines the copy
     lit_first_ = lit_last_ = 0;
     m_inspector_.clear();
     m_inspector_call_.clear();
@@ -816,6 +825,15 @@ bool PixelEditor::select_block(i32 index) {
         text += "как: " + timing_words(rec_, b);
         u32 repeats = 0;
         for (const pixel::Block& o : rec_.blocks) repeats += o.site == b.site && o.part == b.part && o.prop == b.prop;
+        // A copy's call is one for all the copies of its copies(…) (part 4г): an edit changes each.
+        if (const i32 c = pixel::copy_of(rec_, part); c >= 0) {
+            std::set<u32> copies;
+            for (const pixel::Block& o : rec_.blocks)
+                if (const i32 oc = o.site == b.site && o.prop == b.prop && o.part < rec_.parts.size() ? pixel::copy_of(rec_, rec_.parts[o.part]) : -1;
+                    oc >= 0 && rec_.copies[static_cast<usize>(oc)].source == rec_.copies[static_cast<usize>(c)].source)
+                    copies.insert(o.part);
+            text += "\nиз copies: " + count_words(static_cast<u32>(copies.size()), "копия", "копии", "копий");
+        }
         if (repeats > 1) text += "\nиз цикла: " + count_words(repeats, "повтор", "повтора", "повторов");
         if (b.site.file > 0 && b.site.file < rec_.files.size()) {
             text += "\nиз модуля «" + rec_.files[b.site.file] + "» (animations/" + rec_.files[b.site.file] + ".luau)";

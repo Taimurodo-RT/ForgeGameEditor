@@ -14,6 +14,7 @@
 
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -126,10 +127,26 @@ struct ShapeMorph {
     f64 k = 0;
 };
 
+// A copy of a part of the picture (copies, part 4г of the motion model): drawn from the part at rest, above it in its
+// group, the copies of one part by number. A pose moves it by its id, as a part.
+struct PartCopy {
+    std::string id;     // "искра[3]"
+    std::string source; // "искра"
+    u32 number = 0;     // 3: above the part's copies with smaller numbers
+    bool operator==(const PartCopy&) const = default;
+};
+
 struct Pose {
-    std::map<std::string, PartPose> parts;
+    std::map<std::string, PartPose> parts; // the picture's parts and the copies of `copies`
     std::map<std::string, ShapeMorph> morphs;
     std::vector<OrderStep> order; // from the SVG's order, one after another
+    std::vector<PartCopy> copies; // the copies drawn: one made by an earlier pose and not here is hidden
+};
+
+// A copy the last pose drew, with its index for bounds(), carried(), matrix() and pivot().
+struct DrawnCopy {
+    std::string id;
+    i32 index = -1;
 };
 
 struct BakeOptions {
@@ -149,8 +166,9 @@ public:
     bool load(std::string_view svg, std::string& why);
     bool loaded() const;
     const SvgOutline& outline() const;
-    const std::vector<Part>& parts() const;
-    i32 part(std::string_view id) const; // -1 when no part has that id
+    // The picture's parts. The copies a pose makes are not among them: their indices come after (drawn_copies, copy).
+    std::span<const Part> parts() const;
+    i32 part(std::string_view id) const; // -1 when no part of the picture has that id
     // The picture's own size in its units (its viewBox, else width and height).
     f64 width() const;
     f64 height() const;
@@ -160,8 +178,9 @@ public:
     vector::Point pivot(i32 part) const;
 
     // Puts the picture in the pose, from the rest pose. Moves are rounded to multiples of `snap` picture units when it
-    // is above 0 (the baker's whole pixels). False with why naming the part or the morph that cannot be done; the
-    // rest of the pose is still applied.
+    // is above 0 (the baker's whole pixels). A copy is made from its part at rest the first time a pose has it and kept
+    // while the picture is loaded. False with why naming the part, the copy or the morph that cannot be done; the rest
+    // of the pose is still applied.
     bool pose(const Pose& pose, std::string& why, f64 snap = 0);
 
     // Picture units to the pixels of a w × h drawing: the picture fitted in, centred (SVG's "xMidYMid meet").
@@ -184,6 +203,10 @@ public:
     Affine carried(i32 part) const;
     // A part's own matrix as the last pose() left it (from its parent's coordinates, as SVG's transform).
     Affine matrix(i32 part) const;
+    // The copies the last pose() drew (part 4г), by index.
+    std::vector<DrawnCopy> drawn_copies() const;
+    // A copy's index once a pose made it, drawn or not; -1 for none.
+    i32 copy(std::string_view id) const;
     // Whether two parts are neighbours in one group, the ones whose order can change against each other.
     bool siblings(i32 a, i32 b) const;
     // Whether any shape of a part has a dash pattern of its own.

@@ -386,6 +386,11 @@ void PixelEditor::start_move() {
             refuse_edit("Код сохранён; под мышью в новой записи нет части: тяните снова");
             return;
         }
+        if (rig_.copy(best) >= 0) {
+            moving_ = false;
+            refuse_edit("копия «" + best + "» правится в коде: copies(…)");
+            return;
+        }
         select_part(best);
     }
     const i32 i = rig_.part(part_);

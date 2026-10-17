@@ -1087,6 +1087,10 @@ void PixelEditor::press(f32 x, f32 y) {
         }
     }
     const std::string best = part_at(x, y);
+    if (rig_.copy(best) >= 0) { // part 4г: a copy is the code's
+        refuse_edit("копия «" + best + "» правится в коде: copies(…)");
+        return;
+    }
     select_part(best);
     // Dragged on past a few points, the part moves: into the code on release.
     moving_ = !best.empty();
@@ -1096,20 +1100,22 @@ void PixelEditor::press(f32 x, f32 y) {
 }
 
 std::string PixelEditor::part_at(f32 x, f32 y) {
-    // The smallest part under the mouse, as it stands in the pose shown.
+    // The smallest part under the mouse, as it stands in the pose shown: a copy drawn too (part 4г).
     const pixel::Affine view = to_view();
     const vector::Point v = view.apply(view_to_picture(x, y));
     std::string best;
     f64 best_area = 1e300;
-    for (i32 i = 0; i < static_cast<i32>(rig_.parts().size()); ++i) {
+    auto take = [&](i32 i, const std::string& id) {
         f64 b[4];
         rig_.bounds(i, view, b);
         const f64 area = (b[2] - b[0]) * (b[3] - b[1]);
         if (v.x >= b[0] && v.x <= b[2] && v.y >= b[1] && v.y <= b[3] && area > 0 && area < best_area) {
             best_area = area;
-            best = rig_.parts()[static_cast<usize>(i)].id;
+            best = id;
         }
-    }
+    };
+    for (i32 i = 0; i < static_cast<i32>(rig_.parts().size()); ++i) take(i, rig_.parts()[static_cast<usize>(i)].id);
+    for (const pixel::DrawnCopy& c : rig_.drawn_copies()) take(c.index, c.id);
     return best;
 }
 
@@ -1647,6 +1653,14 @@ void PixelEditor::redraw() {
         rig_.bounds(hi, texels, box);
         outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
     }
+    // The copy of the selected block, where it stands (part 4г).
+    if (rec_ok_ && block_ >= 0 && static_cast<usize>(block_) < rec_.blocks.size() && rec_.blocks[static_cast<usize>(block_)].part < rec_.parts.size())
+        for (const pixel::DrawnCopy& c : rig_.drawn_copies())
+            if (c.id == rec_.parts[rec_.blocks[static_cast<usize>(block_)].part]) {
+                f64 box[4];
+                rig_.bounds(c.index, texels, box);
+                outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
+            }
     vector_shown_ = vec[0];
     show(vec[0], frame_px_);
     sync_problem();

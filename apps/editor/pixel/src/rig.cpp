@@ -332,6 +332,38 @@ bool view_box(const SvgOutline& svg, f64 out[4]) {
     return out[2] > 0 && out[3] > 0;
 }
 
+// The paint ThorVG leaves off a shape with display="none" (it draws nothing of it), for the copy of it that is shown
+// (part 4г): its colours and their opacities, the width, ends, corners and dash of its stroke, its fill rule and its
+// opacity, as the SVG gives them. A gradient is not read: a fill or a stroke of one stays off.
+void put_svg_paint(tvg::Shape* s, const SvgOutline& svg, i32 e) {
+    vector::Look base;
+    base.fill.on = false;
+    const vector::Look l = vector::look_from_svg(svg, e, base);
+    s->fill(to_u8(l.fill.r), to_u8(l.fill.g), to_u8(l.fill.b), l.fill.on ? to_u8(l.fill.opacity) : 0);
+    s->strokeFill(to_u8(l.stroke.r), to_u8(l.stroke.g), to_u8(l.stroke.b), l.stroke.on ? to_u8(l.stroke.opacity) : 0);
+    s->strokeWidth(l.stroke.on ? static_cast<f32>(l.stroke_width) : 0);
+    s->opacity(to_u8(l.opacity));
+    const std::string cap = vector::inherited(svg, e, "stroke-linecap"), join = vector::inherited(svg, e, "stroke-linejoin");
+    s->strokeCap(cap == "round" ? tvg::StrokeCap::Round : cap == "square" ? tvg::StrokeCap::Square : tvg::StrokeCap::Butt);
+    s->strokeJoin(join == "round" ? tvg::StrokeJoin::Round : join == "bevel" ? tvg::StrokeJoin::Bevel : tvg::StrokeJoin::Miter);
+    s->strokeMiterlimit(static_cast<f32>(std::max(1.0, vector::svg_number(vector::inherited(svg, e, "stroke-miterlimit"), 4.0))));
+    s->fillRule(vector::inherited(svg, e, "fill-rule") == "evenodd" ? tvg::FillRule::EvenOdd : tvg::FillRule::NonZero);
+    std::string dash = vector::inherited(svg, e, "stroke-dasharray");
+    std::replace(dash.begin(), dash.end(), ',', ' ');
+    std::vector<f32> pattern;
+    for (const char* q = dash.c_str();;) {
+        char* end = nullptr;
+        const f64 v = std::strtod(q, &end);
+        if (end == q || !std::isfinite(v) || v < 0) break;
+        pattern.push_back(static_cast<f32>(v));
+        q = end;
+    }
+    if (pattern.size() % 2) pattern.insert(pattern.end(), pattern.begin(), pattern.end()); // SVG repeats an odd list
+    const bool any = std::any_of(pattern.begin(), pattern.end(), [](f32 v) { return v > 0; });
+    if (any) s->strokeDash(pattern.data(), static_cast<u32>(pattern.size()),
+                           static_cast<f32>(vector::svg_number(vector::inherited(svg, e, "stroke-dashoffset"), 0)));
+}
+
 } // namespace
 
 struct Rig::Impl {
@@ -343,7 +375,11 @@ struct Rig::Impl {
     f64 vb[4] = {0, 0, 0, 0};  // the picture's area in its units: x, y, width, height
     std::vector<Leaf> leaves;
     std::unordered_map<const tvg::Paint*, i32> leaf_of;
-    std::vector<Part> parts;
+    std::vector<Part> parts; // the picture's first, then the copies poses made (part 4г)
+    usize picture = 0;       // how many are the picture's
+    std::vector<i32> source; // by part: the part a copy is of; -1 for the picture's
+    std::vector<u32> number; // by part: a copy's number
+    std::vector<char> drawn; // by part: a copy the last pose drew
     std::vector<PartRec> recs;
     std::unordered_map<const tvg::Paint*, i32> part_of;
     std::vector<vector::Point> pivots;
@@ -364,6 +400,15 @@ struct Rig::Impl {
         }
         if (pic) pic->unref();
     }
+
+    // Any part by id, the copies too; -1 for none.
+    i32 find(std::string_view id) const {
+        for (usize i = 0; i < parts.size(); ++i)
+            if (parts[i].id == id) return static_cast<i32>(i);
+        return -1;
+    }
+
+    i32 add_copy(const std::string& id, i32 src, u32 n);
 
     // The matrix from a paint to picture units as the paints stand now.
     Affine global(const tvg::Paint* p) const {
@@ -394,6 +439,88 @@ struct Rig::Impl {
 
     const u8* bytes() const { return reinterpret_cast<const u8*>(buffer.data()); }
 };
+
+// A copy of part src from its rest (part 4г): its paint duplicated, with a scene of its own round a shape as every
+// shape part has, put in src's group above src and above src's copies with smaller numbers. Its shapes and the part
+// itself come after all others; it turns round src's pivot.
+i32 Rig::Impl::add_copy(const std::string& id, i32 src, u32 n) {
+    const PartRec& sr = recs[static_cast<usize>(src)];
+    tvg::Paint* dup = sr.paint->duplicate(); // seen: made after the rest, its part's paint is too
+    const i32 element = parts[static_cast<usize>(src)].element;
+    if (sr.leaf >= 0 && vector::display_none(outline, element)) put_svg_paint(static_cast<tvg::Shape*>(dup), outline, element);
+    tvg::Scene* wrap = nullptr;
+    if (sr.wrap) {
+        wrap = tvg::Scene::gen();
+        wrap->add(dup);
+    }
+    tvg::Paint* own = wrap ? static_cast<tvg::Paint*>(wrap) : dup;
+    GroupRec& g = groups[static_cast<usize>(sr.group)];
+    const std::list<tvg::Paint*>& list = g.scene->paints();
+    auto it = std::find(list.begin(), list.end(), slot(sr));
+    if (it != list.end()) ++it;
+    for (; it != list.end(); ++it) {
+        bool lower = false;
+        for (usize c = picture; c < recs.size(); ++c)
+            if (slot(recs[c]) == *it) lower = source[c] == src && number[c] < n;
+        if (!lower) break;
+    }
+    g.scene->add(own, it == list.end() ? nullptr : *it);
+    g.rest.assign(list.begin(), list.end());
+
+    const i32 index = static_cast<i32>(parts.size());
+    Part part = parts[static_cast<usize>(src)];
+    part.id = id;
+    PartRec r;
+    r.paint = dup;
+    r.rest_local = sr.rest_local;
+    r.rest_opacity = dup->opacity(); // as made: a hidden shape's copy has the opacity the SVG gives it
+    r.rest_visible = true;
+    r.parent_global = sr.parent_global;
+    r.rest_global = sr.rest_global;
+    r.group = sr.group;
+    r.wrap = wrap;
+    // Its shapes, in the order drawn, each as the source's shape in the same place.
+    std::vector<tvg::Paint*> all;
+    {
+        tvg::Accessor* acc = tvg::Accessor::gen();
+        acc->set(dup, [](const tvg::Paint* p, void* data) {
+            static_cast<std::vector<tvg::Paint*>*>(data)->push_back(const_cast<tvg::Paint*>(p));
+            return true;
+        }, &all);
+        delete acc;
+    }
+    const std::vector<i32> theirs = sr.leaves;
+    usize k = 0;
+    for (tvg::Paint* p : all) {
+        if (p->type() != tvg::Type::Shape || k >= theirs.size()) continue;
+        const Leaf& like = leaves[static_cast<usize>(theirs[k++])];
+        auto* s = static_cast<tvg::Shape*>(p);
+        Leaf l;
+        l.shape = s;
+        l.rest.take(s);
+        l.cmds = like.cmds;
+        l.pts = like.pts;
+        l.visible = s->visible();
+        l.own_width = like.own_width;
+        l.part = index;
+        l.rest_global = like.rest_global;
+        const i32 li = static_cast<i32>(leaves.size());
+        leaf_of[s] = li;
+        r.leaves.push_back(li);
+        if (p == dup) r.leaf = li;
+        leaves.push_back(std::move(l));
+    }
+    part_of[dup] = index;
+    const vector::Point pv = pivots[static_cast<usize>(src)];
+    parts.push_back(std::move(part));
+    recs.push_back(std::move(r));
+    pivots.push_back(pv);
+    moves.push_back({});
+    source.push_back(src);
+    number.push_back(n);
+    drawn.push_back(0);
+    return index;
+}
 
 Rig::Rig() : impl_(std::make_unique<Impl>()) {}
 Rig::~Rig() = default;
@@ -584,15 +711,19 @@ bool Rig::load(std::string_view svg, std::string& why) {
         if (!b.empty()) part.x0 = b.x0, part.y0 = b.y0, part.x1 = b.x1, part.y1 = b.y1;
         m.pivots[i] = {(part.x0 + part.x1) / 2, (part.y0 + part.y1) / 2};
     }
+    m.picture = m.parts.size();
+    m.source.assign(m.picture, -1);
+    m.number.assign(m.picture, 0);
+    m.drawn.assign(m.picture, 0);
     return true;
 }
 
 bool Rig::loaded() const { return impl_ && impl_->pic != nullptr; }
 const SvgOutline& Rig::outline() const { return impl_->outline; }
-const std::vector<Part>& Rig::parts() const { return impl_->parts; }
+std::span<const Part> Rig::parts() const { return {impl_->parts.data(), impl_->picture}; }
 
 i32 Rig::part(std::string_view id) const {
-    for (usize i = 0; i < impl_->parts.size(); ++i)
+    for (usize i = 0; i < impl_->picture; ++i)
         if (impl_->parts[i].id == id) return static_cast<i32>(i);
     return -1;
 }
@@ -662,9 +793,43 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         }
     }
 
+    // Copies (part 4г): made from their parts at rest the first time a pose has them, hidden in a pose without them.
+    std::fill(m.drawn.begin(), m.drawn.end(), 0);
+    for (const PartCopy& c : pose.copies) {
+        const i32 si = part(c.source);
+        i32 ci = m.find(c.id);
+        if (si < 0) {
+            fail("копия «" + c.id + "»: в рисунке нет части «" + c.source + "»");
+        } else if (ci >= 0 && static_cast<usize>(ci) < m.picture) {
+            fail("копия «" + c.id + "»: так зовут часть рисунка");
+        } else if (ci >= 0 && m.source[static_cast<usize>(ci)] != si) {
+            fail("копия «" + c.id + "» уже есть, но не части «" + c.source + "»");
+        } else if (ci < 0 && m.recs[static_cast<usize>(si)].leaves.empty()) {
+            fail("копия «" + c.id + "»: у части «" + c.source + "» нет фигур");
+        } else if (ci < 0 && m.recs[static_cast<usize>(si)].group < 0) {
+            fail("копия «" + c.id + "»: часть «" + c.source + "» не в группе");
+        } else {
+            if (ci < 0) ci = m.add_copy(c.id, si, c.number);
+            m.drawn[static_cast<usize>(ci)] = 1;
+            m.pivots[static_cast<usize>(ci)] = m.pivots[static_cast<usize>(si)];
+        }
+    }
+    for (usize i = m.picture; i < m.recs.size(); ++i) {
+        if (m.drawn[i]) continue;
+        PartRec& r = m.recs[i];
+        r.paint->visible(false);
+        r.hidden = true;
+        if (r.leaf >= 0) m.leaves[static_cast<usize>(r.leaf)].hidden = true;
+    }
+    // A part of the pose: the picture's or a copy it draws.
+    auto posed_part = [&](std::string_view id) {
+        const i32 i = m.find(id);
+        return i >= 0 && (static_cast<usize>(i) < m.picture || m.drawn[static_cast<usize>(i)]) ? i : -1;
+    };
+
     // Morphs: the shape's path and look become the pair's at k.
     for (const auto& [id, morph] : pose.morphs) {
-        const i32 pi = part(id);
+        const i32 pi = posed_part(id);
         if (pi < 0) {
             fail("морфинг: в рисунке нет фигуры «" + id + "»");
             continue;
@@ -733,7 +898,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
     std::vector<const PartPose*> posed(m.parts.size(), nullptr);
     std::vector<i32> carrier(m.parts.size(), -1); // the part a link carries it by (part 4в)
     for (const auto& [id, pp] : pose.parts) {
-        const i32 pi = part(id);
+        const i32 pi = posed_part(id);
         if (pi < 0) {
             fail("в рисунке нет части «" + id + "»");
             continue;
@@ -1037,7 +1202,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
 
     // The order: each step among the part's neighbours in its group.
     for (const OrderStep& step : pose.order) {
-        const i32 pi = part(step.part);
+        const i32 pi = posed_part(step.part);
         if (pi < 0) {
             fail("порядок: в рисунке нет части «" + step.part + "»");
             continue;
@@ -1123,7 +1288,7 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
 
     // The shapes in the order they are drawn now: the SVG's, or as the pose's order steps left the groups.
     std::vector<i32> order;
-    if (m.reordered) {
+    if (m.reordered || m.recs.size() > m.picture) { // copies stand among the shapes of their groups
         std::vector<tvg::Paint*> all;
         tvg::Accessor* acc = tvg::Accessor::gen();
         acc->set(m.pic, [](const tvg::Paint* p, void* data) {
@@ -1241,6 +1406,19 @@ Affine Rig::matrix(i32 part) const {
     const Impl& m = *impl_;
     if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};
     return from_tvg(m.recs[static_cast<usize>(part)].paint->transform());
+}
+
+std::vector<DrawnCopy> Rig::drawn_copies() const {
+    const Impl& m = *impl_;
+    std::vector<DrawnCopy> out;
+    for (usize i = m.picture; i < m.parts.size(); ++i)
+        if (m.drawn[i]) out.push_back({m.parts[i].id, static_cast<i32>(i)});
+    return out;
+}
+
+i32 Rig::copy(std::string_view id) const {
+    const i32 i = impl_->find(id);
+    return i >= 0 && static_cast<usize>(i) >= impl_->picture ? i : -1;
 }
 
 bool Rig::siblings(i32 a, i32 b) const {
