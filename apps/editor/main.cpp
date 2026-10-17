@@ -2078,7 +2078,9 @@ struct Options {
     // "pixel-motion-g", opened again and played in the game by "pixel-motion-g-again"; part 4д, a swap of drawings: a
     // character with a second drawing in its code, a clip going to it and back, the drawing's track, the tree of the
     // drawing shown, a drag in the middle refused, the swap's length typed, baked and given, by "pixel-motion-h", opened
-    // again and played in the game by "pixel-motion-h-again"); "input" (the tab «Ввод»: the same, the keys of
+    // again and played in the game by "pixel-motion-h-again"; part 4е, shapes drawn with the mouse: the tools, the pen,
+    // the colour of new shapes, a shape's fields, «Привязка», baked, by "pixel-motion-i", opened again and played in the
+    // game by "pixel-motion-i-again"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2360,6 +2362,8 @@ public:
         if (part == "pixel-motion-g-again") return frame < 3 || pixel_motion_g_again_step();
         if (part == "pixel-motion-h") return frame < 3 || pixel_motion_h_step();
         if (part == "pixel-motion-h-again") return frame < 3 || pixel_motion_h_again_step();
+        if (part == "pixel-motion-i") return frame < 3 || pixel_motion_i_step();
+        if (part == "pixel-motion-i-again") return frame < 3 || pixel_motion_i_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19126,6 +19130,18 @@ return {
         const int opened = pj_run({exe, "--project", project, "--self-test", "pixel-motion-h-again"}, fourteen);
         check(opened == 0, "opened from another working folder: the files, the recording and every frame as pixel-motion-h left them; the "
                            "game plays the flag by «Ларец»'s 10 frames (pixel-motion-h-again: exit " + std::to_string(opened) + ")");
+        // Part 4е: shapes drawn with the mouse, then to the game.
+        const fs::path fifteen = mo_root() / utf8_path("пятнадцатая папка"), sixteen = mo_root() / utf8_path("шестнадцатая папка");
+        fs::create_directories(fifteen, ec);
+        fs::create_directories(sixteen, ec);
+        const int shaped = pj_run({exe, "--project", project, "--self-test", "pixel-motion-i"}, fifteen);
+        check(shaped == 0, "«Ларец»: a rect, an ellipse on the grid, a line and the pen open and closed drawn into its code, a rect into "
+                           "its second drawing, each a step undone and done again byte for byte; Esc, no size, the swap and an SVG's "
+                           "picture refused; the colour of new shapes from the eyedropper and typed; rect_1's «Фигура» typed and refused; "
+                           "the lock and its pivot on the grid; baked as the library bakes (pixel-motion-i: exit " + std::to_string(shaped) + ")");
+        const int drawn_again = pj_run({exe, "--project", project, "--self-test", "pixel-motion-i-again"}, sixteen);
+        check(drawn_again == 0, "opened from another working folder: the files, the recording and every frame as pixel-motion-i left them; "
+                                "the game plays the flag by «Ларец»'s 10 frames (pixel-motion-i-again: exit " + std::to_string(drawn_again) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
@@ -23905,6 +23921,787 @@ return {
         default: break;
         }
         ++mh_step_;
+        return true;
+    }
+
+    // Part 4е (pixel-motion-i, then pixel-motion-i-again): shapes drawn with the mouse into «Ларец» as pixel-motion-h left
+    // it. In frame 1, the main drawing: a rect (R, dragged; its outline in the shape's colour while held, nothing
+    // written; Esc while held drops it), an ellipse with «Привязка» (its corners on the grid's lines, 2 apart at this
+    // zoom), a line (Shift+L; L alone the preview's repeat), an open pen (Shift+P, three clicks, its lines, its line to
+    // the mouse and its points drawn, Enter) and a closed one (a click on its first point; by the first of two points a
+    // click is a third): after each the script byte for byte with the call last in draw, one step with its label,
+    // Ctrl+Z and Ctrl+Y byte for byte, the new part selected and «Выбор» again. Esc drops the pen's points and then the
+    // tool; a click without a drag says the shape has no size; a frame in the swap refuses as it is pressed; in frame 6,
+    // «open» shown, the rect goes into drawings.open and the «Фигура» of its lid is «open»'s. The eyedropper and the
+    // tools turn each other off, its click the colour of new shapes; the colour typed (rgb(…) as #rrggbb, its swatch,
+    // the outline held in it), one that does not read refused. The «Фигура» fields of rect_1 as drawn, w, fill and r
+    // (missing: added; «1,0» the step's 1) typed, a negative w, an opacity past 1, an empty and an unreadable fill
+    // refused, «12,0» for w 12 nothing. «Привязка»: the lock dragged by whole steps of the grid, its pivot onto the grid.
+    // «Ёжик» of an SVG refuses a shape, its part says its shape is the SVG's. «Узор», written by another program: a
+    // shape of a loop says how many its call draws, a colour of an expression and fields in a variable are not shown and
+    // said why (once); the rect saves the unsaved panel first; another tool finishes the pen (one point dropped); the
+    // code read again, another clip and another picture drop its points; code with an error refuses the rect and the
+    // field once the panel is saved, the «Фигура» says why. Both views of frames 1, 4 and 6 as the library has the files;
+    // «Запечь» as the library bakes them; the game's copy the strip. pixel-motion-i-again, from another working folder:
+    // the files, the recording and both views of every frame the same; the game plays the flag by «Ларец»'s ten frames.
+    int mi_step_ = 0;
+    std::string mi_code_, mi_label_, mi_seen_;
+    std::vector<u8> mi_doc_; // the «.pixel.json» as the last step left it
+    std::string mi_pat_, mi_pat_label_; // «Узор»: its code and the last step as the checks left them
+    std::vector<u8> mi_pat_doc_;
+    static constexpr const char* kMiPattern = R"lua(-- «Узор»: фигуры мышью части 4е: цикл, цвет выражением, поля в переменной.
+local warm = "#ff8000"
+local look = { x = 44, y = 44, w = 12, h = 8, fill = "#3060c0" }
+return {
+  draw = function(p, rng)
+    canvas(64, 64)
+    for i = 0, 2 do
+      rect("dot" .. i, { x = 4 + i * 10, y = 4, w = 6, h = 6, fill = "#c03030" })
+    end
+    circle("sun", { x = 40, y = 20, r = 6, fill = warm })
+    rect("box", look)
+  end,
+  clips = {
+    idle = function(p)
+      part("sun"):to({ y = 2 }, 0.5, "linear")
+    end,
+    wave = function(p)
+      part("dot1"):to({ y = 4 }, 0.5, "linear")
+    end,
+  },
+}
+)lua";
+    static constexpr u32 kMiPatternError = 6; // the line of «canvas(64, 64) +»'s error as Luau says it
+    static constexpr const char* kMiMidSwap = "посреди смены рисунка фигура не рисуется: выберите кадр до или после";
+    static constexpr const char* kMiNoSize = "фигура без размера не рисуется: протяните мышью";
+
+    // In an editor for «Движение А» after pixel-motion-h-again (--self-test pixel-motion-i).
+    bool pixel_motion_i_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string doc = "персонажи/Ларец.pixel.json", lua = "персонажи/Ларец.luau", png = "персонажи/Ларец.png";
+        const std::string hog_doc = "персонажи/Ёжик.pixel.json", hog_lua = "персонажи/Ёжик.luau";
+        const pixel::Recording* rec = px().recording();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto put = [&](const fs::path& f, std::string_view text) { return write_file_atomic(f, {reinterpret_cast<const u8*>(text.data()), text.size()}); };
+        auto put_bytes = [&](const fs::path& f, const std::vector<u8>& b) { return write_file_atomic(f, b); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        auto at_frame = [&](u32 k) { return px_click("px-frame-" + std::to_string(k)) && px().frame() == k; };
+        auto views_are = [&](u32 k) {
+            assets::CookedTexture baked;
+            std::string why;
+            return mo_ref("idle", k, baked, why) && px_same(px().pixel_frame(), baked) && mc_vector_is(k, 0, 0, 0);
+        };
+        auto files_are = [&](const std::string& code) { return file(lua) == bytes(code) && file(doc) == mi_doc_; };
+        auto unchanged = [&](const std::string& what) {
+            return check(files_are(mi_code_) && step_label() == mi_label_, what + ": nothing written, no step: " + step_label());
+        };
+        // One step: both files as it should leave them, its label; Ctrl+Z and Ctrl+Y byte for byte.
+        auto edited = [&](const std::string& code, const std::vector<u8>& new_doc, const std::string& label, const std::string& what) {
+            const std::vector<u8> now = file(lua), was_doc = mi_doc_;
+            auto both = [&] { return file(lua) == bytes(code) && file(doc) == new_doc; };
+            const bool done = check(both() && step_label() == label,
+                                    what + ": the script and the «.pixel.json» byte for byte, one step: " + step_label() +
+                                        (now == bytes(code) ? std::string() : "\n" + std::string(now.begin(), now.end()) + "\nwanted\n" + code));
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(mi_code_) && file(doc) == was_doc && step_label() == mi_label_, "Ctrl+Z: " + what + " undone, both files byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(both() && step_label() == label, "Ctrl+Y: " + what + " again, byte for byte");
+            if (done) mi_code_ = code, mi_label_ = label, mi_doc_ = new_doc;
+        };
+        // A new last line of a drawing: after `last`, the line before its end.
+        auto drawn = [&](const std::string& last, const std::string& indent, const std::string& call) {
+            return mb_sub(mi_code_, last + "\n", last + "\n" + indent + call + "\n");
+        };
+        // The tool, and its chip lit in the row (the model laid out first).
+        auto tool_is = [&](PixelEditor::Tool t, const char* chip) {
+            ed_.context()->Update();
+            return px().tool() == t && pj_class(chip, "selected");
+        };
+        auto snap_is = [&](bool on) {
+            ed_.context()->Update();
+            return px().snapping() == on && pj_class("px-snap", "selected") == on && px().snap_step() == 2;
+        };
+        // A shape's outline over the vector, in its colour, where the view of the picture has none.
+        auto outlined = [&](u8 r, u8 g, u8 b) {
+            const assets::CookedTexture &shown = px().vector_shown(), &view = px().vector_view();
+            if (shown.rgba8.size() != view.rgba8.size()) return false;
+            usize more = 0;
+            for (usize i = 0; i + 3 < shown.rgba8.size(); i += 4)
+                more += shown.rgba8[i] == r && shown.rgba8[i + 1] == g && shown.rgba8[i + 2] == b && shown.rgba8[i + 3] == 255 &&
+                        !(view.rgba8[i] == r && view.rgba8[i + 1] == g && view.rgba8[i + 2] == b);
+            return more > 0;
+        };
+        auto click_at = [&](vector::Point p) {
+            f32 x = 0, y = 0;
+            if (!px().screen_of(p, x, y)) return false;
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+            return true;
+        };
+        auto has_part = [&](const char* id) { return px().rig().holder(id).part(id) >= 0; };
+        // A texel of the vector shown by a point of the picture (or one beside it) in a colour its view has not there.
+        auto lit = [&](vector::Point p, u8 r, u8 g, u8 b) {
+            const assets::CookedTexture &shown = px().vector_shown(), &view = px().vector_view();
+            const vector::Point q = px().texel_of(p);
+            if (shown.rgba8.size() != view.rgba8.size()) return false;
+            for (i64 dy = -1; dy <= 1; ++dy)
+                for (i64 dx = -1; dx <= 1; ++dx) {
+                    const i64 x = std::lround(q.x) + dx, y = std::lround(q.y) + dy;
+                    if (x < 0 || y < 0 || x >= shown.width || y >= shown.height) continue;
+                    const usize i = (static_cast<usize>(y) * shown.width + static_cast<usize>(x)) * 4;
+                    if (shown.rgba8[i] == r && shown.rgba8[i + 1] == g && shown.rgba8[i + 2] == b && shown.rgba8[i + 3] == 255 &&
+                        !(view.rgba8[i] == r && view.rgba8[i + 1] == g && view.rgba8[i + 2] == b))
+                        return true;
+                }
+            return false;
+        };
+        auto swatch_is = [&](u8 r, u8 g, u8 b) {
+            ed_.context()->Update();
+            Rml::Element* e = ed_.find_element("px-shape-swatch");
+            const Rml::Colourb c = e ? e->GetProperty<Rml::Colourb>("background-color") : Rml::Colourb(0, 0, 0, 0);
+            return c.red == r && c.green == g && c.blue == b && c.alpha == 255;
+        };
+        const std::string lock_line = "    rect(\"lock\", { x = 29, y = 30, w = 6, h = 8, fill = \"#e0c040\" })";
+        // «Узор», written by another program: shapes of a loop, a colour of an expression, fields in a variable.
+        const std::string pat_doc = "персонажи/Узор.pixel.json", pat_lua = "персонажи/Узор.luau";
+        auto pat_files_are = [&](const std::string& code) { return file(pat_lua) == bytes(code) && file(pat_doc) == mi_pat_doc_; };
+        auto pat_unchanged = [&](const std::string& what) {
+            return check(pat_files_are(mi_pat_) && step_label() == mi_pat_label_, what + ": nothing written to «Узор», no step: " + step_label());
+        };
+        auto pat_code_error = [&](u32 line) {
+            return "Код с ошибкой: фигура мышью не рисуется, пока он не рисует (строка " + std::to_string(line) + ", см. консоль)";
+        };
+        switch (mi_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            const std::vector<u8> code = file(lua);
+            mi_code_.assign(code.begin(), code.end());
+            mi_doc_ = file(doc);
+            check(mi_code_.find("swap(\"open\", 0.75, \"linear\")") != std::string::npos && mi_code_.find(lock_line) != std::string::npos &&
+                      !mi_doc_.empty() && !file(png).empty(),
+                  "«Ларец» as pixel-motion-h left it");
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(idle && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Ларец» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Ларец»");
+            break;
+        // The row of tools: «Выбор», the colour of new shapes, «Привязка» off.
+        case 3: {
+            if (hold(px().code() == mi_code_ && px().clip() == "idle" && rec && !px().stale() && shown("px-tool-rect") && shown("px-frame-0"),
+                     "«Ларец», its recording, the tools"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            mi_label_ = step_label();
+            check(files_are(mi_code_), "opened: nothing written");
+            check(tool_is(PixelEditor::Tool::Select, "px-tool-select") && !pj_class("px-tool-rect", "selected") && px().shape_color() == "#5968e8" &&
+                      ue_field("px-shape-color") == "#5968e8" && !px().snapping() && !pj_class("px-snap", "selected"),
+                  "«Выбор», the colour #5968e8, «Привязка» off");
+            check(at_frame(0), "frame 1");
+            break;
+        }
+        // R, a rect dragged: its outline while held, nothing written.
+        case 4: {
+            if (wait(2)) return true;
+            key(SDLK_R, SDL_KMOD_NONE);
+            check(tool_is(PixelEditor::Tool::Rect, "px-tool-rect") && !pj_class("px-tool-select", "selected"), "R: «Прямоугольник»");
+            check(mb_hold_point({20, 20}, 6, 6), "a rect pressed and dragged");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            mb_let_go();
+            check(px().tool() == PixelEditor::Tool::Rect && px().note().empty(), "Esc while held: the rect dropped, the tool kept");
+            unchanged("a rect dropped by Esc");
+            check(mb_hold_point({2, 2}, 7.96, 4.04), "pressed at 2; 2 and dragged to 9,96; 6,04");
+            break;
+        }
+        case 5: {
+            if (wait(2)) return true;
+            check(outlined(0x59, 0x68, 0xe8), "held: the rect outlined in #5968e8 over the vector");
+            unchanged("a rect held");
+            mb_let_go();
+            check(px().part() == "rect_1" && tool_is(PixelEditor::Tool::Select, "px-tool-select"), "rect_1 selected, «Выбор» again: «" + px().part() + "»");
+            edited(drawn(lock_line, "    ", "rect(\"rect_1\", { x = 2, y = 2, w = 8, h = 4, fill = \"#5968e8\" })"), mi_doc_,
+                   "«Ларец»: прямоугольник rect_1", "the rect");
+            break;
+        }
+        case 6: {
+            if (hold(has_part("rect_1") && shown("px-part-rect_1"), "rect_1 in the tree")) return true;
+            check(tool_is(PixelEditor::Tool::Select, "px-tool-select") && px().part().empty(), "after Ctrl+Z and Ctrl+Y: «Выбор», nothing selected");
+            check(views_are(0), "both views of frame 1 as the library has the files: rect_1 drawn");
+            // «Привязка» on: the grid's step at this zoom 2.
+            check(px_click("px-snap") && snap_is(true), "«Привязка» on, the step 2: " + std::to_string(px().snap_step()));
+            key(SDLK_O, SDL_KMOD_NONE);
+            check(tool_is(PixelEditor::Tool::Ellipse, "px-tool-ellipse"), "O: «Эллипс»");
+            check(mb_hold_point({40.7, 3.3}, 10.5, 7.6), "pressed at 40,7; 3,3 and dragged to 51,2; 10,9");
+            mb_let_go();
+            edited(drawn("    rect(\"rect_1\", { x = 2, y = 2, w = 8, h = 4, fill = \"#5968e8\" })", "    ",
+                         "ellipse(\"ellipse_1\", { x = 46, y = 7, rx = 6, ry = 3, fill = \"#5968e8\" })"),
+                   mi_doc_, "«Ларец»: эллипс ellipse_1", "the ellipse on the grid: 40; 4 to 52; 10");
+            break;
+        }
+        // The part written is selected (before Ctrl+Z it was); L alone is the preview's repeat, Shift+L the line.
+        case 7: {
+            if (hold(has_part("ellipse_1"), "ellipse_1 drawn")) return true;
+            check(px_click("px-snap") && snap_is(false), "«Привязка» off");
+            const bool loop = px().loop_view();
+            key(SDLK_L, SDL_KMOD_NONE);
+            check(px().loop_view() != loop && px().tool() == PixelEditor::Tool::Select, "L: the preview's repeat, the tool as it was");
+            key(SDLK_L, SDL_KMOD_NONE);
+            key(SDLK_L, SDL_KMOD_SHIFT);
+            check(px().loop_view() == loop && tool_is(PixelEditor::Tool::Line, "px-tool-line"), "Shift+L: «Линия»");
+            check(mb_hold_point({2, 60}, 28.04, -9.04), "pressed at 2; 60 and dragged to 30,04; 50,96");
+            mb_let_go();
+            check(px().part() == "line_1" && px().tool() == PixelEditor::Tool::Select, "line_1 selected, «Выбор» again: «" + px().part() + "»");
+            edited(drawn("    ellipse(\"ellipse_1\", { x = 46, y = 7, rx = 6, ry = 3, fill = \"#5968e8\" })", "    ",
+                         "line(\"line_1\", { x1 = 2, y1 = 60, x2 = 30, y2 = 51, stroke = \"#5968e8\" })"),
+                   mi_doc_, "«Ларец»: линия line_1", "the line");
+            break;
+        }
+        // Shift+P, the pen: three clicks, its line to the mouse, Enter.
+        case 8: {
+            if (hold(has_part("line_1"), "line_1 drawn")) return true;
+            key(SDLK_P, SDL_KMOD_SHIFT);
+            check(tool_is(PixelEditor::Tool::Pen, "px-tool-pen"), "Shift+P: «Перо»");
+            check(click_at({34, 40}) && click_at({40, 44}) && click_at({36, 50}) && px().pen_points().size() == 3, "three points clicked");
+            f32 x = 0, y = 0;
+            check(px().screen_of({30, 56}, x, y), "the mouse on");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            break;
+        }
+        case 9: {
+            if (wait(2)) return true;
+            check(outlined(0x59, 0x68, 0xe8), "the pen's points and lines in #5968e8 over the vector");
+            check(lit({37, 42}, 0x59, 0x68, 0xe8) && lit({33, 53}, 0x59, 0x68, 0xe8), "its line between two points and its line to the mouse");
+            check(lit({40, 44}, 255, 255, 255), "the white middle of a point");
+            unchanged("the pen's points");
+            key(SDLK_RETURN, SDL_KMOD_NONE);
+            check(px().pen_points().empty() && px().part() == "path_1" && px().tool() == PixelEditor::Tool::Select, "Enter: path_1 selected, «Выбор»");
+            edited(drawn("    line(\"line_1\", { x1 = 2, y1 = 60, x2 = 30, y2 = 51, stroke = \"#5968e8\" })", "    ",
+                         "path(\"path_1\", { d = \"M 34 40 L 40 44 L 36 50\", fill = \"none\", stroke = \"#5968e8\" })"),
+                   mi_doc_, "«Ларец»: контур path_1", "the open pen");
+            break;
+        }
+        // A closed pen: the fourth click on the first point.
+        case 10: {
+            if (hold(has_part("path_1"), "path_1 drawn")) return true;
+            key(SDLK_P, SDL_KMOD_SHIFT);
+            check(click_at({50, 40}) && click_at({60, 44}) && click_at({54, 52}) && px().pen_points().size() == 3, "three points of a closed pen");
+            unchanged("three points");
+            check(click_at({50.3, 40.2}), "a click by the first point");
+            check(px().pen_points().empty() && px().part() == "poly_1" && px().tool() == PixelEditor::Tool::Select, "closed: poly_1 selected, «Выбор»");
+            edited(drawn("    path(\"path_1\", { d = \"M 34 40 L 40 44 L 36 50\", fill = \"none\", stroke = \"#5968e8\" })", "    ",
+                         "poly(\"poly_1\", { points = { 50, 40, 60, 44, 54, 52 }, fill = \"#5968e8\" })"),
+                   mi_doc_, "«Ларец»: многоугольник poly_1", "the closed pen");
+            break;
+        }
+        // Esc: the pen's points, then the tool. A click without a drag: no size.
+        case 11: {
+            if (hold(has_part("poly_1"), "poly_1 drawn")) return true;
+            key(SDLK_P, SDL_KMOD_SHIFT);
+            check(click_at({20, 20}) && click_at({24, 24}) && px().pen_points().size() == 2, "two points");
+            check(click_at({20.3, 20.2}) && px().pen_points().size() == 3 && px().note().empty(), "a click by the first of two points: a third, not closed");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(px().pen_points().empty() && px().tool() == PixelEditor::Tool::Pen, "Esc: the points dropped, the pen kept");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(tool_is(PixelEditor::Tool::Select, "px-tool-select"), "Esc again: «Выбор»");
+            unchanged("a pen dropped");
+            key(SDLK_R, SDL_KMOD_NONE);
+            check(click_at({20, 20}) && px().note() == kMiNoSize && px().tool() == PixelEditor::Tool::Rect, "a click with the rect: «" + px().note() + "»");
+            unchanged("a rect of no size");
+            // In the swap: refused as it is pressed.
+            check(at_frame(3), "frame 4");
+            break;
+        }
+        case 12: {
+            if (wait(2)) return true;
+            check(px().rig().swapping(), "frame 4: in the swap");
+            check(mb_hold_point({20, 20}, 6, 6), "a rect pressed and dragged");
+            check(px().note() == kMiMidSwap, "refused as it is pressed: «" + px().note() + "»");
+            mb_let_go();
+            unchanged("a rect in the swap");
+            check(views_are(3), "both views of frame 4 as the library has the files");
+            check(at_frame(5), "frame 6");
+            break;
+        }
+        // «open» shown: the rect goes into its function, its number past the main drawing's rect_1.
+        case 13: {
+            if (wait(2)) return true;
+            check(!px().rig().swapping() && &px().rig().shown() == px().rig().drawing("open"), "frame 6: «open»");
+            check(mb_hold_point({2, 30}, 6, 6), "a rect dragged in «open»");
+            mb_let_go();
+            check(px().part() == "rect_2", "rect_2 selected: «" + px().part() + "»");
+            edited(drawn("      circle(\"shine\", { x = 32, y = 26, r = 6, fill = \"#fff080\" })", "      ",
+                         "rect(\"rect_2\", { x = 2, y = 30, w = 6, h = 6, fill = \"#5968e8\" })"),
+                   mi_doc_, "«Ларец»: прямоугольник rect_2", "the rect in drawings.open");
+            break;
+        }
+        // The «Фигура» of a part both drawings have: as the drawing shown draws it.
+        case 14: {
+            if (hold(has_part("rect_2"), "rect_2 drawn")) return true;
+            check(click_at({32, 10}) && px().part() == "lid", "a click on the lid of «open»: «" + px().part() + "»");
+            break;
+        }
+        case 15: {
+            if (hold(shown("px-shape-y"), "the «Фигура» of the lid")) return true;
+            check(ue_field("px-shape-y") == "6" && ue_field("px-shape-h") == "10" && !shown("px-shape-count"),
+                  "y 6, h 10: the lid of «open», not of the main drawing (y " + ue_field("px-shape-y") + ")");
+            break;
+        }
+        // The eyedropper and the tools turn each other off; its click the colour of new shapes.
+        case 16: {
+            if (wait(2)) return true;
+            check(px().rig().holder_name("rect_2") == "open" && views_are(5), "rect_2 in «open»; both views of frame 6 as the library has the files");
+            key(SDLK_R, SDL_KMOD_NONE);
+            key(SDLK_I, SDL_KMOD_NONE);
+            check(px().picking() && tool_is(PixelEditor::Tool::Select, "px-tool-select"), "I: the eyedropper, «Выбор»");
+            key(SDLK_R, SDL_KMOD_NONE);
+            check(!px().picking() && px().tool() == PixelEditor::Tool::Rect, "R: the eyedropper off");
+            key(SDLK_I, SDL_KMOD_NONE);
+            check(px().picking() && px().tool() == PixelEditor::Tool::Select, "I again");
+            check(click_at({32, 44}), "a click on the box");
+            check(px().shape_color() == "#806040" && px().note() == "Скопирован цвет #806040", "the box's colour for new shapes: " + px().shape_color());
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!px().picking(), "Esc: the eyedropper off");
+            check(ue_type("px-shape-color", "zzz"), "zzz typed into the colour");
+            check(px().note() == "цвет фигур «zzz» не читается: #rrggbb, rgb(r, g, b) или имя вроде red" && px().shape_color() == "#806040",
+                  "refused: «" + px().note() + "»");
+            unchanged("colours");
+            break;
+        }
+        case 17: {
+            if (wait(2)) return true;
+            check(ue_field("px-shape-color") == "#806040", "the field shows the colour again: " + ue_field("px-shape-color"));
+            check(ue_type("px-shape-color", "rgb(64, 160, 192)") && px().shape_color() == "#40a0c0", "rgb(64, 160, 192) typed: #40a0c0");
+            unchanged("the colour typed");
+            check(at_frame(0), "frame 1");
+            break;
+        }
+        case 18: {
+            if (wait(2)) return true;
+            check(ue_field("px-shape-color") == "#40a0c0" && swatch_is(0x40, 0xa0, 0xc0), "the field and its swatch: " + ue_field("px-shape-color"));
+            key(SDLK_R, SDL_KMOD_NONE);
+            check(mb_hold_point({54, 56}, 8, 6), "a rect dragged in frame 1");
+            break;
+        }
+        case 19: {
+            if (wait(2)) return true;
+            check(outlined(0x40, 0xa0, 0xc0), "held: its outline in #40a0c0");
+            mb_let_go();
+            edited(drawn("    poly(\"poly_1\", { points = { 50, 40, 60, 44, 54, 52 }, fill = \"#5968e8\" })", "    ",
+                         "rect(\"rect_3\", { x = 54, y = 56, w = 8, h = 6, fill = \"#40a0c0\" })"),
+                   mi_doc_, "«Ларец»: прямоугольник rect_3", "a rect in the colour typed");
+            break;
+        }
+        // «Фигура» of rect_1: its fields as drawn.
+        case 20: {
+            if (hold(has_part("rect_3"), "rect_3 drawn")) return true;
+            check(click_at({6, 4}) && px().part() == "rect_1", "a click on rect_1 selects it: «" + px().part() + "»");
+            break;
+        }
+        case 21: {
+            if (hold(shown("px-shape-w"), "the «Фигура» of rect_1")) return true;
+            std::string wrong;
+            for (const auto& [f, v] : std::vector<std::pair<const char*, const char*>>{
+                     {"x", "2"}, {"y", "2"}, {"w", "8"}, {"h", "4"}, {"r", "0"}, {"fill", "#5968e8"}, {"stroke", ""}, {"stroke_width", ""}, {"opacity", "1"}})
+                if (ue_field(("px-shape-" + std::string(f)).c_str()) != v) wrong += std::string(" ") + f + "=" + ue_field(("px-shape-" + std::string(f)).c_str());
+            check(wrong.empty() && !shown("px-shape-why") && !shown("px-shape-count"), "x 2, y 2, w 8, h 4, r 0, fill #5968e8, stroke and its width SVG's own, opacity 1:" + wrong);
+            check(ue_type("px-shape-w", "12"), "12 typed into w");
+            const std::string was = "rect(\"rect_1\", { x = 2, y = 2, w = 8, h = 4, fill = \"#5968e8\" })";
+            edited(mb_sub(mi_code_, was, "rect(\"rect_1\", { x = 2, y = 2, w = 12, h = 4, fill = \"#5968e8\" })"), mi_doc_, "«Ларец»: rect_1 · w = 12",
+                   "w of rect_1");
+            break;
+        }
+        // Refused before anything is written, as draw would refuse.
+        case 22: {
+            if (hold(has_part("rect_1") && ue_field("px-shape-w") == "12", "w 12")) return true;
+            if (px().part() != "rect_1") check(click_at({6, 4}) && px().part() == "rect_1", "rect_1 selected again");
+            const std::vector<std::tuple<const char*, const char*, const char*>> bad = {
+                {"px-shape-w", "-1", "Фигура «rect_1»: «w» не меньше 0"},
+                {"px-shape-opacity", "2", "Фигура «rect_1»: «opacity» от 0 до 1"},
+                {"px-shape-fill", "", "Фигура «rect_1»: пусто не пишется: «none» — без цвета, свой цвет — уберите поле в коде"},
+                {"px-shape-fill", "zzz", "Фигура «rect_1»: цвет «zzz» не читается (#rgb, #rrggbb, rgb(r, g, b), имя вроде red или none)"}};
+            for (const auto& [id, text, why] : bad) {
+                check(ue_type(id, text) && px().note() == why, std::string(id) + " «" + text + "» refused: «" + px().note() + "»");
+                unchanged(std::string(id) + " «" + text + "»");
+            }
+            check(ue_type("px-shape-w", "12,0") && px().note().empty(), "«12,0» typed into w: the number it is, no word");
+            unchanged("w «12,0»");
+            break;
+        }
+        case 23: {
+            if (wait(2)) return true;
+            check(ue_field("px-shape-w") == "12" && ue_field("px-shape-fill") == "#5968e8", "the fields show the shape again");
+            check(ue_type("px-shape-fill", "#e04040"), "#e04040 typed into fill");
+            edited(mb_sub(mi_code_, "w = 12, h = 4, fill = \"#5968e8\" })", "w = 12, h = 4, fill = \"#e04040\" })"), mi_doc_,
+                   "«Ларец»: rect_1 · fill = #e04040", "fill of rect_1");
+            break;
+        }
+        case 24: {
+            if (hold(has_part("rect_1") && ue_field("px-shape-fill") == "#e04040", "fill #e04040")) return true;
+            check(ue_type("px-shape-r", "1,0"), "1,0 typed into r");
+            edited(mb_sub(mi_code_, "fill = \"#e04040\" })", "fill = \"#e04040\", r = 1 })"), mi_doc_, "«Ларец»: rect_1 · r = 1", "r of rect_1, added");
+            break;
+        }
+        // «Привязка»: the lock dragged by whole steps of the grid.
+        case 25: {
+            if (hold(has_part("rect_1") && ue_field("px-shape-r") == "1", "r 1")) return true;
+            check(views_are(0), "both views of frame 1 as the library has the files: rect_1 wider, red, rounded");
+            check(px_click("px-snap") && snap_is(true), "«Привязка» on, the step 2: " + std::to_string(px().snap_step()));
+            check(mb_hold_point({32, 36}, 3.3, 1.2), "the lock pressed and dragged by 3,3; 1,2");
+            mb_let_go();
+            check(px().part() == "lock", "the lock selected: «" + px().part() + "»");
+            edited(mb_sub(mi_code_, "      part(\"box\"):to({ y = -2 }, 0.5, \"linear\")",
+                          "      at(0, part(\"lock\"):to({ x = 4, y = 2 }, 0))\n      part(\"box\"):to({ y = -2 }, 0.5, \"linear\")"),
+                   mi_doc_, "«Ларец»: «lock» сдвинута на 4; 2", "the lock moved by two steps and one");
+            break;
+        }
+        // Its pivot dragged onto the grid's lines: (32; 34) at rest, 4; 2 moved.
+        case 26: {
+            if (hold(rec && !px().stale() && px().code() == mi_code_, "the recording of the moved lock")) return true;
+            if (wait(2)) return true;
+            if (px().part() != "lock") check(px_click("px-part-lock") && px().part() == "lock", "the lock selected");
+            const vector::Point p = px().posed_pivot("lock");
+            check(std::fabs(p.x - 36) < 1e-9 && std::fabs(p.y - 36) < 1e-9, "the lock's pivot 36; 36 in frame 1");
+            check(mb_hold_point({36, 36}, 8.7, 1.4), "its pivot dragged by 8,7; 1,4");
+            mb_let_go();
+            pixel::PixelDoc d;
+            std::string why;
+            check(pixel::read_pixel_doc({reinterpret_cast<const char*>(mi_doc_.data()), mi_doc_.size()}, d, why), "the «.pixel.json» reads " + why);
+            d.pivots["lock"] = {40, 36};
+            edited(mi_code_, bytes(pixel::write_pixel_doc(d)), "«Ларец»: опорная точка «lock» 40; 36", "the pivot on the grid");
+            check(px_click("px-snap") && snap_is(false), "«Привязка» off");
+            break;
+        }
+        // «Ёжик», a picture of an SVG: no shape, its part's shape the SVG's.
+        case 27: {
+            if (hold(idle && listed_at(hog_doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(hog_doc))), "«Ёжик» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(hog_doc))) && px().opened() == hog_doc, "a click on «Ёжик»");
+            break;
+        }
+        case 28: {
+            if (hold(px().opened() == hog_doc && px().rig().loaded() && !px().rig().parts().empty() && shown("px-tool-rect"), "«Ёжик» and its parts"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            const std::vector<u8> hog = file(hog_lua), hog_d = file(hog_doc);
+            const std::string label = step_label();
+            key(SDLK_R, SDL_KMOD_NONE);
+            check(mb_hold_point({10, 10}, 8, 8), "a rect dragged on «Ёжик»");
+            check(px().note() == "рисунок из «Ёжик.svg»: фигуры мышью пишутся в draw кода — допишите draw", "refused: «" + px().note() + "»");
+            mb_let_go();
+            check(file(hog_lua) == hog && file(hog_doc) == hog_d && step_label() == label, "nothing written to «Ёжик»");
+            key(SDLK_V, SDL_KMOD_NONE);
+            const std::string part = px().rig().parts()[0].id;
+            check(px_click("px-part-" + part) && px().part() == part, "its part «" + part + "» selected");
+            break;
+        }
+        case 29: {
+            if (hold(shown("px-shape-why"), "the «Фигура» of «Ёжик»'s part")) return true;
+            check(element_text("px-shape-why") == "рисунок из файла: фигура правится в SVG" && px().shape_fields().empty(),
+                  "«" + element_text("px-shape-why") + "», no fields");
+            pixel::PixelDoc d;
+            d.script = "Узор.luau";
+            d.frame_w = d.frame_h = 64;
+            d.clips = {{"idle", 2, 4, true}, {"wave", 2, 4, true}};
+            mi_pat_ = kMiPattern;
+            mi_pat_doc_ = bytes(pixel::write_pixel_doc(d));
+            check(put(as().abs(pat_lua), kMiPattern) && put_bytes(as().abs(pat_doc), mi_pat_doc_), "«Узор.luau» and «Узор.pixel.json» written by another program");
+            as().refresh();
+            break;
+        }
+        case 30: {
+            if (hold(idle && listed_at(pat_doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(pat_doc))), "«Узор» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(pat_doc))) && px().opened() == pat_doc, "a click on «Узор»");
+            break;
+        }
+        // A shape of a loop: how many shapes its call draws.
+        case 31: {
+            if (hold(px().code() == mi_pat_ && px().clip() == "idle" && rec && !px().stale() && shown("px-frame-0") && shown("px-tool-rect"),
+                     "«Узор» and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            mi_pat_label_ = step_label();
+            check(pat_files_are(mi_pat_), "opened: nothing written");
+            check(at_frame(0) && click_at({17, 7}) && px().part() == "dot1", "frame 1, a click on dot1: «" + px().part() + "»");
+            break;
+        }
+        case 32: {
+            if (hold(shown("px-shape-x"), "the «Фигура» of dot1")) return true;
+            check(shown("px-shape-count") && element_text("px-shape-count") == "из цикла: 3 фигуры" && ue_field("px-shape-x") == "14" &&
+                      ue_field("px-shape-w") == "6" && !shown("px-shape-why"),
+                  "«" + element_text("px-shape-count") + "», x 14 as drawn, w 6");
+            check(click_at({40, 20}) && px().part() == "sun", "a click on the sun: «" + px().part() + "»");
+            break;
+        }
+        // A colour of an expression: its field not shown, the reason said.
+        case 33: {
+            if (hold(shown("px-shape-why"), "the «Фигура» of the sun")) return true;
+            check(element_text("px-shape-why") == "цвет «fill» задан выражением: правится в коде" && !shown("px-shape-fill") &&
+                      ue_field("px-shape-x") == "40" && !shown("px-shape-count"),
+                  "«" + element_text("px-shape-why") + "», no fill, x 40");
+            check(click_at({50, 48}) && px().part() == "box", "a click on the box: «" + px().part() + "»");
+            break;
+        }
+        // Fields in a variable: none shown, the reason once. The panel unsaved: the rect saves it first, a step of its own.
+        case 34: {
+            if (hold(!shown("px-shape-x"), "the «Фигура» of the box")) return true;
+            check(element_text("px-shape-why") == "поля фигуры не таблицей в вызове: правится в коде" && px().shape_fields().empty(),
+                  "«" + element_text("px-shape-why") + "», no fields");
+            const std::string title = "поля в переменной.", typed = mb_sub(mi_pat_, title, title + " Да."), saved = "«Узор»: код «Узор.luau» сохранён";
+            check(mo_caret(mo_char(mi_pat_, title) + mo_letters(title)), "the caret after the title");
+            mo_type(" Да.");
+            check(px().code_unsaved() && px().code() == typed, "« Да.» typed: not saved");
+            check(px_click("px-tool-rect") && px().tool() == PixelEditor::Tool::Rect && px().code_unsaved(), "«Прямоугольник» clicked, the panel unsaved");
+            check(mb_hold_point({4, 30}, 8, 6), "a rect dragged");
+            mb_let_go();
+            const std::string done = mb_sub(typed, "    rect(\"box\", look)\n",
+                                            "    rect(\"box\", look)\n    rect(\"rect_1\", { x = 4, y = 30, w = 8, h = 6, fill = \"#40a0c0\" })\n");
+            check(pat_files_are(done) && step_label() == "«Узор»: прямоугольник rect_1" && !px().code_unsaved(), "the panel saved, then the rect: " + step_label());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(pat_files_are(typed) && step_label() == saved, "Ctrl+Z: the rect undone, the panel's text as saved: " + step_label());
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(pat_files_are(done) && step_label() == "«Узор»: прямоугольник rect_1", "Ctrl+Y: the rect again");
+            mi_pat_ = done, mi_pat_label_ = step_label();
+            break;
+        }
+        // Another tool finishes the pen as Enter does; a pen of one point is dropped.
+        case 35: {
+            if (hold(has_part("rect_1"), "rect_1 of «Узор» drawn")) return true;
+            key(SDLK_P, SDL_KMOD_SHIFT);
+            check(click_at({4, 50}) && click_at({20, 58}) && px().pen_points().size() == 2, "two points of the pen");
+            key(SDLK_R, SDL_KMOD_NONE);
+            const std::string rect = "    rect(\"rect_1\", { x = 4, y = 30, w = 8, h = 6, fill = \"#40a0c0\" })\n";
+            const std::string done = mb_sub(mi_pat_, rect, rect + "    path(\"path_1\", { d = \"M 4 50 L 20 58\", fill = \"none\", stroke = \"#40a0c0\" })\n");
+            check(pat_files_are(done) && step_label() == "«Узор»: контур path_1" && px().pen_points().empty() && px().tool() == PixelEditor::Tool::Rect,
+                  "R: the pen finished, path_1 written, «Прямоугольник»: " + step_label());
+            mi_pat_ = done, mi_pat_label_ = step_label();
+            key(SDLK_P, SDL_KMOD_SHIFT);
+            check(click_at({30, 58}) && px().pen_points().size() == 1, "one point");
+            key(SDLK_V, SDL_KMOD_NONE);
+            check(px().pen_points().empty() && px().tool() == PixelEditor::Tool::Select, "V: the point dropped, «Выбор»");
+            pat_unchanged("a pen of one point dropped");
+            break;
+        }
+        // The code read again (Ctrl+Z): the pen's points dropped.
+        case 36: {
+            if (hold(has_part("path_1"), "path_1 of «Узор» drawn")) return true;
+            key(SDLK_P, SDL_KMOD_SHIFT);
+            check(click_at({30, 58}) && click_at({40, 60}) && px().pen_points().size() == 2, "two points");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(step_label() == "«Узор»: прямоугольник rect_1" && px().pen_points().empty(), "Ctrl+Z: path_1 undone, the points dropped: " + step_label());
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(pat_files_are(mi_pat_) && step_label() == mi_pat_label_ && px().pen_points().empty(), "Ctrl+Y: path_1 again, no points");
+            break;
+        }
+        // Another clip: the pen's points dropped.
+        case 37: {
+            if (hold(has_part("path_1") && shown("px-state-wave"), "the clips of «Узор»")) return true;
+            check(px().tool() == PixelEditor::Tool::Pen && click_at({30, 58}) && click_at({40, 60}) && px().pen_points().size() == 2, "two points again");
+            check(px_click("px-state-wave") && px().clip() == "wave" && px().pen_points().empty(), "«wave»: the points dropped");
+            check(px_click("px-state-idle") && px().clip() == "idle", "«idle» again");
+            pat_unchanged("the clips");
+            break;
+        }
+        // Code with an error: the shape refused once the panel is saved; the «Фигура» says why.
+        case 38: {
+            if (hold(rec && px().clip() == "idle" && !px().stale(), "the recording of «idle»")) return true;
+            key(SDLK_V, SDL_KMOD_NONE);
+            check(px().tool() == PixelEditor::Tool::Select && click_at({7, 7}) && px().part() == "dot0", "«Выбор», a click on dot0");
+            const std::string at = "canvas(64, 64)";
+            check(mo_caret(mo_char(mi_pat_, at) + mo_letters(at)), "the caret after canvas(64, 64)");
+            mo_type(" +");
+            check(px_click("px-tool-rect") && px().code_unsaved(), "«Прямоугольник» clicked, the panel unsaved");
+            check(mb_hold_point({4, 40}, 6, 6), "a rect dragged");
+            mb_let_go();
+            check(pat_files_are(mb_sub(mi_pat_, at, at + " +")) && step_label() == "«Узор»: код «Узор.luau» сохранён" && px().note() == pat_code_error(kMiPatternError),
+                  "the panel saved, the rect refused: «" + px().note() + "», " + step_label());
+            break;
+        }
+        case 39: {
+            if (wait(2)) return true;
+            check(element_text("px-shape-why") == pat_code_error(kMiPatternError) && !shown("px-shape-x"),
+                  "the «Фигура» of dot0: «" + element_text("px-shape-why") + "»");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(pat_files_are(mi_pat_) && step_label() == mi_pat_label_ && px().code() == mi_pat_, "Ctrl+Z: the code as it was");
+            key(SDLK_V, SDL_KMOD_NONE);
+            check(click_at({7, 7}) && px().part() == "dot0", "dot0 selected");
+            break;
+        }
+        // A field typed while the panel has an error unsaved: the panel saved first, the field refused.
+        case 40: {
+            if (hold(rec && !px().stale() && shown("px-shape-w"), "the «Фигура» of dot0")) return true;
+            const std::string at = "canvas(64, 64)";
+            check(mo_caret(mo_char(mi_pat_, at) + mo_letters(at)), "the caret after canvas(64, 64)");
+            mo_type(" +");
+            check(ue_type("px-shape-w", "8"), "8 typed into w of dot0");
+            check(pat_files_are(mb_sub(mi_pat_, at, at + " +")) && step_label() == "«Узор»: код «Узор.luau» сохранён" && px().note() == pat_code_error(kMiPatternError),
+                  "the panel saved, w refused: «" + px().note() + "», " + step_label());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(pat_files_are(mi_pat_) && step_label() == mi_pat_label_, "Ctrl+Z: the code as it was");
+            break;
+        }
+        // Another picture opened: the pen's points dropped.
+        case 41: {
+            if (hold(rec && !px().stale() && px().code() == mi_pat_, "the code as it was")) return true;
+            key(SDLK_P, SDL_KMOD_SHIFT);
+            check(click_at({30, 58}) && click_at({40, 60}) && px().pen_points().size() == 2, "two points");
+            pat_unchanged("«Узор» as the checks left it");
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc && px().pen_points().empty(), "«Ларец» again: the points dropped");
+            break;
+        }
+        // Both views against the files; «Запечь».
+        case 42: {
+            if (hold(px().code() == mi_code_ && rec && !px().stale() && shown("px-frame-0"), "«Ларец» again")) return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            key(SDLK_V, SDL_KMOD_NONE);
+            check(px().tool() == PixelEditor::Tool::Select && px().pen_points().empty(), "«Выбор», no points");
+            check(at_frame(0), "frame 1");
+            break;
+        }
+        case 43: {
+            if (wait(2)) return true;
+            check(views_are(0), "both views of frame 1 as the library draws and bakes the files");
+            check(at_frame(5), "frame 6");
+            break;
+        }
+        case 44: {
+            if (wait(2)) return true;
+            check(views_are(5), "both views of frame 6");
+            break;
+        }
+        case 45: {
+            if (hold(idle && rec && !px().stale() && element_text("px-total") == "в картинке 10 кадров из 64", "«в картинке 10 кадров из 64»")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            assets::CookedTexture strip;
+            const std::vector<u8> baked = file(png);
+            check(!baked.empty() && assets::decode_image(baked, strip) && strip.width == 640 && strip.height == 64, "«Ларец.png»: 10 frames of 64 × 64");
+            check(px().note() == "Запечено: «Ларец.png», 10 кадров 64 × 64." && step_label() == "«Ларец»: запечено в «Ларец.png», 10 кадров",
+                  "«" + px().note() + "», one step: " + step_label());
+            pixel::PixelDoc dd;
+            pixel::Rig rig;
+            pixel::PoseScript script;
+            std::string why, bad, same;
+            check(mo_load(dd, rig, script, why) && dd.clips.size() == 1, "the files read apart from the tab " + why);
+            for (u32 k = 0; k < 10 && dd.clips.size() == 1; ++k) {
+                assets::CookedTexture ref;
+                if (!pixel::bake_frame(rig, script, dd, dd.clips[0], k, pixel::bake_options(dd, {}), ref, why) || !px_same(px_cut(strip, 64, k), ref))
+                    bad += " " + std::to_string(k + 1) + why;
+                if (k > 0 && px_same(px_cut(strip, 64, k), px_cut(strip, 64, k - 1))) same += " " + std::to_string(k + 1);
+            }
+            check(bad.empty(), "each of the 10 frames as the library bakes the files apart from the tab;" + bad);
+            check(same.empty(), "frames 2–10 each other than the one before:" + same);
+            break;
+        }
+        case 46: {
+            if (hold(idle && tg_bytes(a / "game" / "pictures" / utf8_path("Ларец.png")) == file(png), "the game's «pictures/Ларец.png» the new strip"))
+                return true;
+            const objects::Template* t = an().library().find("flag");
+            check(t && t->picture == "Ларец.png" && t->frames == 10, "«Флаг» still draws «Ларец.png» by its 10 frames");
+            break;
+        }
+        // What the tab shows and the files, beside the games, for pixel-motion-i-again.
+        case 47: {
+            if (hold(rec && !px().stale() && shown("px-frame-0"), "the recording")) return true;
+            if (mb_look(mi_seen_)) return true;
+            mi_seen_ = mp_recorded() + mi_seen_;
+            const fs::path root = mo_root();
+            check(put(root / utf8_path("ларец 4е.txt"), mi_seen_) && put_bytes(root / utf8_path("ларец 4е.luau"), file(lua)) &&
+                      put_bytes(root / utf8_path("ларец 4е.pixel.json"), file(doc)) && put_bytes(root / utf8_path("ларец 4е.png"), file(png)) &&
+                      put_bytes(root / utf8_path("флаг ларца 4е.json"), an_file("flag")),
+                  "what the tab shows and the files, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++mi_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-motion-i (--self-test pixel-motion-i-again).
+    bool pixel_motion_i_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string doc = "персонажи/Ларец.pixel.json", lua = "персонажи/Ларец.luau", png = "персонажи/Ларец.png";
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
+        auto same = [&] {
+            return !left("ларец 4е.luau").empty() && file(lua) == left("ларец 4е.luau") && file(doc) == left("ларец 4е.pixel.json") &&
+                   file(png) == left("ларец 4е.png") && an_file("flag") == left("флаг ларца 4е.json");
+        };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        switch (mi_step_) {
+        case 0:
+            check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), mo_root() / utf8_path("пятнадцатая папка")),
+                  "from another working folder: " + path_to_utf8(fs::current_path()));
+            check(same(), "the files as pixel-motion-i left them");
+            check(click_tab(3), "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Ларец» listed"))
+                return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Ларец»");
+            break;
+        case 3: {
+            const std::vector<u8> code = left("ларец 4е.luau");
+            if (hold(px().code() == std::string(code.begin(), code.end()) && px().clip() == "idle" && px().recording() && !px().stale() &&
+                         shown("px-frame-0") && shown("px-total"),
+                     "«Ларец» and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            if (mb_look(mi_seen_)) return true;
+            const std::vector<u8> was = left("ларец 4е.txt");
+            const std::string seen = mp_recorded() + mi_seen_;
+            check(!was.empty() && seen == std::string(was.begin(), was.end()),
+                  "the recording, the tracks and both views of every frame as pixel-motion-i saw them\n" + seen);
+            check(element_text("px-total") == "в картинке 10 кадров из 64" && !px().edited(), "«" + element_text("px-total") + "», the picture as baked");
+            check(px().tool() == PixelEditor::Tool::Select && px().shape_color() == "#5968e8" && !px().snapping(),
+                  "a new editor: «Выбор», #5968e8, «Привязка» off (none of them in files)");
+            check(same(), "looked at: nothing written");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 4:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 5: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = an_edits();
+            const int code = tg_play(&e, "ожидания ларца 4е.json", mo_root());
+            check(code == 0, "the game plays the flag by «Ларец»'s 10 frames, each on the screen as baked (exit " + std::to_string(code) + ")");
+            check(same(), "played: the files as they were");
+            return false;
+        }
+        default: break;
+        }
+        ++mi_step_;
         return true;
     }
 
@@ -31158,7 +31955,7 @@ int main(int argc, char** argv) {
                                          "frame-limit-a-cross", "pixel-motion", "pixel-motion-a", "pixel-motion-b", "pixel-motion-b-again",
                                          "pixel-motion-c", "pixel-motion-c-again", "pixel-motion-d", "pixel-motion-d-again", "pixel-motion-e",
                                          "pixel-motion-e-again", "pixel-motion-f", "pixel-motion-f-again", "pixel-motion-g",
-                                         "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "input", "input-a", "input-a-again",
+                                         "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -31174,7 +31971,7 @@ int main(int argc, char** argv) {
                     "frame-limit-a-low, frame-limit-a-low-again, frame-limit-a-cross, pixel-motion and its parts pixel-motion-a, pixel-motion-b, "
                     "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, pixel-motion-d, pixel-motion-d-again, pixel-motion-e, "
                     "pixel-motion-e-again, pixel-motion-f, pixel-motion-f-again, pixel-motion-g, pixel-motion-g-again, pixel-motion-h, "
-                    "pixel-motion-h-again, "
+                    "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "

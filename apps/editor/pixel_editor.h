@@ -39,12 +39,17 @@
 // copies it). sound("шаг") is the game's sounds/шаг, шаг.wav or шаг.ogg: a row of its waves on the timeline, red with
 // a console line when there is none; the preview sounds each mark in the frame it first shows its moment, while M is
 // on, and remembers what it sounded since it was started.
+//
+// Part 4е of step 4 «Фигуры мышью»: a row over the views has the tools (a rect, an ellipse, a line, the pen), the colour
+// of new shapes and «Привязка»; a shape drawn is a new last line of the code of the drawing the frame shows. The
+// selected part's «Фигура» has the fields of the call that drew it, each written into the call.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
 #include "forge/objects/library.h"
 #include "forge/pixel/bake.h"
+#include "forge/pixel/draw_edit.h"
 #include "forge/pixel/sound.h"
 #include "forge/pixel/timeline.h"
 #include "forge/pixel/view.h"
@@ -288,6 +293,39 @@ public:
     void away();
     bool offscreen = false; // main: no sound device is opened
 
+    // --- shapes drawn with the mouse (part 4е, pixel_shapes.cpp) ---
+    // The tools of the row over the views: «Выбор» (V), «Прямоугольник» (R), «Эллипс» (O), «Линия» (Shift+L), «Перо»
+    // (Shift+P). A rect, an ellipse or a line is dragged in the vector, the pen's points clicked; the shape is a new last
+    // line of the function of the drawing the frame shows (one step, the panel saved first), the new part selected and
+    // the tool «Выбор» again. Refused, note() saying why and nothing written, for a picture of an SVG file, a drawing
+    // function not written in this file, code with an error, a frame in a swap, a shape of no size. Choosing a tool turns
+    // the eyedropper off and finishes the pen as Enter does.
+    enum class Tool : u8 { Select, Rect, Ellipse, Line, Pen };
+    void set_tool(Tool t);
+    Tool tool() const { return tool_; }
+    // The pen's points so far (picture units). Enter finishes it open (a path), a click on its first point closes it (a
+    // poly); Esc, another character or clip, the code read again drop it.
+    const std::vector<vector::Point>& pen_points() const { return pen_; }
+    bool finish_pen();
+    void drop_pen();
+    // The colour of new shapes, "#rrggbb" (#5968e8 at first; an eyedropper's click sets it too). Not written into files.
+    bool set_shape_color(const std::string& text);
+    const std::string& shape_color() const { return shape_color_; }
+    // «Привязка»: the tools' points, a part dragged and a pivot dragged go by the grid's lines, its step at the zoom the
+    // press was made at (snap_step() at the zoom now). Not written into files.
+    void set_snapping(bool on);
+    bool snapping() const { return snapping_; }
+    f64 snap_step() const;
+    // The «Фигура» section of the selected part: the fields of the call that drew it as it drew them (only those the
+    // field can write), why the others are not shown, how many shapes the call drew (a loop: more than one). A field
+    // typed: written into the call (one step, the panel saved first), checked as draw checks it; note() why not.
+    struct ShapeField {
+        std::string name, value;
+    };
+    const std::vector<ShapeField>& shape_fields() const { return shape_fields_; }
+    const std::string& shape_why() const { return shape_why_; }
+    bool set_shape_field(const std::string& field, const std::string& text);
+
     // --- the code panel and the console (part 3а) ---
     // The panel's text: the script as a text field shows it (pixel::panel_text). Not saved while it is not the file's.
     const std::string& code() const { return code_; }
@@ -359,6 +397,8 @@ public:
     // The vector as its view shows it: the selected part's bounds and pivot over it, the outline of the tree's row
     // under the mouse.
     const assets::CookedTexture& vector_shown() const { return vector_shown_; }
+    // Where a point of the picture is in those textures (their texels), at the view's zoom and pan.
+    vector::Point texel_of(vector::Point p) const { return to_texels().apply(p); }
     const assets::CookedTexture& pixel_frame() const { return frame_px_; }
     // The wave of a row of sounds as its image shows it (white where it sounds).
     const assets::CookedTexture* wave_image(usize row) const { return row < waves_.size() ? &waves_[row] : nullptr; }
@@ -454,6 +494,9 @@ private:
         pixel::SoundFile file;
         std::vector<i64> stamps; // of the files it may be, as they were when looked for
     };
+    struct ShapeFieldRow {
+        Rml::String name, value;
+    };
 
     pixel::ClipSpec* selected_clip();
     const pixel::ClipSpec* selected_clip() const;
@@ -535,6 +578,22 @@ private:
     void sound_frames(i64 now, bool wrapped); // the preview showed range frame `now`: the marks it passed sound
     void hush(); // another clip or character: the preview's sounds stop, what it sounded is forgotten
     std::string state_name(const std::string& id) const; // «Идёт» of "walk"; the id when no template plays it
+    // Part 4е (pixel_shapes.cpp).
+    void bind_shapes(Rml::DataModelConstructor& model);
+    void shape_press(f32 x, f32 y); // a press in the vector with a tool: a shape begins, or the pen's point
+    void shape_drag(f32 x, f32 y);
+    void shape_release();
+    std::string shown_drawing() const;           // "draw", or the name of the drawing the frame shows
+    // Whether a shape can be written into drawing `target` ("draw" or a name) as the frame shows it now.
+    bool can_draw(const std::string& target, std::string& why) const;
+    bool write_shape(const pixel::NewShape& s);  // the call, one step; the part selected, «Выбор»
+    // A part's shape as the code drew it in drawing `where` (shape_drawing: the one shown when it has the part), and how
+    // many shapes its call drew; null with from_svg for a part of the SVG file's picture.
+    std::string shape_drawing(const std::string& id) const;
+    const pixel::DrawShape* shape_of(const std::string& id, const std::string& where, bool& from_svg, usize& count) const;
+    void rebuild_shape();
+    void draw_tool(assets::CookedTexture& t, const pixel::Affine& texels) const; // the shape being drawn, over the vector
+    void code_error(std::string& why) const; // "Код с ошибкой: …" with its line
     void dirty(const char* var) {
         if (model_) model_.DirtyVariable(var);
     }
@@ -616,6 +675,15 @@ private:
     i64 sound_shown_ = -1; // the range's frame the playing preview showed last
     audio::Mixer mixer_;
     bool mixer_tried_ = false;
+    // Part 4е: the tool, the shape dragged (its corners or ends, picture units), the pen's points, the colour.
+    Tool tool_ = Tool::Select;
+    bool tooling_ = false, snapping_ = false;
+    vector::Point tool_from_, tool_to_;
+    f64 snap_step_ = 0; // of the press going on: the grid's step with «Привязка», else 0
+    std::vector<vector::Point> pen_;
+    std::string shape_color_ = pixel::kShapeColor;
+    std::vector<ShapeField> shape_fields_;
+    std::string shape_why_;
 
     // Part 3а: the player.
     f64 t_ = 0;          // the playhead
@@ -687,6 +755,9 @@ private:
     std::vector<TimingRow> m_timings_;
     std::vector<PartValueRow> m_part_values_;
     std::vector<SoundView> m_sounds_;
+    std::vector<ShapeFieldRow> m_shape_fields_;
+    Rml::String m_tool_ = "select", m_shape_color_ = pixel::kShapeColor, m_shape_swatch_, m_shape_why_, m_shape_count_;
+    bool m_snapping_ = false, m_has_shape_ = false;
     Rml::String m_zoom_words_, m_coords_, m_picked_, m_pick_swatch_;
     bool m_grid_ = false, m_picking_ = false, m_sound_on_ = true;
     Rml::String m_block_value_, m_block_length_, m_block_timing_, m_timing_icon_, m_block_why_, m_part_name_, m_part_code_;
