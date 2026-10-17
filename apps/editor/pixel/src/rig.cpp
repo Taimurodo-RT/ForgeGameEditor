@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 
@@ -104,7 +105,20 @@ struct Leaf {
     f32 own_width = 1; // its stroke width, as SVG has one for a shape without a stroke too (stroke-width, else 1)
     bool path_changed = false, look_changed = false, trim_changed = false;
     bool hidden = false; // a part the pose hid (its own paint, for the baker that shows shapes one by one)
+    i32 part = -1;       // the innermost part it is in, -1 for none
 };
+
+// The effects a pose put on a part's scene (part 4б), in ThorVG's terms, kept so the baker can put them back.
+struct Fx {
+    f64 blur = 0; // sigma, 0 for none
+    bool shadow = false;
+    u8 r = 0, g = 0, b = 0, a = 0;
+    f64 angle = 0, distance = 0, sigma = 0;
+};
+
+// How the effects of a part go on: all, the blur alone (the baker's passes of shapes), or with the shadow opaque (its
+// pass of the shadow).
+enum class FxMode : u8 { Full, BlurOnly, ShadowOpaque };
 
 struct PartRec {
     tvg::Paint* paint = nullptr;
@@ -116,6 +130,47 @@ struct PartRec {
     std::vector<i32> leaves; // the shapes it draws, in order
     i32 leaf = -1;           // when it is a shape itself
     i32 group = -1;          // its parent's scene in Impl::groups
+    tvg::Scene* wrap = nullptr; // a shape's own scene around it, for effects (ThorVG puts them on scenes only)
+    Fx fx;
+    bool fx_on = false;  // the last pose put effects on its scene
+    bool masked = false; // the last pose gave it a mask
+};
+
+// What stands for a part among its neighbours: its own scene round a shape, else its paint.
+tvg::Paint* slot(const PartRec& r) { return r.wrap ? static_cast<tvg::Paint*>(r.wrap) : r.paint; }
+
+// The scene a part's effects go on: a group's own, a shape's wrap; null for neither.
+tvg::Scene* fx_scene(const PartRec& r) {
+    if (r.wrap) return r.wrap;
+    return r.paint->type() == tvg::Type::Scene ? static_cast<tvg::Scene*>(r.paint) : nullptr;
+}
+
+void put_fx(const PartRec& r, FxMode mode) {
+    tvg::Scene* s = fx_scene(r);
+    if (!s) return;
+    s->add(tvg::SceneEffect::Clear);
+    if (r.fx.blur > 0) s->add(tvg::SceneEffect::GaussianBlur, r.fx.blur, 0, 0, 100);
+    if (r.fx.shadow && mode != FxMode::BlurOnly)
+        s->add(tvg::SceneEffect::DropShadow, int(r.fx.r), int(r.fx.g), int(r.fx.b), mode == FxMode::ShadowOpaque ? 255 : int(r.fx.a),
+               r.fx.angle, r.fx.distance, r.fx.sigma, 100);
+}
+
+// A tint, then a flash, on one colour (part 4б): each channel times the tint's, the red, green and blue `flash` of the
+// way to its colour; each step rounded.
+struct Tone {
+    bool tint = false;
+    f64 m[4] = {255, 255, 255, 255};
+    f64 flash = 0;
+    f64 f[3] = {255, 255, 255};
+
+    void apply(u8& r, u8& g, u8& b, u8& a) const {
+        u8* c[4] = {&r, &g, &b, &a};
+        auto byte = [](f64 v) { return static_cast<u8>(std::clamp(std::lround(v), 0L, 255L)); };
+        if (tint)
+            for (int i = 0; i < 4; ++i) *c[i] = byte(*c[i] * m[i] / 255.0);
+        if (flash > 0)
+            for (int i = 0; i < 3; ++i) *c[i] = byte(*c[i] + (f[i] - *c[i]) * flash);
+    }
 };
 
 // A scene with parts in it: its paints in the SVG's order, put back when a pose changed it.
@@ -414,7 +469,26 @@ bool Rig::load(std::string_view svg, std::string& why) {
             }
     for (usize l = 0; l < m.leaves.size(); ++l)
         for (const tvg::Paint* q = m.leaves[l].shape; q && q != m.doc; q = q->parent())
-            if (auto it = m.part_of.find(q); it != m.part_of.end()) m.recs[static_cast<usize>(it->second)].leaves.push_back(static_cast<i32>(l));
+            if (auto it = m.part_of.find(q); it != m.part_of.end()) {
+                m.recs[static_cast<usize>(it->second)].leaves.push_back(static_cast<i32>(l));
+                if (m.leaves[l].part < 0) m.leaves[l].part = it->second;
+            }
+
+    // Every shape that is a part gets a scene of its own round it, for the blur and the shadow of part 4б. With no
+    // effect it draws the shape just as before. The groups' orders are taken again with these scenes in them.
+    for (PartRec& r : m.recs) {
+        const tvg::Paint* parent = r.paint->parent();
+        if (r.paint->type() != tvg::Type::Shape || !parent || parent->type() != tvg::Type::Scene) continue;
+        auto* scene = static_cast<tvg::Scene*>(const_cast<tvg::Paint*>(parent));
+        tvg::Scene* w = tvg::Scene::gen();
+        scene->add(w, r.paint);
+        r.paint->ref();
+        scene->remove(r.paint);
+        w->add(r.paint);
+        r.paint->unref(false);
+        r.wrap = w;
+    }
+    for (GroupRec& g : m.groups) g.rest.assign(g.scene->paints().begin(), g.scene->paints().end());
 
     // Rest bounds (of what the part draws; of all its shapes when it draws nothing) and the pivots at their centres.
     m.pivots.resize(m.parts.size());
@@ -476,6 +550,15 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
             r.paint->visible(r.rest_visible);
             r.hidden = false;
             if (r.leaf >= 0) m.leaves[static_cast<usize>(r.leaf)].hidden = false;
+        }
+        if (r.fx_on) {
+            if (tvg::Scene* sc = fx_scene(r)) sc->add(tvg::SceneEffect::Clear);
+            r.fx = {};
+            r.fx_on = false;
+        }
+        if (r.masked) {
+            slot(r)->mask(nullptr, tvg::MaskMethod::None);
+            r.masked = false;
         }
     }
     if (m.reordered) {
@@ -575,6 +658,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         by_depth.emplace_back(depth, &e);
     }
     std::stable_sort(by_depth.begin(), by_depth.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<const PartPose*> posed(m.parts.size(), nullptr); // the parts the pose gave, by index
     for (const auto& d : by_depth) {
         const auto& [id, pp] = *d.second;
         const i32 pi = part(id);
@@ -582,12 +666,15 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
             fail("в рисунке нет части «" + id + "»");
             continue;
         }
-        const f64 nums[] = {pp.x,       pp.y,         pp.rot,          pp.scale,        pp.sx,   pp.sy,        pp.skew_x,
-                            pp.skew_y,  pp.opacity,   pp.stroke_width, pp.stroke_width_k, pp.dash, pp.draw_from, pp.draw_to};
+        const f64 nums[] = {pp.x,       pp.y,         pp.rot,          pp.scale,          pp.sx,      pp.sy,
+                            pp.skew_x,  pp.skew_y,    pp.opacity,      pp.stroke_width,   pp.stroke_width_k,
+                            pp.dash,    pp.draw_from, pp.draw_to,      pp.tint_k,         pp.flash,   pp.flash_color_k,
+                            pp.blur,    pp.shadow_k,  pp.shadow_x,     pp.shadow_y,       pp.shadow_blur};
         if (!std::all_of(std::begin(nums), std::end(nums), [](f64 v) { return std::isfinite(v); })) {
             fail("часть «" + id + "»: не число в позе");
             continue;
         }
+        posed[static_cast<usize>(pi)] = &pp;
         PartRec& r = m.recs[static_cast<usize>(pi)];
         f64 x = pp.x, y = pp.y;
         if (snap > 0) x = std::round(x / snap) * snap, y = std::round(y / snap) * snap;
@@ -687,6 +774,136 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         }
     }
 
+    // Tints and flashes: the colours of each shape, its own part's first, then its groups' (part 4б).
+    auto tone = [&](i32 q, Tone& t) {
+        const PartPose* pp = q >= 0 ? posed[static_cast<usize>(q)] : nullptr;
+        if (!pp) return false;
+        const f64 tk = std::clamp(pp->tint_k, 0.0, 1.0), fl = std::clamp(pp->flash, 0.0, 1.0);
+        t = {};
+        if (pp->has_tint && tk > 0) {
+            t.tint = true;
+            const u8 c[4] = {pp->tint.r, pp->tint.g, pp->tint.b, pp->tint.a};
+            for (int i = 0; i < 4; ++i) t.m[i] = 255 + (c[i] - 255) * tk;
+        }
+        if (fl > 0) {
+            t.flash = fl;
+            const f64 ck = std::clamp(pp->flash_color_k, 0.0, 1.0);
+            const u8 c[3] = {pp->flash_color.r, pp->flash_color.g, pp->flash_color.b};
+            if (pp->has_flash_color && ck > 0)
+                for (int i = 0; i < 3; ++i) t.f[i] = 255 + (c[i] - 255) * ck;
+        }
+        return t.tint || t.flash > 0;
+    };
+    for (Leaf& l : m.leaves) {
+        std::vector<Tone> tones;
+        for (i32 q = l.part; q >= 0; q = m.parts[static_cast<usize>(q)].parent)
+            if (Tone t; tone(q, t)) tones.push_back(t);
+        if (tones.empty()) continue;
+        auto colour = [&](u8& r, u8& g, u8& b, u8& a) {
+            for (const Tone& t : tones) t.apply(r, g, b, a);
+        };
+        auto gradient = [&](const tvg::Fill* f) {
+            tvg::Fill* d = f->duplicate();
+            const tvg::Fill::ColorStop* stops = nullptr;
+            const u32 n = d->colorStops(&stops);
+            std::vector<tvg::Fill::ColorStop> v(stops, stops + n);
+            for (tvg::Fill::ColorStop& c : v) colour(c.r, c.g, c.b, c.a);
+            d->colorStops(v.data(), n);
+            return d;
+        };
+        tvg::Shape* s = l.shape;
+        if (const tvg::Fill* f = s->fill()) {
+            s->fill(gradient(f));
+        } else {
+            u8 r, g, b, a = 0;
+            s->fill(&r, &g, &b, &a);
+            if (a > 0) colour(r, g, b, a), s->fill(r, g, b, a); // a shape without a fill stays without one
+        }
+        if (s->strokeWidth() > 0) {
+            if (const tvg::Fill* f = s->strokeFill()) {
+                s->strokeFill(gradient(f));
+            } else {
+                u8 r, g, b, a = 0;
+                s->strokeFill(&r, &g, &b, &a);
+                if (a > 0) colour(r, g, b, a), s->strokeFill(r, g, b, a);
+            }
+        }
+        l.look_changed = true;
+    }
+
+    // Blur and shadow on each part's scene, in picture units: ThorVG takes its sigma and offset through the scene's
+    // matrix (its scale from e11 and e12), so they go in through its inverse.
+    for (usize pi = 0; pi < posed.size(); ++pi) {
+        const PartPose* pp = posed[pi];
+        if (!pp) continue;
+        const u8 sa = pp->has_shadow ? to_u8(pp->shadow.a / 255.0 * std::clamp(pp->shadow_k, 0.0, 1.0)) : 0;
+        if (!(pp->blur > 0) && sa == 0) continue;
+        PartRec& r = m.recs[pi];
+        tvg::Scene* sc = fx_scene(r);
+        if (!sc) continue;
+        const Affine g = m.global(sc);
+        const f64 scale = std::sqrt(g.a * g.a + g.c * g.c), det = g.a * g.d - g.b * g.c;
+        if (!(scale > 1e-12) || !(std::abs(det) > 1e-12)) continue;
+        Fx fx;
+        if (pp->blur > 0) fx.blur = pp->blur / scale;
+        if (sa > 0) {
+            fx.shadow = true;
+            fx.r = pp->shadow.r, fx.g = pp->shadow.g, fx.b = pp->shadow.b, fx.a = sa;
+            // ThorVG: x = distance · sin(angle), y = −distance · cos(angle), then through the matrix.
+            const f64 x = (g.d * pp->shadow_x - g.c * pp->shadow_y) / det, y = (-g.b * pp->shadow_x + g.a * pp->shadow_y) / det;
+            fx.distance = std::hypot(x, y);
+            fx.angle = std::atan2(x, -y) * 180.0 / vector::trig::kPi;
+            if (fx.angle < 0) fx.angle += 360;
+            fx.sigma = std::max(0.0, pp->shadow_blur) / scale;
+        }
+        r.fx = fx;
+        r.fx_on = true;
+        put_fx(r, FxMode::Full);
+    }
+
+    // Masks: a copy of the mask's shapes as they stand, opaque, where they are drawn. ThorVG draws a mask through the
+    // masked paint's parent, so the copy goes from there.
+    for (usize pi = 0; pi < posed.size(); ++pi) {
+        const PartPose* pp = posed[pi];
+        if (!pp || pp->mask.empty()) continue;
+        const std::string& id = m.parts[pi].id;
+        const i32 mi = part(pp->mask);
+        if (mi < 0) {
+            fail("маска части «" + id + "»: в рисунке нет части «" + pp->mask + "»");
+            continue;
+        }
+        if (static_cast<usize>(mi) == pi) {
+            fail("часть «" + id + "» не маска сама себе");
+            continue;
+        }
+        const PartRec& mr = m.recs[static_cast<usize>(mi)];
+        if (mr.leaves.empty()) {
+            fail("у маски «" + pp->mask + "» нет фигур");
+            continue;
+        }
+        PartRec& r = m.recs[pi];
+        tvg::Paint* sl = slot(r);
+        const Affine from_parent = inverse(m.global(sl->parent()));
+        tvg::Scene* target = tvg::Scene::gen();
+        for (i32 li : mr.leaves) {
+            const Leaf& l = m.leaves[static_cast<usize>(li)];
+            auto* d = static_cast<tvg::Shape*>(l.shape->duplicate());
+            u8 cr, cg, cb, fa = 0, sa2 = 0;
+            const bool fill_grad = d->fill() != nullptr, stroke_grad = d->strokeFill() != nullptr;
+            if (!fill_grad) d->fill(&cr, &cg, &cb, &fa);
+            if (!stroke_grad) d->strokeFill(&cr, &cg, &cb, &sa2);
+            const bool fill = fill_grad || fa > 0, stroke = d->strokeWidth() > 0 && (stroke_grad || sa2 > 0);
+            d->fill(255, 255, 255, fill || !stroke ? 255 : 0); // a hidden shape (display="none") has neither: its area
+            d->strokeFill(255, 255, 255, stroke ? 255 : 0);
+            d->opacity(255);
+            d->visible(true);
+            d->transform(to_tvg(from_parent * m.global(l.shape)));
+            target->add(d);
+        }
+        sl->mask(target, pp->mask_invert ? tvg::MaskMethod::InvAlpha : tvg::MaskMethod::Alpha);
+        r.masked = true;
+    }
+
     // The order: each step among the part's neighbours in its group.
     for (const OrderStep& step : pose.order) {
         const i32 pi = part(step.part);
@@ -709,7 +926,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
                 continue;
             }
             if (oi == pi) continue;
-            tvg::Paint* other = m.recs[static_cast<usize>(oi)].paint;
+            tvg::Paint* other = slot(m.recs[static_cast<usize>(oi)]);
             if (step.kind == OrderStep::Kind::Below) {
                 at = other;
             } else {
@@ -717,13 +934,13 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
                 auto it = std::find(list.begin(), list.end(), other);
                 if (it != list.end()) ++it;
                 at = it == list.end() ? nullptr : *it;
-                if (at == r.paint) continue; // already right above it
+                if (at == slot(r)) continue; // already right above it
             }
         } else if (step.kind == OrderStep::Kind::Bottom) {
             at = scene->paints().empty() ? nullptr : scene->paints().front();
-            if (at == r.paint) continue;
+            if (at == slot(r)) continue;
         }
-        reinsert(scene, r.paint, at);
+        reinsert(scene, slot(r), at);
         m.reordered = true;
     }
     m.pic->transform(m.pic->transform()); // ThorVG redraws a picture only when the picture itself changed
@@ -788,9 +1005,31 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
     } else {
         for (usize i = 0; i < m.leaves.size(); ++i) order.push_back(static_cast<i32>(i));
     }
+    // Effects (part 4б): the blur stays in every pass; a part's shadow has a pass of its own before its first shape,
+    // the part whole with only its shadow on, opaque; where it covers half a pixel, the shadow's colour.
+    for (const PartRec& r : m.recs)
+        if (r.fx_on) put_fx(r, FxMode::BlurOnly);
+    std::vector<char> shadow_done(m.recs.size(), 0);
+    auto shadow_pass = [&](PartRec& r) {
+        put_fx(r, FxMode::ShadowOpaque);
+        for (i32 li : r.leaves)
+            if (const Leaf& l = m.leaves[static_cast<usize>(li)]; l.visible && !l.hidden) l.shape->visible(true);
+        pass(false, r.fx.r, r.fx.g, r.fx.b);
+        for (i32 li : r.leaves) m.leaves[static_cast<usize>(li)].shape->visible(false);
+        put_fx(r, FxMode::BlurOnly);
+    };
+
     for (Leaf& l : m.leaves) l.shape->visible(false);
     for (i32 li : order) {
         Leaf& l = m.leaves[static_cast<usize>(li)];
+        std::vector<i32> chain; // the parts it is in, the outermost first
+        for (i32 q = l.part; q >= 0; q = m.parts[static_cast<usize>(q)].parent) chain.insert(chain.begin(), q);
+        for (i32 q : chain) {
+            PartRec& r = m.recs[static_cast<usize>(q)];
+            if (!r.fx_on || !r.fx.shadow || shadow_done[static_cast<usize>(q)]) continue;
+            shadow_done[static_cast<usize>(q)] = 1;
+            shadow_pass(r);
+        }
         if (!l.visible || l.hidden) continue;
         tvg::Shape* s = l.shape;
         s->visible(true);
@@ -815,6 +1054,8 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
         s->visible(false);
     }
     for (Leaf& l : m.leaves) l.shape->visible(l.visible && !l.hidden);
+    for (const PartRec& r : m.recs)
+        if (r.fx_on) put_fx(r, FxMode::Full);
     m.pic->transform(m.pic->transform());
 
     if (!options.palette.empty())
@@ -886,11 +1127,42 @@ bool Rig::dashed(i32 part) const {
     return false;
 }
 
+bool Rig::has_shapes(i32 part) const {
+    const Impl& m = *impl_;
+    return part >= 0 && static_cast<usize>(part) < m.recs.size() && !m.recs[static_cast<usize>(part)].leaves.empty();
+}
+
 bool parse_color(std::string_view text, Rgba8& out) {
     u8 c[3];
     if (!vector::parse_svg_color(text, c)) return false;
     out = {c[0], c[1], c[2], 255};
     return true;
+}
+
+bool parse_part_color(std::string_view text, Rgba8& out) {
+    if (text.size() == 9 && text[0] == '#') {
+        u8 c[4];
+        for (int i = 0; i < 4; ++i) {
+            int v = 0;
+            for (int k = 1; k <= 2; ++k) {
+                const char ch = text[static_cast<usize>(i * 2 + k)];
+                const int d = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+                if (d < 0) return false;
+                v = v * 16 + d;
+            }
+            c[i] = static_cast<u8>(v);
+        }
+        out = {c[0], c[1], c[2], c[3]};
+        return true;
+    }
+    return parse_color(text, out);
+}
+
+std::string color_hex(const Rgba8& c) {
+    char buf[12];
+    if (c.a == 255) std::snprintf(buf, sizeof buf, "#%02x%02x%02x", c.r, c.g, c.b);
+    else std::snprintf(buf, sizeof buf, "#%02x%02x%02x%02x", c.r, c.g, c.b, c.a);
+    return buf;
 }
 
 } // namespace forge::pixel

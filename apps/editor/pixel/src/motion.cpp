@@ -8,9 +8,12 @@ namespace forge::pixel {
 
 namespace {
 
-constexpr const char* kPropWords[] = {"x",      "y",      "rot",          "scale", "sx",        "sy",
-                                     "skew_x", "skew_y", "opacity",      "fill",  "stroke",    "stroke_width",
-                                     "dash",   "draw_from", "draw_to",   "visible", "morph",   "порядок"};
+constexpr const char* kPropWords[] = {"x",           "y",         "rot",         "scale",       "sx",
+                                     "sy",          "skew_x",    "skew_y",      "opacity",     "fill",
+                                     "stroke",      "stroke_width", "dash",     "draw_from",   "draw_to",
+                                     "visible",     "tint",      "flash",       "flash_color", "blur",
+                                     "shadow",      "shadow_x",  "shadow_y",    "shadow_blur", "morph",
+                                     "маска",       "порядок"};
 static_assert(std::size(kPropWords) == kPropCount);
 
 u8 mix8(u8 a, u8 b, f64 k) { return static_cast<u8>(std::clamp(std::round(a + (b - a) * k), 0.0, 255.0)); }
@@ -42,9 +45,14 @@ bool prop_from_word(std::string_view word, Prop& out) {
 }
 
 bool prop_is_number(Prop p) {
-    return p != Prop::Fill && p != Prop::Stroke && p != Prop::StrokeWidth && p != Prop::Visible && p != Prop::Morph &&
-           p != Prop::Order;
+    return !prop_is_color(p) && p != Prop::StrokeWidth && p != Prop::Visible && p != Prop::Morph && !prop_is_call(p);
 }
+
+bool prop_is_color(Prop p) {
+    return p == Prop::Fill || p == Prop::Stroke || p == Prop::Tint || p == Prop::FlashColor || p == Prop::Shadow;
+}
+
+bool prop_is_call(Prop p) { return p == Prop::Mask || p == Prop::Order; }
 
 PropValue rest_value(Prop p) {
     PropValue v;
@@ -63,7 +71,7 @@ PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k) {
         r.v = a.v + (b.v - a.v) * k; // past 0 … 1 too: back and elastic overshoot
         return r;
     }
-    if (p == Prop::Visible || p == Prop::Order) return k >= 1 ? b : a; // no values between
+    if (p == Prop::Visible || prop_is_call(p)) return k >= 1 ? b : a; // no values between
     if (p == Prop::StrokeWidth && a.v == 1 && b.v == 1) {
         r.v = 1;
         r.n = a.n + (b.n - a.n) * k; // two widths given: as numbers, past them too
@@ -79,7 +87,7 @@ PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k) {
         r.n = (std::max(a.v, 0.0) * a.n * (1 - k) + std::max(b.v, 0.0) * b.n * k) / r.v;
         return r;
     }
-    if (p == Prop::Fill || p == Prop::Stroke) {
+    if (prop_is_color(p)) {
         if (a.v <= 0) {
             r.color = b.color;
             r.v = b.v * k;
@@ -322,6 +330,30 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
         case Prop::DrawFrom: pp.draw_from = v.v; break;
         case Prop::DrawTo: pp.draw_to = v.v; break;
         case Prop::Visible: pp.visible = v.v > 0; break;
+        case Prop::Tint:
+            pp.has_tint = v.v > 0;
+            pp.tint = v.color;
+            pp.tint_k = v.v;
+            break;
+        case Prop::Flash: pp.flash = std::clamp(v.v, 0.0, 1.0); break; // back and springs overshoot: held in 0 … 1
+        case Prop::FlashColor:
+            pp.has_flash_color = v.v > 0;
+            pp.flash_color = v.color;
+            pp.flash_color_k = v.v;
+            break;
+        case Prop::Blur: pp.blur = std::max(v.v, 0.0); break;
+        case Prop::Shadow:
+            pp.has_shadow = v.v > 0;
+            pp.shadow = v.color;
+            pp.shadow_k = v.v;
+            break;
+        case Prop::ShadowX: pp.shadow_x = v.v; break;
+        case Prop::ShadowY: pp.shadow_y = v.v; break;
+        case Prop::ShadowBlur: pp.shadow_blur = std::max(v.v, 0.0); break;
+        case Prop::Mask:
+            pp.mask = v.v > 0 ? v.target : std::string();
+            pp.mask_invert = v.v > 1;
+            break;
         case Prop::Morph:
         case Prop::Order: break;
         }
