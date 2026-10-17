@@ -453,9 +453,21 @@ bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue
 }
 
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why) {
+    const f64 at = snap_time(t);
+    // The copies born by t are drawn (part 4г); one not born yet has nothing in the frame.
+    std::vector<char> unborn(rec.parts.size(), 0);
+    for (const Copy& c : rec.copies) {
+        if (c.born <= at) {
+            out.copies.push_back({c.id, c.source, c.number});
+            continue;
+        }
+        for (usize p = 0; p < rec.parts.size(); ++p)
+            if (rec.parts[p] == c.id) unborn[p] = 1;
+    }
     for (u32 i = 0; i < rec.tracks.size(); ++i) {
         const Recording::Track& tr = rec.tracks[i];
         if (tr.prop == Prop::Order) continue; // all calls of all parts up to t, below
+        if (tr.part < unborn.size() && unborn[tr.part]) continue;
         PropValue v;
         if (!sample(rec, i, t, eval, v, why)) return false;
         const std::string& id = rec.parts[tr.part];
@@ -531,9 +543,9 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
     }
     // The order: from the SVG's, every call up to t in the order of time (start, then order).
     std::vector<u32> calls;
-    const f64 at = snap_time(t);
     for (u32 i = 0; i < rec.blocks.size(); ++i)
-        if (rec.blocks[i].prop == Prop::Order && rec.blocks[i].start <= at) calls.push_back(i);
+        if (rec.blocks[i].prop == Prop::Order && rec.blocks[i].start <= at && !(rec.blocks[i].part < unborn.size() && unborn[rec.blocks[i].part]))
+            calls.push_back(i);
     std::stable_sort(calls.begin(), calls.end(), [&](u32 a, u32 b) { return before(rec.blocks[a], rec.blocks[b]); });
     for (u32 i : calls) {
         const Block& b = rec.blocks[i];
@@ -576,6 +588,12 @@ vector::Point path_point(const PathLine& path, f64 u, f64* angle) {
 i32 bone_of(const Recording& rec, std::string_view id) {
     for (usize i = 0; i < rec.bones.size(); ++i)
         if (rec.bones[i].id == id) return static_cast<i32>(i);
+    return -1;
+}
+
+i32 copy_of(const Recording& rec, std::string_view id) {
+    for (usize i = 0; i < rec.copies.size(); ++i)
+        if (rec.copies[i].id == id) return static_cast<i32>(i);
     return -1;
 }
 

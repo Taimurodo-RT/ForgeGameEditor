@@ -52,7 +52,7 @@ struct MoveStep {
 struct Task {
     enum class Kind : u8 {
         Move, Wait, All, Any, Chain, Sequence, Delay, At, Spawn, Join, Loop, LoopFor, LoopUntil, Run, WaitUntil, Mark,
-        Save, TweenFn,
+        Save, TweenFn, Copies,
     };
     Kind kind = Kind::Move;
     u32 part = 0;        // Move, Save
@@ -60,7 +60,8 @@ struct Task {
     Prop prop = Prop::X;
     std::vector<MoveStep> steps;
     std::vector<u32> children; // the tasks a flow function was given; Join: the ones it waits for
-    f64 number = 0;            // seconds, or a loop's count (infinite for loop(f))
+    f64 number = 0;            // seconds, or a loop's count (infinite for loop(f)), or how many copies
+    u32 copy = 0;              // Copies: the first in Recording::copies
     i32 fn = -1;               // a function's registry ref
     std::string name;          // wait_until, loop_until, emit, sound
     Mark::Kind mark = Mark::Kind::Emit;

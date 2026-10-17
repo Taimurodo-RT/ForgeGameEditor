@@ -182,6 +182,19 @@ struct Note {
     std::string text;
 };
 
+// copies("искра", n, function(i, c) … end) (part 4г): a copy of a part of the picture, drawn from `born` to the clip's
+// end; its blocks are a part's, by its id.
+struct Copy {
+    std::string id;     // "искра[3]"
+    std::string source; // "искра"
+    u32 number = 0;     // 3: the part's copies in the clip, by their calls
+    f64 born = 0;
+    SiteRef site; // the copies(…) call
+};
+
+inline constexpr u32 kMaxCopiesCall = 64;
+inline constexpr u32 kMaxCopies = 256;
+
 struct Recording {
     std::string clip;
     f64 length = 0;                 // where the clip's own flow ends; what runs on in the background is cut there
@@ -199,6 +212,7 @@ struct Recording {
     std::vector<Along> alongs;     // by Block::ref of To::Along
     std::vector<std::string> snaps; // by Block::ref of To::Snap: the part placed by
     std::vector<Bone> bones;       // the parts of links and snaps, with the parts they are inside, a parent before them
+    std::vector<Copy> copies;      // in the order of their calls: by number within each part
     u64 generation = 0; // the script's recording it came from: bindings are asked of that one only
 
     // resolve(): each track's blocks by start and order.
@@ -249,7 +263,7 @@ bool block_going(const Block& b, f64 t, f64 frame);
 // of the first property in Prop's order); -1 when none has.
 i32 latest_block(const Recording& rec, u32 part, f64 t);
 
-// The pose of all parts at t, from the tracks.
+// The pose of all parts at t, from the tracks: the copies born at t or before with theirs.
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why);
 
 // The point at share u of a path's length and, when angle is given, the direction of its segment there in degrees.
@@ -261,6 +275,7 @@ bool bone_world(const Recording& rec, u32 bone, f64 t, BindingEval* eval, Affine
 // The same without its own move: C · W(parent).
 bool bone_frame(const Recording& rec, u32 bone, f64 t, BindingEval* eval, Affine& out, std::string& why);
 i32 bone_of(const Recording& rec, std::string_view id); // -1 for none
+i32 copy_of(const Recording& rec, std::string_view id); // its index in Recording::copies; -1 for none
 
 // The old pose(t) on top of a recorded one: moves and turns add, scales and opacity multiply, a fill or a morph the
 // script sets replaces the recorded one.
