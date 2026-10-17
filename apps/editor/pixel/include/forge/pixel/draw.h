@@ -53,6 +53,7 @@ struct DrawShape {
 struct Drawing {
     bool canvas = false; // canvas(w, h) was called
     f64 width = 0, height = 0;
+    u32 canvas_line = 0; // its line in the script
     std::vector<DrawShape> shapes; // in the order drawn: a group before what is drawn in it
     bool operator==(const Drawing&) const = default;
 };

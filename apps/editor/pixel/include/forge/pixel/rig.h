@@ -141,6 +141,12 @@ struct Pose {
     std::map<std::string, ShapeMorph> morphs;
     std::vector<OrderStep> order; // from the SVG's order, one after another
     std::vector<PartCopy> copies; // the copies drawn: one made by an earlier pose and not here is hidden
+    // The drawing shown (part 4д): empty for the main one, else a name of the rig's drawings. In a swap, the one it goes
+    // from and how far, 0 … 1: the pairs morph by it, the old parts fade by 1 − k, the new ones come in by k.
+    std::string drawing;
+    bool swap = false;
+    std::string swap_from;
+    f64 swap_k = 0;
 };
 
 // A copy the last pose drew, with its index for bounds(), carried(), matrix() and pivot().
@@ -173,9 +179,29 @@ public:
     f64 width() const;
     f64 height() const;
 
-    // A part's pivot (picture units); the centre of its rest bounds until set.
+    // A part's pivot (picture units); the centre of its rest bounds until set. Set, it is the part's with this id in
+    // every drawing (part 4д).
     void set_pivot(std::string_view id, vector::Point at);
     vector::Point pivot(i32 part) const;
+
+    // The character's other drawings (part 4д of docs/models/движение-модель.md): pictures of their own on the main
+    // one's canvas, by name. Loading the main picture drops them. False with why when the SVG does not load or its size
+    // is not the main picture's.
+    bool add_drawing(const std::string& name, std::string_view svg, std::string& why);
+    std::vector<std::string> drawings() const; // their names, sorted
+    // A drawing by name, "" and "draw" this picture itself; null for none.
+    Rig* drawing(std::string_view name);
+    const Rig* drawing(std::string_view name) const;
+    // The name of the picture a part (or an element) with this id is in: "" for this one, else the first drawing by
+    // name that has it; "" when none has. holder() is that picture.
+    std::string holder_name(std::string_view id) const;
+    const Rig& holder(std::string_view id) const;
+    // The picture the last pose() showed: this one or a drawing, in a swap the one it goes to; what the tab's tree,
+    // bounds and mouse go by.
+    Rig& shown();
+    const Rig& shown() const;
+    // Whether the last pose() was in a swap: the frame is two pictures, the old one under the new.
+    bool swapping() const;
 
     // Puts the picture in the pose, from the rest pose. Moves are rounded to multiples of `snap` picture units when it
     // is above 0 (the baker's whole pixels). A copy is made from its part at rest the first time a pose has it and kept
@@ -219,7 +245,19 @@ public:
 
 private:
     struct Impl;
+    struct SwapSide; // which picture of a swap this one is, and the other
     std::unique_ptr<Impl> impl_;
+
+    // pose(), draw() and bake() of one picture: the other drawings out of it.
+    bool pose_alone(const Pose& pose, std::string& why, f64 snap, const Rig& family, const SwapSide* side);
+    assets::CookedTexture draw_alone(u32 w, u32 h, const Affine& px);
+    void bake_alone(u32 w, u32 h, std::vector<u8>& out);
+    // The pose as drawing d takes it: its parts, copies, morphs and order; a mask, a link and an order neighbour it
+    // has not are off.
+    Pose for_drawing(const Pose& pose, const Rig& d) const;
+    // Whether part `id` (of the picture, or a copy the pose draws) is a shape that goes into a swap's pairs: not a
+    // group, not hidden by display="none".
+    bool swap_shape(const Pose& pose, const std::string& id) const;
 };
 
 // "#rgb", "#rrggbb", "rgb(r, g, b)" and a few names; false for anything else.

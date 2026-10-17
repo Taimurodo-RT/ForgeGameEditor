@@ -88,6 +88,7 @@ std::string value_words(Prop p, const PropValue& v) {
         case OrderStep::Kind::Below: return "под " + v.target;
         }
     }
+    if (p == Prop::Drawing) return v.target.empty() ? "draw" : v.target; // part 4д
     if (p == Prop::Morph) {
         if (v.v <= 0 || v.target.empty()) return "своя форма";
         return v.target + (v.v < 1 ? " " + format_number(v.v) : std::string());
@@ -112,6 +113,7 @@ std::string block_words(const Recording& rec, const Block& b) {
     if (!b.frames.empty()) return "tween";
     const std::string to = value_words(b.prop, b.value);
     if (prop_is_call(b.prop)) return to; // «наверх», «маска lid», «с hand»: the track says what it is
+    if (b.prop == Prop::Drawing) return "→ " + to; // «→ angry» on the track «рисунок» (part 4д)
     return b.spring ? "пружина → " + to : prop + " → " + to;
 }
 

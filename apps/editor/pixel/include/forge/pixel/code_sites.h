@@ -13,6 +13,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace forge::pixel {
@@ -90,6 +91,10 @@ public:
     const std::vector<CallSite>& sites() const { return sites_; }
     const std::vector<ClipFunction>& clips() const { return clips_; }
     const ClipFunction* clip(std::string_view name) const;
+    // The line of a key of the module's table (return { draw = …, drawings = … }) and of an item of its drawings
+    // (drawings = { angry = function(p, rng) … end }, part 4д); 0 when there is none.
+    u32 module_line(std::string_view key) const;
+    u32 drawing_line(std::string_view name) const;
 
     // The source with every call through __fc / __fm, numbered from first_id in sites() order: f(a, b) is
     // __fc(id, f, a, b) and o:m(a) is __fm(id, o, "m", a). Every token stays on its line.
@@ -99,6 +104,7 @@ private:
     std::string source_;
     std::vector<CallSite> sites_;
     std::vector<ClipFunction> clips_;
+    std::vector<std::pair<std::string, u32>> keys_, drawings_;
 };
 
 // A number as the editor writes it: to thousandths, without trailing zeros ("0.25", "-3", "12.5").

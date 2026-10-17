@@ -1,6 +1,7 @@
 #include "forge/pixel/rig.h"
 
 #include "forge/assets/image_edit.h"
+#include "forge/pixel/code_sites.h"
 #include "forge/vector/morph.h"
 #include "forge/vector/svg_shape.h"
 #include "forge/vector/trig.h"
@@ -127,6 +128,8 @@ struct Leaf {
     bool hidden = false; // a part the pose hid (its own paint, for the baker that shows shapes one by one)
     i32 part = -1;       // the innermost part it is in, -1 for none
     Affine rest_global;  // its path's points to picture units at rest
+    bool morphed = false; // in a swap (part 4д): the pose morphed it, into `now` (its path's units)
+    vector::Shape now;
 };
 
 // The effects a pose put on a part's scene (part 4б), in ThorVG's terms, kept so the baker can put them back.
@@ -364,7 +367,72 @@ void put_svg_paint(tvg::Shape* s, const SvgOutline& svg, i32 e) {
                            static_cast<f32>(vector::svg_number(vector::inherited(svg, e, "stroke-dashoffset"), 0)));
 }
 
+// A path through a matrix (part 4д: a shape of another drawing in the units of this one's).
+vector::Path transformed(const vector::Path& p, const Affine& m) {
+    vector::Path out = p;
+    for (vector::Contour& c : out.contours) {
+        c.start = m.apply(c.start);
+        for (vector::Cubic& q : c.curves) q.c1 = m.apply(q.c1), q.c2 = m.apply(q.c2), q.to = m.apply(q.to);
+    }
+    return out;
+}
+
+// A shape of another drawing in this one's units (part 4д): its path through the matrix, its stroke as wide as it
+// looks there.
+vector::Shape in_units(vector::Shape shape, const Affine& m) {
+    shape.path = transformed(shape.path, m);
+    shape.look.stroke_width *= std::sqrt(std::abs(m.a * m.d - m.b * m.c));
+    return shape;
+}
+
+// A morphed shape put on a leaf's paint: its path, and its look but for a gradient it keeps.
+void put_shape(Leaf& leaf, const vector::Shape& shape) {
+    tvg::Shape* s = leaf.shape;
+    s->reset();
+    for (const vector::Contour& c : shape.path.contours) {
+        s->moveTo(static_cast<f32>(c.start.x), static_cast<f32>(c.start.y));
+        for (const vector::Cubic& q : c.curves)
+            s->cubicTo(static_cast<f32>(q.c1.x), static_cast<f32>(q.c1.y), static_cast<f32>(q.c2.x), static_cast<f32>(q.c2.y),
+                       static_cast<f32>(q.to.x), static_cast<f32>(q.to.y));
+        if (c.closed) s->close();
+    }
+    const vector::Look& look = shape.look;
+    if (!leaf.rest.fill_grad)
+        s->fill(to_u8(look.fill.r), to_u8(look.fill.g), to_u8(look.fill.b), look.fill.on ? to_u8(look.fill.opacity) : 0);
+    if (!leaf.rest.stroke_grad)
+        s->strokeFill(to_u8(look.stroke.r), to_u8(look.stroke.g), to_u8(look.stroke.b), look.stroke.on ? to_u8(look.stroke.opacity) : 0);
+    s->strokeWidth(static_cast<f32>(look.stroke.on ? look.stroke_width : 0));
+    s->opacity(to_u8(look.opacity));
+    leaf.path_changed = leaf.look_changed = true;
+}
+
+// Straight RGBA b over a, pixel by pixel (a swap's frame, part 4д: the new drawing over the old).
+void over(std::vector<u8>& a, const std::vector<u8>& b) {
+    for (usize i = 0; i + 3 < a.size() && i + 3 < b.size(); i += 4) {
+        const u32 sa = b[i + 3];
+        if (sa == 0) continue;
+        if (sa == 255) {
+            std::copy_n(b.begin() + static_cast<std::ptrdiff_t>(i), 4, a.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        const u32 da = a[i + 3];
+        const u32 oa = sa * 255 + da * (255 - sa); // alpha times 255²
+        for (int c = 0; c < 3; ++c)
+            a[i + c] = static_cast<u8>((b[i + c] * sa * 255 + a[i + c] * da * (255 - sa) + oa / 2) / oa);
+        a[i + 3] = static_cast<u8>((oa + 127) / 255);
+    }
+}
+
 } // namespace
+
+// Which picture of a swap a pose is of (part 4д): the old one morphs its pairs into the new one's shapes and fades
+// the rest by 1 − k; the new one hides its pairs and brings the rest in by k.
+struct Rig::SwapSide {
+    bool from = false;
+    const Rig* other = nullptr;
+    std::string other_name;
+    f64 k = 0;
+};
 
 struct Rig::Impl {
     Engine engine; // first: the last to go
@@ -392,6 +460,12 @@ struct Rig::Impl {
     tvg::SwCanvas* canvas = nullptr;
     std::vector<u32> buffer;
     u32 cw = 0, ch = 0;
+
+    // Part 4д: the other drawings, by name, and what the last pose showed of them ("" the main picture).
+    std::map<std::string, Rig> drawings;
+    std::string shown;
+    bool swap = false;
+    std::string swap_from;
 
     ~Impl() {
         if (canvas) {
@@ -733,6 +807,7 @@ f64 Rig::height() const { return impl_->vb[3]; }
 
 void Rig::set_pivot(std::string_view id, vector::Point at) {
     if (const i32 i = part(id); i >= 0) impl_->pivots[static_cast<usize>(i)] = at;
+    for (auto& [name, d] : impl_->drawings) d.set_pivot(id, at);
 }
 
 vector::Point Rig::pivot(i32 i) const {
@@ -740,14 +815,15 @@ vector::Point Rig::pivot(i32 i) const {
     return impl_->pivots[static_cast<usize>(i)];
 }
 
-bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
+bool Rig::pose_alone(const Pose& pose, std::string& why, f64 snap, const Rig& family, const SwapSide* side) {
     Impl& m = *impl_;
-    why.clear();
     if (!m.pic) {
-        why = "SVG не загружен";
+        if (why.empty()) why = "SVG не загружен";
         return false;
     }
+    bool failed = false;
     auto fail = [&](std::string text) {
+        failed = true;
         if (why.empty()) why = std::move(text);
     };
 
@@ -778,6 +854,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         m.reordered = false;
     }
     for (Leaf& l : m.leaves) {
+        l.morphed = false;
         if (l.path_changed) {
             l.shape->reset();
             l.shape->appendPath(l.cmds.data(), static_cast<u32>(l.cmds.size()), l.pts.data(), static_cast<u32>(l.pts.size()));
@@ -839,8 +916,16 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
             fail("морфинг: «" + id + "» — группа, морфинг бывает только у фигуры");
             continue;
         }
-        const i32 ti = m.outline.find(morph.target);
-        if (ti < 0) {
+        // The target: a shape of this picture, else of the drawing that has it (part 4д), in this shape's units.
+        const Rig* tp_rig = this;
+        std::string tp_name;
+        i32 ti = m.outline.find(morph.target);
+        if (ti < 0 && &family != this) {
+            tp_name = family.holder_name(morph.target);
+            tp_rig = family.drawing(tp_name);
+            ti = tp_rig ? tp_rig->impl_->outline.find(morph.target) : -1;
+        }
+        if (ti < 0 || !tp_rig) {
             fail("морфинг «" + id + "»: в рисунке нет фигуры «" + morph.target + "»");
             continue;
         }
@@ -848,13 +933,20 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
             fail("морфинг «" + id + "»: k — не число");
             continue;
         }
+        const Impl& tm = *tp_rig->impl_;
         const i32 si = m.parts[static_cast<usize>(pi)].element;
-        if (transform_chain(m.outline, si) != transform_chain(m.outline, ti)) {
+        if (tp_rig == this && transform_chain(m.outline, si) != transform_chain(m.outline, ti)) {
             fail("морфинг «" + id + "» в «" + morph.target + "»: у фигур разные transform, их точки не в одних координатах");
             continue;
         }
+        const i32 tp = tp_rig->part(morph.target);
+        const PartRec* tr = tp >= 0 ? &tm.recs[static_cast<usize>(tp)] : nullptr;
+        if (tp_rig != this && (!tr || tr->leaf < 0)) {
+            fail("морфинг «" + id + "»: в рисунке нет фигуры «" + morph.target + "»");
+            continue;
+        }
         Leaf& leaf = m.leaves[static_cast<usize>(r.leaf)];
-        const std::string key = id + '\n' + morph.target;
+        const std::string key = id + '\n' + morph.target + (tp_rig == this ? std::string() : "\n@" + tp_name);
         auto it = m.morphs.find(key);
         if (it == m.morphs.end()) {
             vector::Shape from, to;
@@ -863,35 +955,70 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
                 fail("морфинг «" + id + "»: " + err);
                 continue;
             }
-            if (!shape_path(m.outline, ti, to.path, err)) {
+            if (!shape_path(tm.outline, ti, to.path, err)) {
                 fail("морфинг «" + id + "» в «" + morph.target + "»: " + err);
                 continue;
             }
             from.look = leaf.rest.vector_look();
-            const i32 tp = part(morph.target);
-            const PartRec* tr = tp >= 0 ? &m.recs[static_cast<usize>(tp)] : nullptr;
-            if (tr && tr->leaf >= 0 && !vector::display_none(m.outline, ti)) to.look = m.leaves[static_cast<usize>(tr->leaf)].rest.vector_look();
-            else to.look = vector::look_from_svg(m.outline, ti, from.look);
+            if (tr && tr->leaf >= 0 && !vector::display_none(tm.outline, ti)) to.look = tm.leaves[static_cast<usize>(tr->leaf)].rest.vector_look();
+            else to.look = vector::look_from_svg(tm.outline, ti, from.look);
+            if (tp_rig != this) to = in_units(std::move(to), inverse(leaf.rest_global) * tm.leaves[static_cast<usize>(tr->leaf)].rest_global);
             it = m.morphs.emplace(key, vector::prepare(from, to)).first;
         }
         vector::mix(it->second, morph.k, m.scratch);
-        tvg::Shape* s = leaf.shape;
-        s->reset();
-        for (const vector::Contour& c : m.scratch.path.contours) {
-            s->moveTo(static_cast<f32>(c.start.x), static_cast<f32>(c.start.y));
-            for (const vector::Cubic& q : c.curves)
-                s->cubicTo(static_cast<f32>(q.c1.x), static_cast<f32>(q.c1.y), static_cast<f32>(q.c2.x), static_cast<f32>(q.c2.y),
-                           static_cast<f32>(q.to.x), static_cast<f32>(q.to.y));
-            if (c.closed) s->close();
+        put_shape(leaf, m.scratch);
+        if (side) {
+            leaf.morphed = true;
+            leaf.now = m.scratch;
         }
-        const vector::Look& look = m.scratch.look;
-        if (!leaf.rest.fill_grad)
-            s->fill(to_u8(look.fill.r), to_u8(look.fill.g), to_u8(look.fill.b), look.fill.on ? to_u8(look.fill.opacity) : 0);
-        if (!leaf.rest.stroke_grad)
-            s->strokeFill(to_u8(look.stroke.r), to_u8(look.stroke.g), to_u8(look.stroke.b), look.stroke.on ? to_u8(look.stroke.opacity) : 0);
-        s->strokeWidth(static_cast<f32>(look.stroke.on ? look.stroke_width : 0));
-        s->opacity(to_u8(look.opacity));
-        leaf.path_changed = leaf.look_changed = true;
+    }
+
+    // A swap (part 4д). The old picture: each shape part with a pair in the new one morphs from what it is now (its
+    // own shape, or its morph) to what the pair is now, in this shape's units.
+    std::vector<char> paired(m.parts.size(), 0);
+    if (side && side->other) {
+        const Rig& o = *side->other;
+        const Impl& om = *o.impl_;
+        for (usize pi = 0; pi < m.parts.size(); ++pi) {
+            if (pi >= m.picture && !m.drawn[pi]) continue;
+            const std::string& id = m.parts[pi].id;
+            if (!swap_shape(pose, id) || !o.swap_shape(pose, id)) continue;
+            paired[pi] = 1;
+            // The new picture is posed first: its copies are made by now.
+            const i32 oi = om.find(id);
+            if (!side->from || oi < 0) continue;
+            Leaf& a = m.leaves[static_cast<usize>(m.recs[pi].leaf)];
+            const Leaf& b = om.leaves[static_cast<usize>(om.recs[static_cast<usize>(oi)].leaf)];
+            auto now = [](const Impl& im, const Leaf& l, i32 element, vector::Shape& out, std::string& err) {
+                if (l.morphed) {
+                    out = l.now;
+                    return true;
+                }
+                out.look = l.rest.vector_look();
+                return shape_path(im.outline, element, out.path, err);
+            };
+            vector::Shape from, to;
+            std::string err;
+            if (!now(m, a, m.parts[pi].element, from, err) || !now(om, b, om.parts[static_cast<usize>(oi)].element, to, err)) {
+                fail("смена рисунка, «" + id + "»: " + err);
+                continue;
+            }
+            to = in_units(std::move(to), inverse(a.rest_global) * b.rest_global);
+            // The same pair at rest again and again: prepared once.
+            const vector::Morph* mo = nullptr;
+            vector::Morph fresh;
+            if (!a.morphed && !b.morphed) {
+                const std::string key = "\x01" + id + '\n' + side->other_name;
+                auto it = m.morphs.find(key);
+                if (it == m.morphs.end()) it = m.morphs.emplace(key, vector::prepare(from, to)).first;
+                mo = &it->second;
+            } else {
+                fresh = vector::prepare(from, to);
+                mo = &fresh;
+            }
+            vector::mix(*mo, side->k, m.scratch);
+            put_shape(a, m.scratch);
+        }
     }
 
     // The parts the pose gives, by index, each checked.
@@ -1070,6 +1197,26 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         }
     }
 
+    // A swap (part 4д): the new picture hides its pairs (the old one draws them), every other shape of either fades:
+    // the old by 1 − k, the new by k.
+    if (side && side->other) {
+        const f64 k = side->from ? 1 - side->k : side->k;
+        for (usize pi = 0; pi < m.parts.size(); ++pi) {
+            if (!paired[pi] || side->from) continue;
+            PartRec& r = m.recs[pi];
+            r.paint->visible(false);
+            r.hidden = true;
+            m.leaves[static_cast<usize>(r.leaf)].hidden = true;
+        }
+        for (usize li = 0; li < m.leaves.size(); ++li) {
+            Leaf& l = m.leaves[li];
+            const i32 own = l.part >= 0 && m.recs[static_cast<usize>(l.part)].leaf == static_cast<i32>(li) ? l.part : -1;
+            if (l.hidden || (own >= 0 && paired[static_cast<usize>(own)])) continue;
+            l.shape->opacity(to_u8(l.shape->opacity() / 255.0 * k));
+            l.look_changed = true;
+        }
+    }
+
     // Tints and flashes: the colours of each shape, its own part's first, then its groups' (part 4б).
     auto tone = [&](i32 q, Tone& t) {
         const PartPose* pp = q >= 0 ? posed[static_cast<usize>(q)] : nullptr;
@@ -1240,8 +1387,131 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         m.reordered = true;
     }
     m.pic->transform(m.pic->transform()); // ThorVG redraws a picture only when the picture itself changed
-    return why.empty();
+    return !failed;
 }
+
+bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
+    Impl& m = *impl_;
+    why.clear();
+    m.shown.clear();
+    m.swap = false;
+    m.swap_from.clear();
+    if (m.drawings.empty() && pose.drawing.empty() && !pose.swap) return pose_alone(pose, why, snap, *this, nullptr);
+    // Part 4д: the picture shown takes the pose of its parts; in a swap, the new one first, then the old one under it.
+    Rig* to = drawing(pose.drawing);
+    if (!to) {
+        why = "нет рисунка «" + pose.drawing + "»";
+        pose_alone(for_drawing(pose, *this), why, snap, *this, nullptr);
+        return false;
+    }
+    Rig* from = pose.swap ? drawing(pose.swap_from) : nullptr;
+    if (pose.swap && !from) why = "нет рисунка «" + pose.swap_from + "»";
+    if (from == to) from = nullptr;
+    m.shown = to == this ? std::string() : pose.drawing;
+    bool ok = why.empty();
+    if (!from) return to->pose_alone(for_drawing(pose, *to), why, snap, *this, nullptr) && ok;
+    m.swap = true;
+    m.swap_from = from == this ? std::string() : pose.swap_from;
+    const f64 k = std::isfinite(pose.swap_k) ? std::clamp(pose.swap_k, 0.0, 1.0) : 0;
+    const SwapSide in{false, from, m.swap_from, k}, out{true, to, m.shown, k};
+    ok = to->pose_alone(for_drawing(pose, *to), why, snap, *this, &in) && ok;
+    return from->pose_alone(for_drawing(pose, *from), why, snap, *this, &out) && ok;
+}
+
+Pose Rig::for_drawing(const Pose& pose, const Rig& d) const {
+    if (impl_->drawings.empty()) return pose;
+    // Whether some picture of the character has the part: the main one or a drawing.
+    auto known = [&](const std::string& id) { return !holder_name(id).empty() || part(id) >= 0; };
+    auto source_of = [&](const std::string& id) -> const std::string* {
+        for (const PartCopy& c : pose.copies)
+            if (c.id == id) return &c.source;
+        return nullptr;
+    };
+    // A part d has, or one no picture has (its error stays).
+    auto takes = [&](const std::string& id) {
+        const std::string* src = source_of(id);
+        const std::string& own = src ? *src : id;
+        return d.part(own) >= 0 || !known(own);
+    };
+    auto lacks = [&](const std::string& id) { return d.part(id) < 0 && known(id); };
+    Pose out;
+    for (const PartCopy& c : pose.copies)
+        if (takes(c.id)) out.copies.push_back(c);
+    for (const auto& [id, pp] : pose.parts) {
+        if (!takes(id)) continue;
+        PartPose q = pp;
+        if (!q.mask.empty() && lacks(q.mask)) q.mask.clear(); // no mask in a drawing without it
+        if (!q.carry_by.empty() && lacks(q.carry_by)) q.carry_by.clear(); // carried as if its carrier were at rest
+        out.parts.emplace(id, std::move(q));
+    }
+    for (const auto& [id, mo] : pose.morphs)
+        if (takes(id)) out.morphs.emplace(id, mo);
+    for (const OrderStep& step : pose.order)
+        if (takes(step.part) && (step.other.empty() || !lacks(step.other))) out.order.push_back(step);
+    return out;
+}
+
+bool Rig::swap_shape(const Pose& pose, const std::string& id) const {
+    const Impl& m = *impl_;
+    if (const i32 p = part(id); p >= 0)
+        return m.recs[static_cast<usize>(p)].leaf >= 0 && !vector::display_none(m.outline, m.parts[static_cast<usize>(p)].element);
+    for (const PartCopy& c : pose.copies)
+        if (c.id == id) {
+            const i32 src = part(c.source);
+            return src >= 0 && m.recs[static_cast<usize>(src)].leaf >= 0; // a copy of a hidden shape is seen
+        }
+    return false;
+}
+
+bool Rig::add_drawing(const std::string& name, std::string_view svg, std::string& why) {
+    Impl& m = *impl_;
+    if (!m.pic) return why = "основной рисунок не загружен", false;
+    if (name.empty() || name == "draw") return why = "рисунок «" + name + "»: так зовут основной рисунок", false;
+    Rig d;
+    if (!d.load(svg, why)) return why = "рисунок «" + name + "»: " + why, false;
+    if (format_number(d.width()) != format_number(width()) || format_number(d.height()) != format_number(height()))
+        return why = "у рисунка «" + name + "» другой холст: " + format_number(d.width()) + " × " + format_number(d.height()) +
+                     ", а у основного " + format_number(width()) + " × " + format_number(height()),
+               false;
+    m.drawings.insert_or_assign(name, std::move(d));
+    // Swaps prepared against the drawing before are gone with it.
+    m.morphs.clear();
+    for (auto& [n, other] : m.drawings) other.impl_->morphs.clear();
+    return true;
+}
+
+std::vector<std::string> Rig::drawings() const {
+    std::vector<std::string> out;
+    for (const auto& [name, d] : impl_->drawings) out.push_back(name);
+    return out;
+}
+
+Rig* Rig::drawing(std::string_view name) {
+    if (name.empty() || name == "draw") return this;
+    const auto it = impl_->drawings.find(std::string(name));
+    return it == impl_->drawings.end() ? nullptr : &it->second;
+}
+
+const Rig* Rig::drawing(std::string_view name) const { return const_cast<Rig*>(this)->drawing(name); }
+
+std::string Rig::holder_name(std::string_view id) const {
+    auto has = [&](const Rig& r) { return r.part(id) >= 0 || r.impl_->outline.find(std::string(id)) >= 0; };
+    if (!impl_->pic || has(*this)) return {};
+    for (const auto& [name, d] : impl_->drawings)
+        if (has(d)) return name;
+    return {};
+}
+
+const Rig& Rig::holder(std::string_view id) const { return *drawing(holder_name(id)); }
+
+Rig& Rig::shown() {
+    Rig* r = drawing(impl_->shown);
+    return r ? *r : *this;
+}
+
+const Rig& Rig::shown() const { return const_cast<Rig*>(this)->shown(); }
+
+bool Rig::swapping() const { return impl_->swap; }
 
 Affine Rig::to_pixels(u32 w, u32 h) const {
     const f64* vb = impl_->vb;
@@ -1253,6 +1523,18 @@ Affine Rig::to_pixels(u32 w, u32 h) const {
 assets::CookedTexture Rig::draw(u32 w, u32 h) { return draw(w, h, to_pixels(w, h)); }
 
 assets::CookedTexture Rig::draw(u32 w, u32 h, const Affine& px) {
+    // A swap's frame (part 4д): the new picture over the old one.
+    Rig& to = shown();
+    Rig* from = impl_->swap ? drawing(impl_->swap_from) : nullptr;
+    if (!from) return to.draw_alone(w, h, px);
+    assets::CookedTexture out = from->draw_alone(w, h, px);
+    const assets::CookedTexture top = to.draw_alone(w, h, px);
+    if (out.rgba8.size() != top.rgba8.size()) return top;
+    over(out.rgba8, top.rgba8);
+    return out;
+}
+
+assets::CookedTexture Rig::draw_alone(u32 w, u32 h, const Affine& px) {
     assets::CookedTexture out;
     Impl& m = *impl_;
     if (!m.pic || w == 0 || h == 0) return out;
@@ -1265,10 +1547,44 @@ assets::CookedTexture Rig::draw(u32 w, u32 h, const Affine& px) {
 
 assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
     assets::CookedTexture out;
-    Impl& m = *impl_;
-    if (!m.pic || w == 0 || h == 0) return out;
+    if (!impl_->pic || w == 0 || h == 0) return out;
     out.width = w, out.height = h;
-    out.rgba8.assign(static_cast<usize>(w) * h * 4, 0);
+    // A swap's frame (part 4д): the old picture, the new one's pixels over it.
+    Rig& to = shown();
+    Rig* from = impl_->swap ? drawing(impl_->swap_from) : nullptr;
+    if (from) {
+        std::vector<u8> top;
+        from->bake_alone(w, h, out.rgba8);
+        to.bake_alone(w, h, top);
+        over(out.rgba8, top);
+    } else {
+        to.bake_alone(w, h, out.rgba8);
+    }
+    if (!options.palette.empty())
+        for (usize i = 0; i < out.rgba8.size(); i += 4) {
+            if (out.rgba8[i + 3] == 0) continue;
+            const Rgba8* best = nullptr;
+            i64 best_d = 0;
+            for (const Rgba8& c : options.palette) {
+                const i64 dr = i64(out.rgba8[i]) - c.r, dg = i64(out.rgba8[i + 1]) - c.g, db = i64(out.rgba8[i + 2]) - c.b;
+                const i64 d = dr * dr + dg * dg + db * db;
+                if (!best || d < best_d) best = &c, best_d = d;
+            }
+            out.rgba8[i] = best->r, out.rgba8[i + 1] = best->g, out.rgba8[i + 2] = best->b;
+        }
+    if (options.outline) {
+        assets::Effect e;
+        e.kind = assets::EffectKind::Outline;
+        e.color = {options.outline_color.r, options.outline_color.g, options.outline_color.b, 255};
+        assets::apply_effect(out, assets::whole_rect(out), e);
+    }
+    return out;
+}
+
+void Rig::bake_alone(u32 w, u32 h, std::vector<u8>& out) {
+    Impl& m = *impl_;
+    out.assign(static_cast<usize>(w) * h * 4, 0);
+    if (!m.pic) return;
     m.target(w, h);
     const Affine px = to_pixels(w, h);
 
@@ -1276,7 +1592,7 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
     auto pass = [&](bool own, u8 r, u8 g, u8 b) {
         m.render(px);
         const u8* src = m.bytes();
-        u8* dst = out.rgba8.data();
+        u8* dst = out.data();
         for (usize i = 0, n = static_cast<usize>(w) * h * 4; i < n; i += 4) {
             if (src[i + 3] < 128) continue;
             dst[i] = own ? src[i] : r;
@@ -1353,27 +1669,8 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
     for (const PartRec& r : m.recs)
         if (r.fx_on) put_fx(r, FxMode::Full);
     m.pic->transform(m.pic->transform());
-
-    if (!options.palette.empty())
-        for (usize i = 0; i < out.rgba8.size(); i += 4) {
-            if (out.rgba8[i + 3] == 0) continue;
-            const Rgba8* best = nullptr;
-            i64 best_d = 0;
-            for (const Rgba8& c : options.palette) {
-                const i64 dr = i64(out.rgba8[i]) - c.r, dg = i64(out.rgba8[i + 1]) - c.g, db = i64(out.rgba8[i + 2]) - c.b;
-                const i64 d = dr * dr + dg * dg + db * db;
-                if (!best || d < best_d) best = &c, best_d = d;
-            }
-            out.rgba8[i] = best->r, out.rgba8[i + 1] = best->g, out.rgba8[i + 2] = best->b;
-        }
-    if (options.outline) {
-        assets::Effect e;
-        e.kind = assets::EffectKind::Outline;
-        e.color = {options.outline_color.r, options.outline_color.g, options.outline_color.b, 255};
-        assets::apply_effect(out, assets::whole_rect(out), e);
-    }
-    return out;
 }
+
 
 void Rig::bounds(i32 part, u32 w, u32 h, f64 out[4]) { bounds(part, to_pixels(w, h), out); }
 
