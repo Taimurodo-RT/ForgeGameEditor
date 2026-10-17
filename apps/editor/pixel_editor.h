@@ -529,6 +529,7 @@ private:
     bool sounds_changed();           // one of them appeared, changed or went on disk
     void lay_sounds();               // the rows of sounds from the view of the timeline
     void sound_frames(i64 now, bool wrapped); // the preview showed range frame `now`: the marks it passed sound
+    void hush(); // another clip or character: the preview's sounds stop, what it sounded is forgotten
     std::string state_name(const std::string& id) const; // «Идёт» of "walk"; the id when no template plays it
     void dirty(const char* var) {
         if (model_) model_.DirtyVariable(var);

@@ -201,6 +201,12 @@ void PixelEditor::set_sound(bool on) {
     if (!on) mixer_.stop_all();
 }
 
+void PixelEditor::hush() {
+    mixer_.stop_all();
+    sounded_.clear();
+    sound_shown_ = -1;
+}
+
 void PixelEditor::away() {
     if (mixer_.voices() == 0) return;
     mixer_.stop_all();

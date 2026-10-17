@@ -733,9 +733,7 @@ bool PixelEditor::open(const std::string& rel) {
     forget_character();
     vector_ = frame_px_ = vector_shown_ = {};
     zoom_ = {};
-    mixer_.stop_all();
-    sounded_.clear();
-    sound_shown_ = -1;
+    hush();
     sound_files_.clear();
     reload();
     fit_view();
@@ -1256,9 +1254,7 @@ bool PixelEditor::select_clip(const std::string& state) {
     frame_ = 0;
     block_ = -1;
     tv_.scale = tv_.start = 0; // all of the clip in sight
-    mixer_.stop_all();
-    sounded_.clear();
-    sound_shown_ = -1;
+    hush();
     if (!note_.empty() && note_ == refused_) note_.clear(); // a mouse edit's refusal was about the clip left
     recount();
     select_block(-1);
@@ -1283,6 +1279,7 @@ bool PixelEditor::add_clip(const std::string& state) {
     frame_ = 0;
     block_ = -1;
     tv_.scale = tv_.start = 0;
+    hush();
     return change(after, "«" + name() + "»: клип «" + state_name(state) + "»");
 }
 
@@ -1293,6 +1290,7 @@ bool PixelEditor::remove_clip() {
     const std::string state = c->state;
     after.clips.erase(std::remove_if(after.clips.begin(), after.clips.end(), [&](const auto& x) { return x.state == state; }), after.clips.end());
     clip_.clear();
+    hush();
     return change(after, "«" + name() + "»: клип «" + state_name(state) + "» убран");
 }
 

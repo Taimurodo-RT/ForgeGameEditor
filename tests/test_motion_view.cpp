@@ -235,6 +235,16 @@ TEST_CASE("Motion view: the grid's step and lines") {
     CHECK(at(w, 6, 1) == std::vector<u8>{204, 204, 204, 255}); // x = 1: 128·0.4 + 255·0.6
     CHECK(at(w, 7, 1) == std::vector<u8>{204, 204, 204, 255});
     CHECK(at(w, 4, 0) == std::vector<u8>{255, 255, 255, 255});
+
+    // A line between two pixels is in the one its point is in: 0,75 in column 0, 3,25 in 3, 5,75 in 5.
+    assets::CookedTexture f;
+    f.width = 8, f.height = 1;
+    f.rgba8.assign(8 * 4, 0);
+    draw_grid(f, Affine{2.5, 0, 0, 2.5, 0.75, 1.5}, 1, 1); // no y line within its row
+    CHECK(at(f, 0, 0) == axis);
+    CHECK(at(f, 3, 0) == line);
+    CHECK(at(f, 5, 0) == line);
+    for (u32 x : {1u, 2u, 4u, 6u, 7u}) CHECK(at(f, x, 0) == none);
 }
 
 TEST_CASE("Motion view: coordinates and colours as the line writes them") {
@@ -282,7 +292,10 @@ TEST_CASE("Motion sound: the file by its three names") {
     s = find_sound(sounds, "шум");
     CHECK(s.file == sounds / utf8_path("шум.wav"));
     CHECK(!s.clip);
-    CHECK(s.why.rfind("звук «шум»: sounds/шум.wav не читается (", 0) == 0);
+    std::string error;
+    CHECK(!audio::load(sounds / utf8_path("шум.wav"), &error));
+    CHECK(!error.empty());
+    CHECK(s.why == "звук «шум»: sounds/шум.wav не читается (" + error + ")");
 
     // A sound of the game is a file of its folder.
     write_bytes(dir.path / utf8_path("выше.wav"), tone);
