@@ -566,8 +566,17 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         leaf.path_changed = leaf.look_changed = true;
     }
 
-    // Parts: moved, turned and scaled around their pivots in rest picture units, then their opacity and fill.
-    for (const auto& [id, pp] : pose.parts) {
+    // Parts: moved, turned and scaled around their pivots in rest picture units, then their opacity and fill. A group
+    // before the parts in it, so a part's own look goes over its group's whatever their names.
+    std::vector<std::pair<i32, const std::pair<const std::string, PartPose>*>> by_depth;
+    for (const auto& e : pose.parts) {
+        i32 depth = 0;
+        for (i32 q = part(e.first); q >= 0; q = m.parts[static_cast<usize>(q)].parent) ++depth;
+        by_depth.emplace_back(depth, &e);
+    }
+    std::stable_sort(by_depth.begin(), by_depth.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& d : by_depth) {
+        const auto& [id, pp] = *d.second;
         const i32 pi = part(id);
         if (pi < 0) {
             fail("в рисунке нет части «" + id + "»");

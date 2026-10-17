@@ -530,6 +530,22 @@ TEST_CASE("Motion draw: a frame of each property is the SVG with it written, byt
         REQUIRE(rig.pose(below, why));
         same_picture(rig, picture({{"head", "stroke-width=\"0\""}}));
     }
+    SUBCASE("a part's own look over its group's, whatever their names") {
+        // "arm" comes before "body" by name; the group's fill and stroke go first all the same.
+        Pose pose;
+        pose.parts["body"].has_fill = true;
+        pose.parts["body"].fill = {255, 0, 0, 255};
+        pose.parts["body"].has_stroke = true;
+        pose.parts["body"].stroke = {0, 0, 0, 255};
+        pose.parts["arm"].has_fill = true;
+        pose.parts["arm"].fill = {0, 160, 0, 255};
+        pose.parts["arm"].has_stroke = true;
+        pose.parts["arm"].stroke = {0, 0, 255, 255};
+        REQUIRE(rig.pose(pose, why));
+        same_picture(rig, picture({{"torso", "fill=\"#ff0000\" stroke=\"#000000\""},
+                                   {"arm", "fill=\"#00a000\" stroke=\"#0000ff\""},
+                                   {"head", "fill=\"#ff0000\" stroke=\"#000000\""}}));
+    }
     SUBCASE("dash: the pattern moved along the line; a shape without one as it was") {
         Pose pose;
         pose.parts["line"].dash = 3;
