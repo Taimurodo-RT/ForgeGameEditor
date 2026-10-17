@@ -152,7 +152,7 @@ int api_shape_morph(lua_State* L) {
     if (!std::isfinite(k)) luaL_error(L, "shape(\"%s\"):morph — k не число", id);
     PoseScript::Impl& im = impl_of(L);
     if (!im.pose) luaL_error(L, "shape(…):morph работает только внутри pose (в клипе — part(…):morph(цель, с))");
-    if (im.rig && im.rig->outline().find(target) < 0) luaL_error(L, "в рисунке нет фигуры «%s»", target);
+    if (im.rig && im.rig->holder(target).outline().find(target) < 0) luaL_error(L, "в рисунке нет фигуры «%s»", target);
     ShapeMorph& m = im.pose->morphs[id];
     m.target = target;
     m.k = k;
@@ -164,9 +164,10 @@ int api_shape(lua_State* L) {
     const char* id = luaL_checkstring(L, 1);
     PoseScript::Impl& im = impl_of(L);
     if (im.rig) {
-        const i32 p = im.rig->part(id);
+        const Rig& r = im.rig->holder(id); // the drawing that has it (part 4д)
+        const i32 p = r.part(id);
         if (p < 0) luaL_error(L, "в рисунке нет фигуры «%s»", id);
-        if (!im.rig->parts()[static_cast<usize>(p)].shape) luaL_error(L, "«%s» — группа, морфинг бывает только у фигуры", id);
+        if (!r.parts()[static_cast<usize>(p)].shape) luaL_error(L, "«%s» — группа, морфинг бывает только у фигуры", id);
     }
     lua_newtable(L);
     lua_pushstring(L, id);
@@ -591,6 +592,7 @@ bool PoseScript::load(std::string_view source) {
     im.clips.clear();
     im.has_pose = false;
     im.has_draw = false;
+    im.drawings.clear();
     im.error.clear();
     im.error_line = 0;
     im.cache.clear();
@@ -621,6 +623,32 @@ bool PoseScript::load(std::string_view source) {
         lua_pop(im.L, 1);
         return false;
     }
+    // The other drawings (part 4д): functions by name, at their lines when they are not.
+    auto load_error = [&](u32 line, std::string text) {
+        im.drawings.clear();
+        im.error_line = line;
+        im.error = line ? "строка " + std::to_string(line) + ": " + text : std::move(text);
+        lua_pop(im.L, 1);
+        return false;
+    };
+    lua_getfield(T, -1, "drawings");
+    if (lua_istable(T, -1)) {
+        lua_pushnil(T);
+        while (lua_next(T, -2)) {
+            const bool named = lua_type(T, -2) == LUA_TSTRING;
+            const std::string name = named ? lua_tostring(T, -2) : "?";
+            const u32 line = named ? im.files[0].code.drawing_line(name) : im.files[0].code.module_line("drawings");
+            if (!named || !lua_isfunction(T, -1))
+                return load_error(line, "drawings." + name + ": рисунок — функция, drawings = { angry = function(p, rng) … end }");
+            if (name == "draw") return load_error(line, "drawings.draw: так зовут основной рисунок, у другого рисунка — своё имя");
+            im.drawings.push_back(name);
+            lua_pop(T, 1);
+        }
+    } else if (!lua_isnil(T, -1)) {
+        return load_error(im.files[0].code.module_line("drawings"), "drawings должен быть таблицей: drawings = { angry = function(p, rng) … end }");
+    }
+    lua_pop(T, 1);
+    std::sort(im.drawings.begin(), im.drawings.end());
     lua_getfield(T, -1, "clips");
     if (lua_istable(T, -1)) {
         lua_pushnil(T);

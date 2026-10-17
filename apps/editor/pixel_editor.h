@@ -116,6 +116,8 @@ public:
     // Whether the picture is the code's (draw), and the text of the SVG the rig was made of (the file's or the drawing's).
     bool drawn() const { return drawn_; }
     const std::string& picture_svg() const { return svg_text_; }
+    // The other drawings of the code, as the rig has them (part 4д).
+    const std::vector<pixel::NamedDrawing>& drawings() const { return others_; }
     // Why the character does not show or the pose fails: empty when all is well.
     const std::string& problem() const { return problem_; }
     u32 error_line() const { return error_line_; }
@@ -462,6 +464,8 @@ private:
     // The picture: the code's drawing when the script has draw, else the SVG of the file.
     void load_picture();
     void load_svg();
+    // The other drawings of the code (part 4д) on the main picture: drawn again, put on a fresh rig when they changed.
+    void load_drawings();
     void load_script();
     void rebuild_list();
     void rebuild_states();
@@ -563,6 +567,9 @@ private:
     // file's SVG is not used.
     bool drawn_ = false;
     pixel::Drawing drawing_;
+    std::vector<pixel::NamedDrawing> others_; // drawings = { … } of the code, by name (part 4д)
+    std::string others_key_;                  // their names and SVGs, as the rig has them
+    const pixel::Rig* shown_rig_ = nullptr;   // the drawing the tree was made of: rebuilt when the frame shows another
     std::string draw_problem_, picture_note_;
     std::string refused_; // the note a mouse edit was refused with: it is about the clip, gone with it
     u32 draw_line_ = 0;

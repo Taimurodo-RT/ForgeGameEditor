@@ -4,19 +4,57 @@
 
 namespace forge::pixel {
 
-std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc, const Drawing* drawn) {
-    // A part the file has no pivot for turns round the drawing's or the middle of its rest bounds, whatever was set
-    // before (Ctrl+Z).
-    for (const Part& p : rig.parts()) {
-        const auto it = doc.pivots.find(p.id);
-        vector::Point at{(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2};
-        if (it != doc.pivots.end()) at = it->second;
-        else if (drawn) drawn_pivot(*drawn, p.id, at);
-        rig.set_pivot(p.id, at);
+bool draw_drawings(PoseScript& script, const PixelDoc& doc, std::vector<NamedDrawing>& out, std::string& why, u32& line) {
+    out.clear();
+    line = 0;
+    for (const std::string& name : script.drawings()) {
+        NamedDrawing d;
+        d.name = name;
+        d.line = script.code().drawing_line(name);
+        if (!script.draw_named(name, doc.params, doc.seed, d.drawing)) {
+            why = script.error();
+            line = script.error_line();
+            out.clear();
+            return false;
+        }
+        d.svg = drawing_svg(d.drawing, doc.frame_w, doc.frame_h);
+        out.push_back(std::move(d));
     }
+    return true;
+}
+
+bool add_drawings(Rig& rig, const std::vector<NamedDrawing>& drawings, std::string& why, u32& line) {
+    line = 0;
+    for (const NamedDrawing& d : drawings)
+        if (!rig.add_drawing(d.name, d.svg, why)) {
+            line = d.drawing.canvas_line ? d.drawing.canvas_line : d.line;
+            if (line) why = "строка " + std::to_string(line) + ": " + why;
+            return false;
+        }
+    return true;
+}
+
+std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc, const Drawing* drawn, const std::vector<NamedDrawing>* others) {
+    // A part the file has no pivot for turns round the drawing's or the middle of its rest bounds, whatever was set
+    // before (Ctrl+Z). The main picture first: what it sets goes to every drawing, each then its own.
+    auto put = [&](Rig& r) {
+        for (const Part& p : r.parts()) {
+            const auto it = doc.pivots.find(p.id);
+            vector::Point at{(p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2};
+            if (it != doc.pivots.end()) {
+                at = it->second;
+            } else if (!(drawn && drawn_pivot(*drawn, p.id, at)) && others) {
+                for (const NamedDrawing& o : *others)
+                    if (drawn_pivot(o.drawing, p.id, at)) break;
+            }
+            r.set_pivot(p.id, at);
+        }
+    };
+    put(rig);
+    for (const std::string& name : rig.drawings()) put(*rig.drawing(name));
     std::vector<std::string> missing;
     for (const auto& [id, at] : doc.pivots)
-        if (rig.part(id) < 0) missing.push_back(id);
+        if (rig.holder(id).part(id) < 0) missing.push_back(id);
     return missing;
 }
 

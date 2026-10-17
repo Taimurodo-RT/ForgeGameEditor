@@ -929,10 +929,11 @@ void PixelEditor::reload() {
     else doc_problem_ = "«" + path_to_utf8(file_.filename()) + "»: " + why;
     load_script();
     load_picture();
-    pixel::apply_pivots(rig_, doc_, drawn_ ? &drawing_ : nullptr);
+    load_drawings();
+    pixel::apply_pivots(rig_, doc_, drawn_ ? &drawing_ : nullptr, &others_);
     if (std::none_of(doc_.clips.begin(), doc_.clips.end(), [&](const auto& c) { return c.state == clip_; }))
         clip_ = doc_.clips.empty() ? std::string() : doc_.clips.front().state;
-    if (!part_.empty() && rig_.part(part_) < 0) part_.clear();
+    if (!part_.empty() && rig_.holder(part_).part(part_) < 0) part_.clear();
     recount();
     if (block_ >= 0) select_block(block_); // its info and lines from the recording as it is now
     check_edited();
@@ -979,6 +980,38 @@ void PixelEditor::load_picture() {
     svg_text_ = std::move(text);
     drawing_ = std::move(d);
     script_.forget(); // its recordings checked the parts of the picture before
+}
+
+void PixelEditor::load_drawings() {
+    std::vector<pixel::NamedDrawing> drawn;
+    std::string why;
+    u32 line = 0;
+    if (script_.loaded() && rig_.loaded() && !pixel::draw_drawings(script_, doc_, drawn, why, line)) {
+        // The rig keeps the drawings it had: the frame shows what was drawn before.
+        draw_problem_ = (draw_problem_.empty() ? "" : draw_problem_ + "\n") + "Рисунок «" + doc_.script + "»: " + why +
+                        (others_.empty() ? "" : " (показан прежний)");
+        if (!draw_line_) draw_line_ = line;
+        return;
+    }
+    std::string key;
+    for (const pixel::NamedDrawing& d : drawn) key += d.name + '\n' + d.svg + '\n';
+    if (key == others_key_ && rig_.drawings().size() == drawn.size()) {
+        others_ = std::move(drawn);
+        return;
+    }
+    // A drawing gone from the code goes from the rig: the main picture again, the drawings on it.
+    pixel::Rig fresh;
+    if (!rig_.loaded() || !fresh.load(svg_text_, why)) return;
+    if (!pixel::add_drawings(fresh, drawn, why, line)) {
+        draw_problem_ = (draw_problem_.empty() ? "" : draw_problem_ + "\n") + "Рисунок «" + doc_.script + "»: " + why;
+        if (!draw_line_) draw_line_ = line;
+        return;
+    }
+    rig_ = std::move(fresh);
+    others_ = std::move(drawn);
+    others_key_ = std::move(key);
+    shown_rig_ = nullptr;
+    script_.forget(); // its recordings checked the parts of the drawings before
 }
 
 void PixelEditor::load_svg() {
@@ -1040,7 +1073,7 @@ void PixelEditor::load_script() {
 // --- parts and pivots --------------------------------------------------------------
 
 bool PixelEditor::select_part(const std::string& id) {
-    if (id == part_ || (!id.empty() && rig_.part(id) < 0)) return false;
+    if (id == part_ || (!id.empty() && rig_.holder(id).part(id) < 0)) return false; // a part of any drawing (part 4д)
     part_ = id;
     view_dirty_ = true;
     rebuild();
@@ -1048,7 +1081,7 @@ bool PixelEditor::select_part(const std::string& id) {
 }
 
 bool PixelEditor::set_pivot(const std::string& id, vector::Point at) {
-    if (!has_ || rig_.part(id) < 0 || !std::isfinite(at.x) || !std::isfinite(at.y)) return false;
+    if (!has_ || rig_.holder(id).part(id) < 0 || !std::isfinite(at.x) || !std::isfinite(at.y)) return false;
     at = {std::round(at.x * 100) / 100, std::round(at.y * 100) / 100};
     pixel::PixelDoc after = doc_;
     after.pivots[id] = at;
@@ -1070,8 +1103,9 @@ bool PixelEditor::screen_of(vector::Point p, f32& x, f32& y) const {
 }
 
 vector::Point PixelEditor::posed_pivot(const std::string& id) const {
-    const i32 i = rig_.part(id);
-    return i < 0 ? vector::Point{} : rig_.carried(i).apply(rig_.pivot(i));
+    const pixel::Rig& r = rig_.shown();
+    const i32 i = r.part(id);
+    return i < 0 ? vector::Point{} : r.carried(i).apply(r.pivot(i));
 }
 
 void PixelEditor::press(f32 x, f32 y) {
@@ -1087,7 +1121,7 @@ void PixelEditor::press(f32 x, f32 y) {
         }
     }
     const std::string best = part_at(x, y);
-    if (rig_.copy(best) >= 0) { // part 4г: a copy is the code's
+    if (rig_.shown().copy(best) >= 0) { // part 4г: a copy is the code's
         refuse_edit("копия «" + best + "» правится в коде: copies(…)");
         return;
     }
@@ -1100,22 +1134,24 @@ void PixelEditor::press(f32 x, f32 y) {
 }
 
 std::string PixelEditor::part_at(f32 x, f32 y) {
-    // The smallest part under the mouse, as it stands in the pose shown: a copy drawn too (part 4г).
+    // The smallest part under the mouse, as it stands in the pose shown: a copy drawn too (part 4г), of the drawing
+    // shown (in a swap the one it goes to, part 4д).
+    pixel::Rig& r = rig_.shown();
     const pixel::Affine view = to_view();
     const vector::Point v = view.apply(view_to_picture(x, y));
     std::string best;
     f64 best_area = 1e300;
     auto take = [&](i32 i, const std::string& id) {
         f64 b[4];
-        rig_.bounds(i, view, b);
+        r.bounds(i, view, b);
         const f64 area = (b[2] - b[0]) * (b[3] - b[1]);
         if (v.x >= b[0] && v.x <= b[2] && v.y >= b[1] && v.y <= b[3] && area > 0 && area < best_area) {
             best_area = area;
             best = id;
         }
     };
-    for (i32 i = 0; i < static_cast<i32>(rig_.parts().size()); ++i) take(i, rig_.parts()[static_cast<usize>(i)].id);
-    for (const pixel::DrawnCopy& c : rig_.drawn_copies()) take(c.index, c.id);
+    for (i32 i = 0; i < static_cast<i32>(r.parts().size()); ++i) take(i, r.parts()[static_cast<usize>(i)].id);
+    for (const pixel::DrawnCopy& c : r.drawn_copies()) take(c.index, c.id);
     return best;
 }
 
@@ -1133,10 +1169,10 @@ void PixelEditor::drag(f32 x, f32 y) {
         return;
     }
     if (!dragging_) return;
-    const i32 i = rig_.part(part_);
+    const i32 i = rig_.shown().part(part_);
     if (i < 0) return;
-    // Back through what carries the pivot in the pose shown: it is kept in rest units.
-    const vector::Point at = pixel::inverse(rig_.carried(i)).apply(view_to_picture(x, y));
+    // Back through what carries the pivot in the pose shown: it is kept in rest units, one for every drawing.
+    const vector::Point at = pixel::inverse(rig_.shown().carried(i)).apply(view_to_picture(x, y));
     rig_.set_pivot(part_, at);
     doc_.pivots[part_] = at; // shown at once; written on release
     drag_moved_ = true;
@@ -1642,28 +1678,34 @@ void PixelEditor::redraw() {
     vector_ = vec[0];
     // The grid over the picture, under the marks: its cell 8 points or more.
     if (grid_) pixel::draw_grid(vec[0], texels, pixel::grid_step(to_view().a), static_cast<u32>(std::max<i64>(1, std::lround(dp_))));
-    if (const i32 pi = rig_.part(part_); pi >= 0) {
+    // Marks on the drawing shown (part 4д); the tree is of it too, made again when the frame shows another.
+    pixel::Rig& shown = rig_.shown();
+    if (const i32 pi = shown.part(part_); pi >= 0) {
         f64 box[4];
-        rig_.bounds(pi, texels, box);
-        const vector::Point at = texels.apply(rig_.carried(pi).apply(rig_.pivot(pi)));
+        shown.bounds(pi, texels, box);
+        const vector::Point at = texels.apply(shown.carried(pi).apply(shown.pivot(pi)));
         mark(vec[0], box, at.x, at.y, std::max<i64>(1, std::lround(dp_)));
     }
-    if (const i32 hi = rig_.part(hovered_); hi >= 0) {
+    if (const i32 hi = shown.part(hovered_); hi >= 0) {
         f64 box[4];
-        rig_.bounds(hi, texels, box);
+        shown.bounds(hi, texels, box);
         outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
     }
     // The copy of the selected block, where it stands (part 4г).
     if (rec_ok_ && block_ >= 0 && static_cast<usize>(block_) < rec_.blocks.size() && rec_.blocks[static_cast<usize>(block_)].part < rec_.parts.size())
-        for (const pixel::DrawnCopy& c : rig_.drawn_copies())
+        for (const pixel::DrawnCopy& c : shown.drawn_copies())
             if (c.id == rec_.parts[rec_.blocks[static_cast<usize>(block_)].part]) {
                 f64 box[4];
-                rig_.bounds(c.index, texels, box);
+                shown.bounds(c.index, texels, box);
                 outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
             }
     vector_shown_ = vec[0];
     show(vec[0], frame_px_);
     sync_problem();
+    if (&shown != shown_rig_) {
+        shown_rig_ = &shown;
+        rebuild();
+    }
     rebuild_part();
 }
 
@@ -1767,10 +1809,12 @@ void PixelEditor::rebuild() {
     m_name_ = has_ ? name() : std::string();
     m_note_ = note_;
     m_parts_.clear();
-    for (const pixel::Part& p : rig_.parts()) {
+    // The parts of the drawing the frame shows (part 4д).
+    const pixel::Rig& shown = rig_.shown();
+    for (const pixel::Part& p : shown.parts()) {
         int depth = 0;
-        for (i32 q = p.parent; q >= 0; q = rig_.parts()[static_cast<usize>(q)].parent) ++depth;
-        const vector::Point pv = rig_.pivot(rig_.part(p.id));
+        for (i32 q = p.parent; q >= 0; q = shown.parts()[static_cast<usize>(q)].parent) ++depth;
+        const vector::Point pv = shown.pivot(shown.part(p.id));
         m_parts_.push_back({p.id, number_words(std::round(pv.x * 10) / 10) + "; " + number_words(std::round(pv.y * 10) / 10), depth, p.shape,
                             p.id == part_});
     }

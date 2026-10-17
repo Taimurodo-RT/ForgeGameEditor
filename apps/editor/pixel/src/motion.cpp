@@ -13,7 +13,7 @@ constexpr const char* kPropWords[] = {"x",           "y",         "rot",        
                                      "stroke",      "stroke_width", "dash",     "draw_from",   "draw_to",
                                      "visible",     "tint",      "flash",       "flash_color", "blur",
                                      "shadow",      "shadow_x",  "shadow_y",    "shadow_blur", "morph",
-                                     "маска",       "крепление",   "порядок"};
+                                     "маска",       "крепление",   "порядок",     "рисунок"};
 static_assert(std::size(kPropWords) == kPropCount);
 
 u8 mix8(u8 a, u8 b, f64 k) { return static_cast<u8>(std::clamp(std::round(a + (b - a) * k), 0.0, 255.0)); }
@@ -181,7 +181,8 @@ bool prop_from_word(std::string_view word, Prop& out) {
 }
 
 bool prop_is_number(Prop p) {
-    return !prop_is_color(p) && p != Prop::StrokeWidth && p != Prop::Visible && p != Prop::Morph && !prop_is_call(p);
+    return !prop_is_color(p) && p != Prop::StrokeWidth && p != Prop::Visible && p != Prop::Morph && !prop_is_call(p) &&
+           p != Prop::Drawing;
 }
 
 bool prop_is_color(Prop p) {
@@ -207,7 +208,7 @@ PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k) {
         r.v = a.v + (b.v - a.v) * k; // past 0 … 1 too: back and elastic overshoot
         return r;
     }
-    if (p == Prop::Visible || prop_is_call(p)) return k >= 1 ? b : a; // no values between
+    if (p == Prop::Visible || p == Prop::Drawing || prop_is_call(p)) return k >= 1 ? b : a; // no values between
     if (p == Prop::StrokeWidth && a.v == 1 && b.v == 1) {
         r.v = 1;
         r.n = a.n + (b.n - a.n) * k; // two widths given: as numbers, past them too
@@ -261,6 +262,16 @@ f64 snap_time(f64 t) { return std::round(t * 1e9) / 1e9; }
 i32 Recording::track(u32 part, Prop p) const {
     const usize i = part * kPropCount + static_cast<usize>(p);
     return i < track_of.size() ? track_of[i] : -1;
+}
+
+f64 block_share(const Recording& rec, const Block& b, f64 t) {
+    const f64 local = snap_time(t - b.start);
+    if (b.length <= 0) return local < 0 ? 0 : 1; // at once, as block_value
+    if (local <= 0) return 0;
+    if (local >= b.length) return 1;
+    const f64 s = local / b.length;
+    return b.curve >= 0 && static_cast<usize>(b.curve) < rec.curves.size() ? curve_at(rec.curves[static_cast<usize>(b.curve)], s)
+                                                                           : vector::timing(b.timing, s);
 }
 
 bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval, PropValue& out, std::string& why) {
@@ -468,6 +479,22 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
         const Recording::Track& tr = rec.tracks[i];
         if (tr.prop == Prop::Order) continue; // all calls of all parts up to t, below
         if (tr.part < unborn.size() && unborn[tr.part]) continue;
+        if (tr.prop == Prop::Drawing) {
+            // The drawing shown, and in a swap's block the one before it and how far (part 4д); "draw" is the main one.
+            const i32 d = deciding_block(rec, i, t);
+            if (d < 0) continue;
+            const Block& b = rec.blocks[static_cast<usize>(d)];
+            auto name = [](const PropValue& v) { return v.target == "draw" ? std::string() : v.target; };
+            const f64 k = block_share(rec, b, at);
+            out.drawing = name(k >= 1 ? b.end : b.from);
+            if (k > 0 && k < 1 && name(b.from) != name(b.end)) {
+                out.drawing = name(b.end);
+                out.swap = true;
+                out.swap_from = name(b.from);
+                out.swap_k = k;
+            }
+            continue;
+        }
         PropValue v;
         if (!sample(rec, i, t, eval, v, why)) return false;
         const std::string& id = rec.parts[tr.part];
@@ -538,7 +565,8 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
             break;
         }
         case Prop::Morph:
-        case Prop::Order: break;
+        case Prop::Order:
+        case Prop::Drawing: break;
         }
     }
     // The order: from the SVG's, every call up to t in the order of time (start, then order).

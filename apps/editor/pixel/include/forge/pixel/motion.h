@@ -20,16 +20,17 @@
 namespace forge::pixel {
 
 // In the order of a part's tracks on the timeline (part 4а of the model adds skew_x … visible and the order, part 4б
-// tint … shadow_blur and the mask, part 4в the link of attach and detach).
+// tint … shadow_blur and the mask, part 4в the link of attach and detach). Drawing is the character's, not a part's
+// (swap, part 4д): its track's part is kDrawingPart.
 enum class Prop : u8 {
     X, Y, Rot, Scale, Sx, Sy, SkewX, SkewY, Opacity, Fill, Stroke, StrokeWidth, Dash, DrawFrom, DrawTo, Visible,
-    Tint, Flash, FlashColor, Blur, Shadow, ShadowX, ShadowY, ShadowBlur, Morph, Mask, Link, Order
+    Tint, Flash, FlashColor, Blur, Shadow, ShadowX, ShadowY, ShadowBlur, Morph, Mask, Link, Order, Drawing
 };
-inline constexpr usize kPropCount = 28;
+inline constexpr usize kPropCount = 29;
 // "x", "y", "rot", "scale", "sx", "sy", "skew_x", "skew_y", "opacity", "fill", "stroke", "stroke_width", "dash",
 // "draw_from", "draw_to", "visible", "tint", "flash", "flash_color", "blur", "shadow", "shadow_x", "shadow_y",
-// "shadow_blur", "morph", and "маска", "крепление" and "порядок" for the mask, the link and the order, which are no
-// fields of the code.
+// "shadow_blur", "morph", and "маска", "крепление", "порядок" and "рисунок" for the mask, the link, the order and the
+// drawing, which are no fields of the code.
 const char* prop_word(Prop p);
 bool prop_from_word(std::string_view word, Prop& out);
 // Plain numbers: all but the colours, stroke_width (nil is its own), visible, morph, the mask and the order.
@@ -44,7 +45,7 @@ bool prop_is_call(Prop p);
 // shape over the part's rest (0: the rest, its own colour, width or shape), the colour, the width `n` or the target
 // beside it. Visible is v 1 or 0. The mask: v 0 none, 1 inside the part `target`, 2 outside it. The link: v 1 carried
 // by the part `target` (attach), 0 let go (detach). The order: v is a kind of OrderStep (rig.h), `target` the neighbour
-// of above and below.
+// of above and below. The drawing: `target` its name, "draw" (or empty, at rest) the main one.
 struct PropValue {
     f64 v = 0;
     Rgba8 color;
@@ -53,12 +54,12 @@ struct PropValue {
     bool operator==(const PropValue&) const = default;
 };
 // At rest: 1 for scale, sx, sy, opacity, draw_to and visible, k = 0 (the rest) for the colours, stroke_width and
-// morph, 0 for the rest (no mask, no link).
+// morph, 0 for the rest (no mask, no link, the main drawing).
 PropValue rest_value(Prop p);
 // From a to b by k: exact at k = 0 and 1. A colour from none comes in at its own colour; a morph between two targets
 // goes back to the part's own shape and on to the other. Two widths given go as numbers (past them too, for back and
-// elastic); from or to its own width k stays in 0 … 1, as a colour's. Visible, the mask, the link and the order change
-// at k = 1 only.
+// elastic); from or to its own width k stays in 0 … 1, as a colour's. Visible, the mask, the link, the order and the
+// drawing change at k = 1 only (a frame shows a swap's way by Pose::swap_k).
 PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k);
 
 // A call of the code: file 0 is the character's script, the others the modules it requires (Recording::files); site
@@ -68,6 +69,9 @@ struct SiteRef {
     i32 site = -1;
     bool operator==(const SiteRef&) const = default;
 };
+
+// The part of the drawing's track (swap, part 4д): no part of a picture has an empty id.
+inline constexpr const char* kDrawingPart = "";
 
 struct Block {
     u32 part = 0; // in Recording::parts
@@ -253,6 +257,9 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why);
 bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue& out, std::string& why);
 // A block's value at t, as if it decided.
 bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval, PropValue& out, std::string& why);
+// How far block b's timing has gone at t: 0 at its start and before, 1 at its end and after (as eased, an easing that
+// overshoots past them).
+f64 block_share(const Recording& rec, const Block& b, f64 t);
 // The block that decides a track at t (after resolve): the last, by start then order, that started at t or before; -1
 // before the first one.
 i32 deciding_block(const Recording& rec, u32 track, f64 t);
@@ -263,7 +270,8 @@ bool block_going(const Block& b, f64 t, f64 frame);
 // of the first property in Prop's order); -1 when none has.
 i32 latest_block(const Recording& rec, u32 part, f64 t);
 
-// The pose of all parts at t, from the tracks: the copies born at t or before with theirs.
+// The pose of all parts at t, from the tracks: the copies born at t or before with theirs; the drawing shown and, in a
+// swap's block, the one it comes from and its share k within 0 … 1 (part 4д).
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why);
 
 // The point at share u of a path's length and, when angle is given, the direction of its segment there in degrees.
