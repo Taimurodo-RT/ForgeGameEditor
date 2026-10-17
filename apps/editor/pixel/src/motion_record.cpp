@@ -484,7 +484,7 @@ bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
             const u32 s = stack.back();
             stack.pop_back();
             for (usize p = 0; p < kPropCount; ++p) {
-                if (prop_is_call(static_cast<Prop>(p))) continue; // the mask and the order are no values to go back to
+                if (prop_is_call(static_cast<Prop>(p))) continue; // the mask, the link and the order are no values to go back to
                 i32 b = -1;
                 if (!add_block(im, ms, st, part, static_cast<Prop>(p), t, st.length, Block::To::Saved, nullptr, s, at, &b))
                     return false;

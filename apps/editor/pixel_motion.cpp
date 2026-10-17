@@ -586,8 +586,8 @@ void PixelEditor::lay_timeline() {
                 for (usize j = 0; j < t.blocks.size(); ++j) {
                     const pixel::Block& b = r.blocks[t.blocks[j]];
                     f64 start = b.start;
-                    // A binding, an order call and a mask call hold until the track's next block: the calls have no
-                    // length of their own.
+                    // A binding and a call of the order, the mask or the link hold until the track's next block: the
+                    // calls have no length of their own.
                     const bool holds = b.to == pixel::Block::To::Binding || pixel::prop_is_call(b.prop);
                     f64 end = holds ? (j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length) : b.start + b.length;
                     // An edge being dragged: the end there, or all of the block from the start there.
@@ -611,6 +611,8 @@ void PixelEditor::lay_timeline() {
                             ? label + ": с " + seconds_words(b.start) + " с до следующего вызова порядка; правится в коде, двойной щелчок — к коду"
                         : b.prop == pixel::Prop::Mask
                             ? label + ": с " + seconds_words(b.start) + " с до следующего вызова маски; правится в коде, двойной щелчок — к коду"
+                        : b.prop == pixel::Prop::Link
+                            ? label + ": с " + seconds_words(b.start) + " с до следующего вызова крепления; правится в коде, двойной щелчок — к коду"
                             : label + ": с " + seconds_words(b.start) + " по " + seconds_words(holds ? end : b.start + b.length) +
                                   " с; края тянут длину и начало по кадрам, двойной щелчок — к коду";
                     m_blocks_.push_back({bi, style, label, title,
