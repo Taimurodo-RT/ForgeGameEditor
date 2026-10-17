@@ -542,12 +542,7 @@ void PixelEditor::rebuild_part() {
                 case pixel::Prop::ShadowX: value = thousandths(pp.shadow_x); break;
                 case pixel::Prop::ShadowY: value = thousandths(pp.shadow_y); break;
                 case pixel::Prop::ShadowBlur: value = thousandths(pp.shadow_blur); break;
-                case pixel::Prop::Mask: {
-                    pixel::PropValue v;
-                    v.v = pp.mask.empty() ? 0 : pp.mask_invert ? 2 : 1, v.target = pp.mask;
-                    value = pixel::value_words(p, v);
-                    break;
-                }
+                case pixel::Prop::Mask: value = pp.mask.empty() ? "нет" : pp.mask + (pp.mask_invert ? ", наоборот" : ""); break;
                 case pixel::Prop::Order: value = order; break;
                 default: break;
                 }
