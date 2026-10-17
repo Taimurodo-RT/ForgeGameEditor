@@ -8,6 +8,7 @@
 #include <thorvg.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -30,6 +31,25 @@ Affine inverse(const Affine& m) {
 }
 
 Affine translation(f64 x, f64 y) { return {1, 0, 0, 1, x, y}; }
+
+Affine pose_matrix(const PartPose& pp, vector::Point pv, f64 snap) {
+    f64 x = pp.x, y = pp.y;
+    if (snap > 0) x = std::round(x / snap) * snap, y = std::round(y / snap) * snap;
+    f64 s = 0, c = 1;
+    vector::trig::sin_cos(pp.rot * vector::trig::kPi / 180.0, s, c);
+    const f64 kx = pp.scale * pp.sx, ky = pp.scale * pp.sy;
+    // T(x, y) · T(pivot) · R · S · Kx · Ky · T(−pivot), Kx and Ky SVG's skewX and skewY
+    Affine rs{c * kx, s * kx, -s * ky, c * ky, 0, 0};
+    if (pp.skew_x != 0 || pp.skew_y != 0) {
+        auto tangent = [](f64 deg) {
+            f64 ts = 0, tc = 1;
+            vector::trig::sin_cos(std::clamp(deg, -kMaxSkew, kMaxSkew) * vector::trig::kPi / 180.0, ts, tc);
+            return ts / tc;
+        };
+        rs = rs * Affine{1, 0, tangent(pp.skew_x), 1, 0, 0} * Affine{1, tangent(pp.skew_y), 0, 1, 0, 0};
+    }
+    return translation(x + pv.x, y + pv.y) * rs * translation(-pv.x, -pv.y);
+}
 
 namespace {
 
@@ -106,6 +126,7 @@ struct Leaf {
     bool path_changed = false, look_changed = false, trim_changed = false;
     bool hidden = false; // a part the pose hid (its own paint, for the baker that shows shapes one by one)
     i32 part = -1;       // the innermost part it is in, -1 for none
+    Affine rest_global;  // its path's points to picture units at rest
 };
 
 // The effects a pose put on a part's scene (part 4б), in ThorVG's terms, kept so the baker can put them back.
@@ -127,6 +148,8 @@ struct PartRec {
     bool rest_visible = true;
     bool hidden = false;  // by the last pose
     Affine parent_global; // the rest matrix from the paint's parent to picture units
+    Affine rest_global;   // and from the paint itself
+    Affine carry;         // the last pose's link (part 4в): C over its groups, identity for none
     std::vector<i32> leaves; // the shapes it draws, in order
     i32 leaf = -1;           // when it is a shape itself
     i32 group = -1;          // its parent's scene in Impl::groups
@@ -248,6 +271,43 @@ void path_box(const tvg::Shape* shape, const Affine& m, Box& box) {
         case tvg::PathCommand::Close: break;
         }
     }
+}
+
+// ThorVG's own matrix of an SVG transform attribute, as it reads one: from a group of a small SVG of its own. False
+// for anything but the words and numbers of a transform.
+bool tvg_transform(const std::string& text, tvg::Matrix& out) {
+    if (text.empty()) return false;
+    for (const char ch : text)
+        if (!std::isalnum(static_cast<unsigned char>(ch)) && !std::strchr(" ,.()+-\t\r\n", ch)) return false;
+    const std::string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><g id=\"t\" transform=\"" + text +
+                            "\"><rect width=\"1\" height=\"1\"/></g></svg>";
+    tvg::Picture* pic = tvg::Picture::gen();
+    pic->ref();
+    bool ok = pic->load(svg.data(), static_cast<u32>(svg.size()), "svg", nullptr, true) == tvg::Result::Success;
+    if (ok) {
+        const tvg::Paint* g = pic->paint(tvg::Accessor::id("t"));
+        ok = g != nullptr;
+        if (ok) out = const_cast<tvg::Paint*>(g)->transform();
+    }
+    pic->unref();
+    return ok;
+}
+
+// A cubic as a broken line: halved until its control points lie within tol of its chord.
+void flatten_cubic(vector::Point p0, vector::Point p1, vector::Point p2, vector::Point p3, f64 tol, int depth,
+                   std::vector<vector::Point>& out) {
+    const f64 dx = p3.x - p0.x, dy = p3.y - p0.y, len = std::hypot(dx, dy);
+    auto off = [&](vector::Point q) {
+        return len < 1e-12 ? std::hypot(q.x - p0.x, q.y - p0.y) : std::abs((q.x - p0.x) * dy - (q.y - p0.y) * dx) / len;
+    };
+    if (depth >= 16 || std::max(off(p1), off(p2)) <= tol) {
+        out.push_back(p3);
+        return;
+    }
+    auto mid = [](vector::Point a, vector::Point b) { return vector::Point{(a.x + b.x) / 2, (a.y + b.y) / 2}; };
+    const vector::Point a = mid(p0, p1), b = mid(p1, p2), c = mid(p2, p3), ab = mid(a, b), bc = mid(b, c), m = mid(ab, bc);
+    flatten_cubic(p0, a, ab, m, tol, depth + 1, out);
+    flatten_cubic(m, bc, c, p3, tol, depth + 1, out);
 }
 
 bool drawable_tag(const std::string& t) {
@@ -386,6 +446,23 @@ bool Rig::load(std::string_view svg, std::string& why) {
         m.vb[2] = std::abs(b.x - a.x), m.vb[3] = std::abs(b.y - a.y);
     }
 
+    // A shape with display="none" comes from ThorVG without its own transform (part 4в of the motion model): a path or
+    // a mask is often hidden, so the transform of its SVG element is put on it here, as ThorVG reads one.
+    {
+        std::unordered_map<u32, tvg::Paint*> first;
+        for (usize i = 4; i < all.size(); ++i)
+            if (all[i]->id) first.emplace(all[i]->id, all[i]);
+        for (usize i = 1; i < m.outline.elements.size(); ++i) {
+            const SvgElement& e = m.outline.elements[i];
+            const std::string* tr = e.attr("transform");
+            if (e.id.empty() || !tr || e.tag == "g" || e.tag == "use" || !drawable_tag(e.tag) || e.property("display") != "none") continue;
+            auto it = first.find(tvg::Accessor::id(e.id.c_str()));
+            tvg::Matrix mx;
+            if (it == first.end() || it->second->type() != tvg::Type::Shape || !tvg_transform(*tr, mx)) continue;
+            it->second->transform(mx);
+        }
+    }
+
     // Rest matrices to picture units, the shapes and their looks.
     std::unordered_map<const tvg::Paint*, Affine> rest_global;
     rest_global[m.doc] = {};
@@ -399,6 +476,7 @@ bool Rig::load(std::string_view svg, std::string& why) {
             l.shape = s;
             l.rest.take(s);
             l.visible = s->visible();
+            l.rest_global = rest_global[p];
             const tvg::PathCommand* cmds = nullptr;
             const tvg::Point* pts = nullptr;
             u32 nc = 0, np = 0;
@@ -430,6 +508,7 @@ bool Rig::load(std::string_view svg, std::string& why) {
         r.rest_opacity = p->opacity();
         r.rest_visible = p->visible();
         r.parent_global = rest_global[p->parent()];
+        r.rest_global = rest_global[p];
         if (auto l = m.leaf_of.find(p); l != m.leaf_of.end()) r.leaf = l->second;
         if (const tvg::Paint* parent = p->parent(); parent && parent->type() == tvg::Type::Scene) {
             auto* scene = static_cast<tvg::Scene*>(const_cast<tvg::Paint*>(parent));
@@ -546,6 +625,7 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
     for (PartRec& r : m.recs) {
         r.paint->transform(r.rest_local);
         r.paint->opacity(r.rest_opacity);
+        r.carry = {};
         if (r.hidden) {
             r.paint->visible(r.rest_visible);
             r.hidden = false;
@@ -649,18 +729,10 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         leaf.path_changed = leaf.look_changed = true;
     }
 
-    // Parts: moved, turned and scaled around their pivots in rest picture units, then their opacity and fill. A group
-    // before the parts in it, so a part's own look goes over its group's whatever their names.
-    std::vector<std::pair<i32, const std::pair<const std::string, PartPose>*>> by_depth;
-    for (const auto& e : pose.parts) {
-        i32 depth = 0;
-        for (i32 q = part(e.first); q >= 0; q = m.parts[static_cast<usize>(q)].parent) ++depth;
-        by_depth.emplace_back(depth, &e);
-    }
-    std::stable_sort(by_depth.begin(), by_depth.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    std::vector<const PartPose*> posed(m.parts.size(), nullptr); // the parts the pose gave, by index
-    for (const auto& d : by_depth) {
-        const auto& [id, pp] = *d.second;
+    // The parts the pose gives, by index, each checked.
+    std::vector<const PartPose*> posed(m.parts.size(), nullptr);
+    std::vector<i32> carrier(m.parts.size(), -1); // the part a link carries it by (part 4в)
+    for (const auto& [id, pp] : pose.parts) {
         const i32 pi = part(id);
         if (pi < 0) {
             fail("в рисунке нет части «" + id + "»");
@@ -669,32 +741,91 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         const f64 nums[] = {pp.x,       pp.y,         pp.rot,          pp.scale,          pp.sx,      pp.sy,
                             pp.skew_x,  pp.skew_y,    pp.opacity,      pp.stroke_width,   pp.stroke_width_k,
                             pp.dash,    pp.draw_from, pp.draw_to,      pp.tint_k,         pp.flash,   pp.flash_color_k,
-                            pp.blur,    pp.shadow_k,  pp.shadow_x,     pp.shadow_y,       pp.shadow_blur};
+                            pp.blur,    pp.shadow_k,  pp.shadow_x,     pp.shadow_y,       pp.shadow_blur,
+                            pp.carry.a, pp.carry.b,   pp.carry.c,      pp.carry.d,        pp.carry.e, pp.carry.f};
         if (!std::all_of(std::begin(nums), std::end(nums), [](f64 v) { return std::isfinite(v); })) {
             fail("часть «" + id + "»: не число в позе");
             continue;
         }
         posed[static_cast<usize>(pi)] = &pp;
+        if (pp.carry_by.empty()) continue;
+        const i32 ci = part(pp.carry_by);
+        if (ci < 0) fail("крепление части «" + id + "»: в рисунке нет части «" + pp.carry_by + "»");
+        else carrier[static_cast<usize>(pi)] = ci;
+    }
+    // What a part's place waits for: the posed parts it is inside, and the part that carries it (which waits for its own
+    // groups in turn). A link that comes back round to its own part is dropped.
+    auto deps = [&](i32 p, std::vector<i32>& out) {
+        out.clear();
+        for (i32 q = m.parts[static_cast<usize>(p)].parent; q >= 0; q = m.parts[static_cast<usize>(q)].parent)
+            if (posed[static_cast<usize>(q)]) out.push_back(q);
+        if (const i32 c = carrier[static_cast<usize>(p)]; c >= 0) out.push_back(c);
+    };
+    std::vector<i32> work, next;
+    for (usize p = 0; p < m.parts.size(); ++p) {
+        if (carrier[p] < 0) continue;
+        std::vector<char> seen(m.parts.size(), 0);
+        bool back = false;
+        deps(static_cast<i32>(p), work);
+        while (!work.empty() && !back) {
+            const i32 q = work.back();
+            work.pop_back();
+            if (static_cast<usize>(q) == p) back = true;
+            if (back || seen[static_cast<usize>(q)]) continue;
+            seen[static_cast<usize>(q)] = 1;
+            deps(q, next);
+            work.insert(work.end(), next.begin(), next.end());
+        }
+        if (back) {
+            fail("крепление по кругу: «" + m.parts[p].id + "» и «" + m.parts[static_cast<usize>(carrier[p])].id + "» несут друг друга");
+            carrier[p] = -1;
+        }
+    }
+    // Each part after what it waits for (a group before the parts in it, so a part's own look goes over its group's).
+    std::vector<i32> order;
+    std::vector<char> placed(m.parts.size(), 0);
+    std::vector<std::pair<i32, usize>> stack;
+    for (usize p = 0; p < m.parts.size(); ++p) {
+        if (!posed[p] || placed[p]) continue;
+        stack.push_back({static_cast<i32>(p), 0});
+        while (!stack.empty()) {
+            auto& [q, i] = stack.back();
+            deps(q, work);
+            while (i < work.size() && (placed[static_cast<usize>(work[i])] || !posed[static_cast<usize>(work[i])])) ++i;
+            if (i < work.size()) {
+                const i32 d = work[i];
+                placed[static_cast<usize>(d)] = 2; // on the way: not taken again
+                stack.push_back({d, 0});
+                continue;
+            }
+            if (placed[static_cast<usize>(q)] != 1) order.push_back(q);
+            placed[static_cast<usize>(q)] = 1;
+            stack.pop_back();
+        }
+    }
+
+    // Parts: moved, turned and scaled around their pivots in rest picture units, then carried by their links, then
+    // their opacity and looks.
+    for (const i32 pi : order) {
+        const PartPose& pp = *posed[static_cast<usize>(pi)];
         PartRec& r = m.recs[static_cast<usize>(pi)];
         f64 x = pp.x, y = pp.y;
         if (snap > 0) x = std::round(x / snap) * snap, y = std::round(y / snap) * snap;
         m.moves[static_cast<usize>(pi)] = {x, y};
-        const vector::Point pv = m.pivots[static_cast<usize>(pi)];
-        f64 s = 0, c = 1;
-        vector::trig::sin_cos(pp.rot * vector::trig::kPi / 180.0, s, c);
-        const f64 kx = pp.scale * pp.sx, ky = pp.scale * pp.sy;
-        // T(x, y) · T(pivot) · R · S · Kx · Ky · T(−pivot), Kx and Ky SVG's skewX and skewY
-        Affine rs{c * kx, s * kx, -s * ky, c * ky, 0, 0};
-        if (pp.skew_x != 0 || pp.skew_y != 0) {
-            auto tangent = [](f64 deg) {
-                f64 ts = 0, tc = 1;
-                vector::trig::sin_cos(std::clamp(deg, -kMaxSkew, kMaxSkew) * vector::trig::kPi / 180.0, ts, tc);
-                return ts / tc;
-            };
-            rs = rs * Affine{1, 0, tangent(pp.skew_x), 1, 0, 0} * Affine{1, tangent(pp.skew_y), 0, 1, 0, 0};
+        const Affine a = pose_matrix(pp, m.pivots[static_cast<usize>(pi)], snap);
+        Affine local = inverse(r.parent_global) * a * r.parent_global * from_tvg(r.rest_local);
+        const i32 ci = carrier[static_cast<usize>(pi)];
+        if (ci >= 0 || pp.carry != Affine{}) {
+            // C over its groups: the part's place in picture units as it would stand, then C.
+            Affine c = pp.carry;
+            if (ci >= 0) {
+                const PartRec& cr = m.recs[static_cast<usize>(ci)];
+                c = m.global(cr.paint) * inverse(cr.rest_global) * c;
+            }
+            const Affine pg = m.global(r.paint->parent());
+            local = inverse(pg) * c * pg * local;
+            r.carry = c;
         }
-        Affine a = translation(x + pv.x, y + pv.y) * rs * translation(-pv.x, -pv.y);
-        const Affine local = inverse(r.parent_global) * a * r.parent_global * from_tvg(r.rest_local);
         r.paint->transform(to_tvg(local));
         r.paint->opacity(to_u8(r.paint->opacity() / 255.0 * std::clamp(pp.opacity, 0.0, 1.0)));
         const f64 fk = std::isfinite(pp.fill_k) ? std::clamp(pp.fill_k, 0.0, 1.0) : 1.0;
@@ -1102,8 +1233,8 @@ Affine Rig::carried(i32 part) const {
     if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};
     const PartRec& r = m.recs[static_cast<usize>(part)];
     const vector::Point mv = m.moves.empty() ? vector::Point{} : m.moves[static_cast<usize>(part)];
-    // The paint's parent as it stands against its rest, then the part's own move.
-    return m.global(r.paint->parent()) * inverse(r.parent_global) * translation(mv.x, mv.y);
+    // The paint's parent as it stands against its rest, then the part's own move; its link's carry over all.
+    return r.carry * m.global(r.paint->parent()) * inverse(r.parent_global) * translation(mv.x, mv.y);
 }
 
 Affine Rig::matrix(i32 part) const {
@@ -1130,6 +1261,65 @@ bool Rig::dashed(i32 part) const {
 bool Rig::has_shapes(i32 part) const {
     const Impl& m = *impl_;
     return part >= 0 && static_cast<usize>(part) < m.recs.size() && !m.recs[static_cast<usize>(part)].leaves.empty();
+}
+
+bool Rig::path_of(i32 part, PathLine& out, std::string& why) const {
+    const Impl& m = *impl_;
+    out = {};
+    if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return why = "в рисунке нет такой части", false;
+    const std::string& id = m.parts[static_cast<usize>(part)].id;
+    out.id = id;
+    const PartRec& r = m.recs[static_cast<usize>(part)];
+    if (r.leaf < 0) return why = "путь «" + id + "» — группа, а нужна фигура", false;
+    const Leaf& l = m.leaves[static_cast<usize>(r.leaf)];
+    // One contour: a move that more lines follow, once.
+    u32 contours = 0;
+    for (usize i = 0; i < l.cmds.size(); ++i)
+        if (l.cmds[i] == tvg::PathCommand::MoveTo && i + 1 < l.cmds.size() &&
+            (l.cmds[i + 1] == tvg::PathCommand::LineTo || l.cmds[i + 1] == tvg::PathCommand::CubicTo))
+            ++contours;
+    if (contours > 1) return why = "у пути «" + id + "» больше одного контура: нужна одна линия", false;
+    // Flat to within a hundred-thousandth of the picture.
+    const f64 tol = std::max(1e-9, std::max(m.vb[2], m.vb[3]) * 1e-5);
+    auto pt = [&](usize k) { return l.rest_global.apply({l.pts[k].x, l.pts[k].y}); };
+    std::vector<vector::Point> line;
+    usize k = 0;
+    bool started = false;
+    for (const tvg::PathCommand cmd : l.cmds) {
+        switch (cmd) {
+        case tvg::PathCommand::MoveTo:
+            if (k >= l.pts.size()) break;
+            if (!started) line.push_back(pt(k)), started = true;
+            ++k;
+            break;
+        case tvg::PathCommand::LineTo:
+            if (k >= l.pts.size()) break;
+            line.push_back(pt(k++));
+            break;
+        case tvg::PathCommand::CubicTo:
+            if (k + 3 > l.pts.size() || line.empty()) break;
+            flatten_cubic(line.back(), pt(k), pt(k + 1), pt(k + 2), tol, 0, line);
+            k += 3;
+            break;
+        case tvg::PathCommand::Close:
+            if (!line.empty()) out.closed = true;
+            break;
+        }
+    }
+    if (out.closed && !line.empty()) line.push_back(line.front());
+    // Without points on top of each other: each segment has a direction.
+    for (const vector::Point& q : line)
+        if (out.points.empty() || std::hypot(q.x - out.points.back().x, q.y - out.points.back().y) > 1e-12) out.points.push_back(q);
+    out.lengths.assign(out.points.size(), 0);
+    for (usize i = 1; i < out.points.size(); ++i) {
+        const f64 dx = out.points[i].x - out.points[i - 1].x, dy = out.points[i].y - out.points[i - 1].y;
+        out.lengths[i] = out.lengths[i - 1] + std::hypot(dx, dy);
+        f64 a = std::atan2(dy, dx) * 180.0 / vector::trig::kPi;
+        if (!out.angles.empty()) a = out.angles.back() + std::remainder(a - out.angles.back(), 360.0);
+        out.angles.push_back(a);
+    }
+    if (!(out.length() > 0)) return why = "у пути «" + id + "» длина 0", false;
+    return true;
 }
 
 bool parse_color(std::string_view text, Rgba8& out) {

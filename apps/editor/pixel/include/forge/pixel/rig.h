@@ -87,6 +87,28 @@ struct PartPose {
     // Drawn only inside (outside when mask_invert) the shapes of part `mask` as they stand: empty for none.
     std::string mask;
     bool mask_invert = false;
+    // Part 4в: carried by another part (attach). The part stands as it would and is then moved by C = W · carry in
+    // picture units, over its groups, where W is how part `carry_by` stands against its rest as drawn now (after its
+    // groups, its own move snapped, its own carry); C = carry when carry_by is empty (a link let go).
+    std::string carry_by;
+    Affine carry;
+};
+
+// What a pose's move, turn, scale and skews do to a part in picture units at rest, round its pivot:
+// T(x, y) · T(pivot) · R · S · Kx · Ky · T(−pivot), the skews held within ±kMaxSkew. x and y are rounded to multiples
+// of `snap` when it is above 0.
+Affine pose_matrix(const PartPose& pp, vector::Point pivot, f64 snap = 0);
+
+// A shape's line in picture units at rest (the path of along, part 4в): a broken line, a closed one with its first
+// point again at the end, the length from the start to each point, the angle of each segment in degrees (0 to the
+// right, clockwise more), each within 180 of the one before.
+struct PathLine {
+    std::string id;
+    std::vector<vector::Point> points;
+    std::vector<f64> lengths;
+    std::vector<f64> angles; // by segment: points.size() − 1
+    bool closed = false;
+    f64 length() const { return lengths.empty() ? 0 : lengths.back(); }
 };
 
 // A part put above or below its neighbours in its group (to_top, to_bottom, above, below of the motion), in order.
@@ -168,6 +190,9 @@ public:
     bool dashed(i32 part) const;
     // Whether a part draws any shapes (a group with display="none" has none in ThorVG).
     bool has_shapes(i32 part) const;
+    // A shape part's line at rest in picture units, flattened (part 4в); false with why for a group, more than one
+    // contour or a line of length 0.
+    bool path_of(i32 part, PathLine& out, std::string& why) const;
 
 private:
     struct Impl;

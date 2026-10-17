@@ -79,6 +79,7 @@ std::string value_words(Prop p, const PropValue& v) {
         if (v.v <= 0) return "без маски";
         return "маска " + v.target + (v.v > 1 ? ", наоборот" : "");
     }
+    if (p == Prop::Link) return v.v > 0 ? "с " + v.target : "отпущена";
     if (p == Prop::Order) {
         switch (static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(v.v), 0, 3))) {
         case OrderStep::Kind::Top: return "наверх";
@@ -94,18 +95,23 @@ std::string value_words(Prop p, const PropValue& v) {
     return format_number(v.v);
 }
 
-std::string block_words(const Recording&, const Block& b) {
+std::string block_words(const Recording& rec, const Block& b) {
     const std::string prop = prop_word(b.prop);
     switch (b.to) {
     case Block::To::Binding: return "связь";
     case Block::To::Back: return prop + " → назад";
     case Block::To::Saved: return prop + " → restore";
     case Block::To::Rest: return prop + " → покой";
+    case Block::To::Along: {
+        const std::string path = b.ref < rec.alongs.size() && rec.alongs[b.ref].path < rec.paths.size() ? rec.paths[rec.alongs[b.ref].path].id : "?";
+        return "по " + path + (b.prop == Prop::Rot ? ", поворот" : "");
+    }
+    case Block::To::Snap: return "к " + (b.ref < rec.snaps.size() ? rec.snaps[b.ref] : std::string("?"));
     case Block::To::Value: break;
     }
     if (!b.frames.empty()) return "tween";
     const std::string to = value_words(b.prop, b.value);
-    if (prop_is_call(b.prop)) return to; // «наверх», «маска lid»: the track says what it is
+    if (prop_is_call(b.prop)) return to; // «наверх», «маска lid», «с hand»: the track says what it is
     return b.spring ? "пружина → " + to : prop + " → " + to;
 }
 

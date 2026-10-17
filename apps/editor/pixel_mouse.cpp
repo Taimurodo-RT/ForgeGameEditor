@@ -214,6 +214,8 @@ bool PixelEditor::set_block_value(const std::string& text) {
         return refuse_edit("Порядок «" + what + "» правится в коде: to_top, to_bottom, above, below");
     } else if (b->prop == pixel::Prop::Mask) {
         return refuse_edit("Маска «" + what + "» правится в коде: mask(\"lid\"), mask(nil)");
+    } else if (b->prop == pixel::Prop::Link) {
+        return refuse_edit("Крепление «" + what + "» правится в коде: attach(\"hand\"), detach()");
     } else {
         v.v = t.empty() ? 0 : 1;
         v.target = t;
@@ -258,7 +260,8 @@ f64 PixelEditor::edge_snap(f64 t) const {
 f64 PixelEditor::block_end(i32 index) const {
     const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
     if (b.to != pixel::Block::To::Binding && !pixel::prop_is_call(b.prop)) return pixel::snap_time(b.start + b.length);
-    // A binding holds until its track's next block, and so does a call of the order or the mask (parts 4а and 4б).
+    // A binding holds until its track's next block, and so does a call of the order, the mask or the link (parts 4а,
+    // 4б and 4в).
     const i32 tr = rec_.track(b.part, b.prop);
     if (tr >= 0) {
         const std::vector<u32>& on = rec_.tracks[static_cast<usize>(tr)].blocks;
@@ -518,7 +521,7 @@ void PixelEditor::rebuild_part() {
             case pixel::Prop::Morph: value = morph; break;
             default: break;
             }
-            // The properties of parts 4а and 4б show when the clip changes them.
+            // The properties of parts 4а, 4б and 4в show when the clip changes them.
             auto rest_color = [&](bool has_it, pixel::Rgba8 c, f64 k, const char* none) {
                 return has_it ? hex_of(c) + (k < 1 ? " · " + thousandths(k) : std::string()) : std::string(none);
             };
@@ -543,6 +546,7 @@ void PixelEditor::rebuild_part() {
                 case pixel::Prop::ShadowY: value = thousandths(pp.shadow_y); break;
                 case pixel::Prop::ShadowBlur: value = thousandths(pp.shadow_blur); break;
                 case pixel::Prop::Mask: value = pp.mask.empty() ? "нет" : pp.mask + (pp.mask_invert ? ", наоборот" : ""); break;
+                case pixel::Prop::Link: value = pp.carry_by.empty() ? "нет" : pp.carry_by; break;
                 case pixel::Prop::Order: value = order; break;
                 default: break;
                 }

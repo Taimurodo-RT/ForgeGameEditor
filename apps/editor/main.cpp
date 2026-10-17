@@ -2070,8 +2070,10 @@ struct Options {
     // the new properties of parts: a clip moving each of them, their tracks, words, values and fields, the order, baked
     // and given, by "pixel-motion-d", opened again and played in the game by "pixel-motion-d-again"; part 4б, effects and
     // masks: a clip with a tint, a flash, a blur, a shadow and a mask, their tracks, words, values and fields, baked and
-    // given, by "pixel-motion-e", opened again and played in the game by "pixel-motion-e-again"); "input" (the tab
-    // «Ввод»: the same, the keys of
+    // given, by "pixel-motion-e", opened again and played in the game by "pixel-motion-e-again"; part 4в, paths and
+    // links: a part along a hidden path, another to a third's place, carried by it and let go, their tracks, words, values
+    // and refusals, baked and given, by "pixel-motion-f", opened again and played in the game by
+    // "pixel-motion-f-again"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2347,6 +2349,8 @@ public:
         if (part == "pixel-motion-d-again") return frame < 3 || pixel_motion_d_again_step();
         if (part == "pixel-motion-e") return frame < 3 || pixel_motion_e_step();
         if (part == "pixel-motion-e-again") return frame < 3 || pixel_motion_e_again_step();
+        if (part == "pixel-motion-f") return frame < 3 || pixel_motion_f_step();
+        if (part == "pixel-motion-f-again") return frame < 3 || pixel_motion_f_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19073,15 +19077,30 @@ return {
         const int shown_again = pj_run({exe, "--project", project, "--self-test", "pixel-motion-e-again"}, eight);
         check(shown_again == 0, "opened from another working folder: the files, the recording and every frame as pixel-motion-e left them; "
                                 "the game plays the flag by «Маяк»'s 10 frames (pixel-motion-e-again: exit " + std::to_string(shown_again) + ")");
+        // Part 4в: paths and links, then to the game.
+        const fs::path nine = mo_root() / utf8_path("девятая папка"), ten = mo_root() / utf8_path("десятая папка");
+        fs::create_directories(nine, ec);
+        fs::create_directories(ten, ec);
+        const int links = pj_run({exe, "--project", project, "--self-test", "pixel-motion-f"}, nine);
+        check(links == 0, "«Тележка»: the cart along a hidden path turning with it, the box to the hook, carried by it and let go, the "
+                          "tracks and their words, the parts' values, both views as the library has them; the path's length and timing "
+                          "typed, its value, its drag and the link's edge refused; baked and given to «Флаг» (pixel-motion-f: exit " +
+                              std::to_string(links) + ")");
+        const int carried = pj_run({exe, "--project", project, "--self-test", "pixel-motion-f-again"}, ten);
+        check(carried == 0, "opened from another working folder: the files, the recording and every frame as pixel-motion-f left them; "
+                            "the game plays the flag by «Тележка»'s 9 frames (pixel-motion-f-again: exit " + std::to_string(carried) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
-        const std::vector<std::string> ours = {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau", "Шкала", "шаг.wav", "Знак", "Маяк"};
+        const std::vector<std::string> ours = {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau", "Шкала", "шаг.wav", "Знак", "Маяк",
+                                               "Тележка"};
         check(tg_naming(b, ours).empty() && !fs::exists(b / "game" / "sounds" / utf8_path("шаг.wav"), ec),
-              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк» or the sounds in B: " + tg_naming(b, ours));
+              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк», «Тележка» or the sounds in B: " + tg_naming(b, ours));
         check(fs::exists(a / "game" / "sounds" / utf8_path("шаг.wav"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Шкала.png"), ec) &&
-                  fs::exists(a / "game" / "pictures" / utf8_path("Знак.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маяк.png"), ec),
-              "A: the sounds in its sounds/, «pictures/Шкала.png», «pictures/Знак.png» and «pictures/Маяк.png» given to the flag");
+                  fs::exists(a / "game" / "pictures" / utf8_path("Знак.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маяк.png"), ec) &&
+                  fs::exists(a / "game" / "pictures" / utf8_path("Тележка.png"), ec),
+              "A: the sounds in its sounds/, «pictures/Шкала.png», «pictures/Знак.png», «pictures/Маяк.png» and «pictures/Тележка.png» given to "
+              "the flag");
         const fs::path chars = a / "assets" / utf8_path("персонажи");
         check(fs::exists(a / "game" / "animations" / utf8_path("движения.luau"), ec) && fs::exists(chars / utf8_path("Ёжик.luau"), ec) &&
                   fs::exists(chars / utf8_path("Персонаж.luau"), ec) && fs::exists(chars / utf8_path("Персонаж.png"), ec) &&
@@ -22541,6 +22560,436 @@ return {
         default: break;
         }
         ++me_step_;
+        return true;
+    }
+
+    // Part 4в (pixel-motion-f, then pixel-motion-f-again): «Тележка», drawn by its code with a path hidden by `hidden`,
+    // its clip «Покой» ten frames four a second: the cart goes along the path turning with it, the box goes to the hook,
+    // goes with it while the crane swings and is let go there. The timeline's tracks in the order of the parts and of the
+    // properties, their blocks' words, the link's blocks to the next and to the clip's end with their titles; the parts'
+    // values in the frame, the link's among them; both views of four frames as the library draws and bakes the files; the
+    // path's length (the clip nine frames then) and timing in the inspector's fields, each both files byte for byte, one
+    // step, Ctrl+Z and Ctrl+Y byte for byte; the path's value, the place's value and the cart dragged on its path refused
+    // with the reason, the link without fields, its edge refused; «Запечь» as the library bakes the files apart from the
+    // tab, each frame other than the one before; given to «Флаг», undone and done again. pixel-motion-f-again, from
+    // another working folder: the files, the recording and both views of every frame the same; the game plays the flag by
+    // «Тележка»'s nine frames.
+    int mf_step_ = 0;
+    std::string mf_code_, mf_label_, mf_seen_;
+    std::vector<u8> mf_doc_, mf_flag0_; // mf_doc_: the «.pixel.json» as the last step left it
+    static constexpr const char* kMfCart = R"lua(-- «Тележка»: путь, место и крепление части 4в в «Покое», 10 кадров по 4 в секунду.
+return {
+  draw = function(p, rng)
+    canvas(64, 64)
+    path("track", { d = "M 8 40 L 32 20 L 56 40", hidden = true })
+    rect("cart", { x = 4, y = 36, w = 8, h = 8, fill = "#c03030" })
+    group("crane", function()
+      rect("boom", { x = 40, y = 8, w = 16, h = 4, fill = "#806040" })
+      circle("hook", { x = 54, y = 14, r = 2, fill = "#202020" })
+    end)
+    rect("box", { x = 6, y = 52, w = 6, h = 6, fill = "#3060c0" })
+  end,
+  clips = {
+    idle = function(p)
+      part("cart"):along("track", 1, "linear", { turn = true })
+      part("box"):snap_to("hook", 0.25, "linear")
+      part("box"):attach("hook")
+      part("crane"):to({ x = -16, rot = -10 }, 0.5, "linear")
+      part("box"):detach()
+      part("crane"):to({ x = 0, rot = 0 }, 0.5, "linear")
+      wait(0.25)
+    end,
+  },
+}
+)lua";
+    static constexpr const char* kMfPath = "путь правится в коде: along(\"track\", …)";
+    static constexpr const char* kMfLink = "крепление правится в коде: attach(\"hand\"), detach()";
+
+    // In an editor for «Движение А» after pixel-motion-e-again (--self-test pixel-motion-f).
+    bool pixel_motion_f_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string doc = "персонажи/Тележка.pixel.json", lua = "персонажи/Тележка.luau", png = "персонажи/Тележка.png";
+        const pixel::Recording* rec = px().recording();
+        const pixel::PixelDoc& d = px().doc();
+        objects::Library& lib = an().library();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto put = [&](const fs::path& f, std::string_view text) { return write_file_atomic(f, {reinterpret_cast<const u8*>(text.data()), text.size()}); };
+        auto put_bytes = [&](const fs::path& f, const std::vector<u8>& b) { return write_file_atomic(f, b); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        auto files_are = [&](const std::string& code) { return file(lua) == bytes(code) && file(doc) == mf_doc_; };
+        // The «.pixel.json» of «Покой» of `frames` frames four a second, as written at the start and as an edit writes it.
+        auto doc_of = [&](u32 frames) {
+            pixel::PixelDoc x;
+            x.script = "Тележка.luau";
+            x.frame_w = x.frame_h = 64;
+            x.clips = {{"idle", frames, 4, true}};
+            return bytes(pixel::write_pixel_doc(x));
+        };
+        // The nth block of a part's property: its index, -1 when none.
+        auto block_of = [&](const char* part_id, pixel::Prop prop, usize nth = 0) -> i32 {
+            for (usize i = 0; rec && i < rec->blocks.size(); ++i)
+                if (rec->blocks[i].part < rec->parts.size() && rec->parts[rec->blocks[i].part] == part_id && rec->blocks[i].prop == prop && nth-- == 0)
+                    return static_cast<i32>(i);
+            return -1;
+        };
+        auto id_of = [](i32 block) { return "px-block-" + std::to_string(block); };
+        auto title_of = [&](i32 block) {
+            Rml::Element* e = ed_.find_element(("px-block-" + std::to_string(block)).c_str());
+            return e ? e->GetAttribute<Rml::String>("title", "") : Rml::String();
+        };
+        auto near = [](f64 x, f64 y) { return std::fabs(x - y) < 1e-6; };
+        auto at_frame = [&](u32 k) { return px_click("px-frame-" + std::to_string(k)) && px().frame() == k; };
+        // Both views of frame k as the library draws and bakes the files on disk, apart from the tab.
+        auto views_are = [&](u32 k) {
+            assets::CookedTexture baked;
+            std::string why;
+            return mo_ref("idle", k, baked, why) && px_same(px().pixel_frame(), baked) && mc_vector_is(k, 0, 0, 0);
+        };
+        auto timing_index = [](const char* word) {
+            for (usize i = 0; i < vector::kTimingCount; ++i)
+                if (std::string(vector::timing_word(static_cast<vector::Timing>(i))) == word) return static_cast<int>(i);
+            return -1;
+        };
+        // One step of the edit: both files as it should leave them (the clip of `frames` frames), its label; Ctrl+Z and
+        // Ctrl+Y byte for byte.
+        auto edited = [&](const std::string& code, u32 frames, const std::string& label, const std::string& what) {
+            const std::vector<u8> now = file(lua), was_doc = mf_doc_, new_doc = doc_of(frames);
+            auto both = [&] { return file(lua) == bytes(code) && file(doc) == new_doc; };
+            const bool done = check(both() && step_label() == label,
+                                    what + ": the script byte for byte, the «.pixel.json» of " + std::to_string(frames) + " frames, one step: " +
+                                        step_label() + (now == bytes(code) ? std::string() : "\n" + std::string(now.begin(), now.end()) + "\nwanted\n" + code));
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(mf_code_) && file(doc) == was_doc && step_label() == mf_label_, "Ctrl+Z: " + what + " undone, both files byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(both() && step_label() == label, "Ctrl+Y: " + what + " again, byte for byte");
+            if (done) mf_code_ = code, mf_label_ = label, mf_doc_ = new_doc;
+        };
+        auto unchanged = [&](const std::string& what) {
+            return check(files_are(mf_code_) && step_label() == mf_label_, what + ": nothing written, no step: " + step_label());
+        };
+        switch (mf_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            mf_doc_ = doc_of(10);
+            mf_code_ = kMfCart;
+            std::error_code ec;
+            check(!fs::exists(as().abs(lua), ec) && !fs::exists(as().abs(doc), ec), "no «Тележка» in the game yet");
+            check(put(as().abs(lua), kMfCart) && put_bytes(as().abs(doc), mf_doc_), "«Тележка.luau» and «Тележка.pixel.json» written by another program");
+            as().refresh();
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(idle && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Тележка» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Тележка»");
+            break;
+        // The recording: the tracks in order, the blocks' words, the link's blocks.
+        case 3: {
+            if (hold(px().code() == kMfCart && px().clip() == "idle" && rec && !px().stale() && shown("px-block-0"), "«Тележка», its code and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            mf_label_ = step_label();
+            check(files_are(kMfCart), "opened: nothing written");
+            check(near(rec->length, 2.5) && px().whole().frames == 10 && rec->blocks.size() == 11 && rec->pauses.size() == 1 && px().console().empty(),
+                  "2,5 s, eleven blocks, a pause, 10 frames, nothing in the console: " + mp_recorded());
+            const char* tracks[] = {"cart · x", "cart · y", "cart · rot", "crane · x", "crane · rot", "box · x", "box · y", "box · крепление"};
+            std::string wrong;
+            for (usize i = 0; i < std::size(tracks); ++i)
+                if (element_text(("px-track-" + std::to_string(i)).c_str()) != tracks[i]) wrong += " " + std::to_string(i);
+            if (ed_.find_element(("px-track-" + std::to_string(std::size(tracks))).c_str())) wrong += " more";
+            check(wrong.empty(), "eight tracks in the order of the parts and of the properties, the link after the numbers:" + wrong + "\n" + mp_recorded());
+            const i32 x = block_of("cart", pixel::Prop::X), y = block_of("cart", pixel::Prop::Y), rot = block_of("cart", pixel::Prop::Rot),
+                      to_x = block_of("box", pixel::Prop::X), to_y = block_of("box", pixel::Prop::Y), held = block_of("box", pixel::Prop::Link),
+                      gone = block_of("box", pixel::Prop::Link, 1);
+            check(x >= 0 && y >= 0 && rot >= 0 && to_x >= 0 && to_y >= 0 && held >= 0 && gone >= 0 && element_text(id_of(x).c_str()) == "по track" &&
+                      element_text(id_of(y).c_str()) == "по track" && element_text(id_of(rot).c_str()) == "по track, поворот" &&
+                      element_text(id_of(to_x).c_str()) == "к hook" && element_text(id_of(to_y).c_str()) == "к hook" &&
+                      element_text(id_of(held).c_str()) == "с hook" && element_text(id_of(gone).c_str()) == "отпущена",
+                  "the blocks' words: «по track», «по track, поворот», «к hook», «с hook», «отпущена»\n" + mp_recorded());
+            // A link holds from its call to the next call of its part, the last to the clip's end: their boxes so.
+            f32 l = 0, r = 0, x0 = 0, x1 = 0, x2 = 0;
+            check(held >= 0 && gone >= 0 && mb_box(id_of(held), l, r) && px().timeline_x(1.25, x0) && px().timeline_x(1.75, x1) &&
+                      px().timeline_x(2.5, x2) && std::fabs(l - x0) < 1.01f && std::fabs(r - x1) < 1.01f && mb_box(id_of(gone), l, r) &&
+                      std::fabs(l - x1) < 1.01f && std::fabs(r - x2) < 1.01f,
+                  "the link's blocks from 1,25 s to 1,75 s and from there to the clip's end");
+            check(title_of(held) == "с hook: с 1,25 с до следующего вызова крепления; правится в коде, двойной щелчок — к коду" &&
+                      title_of(gone) == "отпущена: с 1,75 с до следующего вызова крепления; правится в коде, двойной щелчок — к коду",
+                  "their titles: «" + title_of(held) + "», «" + title_of(gone) + "»");
+            check(at_frame(1), "frame 2 of the ruler");
+            break;
+        }
+        // The parts' values in the frame; both views as the library has them.
+        case 4: {
+            if (wait(2)) return true;
+            check(px_click("px-part-cart") && px().part() == "cart", "a click on «cart» in the tree");
+            break;
+        }
+        case 5: {
+            if (wait(2)) return true;
+            // A quarter of the path's length: half way up its first side, turned along it, atan(20 / 24) up.
+            check(mp_values() == "x 12; y -10; rot -39,806; scale 1; sx 1; sy 1; opacity 1; fill свой; morph нет",
+                  "frame 2: the cart a quarter along the path, turned with it: " + mp_values());
+            check(views_are(1), "both views of frame 2 as the library draws and bakes the files");
+            check(at_frame(3), "frame 4");
+            break;
+        }
+        case 6: {
+            if (wait(2)) return true;
+            check(mp_values() == "x 36; y -10; rot 39,806; scale 1; sx 1; sy 1; opacity 1; fill свой; morph нет",
+                  "frame 4: three quarters along, half way down the second side, turned down with it: " + mp_values());
+            check(views_are(3), "both views of frame 4");
+            check(px_click("px-part-box") && at_frame(6), "«box»; frame 7");
+            break;
+        }
+        case 7: {
+            if (wait(2)) return true;
+            // At the hook's centre (54, 14) from its own (9, 55), carried by the hook since 1,25 s.
+            check(mp_values() == "x 45; y -41; rot 0; scale 1; sx 1; sy 1; opacity 1; fill свой; morph нет; крепление hook",
+                  "frame 7: the box at the hook, going with it: " + mp_values());
+            check(views_are(6), "both views of frame 7: the box carried by the swinging crane");
+            check(at_frame(8), "frame 9");
+            break;
+        }
+        case 8: {
+            if (wait(2)) return true;
+            check(mp_values() == "x 45; y -41; rot 0; scale 1; sx 1; sy 1; opacity 1; fill свой; morph нет; крепление нет",
+                  "frame 9: the box let go at 1,75 s, its own values as they were: " + mp_values());
+            check(views_are(8), "both views of frame 9: the box where the crane left it, the crane half way back");
+            check(px_click("px-part-crane"), "«crane»");
+            break;
+        }
+        case 9: {
+            if (wait(2)) return true;
+            check(mp_values() == "x -8; y 0; rot -5; scale 1; sx 1; sy 1; opacity 1; fill свой; morph нет", "frame 9: the crane half way back: " + mp_values());
+            const i32 x = block_of("cart", pixel::Prop::X);
+            check(x >= 0 && px_click(id_of(x)) && px().block() == x, "a click on «по track»");
+            break;
+        }
+        // The path's block: no value field, its reason; its length and its timing typed.
+        case 10: {
+            const i32 x = block_of("cart", pixel::Prop::X);
+            if (hold(px().block() == x && shown("px-block-why") && shown("px-block-length"), "the inspector of «по track»")) return true;
+            // The element's text keeps RmlUi's escapes of the quotes.
+            check(!shown("px-block-value") && shown("px-timing") && ue_field("px-block-length") == "1" &&
+                      element_text("px-block-why") == "путь правится в коде: along(&quot;track&quot;, …)",
+                  "length and timing, no value: «" + element_text("px-block-why") + "»");
+            check(ue_type("px-block-length", "0,75"), "0,75 typed into «Длина»");
+            // The clip 2,25 s: nine frames four a second.
+            edited(mb_sub(mf_code_, "along(\"track\", 1,", "along(\"track\", 0.75,"), 9, "«Тележка»: cart · x, длина 0,75 с", "the path's length");
+            break;
+        }
+        case 11:
+            if (hold(rec && !px().stale() && near(rec->length, 2.25) && ue_field("px-block-length") == "0,75" && !px().timings_open(),
+                     "the fields of the new recording, 2,25 s"))
+                return true;
+            check(px_click("px-timing") && px().timings_open(), "a click on «linear»: the list");
+            break;
+        case 12:
+            if (hold(shown("px-timing-0"), "the list of timings")) return true;
+            check(px_click("px-timing-" + std::to_string(timing_index("smooth"))) && !px().timings_open(), "a click on «smooth»: the list shut");
+            edited(mb_sub(mf_code_, "along(\"track\", 0.75, \"linear\"", "along(\"track\", 0.75, \"smooth\""), 9, "«Тележка»: cart · x, smooth",
+                   "the path's timing");
+            break;
+        // The cart dragged while its path goes: refused with the path's reason.
+        case 13: {
+            if (hold(rec && !px().stale() && element_text("px-timing").find("smooth") != std::string::npos, "the inspector of the new recording"))
+                return true;
+            check(at_frame(1), "frame 2");
+            break;
+        }
+        case 14: {
+            if (wait(2)) return true;
+            check(mb_hold_part("cart", {8, 40}, 2, 0), "the cart dragged by 2; 0 on its path");
+            mb_let_go();
+            check(px().note() == std::string("«cart» не сдвинуть: ") + kMfPath, "refused: «" + px().note() + "»");
+            unchanged("a drag of the cart on its path");
+            const i32 to_x = block_of("box", pixel::Prop::X);
+            check(to_x >= 0 && px_click(id_of(to_x)) && px().block() == to_x, "a click on «к hook»");
+            break;
+        }
+        // The place's block: its length and timing, not its value.
+        case 15: {
+            const i32 to_x = block_of("box", pixel::Prop::X);
+            if (hold(px().block() == to_x && shown("px-block-why"), "the inspector of «к hook»")) return true;
+            check(!shown("px-block-value") && shown("px-timing") && ue_field("px-block-length") == "0,25" &&
+                      element_text("px-block-why") == "место считается от «hook»: правится в коде",
+                  "length and timing, no value: «" + element_text("px-block-why") + "»");
+            const i32 held = block_of("box", pixel::Prop::Link);
+            check(held >= 0 && px_click(id_of(held)) && px().block() == held, "a click on «с hook»");
+            break;
+        }
+        // The link: no field, its edge refused.
+        case 16: {
+            const i32 held = block_of("box", pixel::Prop::Link);
+            if (hold(px().block() == held && shown("px-block-why"), "the inspector says why")) return true;
+            check(!shown("px-block-value") && !shown("px-block-length") && !shown("px-timing") &&
+                      element_text("px-block-why") == "крепление правится в коде: attach(&quot;hand&quot;), detach()",
+                  "no fields; «" + element_text("px-block-why") + "»");
+            check(mb_hold_edge(id_of(held), 1.5, 1.25, true), "its end pressed and dragged");
+            mb_let_go();
+            check(px().note() == std::string("Длину «box · крепление» мышью не изменить: ") + kMfLink, "«" + px().note() + "»");
+            unchanged("the link's edge");
+            break;
+        }
+        // «Запечь»: 9 frames of 64 × 64, each as the library bakes the files apart from the tab.
+        case 17: {
+            if (hold(idle && rec && !px().stale() && element_text("px-total") == "в картинке 9 кадров из 64", "«в картинке 9 кадров из 64»")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            assets::CookedTexture strip;
+            const std::vector<u8> baked = file(png);
+            check(!baked.empty() && assets::decode_image(baked, strip) && strip.width == 576 && strip.height == 64, "«Тележка.png»: 9 frames of 64 × 64");
+            check(d.strip == std::vector<pixel::StripClip>{{"idle", 0, 9, 4, true}} && px().note() == "Запечено: «Тележка.png», 9 кадров 64 × 64." &&
+                      step_label() == "«Тележка»: запечено в «Тележка.png», 9 кадров",
+                  "in the file: «Покой» 1–9; «" + px().note() + "», one step: " + step_label());
+            pixel::PixelDoc dd;
+            pixel::Rig rig;
+            pixel::PoseScript script;
+            std::string why, bad, same;
+            check(mo_load(dd, rig, script, why) && dd.clips.size() == 1, "the files read apart from the tab " + why);
+            for (u32 k = 0; k < 9 && dd.clips.size() == 1; ++k) {
+                assets::CookedTexture ref;
+                if (!pixel::bake_frame(rig, script, dd, dd.clips[0], k, pixel::bake_options(dd, {}), ref, why) || !px_same(px_cut(strip, 64, k), ref))
+                    bad += " " + std::to_string(k + 1) + why;
+                // Each frame other than the one before: the cart on its path to 0,75 s, the box to the hook, the crane
+                // swinging it out and back without it to 2 s, frame 9.
+                if (k > 0 && px_same(px_cut(strip, 64, k), px_cut(strip, 64, k - 1))) same += " " + std::to_string(k + 1);
+            }
+            check(bad.empty(), "each of the 9 frames as the library bakes the files apart from the tab;" + bad);
+            check(same.empty(), "frames 2–9 each other than the one before:" + same);
+            break;
+        }
+        case 18:
+            if (hold(idle && as().record_of(as().abs(png)) && shown("px-give-open") && !pj_class("px-give-open", "disabled"), "the picture indexed"))
+                return true;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
+            break;
+        case 19: {
+            const auto& l = px().templates();
+            const objects::Template* flag = lib.find("flag");
+            const usize at = flag ? static_cast<usize>(std::find(l.begin(), l.end(), flag->key) - l.begin()) : l.size();
+            const std::string row = "px-tpl-" + std::to_string(at);
+            if (hold(at < l.size() && shown(row), "the templates listed")) return true;
+            check(element_text(row.c_str()).find("сыграет: Покой") != std::string::npos, "«Флаг» will play «Покой»");
+            mf_flag0_ = an_file("flag");
+            check(px_click(row), "a click on «Флаг»");
+            break;
+        }
+        case 20: {
+            const objects::Template* t = lib.find("flag");
+            objects::Clip all{{}, 4, true};
+            for (u32 k = 0; k < 9; ++k) all.frames.push_back(k);
+            check(t && t->picture == "Тележка.png" && t->frames == 9 && t->animations.size() == 1 && an_is("flag", "idle", all) &&
+                      objects::read_template(t->file)->frames == 9,
+                  "«Флаг»: «Тележка.png», 9 frames, «Покой» by all of them four a second; in its file");
+            check(tg_bytes(a / "game" / "pictures" / utf8_path("Тележка.png")) == file(png), "the game's «pictures/Тележка.png»: the strip as baked");
+            check(px().note() == "«Флаг» рисует «Тележка.png», 9 кадров, анимации: «Покой»." && step_label() == "«Флаг»: картинка «Тележка.png» из «Тележка»",
+                  "«" + px().note() + "», one step: " + step_label());
+            const std::vector<u8> given = an_file("flag");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("flag")) == an_lf(mf_flag0_), "Ctrl+Z: «Флаг» as before (line ends aside)");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("flag") == given && lib.find("flag")->frames == 9 && an_is("flag", "idle", all), "Ctrl+Y: given again, byte for byte");
+            break;
+        }
+        // What the tab shows and the files, beside the games, for pixel-motion-f-again: the recording and both views of
+        // each frame.
+        case 21: {
+            if (hold(rec && !px().stale() && !px().giving() && shown("px-frame-0"), "the recording")) return true;
+            if (mb_look(mf_seen_)) return true;
+            mf_seen_ = mp_recorded() + mf_seen_;
+            const fs::path root = mo_root();
+            check(put(root / utf8_path("тележка.txt"), mf_seen_) && put_bytes(root / utf8_path("тележка.luau"), file(lua)) &&
+                      put_bytes(root / utf8_path("тележка.pixel.json"), file(doc)) && put_bytes(root / utf8_path("тележка.png"), file(png)) &&
+                      put_bytes(root / utf8_path("флаг тележки.json"), an_file("flag")),
+                  "what the tab shows and the files, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++mf_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-motion-f (--self-test pixel-motion-f-again).
+    bool pixel_motion_f_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string doc = "персонажи/Тележка.pixel.json", lua = "персонажи/Тележка.luau", png = "персонажи/Тележка.png";
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
+        auto same = [&] {
+            return !left("тележка.luau").empty() && file(lua) == left("тележка.luau") && file(doc) == left("тележка.pixel.json") &&
+                   file(png) == left("тележка.png") && an_file("flag") == left("флаг тележки.json");
+        };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        switch (mf_step_) {
+        case 0:
+            check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), mo_root() / utf8_path("девятая папка")),
+                  "from another working folder: " + path_to_utf8(fs::current_path()));
+            check(same(), "the files as pixel-motion-f left them");
+            check(click_tab(3), "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Тележка» listed"))
+                return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Тележка»");
+            break;
+        case 3: {
+            const std::vector<u8> code = left("тележка.luau");
+            if (hold(px().code() == std::string(code.begin(), code.end()) && px().clip() == "idle" && px().recording() && !px().stale() &&
+                         shown("px-frame-0") && shown("px-total"),
+                     "«Тележка» and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            if (mb_look(mf_seen_)) return true;
+            const std::vector<u8> was = left("тележка.txt");
+            const std::string seen = mp_recorded() + mf_seen_;
+            check(!was.empty() && seen == std::string(was.begin(), was.end()),
+                  "the recording, the tracks and both views of every frame as pixel-motion-f saw them\n" + seen);
+            check(element_text("px-total") == "в картинке 9 кадров из 64" && !px().edited(), "«" + element_text("px-total") + "», the picture as baked");
+            check(same(), "looked at: nothing written");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 4:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 5: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = an_edits();
+            const int code = tg_play(&e, "ожидания тележка.json", mo_root());
+            check(code == 0, "the game plays the flag by «Тележка»'s 9 frames, each on the screen as baked (exit " + std::to_string(code) + ")");
+            check(same(), "played: the files as they were");
+            return false;
+        }
+        default: break;
+        }
+        ++mf_step_;
         return true;
     }
 
@@ -29793,7 +30242,7 @@ int main(int argc, char** argv) {
                                          "frame-limit", "frame-limit-a", "frame-limit-a-again", "frame-limit-a-low", "frame-limit-a-low-again",
                                          "frame-limit-a-cross", "pixel-motion", "pixel-motion-a", "pixel-motion-b", "pixel-motion-b-again",
                                          "pixel-motion-c", "pixel-motion-c-again", "pixel-motion-d", "pixel-motion-d-again", "pixel-motion-e",
-                                         "pixel-motion-e-again", "input", "input-a",
+                                         "pixel-motion-e-again", "pixel-motion-f", "pixel-motion-f-again", "input", "input-a",
                                          "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
@@ -29809,7 +30258,7 @@ int main(int argc, char** argv) {
                     "animation-a-again, pixel and its parts pixel-a, pixel-a-again, frame-limit and its parts frame-limit-a, frame-limit-a-again, "
                     "frame-limit-a-low, frame-limit-a-low-again, frame-limit-a-cross, pixel-motion and its parts pixel-motion-a, pixel-motion-b, "
                     "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, pixel-motion-d, pixel-motion-d-again, pixel-motion-e, "
-                    "pixel-motion-e-again, "
+                    "pixel-motion-e-again, pixel-motion-f, pixel-motion-f-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
