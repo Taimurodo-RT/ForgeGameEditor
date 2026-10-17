@@ -414,6 +414,14 @@ part("torso"):to_bottom())"));
     p = frame(s, rec, &rig, 0.7);
     CHECK(p.order == std::vector<OrderStep>{{"arm", K::Top, ""}, {"head", K::Top, ""}, {"arm", K::Below, "torso"}, {"head", K::Above, "torso"}});
     CHECK(frame(s, rec, &rig, 1).order.size() == 5);
+    // Recorded one way, timed the other: all() records its first task whole before the second, yet the head's call at
+    // 0.25 goes before the arm's at 0.5.
+    PoseScript late = script_of(clip_of(R"(all(delay(0.5, part("arm"):to_top()), delay(0.25, part("head"):to_top())))"));
+    const Recording later = recorded(late, &rig);
+    REQUIRE(later.blocks.size() == 2);
+    CHECK(later.parts[later.blocks[0].part] == "arm"); // the premise: the record has them the other way
+    CHECK(frame(late, later, &rig, 0.3).order == std::vector<OrderStep>{{"head", K::Top, ""}});
+    CHECK(frame(late, later, &rig, 0.7).order == std::vector<OrderStep>{{"head", K::Top, ""}, {"arm", K::Top, ""}});
 
     // The order is the code's: no field edits it, a chain does not go on from it.
     std::string out, why;
@@ -480,6 +488,13 @@ TEST_CASE("Motion draw: a frame of each property is the SVG with it written, byt
         pose.parts.erase("torso");
         REQUIRE(rig.pose(pose, why));
         same_picture(rig, picture({{"head", "stroke=\"rgb(160,16,0)\""}}));
+        // A shape without one, half way: the colour itself, coming in from transparent, 255 · ½ is 128.
+        pose.parts.erase("head");
+        pose.parts["torso"].has_stroke = true;
+        pose.parts["torso"].stroke = {255, 0, 0, 255};
+        pose.parts["torso"].stroke_k = 0.5;
+        REQUIRE(rig.pose(pose, why));
+        same_picture(rig, picture({{"torso", "stroke=\"#ff0000\" stroke-opacity=\"0.502\""}}));
     }
     SUBCASE("stroke width: from each shape's own, the group's shapes each") {
         Pose pose;
@@ -497,6 +512,23 @@ TEST_CASE("Motion draw: a frame of each property is the SVG with it written, byt
         same_picture(rig, picture({{"torso", "stroke=\"#000000\" stroke-width=\"2.5\""},
                                    {"arm", "stroke=\"#000000\" stroke-width=\"2.5\""},
                                    {"head", "stroke=\"#000000\" stroke-width=\"2.5\""}}));
+        // The group's width half way, a stroke given to the torso: the torso's own width is SVG's 1, not the 0 it
+        // drew, 1 → 3 is 2; the head's 1.5 → 3 is 2.25; the arm, given no stroke, draws none.
+        Pose half;
+        half.parts["body"].has_stroke_width = true;
+        half.parts["body"].stroke_width = 3;
+        half.parts["body"].stroke_width_k = 0.5;
+        half.parts["torso"].has_stroke = true;
+        half.parts["torso"].stroke = {0, 0, 0, 255};
+        REQUIRE(rig.pose(half, why));
+        same_picture(rig, picture({{"torso", "stroke=\"#000000\" stroke-width=\"2\""}, {"head", "stroke-width=\"2.25\""}}));
+        // Below 0, as two widths overshooting with back: none.
+        Pose below;
+        below.parts["head"].has_stroke_width = true;
+        below.parts["head"].stroke_width = -0.5;
+        below.parts["head"].stroke_width_k = 1;
+        REQUIRE(rig.pose(below, why));
+        same_picture(rig, picture({{"head", "stroke-width=\"0\""}}));
     }
     SUBCASE("dash: the pattern moved along the line; a shape without one as it was") {
         Pose pose;
@@ -570,6 +602,23 @@ part("arm"):to_top())"));
     REQUIRE(rig.pose({}, why));
     CHECK(rig.draw(128, 128).rgba8 == rest.rgba8);
     CHECK(rig.bake(64, 64, {}).rgba8 == rest_baked.rgba8);
+}
+
+TEST_CASE("Motion draw: a stroke given to a shape whose own is clear is taken back") {
+    // stroke-opacity 0: the shape has a width and a clear colour. A stroke given shows at that width; the rest after it
+    // is the picture at rest again, the clear colour put back.
+    Rig rig = loaded(R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect id="box" x="8" y="8" width="16" height="16" fill="#3060c0" stroke="#ff0000" stroke-opacity="0" stroke-width="4"/>
+</svg>)");
+    std::string why;
+    const assets::CookedTexture rest = rig.draw(64, 64);
+    Pose given;
+    given.parts["box"].has_stroke = true;
+    given.parts["box"].stroke = {0, 0, 0, 255};
+    REQUIRE(rig.pose(given, why));
+    CHECK(rig.draw(64, 64).rgba8 != rest.rgba8);
+    REQUIRE(rig.pose({}, why));
+    CHECK(rig.draw(64, 64).rgba8 == rest.rgba8);
 }
 
 TEST_CASE("Motion draw: a pose of the new numbers that are no numbers is named") {
