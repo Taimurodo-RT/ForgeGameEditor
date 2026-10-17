@@ -286,6 +286,10 @@ TEST_CASE("Motion paths: a shape's line by its length, against the formula of ea
     // What is no path.
     CHECK(path_error(rig, "lane") == "путь «lane» — группа, а нужна фигура");
     CHECK(path_error(rig, "two") == "у пути «two» больше одного контура: нужна одна линия");
+    Pic with_dot;
+    with_dot.tail = R"svg(  <path id="dot" d="M 5 5 L 5 5" display="none"/>
+)svg";
+    CHECK(path_error(loaded(with_dot.text()), "dot") == "у пути «dot» длина 0");
 }
 
 TEST_CASE("Motion paths: along moves a part's pivot along the line by the timing") {
@@ -313,6 +317,8 @@ part("ball").x(0, 1, "linear"))"));
     CHECK(frame(s, rec, &rig, 1.5).parts.at("ball").x == doctest::Approx(24));
     CHECK(block_words(rec, block(rec, "ball", Prop::X)) == "по route");
     CHECK(block_words(rec, block(rec, "ball", Prop::Y)) == "по route");
+    // Its end (the block's «куда» in its title): the path's end.
+    CHECK(block(rec, "ball", Prop::X).end.v == doctest::Approx(48));
 
     // A timing word: the share of the length is the timing's.
     s = script_of(clip_of(R"(part("ball"):along("route", 1, "smooth"))"));
@@ -336,6 +342,18 @@ part("ball").x(0, 1, "linear"))"));
     CHECK(frame(s, rec, &rig, 0).parts.at("ball").x == doctest::Approx(36)); // at once at from, not where it was
     CHECK(frame(s, rec, &rig, 0.5).parts.at("ball").x == doctest::Approx(24));
     CHECK(frame(s, rec, &rig, 1).parts.at("ball").x == doctest::Approx(12));
+    // Asked before its start (as block_value is), the block is where the part was, as every other block is.
+    s = script_of(clip_of(R"(part("ball").x(5, 1, "linear")
+part("ball"):along("route", 1, "linear", { from = 0.75 }))"));
+    rec = recorded(s, &rig);
+    {
+        const Block& on = block(rec, "ball", Prop::X, 1);
+        PropValue before;
+        std::string why;
+        REQUIRE(block_value(rec, on, on.start - 0.25, nullptr, before, why));
+        CHECK(before.v == doctest::Approx(5));
+        CHECK(frame(s, rec, &rig, on.start).parts.at("ball").x == doctest::Approx(36));
+    }
 
     s = script_of(clip_of(R"(part("ball"):to({ x = 3, y = 2 }, 0)
 part("ball"):along("route", 1, "linear", { relative = true, from = 0.5 }))"));
@@ -370,6 +388,17 @@ part("ball"):along("route", 1, "linear", { turn = true, from = 1, to = 0 }))"));
     // On the circle: the pivot on the radius at each time.
     const Pose half = frame(s, rec, &rig, 0.3);
     CHECK(std::hypot(8 + half.parts.at("ball").x - 32, 50 + half.parts.at("ball").y - 32) == doctest::Approx(10).epsilon(1e-3));
+
+    // Back up the broken line's second segment: turned round to −90, not 270; a closed line from three quarters of its
+    // way round starts within −180 … 180 all the same.
+    s = script_of(clip_of(R"(part("ball"):along("zig", 1, "linear", { turn = true, from = 1, to = 0.5 }))"));
+    rec = recorded(s, &rig);
+    CHECK(frame(s, rec, &rig, 0).parts.at("ball").rot == doctest::Approx(-90));
+    s = script_of(clip_of(R"(part("ball"):along("ring", 1, "linear", { turn = true, from = 0.75 }))"));
+    rec = recorded(s, &rig);
+    const f64 late = frame(s, rec, &rig, 0).parts.at("ball").rot;
+    CHECK(late > -180 - 1e-9);
+    CHECK(late <= 180 + 1e-9);
 
     // A path in a moved group: where the group puts it.
     s = script_of(clip_of(R"(part("ball"):along("road", 1, "linear"))"));
@@ -421,6 +450,24 @@ wait(0.1))"));
         CHECK(block(rec, "sword", Prop::X).value.v == doctest::Approx(x.value.v));
     }
 
+    // From inside a moving group and from a link: the numbers are in the frame the part stands in at the call.
+    struct From {
+        const char* code;
+        const char* part;
+    };
+    for (const From& f : {From{R"(part("arm"):to({ x = 2, y = -3, rot = 30, scale = 1.5 }, 0)
+part("tip"):snap_to("ball", 0.2))", "tip"},
+                          From{R"(part("sword"):attach("hand")
+part("hand"):to({ x = 4, rot = -25, scale = 1.2 }, 0)
+part("sword"):snap_to("ball", 0.2))", "sword"}}) {
+        INFO(f.code);
+        PoseScript s = script_of(clip_of(f.code));
+        const Recording rec = recorded(s, &rig);
+        std::string why;
+        REQUIRE(rig.pose(frame(s, rec, &rig, 0.2), why));
+        CHECK(near(pivot_now(rig, f.part), pivot_now(rig, "ball"), 1e-4));
+    }
+
     // To a part carried by a link: where the link has carried it.
     PoseScript s = script_of(clip_of(R"(part("hand"):attach("torso")
 part("body"):to({ x = -6, y = 4, rot = 10 }, 0.5, "linear")
@@ -464,6 +511,26 @@ all(part("hand"):to({ x = 4, y = -2, rot = 30, scale = 1.5 }, 1, "linear"), part
     // The part's own values stay its own.
     CHECK(p.parts.at("sword").x == 0);
 
+    // Its pivot goes with the carry; the next pose without it puts the pivot back at rest.
+    CHECK(near(pivot_now(rig, "sword"), c.apply(rig.pivot(rig.part("sword"))), 1e-4));
+    REQUIRE(rig.pose({}, why));
+    CHECK(near(pivot_now(rig, "sword"), rig.pivot(rig.part("sword"))));
+
+    // Its own turn goes on under the carry: the carry round the part turned about its own pivot.
+    const vector::Point sword = rig.pivot(rig.part("sword"));
+    s = script_of(clip_of(R"(part("sword"):attach("hand")
+all(part("hand"):to({ x = 4, y = -2, rot = 30 }, 1, "linear"), part("sword"):to({ rot = 45, sx = 1.4 }, 1, "linear")))"));
+    rec = recorded(s, &rig);
+    p = frame(s, rec, &rig, 1);
+    REQUIRE(rig.pose(p, why));
+    PartPose own = moved(0, 0, 45);
+    own.sx = 1.4;
+    Pic turned;
+    turned.transform["hand"] = matrix(rig.matrix(rig.part("hand")));
+    turned.transform["sword"] = matrix(pose_matrix(own, sword));
+    turned.wrap["sword"] = matrix(pose_matrix(moved(4, -2, 30), hand));
+    same_picture(rig, turned.text());
+
     // Let go: it stays where it was carried to, while the hand goes back.
     s = script_of(clip_of(R"(part("sword"):attach("hand")
 part("hand"):to({ x = 4, rot = 30 }, 1, "linear")
@@ -477,6 +544,18 @@ part("hand"):to({ x = 0, rot = 0 }, 1, "linear"))"));
     Pic let_go;
     let_go.wrap["sword"] = matrix(pose_matrix(moved(4, 0, 30), hand));
     same_picture(rig, let_go.text());
+
+    // Attached where the hand already stood: the sword stays put at the call and goes with the hand from there on.
+    s = script_of(clip_of(R"(part("hand"):to({ x = 4, rot = 30 }, 1, "linear")
+part("sword"):attach("hand")
+part("hand"):to({ x = 0, rot = 0 }, 1, "linear"))"));
+    rec = recorded(s, &rig);
+    REQUIRE(rig.pose(frame(s, rec, &rig, 1), why));
+    CHECK(near(pivot_now(rig, "sword"), rig.pivot(rig.part("sword")), 1e-4));
+    REQUIRE(rig.pose(frame(s, rec, &rig, 2), why));
+    Pic since;
+    since.wrap["sword"] = matrix(inverse(pose_matrix(moved(4, 0, 30), hand)));
+    same_picture(rig, since.text());
 
     // A new link over the one let go: multiplied on the left from its own call.
     s = script_of(clip_of(R"(part("sword"):attach("hand")
@@ -511,6 +590,21 @@ part("body"):to({ x = -5, rot = 20, sy = 1.2 }, 1, "linear"))"));
     Affine w;
     REQUIRE(bone_world(rec, static_cast<u32>(bone_of(rec, "hand")), 1, nullptr, w, why));
     CHECK(near(w.apply(hand), pivot_now(rig, "hand"), 1e-4));
+
+    // A target drawn after the part (the ball after the sword) is placed first all the same: the sword goes with where the
+    // ball stands in this pose, not where it stood in the last.
+    {
+        Rig fresh = loaded(picture());
+        const vector::Point ball = fresh.pivot(fresh.part("ball"));
+        s = script_of(clip_of(R"(part("sword"):attach("ball")
+part("ball"):to({ x = 10, y = -6, rot = 20 }, 1, "linear"))"));
+        rec = recorded(s, &fresh);
+        REQUIRE(fresh.pose(frame(s, rec, &fresh, 1), why));
+        Pic later;
+        later.transform["ball"] = matrix(fresh.matrix(fresh.part("ball")));
+        later.wrap["sword"] = matrix(pose_matrix(moved(10, -6, 20), ball));
+        same_picture(fresh, later.text());
+    }
 
     // save, restore and rest do not touch the link.
     s = script_of(clip_of(R"(part("sword"):attach("hand")
@@ -599,21 +693,50 @@ part("sword"):detach())");
     CHECK(static_cast<usize>(Prop::Mask) + 1 == static_cast<usize>(Prop::Link));
     CHECK(static_cast<usize>(Prop::Link) + 1 == static_cast<usize>(Prop::Order));
     CHECK(mix(Prop::Link, rest_value(Prop::Link), v, 0.5) == rest_value(Prop::Link));
+
+    // A pose given to the rig straight checks its links itself: a link round is dropped (that of the first part found in
+    // it), one to no part too, and the rest of the pose is drawn.
+    Rig straight = loaded(picture());
+    auto drawn = [&](const Pose& pose, bool ok, const char* said) {
+        std::string told;
+        CHECK(straight.pose(pose, told) == ok);
+        CHECK(told == said);
+        return straight.draw(128, 128);
+    };
+    Pose round;
+    round.parts["sword"] = moved(6, 0, 20);
+    round.parts["sword"].carry_by = "ball";
+    round.parts["ball"].carry_by = "sword";
+    round.parts["hand"].carry_by = "sword";
+    Pose dropped = round;
+    dropped.parts["sword"].carry_by.clear();
+    Pose alone;
+    alone.parts["sword"] = moved(6, 0, 20);
+    const assets::CookedTexture with_round = drawn(round, false, "крепление по кругу: «sword» и «ball» несут друг друга");
+    CHECK(with_round.rgba8 == drawn(dropped, true, "").rgba8);
+    CHECK(with_round.rgba8 != drawn(alone, true, "").rgba8); // the hand and the ball go with the sword
+    Pose lost = dropped, lost_dropped = dropped;
+    lost.parts["hand"].carry_by = "nothing";
+    lost_dropped.parts["hand"].carry_by.clear();
+    CHECK(drawn(lost, false, "крепление части «hand»: в рисунке нет части «nothing»").rgba8 == drawn(lost_dropped, true, "").rgba8);
 }
 
 TEST_CASE("Motion links: hidden shapes stand where their transform puts them") {
-    // A mask hidden with a transform of its own, against the same shape shown and hidden by the clip.
+    // A mask hidden with a transform of its own, against the same shape shown and hidden by the clip; beside it a second
+    // hidden shape with another transform of its own.
     const char* svg = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <rect id="face" x="10" y="10" width="40" height="40" fill="#e0b080"/>
   <rect id="lid" x="0" y="0" width="20" height="10" transform="translate(20 15) rotate(25)" %s/>
+  <rect id="flap" x="0" y="0" width="6" height="4" transform="translate(44 6) scale(1.5)" %s/>
 </svg>)svg";
-    char hidden[512], shown[512];
-    std::snprintf(hidden, sizeof hidden, svg, "display=\"none\"");
-    std::snprintf(shown, sizeof shown, svg, "fill=\"#000000\"");
+    char hidden[768], shown[768];
+    std::snprintf(hidden, sizeof hidden, svg, "display=\"none\"", "display=\"none\"");
+    std::snprintf(shown, sizeof shown, svg, "fill=\"#000000\"", "display=\"none\"");
     Rig a = loaded(hidden), b = loaded(shown);
-    // The pivot: the centre of the same box.
+    // The pivot: the centre of the same box, each by its own transform.
     CHECK(near(a.pivot(a.part("lid")), b.pivot(b.part("lid")), 1e-6));
     CHECK_FALSE(near(a.pivot(a.part("lid")), {10, 5}, 1)); // not where it would be without its transform
+    CHECK(near(a.pivot(a.part("flap")), {48.5, 9}, 1e-6));
     PoseScript s = script_of(clip_of(R"(part("face"):mask("lid"))"));
     const Recording rec = recorded(s, &a);
     std::string why;

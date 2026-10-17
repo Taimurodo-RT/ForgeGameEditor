@@ -753,15 +753,13 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         if (ci < 0) fail("крепление части «" + id + "»: в рисунке нет части «" + pp.carry_by + "»");
         else carrier[static_cast<usize>(pi)] = ci;
     }
-    // What a part's place waits for: the posed parts it is inside, and the part that carries it with the posed parts
-    // that one is inside. A link that comes back round to its own part is dropped.
+    // What a part's place waits for: the posed parts it is inside, and the part that carries it (which waits for its own
+    // groups in turn). A link that comes back round to its own part is dropped.
     auto deps = [&](i32 p, std::vector<i32>& out) {
         out.clear();
         for (i32 q = m.parts[static_cast<usize>(p)].parent; q >= 0; q = m.parts[static_cast<usize>(q)].parent)
             if (posed[static_cast<usize>(q)]) out.push_back(q);
-        if (const i32 c = carrier[static_cast<usize>(p)]; c >= 0)
-            for (i32 q = c; q >= 0; q = m.parts[static_cast<usize>(q)].parent)
-                if (posed[static_cast<usize>(q)] || q == c) out.push_back(q);
+        if (const i32 c = carrier[static_cast<usize>(p)]; c >= 0) out.push_back(c);
     };
     std::vector<i32> work, next;
     for (usize p = 0; p < m.parts.size(); ++p) {
