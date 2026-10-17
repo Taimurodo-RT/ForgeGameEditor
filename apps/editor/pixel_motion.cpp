@@ -571,18 +571,26 @@ void PixelEditor::lay_timeline() {
                                      "wait(" + seconds_words(p.length) + ") с " + seconds_words(p.start) + " с: край тянет длину по кадрам"});
             }
             // Tracks in the order of the picture's parts and of the properties; a copy's right after its part's, the
-            // copies by number (part 4г).
+            // copies by number (part 4г). The drawing's track first, the parts of the other drawings after the main
+            // one's (part 4д).
             std::vector<usize> order(r.tracks.size());
             for (usize i = 0; i < order.size(); ++i) order[i] = i;
+            auto index = [&](const std::string& id) {
+                if (const i32 i = rig_.part(id); i >= 0) return i;
+                const pixel::Rig& h = rig_.holder(id);
+                const i32 j = &h == &rig_ ? -1 : h.part(id);
+                return j < 0 ? std::numeric_limits<i32>::max() : static_cast<i32>(rig_.parts().size()) + j;
+            };
             auto rank = [&](usize i) {
                 const pixel::Recording::Track& t = r.tracks[i];
                 const std::string id = t.part < r.parts.size() ? r.parts[t.part] : std::string();
-                i32 p = rig_.part(id), copy = 0;
+                if (t.prop == pixel::Prop::Drawing) return std::tuple{-1, 0, 0};
+                i32 p = index(id), copy = 0;
                 if (const i32 c = pixel::copy_of(r, id); c >= 0) {
-                    p = rig_.part(r.copies[static_cast<usize>(c)].source);
+                    p = index(r.copies[static_cast<usize>(c)].source);
                     copy = static_cast<i32>(r.copies[static_cast<usize>(c)].number);
                 }
-                return std::tuple{p < 0 ? std::numeric_limits<i32>::max() : p, copy, static_cast<int>(t.prop)};
+                return std::tuple{p, copy, static_cast<int>(t.prop)};
             };
             std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) { return rank(a) < rank(b); });
             usize shown = 0, more = 0;
@@ -590,7 +598,9 @@ void PixelEditor::lay_timeline() {
                 const pixel::Recording::Track& t = r.tracks[order[row]];
                 char top[48];
                 std::snprintf(top, sizeof top, "top: %.0fpx;", static_cast<f64>(row) * kRowPx);
-                m_tracks_.push_back({(t.part < r.parts.size() ? r.parts[t.part] : std::string("?")) + " · " + pixel::prop_word(t.prop), top});
+                m_tracks_.push_back({t.prop == pixel::Prop::Drawing ? std::string(pixel::prop_word(t.prop))
+                                                                    : (t.part < r.parts.size() ? r.parts[t.part] : std::string("?")) + " · " + pixel::prop_word(t.prop),
+                                     top});
                 for (usize j = 0; j < t.blocks.size(); ++j) {
                     const pixel::Block& b = r.blocks[t.blocks[j]];
                     f64 start = b.start;
@@ -817,7 +827,8 @@ bool PixelEditor::select_block(i32 index) {
     if (index >= 0) {
         const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
         const std::string part = b.part < rec_.parts.size() ? rec_.parts[b.part] : std::string("?");
-        std::string text = part + " · " + pixel::prop_word(b.prop) + "\n";
+        // The drawing's track is the character's, no part's (part 4д).
+        std::string text = (b.prop == pixel::Prop::Drawing ? std::string() : part + " · ") + pixel::prop_word(b.prop) + "\n";
         if (b.to == pixel::Block::To::Binding) text += "с " + seconds_words(b.start) + " с, пока на дорожке не начнётся другой блок\n";
         else text += "с " + seconds_words(b.start) + " по " + seconds_words(b.start + b.length) + " с (" + seconds_words(b.length) + " с)\n";
         if (b.to != pixel::Block::To::Binding)
