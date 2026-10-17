@@ -65,26 +65,20 @@ MotionLengths drag_flag(const Recording& rec, const MotionLengths& now, usize ev
     return out;
 }
 
-namespace {
-
-std::string hex(Rgba8 c) {
-    char buf[8];
-    std::snprintf(buf, sizeof buf, "#%02x%02x%02x", c.r, c.g, c.b);
-    return buf;
-}
-
-} // namespace
-
 std::string value_words(Prop p, const PropValue& v) {
-    if (p == Prop::Fill || p == Prop::Stroke) {
-        if (v.v <= 0) return "свой цвет";
-        return hex(v.color) + (v.v < 1 ? " " + format_number(v.v) : std::string());
+    if (prop_is_color(p)) {
+        if (v.v <= 0) return p == Prop::Tint ? "без тона" : p == Prop::FlashColor ? "белый" : p == Prop::Shadow ? "без тени" : "свой цвет";
+        return color_hex(v.color) + (v.v < 1 ? " " + format_number(v.v) : std::string());
     }
     if (p == Prop::StrokeWidth) {
         if (v.v <= 0) return "своя толщина";
         return format_number(v.n) + (v.v < 1 ? " " + format_number(v.v) : std::string());
     }
     if (p == Prop::Visible) return v.v > 0 ? "да" : "нет";
+    if (p == Prop::Mask) {
+        if (v.v <= 0) return "без маски";
+        return "маска " + v.target + (v.v > 1 ? ", наоборот" : "");
+    }
     if (p == Prop::Order) {
         switch (static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(v.v), 0, 3))) {
         case OrderStep::Kind::Top: return "наверх";
@@ -111,7 +105,7 @@ std::string block_words(const Recording&, const Block& b) {
     }
     if (!b.frames.empty()) return "tween";
     const std::string to = value_words(b.prop, b.value);
-    if (b.prop == Prop::Order) return to; // «наверх», «над body»: the track says it is the order
+    if (prop_is_call(b.prop)) return to; // «наверх», «маска lid»: the track says what it is
     return b.spring ? "пружина → " + to : prop + " → " + to;
 }
 

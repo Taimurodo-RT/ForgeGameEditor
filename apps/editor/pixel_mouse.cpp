@@ -30,24 +30,20 @@ std::string block_name(const pixel::Recording& rec, const pixel::Block& b) {
     return (b.part < rec.parts.size() ? rec.parts[b.part] : std::string("?")) + " · " + pixel::prop_word(b.prop);
 }
 
-std::string hex_of(const pixel::Rgba8& c) {
-    char buf[8];
-    std::snprintf(buf, sizeof buf, "#%02x%02x%02x", c.r, c.g, c.b);
-    return buf;
-}
+std::string hex_of(const pixel::Rgba8& c) { return pixel::color_hex(c); }
 
 std::string thousandths(f64 v) { return number_words(std::round(v * 1000) / 1000); }
 
-// A value as the inspector's field shows it and takes it: a number; #rrggbb or nothing (its own colour) of fill and
-// stroke; a number or nothing (its own width) of stroke_width; «да» or «нет» of visible; the shape's id or nothing
-// (its own shape) of morph; the order as its mark («над body»), not to be typed.
+// A value as the inspector's field shows it and takes it: a number; #rrggbb, #rrggbbaa or nothing (the rest) of a
+// colour; a number or nothing (its own width) of stroke_width; «да» or «нет» of visible; the shape's id or nothing
+// (its own shape) of morph; the mask and the order as their marks («маска lid», «над body»), not to be typed.
 std::string field_of(pixel::Prop p, const pixel::PropValue& v) {
     if (pixel::prop_is_number(p)) return thousandths(v.v);
     if (p == pixel::Prop::Visible) return v.v > 0 ? "да" : "нет";
-    if (p == pixel::Prop::Order) return pixel::value_words(p, v);
+    if (pixel::prop_is_call(p)) return pixel::value_words(p, v);
     if (!(v.v > 0)) return "";
     if (p == pixel::Prop::StrokeWidth) return thousandths(v.n);
-    return p == pixel::Prop::Fill || p == pixel::Prop::Stroke ? hex_of(v.color) : v.target;
+    return pixel::prop_is_color(p) ? hex_of(v.color) : v.target;
 }
 
 bool read_number(const std::string& text, f64& out) {
@@ -200,8 +196,12 @@ bool PixelEditor::set_block_value(const std::string& text) {
     while (!t.empty() && t.front() == ' ') t.erase(t.begin());
     if (pixel::prop_is_number(b->prop)) {
         if (!read_number(t, v.v)) return refuse_edit("Значение «" + what + "» — число");
-    } else if (b->prop == pixel::Prop::Fill || b->prop == pixel::Prop::Stroke) {
-        if (!t.empty() && !pixel::parse_color(t, v.color)) return refuse_edit("Цвет «" + what + "» — #rrggbb, пусто — свой цвет части");
+        if (b->prop == pixel::Prop::Flash && (v.v < 0 || v.v > 1)) return refuse_edit("Вспышка «" + what + "» — доля от 0 до 1");
+        if ((b->prop == pixel::Prop::Blur || b->prop == pixel::Prop::ShadowBlur) && v.v < 0)
+            return refuse_edit("Размытие «" + what + "» — число не меньше 0");
+    } else if (pixel::prop_is_color(b->prop)) {
+        const char* rest = b->prop == pixel::Prop::Tint ? "без тона" : b->prop == pixel::Prop::FlashColor ? "белый" : b->prop == pixel::Prop::Shadow ? "без тени" : "свой цвет части";
+        if (!t.empty() && !pixel::parse_part_color(t, v.color)) return refuse_edit("Цвет «" + what + "» — #rrggbb или #rrggbbaa, пусто — " + rest);
         v.v = t.empty() ? 0 : 1;
     } else if (b->prop == pixel::Prop::StrokeWidth) {
         if (!t.empty() && (!read_number(t, v.n) || v.n < 0))
@@ -212,6 +212,8 @@ bool PixelEditor::set_block_value(const std::string& text) {
         v.v = t == "да" ? 1 : 0;
     } else if (b->prop == pixel::Prop::Order) {
         return refuse_edit("Порядок «" + what + "» правится в коде: to_top, to_bottom, above, below");
+    } else if (b->prop == pixel::Prop::Mask) {
+        return refuse_edit("Маска «" + what + "» правится в коде: mask(\"lid\"), mask(nil)");
     } else {
         v.v = t.empty() ? 0 : 1;
         v.target = t;
@@ -255,8 +257,8 @@ f64 PixelEditor::edge_snap(f64 t) const {
 
 f64 PixelEditor::block_end(i32 index) const {
     const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
-    if (b.to != pixel::Block::To::Binding && b.prop != pixel::Prop::Order) return pixel::snap_time(b.start + b.length);
-    // A binding holds until its track's next block, and so does a call of the order (part 4а).
+    if (b.to != pixel::Block::To::Binding && !pixel::prop_is_call(b.prop)) return pixel::snap_time(b.start + b.length);
+    // A binding holds until its track's next block, and so does a call of the order or the mask (parts 4а and 4б).
     const i32 tr = rec_.track(b.part, b.prop);
     if (tr >= 0) {
         const std::vector<u32>& on = rec_.tracks[static_cast<usize>(tr)].blocks;
@@ -516,7 +518,10 @@ void PixelEditor::rebuild_part() {
             case pixel::Prop::Morph: value = morph; break;
             default: break;
             }
-            // The properties of part 4а show when the clip changes them.
+            // The properties of parts 4а and 4б show when the clip changes them.
+            auto rest_color = [&](bool has_it, pixel::Rgba8 c, f64 k, const char* none) {
+                return has_it ? hex_of(c) + (k < 1 ? " · " + thousandths(k) : std::string()) : std::string(none);
+            };
             if (value.empty() && index >= 0 && rec_.track(static_cast<u32>(index), p) >= 0) switch (p) {
                 case pixel::Prop::SkewX: value = thousandths(pp.skew_x); break;
                 case pixel::Prop::SkewY: value = thousandths(pp.skew_y); break;
@@ -529,6 +534,15 @@ void PixelEditor::rebuild_part() {
                 case pixel::Prop::DrawFrom: value = thousandths(pp.draw_from); break;
                 case pixel::Prop::DrawTo: value = thousandths(pp.draw_to); break;
                 case pixel::Prop::Visible: value = pp.visible ? "да" : "нет"; break;
+                case pixel::Prop::Tint: value = rest_color(pp.has_tint, pp.tint, pp.tint_k, "без тона"); break;
+                case pixel::Prop::Flash: value = thousandths(pp.flash); break;
+                case pixel::Prop::FlashColor: value = rest_color(pp.has_flash_color, pp.flash_color, pp.flash_color_k, "белый"); break;
+                case pixel::Prop::Blur: value = thousandths(pp.blur); break;
+                case pixel::Prop::Shadow: value = rest_color(pp.has_shadow, pp.shadow, pp.shadow_k, "без тени"); break;
+                case pixel::Prop::ShadowX: value = thousandths(pp.shadow_x); break;
+                case pixel::Prop::ShadowY: value = thousandths(pp.shadow_y); break;
+                case pixel::Prop::ShadowBlur: value = thousandths(pp.shadow_blur); break;
+                case pixel::Prop::Mask: value = pp.mask.empty() ? "нет" : pp.mask + (pp.mask_invert ? ", наоборот" : ""); break;
                 case pixel::Prop::Order: value = order; break;
                 default: break;
                 }

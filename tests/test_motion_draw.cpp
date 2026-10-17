@@ -292,7 +292,8 @@ all(part("head").stroke_width(4, 1, "in_back"), part("torso").stroke_width(4, 1,
     CHECK(block(sr, "arm", Prop::SkewX).spring);
     PoseScript bad = script_of(clip_of(R"(part("arm").visible:spring(false))"));
     CHECK(record_error(bad, &rig) ==
-          "строка 2: пружина — только у чисел: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, dash, draw_from, draw_to");
+          "строка 2: пружина — только у чисел: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, dash, draw_from, draw_to, flash, "
+          "blur, shadow_x, shadow_y, shadow_blur");
 
     // save and restore, rest: the new properties go back too; the order is no value to go back to.
     PoseScript back = script_of(clip_of(R"(part("arm"):save()
@@ -347,10 +348,10 @@ tween(1, function(k) part("torso").visible(k < 0.5) part("torso").draw_to(1 - k)
     };
     CHECK(error(R"(part("arm").visible(1, 0.1))") == "строка 2: visible: нужно true или false, а не number");
     CHECK(error(R"(part("arm").stroke_width(-1, 0.1))") == "строка 2: stroke_width: нужно число не меньше 0 или nil (своя толщина)");
-    CHECK(error(R"(part("arm").stroke("teal-ish", 0.1))") == "строка 2: stroke: нужен цвет \"#rrggbb\"");
+    CHECK(error(R"(part("arm").stroke("teal-ish", 0.1))") == "строка 2: stroke: нужен цвет \"#rrggbb\" или \"#rrggbbaa\"");
     CHECK(error(R"(part("arm"):to({ order = 1 }, 0.1))") ==
           "строка 2: part:to: поля «order» нет (есть x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, "
-          "dash, draw_from, draw_to, visible)");
+          "dash, draw_from, draw_to, visible, tint, flash, flash_color, blur, shadow, shadow_x, shadow_y, shadow_blur)");
 }
 
 TEST_CASE("Motion draw: widths and colours mixed from each shape's own") {

@@ -19,21 +19,29 @@
 
 namespace forge::pixel {
 
-// In the order of a part's tracks on the timeline (part 4а of the model adds skew_x … visible and the order).
+// In the order of a part's tracks on the timeline (part 4а of the model adds skew_x … visible and the order, part 4б
+// tint … shadow_blur and the mask).
 enum class Prop : u8 {
-    X, Y, Rot, Scale, Sx, Sy, SkewX, SkewY, Opacity, Fill, Stroke, StrokeWidth, Dash, DrawFrom, DrawTo, Visible, Morph, Order
+    X, Y, Rot, Scale, Sx, Sy, SkewX, SkewY, Opacity, Fill, Stroke, StrokeWidth, Dash, DrawFrom, DrawTo, Visible,
+    Tint, Flash, FlashColor, Blur, Shadow, ShadowX, ShadowY, ShadowBlur, Morph, Mask, Order
 };
-inline constexpr usize kPropCount = 18;
+inline constexpr usize kPropCount = 27;
 // "x", "y", "rot", "scale", "sx", "sy", "skew_x", "skew_y", "opacity", "fill", "stroke", "stroke_width", "dash",
-// "draw_from", "draw_to", "visible", "morph", and "порядок" for the order, which is no field of the code.
+// "draw_from", "draw_to", "visible", "tint", "flash", "flash_color", "blur", "shadow", "shadow_x", "shadow_y",
+// "shadow_blur", "morph", and "маска" and "порядок" for the mask and the order, which are no fields of the code.
 const char* prop_word(Prop p);
 bool prop_from_word(std::string_view word, Prop& out);
-// Plain numbers: all but fill, stroke, stroke_width (nil is its own), visible, morph and the order.
+// Plain numbers: all but the colours, stroke_width (nil is its own), visible, morph, the mask and the order.
 bool prop_is_number(Prop p);
+// Colours with a share over their rest (fill, stroke, tint, flash_color, shadow).
+bool prop_is_color(Prop p);
+// Calls at a moment rather than properties (the mask and the order): no length, not in save, restore and rest.
+bool prop_is_call(Prop p);
 
-// A property's value. For fill, stroke, stroke_width and morph `v` is the share k of the colour, the width or the
-// target shape over the part's own (0: its own), the colour, the width `n` or the target beside it. Visible is v 1 or
-// 0. The order: v is a kind of OrderStep (rig.h), `target` the neighbour of above and below.
+// A property's value. For a colour, stroke_width and morph `v` is the share k of the colour, the width or the target
+// shape over the part's rest (0: the rest, its own colour, width or shape), the colour, the width `n` or the target
+// beside it. Visible is v 1 or 0. The mask: v 0 none, 1 inside the part `target`, 2 outside it. The order: v is a kind
+// of OrderStep (rig.h), `target` the neighbour of above and below.
 struct PropValue {
     f64 v = 0;
     Rgba8 color;
@@ -41,12 +49,13 @@ struct PropValue {
     f64 n = 0;
     bool operator==(const PropValue&) const = default;
 };
-// At rest: 1 for scale, sx, sy, opacity, draw_to and visible, k = 0 (its own) for fill, stroke, stroke_width and
-// morph, 0 for the rest.
+// At rest: 1 for scale, sx, sy, opacity, draw_to and visible, k = 0 (the rest) for the colours, stroke_width and
+// morph, 0 for the rest (no mask).
 PropValue rest_value(Prop p);
 // From a to b by k: exact at k = 0 and 1. A colour from none comes in at its own colour; a morph between two targets
 // goes back to the part's own shape and on to the other. Two widths given go as numbers (past them too, for back and
-// elastic); from or to its own width k stays in 0 … 1, as a colour's. Visible and the order change at k = 1 only.
+// elastic); from or to its own width k stays in 0 … 1, as a colour's. Visible, the mask and the order change at k = 1
+// only.
 PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k);
 
 // A call of the code: file 0 is the character's script, the others the modules it requires (Recording::files); site

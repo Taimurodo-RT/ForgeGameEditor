@@ -67,6 +67,26 @@ struct PartPose {
     f64 dash = 0;           // added to each shape's own dash offset (stroke-dashoffset)
     f64 draw_from = 0, draw_to = 1; // the share of each shape's path drawn (ThorVG's trimpath); none when from ≥ to
     bool visible = true;
+    // Part 4б. The tint multiplies each shape's colours by white + (tint − white) · tint_k; the flash takes their red,
+    // green and blue `flash` (0 … 1) of the way to white + (flash_color − white) · flash_color_k. A part's own first,
+    // then its groups', after every part's fill and stroke.
+    bool has_tint = false;
+    Rgba8 tint;
+    f64 tint_k = 1;
+    f64 flash = 0;
+    bool has_flash_color = false;
+    Rgba8 flash_color;
+    f64 flash_color_k = 1;
+    // ThorVG's blur and drop shadow on the part's scene, in picture units however the part and its groups stand: the
+    // blur's sigma, the shadow's colour (its alpha times shadow_k), offset and sigma.
+    f64 blur = 0;
+    bool has_shadow = false;
+    Rgba8 shadow;
+    f64 shadow_k = 1;
+    f64 shadow_x = 0, shadow_y = 0, shadow_blur = 0;
+    // Drawn only inside (outside when mask_invert) the shapes of part `mask` as they stand: empty for none.
+    std::string mask;
+    bool mask_invert = false;
 };
 
 // A part put above or below its neighbours in its group (to_top, to_bottom, above, below of the motion), in order.
@@ -146,6 +166,8 @@ public:
     bool siblings(i32 a, i32 b) const;
     // Whether any shape of a part has a dash pattern of its own.
     bool dashed(i32 part) const;
+    // Whether a part draws any shapes (a group with display="none" has none in ThorVG).
+    bool has_shapes(i32 part) const;
 
 private:
     struct Impl;
@@ -154,5 +176,9 @@ private:
 
 // "#rgb", "#rrggbb", "rgb(r, g, b)" and a few names; false for anything else.
 bool parse_color(std::string_view text, Rgba8& out);
+// A colour of a part's property (part 4б of the motion model): what parse_color reads, or "#rrggbbaa" with its alpha.
+bool parse_part_color(std::string_view text, Rgba8& out);
+// "#rrggbb", or "#rrggbbaa" when its alpha is not full.
+std::string color_hex(const Rgba8& c);
 
 } // namespace forge::pixel

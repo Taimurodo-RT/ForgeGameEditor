@@ -1085,8 +1085,8 @@ TEST_CASE("Motion clip: errors name the line of their call") {
     CHECK(error_of("part('a'):restore(0.1)") == "строка 2: restore(…) без save(): сначала part(\"a\"):save()");
     CHECK(error_of("part('a'):jump()") ==
           "строка 2: у части нет «jump» (свойства: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, "
-          "stroke_width, dash, draw_from, draw_to, visible; методы: to, rest, save, restore, morph, spring, set, to_top, "
-          "to_bottom, above, below)");
+          "stroke_width, dash, draw_from, draw_to, visible, tint, flash, flash_color, blur, shadow, shadow_x, shadow_y, "
+          "shadow_blur; методы: to, rest, save, restore, morph, spring, set, to_top, to_bottom, above, below, mask)");
     CHECK(error_of("wait(-1)") == "строка 2: wait(с): секунды — число не меньше 0");
     CHECK(error_of("\n\nlocal t = part('a').x(1, 0.1)\nall(t)\nall(t)") == "строка 6: all: этот переход уже отдан другой функции");
     PoseScript s = script_of(clip_of("wait(1)"));
