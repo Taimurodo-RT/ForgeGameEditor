@@ -1313,3 +1313,229 @@ TEST_CASE("Motion edit: timing, start, a pause, a new line") {
     REQUIRE(add_at_line(rec, 0.5, "body", Prop::Fill, red, 0.2, code, kEdit, out, why));
     CHECK(out.find("  at(0.5, part(\"body\").fill(\"#ff0000\", 0.2))\n") != std::string::npos);
 }
+
+TEST_CASE("Motion edit: the block that decides a frame, whether its transition goes, a part's latest") {
+    PoseScript s = script_of(clip_of(R"(local body = part("body")
+body.y(2, 0.2)
+wait(0.1)
+body:to({ x = 3 }, 0.2)
+at(0.4, part("head").rot(5, 0))
+part("a"):to({ y = 2, x = 1 }, 0.1))"));
+    const Recording rec = recorded(s);
+    const u32 body = static_cast<u32>(std::find(rec.parts.begin(), rec.parts.end(), "body") - rec.parts.begin());
+    const u32 head = static_cast<u32>(std::find(rec.parts.begin(), rec.parts.end(), "head") - rec.parts.begin());
+    const u32 a = static_cast<u32>(std::find(rec.parts.begin(), rec.parts.end(), "a") - rec.parts.begin());
+    const u32 ty = static_cast<u32>(rec.track(body, Prop::Y)), tx = static_cast<u32>(rec.track(body, Prop::X));
+    const u32 th = static_cast<u32>(rec.track(head, Prop::Rot));
+    auto index = [&](const Block& b) { return static_cast<i32>(&b - rec.blocks.data()); };
+    const Block& y = block(rec, "body", Prop::Y);
+    const Block& x = block(rec, "body", Prop::X);
+    const Block& h = block(rec, "head", Prop::Rot);
+    // The block that started last at t or before decides, as a frame reads it.
+    CHECK(deciding_block(rec, ty, 0) == index(y));
+    CHECK(deciding_block(rec, ty, 0.25) == index(y));
+    CHECK(deciding_block(rec, tx, 0.29) == -1);
+    CHECK(deciding_block(rec, tx, 0.3) == index(x));
+    CHECK(deciding_block(rec, 99, 0.3) == -1);
+    // Its transition goes after its start up to its end; one of length 0 in the frame it starts in.
+    CHECK_FALSE(block_going(y, 0, 0.1));
+    CHECK(block_going(y, 0.1, 0.1));
+    CHECK(block_going(y, 0.2, 0.1));
+    CHECK_FALSE(block_going(y, 0.25, 0.1));
+    CHECK_FALSE(block_going(x, 0.3, 0.1));
+    CHECK(block_going(x, 0.5, 0.1));
+    CHECK(deciding_block(rec, th, 0.4) == index(h));
+    CHECK(block_going(h, 0.4, 0.1));
+    CHECK(block_going(h, 0.45, 0.1));
+    CHECK_FALSE(block_going(h, 0.5, 0.1));
+    CHECK_FALSE(block_going(h, 0.39, 0.1));
+    // Of a part's tracks, the one that started last; started together, the first property.
+    CHECK(latest_block(rec, body, 0.1) == index(y));
+    CHECK(latest_block(rec, body, 0.35) == index(x));
+    CHECK(latest_block(rec, head, 0.3) == -1);
+    CHECK(latest_block(rec, a, 0.6) == index(block(rec, "a", Prop::X)));
+}
+
+namespace {
+
+constexpr std::string_view kMove = R"(return { params = { height = 6 }, clips = { c = function(p)
+  local body = part("body")
+  at(0, body.x(1, 0.2))
+  body.y(-p.height, 0.2)
+  part("torso"):to({ x = 2 }, 0.2)
+  wait(0.2)
+end } }
+)";
+
+std::string moved(std::string_view from, std::string_view to) {
+    std::string s(kMove);
+    const usize at = s.find(from);
+    REQUIRE(at != std::string::npos);
+    REQUIRE(s.find(from, at + 1) == std::string::npos);
+    return s.replace(at, from.size(), to);
+}
+
+f64 value_at(const Recording& rec, std::string_view part, Prop p, f64 t) {
+    const u32 pi = static_cast<u32>(std::find(rec.parts.begin(), rec.parts.end(), part) - rec.parts.begin());
+    const i32 tr = pi < rec.parts.size() ? rec.track(pi, p) : -1;
+    PropValue v = rest_value(p);
+    std::string why;
+    if (tr >= 0) REQUIRE(sample(rec, static_cast<u32>(tr), t, nullptr, v, why));
+    return v.v;
+}
+
+} // namespace
+
+TEST_CASE("Motion edit: a part dragged in a frame, written into its code") {
+    PoseScript s = script_of(kMove);
+    const Recording rec = recorded(s);
+    const CodeSites& code = s.code();
+    std::string out, why;
+    CHECK(rec.length == 0.6);
+
+    // Both transitions go: each end moves by as much, two calls of one text (an expression keeps itself).
+    REQUIRE(edit_part_move(rec, "body", 0.2, 0.1, 0.5, -1, code, kMove, out, why));
+    CHECK(out == moved("body.x(1, 0.2))\n  body.y(-p.height, 0.2)", "body.x(1.5, 0.2))\n  body.y(-p.height - 1, 0.2)"));
+    PoseScript both = script_of(out);
+    const Recording b = recorded(both);
+    CHECK(value_at(b, "body", Prop::X, 0.2) == 1.5);
+    CHECK(value_at(b, "body", Prop::Y, 0.2) == -7);
+    CHECK(b.blocks.size() == rec.blocks.size());
+    // Only the one that moved.
+    REQUIRE(edit_part_move(rec, "body", 0.1, 0.1, 0, 2, code, kMove, out, why));
+    CHECK(out == moved("body.y(-p.height, 0.2)", "body.y(-p.height + 2, 0.2)"));
+
+    // No transition of it goes: a first line at the frame, from where the recording has it, length 0.
+    REQUIRE(edit_part_move(rec, "body", 0.3, 0.1, 1, 0, code, kMove, out, why));
+    CHECK(out == moved("  local body", "  at(0.3, part(\"body\"):to({ x = 2 }, 0))\n  local body"));
+    PoseScript put = script_of(out);
+    const Recording pr = recorded(put);
+    CHECK(value_at(pr, "body", Prop::X, 0.3) == 2);
+    CHECK(value_at(pr, "body", Prop::X, 0.25) == 1);
+    CHECK(pr.length == rec.length);
+
+    // x goes in a table without y: y is added to it, its value where the recording has it plus the move.
+    REQUIRE(edit_part_move(rec, "torso", 0.4, 0.1, 0.5, -2, code, kMove, out, why));
+    CHECK(out == moved("{ x = 2 }", "{ x = 2.5, y = -2 }"));
+    PoseScript field = script_of(out);
+    const Recording fr = recorded(field);
+    check_block(block(fr, "torso", Prop::Y), 0.2, 0.2, -2);
+    CHECK(value_at(fr, "torso", Prop::X, 0.4) == 2.5);
+
+    // A part without a block: both in one line; dragged again in that frame, the line's own numbers.
+    REQUIRE(edit_part_move(rec, "head", 0.5, 0.1, 1, 2, code, kMove, out, why));
+    const std::string head = moved("  local body", "  at(0.5, part(\"head\"):to({ x = 1, y = 2 }, 0))\n  local body");
+    CHECK(out == head);
+    PoseScript placed = script_of(head);
+    const Recording hr = recorded(placed);
+    CHECK(value_at(hr, "head", Prop::Y, 0.5) == 2);
+    REQUIRE(edit_part_move(hr, "head", 0.5, 0.1, 0.5, 0, placed.code(), head, out, why));
+    CHECK(out == moved("  local body", "  at(0.5, part(\"head\"):to({ x = 1.5, y = 2 }, 0))\n  local body"));
+    REQUIRE(edit_part_move(hr, "head", 0.55, 0.1, 0, -1, placed.code(), head, out, why));
+    CHECK(out == moved("  local body", "  at(0.5, part(\"head\"):to({ x = 1, y = 1 }, 0))\n  local body"));
+
+    // A frame off the thousandths (12 a second): the line starts before the frame, so the frame shows it.
+    REQUIRE(edit_part_move(rec, "head", 5.0 / 12, 1.0 / 12, 1, 0, code, kMove, out, why));
+    CHECK(out == moved("  local body", "  at(0.416, part(\"head\"):to({ x = 1 }, 0))\n  local body"));
+    PoseScript twelfth = script_of(out);
+    const Recording tr = recorded(twelfth);
+    CHECK(value_at(tr, "head", Prop::X, 5.0 / 12) == 1);
+    CHECK(value_at(tr, "head", Prop::X, 4.0 / 12) == 0);
+
+    CHECK_FALSE(edit_part_move(rec, "head", 0.5, 0.1, 0, 0, code, kMove, out, why));
+    CHECK(why == "часть не сдвинута");
+    CHECK(out.empty());
+}
+
+TEST_CASE("Motion edit: a part dragged where its block takes no number, or its track started since") {
+    // A binding and a back decide: their words; a track that started since the other's call: a line, not a field.
+    const std::string src = clip_of(R"(local a = part("a")
+part("t"):to({ x = 2 }, 0.4)
+at(0.1, part("t").y(1, 0))
+a.x(function(t) return t end)
+a.y(2, 0.1):back(0.2))");
+    PoseScript s = script_of(src);
+    const Recording rec = recorded(s);
+    std::string out, why;
+    CHECK_FALSE(edit_part_move(rec, "a", 0.6, 0.1, 1, 0, s.code(), src, out, why));
+    CHECK(why == "значение блока считает функция связи: правьте её в коде");
+    CHECK_FALSE(edit_part_move(rec, "a", 0.6, 0.1, 0, 1, s.code(), src, out, why));
+    CHECK(why == "блок возвращает туда, откуда начался переход: его значения в коде нет");
+    CHECK(out.empty());
+    REQUIRE(edit_part_move(rec, "t", 0.3, 0.1, 0, 1, s.code(), src, out, why));
+    CHECK(out == "return { clips = { c = function(p, rng)\nat(0.3, part(\"t\"):to({ y = 2 }, 0))\n" + src.substr(src.find("local a")));
+
+    // A module's call is not edited.
+    PoseScript m;
+    m.set_module_reader([](std::string_view name, std::string& text, std::string& w) {
+        if (name != "moves") return w = "нет", false;
+        text = "return { lift = function(h) h:to({ y = -3 }, 0.4) end }";
+        return true;
+    });
+    const std::string ms = "local mv = require(\"moves\")\n" + clip_of("mv.lift(part(\"a\"))");
+    REQUIRE(m.load(ms));
+    const Recording mr = recorded(m);
+    CHECK_FALSE(edit_part_move(mr, "a", 0.2, 0.1, 0, 1, m.code(), ms, out, why));
+    CHECK(why == "блок из общего модуля «moves.luau»: правка изменит всех персонажей, правьте его в коде");
+    // x does not go and y's call is the module's: x has a line of its own.
+    REQUIRE(edit_part_move(mr, "a", 0.2, 0.1, 1, 0, m.code(), ms, out, why));
+    CHECK(out.find("at(0.2, part(\"a\"):to({ x = 1 }, 0))") != std::string::npos);
+}
+
+TEST_CASE("Motion edit: what of a block can be edited, and why not") {
+    PoseScript s = script_of(kEdit);
+    const Recording rec = recorded(s);
+    const CodeSites& code = s.code();
+    std::string why;
+    const Block& y0 = block(rec, "body", Prop::Y);
+    const Block& y3 = block(rec, "body", Prop::Y, 3);
+    const Block& x = block(rec, "body", Prop::X);
+    CHECK(can_edit(rec, y0, BlockEdit::Value, code, why));
+    CHECK(why.empty());
+    CHECK(can_edit(rec, y0, BlockEdit::Length, code, why));
+    CHECK(can_edit(rec, y0, BlockEdit::Timing, code, why));
+    CHECK_FALSE(can_edit(rec, y0, BlockEdit::Start, code, why));
+    CHECK(why == "блок идёт за предыдущим, своего начала в коде у него нет: оно есть у at(с, …) и delay(с, …)");
+    CHECK_FALSE(can_edit(rec, y3, BlockEdit::Value, code, why));
+    CHECK(why == "блок возвращает туда, откуда начался переход: его значения в коде нет");
+    CHECK(can_edit(rec, y3, BlockEdit::Length, code, why));
+    CHECK(can_edit(rec, x, BlockEdit::Start, code, why));
+    REQUIRE(rec.pauses.size() == 1);
+    CHECK(can_edit_pause(rec, rec.pauses[0], code, why));
+
+    const std::string src = clip_of(R"(local a = part("a")
+a.x:spring(10)
+a.y(function(t) return t end)
+a.rot(4, 0.1))");
+    PoseScript sp = script_of(src);
+    const Recording sr = recorded(sp);
+    const Block& spring = block(sr, "a", Prop::X);
+    const Block& bound = block(sr, "a", Prop::Y);
+    const Block& rot = block(sr, "a", Prop::Rot);
+    CHECK(can_edit(sr, spring, BlockEdit::Value, sp.code(), why));
+    CHECK_FALSE(can_edit(sr, spring, BlockEdit::Length, sp.code(), why));
+    CHECK(why == "длину пружины задают её масса, жёсткость и затухание");
+    CHECK_FALSE(can_edit(sr, spring, BlockEdit::Timing, sp.code(), why));
+    CHECK(why == "у пружины нет сглаживания: её ход задают масса, жёсткость и затухание");
+    CHECK_FALSE(can_edit(sr, bound, BlockEdit::Value, sp.code(), why));
+    CHECK(why == "значение блока считает функция связи: правьте её в коде");
+    CHECK_FALSE(can_edit(sr, bound, BlockEdit::Length, sp.code(), why));
+    CHECK(why == "у связи нет длины: она держится до следующего блока");
+    // A timing the call has not: added after its length.
+    CHECK(can_edit(sr, rot, BlockEdit::Timing, sp.code(), why));
+    std::string out;
+    REQUIRE(edit_timing(sr, rot, Timing::OutQuad, sp.code(), src, out, why));
+    CHECK(out.find("a.rot(4, 0.1, \"out_quad\")") != std::string::npos);
+}
+
+TEST_CASE("Motion edit: a line put into a file of CRLF lines ends as they do") {
+    const std::string src = "return { clips = { c = function(p)\r\n  part(\"a\").x(1, 0.1)\r\nend } }\r\n";
+    PoseScript s = script_of(src);
+    const Recording rec = recorded(s);
+    std::string out, why;
+    REQUIRE(add_at_table(rec, 0.1, "b", {{Prop::X, 1}, {Prop::Y, -2}}, 0, s.code(), src, out, why));
+    CHECK(out == "return { clips = { c = function(p)\r\n  at(0.1, part(\"b\"):to({ x = 1, y = -2 }, 0))\r\n  part(\"a\").x(1, 0.1)\r\nend } }\r\n");
+    CHECK_FALSE(add_at_table(rec, 0.1, "b", {}, 0, s.code(), src, out, why));
+    CHECK(why == "нечего ставить");
+    CHECK_FALSE(add_at_table(rec, 0.1, "b", {{Prop::Fill, 1}}, 0, s.code(), src, out, why));
+}

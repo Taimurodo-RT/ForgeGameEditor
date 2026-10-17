@@ -35,6 +35,7 @@ namespace {
 constexpr u32 kViewPx = 288;      // the vector view, and the box the pixel frame is shown big in
 constexpr f64 kOnion = 0.3;       // how much of the frames either side «Калька» shows
 constexpr f32 kPivotReach = 10;   // how near the pivot a press takes it (view pixels)
+constexpr f32 kMoveStart = 3;     // how far a part is dragged before it moves (logical px)
 constexpr u32 kNewClipFrames = 4; // a clip as it is added
 constexpr f32 kNewClipFps = 10;
 
@@ -158,7 +159,19 @@ void plot(assets::CookedTexture& t, i64 x, i64 y, const std::array<u8, 4>& c) {
     std::copy(c.begin(), c.end(), &t.rgba8[(static_cast<usize>(y) * t.width + static_cast<usize>(x)) * 4]);
 }
 
-constexpr std::array<u8, 4> kMark{40, 120, 255, 255}, kMarkEdge{255, 255, 255, 255};
+constexpr std::array<u8, 4> kMark{40, 120, 255, 255}, kMarkEdge{255, 255, 255, 255}, kHover{255, 150, 20, 255};
+
+// The part of the tree's row under the mouse: dashed round its bounds, 2 px out of them, a colour of its own.
+void outline(assets::CookedTexture& t, const f64 box[4], i64 k) {
+    const i64 x0 = std::lround(box[0]) - 2 * k, y0 = std::lround(box[1]) - 2 * k, x1 = std::lround(box[2]) + 2 * k,
+              y1 = std::lround(box[3]) + 2 * k;
+    for (i64 x = x0; x <= x1; ++x)
+        if ((x - x0) % (5 * k) < 3 * k)
+            for (i64 j = 0; j < k; ++j) plot(t, x, y0 - j, kHover), plot(t, x, y1 + j, kHover);
+    for (i64 y = y0; y <= y1; ++y)
+        if ((y - y0) % (5 * k) < 3 * k)
+            for (i64 j = 0; j < k; ++j) plot(t, x0 - j, y, kHover), plot(t, x1 + j, y, kHover);
+}
 
 // The selected part over the vector: its bounds and its pivot.
 // k: texels to a px of the view (its dp-ratio, whole), so the marks keep their size on screen.
@@ -343,6 +356,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("px_giving", &m_giving_);
     model.Bind("px_can_give", &m_can_give_);
     bind_motion(model);
+    bind_mouse(model);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -497,7 +511,7 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
     }
     // The preview plays the range by its frames, at its speed, over again while L is on.
     const pixel::ClipSpec* c = selected_clip();
-    if (playing_ && c && !dragging_ && tl_drag_ == Drag::None && cut_.frames > 0) {
+    if (playing_ && c && !dragging_ && !move_started_ && tl_drag_ == Drag::None && cut_.frames > 0) {
         play_clock_ += std::min(dt, 0.1) * speed_;
         const f64 span = cut_.frames / static_cast<f64>(cut_.fps);
         u64 k = static_cast<u64>(std::floor(play_clock_ * cut_.fps + 1e-9));
@@ -536,6 +550,7 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
             text->SetValue(code_);
         update_caret();
         update_timeline_box();
+        update_hover(context);
     }
     if (context) {
         Rml::Element* view = nullptr;
@@ -569,7 +584,9 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
         if (timeline) {
             context_ = context;
             update_timeline_box();
-            timeline_press(e.button.x * density, e.button.y * density, context->GetHoverElement(), e.button.button == SDL_BUTTON_MIDDLE);
+            const bool middle = e.button.button == SDL_BUTTON_MIDDLE;
+            if (!middle && edge_press(e.button.x * density, e.button.y * density, context->GetHoverElement(), false)) return true;
+            timeline_press(e.button.x * density, e.button.y * density, context->GetHoverElement(), middle);
             return tl_drag_ != Drag::None;
         }
         if (!vector || e.button.button != SDL_BUTTON_LEFT) return false;
@@ -581,7 +598,7 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
             timeline_drag(e.motion.x * density);
             return true;
         }
-        if (!dragging_) return false;
+        if (!dragging_ && !moving_) return false;
         drag(e.motion.x * density, e.motion.y * density);
         return true;
     case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -589,7 +606,7 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
             timeline_release();
             return true;
         }
-        if (!dragging_) return false;
+        if (!dragging_ && !moving_) return false;
         release();
         return true;
     default: return false;
@@ -674,7 +691,7 @@ bool PixelEditor::open(const std::string& rel) {
     note_.clear();
     giving_ = false;
     forget_character();
-    vector_ = frame_px_ = {};
+    vector_ = frame_px_ = vector_shown_ = {};
     reload();
     return has_;
 }
@@ -1010,7 +1027,6 @@ vector::Point PixelEditor::posed_pivot(const std::string& id) const {
 
 void PixelEditor::press(f32 x, f32 y) {
     if (!rig_.loaded()) return;
-    const vector::Point p = view_to_picture(x, y);
     if (!part_.empty()) {
         f32 px, py;
         if (screen_of(posed_pivot(part_), px, py) && std::hypot(px - x, py - y) <= kPivotReach * std::max(1.0f, view_w_ / kViewPx)) {
@@ -1021,8 +1037,18 @@ void PixelEditor::press(f32 x, f32 y) {
             return;
         }
     }
+    const std::string best = part_at(x, y);
+    select_part(best);
+    // Dragged on past a few points, the part moves: into the code on release.
+    moving_ = !best.empty();
+    move_started_ = false;
+    move_x_ = x, move_y_ = y;
+    move_dx_ = move_dy_ = 0;
+}
+
+std::string PixelEditor::part_at(f32 x, f32 y) {
     // The smallest part under the mouse, as it stands in the pose shown.
-    const vector::Point v = rig_.to_pixels(kViewPx, kViewPx).apply(p);
+    const vector::Point v = rig_.to_pixels(kViewPx, kViewPx).apply(view_to_picture(x, y));
     std::string best;
     f64 best_area = 1e300;
     for (i32 i = 0; i < static_cast<i32>(rig_.parts().size()); ++i) {
@@ -1034,10 +1060,22 @@ void PixelEditor::press(f32 x, f32 y) {
             best = rig_.parts()[static_cast<usize>(i)].id;
         }
     }
-    select_part(best);
+    return best;
 }
 
 void PixelEditor::drag(f32 x, f32 y) {
+    if (moving_) {
+        if (!move_started_ && std::hypot(x - move_x_, y - move_y_) > kMoveStart * std::max(1.0f, dp_)) start_move();
+        if (!move_started_) return;
+        // Back through what carries the part: the units of its own move, to tenths.
+        const vector::Point a = move_inv_.apply(view_to_picture(x, y)), b = move_inv_.apply(move_from_);
+        const f64 dx = std::round((a.x - b.x) * 10) / 10, dy = std::round((a.y - b.y) * 10) / 10;
+        if (dx != move_dx_ || dy != move_dy_) {
+            move_dx_ = dx, move_dy_ = dy;
+            view_dirty_ = true;
+        }
+        return;
+    }
     if (!dragging_) return;
     const i32 i = rig_.part(part_);
     if (i < 0) return;
@@ -1050,6 +1088,16 @@ void PixelEditor::drag(f32 x, f32 y) {
 }
 
 void PixelEditor::release() {
+    if (moving_) {
+        moving_ = false;
+        if (!move_started_) return;
+        move_started_ = false;
+        const f64 dx = move_dx_, dy = move_dy_;
+        move_dx_ = move_dy_ = 0;
+        view_dirty_ = true;
+        if (dx != 0 || dy != 0) move_part(dx, dy);
+        return;
+    }
     if (!dragging_) return;
     dragging_ = false;
     if (!drag_moved_) return;
@@ -1156,6 +1204,7 @@ bool PixelEditor::select_clip(const std::string& state) {
     frame_ = 0;
     block_ = -1;
     tv_.scale = tv_.start = 0; // all of the clip in sight
+    if (!note_.empty() && note_ == refused_) note_.clear(); // a mouse edit's refusal was about the clip left
     recount();
     select_block(-1);
     view_dirty_ = true;
@@ -1460,7 +1509,7 @@ void PixelEditor::redraw() {
     view_dirty_ = false;
     pose_problem_.clear();
     if (!has_ || !rig_.loaded()) {
-        vector_ = frame_px_ = {};
+        vector_ = frame_px_ = vector_shown_ = {};
         show({}, {});
         sync_problem();
         return;
@@ -1498,6 +1547,14 @@ void PixelEditor::redraw() {
                 break;
             }
     if (pose_problem_.empty() && script_problem_.empty()) error_line_ = 0;
+    // The part being dragged, moved by the mouse so far (its code changes on release).
+    if (move_started_ && !part_.empty() && (move_dx_ != 0 || move_dy_ != 0)) {
+        pixel::PartPose& pp = poses[0].parts[part_];
+        pp.x += move_dx_;
+        pp.y += move_dy_;
+    }
+    shown_pose_ = poses[0];
+    shown_ok_ = scripted && pose_problem_.empty();
 
     // Pixel frames as they bake: the rig's moves in whole pixels.
     const f64 scale = rig_.to_pixels(doc_.frame_w, doc_.frame_h).a;
@@ -1524,8 +1581,15 @@ void PixelEditor::redraw() {
         const vector::Point at = rig_.to_pixels(view_px(), view_px()).apply(rig_.carried(pi).apply(rig_.pivot(pi)));
         mark(vec[0], box, at.x, at.y, std::max<i64>(1, std::lround(dp_)));
     }
+    if (const i32 hi = rig_.part(hovered_); hi >= 0) {
+        f64 box[4];
+        rig_.bounds(hi, view_px(), view_px(), box);
+        outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
+    }
+    vector_shown_ = vec[0];
     show(vec[0], frame_px_);
     sync_problem();
+    rebuild_part();
 }
 
 void PixelEditor::show(const assets::CookedTexture& vec, const assets::CookedTexture& px) {
@@ -1680,6 +1744,7 @@ void PixelEditor::rebuild() {
     lay_timeline();
     rebuild_console();
     rebuild_gutter();
+    rebuild_inspector();
     m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(frame_limit());
     m_limit_ = std::to_string(frame_limit());
     m_fw_ = std::to_string(doc_.frame_w);

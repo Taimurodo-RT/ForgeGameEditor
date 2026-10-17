@@ -1306,7 +1306,7 @@
             <div class="an-stage px-stage column" data-if="px_has">
                 <div class="px-views row">
                     <div class="px-view column">
-                        <span class="an-label">Вектор: щелчок выбирает часть, её опорная точка тянется мышью</span>
+                        <span class="an-label">Вектор: щелчок выбирает часть, протяжка двигает её в коде, опорная точка тянется мышью</span>
                         <div id="px-vector" class="px-canvas"><img id="px-vector-img" data-if="px_vector != ''" data-attr-src="px_vector"/></div>
                     </div>
                     <div class="px-view column">
@@ -1324,8 +1324,33 @@
                 <div id="px-inspector" class="px-inspector column" data-if="px_has_block">
                     <span id="px-inspector-text" class="px-inspector-text">{{ px_inspector }}</span>
                     <span id="px-inspector-call" class="px-call" data-if="px_inspector_call != ''">{{ px_inspector_call }}</span>
+                    <div class="px-field row" data-if="px_can_value">
+                        <span class="grow" title="Куда идёт блок: число в вызове кода (у fill — #rrggbb, у morph — id фигуры)">Значение</span>
+                        <input id="px-block-value" type="text" class="small" data-attr-value="px_block_value" data-event-change="px_block_value(ev.value, ev.linebreak)" data-event-blur="px_block_value_commit"/>
+                    </div>
+                    <div class="px-field row" data-if="px_can_length">
+                        <span class="grow" title="Секунды перехода: число в вызове кода">Длина, с</span>
+                        <input id="px-block-length" type="text" class="small number" data-attr-value="px_block_length" data-event-change="px_block_length(ev.value, ev.linebreak)" data-event-blur="px_block_length_commit"/>
+                    </div>
+                    <div class="px-field row" data-if="px_can_timing">
+                        <span class="grow">Как</span>
+                        <div id="px-timing" class="an-chip row px-timing-chip" title="Сглаживание: щелчок открывает список с кривой каждого" data-event-click="px_timing_open"><img data-if="px_timing_icon != ''" data-attr-src="px_timing_icon"/><span>{{ px_block_timing }}</span></div>
+                    </div>
+                    <div id="px-timings" class="px-timings column" data-if="px_timings_open">
+                        <div data-for="t : px_timings" class="px-timing-row row" data-attr-id="'px-timing-' + it_index" data-class-selected="t.selected" data-event-click="px_timing(it_index)"><img data-attr-src="t.icon"/><span>{{ t.word }}</span></div>
+                    </div>
+                    <span id="px-block-why" class="an-hint px-why" data-if="px_block_why != ''">{{ px_block_why }}</span>
                 </div>
-                <div class="an-hint" data-if="!px_has_block">Щёлкните блок на таймлайне: здесь будет, что он делает и какой вызов кода его сделал.</div>
+                <div class="an-hint" data-if="!px_has_block">Щёлкните блок на таймлайне: здесь будет, что он делает и какой вызов кода его сделал. Края блока тянут его длину и начало.</div>
+
+                <div class="lg-nav-title" data-if="px_has_part">Часть «{{ px_part_name }}»</div>
+                <div id="px-inspect-part" class="px-inspector column" data-if="px_has_part">
+                    <div data-for="v : px_part_values" class="px-value row" data-attr-id="'px-pv-' + v.name"><span class="grow">{{ v.name }}</span><span class="px-num">{{ v.value }}</span></div>
+                    <div class="row px-value" data-if="px_part_code != ''">
+                        <span id="px-inspect-call" class="px-call grow">{{ px_part_code }}</span>
+                        <div id="px-inspect-code" class="button outlined small" data-if="px_part_can_code" title="Выделить в панели вызов, который сейчас решает её движение" data-event-click="px_part_code"><span>К коду</span></div>
+                    </div>
+                </div>
 
                 <div class="lg-nav-title">Параметры скрипта</div>
                 <div data-for="v : px_params" class="px-field row">

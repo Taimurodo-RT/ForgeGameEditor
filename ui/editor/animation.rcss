@@ -155,6 +155,16 @@
 .px-inspector { gap: var(--space-1); padding: var(--space-1) var(--space-2); font-size: 13px; }
 .px-inspector-text { white-space: pre-line; }
 .px-call { font-family: var(--font-mono); font-size: 12px; color: var(--on-surface-variant); }
+.px-inspector .px-field { padding: 2px 0px; }
+#px-block-value { width: 84px; }
+.px-timing-chip { gap: 4px; align-items: center; }
+.px-timing-chip img, .px-timing-row img { width: 32px; height: 20px; }
+.px-timings { max-height: 220px; overflow-y: auto; gap: 1px; border-radius: 6px; background-color: var(--surface-container-lowest); }
+.px-timing-row { gap: var(--space-1); align-items: center; padding: 1px var(--space-2); font-size: 12px; cursor: pointer; }
+.px-timing-row:hover { background-color: var(--state-hover-layer); }
+.px-timing-row.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
+.px-why { white-space: pre-line; }
+.px-value { gap: var(--space-1); align-items: center; min-height: 20px; }
 
 /* The code panel: line numbers beside the text, the console under it. */
 .px-code {
@@ -245,15 +255,16 @@
 .px-mark { position: absolute; top: 6px; height: 10px; border-radius: 5px; background-color: var(--secondary); }
 .px-mark.span { border-radius: 2px; opacity: 0.7; }
 .px-mark.sound { background-color: var(--tertiary); }
-.px-pause { position: absolute; top: 3px; height: 16px; overflow: hidden; border-radius: 3px; font-size: 10px; line-height: 16px; padding-left: 3px; background-color: var(--surface-container-highest); color: var(--on-surface-variant); }
+.px-pause { position: absolute; box-sizing: border-box; top: 3px; height: 16px; overflow: hidden; border-radius: 3px; font-size: 10px; line-height: 16px; padding-left: 3px; background-color: var(--surface-container-highest); color: var(--on-surface-variant); }
 .px-tracks { position: relative; height: 104px; overflow-y: auto; }
 .px-tracks-in { position: relative; }
 .px-track-name { position: absolute; left: 0px; width: 112px; height: 20px; line-height: 20px; padding-right: 8px; text-align: right; font-size: 11px; color: var(--on-surface-variant); overflow: hidden; }
-.px-blocks { position: absolute; left: 120px; right: 0px; top: 0px; bottom: 0px; }
+.px-blocks { position: absolute; left: 128px; right: 0px; top: 0px; bottom: 0px; } /* under the ruler, as .px-over */
 .px-block {
     position: absolute;
+    box-sizing: border-box; /* its box from its start to its end: the edges are where the mouse takes them */
     height: 18px;
-    line-height: 18px;
+    line-height: 16px;
     overflow: hidden;
     white-space: nowrap;
     padding-left: 3px;

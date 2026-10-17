@@ -220,18 +220,41 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why) {
     return true;
 }
 
-bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue& out, std::string& why) {
-    if (track >= rec.tracks.size()) return why = "нет такой дорожки", false;
+i32 deciding_block(const Recording& rec, u32 track, f64 t) {
+    if (track >= rec.tracks.size()) return -1;
     const Recording::Track& tr = rec.tracks[track];
     // The last block (by start, then order) that started at t or before.
     const f64 at = snap_time(t);
     const auto it = std::upper_bound(tr.blocks.begin(), tr.blocks.end(), at,
                                      [&](f64 time, u32 i) { return time < rec.blocks[i].start; });
-    if (it == tr.blocks.begin()) {
-        out = rest_value(tr.prop);
+    return it == tr.blocks.begin() ? -1 : static_cast<i32>(*(it - 1));
+}
+
+bool block_going(const Block& b, f64 t, f64 frame) {
+    const f64 local = snap_time(t - b.start); // as block_value reads it
+    if (b.to == Block::To::Binding) return local >= 0;
+    if (b.length <= 0) return local >= 0 && local < frame;
+    return local > 0 && local <= b.length;
+}
+
+i32 latest_block(const Recording& rec, u32 part, f64 t) {
+    i32 best = -1;
+    for (usize p = 0; p < kPropCount; ++p) {
+        const i32 tr = rec.track(part, static_cast<Prop>(p));
+        const i32 d = tr < 0 ? -1 : deciding_block(rec, static_cast<u32>(tr), t);
+        if (d >= 0 && (best < 0 || rec.blocks[static_cast<usize>(d)].start > rec.blocks[static_cast<usize>(best)].start)) best = d;
+    }
+    return best;
+}
+
+bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue& out, std::string& why) {
+    if (track >= rec.tracks.size()) return why = "нет такой дорожки", false;
+    const i32 d = deciding_block(rec, track, t);
+    if (d < 0) {
+        out = rest_value(rec.tracks[track].prop);
         return true;
     }
-    return block_value(rec, rec.blocks[*(it - 1)], at, eval, out, why);
+    return block_value(rec, rec.blocks[static_cast<usize>(d)], snap_time(t), eval, out, why);
 }
 
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why) {

@@ -15,8 +15,17 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace forge::pixel {
+
+// What of a block a mouse edit changes: the inspector's fields and the timeline's edges.
+enum class BlockEdit : u8 { Value, Length, Timing, Start };
+// Whether that of block b can be edited: false with why, the words its edit would refuse with (a binding, a spring,
+// tween's frames, back, restore, rest, a module's call, a block without a start of its own).
+bool can_edit(const Recording& rec, const Block& b, BlockEdit what, const CodeSites& code, std::string& why);
+bool can_edit_pause(const Recording& rec, const Pause& pause, const CodeSites& code, std::string& why);
 
 // The value block b goes to, of property p: its own, or another one added to the table of its call
 // (part("body"):to({ y = 2 }, …) → { y = 2, x = 3 }). A call of one property (body.y(…)) takes no other: add_at_line.
@@ -38,5 +47,17 @@ bool edit_pause(const Recording& rec, const Pause& pause, f64 length, const Code
 // at(0.25, part("head").rot(5, 0.1)), or at(0.25, part("mouth"):morph("mouth_open", 0.1)).
 bool add_at_line(const Recording& rec, f64 t, std::string_view part, Prop p, const PropValue& value, f64 length,
                  const CodeSites& code, std::string_view source, std::string& out, std::string& why);
+// The same with numbers of a part in one table: at(0.25, part("head"):to({ x = 3, y = -2 }, 0)).
+bool add_at_table(const Recording& rec, f64 t, std::string_view part, const std::vector<std::pair<Prop, f64>>& values,
+                  f64 length, const CodeSites& code, std::string_view source, std::string& out, std::string& why);
+
+// A part dragged in the view in the frame at t (`frame` seconds long) by dx, dy, in the units its x and y move it by
+// («Правки мышью (часть 3б)»). For each of x and y that moved: the deciding block's end value plus the move when its
+// transition goes in this frame; else a field of the other one's call when that one goes, its table has no such field
+// and this track started nothing since; else, both of them in one new first line of the clip,
+// at(t, part("head"):to({ x = …, y = … }, 0)), at t to thousandths not after it, from the recording's values at t.
+// Every change in one text; false with why.
+bool edit_part_move(const Recording& rec, std::string_view part, f64 t, f64 frame, f64 dx, f64 dy, const CodeSites& code,
+                    std::string_view source, std::string& out, std::string& why);
 
 } // namespace forge::pixel

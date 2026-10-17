@@ -184,6 +184,15 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why);
 bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue& out, std::string& why);
 // A block's value at t, as if it decided.
 bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval, PropValue& out, std::string& why);
+// The block that decides a track at t (after resolve): the last, by start then order, that started at t or before; -1
+// before the first one.
+i32 deciding_block(const Recording& rec, u32 track, f64 t);
+// Whether block b's transition goes in the frame at t, `frame` seconds long: after its start and not after its end; a
+// block of length 0 in the frame it starts in; a binding from its start on (while it decides).
+bool block_going(const Block& b, f64 t, f64 frame);
+// Of all a part's tracks, the deciding block that started last at t or before (of two that started together, the one
+// of the first property in Prop's order); -1 when none has.
+i32 latest_block(const Recording& rec, u32 part, f64 t);
 
 // The pose of all parts at t, from the tracks.
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why);
