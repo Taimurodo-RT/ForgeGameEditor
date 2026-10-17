@@ -47,6 +47,9 @@ struct DrawShape {
     bool has_pivot = false;
     vector::Point pivot;      // in the picture's units
     u32 line = 0;             // the call's line in the script
+    // The call that drew it (part 4е): its place in the script's CodeSites::sites(), -1 when a module's code drew it.
+    i32 site = -1;
+    bool module = false;      // drawn by the code of a module the script requires
     bool operator==(const DrawShape&) const = default;
 };
 

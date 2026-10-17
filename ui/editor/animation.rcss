@@ -264,6 +264,10 @@
 .px-sound-row.missing .px-tl-time { background-color: var(--error-container); }
 /* The line under the views: the zoom, the point under the mouse, the eyedropper's colour; the grid and the eyedropper. */
 .px-view-line { gap: var(--space-2); align-items: center; min-height: 28px; padding: 0px var(--space-1); }
+/* Part 4е: the tools over the views, the colour of new shapes, «Привязка»; the «Фигура» fields of a part. */
+.px-tools { gap: var(--space-1); align-items: center; min-height: 28px; padding: 0px var(--space-1); }
+#px-shape-color { width: 84px; }
+#px-shape .px-field input { width: 84px; }
 .px-swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px var(--outline-variant); }
 .px-pause { position: absolute; box-sizing: border-box; top: 3px; height: 16px; overflow: hidden; border-radius: 3px; font-size: 10px; line-height: 16px; padding-left: 3px; background-color: var(--surface-container-highest); color: var(--on-surface-variant); }
 .px-tracks { position: relative; height: 104px; overflow-y: auto; }
