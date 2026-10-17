@@ -23019,7 +23019,8 @@ return {
     // stand; both views of four frames as the library draws and bakes the files; a click and a drag on a copy refused
     // with the reason, the part selected kept; a copy's block outlines its copy and says it is of copies(…) of six, its
     // length typed changes the one number of the six, both files byte for byte, one step, Ctrl+Z and Ctrl+Y byte for
-    // byte (the clip ten frames then); «Запечь» as the library bakes the files apart from the tab, each frame other than
+    // byte (the clip ten frames then); the fan typed 30 lower in the panel, a drag on the wand saves the panel and is
+    // refused, a copy under the mouse in the new recording, Ctrl+Z; «Запечь» as the library bakes the files apart from the tab, each frame other than
     // the one before; given to «Флаг», undone and done again. pixel-motion-g-again, from another working folder: the
     // files, the recording and both views of every frame the same; the game plays the flag by «Искры»'s ten frames.
     int mg_step_ = 0;
@@ -23029,8 +23030,8 @@ return {
 return {
   draw = function(p, rng)
     canvas(64, 64)
-    rect("wand", { x = 30, y = 46, w = 4, h = 14, fill = "#806040" })
     path("spark", { d = "M 32 35 L 33.5 38.5 L 37 40 L 33.5 41.5 L 32 45 L 30.5 41.5 L 27 40 L 30.5 38.5 Z", fill = "#f0c020", hidden = true })
+    rect("wand", { x = 30, y = 46, w = 4, h = 14, fill = "#806040" })
   end,
   clips = {
     idle = function(p)
@@ -23171,15 +23172,16 @@ return {
             check(copies == " spark[1] spark 1 0 spark[2] spark 2 0 spark[3] spark 3 0 spark[4] spark 4 0 spark[5] spark 5 0 spark[6] spark 6 0 "
                             "spark[7] spark 7 1.25",
                   "seven copies of the spark by number, six born at 0 s, the seventh at 1,25 s:" + copies);
-            std::vector<std::string> tracks = {"wand · x", "wand · rot", "spark · x", "spark · y"};
+            // The spark drawn first: its tracks, its copies', then the wand's.
+            std::vector<std::string> tracks = {"spark · x", "spark · y"};
             for (int k = 1; k <= 6; ++k)
                 for (const char* prop : {"x", "y", "rot", "opacity"}) tracks.push_back("spark[" + std::to_string(k) + "] · " + prop);
-            for (const char* t : {"spark[7] · x", "spark[7] · y", "spark[7] · крепление"}) tracks.push_back(t);
+            for (const char* t : {"spark[7] · x", "spark[7] · y", "spark[7] · крепление", "wand · x", "wand · rot"}) tracks.push_back(t);
             std::string wrong;
             for (usize i = 0; i < tracks.size(); ++i)
                 if (element_text(("px-track-" + std::to_string(i)).c_str()) != tracks[i]) wrong += " " + std::to_string(i);
             if (ed_.find_element(("px-track-" + std::to_string(tracks.size())).c_str())) wrong += " more";
-            check(wrong.empty(), "31 tracks: the wand's, the spark's, then each copy's by number, the link after the numbers:" + wrong + "\n" +
+            check(wrong.empty(), "31 tracks: the spark's, then each copy's by number, the link after the numbers, then the wand's:" + wrong + "\n" +
                                      mp_recorded());
             const i32 x1 = block_of("spark[1]", pixel::Prop::X), y6 = block_of("spark[6]", pixel::Prop::Y), r3 = block_of("spark[3]", pixel::Prop::Rot),
                       o4 = block_of("spark[4]", pixel::Prop::Opacity), to = block_of("spark[7]", pixel::Prop::X), held = block_of("spark[7]", pixel::Prop::Link);
@@ -23243,12 +23245,17 @@ return {
             const vector::Point s = spark_at(), c = copy_at("spark[7]");
             check(at(c, s.x, s.y) && s.x < 48 && near(s.y, 32), "frame 9: the seventh going with the spark: " + point_words(c) + "; " + point_words(s));
             check(views_are(8), "both views of frame 9");
-            const i32 x3 = block_of("spark[3]", pixel::Prop::X);
-            check(at_frame(2) && x3 >= 0 && px_click(id_of(x3)) && px().block() == x3, "frame 3; a click on «spark[3] · x»");
+            check(at_frame(2), "frame 3");
             break;
         }
-        // A copy's block: its copy outlined; one call for the six; its length typed.
+        // A copy's block, clicked with the frame drawn: its copy outlined; one call for the six; its length typed.
         case 9: {
+            if (wait(2)) return true;
+            const i32 x3 = block_of("spark[3]", pixel::Prop::X);
+            check(x3 >= 0 && px_click(id_of(x3)) && px().block() == x3, "a click on «spark[3] · x»");
+            break;
+        }
+        case 10: {
             const i32 x3 = block_of("spark[3]", pixel::Prop::X);
             if (hold(px().block() == x3 && shown("px-block-length"), "the inspector of «spark[3] · x»")) return true;
             if (wait(2)) return true;
@@ -23288,7 +23295,7 @@ return {
             edited(mb_sub(mg_code_, "}, 1, \"linear\")", "}, 1.5, \"linear\")"), 10, "«Искры»: spark[3] · x, длина 1,5 с", "the copies' length");
             break;
         }
-        case 10: {
+        case 11: {
             if (hold(rec && !px().stale() && near(rec->length, 2.5) && ue_field("px-block-length") == "1,5", "the fields of the new recording, 2,5 s"))
                 return true;
             std::string lengths;
@@ -23298,10 +23305,40 @@ return {
                     lengths += " " + rec->parts[b.part] + " · " + pixel::prop_word(b.prop) + " " + pixel::format_number(b.length);
             check(lengths.empty(), "each block of the six 1,5 s, the one number in the code:" + lengths);
             check(near(rec->copies.back().born, 1.5), "the seventh born at 1,5 s, when the fan is done");
+            check(at_frame(5), "frame 6");
+            break;
+        }
+        // The panel unsaved, under the mouse in its new recording a copy: the drag saves the panel, then is refused.
+        case 12: {
+            if (wait(2)) return true;
+            // At 1,25 s the wand stands turned at (48; 53), the sixth copy of the fan 5/6 of its way up to (52; 26).
+            const vector::Point on_wand{47, 57};
+            auto sixth_at = [&](f64 x, f64 y) {
+                const vector::Point c = copy_at("spark[6]");
+                return std::fabs(c.x - x) < 1e-6 && std::fabs(c.y - y) < 1e-6;
+            };
+            check(sixth_at(32 + 50.0 / 3, 40 - 35.0 / 3), "frame 6: the sixth copy up in the fan, away from the wand: " + point_words(copy_at("spark[6]")));
+            // The fan 30 lower: the sixth copy, 5/6 of its way down to (52; 56), over the wand.
+            const std::string fan = "y = math.abs(i - 3.5) * 4 - 24";
+            check(mo_caret(mo_char(mg_code_, fan) + mo_letters(fan)), "the caret after the fan's y");
+            mo_type(" + 30");
+            const std::string typed = mb_sub(mg_code_, fan, fan + " + 30");
+            check(px().code_unsaved() && px().code() == typed && files_are(mg_code_), "« + 30» typed: the fan 30 lower, not saved");
+            check(mb_hold_point(on_wand, 2, 0), "pressed on the wand, away from its pivot, and dragged by 2; 0");
+            mb_let_go();
+            const std::string label = "«Искры»: код «Искры.luau» сохранён";
+            check(px().note() == "копия «spark[6]» правится в коде: copies(…)" && px().part() == "wand" && !px().code_unsaved() && file(lua) == bytes(typed) &&
+                      file(doc) == mg_doc_ && step_label() == label && sixth_at(32 + 50.0 / 3, 40 + 40.0 / 3),
+                  "the panel saved, one step; under the mouse in its recording the sixth copy, the drag refused: «" + px().note() + "», «" + px().part() +
+                      "», " + step_label() + "; " + point_words(copy_at("spark[6]")));
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mg_code_) && step_label() == mg_label_ && px().code() == mg_code_ && !px().code_unsaved(),
+                  "Ctrl+Z: the save undone, the wand not moved: " + step_label());
             break;
         }
         // «Запечь»: 10 frames of 64 × 64, each as the library bakes the files apart from the tab.
-        case 11: {
+        case 13: {
             if (hold(idle && rec && !px().stale() && element_text("px-total") == "в картинке 10 кадров из 64", "«в картинке 10 кадров из 64»")) return true;
             check(px_click("px-bake"), "«Запечь»");
             assets::CookedTexture strip;
@@ -23327,12 +23364,12 @@ return {
             check(same.empty(), "frames 2–10 each other than the one before:" + same);
             break;
         }
-        case 12:
+        case 14:
             if (hold(idle && as().record_of(as().abs(png)) && shown("px-give-open") && !pj_class("px-give-open", "disabled"), "the picture indexed"))
                 return true;
             check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
             break;
-        case 13: {
+        case 15: {
             const auto& l = px().templates();
             const objects::Template* flag = lib.find("flag");
             const usize i = flag ? static_cast<usize>(std::find(l.begin(), l.end(), flag->key) - l.begin()) : l.size();
@@ -23343,7 +23380,7 @@ return {
             check(px_click(row), "a click on «Флаг»");
             break;
         }
-        case 14: {
+        case 16: {
             const objects::Template* t = lib.find("flag");
             objects::Clip all{{}, 4, true};
             for (u32 k = 0; k < 10; ++k) all.frames.push_back(k);
@@ -23362,7 +23399,7 @@ return {
         }
         // What the tab shows and the files, beside the games, for pixel-motion-g-again: the recording and both views of
         // each frame.
-        case 15: {
+        case 17: {
             if (hold(rec && !px().stale() && !px().giving() && shown("px-frame-0"), "the recording")) return true;
             if (mb_look(mg_seen_)) return true;
             mg_seen_ = mp_recorded() + mg_seen_;

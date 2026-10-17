@@ -333,17 +333,25 @@ copies("leaf", 1, function() end))"));
         w.dot = {"dot_c1", "dot_c2"};
         w.spark = {"spark_c1"};
         w.leaf = {"leaf_c1"};
-        same_as_written(rig, frame(s, rec, &rig, 0), w,
-                        {{"dot[1]", "dot_c1"}, {"dot[2]", "dot_c2"}, {"spark[1]", "spark_c1"}, {"leaf[1]", "leaf_c1"}});
+        const std::map<std::string, std::string> ids = {{"dot[1]", "dot_c1"}, {"dot[2]", "dot_c2"}, {"spark[1]", "spark_c1"}, {"leaf[1]", "leaf_c1"}};
+        same_as_written(rig, frame(s, rec, &rig, 0), w, ids);
+        // Posed again, the copies made before go back to their rest: the spark's copy keeps its opacity of 0.8.
+        same_as_written(rig, frame(s, rec, &rig, 0), w, ids);
     }
-    // Before its birth a copy is not there; from it on, it is.
+    // Before its birth a copy is not there, its place among its neighbours neither (at() lays its call out at 0,1 s, before
+    // the birth); from it on, it is.
     {
         Rig rig = loaded(picture());
         PoseScript s = script_of(clip_of(R"(wait(0.5)
-copies("dot", 1, function(i, c) c.x(10, 0.5) end))"));
+copies("dot", 1, function(i, c)
+  c.x(10, 0.5)
+  at(0.1, c:to_top())
+end))"));
         const Recording rec = recorded(s, &rig);
+        CHECK(block(rec, "dot[1]", Prop::Order).start == doctest::Approx(0.1));
         const Pose early = frame(s, rec, &rig, 0.25);
         CHECK(early.copies.empty());
+        CHECK(early.order.empty());
         std::string why;
         REQUIRE(rig.pose(early, why));
         CHECK(same(rig.draw(128, 128), loaded(picture()).draw(128, 128)));
@@ -412,6 +420,9 @@ c:mask("torso"))", dot1, "dot_c1", 0);
     same_clip("dot", R"(c:along("route", 1, "linear", { turn = true }))", dot1, "dot_c1", 0.4);
     same_clip("dot", R"(c:snap_to("torso", 0.5))", dot1, "dot_c1", 1.25, R"(part("body"):to({ x = 6, rot = 20 }, 1, "linear")
 )");
+    // Its own group moved: the copy stands in it as its part does.
+    same_clip("dot", R"(c:snap_to("torso", 0.5))", dot1, "dot_c1", 1.25, R"(part("fx"):to({ x = 6, rot = 20 }, 1, "linear")
+)");
     same_clip("dot", R"(c:attach("dot"))", dot1, "dot_c1", 1, "", R"(part("dot"):to({ x = 6, y = 5, rot = 40 }, 1, "linear"))");
     same_clip("dot", R"(c:attach("torso"))", dot1, "dot_c1", 1, "", R"(part("body"):to({ y = 5, rot = 15, sx = 1.2 }, 1, "linear"))");
     same_clip("dot", R"(c:above("spark_sq"))", dot1, "dot_c1", 0);
@@ -436,6 +447,19 @@ TEST_CASE("Motion copies: the rig makes a copy once and hides it in a pose witho
     CHECK(rig.drawn_copies()[0].index == index);
     CHECK(rig.pivot(index).x == rig.pivot(rig.part("dot")).x);
     CHECK(rig.copy("dot") == -1);
+    // As a line it is its part's, in the picture's units through the moved group.
+    {
+        PathLine a, b;
+        REQUIRE(rig.path_of(index, a, why));
+        REQUIRE(rig.path_of(rig.part("dot"), b, why));
+        CHECK(a.id == "dot[1]");
+        REQUIRE(a.points.size() == b.points.size());
+        for (usize k = 0; k < a.points.size(); ++k) {
+            CHECK(a.points[k].x == b.points[k].x);
+            CHECK(a.points[k].y == b.points[k].y);
+        }
+        CHECK(a.closed == b.closed);
+    }
 
     // A pose without it: hidden, the picture at rest smooth and baked; it is kept.
     REQUIRE(rig.pose({}, why));

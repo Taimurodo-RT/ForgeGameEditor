@@ -445,8 +445,7 @@ struct Rig::Impl {
 // itself come after all others; it turns round src's pivot.
 i32 Rig::Impl::add_copy(const std::string& id, i32 src, u32 n) {
     const PartRec& sr = recs[static_cast<usize>(src)];
-    tvg::Paint* dup = sr.paint->duplicate();
-    dup->visible(true); // seen from its birth, a hidden shape's copy too
+    tvg::Paint* dup = sr.paint->duplicate(); // seen: made after the rest, its part's paint is too
     const i32 element = parts[static_cast<usize>(src)].element;
     if (sr.leaf >= 0 && vector::display_none(outline, element)) put_svg_paint(static_cast<tvg::Shape*>(dup), outline, element);
     tvg::Scene* wrap = nullptr;
@@ -474,7 +473,7 @@ i32 Rig::Impl::add_copy(const std::string& id, i32 src, u32 n) {
     PartRec r;
     r.paint = dup;
     r.rest_local = sr.rest_local;
-    r.rest_opacity = sr.rest_opacity;
+    r.rest_opacity = dup->opacity(); // as made: a hidden shape's copy has the opacity the SVG gives it
     r.rest_visible = true;
     r.parent_global = sr.parent_global;
     r.rest_global = sr.rest_global;
