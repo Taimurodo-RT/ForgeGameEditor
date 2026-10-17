@@ -1307,13 +1307,22 @@
                 <div class="px-views row">
                     <div class="px-view column">
                         <span class="an-label">Вектор: щелчок выбирает часть, протяжка двигает её в коде, опорная точка тянется мышью</span>
-                        <div id="px-vector" class="px-canvas"><img id="px-vector-img" data-if="px_vector != ''" data-attr-src="px_vector"/></div>
+                        <div id="px-vector" class="px-canvas" title="Колесо, = и − — масштаб, 0 — вписать, средняя кнопка — сдвиг"><img id="px-vector-img" data-if="px_vector != ''" data-attr-src="px_vector"/></div>
                     </div>
                     <div class="px-view column">
                         <span class="an-label">Пиксели {{ px_size }}, как запечётся</span>
                         <div id="px-pixel" class="px-canvas"><img id="px-pixel-img" data-if="px_pixel != ''" data-attr-src="px_pixel"/></div>
                         <div class="row px-one"><img id="px-one" data-if="px_one != ''" data-attr-src="px_one"/><span class="an-label">в настоящем размере</span></div>
                     </div>
+                </div>
+                <div id="px-view-line" class="px-view-line row">
+                    <span id="px-zoom" class="px-num" data-if="px_zoom_words != ''">{{ px_zoom_words }}</span>
+                    <span id="px-coords" class="px-num" title="Точка рисунка под мышью, как в коде; P копирует её">{{ px_coords }}</span>
+                    <div id="px-pick-swatch" class="px-swatch" data-if="px_picking" data-attr-style="px_pick_swatch"/>
+                    <span id="px-picked" class="px-num" data-if="px_picking">{{ px_picked }}</span>
+                    <div class="grow"/>
+                    <div id="px-grid" class="an-chip" data-class-selected="px_grid" title="Сетка в единицах рисунка (')" data-event-click="px_grid_toggle">Сетка</div>
+                    <div id="px-picking" class="an-chip" data-class-selected="px_picking" title="Пипетка (I): щелчок копирует цвет под мышью; I или Esc выключает" data-event-click="px_picking_toggle"><icon class="s" name="colorize"/></div>
                 </div>
                 <div id="px-problem" class="an-problem px-problem" data-if="px_problem != ''">{{ px_problem }}</div>
                 <div id="px-note" class="an-sel-note" data-if="px_note != ''">{{ px_note }}</div>
@@ -1437,6 +1446,7 @@
                 </div>
                 <div id="px-loop-view" class="an-check row" title="Просмотр по кругу (L); в игре — «Повторять» клипа" data-event-click="px_loop_view"><icon class="s" data-attr-name="px_loop_view ? 'check_box' : 'check_box_outline_blank'"/><span>По кругу</span></div>
                 <div id="px-onion" class="an-check row" title="Соседние кадры бледно под текущим" data-event-click="px_onion"><icon class="s" data-attr-name="px_onion ? 'check_box' : 'check_box_outline_blank'"/><span>Калька</span></div>
+                <div id="px-sound" class="an-check row" title="Звуки отметок sound(…) при просмотре (M)" data-event-click="px_sound_toggle"><icon class="s" data-attr-name="px_sound_on ? 'volume_up' : 'volume_off'"/><span>Звук</span></div>
             </div>
             <div class="px-clips row">
                 <span class="px-tl-name">Клипы</span>
@@ -1463,8 +1473,12 @@
                 <div class="px-tl-row row" data-if="px_marks.size > 0">
                     <span class="px-tl-name">Метки</span>
                     <div id="px-marks" class="px-tl-time">
-                        <div data-for="m : px_marks" class="px-mark" data-attr-id="'px-mark-' + m.index" data-class-sound="m.sound" data-class-span="m.span" data-attr-style="m.style" data-attr-title="m.title"/>
+                        <div data-for="m : px_marks" class="px-mark" data-attr-id="'px-mark-' + m.index" data-class-sound="m.sound" data-class-span="m.span" data-class-missing="m.missing" data-attr-style="m.style" data-attr-title="m.title"/>
                     </div>
+                </div>
+                <div data-for="s : px_sounds" class="px-tl-row px-sound-row row" data-attr-id="'px-sound-' + it_index" data-class-missing="s.missing">
+                    <span class="px-tl-name" data-attr-title="s.title">{{ s.name }}</span>
+                    <div class="px-tl-time"><img class="px-wave" data-attr-id="'px-wave-' + it_index" data-if="s.wave != ''" data-attr-src="s.wave" data-attr-style="s.style"/></div>
                 </div>
                 <div class="px-tl-row row" data-if="px_pauses.size > 0">
                     <span class="px-tl-name">Паузы</span>

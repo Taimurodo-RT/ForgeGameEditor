@@ -11,9 +11,11 @@ add_library(forge_editor_pixel STATIC
   src/timeline.cpp
   src/motion.cpp
   src/motion_edit.cpp
-  src/motion_record.cpp)
+  src/motion_record.cpp
+  src/view.cpp
+  src/sound.cpp)
 target_include_directories(forge_editor_pixel PUBLIC include)
-target_link_libraries(forge_editor_pixel PUBLIC forge::core forge::vector forge::assets forge_editor_pixel_code PRIVATE thorvg Luau.VM Luau.Compiler yyjson)
+target_link_libraries(forge_editor_pixel PUBLIC forge::core forge::vector forge::assets forge::audio forge_editor_pixel_code PRIVATE thorvg Luau.VM Luau.Compiler yyjson)
 forge_target_defaults(forge_editor_pixel)
 
 # The place of every call of a character's code (code_sites.h) reads Luau's syntax tree through Luau's C++ headers, so

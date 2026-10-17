@@ -74,6 +74,9 @@ inline std::string count_words(u32 n, const char* one, const char* few, const ch
     return std::to_string(n) + " " + (d == 1 && h != 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many);
 }
 
+// The vector view, and the box the pixel frame is shown big in (logical px).
+inline constexpr u32 kViewPx = 288;
+
 // When a file was last written and how long it is; 0 when it is not there.
 inline i64 stamp_of(const std::filesystem::path& file) {
     std::error_code ec;
