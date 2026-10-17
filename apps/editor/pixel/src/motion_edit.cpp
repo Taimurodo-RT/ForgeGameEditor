@@ -8,6 +8,9 @@ namespace forge::pixel {
 
 namespace {
 
+// The order of parts has no value, length or start to drag: it is written in the code (part 4а).
+constexpr const char* kOrderInCode = "порядок частей правится в коде: to_top, to_bottom, above, below";
+
 // The call of s in the character's script; null with why for a module's call or none.
 const CallSite* script_call(const Recording& rec, SiteRef s, const CodeSites& code, std::string& why) {
     if (s.site < 0) return why = "у блока нет вызова в коде", nullptr;
@@ -55,7 +58,7 @@ bool has_value(const Block& b, std::string& why) {
 
 // The call whose argument holds block b's value; null with why.
 const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
-    if (b.prop == Prop::Order) return why = "порядок частей правится в коде: to_top, to_bottom, above, below", nullptr;
+    if (b.prop == Prop::Order) return why = kOrderInCode, nullptr;
     const CallSite* c = script_call(rec, b.site, code, why);
     if (!c || !has_value(b, why)) return nullptr;
     if (b.value_arg < 0 || static_cast<usize>(b.value_arg) >= c->args.size()) return why = "в вызове нет значения", nullptr;
@@ -66,6 +69,7 @@ const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites
 
 // The call whose argument holds block b's length or timing; null with why.
 const CallSite* timed_call(const Recording& rec, const Block& b, const CodeSites& code, bool timing, std::string& why) {
+    if (b.prop == Prop::Order) return why = kOrderInCode, nullptr;
     const CallSite* c = script_call(rec, b.site, code, why);
     if (!c) return nullptr;
     if (b.to == Block::To::Binding)
@@ -87,6 +91,7 @@ const CallSite* timed_call(const Recording& rec, const Block& b, const CodeSites
 
 // The at(…) or delay(…) whose number is block b's start; null with why.
 const CallSite* start_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
+    if (b.prop == Prop::Order) return why = kOrderInCode, nullptr;
     if (b.start_site.site < 0)
         return why = "блок идёт за предыдущим, своего начала в коде у него нет: оно есть у at(с, …) и delay(с, …)",
                nullptr;
@@ -124,7 +129,7 @@ bool can_edit_pause(const Recording& rec, const Pause& pause, const CodeSites& c
 bool edit_value(const Recording& rec, const Block& b, Prop p, const PropValue& value, const CodeSites& code,
                 std::string_view source, std::string& out, std::string& why) {
     out.clear();
-    if (p == Prop::Order) return why = "порядок частей правится в коде: to_top, to_bottom, above, below", false;
+    if (p == Prop::Order) return why = kOrderInCode, false;
     const CallSite* c = value_call(rec, b, code, why);
     if (!c) return false;
     const CodeArg& arg = c->args[static_cast<usize>(b.value_arg)];

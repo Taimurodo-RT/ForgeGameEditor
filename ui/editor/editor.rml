@@ -1488,7 +1488,7 @@
                 </div>
                 <div id="px-tracks" class="px-tracks" data-if="px_has_rec">
                     <div class="px-tracks-in" data-attr-style="px_tracks_height">
-                        <div data-for="tr : px_tracks" class="px-track-name" data-attr-style="tr.style">{{ tr.label }}</div>
+                        <div data-for="tr : px_tracks" class="px-track-name" data-attr-id="'px-track-' + it_index" data-attr-style="tr.style">{{ tr.label }}</div>
                         <div class="px-blocks">
                             <div data-for="b : px_blocks" class="px-block" data-attr-id="'px-block-' + b.index" data-class-selected="b.selected" data-class-lit="b.lit" data-class-module="b.module" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_block(b.index)" data-event-dblclick="px_block_code(b.index)">{{ b.label }}</div>
                         </div>

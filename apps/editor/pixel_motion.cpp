@@ -586,8 +586,9 @@ void PixelEditor::lay_timeline() {
                 for (usize j = 0; j < t.blocks.size(); ++j) {
                     const pixel::Block& b = r.blocks[t.blocks[j]];
                     f64 start = b.start;
-                    f64 end = b.to == pixel::Block::To::Binding ? (j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length)
-                                                                : b.start + b.length;
+                    // A binding and an order call hold until the track's next block: the order has no length of its own.
+                    const bool holds = b.to == pixel::Block::To::Binding || b.prop == pixel::Prop::Order;
+                    f64 end = holds ? (j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length) : b.start + b.length;
                     // An edge being dragged: the end there, or all of the block from the start there.
                     if (static_cast<i32>(t.blocks[j]) == drag_block_ && tl_drag_ == Drag::BlockEnd) end = drag_edge_;
                     if (static_cast<i32>(t.blocks[j]) == drag_block_ && tl_drag_ == Drag::BlockStart) end += drag_edge_ - start, start = drag_edge_;
@@ -604,9 +605,12 @@ void PixelEditor::lay_timeline() {
                     std::string label = pixel::block_words(r, b);
                     if (b.site.file > 0 && b.site.file < r.files.size()) label += " · " + r.files[b.site.file];
                     std::string style = place(x0, x1 - x0) + " " + top;
-                    m_blocks_.push_back({bi, style, label,
-                                         label + ": с " + seconds_words(b.start) + " по " + seconds_words(b.to == pixel::Block::To::Binding ? end : b.start + b.length) +
-                                             " с; края тянут длину и начало по кадрам, двойной щелчок — к коду",
+                    const std::string title =
+                        b.prop == pixel::Prop::Order
+                            ? label + ": с " + seconds_words(b.start) + " с до следующего вызова порядка; правится в коде, двойной щелчок — к коду"
+                            : label + ": с " + seconds_words(b.start) + " по " + seconds_words(holds ? end : b.start + b.length) +
+                                  " с; края тянут длину и начало по кадрам, двойной щелчок — к коду";
+                    m_blocks_.push_back({bi, style, label, title,
                                          bi == block_, std::find(caret_blocks_.begin(), caret_blocks_.end(), bi) != caret_blocks_.end(), b.site.file > 0});
                 }
             }
@@ -1107,6 +1111,13 @@ void PixelEditor::rebuild_console() {
             lines.push_back({where + (line ? "строка " + std::to_string(line) + ": " : std::string()) + f->second.file.why, line, false, true});
         }
     }
+    // What the clip asks and the frame does not do, once a part (part 4а): a skew past 89°, a dash without a pattern.
+    if (rec_ok_)
+        for (const pixel::Note& n : rec_.notes) {
+            const bool here = n.site.file == 0;
+            const std::string where = !here && n.site.file < rec_.files.size() ? rec_.files[n.site.file] + ".luau: " : std::string();
+            lines.push_back({where + (n.line ? "строка " + std::to_string(n.line) + ": " : std::string()) + n.text, here ? n.line : 0, false, true});
+        }
     if (rec_ok_)
         for (const pixel::LogLine& l : rec_.log) {
             std::string where;
