@@ -76,9 +76,22 @@ std::string hex(Rgba8 c) {
 } // namespace
 
 std::string value_words(Prop p, const PropValue& v) {
-    if (p == Prop::Fill) {
+    if (p == Prop::Fill || p == Prop::Stroke) {
         if (v.v <= 0) return "свой цвет";
         return hex(v.color) + (v.v < 1 ? " " + format_number(v.v) : std::string());
+    }
+    if (p == Prop::StrokeWidth) {
+        if (v.v <= 0) return "своя толщина";
+        return format_number(v.n) + (v.v < 1 ? " " + format_number(v.v) : std::string());
+    }
+    if (p == Prop::Visible) return v.v > 0 ? "да" : "нет";
+    if (p == Prop::Order) {
+        switch (static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(v.v), 0, 3))) {
+        case OrderStep::Kind::Top: return "наверх";
+        case OrderStep::Kind::Bottom: return "вниз";
+        case OrderStep::Kind::Above: return "над " + v.target;
+        case OrderStep::Kind::Below: return "под " + v.target;
+        }
     }
     if (p == Prop::Morph) {
         if (v.v <= 0 || v.target.empty()) return "своя форма";
@@ -98,6 +111,7 @@ std::string block_words(const Recording&, const Block& b) {
     }
     if (!b.frames.empty()) return "tween";
     const std::string to = value_words(b.prop, b.value);
+    if (b.prop == Prop::Order) return to; // «наверх», «над body»: the track says it is the order
     return b.spring ? "пружина → " + to : prop + " → " + to;
 }
 

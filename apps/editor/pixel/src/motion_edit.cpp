@@ -22,7 +22,9 @@ const CallSite* script_call(const Recording& rec, SiteRef s, const CodeSites& co
 
 std::string value_text(Prop p, const PropValue& v) {
     if (prop_is_number(p)) return format_number(v.v);
-    if (!(v.v > 0)) return "nil"; // its own colour or shape
+    if (p == Prop::Visible) return v.v > 0 ? "true" : "false";
+    if (!(v.v > 0)) return "nil"; // its own colour, width or shape
+    if (p == Prop::StrokeWidth) return format_number(v.n);
     if (p == Prop::Morph) return quote_string(v.target);
     char buf[8];
     std::snprintf(buf, sizeof buf, "#%02x%02x%02x", v.color.r, v.color.g, v.color.b);
@@ -53,6 +55,7 @@ bool has_value(const Block& b, std::string& why) {
 
 // The call whose argument holds block b's value; null with why.
 const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
+    if (b.prop == Prop::Order) return why = "порядок частей правится в коде: to_top, to_bottom, above, below", nullptr;
     const CallSite* c = script_call(rec, b.site, code, why);
     if (!c || !has_value(b, why)) return nullptr;
     if (b.value_arg < 0 || static_cast<usize>(b.value_arg) >= c->args.size()) return why = "в вызове нет значения", nullptr;
@@ -121,6 +124,7 @@ bool can_edit_pause(const Recording& rec, const Pause& pause, const CodeSites& c
 bool edit_value(const Recording& rec, const Block& b, Prop p, const PropValue& value, const CodeSites& code,
                 std::string_view source, std::string& out, std::string& why) {
     out.clear();
+    if (p == Prop::Order) return why = "порядок частей правится в коде: to_top, to_bottom, above, below", false;
     const CallSite* c = value_call(rec, b, code, why);
     if (!c) return false;
     const CodeArg& arg = c->args[static_cast<usize>(b.value_arg)];

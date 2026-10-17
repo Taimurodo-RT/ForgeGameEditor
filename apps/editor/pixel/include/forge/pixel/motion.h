@@ -19,25 +19,34 @@
 
 namespace forge::pixel {
 
-enum class Prop : u8 { X, Y, Rot, Scale, Sx, Sy, Opacity, Fill, Morph };
-inline constexpr usize kPropCount = 9;
-// "x", "y", "rot", "scale", "sx", "sy", "opacity", "fill", "morph".
+// In the order of a part's tracks on the timeline (part 4а of the model adds skew_x … visible and the order).
+enum class Prop : u8 {
+    X, Y, Rot, Scale, Sx, Sy, SkewX, SkewY, Opacity, Fill, Stroke, StrokeWidth, Dash, DrawFrom, DrawTo, Visible, Morph, Order
+};
+inline constexpr usize kPropCount = 18;
+// "x", "y", "rot", "scale", "sx", "sy", "skew_x", "skew_y", "opacity", "fill", "stroke", "stroke_width", "dash",
+// "draw_from", "draw_to", "visible", "morph", and "порядок" for the order, which is no field of the code.
 const char* prop_word(Prop p);
 bool prop_from_word(std::string_view word, Prop& out);
-bool prop_is_number(Prop p); // all but fill and morph
+// Plain numbers: all but fill, stroke, stroke_width (nil is its own), visible, morph and the order.
+bool prop_is_number(Prop p);
 
-// A property's value. For fill and morph `v` is the share k of the colour or of the target shape over the part's own
-// (0: its own), the colour or the target beside it.
+// A property's value. For fill, stroke, stroke_width and morph `v` is the share k of the colour, the width or the
+// target shape over the part's own (0: its own), the colour, the width `n` or the target beside it. Visible is v 1 or
+// 0. The order: v is a kind of OrderStep (rig.h), `target` the neighbour of above and below.
 struct PropValue {
     f64 v = 0;
     Rgba8 color;
     std::string target;
+    f64 n = 0;
     bool operator==(const PropValue&) const = default;
 };
-// At rest: 0 for x, y and rot, 1 for scale, sx, sy and opacity, k = 0 for fill and morph.
+// At rest: 1 for scale, sx, sy, opacity, draw_to and visible, k = 0 (its own) for fill, stroke, stroke_width and
+// morph, 0 for the rest.
 PropValue rest_value(Prop p);
 // From a to b by k: exact at k = 0 and 1. A colour from none comes in at its own colour; a morph between two targets
-// goes back to the part's own shape and on to the other.
+// goes back to the part's own shape and on to the other. Two widths given go as numbers (past them too, for back and
+// elastic); from or to its own width k stays in 0 … 1, as a colour's. Visible and the order change at k = 1 only.
 PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k);
 
 // A call of the code: file 0 is the character's script, the others the modules it requires (Recording::files); site
@@ -132,6 +141,14 @@ struct LogLine {
     std::string text;
 };
 
+// What the recording warns of (a skew past its limit, a dash with no pattern to move): a line of the console, once a
+// part, at the call of its first block.
+struct Note {
+    SiteRef site;
+    u32 line = 0; // in the site's file
+    std::string text;
+};
+
 struct Recording {
     std::string clip;
     f64 length = 0;                 // where the clip's own flow ends; what runs on in the background is cut there
@@ -144,6 +161,7 @@ struct Recording {
     std::vector<Mark> marks;
     std::vector<Pause> pauses;
     std::vector<LogLine> log;
+    std::vector<Note> notes;
     u64 generation = 0; // the script's recording it came from: bindings are asked of that one only
 
     // resolve(): each track's blocks by start and order.

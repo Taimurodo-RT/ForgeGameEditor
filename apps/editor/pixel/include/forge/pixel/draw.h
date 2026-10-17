@@ -40,6 +40,8 @@ struct DrawShape {
     std::string d;           // Path, as written
     std::string fill, stroke; // "#rrggbb" or "none"; empty: SVG's own (a black fill, a stroke on a line only)
     f64 stroke_width = -1;    // below 0: SVG's own (1)
+    std::vector<f64> dash;    // stroke-dasharray; empty: none
+    std::string cap, join;    // stroke-linecap ("butt", "round", "square"), stroke-linejoin ("miter", "round", "bevel"); empty: SVG's own
     f64 opacity = 1;
     bool hidden = false;      // display: none — a shape to morph into
     bool has_pivot = false;

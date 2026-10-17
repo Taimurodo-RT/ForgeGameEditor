@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 namespace forge::pixel {
 
@@ -62,7 +63,8 @@ bool own_field(Kind k, std::string_view f) {
 }
 
 bool common_field(std::string_view f) {
-    return f == "fill" || f == "stroke" || f == "stroke_width" || f == "opacity" || f == "hidden" || f == "pivot";
+    return f == "fill" || f == "stroke" || f == "stroke_width" || f == "dash" || f == "cap" || f == "join" || f == "opacity" ||
+           f == "hidden" || f == "pivot";
 }
 
 // A name as a part's id: letters (of any language), digits, _ and -, not first a digit or -; well-formed UTF-8.
@@ -143,6 +145,39 @@ struct Reader {
         out = hex;
         return true;
     }
+    // A word of a few: cap = "round".
+    bool word(const char* f, std::initializer_list<const char*> words, std::string& out) {
+        push(f);
+        const int type = lua_type(L, -1);
+        std::string text = type == LUA_TSTRING ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        if (type == LUA_TNIL) return true;
+        std::string list;
+        for (const char* w : words) {
+            if (text == w) {
+                out = text;
+                return true;
+            }
+            list += (list.empty() ? "\"" : ", \"") + std::string(w) + "\"";
+        }
+        return fail(std::string(f) + " — " + list + (type == LUA_TSTRING ? ", а не «" + text + "»" : std::string()));
+    }
+    // Numbers not below 0, not all 0: dash = { 4, 2 }.
+    bool lengths(const char* f, std::vector<f64>& out) {
+        push(f);
+        const bool has = !lua_isnil(L, -1);
+        bool ok = !has || (lua_istable(L, -1) && lua_objlen(L, -1) > 0);
+        bool any = false;
+        for (int i = 1; ok && has && i <= lua_objlen(L, -1); ++i) {
+            lua_rawgeti(L, -1, i);
+            ok = lua_type(L, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(L, -1)) && lua_tonumber(L, -1) >= 0;
+            if (ok) out.push_back(lua_tonumber(L, -1)), any = any || lua_tonumber(L, -1) > 0;
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (!ok || (has && !any)) return fail(std::string(f) + " — длины штрихов и промежутков, числа не меньше 0 и не все 0: " + f + " = { 4, 2 }");
+        return true;
+    }
     // Two numbers, { x, y }.
     bool point(const char* f, bool& has, vector::Point& out) {
         push(f);
@@ -200,7 +235,7 @@ bool add_shape(lua_State* L, PoseScript::Impl& im, Kind kind, int& fn) {
             const std::string f = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : std::string("?");
             if (!own_field(kind, f) && !common_field(f)) {
                 lua_pop(L, 1);
-                return r.fail("поля «" + f + "» нет (есть " + fields_of(kind) + ", fill, stroke, stroke_width, opacity, hidden, pivot)");
+                return r.fail("поля «" + f + "» нет (есть " + fields_of(kind) + ", fill, stroke, stroke_width, dash, cap, join, opacity, hidden, pivot)");
             }
         }
     }
@@ -219,6 +254,9 @@ bool add_shape(lua_State* L, PoseScript::Impl& im, Kind kind, int& fn) {
     const bool width = !lua_isnil(L, -1);
     lua_pop(L, 1);
     if (width && !r.number("stroke_width", false, 1, s.stroke_width, true)) return false;
+    if (!r.lengths("dash", s.dash) || !r.word("cap", {"butt", "round", "square"}, s.cap) ||
+        !r.word("join", {"miter", "round", "bevel"}, s.join))
+        return false;
     if (!r.number("opacity", false, 1, s.opacity)) return false;
     if (s.opacity < 0 || s.opacity > 1) return r.fail("opacity от 0 до 1");
     r.push("hidden");
@@ -407,6 +445,13 @@ std::string drawing_svg(const Drawing& d, u32 w, u32 h) {
         if (!s.stroke.empty()) out += " stroke=\"" + s.stroke + "\"";
         else if (s.kind == Kind::Line) out += " stroke=\"#000000\"";
         if (s.stroke_width >= 0) attr("stroke-width", s.stroke_width);
+        if (!s.dash.empty()) {
+            out += " stroke-dasharray=\"";
+            for (usize k = 0; k < s.dash.size(); ++k) out += (k ? " " : "") + format_number(s.dash[k]);
+            out += "\"";
+        }
+        if (!s.cap.empty()) out += " stroke-linecap=\"" + s.cap + "\"";
+        if (!s.join.empty()) out += " stroke-linejoin=\"" + s.join + "\"";
         if (s.opacity != 1) attr("opacity", s.opacity);
         if (s.hidden) out += " display=\"none\"";
         if (s.kind == Kind::Group) {

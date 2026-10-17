@@ -8,7 +8,9 @@ namespace forge::pixel {
 
 namespace {
 
-constexpr const char* kPropWords[] = {"x", "y", "rot", "scale", "sx", "sy", "opacity", "fill", "morph"};
+constexpr const char* kPropWords[] = {"x",      "y",      "rot",          "scale", "sx",        "sy",
+                                     "skew_x", "skew_y", "opacity",      "fill",  "stroke",    "stroke_width",
+                                     "dash",   "draw_from", "draw_to",   "visible", "morph",   "порядок"};
 static_assert(std::size(kPropWords) == kPropCount);
 
 u8 mix8(u8 a, u8 b, f64 k) { return static_cast<u8>(std::clamp(std::round(a + (b - a) * k), 0.0, 255.0)); }
@@ -39,11 +41,17 @@ bool prop_from_word(std::string_view word, Prop& out) {
     return false;
 }
 
-bool prop_is_number(Prop p) { return p != Prop::Fill && p != Prop::Morph; }
+bool prop_is_number(Prop p) {
+    return p != Prop::Fill && p != Prop::Stroke && p != Prop::StrokeWidth && p != Prop::Visible && p != Prop::Morph &&
+           p != Prop::Order;
+}
 
 PropValue rest_value(Prop p) {
     PropValue v;
-    v.v = (p == Prop::Scale || p == Prop::Sx || p == Prop::Sy || p == Prop::Opacity) ? 1 : 0;
+    v.v = (p == Prop::Scale || p == Prop::Sx || p == Prop::Sy || p == Prop::Opacity || p == Prop::DrawTo ||
+           p == Prop::Visible)
+              ? 1
+              : 0;
     return v;
 }
 
@@ -55,11 +63,23 @@ PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k) {
         r.v = a.v + (b.v - a.v) * k; // past 0 … 1 too: back and elastic overshoot
         return r;
     }
+    if (p == Prop::Visible || p == Prop::Order) return k >= 1 ? b : a; // no values between
+    if (p == Prop::StrokeWidth && a.v == 1 && b.v == 1) {
+        r.v = 1;
+        r.n = a.n + (b.n - a.n) * k; // two widths given: as numbers, past them too
+        return r;
+    }
     k = std::clamp(k, 0.0, 1.0);
     if (k == 0) return a;
     if (k == 1) return b;
     if (a.v <= 0 && b.v <= 0) return a;
-    if (p == Prop::Fill) {
+    if (p == Prop::StrokeWidth) {
+        // Each shape's width is own · (1 − v) + n · v; mixed linearly for every own width at once.
+        r.v = a.v + (b.v - a.v) * k;
+        r.n = (std::max(a.v, 0.0) * a.n * (1 - k) + std::max(b.v, 0.0) * b.n * k) / r.v;
+        return r;
+    }
+    if (p == Prop::Fill || p == Prop::Stroke) {
         if (a.v <= 0) {
             r.color = b.color;
             r.v = b.v * k;
@@ -124,6 +144,10 @@ bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval,
         const f64 p1 = i < b.steps.size() ? b.steps[i] : b.end.v;
         out = {};
         out.v = p0 + (p1 - p0) * (x - static_cast<f64>(i));
+        return true;
+    }
+    if (b.prop == Prop::Visible && b.frames.empty()) { // at its end, whatever its timing does on the way
+        out = b.from;
         return true;
     }
     const f64 s = std::min(local / b.length, 1.0);
@@ -260,6 +284,7 @@ bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why) {
     for (u32 i = 0; i < rec.tracks.size(); ++i) {
         const Recording::Track& tr = rec.tracks[i];
+        if (tr.prop == Prop::Order) continue; // all calls of all parts up to t, below
         PropValue v;
         if (!sample(rec, i, t, eval, v, why)) return false;
         const std::string& id = rec.parts[tr.part];
@@ -275,14 +300,45 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
         case Prop::Scale: pp.scale = v.v; break;
         case Prop::Sx: pp.sx = v.v; break;
         case Prop::Sy: pp.sy = v.v; break;
+        case Prop::SkewX: pp.skew_x = v.v; break;
+        case Prop::SkewY: pp.skew_y = v.v; break;
         case Prop::Opacity: pp.opacity = v.v; break;
         case Prop::Fill:
             pp.has_fill = v.v > 0;
             pp.fill = v.color;
             pp.fill_k = v.v;
             break;
-        case Prop::Morph: break;
+        case Prop::Stroke:
+            pp.has_stroke = v.v > 0;
+            pp.stroke = v.color;
+            pp.stroke_k = v.v;
+            break;
+        case Prop::StrokeWidth:
+            pp.has_stroke_width = v.v > 0;
+            pp.stroke_width = v.n;
+            pp.stroke_width_k = v.v;
+            break;
+        case Prop::Dash: pp.dash = v.v; break;
+        case Prop::DrawFrom: pp.draw_from = v.v; break;
+        case Prop::DrawTo: pp.draw_to = v.v; break;
+        case Prop::Visible: pp.visible = v.v > 0; break;
+        case Prop::Morph:
+        case Prop::Order: break;
         }
+    }
+    // The order: from the SVG's, every call up to t in the order of time (start, then order).
+    std::vector<u32> calls;
+    const f64 at = snap_time(t);
+    for (u32 i = 0; i < rec.blocks.size(); ++i)
+        if (rec.blocks[i].prop == Prop::Order && rec.blocks[i].start <= at) calls.push_back(i);
+    std::stable_sort(calls.begin(), calls.end(), [&](u32 a, u32 b) { return before(rec.blocks[a], rec.blocks[b]); });
+    for (u32 i : calls) {
+        const Block& b = rec.blocks[i];
+        OrderStep step;
+        step.part = rec.parts[b.part];
+        step.kind = static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(b.value.v), 0, 3));
+        step.other = b.value.target;
+        out.order.push_back(std::move(step));
     }
     return true;
 }

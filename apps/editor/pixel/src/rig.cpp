@@ -48,13 +48,16 @@ struct Engine {
     Engine& operator=(const Engine&) = delete;
 };
 
-// A shape's paint as ThorVG holds it: a colour or a gradient (an own copy) for the fill and for the stroke.
+// A shape's paint as ThorVG holds it: a colour or a gradient (an own copy) for the fill and for the stroke, the
+// stroke's width and dash.
 struct Look {
     u8 fr = 0, fg = 0, fb = 0, fa = 0;
     std::unique_ptr<tvg::Fill> fill_grad;
     u8 sr = 0, sg = 0, sb = 0, sa = 0;
     std::unique_ptr<tvg::Fill> stroke_grad;
     f32 stroke_width = 0;
+    std::vector<f32> dash;
+    f32 dash_offset = 0;
     u8 opacity = 255;
 
     void take(tvg::Shape* s) {
@@ -64,14 +67,18 @@ struct Look {
         if (const tvg::Fill* g = s->strokeFill()) stroke_grad.reset(g->duplicate());
         else s->strokeFill(&sr, &sg, &sb, &sa);
         stroke_width = s->strokeWidth();
+        const f32* pattern = nullptr;
+        const u32 n = s->strokeDash(&pattern, &dash_offset);
+        dash.assign(pattern, pattern + (pattern ? n : 0));
         opacity = s->opacity();
     }
     void put(tvg::Shape* s) const {
         if (fill_grad) s->fill(fill_grad->duplicate());
         else s->fill(fr, fg, fb, fa);
         if (stroke_grad) s->strokeFill(stroke_grad->duplicate());
-        else if (stroke_width > 0 || sa > 0) s->strokeFill(sr, sg, sb, sa);
+        else s->strokeFill(sr, sg, sb, sa); // a stroke the pose gave a shape without one goes too
         s->strokeWidth(stroke_width);
+        s->strokeDash(dash.empty() ? nullptr : dash.data(), static_cast<u32>(dash.size()), dash_offset);
         s->opacity(opacity);
     }
     bool has_fill() const { return fill_grad || fa > 0; }
@@ -94,17 +101,36 @@ struct Leaf {
     std::vector<tvg::PathCommand> cmds;
     std::vector<tvg::Point> pts;
     bool visible = true;
-    bool path_changed = false, look_changed = false;
+    f32 own_width = 1; // its stroke width, as SVG has one for a shape without a stroke too (stroke-width, else 1)
+    bool path_changed = false, look_changed = false, trim_changed = false;
+    bool hidden = false; // a part the pose hid (its own paint, for the baker that shows shapes one by one)
 };
 
 struct PartRec {
     tvg::Paint* paint = nullptr;
     tvg::Matrix rest_local{};
     u8 rest_opacity = 255;
+    bool rest_visible = true;
+    bool hidden = false;  // by the last pose
     Affine parent_global; // the rest matrix from the paint's parent to picture units
     std::vector<i32> leaves; // the shapes it draws, in order
     i32 leaf = -1;           // when it is a shape itself
+    i32 group = -1;          // its parent's scene in Impl::groups
 };
+
+// A scene with parts in it: its paints in the SVG's order, put back when a pose changed it.
+struct GroupRec {
+    tvg::Scene* scene = nullptr;
+    std::vector<tvg::Paint*> rest;
+};
+
+// Moves a paint of a scene before `at` (to the top for null): out and in again, kept alive meanwhile.
+void reinsert(tvg::Scene* scene, tvg::Paint* p, tvg::Paint* at) {
+    p->ref();
+    scene->remove(p);
+    scene->add(p, at);
+    p->unref(false);
+}
 
 struct Box {
     f64 x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
@@ -207,6 +233,8 @@ struct Rig::Impl {
     std::unordered_map<const tvg::Paint*, i32> part_of;
     std::vector<vector::Point> pivots;
     std::vector<vector::Point> moves; // each part's own move in the last pose, as applied (snapped)
+    std::vector<GroupRec> groups;
+    bool reordered = false; // the last pose changed the order of some group
     std::map<std::string, vector::Morph> morphs;
     vector::Shape scratch;
 
@@ -345,8 +373,38 @@ bool Rig::load(std::string_view svg, std::string& why) {
         r.paint = p;
         r.rest_local = p->transform();
         r.rest_opacity = p->opacity();
+        r.rest_visible = p->visible();
         r.parent_global = rest_global[p->parent()];
         if (auto l = m.leaf_of.find(p); l != m.leaf_of.end()) r.leaf = l->second;
+        if (const tvg::Paint* parent = p->parent(); parent && parent->type() == tvg::Type::Scene) {
+            auto* scene = static_cast<tvg::Scene*>(const_cast<tvg::Paint*>(parent));
+            auto g = std::find_if(m.groups.begin(), m.groups.end(), [&](const GroupRec& x) { return x.scene == scene; });
+            if (g == m.groups.end()) {
+                m.groups.push_back({scene, std::vector<tvg::Paint*>(scene->paints().begin(), scene->paints().end())});
+                g = m.groups.end() - 1;
+            }
+            r.group = static_cast<i32>(g - m.groups.begin());
+        }
+    }
+    // A shape without a stroke has a width all the same in SVG (stroke-width, else 1), which ThorVG drops: it is read
+    // from the nearest element with an id, the shape's own or its group's.
+    {
+        std::unordered_map<u32, i32> element_of;
+        for (usize i = 1; i < m.outline.elements.size(); ++i)
+            if (!m.outline.elements[i].id.empty()) element_of.emplace(tvg::Accessor::id(m.outline.elements[i].id.c_str()), static_cast<i32>(i));
+        for (Leaf& l : m.leaves) {
+            if (l.rest.stroke_width > 0) {
+                l.own_width = l.rest.stroke_width;
+                continue;
+            }
+            i32 e = 0;
+            for (const tvg::Paint* q = l.shape; q && q != m.doc; q = q->parent())
+                if (auto it = q->id ? element_of.find(q->id) : element_of.end(); it != element_of.end()) {
+                    e = it->second;
+                    break;
+                }
+            l.own_width = static_cast<f32>(std::max(0.0, vector::svg_number(vector::inherited(m.outline, e, "stroke-width"), 1.0)));
+        }
     }
     for (usize i = 0; i < m.parts.size(); ++i)
         for (const tvg::Paint* q = m.recs[i].paint->parent(); q && q != m.doc; q = q->parent())
@@ -414,6 +472,16 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
     for (PartRec& r : m.recs) {
         r.paint->transform(r.rest_local);
         r.paint->opacity(r.rest_opacity);
+        if (r.hidden) {
+            r.paint->visible(r.rest_visible);
+            r.hidden = false;
+            if (r.leaf >= 0) m.leaves[static_cast<usize>(r.leaf)].hidden = false;
+        }
+    }
+    if (m.reordered) {
+        for (GroupRec& g : m.groups)
+            for (tvg::Paint* p : g.rest) reinsert(g.scene, p, nullptr);
+        m.reordered = false;
     }
     for (Leaf& l : m.leaves) {
         if (l.path_changed) {
@@ -424,6 +492,10 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         if (l.look_changed) {
             l.rest.put(l.shape);
             l.look_changed = false;
+        }
+        if (l.trim_changed) {
+            l.shape->trimpath(0, 1);
+            l.trim_changed = false;
         }
     }
 
@@ -501,7 +573,8 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
             fail("в рисунке нет части «" + id + "»");
             continue;
         }
-        const f64 nums[] = {pp.x, pp.y, pp.rot, pp.scale, pp.sx, pp.sy, pp.opacity};
+        const f64 nums[] = {pp.x,       pp.y,         pp.rot,          pp.scale,        pp.sx,   pp.sy,        pp.skew_x,
+                            pp.skew_y,  pp.opacity,   pp.stroke_width, pp.stroke_width_k, pp.dash, pp.draw_from, pp.draw_to};
         if (!std::all_of(std::begin(nums), std::end(nums), [](f64 v) { return std::isfinite(v); })) {
             fail("часть «" + id + "»: не число в позе");
             continue;
@@ -514,8 +587,16 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
         f64 s = 0, c = 1;
         vector::trig::sin_cos(pp.rot * vector::trig::kPi / 180.0, s, c);
         const f64 kx = pp.scale * pp.sx, ky = pp.scale * pp.sy;
-        // T(x, y) · T(pivot) · R · S · T(−pivot)
-        const Affine rs{c * kx, s * kx, -s * ky, c * ky, 0, 0};
+        // T(x, y) · T(pivot) · R · S · Kx · Ky · T(−pivot), Kx and Ky SVG's skewX and skewY
+        Affine rs{c * kx, s * kx, -s * ky, c * ky, 0, 0};
+        if (pp.skew_x != 0 || pp.skew_y != 0) {
+            auto tangent = [](f64 deg) {
+                f64 ts = 0, tc = 1;
+                vector::trig::sin_cos(std::clamp(deg, -kMaxSkew, kMaxSkew) * vector::trig::kPi / 180.0, ts, tc);
+                return ts / tc;
+            };
+            rs = rs * Affine{1, 0, tangent(pp.skew_x), 1, 0, 0} * Affine{1, tangent(pp.skew_y), 0, 1, 0, 0};
+        }
         Affine a = translation(x + pv.x, y + pv.y) * rs * translation(-pv.x, -pv.y);
         const Affine local = inverse(r.parent_global) * a * r.parent_global * from_tvg(r.rest_local);
         r.paint->transform(to_tvg(local));
@@ -539,6 +620,102 @@ bool Rig::pose(const Pose& pose, std::string& why, f64 snap) {
                 }
                 l.look_changed = true;
             }
+        // The stroke as the fill, from each shape's own colour; a shape without one gets it at its own width, coming in
+        // from transparent.
+        const f64 sk = std::clamp(pp.stroke_k, 0.0, 1.0);
+        if (pp.has_stroke && sk > 0)
+            for (i32 li : r.leaves) {
+                Leaf& l = m.leaves[static_cast<usize>(li)];
+                u8 cr, cg, cb, ca = 0;
+                const bool grad = l.shape->strokeFill() != nullptr;
+                if (!grad) l.shape->strokeFill(&cr, &cg, &cb, &ca);
+                if (grad && sk < 0.5) continue; // a gradient does not mix: it changes halfway
+                const bool none = !grad && (ca == 0 || l.shape->strokeWidth() <= 0);
+                const u8 base = grad || none ? 255 : ca;
+                const u8 sa = static_cast<u8>((base * pp.stroke.a + 127) / 255);
+                if (none) {
+                    if (l.shape->strokeWidth() <= 0) l.shape->strokeWidth(l.own_width);
+                    l.shape->strokeFill(pp.stroke.r, pp.stroke.g, pp.stroke.b, static_cast<u8>(std::lround(sa * sk)));
+                } else if (grad || sk >= 1) {
+                    l.shape->strokeFill(pp.stroke.r, pp.stroke.g, pp.stroke.b, sa);
+                } else {
+                    auto lerp = [sk](u8 c0, u8 c1) { return static_cast<u8>(std::lround(c0 + (c1 - c0) * sk)); };
+                    l.shape->strokeFill(lerp(cr, pp.stroke.r), lerp(cg, pp.stroke.g), lerp(cb, pp.stroke.b), lerp(ca, sa));
+                }
+                l.look_changed = true;
+            }
+        // The width from each shape's own: what it draws now, else the width SVG gives it.
+        if (pp.has_stroke_width && pp.stroke_width_k > 0)
+            for (i32 li : r.leaves) {
+                Leaf& l = m.leaves[static_cast<usize>(li)];
+                const f64 own = l.shape->strokeWidth() > 0 ? l.shape->strokeWidth() : l.own_width;
+                l.shape->strokeWidth(static_cast<f32>(std::max(0.0, own + (pp.stroke_width - own) * pp.stroke_width_k)));
+                l.look_changed = true;
+            }
+        // The dash: each shape's own pattern moved along its line.
+        if (pp.dash != 0)
+            for (i32 li : r.leaves) {
+                Leaf& l = m.leaves[static_cast<usize>(li)];
+                if (l.rest.dash.empty()) continue;
+                l.shape->strokeDash(l.rest.dash.data(), static_cast<u32>(l.rest.dash.size()),
+                                    static_cast<f32>(static_cast<f64>(l.rest.dash_offset) + pp.dash));
+                l.look_changed = true;
+            }
+        // The share of each shape's path drawn, its contours one line after another; nothing when from ≥ to.
+        if (pp.draw_from != 0 || pp.draw_to != 1) {
+            const f64 from = std::clamp(pp.draw_from, 0.0, 1.0), to = std::clamp(pp.draw_to, 0.0, 1.0);
+            for (i32 li : r.leaves) {
+                Leaf& l = m.leaves[static_cast<usize>(li)];
+                if (from < to) l.shape->trimpath(static_cast<f32>(from), static_cast<f32>(to), false);
+                else l.shape->trimpath(0, 0, false); // ThorVG draws nothing of an empty share (and wraps a reversed one)
+                l.trim_changed = true;
+            }
+        }
+        if (!pp.visible) {
+            r.paint->visible(false);
+            r.hidden = true;
+            if (r.leaf >= 0) m.leaves[static_cast<usize>(r.leaf)].hidden = true;
+        }
+    }
+
+    // The order: each step among the part's neighbours in its group.
+    for (const OrderStep& step : pose.order) {
+        const i32 pi = part(step.part);
+        if (pi < 0) {
+            fail("порядок: в рисунке нет части «" + step.part + "»");
+            continue;
+        }
+        const PartRec& r = m.recs[static_cast<usize>(pi)];
+        if (r.group < 0) continue;
+        tvg::Scene* scene = m.groups[static_cast<usize>(r.group)].scene;
+        tvg::Paint* at = nullptr;
+        if (step.kind == OrderStep::Kind::Above || step.kind == OrderStep::Kind::Below) {
+            const i32 oi = part(step.other);
+            if (oi < 0) {
+                fail("порядок: в рисунке нет части «" + step.other + "»");
+                continue;
+            }
+            if (!siblings(pi, oi)) {
+                fail(step.part + " и " + step.other + " в разных группах: порядок меняется только среди соседей");
+                continue;
+            }
+            if (oi == pi) continue;
+            tvg::Paint* other = m.recs[static_cast<usize>(oi)].paint;
+            if (step.kind == OrderStep::Kind::Below) {
+                at = other;
+            } else {
+                const std::list<tvg::Paint*>& list = scene->paints();
+                auto it = std::find(list.begin(), list.end(), other);
+                if (it != list.end()) ++it;
+                at = it == list.end() ? nullptr : *it;
+                if (at == r.paint) continue; // already right above it
+            }
+        } else if (step.kind == OrderStep::Kind::Bottom) {
+            at = scene->paints().empty() ? nullptr : scene->paints().front();
+            if (at == r.paint) continue;
+        }
+        reinsert(scene, r.paint, at);
+        m.reordered = true;
     }
     m.pic->transform(m.pic->transform()); // ThorVG redraws a picture only when the picture itself changed
     return why.empty();
@@ -587,9 +764,25 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
         }
     };
 
+    // The shapes in the order they are drawn now: the SVG's, or as the pose's order steps left the groups.
+    std::vector<i32> order;
+    if (m.reordered) {
+        std::vector<tvg::Paint*> all;
+        tvg::Accessor* acc = tvg::Accessor::gen();
+        acc->set(m.pic, [](const tvg::Paint* p, void* data) {
+            static_cast<std::vector<tvg::Paint*>*>(data)->push_back(const_cast<tvg::Paint*>(p));
+            return true;
+        }, &all);
+        delete acc;
+        for (tvg::Paint* p : all)
+            if (auto it = m.leaf_of.find(p); it != m.leaf_of.end()) order.push_back(it->second);
+    } else {
+        for (usize i = 0; i < m.leaves.size(); ++i) order.push_back(static_cast<i32>(i));
+    }
     for (Leaf& l : m.leaves) l.shape->visible(false);
-    for (Leaf& l : m.leaves) {
-        if (!l.visible) continue;
+    for (i32 li : order) {
+        Leaf& l = m.leaves[static_cast<usize>(li)];
+        if (!l.visible || l.hidden) continue;
         tvg::Shape* s = l.shape;
         s->visible(true);
         u8 fr = 0, fg = 0, fb = 0, fa = 0, sr = 0, sg = 0, sb = 0, sa = 0;
@@ -612,7 +805,7 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
         }
         s->visible(false);
     }
-    for (Leaf& l : m.leaves) l.shape->visible(l.visible);
+    for (Leaf& l : m.leaves) l.shape->visible(l.visible && !l.hidden);
     m.pic->transform(m.pic->transform());
 
     if (!options.palette.empty())
@@ -661,6 +854,27 @@ Affine Rig::carried(i32 part) const {
     const vector::Point mv = m.moves.empty() ? vector::Point{} : m.moves[static_cast<usize>(part)];
     // The paint's parent as it stands against its rest, then the part's own move.
     return m.global(r.paint->parent()) * inverse(r.parent_global) * translation(mv.x, mv.y);
+}
+
+Affine Rig::matrix(i32 part) const {
+    const Impl& m = *impl_;
+    if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};
+    return from_tvg(m.recs[static_cast<usize>(part)].paint->transform());
+}
+
+bool Rig::siblings(i32 a, i32 b) const {
+    const Impl& m = *impl_;
+    if (a < 0 || b < 0 || static_cast<usize>(a) >= m.recs.size() || static_cast<usize>(b) >= m.recs.size()) return false;
+    const PartRec& ra = m.recs[static_cast<usize>(a)];
+    return ra.group >= 0 && ra.group == m.recs[static_cast<usize>(b)].group;
+}
+
+bool Rig::dashed(i32 part) const {
+    const Impl& m = *impl_;
+    if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return false;
+    for (i32 li : m.recs[static_cast<usize>(part)].leaves)
+        if (!m.leaves[static_cast<usize>(li)].rest.dash.empty()) return true;
+    return false;
 }
 
 bool parse_color(std::string_view text, Rgba8& out) {

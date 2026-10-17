@@ -38,12 +38,16 @@ std::string hex_of(const pixel::Rgba8& c) {
 
 std::string thousandths(f64 v) { return number_words(std::round(v * 1000) / 1000); }
 
-// A value as the inspector's field shows it and takes it: a number; #rrggbb or nothing (its own colour) of fill; the
-// shape's id or nothing (its own shape) of morph.
+// A value as the inspector's field shows it and takes it: a number; #rrggbb or nothing (its own colour) of fill and
+// stroke; a number or nothing (its own width) of stroke_width; «да» or «нет» of visible; the shape's id or nothing
+// (its own shape) of morph; the order as its mark («над body»), not to be typed.
 std::string field_of(pixel::Prop p, const pixel::PropValue& v) {
     if (pixel::prop_is_number(p)) return thousandths(v.v);
+    if (p == pixel::Prop::Visible) return v.v > 0 ? "да" : "нет";
+    if (p == pixel::Prop::Order) return pixel::value_words(p, v);
     if (!(v.v > 0)) return "";
-    return p == pixel::Prop::Fill ? hex_of(v.color) : v.target;
+    if (p == pixel::Prop::StrokeWidth) return thousandths(v.n);
+    return p == pixel::Prop::Fill || p == pixel::Prop::Stroke ? hex_of(v.color) : v.target;
 }
 
 bool read_number(const std::string& text, f64& out) {
@@ -196,9 +200,18 @@ bool PixelEditor::set_block_value(const std::string& text) {
     while (!t.empty() && t.front() == ' ') t.erase(t.begin());
     if (pixel::prop_is_number(b->prop)) {
         if (!read_number(t, v.v)) return refuse_edit("Значение «" + what + "» — число");
-    } else if (b->prop == pixel::Prop::Fill) {
+    } else if (b->prop == pixel::Prop::Fill || b->prop == pixel::Prop::Stroke) {
         if (!t.empty() && !pixel::parse_color(t, v.color)) return refuse_edit("Цвет «" + what + "» — #rrggbb, пусто — свой цвет части");
         v.v = t.empty() ? 0 : 1;
+    } else if (b->prop == pixel::Prop::StrokeWidth) {
+        if (!t.empty() && (!read_number(t, v.n) || v.n < 0))
+            return refuse_edit("Толщина «" + what + "» — число не меньше 0, пусто — своя толщина фигур");
+        v.v = t.empty() ? 0 : 1;
+    } else if (b->prop == pixel::Prop::Visible) {
+        if (t != "да" && t != "нет") return refuse_edit("Видимость «" + what + "» — «да» или «нет»");
+        v.v = t == "да" ? 1 : 0;
+    } else if (b->prop == pixel::Prop::Order) {
+        return refuse_edit("Порядок «" + what + "» правится в коде: to_top, to_bottom, above, below");
     } else {
         v.v = t.empty() ? 0 : 1;
         v.target = t;

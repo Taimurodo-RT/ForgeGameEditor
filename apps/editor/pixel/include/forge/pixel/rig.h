@@ -44,16 +44,38 @@ struct Part {
     f64 x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 };
 
-// What a pose does to one part, from its rest. Turning and scaling are around the part's pivot; a part inside another
-// moves with it, as in SVG.
+// A skew is kept within ±kMaxSkew degrees: past them its tangent runs off to infinity.
+inline constexpr f64 kMaxSkew = 89;
+
+// What a pose does to one part, from its rest. Turning, scaling and skewing are around the part's pivot; a part inside
+// another moves with it, as in SVG. The looks (fill … visible) are of every shape of the part, a group's shapes too.
 struct PartPose {
     f64 x = 0, y = 0;       // picture units
     f64 rot = 0;            // degrees, clockwise on screen (SVG's rotate)
     f64 scale = 1, sx = 1, sy = 1;
+    f64 skew_x = 0, skew_y = 0; // degrees, SVG's skewX and skewY after the scale
     f64 opacity = 1;        // times its own
     bool has_fill = false;  // the fill of the part (every shape of a group) becomes `fill`
     Rgba8 fill;
     f64 fill_k = 1;         // how far: 0 its own colour, 1 `fill` (a gradient takes it from 0.5 on)
+    bool has_stroke = false; // the stroke colour becomes `stroke`, as the fill; a shape without one gets it
+    Rgba8 stroke;
+    f64 stroke_k = 1;
+    bool has_stroke_width = false; // the stroke width becomes `stroke_width` (picture units, 0 at least) by `stroke_width_k`
+    f64 stroke_width = 0;
+    f64 stroke_width_k = 1;
+    f64 dash = 0;           // added to each shape's own dash offset (stroke-dashoffset)
+    f64 draw_from = 0, draw_to = 1; // the share of each shape's path drawn (ThorVG's trimpath); none when from ≥ to
+    bool visible = true;
+};
+
+// A part put above or below its neighbours in its group (to_top, to_bottom, above, below of the motion), in order.
+struct OrderStep {
+    enum class Kind : u8 { Top, Bottom, Above, Below };
+    std::string part;
+    Kind kind = Kind::Top;
+    std::string other; // the neighbour of Above and Below
+    bool operator==(const OrderStep&) const = default;
 };
 
 // A shape morphed into another element of the same SVG (it may be hidden): k = 0 is the shape, 1 the target.
@@ -65,6 +87,7 @@ struct ShapeMorph {
 struct Pose {
     std::map<std::string, PartPose> parts;
     std::map<std::string, ShapeMorph> morphs;
+    std::vector<OrderStep> order; // from the SVG's order, one after another
 };
 
 struct BakeOptions {
@@ -106,7 +129,7 @@ public:
     // The same with picture units going to the drawing's pixels by `px` (the view zoomed and moved).
     assets::CookedTexture draw(u32 w, u32 h, const Affine& px);
     // Pixel art: each shape drawn alone, its fill and its stroke apart; a pixel takes the exact colour of the last one
-    // (in the SVG's order) that covers at least half of it. No half-transparent pixels, no colours in between.
+    // (in the order drawn now) that covers at least half of it. No half-transparent pixels, no colours in between.
     assets::CookedTexture bake(u32 w, u32 h, const BakeOptions& options);
 
     // A part's pose bounds in the pixels of a w × h drawing (after the last pose()): x0, y0, x1, y1.
@@ -117,6 +140,12 @@ public:
     // its own move, not by its own turn and scale, which are round the pivot. The pivot stands at
     // carried(part).apply(pivot(part)); a point p of the pose is the pivot inverse(carried(part)).apply(p) (dragged).
     Affine carried(i32 part) const;
+    // A part's own matrix as the last pose() left it (from its parent's coordinates, as SVG's transform).
+    Affine matrix(i32 part) const;
+    // Whether two parts are neighbours in one group, the ones whose order can change against each other.
+    bool siblings(i32 a, i32 b) const;
+    // Whether any shape of a part has a dash pattern of its own.
+    bool dashed(i32 part) const;
 
 private:
     struct Impl;

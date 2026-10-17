@@ -33,7 +33,12 @@ using Mode = Impl::Mode;
 constexpr const char* kPartMeta = "forge.motion.part";
 constexpr const char* kPropMeta = "forge.motion.prop";
 constexpr const char* kTaskMeta = "forge.motion.task";
-constexpr Prop kHandleProps[] = {Prop::X, Prop::Y, Prop::Rot, Prop::Scale, Prop::Sx, Prop::Sy, Prop::Opacity, Prop::Fill};
+// The properties a part has as fields (body.y, { y = 2 }): all but morph, a method of its own, and the order.
+constexpr Prop kHandleProps[] = {Prop::X,       Prop::Y,           Prop::Rot,    Prop::Scale,    Prop::Sx,     Prop::Sy,
+                                 Prop::SkewX,   Prop::SkewY,       Prop::Opacity, Prop::Fill,    Prop::Stroke, Prop::StrokeWidth,
+                                 Prop::Dash,    Prop::DrawFrom,    Prop::DrawTo,  Prop::Visible};
+constexpr const char* kFieldWords = "x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, dash, draw_from, draw_to, visible";
+constexpr const char* kNumberWords = "x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, dash, draw_from, draw_to";
 constexpr f64 kForever = std::numeric_limits<f64>::infinity();
 constexpr u32 kMaxIterations = 100000;
 constexpr u32 kMaxBindingDepth = 16;
@@ -209,11 +214,24 @@ bool read_value(lua_State* L, int idx, Prop p, MotionState& ms, PropValue& out) 
         if (!std::isfinite(out.v)) return call_error(ms, std::string(prop_word(p)) + ": не число");
         return true;
     }
-    if (p == Prop::Fill) {
+    if (p == Prop::Fill || p == Prop::Stroke) {
         if (lua_isnil(L, idx)) return true; // its own colour
         const char* text = lua_type(L, idx) == LUA_TSTRING ? lua_tostring(L, idx) : nullptr;
-        if (!text || !parse_color(text, out.color)) return call_error(ms, "fill: нужен цвет \"#rrggbb\"");
+        if (!text || !parse_color(text, out.color)) return call_error(ms, std::string(prop_word(p)) + ": нужен цвет \"#rrggbb\"");
         out.v = 1;
+        return true;
+    }
+    if (p == Prop::StrokeWidth) {
+        if (lua_isnil(L, idx)) return true; // its own width
+        if (lua_type(L, idx) != LUA_TNUMBER || !std::isfinite(lua_tonumber(L, idx)) || lua_tonumber(L, idx) < 0)
+            return call_error(ms, "stroke_width: нужно число не меньше 0 или nil (своя толщина)");
+        out.v = 1;
+        out.n = lua_tonumber(L, idx);
+        return true;
+    }
+    if (p == Prop::Visible) {
+        if (lua_type(L, idx) != LUA_TBOOLEAN) return call_error(ms, std::string("visible: нужно true или false, а не ") + luaL_typename(L, idx));
+        out.v = lua_toboolean(L, idx) ? 1 : 0;
         return true;
     }
     // morph: a shape of the SVG, or nil (or the part itself) for its own shape
@@ -272,10 +290,10 @@ bool read_table(lua_State* L, int idx, MotionState& ms, const char* what, MoveSt
     while (lua_next(L, idx)) {
         Prop p;
         const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : nullptr;
-        if (!key || !prop_from_word(key, p) || p == Prop::Morph) {
+        if (!key || !prop_from_word(key, p) || p == Prop::Morph || p == Prop::Order) {
             const std::string k = key ? key : "?";
             lua_pop(L, 2);
-            return call_error(ms, std::string(what) + ": поля «" + k + "» нет (есть x, y, rot, scale, sx, sy, opacity, fill)");
+            return call_error(ms, std::string(what) + ": поля «" + k + "» нет (есть " + kFieldWords + ")");
         }
         lua_pop(L, 1);
     }
@@ -459,6 +477,7 @@ bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
             const u32 s = stack.back();
             stack.pop_back();
             for (usize p = 0; p < kPropCount; ++p) {
+                if (static_cast<Prop>(p) == Prop::Order) continue; // the order is not a value to go back to
                 i32 b = -1;
                 if (!add_block(im, ms, st, part, static_cast<Prop>(p), t, st.length, Block::To::Saved, nullptr, s, at, &b))
                     return false;
@@ -1080,7 +1099,8 @@ bool rest_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool sin
     if (!read_length(L, arg, ms, "rest", st.length) || !read_timing(im, L, arg + 1, ms, st)) return false;
     if (single) st.props.emplace_back(p, rest_value(p));
     else
-        for (usize i = 0; i < kPropCount; ++i) st.props.emplace_back(static_cast<Prop>(i), rest_value(static_cast<Prop>(i)));
+        for (usize i = 0; i < kPropCount; ++i)
+            if (static_cast<Prop>(i) != Prop::Order) st.props.emplace_back(static_cast<Prop>(i), rest_value(static_cast<Prop>(i)));
     task = move_task(im, ms, id, single, p, std::move(st));
     return true;
 }
@@ -1165,14 +1185,14 @@ bool spring_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool s
     st.value_arg = 0;
     st.value_field = !single;
     if (single) {
-        if (!prop_is_number(p)) return call_error(ms, "пружина — только у чисел: x, y, rot, scale, sx, sy, opacity");
+        if (!prop_is_number(p)) return call_error(ms, std::string("пружина — только у чисел: ") + kNumberWords);
         PropValue v;
         if (!read_value(L, to, p, ms, v)) return false;
         st.props.emplace_back(p, std::move(v));
     } else {
         if (!read_table(L, to, ms, "part:spring", st)) return false;
         for (const auto& [q, v] : st.props)
-            if (!prop_is_number(q)) return call_error(ms, "пружина — только у чисел: x, y, rot, scale, sx, sy, opacity");
+            if (!prop_is_number(q)) return call_error(ms, std::string("пружина — только у чисел: ") + kNumberWords);
     }
     if (!read_spring(L, to + 1, to + 2, ms, st)) return false;
     task = move_task(im, ms, id, single, p, std::move(st));
@@ -1189,12 +1209,58 @@ int api_part_spring(lua_State* L) {
     return 1;
 }
 
+// part:to_top(), :to_bottom(), :above("body"), :below("body"): the part among its neighbours in its group, at its
+// time in the flow, with no length.
+bool order_task(Impl& im, lua_State* L, MotionState& ms, const char* id, OrderStep::Kind kind, const char* what, u32& task) {
+    MoveStep st;
+    st.site = here(im);
+    PropValue v;
+    v.v = static_cast<f64>(kind);
+    if (kind == OrderStep::Kind::Above || kind == OrderStep::Kind::Below) {
+        const char* other = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+        if (!other || lua_gettop(L) > 2) return call_error(ms, std::string(what) + "(\"body\"): одно имя соседней части");
+        v.target = other;
+        st.value_arg = 0;
+        if (im.rig) {
+            const i32 a = im.rig->part(id), b = im.rig->part(other);
+            if (b < 0) return call_error(ms, "в рисунке нет части «" + v.target + "»");
+            if (a == b) return call_error(ms, std::string(what) + ": часть «" + id + "» рядом с самой собой не поставить");
+            if (!im.rig->siblings(a, b))
+                return call_error(ms, std::string(id) + " и " + v.target + " в разных группах: порядок меняется только среди соседей");
+        }
+    } else if (lua_gettop(L) > 1) {
+        return call_error(ms, std::string(what) + "() — без аргументов");
+    }
+    st.props.emplace_back(Prop::Order, std::move(v));
+    task = move_task(im, ms, id, true, Prop::Order, std::move(st));
+    return true;
+}
+
+int order_call(lua_State* L, OrderStep::Kind kind, const char* what) {
+    const char* id = part_id(L, 1, what);
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, what);
+    u32 task = 0;
+    if (!order_task(im, L, ms, id, kind, what, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+int api_part_to_top(lua_State* L) { return order_call(L, OrderStep::Kind::Top, "to_top"); }
+int api_part_to_bottom(lua_State* L) { return order_call(L, OrderStep::Kind::Bottom, "to_bottom"); }
+int api_part_above(lua_State* L) { return order_call(L, OrderStep::Kind::Above, "above"); }
+int api_part_below(lua_State* L) { return order_call(L, OrderStep::Kind::Below, "below"); }
+
 // ---- Luau: properties ----
 
 void push_value(lua_State* L, Prop p, const PropValue& v) {
     if (prop_is_number(p)) {
         lua_pushnumber(L, v.v);
-    } else if (p == Prop::Fill && v.v > 0) {
+    } else if (p == Prop::Visible) {
+        lua_pushboolean(L, v.v > 0);
+    } else if (p == Prop::StrokeWidth && v.v > 0) {
+        lua_pushnumber(L, v.n);
+    } else if ((p == Prop::Fill || p == Prop::Stroke) && v.v > 0) {
         char buf[16];
         std::snprintf(buf, sizeof buf, "#%02x%02x%02x", v.color.r, v.color.g, v.color.b);
         lua_pushstring(L, buf);
@@ -1369,6 +1435,8 @@ Task* move_of(lua_State* L, MotionState& ms, const char* what) {
     Task& t = ms.tasks[id];
     if (t.kind != Task::Kind::Move)
         luaL_error(L, "%s — только у переходов частей; после all(…) и других — отдельной строкой", what);
+    if (t.single && t.prop == Prop::Order)
+        luaL_error(L, "%s — не после to_top, to_bottom, above и below: у порядка нет длины, следующий переход — отдельной строкой", what);
     if (t.laid) luaL_error(L, "%s — переход уже записан: допишите цепочку раньше, чем читаете значения", what);
     return &t;
 }
@@ -1447,7 +1515,9 @@ int index_with(lua_State* L, const char* what, const char* known) {
 }
 
 int api_part_index(lua_State* L) {
-    return index_with(L, "части", "свойства: x, y, rot, scale, sx, sy, opacity, fill; методы: to, rest, save, restore, morph, spring, set");
+    return index_with(L, "части", "свойства: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, dash, "
+                                  "draw_from, draw_to, visible; методы: to, rest, save, restore, morph, spring, set, to_top, "
+                                  "to_bottom, above, below");
 }
 int api_prop_index(lua_State* L) { return index_with(L, "свойства", "методы: rest, spring; значение — body.y()"); }
 int api_task_index(lua_State* L) { return index_with(L, "перехода", "методы: to, back, wait"); }
@@ -1478,7 +1548,8 @@ void methods_meta(lua_State* L, const char* meta, lua_CFunction index, std::init
 void register_motion_api(lua_State* L) {
     methods_meta(L, kPartMeta, &api_part_index,
                  {{"to", &api_part_to}, {"rest", &api_part_rest}, {"save", &api_part_save}, {"restore", &api_part_restore},
-                  {"morph", &api_part_morph}, {"spring", &api_part_spring}, {"set", &api_part_set}});
+                  {"morph", &api_part_morph}, {"spring", &api_part_spring}, {"set", &api_part_set}, {"to_top", &api_part_to_top},
+                  {"to_bottom", &api_part_to_bottom}, {"above", &api_part_above}, {"below", &api_part_below}});
     methods_meta(L, kPropMeta, &api_prop_index, {{"rest", &api_prop_rest}, {"spring", &api_prop_spring}}, &api_prop_call);
     methods_meta(L, kTaskMeta, &api_task_index, {{"to", &api_task_to}, {"back", &api_task_back}, {"wait", &api_task_wait}});
     const std::pair<const char*, lua_CFunction> globals[] = {
@@ -1496,6 +1567,43 @@ void register_motion_api(lua_State* L) {
         lua_setglobal(L, name);
     }
 }
+
+namespace {
+
+// What the recording warns of, once a part: a skew that goes past ±kMaxSkew (the frame holds it there; a binding's
+// value is held without a word), a dash on a part none of whose shapes has a pattern.
+void add_notes(const Impl& im, const Rig* rig, Recording& rec) {
+    std::vector<std::pair<u32, Prop>> said;
+    auto note = [&](const Block& b, Prop kind, std::string text) {
+        for (const auto& s : said)
+            if (s.first == b.part && s.second == kind) return;
+        said.emplace_back(b.part, kind);
+        const CallSite* c = im.call(b.site);
+        rec.notes.push_back({b.site, c ? c->line : 0, std::move(text)});
+    };
+    for (const Block& b : rec.blocks) {
+        const std::string& part = rec.parts[b.part];
+        if ((b.prop == Prop::SkewX || b.prop == Prop::SkewY) && b.to != Block::To::Binding) {
+            // Along the whole block: an easing that overshoots goes past where it ends.
+            constexpr int kSteps = 240;
+            f64 worst = 0;
+            for (int i = 0; i <= kSteps; ++i) {
+                PropValue v;
+                std::string why;
+                if (block_value(rec, b, b.start + b.length * i / kSteps, nullptr, v, why) && std::abs(v.v) > std::abs(worst)) worst = v.v;
+                if (b.length <= 0) break;
+            }
+            if (std::abs(worst) > kMaxSkew)
+                note(b, Prop::SkewX,
+                     "часть «" + part + "»: " + prop_word(b.prop) + " доходит до " + format_number(worst) +
+                         "°, а наклон держится в −89…89°: дальше кадр не наклоняет");
+        }
+        if (b.prop == Prop::Dash && rig && !rig->dashed(rig->part(part)))
+            note(b, Prop::Dash, "часть «" + part + "»: dash, а пунктира у её фигур нет");
+    }
+}
+
+} // namespace
 
 bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, const std::map<std::string, f64>& values,
                  u64 seed, const MotionLengths& lengths, Recording& out) {
@@ -1553,6 +1661,7 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
             im.fail(why.c_str());
         }
     }
+    if (ok) add_notes(im, rig, out);
     for (const ScriptFile& f : im.files) out.files.push_back(f.name);
     for (int r : ms.refs) lua_unref(im.L, r);
     if (ok) {
@@ -1808,11 +1917,19 @@ bool PoseScript::Impl::eval(const Recording& rec, i32 binding, Prop prop, f64 t,
         good = lua_type(T, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(T, -1));
         if (good) out.v = lua_tonumber(T, -1);
         else why = at + "связь " + prop_word(prop) + " вернула не число";
-    } else if (prop == Prop::Fill && !lua_isnil(T, -1)) {
+    } else if ((prop == Prop::Fill || prop == Prop::Stroke) && !lua_isnil(T, -1)) {
         const char* text = lua_tostring(T, -1);
         good = text && parse_color(text, out.color);
         if (good) out.v = 1;
-        else why = at + "связь fill вернула не цвет \"#rrggbb\"";
+        else why = at + "связь " + prop_word(prop) + " вернула не цвет \"#rrggbb\"";
+    } else if (prop == Prop::StrokeWidth && !lua_isnil(T, -1)) {
+        good = lua_type(T, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(T, -1));
+        if (good) out.v = 1, out.n = lua_tonumber(T, -1);
+        else why = at + "связь stroke_width вернула не число и не nil";
+    } else if (prop == Prop::Visible) {
+        good = lua_type(T, -1) == LUA_TBOOLEAN;
+        if (good) out.v = lua_toboolean(T, -1) ? 1 : 0;
+        else why = at + "связь visible вернула не true и не false";
     }
     lua_pop(T, 1);
     return good;
