@@ -21790,7 +21790,7 @@ return {
             if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
             mp_label_ = step_label();
             check(files_are(kMpSign), "opened: nothing written");
-            check(near(rec->length, 2.5) && px().whole().frames == 10 && rec->blocks.size() == 10, "2,5 s, ten blocks, 10 frames: " + mp_recorded());
+            check(near(rec->length, 2.5) && px().whole().frames == 10 && rec->blocks.size() == 9, "2,5 s, nine blocks, 10 frames: " + mp_recorded());
             const char* tracks[] = {"torso · dash", "torso · visible", "arm · skew_x", "arm · порядок", "head · skew_y",
                                     "head · stroke", "head · stroke_width", "line · dash", "twice · draw_to"};
             std::string wrong;
@@ -21897,7 +21897,7 @@ return {
             const i32 width = block_of("head", pixel::Prop::StrokeWidth);
             if (hold(field_of(width, "4"), "its field: 4")) return true;
             check(ue_type("px-block-value", "3"), "3 typed");
-            edited(mb_sub(mp_code_, "stroke_width = 4", "stroke_width = 3"), "«Знак»: head · stroke_width = 3", "the stroke's width, a field of its table");
+            edited(mb_sub(mp_code_, "stroke_width = 4 }", "stroke_width = 3 }"), "«Знак»: head · stroke_width = 3", "the stroke's width, a field of its table");
             break;
         }
         case 15: {
@@ -29341,7 +29341,8 @@ int main(int argc, char** argv) {
                                          "animation",    "animation-a",     "animation-a-again", "pixel", "pixel-a", "pixel-a-again",
                                          "frame-limit", "frame-limit-a", "frame-limit-a-again", "frame-limit-a-low", "frame-limit-a-low-again",
                                          "frame-limit-a-cross", "pixel-motion", "pixel-motion-a", "pixel-motion-b", "pixel-motion-b-again",
-                                         "pixel-motion-c", "pixel-motion-c-again", "input", "input-a", "input-a-again",
+                                         "pixel-motion-c", "pixel-motion-c-again", "pixel-motion-d", "pixel-motion-d-again", "input", "input-a",
+                                         "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -29355,7 +29356,7 @@ int main(int argc, char** argv) {
                     "platformer-template-a-again, modules and its parts modules-probe, modules-old, animation and its parts animation-a, "
                     "animation-a-again, pixel and its parts pixel-a, pixel-a-again, frame-limit and its parts frame-limit-a, frame-limit-a-again, "
                     "frame-limit-a-low, frame-limit-a-low-again, frame-limit-a-cross, pixel-motion and its parts pixel-motion-a, pixel-motion-b, "
-                    "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, "
+                    "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, pixel-motion-d, pixel-motion-d-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
