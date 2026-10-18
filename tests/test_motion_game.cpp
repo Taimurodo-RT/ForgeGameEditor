@@ -522,10 +522,10 @@ TEST_CASE("5а: a thing's own scheme hears its animation's marks, «Метка»
 TEST_CASE("5а: a mark's sound is the game's sound of that name, as «Векторная» finds it") {
     const fs::path dir = fs::temp_directory_path() / "forge_motion_mark_sounds";
     fs::remove_all(dir);
-    write_text(dir / "шаг.ogg", "x");
-    write_text(dir / "шаг.wav", "x");
-    write_text(dir / "звон", "x");
-    write_text(dir / "удар.wav", "x");
+    write_text(dir / utf8_path("шаг.ogg"), "x");
+    write_text(dir / utf8_path("шаг.wav"), "x");
+    write_text(dir / utf8_path("звон"), "x");
+    write_text(dir / utf8_path("удар.wav"), "x");
     CHECK(objects::mark_sound_file(dir, "шаг") == dir / utf8_path("шаг.wav")); // .wav before .ogg
     CHECK(objects::mark_sound_file(dir, "звон") == dir / utf8_path("звон"));    // the name itself first
     CHECK(objects::mark_sound_file(dir, "удар.wav") == dir / utf8_path("удар.wav"));
@@ -533,15 +533,15 @@ TEST_CASE("5а: a mark's sound is the game's sound of that name, as «Векто
     CHECK(objects::mark_sound_file(dir, "").empty());
     CHECK(objects::mark_sound_file(dir, "../шаг").empty());
     CHECK(objects::mark_sound_file(dir, "a\\шаг").empty());
-    fs::create_directories(dir / "папка");
+    fs::create_directories(dir / utf8_path("папка"));
     CHECK(objects::mark_sound_file(dir, "папка").empty()); // a folder is no sound
     // .ogg alone; a name is never a path, even to a sound that is there.
-    write_text(dir / "гром.ogg", "x");
+    write_text(dir / utf8_path("гром.ogg"), "x");
     CHECK(objects::mark_sound_file(dir, "гром") == dir / utf8_path("гром.ogg"));
-    write_text(dir / "папка" / "капля.wav", "x");
+    write_text(dir / utf8_path("папка") / utf8_path("капля.wav"), "x");
     CHECK(objects::mark_sound_file(dir, "папка/капля").empty());
-    CHECK(objects::mark_sound_file(dir / "папка", "../звон").empty());
-    CHECK(objects::mark_sound_file(dir / "папка", "..").empty());
+    CHECK(objects::mark_sound_file(dir / utf8_path("папка"), "../звон").empty());
+    CHECK(objects::mark_sound_file(dir / utf8_path("папка"), "..").empty());
 #ifndef _WIN32
     write_text(dir / utf8_path("a\\шаг.wav"), "x"); // a file of that name, not a folder
     CHECK(objects::mark_sound_file(dir, "a\\шаг").empty());
