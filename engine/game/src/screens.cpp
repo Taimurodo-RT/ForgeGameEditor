@@ -1226,8 +1226,14 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
     for (Start& s : starts) {
         const bool loop = c.x < 0 ? s.clip->loop : c.x > 0;
         Impl::Playing* p = impl_->playing_of(s.e);
-        // The same clip while it goes keeps going: a call every step does not hold it at its first frame.
-        if (p && p->file == s.file && p->clip == s.clip && p->going && (loop || p->loop || p->played < s.clip->length)) {
+        // The same clip while it goes keeps going: a call every step does not hold it at its first frame. One that
+        // came to its end without a loop starts again.
+        if (p && p->file == s.file && p->clip == s.clip && p->going && (p->loop || p->played < s.clip->length)) {
+            if (p->loop && !loop) { // on from where it is in this lap, not from the laps behind it
+                const f64 at = vector::motion_clip_time(*s.clip, p->played);
+                if (p->counted >= 0) p->counted -= p->played - at;
+                p->played = at;
+            }
             p->loop = loop;
             p->speed = c.y;
             continue;

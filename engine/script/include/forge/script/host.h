@@ -227,8 +227,9 @@ public:
     // "show", "hide" or "toggle" a screen by its name.
     virtual void screen(std::string_view what, std::string_view name) = 0;
     // A live SVG picture on a screen (forge.ui.svg_*, game::ScreenSvg): "move", "turn", "color", "fade", "morph" or
-    // "reset" of a part (its id in the file) of the picture a layer shows. False with why when there is no such screen
-    // or layer, or the colour does not read. Without a game, nothing happens.
+    // "reset" of a part (its id in the file) of the picture a layer shows; "play" a clip (part: its name, x: loop 1, 0
+    // or below 0 for the clip's own, y: speed) or "stop". False with why when there is no such screen or layer, the
+    // colour does not read, or the clip cannot play. Without a game, nothing happens.
     virtual bool svg(std::string_view what, std::string_view screen, std::string_view layer, std::string_view part, f64 x, f64 y,
                      std::string_view text, std::string* why) {
         (void)what, (void)screen, (void)layer, (void)part, (void)x, (void)y, (void)text, (void)why;
