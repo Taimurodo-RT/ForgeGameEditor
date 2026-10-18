@@ -87,6 +87,14 @@ struct MotionTrack {
     bool operator==(const MotionTrack&) const = default;
 };
 
+// What a clip does that a screen does not draw yet (MotionClip::not_drawn), in this order: "dash", "draw" (a path drawn
+// along its length), "tint", "flash", "blur", "shadow", "mask", "link", "copies", "order", "drawing" (a swap of
+// drawings), "morph_drawing" (a morph into a shape of another drawing).
+inline constexpr const char* kMotionNotDrawn[] = {"dash", "draw", "tint", "flash", "blur", "shadow", "mask", "link", "copies", "order", "drawing",
+                                                  "morph_drawing"};
+// Its words for the author: "пунктир", "прорисовка", …; null for a word that is none of them.
+const char* motion_not_drawn_words(std::string_view word);
+
 // sound("шаг") and emit("удар", 0.1) of the code.
 struct MotionMark {
     bool sound = false;

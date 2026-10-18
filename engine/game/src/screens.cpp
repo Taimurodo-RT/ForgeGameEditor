@@ -1243,12 +1243,12 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
             impl_->playing.emplace_back();
             p = &impl_->playing.back();
         }
-        for (const std::string& w : s.clip->not_drawn)
+        for (const std::string& w : s.clip->not_drawn) {
+            const char* said = vector::motion_not_drawn_words(w);
             impl_->say_once("«" + s.picture + "», клип «" + s.clip->name + "»: на экране пока не рисуется: " +
-                            (w == "dash" ? "пунктир" : w == "draw" ? "прорисовка" : w == "tint" ? "тон" : w == "flash" ? "вспышка"
-                             : w == "blur" || w == "shadow" ? "размытие и тень (на экране игры не рисуются, в запекании есть)"
-                             : w == "mask" ? "маска" : w == "link" ? "крепление" : w == "copies" ? "копии" : w == "order" ? "порядок частей"
-                             : w == "drawing" ? "смена рисунка" : w == "morph_drawing" ? "морфинг в фигуру другого рисунка" : w));
+                            (w == "blur" || w == "shadow" ? std::string("размытие и тень (на экране игры не рисуются, в запекании есть)")
+                                                          : std::string(said ? said : w.c_str())));
+        }
         *p = {};
         p->element = s.e->GetObserverPtr();
         p->page = c.screen;

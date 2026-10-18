@@ -436,6 +436,15 @@ bool motion_prop_from_word(std::string_view word, MotionProp& out) {
     return false;
 }
 
+const char* motion_not_drawn_words(std::string_view word) {
+    static constexpr const char* kSaid[] = {"пунктир", "прорисовка", "тон", "вспышка", "размытие", "тень", "маска", "крепление", "копии",
+                                            "порядок частей", "смена рисунка", "морфинг в фигуру другого рисунка"};
+    static_assert(std::size(kSaid) == std::size(kMotionNotDrawn));
+    for (usize i = 0; i < std::size(kMotionNotDrawn); ++i)
+        if (word == kMotionNotDrawn[i]) return kSaid[i];
+    return nullptr;
+}
+
 bool motion_prop_moves(MotionProp p) { return static_cast<usize>(p) <= static_cast<usize>(MotionProp::SkewY); }
 
 MotionValue motion_rest(MotionProp p) {

@@ -10,6 +10,7 @@
 #include "forge/core/path.h"
 #include "forge/data/json.h"
 #include "forge/editor/sources.h"
+#include "forge/pixel/screen.h"
 #include "forge/pixel/svg.h"
 
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -475,6 +476,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     on("px_bake", [this](Rml::Event&, const Rml::VariantList&) { bake(false); });
     on("px_bake_over", [this](Rml::Event&, const Rml::VariantList&) { bake(true); });
     on("px_give_open", [this](Rml::Event&, const Rml::VariantList&) { open_give(!giving_); });
+    on("px_give_screen", [this](Rml::Event&, const Rml::VariantList&) { give_screen(); });
     on("px_give", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
         if (i >= 0 && i < static_cast<int>(templates_.size())) give(templates_[static_cast<usize>(i)]);
@@ -1666,6 +1668,58 @@ bool PixelEditor::give(u64 key) {
     note_ = "«" + t->name + "» рисует «" + copied + "», " + count_words(frames, "кадр", "кадра", "кадров") +
             (given.empty() ? ", своих анимаций нет" : ", анимации: " + given) + (marks.empty() ? "" : "; метки: " + marks) +
             (left.empty() ? "" : "; не отданы: " + left) + "." + (emits && !module_.anim_emits() ? " Метки emit эта игра не ловит, звуки звучат." : "");
+    FORGE_INFO("Векторная: %s", note_.c_str());
+    rebuild();
+    return true;
+}
+
+bool PixelEditor::give_screen() {
+    note_.clear();
+    auto refuse = [&](std::string why) {
+        note_ = std::move(why);
+        rebuild();
+        return false;
+    };
+    objects::Library* lib = module_.library();
+    if (!lib || lib->pictures_folder().empty()) return refuse("Отдать экрану можно в открытой игре");
+    if (!has_ || !rig_.loaded()) return refuse("Нечего отдавать: рисунок не открыт");
+    if (!script_.loaded()) return refuse("Нечего отдавать: " + (problem_.empty() ? std::string("скрипт не работает") : problem_));
+    if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: отдайте через миг");
+    const std::string who = name();
+    const fs::path svg_path = lib->pictures_folder() / utf8_path(who + ".svg");
+    const fs::path motion_path = lib->pictures_folder() / utf8_path(who + ".motion.json");
+    std::optional<std::vector<u8>> svg_before = bytes_of(svg_path), motion_before = bytes_of(motion_path);
+    // A pair another character gave (or a picture of the game's own) is not written over.
+    auto foreign = [&](const std::string& file) {
+        return refuse("В картинках игры уже есть «" + file + "» не от этого персонажа: переименуйте персонажа или ту картинку");
+    };
+    if (motion_before) {
+        vector::MotionFile was;
+        std::string why;
+        if (!vector::read_motion_file(std::string_view(reinterpret_cast<const char*>(motion_before->data()), motion_before->size()), was, why) ||
+            was.from != rel_)
+            return foreign(who + ".motion.json");
+    } else if (svg_before)
+        return foreign(who + ".svg");
+    pixel::ScreenGift gift;
+    std::string why;
+    const bool ok = pixel::build_screen(script_, rig_, doc_, who, rel_, svg_text_, drawn_ ? &drawing_ : nullptr, gift, why);
+    view_dirty_ = true; // the frames were the script's: the view shows its own again
+    if (!ok) return refuse(why);
+    std::vector<u8> svg_bytes = text_bytes(gift.svg), motion_bytes = text_bytes(vector::write_motion_file(gift.motion));
+    if (svg_before == svg_bytes && motion_before == motion_bytes) return refuse("Уже отдано так");
+    std::string clips;
+    for (const vector::MotionClip& c : gift.motion.clips) clips += (clips.empty() ? "«" : ", «") + c.name + "»";
+    std::vector<PixelFiles::File> files;
+    files.push_back({svg_path, std::move(svg_before), std::move(svg_bytes)});
+    files.push_back({motion_path, std::move(motion_before), std::move(motion_bytes)});
+    std::error_code ec;
+    const fs::path made = fs::exists(lib->pictures_folder(), ec) ? fs::path() : lib->pictures_folder();
+    history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), "«" + who + "»: отдан экрану", made));
+    history_.seal();
+    note_ = "Отдано экрану: «" + who + ".svg» и «" + who + ".motion.json», " + (gift.motion.clips.size() == 1 ? "клип " : "клипы ") + clips +
+            ". На экране: заливка слоя картинкой «" + who + "» в «Интерфейсе», клип — нода «Проиграть анимацию картинки».";
+    for (const std::string& n : gift.notes) note_ += " " + n + ".";
     FORGE_INFO("Векторная: %s", note_.c_str());
     rebuild();
     return true;

@@ -1450,6 +1450,7 @@
                     <div id="px-bake" class="button filled small" title="Все клипы, каждый по своему диапазону, полосой кадров в картинку «Ресурсов» рядом с .pixel.json" data-event-click="px_bake"><icon class="s" name="grid_on"/><span>Запечь</span></div>
                     <div id="px-snapshot" class="button outlined small" title="Пиксельный кадр под бегунком, как запечётся, — PNG в «Ресурсы»" data-event-click="px_snapshot"><icon class="s" name="photo_camera"/><span>Снимок кадра</span></div>
                     <div id="px-give-open" class="button outlined small" data-class-disabled="!px_can_give" data-event-click="px_give_open"><icon class="s" name="person_add"/><span>Отдать шаблону…</span></div>
+                    <div id="px-give-screen" class="button outlined small" title="Клипы кода и рисунок — в картинки игры («Имя.svg» и «Имя.motion.json»): слой экрана играет их нодой «Проиграть анимацию картинки»" data-event-click="px_give_screen"><icon class="s" name="smart_display"/><span>Отдать экрану</span></div>
                 </div>
                 <div id="px-edited" class="px-warn column" data-if="px_edited">
                     <span>Картинку правили после запекания: новое запекание заменит правки (Ctrl+Z вернёт их).</span>

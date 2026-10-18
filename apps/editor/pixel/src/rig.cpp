@@ -1704,6 +1704,18 @@ Affine Rig::matrix(i32 part) const {
     return from_tvg(m.recs[static_cast<usize>(part)].paint->transform());
 }
 
+Affine Rig::rest_frame(i32 part) const {
+    const Impl& m = *impl_;
+    if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};
+    return m.recs[static_cast<usize>(part)].parent_global;
+}
+
+Affine Rig::rest_local(i32 part) const {
+    const Impl& m = *impl_;
+    if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};
+    return from_tvg(m.recs[static_cast<usize>(part)].rest_local);
+}
+
 std::vector<DrawnCopy> Rig::drawn_copies() const {
     const Impl& m = *impl_;
     std::vector<DrawnCopy> out;
