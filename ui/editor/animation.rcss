@@ -123,6 +123,8 @@
 .px-top { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
 .px-nav { width: 220px; }
 .px-stage { flex: 0 0 auto; overflow-y: auto; }
+/* The problem and the note under the views wrap at the views' width: a long line does not widen the stage. */
+.px-said > div { flex: 1 1 0px; min-width: 0px; }
 .px-views { gap: var(--space-2); flex-wrap: wrap; justify-content: center; }
 .px-view { gap: var(--space-1); align-items: center; }
 .px-canvas {
