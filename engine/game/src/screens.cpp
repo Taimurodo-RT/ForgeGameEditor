@@ -1238,7 +1238,6 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
             p->speed = c.y;
             continue;
         }
-        if (p && (p->file != s.file || p->clip != s.clip)) ui::svg_unpose(s.e); // what the last clip changed goes
         if (!p) {
             impl_->playing.emplace_back();
             p = &impl_->playing.back();
