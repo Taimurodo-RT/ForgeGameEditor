@@ -103,9 +103,13 @@ std::string code() {
     end,
     zero = function(p) part("ball"):to({ x = 5 }, 0) end,
     posed = function(p) part("box").y(4, 0.4) end,
+    over = function(p) part("box").y(6, 0.4) end,
+    still = function(p) part("ball"):to({ x = 0 }, 0.3) end,
+    steep = function(p) part("arm"):to({ skew_x = 95, x = 2 }, 0.3, "linear") end,
   },
   pose = function(t, p, rng, clip)
     if clip == "posed" then part("box"):set{ x = 3 * math.sin(t * 7) } end
+    if clip == "over" then part("box"):set{ y = 1 + 6 * t } end
   end,
 }
 )";
@@ -609,6 +613,14 @@ TEST_CASE("Screen clips: the game's values are the tab's frame, for every kind o
     const MotionClip posed = checked(s, rig, doc, "posed");
     CHECK(track_of(posed, "box", MotionProp::X)->pieces.front().kind == MotionPiece::Kind::Frames);
     CHECK(track_of(posed, "box", MotionProp::Y)->pieces.front().kind == MotionPiece::Kind::Ease);
+    // pose(t) over a block of the same property: the frame is pose(t)'s, not the block's easing.
+    const MotionClip over = checked(s, rig, doc, "over");
+    REQUIRE(track_of(over, "box", MotionProp::Y));
+    CHECK(track_of(over, "box", MotionProp::Y)->pieces.front().kind == MotionPiece::Kind::Frames);
+    CHECK(count_kind(over, MotionPiece::Kind::Ease) == 0);
+    // A block from rest to rest: no track.
+    const MotionClip still = checked(s, rig, doc, "still");
+    CHECK(still.tracks.empty());
 }
 
 TEST_CASE("Screen clips: a part's matrix is the rig's after the pose, in groups with transforms of their own") {
@@ -616,7 +628,7 @@ TEST_CASE("Screen clips: a part's matrix is the rig's after the pose, in groups 
     PoseScript s = script_of(code());
     const PixelDoc doc = doc64();
     std::string why;
-    for (const char* name : {"eased", "along", "arc", "start"}) {
+    for (const char* name : {"eased", "along", "arc", "start", "steep"}) { // steep: a skew past 89°, held there
         MotionFile file;
         file.clips.push_back(checked(s, rig, doc, name));
         const MotionClip& c = file.clips.back();
@@ -714,6 +726,60 @@ TEST_CASE("Screen clips: the screen's picture (lunasvg) is the tab's (ThorVG)") 
     }
 }
 
+TEST_CASE("Screen clips: the screen's picture of a pose, part by part in the file's order, as the file written so by hand") {
+    // A group's fill over the parts in it and one of them its own after it (the pose lists it first); a shape without a
+    // fill keeps none; a colour the file writes in `style` goes there; an opacity of its own times the clip's.
+    const char* kHand = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g id="team" fill="#2050a0">
+    <rect id="lead" x="4" y="4" width="16" height="16" fill="#a02020"/>
+    <rect id="rest" x="24" y="4" width="16" height="16"/>
+    <rect id="hole" x="44" y="4" width="16" height="16" fill="none" stroke="#202020" stroke-width="3"/>
+  </g>
+  <rect id="styled" x="4" y="30" width="16" height="16" style="fill:#20a020"/>
+  <rect id="ghost" x="30" y="30" width="16" height="16" fill="#000000" opacity="0.5"/>
+</svg>)svg";
+    const char* kWant = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g id="team" fill="#ffffff">
+    <rect id="lead" x="4" y="4" width="16" height="16" fill="#000000"/>
+    <rect id="rest" x="24" y="4" width="16" height="16"/>
+    <rect id="hole" x="44" y="4" width="16" height="16" fill="none" stroke="#202020" stroke-width="3"/>
+  </g>
+  <rect id="styled" x="4" y="30" width="16" height="16" style="fill:#ff00ff"/>
+  <rect id="ghost" x="30" y="30" width="16" height="16" fill="#000000" opacity="0.25"/>
+</svg>)svg";
+    auto part = [](const char* id, MotionProp p, MotionValue v) {
+        vector::MotionPartPose pp;
+        pp.id = id;
+        for (usize i = 0; i < vector::kMotionPropCount; ++i) pp.values[i] = vector::motion_rest(static_cast<MotionProp>(i));
+        pp.has[static_cast<usize>(p)] = true;
+        pp.values[static_cast<usize>(p)] = v;
+        return pp;
+    };
+    const std::vector<vector::MotionPartPose> pose{part("lead", MotionProp::Fill, {1, {0, 0, 0, 255}, {}, 0}),
+                                                   part("team", MotionProp::Fill, {1, {255, 255, 255, 255}, {}, 0}),
+                                                   part("styled", MotionProp::Fill, {1, {255, 0, 255, 255}, {}, 0}),
+                                                   part("ghost", MotionProp::Opacity, {0.5, {}, {}, 0})};
+    std::vector<u8> got, want, rest;
+    std::string why;
+    REQUIRE(ui::render_posed_svg(kHand, {"hand.svg", pose}, 64, 64, got, why));
+    REQUIRE(ui::render_posed_svg(kWant, {"want.svg", {}}, 64, 64, want, why));
+    REQUIRE(ui::render_posed_svg(kHand, {"hand.svg", {}}, 64, 64, rest, why));
+    usize off = 0, changed = 0;
+    for (usize i = 0; i < got.size(); ++i) {
+        off += got[i] != want[i];
+        changed += got[i] != rest[i];
+    }
+    std::string where;
+    for (usize i = 0; i < got.size() && where.size() < 400; i += 4)
+        if (got[i] != want[i] || got[i + 1] != want[i + 1] || got[i + 2] != want[i + 2] || got[i + 3] != want[i + 3])
+            where += " (" + std::to_string(i / 4 % 64) + "," + std::to_string(i / 4 / 64) + ": " + std::to_string(got[i]) + "," +
+                     std::to_string(got[i + 1]) + "," + std::to_string(got[i + 2]) + "," + std::to_string(got[i + 3]) + " / " +
+                     std::to_string(want[i]) + "," + std::to_string(want[i + 1]) + "," + std::to_string(want[i + 2]) + "," + std::to_string(want[i + 3]) + ")";
+    INFO(off, " bytes off", where);
+    CHECK(off == 0);
+    CHECK(changed > 1000);
+}
+
 TEST_CASE("Screen clips: the marks a game passes between two of its frames") {
     MotionClip c;
     c.length = 1;
@@ -753,6 +819,7 @@ TEST_CASE("Screen clips: what a clip does that the screen does not draw, each fr
     copies = function(p) copies("ball", 2, function(i, c) c.x(i * 4, 0.2) end) end,
     order = function(p) part("ball"):to_top() wait(0.1) end,
     plain = function(p) part("ball").x(3, 0.2) end,
+    flash0 = function(p) part("body").flash(0, 0.2) end,
   },
 })";
     const Rig rig = loaded();
@@ -774,6 +841,10 @@ TEST_CASE("Screen clips: what a clip does that the screen does not draw, each fr
     std::string why;
     REQUIRE(screen_clip(s, rig, doc, "plain", f, plain, why));
     CHECK(plain.not_drawn.empty());
+    // By its track, though no frame shows it.
+    MotionClip flash0;
+    REQUIRE(screen_clip(s, rig, doc, "flash0", f, flash0, why));
+    CHECK(flash0.not_drawn == std::vector<std::string>{"flash"});
     // The copies have no tracks: they are not in the picture the screen shows.
     MotionClip copies;
     REQUIRE(screen_clip(s, rig, doc, "copies", f, copies, why));
@@ -793,6 +864,7 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
     open = function(p) part("mouth"):morph("mouth_o", 0.2) part("nose").x(2, 0.1) end,
     angry = function(p) swap("angry", 0.2) end,
     brow = function(p) part("mouth"):morph("brow", 0.2) end,
+    brow_on = function(p) start_from("brow") part("nose").x(1, 0.1) end,
   },
   draw = function(p, rng)
     canvas(64, 64)
@@ -844,6 +916,8 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
     REQUIRE(gift.motion.part("nose"));
     CHECK(gift.motion.clip("angry")->not_drawn == std::vector<std::string>{"drawing"});
     CHECK(gift.motion.clip("brow")->not_drawn == std::vector<std::string>{"morph_drawing"});
+    // From the frames: start_from leaves the mouth morphed into the brow, by no track of the clip's own.
+    CHECK(gift.motion.clip("brow_on")->not_drawn == std::vector<std::string>{"morph_drawing"});
     CHECK(gift.motion.clip("open")->not_drawn.empty());
 
     // A file's SVG: written as it is, a morph of a shape that is not a <path> said.
