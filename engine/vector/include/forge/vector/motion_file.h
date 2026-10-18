@@ -177,11 +177,12 @@ struct MotionPartPose {
 // file's `parts` stays where it is (read_motion_file refuses such a file).
 std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t);
 
-// Where a clip is after `played` seconds of play: looped round, or held at its end.
-f64 motion_clip_time(const MotionClip& clip, f64 played);
+// Where a clip is after `played` seconds of play: round and round when it loops, else held at its end. `loop` is how
+// the game plays it, which need not be the clip's own (svg_play's `loop`).
+f64 motion_clip_time(const MotionClip& clip, f64 played, bool loop);
 // The marks a clip passes on its way from `played_before` (not counted) to `played` (counted) seconds of play, round
-// its loop as often as it goes; each mark once however many times round. Below 0 for `played_before`: from the start,
-// the marks at 0 counted. Indices into clip.marks, in the order passed.
-std::vector<usize> motion_marks_passed(const MotionClip& clip, f64 played_before, f64 played);
+// and round when it loops (as motion_clip_time); each mark once however many times round. Below 0 for
+// `played_before`: from the start, the marks at 0 counted. Indices into clip.marks, in the order passed.
+std::vector<usize> motion_marks_passed(const MotionClip& clip, f64 played_before, f64 played, bool loop);
 
 } // namespace forge::vector

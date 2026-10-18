@@ -200,7 +200,9 @@ struct ProjectEdits {
     // «приземлился», a clip on the layer ms_other_name, whose picture has no file of clips: the error ms_scheme_error.
     // The author's Luau (a link's «Код», ms_code) plays «jump» at 1.2 s of the world and again at 1.3 s (it goes on) and
     // at 1.8 s (it ended: from 0), stops it at 2 s, plays «idle» twice as fast at 2.5 s, takes the picture back to its
-    // file at 3.1 s, plays «idle» at 3.6 s and at 4.6 s a clip there is not: the error ms_code_error. ms_tab: the tab's frame of each clip at each 120th of a second, one line each:
+    // file at 3.1 s, plays «idle» at 3.6 s, «jump» round and round at 4.6 s (its file has no loop), the same without
+    // the loop at 5.6 s (to the end of that lap), «idle» once at 6.1 s and at 6.8 s a clip there is not: the error
+    // ms_code_error. ms_tab: the tab's frame of each clip at each 120th of a second, one line each:
     // "clip k part a b c d e f" (the part's matrix as the tab's picture has it) or "clip k part morph share target".
     // The sound mark is the game's sound ms_sound; ms_not_drawn: the line the game says once of what it does not draw.
     std::string ms_screen, ms_layer_name, ms_other_name, ms_file, ms_svg, ms_sound, ms_scheme_error, ms_code, ms_code_error, ms_not_drawn;

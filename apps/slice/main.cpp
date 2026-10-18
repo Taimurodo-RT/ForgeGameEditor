@@ -9103,7 +9103,8 @@ private:
     // matrix, each morph. «idle» from the scheme with its step (the sound) at each lap; «jump» to its end and held there,
     // its mark «приземлился» a message the scheme hears (its clip on a picture without clips: the error); stopped where
     // it was, as lunasvg draws that pose; «idle» twice as fast; the file; «idle» again going on while the world is paused;
-    // a clip there is not: the error. What the screen does not draw said once.
+    // «jump» round and round, its mark at each lap, then to the end of that lap; «idle» once, its step at 0 only; a clip
+    // there is not: the error. What the screen does not draw said once.
     void build_motion_edits(Shell& s) {
         struct Tab {
             std::map<std::string, std::array<f64, 6>> matrix; // "clip k part"
@@ -9112,10 +9113,10 @@ private:
         };
         struct Seen {
             u64 clock = 1'000'000'000;
-            u32 frames = 0, compared = 0, off = 0, pause_frames = 0;
+            u32 frames = 0, compared = 0, off = 0, pause_frames = 0, jump_laps = 0, landed = 0; // landed: the messages «приземлился»
             f64 last = -1, paused_at = -1, paused_clip = -1;
             std::string last_clip, first_off;
-            bool clicks[4] = {}, stopped_drawn = false, file_drawn = false, faster = false, paused = false, end = false;
+            bool clicks[6] = {}, stopped_drawn = false, file_drawn = false, faster = false, paused = false, end = false;
             std::vector<f64> held; // the stopped pose's matrix, frame after frame
         };
         auto tab = std::make_shared<Tab>();
@@ -9141,6 +9142,11 @@ private:
         }
         // The screens' clock: on by a 60th of a second each frame (to the nanosecond, so what a clip has played is one).
         s.screens().set_clock([st] { return st->clock + (static_cast<u64>(st->frames) * 1'000'000'000ULL + 30) / 60; });
+        // The marks' messages counted on their way to the game (the scheme's script stops at its first error).
+        s.screens().on_action = [st, to = s.screens().on_action](const game::ScreenAction& a, const std::string& page) {
+            st->landed += a.what == "message" && a.target == "приземлился";
+            if (to) to(a, page);
+        };
         // The pose the layer shows against the tab's frame of its clip at its moment.
         auto compare = [this, tab, st](Rml::Element* el, const game::ScreenClip& c) {
             const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
@@ -9251,8 +9257,8 @@ private:
             auto in = [t](f64 from, f64 to) { return t >= from && t < to; };
             const f64 step = has ? c.time - st->last : 0;
             const bool same_clip = has && c.clip == st->last_clip;
-            auto lap = [&](f64 by) { // on by `by`, or round the loop of 0.5 s
-                return same_clip && (std::fabs(step - by) < 1e-6 || std::fabs(step - by + 0.5) < 1e-6);
+            auto lap = [&](f64 by, f64 length = 0.5) { // on by `by`, or round the loop: «idle» is 0.5 s, «jump» 0.4 s
+                return same_clip && (std::fabs(step - by) < 1e-6 || std::fabs(step - by + length) < 1e-6);
             };
             auto said = [&](const std::string& text) {
                 usize n = 0;
@@ -9272,7 +9278,8 @@ private:
             if (in(1.25, 1.55)) check(has && c.clip == "jump" && c.going && lap(1.0 / 60), "код в 1,2 с играет «jump», в 1,3 с он идёт дальше: " + c.clip);
             if (in(1.65, 1.75)) check(has && c.clip == "jump" && c.going && c.time == 0.4, "«jump» дошёл до конца и стоит: " + std::to_string(c.time));
             if (in(1.7, 1.75))
-                check(said(e.ms_scheme_error) >= 1, "метка «приземлился» — сообщение, схема его слышит и говорит ошибку: " + e.ms_scheme_error);
+                check(st->landed == 1 && said(e.ms_scheme_error) >= 1,
+                      "метка «приземлился» — сообщение, схема его слышит и говорит ошибку: " + e.ms_scheme_error);
             // At 1.8 s it had ended: from 0 again.
             if (in(1.85, 1.95)) check(has && c.clip == "jump" && c.going && c.time < 0.2 && lap(1.0 / 60), "в 1,8 с кончившийся «jump» — с начала");
             if (in(2.05, 2.45)) {
@@ -9305,6 +9312,26 @@ private:
                 }
             }
             if (in(3.65, 4.55)) check(has && c.clip == "idle" && c.going && (lap(1.0 / 60) || c.time == 0), "в 3,6 с снова «idle»");
+            if (in(4.65, 4.7)) sounds(3, 9, "снова «idle» прошёл 0, 0,5 и 1 с, на паузе тоже");
+            // «jump» round and round from 4.6 s, though its file has no loop: its mark at each lap (5 and 5,4 s).
+            if (in(4.65, 5.55)) {
+                check(has && c.clip == "jump" && c.going && c.time < 0.4 && lap(1.0 / 60, 0.4), "в 4,6 с «jump» по кругу: " + std::to_string(c.time));
+                st->jump_laps += same_clip && c.clip == "jump" && step < 0;
+            }
+            if (in(5.45, 5.55))
+                check(st->jump_laps == 2 && st->landed == 3, "«jump» прошёл два круга, метка — на каждом: сообщений " + std::to_string(st->landed));
+            // At 5.6 s without the loop: on to the end of that lap (5,8 s) and held there, the mark once more.
+            if (in(5.65, 5.75)) check(has && c.clip == "jump" && c.going && c.time > 0.2 && lap(1.0 / 60, 0.4) && step > 0, "в 5,6 с «jump» идёт дальше, не с начала");
+            if (in(5.85, 6.05)) {
+                check(has && c.clip == "jump" && c.going && c.time == 0.4, "«jump» дошёл до конца круга и стоит: " + std::to_string(c.time));
+                check(st->landed == 4, "в конце круга метка ещё раз: сообщений " + std::to_string(st->landed));
+            }
+            // «idle» once from 6.1 s: to its end (6,6 s) and held there, its step at 0 and not again at its end.
+            if (in(6.15, 6.55)) check(has && c.clip == "idle" && c.going && step > 0 && lap(1.0 / 60), "в 6,1 с «idle» один раз");
+            if (in(6.65, 6.75)) {
+                check(has && c.clip == "idle" && c.going && c.time == 0.5, "«idle» один раз дошёл до конца и стоит: " + std::to_string(c.time));
+                sounds(4, 10, "«idle» один раз: шаг в 0, в конце нет");
+            }
             // The world paused for 21 frames: its time stands, the clip goes on.
             if (t >= 3.7 && !st->paused) {
                 st->paused = true;
@@ -9323,10 +9350,12 @@ private:
                 st->last = c.time;
                 st->last_clip = c.clip;
             } else st->last_clip.clear();
-            if (t < 4.65) return false;
-            check(st->paused && st->pause_frames == 21 && st->faster && st->stopped_drawn && st->file_drawn, "все части пройдены");
-            check(has && c.clip == "idle" && c.going, "после ошибки «idle» идёт дальше");
-            sounds(3, 9, "снова «idle» прошёл 0, 0,5 и 1 с, на паузе тоже");
+            if (t < 6.9) return false;
+            check(st->paused && st->pause_frames == 21 && st->faster && st->stopped_drawn && st->file_drawn && st->clicks[3] && st->clicks[4],
+                  "все части пройдены");
+            check(has && c.clip == "idle" && c.going && c.time == 0.5, "после ошибки «idle» стоит в конце");
+            sounds(5, 10, "после ошибки шагов не прибавилось");
+            check(st->landed == 4, "сообщений «приземлился» 4: " + std::to_string(st->landed));
             check(said(e.ms_code_error) >= 1, "клип, которого нет, — ошибка кода: " + e.ms_code_error);
             std::string lines;
             usize known = 0;

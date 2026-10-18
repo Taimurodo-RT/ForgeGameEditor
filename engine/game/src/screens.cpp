@@ -303,7 +303,7 @@ struct GameScreens::Impl : Rml::EventListener {
             if (p.going) {
                 p.played += dt * p.speed;
                 if (!p.loop) p.played = std::min(p.played, c.length);
-                for (const usize m : vector::motion_marks_passed(c, p.counted, p.played)) {
+                for (const usize m : vector::motion_marks_passed(c, p.counted, p.played, p.loop)) {
                     const vector::MotionMark& mk = c.marks[m];
                     if (!mk.sound) {
                         if (screens.on_action) screens.on_action({"message", mk.name}, p.page);
@@ -322,7 +322,7 @@ struct GameScreens::Impl : Rml::EventListener {
                 }
                 p.counted = p.played;
             }
-            const f64 at = p.loop ? vector::motion_clip_time(c, p.played) : std::min(p.played, c.length);
+            const f64 at = vector::motion_clip_time(c, p.played, p.loop);
             ui::svg_pose(p.element.get(), {p.picture, vector::motion_pose(*p.file, c, at)});
         }
     }
@@ -1230,7 +1230,7 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
         // came to its end without a loop starts again.
         if (p && p->file == s.file && p->clip == s.clip && p->going && (p->loop || p->played < s.clip->length)) {
             if (p->loop && !loop) { // on from where it is in this lap, not from the laps behind it
-                const f64 at = vector::motion_clip_time(*s.clip, p->played);
+                const f64 at = vector::motion_clip_time(*s.clip, p->played, true);
                 if (p->counted >= 0) p->counted -= p->played - at;
                 p->played = at;
             }
@@ -1268,7 +1268,7 @@ bool GameScreens::svg_clip(std::string_view screen, std::string_view layer, Scre
         for (const Impl::Playing& p : impl_->playing)
             if (p.element.get() == e) {
                 out.clip = p.clip->name;
-                out.time = p.loop ? vector::motion_clip_time(*p.clip, p.played) : std::min(p.played, p.clip->length);
+                out.time = vector::motion_clip_time(*p.clip, p.played, p.loop);
                 out.going = p.going;
                 return true;
             }

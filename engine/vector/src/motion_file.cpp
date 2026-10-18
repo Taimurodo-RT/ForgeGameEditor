@@ -755,27 +755,27 @@ std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip
     return out;
 }
 
-f64 motion_clip_time(const MotionClip& clip, f64 played) {
+f64 motion_clip_time(const MotionClip& clip, f64 played, bool loop) {
     if (!(clip.length > 0) || !(played > 0)) return 0;
-    if (!clip.loop) return std::min(played, clip.length);
+    if (!loop) return std::min(played, clip.length);
     return std::fmod(played, clip.length);
 }
 
-std::vector<usize> motion_marks_passed(const MotionClip& clip, f64 before, f64 played) {
+std::vector<usize> motion_marks_passed(const MotionClip& clip, f64 before, f64 played, bool loop) {
     std::vector<std::pair<f64, usize>> hit; // when, which
     const f64 len = clip.length;
     for (usize i = 0; i < clip.marks.size(); ++i) {
         const f64 at = clip.marks[i].at;
         f64 when = at; // the first time the clip is at the mark after `before`
         if (before >= 0) {
-            if (clip.loop && len > 0) {
+            if (loop && len > 0) {
                 when = at + (std::floor((before - at) / len) + 1) * len;
                 if (when <= before) when += len; // rounding
             } else if (at <= before) {
                 continue;
             }
         }
-        if (!clip.loop && at > len) continue;
+        if (!loop && at > len) continue;
         if (when <= played) hit.push_back({when, i});
     }
     std::stable_sort(hit.begin(), hit.end(), [](const auto& a, const auto& b) { return a.first < b.first; });

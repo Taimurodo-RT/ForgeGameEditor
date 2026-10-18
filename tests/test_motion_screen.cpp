@@ -708,18 +708,23 @@ TEST_CASE("Screen clips: the marks a game passes between two of its frames") {
     c.loop = true;
     c.marks = {{true, "шаг", 0, 0}, {false, "удар", 0.5, 0.1}, {true, "шаг2", 1, 0}};
     using V = std::vector<usize>;
-    CHECK(vector::motion_marks_passed(c, -1, 0) == V{0}); // the first frame counts the marks at 0
-    CHECK(vector::motion_marks_passed(c, 0, 0.4) == V{});
-    CHECK(vector::motion_marks_passed(c, 0.4, 0.6) == V{1});
-    CHECK(vector::motion_marks_passed(c, 0.6, 1.2) == V{0, 2}); // round the loop: at the same moment, in the clip's order
-    CHECK(vector::motion_marks_passed(c, 1.2, 1.5) == V{1});
-    CHECK(vector::motion_marks_passed(c, 0.6, 3.6) == V{0, 2, 1}); // each once however many times round
+    CHECK(vector::motion_marks_passed(c, -1, 0, true) == V{0}); // the first frame counts the marks at 0
+    CHECK(vector::motion_marks_passed(c, 0, 0.4, true) == V{});
+    CHECK(vector::motion_marks_passed(c, 0.4, 0.6, true) == V{1});
+    CHECK(vector::motion_marks_passed(c, 0.6, 1.2, true) == V{0, 2}); // round the loop: at the same moment, in the clip's order
+    CHECK(vector::motion_marks_passed(c, 1.2, 1.5, true) == V{1});
+    CHECK(vector::motion_marks_passed(c, 0.6, 3.6, true) == V{0, 2, 1}); // each once however many times round
+    CHECK(vector::motion_clip_time(c, 2.25, true) == doctest::Approx(0.25));
+    // The game's `loop`, not the clip's: the looping clip played once is held at its end, its mark at 0 not passed
+    // again there.
+    CHECK(vector::motion_marks_passed(c, 0.6, 1, false) == V{2});
+    CHECK(vector::motion_marks_passed(c, 1, 1, false) == V{}); // held at its end: nothing more
+    CHECK(vector::motion_clip_time(c, 3, false) == 1);
+    // A clip without a loop played round and round.
     c.loop = false;
-    CHECK(vector::motion_marks_passed(c, 0.6, 1) == V{2});
-    CHECK(vector::motion_marks_passed(c, 1, 1) == V{}); // held at its end: nothing more
-    CHECK(vector::motion_clip_time(c, 3) == 1);
-    c.loop = true;
-    CHECK(vector::motion_clip_time(c, 2.25) == doctest::Approx(0.25));
+    CHECK(vector::motion_clip_time(c, 2.25, true) == doctest::Approx(0.25));
+    CHECK(vector::motion_marks_passed(c, 0.6, 1.2, true) == V{0, 2});
+    CHECK(vector::motion_marks_passed(c, 0.6, 1.2, false) == V{2});
 }
 
 TEST_CASE("Screen clips: what a clip does that the screen does not draw, each from its own clip") {
