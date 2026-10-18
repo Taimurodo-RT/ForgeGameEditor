@@ -552,15 +552,15 @@ TEST_CASE("5а: a mark's sound is the game's sound of that name, as «Векто
 TEST_CASE("5а: «Покадровая» shows under a frame the mark that begins there, a flag over a note, and a window's bar") {
     using B = objects::FrameMark::Begins;
     objects::Clip c{{0, 1, 2, 3, 4}, 10, true, {{"шаг", true, 1, 1}, {"удар", false, 1, 1}, {"взмах", false, 2, 2}, {"звон", true, 2, 1},
-                                                 {"тик", false, 4, 1}, {"эхо", false, 7, 1}}};
+                                                 {"стук", false, 3, 1}, {"тик", false, 4, 1}, {"эхо", false, 7, 1}}};
     const std::vector<objects::FrameMark> f = objects::frame_marks(c);
     REQUIRE(f.size() == 5);
     std::string seen;
     for (const objects::FrameMark& m : f)
         seen += std::string(m.begins == B::Emit ? "⚑" : m.begins == B::Sound ? "♪" : "·") + (m.window ? "▬" : "") + " ";
     // Places from 0: a sound before an emit on 1, after one on 2: the flag either way; the window of «взмах» on 2–3, a
-    // one-frame emit no bar; «эхо» past the frames nowhere.
-    CHECK(seen == "· ⚑ ⚑▬ ·▬ ⚑ ");
+    // one-frame emit no bar of its own, and on 3, inside that window, the bar stays; «эхо» past the frames nowhere.
+    CHECK(seen == "· ⚑ ⚑▬ ⚑▬ ⚑ ");
     c.events = {{"шаг", true, 0, 1}};
     CHECK(objects::frame_marks(c)[0].begins == B::Sound);
 }
