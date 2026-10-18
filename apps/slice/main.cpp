@@ -9268,12 +9268,15 @@ private:
             };
             if (in(0.05, 1.15)) check(has && c.clip == "idle" && c.going && (f < 4 || lap(1.0 / 60)), "схема играет «idle» с начала, 1/60 с за кадр: " + c.clip);
             if (in(1.1, 1.15)) sounds(0, 3, "«idle» прошёл 0, 0,5 и 1 с");
-            if (in(1.25, 1.55)) check(has && c.clip == "jump" && c.going && lap(1.0 / 60), "код в 1,2 с играет «jump»: " + c.clip);
-            if (in(1.65, 2.15)) check(has && c.clip == "jump" && c.going && c.time == 0.4, "«jump» дошёл до конца и стоит: " + std::to_string(c.time));
-            if (in(1.75, 2.15))
+            // «jump» at 1.2 s, played again at 1.3 s while it goes: on, not from 0.
+            if (in(1.25, 1.55)) check(has && c.clip == "jump" && c.going && lap(1.0 / 60), "код в 1,2 с играет «jump», в 1,3 с он идёт дальше: " + c.clip);
+            if (in(1.65, 1.75)) check(has && c.clip == "jump" && c.going && c.time == 0.4, "«jump» дошёл до конца и стоит: " + std::to_string(c.time));
+            if (in(1.7, 1.75))
                 check(said(e.ms_scheme_error) >= 1, "метка «приземлился» — сообщение, схема его слышит и говорит ошибку: " + e.ms_scheme_error);
-            if (in(2.25, 2.65)) {
-                check(has && c.clip == "jump" && !c.going && c.time == 0.4, "в 2,2 с код остановил клип на показанном кадре");
+            // At 1.8 s it had ended: from 0 again.
+            if (in(1.85, 1.95)) check(has && c.clip == "jump" && c.going && c.time < 0.2 && lap(1.0 / 60), "в 1,8 с кончившийся «jump» — с начала");
+            if (in(2.05, 2.45)) {
+                check(has && c.clip == "jump" && !c.going && c.time > 0.15 && c.time < 0.25, "в 2 с код остановил клип в воздухе: " + std::to_string(c.time));
                 sounds(1, 3, "«jump» и остановка без шагов");
                 const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
                 std::vector<f64> now;
@@ -9282,28 +9285,28 @@ private:
                 if (st->held.empty()) st->held = now;
                 check(!now.empty() && now == st->held, "остановленная поза стоит");
                 // The picture made again at the pose: the frame shows it.
-                if (t >= 2.5 && !st->stopped_drawn && pose) {
+                if (t >= 2.35 && !st->stopped_drawn && pose) {
                     st->stopped_drawn = true;
-                    drawn(el, *pose, "остановлен в конце «jump»");
+                    drawn(el, *pose, "остановлен в воздухе");
                 }
             }
-            if (in(2.75, 3.25)) {
+            if (in(2.55, 3.05)) {
                 st->faster = st->faster || (has && c.clip == "idle");
-                check(has && c.clip == "idle" && c.going && lap(2.0 / 60), "в 2,7 с «idle» вдвое быстрее: 1/30 с за кадр");
+                check(has && c.clip == "idle" && c.going && lap(2.0 / 60), "в 2,5 с «idle» вдвое быстрее: 1/30 с за кадр");
                 const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
                 check(pose && pose->parts.size() == 1 && pose->parts[0].id != "mouth", "рот «jump» ушёл с ним: «idle» двигает одну часть");
             }
-            if (in(3.35, 3.75)) {
-                check(!has, "в 3,3 с код вернул картинку к файлу: клипа нет");
+            if (in(3.15, 3.55)) {
+                check(!has, "в 3,1 с код вернул картинку к файлу: клипа нет");
                 sounds(2, 6, "вдвое быстрее «idle» прошёл 0, 0,5 и 1 с");
-                if (t >= 3.6 && !st->file_drawn) {
+                if (t >= 3.45 && !st->file_drawn) {
                     st->file_drawn = true;
                     drawn(el, {"Скакун.svg", {}}, "как в файле");
                 }
             }
-            if (in(3.85, 4.75)) check(has && c.clip == "idle" && c.going && (lap(1.0 / 60) || c.time == 0), "в 3,8 с снова «idle»");
+            if (in(3.65, 4.55)) check(has && c.clip == "idle" && c.going && (lap(1.0 / 60) || c.time == 0), "в 3,6 с снова «idle»");
             // The world paused for 21 frames: its time stands, the clip goes on.
-            if (t >= 3.9 && !st->paused) {
+            if (t >= 3.7 && !st->paused) {
                 st->paused = true;
                 st->paused_at = t;
                 st->paused_clip = c.time;
@@ -9320,7 +9323,7 @@ private:
                 st->last = c.time;
                 st->last_clip = c.clip;
             } else st->last_clip.clear();
-            if (t < 4.85) return false;
+            if (t < 4.65) return false;
             check(st->paused && st->pause_frames == 21 && st->faster && st->stopped_drawn && st->file_drawn, "все части пройдены");
             check(has && c.clip == "idle" && c.going, "после ошибки «idle» идёт дальше");
             sounds(3, 9, "снова «idle» прошёл 0, 0,5 и 1 с, на паузе тоже");

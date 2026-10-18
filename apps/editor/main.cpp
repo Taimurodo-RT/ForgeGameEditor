@@ -26601,9 +26601,9 @@ return {
     // there, «Уже отдано так». Then the game, with the mouse and the keys: in «Интерфейс» «Скакун» on the HUD from the
     // game's pictures and «Ёжик» from «Ресурсы» (a picture without clips); the own scheme of «Табличка» plays «idle» on
     // «Скакун» at the start and, on the message «приземлился», a clip on «Ёжик»; «Жук идёт за героем» with the author's
-    // Luau plays «jump», stops, plays «idle» twice as fast, takes the picture back to its file, plays «idle» again and
-    // asks for a clip there is not. «Играть со стартового»: the scene project with --edits ms_* compares each frame of
-    // the clips with the tab's.
+    // Luau plays «jump» (again while it goes, and once it ended), stops it in the air, plays «idle» twice as fast, takes
+    // the picture back to its file, plays «idle» again and asks for a clip there is not. «Играть со стартового»: the
+    // scene project with --edits ms_* compares each frame of the clips with the tab's.
     int mm_step_ = 0;
     std::vector<u8> mm_doc_, mm_svg_, mm_motion_, mm_other_;
     std::string mm_label_;
@@ -27136,11 +27136,15 @@ return {
     static constexpr const char* kMgSearch[3] = {"проиграть анимацию", "проиграть анимацию", "при сообщении"};
     // Its moments are away from the steps of «idle» (each 0.5 s of it): a frame sooner or later hears the same.
     static constexpr const char* kMgCode =
-        "-- «Скакун» на HUD: прыгает, стоит, бежит вдвое быстрее, снова как в файле, снова стоит и клип, которого нет.\n"
+        "-- «Скакун» на HUD: прыгает, прыгает снова и замирает в воздухе, бежит вдвое быстрее, снова как в файле, стоит и клип, которого нет.\n"
         "local ui = forge.ui\n"
         "forge.wait(1.2)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"jump\")\n"
-        "forge.wait(1)\n"
+        "forge.wait(0.1)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"jump\") -- идёт дальше, не с начала\n"
+        "forge.wait(0.5)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"jump\") -- кончился: с начала\n"
+        "forge.wait(0.2)\n"
         "ui.svg_stop(\"hud\", \"Скакун\")\n"
         "forge.wait(0.5)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"idle\", { speed = 2 })\n"
