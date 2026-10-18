@@ -91,6 +91,8 @@ public:
     // the thing's id, in order, the first kMarksKept of them. Their sounds are in sounds_played (RPG catches no emit).
     static constexpr forge::usize kMarksKept = 4096;
     const std::vector<std::string>& marks_fired() const { return marks_fired_; }
+    // The game's clock: the ticks played (things stand by it), never set back.
+    u64 clock_ticks() const { return clock_ticks_; }
     Outcome outcome() const { return outcome_; }
     u32 ends() const { return ends_; }
     // Problems of the game's data, and why the last begin() refused.

@@ -298,7 +298,8 @@ public:
         bool sound = false;
         bool sounded = false; // a sound whose file is there
         flecs::entity_t thing = 0;
-        forge::u64 tick = 0; // the level's tick it fired after
+        forge::u64 tick = 0;  // the level's tick it fired after
+        forge::f64 x = 0, y = 0; // where: the thing's place, the hero's feet
     };
     static constexpr forge::usize kMarksKept = 4096;
     const std::vector<FiredMark>& marks_fired() const { return marks_fired_; }

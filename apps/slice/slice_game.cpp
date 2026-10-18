@@ -2414,7 +2414,7 @@ void SliceGame::anim_marks(bool fire) {
 }
 
 void SliceGame::fire_mark(const objects::ClipEvent& e, flecs::entity_t thing, f64 x, f64 y, const Pictures::Picture& pic) {
-    FiredMark f{e.name, e.sound, false, thing, level_->sim->clock().tick()};
+    FiredMark f{e.name, e.sound, false, thing, level_->sim->clock().tick(), x, y};
     if (e.sound) {
         f.sounded = sounds_.play_mark(e.name, x, y);
         if (!f.sounded && marks_silent_.insert(e.name).second)

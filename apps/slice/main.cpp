@@ -356,6 +356,8 @@ public:
     bool project_has_edits = false;
     ProjectEdits project_edits;
     std::string project_edits_error;
+    // --hz N: the frames a second of the run (a screen of 144 Hz); 60 unless said.
+    u32 screen_hz = 60;
 
     bool frame(Shell& shell, int& failures) {
         if (steps_.empty()) build(shell);
@@ -1283,6 +1285,29 @@ private:
             return true;
         }});
     }
+    // The author's animation of a template in a state, with its marks (part 5а); false: they gave it none.
+    bool authored_clip(const std::string& of, const std::string& state, objects::Clip& out) const {
+        const ProjectEdits& e = project_edits;
+        usize from = 0;
+        for (usize i = 0; i < e.an_of.size() && i < e.an_state.size() && i < e.an_count.size() && i < e.an_fps.size() && i < e.an_loop.size(); ++i) {
+            const usize n = static_cast<usize>(std::max(0, e.an_count[i]));
+            if (e.an_of[i] == of && e.an_state[i] == state && from + n <= e.an_frames.size()) {
+                out = {};
+                for (usize k = from; k < from + n; ++k) out.frames.push_back(static_cast<u32>(e.an_frames[k]));
+                out.fps = static_cast<f32>(e.an_fps[i]);
+                out.loop = e.an_loop[i] != 0;
+                for (usize m = 0; m < e.mk_of.size() && m < e.mk_state.size() && m < e.mk_name.size() && m < e.mk_sound.size() &&
+                                  m < e.mk_frame.size() && m < e.mk_frames.size();
+                     ++m)
+                    if (e.mk_of[m] == of && e.mk_state[m] == state)
+                        out.events.push_back({e.mk_name[m], e.mk_sound[m] != 0, static_cast<u32>(std::max(0, e.mk_frame[m])),
+                                              static_cast<u32>(std::max(1, e.mk_frames[m]))});
+                return true;
+            }
+            from += n;
+        }
+        return false;
+    }
     // The tab «Анимация»: the author's animations as the game plays them. The game's own clips of the templates are
     // the author's, and the states the author left are the game's rule. The hero stands, walks and jumps; a copy of the
     // object that stands and one of the walker put beside it: each drawn with the frame its animation has at the tick
@@ -1311,22 +1336,7 @@ private:
             return false;
         };
         // The author's animation of a template in a state (false: they gave it none).
-        auto authored = [this](const std::string& of, const std::string& state, objects::Clip& out) {
-            const ProjectEdits& e = project_edits;
-            usize from = 0;
-            for (usize i = 0; i < e.an_of.size() && i < e.an_state.size() && i < e.an_count.size() && i < e.an_fps.size() && i < e.an_loop.size(); ++i) {
-                const usize n = static_cast<usize>(std::max(0, e.an_count[i]));
-                if (e.an_of[i] == of && e.an_state[i] == state && from + n <= e.an_frames.size()) {
-                    out = {};
-                    for (usize k = from; k < from + n; ++k) out.frames.push_back(static_cast<u32>(e.an_frames[k]));
-                    out.fps = static_cast<f32>(e.an_fps[i]);
-                    out.loop = e.an_loop[i] != 0;
-                    return true;
-                }
-                from += n;
-            }
-            return false;
-        };
+        auto authored = [this](const std::string& of, const std::string& state, objects::Clip& out) { return authored_clip(of, state, out); };
         // What a template plays in a pose by the author: their animation, else the game's rule for its frames.
         auto expected = [&g, authored](const std::string& of, Pose pose) {
             objects::Clip c;
@@ -1519,6 +1529,264 @@ private:
             return true;
         }});
     }
+    // Part 5а (docs/models/движение-модель.md, «Метки в игре»): the marks of the author's animations fire on the world's
+    // tick after which their frame is first shown. A new game shows a frame and goes on from the next; a copy of the
+    // object that stands plays by the level's clock: its sound at its place, its emit to its own scheme at the next tick
+    // (the game's variable mk_count_var counts them), «Идёт метка анимации» on just the frames of the window (the game's
+    // anim_going, and mk_going_var the scheme sets on «Каждый шаг»); the hero walks: the step sound on its frames, frame
+    // 0's on the tick it takes the pose; the world paused: none. Every frame is looked at by the ticks it shows, so the
+    // same at --hz 144, frames of no tick among them.
+    void build_mark_edits(Shell& s) {
+        SliceGame& g = g_;
+        constexpr u64 kMarked = 0x14a1a000000003ull; // the copy's level id
+        struct Watch {
+            u64 tick = 0;            // drawn by the frame looked at last
+            Pose pose = Pose::Stand; // the hero's then, and since when
+            u64 since = 0;
+            usize fired = 0;         // marks_fired() looked at
+            flecs::entity_t copy = 0;
+            bool copy_ran = false;   // a tick has run with it: its scheme too
+            f64 count = 0;           // mk_count_var then
+            u32 pending = 0;         // emits mk_mark fired at `tick`, for the scheme at the tick after
+            u32 played = 0;          // the game's sounds of marks before the watch
+            u32 hero = 0, copy_marks = 0, emits = 0, sounded = 0, silent = 0, going = 0, still = 0, frames = 0, idle = 0, paused = 0;
+            u32 bad = 0, walk_begun = 0;
+            u64 from = 0, walk_from = 0, stopped_at = 0, paused_at = 0;
+            std::string first_bad;
+        };
+        auto w = std::make_shared<Watch>();
+        const u32 slow = screen_hz / 60 + 1; // frames for a tick, at most
+        // The marks of the place that begins to show at tick u of the animation: places begin at 0 and every
+        // clip_ticks after; past the last place only going round.
+        auto marks_at = [](const objects::Clip& c, u64 u, std::vector<const objects::ClipEvent*>& out) {
+            const u64 per = objects::clip_ticks(c.fps), n = c.frames.size();
+            if (per == 0 || n == 0 || u % per != 0) return;
+            const u64 k = u / per;
+            if (!c.loop && k >= n) return;
+            for (const objects::ClipEvent& e : c.events)
+                if (e.frame == k % n) out.push_back(&e);
+        };
+        // Those of the places that begin after tick `was` (-1: the start, place 0 begins) and not after `now`.
+        auto between = [marks_at](const objects::Clip& c, i64 was, u64 now) {
+            std::vector<const objects::ClipEvent*> out;
+            for (i64 u = was + 1; u <= static_cast<i64>(now); ++u) marks_at(c, static_cast<u64>(u), out);
+            return out;
+        };
+        // The place shown at tick u is one of the window of a mark named so.
+        auto window_on = [](const objects::Clip& c, const std::string& name, u64 u) {
+            const u64 per = objects::clip_ticks(c.fps), n = c.frames.size();
+            if (per == 0 || n == 0) return false;
+            const u64 k = u / per, place = c.loop ? k % n : std::min(k, n - 1);
+            for (const objects::ClipEvent& e : c.events)
+                if (e.name == name && place >= e.frame && place < e.frame + e.frames) return true;
+            return false;
+        };
+        auto sound_there = [&g](const std::string& name) {
+            return !objects::mark_sound_file(g.library().sounds_folder(), name).empty();
+        };
+        auto start = [&s, &g, this, w]() {
+            *w = {};
+            w->tick = g.drawn_tick();
+            w->pose = g.hero_pose();
+            w->since = g.hero_pose_since();
+            w->fired = g.marks_fired().size();
+            w->count = var(s, project_edits.mk_count_var.c_str());
+            w->played = g.sounds().played_marks();
+        };
+        // The frame just drawn against the author's marks.
+        auto watch = [&s, &g, this, w, between, window_on, sound_there](const char* when) {
+            const ProjectEdits& e = project_edits;
+            const u64 now = g.drawn_tick();
+            const flecs::entity_t hero = g.hero_entity();
+            const std::vector<SliceGame::FiredMark>& fired = g.marks_fired();
+            auto bad = [&](const std::string& what) {
+                if (!w->bad++) w->first_bad = std::string(when) + ", тик " + std::to_string(now) + ": " + what;
+                if (w->bad <= 5) FORGE_WARN("метки: %s, тик %llu: %s", when, static_cast<unsigned long long>(now), what.c_str());
+            };
+            auto names = [](const std::vector<const objects::ClipEvent*>& l) {
+                std::string out;
+                for (const objects::ClipEvent* x : l) out += (out.empty() ? "" : ", ") + x->name;
+                return "[" + out + "]";
+            };
+            ++w->frames;
+            if (now < w->tick) bad("кадр показывает тик раньше прежнего");
+            const bool ticked = now > w->tick;
+            // What the frame should have fired: the hero's pose from its tick (a new one from its start), the copy's
+            // by the level's clock.
+            std::vector<const objects::ClipEvent*> want_hero, want_copy;
+            objects::Clip hero_clip, copy_clip;
+            const Pose pose = g.hero_pose();
+            const u64 since = g.hero_pose_since();
+            if (hero && authored_clip(e.an_hero, pose_id(pose), hero_clip)) {
+                const bool anew = pose != w->pose || since != w->since;
+                if (anew && pose == Pose::Walk) ++w->walk_begun;
+                want_hero = between(hero_clip, anew ? -1 : static_cast<i64>(w->tick - since), now - since);
+            }
+            const bool copy = w->copy && authored_clip(e.an_still, "idle", copy_clip);
+            if (copy) want_copy = between(copy_clip, static_cast<i64>(w->tick), now);
+            // What it fired: the hero's, the copy's, other copies' of templates with marks (emits counted).
+            std::vector<const SliceGame::FiredMark*> got_hero, got_copy;
+            u32 emitted = 0;
+            for (usize i = w->fired; i < fired.size(); ++i) {
+                const SliceGame::FiredMark& m = fired[i];
+                if (m.tick != now) bad("метка «" + m.name + "» на тике " + std::to_string(m.tick) + ", а кадр показывает " + std::to_string(now));
+                if (m.thing == hero) got_hero.push_back(&m);
+                else if (copy && m.thing == w->copy) got_copy.push_back(&m);
+                if (m.thing != hero && !m.sound && m.name == e.mk_mark) ++emitted;
+                if (m.sound && m.sounded != sound_there(m.name))
+                    bad("звук «" + m.name + "»: " + (m.sounded ? "прозвучал, а файла нет" : "не прозвучал, а файл есть"));
+                if (m.sound) ++(m.sounded ? w->sounded : w->silent);
+                else ++w->emits;
+            }
+            auto same = [&](const char* who, const std::vector<const SliceGame::FiredMark*>& got, const std::vector<const objects::ClipEvent*>& want,
+                            f64 x, f64 y) {
+                std::string g_names;
+                for (const SliceGame::FiredMark* m : got) g_names += (g_names.empty() ? "" : ", ") + m->name;
+                bool ok = got.size() == want.size();
+                for (usize i = 0; ok && i < got.size(); ++i)
+                    ok = got[i]->name == want[i]->name && got[i]->sound == want[i]->sound && std::fabs(got[i]->x - x) < 1e-6 &&
+                         std::fabs(got[i]->y - y) < 1e-6;
+                if (!ok) bad(std::string(who) + ": метки [" + g_names + "], а по анимации автора " + names(want));
+            };
+            same("герой", got_hero, want_hero, g.hero_x(), g.hero_y() + kHeroHalfH);
+            f64 cx = 0, cy = 0;
+            if (copy) {
+                g.position_of(w->copy, cx, cy);
+                same("копия", got_copy, want_copy, cx, cy);
+            }
+            w->hero += static_cast<u32>(got_hero.size());
+            w->copy_marks += static_cast<u32>(got_copy.size());
+            // Its scheme: «При метке анимации» at the tick after, «Идёт метка анимации» on the frame shown.
+            const f64 count = var(s, e.mk_count_var.c_str());
+            if (ticked) {
+                if (count - w->count != w->pending)
+                    bad(e.mk_count_var + " +" + std::to_string(count - w->count) + ", а меток «" + e.mk_mark + "» на тике раньше " +
+                        std::to_string(w->pending));
+                w->pending = emitted;
+            } else if (count != w->count || w->fired != fired.size()) {
+                bad("кадр без тика: " + e.mk_count_var + " +" + std::to_string(count - w->count) + ", меток " + std::to_string(fired.size() - w->fired));
+            }
+            if (copy && w->copy_ran) {
+                const bool on = window_on(copy_clip, e.mk_mark, now);
+                ++(on ? w->going : w->still);
+                if (g.anim_going(w->copy, e.mk_mark) != on) bad(std::string("«Идёт метка анимации» ") + (on ? "нет" : "да") + ", а кадр " + (on ? "в окне" : "не в окне"));
+                if ((var(s, e.mk_going_var.c_str()) != 0) != on)
+                    bad(e.mk_going_var + " = " + std::to_string(var(s, e.mk_going_var.c_str())) + ", а кадр " + (on ? "в окне" : "не в окне"));
+            }
+            if (copy && ticked) w->copy_ran = true;
+            // A frame of no tick: in the pause, or on a screen faster than the world's 60 ticks.
+            if (!ticked) ++(s.screen() == forge::game::Screen::Paused ? w->paused : w->idle);
+            w->tick = now;
+            w->pose = pose;
+            w->since = since;
+            w->fired = fired.size();
+            w->count = count;
+        };
+
+        steps_.push_back({"метки автора в анимациях игры", 3, [&g, this](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f < 1) return false;
+            const usize n = e.mk_of.size();
+            if (!check_ok(n > 0 && e.mk_state.size() == n && e.mk_name.size() == n && e.mk_sound.size() == n && e.mk_frame.size() == n &&
+                              e.mk_frames.size() == n && !e.mk_mark.empty() && !e.mk_count_var.empty() && !e.mk_going_var.empty(),
+                          "метки автора: по шаблону, состоянию, имени, виду, месту и окну; схема и её переменные"))
+                return true;
+            for (const std::string* of : {&e.an_hero, &e.an_still}) {
+                const objects::Template* t = g.library().find(*of);
+                const Pictures::Picture* pic = g.picture_of(*of);
+                if (!check_ok(t && pic, "шаблон «" + *of + "» с картинкой в игре")) continue;
+                bool marked = false;
+                for (Pose pose : poses_of(mover_of(g.library(), *t))) {
+                    objects::Clip mine;
+                    const std::vector<objects::ClipEvent> want = authored_clip(*of, pose_id(pose), mine) ? mine.events : std::vector<objects::ClipEvent>{};
+                    const std::vector<objects::ClipEvent>& have = pic->clips[static_cast<usize>(pose)].events;
+                    check(have == want, "«" + t->name + "», «" + pose_name(pose) + "»: меток в игре " + std::to_string(have.size()) + ", у автора " +
+                                            std::to_string(want.size()));
+                    marked = marked || !want.empty();
+                }
+                check(marked, "у «" + t->name + "» есть метки");
+            }
+            check(e.mk_scheme == e.an_still, "своя схема у «" + e.mk_scheme + "», той, что стоит");
+            return true;
+        }});
+        steps_.push_back({"новая игра: метки со следующего кадра; копия рядом с героем", 400 * slow, [&s, &g, this, w, start, watch, slow](u32 f) {
+            const ProjectEdits& e = project_edits;
+            if (f == 0) {
+                check(s.new_game(), "новая игра");
+                return false;
+            }
+            if (f == 1) {
+                start();
+                w->from = g.drawn_tick();
+                check(g.marks_count() == 0 && g.marks_fired().empty(), "новая игра: кадр, что показан, меток не дал");
+                check(g.spawn_copy(e.an_still, g.hero_x() - 3, g.hero_y() + kHeroHalfH, kMarked) != 0, "копия «" + e.an_still + "» рядом с героем");
+                w->copy = g.copy_with_id(kMarked);
+                return false;
+            }
+            watch("стоит");
+            // Two rounds of the copy's animation, the hero on the ground and standing.
+            objects::Clip c;
+            const u64 round = authored_clip(e.an_still, "idle", c) ? static_cast<u64>(objects::clip_ticks(c.fps)) * c.frames.size() : 0;
+            if (f < 30 * slow || g.drawn_tick() < w->from + 2 * round || !g.on_ground() || g.hero_pose() != Pose::Stand) return false;
+            check(round > 0 && w->copy_marks > 0 && w->hero == 0, "копия дала метки (" + std::to_string(w->copy_marks) + "), герой стоит без меток (" +
+                                                                       std::to_string(w->hero) + ")");
+            return true;
+        }});
+        steps_.push_back({"герой идёт: звук шага на кадрах ходьбы, кадр 0 сразу", 300 * slow, [&g, this, w, watch](u32 f) {
+            watch("идёт");
+            if (f == 0) w->walk_from = g.drawn_tick();
+            // Right, away from the copy, for 50 ticks; then it stops and stands.
+            Controls c;
+            c.right = g.drawn_tick() < w->walk_from + 50;
+            g.script(c);
+            if (c.right) return false;
+            if (!w->stopped_at) w->stopped_at = g.drawn_tick();
+            if (!g.on_ground() || g.hero_pose() != Pose::Stand || g.drawn_tick() < w->stopped_at + 12) return false;
+            objects::Clip walk;
+            check(authored_clip(project_edits.an_hero, "walk", walk) && w->walk_begun >= 1 && w->hero >= 4,
+                  "герой пошёл (" + std::to_string(w->walk_begun) + " раз) и дал меток шага " + std::to_string(w->hero));
+            return true;
+        }});
+        steps_.push_back({"пауза: мир стоит, меток нет; дальше как шли", 200 * slow, [&s, &g, this, w, watch, slow](u32 f) {
+            if (f == 0) {
+                watch("перед паузой");
+                s.pause(true);
+                return false;
+            }
+            watch(f <= 30 * slow ? "пауза" : "после паузы");
+            if (f == 1) {
+                w->paused_at = g.drawn_tick();
+                check(s.screen() == forge::game::Screen::Paused, "пауза открыта");
+            }
+            if (f <= 30 * slow) {
+                check(g.drawn_tick() == w->paused_at, "в паузе тик стоит");
+                if (f == 30 * slow) s.pause(false);
+                return false;
+            }
+            return g.drawn_tick() >= w->paused_at + 30;
+        }});
+        steps_.push_back({"метки: итог", 2, [&g, this, w, watch](u32 f) {
+            const ProjectEdits& e = project_edits;
+            watch("итог");
+            if (f < 1) return false;
+            check(w->bad == 0, "метки не по анимации автора " + std::to_string(w->bad) + " раз из " + std::to_string(w->frames) + " кадров, первый: " +
+                                   w->first_bad);
+            check(g.marks_count() == g.marks_fired().size(), "все метки записаны: " + std::to_string(g.marks_count()));
+            check(w->copy_marks >= 6 && w->emits >= 2 && w->sounded >= 2 && w->silent >= 1,
+                  "меток копии " + std::to_string(w->copy_marks) + ", emit " + std::to_string(w->emits) + ", звуков с файлом " + std::to_string(w->sounded) +
+                      ", без файла " + std::to_string(w->silent));
+            check(g.sounds().played_marks() - w->played == w->sounded, "игра сыграла звуков меток " + std::to_string(g.sounds().played_marks() - w->played) +
+                                                                          ", с файлом их было " + std::to_string(w->sounded));
+            check(w->going > 0 && w->still > 0, "«Идёт метка анимации» «" + e.mk_mark + "»: да на " + std::to_string(w->going) + " кадрах, нет на " +
+                                                    std::to_string(w->still));
+            check(screen_hz == 60 ? w->idle == 0 : w->idle > 0, "кадров без тика вне паузы " + std::to_string(w->idle) + " из " + std::to_string(w->frames) +
+                                                                    " при " + std::to_string(screen_hz) + " кадрах в секунду");
+            check(w->paused > 0, "кадров в паузе " + std::to_string(w->paused));
+            FORGE_INFO("метки при %u к/с: кадров %u (без тика %u, в паузе %u), у героя %u, у копии %u, emit %u, звуков %u и без файла %u; окно %u кадров, вне %u",
+                       screen_hz, w->frames, w->idle, w->paused, w->hero, w->copy_marks, w->emits, w->sounded, w->silent, w->going, w->still);
+            return true;
+        }});
+    }
     static bool one_of(SliceGame& g, const std::string& id, f64& x, f64& y) {
         const std::vector<flecs::entity_t> c = g.copies_of(id);
         return c.size() == 1 && g.position_of(c[0], x, y);
@@ -1617,7 +1885,9 @@ private:
         if (!project_edits.go_through.empty() || project_edits.go_continue) build_going(s);
         if (!project_edits.pl_enemy.empty()) build_platform_edits(s);
         if (!project_edits.tp_hero.empty()) build_template_edits(s);
-        if (!project_edits.an_of.empty()) build_anim_edits(s);
+        // The frames of the animations by the run's frames, at 60 a second; the marks by the world's ticks, at any.
+        if (!project_edits.an_of.empty() && screen_hz == 60) build_anim_edits(s);
+        if (!project_edits.mk_of.empty()) build_mark_edits(s);
         if (!project_edits.in_action.empty()) build_input_edits(s);
         if (!project_edits.vs_screen.empty()) build_vector_edits(s);
         if (project_edits.object.empty() && !project_edits.absent) return;
@@ -10523,6 +10793,7 @@ int run(int argc, char** argv);
 int slice::run(int argc, char** argv) {
     Options options;
     std::string scene = "village";
+    u32 hz = 60;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--stress") == 0) options.stress = true;
         else if (std::strcmp(argv[i], "--play") == 0) options.edit_links = true;
@@ -10546,6 +10817,7 @@ int slice::run(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) scene = argv[++i];
         else if (std::strcmp(argv[i], "--level") == 0 && i + 1 < argc) options.level_dir = utf8_path(argv[++i]);
         else if (std::strcmp(argv[i], "--fired") == 0 && i + 1 < argc) options.fired_file = utf8_path(argv[++i]);
+        else if (std::strcmp(argv[i], "--hz") == 0 && i + 1 < argc) hz = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         else if (std::strcmp(argv[i], "--at") == 0 && i + 1 < argc) {
             options.at = std::sscanf(argv[++i], "%lf,%lf", &options.at_x, &options.at_y) == 2;
         }
@@ -10754,6 +11026,7 @@ int slice::run(int argc, char** argv) {
     test.project_has_edits = has_edits;
     test.project_edits = edits;
     test.project_edits_error = edits_error;
+    test.screen_hz = hz >= 30 && hz <= 480 ? hz : 60;
     GameMain m;
     m.dev_ui_dir = FORGE_UI_DIR;
     m.dev_game_dir = SLICE_DATA_DIR;
