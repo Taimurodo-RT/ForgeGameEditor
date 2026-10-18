@@ -2080,7 +2080,9 @@ struct Options {
     // drawing shown, a drag in the middle refused, the swap's length typed, baked and given, by "pixel-motion-h", opened
     // again and played in the game by "pixel-motion-h-again"; part 4е, shapes drawn with the mouse: the tools, the pen,
     // the colour of new shapes, a shape's fields, «Привязка», baked, by "pixel-motion-i", opened again and played in the
-    // game by "pixel-motion-i-again"); "input" (the tab «Ввод»: the same, the keys of
+    // game by "pixel-motion-i-again"; part 4ж, the part's fields and the curve: fields typed by their three rules and
+    // refused, «кривая», the points of its graph dragged, a shared curve and a module's, baked and given, by
+    // "pixel-motion-j", opened again and played in the game by "pixel-motion-j-again"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2364,6 +2366,8 @@ public:
         if (part == "pixel-motion-h-again") return frame < 3 || pixel_motion_h_again_step();
         if (part == "pixel-motion-i") return frame < 3 || pixel_motion_i_step();
         if (part == "pixel-motion-i-again") return frame < 3 || pixel_motion_i_again_step();
+        if (part == "pixel-motion-j") return frame < 3 || pixel_motion_j_step();
+        if (part == "pixel-motion-j-again") return frame < 3 || pixel_motion_j_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19142,19 +19146,32 @@ return {
         const int drawn_again = pj_run({exe, "--project", project, "--self-test", "pixel-motion-i-again"}, sixteen);
         check(drawn_again == 0, "opened from another working folder: the files, the recording and every frame as pixel-motion-i left them; "
                                 "the game plays the flag by «Ларец»'s 10 frames (pixel-motion-i-again: exit " + std::to_string(drawn_again) + ")");
+        // Part 4ж: the part's fields and the curve, then to the game.
+        const fs::path seventeen = mo_root() / utf8_path("семнадцатая папка"), eighteen = mo_root() / utf8_path("восемнадцатая папка");
+        fs::create_directories(seventeen, ec);
+        fs::create_directories(eighteen, ec);
+        const int fielded = pj_run({exe, "--project", project, "--self-test", "pixel-motion-j"}, seventeen);
+        check(fielded == 0, "«Маятник»: the bob's fields in three sections, x, rot, fill and the rod's width typed by their three rules, own in a "
+                            "table, a word, a short colour, a negative width and the swap refused; «кривая» from the list, both points of its "
+                            "graph dragged, Esc, the shared curve and the module's; baked and given to «Флаг» (pixel-motion-j: exit " +
+                                std::to_string(fielded) + ")");
+        const int swung = pj_run({exe, "--project", project, "--self-test", "pixel-motion-j-again"}, eighteen);
+        check(swung == 0, "opened from another working folder: the files, the recording and every frame as pixel-motion-j left them; the "
+                          "game plays the flag by «Маятник»'s 10 frames (pixel-motion-j-again: exit " + std::to_string(swung) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
         const std::vector<std::string> ours = {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau", "Шкала", "шаг.wav", "Знак", "Маяк",
-                                               "Тележка", "Искры", "Ларец"};
+                                               "Тележка", "Искры", "Ларец", "Маятник", "кривые"};
         check(tg_naming(b, ours).empty() && !fs::exists(b / "game" / "sounds" / utf8_path("шаг.wav"), ec),
-              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк», «Тележка», «Искры», «Ларец» or the sounds in B: " + tg_naming(b, ours));
+              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк», «Тележка», «Искры», «Ларец», «Маятник», «кривые» or the sounds in B: " +
+                  tg_naming(b, ours));
         check(fs::exists(a / "game" / "sounds" / utf8_path("шаг.wav"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Шкала.png"), ec) &&
                   fs::exists(a / "game" / "pictures" / utf8_path("Знак.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маяк.png"), ec) &&
                   fs::exists(a / "game" / "pictures" / utf8_path("Тележка.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Искры.png"), ec) &&
-                  fs::exists(a / "game" / "pictures" / utf8_path("Ларец.png"), ec),
+                  fs::exists(a / "game" / "pictures" / utf8_path("Ларец.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маятник.png"), ec),
               "A: the sounds in its sounds/, «pictures/Шкала.png», «pictures/Знак.png», «pictures/Маяк.png», «pictures/Тележка.png», "
-              "«pictures/Искры.png» and «pictures/Ларец.png» given to the flag");
+              "«pictures/Искры.png», «pictures/Ларец.png» and «pictures/Маятник.png» given to the flag");
         const fs::path chars = a / "assets" / utf8_path("персонажи");
         check(fs::exists(a / "game" / "animations" / utf8_path("движения.luau"), ec) && fs::exists(chars / utf8_path("Ёжик.luau"), ec) &&
                   fs::exists(chars / utf8_path("Персонаж.luau"), ec) && fs::exists(chars / utf8_path("Персонаж.png"), ec) &&
@@ -20342,19 +20359,20 @@ return {
         case 16: {
             if (hold(shown("px-timing-0"), "the list of timings")) return true;
             std::string wrong;
-            for (usize i = 0; i <= vector::kTimingCount; ++i) {
+            for (usize i = 0; i <= vector::kTimingCount + 1; ++i) {
                 const std::string id = "px-timing-" + std::to_string(i);
                 Rml::Element* row = ed_.find_element(id.c_str());
-                const bool want = i < vector::kTimingCount;
+                const bool want = i <= vector::kTimingCount, bezier = i == vector::kTimingCount; // the words, then «кривая» (part 4ж)
                 if ((row != nullptr) != want) wrong += " " + id;
                 if (!row || !want) continue;
                 Rml::Element* img = row->GetNumChildren() > 1 ? row->GetChild(0) : nullptr;
                 const std::string word = row->GetNumChildren() > 1 ? row->GetChild(1)->GetInnerRML() : std::string();
-                if (!img || img->GetAttribute<Rml::String>("src", "") != "/memory/px_curve_" + std::to_string(i) ||
-                    word != vector::timing_word(static_cast<vector::Timing>(i)) || row->IsClassSet("selected") != (static_cast<int>(i) == timing_index("out_quad")))
+                if (!img || img->GetAttribute<Rml::String>("src", "") != (bezier ? std::string("/memory/px_curve_bezier") : "/memory/px_curve_" + std::to_string(i)) ||
+                    word != (bezier ? std::string("кривая") : vector::timing_word(static_cast<vector::Timing>(i))) ||
+                    row->IsClassSet("selected") != (static_cast<int>(i) == timing_index("out_quad")))
                     wrong += " " + id + " «" + word + "»";
             }
-            check(wrong.empty(), std::to_string(vector::kTimingCount) + " timings, each with its curve, «out_quad» lit:" + wrong);
+            check(wrong.empty(), std::to_string(vector::kTimingCount) + " timings and «кривая», each with its curve, «out_quad» lit:" + wrong);
             check(px_click("px-timing-" + std::to_string(timing_index("in_out_cubic"))) && !px().timings_open(), "a click on «in_out_cubic»: the list shut");
             edited(mb_sub(mb_code_, "\"out_quad\"", "\"in_out_cubic\""), 15, "«Ёжик»: body · y, in_out_cubic", "the timing");
             break;
@@ -20433,8 +20451,8 @@ return {
             break;
         case 25:
             if (hold(rec && px().rig().part("torso") >= 0 && mb_value("y") == "-2", "the frame of the new code")) return true;
-            check(mb_stands("torso", torso_at) && mb_value("x") == "2" && element_text("px-pv-y").find("-2") != std::string::npos,
-                  "the torso stands where it was let go; «Часть «torso»»: x 2, y −2");
+            check(mb_stands("torso", torso_at) && mb_value("x") == "2" && ue_field("px-pf-y") == "-2",
+                  "the torso stands where it was let go; «Часть «torso»»: x 2, the field y −2");
             check(px_click("px-frame-1") && px().frame() == 1 && near(px().time(), 0.1), "frame 2: 0,1 s, no transition of the head");
             break;
         case 26: {
@@ -21920,7 +21938,10 @@ return {
             break;
         }
         case 5: {
-            if (hold(shown("px-pv-stroke"), "the head's values")) return true;
+            if (hold(ue_field("px-pf-stroke") == "#ff0000", "the head's fields")) return true;
+            check(element_text("px-pf-now-stroke") == "сейчас #ff0000 · 0,5" && element_text("px-pf-now-stroke_width") == "сейчас 4 · 0,5",
+                  "the head's stroke going to #ff0000 and its width to 4, half way in the frame: «" + element_text("px-pf-now-stroke") + "», «" +
+                      element_text("px-pf-now-stroke_width") + "»");
             check(mp_values() == "x 0; y 0; rot 0; scale 1; sx 1; sy 1; skew_y 0; opacity 1; fill свой; stroke #ff0000 · 0,5; stroke_width 4 · 0,5; morph нет",
                   "frame 2: the head's stroke half way to #ff0000, its width half way to 4, its skew_y; no rows of what it does not change: " + mp_values());
             check(views_are(1), "both views of frame 2 as the library draws and bakes the files");
@@ -21928,7 +21949,8 @@ return {
             break;
         }
         case 6: {
-            if (hold(shown("px-pv-skew_x"), "the arm's values")) return true;
+            if (hold(ue_field("px-pf-skew_x") == "40", "the arm's fields")) return true;
+            check(element_text("px-pf-now-skew_x") == "сейчас 20", "the arm's skew_x going to 40, 20 in the frame: «" + element_text("px-pf-now-skew_x") + "»");
             check(mp_values() == "x 0; y 0; rot 0; scale 1; sx 1; sy 1; skew_x 20; opacity 1; fill свой; morph нет; порядок как в рисунке",
                   "frame 2: skew_x 20, the order as drawn: " + mp_values());
             check(at_frame(3), "frame 4");
@@ -24732,6 +24754,691 @@ return {
         default: break;
         }
         ++mi_step_;
+        return true;
+    }
+
+    // Part 4ж (pixel-motion-j, then pixel-motion-j-again): «Маятник», written by another program with the game's module
+    // «animations/кривые.luau»: its clip «Покой» ten frames four a second, the bob moving by a call of one property
+    // (at(…), not waited for) and a table, the rod and the base by one bezier(…) in a variable, the stand by the
+    // module's curve, a swap to «night» last. The bob's fields in frame 2: three sections, x and y going («→», their
+    // ends, «сейчас» the frame), rot not; x typed (the end of its call), rot and fill (fields added to the table going),
+    // fill emptied (own in a table refused), a word for a number, a short colour and a negative width refused, «10,0»
+    // for 10 nothing; the rod's width (a line at(0.25, …) at the top of the clip), then emptied (nil in that line); each
+    // a step with its label, Ctrl+Z and Ctrl+Y byte for byte. Frame 5: the bob's done, the rod's rot at its end as
+    // shown; frame 10, in the swap: a field refused. The bob's y block: «кривая» from the list (the word replaced by
+    // bezier(0.25, 0.1, 0.25, 1)), the graph's points dragged (nothing written while held; let go, the numbers of the
+    // call), Esc while held back, nothing written; the bob in frame 2 as the formula of cubic-bezier; the rod's: «кривая
+    // общая: 2 блока», a point moves the variable's call and both blocks; the stand's: the module's, no points, said why,
+    // «кривая» from the list nothing. Both views of frames 1, 5 and 10 as the library has the files; «Запечь»; given to
+    // «Флаг», undone and done again. pixel-motion-j-again, from another working folder: the files, the recording and
+    // both views of every frame the same; the game plays the flag by «Маятник»'s ten frames.
+    int mj_step_ = 0;
+    std::string mj_code_, mj_label_, mj_seen_;
+    std::vector<u8> mj_doc_, mj_flag0_; // mj_doc_: the «.pixel.json» as written, the same through the edits
+    f32 mj_x_ = 0, mj_y_ = 0;           // where a point of the graph is held
+    std::string mj_back_code_, mj_back_label_; // the code and its step before point 2 is put by point 1
+    static constexpr const char* kMjPendulum = R"lua(-- «Маятник»: поля части и кривая части 4ж в «Покое», 10 кадров по 4 в секунду.
+local m = require("кривые")
+local soft = bezier(0.42, 0, 0.58, 1)
+
+return {
+  draw = function(p, rng)
+    canvas(64, 64)
+    rect("stand", { x = 30, y = 2, w = 4, h = 8, fill = "#606060" })
+    rect("rod", { x = 31, y = 8, w = 2, h = 30, fill = "#909090" })
+    circle("bob", { x = 32, y = 44, r = 8, fill = "#c04040", stroke = "#401010", stroke_width = 2 })
+    rect("base", { x = 8, y = 56, w = 48, h = 6, fill = "#705030" })
+  end,
+  drawings = {
+    night = function(p, rng)
+      canvas(64, 64)
+      rect("stand", { x = 30, y = 2, w = 4, h = 8, fill = "#404060" })
+      rect("rod", { x = 31, y = 8, w = 2, h = 30, fill = "#606080" })
+      circle("bob", { x = 32, y = 44, r = 8, fill = "#4040c0" })
+      rect("base", { x = 8, y = 56, w = 48, h = 6, fill = "#302850" })
+    end,
+  },
+  clips = {
+    idle = function(p)
+      local bob = part("bob")
+      at(0, bob.x(6, 0.5, "linear"))
+      part("bob"):to({ y = -2 }, 0.5, "linear")
+      part("rod"):to({ rot = 8 }, 0.5, soft)
+      part("base").y(-4, 0.5, soft)
+      part("stand").y(4, 0.5, m.snap)
+      swap("night", 0.5)
+    end,
+  },
+}
+)lua";
+    static constexpr const char* kMjCurves = R"lua(-- Общие кривые игры (часть 4ж): одна на всех персонажей, правится здесь.
+return { snap = bezier(0.5, 0, 0.5, 1) }
+)lua";
+
+    // In an editor for «Движение А» after pixel-motion-i-again (--self-test pixel-motion-j).
+    bool pixel_motion_j_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string doc = "персонажи/Маятник.pixel.json", lua = "персонажи/Маятник.luau", png = "персонажи/Маятник.png";
+        const fs::path module = a / "game" / "animations" / utf8_path("кривые.luau");
+        const pixel::Recording* rec = px().recording();
+        objects::Library& lib = an().library();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto put = [&](const fs::path& f, std::string_view text) { return write_file_atomic(f, {reinterpret_cast<const u8*>(text.data()), text.size()}); };
+        auto put_bytes = [&](const fs::path& f, const std::vector<u8>& b) { return write_file_atomic(f, b); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        auto files_are = [&](const std::string& code) { return file(lua) == bytes(code) && file(doc) == mj_doc_; };
+        auto unchanged = [&](const std::string& what) {
+            return check(files_are(mj_code_) && step_label() == mj_label_, what + ": nothing written, no step: " + step_label());
+        };
+        // One step: the script as it should leave it, the «.pixel.json» the same, its label; Ctrl+Z and Ctrl+Y byte for byte.
+        auto edited = [&](const std::string& code, const std::string& label, const std::string& what) {
+            const std::vector<u8> now = file(lua);
+            auto both = [&] { return file(lua) == bytes(code) && file(doc) == mj_doc_; };
+            const bool done = check(both() && step_label() == label,
+                                    what + ": the script byte for byte, the «.pixel.json» the same, one step: " + step_label() +
+                                        (now == bytes(code) ? std::string() : "\n" + std::string(now.begin(), now.end()) + "\nwanted\n" + code));
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mj_code_) && step_label() == mj_label_, "Ctrl+Z: " + what + " undone, both files byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(both() && step_label() == label, "Ctrl+Y: " + what + " again, byte for byte");
+            if (done) mj_code_ = code, mj_label_ = label;
+        };
+        auto doc_of = [&](u32 frames) {
+            pixel::PixelDoc x;
+            x.script = "Маятник.luau";
+            x.frame_w = x.frame_h = 64;
+            x.clips = {{"idle", frames, 4, true}};
+            return bytes(pixel::write_pixel_doc(x));
+        };
+        auto block_of = [&](const std::string& part_id, pixel::Prop prop) -> i32 {
+            for (usize i = 0; rec && i < rec->blocks.size(); ++i)
+                if (rec->blocks[i].part < rec->parts.size() && rec->parts[rec->blocks[i].part] == part_id && rec->blocks[i].prop == prop)
+                    return static_cast<i32>(i);
+            return -1;
+        };
+        auto id_of = [](i32 block) { return "px-block-" + std::to_string(block); };
+        auto near = [](f64 x, f64 y) { return std::fabs(x - y) < 1e-6; };
+        auto at_frame = [&](u32 k) { return px_click("px-frame-" + std::to_string(k)) && px().frame() == k; };
+        auto views_are = [&](u32 k) {
+            assets::CookedTexture baked;
+            std::string why;
+            return mo_ref("idle", k, baked, why) && px_same(px().pixel_frame(), baked) && mc_vector_is(k, 0, 0, 0);
+        };
+        // A number as the tab writes it: to thousandths, a comma.
+        auto words = [](f64 v) {
+            char buf[32];
+            std::snprintf(buf, sizeof buf, "%g", std::round(v * 1000) / 1000);
+            std::string s = buf;
+            std::replace(s.begin(), s.end(), '.', ',');
+            return s;
+        };
+        // A field of the selected part as shown: its name (with «→» while its transition goes), its text, its «сейчас».
+        auto field_words = [&](const char* name) {
+            ed_.context()->Update();
+            const std::string n(name);
+            return element_text(("px-pf-label-" + n).c_str()) + " [" + ue_field(("px-pf-" + n).c_str()) + "] " + element_text(("px-pf-now-" + n).c_str());
+        };
+        auto field_is = [&](const char* name, const std::string& label, const std::string& value, const std::string& now) {
+            return field_words(name) == label + " [" + value + "] " + now;
+        };
+        auto curve_is = [&](const vector::Bezier& c) {
+            const vector::Bezier* e = px().ease_curve();
+            return e && *e == c;
+        };
+        auto curve_of = [&](i32 b) {
+            const i32 z = b >= 0 && rec ? rec->blocks[static_cast<usize>(b)].bezier : -1;
+            return z >= 0 ? rec->beziers[static_cast<usize>(z)].curve : vector::Bezier{-1, -1, -1, -1};
+        };
+        // The graph in sight (the side panel scrolls).
+        auto graph_seen = [&] {
+            Rml::Element* g = ed_.find_element("px-ease-graph");
+            if (!g || !g->IsVisible(true)) return false;
+            g->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
+            ed_.context()->Update();
+            return true;
+        };
+        // A point of the graph pressed (dx; dy logical px beside its middle) and moved in steps by the way to (x, y) of
+        // the graph, held there.
+        auto hold_point = [&](int handle, f64 x, f64 y, f32 dx = 0, f32 dy = 0) {
+            f32 x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+            if (!graph_seen() || !px().ease_handle(handle, x0, y0) || !px().ease_screen(x, y, x1, y1)) return false;
+            const f32 k = ed_.ui().dp_ratio();
+            x0 += dx * k, y0 += dy * k, x1 += dx * k, y1 += dy * k;
+            mouse(SDL_EVENT_MOUSE_MOTION, x0, y0);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0);
+            for (int i = 1; i <= 4; ++i)
+                mouse(SDL_EVENT_MOUSE_MOTION, x0 + (x1 - x0) * static_cast<f32>(i) / 4, y0 + (y1 - y0) * static_cast<f32>(i) / 4);
+            mj_x_ = x1, mj_y_ = y1;
+            return px().ease_held() == handle;
+        };
+        // The graph's picture: the colour at its point (x, y); how many texels have the arms' colour.
+        static constexpr u8 kCurveRgba[4] = {40, 120, 255, 255}, kArmRgba[4] = {150, 150, 160, 255}, kWhiteRgba[4] = {255, 255, 255, 255};
+        auto graph_is = [&](f64 x, f64 y, const u8 (&c)[4]) {
+            u32 w = 0, h = 0;
+            const std::vector<u8>& g = px().ease_pixels(w, h);
+            i64 tx = 0, ty = 0;
+            if (!px().ease_texel(x, y, tx, ty) || tx < 0 || ty < 0 || tx >= w || ty >= h || g.size() != static_cast<usize>(w) * h * 4) return false;
+            return std::equal(c, c + 4, &g[(static_cast<usize>(ty) * w + static_cast<usize>(tx)) * 4]);
+        };
+        auto arms = [&] {
+            u32 w = 0, h = 0;
+            const std::vector<u8>& g = px().ease_pixels(w, h);
+            usize n = 0;
+            for (usize i = 0; i + 4 <= g.size(); i += 4) n += std::equal(kArmRgba, kArmRgba + 4, &g[i]);
+            return n;
+        };
+        // Typed into a field and the field left, no Enter.
+        auto ue_leave = [&](const char* id, const std::string& text) {
+            auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
+            if (!e) return false;
+            e->Focus();
+            e->SetValue(text);
+            const bool typed = e->GetValue() == text;
+            e->Blur();
+            return typed;
+        };
+        auto let_go = [&] { mouse(SDL_EVENT_MOUSE_BUTTON_UP, mj_x_, mj_y_); };
+        const std::string curve_row = "px-timing-" + std::to_string(vector::kTimingCount);
+        // A row of the list of timings: its picture and its word.
+        auto timing_row = [&](const std::string& id) {
+            Rml::Element* row = ed_.find_element(id.c_str());
+            if (!row || row->GetNumChildren() < 2) return std::string("?");
+            return row->GetChild(0)->GetAttribute<Rml::String>("src", "") + " " + row->GetChild(1)->GetInnerRML();
+        };
+        switch (mj_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            mj_code_ = kMjPendulum;
+            mj_doc_ = doc_of(10);
+            std::error_code ec;
+            check(!fs::exists(as().abs(lua), ec) && !fs::exists(module, ec), "no «Маятник» and no «кривые» in the game yet");
+            check(put(module, kMjCurves) && put(as().abs(lua), kMjPendulum) && put_bytes(as().abs(doc), mj_doc_),
+                  "«Маятник.luau», «Маятник.pixel.json» and the game's «animations/кривые.luau» written by another program");
+            as().refresh();
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(idle && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Маятник» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Маятник»");
+            break;
+        case 3: {
+            if (hold(px().code() == kMjPendulum && px().clip() == "idle" && rec && !px().stale() && shown("px-block-0") && shown("px-part-bob"),
+                     "«Маятник», its code and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            mj_label_ = step_label();
+            check(files_are(kMjPendulum), "opened: nothing written");
+            check(near(rec->length, 2.5) && px().whole().frames == 10 && rec->blocks.size() == 6 && px().console().empty(),
+                  "2,5 s, 6 blocks, 10 frames, nothing in the console: " + mp_recorded());
+            check(px_click("px-part-bob") && px().part() == "bob", "a click on «bob» in the tree");
+            check(at_frame(1) && near(px().time(), 0.25), "frame 2: 0,25 s");
+            break;
+        }
+        // The bob's fields: three sections; x and y going, rot not; x typed: the end of its call.
+        case 4: {
+            if (wait(2)) return true;
+            ed_.context()->Update();
+            std::string heads;
+            for (const char* f : {"x", "y", "rot", "opacity", "stroke", "stroke_width", "fill"})
+                if (shown(std::string("px-pf-section-") + f)) heads += std::string(heads.empty() ? "" : "; ") + f + ": " + element_text((std::string("px-pf-section-") + f).c_str());
+            check(heads == "x: Трансформация; stroke: Контур; fill: Заливка", "three sections, over x, stroke and fill: " + heads);
+            std::string rows;
+            for (const PixelEditor::PartField& f : px().part_fields()) rows += (rows.empty() ? "" : " ") + f.name;
+            check(rows == "x y rot scale sx sy skew_x skew_y opacity stroke stroke_width fill", "the fields in order: " + rows);
+            check(field_is("x", "x →", "6", "сейчас 3") && field_is("y", "y →", "-2", "сейчас -1"),
+                  "x and y going: their ends, «сейчас» the frame: " + field_words("x") + "; " + field_words("y"));
+            check(field_is("rot", "rot", "0", "") && field_is("fill", "fill", "", "") && field_is("stroke_width", "stroke_width", "", ""),
+                  "rot, fill and the width as the recording has them, the frame the same: " + field_words("rot") + "; " + field_words("fill") + "; " +
+                      field_words("stroke_width"));
+            check(!ed_.find_element("px-pv-x") && !ed_.find_element("px-pv-fill") && mb_value("x") == "3" && mb_value("fill") == "свой",
+                  "no row of a field's property under them; the part's values the frame's: " + mp_values());
+            check(ue_type("px-pf-x", "10"), "10 typed into x");
+            edited(mb_sub(mj_code_, "bob.x(6, 0.5, \"linear\")", "bob.x(10, 0.5, \"linear\")"), "«Маятник»: bob · x = 10", "x: the end of its call");
+            break;
+        }
+        // rot typed: a field added to the table going.
+        case 5:
+            if (hold(rec && !px().stale() && ue_field("px-pf-x") == "10", "x of the new recording")) return true;
+            check(field_is("x", "x →", "10", "сейчас 5"), "x 10, the frame 5: " + field_words("x"));
+            check(ue_leave("px-pf-rot", "15"), "15 typed into rot, the field left without Enter");
+            edited(mb_sub(mj_code_, "{ y = -2 }", "{ y = -2, rot = 15 }"), "«Маятник»: bob · rot = 15", "rot: a field added to y's table going");
+            break;
+        // fill typed: a colour added to that table.
+        case 6:
+            if (hold(rec && !px().stale() && ue_field("px-pf-rot") == "15", "rot of the new recording")) return true;
+            check(field_is("rot", "rot →", "15", "сейчас 7,5"), "rot going to 15, the frame 7,5: " + field_words("rot"));
+            check(ue_type("px-pf-fill", "#20a040"), "#20a040 typed into fill");
+            edited(mb_sub(mj_code_, "{ y = -2, rot = 15 }", "{ y = -2, rot = 15, fill = \"#20a040\" }"), "«Маятник»: bob · fill = #20a040",
+                   "fill: a colour added to the table");
+            break;
+        // Refused: own in a table, a word, a short colour, a negative width; the same number writes nothing.
+        case 7: {
+            if (hold(rec && !px().stale() && ue_field("px-pf-fill") == "#20a040", "fill of the new recording")) return true;
+            check(field_is("fill", "fill →", "#20a040", "сейчас #20a040 · 0,5"), "fill going to #20a040, half way in the frame: " + field_words("fill"));
+            const std::string own = "«bob · fill» не записать: своё в таблице { … } не пишется: nil в таблице — нет поля; своё — отдельным вызовом "
+                                    "part(\"bob\").fill(nil, …)";
+            check(ue_type("px-pf-fill", "") && px().note() == own, "fill emptied: «" + px().note() + "»");
+            unchanged("own in a table");
+            check(ue_type("px-pf-x", "abc") && px().note() == "Значение «bob · x» — число", "a word for x: «" + px().note() + "»");
+            unchanged("a word for a number");
+            check(ue_type("px-pf-stroke", "#12") && px().note() == "Цвет «bob · stroke» — #rrggbb или #rrggbbaa, пусто — свой цвет части",
+                  "#12 for the stroke: «" + px().note() + "»");
+            unchanged("a short colour");
+            check(ue_type("px-pf-stroke_width", "-1") && px().note() == "Толщина «bob · stroke_width» — число не меньше 0, пусто — своя толщина фигур",
+                  "-1 for the width: «" + px().note() + "»");
+            unchanged("a negative width");
+            check(ue_type("px-pf-x", "10,0") && px().note().empty(), "«10,0» for 10: nothing said: «" + px().note() + "»");
+            unchanged("the same number");
+            check(ue_type("px-pf-stroke_width", " ") && px().note().empty(), "a space for the width, its own as it shows: nothing said: «" + px().note() + "»");
+            unchanged("the width's own as it shows");
+            check(field_is("x", "x →", "10", "сейчас 5") && field_is("fill", "fill →", "#20a040", "сейчас #20a040 · 0,5") &&
+                      field_is("stroke", "stroke", "", "") && field_is("stroke_width", "stroke_width", "", ""),
+                  "the fields the code's again: " + field_words("x") + "; " + field_words("fill") + "; " + field_words("stroke") + "; " +
+                      field_words("stroke_width"));
+            check(px_click("px-part-rod") && px().part() == "rod", "a click on «rod»");
+            break;
+        }
+        // The rod's width: nothing of the rod goes, a line at(…) at the top of the clip.
+        case 8:
+            if (hold(field_is("rot", "rot", "0", ""), "the rod's fields")) return true;
+            check(ue_type("px-pf-stroke_width", "3"), "3 typed into the rod's width");
+            edited(mb_sub(mj_code_, "      local bob", "      at(0.25, part(\"rod\").stroke_width(3, 0))\n      local bob"), "«Маятник»: rod · stroke_width = 3",
+                   "the rod's width: a line at(0.25, …) at the top of the clip, its length 0");
+            break;
+        // Emptied: its own width, nil in that line.
+        case 9:
+            if (hold(rec && !px().stale() && ue_field("px-pf-stroke_width") == "3", "the width of the new recording")) return true;
+            check(field_is("stroke_width", "stroke_width →", "3", ""), "the width 3 from this frame, as shown: " + field_words("stroke_width"));
+            check(ue_type("px-pf-stroke_width", ""), "the width emptied");
+            edited(mb_sub(mj_code_, "part(\"rod\").stroke_width(3, 0)", "part(\"rod\").stroke_width(nil, 0)"), "«Маятник»: rod · stroke_width = своё",
+                   "its own width: nil in that line");
+            break;
+        case 10: {
+            if (hold(rec && !px().stale() && ue_field("px-pf-stroke_width").empty(), "the width of the new recording")) return true;
+            check(field_is("stroke_width", "stroke_width →", "", ""), "its own width from this frame: " + field_words("stroke_width"));
+            // rot's field takes the keyboard in frame 2 (the rod's rot not going: 0); the playhead goes to frame 4.
+            Rml::Element* rot = ed_.find_element("px-pf-rot");
+            check(rot && field_is("rot", "rot", "0", ""), "the rod's rot in frame 2: " + field_words("rot"));
+            if (rot) rot->Focus();
+            px().set_frame(3);
+            break;
+        }
+        // Its text kept while it has the keyboard; left as it showed: nothing written, the code's value shown.
+        case 11: {
+            if (wait(2)) return true;
+            check(near(px().time(), 0.75) && field_is("rot", "rot →", "0", "сейчас 4"),
+                  "frame 4, the field with the keyboard: its text kept, the label and «сейчас» the frame's: " + field_words("rot"));
+            if (Rml::Element* rot = ed_.find_element("px-pf-rot")) rot->Blur();
+            check(field_is("rot", "rot →", "8", "сейчас 4"), "left as it showed: the end of the rod's transition shown: " + field_words("rot"));
+            unchanged("a field left as it showed");
+            check(at_frame(4) && near(px().time(), 1), "frame 5: 1 s");
+            break;
+        }
+        // Frame 5: the rod's rot at the end of its transition, as shown; the bob's done.
+        case 12:
+            if (wait(2)) return true;
+            check(field_is("rot", "rot →", "8", ""), "the rod's rot at its end, the frame the same: " + field_words("rot"));
+            check(px_click("px-part-bob") && px().part() == "bob", "«bob»");
+            break;
+        case 13:
+            if (hold(field_is("x", "x", "10", ""), "the bob's fields in frame 5")) return true;
+            check(field_is("y", "y", "-2", "") && field_is("rot", "rot", "15", "") && field_is("fill", "fill", "#20a040", ""),
+                  "nothing of the bob going: the recording's values, the frame the same: " + field_words("y") + "; " + field_words("rot") + "; " +
+                      field_words("fill"));
+            check(at_frame(9) && near(px().time(), 2.25), "frame 10: 2,25 s");
+            break;
+        // In the swap: refused.
+        case 14:
+            if (wait(2)) return true;
+            check(px().rig().swapping(), "frame 10 in the swap to «night»");
+            check(ue_type("px-pf-y", "1") && px().note() == "посреди смены рисунка поля части не пишутся: выберите кадр до или после",
+                  "y typed in the swap: «" + px().note() + "»");
+            unchanged("a field in the middle of a swap");
+            check(at_frame(1), "frame 2");
+            break;
+        // The bob's y: linear, its graph: the curve, no arms, no points.
+        case 15: {
+            if (wait(2)) return true;
+            const i32 y = block_of("bob", pixel::Prop::Y);
+            check(y >= 0 && px_click(id_of(y)) && px().block() == y, "a click on the bob's «y → -2»");
+            break;
+        }
+        case 16: {
+            const i32 y = block_of("bob", pixel::Prop::Y);
+            if (hold(px().block() == y && shown("px-timing") && shown("px-ease-graph"), "the inspector and the graph of «y → -2»")) return true;
+            if (wait(2)) return true;
+            f32 hx = 0, hy = 0;
+            check(!px().ease_curve() && !px().ease_handle(1, hx, hy) && element_text("px-timing").find("linear") != std::string::npos &&
+                      !shown("px-ease-why") && !shown("px-ease-share"),
+                  "linear: its graph, no points, nothing said under it");
+            check(graph_is(0.5, 0.5, kCurveRgba) && graph_is(0.25, 0.25, kCurveRgba) && arms() == 0, "the graph: linear's line, no arms");
+            check(px_click("px-timing") && px().timings_open(), "«как» opens the list");
+            break;
+        }
+        // «кривая» from the list: bezier(0.25, 0.1, 0.25, 1) in place of the word.
+        case 17:
+            if (hold(shown(curve_row), "the list, «кривая» last")) return true;
+            check(timing_row(curve_row) == "/memory/px_curve_bezier кривая" && !pj_class(curve_row.c_str(), "selected"),
+                  "«кривая» after the words, its curve, not selected: " + timing_row(curve_row));
+            check(px_click(curve_row), "a click on «кривая»");
+            edited(mb_sub(mj_code_, "fill = \"#20a040\" }, 0.5, \"linear\")", "fill = \"#20a040\" }, 0.5, bezier(0.25, 0.1, 0.25, 1))"),
+                   "«Маятник»: bob · y, кривая 0,25; 0,1; 0,25; 1", "«кривая»: bezier(0.25, 0.1, 0.25, 1) in place of the word");
+            break;
+        // Its graph: the curve, the arms, the points hollow; the call's table gives it to y, rot and fill. Point 1 pressed
+        // and dragged: the graph follows, nothing written.
+        case 18: {
+            const vector::Bezier c{0.25, 0.1, 0.25, 1};
+            if (hold(rec && !px().stale() && curve_is(c) && shown("px-ease-graph"), "the graph of bezier(0.25, 0.1, 0.25, 1)")) return true;
+            if (wait(2)) return true;
+            check(element_text("px-timing").find("кривая") != std::string::npos, "«как»: «кривая»");
+            check(px().ease_share() == "кривая общая: 3 блока" && element_text("px-ease-share") == "кривая общая: 3 блока" && !shown("px-ease-why"),
+                  "the curve of a call of a table: y, rot and fill, said under the graph: «" + element_text("px-ease-share") + "»");
+            check(graph_is(0.5, vector::bezier(c, 0.5), kCurveRgba) && arms() > 0 && graph_is(0.25, 0.1, kWhiteRgba) && graph_is(0.25, 1, kWhiteRgba),
+                  "the graph: the curve, the arms, both points hollow");
+            check(mb_value("y") == words(-2 * vector::bezier(c, 0.5)), "frame 2: y as CSS's ease at half the time: " + mb_value("y"));
+            check(hold_point(1, 0.3, 0), "point 1 pressed and dragged to 0,3; 0");
+            check(curve_is({0.3, 0, 0.25, 1}), "held: the curve follows the mouse");
+            unchanged("a point held");
+            break;
+        }
+        // Held, drawn again: the point full, the curve the mouse's. Let go: its two numbers.
+        case 19:
+            if (wait(2)) return true;
+            check(px().ease_held() == 1 && graph_is(0.3, 0, kCurveRgba) && graph_is(0.25, 1, kWhiteRgba) &&
+                      graph_is(0.5, vector::bezier({0.3, 0, 0.25, 1}, 0.5), kCurveRgba),
+                  "held: the point full, the other hollow, the curve where the mouse has it");
+            unchanged("a point held a while");
+            let_go();
+            edited(mb_sub(mj_code_, "bezier(0.25, 0.1, 0.25, 1)", "bezier(0.3, 0, 0.25, 1)"), "«Маятник»: bob · y, кривая 0,3; 0; 0,25; 1",
+                   "point 1 let go: its two numbers");
+            break;
+        // Point 2 pressed beside its middle: it goes by the mouse's way, not to the mouse; x2 alone (y2 the same).
+        case 20:
+            if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.25, 1}), "the curve of the new recording")) return true;
+            check(hold_point(2, 0.2, 1, 3, 2), "point 2 pressed 3; 2 beside its middle and dragged by the way to 0,2; 1");
+            let_go();
+            edited(mb_sub(mj_code_, "bezier(0.3, 0, 0.25, 1)", "bezier(0.3, 0, 0.2, 1)"), "«Маятник»: bob · y, кривая 0,3; 0; 0,2; 1",
+                   "point 2 let go: x2 alone, y2 the same");
+            break;
+        // Point 2 by point 1: a press within reach of both takes the nearer.
+        case 21:
+            if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.2, 1}), "the curve of the new recording")) return true;
+            mj_back_code_ = mj_code_, mj_back_label_ = mj_label_;
+            check(hold_point(2, 0.3, 0.05), "point 2 dragged to 0,3; 0,05, by point 1");
+            let_go();
+            edited(mb_sub(mj_code_, "bezier(0.3, 0, 0.2, 1)", "bezier(0.3, 0, 0.3, 0.05)"), "«Маятник»: bob · y, кривая 0,3; 0; 0,3; 0,05",
+                   "point 2 by point 1");
+            break;
+        case 22: {
+            if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.3, 0.05}), "the curve of the new recording")) return true;
+            f32 x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            check(graph_seen() && px().ease_handle(1, x1, y1) && px().ease_handle(2, x2, y2) && std::hypot(x2 - x1, y2 - y1) > 1 &&
+                      std::hypot(x2 - x1, y2 - y1) < 8 * ed_.ui().dp_ratio(),
+                  "the two points apart, both within reach of either");
+            mouse(SDL_EVENT_MOUSE_MOTION, x2, y2);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x2, y2);
+            check(px().ease_held() == 2, "a press on point 2: the nearer taken, not point 1");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x2, y2);
+            unchanged("a point taken and dropped by Esc");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mj_back_code_) && step_label() == mj_back_label_, "Ctrl+Z: bezier(0.3, 0, 0.2, 1) again, both files byte for byte");
+            mj_code_ = mj_back_code_, mj_label_ = mj_back_label_;
+            break;
+        }
+        // Esc while held, the point past the graph: held at its edge; back, nothing written. A press off the points takes
+        // nothing. The frame as the formula; then the rod's curve, shared.
+        case 23: {
+            if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.2, 1}), "the curve of the undone recording")) return true;
+            check(hold_point(1, 1.3, 1.9) && curve_is({1, 1.5, 0.2, 1}), "point 1 dragged past the graph: held at 1; 1,5");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(px().ease_held() == 0 && curve_is({0.3, 0, 0.2, 1}), "Esc: the point where it was");
+            let_go();
+            unchanged("a point dropped by Esc");
+            f32 x = 0, y = 0;
+            check(graph_seen() && px().ease_screen(0.6, 0.3, x, y), "the graph on the screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+            check(px().ease_held() == 0, "a press off the points takes nothing");
+            mouse(SDL_EVENT_MOUSE_MOTION, x + 20, y + 20);
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x + 20, y + 20);
+            unchanged("a press and a drag off the points");
+            const vector::Bezier c{0.3, 0, 0.2, 1};
+            check(mb_value("y") == words(-2 * vector::bezier(c, 0.5)) && mb_value("rot") == words(15 * vector::bezier(c, 0.5)),
+                  "frame 2: y and rot as cubic-bezier(0.3, 0, 0.2, 1) at half the time: " + mp_values());
+            check(field_is("y", "y →", "-2", "сейчас " + words(-2 * vector::bezier(c, 0.5))), "y's field: " + field_words("y"));
+            const i32 rot = block_of("rod", pixel::Prop::Rot);
+            check(rot >= 0 && px_click(id_of(rot)) && px().block() == rot, "a click on the rod's «rot → 8»");
+            break;
+        }
+        case 24: {
+            const i32 rot = block_of("rod", pixel::Prop::Rot);
+            if (hold(px().block() == rot && px().ease_curve() && shown("px-ease-share"), "the graph of the rod's curve")) return true;
+            check(curve_is({0.42, 0, 0.58, 1}) && px().ease_share() == "кривая общая: 2 блока" && element_text("px-ease-share") == "кривая общая: 2 блока",
+                  "«" + element_text("px-ease-share") + "»");
+            check(hold_point(1, 0.5, 0), "point 1 dragged to 0,5; 0");
+            let_go();
+            edited(mb_sub(mj_code_, "local soft = bezier(0.42, 0, 0.58, 1)", "local soft = bezier(0.5, 0, 0.58, 1)"),
+                   "«Маятник»: rod · rot, кривая 0,5; 0; 0,58; 1", "a point of the shared curve: the call in the variable");
+            break;
+        }
+        // Both blocks of it; the stand's curve, the module's.
+        case 25: {
+            if (hold(rec && !px().stale() && curve_is({0.5, 0, 0.58, 1}), "the curve of the new recording")) return true;
+            check(curve_of(block_of("rod", pixel::Prop::Rot)) == vector::Bezier{0.5, 0, 0.58, 1} &&
+                      curve_of(block_of("base", pixel::Prop::Y)) == vector::Bezier{0.5, 0, 0.58, 1},
+                  "both blocks of it: the rod's and the base's");
+            const i32 stand = block_of("stand", pixel::Prop::Y);
+            check(stand >= 0 && px_click(id_of(stand)) && px().block() == stand, "a click on the stand's «y → 4»");
+            break;
+        }
+        case 26: {
+            const i32 stand = block_of("stand", pixel::Prop::Y);
+            if (hold(px().block() == stand && shown("px-ease-why"), "the graph of the stand's curve")) return true;
+            if (wait(2)) return true;
+            const std::string why = "кривая из модуля «кривые.luau»: правьте её в коде";
+            check(curve_is({0.5, 0, 0.5, 1}) && element_text("px-ease-why") == why && px().ease_why() == why,
+                  "the module's curve: «" + element_text("px-ease-why") + "»");
+            check(!shown("px-ease-share") && px().ease_share().empty(), "a curve of one block: no «кривая общая»");
+            check(graph_is(0.5, 0.5, kCurveRgba) && graph_is(0.25, vector::bezier({0.5, 0, 0.5, 1}, 0.25), kCurveRgba) && arms() == 0,
+                  "its graph: the curve, no arms, no points");
+            f32 x = 0, y = 0;
+            check(!px().ease_handle(1, x, y) && !px().ease_handle(2, x, y), "no points");
+            // A press where its first point is: nothing taken, nothing written.
+            check(graph_seen() && px().ease_screen(0.5, 0, x, y), "the graph on the screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+            check(px().ease_held() == 0, "a press there takes nothing");
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+            unchanged("a press on the module's curve");
+            check(px_click("px-timing") && px().timings_open(), "the list");
+            break;
+        }
+        case 27: {
+            if (hold(shown(curve_row), "the list")) return true;
+            std::string lit;
+            for (usize i = 0; i < vector::kTimingCount; ++i)
+                if (pj_class(("px-timing-" + std::to_string(i)).c_str(), "selected")) lit += " " + std::to_string(i);
+            check(pj_class(curve_row.c_str(), "selected") && lit.empty(), "«кривая» selected for a curve, no word:" + lit);
+            check(px_click(curve_row) && px().note().empty(), "«кривая» again");
+            unchanged("«кривая» for a block with a curve");
+            check(at_frame(0), "frame 1");
+            break;
+        }
+        // Both views against the files: frames 1, 5 and 10.
+        case 28:
+            if (wait(2)) return true;
+            check(views_are(0), "both views of frame 1 as the library draws and bakes the files");
+            check(at_frame(4), "frame 5");
+            break;
+        case 29:
+            if (wait(2)) return true;
+            check(views_are(4), "both views of frame 5");
+            check(at_frame(9), "frame 10");
+            break;
+        case 30:
+            if (wait(2)) return true;
+            check(views_are(9), "both views of frame 10, in the swap");
+            break;
+        // «Запечь»: 10 frames of 64 × 64, each as the library bakes the files apart from the tab.
+        case 31: {
+            if (hold(idle && rec && !px().stale() && element_text("px-total") == "в картинке 10 кадров из 64", "«в картинке 10 кадров из 64»")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            assets::CookedTexture strip;
+            const std::vector<u8> baked = file(png);
+            check(!baked.empty() && assets::decode_image(baked, strip) && strip.width == 640 && strip.height == 64, "«Маятник.png»: 10 frames of 64 × 64");
+            check(px().note() == "Запечено: «Маятник.png», 10 кадров 64 × 64." && step_label() == "«Маятник»: запечено в «Маятник.png», 10 кадров",
+                  "«" + px().note() + "», one step: " + step_label());
+            pixel::PixelDoc dd;
+            pixel::Rig rig;
+            pixel::PoseScript script;
+            std::string why, bad, same;
+            check(mo_load(dd, rig, script, why) && dd.clips.size() == 1, "the files read apart from the tab " + why);
+            for (u32 k = 0; k < 10 && dd.clips.size() == 1; ++k) {
+                assets::CookedTexture ref;
+                if (!pixel::bake_frame(rig, script, dd, dd.clips[0], k, pixel::bake_options(dd, {}), ref, why) || !px_same(px_cut(strip, 64, k), ref))
+                    bad += " " + std::to_string(k + 1) + why;
+                // Each frame other than the one before: the bob, the rod, the base, the stand, the swap.
+                if (k > 0 && px_same(px_cut(strip, 64, k), px_cut(strip, 64, k - 1))) same += " " + std::to_string(k + 1);
+            }
+            check(bad.empty(), "each of the 10 frames as the library bakes the files apart from the tab;" + bad);
+            check(same.empty(), "frames 2–10 each other than the one before:" + same);
+            break;
+        }
+        case 32:
+            if (hold(idle && as().record_of(as().abs(png)) && shown("px-give-open") && !pj_class("px-give-open", "disabled"), "the picture indexed"))
+                return true;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
+            break;
+        case 33: {
+            const auto& l = px().templates();
+            const objects::Template* flag = lib.find("flag");
+            const usize i = flag ? static_cast<usize>(std::find(l.begin(), l.end(), flag->key) - l.begin()) : l.size();
+            const std::string row = "px-tpl-" + std::to_string(i);
+            if (hold(i < l.size() && shown(row), "the templates listed")) return true;
+            check(element_text(row.c_str()).find("сыграет: Покой") != std::string::npos, "«Флаг» will play «Покой»");
+            mj_flag0_ = an_file("flag");
+            check(px_click(row), "a click on «Флаг»");
+            break;
+        }
+        case 34: {
+            const objects::Template* t = lib.find("flag");
+            objects::Clip all{{}, 4, true};
+            for (u32 k = 0; k < 10; ++k) all.frames.push_back(k);
+            check(t && t->picture == "Маятник.png" && t->frames == 10 && t->animations.size() == 1 && an_is("flag", "idle", all) &&
+                      objects::read_template(t->file)->frames == 10,
+                  "«Флаг»: «Маятник.png», 10 frames, «Покой» by all of them four a second; in its file");
+            check(tg_bytes(a / "game" / "pictures" / utf8_path("Маятник.png")) == file(png), "the game's «pictures/Маятник.png»: the strip as baked");
+            check(px().note() == "«Флаг» рисует «Маятник.png», 10 кадров, анимации: «Покой»." && step_label() == "«Флаг»: картинка «Маятник.png» из «Маятник»",
+                  "«" + px().note() + "», one step: " + step_label());
+            const std::vector<u8> given = an_file("flag");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("flag")) == an_lf(mj_flag0_), "Ctrl+Z: «Флаг» as before (line ends aside)");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("flag") == given && lib.find("flag")->frames == 10 && an_is("flag", "idle", all), "Ctrl+Y: given again, byte for byte");
+            break;
+        }
+        // What the tab shows and the files, beside the games, for pixel-motion-j-again.
+        case 35: {
+            if (hold(rec && !px().stale() && !px().giving() && shown("px-frame-0"), "the recording")) return true;
+            if (mb_look(mj_seen_)) return true;
+            mj_seen_ = mp_recorded() + mj_seen_;
+            const fs::path root = mo_root();
+            check(put(root / utf8_path("маятник.txt"), mj_seen_) && put_bytes(root / utf8_path("маятник.luau"), file(lua)) &&
+                      put_bytes(root / utf8_path("маятник.pixel.json"), file(doc)) && put_bytes(root / utf8_path("маятник.png"), file(png)) &&
+                      put_bytes(root / utf8_path("кривые.luau"), tg_bytes(module)) && put_bytes(root / utf8_path("флаг маятника.json"), an_file("flag")),
+                  "what the tab shows and the files, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++mj_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-motion-j (--self-test pixel-motion-j-again).
+    bool pixel_motion_j_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string doc = "персонажи/Маятник.pixel.json", lua = "персонажи/Маятник.luau", png = "персонажи/Маятник.png";
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
+        auto same = [&] {
+            return !left("маятник.luau").empty() && file(lua) == left("маятник.luau") && file(doc) == left("маятник.pixel.json") &&
+                   file(png) == left("маятник.png") && tg_bytes(a / "game" / "animations" / utf8_path("кривые.luau")) == left("кривые.luau") &&
+                   an_file("flag") == left("флаг маятника.json");
+        };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        switch (mj_step_) {
+        case 0:
+            check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), mo_root() / utf8_path("семнадцатая папка")),
+                  "from another working folder: " + path_to_utf8(fs::current_path()));
+            check(same(), "the files as pixel-motion-j left them");
+            check(click_tab(3), "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Маятник» listed"))
+                return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Маятник»");
+            break;
+        case 3: {
+            const std::vector<u8> code = left("маятник.luau");
+            if (hold(px().code() == std::string(code.begin(), code.end()) && px().clip() == "idle" && px().recording() && !px().stale() &&
+                         shown("px-frame-0") && shown("px-total"),
+                     "«Маятник» and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            if (mb_look(mj_seen_)) return true;
+            const std::vector<u8> was = left("маятник.txt");
+            const std::string seen = mp_recorded() + mj_seen_;
+            check(!was.empty() && seen == std::string(was.begin(), was.end()),
+                  "the recording, the tracks and both views of every frame as pixel-motion-j saw them\n" + seen);
+            check(element_text("px-total") == "в картинке 10 кадров из 64" && !px().edited(), "«" + element_text("px-total") + "», the picture as baked");
+            check(same(), "looked at: nothing written");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 4:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 5: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = an_edits();
+            const int code = tg_play(&e, "ожидания маятника.json", mo_root());
+            check(code == 0, "the game plays the flag by «Маятник»'s 10 frames, each on the screen as baked (exit " + std::to_string(code) + ")");
+            check(same(), "played: the files as they were");
+            return false;
+        }
+        default: break;
+        }
+        ++mj_step_;
         return true;
     }
 
@@ -31985,7 +32692,8 @@ int main(int argc, char** argv) {
                                          "frame-limit-a-cross", "pixel-motion", "pixel-motion-a", "pixel-motion-b", "pixel-motion-b-again",
                                          "pixel-motion-c", "pixel-motion-c-again", "pixel-motion-d", "pixel-motion-d-again", "pixel-motion-e",
                                          "pixel-motion-e-again", "pixel-motion-f", "pixel-motion-f-again", "pixel-motion-g",
-                                         "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "input", "input-a", "input-a-again",
+                                         "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
+                                         "pixel-motion-j-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -32001,7 +32709,7 @@ int main(int argc, char** argv) {
                     "frame-limit-a-low, frame-limit-a-low-again, frame-limit-a-cross, pixel-motion and its parts pixel-motion-a, pixel-motion-b, "
                     "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, pixel-motion-d, pixel-motion-d-again, pixel-motion-e, "
                     "pixel-motion-e-again, pixel-motion-f, pixel-motion-f-again, pixel-motion-g, pixel-motion-g-again, pixel-motion-h, "
-                    "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, "
+                    "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
