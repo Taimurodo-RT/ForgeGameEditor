@@ -535,6 +535,10 @@ usize motion_frame_count(f64 at, f64 end) {
     return static_cast<usize>(std::max(1.0, std::ceil(m - 1e-6))) + 1;
 }
 
+f64 motion_frame_moment(f64 at, usize i) {
+    return static_cast<f64>(std::llround(at * 1e9) + std::llround(static_cast<f64>(i) * 1e9 / kMotionRate)) / 1e9;
+}
+
 MotionMatrix operator*(const MotionMatrix& m, const MotionMatrix& n) {
     return {m.a * n.a + m.c * n.b, m.b * n.a + m.d * n.b, m.a * n.c + m.c * n.d,
             m.b * n.c + m.d * n.d, m.a * n.e + m.c * n.f + m.e, m.b * n.e + m.d * n.f + m.f};
@@ -680,16 +684,17 @@ MotionValue motion_piece_value(const MotionFile& file, MotionProp p, const Motio
         if (n == 0) return motion_rest(p);
         if (n == 1 || t <= pc.at) return pc.frames.front();
         if (t >= pc.end) return pc.frames.back();
-        const f64 x = (t - pc.at) * kMotionRate;
-        auto i = static_cast<usize>(std::floor(x + 1e-7)); // a moment a hair before a frame's is that frame's
-        f64 k = x - static_cast<f64>(i);
-        if (i + 2 >= n) {
-            // The last stretch: from the last moment on the 120ths to the moment before `end`.
-            i = n - 2;
-            const f64 t0 = pc.at + static_cast<f64>(i) / kMotionRate;
-            k = (t - t0) / (pc.end - t0);
-        }
-        return motion_mix(p, pc.frames[i], pc.frames[i + 1], std::clamp(k, 0.0, 1.0));
+        // The value whose moment is t or the last before it, on the nanoseconds; the last one's is the moment before
+        // `end`.
+        const f64 last = static_cast<f64>(std::llround(pc.end * 1e9) - 1) / 1e9;
+        if (t >= last) return pc.frames.back();
+        const auto moment = [&](usize i) { return i + 1 >= n ? last : motion_frame_moment(pc.at, i); };
+        auto i = static_cast<usize>(std::max(0.0, std::floor((t - pc.at) * kMotionRate)));
+        i = std::min(i, n - 2);
+        while (i > 0 && t < moment(i)) --i;
+        while (i + 2 < n && t >= moment(i + 1)) ++i;
+        const f64 t0 = moment(i), t1 = moment(i + 1);
+        return motion_mix(p, pc.frames[i], pc.frames[i + 1], t1 > t0 ? std::clamp((t - t0) / (t1 - t0), 0.0, 1.0) : 0.0);
     }
     }
     return motion_rest(p);

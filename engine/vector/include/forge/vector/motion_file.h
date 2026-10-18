@@ -8,7 +8,8 @@
 // last until the clip's end):
 //   hold    the value stands
 //   ease    from `from` to `to` in `length` by an easing (a timing word, a bezier, an author's curve), then `to`
-//   frames  values 120 times a second from `at`, the last at the very moment before `end`; mixed between them
+//   frames  values 120 times a second from `at` (to the nanosecond), the last at the very moment before `end`; mixed
+//           between them
 // Values are as the tab's recording keeps them (forge::pixel::PropValue): a colour, a stroke width and a morph are a
 // share over the part's own with the colour, the width or the target beside it.
 
@@ -79,6 +80,9 @@ struct MotionPiece {
 };
 // How many values a frames piece from `at` to `end` has: the moments at + i / kMotionRate before `end`, then `end`.
 usize motion_frame_count(f64 at, f64 end);
+// The moment of value i of a frames piece from `at` (i before the last): at + i / kMotionRate, to the nanosecond as
+// the recording keeps its times. Between two moments the piece mixes by the share of the time between them.
+f64 motion_frame_moment(f64 at, usize i);
 
 struct MotionTrack {
     std::string part;

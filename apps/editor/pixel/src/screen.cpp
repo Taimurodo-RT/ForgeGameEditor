@@ -41,7 +41,7 @@ std::vector<i64> moments(i64 at, i64 end) {
     const usize n = vector::motion_frame_count(seconds(at), seconds(end));
     std::vector<i64> out;
     out.reserve(n);
-    for (usize i = 0; i + 1 < n; ++i) out.push_back(at + std::llround(static_cast<f64>(i) * 1e9 / vector::kMotionRate));
+    for (usize i = 0; i + 1 < n; ++i) out.push_back(ns_of(vector::motion_frame_moment(seconds(at), i)));
     out.push_back(end - 1);
     return out;
 }
