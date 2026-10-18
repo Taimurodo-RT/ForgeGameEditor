@@ -152,8 +152,7 @@ bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOpt
         const ClipSpec& c = doc.clips[i];
         out.clips.push_back({c.state, at, cuts[i].frames, c.fps, c.loop, {}});
         if (cuts[i].code) {
-            // Recorded already by cut_clip: the same recording again.
-            script.set_lengths(doc.lengths);
+            // Recorded already by cut_clip, with every clip's lengths (part 5б): the same recording again.
             if (const Recording* rec = script.recording(rig, c.state, doc.params, doc.seed)) {
                 std::vector<usize> left;
                 out.clips.back().events = strip_events(*rec, cuts[i], &left);

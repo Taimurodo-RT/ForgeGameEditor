@@ -776,6 +776,7 @@ private:
     bool drag_only_ = false;
     pixel::MotionLengths drag_lengths_, drag_base_lengths_;
     pixel::Recording drag_rec_;
+    pixel::TimeView drag_view_; // the timeline as at the press of a flag: the clip's length changes under the mouse
     f64 drag_from_ = 0, drag_to_ = 0;
     bool shift_ = false;
     // The code panel.

@@ -11,6 +11,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
@@ -132,6 +133,12 @@ TEST_CASE("5б: frame 0 of a clip that starts from idle is idle's end, byte for 
     CHECK(first.parts.at("torso").mask == "cover");
     CHECK(first.order == std::vector<OrderStep>{{"ball", OrderStep::Kind::Top, ""}});
     CHECK(first.order == end.order);
+    // The pose is what differs from the rest, nothing more.
+    std::vector<std::pair<std::string, Prop>> kept;
+    for (const StartValue& v : go.start.values) kept.emplace_back(v.part, v.prop);
+    std::sort(kept.begin(), kept.end());
+    CHECK(kept == std::vector<std::pair<std::string, Prop>>{{"arm", Prop::Opacity}, {"arm", Prop::Fill}, {"ball", Prop::Visible}, {"body", Prop::X},
+                                                           {"body", Prop::Rot}, {"mouth", Prop::StrokeWidth}, {"mouth", Prop::Morph}, {"torso", Prop::Mask}});
 
     // No blocks of the pose: the tracks are what the clip moves itself.
     for (const Recording::Track& t : go.tracks) CHECK(go.parts[t.part] == "body");
@@ -168,11 +175,16 @@ TEST_CASE("5б: save before a block keeps the pose, a value read reads it, a bin
     const auto body = static_cast<u32>(std::find(go.parts.begin(), go.parts.end(), "body") - go.parts.begin());
     REQUIRE(start_value(go, body, Prop::X));
     CHECK(start_value(go, body, Prop::X)->value.v == 7.5);
+    // A read in a frame, of a part the clip does not move: from the pose too.
+    PoseScript f = script_of(clips_of({{"idle", "  part(\"body\").x(5, 0.2)"}, {"go", "  start_from(\"idle\")\n  wait(0.2)"}},
+                                      ",\n  pose = function(t, p, rng, clip) if clip == \"go\" then part(\"arm\"):set{ y = part(\"body\").x() } end end"));
+    const Recording fg = recorded(f, &rig, "go");
+    CHECK(frame(f, fg, &rig, 0.1).parts.at("arm").y == 5);
 }
 
 TEST_CASE("5б: a chain of clips, each from the one before, from the first on") {
     Rig rig = loaded();
-    PoseScript s = script_of(clips_of({{"a", "  part(\"body\").x(3, 0.1)"},
+    PoseScript s = script_of(clips_of({{"a", "  part(\"body\").x(3, 0.1)\n  part(\"ball\"):to_top()"},
                                        {"b", "  start_from(\"a\")\n  part(\"body\").y(4, 0.1)"},
                                        {"c", "  start_from(\"b\")\n  part(\"body\").rot(9, 0.1)"}}));
     const Recording c = recorded(s, &rig, "c");
@@ -180,6 +192,8 @@ TEST_CASE("5б: a chain of clips, each from the one before, from the first on") 
     CHECK((first.parts.at("body").x == 3 && first.parts.at("body").y == 4 && first.parts.at("body").rot == 0));
     CHECK((last.parts.at("body").x == 3 && last.parts.at("body").y == 4 && last.parts.at("body").rot == 9));
     CHECK(c.start.clip == "b");
+    // The order of a goes on through b, which does not touch it.
+    CHECK(first.order == std::vector<OrderStep>{{"ball", OrderStep::Kind::Top, ""}});
 }
 
 TEST_CASE("5б: a link holds on, one let go stays where it was; the copies do not carry over") {
@@ -229,20 +243,75 @@ TEST_CASE("5б: a link holds on, one let go stays where it was; the copies do no
     for (const auto& [id, pp] : g0.parts) CHECK(id.find('[') == std::string::npos);
 }
 
+TEST_CASE("5б: where parts stand by idle's link: a snap to the held ball, a detach later, an attach, the carry at idle's end") {
+    Rig rig = loaded();
+    const vector::Point ball0 = pivot_now(rig, "ball");
+    PoseScript s = script_of(clips_of({{"idle", "  part(\"ball\"):attach(\"hand\")\n  part(\"arm\").x(6, 0.2)"},
+                                       {"reach", "  start_from(\"idle\")\n  part(\"mouth\"):snap_to(\"ball\", 0.1)"},
+                                       {"late", "  start_from(\"idle\")\n  wait(0.2)\n  part(\"ball\"):detach()"},
+                                       {"round", "  start_from(\"idle\")\n  part(\"arm\"):attach(\"ball\")"}}));
+    // The snap reads where the ball stands now: held by the hand of the arm 6 to the right, as idle left them.
+    const Recording reach = recorded(s, &rig, "reach");
+    shot(rig, frame(s, reach, &rig, 0.1));
+    CHECK(near(pivot_now(rig, "mouth"), {ball0.x + 6, ball0.y}, 1e-6));
+    // A detach further on: till then the hand holds it.
+    const Recording late = recorded(s, &rig, "late");
+    const Pose l1 = frame(s, late, &rig, 0.1);
+    CHECK(l1.parts.at("ball").carry_by == "hand");
+    shot(rig, l1);
+    CHECK(near(pivot_now(rig, "ball"), {ball0.x + 6, ball0.y}));
+    CHECK(frame(s, late, &rig, 0.2).parts.at("ball").carry_by.empty());
+    // The hand holds the ball: the arm on the ball is a round.
+    CHECK(record_error(s, &rig, "round") == "строка 17: крепление по кругу: arm → ball → hand → arm");
+
+    // An attach in the clip: the ball stays where it is, the hand where idle left it; it goes with the arm from there.
+    PoseScript g = script_of(clips_of({{"idle", "  part(\"arm\").x(6, 0.2)"},
+                                       {"grab", "  start_from(\"idle\")\n  part(\"ball\"):attach(\"hand\")\n  part(\"arm\").x(0, 0.2)"}}));
+    const Recording grab = recorded(g, &rig, "grab");
+    shot(rig, frame(g, grab, &rig, 0));
+    CHECK(near(pivot_now(rig, "ball"), ball0));
+    shot(rig, frame(g, grab, &rig, 0.2));
+    CHECK(near(pivot_now(rig, "ball"), {ball0.x - 6, ball0.y}));
+
+    // The carry idle ends with: attached with the arm out, the arm back, the ball 6 to the left; the clip starts so.
+    PoseScript e = script_of(clips_of({{"idle", "  part(\"arm\").x(6, 0.2)\n  part(\"ball\"):attach(\"hand\")\n  part(\"arm\").x(0, 0.2)"},
+                                       {"go", "  start_from(\"idle\")\n  wait(0.1)"}}));
+    const Recording ei = recorded(e, &rig, "idle"), eg = recorded(e, &rig, "go");
+    const assets::CookedTexture end = shot(rig, frame(e, ei, &rig, ei.length));
+    CHECK(near(pivot_now(rig, "ball"), {ball0.x - 6, ball0.y}));
+    const assets::CookedTexture first = shot(rig, frame(e, eg, &rig, 0));
+    CHECK(near(pivot_now(rig, "ball"), {ball0.x - 6, ball0.y}));
+    CHECK(end.rgba8 == first.rgba8);
+
+    // A detach in the background after the end of b: at b's end the hand holds the ball still, and c starts so.
+    PoseScript c = script_of(clips_of({{"a", "  part(\"ball\"):attach(\"hand\")\n  part(\"arm\").x(6, 0.2)"},
+                                       {"b", "  start_from(\"a\")\n  spawn(function() wait(1) part(\"ball\"):detach() end)\n  wait(0.1)"},
+                                       {"c", "  start_from(\"b\")\n  wait(0.1)"}}));
+    const Recording cb = recorded(c, &rig, "b"), cc = recorded(c, &rig, "c");
+    CHECK(cb.length == doctest::Approx(0.1));
+    const Pose c0 = frame(c, cc, &rig, 0);
+    CHECK(c0.parts.at("ball").carry_by == "hand");
+    shot(rig, c0);
+    CHECK(near(pivot_now(rig, "ball"), {ball0.x + 6, ball0.y}));
+}
+
 TEST_CASE("5б: the drawing shown at idle's end, and a swap from it") {
     const std::string draw = "  draw = function(p, rng)\n    canvas(64, 64)\n    rect(\"face\", { x = 10, y = 10, w = 20, h = 20, fill = \"#c09060\" })\n  end,\n"
                              "  drawings = {\n    angry = function(p, rng)\n      canvas(64, 64)\n"
                              "      rect(\"face\", { x = 12, y = 12, w = 24, h = 24, fill = \"#e06040\" })\n    end,\n  },\n";
     PoseScript s = script_of(clips_of({{"idle", "  swap(\"angry\", 0.2)"}, {"calm", "  start_from(\"idle\")\n  swap(\"draw\", 0.2)"},
-                                       {"still", "  start_from(\"idle\")\n  wait(0.2)"}},
+                                       {"still", "  start_from(\"idle\")\n  wait(0.2)"}, {"late", "  start_from(\"idle\")\n  wait(0.2)\n  swap(\"draw\", 0.2)"}},
                                       ",\n" + draw));
-    const Recording calm = recorded(s, nullptr, "calm"), still = recorded(s, nullptr, "still");
+    const Recording calm = recorded(s, nullptr, "calm"), still = recorded(s, nullptr, "still"), late = recorded(s, nullptr, "late");
     CHECK(frame(s, still, nullptr, 0).drawing == "angry");
     CHECK(frame(s, still, nullptr, 0.2).drawing == "angry");
     CHECK(frame(s, calm, nullptr, 0).drawing == "angry");
     const Pose mid = frame(s, calm, nullptr, 0.1);
     CHECK((mid.swap && mid.swap_from == "angry" && mid.drawing.empty()));
     CHECK(frame(s, calm, nullptr, 0.2).drawing.empty());
+    // Before a swap further on: the drawing idle left, not the main one.
+    CHECK(frame(s, late, nullptr, 0.1).drawing == "angry");
+    CHECK(frame(s, late, nullptr, 0.4).drawing.empty());
 }
 
 TEST_CASE("5б: start_from errors name their line; a round names the lines of both clips") {
@@ -309,6 +378,15 @@ TEST_CASE("5б: start_from errors name their line; a round names the lines of bo
         const Recording go = recorded(s, &rig, "go");
         CHECK(go.start.clip == "idle");
         CHECK(frame(s, go, &rig, 0).parts.at("body").x == 5);
+    }
+    // Two of them under pcall in one try: the first is the one, the second fails as a line after it.
+    {
+        PoseScript s = script_of(clips_of({idle, {"other", "  part(\"body\").y(2, 0.1)"},
+                                           {"go", "  pcall(start_from, \"idle\")\n  pcall(start_from, \"other\")\n  part(\"body\").rot(3, 0.1)"}}));
+        const Recording go = recorded(s, &rig, "go");
+        CHECK(go.start.clip == "idle");
+        const Pose first = frame(s, go, &rig, 0);
+        CHECK((first.parts.at("body").x == 1 && first.parts.at("body").y == 0));
     }
 }
 

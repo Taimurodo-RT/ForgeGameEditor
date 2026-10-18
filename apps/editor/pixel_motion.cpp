@@ -520,6 +520,9 @@ void PixelEditor::lay_timeline() {
         };
         tv_.length = std::max(whole_.length, cell_end(static_cast<i64>(whole_.frames) - 1));
         tv_.clamp();
+        // A flag dragged makes the clip longer or shorter at each move: the view stays as at the press, so the moment
+        // under the mouse is the one it showed there (a short clip fills the timeline and would be fitted again).
+        if (tl_drag_ == Drag::Flag) tv_.scale = drag_view_.scale, tv_.start = drag_view_.start;
         const f64 w = tl_w_, per_frame = tv_.per_second() / fps;
         // Frames and the ruler's marks in sight.
         const f64 t0 = tv_.t(0), t1 = tv_.t(w);
@@ -705,6 +708,7 @@ void PixelEditor::timeline_press(f32 x, f32, Rml::Element* over, bool middle) {
         tl_drag_ = Drag::Flag;
         drag_event_ = i;
         drag_rec_ = rec_;
+        drag_view_ = tv_;
         drag_base_lengths_ = lengths_now(clip_);
         drag_lengths_ = drag_base_lengths_;
         drag_only_ = shift_;

@@ -26170,7 +26170,9 @@ return {
     // from the picture at rest. In the panel start_from("idle") typed as the first line of «В воздухе» and saved: the row
     // «Начало» has the flag «из idle» at 0, a double click puts the caret on the line, «Покой» has none; frame 1 of «В
     // воздухе» is «Покой» at its end, by its length of «взмах», in both views, as the library draws the files apart from
-    // the tab, and is not the picture at rest.
+    // the tab, and is not the picture at rest. «взмах» of «Покой» dragged on the timeline to 0,5 s: «Покой» recorded with it
+    // while the button is down, written when let go; frame 1 of «В воздухе» is «Покой» at its end by it, in both views;
+    // undone, at its end as before.
     // «Запечь»: frame 1 of «В воздухе» in the picture is «Покой» at its end, each frame as the library bakes. The body
     // dragged in frame 1: at(0, …) right after start_from, from where the pose has the body; undone and done again byte
     // for byte, undone. start_from("air") typed into «Покой»: the round said in the console with the lines of both
@@ -26180,6 +26182,7 @@ return {
     std::string ml_seen_;
     std::vector<u8> ml_doc_, ml_png_;
     assets::CookedTexture ml_rest_;
+    PxRef ml_end_;
     static constexpr const char* kMlJumper = R"lua(-- «Прыгун»: начало с позы, часть 5б. «Покой» кончается с поднятой рукой (тем выше, чем дольше «взмах»), «В воздухе» начнётся оттуда.
 return {
   draw = function(p, rng)
@@ -26258,13 +26261,13 @@ return {
             const auto it = std::find(l.begin(), l.end(), rel);
             return it == l.end() ? -1 : static_cast<int>(it - l.begin());
         };
-        auto doc_of = [&] {
+        auto doc_of = [&](u32 idle_frames, f64 swing) {
             pixel::PixelDoc x;
             x.script = "Прыгун.luau";
             x.frame_w = 32;
             x.frame_h = 64;
-            x.clips = {{"idle", 6, 10, true}, {"air", 5, 10, false}};
-            x.lengths["idle"].durations["взмах"] = 0.4;
+            x.clips = {{"idle", idle_frames, 10, true}, {"air", 5, 10, false}};
+            x.lengths["idle"].durations["взмах"] = swing;
             return bytes(pixel::write_pixel_doc(x));
         };
         const std::string saved = "«Прыгун»: код «Прыгун.luau» сохранён", bake_label = "«Прыгун»: запечено в «Прыгун.png», 11 кадров",
@@ -26275,7 +26278,7 @@ return {
             check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
             std::error_code ec;
             check(!fs::exists(as().abs(lua), ec) && !fs::exists(as().abs(doc), ec), "no «Прыгун» in the game yet");
-            ml_doc_ = doc_of();
+            ml_doc_ = doc_of(6, 0.4);
             check(put(as().abs(lua), kMlJumper) && put_bytes(as().abs(doc), ml_doc_), "«Прыгун.luau» and «Прыгун.pixel.json» written by another program");
             as().refresh();
             check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
@@ -26347,15 +26350,55 @@ return {
             if (hold(px().clip() == "idle" && rec && rec->clip == "idle" && !px().stale() && shown("px-block-0"), "«Покой» recorded")) return true;
             check(rec->start.clip.empty() && !shown("px-start") && std::fabs(rec->length - 0.6) < 1e-9 && px().whole().frames == 6,
                   "«Покой»: no flag of its own, 0,6 s by its «взмах» of 0,4 s, 6 frames: " + std::to_string(rec->length) + " s");
+            break;
+        // «взмах» of «Покой» dragged on the timeline: while the button is down «Покой» is recorded with its new length;
+        // let go, frame 1 of «В воздухе» is «Покой» at its end now; undone, at its end as before.
+        case 8: {
+            if (hold(shown("px-flag-0") && element_text("px-flag-0").find("взмах 0,4 с") != std::string::npos, "the flag «взмах» of «Покой»")) return true;
+            std::string why;
+            check(ml_idle_end(ml_end_, why), "«Покой» at its end by «взмах» of 0,4 s, made apart from the tab " + why);
+            f32 x0 = 0, x1 = 0, x = 0, y = 0;
+            check(px().timeline_x(0.4, x0) && px().timeline_x(0.5, x1) && element_center("px-flag-0", x, y), "the flag and the timeline");
+            x0 += 1;
+            mouse(SDL_EVENT_MOUSE_MOTION, x0, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y);
+            for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x0 + (x1 - x0) * static_cast<f32>(i) / 4, y);
+            const pixel::Recording* held = px().recording();
+            check(held && std::fabs(held->length - 0.7) < 1e-9 && file(doc) == ml_doc_,
+                  "the button down at 0,5 s: «Покой» recorded with «взмах» of 0,5 s, 0,7 s, nothing written yet: " +
+                      std::to_string(held ? held->length : 0) + " s");
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x1, y);
+            check(file(doc) == doc_of(7, 0.5) && file(lua) == bytes(started) && step_label() == "«Прыгун»: «взмах» 0,5 с",
+                  "let go: «взмах» 0,5 s and «Покой» of 7 frames in the «.pixel.json», the code the same; one step: " + step_label());
             check(px_click("px-state-air") && px().clip() == "air", "«В воздухе» again");
             break;
-        case 8:
+        }
+        case 9:
+            if (hold(px().clip() == "air" && rec && rec->start.clip == "idle" && !px().stale() && shown("px-start"), "«В воздухе» from idle")) return true;
+            check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
+            break;
+        case 10: {
+            if (wait(2)) return true;
+            PxRef end;
+            std::string why;
+            check(ml_idle_end(end, why) && !px_same(end.px, ml_end_.px), "«Покой» at its end by «взмах» of 0,5 s, not as by 0,4 s " + why);
+            check(px_same(px().pixel_frame(), end.px) && px_same(px().vector_view(), end.vec), "frame 1 of «В воздухе»: «Покой» at its end now, in both views");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(doc) == ml_doc_ && file(lua) == bytes(started) && step_label() == saved, "Ctrl+Z: the «.pixel.json» as it was, byte for byte: " + step_label());
+            break;
+        }
+        case 11:
+            if (wait(2)) return true;
+            check(px().clip() == "air" && px().frame() == 0 && px_same(px().pixel_frame(), ml_end_.px) && px_same(px().vector_view(), ml_end_.vec),
+                  "frame 1 of «В воздухе»: «Покой» at its end as before, in both views");
+            break;
+        case 12:
             if (hold(px().clip() == "air" && rec && rec->start.clip == "idle" && !px().stale() && shown("px-start"), "«В воздухе» from idle")) return true;
             check(ml_flag() == flag, "its flag again");
             check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
             break;
         // Frame 1 is idle at its end in both views; then baked.
-        case 9: {
+        case 13: {
             if (wait(2)) return true;
             PxRef end;
             std::string why;
@@ -26367,7 +26410,7 @@ return {
             check(mo_ref("air", 0, first, why) && px_same(first, end.px), "the library bakes frame 1 of «В воздухе» of the files as «Покой» at its end " + why);
             break;
         }
-        case 10: {
+        case 14: {
             if (hold(idle && rec && !px().stale() && element_text("px-total") == "в картинке 11 кадров из 64", "«в картинке 11 кадров из 64»")) return true;
             check(px_click("px-bake"), "«Запечь»");
             assets::CookedTexture strip;
@@ -26393,7 +26436,7 @@ return {
             break;
         }
         // The body dragged in frame 1: at(0, …) right after start_from, x from where the pose has it.
-        case 11: {
+        case 15: {
             if (wait(2)) return true;
             check(mb_hold_part("body", {12, 40}, 2, 0), "the body dragged by 2; 0");
             mb_let_go();
@@ -26412,7 +26455,7 @@ return {
             break;
         }
         // A round: «Покой» from «В воздухе», «В воздухе» from «Покой».
-        case 12: {
+        case 16: {
             if (hold(rec && rec->start.clip == "idle" && !px().stale() && px().code() == started, "the code read again")) return true;
             check(mo_caret(mo_char(started, kMlIdle) + mo_letters(kMlIdle)), "the caret at the end of «idle = function(p)»");
             mo_type(kMlRound);
@@ -26420,7 +26463,7 @@ return {
             check(file(lua) == bytes(round) && step_label() == saved, "start_from(\"air\") typed into «Покой» and saved: " + step_label());
             break;
         }
-        case 13: {
+        case 17: {
             const auto said = std::find_if(px().console().begin(), px().console().end(), [&](const PixelEditor::ConsoleLine& l) { return l.text == round_line; });
             if (hold(said != px().console().end() && !px().code_unsaved(), "the round said")) return true;
             check(said->line == 11 && said->error, "the console: «" + said->text + "», its line 11, an error");
@@ -26435,7 +26478,7 @@ return {
             break;
         }
         // What the tab shows and the files, beside the games, for pixel-motion-l-again.
-        case 14: {
+        case 18: {
             if (hold(rec && rec->start.clip == "idle" && !px().stale() && px().code() == started && px().console().empty() && shown("px-start"),
                      "the clip from idle again"))
                 return true;
