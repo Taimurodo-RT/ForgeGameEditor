@@ -2266,9 +2266,10 @@ private:
         if (!project_edits.go_through.empty() || project_edits.go_continue) build_going(s);
         if (!project_edits.pl_enemy.empty()) build_platform_edits(s);
         if (!project_edits.tp_hero.empty()) build_template_edits(s);
-        // The frames of the animations by the run's frames, at 60 a second; the marks by the world's ticks, at any.
+        // The frames of the animations by the run's frames, at 60 a second (their marks with them, as the game reads
+        // them); the marks fired by the world's ticks, at any, when a scheme of them comes too.
         if (!project_edits.an_of.empty() && screen_hz == 60) build_anim_edits(s);
-        if (!project_edits.mk_of.empty()) build_mark_edits(s);
+        if (!project_edits.mk_scheme.empty()) build_mark_edits(s);
         if (!project_edits.in_action.empty()) build_input_edits(s);
         if (!project_edits.vs_screen.empty()) build_vector_edits(s);
         if (project_edits.object.empty() && !project_edits.absent) return;

@@ -19849,9 +19849,11 @@ return {
             const std::vector<u8> b = file(png);
             assets::CookedTexture strip;
             check(!b.empty() && assets::decode_image(b, strip) && strip.width == 32 * 19 && strip.height == 64, "«Ёжик.png»: 19 frames of 32 × 64");
-            check(d.strip == std::vector<pixel::StripClip>{{"stand", 0, 4, 10, true}, {"air", 4, 15, 30, true}} &&
+            // emit("отрыв") at 0,5 s («отрыв» waits 0,4 s from 0,1 s): the range begins at 0,2 s, its frame 9 (from 0) is
+            // the first to show it.
+            check(d.strip == std::vector<pixel::StripClip>{{"stand", 0, 4, 10, true}, {"air", 4, 15, 30, true, {{"отрыв", false, 9, 1}}}} &&
                       step_label() == "«Ёжик»: запечено в «Ёжик.png», 19 кадров",
-                  "«Стоит» 1–4, «В воздухе» by its range 5–19: " + step_label());
+                  "«Стоит» 1–4, «В воздухе» by its range 5–19, «отрыв» on its frame 10: " + step_label());
             std::string bad;
             for (const auto& [state, first, n] : {std::tuple{"stand", 0u, 4u}, std::tuple{"air", 4u, 15u}})
                 for (u32 k = 0; k < n; ++k) {
@@ -20925,6 +20927,10 @@ return {
   },
 }
 )lua";
+    // Its sounds as baked onto the frames of «Покой» (part 5а): each sound half a frame before frame k first shows on k.
+    static std::vector<pixel::StripEvent> mc_marks() {
+        return {{"шаг", true, 10, 1}, {"нет", true, 20, 1}, {"шум", true, 30, 1}, {"шаг", true, 40, 1}, {"нет", true, 50, 1}, {"шаг", true, 63, 1}};
+    }
     // A WAV of 48 kHz, 16 bits, two channels: the samples left, right, left …
     static std::vector<u8> mc_wav(const std::vector<i16>& samples) {
         std::vector<u8> out;
@@ -21629,9 +21635,9 @@ return {
             assets::CookedTexture strip;
             const std::vector<u8> baked = file(png);
             check(!baked.empty() && assets::decode_image(baked, strip) && strip.width == 16384 && strip.height == 256, "«Шкала.png»: 64 frames of 256 × 256");
-            check(d.strip == std::vector<pixel::StripClip>{{"idle", 0, 64, 30, true}} && px().note() == "Запечено: «Шкала.png», 64 кадра 256 × 256." &&
+            check(d.strip == std::vector<pixel::StripClip>{{"idle", 0, 64, 30, true, mc_marks()}} && px().note() == "Запечено: «Шкала.png», 64 кадра 256 × 256." &&
                       step_label() == "«Шкала»: запечено в «Шкала.png», 64 кадра",
-                  "in the file: «Покой» 1–64; «" + px().note() + "», one step: " + step_label());
+                  "in the file: «Покой» 1–64, its sounds on their frames; «" + px().note() + "», one step: " + step_label());
             const std::string numbers = fl_numbers(strip, 64);
             check(numbers.empty(), "each frame shows its number in the cells; not:" + numbers);
             pixel::PixelDoc dd;
@@ -21667,11 +21673,13 @@ return {
             const objects::Template* t = lib.find("flag");
             objects::Clip all{{}, 30, true};
             for (u32 k = 0; k < 64; ++k) all.frames.push_back(k);
+            for (const pixel::StripEvent& m : mc_marks()) all.events.push_back({m.name, m.sound, m.frame, m.frames});
             check(t && t->picture == "Шкала.png" && t->frames == 64 && t->animations.size() == 1 && an_is("flag", "idle", all) &&
                       objects::read_template(t->file)->frames == 64,
-                  "«Флаг»: «Шкала.png», 64 frames, «Покой» by all of them thirty a second; in its file");
+                  "«Флаг»: «Шкала.png», 64 frames, «Покой» by all of them thirty a second, its sounds on their frames; in its file");
             check(tg_bytes(a / "game" / "pictures" / utf8_path("Шкала.png")) == file(png), "the game's «pictures/Шкала.png»: the strip as baked");
-            check(px().note() == "«Флаг» рисует «Шкала.png», 64 кадра, анимации: «Покой»." && step_label() == "«Флаг»: картинка «Шкала.png» из «Шкала»",
+            check(px().note() == "«Флаг» рисует «Шкала.png», 64 кадра, анимации: «Покой»; метки: «шаг», «нет», «шум»." &&
+                      step_label() == "«Флаг»: картинка «Шкала.png» из «Шкала»",
                   "«" + px().note() + "», one step: " + step_label());
             const std::vector<u8> given = an_file("flag");
             key(SDLK_Z, SDL_KMOD_CTRL);

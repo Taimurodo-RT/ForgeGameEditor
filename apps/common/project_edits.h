@@ -103,7 +103,8 @@ struct ProjectEdits {
     // mk_of[i] in mk_state[i], named mk_name[i], a sound when mk_sound[i] is 1 (else emit), on its place mk_frame[i] in the
     // animation's frames, a window of mk_frames[i] places. mk_scheme: the template whose own scheme of «Логика» adds 1 to
     // the game's variable mk_count_var on «При метке анимации» mk_mark and sets mk_going_var on «Каждый шаг» to
-    // «Идёт метка анимации» of itself and mk_mark.
+    // «Идёт метка анимации» of itself and mk_mark; with it the game checks the marks it fires tick by tick, without it
+    // only that it reads them with the animations.
     std::vector<std::string> mk_of, mk_state, mk_name;
     std::vector<int> mk_sound, mk_frame, mk_frames;
     std::string mk_scheme, mk_mark, mk_count_var, mk_going_var;
