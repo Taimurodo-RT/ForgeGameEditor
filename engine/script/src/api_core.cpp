@@ -378,8 +378,8 @@ int api_ui_svg_play(lua_State* L) {
         lua_pop(L, 1);
         lua_getfield(L, 4, "speed");
         if (!lua_isnil(L, -1)) {
-            if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "ui.svg_play: speed: нужно число больше 0");
-            speed = lua_tonumber(L, -1);
+            speed = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
+            if (!(speed > 0) || !std::isfinite(speed)) luaL_error(L, "ui.svg_play: speed: нужно число больше 0");
         }
         lua_pop(L, 1);
         lua_pushnil(L);
