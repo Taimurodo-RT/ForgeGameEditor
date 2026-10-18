@@ -452,6 +452,9 @@ TEST_CASE("Screen clips file: pieces between their moments") {
     v.to.v = 0;
     CHECK(vector::motion_piece_value(f, MotionProp::Visible, v, 0.99).v == 1);
     CHECK(vector::motion_piece_value(f, MotionProp::Visible, v, 1).v == 0);
+    v.timing = vector::Timing::OutBack; // past 1 on the way: still shown
+    REQUIRE(vector::motion_ease(f, v, 0.6) > 1);
+    CHECK(vector::motion_piece_value(f, MotionProp::Visible, v, 0.6).v == 1);
     MotionPiece w;
     w.kind = MotionPiece::Kind::Ease;
     w.length = 1;
@@ -475,6 +478,15 @@ TEST_CASE("Screen clips file: pieces between their moments") {
     CHECK(vector::motion_piece_value(f, MotionProp::X, fr, 0.13).v == 34);
     CHECK(vector::motion_frame_count(0, 0.25) == 31); // 30 120ths before it, then 0.25 itself
     CHECK(vector::motion_frame_count(0.5, 0.5) == 1);
+    // Visible has no values between: shown up to the frame that hides it.
+    MotionPiece vf;
+    vf.kind = MotionPiece::Kind::Frames;
+    vf.end = 0.03;
+    REQUIRE(vector::motion_frame_count(vf.at, vf.end) == 5);
+    vf.frames = {{1}, {0}, {0}, {0}, {1}};
+    CHECK(vector::motion_piece_value(f, MotionProp::Visible, vf, 0.75 / 120).v == 1);
+    CHECK(vector::motion_piece_value(f, MotionProp::Visible, vf, 1.0 / 120).v == 0);
+    CHECK(vector::motion_piece_value(f, MotionProp::Visible, vf, 2.5 / 120).v == 0);
 
     // A track: its piece at t, t held within the clip.
     MotionTrack tr{"a", MotionProp::X, {}};
