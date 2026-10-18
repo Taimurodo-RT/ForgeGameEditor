@@ -78,10 +78,11 @@ namespace {
 //                       the player on the old one, walking and saving
 // --scene rpg_marks     (part 5а of docs/models/движение-модель.md) the test game copied with marks in the animations
 //                       (prepare_copy): the hero's «walk» rings «звон» on each step, his «stand» a sound with no file,
-//                       the elder's «stand» a «кивок» and a «звон»; on every frame the marks fired, and the sounds
-//                       played, are those the animations come to on the game's ticks, worked out by the scene; none the
-//                       first tick of the map, the hero's anew from his first tick when he starts or stops, none in the
-//                       pause
+//                       the elder's «stand» a «кивок» and a «звон», the coins' a «блеск»; on every frame the marks
+//                       fired, and the sounds played, are those the animations come to on the game's ticks, worked out
+//                       by the scene; none the first tick of the map (a new game begun so that it is a frame's start
+//                       for the elder and the coins), the hero's anew from his first tick when he starts or stops,
+//                       none in the pause, none of the coins once picked up
 
 struct Step {
     const char* name;
@@ -139,6 +140,7 @@ constexpr Way kWays[] = {
 const objects::Clip kMarksWalk{{1, 2}, 10, true, {{"звон", true, 0, 1}}};
 const objects::Clip kMarksStand{{0}, 2, true, {{"шорох", true, 0, 1}}};
 const objects::Clip kMarksElder{{0, 0}, 5, true, {{"кивок", false, 0, 1}, {"звон", true, 1, 1}}};
+const objects::Clip kMarksCoins{{0}, 4, true, {{"блеск", false, 0, 1}}};
 
 // The marks of the places of an animation that begin after tick `was` (-1: place 0 too) and not after `now`: places
 // begin at 0 and every clip_ticks after, past the last only going round. Worked out apart from objects::clip_events.
@@ -1122,7 +1124,7 @@ private:
         const u64 d = clock > w.clock ? clock - w.clock : 0;
         // What the ticks came to: nothing on the map's first (it takes the frame shown); the hero's walk or stand from
         // his tick in it (a new one from its start), the elder's stand by the clock.
-        std::vector<const objects::ClipEvent*> want_hero, want_elder;
+        std::vector<const objects::ClipEvent*> want_hero, want_elder, want_coins;
         if (d == 0) {
             ++w.idle;
             if (walking != w.walking) bad("герой пошёл или встал без тика");
@@ -1139,16 +1141,20 @@ private:
             w.hero_t += d;
             want_hero = marks_between(walking ? kMarksWalk : kMarksStand, was, w.hero_t);
             want_elder = marks_between(kMarksElder, static_cast<i64>(w.clock), clock);
+            // The coins lying when the ticks began (the hero picks them up after his steps of the frame).
+            if (!w.coins_gone) want_coins = marks_between(kMarksCoins, static_cast<i64>(w.clock), clock);
+            else w.coins_after += static_cast<u32>(d);
         }
-        // What it fired: the hero's, the elder's, no one else's.
-        std::string got_hero, got_elder;
+        // What it fired: the hero's, the elder's, the coins', no one else's.
+        std::string got_hero, got_elder, got_coins;
         const std::vector<std::string>& fired = g_.marks_fired();
         for (usize i = w.fired; i < fired.size(); ++i) {
             const usize at = fired[i].find('@'); // a name has no @, an id may: «elder@7,6»
             const std::string name = fired[i].substr(0, at), who = at == std::string::npos ? std::string() : fired[i].substr(at + 1);
             if (who == "hero") got_hero += (got_hero.empty() ? "" : ", ") + name;
             else if (who == elder_id_) got_elder += (got_elder.empty() ? "" : ", ") + name;
-            else bad("метка «" + fired[i] + "» не героя и не старосты");
+            else if (who == shining_id_) got_coins += (got_coins.empty() ? "" : ", ") + name;
+            else bad("метка «" + fired[i] + "» не героя, не старосты и не монет");
         }
         u32 rung = 0;
         auto same = [&](const char* who, const std::string& got, const std::vector<const objects::ClipEvent*>& want, u32& count) {
@@ -1165,6 +1171,7 @@ private:
         };
         same("герой", got_hero, want_hero, w.hero);
         same("староста", got_elder, want_elder, w.elder);
+        same("монеты", got_coins, want_coins, w.coins);
         // The sounds: each «звон» once, its file; «шорох» has none and plays nothing.
         const std::vector<std::string>& played = g_.sounds_played();
         const usize now_played = played.size() - std::min(played.size(), w.played);
@@ -1176,6 +1183,7 @@ private:
         w.walking = walking;
         w.fired = fired.size();
         w.played = played.size();
+        w.coins_gone = g_.gone(shining_id_);
     }
     // The test game with marks: the hero's steps ring, his standing rustles with no file, the elder nods and rings.
     void marks_scene() {
@@ -1192,21 +1200,28 @@ private:
                     const auto it = t->animations.find(state);
                     return it == t->animations.end() ? objects::Clip{} : it->second;
                 };
-                check(hero && elder && anim(hero, "walk") == kMarksWalk && anim(hero, "stand") == kMarksStand && anim(elder, "stand") == kMarksElder &&
-                          hero->animations.size() == 2 && elder->animations.size() == 1,
-                      "в копии у героя «walk» и «stand» с метками, у старосты «stand»");
+                const objects::Template* coins = g_.library().find("coins");
+                check(hero && elder && coins && anim(hero, "walk") == kMarksWalk && anim(hero, "stand") == kMarksStand &&
+                          anim(elder, "stand") == kMarksElder && anim(coins, "stand") == kMarksCoins && hero->animations.size() == 2 &&
+                          elder->animations.size() == 1 && coins->animations.size() == 1,
+                      "в копии у героя «walk» и «stand» с метками, у старосты и монет «stand»");
                 check(!objects::mark_sound_file(g_.library().sounds_folder(), "звон").empty() &&
                           objects::mark_sound_file(g_.library().sounds_folder(), "шорох").empty(),
                       "звук «звон» есть в sounds, «шорох» нет");
                 elder_id_.clear();
+                shining_id_.clear();
                 for (const Thing& t : g_.map() ? g_.map()->villagers : std::vector<Thing>{})
                     if (t.tmpl && t.tmpl->id == "elder") elder_id_ = t.id;
-                check(!elder_id_.empty() && g_.marks_fired().empty(), "староста на карте «" + elder_id_ + "», меток ещё нет");
+                for (const Thing& t : g_.map() ? g_.map()->pickups : std::vector<Thing>{})
+                    if (t.tmpl && t.tmpl->id == "coins") shining_id_ = t.id;
+                check(!elder_id_.empty() && shining_id_ == "coins@9,11" && g_.marks_fired().empty(),
+                      "староста на карте «" + elder_id_ + "», монеты «" + shining_id_ + "», меток ещё нет");
                 return false;
             }
             watch_marks("стоит");
             if (f < 75) return false;
-            check(mw_.taken && mw_.hero >= 2 && mw_.elder >= 5, "стоя: у героя меток " + std::to_string(mw_.hero) + ", у старосты " + std::to_string(mw_.elder));
+            check(mw_.taken && mw_.hero >= 2 && mw_.elder >= 5 && mw_.coins >= 4,
+                  "стоя: у героя меток " + std::to_string(mw_.hero) + ", у старосты " + std::to_string(mw_.elder) + ", у монет " + std::to_string(mw_.coins));
             return true;
         }});
         steps_.push_back({"вправо: «звон» на каждом шаге, с первого тика; встал — «шорох» сразу", 120, [this](u32 f) {
@@ -1239,33 +1254,61 @@ private:
             watch_marks(f < 25 ? "идёт" : "встал");
             return f >= 70;
         }});
-        // Begun again where the old map stopped mid-animation: nothing on its first tick, then as at the start.
-        steps_.push_back({"снова новая игра: на первом тике опять ничего", 60, [this](u32 f) {
-            if (f == 0) {
+        // To the coins (cell 9,11): their «блеск» while they lie, none once he has them.
+        steps_.push_back({"к монетам: «блеск», пока лежат; поднятые молчат", 400, [this](u32 f) {
+            if (f == 0) mw_.coins_from = mw_.coins;
+            const bool gone = g_.gone(shining_id_);
+            watch_marks(gone ? "монеты подняты" : "к монетам");
+            if (!gone) {
+                if (!walk_to(9, 11, f)) return f >= 399 ? (fail("монеты не подняты" + state()), true) : false;
+                fail("герой у монет, а они не подняты" + state());
+                return true;
+            }
+            let_go();
+            if (mw_.coins_after < 50 || g_.walking()) return false;
+            check(mw_.coins > mw_.coins_from && var("inv.coins") == 5,
+                  "монеты подняты (inv.coins = 5), «блеск» по пути " + std::to_string(mw_.coins - mw_.coins_from) + ", потом " +
+                      std::to_string(mw_.coins_after) + " тиков без него" + state());
+            return true;
+        }});
+        // Begun again where the old map stopped mid-animation, so that its first tick begins a frame of the elder's and
+        // the coins' (the game's clock goes on: at 60 a frame of either begins on a tick of 60): nothing on it, then as
+        // at the start.
+        steps_.push_back({"снова новая игра: на первом тике опять ничего", 140, [this](u32 f) {
+            if (!mw_.again) {
+                watch_marks("перед новой игрой");
+                if (g_.clock_ticks() % 60 != 59) return f >= 70 ? (fail("часы игры не дошли до 59 из 60"), true) : false;
                 check(s_->new_game() && g_.marks_fired().empty(), "новая игра снова, меток нет");
+                mw_.again = true;
                 mw_.clock = g_.clock_ticks();
                 mw_.fired = 0;
                 mw_.played = g_.sounds_played().size();
                 mw_.walking = false;
                 mw_.taken = false;
-                mw_.before = mw_.hero + mw_.elder;
+                mw_.coins_gone = false;
+                mw_.before = mw_.hero + mw_.elder + mw_.coins;
+                mw_.begun = f;
                 return false;
             }
             watch_marks("снова стоит");
-            return f >= 45;
+            if (f == mw_.begun + 1)
+                check(g_.clock_ticks() % 60 == 0 && !marks_between(kMarksElder, static_cast<i64>(g_.clock_ticks()) - 1, g_.clock_ticks()).empty() &&
+                          !marks_between(kMarksCoins, static_cast<i64>(g_.clock_ticks()) - 1, g_.clock_ticks()).empty() && g_.marks_fired().empty(),
+                      "первый тик новой карты (" + std::to_string(g_.clock_ticks()) + ") начинает кадр старосты и монет, а меток нет");
+            return f >= mw_.begun + 45;
         }});
         steps_.push_back({"метки: итог", 2, [this](u32 f) {
             watch_marks("итог");
             if (f < 1) return false;
             const MarkWatch& w = mw_;
             check(w.bad == 0, "метки не по анимациям " + std::to_string(w.bad) + " раз из " + std::to_string(w.frames) + " кадров, первый: " + w.first_bad);
-            check(g_.marks_fired().size() == w.hero + w.elder - w.before, "все метки этой игры записаны: " + std::to_string(g_.marks_fired().size()));
+            check(g_.marks_fired().size() == w.hero + w.elder + w.coins - w.before, "все метки этой игры записаны: " + std::to_string(g_.marks_fired().size()));
             check(w.steps >= 6 && w.turns >= 4 && w.silent >= 4 && w.emits >= 10 && w.sounded >= 16 && w.idle >= 30,
                   "шагов со «звоном» " + std::to_string(w.steps) + ", пошёл и встал " + std::to_string(w.turns) + " раз, «шорох» без файла " +
                       std::to_string(w.silent) + ", «кивок» " + std::to_string(w.emits) + ", звуков " + std::to_string(w.sounded) +
                       ", кадров без тика " + std::to_string(w.idle));
-            FORGE_INFO("метки RPG: кадров %u (без тика %u), у героя %u (шагов %u), у старосты %u, звуков %u, без файла %u, emit %u", w.frames,
-                       w.idle, w.hero, w.steps, w.elder, w.sounded, w.silent, w.emits);
+            FORGE_INFO("метки RPG: кадров %u (без тика %u), у героя %u (шагов %u), у старосты %u, у монет %u (поднятых %u тиков), звуков %u, без файла %u, emit %u",
+                       w.frames, w.idle, w.hero, w.steps, w.elder, w.coins, w.coins_after, w.sounded, w.silent, w.emits);
             return true;
         }});
     }
@@ -1360,14 +1403,18 @@ private:
         bool walking = false;
         bool taken = false; // the map's first tick gone: it takes the frame shown and fires nothing
         usize fired = 0, played = 0;
-        u32 frames = 0, idle = 0, hero = 0, elder = 0, steps = 0, turns = 0, sounded = 0, silent = 0, emits = 0, bad = 0;
-        u32 steps_from = 0; // steps when a walk began
-        u64 paused_at = 0;  // the clock when the pause opened
-        u32 before = 0;     // the marks of the games before the last begun
+        u32 frames = 0, idle = 0, hero = 0, elder = 0, coins = 0, steps = 0, turns = 0, sounded = 0, silent = 0, emits = 0, bad = 0;
+        u32 steps_from = 0, coins_from = 0; // steps and the coins' marks when a walk began
+        bool coins_gone = false;            // picked up when the frame looked at last was over
+        u32 coins_after = 0;                // ticks watched since
+        u64 paused_at = 0;                  // the clock when the pause opened
+        u32 before = 0;                     // the marks of the games before the last begun
+        bool again = false;                 // the second new game begun, on frame `begun` of its step
+        u32 begun = 0;
         std::string first_bad;
     };
     MarkWatch mw_;
-    std::string elder_id_;
+    std::string elder_id_, shining_id_; // the elder and the coins of rpg_marks
     // The author's game (scene project).
     fs::path edits_file_;
     edits::ProjectEdits e_;
@@ -1395,19 +1442,21 @@ bool prepare_copy(const std::string& scene, const fs::path& game, fs::path& out,
         return false;
     }
     if (marks) {
-        // The hero's and the elder's animations with marks, and the sound «звон» (a tenth of a second of 880 Hz).
+        // The hero's, the elder's and the coins' animations with marks, and the sound «звон» (a tenth of a second of 880 Hz).
         objects::Library library;
         if (!library.load(out / "kinds.json", out / "objects", &why)) return false;
         const objects::Template* hero = library.find("hero_look");
         const objects::Template* elder = library.find("elder");
-        if (!hero || !elder) {
-            why = "в копии нет героя hero_look или старосты elder";
+        const objects::Template* coins = library.find("coins");
+        if (!hero || !elder || !coins) {
+            why = "в копии нет героя hero_look, старосты elder или монет coins";
             return false;
         }
-        objects::Template h = *hero, e = *elder;
+        objects::Template h = *hero, e = *elder, c = *coins;
         h.animations = {{"walk", kMarksWalk}, {"stand", kMarksStand}};
         e.animations = {{"stand", kMarksElder}};
-        if (!library.put(h, &why) || !library.put(e, &why)) return false;
+        c.animations = {{"stand", kMarksCoins}};
+        if (!library.put(h, &why) || !library.put(e, &why) || !library.put(c, &why)) return false;
         audio::Clip ring;
         for (u32 i = 0; i < audio::kRate / 10; ++i) {
             const f32 v = 0.3f * static_cast<f32>(std::sin(2.0 * 3.14159265358979 * 880.0 * i / audio::kRate));

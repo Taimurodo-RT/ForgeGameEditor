@@ -25615,7 +25615,7 @@ return {
     }
     static objects::Clip mk_idle() { return {{0, 1, 2, 3, 4, 5, 6, 7}, 10, true, {{"шаг", true, 0, 1}, {"удар", false, 2, 2}, {"звон", true, 4, 1}}}; }
     static objects::Clip mk_walk() { return {{8, 9, 10, 11}, 10, true, {{"шаг", true, 0, 1}, {"шаг", true, 2, 1}}}; }
-    // The frames of «Покадровая» with their marks as shown: «1 ♪», «3 ⚑ ▬», …; then «Метки: …» under them.
+    // The frames of «Покадровая» with their marks as shown: «1 ♪», «3 ⚑ ▬», …; then «Метки: …» under them, when shown.
     std::string mk_seq() {
         ed_.context()->Update();
         std::string out;
@@ -25633,7 +25633,8 @@ return {
             out += std::to_string(i + 1) + (mark == "music_note" ? " ♪" : mark == "flag" ? " ⚑" : mark.empty() ? "" : " " + mark) +
                    (windows.empty() ? "" : " ▬") + "; ";
         }
-        return out + element_text("an-marks");
+        Rml::Element* line = ed_.find_element("an-marks");
+        return out + (line && line->IsVisible() ? element_text("an-marks") : std::string());
     }
 
     // In an editor for «Движение А» after pixel-motion-j-again (--self-test pixel-motion-k).

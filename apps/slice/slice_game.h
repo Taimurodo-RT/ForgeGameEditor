@@ -304,6 +304,9 @@ public:
     static constexpr forge::usize kMarksKept = 4096;
     const std::vector<FiredMark>& marks_fired() const { return marks_fired_; }
     forge::u64 marks_count() const { return marks_count_; }
+    // A copy's pose for its animation now, and whether its part of the world sleeps (its marks do not fire).
+    Pose copy_pose_of(flecs::entity_t copy) const;
+    bool asleep(flecs::entity_t copy) const;
 
 private:
     friend class SliceLogic;

@@ -116,7 +116,7 @@ bool SliceSounds::play_mark(const std::string& name, f64 x, f64 y) {
     if (!it->second) return false;
     ++named_played_;
     ++marks_played_;
-    mixer_.play(*it->second, {.volume = 1, .at = true, .x = x, .y = y, .range = 16});
+    last_mark_ = mixer_.play(*it->second, {.volume = 1, .at = true, .x = x, .y = y, .range = 16});
     return true;
 }
 

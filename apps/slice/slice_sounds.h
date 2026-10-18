@@ -62,6 +62,8 @@ public:
     u32 played(Cue cue) const { return played_[static_cast<usize>(cue)]; }
     u32 played_named() const { return named_played_; }
     u32 played_marks() const { return marks_played_; }
+    // The place in the world the last mark's sound plays at, while it plays.
+    bool last_mark_at(f64& x, f64& y) const { return mixer_.where(last_mark_, x, y); }
     u32 loops() const { return static_cast<u32>(loops_.size()); }
 
 private:
@@ -77,6 +79,7 @@ private:
     std::array<forge::audio::SoundPtr, static_cast<usize>(Cue::Count)> cues_{};
     std::array<u32, static_cast<usize>(Cue::Count)> played_{};
     u32 named_played_ = 0, marks_played_ = 0;
+    forge::audio::Voice last_mark_;
     std::unordered_map<std::string, forge::audio::SoundPtr> named_;
     std::unordered_map<std::string, forge::audio::SoundPtr> marks_; // by the mark's name; null: none there
     std::unordered_map<flecs::entity_t, Loop> loops_;

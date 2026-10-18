@@ -231,7 +231,7 @@ void Objects::init(flecs::world& ecs) {
     enemies = ecs.query<Position, Body, Enemy>();
     hazards = ecs.query<Position, Body, Hazard>();
     bodies = ecs.query_builder<Position, Body>().without<Npc>().without<Critter>().without<Item>().without<Hero>().build();
-    copies = ecs.query_builder<Position, objects::ObjectRef>().without<Hero>().build();
+    copies = ecs.query_builder<Position, objects::ObjectRef>().build();
 }
 
 Pose critter_pose(const Body& b) { return (b.contacts & sim::OnGround) && std::fabs(b.vx) > 0.3f ? Pose::Walk : Pose::Stand; }

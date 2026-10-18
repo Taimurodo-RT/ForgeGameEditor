@@ -543,11 +543,13 @@ void AnimationEditor::rebuild() {
     for (u32 f : c.frames) m_seq_.push_back({f < thumbs_.size() ? "/memory/" + thumbs_[f] : std::string(), static_cast<int>(f), true, false, {}, false});
     // Its marks (part 5а): only from the code of «Векторная», shown here as they are.
     m_marks_.clear();
+    const std::vector<objects::FrameMark> under = objects::frame_marks(c);
+    for (usize k = 0; k < under.size() && k < m_seq_.size(); ++k) {
+        m_seq_[k].mark = under[k].begins == objects::FrameMark::Begins::Emit ? "flag" : under[k].begins == objects::FrameMark::Begins::Sound ? "music_note" : "";
+        m_seq_[k].window = under[k].window;
+    }
     for (const objects::ClipEvent& e : c.events) {
         if (e.frame >= m_seq_.size()) continue;
-        Thumb& at = m_seq_[e.frame];
-        if (!e.sound || at.mark.empty()) at.mark = e.sound ? "music_note" : "flag";
-        for (u32 k = 0; !e.sound && k < e.frames && e.frame + k < m_seq_.size(); ++k) m_seq_[e.frame + k].window = e.frames > 1;
         const std::string where = e.frames > 1 ? "кадры " + std::to_string(e.frame + 1) + "–" + std::to_string(e.frame + e.frames)
                                                : "кадр " + std::to_string(e.frame + 1);
         m_marks_ += (m_marks_.empty() ? "" : ", ") + std::string(e.sound ? "звук " : "") + e.name + " — " + where;

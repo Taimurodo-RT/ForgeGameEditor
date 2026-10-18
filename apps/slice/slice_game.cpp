@@ -2427,6 +2427,19 @@ void SliceGame::fire_mark(const objects::ClipEvent& e, flecs::entity_t thing, f6
     ++marks_count_;
 }
 
+Pose SliceGame::copy_pose_of(flecs::entity_t copy) const {
+    if (!level_ || copy == 0) return Pose::Idle;
+    const flecs::entity e(level_->scene->ecs(), copy);
+    return e.is_alive() ? copy_pose(e) : Pose::Idle;
+}
+
+bool SliceGame::asleep(flecs::entity_t copy) const {
+    if (!level_ || copy == 0) return true;
+    const flecs::entity e(level_->scene->ecs(), copy);
+    const Position* p = e.is_alive() ? e.try_get<Position>() : nullptr;
+    return !p || level_->sim->zones().zone_of(p->chunk()) == Zone::Asleep;
+}
+
 bool SliceGame::anim_going(flecs::entity_t thing, std::string_view mark) const {
     if (!level_ || thing == 0) return false;
     // Asked by a scheme while a tick runs: the frame shown when that tick is over.

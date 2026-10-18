@@ -200,6 +200,13 @@ bool clip_event_going(const Clip& clip, const ClipEvent& e, u64 ticks);
 // Why an event cannot be one of the clip's: no name, its place or its window past the frames, a sound with a window.
 // Empty: it can.
 std::string event_problem(const Clip& clip, const ClipEvent& e);
+// What each place of a clip shows under its frame in «Покадровая»: the mark that begins there, an emit's flag over a
+// sound's note, and whether a window of more than one frame goes on there.
+struct FrameMark {
+    enum class Begins : u8 { None, Sound, Emit } begins = Begins::None;
+    bool window = false;
+};
+std::vector<FrameMark> frame_marks(const Clip& clip);
 // The clip's events cut to its frames, after frames were taken away: those that began past them go, a window that
 // went on past them ends at the last; the names of those gone, in order.
 std::vector<std::string> trim_events(Clip& clip);

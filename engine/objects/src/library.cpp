@@ -636,6 +636,18 @@ std::filesystem::path mark_sound_file(const std::filesystem::path& folder, std::
     return {};
 }
 
+std::vector<FrameMark> frame_marks(const Clip& clip) {
+    std::vector<FrameMark> out(clip.frames.size());
+    for (const ClipEvent& e : clip.events) {
+        if (e.frame >= out.size()) continue;
+        FrameMark& at = out[e.frame];
+        if (!e.sound) at.begins = FrameMark::Begins::Emit;
+        else if (at.begins == FrameMark::Begins::None) at.begins = FrameMark::Begins::Sound;
+        for (u32 k = 0; !e.sound && e.frames > 1 && k < e.frames && e.frame + k < out.size(); ++k) out[e.frame + k].window = true;
+    }
+    return out;
+}
+
 std::vector<std::string> trim_events(Clip& clip) {
     std::vector<std::string> gone;
     const u32 n = static_cast<u32>(clip.frames.size());

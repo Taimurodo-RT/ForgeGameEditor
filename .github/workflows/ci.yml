@@ -263,13 +263,15 @@ jobs:
           "./$packed" --test --scene platformer
           (cd build/elsewhere && "../../$packed" --test --scene platformer_continue)
           (cd build/elsewhere && "../../$packed" --test --scene platformer_edges)
-      - name: The template «Платформер» in the build, then in the package with games/slice, games/platformer and games/modules moved away (slice scenes platformer_template, a bot through «Луг» to «Холмы», saved there, three falls and «Ещё раз»; then platformer_template_continue from another working folder, «Продолжить», no reward twice, through «Вершина» to the flag)
+      - name: The template «Платформер» in the build, then in the package with games/slice, games/platformer and games/modules moved away (slice scenes platformer_template, a bot through «Луг» to «Холмы», saved there, three falls and «Ещё раз»; then platformer_template_continue from another working folder, «Продолжить», no reward twice, through «Вершина» to the flag; platformer_marks at 60 and at 42 frames a second, a copy of it with animations with marks: none on the first frame of a new game or of «Холмы», «Жук» by its pose, a «Флаг» far off asleep and silent, «Барабан»'s scheme counting the ticks of its mark's window, sounds at their place, none on the frame of the win)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then built=build/apps/slice/Release/forge_slice.exe; packed=build/dist/OldMine/OldMine.exe; else built=build/apps/slice/forge_slice; packed=build/dist/OldMine/OldMine; fi
           mkdir -p build/elsewhere
           "./$built" --test --scene platformer_template --screenshot world-slice-platformer-template.png
           (cd build/elsewhere && "../../$built" --test --scene platformer_template_continue --screenshot ../../world-slice-platformer-template-won.png)
+          "./$built" --test --scene platformer_marks
+          "./$built" --test --scene platformer_marks --hz 42
           mv games/slice build/slice-away
           mv games/platformer build/platformer-away
           mv games/modules build/modules-away

@@ -144,6 +144,8 @@ public:
     u32 voices(Bus bus) const;
     // How many sounds were ever started (for tests).
     u64 started() const { return started_; }
+    // Where a sound plays in the world, while it plays (for tests): false for one not in the world or over.
+    bool where(Voice v, f64& x, f64& y) const;
 
     static constexpr u32 kMaxVoices = 64;
 

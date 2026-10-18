@@ -199,7 +199,7 @@ struct Objects {
     flecs::query<forge::scene::Position, forge::sim::Body, Enemy> enemies;
     flecs::query<forge::scene::Position, forge::sim::Body, Hazard> hazards;
     flecs::query<forge::scene::Position, forge::sim::Body> bodies; // a body and nothing else of the above
-    flecs::query<forge::scene::Position, forge::objects::ObjectRef> copies; // of templates, the hero not
+    flecs::query<forge::scene::Position, forge::objects::ObjectRef> copies; // of templates (the hero is none: no ObjectRef)
     void init(flecs::world& ecs);
 };
 

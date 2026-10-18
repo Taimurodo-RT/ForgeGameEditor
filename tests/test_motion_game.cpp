@@ -145,6 +145,20 @@ TEST_CASE("5а: a mark falls on the frame that first shows its moment, at any fr
 end } })");
     const pixel::Recording rec2 = recorded(s2);
     CHECK(marks(pixel::strip_events(rec2, pixel::cut_clip(spec(12, false), true, rec2.length))) == "б@0 а@0 ♪в@1");
+
+    // A flow of spawn(…) is written down before what comes after it: the strip has its marks by their frames.
+    pixel::PoseScript s3 = script_of(R"(return { clips = { c = function(p)
+  spawn(function()
+    wait(0.3)
+    emit("поздно")
+  end)
+  emit("рано")
+  wait(0.5)
+end } })");
+    const pixel::Recording rec3 = recorded(s3);
+    REQUIRE(rec3.marks.size() == 2);
+    CHECK(rec3.marks[0].name == "поздно");
+    CHECK(marks(pixel::strip_events(rec3, pixel::cut_clip(spec(10, false), true, rec3.length))) == "рано@0 поздно@3");
 }
 
 TEST_CASE("5а: a baked strip keeps the marks of each clip of the code, and .pixel.json keeps them") {
@@ -521,5 +535,32 @@ TEST_CASE("5а: a mark's sound is the game's sound of that name, as «Векто
     CHECK(objects::mark_sound_file(dir, "a\\шаг").empty());
     fs::create_directories(dir / "папка");
     CHECK(objects::mark_sound_file(dir, "папка").empty()); // a folder is no sound
+    // .ogg alone; a name is never a path, even to a sound that is there.
+    write_text(dir / "гром.ogg", "x");
+    CHECK(objects::mark_sound_file(dir, "гром") == dir / utf8_path("гром.ogg"));
+    write_text(dir / "папка" / "капля.wav", "x");
+    CHECK(objects::mark_sound_file(dir, "папка/капля").empty());
+    CHECK(objects::mark_sound_file(dir / "папка", "../звон").empty());
+    CHECK(objects::mark_sound_file(dir / "папка", "..").empty());
+#ifndef _WIN32
+    write_text(dir / utf8_path("a\\шаг.wav"), "x"); // a file of that name, not a folder
+    CHECK(objects::mark_sound_file(dir, "a\\шаг").empty());
+#endif
     fs::remove_all(dir);
+}
+
+TEST_CASE("5а: «Покадровая» shows under a frame the mark that begins there, a flag over a note, and a window's bar") {
+    using B = objects::FrameMark::Begins;
+    objects::Clip c{{0, 1, 2, 3, 4}, 10, true, {{"шаг", true, 1, 1}, {"удар", false, 1, 1}, {"взмах", false, 2, 2}, {"звон", true, 2, 1},
+                                                 {"тик", false, 4, 1}, {"эхо", false, 7, 1}}};
+    const std::vector<objects::FrameMark> f = objects::frame_marks(c);
+    REQUIRE(f.size() == 5);
+    std::string seen;
+    for (const objects::FrameMark& m : f)
+        seen += std::string(m.begins == B::Emit ? "⚑" : m.begins == B::Sound ? "♪" : "·") + (m.window ? "▬" : "") + " ";
+    // Places from 0: a sound before an emit on 1, after one on 2: the flag either way; the window of «взмах» on 2–3, a
+    // one-frame emit no bar; «эхо» past the frames nowhere.
+    CHECK(seen == "· ⚑ ⚑▬ ·▬ ⚑ ");
+    c.events = {{"шаг", true, 0, 1}};
+    CHECK(objects::frame_marks(c)[0].begins == B::Sound);
 }

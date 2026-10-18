@@ -15,8 +15,8 @@
 //   forge_slice --test --screenshot out.png [--scene village|mine|door|links|menu|windows|templates|volumes|physics|light|zones|own_tiles
 //                                                    |tiled|tiled_update|levels|levels_continue|platformer
 //                                                    |platformer_continue|platformer_edges|platformer_template
-//                                                    |platformer_template_continue|module_slots|input|input_again
-//                                                    |project]
+//                                                    |platformer_template_continue|platformer_marks|module_slots
+//                                                    |input|input_again|project] [--hz N]
 //                                   offscreen: plays the game through and checks it
 //                                   (volumes: over a settings.json of music and sounds at 0;
 //                                   physics, light, zones: the level of games/examples/physics, light or zones as a
@@ -38,6 +38,12 @@
 //                                   platformer_template: the template «Платформер» (games/platformer) played through
 //                                   «Луг» to «Холмы» by the keys, the hero's frames by the pixels, saved there, lost;
 //                                   platformer_template_continue, another process: «Продолжить» and on to the flag;
+//                                   platformer_marks (part 5а of docs/models/движение-модель.md): a copy of the
+//                                   template whose hero, «Жук», «Флаг» and a «Барабан» of its own have animations with
+//                                   marks, each frame checked by the ticks it shows (--hz N: N frames a second, 60
+//                                   unless given): none on the first frame of a new game or of a level gone to, copies by
+//                                   their pose, none asleep, a scheme asking «Идёт метка» on each tick, sounds at their
+//                                   place, none on the frame of the win;
 //                                   module_slots (step 14.3a), with the --user DIR of the test module's probe_save: the
 //                                   module's values in the game, the slots of another module or of none refused, a slot
 //                                   from before step 14.3a loaded;
@@ -330,6 +336,26 @@ inline std::filesystem::path root() { return std::filesystem::temp_directory_pat
 // The author's choice: the jump on K and the gamepad's A, nothing else changed.
 inline constexpr std::string_view kAuthor = "{\n  \"actions\": [\n    {\"id\": \"jump\", \"binds\": [\"key:K\", \"pad:south\"]}\n  ]\n}\n";
 } // namespace keys_scene
+
+// --scene platformer_marks (part 5а of docs/models/движение-модель.md, «Метки в игре»): a copy of the template
+// «Платформер» whose hero, «Жук» and «Флаг» have animations with marks, and a «Барабан» of its own (the flag's picture)
+// whose scheme counts on «Каждый шаг» the ticks its mark «блик» goes; the sound «звон» in its sounds, «шорох» not there.
+namespace marks_scene {
+inline std::filesystem::path root() { return std::filesystem::temp_directory_path() / utf8_path("forge_slice_метки"); }
+// A mark at frame 0 of each of the hero's poses, so the look a new game or level begins with would fire one.
+const objects::Clip kHeroStand{{0}, 2, true, {{"шорох", true, 0, 1}}};
+const objects::Clip kHeroWalk{{1, 2}, 10, true, {{"звон", true, 0, 1}, {"топ", false, 1, 1}}};
+const objects::Clip kHeroAir{{3}, 10, true, {{"шорох", true, 0, 1}}};
+const objects::Clip kBeetleWalk{{0, 1}, 10, true, {{"топ", false, 0, 1}, {"звон", true, 1, 1}}};
+const objects::Clip kBeetleStand{{0}, 2, true, {{"кивок", false, 0, 1}}};
+const objects::Clip kFlagIdle{{0}, 30, true, {{"кивок", false, 0, 1}}};       // a mark every 2 ticks: the even ones
+// «блик» goes on ticks 6..11 of every 18: its edges fall on every even tick of 10, so at 42 frames a second (10 ticks
+// in 7 frames) some frame of two ticks has one on each side.
+const objects::Clip kDrumIdle{{0, 0, 0}, 10, true, {{"блик", false, 1, 1}}};
+inline constexpr const char* kDrumVar = "барабан.тики";
+// Level ids of the copies the scene puts.
+constexpr u64 kDrum = 0x5a0000000000d001ull, kFarFlag = 0x5a0000000000d002ull, kFlag = 0x5a0000000000d003ull, kFlag2 = 0x5a0000000000d004ull;
+} // namespace marks_scene
 
 // The self-test: steps run one after another, each over as many frames as
 // it needs (a step returns true when it is done).
@@ -1627,6 +1653,7 @@ private:
             // What it fired: the hero's, the copy's, other copies' of templates with marks (emits counted).
             std::vector<const SliceGame::FiredMark*> got_hero, got_copy;
             u32 emitted = 0;
+            const SliceGame::FiredMark* last_sound = nullptr;
             for (usize i = w->fired; i < fired.size(); ++i) {
                 const SliceGame::FiredMark& m = fired[i];
                 if (m.tick != now) bad("метка «" + m.name + "» на тике " + std::to_string(m.tick) + ", а кадр показывает " + std::to_string(now));
@@ -1637,7 +1664,12 @@ private:
                     bad("звук «" + m.name + "»: " + (m.sounded ? "прозвучал, а файла нет" : "не прозвучал, а файл есть"));
                 if (m.sound) ++(m.sounded ? w->sounded : w->silent);
                 else ++w->emits;
+                if (m.sound && m.sounded) last_sound = &m;
             }
+            // The last sound played: at its mark's place, heard from there.
+            f64 sx = 0, sy = 0;
+            if (last_sound && (!g.sounds().last_mark_at(sx, sy) || sx != last_sound->x || sy != last_sound->y))
+                bad("звук «" + last_sound->name + "» не на месте метки");
             auto same = [&](const char* who, const std::vector<const SliceGame::FiredMark*>& got, const std::vector<const objects::ClipEvent*>& want,
                             f64 x, f64 y) {
                 std::string g_names;
@@ -1784,6 +1816,355 @@ private:
             check(w->paused > 0, "кадров в паузе " + std::to_string(w->paused));
             FORGE_INFO("метки при %u к/с: кадров %u (без тика %u, в паузе %u), у героя %u, у копии %u, emit %u, звуков %u и без файла %u; окно %u кадров, вне %u",
                        screen_hz, w->frames, w->idle, w->paused, w->hero, w->copy_marks, w->emits, w->sounded, w->silent, w->going, w->still);
+            return true;
+        }});
+    }
+
+    // --scene platformer_marks (part 5а, «Метки в игре»), at 60 frames a second or another --hz: each frame against the
+    // animations marks_scene put in the template, by the ticks it shows. The first frame of a new game and of a level
+    // gone to fires nothing (the look it begins with has a mark at its frame 0), the hero goes on from the next by its
+    // pose's own clock; «Жук» by its pose, standing or walking; «Флаг» 290 tiles off, where the world sleeps, none;
+    // «Барабан»'s scheme counts the ticks its «блик» goes, asked during each tick (at 42 frames a second some frames
+    // run two, one on each side of the window's edge); «Идёт метка» of the hero by its pose's clock; sounds at their
+    // place; the frame the game is won in fires none, though «Флаг» had one due.
+    void build_marks(Shell& s) {
+        using namespace marks_scene;
+        SliceGame& g = g_;
+        struct Watch {
+            u64 tick = 0;            // drawn by the frame looked at last
+            Pose pose = Pose::Stand; // the hero's then, and since when
+            u64 since = 0;
+            usize fired = 0;         // marks_fired() looked at
+            u32 travels = 0;
+            u32 played = 0;          // the game's sounds of marks
+            f64 drum = 0;            // kDrumVar then
+            bool renew = false;      // a new game asked: the next frame is the first of another world
+            bool drum_ran = false;   // a frame of ticks has run with «Барабан»: its scheme too
+            bool ended = false;      // the game ended in a frame looked at
+            flecs::entity_t far = 0; // «Флаг» 290 tiles off
+            f64 far_x = 0;
+            u64 asleep_from = 0;
+            u32 frames = 0, idle = 0, worlds = 0, bad = 0;
+            u32 hero = 0, after_travel = 0, beetles = 0, flags = 0, drums = 0, emits = 0, sounded = 0, silent = 0, at_place = 0;
+            u32 asleep = 0, asleep_due = 0, beetle_walk = 0, beetle_stand = 0, hero_on = 0, hero_off = 0, drum_on = 0, drum_off = 0, counted = 0, straddles = 0;
+            u32 walk_begun = 0, due_at_end = 0, attempt = 0, end_frame = 0;
+            u32 was_travels = 0;
+            u64 from = 0;
+            bool flag_put = false, end_seen = false;
+            std::string first_bad;
+        };
+        auto w = std::make_shared<Watch>();
+        const u32 slow = screen_hz / 60 + 1; // frames for a tick, at most
+        auto clip_of = [&g](std::string_view id, Pose pose) -> const objects::Clip* {
+            const Pictures::Picture* p = g.picture_of(id);
+            return p ? &p->clips[static_cast<usize>(pose)] : nullptr;
+        };
+        // The marks of the places that begin after tick `was` (-1: the start, place 0 begins) and not after `now`, past
+        // the last place only going round, at most one round of them (the last).
+        auto between = [](const objects::Clip& c, i64 was, u64 now) {
+            std::vector<const objects::ClipEvent*> out;
+            const u64 per = objects::clip_ticks(c.fps), n = c.frames.size();
+            if (per == 0 || n == 0) return out;
+            std::vector<u64> places;
+            for (i64 u = was + 1; u <= static_cast<i64>(now); ++u)
+                if (static_cast<u64>(u) % per == 0 && (c.loop || static_cast<u64>(u) / per < n)) places.push_back(static_cast<u64>(u) / per);
+            if (places.size() > n) places.erase(places.begin(), places.end() - static_cast<std::ptrdiff_t>(n));
+            for (u64 k : places)
+                for (const objects::ClipEvent& e : c.events)
+                    if (e.frame == k % n) out.push_back(&e);
+            return out;
+        };
+        // The place shown at tick u is one of the window of a mark named so.
+        auto window_on = [](const objects::Clip& c, const std::string& name, u64 u) {
+            const u64 per = objects::clip_ticks(c.fps), n = c.frames.size();
+            if (per == 0 || n == 0) return false;
+            const u64 k = u / per, place = c.loop ? k % n : std::min(k, n - 1);
+            for (const objects::ClipEvent& e : c.events)
+                if (e.name == name && place >= e.frame && place < e.frame + e.frames) return true;
+            return false;
+        };
+        // The frame just drawn.
+        auto watch = [&s, &g, this, w, clip_of, between, window_on](const char* when) {
+            const u64 now = g.drawn_tick();
+            const flecs::entity_t hero = g.hero_entity();
+            const std::vector<SliceGame::FiredMark>& fired = g.marks_fired();
+            auto bad = [&](const std::string& what) {
+                if (!w->bad++) w->first_bad = std::string(when) + ", тик " + std::to_string(now) + ": " + what;
+                if (w->bad <= 5) FORGE_WARN("метки: %s, тик %llu: %s", when, static_cast<unsigned long long>(now), what.c_str());
+            };
+            auto names = [](const auto& l) {
+                std::string out;
+                for (const auto* x : l) out += (out.empty() ? "" : ", ") + x->name;
+                return "[" + out + "]";
+            };
+            ++w->frames;
+            const f64 drum_var = var(s, kDrumVar);
+            // The first frame of another world (a new game, a level gone to): nothing fires, the rest from the next.
+            if (w->renew || g.travels() != w->travels) {
+                ++w->worlds;
+                const usize before = w->renew ? 0 : w->fired;
+                if (fired.size() != before) bad("первый кадр " + std::string(w->renew ? "новой игры" : "уровня") + " дал меток " + std::to_string(fired.size() - before));
+                w->renew = false;
+                w->travels = g.travels();
+                w->drum_ran = false;
+                w->ended = g.won() || g.lost();
+                w->tick = now;
+                w->pose = g.hero_pose();
+                w->since = g.hero_pose_since();
+                w->fired = fired.size();
+                w->played = g.sounds().played_marks();
+                w->drum = drum_var;
+                return;
+            }
+            if (now < w->tick) bad("кадр показывает тик раньше прежнего");
+            const bool ticked = now > w->tick, ended_now = !w->ended && (g.won() || g.lost());
+            if (!ticked && !w->ended && !ended_now) ++w->idle;
+            // What the frame should have fired: the hero's pose from its tick (a new one from its start), each copy's by
+            // the level's clock, but none asleep; on the frame the game ended in, nothing (what was due counted).
+            struct Want {
+                flecs::entity_t thing;
+                std::string who;
+                std::vector<const objects::ClipEvent*> marks;
+                f64 x, y;
+            };
+            std::vector<Want> want;
+            const Pose pose = g.hero_pose();
+            const u64 since = g.hero_pose_since();
+            const objects::Clip* hc = hero ? clip_of("hero_look", pose) : nullptr;
+            const bool anew = pose != w->pose || since != w->since;
+            if (hc && since <= now) {
+                if (anew && pose == Pose::Walk) ++w->walk_begun;
+                if (!anew && since > w->tick) bad("поза героя с тика после прежнего кадра, а он та же");
+                want.push_back({hero, "герой", between(*hc, anew ? -1 : static_cast<i64>(w->tick - since), now - since), g.hero_x(), g.hero_y() + kHeroHalfH});
+            }
+            for (const char* id : {"beetle", "flag", "drum"})
+                for (flecs::entity_t e : g.copies_of(id)) {
+                    f64 x = 0, y = 0;
+                    g.position_of(e, x, y);
+                    const Pose cp = g.copy_pose_of(e);
+                    const objects::Clip* cc = clip_of(id, cp);
+                    const std::string who = std::string(id) + " " + std::to_string(e);
+                    if (g.asleep(e)) {
+                        // Its marks as if it were awake: what a sleeping copy must not fire.
+                        if (cc) w->asleep_due += static_cast<u32>(between(*cc, static_cast<i64>(w->tick), now).size());
+                        if (e == w->far) ++w->asleep;
+                        want.push_back({e, who, {}, x, y});
+                        continue;
+                    }
+                    if (std::string_view(id) == "beetle") ++(cp == Pose::Walk ? w->beetle_walk : w->beetle_stand);
+                    want.push_back({e, who, cc ? between(*cc, static_cast<i64>(w->tick), now) : std::vector<const objects::ClipEvent*>{}, x, y});
+                }
+            if (ended_now || w->ended) {
+                u32 due = 0;
+                for (Want& x : want) {
+                    due += static_cast<u32>(x.marks.size());
+                    x.marks.clear();
+                }
+                if (ended_now) w->due_at_end = due;
+            }
+            // What it fired, by whom.
+            std::map<flecs::entity_t, std::vector<const SliceGame::FiredMark*>> got;
+            u32 sounded = 0;
+            const SliceGame::FiredMark* last_sound = nullptr;
+            for (usize i = w->fired; i < fired.size(); ++i) {
+                const SliceGame::FiredMark& m = fired[i];
+                if (m.tick != now) bad("метка «" + m.name + "» на тике " + std::to_string(m.tick) + ", а кадр показывает " + std::to_string(now));
+                got[m.thing].push_back(&m);
+                if (m.sound && m.sounded != (m.name == "звон"))
+                    bad("звук «" + m.name + "»: " + (m.sounded ? "прозвучал, а файла нет" : "не прозвучал, а файл есть"));
+                if (!m.sound) ++w->emits;
+                else if (!m.sounded) ++w->silent;
+                else {
+                    ++w->sounded;
+                    ++sounded;
+                    last_sound = &m;
+                }
+            }
+            for (const Want& x : want) {
+                std::vector<const SliceGame::FiredMark*> mine;
+                if (auto it = got.find(x.thing); it != got.end()) {
+                    mine = it->second;
+                    got.erase(it);
+                }
+                bool ok = mine.size() == x.marks.size();
+                for (usize i = 0; ok && i < mine.size(); ++i)
+                    ok = mine[i]->name == x.marks[i]->name && mine[i]->sound == x.marks[i]->sound && mine[i]->x == x.x && mine[i]->y == x.y;
+                if (!ok) bad(x.who + ": метки " + names(mine) + ", а по анимации " + names(x.marks));
+                const u32 n = static_cast<u32>(mine.size());
+                if (x.thing == hero) {
+                    w->hero += n;
+                    if (g.level_id() == "hills") w->after_travel += n;
+                } else if (x.who.starts_with("beetle")) w->beetles += n;
+                else if (x.who.starts_with("flag")) w->flags += n;
+                else w->drums += n;
+            }
+            for (const auto& [thing, l] : got) bad("метки " + names(l) + " у " + std::to_string(thing) + ", а его анимаций нет");
+            // The sounds: as many played, the last at its mark's place.
+            const u32 played = g.sounds().played_marks();
+            if (played - w->played != sounded) bad("звуков меток сыграно " + std::to_string(played - w->played) + ", а с файлом " + std::to_string(sounded));
+            if (last_sound) {
+                f64 x = 0, y = 0;
+                if (!g.sounds().last_mark_at(x, y) || x != last_sound->x || y != last_sound->y)
+                    bad("звук «" + last_sound->name + "» не на месте метки (" + std::to_string(last_sound->x) + ", " + std::to_string(last_sound->y) + ")");
+                else ++w->at_place;
+            }
+            // «Барабан»'s scheme: on each tick, if «блик» goes in the frame that tick ends in, +1; «Идёт метка» now.
+            const flecs::entity_t drum = g.copy_with_id(kDrum);
+            const objects::Clip* dc = clip_of("drum", Pose::Idle);
+            if (drum && dc && g.asleep(drum)) w->drum_ran = false; // its scheme may sleep too: counted again from the frame after it wakes
+            if (drum && dc) {
+                if (w->drum_ran && ticked) {
+                    u32 on_ticks = 0;
+                    for (u64 u = w->tick + 1; u <= now; ++u) on_ticks += window_on(*dc, "блик", u) ? 1 : 0;
+                    for (u64 u = w->tick + 1; u < now; ++u) w->straddles += window_on(*dc, "блик", u) != window_on(*dc, "блик", u + 1) ? 1 : 0;
+                    if (drum_var - w->drum != on_ticks)
+                        bad(std::string(kDrumVar) + " +" + std::to_string(drum_var - w->drum) + ", а тиков с «блик» " + std::to_string(on_ticks) + " из " +
+                            std::to_string(now - w->tick));
+                    ++w->counted;
+                } else if (w->drum_ran && drum_var != w->drum) {
+                    bad(std::string("кадр без тика: ") + kDrumVar + " +" + std::to_string(drum_var - w->drum));
+                }
+                if (ticked && !w->ended && !ended_now && !g.asleep(drum)) w->drum_ran = true;
+                const bool on = window_on(*dc, "блик", now);
+                ++(on ? w->drum_on : w->drum_off);
+                if (g.anim_going(drum, "блик") != on) bad(std::string("«Идёт метка» «блик» у «Барабана» ") + (on ? "нет" : "да") + ", а кадр " + (on ? "в окне" : "не в окне"));
+            }
+            // The hero's «звон» by its pose's clock.
+            if (hc && since <= now) {
+                const bool on = window_on(*hc, "звон", now - since);
+                if (pose == Pose::Walk) ++(on ? w->hero_on : w->hero_off);
+                if (g.anim_going(hero, "звон") != on) bad(std::string("«Идёт метка» «звон» у героя ") + (on ? "нет" : "да") + ", а его кадр " + (on ? "в окне" : "не в окне"));
+            }
+            w->tick = now;
+            w->pose = pose;
+            w->since = since;
+            w->fired = fired.size();
+            w->played = played;
+            w->drum = drum_var;
+            if (ended_now) w->ended = true;
+        };
+
+        steps_.push_back({"новая игра: первый кадр без меток; «Барабан» рядом с героем", 200 * slow, [&s, &g, this, w, watch, clip_of](u32 f) {
+            if (f == 0) {
+                check(s.new_game(), "новая игра");
+                w->renew = true;
+                return false;
+            }
+            watch("новая игра");
+            if (f == 1) {
+                check(g.marks_count() == 0 && g.marks_fired().empty(), "новая игра: кадр, что показан, меток не дал");
+                // The template's animations as marks_scene put them, as the game plays them.
+                const std::pair<const char*, std::vector<std::pair<Pose, const objects::Clip*>>> want[] = {
+                    {"hero_look", {{Pose::Stand, &kHeroStand}, {Pose::Walk, &kHeroWalk}, {Pose::Air, &kHeroAir}}},
+                    {"beetle", {{Pose::Stand, &kBeetleStand}, {Pose::Walk, &kBeetleWalk}}},
+                    {"flag", {{Pose::Idle, &kFlagIdle}}},
+                    {"drum", {{Pose::Idle, &kDrumIdle}}}};
+                for (const auto& [id, poses] : want)
+                    for (const auto& [pose, clip] : poses) {
+                        const objects::Clip* have = clip_of(id, pose);
+                        check(have && *have == *clip, std::string("«") + id + "», «" + pose_name(pose) + "»: анимация с метками в игре");
+                    }
+                check(g.script_errors().empty(), "схема «Барабана» без ошибок");
+                check(g.spawn_copy("drum", g.hero_x() + 1.5, g.hero_y() + kHeroHalfH, kDrum) != 0, "«Барабан» рядом с героем");
+                w->from = g.drawn_tick();
+                return false;
+            }
+            // Two rounds of «Барабан» and more, the hero on the ground and standing.
+            return g.drawn_tick() >= w->from + 120 && g.on_ground() && g.hero_pose() == Pose::Stand;
+        }});
+        steps_.push_back({"герой идёт, встаёт, снова идёт", 300 * slow, [&g, w, watch](u32 f) {
+            watch("идёт");
+            if (f == 0) w->from = g.drawn_tick();
+            const u64 t = g.drawn_tick() - w->from;
+            Controls c;
+            c.right = t < 30 || (t >= 60 && t < 90);
+            g.script(c);
+            return t >= 130 && g.on_ground() && g.hero_pose() == Pose::Stand;
+        }});
+        // «Флаг» 290 tiles left of the hero (4.5 chunks), put while the camera looks there (the world loads around it);
+        // the camera back at the hero, its chunk is kept (within 5 chunks of a focus) but asleep (beyond the zones' near
+        // margin of 3): it stands 120 ticks there.
+        steps_.push_back({"вдали мир спит: «Флаг» там молчит", 600 * slow, [&g, this, w, watch](u32 f) {
+            watch("вдали");
+            if (f == 0) w->far_x = std::floor(g.hero_x()) - 290.5;
+            if (!w->far) {
+                g.camera().x = w->far_x;
+                g.camera().y = g.hero_y() - 2;
+                if (f >= 2 && g.spawn_copy("flag", w->far_x, g.hero_y() + kHeroHalfH, kFarFlag) != 0) w->far = g.copy_with_id(kFarFlag);
+                return !check_ok(f < 120, "«Флаг» вдали поставлен там, куда смотрит камера");
+            }
+            if (!g.asleep(w->far)) return !check_ok(f < 400, "«Флаг» вдали уснул, когда камера вернулась к герою");
+            if (!w->asleep_from) w->asleep_from = g.drawn_tick();
+            return g.drawn_tick() >= w->asleep_from + 120;
+        }});
+        steps_.push_back({"на «Холмах»: первый кадр без меток, дальше герой снова", 300 * slow, [&g, this, w, watch](u32 f) {
+            if (f == 0) {
+                watch("перед переходом");
+                w->was_travels = g.travels();
+                g.go_to("hills");
+                return false;
+            }
+            watch(f == 1 ? "переход" : "на «Холмах»");
+            if (f == 1) {
+                check(g.level_id() == "hills" && g.travels() == w->was_travels + 1, "герой на «Холмах»");
+                w->from = g.drawn_tick();
+                return false;
+            }
+            if (g.drawn_tick() < w->from + 100 || !g.on_ground() || g.hero_pose() != Pose::Stand) return false;
+            check(w->after_travel >= 2, "на «Холмах» у героя меток " + std::to_string(w->after_travel));
+            return true;
+        }});
+        steps_.push_back({"победа: в её кадре меток нет, хоть у «Флага» была", 600 * slow, [&s, &g, this, w, watch](u32 f) {
+            watch(w->ended ? "после победы" : "к победе");
+            if (w->ended && !w->end_seen) {
+                w->end_seen = true;
+                w->end_frame = f;
+                check(g.won(), "победа");
+            }
+            if (w->end_seen) {
+                if (f < w->end_frame + 10) return false; // the world stands
+                if (w->due_at_end > 0 || w->attempt > 0) return true;
+                // Nothing was due on the tick it was won: again, the flag put on the other one.
+                FORGE_INFO("метки: в кадре победы (тик %llu) ничего не было бы; снова, «Флаг» на тике другой чётности",
+                           static_cast<unsigned long long>(g.drawn_tick()));
+                ++w->attempt;
+                w->end_seen = w->flag_put = false;
+                check(s.new_game(), "новая игра");
+                w->renew = true;
+                return false;
+            }
+            if (!w->flag_put && !w->ended && g.on_ground() && g.drawn_tick() % 2 == (w->attempt == 0 ? 0u : 1u)) {
+                check(g.spawn_copy("flag", g.hero_x(), g.hero_y() + kHeroHalfH, w->attempt == 0 ? kFlag : kFlag2) != 0, "«Флаг» на герое");
+                w->flag_put = true;
+            }
+            return false;
+        }});
+        steps_.push_back({"метки: итог", 2, [&g, this, w, watch](u32 f) {
+            watch("итог");
+            if (f < 1) return false;
+            check(w->bad == 0, "метки не по анимациям " + std::to_string(w->bad) + " раз из " + std::to_string(w->frames) + " кадров, первый: " + w->first_bad);
+            check(g.marks_count() == g.marks_fired().size(), "все метки записаны: " + std::to_string(g.marks_count()));
+            check(w->worlds >= 2, "первых кадров мира " + std::to_string(w->worlds) + " (новая игра и уровень)");
+            check(w->hero > 0 && w->walk_begun >= 2 && w->after_travel >= 2, "у героя меток " + std::to_string(w->hero) + ", пошёл " + std::to_string(w->walk_begun) +
+                                                                               " раз, на «Холмах» " + std::to_string(w->after_travel));
+            check(w->beetles > 0 && w->beetle_walk > 0, "у жуков меток " + std::to_string(w->beetles) + ", кадров с жуком, что идёт, " + std::to_string(w->beetle_walk));
+            check(w->asleep >= 60 && w->asleep_due > 0, "кадров, где «Флаг» вдали спит, " + std::to_string(w->asleep) + ", меток спящих по часам " +
+                                                         std::to_string(w->asleep_due));
+            check(w->drums > 0 && w->drum_on > 0 && w->drum_off > 0 && w->counted > 0,
+                  "у «Барабана» меток " + std::to_string(w->drums) + ", «блик» идёт " + std::to_string(w->drum_on) + " кадров, нет " + std::to_string(w->drum_off) +
+                      ", тики сверены в " + std::to_string(w->counted));
+            check(screen_hz < 60 ? w->straddles > 0 : w->straddles == 0, "кадров по обе стороны края окна «блик» " + std::to_string(w->straddles) + " при " +
+                                                                          std::to_string(screen_hz) + " кадрах в секунду");
+            check(w->hero_on > 0 && w->hero_off > 0, "«звон» героя идёт " + std::to_string(w->hero_on) + " кадров ходьбы, нет " + std::to_string(w->hero_off));
+            check(w->sounded >= 2 && w->silent >= 1 && w->at_place > 0, "звуков с файлом " + std::to_string(w->sounded) + ", без файла " + std::to_string(w->silent) +
+                                                                           ", на месте " + std::to_string(w->at_place));
+            check(w->due_at_end > 0, "в кадре победы было бы меток " + std::to_string(w->due_at_end));
+            check(screen_hz <= 60 ? w->idle == 0 : w->idle > 0, "кадров без тика " + std::to_string(w->idle) + " при " + std::to_string(screen_hz) + " кадрах в секунду");
+            FORGE_INFO("метки платформера при %u к/с: кадров %u (без тика %u), миров %u; у героя %u (на «Холмах» %u), у жуков %u, у флага %u, у барабана %u; "
+                       "emit %u, звуков %u (на месте %u) и без файла %u; флаг вдали спал %u кадров (меток по часам %u); «блик» %u/%u, тики сверены %u, через край %u; "
+                       "«звон» героя %u/%u; в кадре победы было бы %u (попыток %u)",
+                       screen_hz, w->frames, w->idle, w->worlds, w->hero, w->after_travel, w->beetles, w->flags, w->drums, w->emits, w->sounded, w->at_place,
+                       w->silent, w->asleep, w->asleep_due, w->drum_on, w->drum_off, w->counted, w->straddles, w->hero_on, w->hero_off, w->due_at_end, w->attempt + 1);
             return true;
         }});
     }
@@ -2114,6 +2495,10 @@ private:
         }
         if (scene_ == "module_slots") {
             build_module_slots(s);
+            return;
+        }
+        if (scene_ == "platformer_marks") {
+            build_marks(s);
             return;
         }
         SliceGame& g = g_;
@@ -10786,6 +11171,79 @@ static bool make_platformer_game(const std::filesystem::path& from, std::string&
     return true;
 }
 
+// --scene platformer_marks: a copy of the template «Платформер» (from) in marks_scene::root(), with an empty player's
+// folder: the hero's, «Жук»'s and «Флаг»'s animations with marks, the template «Барабан» and its scheme (on «Каждый шаг»:
+// if «Идёт метка анимации» «блик» of itself, «Прибавить к переменной игры» барабан.тики), the sound «звон».
+static bool make_marks_game(const std::filesystem::path& from, std::string& why) {
+    namespace fs = std::filesystem;
+    using namespace marks_scene;
+    const fs::path game = root() / "data";
+    std::error_code ec;
+    fs::remove_all(root(), ec);
+    fs::create_directories(root() / "user", ec);
+    fs::copy(from, game, fs::copy_options::recursive, ec);
+    if (ec) {
+        why = "не скопирован шаблон из " + path_to_utf8(from) + ": " + ec.message();
+        return false;
+    }
+    objects::Library library;
+    if (!library.load(game / "kinds.json", game / "objects", &why)) return false;
+    const objects::Template* hero = library.find("hero_look");
+    const objects::Template* beetle = library.find("beetle");
+    const objects::Template* flag = library.find("flag");
+    if (!hero || !beetle || !flag) {
+        why = "в копии шаблона нет героя hero_look, жука beetle или флага flag";
+        return false;
+    }
+    objects::Template h = *hero, b = *beetle, f = *flag, drum;
+    h.animations = {{"stand", kHeroStand}, {"walk", kHeroWalk}, {"air", kHeroAir}};
+    b.animations = {{"stand", kBeetleStand}, {"walk", kBeetleWalk}};
+    f.animations = {{"idle", kFlagIdle}};
+    drum.id = "drum";
+    drum.name = "Барабан";
+    drum.kind = "picture";
+    drum.about = "стоит и бьёт: «блик» на втором кадре";
+    drum.picture = f.picture;
+    drum.animations = {{"idle", kDrumIdle}};
+    if (!library.put(h, &why) || !library.put(b, &why) || !library.put(f, &why) || !library.put(drum, &why)) return false;
+    logic::Logic logic;
+    if (!logic.load(game / "logic.json", &why)) return false;
+    script::Graph g = logic::new_thing_scheme("drum");
+    u32 tick = 0;
+    for (const script::GraphNode& n : g.nodes)
+        if (n.def == "std.event.tick") tick = n.uid;
+    const u32 self = g.add("std.self", 0, 400).uid;
+    const u32 going = g.add("api.anim.going", 280, 400).uid;
+    g.find(going)->set_value("mark", "блик");
+    g.link(self, "actor", going, "thing");
+    const u32 branch = g.add("std.flow.if", 560, 200).uid;
+    g.link(tick, script::kFlowNext, branch);
+    g.link(going, "on", branch, "cond");
+    const u32 add = g.add("api.game.add_var", 840, 200).uid;
+    g.find(add)->set_value("name", kDrumVar);
+    g.link(branch, "then", add);
+    logic::ThingScheme own;
+    own.thing = "drum";
+    own.graph = g.to_json();
+    if (!tick || !logic.add_scheme(std::move(own)) || !logic.save(game / "logic.json", &why)) {
+        if (why.empty()) why = "схема «Барабана» не записана";
+        return false;
+    }
+    // «звон»: half a second of 880 Hz, so it is still in the mixer the frame after it began.
+    audio::Clip ring;
+    for (u32 i = 0; i < audio::kRate / 2; ++i) {
+        const f32 v = 0.3f * static_cast<f32>(std::sin(2.0 * 3.14159265358979 * 880.0 * i / audio::kRate));
+        ring.samples.insert(ring.samples.end(), {v, v});
+    }
+    std::vector<u8> wav;
+    fs::create_directories(game / "sounds", ec);
+    if (!audio::encode_wav(ring, wav) || !write_file_atomic(game / "sounds" / utf8_path("звон.wav"), wav)) {
+        why = "звук sounds/звон.wav не записан";
+        return false;
+    }
+    return true;
+}
+
 // The game, as the launcher starts it for a game of the module "slice" (slice_module.cpp).
 namespace slice {
 int run(int argc, char** argv);
@@ -10985,6 +11443,22 @@ int slice::run(int argc, char** argv) {
         options.links_file.clear();
         data = path_to_utf8(keys_scene::root() / "data");
         user = path_to_utf8(keys_scene::root() / "user");
+        args.push_back(const_cast<char*>("--data"));
+        args.push_back(data.data());
+        args.push_back(const_cast<char*>("--user"));
+        args.push_back(user.data());
+    }
+    // --scene platformer_marks (part 5а): a copy of the template «Платформер» with animations with marks, made anew.
+    if (scene == "platformer_marks" && options.silent) {
+        std::error_code ec;
+        const std::filesystem::path packaged = exe_dir() / "data" / "examples" / "platformer";
+        const std::filesystem::path from =
+            std::filesystem::is_directory(packaged, ec) ? packaged : utf8_path(SLICE_DATA_DIR).parent_path() / "platformer";
+        std::string why;
+        if (!make_marks_game(from, why)) FORGE_ERROR("--scene platformer_marks: %s", why.c_str());
+        options.links_file.clear();
+        data = path_to_utf8(marks_scene::root() / "data");
+        user = path_to_utf8(marks_scene::root() / "user");
         args.push_back(const_cast<char*>("--data"));
         args.push_back(data.data());
         args.push_back(const_cast<char*>("--user"));
