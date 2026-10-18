@@ -277,6 +277,9 @@ TEST_CASE("5б: where parts stand by idle's link: a snap to the held ball, a det
     PoseScript e = script_of(clips_of({{"idle", "  part(\"arm\").x(6, 0.2)\n  part(\"ball\"):attach(\"hand\")\n  part(\"arm\").x(0, 0.2)"},
                                        {"go", "  start_from(\"idle\")\n  wait(0.1)"}}));
     const Recording ei = recorded(e, &rig, "idle"), eg = recorded(e, &rig, "go");
+    // The arm ends at 0, its rest: not in the pose; the ball's link is, with its carry.
+    REQUIRE(eg.start.values.size() == 1);
+    CHECK((eg.start.values[0].part == "ball" && eg.start.values[0].prop == Prop::Link && !(eg.start.values[0].carry == Affine{})));
     const assets::CookedTexture end = shot(rig, frame(e, ei, &rig, ei.length));
     CHECK(near(pivot_now(rig, "ball"), {ball0.x - 6, ball0.y}));
     const assets::CookedTexture first = shot(rig, frame(e, eg, &rig, 0));
