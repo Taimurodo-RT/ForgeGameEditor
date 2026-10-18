@@ -13,8 +13,16 @@
 //   morph  the part's outline on the way to another shape of the file, k = 0 the part, 1 the other shape
 //          (forge::vector's morph; the part must be a <path>, the other any shape in the same coordinates)
 // What does not apply (a part the file has not, a morph into nothing) is said once, in Russian, by svg_problems.
+//
+// A clip of a character plays on the element too (part 5в of docs/models/движение-модель.md): svg_pose gives the
+// parts of one of its pictures as the clip has them at a moment, over what the changes above said. Each part takes
+// what the tab's picture of «Векторная» gives it: its transform (the clip's matrix), its opacity times the file's,
+// its shapes' fill, stroke and stroke width from their own by the clip's shares (a group first, the parts inside it
+// after), hidden by display: none, its outline morphed with its colours, a fill or stroke its `style` gives changed
+// there.
 
 #include "forge/core/types.h"
+#include "forge/vector/motion_file.h"
 
 #include <string>
 #include <string_view>
@@ -53,6 +61,24 @@ const SvgPart* svg_part(Rml::Element* element, std::string_view part);
 // The parts of the element's pictures that did not take what was said, one line each, since the last call; a line
 // comes once however often the script says it.
 std::vector<std::string> svg_problems();
+
+// What a clip shows at a moment on an element's picture `picture` (its file name, "Ёжик.svg"): motion_pose's parts.
+struct SvgPose {
+    std::string picture;
+    std::vector<vector::MotionPartPose> parts;
+};
+// The element shows the pose on its next frame; another pose of the same parts replaces it.
+void svg_pose(Rml::Element* element, SvgPose pose);
+// The pose goes and the element's pictures are made again from their files, with what the changes above said: what a
+// clip changed and the next one does not is as the file has it again.
+void svg_unpose(Rml::Element* element);
+// The pose the element shows (nullptr: none).
+const SvgPose* svg_posed(Rml::Element* element);
+// A picture's text with a pose on it, drawn w × h as an element draws it (the picture fitted in, centred), straight
+// RGBA: what a screen shows, without one. False with why when the text is not SVG.
+bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, std::vector<u8>& rgba, std::string& why);
+// The attributes the pose gives an element of the picture after it is applied, for checks: "" when none was given.
+std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::string_view id, std::string_view name);
 
 // Ui::init calls it: the SVG plugin asks this file what a live element's pictures are.
 void install_live_svg();
