@@ -296,8 +296,38 @@ u32 values_rev(const std::vector<std::pair<std::string, std::string>>& values) {
 
 namespace {
 
+// An event of an animation as a template file has it: {"frame": 1, "emit": "удар", "frames": 2} or {"frame": 0,
+// "sound": "шаг"}; why not.
+std::optional<ClipEvent> read_event(yyjson_val* v, const Clip& clip, std::string& why) {
+    if (!yyjson_is_obj(v)) {
+        why = "метка не объект";
+        return std::nullopt;
+    }
+    ClipEvent e;
+    yyjson_val* emit = yyjson_obj_get(v, "emit");
+    yyjson_val* sound = yyjson_obj_get(v, "sound");
+    if ((emit != nullptr) == (sound != nullptr) || !yyjson_is_str(emit ? emit : sound)) {
+        why = "у метки нужно одно из \"emit\" и \"sound\" строкой";
+        return std::nullopt;
+    }
+    e.sound = sound != nullptr;
+    e.name = yyjson_get_str(emit ? emit : sound);
+    yyjson_val* frame = yyjson_obj_get(v, "frame");
+    yyjson_val* frames = yyjson_obj_get(v, "frames");
+    if (!yyjson_is_uint(frame) || (frames && !yyjson_is_uint(frames))) {
+        why = "метка «" + e.name + "»: \"frame\" и \"frames\" — целые от 0";
+        return std::nullopt;
+    }
+    e.frame = static_cast<u32>(std::min<u64>(yyjson_get_uint(frame), kMaxFrameLimit));
+    if (frames) e.frames = static_cast<u32>(std::min<u64>(yyjson_get_uint(frames), kMaxFrameLimit));
+    why = event_problem(clip, e);
+    if (!why.empty()) return std::nullopt;
+    return e;
+}
+
 // An animation as a template file has it; why not (no frames, too many, a frame not a number, fps not of the list).
-std::optional<Clip> read_clip(yyjson_val* v, std::string& why) {
+// Its events that do not read are left out, each said in `notes`.
+std::optional<Clip> read_clip(yyjson_val* v, std::string& why, std::vector<std::string>& notes) {
     if (!yyjson_is_obj(v)) {
         why = "не объект";
         return std::nullopt;
@@ -323,6 +353,15 @@ std::optional<Clip> read_clip(yyjson_val* v, std::string& why) {
     // Read knowing no game: the game's limit and the picture's frames are the library's to check.
     why = clip_problem(clip, kMaxFrameLimit, kMaxFrameLimit);
     if (!why.empty()) return std::nullopt;
+    if (yyjson_val* events = yyjson_obj_get(v, "events")) {
+        if (!yyjson_is_arr(events)) notes.push_back("\"events\" не список");
+        yyjson_val* e;
+        yyjson_arr_foreach(events, i, n, e) {
+            std::string no;
+            if (std::optional<ClipEvent> ev = read_event(e, clip, no)) clip.events.push_back(std::move(*ev));
+            else notes.push_back(std::move(no));
+        }
+    }
     return clip;
 }
 
@@ -372,8 +411,11 @@ std::optional<Template> read_template(const fs::path& file, std::string* error) 
         while (yyjson_val* key = yyjson_obj_iter_next(&it)) {
             const std::string state = text_of(key);
             std::string why;
-            if (std::optional<Clip> clip = read_clip(yyjson_obj_iter_get_val(key), why)) t.animations[state] = std::move(*clip);
-            else
+            std::vector<std::string> notes;
+            if (std::optional<Clip> clip = read_clip(yyjson_obj_iter_get_val(key), why, notes)) t.animations[state] = std::move(*clip);
+            for (const std::string& note : notes)
+                FORGE_WARN("%s: анимация «%s»: метка не читается (%s)", path_to_utf8(file).c_str(), state.c_str(), note.c_str());
+            if (!why.empty())
                 FORGE_WARN("%s: анимация «%s» не читается (%s), это состояние рисуется по правилу игры", path_to_utf8(file).c_str(),
                            state.c_str(), why.c_str());
         }
@@ -429,6 +471,17 @@ std::string template_json(const Template& t) {
             for (usize i = 0; i < clip.frames.size(); ++i) s += (i ? ", " : "") + std::to_string(clip.frames[i]);
             s += "], \"fps\": " + fps_text(clip.fps);
             if (!clip.loop) s += ", \"loop\": false";
+            if (!clip.events.empty()) {
+                s += ", \"events\": [";
+                for (usize i = 0; i < clip.events.size(); ++i) {
+                    const ClipEvent& e = clip.events[i];
+                    s += (i ? ", " : "") + ("{\"frame\": " + std::to_string(e.frame) + ", " + (e.sound ? "\"sound\": " : "\"emit\": ") +
+                                            json_text(e.name));
+                    if (e.frames != 1) s += ", \"frames\": " + std::to_string(e.frames);
+                    s += "}";
+                }
+                s += "]";
+            }
             s += "}";
             first = false;
         }
@@ -528,8 +581,63 @@ std::string clip_problem(const Clip& clip, u32 frames, u32 limit) {
 
 u32 clip_frame(const Clip& clip, u64 ticks) {
     if (clip.frames.empty()) return 0;
+    return clip.frames[clip_place(clip, ticks)];
+}
+
+u32 clip_place(const Clip& clip, u64 ticks) {
+    if (clip.frames.empty()) return 0;
     const u64 step = ticks / std::max(1u, clip_ticks(clip.fps)), n = clip.frames.size();
-    return clip.frames[clip.loop ? step % n : std::min(step, n - 1)];
+    return static_cast<u32>(clip.loop ? step % n : std::min(step, n - 1));
+}
+
+std::vector<u32> clip_events(const Clip& clip, i64 was, u64 now) {
+    std::vector<u32> out;
+    const u64 n = clip.frames.size();
+    if (n == 0 || clip.events.empty() || (was >= 0 && static_cast<u64>(was) >= now)) return out;
+    // Frame s of the animation (counted on past its end) begins at tick s · ticks a frame.
+    const u64 per = std::max(1u, clip_ticks(clip.fps));
+    u64 first = was < 0 ? 0 : static_cast<u64>(was) / per + 1, last = now / per;
+    if (!clip.loop) last = std::min(last, n - 1);
+    if (last < first) return out;
+    if (last - first >= n) first = last - n + 1;
+    for (u64 s = first; s <= last; ++s) {
+        const u64 place = s % n;
+        for (usize i = 0; i < clip.events.size(); ++i)
+            if (clip.events[i].frame == place) out.push_back(static_cast<u32>(i));
+    }
+    return out;
+}
+
+bool clip_event_going(const Clip& clip, const ClipEvent& e, u64 ticks) {
+    if (clip.frames.empty()) return false;
+    const u32 place = clip_place(clip, ticks);
+    return place >= e.frame && place - e.frame < e.frames;
+}
+
+std::string event_problem(const Clip& clip, const ClipEvent& e) {
+    const usize n = clip.frames.size();
+    if (e.name.empty()) return "у метки нет имени";
+    if (e.frame >= n) return "метка «" + e.name + "» на кадре " + std::to_string(e.frame + 1) + ", а в анимации их " + std::to_string(n);
+    if (e.frames < 1 || e.frames > n - e.frame)
+        return "окно метки «" + e.name + "» на " + std::to_string(e.frames) + " кадров не помещается в анимацию";
+    if (e.sound && e.frames != 1) return "у звука «" + e.name + "» нет окна";
+    return {};
+}
+
+std::vector<std::string> trim_events(Clip& clip) {
+    std::vector<std::string> gone;
+    const u32 n = static_cast<u32>(clip.frames.size());
+    std::vector<ClipEvent> kept;
+    for (ClipEvent& e : clip.events) {
+        if (e.frame >= n) {
+            gone.push_back(e.name);
+            continue;
+        }
+        e.frames = std::min(e.frames, n - e.frame);
+        kept.push_back(std::move(e));
+    }
+    clip.events = std::move(kept);
+    return gone;
 }
 
 u32 Template::look() const {

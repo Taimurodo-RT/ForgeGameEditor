@@ -13,14 +13,16 @@
 //               "jump": {"frames": 7, "fps": 12, "loop": false, "range": [0.25, 0.75]}},
 //     "waits": {"jump": {"отрыв": 0.18}}, "durations": {"spin": {"оборот": 0.6}},
 //     "bake": {"palette": "svg", "outline": null, "picture": "<Guid of the baked picture>", "hash": "<its bytes>",
-//              "strip": {"stand": {"first": 0, "frames": 4, "fps": 6, "loop": true}, "walk": {"first": 4, …}}}
+//              "strip": {"stand": {"first": 0, "frames": 4, "fps": 6, "loop": true}, "walk": {"first": 4, …,
+//                        "events": [{"frame": 0, "sound": "шаг"}, {"frame": 2, "emit": "удар", "frames": 2}]}}}
 //   }
 //
 // "svg" is not there when the code draws the picture (its draw section, draw.h).
 // "range" is the part of a clip of the code baked (step 3 of docs/models/движение-модель.md), only when it is not all of
 // it; such a clip's "frames" are counted from it (clip_cut.h), the file keeps them as they were last counted.
 // "strip" is what the picture holds, as it was baked: «Отдать шаблону…» gives the template these animations, whatever
-// the clips became since. "waits" and "durations" are the lengths of the code's wait_until and duration by clip and
+// the clips became since, with the marks of their code on the frames that show them (part 5а of
+// docs/models/движение-модель.md); a clip without marks has no "events". "waits" and "durations" are the lengths of the code's wait_until and duration by clip and
 // name (step 1 of docs/models/движение-модель.md): dragged on the timeline, they live here, not in the code.
 
 #include "forge/pixel/motion.h"
@@ -53,12 +55,22 @@ struct ClipSpec {
     bool operator==(const ClipSpec&) const = default;
 };
 
-// A clip as baked: its frames in the strip.
+// A mark of a baked clip (part 5а): emit("удар"[, s]) or sound("шаг") on the frame of the clip (from 0) that first shows
+// its moment, a window on `frames` frames; what objects::ClipEvent gives the game.
+struct StripEvent {
+    std::string name;
+    bool sound = false;
+    u32 frame = 0, frames = 1;
+    bool operator==(const StripEvent&) const = default;
+};
+
+// A clip as baked: its frames in the strip, its marks by frame (those of one frame as the code made them).
 struct StripClip {
     std::string state;
     u32 first = 0, frames = 0;
     f32 fps = 10;
     bool loop = true;
+    std::vector<StripEvent> events;
     bool operator==(const StripClip&) const = default;
 };
 

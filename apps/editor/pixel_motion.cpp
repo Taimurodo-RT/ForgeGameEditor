@@ -291,6 +291,12 @@ void PixelEditor::recount() {
                     warnings_.push_back("Длина «" + name + "» " + seconds_words(s) + " с из файла: в клипе " + clip + " нет duration(\"" + name +
                                         "\") или loop_until(\"" + name + "\")");
         }
+        // Marks no frame of the range shows do not go into the picture (part 5а).
+        std::vector<usize> left;
+        pixel::strip_events(rec_, cut_, &left);
+        std::string names;
+        for (usize i : left) names += (names.empty() ? "" : ", ") + rec_.marks[i].name + " " + seconds_words(rec_.marks[i].time) + " с";
+        if (!names.empty()) warnings_.push_back("Клип " + clip + ": метки за диапазоном не запекаются: " + names);
     }
     // The playhead stays at its moment, at the clip's end when it got shorter.
     const f64 last = whole_.frames > 0 ? whole_.time(whole_.frames - 1) : 0;

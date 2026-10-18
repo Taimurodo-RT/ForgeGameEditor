@@ -141,6 +141,8 @@ void AnimationEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("index", &Thumb::index);
         s.RegisterMember("used", &Thumb::used);
         s.RegisterMember("shown", &Thumb::shown);
+        s.RegisterMember("mark", &Thumb::mark);
+        s.RegisterMember("window", &Thumb::window);
     }
     model.RegisterArray<std::vector<Thumb>>();
     if (auto s = model.RegisterStruct<FpsChip>()) {
@@ -166,6 +168,7 @@ void AnimationEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("an_loop", &m_loop_);
     model.Bind("an_playing", &m_playing_);
     model.Bind("an_mode", &m_mode_);
+    model.Bind("an_marks", &m_marks_);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) { fn(args); });
@@ -367,7 +370,12 @@ bool AnimationEditor::remove_last() {
     objects::Clip c = t->animations.at(state_);
     if (c.frames.size() <= 1) return change_state(std::nullopt, "«" + t->name + "»: «" + m_state_name_ + "» как в игре");
     c.frames.pop_back();
-    return change_state(std::move(c), "«" + t->name + "»: последний кадр из «" + m_state_name_ + "» убран");
+    // Its marks go with it, a window over it ends a frame sooner (part 5а of docs/models/движение-модель.md).
+    const std::vector<std::string> gone = objects::trim_events(c);
+    std::string names;
+    for (const std::string& name : gone) names += (names.empty() ? "«" : ", «") + name + "»";
+    return change_state(std::move(c), "«" + t->name + "»: последний кадр из «" + m_state_name_ + "» убран" +
+                                          (gone.empty() ? "" : (gone.size() == 1 ? ", метка " : ", метки ") + names + " тоже"));
 }
 
 bool AnimationEditor::set_fps(f32 fps) {
@@ -532,11 +540,22 @@ void AnimationEditor::rebuild() {
     for (u32 f = 0; f < thumbs_.size(); ++f)
         m_strip_.push_back({"/memory/" + thumbs_[f], static_cast<int>(f), std::find(c.frames.begin(), c.frames.end(), f) != c.frames.end(), false});
     m_seq_.clear();
-    for (u32 f : c.frames) m_seq_.push_back({f < thumbs_.size() ? "/memory/" + thumbs_[f] : std::string(), static_cast<int>(f), true, false});
+    for (u32 f : c.frames) m_seq_.push_back({f < thumbs_.size() ? "/memory/" + thumbs_[f] : std::string(), static_cast<int>(f), true, false, {}, false});
+    // Its marks (part 5а): only from the code of «Векторная», shown here as they are.
+    m_marks_.clear();
+    for (const objects::ClipEvent& e : c.events) {
+        if (e.frame >= m_seq_.size()) continue;
+        Thumb& at = m_seq_[e.frame];
+        if (!e.sound || at.mark.empty()) at.mark = e.sound ? "music_note" : "flag";
+        for (u32 k = 0; !e.sound && k < e.frames && e.frame + k < m_seq_.size(); ++k) m_seq_[e.frame + k].window = e.frames > 1;
+        const std::string where = e.frames > 1 ? "кадры " + std::to_string(e.frame + 1) + "–" + std::to_string(e.frame + e.frames)
+                                               : "кадр " + std::to_string(e.frame + 1);
+        m_marks_ += (m_marks_.empty() ? "" : ", ") + std::string(e.sound ? "звук " : "") + e.name + " — " + where;
+    }
     for (usize i = 0; i < m_fps_.size(); ++i) m_fps_[i].selected = std::fabs(objects::kClipFps[i] - c.fps) < 1e-4f;
     shown_ = ~0u;
     for (const char* name : {"an_list", "an_states", "an_strip", "an_seq", "an_fps", "an_note", "an_has_sel", "an_sel_name", "an_sel_note",
-                             "an_problem", "an_state_name", "an_frames", "an_own", "an_loop"})
+                             "an_problem", "an_state_name", "an_frames", "an_own", "an_loop", "an_marks"})
         dirty(name);
     show_frame();
 }

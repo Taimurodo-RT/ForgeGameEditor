@@ -1229,8 +1229,9 @@
                 </div>
                 <div class="lg-nav-title">{{ an_state_name }}: кадры по порядку</div>
                 <div class="an-seq row">
-                    <div data-for="f : an_seq" class="an-frame small"><img data-attr-src="f.icon"/><span class="an-num">{{ f.index + 1 }}</span></div>
+                    <div data-for="f : an_seq" class="an-frame small" data-attr-id="'an-seq-' + it_index"><img data-attr-src="f.icon"/><span class="an-num">{{ f.index + 1 }}</span><icon class="an-mark" data-if="f.mark != ''" data-attr-name="f.mark"/><div class="an-window" data-if="f.window"/></div>
                 </div>
+                <div id="an-marks" class="an-marks" data-if="an_marks != ''">Метки: {{ an_marks }}</div>
                 <div class="row an-actions">
                     <div id="an-remove-last" class="button outlined small" data-class-disabled="!an_own" data-event-click="an_remove_last"><icon class="s" name="backspace"/><span>Убрать последний</span></div>
                     <div id="an-reset" class="button outlined small" data-class-disabled="!an_own" data-event-click="an_reset"><icon class="s" name="restart_alt"/><span>Как в игре</span></div>

@@ -1583,9 +1583,16 @@ bool PixelEditor::bake(bool over_edits) {
                               count_words(strip.frames, "кадр", "кадра", "кадров");
     history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), label));
     history_.seal();
+    // The marks no frame shows, by clip (part 5а).
+    std::string left;
+    for (usize i = 0; i < strip.left.size(); ++i) {
+        const pixel::Strip::Left& l = strip.left[i];
+        left += i > 0 && strip.left[i - 1].clip == l.clip ? ", " : (i ? "; клип «" : " Клип «") + state_name(l.clip) + "»: метки за диапазоном не запечены: ";
+        left += l.name + " " + seconds_words(l.time) + " с";
+    }
     note_ = "Запечено: «" + path_to_utf8(target.filename()) + "», " + count_words(strip.frames, "кадр", "кадра", "кадров") + " " +
             std::to_string(doc_.frame_w) + " × " + std::to_string(doc_.frame_h) +
-            (doc_.game_palette && colors.empty() ? " (в игре нет своих цветов: в цветах рисунка)." : ".");
+            (doc_.game_palette && colors.empty() ? " (в игре нет своих цветов: в цветах рисунка)." : ".") + (left.empty() ? "" : left + ".");
     FORGE_INFO("Векторная: %s", note_.c_str());
     rebuild();
     return true;
@@ -1623,17 +1630,24 @@ bool PixelEditor::give(u64 key) {
     probe.frames = frames;
     const std::vector<level::LevelModule::AnimState> plays = module_.anim_states(*lib, probe);
     GiveCommand::Look before{t->picture, t->frames, t->animations, t->frames_over, t->animations_over}, after{copied, frames, {}, 0, {}};
-    std::string given, left;
+    std::string given, left, marks;
+    bool emits = false;
     for (const pixel::StripClip& c : doc_.strip) {
         const auto st = std::find_if(plays.begin(), plays.end(), [&](const auto& s) { return s.id == c.state; });
         objects::Clip clip;
         for (u32 f = 0; f < c.frames; ++f) clip.frames.push_back(c.first + f);
         clip.fps = c.fps;
         clip.loop = c.loop;
+        // Its marks on the same frames (part 5а).
+        for (const pixel::StripEvent& e : c.events) clip.events.push_back({e.name, e.sound, e.frame, e.frames});
         const std::string why = st == plays.end() ? std::string("его шаблон не играет") : objects::clip_problem(clip, frames, lib->frame_limit());
         if (!why.empty()) {
             left += (left.empty() ? "" : ", ") + ("«" + state_name(c.state) + "» (" + why + ")");
             continue;
+        }
+        for (const objects::ClipEvent& e : clip.events) {
+            if (marks.find("«" + e.name + "»") == std::string::npos) marks += (marks.empty() ? "" : ", ") + ("«" + e.name + "»");
+            emits = emits || !e.sound;
         }
         after.animations[c.state] = std::move(clip);
         given += (given.empty() ? "" : ", ") + ("«" + st->name + "»");
@@ -1650,7 +1664,8 @@ bool PixelEditor::give(u64 key) {
     history_.seal();
     giving_ = false;
     note_ = "«" + t->name + "» рисует «" + copied + "», " + count_words(frames, "кадр", "кадра", "кадров") +
-            (given.empty() ? ", своих анимаций нет" : ", анимации: " + given) + (left.empty() ? "" : "; не отданы: " + left) + ".";
+            (given.empty() ? ", своих анимаций нет" : ", анимации: " + given) + (marks.empty() ? "" : "; метки: " + marks) +
+            (left.empty() ? "" : "; не отданы: " + left) + "." + (emits && !module_.anim_emits() ? " Метки emit эта игра не ловит, звуки звучат." : "");
     FORGE_INFO("Векторная: %s", note_.c_str());
     rebuild();
     return true;
