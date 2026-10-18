@@ -314,6 +314,7 @@ TEST_CASE("Screen clips file: every field there and back, numbers in their short
     c.tracks.push_back(v);
     c.marks.push_back({true, "шаг", 0.3, 0});
     c.marks.push_back({false, "удар", 0.5, 0.1});
+    c.marks.push_back({false, "сказал \"ой\" \\ и\tвсё", 0.7, 0}); // what JSON escapes
     c.not_drawn = {"dash", "mask"};
     f.clips.push_back(c);
     MotionClip still;
@@ -340,6 +341,7 @@ TEST_CASE("Screen clips file: every field there and back, numbers in their short
     CHECK(text.find("\"curve\": 0") != std::string::npos);
     CHECK(text.find("{\"sound\": \"шаг\", \"at\": 0.3}") != std::string::npos);
     CHECK(text.find("{\"emit\": \"удар\", \"at\": 0.5, \"length\": 0.1}") != std::string::npos);
+    CHECK(text.find(R"({"emit": "сказал \"ой\" \\ и\tвсё", "at": 0.7})") != std::string::npos);
     CHECK(text.find("\"not_drawn\": [\"dash\", \"mask\"]") != std::string::npos);
     CHECK(back.clip("бег") != nullptr);
     CHECK(back.clip("прыжок") == nullptr);
