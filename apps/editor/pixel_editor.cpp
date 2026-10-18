@@ -570,6 +570,7 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
         }
     }
     if (view_dirty_) redraw();
+    if (ease_dirty_) draw_ease(); // part 4ж: once between two of the UI's updates
     track_mouse(context);
     // Without a device the preview's sounds end on time all the same.
     if (!mixer_.has_device() && mixer_.voices() > 0) mixer_.advance(dt);
@@ -585,13 +586,19 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
     case SDL_EVENT_WINDOW_FOCUS_LOST: shift_ = false; return false;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
         if ((e.button.button != SDL_BUTTON_LEFT && e.button.button != SDL_BUTTON_MIDDLE) || !context || !has_) return false;
-        bool vector = false, timeline = false, pixels = false;
+        bool vector = false, timeline = false, pixels = false, ease = false;
         for (const Rml::Element* el = context->GetHoverElement(); el; el = el->GetParentNode()) {
             vector = vector || el->GetId() == "px-vector";
             timeline = timeline || el->GetId() == "px-tl";
             pixels = pixels || el->GetId() == "px-pixel";
+            ease = ease || el->GetId() == "px-ease-graph";
         }
         mouse_x_ = e.button.x * density, mouse_y_ = e.button.y * density;
+        // Part 4ж: a point of the easing's graph taken.
+        if (ease && e.button.button == SDL_BUTTON_LEFT) {
+            context_ = context;
+            return ease_press(mouse_x_, mouse_y_);
+        }
         // Part 3в: the middle button pans the vector; picking, a click copies the colour under it.
         if (vector && e.button.button == SDL_BUTTON_MIDDLE) {
             panning_ = true;
@@ -622,6 +629,10 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
             timeline_drag(e.motion.x * density);
             return true;
         }
+        if (ease_held_) {
+            ease_drag(mouse_x_, mouse_y_);
+            return true;
+        }
         // Part 4е: a shape dragged; the pen's line to the mouse follows it.
         if (tooling_) {
             shape_drag(e.motion.x * density, e.motion.y * density);
@@ -638,6 +649,10 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
         }
         if (tl_drag_ != Drag::None) {
             timeline_release();
+            return true;
+        }
+        if (ease_held_ && e.button.button == SDL_BUTTON_LEFT) {
+            ease_release();
             return true;
         }
         if (tooling_) {
@@ -672,7 +687,8 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_B: range_start_here(); return true;
     case SDLK_N: range_end_here(); return true;
     case SDLK_ESCAPE:
-        if (!pen_.empty()) drop_pen();
+        if (ease_held_) ease_cancel(); // part 4ж: the point back where it was, nothing written
+        else if (!pen_.empty()) drop_pen();
         else if (tooling_) tooling_ = false, view_dirty_ = true;
         else if (giving_) open_give(false);
         else if (picking_) set_picking(false);

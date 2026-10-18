@@ -1,7 +1,8 @@
 // «Векторная», part 3б of step 3 of docs/models/движение-модель.md: the mouse writes into the code. The timeline's
 // edges of blocks and pauses, the inspector's fields of the selected block, a part dragged in the vector, the selected
-// part's values and «К коду», the tree's row under the mouse outlined (pixel_editor.h). The edits themselves are
-// forge/pixel/motion_edit.h; here they are taken from the mouse and written as steps of the history.
+// part's values and «К коду», the tree's row under the mouse outlined (pixel_editor.h); part 4ж: the part's fields and
+// the graph of a block's easing with the handles of its bezier(…). The edits themselves are forge/pixel/motion_edit.h;
+// here they are taken from the mouse and written as steps of the history.
 
 #include "pixel_editor.h"
 #include "pixel_files.h"
@@ -15,6 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <string_view>
+#include <utility>
 
 namespace forge::editor_app {
 
@@ -60,6 +63,118 @@ bool read_number(const std::string& text, f64& out) {
 }
 
 std::string curve_image(usize i) { return "px_curve_" + std::to_string(i); }
+constexpr const char* kBezierIcon = "px_curve_bezier"; // the list's «кривая» (part 4ж)
+
+std::string trimmed_text(const std::string& text) {
+    std::string t = text;
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    while (!t.empty() && t.front() == ' ') t.erase(t.begin());
+    return t;
+}
+
+// A text typed into a field as property p's value (the fields of a block, 3б, and of a part, 4ж): false with why;
+// `what` names it ("body · y").
+bool value_of_text(pixel::Prop p, const std::string& text, const std::string& what, pixel::PropValue& v, std::string& why) {
+    const std::string t = trimmed_text(text);
+    if (pixel::prop_is_number(p)) {
+        if (!read_number(t, v.v)) return why = "Значение «" + what + "» — число", false;
+        if (p == pixel::Prop::Flash && (v.v < 0 || v.v > 1)) return why = "Вспышка «" + what + "» — доля от 0 до 1", false;
+        if ((p == pixel::Prop::Blur || p == pixel::Prop::ShadowBlur) && v.v < 0) return why = "Размытие «" + what + "» — число не меньше 0", false;
+    } else if (pixel::prop_is_color(p)) {
+        const char* rest = p == pixel::Prop::Tint ? "без тона" : p == pixel::Prop::FlashColor ? "белый" : p == pixel::Prop::Shadow ? "без тени" : "свой цвет части";
+        if (!t.empty() && !pixel::parse_part_color(t, v.color)) return why = "Цвет «" + what + "» — #rrggbb или #rrggbbaa, пусто — " + rest, false;
+        v.v = t.empty() ? 0 : 1;
+    } else if (p == pixel::Prop::StrokeWidth) {
+        if (!t.empty() && (!read_number(t, v.n) || v.n < 0))
+            return why = "Толщина «" + what + "» — число не меньше 0, пусто — своя толщина фигур", false;
+        v.v = t.empty() ? 0 : 1;
+    } else if (p == pixel::Prop::Visible) {
+        if (t != "да" && t != "нет") return why = "Видимость «" + what + "» — «да» или «нет»", false;
+        v.v = t == "да" ? 1 : 0;
+    } else if (p == pixel::Prop::Order) {
+        return why = "Порядок «" + what + "» правится в коде: to_top, to_bottom, above, below", false;
+    } else if (p == pixel::Prop::Mask) {
+        return why = "Маска «" + what + "» правится в коде: mask(\"lid\"), mask(nil)", false;
+    } else if (p == pixel::Prop::Link) {
+        return why = "Крепление «" + what + "» правится в коде: attach(\"hand\"), detach()", false;
+    } else if (p == pixel::Prop::Drawing) {
+        return why = "Рисунок правится в коде: swap(…)", false;
+    } else {
+        v.v = t.empty() ? 0 : 1;
+        v.target = t;
+    }
+    return true;
+}
+
+// The part's fields (part 4ж) in order, with the heading over the first of each section.
+struct FieldProp {
+    pixel::Prop prop;
+    const char* section;
+};
+constexpr FieldProp kFieldProps[] = {
+    {pixel::Prop::X, "Трансформация"}, {pixel::Prop::Y, ""}, {pixel::Prop::Rot, ""}, {pixel::Prop::Scale, ""}, {pixel::Prop::Sx, ""},
+    {pixel::Prop::Sy, ""}, {pixel::Prop::SkewX, ""}, {pixel::Prop::SkewY, ""}, {pixel::Prop::Opacity, ""},
+    {pixel::Prop::Stroke, "Контур"}, {pixel::Prop::StrokeWidth, ""}, {pixel::Prop::Fill, "Заливка"},
+};
+
+bool is_field(std::string_view word) {
+    for (const FieldProp& f : kFieldProps)
+        if (word == pixel::prop_word(f.prop)) return true;
+    return false;
+}
+
+// A field's property as the frame shows it, written as the part's values write it (3б): «свой», «своя» its own.
+std::string frame_text(pixel::Prop p, const pixel::PartPose& pp) {
+    auto color = [](bool has, const pixel::Rgba8& c, f64 k) { return has ? hex_of(c) + (k < 1 ? " · " + thousandths(k) : std::string()) : std::string("свой"); };
+    switch (p) {
+    case pixel::Prop::X: return thousandths(pp.x);
+    case pixel::Prop::Y: return thousandths(pp.y);
+    case pixel::Prop::Rot: return thousandths(pp.rot);
+    case pixel::Prop::Scale: return thousandths(pp.scale);
+    case pixel::Prop::Sx: return thousandths(pp.sx);
+    case pixel::Prop::Sy: return thousandths(pp.sy);
+    case pixel::Prop::SkewX: return thousandths(pp.skew_x);
+    case pixel::Prop::SkewY: return thousandths(pp.skew_y);
+    case pixel::Prop::Opacity: return thousandths(pp.opacity);
+    case pixel::Prop::Stroke: return color(pp.has_stroke, pp.stroke, pp.stroke_k);
+    case pixel::Prop::StrokeWidth:
+        return pp.has_stroke_width ? thousandths(pp.stroke_width) + (pp.stroke_width_k < 1 ? " · " + thousandths(pp.stroke_width_k) : std::string()) : "своя";
+    case pixel::Prop::Fill: return color(pp.has_fill, pp.fill, pp.fill_k);
+    default: return {};
+    }
+}
+
+// The frame's value of a field's property, for a clip without a recording.
+pixel::PropValue frame_value(pixel::Prop p, const pixel::PartPose& pp) {
+    pixel::PropValue v;
+    switch (p) {
+    case pixel::Prop::X: v.v = pp.x; break;
+    case pixel::Prop::Y: v.v = pp.y; break;
+    case pixel::Prop::Rot: v.v = pp.rot; break;
+    case pixel::Prop::Scale: v.v = pp.scale; break;
+    case pixel::Prop::Sx: v.v = pp.sx; break;
+    case pixel::Prop::Sy: v.v = pp.sy; break;
+    case pixel::Prop::SkewX: v.v = pp.skew_x; break;
+    case pixel::Prop::SkewY: v.v = pp.skew_y; break;
+    case pixel::Prop::Opacity: v.v = pp.opacity; break;
+    case pixel::Prop::Stroke: v.v = pp.has_stroke ? 1 : 0, v.color = pp.stroke; break;
+    case pixel::Prop::StrokeWidth: v.v = pp.has_stroke_width ? 1 : 0, v.n = pp.stroke_width; break;
+    case pixel::Prop::Fill: v.v = pp.has_fill ? 1 : 0, v.color = pp.fill; break;
+    default: break;
+    }
+    return v;
+}
+
+// The graph of a block's easing under «как» (part 4ж), in logical px: x 0 … 1 and y kEaseLo … kEaseHi within a
+// margin; a press within kEaseReach of a handle takes it.
+constexpr f64 kEaseW = 200, kEaseH = 180, kEasePad = 10, kEaseLo = -0.5, kEaseHi = 1.5, kEaseReach = 8;
+f64 ease_gx(f64 x) { return kEasePad + x * (kEaseW - 2 * kEasePad); }
+f64 ease_gy(f64 y) { return kEasePad + (kEaseHi - y) / (kEaseHi - kEaseLo) * (kEaseH - 2 * kEasePad); }
+
+// "0,3; 0; 0,2; 1": the numbers have commas of their own.
+std::string bezier_words(const vector::Bezier& c) {
+    return thousandths(c.x1) + "; " + thousandths(c.y1) + "; " + thousandths(c.x2) + "; " + thousandths(c.y2);
+}
 
 } // namespace
 
@@ -77,6 +192,19 @@ void PixelEditor::bind_mouse(Rml::DataModelConstructor& model) {
         s.RegisterMember("value", &PartValueRow::value);
     }
     model.RegisterArray<std::vector<PartValueRow>>();
+    if (auto s = model.RegisterStruct<PartFieldRow>()) {
+        s.RegisterMember("name", &PartFieldRow::name);
+        s.RegisterMember("label", &PartFieldRow::label);
+        s.RegisterMember("section", &PartFieldRow::section);
+        s.RegisterMember("value", &PartFieldRow::value);
+        s.RegisterMember("now", &PartFieldRow::now);
+    }
+    model.RegisterArray<std::vector<PartFieldRow>>();
+    model.Bind("px_part_fields", &m_part_fields_);
+    model.Bind("px_has_ease", &m_has_ease_);
+    model.Bind("px_ease_image", &m_ease_image_);
+    model.Bind("px_ease_share", &m_ease_share_);
+    model.Bind("px_ease_why", &m_ease_why_);
     model.Bind("px_timings", &m_timings_);
     model.Bind("px_part_values", &m_part_values_);
     model.Bind("px_block_value", &m_block_value_);
@@ -133,8 +261,26 @@ void PixelEditor::bind_mouse(Rml::DataModelConstructor& model) {
     on("px_timing", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
         if (i >= 0 && i < static_cast<int>(vector::kTimingCount)) set_block_timing(static_cast<vector::Timing>(i));
+        else if (i == static_cast<int>(vector::kTimingCount)) set_block_bezier_timing(); // the row after the words
     });
     on("px_part_code", [this](Rml::Event&, const Rml::VariantList&) { part_to_code(); });
+    // Part 4ж: a part's field left as it showed when it took the keyboard writes nothing.
+    auto part_field = [this](const std::string& name, const std::string& text) {
+        bool same = name == field_focus_ && text == field_shown_;
+        if (!same && name != field_focus_)
+            for (const PartField& f : part_fields_)
+                same = same || (f.name == name && f.value == text);
+        if (!same) return void(set_part_field(name, text));
+        // Nothing written: the field shows the code's value again (the playhead may have moved while it had the keyboard).
+        field_fresh_ = name;
+        rebuild_part();
+    };
+    on("px_part_field", [part_field, arg_str, arg_enter](Rml::Event&, const Rml::VariantList& a) {
+        if (arg_enter(a, 2)) part_field(arg_str(a, 0), arg_str(a, 1));
+    });
+    on("px_part_field_commit", [part_field, arg_str, field](Rml::Event& ev, const Rml::VariantList& a) {
+        if (auto text = field(ev)) part_field(arg_str(a, 0), *text);
+    });
 }
 
 // --- an edit begins, is refused, is written ------------------------------------------------------------------
@@ -194,38 +340,8 @@ bool PixelEditor::set_block_value(const std::string& text) {
     if (!b) return false;
     const std::string what = block_name(rec_, *b);
     pixel::PropValue v;
-    std::string t = text;
-    while (!t.empty() && t.back() == ' ') t.pop_back();
-    while (!t.empty() && t.front() == ' ') t.erase(t.begin());
-    if (pixel::prop_is_number(b->prop)) {
-        if (!read_number(t, v.v)) return refuse_edit("Значение «" + what + "» — число");
-        if (b->prop == pixel::Prop::Flash && (v.v < 0 || v.v > 1)) return refuse_edit("Вспышка «" + what + "» — доля от 0 до 1");
-        if ((b->prop == pixel::Prop::Blur || b->prop == pixel::Prop::ShadowBlur) && v.v < 0)
-            return refuse_edit("Размытие «" + what + "» — число не меньше 0");
-    } else if (pixel::prop_is_color(b->prop)) {
-        const char* rest = b->prop == pixel::Prop::Tint ? "без тона" : b->prop == pixel::Prop::FlashColor ? "белый" : b->prop == pixel::Prop::Shadow ? "без тени" : "свой цвет части";
-        if (!t.empty() && !pixel::parse_part_color(t, v.color)) return refuse_edit("Цвет «" + what + "» — #rrggbb или #rrggbbaa, пусто — " + rest);
-        v.v = t.empty() ? 0 : 1;
-    } else if (b->prop == pixel::Prop::StrokeWidth) {
-        if (!t.empty() && (!read_number(t, v.n) || v.n < 0))
-            return refuse_edit("Толщина «" + what + "» — число не меньше 0, пусто — своя толщина фигур");
-        v.v = t.empty() ? 0 : 1;
-    } else if (b->prop == pixel::Prop::Visible) {
-        if (t != "да" && t != "нет") return refuse_edit("Видимость «" + what + "» — «да» или «нет»");
-        v.v = t == "да" ? 1 : 0;
-    } else if (b->prop == pixel::Prop::Order) {
-        return refuse_edit("Порядок «" + what + "» правится в коде: to_top, to_bottom, above, below");
-    } else if (b->prop == pixel::Prop::Mask) {
-        return refuse_edit("Маска «" + what + "» правится в коде: mask(\"lid\"), mask(nil)");
-    } else if (b->prop == pixel::Prop::Link) {
-        return refuse_edit("Крепление «" + what + "» правится в коде: attach(\"hand\"), detach()");
-    } else if (b->prop == pixel::Prop::Drawing) {
-        return refuse_edit("Рисунок правится в коде: swap(…)");
-    } else {
-        v.v = t.empty() ? 0 : 1;
-        v.target = t;
-    }
     std::string out, why;
+    if (!value_of_text(b->prop, text, what, v, why)) return refuse_edit(why);
     if (!pixel::edit_value(rec_, *b, b->prop, v, script_.code(), script_text_, out, why)) return refuse_edit("Значение «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false; // the same
     const std::string shown = field_of(b->prop, v);
@@ -253,6 +369,68 @@ bool PixelEditor::set_block_timing(vector::Timing timing) {
     if (!pixel::edit_timing(rec_, *b, timing, script_.code(), script_text_, out, why)) return refuse_edit("Сглаживание «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: " + what + ", " + vector::timing_word(timing));
+}
+
+bool PixelEditor::set_block_bezier_timing() {
+    note_.clear();
+    timings_open_ = false;
+    const pixel::Block* b = edited_block();
+    if (!b) return false;
+    if (b->bezier >= 0) return rebuild(), false; // a curve already: its numbers stay
+    const std::string what = block_name(rec_, *b);
+    const vector::Bezier ease; // CSS's ease
+    std::string out, why;
+    if (!pixel::edit_timing_bezier(rec_, *b, ease, script_.code(), script_text_, out, why))
+        return refuse_edit("Сглаживание «" + what + "» не записать: " + why);
+    if (out == script_text_) return rebuild(), false;
+    return write_script(out, "«" + name() + "»: " + what + ", кривая " + bezier_words(ease));
+}
+
+bool PixelEditor::set_block_bezier(const vector::Bezier& curve) {
+    note_.clear();
+    const pixel::Block* b = edited_block();
+    if (!b) return false;
+    const std::string what = block_name(rec_, *b);
+    std::string out, why;
+    if (!pixel::edit_bezier(rec_, *b, curve, script_.code(), script_text_, out, why)) return refuse_edit("Кривую «" + what + "» не записать: " + why);
+    if (out == script_text_) return rebuild(), false;
+    return write_script(out, "«" + name() + "»: " + what + ", кривая " + bezier_words(curve));
+}
+
+// --- the selected part: its fields (part 4ж) ------------------------------------------------------------
+
+bool PixelEditor::set_part_field(const std::string& field, const std::string& text) {
+    note_.clear();
+    // Whatever comes of it, the field shows the code's value again, though it has the keyboard.
+    struct Fresh {
+        PixelEditor* ed;
+        std::string name;
+        ~Fresh() {
+            ed->field_fresh_ = name;
+            ed->rebuild_part();
+        }
+    } fresh{this, field};
+    const FieldProp* f = nullptr;
+    for (const FieldProp& fp : kFieldProps)
+        if (field == pixel::prop_word(fp.prop)) f = &fp;
+    if (!f) return refuse_edit("У части нет поля «" + field + "»");
+    if (!has_ || part_.empty() || rig_.holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
+    const std::string id = part_, what = id + " · " + field;
+    pixel::PropValue v;
+    std::string out, why;
+    if (!value_of_text(f->prop, text, what, v, why)) return refuse_edit(why);
+    bool saved = false;
+    if (!begin_edit(saved)) return false;
+    if (rig_.swapping()) return refuse_edit("посреди смены рисунка поля части не пишутся: выберите кадр до или после");
+    play(false);
+    const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
+    bool going = false;
+    if (field_of(f->prop, pixel::part_prop_value(rec_, id, t_, frame, f->prop, going)) == field_of(f->prop, v)) return rebuild(), false; // the same
+    if (!pixel::edit_part_prop(rec_, id, t_, frame, f->prop, v, script_.code(), script_text_, out, why))
+        return refuse_edit("«" + what + "» не записать: " + why);
+    if (out == script_text_) return rebuild(), false;
+    const std::string shown = field_of(f->prop, v);
+    return write_script(out, "«" + name() + "»: " + what + " = " + (shown.empty() ? std::string("своё") : shown));
 }
 
 // --- the timeline's edges ---------------------------------------------------------------------------------
@@ -437,22 +615,41 @@ void PixelEditor::make_curves() {
     // 0 and 1 faint across, the curve over them; back and elastic go past both.
     const f64 lo = -0.45, hi = 1.45;
     auto row = [&](f64 v) { return std::clamp<i64>(std::lround((kCurveH - 1) - (v - lo) / (hi - lo) * (kCurveH - 1)), 0, kCurveH - 1); };
-    for (usize i = 0; i < vector::kTimingCount; ++i) {
+    const vector::Bezier ease;
+    for (usize i = 0; i <= vector::kTimingCount; ++i) {
+        // After the words, the list's «кривая»: CSS's ease with the lines to its two points (part 4ж).
+        const bool bezier = i == vector::kTimingCount;
+        auto curve = [&](f64 x) { return bezier ? vector::bezier(ease, x) : vector::timing(static_cast<vector::Timing>(i), x); };
         std::vector<u8> px(static_cast<usize>(kCurveW) * kCurveH * 4, 0);
         auto put = [&](i64 x, i64 y, const u8 (&c)[4]) {
             if (x < 0 || y < 0 || x >= kCurveW || y >= kCurveH) return;
             std::copy(c, c + 4, &px[(static_cast<usize>(y) * kCurveW + static_cast<usize>(x)) * 4]);
         };
-        const u8 faint[4] = {128, 128, 128, 110}, line[4] = {40, 120, 255, 255};
+        const u8 faint[4] = {128, 128, 128, 110}, line[4] = {40, 120, 255, 255}, handle[4] = {150, 150, 160, 255};
         for (i64 x = 0; x < kCurveW; ++x) put(x, row(0), faint), put(x, row(1), faint);
+        if (bezier) {
+            // (0, 0) to (x1, y1) and (1, 1) to (x2, y2), a dot at each end
+            auto segment = [&](f64 x0, f64 y0, f64 x1, f64 y1) {
+                for (int k = 0; k <= 48; ++k) {
+                    const f64 u = k / 48.0;
+                    put(std::lround((x0 + (x1 - x0) * u) * (kCurveW - 1)), row(y0 + (y1 - y0) * u), handle);
+                }
+                const i64 cx = std::lround(x1 * (kCurveW - 1)), cy = row(y1);
+                for (i64 dy = -2; dy <= 2; ++dy)
+                    for (i64 dx = -2; dx <= 2; ++dx)
+                        if (dx * dx + dy * dy <= 5) put(cx + dx, cy + dy, line);
+            };
+            segment(0, 0, ease.x1, ease.y1);
+            segment(1, 1, ease.x2, ease.y2);
+        }
         i64 prev = -1;
         for (i64 x = 0; x < kCurveW; ++x) {
-            const i64 y = row(vector::timing(static_cast<vector::Timing>(i), static_cast<f64>(x) / (kCurveW - 1)));
+            const i64 y = row(curve(static_cast<f64>(x) / (kCurveW - 1)));
             const i64 a = prev < 0 ? y : std::min(prev, y), b = prev < 0 ? y : std::max(prev, y);
             for (i64 yy = a; yy <= b; ++yy) put(x, yy, line), put(x, yy + 1, line);
             prev = y;
         }
-        ui_->set_image(curve_image(i), px.data(), static_cast<u32>(kCurveW), static_cast<u32>(kCurveH));
+        ui_->set_image(bezier ? std::string(kBezierIcon) : curve_image(i), px.data(), static_cast<u32>(kCurveW), static_cast<u32>(kCurveH));
     }
 }
 
@@ -480,15 +677,19 @@ void PixelEditor::rebuild_inspector() {
         if (m_can_value_) m_block_value_ = field_of(b->prop, b->value);
         if (m_can_length_) m_block_length_ = thousandths(b->length);
         if (m_can_timing_) {
-            const bool own = b->curve >= 0;
-            m_block_timing_ = own ? "своя кривая" : vector::timing_word(b->timing);
-            m_timing_icon_ = own ? "" : "/memory/" + curve_image(static_cast<usize>(b->timing));
-            if (timings_open_)
+            // bezier(…) is «кривая» (part 4ж), an author's function «своя кривая».
+            const bool own = b->curve >= 0, bezier = b->bezier >= 0;
+            m_block_timing_ = bezier ? "кривая" : own ? "своя кривая" : vector::timing_word(b->timing);
+            m_timing_icon_ = bezier ? "/memory/" + std::string(kBezierIcon) : own ? "" : "/memory/" + curve_image(static_cast<usize>(b->timing));
+            if (timings_open_) {
                 for (usize i = 0; i < vector::kTimingCount; ++i)
                     rows.push_back({vector::timing_word(static_cast<vector::Timing>(i)), "/memory/" + curve_image(i),
-                                    !own && static_cast<usize>(b->timing) == i});
+                                    !own && !bezier && static_cast<usize>(b->timing) == i});
+                rows.push_back({"кривая", "/memory/" + std::string(kBezierIcon), bezier});
+            }
         }
     }
+    rebuild_ease(m_can_timing_ ? b : nullptr);
     if (!m_can_timing_) timings_open_ = false;
     m_timings_open_ = timings_open_;
     m_timings_ = std::move(rows);
@@ -503,8 +704,8 @@ void PixelEditor::rebuild_part() {
     std::string code;
     bool can_code = false;
     const bool has = has_ && !part_.empty() && rig_.holder(part_).part(part_) >= 0;
+    pixel::PartPose pp;
     if (has) {
-        pixel::PartPose pp;
         if (shown_ok_)
             if (const auto it = shown_pose_.parts.find(part_); it != shown_pose_.parts.end()) pp = it->second;
         std::string morph = "нет";
@@ -589,9 +790,12 @@ void PixelEditor::rebuild_part() {
     if (!same) {
         part_values_ = std::move(values);
         m_part_values_.clear();
-        for (const PartValue& v : part_values_) m_part_values_.push_back({v.name, v.value});
+        // The properties of the fields are shown by the fields (part 4ж).
+        for (const PartValue& v : part_values_)
+            if (!is_field(v.name)) m_part_values_.push_back({v.name, v.value});
         dirty("px_part_values");
     }
+    rebuild_fields(has, pp);
     if (has != m_has_part_ || part_ != m_part_name_ || code != m_part_code_ || can_code != m_part_can_code_) {
         m_has_part_ = has;
         m_part_name_ = part_;
@@ -608,6 +812,248 @@ bool PixelEditor::part_to_code() {
     if (code_ != script_panel_) return refuse_edit("Код в панели не тот, что записан: сохраните его (Ctrl+S), и часть покажет свой вызов");
     select_call(b);
     return true;
+}
+
+// --- the part's fields and the graph of the easing (part 4ж) --------------------------------------------------
+
+void PixelEditor::rebuild_fields(bool has, const pixel::PartPose& pp) {
+    std::vector<PartField> fields;
+    if (has) {
+        const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
+        for (const FieldProp& f : kFieldProps) {
+            PartField row;
+            row.name = pixel::prop_word(f.prop);
+            row.section = f.section;
+            // What the clip's code gives it; without a recording, what the frame shows.
+            row.value = field_of(f.prop, rec_ok_ ? pixel::part_prop_value(rec_, part_, t_, frame, f.prop, row.going) : frame_value(f.prop, pp));
+            const std::string now = frame_text(f.prop, pp);
+            if (now != row.value && !(row.value.empty() && (now == "свой" || now == "своя"))) row.now = "сейчас " + now;
+            fields.push_back(std::move(row));
+        }
+    }
+    // The field with the keyboard keeps its text while the playhead and the recording change (unless written).
+    std::string focused;
+    Rml::Element* focus = context_ ? context_->GetFocusElement() : nullptr;
+    if (has && focus && focus->GetId().rfind("px-pf-", 0) == 0 && focus->GetTagName() == "input") focused = focus->GetId().substr(6);
+    if (focused != field_focus_) {
+        field_focus_ = focused;
+        field_shown_.clear();
+        for (const PartFieldRow& r : m_part_fields_)
+            if (r.name == focused) field_shown_ = r.value; // the text it showed when it took the keyboard
+    }
+    const std::string fresh = std::exchange(field_fresh_, std::string());
+    std::vector<PartFieldRow> rows;
+    for (const PartField& f : fields) {
+        PartFieldRow r{f.name, f.going ? f.name + " →" : f.name, f.section, f.value, f.now};
+        if (f.name == focused) {
+            if (f.name == fresh) field_shown_ = f.value;
+            else r.value = static_cast<Rml::ElementFormControl*>(focus)->GetValue();
+        }
+        rows.push_back(std::move(r));
+    }
+    part_fields_ = std::move(fields);
+    const bool same = rows.size() == m_part_fields_.size() &&
+                      std::equal(rows.begin(), rows.end(), m_part_fields_.begin(), [](const PartFieldRow& a, const PartFieldRow& b) {
+                          return a.name == b.name && a.label == b.label && a.section == b.section && a.value == b.value && a.now == b.now;
+                      });
+    if (!same || !fresh.empty()) {
+        m_part_fields_ = std::move(rows);
+        dirty("px_part_fields");
+    }
+}
+
+void PixelEditor::rebuild_ease(const pixel::Block* b) {
+    const i32 index = b ? static_cast<i32>(b - rec_.blocks.data()) : -1;
+    bool has = false, can = false;
+    std::string why, share;
+    if (b && b->bezier >= 0 && static_cast<usize>(b->bezier) < rec_.beziers.size()) {
+        has = true;
+        can = pixel::can_edit_bezier(rec_, *b, script_.code(), why);
+        const usize n = pixel::bezier_users(rec_, *b);
+        if (n > 1) share = "кривая общая: " + count_words(static_cast<u32>(n), "блок", "блока", "блоков");
+    }
+    // The block or its curve gone from under the hand: let go of it.
+    if (ease_held_ && (index != ease_block_ || !has || !can)) ease_held_ = 0;
+    if (!ease_held_) ease_live_ = has ? rec_.beziers[static_cast<usize>(b->bezier)].curve : vector::Bezier{};
+    ease_has_ = has, ease_can_ = can, ease_block_ = index;
+    if (m_has_ease_ != (b != nullptr) || m_ease_why_ != why || m_ease_share_ != share) {
+        m_has_ease_ = b != nullptr;
+        m_ease_why_ = why;
+        m_ease_share_ = share;
+        for (const char* var : {"px_has_ease", "px_ease_why", "px_ease_share"}) dirty(var);
+    }
+    ease_dirty_ = true;
+}
+
+void PixelEditor::draw_ease() {
+    ease_dirty_ = false;
+    if (!ui_) return;
+    const pixel::Block* b = m_has_ease_ && ease_block_ >= 0 && ease_block_ < static_cast<i32>(rec_.blocks.size()) ? &rec_.blocks[static_cast<usize>(ease_block_)] : nullptr;
+    if (!b) {
+        ease_key_.clear();
+        return;
+    }
+    const f64 s = std::max(1.0f, dp_);
+    const i64 w = std::lround(kEaseW * s), h = std::lround(kEaseH * s);
+    const bool handles = ease_has_ && ease_can_;
+    // The curve as points of the texture: of bezier(…) by its parameter, else y of x.
+    std::vector<f64> line;
+    const i64 n = 4 * w;
+    for (i64 k = 0; k <= n; ++k) {
+        const f64 u = static_cast<f64>(k) / static_cast<f64>(n);
+        f64 x = u, y = 0;
+        if (ease_has_) {
+            const vector::Bezier& c = ease_live_;
+            x = 3 * (1 - u) * (1 - u) * u * c.x1 + 3 * (1 - u) * u * u * c.x2 + u * u * u;
+            y = 3 * (1 - u) * (1 - u) * u * c.y1 + 3 * (1 - u) * u * u * c.y2 + u * u * u;
+        } else {
+            y = pixel::block_ease(rec_, *b, u);
+        }
+        line.push_back(ease_gx(x) * s), line.push_back(ease_gy(y) * s);
+    }
+    std::string key(reinterpret_cast<const char*>(line.data()), line.size() * sizeof(f64));
+    key += std::to_string(w) + " " + std::to_string(h) + " " + std::to_string(handles) + " " + std::to_string(ease_held_) + " " + bezier_words(ease_live_);
+    if (key == ease_key_) return;
+    ease_key_ = std::move(key);
+
+    std::vector<u8> px(static_cast<usize>(w * h) * 4, 0);
+    auto put = [&](i64 x, i64 y, const u8 (&c)[4]) {
+        if (x < 0 || y < 0 || x >= w || y >= h) return;
+        std::copy(c, c + 4, &px[(static_cast<usize>(y) * static_cast<usize>(w) + static_cast<usize>(x)) * 4]);
+    };
+    auto disc = [&](f64 cx, f64 cy, f64 r, const u8 (&c)[4]) {
+        for (i64 y = static_cast<i64>(std::floor(cy - r)); y <= static_cast<i64>(std::ceil(cy + r)); ++y)
+            for (i64 x = static_cast<i64>(std::floor(cx - r)); x <= static_cast<i64>(std::ceil(cx + r)); ++x)
+                if (std::hypot(static_cast<f64>(x) + 0.5 - cx, static_cast<f64>(y) + 0.5 - cy) <= r) put(x, y, c);
+    };
+    auto segment = [&](f64 x0, f64 y0, f64 x1, f64 y1, f64 r, const u8 (&c)[4]) {
+        const i64 steps = std::max<i64>(1, static_cast<i64>(std::ceil(std::hypot(x1 - x0, y1 - y0) * 2)));
+        for (i64 k = 0; k <= steps; ++k) {
+            const f64 u = static_cast<f64>(k) / static_cast<f64>(steps);
+            disc(x0 + (x1 - x0) * u, y0 + (y1 - y0) * u, r, c);
+        }
+    };
+    const u8 square[4] = {128, 128, 128, 28}, faint[4] = {128, 128, 128, 110}, curve[4] = {40, 120, 255, 255}, arm[4] = {150, 150, 160, 255},
+             white[4] = {255, 255, 255, 255};
+    // The square 0 … 1, faint lines at y = 0 and y = 1.
+    const i64 x0 = std::lround(ease_gx(0) * s), x1 = std::lround(ease_gx(1) * s), y1 = std::lround(ease_gy(1) * s), y0 = std::lround(ease_gy(0) * s);
+    for (i64 y = y1; y <= y0; ++y)
+        for (i64 x = x0; x <= x1; ++x) put(x, y, square);
+    const i64 thin = std::max<i64>(1, std::lround(s));
+    for (i64 x = 0; x < w; ++x)
+        for (i64 t = 0; t < thin; ++t) put(x, y0 + t, faint), put(x, y1 + t, faint);
+    if (handles) {
+        const vector::Bezier& c = ease_live_;
+        segment(ease_gx(0) * s, ease_gy(0) * s, ease_gx(c.x1) * s, ease_gy(c.y1) * s, 0.75 * s, arm);
+        segment(ease_gx(1) * s, ease_gy(1) * s, ease_gx(c.x2) * s, ease_gy(c.y2) * s, 0.75 * s, arm);
+    }
+    for (usize k = 2; k < line.size(); k += 2) segment(line[k - 2], line[k - 1], line[k], line[k + 1], 1.1 * s, curve);
+    if (handles) {
+        // The points: hollow, the one held full.
+        const vector::Bezier& c = ease_live_;
+        const f64 pts[2][2] = {{c.x1, c.y1}, {c.x2, c.y2}};
+        for (int k = 0; k < 2; ++k) {
+            const f64 cx = ease_gx(pts[k][0]) * s, cy = ease_gy(pts[k][1]) * s;
+            disc(cx, cy, 4.5 * s, curve);
+            if (ease_held_ != k + 1) disc(cx, cy, 2.5 * s, white);
+        }
+    }
+    if (!ease_images_[1].empty()) ui_->drop_image(ease_images_[1]);
+    ease_images_[1] = ease_images_[0];
+    ease_images_[0] = "px_ease_" + std::to_string(++image_serial_);
+    ui_->set_image(ease_images_[0], px.data(), static_cast<u32>(w), static_cast<u32>(h));
+    m_ease_image_ = "/memory/" + ease_images_[0];
+    dirty("px_ease_image");
+    ease_px_ = std::move(px);
+    ease_w_ = static_cast<u32>(w), ease_h_ = static_cast<u32>(h);
+}
+
+bool PixelEditor::ease_texel(f64 x, f64 y, i64& tx, i64& ty) const {
+    if (ease_w_ == 0) return false;
+    const f64 s = static_cast<f64>(ease_w_) / kEaseW;
+    tx = static_cast<i64>(std::floor(ease_gx(x) * s)), ty = static_cast<i64>(std::floor(ease_gy(y) * s));
+    return true;
+}
+
+bool PixelEditor::ease_box(f32& x, f32& y, f32& w, f32& h) const {
+    Rml::Element* graph = element("px-ease-graph");
+    if (!graph || !graph->IsVisible(true)) return false;
+    const Rml::Vector2f at = graph->GetAbsoluteOffset(Rml::BoxArea::Content), size = graph->GetBox().GetSize(Rml::BoxArea::Content);
+    x = at.x, y = at.y, w = size.x, h = size.y;
+    return w > 0 && h > 0;
+}
+
+bool PixelEditor::ease_screen(f64 x, f64 y, f32& sx, f32& sy) const {
+    f32 bx = 0, by = 0, bw = 0, bh = 0;
+    if (!m_has_ease_ || !ease_box(bx, by, bw, bh)) return false;
+    sx = bx + static_cast<f32>(ease_gx(x) / kEaseW * bw);
+    sy = by + static_cast<f32>(ease_gy(y) / kEaseH * bh);
+    return true;
+}
+
+bool PixelEditor::ease_handle(int handle, f32& x, f32& y) const {
+    if (!ease_has_ || !ease_can_ || (handle != 1 && handle != 2)) return false;
+    return ease_screen(handle == 1 ? ease_live_.x1 : ease_live_.x2, handle == 1 ? ease_live_.y1 : ease_live_.y2, x, y);
+}
+
+bool PixelEditor::ease_press(f32 x, f32 y) {
+    f32 bx = 0, by = 0, bw = 0, bh = 0;
+    // The handle within reach, the nearer of two.
+    auto nearest = [&]() {
+        if (!ease_box(bx, by, bw, bh)) return 0;
+        const f32 reach = static_cast<f32>(kEaseReach / kEaseW) * bw;
+        int best = 0;
+        f32 bd = 0;
+        for (int k = 1; k <= 2; ++k) {
+            f32 hx = 0, hy = 0;
+            if (!ease_handle(k, hx, hy)) continue;
+            const f32 d = std::hypot(x - hx, y - hy);
+            if (d <= reach && (best == 0 || d < bd)) best = k, bd = d;
+        }
+        return best;
+    };
+    if (nearest() == 0) return false; // not at a point: a click on the graph
+    // The panel saved first, a step of its own; the block found again in its recording.
+    if (!edited_block()) return true;
+    rebuild_inspector();
+    const int k = nearest();
+    if (k == 0) return refuse_edit("Код сохранён; у кривой в новой записи нет точки под мышью: тяните снова"), true;
+    play(false);
+    f32 hx = 0, hy = 0;
+    ease_handle(k, hx, hy);
+    ease_held_ = k;
+    ease_from_ = ease_live_;
+    ease_grab_x_ = x - hx, ease_grab_y_ = y - hy;
+    ease_dirty_ = true;
+    return true;
+}
+
+void PixelEditor::ease_drag(f32 x, f32 y) {
+    f32 bx = 0, by = 0, bw = 0, bh = 0;
+    if (!ease_held_ || !ease_box(bx, by, bw, bh)) return;
+    const f64 gx = (x - ease_grab_x_ - bx) / bw * kEaseW, gy = (y - ease_grab_y_ - by) / bh * kEaseH;
+    // x within 0 … 1, y within the graph's, both to hundredths.
+    const f64 hx = std::round(std::clamp((gx - kEasePad) / (kEaseW - 2 * kEasePad), 0.0, 1.0) * 100) / 100;
+    const f64 hy = std::round(std::clamp(kEaseHi - (gy - kEasePad) / (kEaseH - 2 * kEasePad) * (kEaseHi - kEaseLo), kEaseLo, kEaseHi) * 100) / 100;
+    (ease_held_ == 1 ? ease_live_.x1 : ease_live_.x2) = hx;
+    (ease_held_ == 1 ? ease_live_.y1 : ease_live_.y2) = hy;
+    ease_dirty_ = true;
+}
+
+void PixelEditor::ease_release() {
+    if (!ease_held_) return;
+    ease_held_ = 0;
+    const vector::Bezier to = ease_live_;
+    ease_live_ = ease_from_; // as it was, until the code says otherwise
+    ease_dirty_ = true;
+    if (to != ease_from_) set_block_bezier(to);
+}
+
+void PixelEditor::ease_cancel() {
+    if (!ease_held_) return;
+    ease_held_ = 0;
+    ease_live_ = ease_from_;
+    ease_dirty_ = true;
 }
 
 // --- the tree's row under the mouse ------------------------------------------------------------------------
