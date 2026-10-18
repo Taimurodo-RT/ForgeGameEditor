@@ -2429,7 +2429,8 @@ void SliceGame::fire_mark(const objects::ClipEvent& e, flecs::entity_t thing, f6
 
 bool SliceGame::anim_going(flecs::entity_t thing, std::string_view mark) const {
     if (!level_ || thing == 0) return false;
-    const u64 now = level_->sim->clock().tick();
+    // Asked by a scheme while a tick runs: the frame shown when that tick is over.
+    const u64 now = level_->sim->next_tick();
     const objects::Clip* clip = nullptr;
     u64 ticks = now;
     if (level_->hero.is_alive() && thing == level_->hero.id()) {
