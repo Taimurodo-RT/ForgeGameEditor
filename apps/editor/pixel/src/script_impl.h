@@ -35,7 +35,7 @@ struct MoveStep {
     f64 length = 0;
     std::vector<std::pair<Prop, PropValue>> props; // Tween, Spring: where each goes; Rest, Bind: which
     vector::Timing timing = vector::Timing::Smooth;
-    i32 curve = -1;
+    i32 curve = -1, bezier = -1;
     bool arc = false, arc_reverse = false;
     vector::Spring spring;
     f64 tolerance = 0.001;

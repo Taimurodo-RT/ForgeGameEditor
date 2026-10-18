@@ -138,6 +138,48 @@ bool timing_from_word(std::string_view word, Timing& out) {
     return false;
 }
 
+bool bezier_valid(const Bezier& b) {
+    return std::isfinite(b.x1) && std::isfinite(b.y1) && std::isfinite(b.x2) && std::isfinite(b.y2) && b.x1 >= 0 &&
+           b.x1 <= 1 && b.x2 >= 0 && b.x2 <= 1;
+}
+
+f64 bezier(const Bezier& b, f64 x) {
+    if (!(x > 0)) return 0;
+    if (x >= 1) return 1;
+    // The curve's polynomials: (a·u + b)·u + c, times u.
+    const f64 cx = 3 * b.x1, bx = 3 * (b.x2 - b.x1) - cx, ax = 1 - cx - bx;
+    const f64 cy = 3 * b.y1, by = 3 * (b.y2 - b.y1) - cy, ay = 1 - cy - by;
+    auto at_x = [&](f64 u) { return ((ax * u + bx) * u + cx) * u; };
+    auto slope = [&](f64 u) { return (3 * ax * u + 2 * bx) * u + cx; };
+    constexpr f64 kClose = 1e-7;
+    f64 u = x;
+    bool found = false;
+    for (int i = 0; i < 8; ++i) {
+        const f64 e = at_x(u) - x;
+        if (std::fabs(e) < kClose) {
+            found = true;
+            break;
+        }
+        const f64 d = slope(u);
+        if (std::fabs(d) < 1e-6) break;
+        u -= e / d;
+        if (!(u >= 0 && u <= 1)) break;
+    }
+    if (!found) {
+        // x(u) grows from 0 to 1: halve [0, 1] around x.
+        f64 lo = 0, hi = 1;
+        u = x;
+        for (int i = 0; i < 64; ++i) {
+            const f64 e = at_x(u) - x;
+            if (std::fabs(e) < kClose) break;
+            if (e < 0) lo = u;
+            else hi = u;
+            u = (lo + hi) / 2;
+        }
+    }
+    return ((ay * u + by) * u + cy) * u;
+}
+
 bool spring_preset(std::string_view word, Spring& out) {
     for (const Preset& p : kPresets)
         if (word == p.word) {

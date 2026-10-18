@@ -29,6 +29,7 @@ bool can_edit_pause(const Recording& rec, const Pause& pause, const CodeSites& c
 
 // The value block b goes to, of property p: its own, or another one added to the table of its call
 // (part("body"):to({ y = 2 }, …) → { y = 2, x = 3 }). A call of one property (body.y(…)) takes no other: add_at_line.
+// An own value (nil) goes into no table: { fill = nil } is a table without fill, refused (part 4ж).
 bool edit_value(const Recording& rec, const Block& b, Prop p, const PropValue& value, const CodeSites& code,
                 std::string_view source, std::string& out, std::string& why);
 // Its length: the number in its call, added when the call has none.
@@ -37,6 +38,17 @@ bool edit_length(const Recording& rec, const Block& b, f64 length, const CodeSit
 // Its timing, as a word: written into its call, added when the call has none.
 bool edit_timing(const Recording& rec, const Block& b, vector::Timing timing, const CodeSites& code,
                  std::string_view source, std::string& out, std::string& why);
+// Its timing as bezier(x1, y1, x2, y2), in the same place (part 4ж): body.y(2, 0.4, "out") → body.y(2, 0.4,
+// bezier(0.25, 0.1, 0.25, 1)).
+bool edit_timing_bezier(const Recording& rec, const Block& b, const vector::Bezier& curve, const CodeSites& code,
+                        std::string_view source, std::string& out, std::string& why);
+// The numbers of the bezier(…) call that made block b's easing, those that changed (part 4ж); false with why for a
+// block without one, one of a module's call, numbers out of their bounds.
+bool can_edit_bezier(const Recording& rec, const Block& b, const CodeSites& code, std::string& why);
+bool edit_bezier(const Recording& rec, const Block& b, const vector::Bezier& curve, const CodeSites& code,
+                 std::string_view source, std::string& out, std::string& why);
+// The blocks whose easing that call made: it, or a variable or a loop holding it (part 4ж).
+usize bezier_users(const Recording& rec, const Block& b);
 // Its start, when it starts at an at(с, …) or a delay(с, …): their number.
 bool edit_start(const Recording& rec, const Block& b, f64 start, const CodeSites& code, std::string_view source,
                 std::string& out, std::string& why);
@@ -59,5 +71,17 @@ bool add_at_table(const Recording& rec, f64 t, std::string_view part, const std:
 // Every change in one text; false with why.
 bool edit_part_move(const Recording& rec, std::string_view part, f64 t, f64 frame, f64 dx, f64 dy, const CodeSites& code,
                     std::string_view source, std::string& out, std::string& why);
+
+// A part's field (part 4ж): what the clip's code gives property p of the part in the frame at t, `frame` seconds long —
+// its deciding block's end when that one's transition goes in this frame (going true), else the recording's value
+// there.
+PropValue part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, bool& going);
+// Property p of the part made `value` in that frame: the deciding block's end when its transition goes; else a field
+// of the table of a call of another property of the part going there that has no such field, when p's track started
+// nothing since (of several, the one that started last; together, the first by the list of properties); else a new
+// first line of the clip, at(t, part("head").rot(10, 0)), at t to thousandths not after it. An own value (nil) goes
+// into no table: a table with field = nil has no field.
+bool edit_part_prop(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, const PropValue& value,
+                    const CodeSites& code, std::string_view source, std::string& out, std::string& why);
 
 } // namespace forge::pixel

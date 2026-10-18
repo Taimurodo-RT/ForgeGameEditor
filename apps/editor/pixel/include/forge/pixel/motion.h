@@ -70,6 +70,12 @@ struct SiteRef {
     bool operator==(const SiteRef&) const = default;
 };
 
+// An easing bezier(x1, y1, x2, y2) of the code (part 4ж): its numbers and the call that wrote them.
+struct BezierUse {
+    vector::Bezier curve;
+    SiteRef site;
+};
+
 // The part of the drawing's track (swap, part 4д): no part of a picture has an empty id.
 inline constexpr const char* kDrawingPart = "";
 
@@ -93,9 +99,10 @@ struct Block {
     u32 ref = 0;
     i32 binding = -1;
 
-    // How it goes: a timing word, or an author's easing (Recording::curves), or a spring, or tween(fn)'s frames.
+    // How it goes: a timing word, or an author's easing (Recording::curves), or bezier(…) (Recording::beziers, part
+    // 4ж), or a spring, or tween(fn)'s frames.
     vector::Timing timing = vector::Timing::Smooth;
-    i32 curve = -1;
+    i32 curve = -1, bezier = -1;
     bool spring = false;
     vector::Spring spring_def;
     f64 tolerance = 0.001;
@@ -207,6 +214,7 @@ struct Recording {
     std::vector<Block> blocks;      // in the order they were made
     std::vector<Saved> saves;
     std::vector<std::vector<f64>> curves; // authors' easings: kCurvePoints values over 0 … 1
+    std::vector<BezierUse> beziers;       // bezier(…) easings (part 4ж)
     std::vector<TimeEvent> events;
     std::vector<Mark> marks;
     std::vector<Pause> pauses;
@@ -260,6 +268,8 @@ bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval,
 // How far block b's timing has gone at t: 0 at its start and before, 1 at its end and after (as eased, an easing that
 // overshoots past them).
 f64 block_share(const Recording& rec, const Block& b, f64 t);
+// Block b's easing at s, the share of its time within 0 … 1: its bezier(…) (part 4ж), its author's easing or its word.
+f64 block_ease(const Recording& rec, const Block& b, f64 s);
 // The block that decides a track at t (after resolve): the last, by start then order, that started at t or before; -1
 // before the first one.
 i32 deciding_block(const Recording& rec, u32 track, f64 t);
