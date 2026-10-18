@@ -238,9 +238,12 @@ bool Pictures::update(const objects::Library& library, const demo::SheetImage& b
 }
 
 void Pictures::set_clips(const objects::Library& library) {
+    marks_ = false;
     for (auto& [key, picture] : by_key_) {
         const objects::Template* t = library.find(key);
         const Mover mover = t ? mover_of(library, *t) : Mover::Still;
+        picture.marks = false;
+        picture.name = t ? t->name : std::string();
         for (usize i = 0; i < kPoses; ++i) {
             const Pose pose = static_cast<Pose>(i);
             picture.clips[i] = pose_rule(mover, pose, picture.frames);
@@ -248,7 +251,9 @@ void Pictures::set_clips(const objects::Library& library) {
             const auto own = t->animations.find(pose_id(pose));
             if (own != t->animations.end() && objects::clip_problem(own->second, picture.frames, library.frame_limit()).empty())
                 picture.clips[i] = own->second;
+            picture.marks = picture.marks || !picture.clips[i].events.empty();
         }
+        marks_ = marks_ || picture.marks;
     }
 }
 

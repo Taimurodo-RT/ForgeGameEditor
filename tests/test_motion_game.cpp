@@ -3,17 +3,28 @@
 // the template's animations keep them; the game learns which marks a world step passed and whether a window goes.
 
 #include "forge/core/file.h"
+#include "forge/core/jobs.h"
+#include "forge/core/path.h"
+#include "forge/logic/logic.h"
 #include "forge/objects/library.h"
 #include "forge/pixel/bake.h"
 #include "forge/pixel/clip_cut.h"
 #include "forge/pixel/doc.h"
 #include "forge/pixel/rig.h"
 #include "forge/pixel/script.h"
+#include "forge/scene/scene.h"
+#include "forge/script/compiler.h"
+#include "forge/script/host.h"
+#include "forge/sim/simulation.h"
+#include "forge/world/generators.h"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <memory>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
+#include <span>
 #include <string>
 #include <vector>
 
@@ -295,4 +306,220 @@ TEST_CASE("5а: which marks a world step passes, and whether a window goes") {
     CHECK(objects::event_problem(attack, {"удар", false, 2, 3}) == "окно метки «удар» на 3 кадров не помещается в анимацию");
     CHECK(objects::event_problem(attack, {"удар", false, 2, 0}) == "окно метки «удар» на 0 кадров не помещается в анимацию");
     CHECK(objects::event_problem(attack, {"шаг", true, 0, 2}) == "у звука «шаг» нет окна");
+}
+
+namespace {
+
+struct PoolScope {
+    PoolScope() { jobs::init(3); }
+    ~PoolScope() { jobs::shutdown(); }
+};
+
+// What the game says to scripts here: the texts they set, and which marks go now (for one thing).
+struct MarkBridge final : script::GameBridge {
+    std::vector<std::string> said;
+    flecs::entity_t thing = 0;
+    std::vector<std::string> going;
+    f64 var(std::string_view, std::string*) override { return 0; }
+    void set_var(std::string_view, f64) override {}
+    void set_text(std::string_view, std::string_view text) override { said.emplace_back(text); }
+    void screen(std::string_view, std::string_view) override {}
+    bool anim_going(flecs::entity_t e, std::string_view mark) override {
+        return e == thing && std::find(going.begin(), going.end(), mark) != going.end();
+    }
+};
+
+struct MarkGame final : logic::Game {
+    std::vector<std::string> hints;
+    bool is_hero(flecs::entity_t) override { return false; }
+    flecs::entity_t hero() override { return 0; }
+    bool has(flecs::entity_t, std::string_view) override { return false; }
+    bool act(std::string_view, flecs::entity_t, std::string_view, flecs::entity_t, flecs::entity_t) override { return true; }
+    void hint(flecs::entity_t, std::string_view text) override { hints.emplace_back(text); }
+    void sound(flecs::entity_t, std::string_view) override {}
+    bool night() override { return false; }
+    void fired(u32) override {}
+};
+
+} // namespace
+
+TEST_CASE("5а: a mark comes to on_anim at the next tick, in turn with messages; anim.going asks the game") {
+    PoolScope pool;
+    world::World world(world::WorldDesc{}, std::make_shared<world::EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    MarkBridge bridge;
+    scripts.set_user(script::kGameBridge, &bridge);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    sim.update(0, view);
+    REQUIRE(scripts.load("fox", R"(
+        local S = {}
+        function S.on_message(self, name) forge.game.set_var("said", "сообщение " .. name) end
+        function S.on_anim(self, name)
+            forge.game.set_var("said", "метка " .. name .. (forge.anim.going(self, name) and ", идёт" or ""))
+        end
+        return S
+    )"));
+    REQUIRE(scripts.load("deaf", "local S = {}\nfunction S.on_message(self, name) forge.game.set_var(\"said\", \"глухой \" .. name) end\nreturn S"));
+    flecs::entity fox = scene.spawn(scene::Position::at_tile(4, 5));
+    fox.set<script::Script>({"fox"});
+    flecs::entity deaf = scene.spawn(scene::Position::at_tile(8, 5));
+    deaf.set<script::Script>({"deaf"});
+    flecs::entity plain = scene.spawn(scene::Position::at_tile(9, 5));
+    bridge.thing = fox.id();
+    bridge.going = {"удар"};
+    run(2);
+
+    scripts.send(fox.id(), "раз");
+    scripts.anim(fox.id(), "удар");
+    scripts.send(fox.id(), "два");
+    scripts.anim(fox.id(), "искра");
+    scripts.anim(deaf.id(), "удар");  // no on_anim: nothing
+    scripts.anim(plain.id(), "удар"); // no module: nothing
+    scripts.anim(0, "удар");          // nobody
+    CHECK(bridge.said.empty());       // not before the next tick
+    run(1);
+    CHECK(bridge.said == std::vector<std::string>{"сообщение раз", "метка удар, идёт", "сообщение два", "метка искра"});
+    CHECK(scripts.errors().empty());
+    run(3);
+    CHECK(bridge.said.size() == 4); // each once
+
+    // The event's node and the going one: what the schemes are made of.
+    script::ScriptApi api;
+    script::register_core_api(api);
+    const script::NodeLibrary nodes = logic::node_library(api);
+    const script::NodeDef* ev = nodes.find("std.event.anim");
+    REQUIRE(ev);
+    CHECK(ev->kind == script::NodeKind::Event);
+    CHECK(ev->event == "on_anim");
+    CHECK(ev->title.get() == "При метке анимации");
+    CHECK(logic::thing_event("std.event.anim"));
+    const script::NodeDef* going = nodes.find("api.anim.going");
+    REQUIRE(going);
+    CHECK(going->title.get() == "Идёт метка анимации");
+    REQUIRE(going->inputs.size() == 2);
+    CHECK(going->inputs[0].title.get() == "Вещь");
+    CHECK(going->inputs[1].title.get() == "Метка");
+}
+
+TEST_CASE("5а: a thing's own scheme hears its animation's marks, «Метка» filters them, «Идёт метка анимации» asks") {
+    PoolScope pool;
+    const fs::path dir = fs::temp_directory_path() / "forge_motion_marks";
+    fs::remove_all(dir);
+    write_text(dir / "kinds.json", R"({"kinds": [{"id": "thing", "name": "Вещь", "group": "Разное", "icon": "box", "foot": 0.5}]})");
+    write_text(dir / "objects" / "fox.object.json", R"({"id": "fox", "name": "Лиса", "kind": "thing"})");
+    objects::Library library;
+    REQUIRE(library.load(dir / "kinds.json", dir / "objects"));
+
+    world::World world(world::WorldDesc{}, std::make_shared<world::EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    MarkBridge bridge;
+    scripts.set_user(script::kGameBridge, &bridge);
+    library.attach(scene);
+    MarkGame game;
+    logic::Runtime runtime(scripts, library, game);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    run(1);
+
+    // При метке «удар» → «Бьёт»; при любой метке → её имя; при метке «искра», если идёт «удар» → «Искра в окне».
+    script::Graph g;
+    const u32 hit = g.add("std.event.anim", 0, 0).uid;
+    g.find(hit)->set_value("filter", "удар");
+    const u32 says = g.add("logic.hint", 280, 0).uid;
+    g.find(says)->set_value("text", "Бьёт");
+    g.link(hit, script::kFlowNext, says);
+    const u32 any = g.add("std.event.anim", 0, 200).uid;
+    const u32 name = g.add("logic.hint", 280, 200).uid;
+    g.link(any, script::kFlowNext, name);
+    g.link(any, "name", name, "text");
+    const u32 spark = g.add("std.event.anim", 0, 400).uid;
+    g.find(spark)->set_value("filter", "искра");
+    const u32 self = g.add("std.self", 0, 560).uid;
+    const u32 going = g.add("api.anim.going", 280, 560).uid;
+    g.find(going)->set_value("mark", "удар");
+    g.link(self, "actor", going, "thing");
+    const u32 branch = g.add("std.flow.if", 560, 400).uid;
+    g.link(spark, script::kFlowNext, branch);
+    g.link(going, "on", branch, "cond");
+    const u32 in_window = g.add("logic.hint", 840, 400).uid;
+    g.find(in_window)->set_value("text", "Искра в окне");
+    g.link(branch, "then", in_window);
+    logic::ThingScheme own;
+    own.thing = "fox";
+    own.graph = g.to_json();
+    logic::Logic logic;
+    logic.add_scheme(own);
+
+    logic::Verbs verbs;
+    REQUIRE(verbs.parse(R"({"verbs": []})"));
+    std::vector<logic::Problem> problems;
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    for (const logic::Problem& p : problems) INFO(p.text);
+    CHECK(problems.empty());
+    std::vector<logic::Thing> things{logic::hero_thing(), logic::thing_of(library, *library.find("fox"))};
+    const logic::FindThing find = [&](std::string_view id) -> const logic::Thing* {
+        for (const logic::Thing& t : things)
+            if (t.id == id) return &t;
+        return nullptr;
+    };
+    script::ScriptApi api;
+    script::register_core_api(api);
+    const script::NodeLibrary nodes = logic::node_library(api);
+    const logic::Compiled c = logic::compile(logic, verbs, find, &nodes);
+    const logic::Module* m = c.find("fox");
+    REQUIRE(m);
+    CHECK(m->source.find("S.on_anim = {}") != std::string::npos);
+    CHECK(m->source.find("S.on_anim[#S.on_anim + 1] = function(self, e1)") != std::string::npos);
+    CHECK(m->source.find("forge.anim.going(") != std::string::npos);
+    std::string error;
+    CHECK_MESSAGE(script::check_syntax(m->source, &error), error);
+    runtime.attach(scene);
+    flecs::entity fox = library.spawn(scene, *library.find("fox"), 10.5, 6);
+    REQUIRE(fox.is_valid());
+    bridge.thing = fox.id();
+    run(2);
+
+    scripts.anim(fox.id(), "удар");
+    run(1);
+    CHECK(game.hints == std::vector<std::string>{"Бьёт", "удар"});
+    scripts.anim(fox.id(), "искра"); // «удар» does not go: no «Искра в окне»
+    run(1);
+    CHECK(game.hints == std::vector<std::string>{"Бьёт", "удар", "искра"});
+    bridge.going = {"удар"};
+    scripts.anim(fox.id(), "искра");
+    run(1);
+    CHECK(game.hints == std::vector<std::string>{"Бьёт", "удар", "искра", "искра", "Искра в окне"});
+    CHECK(scripts.errors().empty());
+}
+
+TEST_CASE("5а: a mark's sound is the game's sound of that name, as «Векторная» finds it") {
+    const fs::path dir = fs::temp_directory_path() / "forge_motion_mark_sounds";
+    fs::remove_all(dir);
+    write_text(dir / "шаг.ogg", "x");
+    write_text(dir / "шаг.wav", "x");
+    write_text(dir / "звон", "x");
+    write_text(dir / "удар.wav", "x");
+    CHECK(objects::mark_sound_file(dir, "шаг") == dir / utf8_path("шаг.wav")); // .wav before .ogg
+    CHECK(objects::mark_sound_file(dir, "звон") == dir / utf8_path("звон"));    // the name itself first
+    CHECK(objects::mark_sound_file(dir, "удар.wav") == dir / utf8_path("удар.wav"));
+    CHECK(objects::mark_sound_file(dir, "нет").empty());
+    CHECK(objects::mark_sound_file(dir, "").empty());
+    CHECK(objects::mark_sound_file(dir, "../шаг").empty());
+    CHECK(objects::mark_sound_file(dir, "a\\шаг").empty());
+    fs::create_directories(dir / "папка");
+    CHECK(objects::mark_sound_file(dir, "папка").empty()); // a folder is no sound
+    fs::remove_all(dir);
 }

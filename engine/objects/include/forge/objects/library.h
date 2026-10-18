@@ -203,6 +203,9 @@ std::string event_problem(const Clip& clip, const ClipEvent& e);
 // The clip's events cut to its frames, after frames were taken away: those that began past them go, a window that
 // went on past them ends at the last; the names of those gone, in order.
 std::vector<std::string> trim_events(Clip& clip);
+// The file of a mark's sound("шаг") among the game's sounds, as «Векторная» finds it: шаг, else шаг.wav, else шаг.ogg
+// in `folder`; empty when none is there or the name is no file of the folder (a / or \ in it).
+std::filesystem::path mark_sound_file(const std::filesystem::path& folder, std::string_view name);
 
 struct Template {
     std::string id;   // "coins": stable, written in the file; the key comes from it

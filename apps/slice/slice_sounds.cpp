@@ -2,6 +2,7 @@
 
 #include "forge/core/log.h"
 #include "forge/core/path.h"
+#include "forge/objects/library.h"
 #include "forge/sim/bodies.h"
 
 #include <cmath>
@@ -104,6 +105,19 @@ void SliceSounds::play(const std::string& name, Cue fallback, f64 x, f64 y, f32 
         }
     }
     if (fallback != Cue::Count) play(fallback, x, y, volume);
+}
+
+bool SliceSounds::play_mark(const std::string& name, f64 x, f64 y) {
+    auto it = marks_.find(name);
+    if (it == marks_.end()) {
+        const std::filesystem::path file = objects::mark_sound_file(folder_, name);
+        it = marks_.emplace(name, file.empty() ? nullptr : named(path_to_utf8(file.filename()))).first;
+    }
+    if (!it->second) return false;
+    ++named_played_;
+    ++marks_played_;
+    mixer_.play(*it->second, {.volume = 1, .at = true, .x = x, .y = y, .range = 16});
+    return true;
 }
 
 audio::SoundPtr SliceSounds::named(const std::string& name) {

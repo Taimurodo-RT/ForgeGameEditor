@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <random>
+#include <system_error>
 
 FORGE_REFLECT(forge::objects::ObjectRef, 1) {
     t.field("template", &forge::objects::ObjectRef::key).hidden();
@@ -621,6 +622,17 @@ std::string event_problem(const Clip& clip, const ClipEvent& e) {
     if (e.frames < 1 || e.frames > n - e.frame)
         return "окно метки «" + e.name + "» на " + std::to_string(e.frames) + " кадров не помещается в анимацию";
     if (e.sound && e.frames != 1) return "у звука «" + e.name + "» нет окна";
+    return {};
+}
+
+std::filesystem::path mark_sound_file(const std::filesystem::path& folder, std::string_view name) {
+    if (name.empty() || name.find_first_of("/\\") != std::string_view::npos || name == "." || name == "..") return {};
+    const std::string n(name);
+    for (const std::string& file : {n, n + ".wav", n + ".ogg"}) {
+        std::error_code ec;
+        const std::filesystem::path p = folder / utf8_path(file);
+        if (std::filesystem::is_regular_file(p, ec)) return p;
+    }
     return {};
 }
 
