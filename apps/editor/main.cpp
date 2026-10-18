@@ -26598,7 +26598,12 @@ return {
     // game's own, a file of clips from another character and one that does not read refused with the files untouched,
     // then given. A clip that fails refused with its line; the code without the tint given over the pair, undone to the
     // pair byte for byte. pixel-motion-m-again, from another working folder: the pair the same, as the library builds it
-    // there, «Уже отдано так».
+    // there, «Уже отдано так». Then the game, with the mouse and the keys: in «Интерфейс» «Скакун» on the HUD from the
+    // game's pictures and «Ёжик» from «Ресурсы» (a picture without clips); the own scheme of «Табличка» plays «idle» on
+    // «Скакун» at the start and, on the message «приземлился», a clip on «Ёжик»; «Жук идёт за героем» with the author's
+    // Luau plays «jump», stops, plays «idle» twice as fast, takes the picture back to its file, plays «idle» again and
+    // asks for a clip there is not. «Играть со стартового»: the scene project with --edits ms_* compares each frame of
+    // the clips with the tab's.
     int mm_step_ = 0;
     std::vector<u8> mm_doc_, mm_svg_, mm_motion_, mm_other_;
     std::string mm_label_;
@@ -26918,12 +26923,299 @@ return {
             check(px_click("px-give-screen"), "«Отдать экрану»");
             check(px().note() == "Уже отдано так" && an().history().undo_label() == label, "«" + px().note() + "», no step");
             check(same(), "looked at and given: nothing written");
+            check(mm_tab(mg_tab_, mg_clips_, why), "the tab's frames of the clips " + why);
+            check(click_tab(8) && ed_.tab() == "ui", "«Интерфейс»");
+            break;
+        }
+        case 4:
+            if (hold(shown("ue-mode-simple") || ue().simple(), "«Интерфейс» laid out")) return true;
+            check(ue().opened() == "hud", "the screen open: the HUD (" + ue().opened() + ")");
+            if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            break;
+        // Two picture layers: «Скакун» of the game's pictures, «Ёжик» from «Ресурсы».
+        case 5:
+            if (hold(shown("ue-block-picture"), "«Простой» laid out")) return true;
+            check(click("ue-block-picture"), "«Картинка»");
+            mg_layers_[mg_n_] = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            check(ue_node(mg_layers_[mg_n_]) && editor::design::block_of(*ue_node(mg_layers_[mg_n_])) == editor::design::Block::Picture &&
+                      (mg_n_ == 0 || mg_layers_[1] != mg_layers_[0]),
+                  "a picture layer of its own");
+            break;
+        case 6:
+            if (hold(shown("ue-s-picture"), "its «Картинка»")) return true;
+            check(ue_open("ue-s-picture"), "a click opens its «Картинка»");
+            break;
+        case 7:
+            usa_scroll_to("ue-s-picture", mg_pick());
+            break;
+        case 8:
+            check(ue_option("ue-s-picture", mg_pick()), mg_n_ == 0 ? "a click on the game's «Скакун»" : "a click on «Ёжик — из «Ресурсов»»");
+            break;
+        case 9: {
+            const u32 id = mg_layers_[mg_n_];
+            const char* name = kMgNames[mg_n_];
+            const std::string picture = std::string("pictures/") + name + ".svg";
+            if (hold(usa_fill(id) == picture, "the layer's picture")) return true;
+            check(tg_bytes(pictures / utf8_path(std::string(name) + ".svg")) ==
+                      (mg_n_ == 0 ? left("скакун.svg") : file("персонажи/Ёжик.svg")),
+                  std::string("the game's «") + name + ".svg» as given or as in «Ресурсы»");
+            const int* box = kMgBoxes[mg_n_];
+            check(ue_type("ue-s-x", std::to_string(box[0])) && ue_type("ue-s-y", std::to_string(box[1])) && ue_type("ue-s-w", std::to_string(box[2])) &&
+                      ue_type("ue-s-h", std::to_string(box[3])),
+                  "its place and size typed in «Простой»");
+            check(ue_type("ue-s-name", name), std::string("named «") + name + "»");
+            const editor::design::Node* n = ue_node(id);
+            check(n && n->name == name && static_cast<int>(n->x) == box[0] && static_cast<int>(n->y) == box[1] && static_cast<int>(n->w) == box[2] &&
+                      static_cast<int>(n->h) == box[3],
+                  std::string("«") + name + "» where it was put");
+            if (mg_n_++ == 0) {
+                mm_step_ = 5; // the second layer
+                return true;
+            }
+            const std::string page = usa_text(a / "game" / "ui" / "hud.html");
+            check(page.find("title=\"Скакун\"") != std::string::npos && page.find("title=\"Ёжик\"") != std::string::npos,
+                  "hud.html: the layers by their names");
+            check(!fs::exists(pictures / utf8_path("Ёжик.motion.json")), "«Ёжик» has no clips beside it");
+            check(click_tab(6), "«Логика»");
+            break;
+        }
+        // «Логика»: the own scheme of «Табличка».
+        case 10:
+            if (wait(2)) return true;
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        case 11:
+            if (wait(2)) return true;
+            check(click("sc-own-add") && lg().scheme().picking(), "«+ Своя схема вещи» lists the things");
+            break;
+        case 12: {
+            if (wait(2)) return true;
+            check(shown("sc-choice-sign") && click("sc-choice-sign"), "«Табличка» picked");
+            const logic::ThingScheme* own = lg().links().scheme_for("sign");
+            mg_scheme_ = own ? own->id : 0;
+            check(mg_scheme_ != 0, "«Табличка» has a scheme of its own");
+            mg_n_ = 0;
+            break;
+        }
+        // Three nodes from its list: «Проиграть анимацию картинки» twice, «При сообщении».
+        case 13:
+            if (wait(2)) return true;
+            check(click("sc-add-" + std::to_string(mg_scheme_)) && lg().scheme().palette_open(), "«+ Нода» on its frame");
+            lg().scheme().set_search(kMgSearch[mg_n_]);
+            break;
+        case 14: {
+            if (wait(2)) return true;
+            const script::Graph* g = lg().scheme().graph(mg_scheme_);
+            const usize before = g ? g->nodes.size() : 0;
+            check(click(std::string("sc-pal-") + kMgDefs[mg_n_]) && !lg().scheme().palette_open(), std::string(kMgDefs[mg_n_]) + " added");
+            g = lg().scheme().graph(mg_scheme_);
+            if (g)
+                for (const script::GraphNode& n : g->nodes)
+                    if (n.def == kMgDefs[mg_n_] && std::find(std::begin(mg_nodes_), std::end(mg_nodes_), n.uid) == std::end(mg_nodes_))
+                        mg_nodes_[mg_n_] = n.uid;
+            check(g && g->nodes.size() == before + 1 && mg_nodes_[mg_n_], "one node more");
+            if (++mg_n_ < 3) {
+                mm_step_ = 13;
+                return true;
+            }
+            break;
+        }
+        // Wired with the mouse: «При старте» → the first, «При сообщении» → the second.
+        case 15: {
+            if (wait(2)) return true;
+            const script::Graph* g = lg().scheme().graph(mg_scheme_);
+            u32 start = 0;
+            if (g)
+                for (const script::GraphNode& n : g->nodes)
+                    if (n.def == "std.event.start") start = n.uid;
+            const std::string s = "sc-pin-" + std::to_string(mg_scheme_) + "-";
+            auto pin = [&](u32 node, const char* side) { return s + std::to_string(node) + side; };
+            check(start && click(pin(start, "-o-next")) && click(pin(mg_nodes_[0], "-i-in")), "«При старте» → «Проиграть анимацию картинки»");
+            check(click(pin(mg_nodes_[2], "-o-next")) && click(pin(mg_nodes_[1], "-i-in")), "«При сообщении» → the other «Проиграть анимацию картинки»");
+            g = lg().scheme().graph(mg_scheme_);
+            check(g && g->links.size() == 2, "two wires: " + std::to_string(g ? g->links.size() : 0));
+            break;
+        }
+        // Its fields typed: «Скакун» plays «idle» at the start; on «приземлился» «Ёжик» plays «idle».
+        case 16: {
+            if (wait(2)) return true;
+            const std::string f = "sc-field-" + std::to_string(mg_scheme_) + "-";
+            auto type = [&](u32 node, const char* param, const std::string& value) {
+                return ue_type((f + std::to_string(node) + "-" + param).c_str(), value);
+            };
+            check(type(mg_nodes_[0], "screen", "hud") && type(mg_nodes_[0], "layer", "Скакун") && type(mg_nodes_[0], "clip", "idle"),
+                  "the first: «hud», «Скакун», «idle»");
+            check(type(mg_nodes_[1], "screen", "hud") && type(mg_nodes_[1], "layer", "Ёжик") && type(mg_nodes_[1], "clip", "idle"),
+                  "the second: «hud», «Ёжик», «idle»");
+            check(type(mg_nodes_[2], "filter", "приземлился"), "«При сообщении»: «приземлился»");
+            SchemeView& sc = lg().scheme();
+            auto value = [&](u32 node, const char* param) {
+                const script::GraphNode* n = sc.graph(mg_scheme_) ? sc.graph(mg_scheme_)->find(node) : nullptr;
+                return n && n->value(param) ? *n->value(param) : std::string();
+            };
+            check(value(mg_nodes_[2], "filter") == "приземлился", "kept on the node");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(value(mg_nodes_[2], "filter") != "приземлился", "Ctrl+Z: the message not typed");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(value(mg_nodes_[2], "filter") == "приземлился", "Ctrl+Y: typed again");
+            for (u32 node : mg_nodes_) check(sc.node_problem(mg_scheme_, node).empty(), "node " + std::to_string(node) + " works");
+            check(lg().problem_of(mg_scheme_).empty(), "the scheme works: " + lg().problem_of(mg_scheme_));
+            logic::Logic saved;
+            const logic::ThingScheme* own = saved.load(ed_.logic_file) ? saved.scheme_for("sign") : nullptr;
+            check(own && own->graph.find("api.ui.svg_play") != std::string::npos && own->graph.find("приземлился") != std::string::npos,
+                  "logic.json keeps it");
+            check(click("lg-mode-links") && lg().mode() == "links", "«Связи»");
+            break;
+        }
+        // The author's own Luau: «Жук идёт за героем» with «Код» of their own, playing the clips of «Скакун».
+        case 17:
+            if (wait(2)) return true;
+            if (!lg().links().spot("beetle")) check(shown("lg-add-beetle") && click("lg-add-beetle") && lg().links().spot("beetle"), "«Жук» onto the board");
+            break;
+        case 18:
+            if (wait(2)) return true;
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(thing_click("beetle") && thing_click("hero") && lg().picking(), "«Жук», then the hero: what does it do to the hero");
+            break;
+        case 19: {
+            std::string offered;
+            for (usize i = 0; i < lg().pick_options(); ++i) offered += " «" + lg().pick_phrase(i) + "»";
+            const i64 at = option_of("Жук идёт за героем");
+            check(at >= 0 && lg().pick(static_cast<usize>(at)), "«Жук идёт за героем» among:" + offered);
+            mg_link_ = lg().selected_link();
+            check(mg_link_ && lg().problem_of(mg_link_).empty(), "a link that works: " + lg().meaning_of(mg_link_));
+            break;
+        }
+        case 20:
+            if (wait(2)) return true;
+            check(click("lg-code-edit") && lg().editing_code() && lg().mode() == "code", "«Свой код» opens the link's code");
+            break;
+        case 21: {
+            if (wait(2)) return true;
+            const std::string typed = vl_type_code(kMgCode);
+            check(typed == kMgCode, "the author's Luau typed into «Код», line by line: «" + typed + "»");
+            check(click("lg-code-save") && !lg().editing_code(), "«Сохранить»: the code builds");
+            const logic::Link* l = lg().links().find(mg_link_);
+            check(l && l->code == kMgCode, "the link has the author's code");
+            check(lg().problem_of(mg_link_).empty(), "it works: " + lg().problem_of(mg_link_));
+            key(SDLK_S, SDL_KMOD_CTRL);
+            break;
+        }
+        case 22: {
+            check(ed_.unsaved().empty(), "Ctrl+S: nothing left unsaved");
+            logic::Logic saved;
+            const logic::Link* l = saved.load(ed_.logic_file) ? saved.find(mg_link_) : nullptr;
+            check(l && l->code == kMgCode && saved.scheme_for("sign"), "logic.json: the link with the author's code, and the scheme of «Табличка»");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 23:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 24: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = mg_edits();
+            const int code = tg_play(&e, "ожидания скакун.json", mo_root(), "project", {"--size", "1920x1080"});
+            check(code == 0, "the game plays the clips on «Скакун» as the tab shows them each frame: «idle» from the scheme with its steps, "
+                             "«jump» with its landing to the scheme, stopped, twice as fast, the file, the world paused; the errors with "
+                             "their lines (exit " + std::to_string(code) + ")");
             return false;
         }
         default: break;
         }
         ++mm_step_;
         return true;
+    }
+    // The game of pixel-motion-m-again: the layers, the scheme of «Табличка» and the author's link.
+    static constexpr const char* kMgNames[2] = {"Скакун", "Ёжик"};
+    static constexpr int kMgBoxes[2][4] = {{100, 300, 96, 144}, {300, 300, 96, 192}};
+    static constexpr const char* kMgDefs[3] = {"api.ui.svg_play", "api.ui.svg_play", "std.event.message"};
+    static constexpr const char* kMgSearch[3] = {"проиграть анимацию", "проиграть анимацию", "при сообщении"};
+    // Its moments are away from the steps of «idle» (each 0.5 s of it): a frame sooner or later hears the same.
+    static constexpr const char* kMgCode =
+        "-- «Скакун» на HUD: прыгает, стоит, бежит вдвое быстрее, снова как в файле, снова стоит и клип, которого нет.\n"
+        "local ui = forge.ui\n"
+        "forge.wait(1.2)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"jump\")\n"
+        "forge.wait(1)\n"
+        "ui.svg_stop(\"hud\", \"Скакун\")\n"
+        "forge.wait(0.5)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"idle\", { speed = 2 })\n"
+        "forge.wait(0.6)\n"
+        "ui.svg_reset(\"hud\", \"Скакун\")\n"
+        "forge.wait(0.5)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"idle\")\n"
+        "forge.wait(1)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"fly\")\n";
+    int mg_n_ = 0;
+    u32 mg_layers_[2] = {0, 0}, mg_scheme_ = 0, mg_nodes_[3] = {0, 0, 0}, mg_link_ = 0;
+    std::vector<std::string> mg_tab_;
+    std::string mg_clips_; // «idle», «jump»: the clips of the file, for its error
+    std::string mg_pick() { return mg_n_ == 0 ? std::string("pictures/Скакун.svg") : "add:" + path_to_utf8(as().abs("персонажи/Ёжик.svg")); }
+    // The tab's frame of each clip of the open character at each 120th of a second, as the scene project compares the
+    // game's with: "clip k part a b c d e f" (the part's matrix in the tab's picture) for each part the clip moves and
+    // "clip k part morph share target" for each it morphs. clips: «idle», «jump» in the file's order.
+    bool mm_tab(std::vector<std::string>& out, std::string& clips, std::string& why) {
+        pixel::PixelDoc doc;
+        pixel::Rig rig;
+        pixel::PoseScript script;
+        pixel::Drawing drawing;
+        std::string picture;
+        if (!mo_load(doc, rig, script, why, &drawing, &picture)) return false;
+        script.set_lengths(doc.lengths);
+        pixel::ScreenGift gift;
+        if (!pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, gift, why)) return false;
+        out.clear();
+        clips.clear();
+        char line[512];
+        for (const vector::MotionClip& c : gift.motion.clips) {
+            clips += (clips.empty() ? "«" : ", «") + c.name + "»";
+            std::set<std::string> moved, morphed;
+            for (const vector::MotionTrack& t : c.tracks) {
+                if (vector::motion_prop_moves(t.prop)) moved.insert(t.part);
+                if (t.prop == vector::MotionProp::Morph) morphed.insert(t.part);
+            }
+            const usize n = static_cast<usize>(std::floor(c.length * 120 + 1e-9));
+            for (usize k = 0; k <= n; ++k) {
+                const f64 t = std::min(vector::motion_frame_moment(0, k), c.length);
+                pixel::Pose pose;
+                if (!script.pose(rig, t, c.name, doc.params, doc.seed, pose)) return why = script.error(), false;
+                if (!rig.pose(pose, why)) return false;
+                for (const std::string& id : moved) {
+                    const pixel::Affine m = rig.matrix(rig.part(id));
+                    std::snprintf(line, sizeof(line), "%s %zu %s %.17g %.17g %.17g %.17g %.17g %.17g", c.name.c_str(), k, id.c_str(), m.a, m.b, m.c,
+                                  m.d, m.e, m.f);
+                    out.push_back(line);
+                }
+                for (const std::string& id : morphed) {
+                    const vector::MotionValue v = pixel::screen_value(pose, id, vector::MotionProp::Morph);
+                    std::snprintf(line, sizeof(line), "%s %zu %s morph %.17g %s", c.name.c_str(), k, id.c_str(), v.v, v.target.c_str());
+                    out.push_back(line);
+                }
+            }
+        }
+        return true;
+    }
+    edits::ProjectEdits mg_edits() {
+        edits::ProjectEdits e;
+        e.ms_screen = "hud";
+        e.ms_layer = mg_layers_[0];
+        e.ms_layer_name = kMgNames[0];
+        e.ms_other_name = kMgNames[1];
+        e.ms_file = "pictures/Скакун.svg";
+        const std::vector<u8> svg = tg_bytes(mo_root() / utf8_path("скакун.svg"));
+        e.ms_svg.assign(svg.begin(), svg.end());
+        e.ms_sound = "шаг.wav";
+        e.ms_scheme_error = "ui.svg_play: нет «Ёжик.motion.json» рядом с «Ёжик.svg»: отдайте персонажа экрану во вкладке «Векторная»";
+        e.ms_code = kMgCode;
+        e.ms_code_error = "ui.svg_play: в «Скакун.motion.json» нет клипа «fly»: есть " + mg_clips_;
+        e.ms_not_drawn = "«Скакун.svg», клип «jump»: на экране пока не рисуется: тон";
+        e.ms_layer_box.assign(std::begin(kMgBoxes[0]), std::end(kMgBoxes[0]));
+        e.ms_tab = mg_tab_;
+        return e;
     }
 
     // --- «Ввод» (the tab after «Три в ряд» in the order) -----------------------------------------------------------

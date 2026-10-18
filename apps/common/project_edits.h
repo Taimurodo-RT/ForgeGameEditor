@@ -193,6 +193,20 @@ struct ProjectEdits {
     // as lunasvg draws vlc_again.
     std::string vlc_said, vlc_again;
     std::vector<std::string> vlc_parts;
+    // A character's clips given to a screen (part 5в of docs/models/движение-модель.md; the editor's self-test
+    // pixel-motion-m-again), for the module slice's scene project. On the screen ms_screen the layer ms_layer (named
+    // ms_layer_name, its box ms_layer_box) shows the game's ms_file, which says ms_svg byte for byte, beside it the file
+    // of clips «Отдать экрану» wrote. The own scheme of a thing plays «idle» on it at the start and, on the mark
+    // «приземлился», a clip on the layer ms_other_name, whose picture has no file of clips: the error ms_scheme_error.
+    // The author's Luau (a link's «Код», ms_code) plays «jump» at 1.2 s of the world, stops at 2.2 s, plays «idle» twice
+    // as fast at 2.7 s, takes the picture back to its file at 3.3 s, plays «idle» at 3.8 s and at 4.8 s a clip there is
+    // not: the error ms_code_error. ms_tab: the tab's frame of each clip at each 120th of a second, one line each:
+    // "clip k part a b c d e f" (the part's matrix as the tab's picture has it) or "clip k part morph share target".
+    // The sound mark is the game's sound ms_sound; ms_not_drawn: the line the game says once of what it does not draw.
+    std::string ms_screen, ms_layer_name, ms_other_name, ms_file, ms_svg, ms_sound, ms_scheme_error, ms_code, ms_code_error, ms_not_drawn;
+    forge::u32 ms_layer = 0;
+    std::vector<int> ms_layer_box;
+    std::vector<std::string> ms_tab;
 };
 
 // False (error says why) when the file cannot be read.

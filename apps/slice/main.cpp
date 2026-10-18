@@ -121,6 +121,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -546,6 +547,8 @@ private:
         // A live picture's scheme runs on the world's time from the game's start: its morph is halfway only in the first
         // second, so it is looked at before the rest.
         if (project_has_edits && project_edits_error.empty() && !project_edits.vl_screen.empty()) build_live_edits(s);
+        // So do a character's clips on a screen: the author's code plays them at moments of the world's time.
+        if (project_has_edits && project_edits_error.empty() && !project_edits.ms_screen.empty()) build_motion_edits(s);
         steps_.push_back({"игра из папки автора", 5, [&s, this](u32 f) {
             if (f < 2) return false;
             std::error_code ec;
@@ -9090,6 +9093,254 @@ private:
             for (const std::string& l : problems) lines += " [" + l + "]";
             check(errors.empty() && problems.empty(), "ни ошибок скриптов, ни непонятых частей картинки:" + lines);
             check(s.data_errors().empty(), "данные игры читаются без ошибок");
+            return true;
+        }});
+    }
+
+    // A character's clips given to a screen (--edits ms_*, the editor's self-test pixel-motion-m-again). The screens go
+    // by the scene's own clock, 1/60 s a frame, so a clip's moment is a 120th of a second the tab's frames were made
+    // at. Every frame the layer shows the clip it plays at its moment as the tab's frame of it has it: each part's
+    // matrix, each morph. «idle» from the scheme with its step (the sound) at each lap; «jump» to its end and held there,
+    // its mark «приземлился» a message the scheme hears (its clip on a picture without clips: the error); stopped where
+    // it was, as lunasvg draws that pose; «idle» twice as fast; the file; «idle» again going on while the world is paused;
+    // a clip there is not: the error. What the screen does not draw said once.
+    void build_motion_edits(Shell& s) {
+        struct Tab {
+            std::map<std::string, std::array<f64, 6>> matrix; // "clip k part"
+            std::map<std::string, std::pair<f64, std::string>> morph;
+            std::map<std::string, usize> count; // "clip k": the parts it has
+        };
+        struct Seen {
+            u64 clock = 1'000'000'000;
+            u32 frames = 0, compared = 0, off = 0, pause_frames = 0;
+            f64 last = -1, paused_at = -1, paused_clip = -1;
+            std::string last_clip, first_off;
+            bool clicks[4] = {}, stopped_drawn = false, file_drawn = false, faster = false, paused = false, end = false;
+            std::vector<f64> held; // the stopped pose's matrix, frame after frame
+        };
+        auto tab = std::make_shared<Tab>();
+        auto st = std::make_shared<Seen>();
+        for (const std::string& line : project_edits.ms_tab) {
+            std::istringstream in(line);
+            std::string clip, part, kind;
+            usize k = 0;
+            in >> clip >> k >> part >> kind;
+            const std::string at = clip + " " + std::to_string(k);
+            ++tab->count[at];
+            if (kind == "morph") {
+                f64 share = 0;
+                std::string target;
+                in >> share >> target;
+                tab->morph[at + " " + part] = {share, target};
+                continue;
+            }
+            std::array<f64, 6> m{};
+            m[0] = std::strtod(kind.c_str(), nullptr);
+            for (usize i = 1; i < 6; ++i) in >> m[i];
+            tab->matrix[at + " " + part] = m;
+        }
+        // The screens' clock: on by a 60th of a second each frame (to the nanosecond, so what a clip has played is one).
+        s.screens().set_clock([st] { return st->clock + (static_cast<u64>(st->frames) * 1'000'000'000ULL + 30) / 60; });
+        // The pose the layer shows against the tab's frame of its clip at its moment.
+        auto compare = [this, tab, st](Rml::Element* el, const game::ScreenClip& c) {
+            const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
+            const f64 at = c.time * 120;
+            const usize k = static_cast<usize>(std::llround(at));
+            const std::string key = c.clip + " " + std::to_string(k);
+            std::string why;
+            if (std::fabs(at - static_cast<f64>(k)) > 1e-6) why = "миг клипа " + std::to_string(c.time) + " с не на 120-й доле секунды";
+            else if (!pose || pose->picture != "Скакун.svg") why = "слой не показывает позы клипа";
+            else if (!tab->count.count(key)) why = "у вкладки нет кадра «" + key + "»";
+            usize parts = 0;
+            for (usize i = 0; why.empty() && i < pose->parts.size(); ++i) {
+                const vector::MotionPartPose& p = pose->parts[i];
+                if (p.moves) {
+                    ++parts;
+                    const auto it = tab->matrix.find(key + " " + p.id);
+                    const f64 got[6] = {p.local.a, p.local.b, p.local.c, p.local.d, p.local.e, p.local.f};
+                    if (it == tab->matrix.end()) why = "часть «" + p.id + "» движется, а у вкладки нет";
+                    else
+                        for (usize j = 0; j < 6; ++j) // the tab's picture keeps its matrices in floats
+                            if (std::fabs(got[j] - it->second[j]) > 1e-5 * (1 + std::max(std::fabs(got[j]), std::fabs(it->second[j]))))
+                                why = "матрица «" + p.id + "»: " + std::to_string(got[j]) + " при " + std::to_string(it->second[j]) + " у вкладки";
+                }
+                if (p.has[static_cast<usize>(vector::MotionProp::Morph)]) {
+                    ++parts;
+                    const vector::MotionValue& v = p.values[static_cast<usize>(vector::MotionProp::Morph)];
+                    const auto it = tab->morph.find(key + " " + p.id);
+                    if (it == tab->morph.end()) why = "морфинг «" + p.id + "», а у вкладки нет";
+                    else if (std::fabs(v.v - it->second.first) > 1e-9 || (v.v > 0 && v.target != it->second.second))
+                        why = "морфинг «" + p.id + "»: " + std::to_string(v.v) + " в «" + v.target + "» при " + std::to_string(it->second.first) + " в «" +
+                              it->second.second + "» у вкладки";
+                }
+            }
+            if (why.empty() && parts != tab->count[key]) why = std::to_string(parts) + " дорожек частей при " + std::to_string(tab->count[key]) + " у вкладки";
+            ++st->compared;
+            if (!why.empty() && st->off++ == 0) st->first_off = "«" + key + "»: " + why;
+        };
+        // The layer where the player sees it and what the frame shows there; where lunasvg's picture of the pose is
+        // solid (a pixel and its neighbours wholly covered, one colour), the frame within 2 of it: the world shows
+        // through the rest.
+        auto drawn = [&s, this](Rml::Element* el, const forge::ui::SvgPose& pose, const std::string& what) {
+            const ProjectEdits& e = project_edits;
+            std::vector<u8> px, want;
+            u32 fw = 0, fh = 0;
+            if (!check_ok(frame_pixels(s, px, fw, fh) && fw == 1920 && fh == 1080, "кадр игры 1920 × 1080 снят")) return;
+            Rml::Element* root = el;
+            while (root && !root->HasAttribute("forge-screen")) root = root->GetParentNode();
+            const Rml::Vector2f at = el->GetAbsoluteOffset(Rml::BoxArea::Border) - (root ? root->GetAbsoluteOffset(Rml::BoxArea::Border) : Rml::Vector2f());
+            const Rml::Vector2f sz = el->GetBox().GetSize(Rml::BoxArea::Border);
+            const int x = static_cast<int>(std::lround(at.x)), y = static_cast<int>(std::lround(at.y));
+            const int w = static_cast<int>(std::lround(sz.x)), h = static_cast<int>(std::lround(sz.y));
+            if (!check_ok(e.ms_layer_box.size() == 4 && x == e.ms_layer_box[0] && y == e.ms_layer_box[1] && w == e.ms_layer_box[2] &&
+                              h == e.ms_layer_box[3],
+                          "слой «" + e.ms_layer_name + "» там, где его поставил автор: " + std::to_string(x) + ", " + std::to_string(y) + ", " +
+                              std::to_string(w) + " × " + std::to_string(h)))
+                return;
+            std::string why;
+            if (!check_ok(forge::ui::render_posed_svg(e.ms_svg, pose, static_cast<u32>(w), static_cast<u32>(h), want, why), "поза рисуется: " + why)) return;
+            auto got = [&](int i, int j, int ch) { return int(px[(static_cast<usize>(y + j) * fw + static_cast<usize>(x + i)) * 4 + static_cast<usize>(ch)]); };
+            auto ref = [&](int i, int j, int ch) { return int(want[(static_cast<usize>(j) * static_cast<usize>(w) + static_cast<usize>(i)) * 4 + static_cast<usize>(ch)]); };
+            int solid = 0, off = 0, worst = 0;
+            for (int j = 1; j + 1 < h; ++j)
+                for (int i = 1; i + 1 < w; ++i) {
+                    bool one = ref(i, j, 3) == 255;
+                    for (int dj = -1; dj <= 1 && one; ++dj)
+                        for (int di = -1; di <= 1 && one; ++di)
+                            for (int ch = 0; ch < 4 && one; ++ch) one = ref(i + di, j + dj, ch) == ref(i, j, ch);
+                    if (!one) continue;
+                    ++solid;
+                    int d = 0;
+                    for (int ch = 0; ch < 3; ++ch) d = std::max(d, std::abs(got(i, j, ch) - ref(i, j, ch)));
+                    worst = std::max(worst, d);
+                    if (d > 2) ++off;
+                }
+            check(solid > w * h / 8 && off == 0, what + ": «" + e.ms_layer_name + "» как lunasvg рисует эту позу: " + std::to_string(off) + " из " +
+                                                     std::to_string(solid) + " сплошных пикселей расходятся больше чем на 2 (самое большее " +
+                                                     std::to_string(worst) + ")");
+            FORGE_INFO("self-test: клипы на экране, %s: %d сплошных пикселей, расхождение до %d", what.c_str(), solid, worst);
+        };
+        steps_.push_back({"клипы персонажа на экране игры", 900, [&s, this, tab, st, compare, drawn](u32 f) {
+            const ProjectEdits& e = project_edits;
+            ++st->frames;
+            const f64 t = g_.script_time();
+            audio::ScreenSounds& snd = g_.sounds().screens();
+            if (f == 0) {
+                std::vector<u8> bytes;
+                read_file(s.game_dir() / utf8_path(e.ms_file), bytes);
+                check(std::string(bytes.begin(), bytes.end()) == e.ms_svg, "«" + e.ms_file + "» игры байт в байт тот, что отдала вкладка");
+                logic::Logic links;
+                bool own = false;
+                if (links.load(project_data / "logic.json"))
+                    for (const logic::Link& l : links.links) own = own || l.code == e.ms_code;
+                check(own, "в logic.json игры связь со своим кодом автора");
+            }
+            if (f == 10) check(s.screens().shown(e.ms_screen), "экран «" + e.ms_screen + "» показан");
+            Rml::Element* el = layer(s, e.ms_screen, e.ms_layer);
+            if (!check_ok(el != nullptr, "слой n" + std::to_string(e.ms_layer) + " на экране «" + e.ms_screen + "»")) return true;
+            game::ScreenClip c;
+            const bool has = s.screens().svg_clip(e.ms_screen, e.ms_layer_name, c);
+            if (has) compare(el, c);
+            else {
+                const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
+                if (pose && !pose->parts.empty() && st->off++ == 0) st->first_off = "клипа нет, а слой показывает позу";
+            }
+            game::ScreenClip other;
+            check(!s.screens().svg_clip(e.ms_screen, e.ms_other_name, other), "«" + e.ms_other_name + "» не играет ничего");
+            // What should be when, by the world's time: a step away from each moment the code or the clip changes it.
+            auto in = [t](f64 from, f64 to) { return t >= from && t < to; };
+            const f64 step = has ? c.time - st->last : 0;
+            const bool same_clip = has && c.clip == st->last_clip;
+            auto lap = [&](f64 by) { // on by `by`, or round the loop of 0.5 s
+                return same_clip && (std::fabs(step - by) < 1e-6 || std::fabs(step - by + 0.5) < 1e-6);
+            };
+            auto said = [&](const std::string& text) {
+                usize n = 0;
+                for (const std::string& l : g_.script_errors()) n += l.size() >= text.size() && l.compare(l.size() - text.size(), text.size(), text) == 0;
+                return n;
+            };
+            auto sounds = [&](usize i, u32 n, const char* when) {
+                if (st->clicks[i]) return;
+                st->clicks[i] = true;
+                check(snd.clicks() == n && (n == 0 || snd.last_click() == e.ms_sound),
+                      std::string(when) + ": шагов «" + snd.last_click() + "» " + std::to_string(snd.clicks()) + ", ждали " + std::to_string(n) + " «" +
+                          e.ms_sound + "»");
+            };
+            if (in(0.05, 1.15)) check(has && c.clip == "idle" && c.going && (f < 4 || lap(1.0 / 60)), "схема играет «idle» с начала, 1/60 с за кадр: " + c.clip);
+            if (in(1.1, 1.15)) sounds(0, 3, "«idle» прошёл 0, 0,5 и 1 с");
+            if (in(1.25, 1.55)) check(has && c.clip == "jump" && c.going && lap(1.0 / 60), "код в 1,2 с играет «jump»: " + c.clip);
+            if (in(1.65, 2.15)) check(has && c.clip == "jump" && c.going && c.time == 0.4, "«jump» дошёл до конца и стоит: " + std::to_string(c.time));
+            if (in(1.75, 2.15))
+                check(said(e.ms_scheme_error) >= 1, "метка «приземлился» — сообщение, схема его слышит и говорит ошибку: " + e.ms_scheme_error);
+            if (in(2.25, 2.65)) {
+                check(has && c.clip == "jump" && !c.going && c.time == 0.4, "в 2,2 с код остановил клип на показанном кадре");
+                sounds(1, 3, "«jump» и остановка без шагов");
+                const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
+                std::vector<f64> now;
+                for (const vector::MotionPartPose& p : pose ? pose->parts : std::vector<vector::MotionPartPose>{})
+                    now.insert(now.end(), {p.local.a, p.local.b, p.local.c, p.local.d, p.local.e, p.local.f, p.values[static_cast<usize>(vector::MotionProp::Morph)].v});
+                if (st->held.empty()) st->held = now;
+                check(!now.empty() && now == st->held, "остановленная поза стоит");
+                // The picture made again at the pose: the frame shows it.
+                if (t >= 2.5 && !st->stopped_drawn && pose) {
+                    st->stopped_drawn = true;
+                    drawn(el, *pose, "остановлен в конце «jump»");
+                }
+            }
+            if (in(2.75, 3.25)) {
+                st->faster = st->faster || (has && c.clip == "idle");
+                check(has && c.clip == "idle" && c.going && lap(2.0 / 60), "в 2,7 с «idle» вдвое быстрее: 1/30 с за кадр");
+                const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
+                check(pose && pose->parts.size() == 1 && pose->parts[0].id != "mouth", "рот «jump» ушёл с ним: «idle» двигает одну часть");
+            }
+            if (in(3.35, 3.75)) {
+                check(!has, "в 3,3 с код вернул картинку к файлу: клипа нет");
+                sounds(2, 6, "вдвое быстрее «idle» прошёл 0, 0,5 и 1 с");
+                if (t >= 3.6 && !st->file_drawn) {
+                    st->file_drawn = true;
+                    drawn(el, {"Скакун.svg", {}}, "как в файле");
+                }
+            }
+            if (in(3.85, 4.75)) check(has && c.clip == "idle" && c.going && (lap(1.0 / 60) || c.time == 0), "в 3,8 с снова «idle»");
+            // The world paused for 21 frames: its time stands, the clip goes on.
+            if (t >= 3.9 && !st->paused) {
+                st->paused = true;
+                st->paused_at = t;
+                st->paused_clip = c.time;
+                s.pause(true);
+            } else if (st->paused && st->pause_frames < 21) {
+                ++st->pause_frames;
+                check(t == st->paused_at && lap(1.0 / 60), "мир на паузе стоит, клип идёт: " + std::to_string(t) + " с, клип " + std::to_string(c.time));
+                if (st->pause_frames == 21) {
+                    check(std::fabs(std::fmod(st->paused_clip + 21.0 / 60, 0.5) - c.time) < 1e-6, "за паузу клип прошёл 21 кадр");
+                    s.pause(false);
+                }
+            }
+            if (has) {
+                st->last = c.time;
+                st->last_clip = c.clip;
+            } else st->last_clip.clear();
+            if (t < 4.85) return false;
+            check(st->paused && st->pause_frames == 21 && st->faster && st->stopped_drawn && st->file_drawn, "все части пройдены");
+            check(has && c.clip == "idle" && c.going, "после ошибки «idle» идёт дальше");
+            sounds(3, 9, "снова «idle» прошёл 0, 0,5 и 1 с, на паузе тоже");
+            check(said(e.ms_code_error) >= 1, "клип, которого нет, — ошибка кода: " + e.ms_code_error);
+            std::string lines;
+            usize known = 0;
+            for (const std::string& l : g_.script_errors()) {
+                lines += " [" + l + "]";
+                known += l.ends_with(e.ms_scheme_error) || l.ends_with(e.ms_code_error);
+            }
+            check(known == g_.script_errors().size(), "других ошибок скриптов нет:" + lines);
+            const std::vector<std::string>& problems = s.screens().svg_problems();
+            std::string told;
+            for (const std::string& l : problems) told += " [" + l + "]";
+            check(problems == std::vector<std::string>{e.ms_not_drawn}, "что экран не рисует, сказано один раз:" + told);
+            check(st->off == 0 && st->compared >= 200, std::to_string(st->compared) + " кадров с клипом сверены с вкладкой, расходятся " +
+                                                           std::to_string(st->off) + (st->first_off.empty() ? "" : ", первый " + st->first_off));
+            FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, шагов %u", st->compared, snd.clicks());
+            check(s.data_errors().empty(), "данные игры читаются без ошибок");
+            s.screens().set_clock(nullptr);
             return true;
         }});
     }
