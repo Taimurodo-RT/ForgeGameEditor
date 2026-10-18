@@ -157,8 +157,13 @@ struct Walker : Luau::AstVisitor {
     }
 };
 
-// return { clips = { name = function(p) … end } } at the top of the chunk.
-void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunction>& out) {
+// The line of a table's item: its key's, else its value's (1-based).
+u32 item_line(const Luau::AstExprTable::Item& item) { return (item.key ? item.key->location : item.value->location).begin.line + 1; }
+
+// return { clips = { name = function(p) … end } } at the top of the chunk; the lines of the module's keys and of the
+// items of its drawings (part 4д).
+void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunction>& out,
+                std::vector<std::pair<std::string, u32>>& keys, std::vector<std::pair<std::string, u32>>& drawings) {
     Luau::AstExprTable* module = nullptr;
     for (usize i = 0; i < root->body.size; ++i)
         if (auto* r = root->body.data[i]->as<Luau::AstStatReturn>(); r && r->list.size == 1)
@@ -166,6 +171,10 @@ void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunc
     if (!module) return;
     for (usize i = 0; i < module->items.size; ++i) {
         const auto& item = module->items.data[i];
+        if (const std::string_view k = key_text(item); !k.empty()) keys.emplace_back(std::string(k), item_line(item));
+        if (auto* d = key_text(item) == "drawings" ? item.value->as<Luau::AstExprTable>() : nullptr)
+            for (usize j = 0; j < d->items.size; ++j)
+                if (const std::string_view k = key_text(d->items.data[j]); !k.empty()) drawings.emplace_back(std::string(k), item_line(d->items.data[j]));
         auto* clips = key_text(item) == "clips" ? item.value->as<Luau::AstExprTable>() : nullptr;
         if (!clips) continue;
         for (usize j = 0; j < clips->items.size; ++j) {
@@ -238,6 +247,8 @@ bool CodeSites::parse(std::string_view source, std::string& why, u32& why_line) 
     source_.assign(source);
     sites_.clear();
     clips_.clear();
+    keys_.clear();
+    drawings_.clear();
     why.clear();
     why_line = 0;
     Luau::Allocator allocator;
@@ -257,7 +268,7 @@ bool CodeSites::parse(std::string_view source, std::string& why, u32& why_line) 
     const Builder b{source_, Lines(source_), result.cstNodeMap};
     Walker walker(b, sites_);
     result.root->visit(&walker);
-    find_clips(b, result.root, clips_);
+    find_clips(b, result.root, clips_, keys_, drawings_);
     return true;
 }
 
@@ -265,6 +276,18 @@ const ClipFunction* CodeSites::clip(std::string_view name) const {
     for (const ClipFunction& c : clips_)
         if (c.name == name) return &c;
     return nullptr;
+}
+
+u32 CodeSites::module_line(std::string_view key) const {
+    for (const auto& [k, line] : keys_)
+        if (k == key) return line;
+    return 0;
+}
+
+u32 CodeSites::drawing_line(std::string_view name) const {
+    for (const auto& [k, line] : drawings_)
+        if (k == name) return line;
+    return 0;
 }
 
 std::string CodeSites::instrumented(u32 first_id) const {

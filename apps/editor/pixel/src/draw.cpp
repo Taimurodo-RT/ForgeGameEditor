@@ -363,6 +363,8 @@ int api_canvas(lua_State* L) {
     d.canvas = true;
     d.width = w;
     d.height = h;
+    const SiteRef site = im.site_ref(im.site);
+    if (const CallSite* c = im.call(site); c && site.file == 0) d.canvas_line = c->line;
     return 0;
 }
 
@@ -475,23 +477,19 @@ bool drawn_pivot(const Drawing& d, const std::string& id, vector::Point& out) {
 }
 
 bool PoseScript::has_draw() const { return impl_->has_draw; }
+const std::vector<std::string>& PoseScript::drawings() const { return impl_->drawings; }
 
-bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
-    Impl& im = *impl_;
-    out = {};
-    im.error.clear();
-    im.error_line = 0;
-    if (!im.ok) {
-        im.error = "скрипт не загружен";
-        return false;
-    }
-    if (!im.has_draw) {
-        im.error = "в коде нет draw = function(p, rng) … end";
-        return false;
-    }
-    lua_State* T = im.module();
-    if (!T) return false;
-    lua_getfield(T, -1, "draw");
+namespace {
+
+// «draw», «angry»: the names a drawing goes by (part 4д).
+std::string drawing_names(const PoseScript::Impl& im) {
+    std::string out = "«draw»";
+    for (const std::string& n : im.drawings) out += ", «" + n + "»";
+    return out;
+}
+
+// Runs the drawing function on top of T's stack (the module under it) into out: what draw and draw_named share.
+bool run_drawing(PoseScript::Impl& im, lua_State* T, const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
     push_params(im, T, values);
     lua_getglobal(T, "rng");
     // The drawing's chance: from the seed alone, the same on every run.
@@ -501,7 +499,7 @@ bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawin
     im.drawn_ids.clear();
     im.groups.clear();
     const auto was = im.mode;
-    im.mode = Impl::Mode::Draw;
+    im.mode = PoseScript::Impl::Mode::Draw;
     im.begin_call();
     im.active = T;
     const int status = lua_pcall(T, 2, 0, 0);
@@ -521,6 +519,60 @@ bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawin
     lua_pop(im.L, 1);
     if (ok) out = std::move(d);
     return ok;
+}
+
+} // namespace
+
+bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
+    Impl& im = *impl_;
+    out = {};
+    im.error.clear();
+    im.error_line = 0;
+    if (!im.ok) {
+        im.error = "скрипт не загружен";
+        return false;
+    }
+    if (!im.has_draw) {
+        im.error = "в коде нет draw = function(p, rng) … end";
+        return false;
+    }
+    lua_State* T = im.module();
+    if (!T) return false;
+    lua_getfield(T, -1, "draw");
+    return run_drawing(im, T, values, seed, out);
+}
+
+bool PoseScript::draw_named(std::string_view name, const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
+    if (name == "draw") return draw(values, seed, out);
+    Impl& im = *impl_;
+    out = {};
+    im.error.clear();
+    im.error_line = 0;
+    if (!im.ok) {
+        im.error = "скрипт не загружен";
+        return false;
+    }
+    if (!std::binary_search(im.drawings.begin(), im.drawings.end(), name)) {
+        im.error = "нет рисунка «" + std::string(name) + "»: есть " + drawing_names(im);
+        return false;
+    }
+    lua_State* T = im.module();
+    if (!T) return false;
+    lua_getfield(T, -1, "drawings");
+    lua_pushlstring(T, name.data(), name.size());
+    lua_gettable(T, -2);
+    lua_remove(T, -2);
+    if (run_drawing(im, T, values, seed, out)) return true;
+    // Its name before the line: «рисунок «angry», строка 12: …».
+    const std::string head = "рисунок «" + std::string(name) + "»";
+    if (im.error.rfind("draw ничего", 0) == 0) {
+        im.error = head + " ничего не нарисовал: rect, circle, ellipse, line, poly, path, group";
+        im.error_line = im.files[0].code.drawing_line(name);
+        if (im.error_line) im.error = "строка " + std::to_string(im.error_line) + ": " + im.error;
+    } else {
+        im.error = head + (im.error.rfind("строка ", 0) == 0 ? ", " : ": ") + im.error;
+    }
+    return false;
 }
 
 } // namespace forge::pixel

@@ -124,6 +124,7 @@ struct PoseScript::Impl : BindingEval {
     std::vector<std::string> clips;
     bool has_pose = false;
     bool has_draw = false;
+    std::vector<std::string> drawings; // the names of drawings = { … } (part 4д), sorted
     std::string error;
     u32 error_line = 0;
     bool ok = false;

@@ -27,8 +27,11 @@ constexpr i64 kCurveW = 64, kCurveH = 40; // a timing's curve in the list, texel
 
 // "body · y"
 std::string block_name(const pixel::Recording& rec, const pixel::Block& b) {
+    if (b.prop == pixel::Prop::Drawing) return pixel::prop_word(b.prop); // the character's track, no part's (part 4д)
     return (b.part < rec.parts.size() ? rec.parts[b.part] : std::string("?")) + " · " + pixel::prop_word(b.prop);
 }
+
+constexpr const char* kMidSwap = "посреди смены рисунка часть не тянется: выберите кадр до или после";
 
 std::string hex_of(const pixel::Rgba8& c) { return pixel::color_hex(c); }
 
@@ -216,6 +219,8 @@ bool PixelEditor::set_block_value(const std::string& text) {
         return refuse_edit("Маска «" + what + "» правится в коде: mask(\"lid\"), mask(nil)");
     } else if (b->prop == pixel::Prop::Link) {
         return refuse_edit("Крепление «" + what + "» правится в коде: attach(\"hand\"), detach()");
+    } else if (b->prop == pixel::Prop::Drawing) {
+        return refuse_edit("Рисунок правится в коде: swap(…)");
     } else {
         v.v = t.empty() ? 0 : 1;
         v.target = t;
@@ -386,19 +391,25 @@ void PixelEditor::start_move() {
             refuse_edit("Код сохранён; под мышью в новой записи нет части: тяните снова");
             return;
         }
-        if (rig_.copy(best) >= 0) {
+        if (rig_.shown().copy(best) >= 0) {
             moving_ = false;
             refuse_edit("копия «" + best + "» правится в коде: copies(…)");
             return;
         }
         select_part(best);
     }
-    const i32 i = rig_.part(part_);
+    // Part 4д: in a swap the frame is two drawings, and the move would be the new one's only.
+    if (rig_.swapping()) {
+        moving_ = false;
+        refuse_edit(kMidSwap);
+        return;
+    }
+    const i32 i = rig_.shown().part(part_);
     if (i < 0) {
         moving_ = false;
         return;
     }
-    move_inv_ = pixel::inverse(rig_.carried(i));
+    move_inv_ = pixel::inverse(rig_.shown().carried(i));
     move_from_ = view_to_picture(move_x_, move_y_);
     move_dx_ = move_dy_ = 0;
     move_started_ = true;
@@ -408,7 +419,8 @@ bool PixelEditor::move_part(f64 dx, f64 dy) {
     note_.clear();
     bool saved = false;
     if (!begin_edit(saved)) return false;
-    if (part_.empty() || rig_.part(part_) < 0) return refuse_edit("Выберите часть");
+    if (part_.empty() || rig_.holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
+    if (rig_.swapping()) return refuse_edit(kMidSwap);
     const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
     std::string out, why;
     if (!pixel::edit_part_move(rec_, part_, t_, frame, dx, dy, script_.code(), script_text_, out, why))
@@ -490,7 +502,7 @@ void PixelEditor::rebuild_part() {
     i32 block = -1;
     std::string code;
     bool can_code = false;
-    const bool has = has_ && !part_.empty() && rig_.part(part_) >= 0;
+    const bool has = has_ && !part_.empty() && rig_.holder(part_).part(part_) >= 0;
     if (has) {
         pixel::PartPose pp;
         if (shown_ok_)
@@ -604,7 +616,7 @@ void PixelEditor::update_hover(Rml::Context* context) {
     std::string id;
     for (const Rml::Element* e = context ? context->GetHoverElement() : nullptr; e && id.empty(); e = e->GetParentNode())
         if (e->IsClassSet("px-part") && e->GetId().rfind("px-part-", 0) == 0) id = e->GetId().substr(8);
-    if (!id.empty() && rig_.part(id) < 0) id.clear();
+    if (!id.empty() && rig_.shown().part(id) < 0) id.clear();
     if (id == hovered_) return;
     hovered_ = id;
     view_dirty_ = true;

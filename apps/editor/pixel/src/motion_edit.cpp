@@ -14,6 +14,8 @@ constexpr const char* kOrderInCode = "порядок частей правитс
 constexpr const char* kMaskInCode = "маска правится в коде: mask(\"lid\"), mask(nil)";
 constexpr const char* kLinkInCode = "крепление правится в коде: attach(\"hand\"), detach()";
 const char* in_code(Prop p) { return p == Prop::Mask ? kMaskInCode : p == Prop::Link ? kLinkInCode : kOrderInCode; }
+// The drawing a swap goes to (part 4д): its length, timing and start are a transition's, its name is the code's.
+constexpr const char* kDrawingInCode = "рисунок правится в коде: swap(…)";
 
 // The call of s in the character's script; null with why for a module's call or none.
 const CallSite* script_call(const Recording& rec, SiteRef s, const CodeSites& code, std::string& why) {
@@ -67,6 +69,7 @@ bool has_value(const Recording& rec, const Block& b, std::string& why) {
 // The call whose argument holds block b's value; null with why.
 const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
     if (prop_is_call(b.prop)) return why = in_code(b.prop), nullptr;
+    if (b.prop == Prop::Drawing) return why = kDrawingInCode, nullptr;
     const CallSite* c = script_call(rec, b.site, code, why);
     if (!c || !has_value(rec, b, why)) return nullptr;
     if (b.value_arg < 0 || static_cast<usize>(b.value_arg) >= c->args.size()) return why = "в вызове нет значения", nullptr;
@@ -138,6 +141,7 @@ bool edit_value(const Recording& rec, const Block& b, Prop p, const PropValue& v
                 std::string_view source, std::string& out, std::string& why) {
     out.clear();
     if (prop_is_call(p)) return why = in_code(p), false;
+    if (p == Prop::Drawing || b.prop == Prop::Drawing) return why = kDrawingInCode, false;
     const CallSite* c = value_call(rec, b, code, why);
     if (!c) return false;
     const CodeArg& arg = c->args[static_cast<usize>(b.value_arg)];
