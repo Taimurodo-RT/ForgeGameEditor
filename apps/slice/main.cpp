@@ -9103,8 +9103,10 @@ private:
     // matrix, each morph. «idle» from the scheme with its step (the sound) at each lap; «jump» to its end and held there,
     // its mark «приземлился» a message the scheme hears (its clip on a picture without clips: the error); stopped where
     // it was, as lunasvg draws that pose; «idle» twice as fast; the file; «idle» again going on while the world is paused;
-    // «jump» round and round, its mark at each lap, then to the end of that lap; «idle» once, its step at 0 only; a clip
-    // there is not: the error. What the screen does not draw said once.
+    // «jump» round and round, its mark at each lap, then to the end of that lap; «idle» once, its step at 0 only, the
+    // mouth of «jump» gone from the picture; «idle» again once it ended (from 0), stopped, again (from 0), twice as fast
+    // (on from where it was); the file of clips written again with «jump» named «hop» and a clip there is not: the
+    // error names the clips of the file as it is now. What the screen does not draw said once.
     void build_motion_edits(Shell& s) {
         struct Tab {
             std::map<std::string, std::array<f64, 6>> matrix; // "clip k part"
@@ -9116,7 +9118,8 @@ private:
             u32 frames = 0, compared = 0, off = 0, pause_frames = 0, jump_laps = 0, landed = 0; // landed: the messages «приземлился»
             f64 last = -1, paused_at = -1, paused_clip = -1;
             std::string last_clip, first_off;
-            bool clicks[6] = {}, stopped_drawn = false, file_drawn = false, faster = false, paused = false, end = false;
+            bool clicks[8] = {}, stopped_drawn = false, file_drawn = false, once_drawn = false, faster = false, paused = false, end = false;
+            std::vector<u8> motion; // the file of clips before the scene wrote it again
             std::vector<f64> held; // the stopped pose's matrix, frame after frame
         };
         auto tab = std::make_shared<Tab>();
@@ -9331,6 +9334,39 @@ private:
             if (in(6.65, 6.75)) {
                 check(has && c.clip == "idle" && c.going && c.time == 0.5, "«idle» один раз дошёл до конца и стоит: " + std::to_string(c.time));
                 sounds(4, 10, "«idle» один раз: шаг в 0, в конце нет");
+                // The mouth «jump» morphed is not «idle»'s: the picture has it as the file again.
+                const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
+                if (t >= 6.7 && !st->once_drawn && pose) {
+                    st->once_drawn = true;
+                    drawn(el, *pose, "«idle» один раз в конце, после «jump»");
+                }
+            }
+            // At 6.8 s «idle» had ended: from 0 again, its step; stopped at 7 s where it was.
+            if (in(6.85, 6.95)) {
+                check(has && c.clip == "idle" && c.going && c.time < 0.17 && lap(1.0 / 60), "в 6,8 с кончившийся «idle» — с начала: " + std::to_string(c.time));
+                sounds(5, 11, "«idle» с начала: шаг в 0");
+            }
+            if (in(7.05, 7.15))
+                check(has && c.clip == "idle" && !c.going && c.time > 0.15 && c.time < 0.25, "в 7 с код остановил «idle»: " + std::to_string(c.time));
+            // At 7.2 s the stopped clip played: from 0, not on from where it stood.
+            if (in(7.25, 7.35)) {
+                check(has && c.clip == "idle" && c.going && c.time < 0.17 && lap(1.0 / 60), "в 7,2 с остановленный «idle» — с начала: " + std::to_string(c.time));
+                sounds(6, 12, "остановленный «idle» с начала: шаг в 0");
+            }
+            // At 7.4 s the same clip twice as fast: on from where it is, 1/30 s a frame.
+            if (in(7.45, 7.65)) check(has && c.clip == "idle" && c.going && lap(2.0 / 60), "в 7,4 с «idle» идёт дальше вдвое быстрее");
+            // At 7.5 s the file of clips written again, its clip named anew: the game reads it again for the next clip.
+            const std::filesystem::path motion = s.game_dir() / utf8_path(e.ms_file).replace_extension(".motion.json");
+            if (t >= 7.5 && st->motion.empty()) {
+                check(read_file(motion, st->motion) && !st->motion.empty(), "«" + path_to_utf8(motion.filename()) + "» прочитан");
+                std::string text(st->motion.begin(), st->motion.end());
+                const std::string from = "\"" + e.ms_rename_from + "\"", to = "\"" + e.ms_rename_to + "\"";
+                const usize at = text.find(from);
+                check(!e.ms_rename_from.empty() && at != std::string::npos && text.find(from, at + 1) == std::string::npos,
+                      "клип «" + e.ms_rename_from + "» в файле клипов один раз");
+                if (at != std::string::npos) text.replace(at, from.size(), to);
+                check(write_file_atomic(motion, {reinterpret_cast<const u8*>(text.data()), text.size()}),
+                      "файл клипов записан снова: «" + e.ms_rename_from + "» теперь «" + e.ms_rename_to + "»");
             }
             // The world paused for 21 frames: its time stands, the clip goes on.
             if (t >= 3.7 && !st->paused) {
@@ -9350,11 +9386,14 @@ private:
                 st->last = c.time;
                 st->last_clip = c.clip;
             } else st->last_clip.clear();
-            if (t < 6.9) return false;
-            check(st->paused && st->pause_frames == 21 && st->faster && st->stopped_drawn && st->file_drawn && st->clicks[3] && st->clicks[4],
+            if (t < 7.75) return false;
+            if (!st->motion.empty())
+                check(write_file_atomic(motion, st->motion), "файл клипов снова как его отдала вкладка");
+            check(st->paused && st->pause_frames == 21 && st->faster && st->stopped_drawn && st->file_drawn && st->once_drawn &&
+                      !st->motion.empty() && st->clicks[3] && st->clicks[4] && st->clicks[5] && st->clicks[6],
                   "все части пройдены");
-            check(has && c.clip == "idle" && c.going && c.time == 0.5, "после ошибки «idle» стоит в конце");
-            sounds(5, 10, "после ошибки шагов не прибавилось");
+            check(has && c.clip == "idle" && c.going && lap(2.0 / 60), "после ошибки «idle» идёт дальше вдвое быстрее");
+            sounds(7, 13, "вдвое быстрее «idle» прошёл конец круга: шаг");
             check(st->landed == 4, "сообщений «приземлился» 4: " + std::to_string(st->landed));
             check(said(e.ms_code_error) >= 1, "клип, которого нет, — ошибка кода: " + e.ms_code_error);
             std::string lines;

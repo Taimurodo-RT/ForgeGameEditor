@@ -26603,8 +26603,10 @@ return {
     // «Скакун» at the start and, on the message «приземлился», a clip on «Ёжик»; «Жук идёт за героем» with the author's
     // Luau plays «jump» (again while it goes, and once it ended), stops it in the air, plays «idle» twice as fast, takes
     // the picture back to its file, plays «idle» again, «jump» round and round though its file has no loop, the same
-    // to the end of that lap, «idle» once and asks for a clip there is not. «Играть со стартового»: the
-    // scene project with --edits ms_* compares each frame of the clips with the tab's.
+    // to the end of that lap, «idle» once, again once it ended (from 0), stops it, plays it again (from 0), twice as
+    // fast (on from where it is) and asks for a clip there is not, the file of clips written again by the scene with
+    // «jump» named «hop» just before. «Играть со стартового»: the scene project with --edits ms_* compares each frame
+    // of the clips with the tab's.
     int mm_step_ = 0;
     std::vector<u8> mm_doc_, mm_svg_, mm_motion_, mm_other_;
     std::string mm_label_;
@@ -27138,7 +27140,8 @@ return {
     // Its moments are away from the steps of «idle» (each 0.5 s of it): a frame sooner or later hears the same.
     static constexpr const char* kMgCode =
         "-- «Скакун» на HUD: прыгает, прыгает снова и замирает в воздухе, бежит вдвое быстрее, снова как в файле, стоит,\n"
-        "-- прыгает по кругу и допрыгивает этот круг, бежит один раз и клип, которого нет.\n"
+        "-- прыгает по кругу и допрыгивает этот круг, бежит один раз, снова, замирает, снова с начала, вдвое быстрее\n"
+        "-- и клип, которого нет.\n"
         "local ui = forge.ui\n"
         "forge.wait(1.2)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"jump\")\n"
@@ -27161,6 +27164,14 @@ return {
         "forge.wait(0.5)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"idle\", { loop = false }) -- один раз\n"
         "forge.wait(0.7)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"idle\") -- кончился: с начала\n"
+        "forge.wait(0.2)\n"
+        "ui.svg_stop(\"hud\", \"Скакун\")\n"
+        "forge.wait(0.2)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"idle\") -- остановлен: с начала\n"
+        "forge.wait(0.2)\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"idle\", { speed = 2 }) -- идёт дальше вдвое быстрее\n"
+        "forge.wait(0.3)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"fly\")\n";
     int mg_n_ = 0;
     u32 mg_layers_[2] = {0, 0}, mg_scheme_ = 0, mg_nodes_[3] = {0, 0, 0}, mg_link_ = 0;
@@ -27223,7 +27234,9 @@ return {
         e.ms_sound = "шаг.wav";
         e.ms_scheme_error = "ui.svg_play: нет «Ёжик.motion.json» рядом с «Ёжик.svg»: отдайте персонажа экрану во вкладке «Векторная»";
         e.ms_code = kMgCode;
-        e.ms_code_error = "ui.svg_play: в «Скакун.motion.json» нет клипа «fly»: есть " + mg_clips_;
+        e.ms_rename_from = "jump";
+        e.ms_rename_to = "hop";
+        e.ms_code_error = "ui.svg_play: в «Скакун.motion.json» нет клипа «fly»: есть " + mm_replaced(mg_clips_, "«jump»", "«hop»");
         e.ms_not_drawn = "«Скакун.svg», клип «jump»: на экране пока не рисуется: тон";
         e.ms_layer_box.assign(std::begin(kMgBoxes[0]), std::end(kMgBoxes[0]));
         e.ms_tab = mg_tab_;

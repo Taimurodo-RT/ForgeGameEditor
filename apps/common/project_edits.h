@@ -201,11 +201,15 @@ struct ProjectEdits {
     // The author's Luau (a link's «Код», ms_code) plays «jump» at 1.2 s of the world and again at 1.3 s (it goes on) and
     // at 1.8 s (it ended: from 0), stops it at 2 s, plays «idle» twice as fast at 2.5 s, takes the picture back to its
     // file at 3.1 s, plays «idle» at 3.6 s, «jump» round and round at 4.6 s (its file has no loop), the same without
-    // the loop at 5.6 s (to the end of that lap), «idle» once at 6.1 s and at 6.8 s a clip there is not: the error
-    // ms_code_error. ms_tab: the tab's frame of each clip at each 120th of a second, one line each:
+    // the loop at 5.6 s (to the end of that lap), «idle» once at 6.1 s, «idle» again at 6.8 s (it ended: from 0), stops
+    // it at 7 s, plays it at 7.2 s (stopped: from 0) and twice as fast at 7.4 s (it goes on), and at 7.7 s a clip there
+    // is not: the error ms_code_error. At 7.5 s the scene writes the file of clips again with the clip ms_rename_from
+    // named ms_rename_to (its bytes back at the end), so the error names the clips of the file as it is then.
+    // ms_tab: the tab's frame of each clip at each 120th of a second, one line each:
     // "clip k part a b c d e f" (the part's matrix as the tab's picture has it) or "clip k part morph share target".
     // The sound mark is the game's sound ms_sound; ms_not_drawn: the line the game says once of what it does not draw.
     std::string ms_screen, ms_layer_name, ms_other_name, ms_file, ms_svg, ms_sound, ms_scheme_error, ms_code, ms_code_error, ms_not_drawn;
+    std::string ms_rename_from, ms_rename_to;
     forge::u32 ms_layer = 0;
     std::vector<int> ms_layer_box;
     std::vector<std::string> ms_tab;

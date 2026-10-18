@@ -190,6 +190,8 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("ms_code", &forge::edits::ProjectEdits::ms_code);
     t.field("ms_code_error", &forge::edits::ProjectEdits::ms_code_error);
     t.field("ms_not_drawn", &forge::edits::ProjectEdits::ms_not_drawn);
+    t.field("ms_rename_from", &forge::edits::ProjectEdits::ms_rename_from);
+    t.field("ms_rename_to", &forge::edits::ProjectEdits::ms_rename_to);
     t.field("ms_layer", &forge::edits::ProjectEdits::ms_layer);
     t.field("ms_layer_box", &forge::edits::ProjectEdits::ms_layer_box);
     t.field("ms_tab", &forge::edits::ProjectEdits::ms_tab);
