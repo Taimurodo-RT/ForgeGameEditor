@@ -114,6 +114,15 @@ struct MotionState {
     std::vector<u32> args;    // a flow function's tasks while it reads them
     std::string error;        // why a step failed, raised where Lua runs
     bool from_lua = false;    // error has its place already (a Luau error, or a task's own line)
+    bool read = false;        // a value was read (body.y(), now()): no start_from after it (part 5б)
+};
+
+// start_from (part 5б) over the tries of one clip's recording: the end pose it starts from once that is recorded, or
+// the clip it asked for when it was not yet.
+struct StartRequest {
+    const StartPose* pose = nullptr; // what start_from puts in; null on the first try
+    std::string wanted;              // start_from("…") met with no pose: that clip is recorded first, then this again
+    SiteRef site;                    // its call
 };
 
 struct PoseScript::Impl : BindingEval {
@@ -154,6 +163,7 @@ struct PoseScript::Impl : BindingEval {
 
     // Recording.
     std::unique_ptr<MotionState> motion;
+    StartRequest* start = nullptr; // the recording's start_from (part 5б)
     u64 generation = 0;
     std::map<std::string, std::pair<int, u64>> bindings; // clip → its bindings table and the recording's generation
     // Reading a recording: bindings and getters read it at frame_t.
@@ -200,8 +210,11 @@ void register_draw_api(lua_State* L);
 
 // motion_record.cpp: the clip functions of Luau (part, all, wait …) and the recording.
 void register_motion_api(lua_State* L);
+// One try of recording a clip: false with start->wanted set when its start_from needs a pose not given yet. With
+// `ends` its end pose is made (end_pose) and its bindings are not kept: it is recorded for a clip that starts from it.
 bool record_clip(PoseScript::Impl& im, lua_State* T, const Rig* rig, std::string_view clip,
-                 const std::map<std::string, f64>& values, u64 seed, const MotionLengths& lengths, Recording& out);
+                 const std::map<std::string, f64>& values, u64 seed, const MotionLengths& lengths, Recording& out,
+                 StartRequest* start = nullptr, StartPose* ends = nullptr);
 void push_params(PoseScript::Impl& im, lua_State* T, const std::map<std::string, f64>& values);
 u64 frame_seed(u64 seed, f64 t, std::string_view clip);
 

@@ -730,9 +730,60 @@ ModuleReader animations_reader(std::filesystem::path game_dir) {
 void PoseScript::set_lengths(std::string_view clip, const MotionLengths& lengths) {
     impl_->lengths[std::string(clip)] = lengths;
 }
+void PoseScript::set_lengths(const std::map<std::string, MotionLengths>& all) { impl_->lengths = all; }
 const std::string& PoseScript::error() const { return impl_->error; }
 u32 PoseScript::error_line() const { return impl_->error_line; }
 void PoseScript::set_budget_ms(f64 ms) { impl_->budget_ns = static_cast<u64>(std::max(1.0, ms) * 1e6); }
+
+namespace {
+
+// A clip on the way to the one being recorded and the start_from it began with (part 5б).
+struct StartLink {
+    std::string clip;
+    SiteRef site;
+};
+
+// Records a clip: a try, and when its start_from asks for a pose, the clip it names recorded the same way (its own
+// start first) and a second try from that one's end. With `end`, the clip's end pose too. False with error().
+bool record_from(PoseScript::Impl& im, const Rig* rig, std::string_view clip, const std::map<std::string, f64>& values,
+                 u64 seed, const MotionLengths& lengths, Recording& out, StartPose* end, std::vector<StartLink>& chain) {
+    StartRequest req;
+    StartPose pose;
+    for (;;) {
+        lua_State* T = im.module();
+        if (!T) return false;
+        const bool ok = record_clip(im, T, rig, clip, values, seed, lengths, out, &req, end);
+        lua_pop(im.L, 1);
+        if (ok || req.wanted.empty()) return ok;
+        // A round: the clip it names is on the way already, or is itself.
+        chain.push_back({std::string(clip), req.site});
+        for (usize i = 0; i < chain.size(); ++i) {
+            if (chain[i].clip != req.wanted) continue;
+            std::string way;
+            for (usize k = i; k < chain.size(); ++k) way += chain[k].clip + ", " + im.where(chain[k].site) + " → ";
+            const CallSite* c = im.call(req.site);
+            im.error = im.where(req.site) + ": клипы начинаются друг с друга по кругу: " + way + req.wanted;
+            im.error_line = c && req.site.file == 0 ? c->line : 0;
+            chain.pop_back();
+            out = {};
+            return false;
+        }
+        static const MotionLengths none;
+        const auto it = im.lengths.find(req.wanted);
+        Recording from;
+        const bool from_ok = record_from(im, rig, req.wanted, values, seed, it != im.lengths.end() ? it->second : none, from,
+                                         &pose, chain);
+        chain.pop_back();
+        if (!from_ok) {
+            out = {};
+            return false;
+        }
+        req = {};
+        req.pose = &pose;
+    }
+}
+
+} // namespace
 
 bool PoseScript::record(const Rig* rig, std::string_view clip, const std::map<std::string, f64>& values, u64 seed,
                         const MotionLengths& lengths, Recording& out) {
@@ -748,11 +799,8 @@ bool PoseScript::record(const Rig* rig, std::string_view clip, const std::map<st
         im.error = "в коде нет клипа «" + std::string(clip) + "»: clips = { " + std::string(clip) + " = function(p) … end }";
         return false;
     }
-    lua_State* T = im.module();
-    if (!T) return false;
-    const bool ok = record_clip(im, T, rig, clip, values, seed, lengths, out);
-    lua_pop(im.L, 1);
-    return ok;
+    std::vector<StartLink> chain;
+    return record_from(im, rig, clip, values, seed, lengths, out, nullptr, chain);
 }
 
 namespace {
@@ -841,16 +889,21 @@ const Recording* PoseScript::recording(const Rig& rig, std::string_view clip, co
         return nullptr;
     }
     const std::string name(clip);
-    const MotionLengths& lengths = im.lengths[name];
-    // What the recording depends on besides the code: the rig, the values, the seed, the lengths.
+    const MotionLengths lengths = im.lengths[name];
+    // What the recording depends on besides the code: the rig, the values, the seed, the lengths of every clip (a
+    // start_from records another, part 5б).
     std::string key = std::to_string(reinterpret_cast<uintptr_t>(&rig)) + '\n' + std::to_string(seed);
     for (const ScriptParam& p : im.params) {
         const auto it = values.find(p.name);
         key += '\n' + p.name + '=' + format_number(it != values.end() ? it->second : p.value) +
                std::to_string(it != values.end() ? std::bit_cast<u64>(it->second) : 0);
     }
-    for (const auto& [n, v] : lengths.waits) key += "\nw" + n + '=' + std::to_string(std::bit_cast<u64>(v));
-    for (const auto& [n, v] : lengths.durations) key += "\nd" + n + '=' + std::to_string(std::bit_cast<u64>(v));
+    for (const auto& [c, l] : im.lengths) {
+        if (l.waits.empty() && l.durations.empty()) continue;
+        key += "\nclip " + c;
+        for (const auto& [n, v] : l.waits) key += "\nw" + n + '=' + std::to_string(std::bit_cast<u64>(v));
+        for (const auto& [n, v] : l.durations) key += "\nd" + n + '=' + std::to_string(std::bit_cast<u64>(v));
+    }
     Impl::Cached& c = im.cache[name];
     if (c.key != key) {
         c.key = key;
