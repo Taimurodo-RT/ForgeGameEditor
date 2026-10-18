@@ -412,17 +412,16 @@ PartProp part_prop(const Recording& rec, std::string_view part, f64 t, f64 frame
 
 } // namespace
 
-PropValue part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, bool& going) {
+bool part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, PropValue& out, bool& going) {
     const PartProp pp = part_prop(rec, part, t, frame, p);
+    going = false;
+    out = rest_value(p);
+    if (pp.block >= 0 && rec.blocks[static_cast<usize>(pp.block)].to == Block::To::Binding) return false;
     going = pp.going;
-    if (pp.going) {
-        const Block& b = rec.blocks[static_cast<usize>(pp.block)];
-        return b.to == Block::To::Value ? b.value : b.end;
-    }
-    PropValue v = rest_value(p);
+    if (pp.going) return out = rec.blocks[static_cast<usize>(pp.block)].end, true;
     std::string why;
-    if (pp.track >= 0 && !sample(rec, static_cast<u32>(pp.track), t, nullptr, v, why)) v = rest_value(p);
-    return v;
+    if (pp.track >= 0 && !sample(rec, static_cast<u32>(pp.track), t, nullptr, out, why)) out = rest_value(p);
+    return true;
 }
 
 bool edit_part_prop(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, const PropValue& value,

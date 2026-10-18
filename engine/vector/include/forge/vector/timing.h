@@ -50,8 +50,7 @@ struct Bezier {
 };
 // All four finite, x1 and x2 within 0 … 1.
 bool bezier_valid(const Bezier& b);
-// y at x, x held to 0 … 1; 0 gives 0 and 1 gives 1 exactly. u of x by Newton's steps, by halving where they do not
-// close in, to 1e-7.
+// y at x, x held to 0 … 1; 0 gives 0 and 1 gives 1 exactly. u of x by halving, to 1e-7.
 f64 bezier(const Bezier& b, f64 x);
 
 // A spring as Motion Canvas's: mass, stiffness, damping, the speed it starts with.

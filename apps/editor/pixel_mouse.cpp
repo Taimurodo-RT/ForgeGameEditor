@@ -425,7 +425,8 @@ bool PixelEditor::set_part_field(const std::string& field, const std::string& te
     play(false);
     const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
     bool going = false;
-    if (field_of(f->prop, pixel::part_prop_value(rec_, id, t_, frame, f->prop, going)) == field_of(f->prop, v)) return rebuild(), false; // the same
+    pixel::PropValue was;
+    if (pixel::part_prop_value(rec_, id, t_, frame, f->prop, was, going) && field_of(f->prop, was) == field_of(f->prop, v)) return rebuild(), false; // the same
     if (!pixel::edit_part_prop(rec_, id, t_, frame, f->prop, v, script_.code(), script_text_, out, why))
         return refuse_edit("«" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
@@ -824,8 +825,10 @@ void PixelEditor::rebuild_fields(bool has, const pixel::PartPose& pp) {
             PartField row;
             row.name = pixel::prop_word(f.prop);
             row.section = f.section;
-            // What the clip's code gives it; without a recording, what the frame shows.
-            row.value = field_of(f.prop, rec_ok_ ? pixel::part_prop_value(rec_, part_, t_, frame, f.prop, row.going) : frame_value(f.prop, pp));
+            // What the clip's code gives it; without a recording or with a binding deciding, what the frame shows.
+            pixel::PropValue v;
+            if (!rec_ok_ || !pixel::part_prop_value(rec_, part_, t_, frame, f.prop, v, row.going)) v = frame_value(f.prop, pp);
+            row.value = field_of(f.prop, v);
             const std::string now = frame_text(f.prop, pp);
             if (now != row.value && !(row.value.empty() && (now == "свой" || now == "своя"))) row.now = "сейчас " + now;
             fields.push_back(std::move(row));
@@ -1044,8 +1047,7 @@ void PixelEditor::ease_release() {
     if (!ease_held_) return;
     ease_held_ = 0;
     const vector::Bezier to = ease_live_;
-    ease_live_ = ease_from_; // as it was, until the code says otherwise
-    ease_dirty_ = true;
+    ease_dirty_ = true; // the curve the code's again once written or refused: both rebuild
     if (to != ease_from_) set_block_bezier(to);
 }
 

@@ -74,8 +74,8 @@ bool edit_part_move(const Recording& rec, std::string_view part, f64 t, f64 fram
 
 // A part's field (part 4ж): what the clip's code gives property p of the part in the frame at t, `frame` seconds long —
 // its deciding block's end when that one's transition goes in this frame (going true), else the recording's value
-// there.
-PropValue part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, bool& going);
+// there. False when a binding decides: its function gives the value, the code no end (the field shows the frame's).
+bool part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, PropValue& out, bool& going);
 // Property p of the part made `value` in that frame: the deciding block's end when its transition goes; else a field
 // of the table of a call of another property of the part going there that has no such field, when p's track started
 // nothing since (of several, the one that started last; together, the first by the list of properties); else a new

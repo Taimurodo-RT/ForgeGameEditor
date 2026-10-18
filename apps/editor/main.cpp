@@ -24760,23 +24760,26 @@ return {
     // Part 4ж (pixel-motion-j, then pixel-motion-j-again): «Маятник», written by another program with the game's module
     // «animations/кривые.luau»: its clip «Покой» ten frames four a second, the bob moving by a call of one property
     // (at(…), not waited for) and a table, the rod and the base by one bezier(…) in a variable, the stand by the
-    // module's curve, a swap to «night» last. The bob's fields in frame 2: three sections, x and y going («→», their
-    // ends, «сейчас» the frame), rot not; x typed (the end of its call), rot and fill (fields added to the table going),
-    // fill emptied (own in a table refused), a word for a number, a short colour and a negative width refused, «10,0»
-    // for 10 nothing; the rod's width (a line at(0.25, …) at the top of the clip), then emptied (nil in that line); each
-    // a step with its label, Ctrl+Z and Ctrl+Y byte for byte. Frame 5: the bob's done, the rod's rot at its end as
-    // shown; frame 10, in the swap: a field refused. The bob's y block: «кривая» from the list (the word replaced by
-    // bezier(0.25, 0.1, 0.25, 1)), the graph's points dragged (nothing written while held; let go, the numbers of the
-    // call), Esc while held back, nothing written; the bob in frame 2 as the formula of cubic-bezier; the rod's: «кривая
-    // общая: 2 блока», a point moves the variable's call and both blocks; the stand's: the module's, no points, said why,
-    // «кривая» from the list nothing. Both views of frames 1, 5 and 10 as the library has the files; «Запечь»; given to
-    // «Флаг», undone and done again. pixel-motion-j-again, from another working folder: the files, the recording and
-    // both views of every frame the same; the game plays the flag by «Маятник»'s ten frames.
+    // module's curve, the base's x by a binding, a swap to «night» last. The bob's fields in frame 2: three sections, x and y going («→», their
+    // ends, «сейчас» the frame), rot not; x typed with Enter (the end of its call), rot and fill (fields added to the
+    // table going), fill emptied (own in a table refused), a word for a number, a short colour and a negative width
+    // refused, «10,0» for 10 nothing, the width's own typed while played (stopped); the rod's width (a line at(0.25, …)
+    // at the top of the clip), then emptied (nil in that line); each a step with its label, Ctrl+Z and Ctrl+Y byte for
+    // byte. Frame 5: the bob's done, the rod's rot at its end as shown, the base's x by a binding (the frame's value; the
+    // same nothing, another refused); frame 10, in the swap: a field refused; the code
+    // with an error: a field refused. The bob's y block: «кривая» from the list (the word replaced by bezier(0.25, 0.1,
+    // 0.25, 1)), a point held while Ctrl+Z takes the curve away let go of, the graph's points dragged (nothing written
+    // while held; let go, the numbers of the call), Esc while held back, nothing written; the bob in frame 2 as the
+    // formula of cubic-bezier; the rod's: «кривая общая: 2 блока», the panel typed and played (a press saves it first, a
+    // step of its own, and stops), a point moves the variable's call and both blocks; the stand's: the module's, no
+    // points, said why, «кривая» from the list nothing. Both views of frames 1, 5 and 10 as the library has the files;
+    // «Запечь»; given to «Флаг», undone and done again. pixel-motion-j-again, from another working folder: the files,
+    // the recording and both views of every frame the same; the game plays the flag by «Маятник»'s ten frames.
     int mj_step_ = 0;
     std::string mj_code_, mj_label_, mj_seen_;
     std::vector<u8> mj_doc_, mj_flag0_; // mj_doc_: the «.pixel.json» as written, the same through the edits
     f32 mj_x_ = 0, mj_y_ = 0;           // where a point of the graph is held
-    std::string mj_back_code_, mj_back_label_; // the code and its step before point 2 is put by point 1
+    std::string mj_back_code_, mj_back_label_; // the code and its step before an edit that a later step undoes
     static constexpr const char* kMjPendulum = R"lua(-- «Маятник»: поля части и кривая части 4ж в «Покое», 10 кадров по 4 в секунду.
 local m = require("кривые")
 local soft = bezier(0.42, 0, 0.58, 1)
@@ -24800,6 +24803,7 @@ return {
   },
   clips = {
     idle = function(p)
+      part("base").x(function() return part("bob").x() / 2 end)
       local bob = part("bob")
       at(0, bob.x(6, 0.5, "linear"))
       part("bob"):to({ y = -2 }, 0.5, "linear")
@@ -24983,8 +24987,8 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
             mj_label_ = step_label();
             check(files_are(kMjPendulum), "opened: nothing written");
-            check(near(rec->length, 2.5) && px().whole().frames == 10 && rec->blocks.size() == 6 && px().console().empty(),
-                  "2,5 s, 6 blocks, 10 frames, nothing in the console: " + mp_recorded());
+            check(near(rec->length, 2.5) && px().whole().frames == 10 && rec->blocks.size() == 7 && px().console().empty(),
+                  "2,5 s, 7 blocks, 10 frames, nothing in the console: " + mp_recorded());
             check(px_click("px-part-bob") && px().part() == "bob", "a click on «bob» in the tree");
             check(at_frame(1) && near(px().time(), 0.25), "frame 2: 0,25 s");
             break;
@@ -25007,7 +25011,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
                       field_words("stroke_width"));
             check(!ed_.find_element("px-pv-x") && !ed_.find_element("px-pv-fill") && mb_value("x") == "3" && mb_value("fill") == "свой",
                   "no row of a field's property under them; the part's values the frame's: " + mp_values());
-            check(ue_type("px-pf-x", "10"), "10 typed into x");
+            check(ue_type_enter("px-pf-x", "10"), "10 typed into x with Enter, the field kept");
             edited(mb_sub(mj_code_, "bob.x(6, 0.5, \"linear\")", "bob.x(10, 0.5, \"linear\")"), "«Маятник»: bob · x = 10", "x: the end of its call");
             break;
         }
@@ -25046,6 +25050,11 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             unchanged("the same number");
             check(ue_type("px-pf-stroke_width", " ") && px().note().empty(), "a space for the width, its own as it shows: nothing said: «" + px().note() + "»");
             unchanged("the width's own as it shows");
+            check(away(), "out of the panel");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(px().playing(), "Space: played");
+            check(ue_type("px-pf-stroke_width", " ") && !px().playing() && px().note().empty(), "the width's own typed while played: stopped, nothing said");
+            unchanged("the width's own while played");
             check(field_is("x", "x →", "10", "сейчас 5") && field_is("fill", "fill →", "#20a040", "сейчас #20a040 · 0,5") &&
                       field_is("stroke", "stroke", "", "") && field_is("stroke_width", "stroke_width", "", ""),
                   "the fields the code's again: " + field_words("x") + "; " + field_words("fill") + "; " + field_words("stroke") + "; " +
@@ -25057,7 +25066,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
         case 8:
             if (hold(field_is("rot", "rot", "0", ""), "the rod's fields")) return true;
             check(ue_type("px-pf-stroke_width", "3"), "3 typed into the rod's width");
-            edited(mb_sub(mj_code_, "      local bob", "      at(0.25, part(\"rod\").stroke_width(3, 0))\n      local bob"), "«Маятник»: rod · stroke_width = 3",
+            edited(mb_sub(mj_code_, "      part(\"base\").x(", "      at(0.25, part(\"rod\").stroke_width(3, 0))\n      part(\"base\").x("), "«Маятник»: rod · stroke_width = 3",
                    "the rod's width: a line at(0.25, …) at the top of the clip, its length 0");
             break;
         // Emptied: its own width, nil in that line.
@@ -25100,10 +25109,22 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             check(field_is("y", "y", "-2", "") && field_is("rot", "rot", "15", "") && field_is("fill", "fill", "#20a040", ""),
                   "nothing of the bob going: the recording's values, the frame the same: " + field_words("y") + "; " + field_words("rot") + "; " +
                       field_words("fill"));
+            check(px_click("px-part-base") && px().part() == "base", "a click on «base»");
+            break;
+        // The base's x by a binding: the frame's value, no arrow; the same nothing, another refused with the binding's words.
+        case 14:
+            if (wait(2)) return true;
+            check(field_is("x", "x", "5", ""), "x by its function, half the bob's 10: the frame's value, no «→», no «сейчас»: " + field_words("x"));
+            check(ue_type("px-pf-x", "5") && px().note().empty(), "5 typed as it shows: nothing said: «" + px().note() + "»");
+            unchanged("a binding's value as it shows");
+            check(ue_type("px-pf-x", "0") && px().note() == "«base · x» не записать: значение блока считает функция связи: правьте её в коде",
+                  "0 typed: «" + px().note() + "»");
+            unchanged("a binding's field");
+            check(px_click("px-part-bob") && px().part() == "bob", "«bob» again");
             check(at_frame(9) && near(px().time(), 2.25), "frame 10: 2,25 s");
             break;
         // In the swap: refused.
-        case 14:
+        case 15:
             if (wait(2)) return true;
             check(px().rig().swapping(), "frame 10 in the swap to «night»");
             check(ue_type("px-pf-y", "1") && px().note() == "посреди смены рисунка поля части не пишутся: выберите кадр до или после",
@@ -25111,14 +25132,37 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             unchanged("a field in the middle of a swap");
             check(at_frame(1), "frame 2");
             break;
-        // The bob's y: linear, its graph: the curve, no arms, no points.
-        case 15: {
+        // The code with an error: a field refused, nothing written.
+        case 16: {
             if (wait(2)) return true;
+            const std::string call = "bob.x(10, 0.5";
+            check(mo_caret(mo_char(mj_code_, call) + mo_letters(call)), "the caret after 0.5");
+            mo_type(" +");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(mb_sub(mj_code_, "bob.x(10, 0.5,", "bob.x(10, 0.5 +,")) && step_label() == "«Маятник»: код «Маятник.luau» сохранён",
+                  "« +» typed and saved: a line that does not compile");
+            break;
+        }
+        case 17: {
+            if (hold(px().stale() && !px().console().empty(), "the timeline faint")) return true;
+            const std::string bad = mb_sub(mj_code_, "bob.x(10, 0.5,", "bob.x(10, 0.5 +,");
+            const std::string why = "Код с ошибкой: правка мышью не начнётся, пока он не записывается (строка " +
+                                    std::to_string(mb_line(bad, "bob.x(10, 0.5 +,")) + ", см. консоль)";
+            check(ue_type("px-pf-y", "1") && px().note() == why, "y typed: «" + px().note() + "»");
+            check(file(lua) == bytes(bad) && file(doc) == mj_doc_ && step_label() == "«Маятник»: код «Маятник.luau» сохранён", "nothing written: " + step_label());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mj_code_) && step_label() == mj_label_, "Ctrl+Z: the line that does not compile undone");
+            break;
+        }
+        // The bob's y: linear, its graph: the curve, no arms, no points.
+        case 18: {
+            if (hold(rec && !px().stale() && px().console().empty(), "the code records again")) return true;
             const i32 y = block_of("bob", pixel::Prop::Y);
             check(y >= 0 && px_click(id_of(y)) && px().block() == y, "a click on the bob's «y → -2»");
             break;
         }
-        case 16: {
+        case 19: {
             const i32 y = block_of("bob", pixel::Prop::Y);
             if (hold(px().block() == y && shown("px-timing") && shown("px-ease-graph"), "the inspector and the graph of «y → -2»")) return true;
             if (wait(2)) return true;
@@ -25131,17 +25175,19 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             break;
         }
         // «кривая» from the list: bezier(0.25, 0.1, 0.25, 1) in place of the word.
-        case 17:
+        case 20:
             if (hold(shown(curve_row), "the list, «кривая» last")) return true;
             check(timing_row(curve_row) == "/memory/px_curve_bezier кривая" && !pj_class(curve_row.c_str(), "selected"),
                   "«кривая» after the words, its curve, not selected: " + timing_row(curve_row));
             check(px_click(curve_row), "a click on «кривая»");
+            mj_back_code_ = mj_code_, mj_back_label_ = mj_label_;
             edited(mb_sub(mj_code_, "fill = \"#20a040\" }, 0.5, \"linear\")", "fill = \"#20a040\" }, 0.5, bezier(0.25, 0.1, 0.25, 1))"),
                    "«Маятник»: bob · y, кривая 0,25; 0,1; 0,25; 1", "«кривая»: bezier(0.25, 0.1, 0.25, 1) in place of the word");
             break;
-        // Its graph: the curve, the arms, the points hollow; the call's table gives it to y, rot and fill. Point 1 pressed
+        // Its graph: the curve, the arms, the points hollow; the call's table gives it to y, rot and fill; «как» with the
+        // picture of «кривая». A point held while Ctrl+Z takes the curve away: let go of, nothing written. Point 1 pressed
         // and dragged: the graph follows, nothing written.
-        case 18: {
+        case 21: {
             const vector::Bezier c{0.25, 0.1, 0.25, 1};
             if (hold(rec && !px().stale() && curve_is(c) && shown("px-ease-graph"), "the graph of bezier(0.25, 0.1, 0.25, 1)")) return true;
             if (wait(2)) return true;
@@ -25151,13 +25197,32 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             check(graph_is(0.5, vector::bezier(c, 0.5), kCurveRgba) && arms() > 0 && graph_is(0.25, 0.1, kWhiteRgba) && graph_is(0.25, 1, kWhiteRgba),
                   "the graph: the curve, the arms, both points hollow");
             check(mb_value("y") == words(-2 * vector::bezier(c, 0.5)), "frame 2: y as CSS's ease at half the time: " + mb_value("y"));
+            Rml::Element* chip = ed_.find_element("px-timing");
+            const std::string icon = chip && chip->GetNumChildren() > 0 ? chip->GetChild(0)->GetAttribute<Rml::String>("src", "") : "?";
+            check(icon == "/memory/px_curve_bezier", "«как»: the picture of «кривая»: " + icon);
+            // Held, the code undone under the hand: the point let go of with its curve.
+            check(hold_point(1, 0.4, 0.2), "point 1 pressed and dragged to 0,4; 0,2");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mj_back_code_) && step_label() == mj_back_label_, "Ctrl+Z while held: «кривая» undone, both files byte for byte");
+            break;
+        }
+        case 22:
+            if (hold(rec && !px().stale() && !px().ease_curve(), "the recording without the curve")) return true;
+            check(px().ease_held() == 0, "the point let go of: its curve gone");
+            let_go();
+            check(px().note().empty() && files_are(mj_back_code_) && step_label() == mj_back_label_, "let go: nothing said, nothing written: «" + px().note() + "»");
+            check(away(), "out of the panel");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(files_are(mj_code_) && step_label() == mj_label_, "Ctrl+Y: «кривая» again, byte for byte");
+            break;
+        case 23:
+            if (hold(rec && !px().stale() && curve_is({0.25, 0.1, 0.25, 1}), "the curve again")) return true;
             check(hold_point(1, 0.3, 0), "point 1 pressed and dragged to 0,3; 0");
             check(curve_is({0.3, 0, 0.25, 1}), "held: the curve follows the mouse");
             unchanged("a point held");
             break;
-        }
         // Held, drawn again: the point full, the curve the mouse's. Let go: its two numbers.
-        case 19:
+        case 24:
             if (wait(2)) return true;
             check(px().ease_held() == 1 && graph_is(0.3, 0, kCurveRgba) && graph_is(0.25, 1, kWhiteRgba) &&
                       graph_is(0.5, vector::bezier({0.3, 0, 0.25, 1}, 0.5), kCurveRgba),
@@ -25168,7 +25233,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
                    "point 1 let go: its two numbers");
             break;
         // Point 2 pressed beside its middle: it goes by the mouse's way, not to the mouse; x2 alone (y2 the same).
-        case 20:
+        case 25:
             if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.25, 1}), "the curve of the new recording")) return true;
             check(hold_point(2, 0.2, 1, 3, 2), "point 2 pressed 3; 2 beside its middle and dragged by the way to 0,2; 1");
             let_go();
@@ -25176,7 +25241,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
                    "point 2 let go: x2 alone, y2 the same");
             break;
         // Point 2 by point 1: a press within reach of both takes the nearer.
-        case 21:
+        case 26:
             if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.2, 1}), "the curve of the new recording")) return true;
             mj_back_code_ = mj_code_, mj_back_label_ = mj_label_;
             check(hold_point(2, 0.3, 0.05), "point 2 dragged to 0,3; 0,05, by point 1");
@@ -25184,7 +25249,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             edited(mb_sub(mj_code_, "bezier(0.3, 0, 0.2, 1)", "bezier(0.3, 0, 0.3, 0.05)"), "«Маятник»: bob · y, кривая 0,3; 0; 0,3; 0,05",
                    "point 2 by point 1");
             break;
-        case 22: {
+        case 27: {
             if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.3, 0.05}), "the curve of the new recording")) return true;
             f32 x1 = 0, y1 = 0, x2 = 0, y2 = 0;
             check(graph_seen() && px().ease_handle(1, x1, y1) && px().ease_handle(2, x2, y2) && std::hypot(x2 - x1, y2 - y1) > 1 &&
@@ -25204,7 +25269,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
         }
         // Esc while held, the point past the graph: held at its edge; back, nothing written. A press off the points takes
         // nothing. The frame as the formula; then the rod's curve, shared.
-        case 23: {
+        case 28: {
             if (hold(rec && !px().stale() && curve_is({0.3, 0, 0.2, 1}), "the curve of the undone recording")) return true;
             check(hold_point(1, 1.3, 1.9) && curve_is({1, 1.5, 0.2, 1}), "point 1 dragged past the graph: held at 1; 1,5");
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
@@ -25227,19 +25292,40 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             check(rot >= 0 && px_click(id_of(rot)) && px().block() == rot, "a click on the rod's «rot → 8»");
             break;
         }
-        case 24: {
+        case 29: {
             const i32 rot = block_of("rod", pixel::Prop::Rot);
             if (hold(px().block() == rot && px().ease_curve() && shown("px-ease-share"), "the graph of the rod's curve")) return true;
             check(curve_is({0.42, 0, 0.58, 1}) && px().ease_share() == "кривая общая: 2 блока" && element_text("px-ease-share") == "кривая общая: 2 блока",
                   "«" + element_text("px-ease-share") + "»");
+            // The panel typed, not saved, and played: a press on a point saves the panel first, a step of its own, and stops.
+            const std::string end = "swap(\"night\", 0.5)";
+            check(mo_caret(mo_char(mj_code_, end) + mo_letters(end)), "the caret after the swap");
+            mo_type(" -- ночь");
+            const std::string typed = mb_sub(mj_code_, end, end + " -- ночь");
+            check(px().code_unsaved() && px().code() == typed, "« -- ночь» typed, not saved");
+            check(away(), "out of the panel");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            check(px().playing(), "Space: played");
             check(hold_point(1, 0.5, 0), "point 1 dragged to 0,5; 0");
+            check(!px().playing(), "the press stopped it");
+            check(file(lua) == bytes(typed) && file(doc) == mj_doc_ && step_label() == "«Маятник»: код «Маятник.luau» сохранён",
+                  "held: the panel saved at the press, a step of its own: " + step_label());
             let_go();
-            edited(mb_sub(mj_code_, "local soft = bezier(0.42, 0, 0.58, 1)", "local soft = bezier(0.5, 0, 0.58, 1)"),
-                   "«Маятник»: rod · rot, кривая 0,5; 0; 0,58; 1", "a point of the shared curve: the call in the variable");
+            const std::string done = mb_sub(typed, "local soft = bezier(0.42, 0, 0.58, 1)", "local soft = bezier(0.5, 0, 0.58, 1)"),
+                              label = "«Маятник»: rod · rot, кривая 0,5; 0; 0,58; 1";
+            check(files_are(done) && step_label() == label, "let go: a point of the shared curve, the call in the variable: " + step_label());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(files_are(mj_code_) && step_label() == mj_label_, "Ctrl+Z twice: the point and the save undone, both files byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(files_are(done) && step_label() == label, "Ctrl+Y twice: both again, byte for byte");
+            mj_code_ = done, mj_label_ = label;
             break;
         }
         // Both blocks of it; the stand's curve, the module's.
-        case 25: {
+        case 30: {
             if (hold(rec && !px().stale() && curve_is({0.5, 0, 0.58, 1}), "the curve of the new recording")) return true;
             check(curve_of(block_of("rod", pixel::Prop::Rot)) == vector::Bezier{0.5, 0, 0.58, 1} &&
                       curve_of(block_of("base", pixel::Prop::Y)) == vector::Bezier{0.5, 0, 0.58, 1},
@@ -25248,7 +25334,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             check(stand >= 0 && px_click(id_of(stand)) && px().block() == stand, "a click on the stand's «y → 4»");
             break;
         }
-        case 26: {
+        case 31: {
             const i32 stand = block_of("stand", pixel::Prop::Y);
             if (hold(px().block() == stand && shown("px-ease-why"), "the graph of the stand's curve")) return true;
             if (wait(2)) return true;
@@ -25270,7 +25356,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             check(px_click("px-timing") && px().timings_open(), "the list");
             break;
         }
-        case 27: {
+        case 32: {
             if (hold(shown(curve_row), "the list")) return true;
             std::string lit;
             for (usize i = 0; i < vector::kTimingCount; ++i)
@@ -25282,22 +25368,22 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             break;
         }
         // Both views against the files: frames 1, 5 and 10.
-        case 28:
+        case 33:
             if (wait(2)) return true;
             check(views_are(0), "both views of frame 1 as the library draws and bakes the files");
             check(at_frame(4), "frame 5");
             break;
-        case 29:
+        case 34:
             if (wait(2)) return true;
             check(views_are(4), "both views of frame 5");
             check(at_frame(9), "frame 10");
             break;
-        case 30:
+        case 35:
             if (wait(2)) return true;
             check(views_are(9), "both views of frame 10, in the swap");
             break;
         // «Запечь»: 10 frames of 64 × 64, each as the library bakes the files apart from the tab.
-        case 31: {
+        case 36: {
             if (hold(idle && rec && !px().stale() && element_text("px-total") == "в картинке 10 кадров из 64", "«в картинке 10 кадров из 64»")) return true;
             check(px_click("px-bake"), "«Запечь»");
             assets::CookedTexture strip;
@@ -25321,12 +25407,12 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             check(same.empty(), "frames 2–10 each other than the one before:" + same);
             break;
         }
-        case 32:
+        case 37:
             if (hold(idle && as().record_of(as().abs(png)) && shown("px-give-open") && !pj_class("px-give-open", "disabled"), "the picture indexed"))
                 return true;
             check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
             break;
-        case 33: {
+        case 38: {
             const auto& l = px().templates();
             const objects::Template* flag = lib.find("flag");
             const usize i = flag ? static_cast<usize>(std::find(l.begin(), l.end(), flag->key) - l.begin()) : l.size();
@@ -25337,7 +25423,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             check(px_click(row), "a click on «Флаг»");
             break;
         }
-        case 34: {
+        case 39: {
             const objects::Template* t = lib.find("flag");
             objects::Clip all{{}, 4, true};
             for (u32 k = 0; k < 10; ++k) all.frames.push_back(k);
@@ -25355,7 +25441,7 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
             break;
         }
         // What the tab shows and the files, beside the games, for pixel-motion-j-again.
-        case 35: {
+        case 40: {
             if (hold(rec && !px().stale() && !px().giving() && shown("px-frame-0"), "the recording")) return true;
             if (mb_look(mj_seen_)) return true;
             mj_seen_ = mp_recorded() + mj_seen_;

@@ -150,32 +150,15 @@ f64 bezier(const Bezier& b, f64 x) {
     const f64 cx = 3 * b.x1, bx = 3 * (b.x2 - b.x1) - cx, ax = 1 - cx - bx;
     const f64 cy = 3 * b.y1, by = 3 * (b.y2 - b.y1) - cy, ay = 1 - cy - by;
     auto at_x = [&](f64 u) { return ((ax * u + bx) * u + cx) * u; };
-    auto slope = [&](f64 u) { return (3 * ax * u + 2 * bx) * u + cx; };
+    // x(u) grows from 0 to 1 (x1 and x2 within 0 … 1): halve [0, 1] around x, some 24 steps to 1e-7.
     constexpr f64 kClose = 1e-7;
-    f64 u = x;
-    bool found = false;
-    for (int i = 0; i < 8; ++i) {
+    f64 lo = 0, hi = 1, u = x;
+    for (int i = 0; i < 64; ++i) {
         const f64 e = at_x(u) - x;
-        if (std::fabs(e) < kClose) {
-            found = true;
-            break;
-        }
-        const f64 d = slope(u);
-        if (std::fabs(d) < 1e-6) break;
-        u -= e / d;
-        if (!(u >= 0 && u <= 1)) break;
-    }
-    if (!found) {
-        // x(u) grows from 0 to 1: halve [0, 1] around x.
-        f64 lo = 0, hi = 1;
-        u = x;
-        for (int i = 0; i < 64; ++i) {
-            const f64 e = at_x(u) - x;
-            if (std::fabs(e) < kClose) break;
-            if (e < 0) lo = u;
-            else hi = u;
-            u = (lo + hi) / 2;
-        }
+        if (std::fabs(e) < kClose) break;
+        if (e < 0) lo = u;
+        else hi = u;
+        u = (lo + hi) / 2;
     }
     return ((ay * u + by) * u + cy) * u;
 }

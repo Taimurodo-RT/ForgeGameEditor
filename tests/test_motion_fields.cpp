@@ -90,6 +90,13 @@ PropValue color(const char* text) {
     return p;
 }
 
+// A part's field in a frame of 0.1 s: the value the code gives it (it gives one), whether its transition goes.
+f64 field(const Recording& rec, std::string_view part, f64 t, Prop p, bool& going) {
+    PropValue v;
+    REQUIRE(part_prop_value(rec, part, t, 0.1, p, v, going));
+    return v.v;
+}
+
 constexpr vector::Bezier kEase{0.25, 0.1, 0.25, 1};
 
 } // namespace
@@ -102,7 +109,7 @@ TEST_CASE("Motion fields: bezier is CSS's cubic-bezier") {
     CHECK(bezier(kEase, 0.75) == doctest::Approx(0.9604589783489741).epsilon(1e-6));
     CHECK(bezier({0.42, 0, 0.58, 1}, 0.3) == doctest::Approx(0.18739590670531256).epsilon(1e-6));
     CHECK(bezier({0.3, 0, 0.2, 1}, 0.5) == doctest::Approx(0.7971529854160904).epsilon(1e-6));
-    // x1 = x2 = 0: x = u³; x1 = x2 = 1: x = 1 − (1 − u)³, flat at the end (Newton's steps give way to halving).
+    // x1 = x2 = 0: x = u³; x1 = x2 = 1: x = 1 − (1 − u)³, flat at the end.
     CHECK(bezier({0, 0, 0, 1}, 0.125) == doctest::Approx(0.5).epsilon(1e-6));
     CHECK(bezier({1, 0, 1, 1}, 0.875) == doctest::Approx(0.5).epsilon(1e-6));
     CHECK(bezier({1, 0, 1, 1}, 0.999) == doctest::Approx(0.972).epsilon(1e-5));
@@ -246,9 +253,14 @@ part("d").x(1, 0.5, e))");
     const f64 b_start = block(br, "b", Prop::X).start; // after a's three lines
     CHECK(b_start == 1.5);
     CHECK(value_at(br, "b", Prop::X, b_start + 0.25) == doctest::Approx(vector::bezier({0.3, 0, 0.75, 1.2}, 0.5)).epsilon(1e-12));
-    // The same numbers: the same text.
+    // The same numbers: the same text. A number that rounds the same stays as written.
     REQUIRE(edit_bezier(rec, b, {0.3, 0, 0.2, 1}, code, src, out, why));
     CHECK(out == src);
+    const std::string zero = clip_of("part(\"a\").x(1, 0.5, bezier(0.30, 0, 0.2, 1))");
+    PoseScript zs = script_of(zero);
+    const Recording zr = recorded(zs);
+    REQUIRE(edit_bezier(zr, block(zr, "a", Prop::X), {0.3, 0.5, 0.2, 1}, zs.code(), zero, out, why));
+    CHECK(out == with(zero, "bezier(0.30, 0, 0.2, 1)", "bezier(0.30, 0.5, 0.2, 1)"));
     CHECK_FALSE(edit_bezier(rec, b, {0.3, 0, -0.2, 1}, code, src, out, why));
     CHECK(why == "bezier: x1 и x2 — от 0 до 1, y1 и y2 — числа");
     // Shared: one call for both blocks.
@@ -298,7 +310,7 @@ at(0.6, a.rot(10, 0.2)))");
     bool going = false;
 
     // Its transition goes: the field is its end, and typing makes the end.
-    CHECK(part_prop_value(rec, "a", 0.2, 0.1, Prop::X, going).v == 4);
+    CHECK(field(rec, "a", 0.2, Prop::X, going) == 4);
     CHECK(going);
     REQUIRE(edit_part_prop(rec, "a", 0.2, 0.1, Prop::X, number(7), code, src, out, why));
     CHECK(out == with(src, "a.x(4, 0.4)", "a.x(7, 0.4)"));
@@ -307,12 +319,21 @@ at(0.6, a.rot(10, 0.2)))");
     REQUIRE(edit_part_prop(rec, "a", 0.2, 0.1, Prop::Fill, color(nullptr), code, src, out, why));
     CHECK(out == with(src, "a.fill(\"#ff0000\", 0.4)", "a.fill(nil, 0.4)"));
     // Done going: the recording's value there.
-    CHECK(part_prop_value(rec, "a", 0.5, 0.1, Prop::X, going).v == 4);
+    CHECK(field(rec, "a", 0.5, Prop::X, going) == 4);
     CHECK_FALSE(going);
-    CHECK(part_prop_value(rec, "a", 0.5, 0.1, Prop::Rot, going).v == 0);
+    CHECK(field(rec, "a", 0.5, Prop::Rot, going) == 0);
     CHECK_FALSE(going);
-    CHECK(part_prop_value(rec, "a", 0.7, 0.1, Prop::Rot, going).v == 10);
+    CHECK(field(rec, "a", 0.7, Prop::Rot, going) == 10);
     CHECK(going);
+
+    // A table done going takes no field: a line of its own. A frame before 0 or not a number: nothing.
+    REQUIRE(edit_part_prop(rec, "a", 0.5, 0.1, Prop::Rot, number(5), code, src, out, why));
+    CHECK(out == with(src, "local a = part(\"a\")", "at(0.5, part(\"a\").rot(5, 0))\nlocal a = part(\"a\")"));
+    for (f64 t : {-0.1, std::nan("")}) {
+        CHECK_FALSE(edit_part_prop(rec, "a", t, 0.1, Prop::Rot, number(5), code, src, out, why));
+        CHECK(why == "кадр — число секунд не меньше 0");
+        CHECK(out.empty());
+    }
 
     // Not going, y's table goes without rot, rot's track started nothing since: the field is added there.
     REQUIRE(edit_part_prop(rec, "a", 0.2, 0.1, Prop::Rot, number(5), code, src, out, why));
@@ -320,7 +341,7 @@ at(0.6, a.rot(10, 0.2)))");
     PoseScript rs = script_of(out);
     const Recording rr = recorded(rs);
     CHECK(value_at(rr, "a", Prop::Rot, 0.4) == 5);
-    CHECK(part_prop_value(rr, "a", 0.2, 0.1, Prop::Rot, going).v == 5);
+    CHECK(field(rr, "a", 0.2, Prop::Rot, going) == 5);
     CHECK(going);
     REQUIRE(edit_part_prop(rec, "a", 0.2, 0.1, Prop::Stroke, color("#102030"), code, src, out, why));
     CHECK(out == with(src, "{ y = 2 }", "{ y = 2, stroke = \"#102030\" }"));
@@ -342,10 +363,22 @@ at(0.6, a.rot(10, 0.2)))");
     const Recording br = recorded(bs);
     CHECK(value_at(br, "b", Prop::SkewX, 0.25) == 10);
     CHECK(value_at(br, "b", Prop::SkewX, 0.2) == 0);
-    CHECK(part_prop_value(rec, "b", 0.25, 0.1, Prop::Sx, going).v == 1);
+    CHECK(field(rec, "b", 0.25, Prop::Sx, going) == 1);
     CHECK_FALSE(going);
     REQUIRE(edit_part_prop(rec, "b", 5.0 / 12, 1.0 / 12, Prop::Sy, number(2), code, src, out, why));
     CHECK(out == with(src, "local a = part(\"a\")", "at(0.416, part(\"b\").sy(2, 0))\nlocal a = part(\"a\")"));
+
+    // rot's block from before the table's call is not since it: the field goes into the table. A table with rot = nil
+    // has rot in its text, though not in the table: a line of its own.
+    const std::string before = clip_of(R"(at(0, part("a").rot(3, 0))
+at(0.1, part("a"):to({ y = 2 }, 0.4))
+at(0, part("b"):to({ y = 2, rot = nil }, 0.4)))");
+    PoseScript fs = script_of(before);
+    const Recording fr = recorded(fs);
+    REQUIRE(edit_part_prop(fr, "a", 0.2, 0.1, Prop::Rot, number(5), fs.code(), before, out, why));
+    CHECK(out == with(before, "{ y = 2 }", "{ y = 2, rot = 5 }"));
+    REQUIRE(edit_part_prop(fr, "b", 0.2, 0.1, Prop::Rot, number(5), fs.code(), before, out, why));
+    CHECK(out == with(before, "at(0, part(\"a\").rot(3, 0))", "at(0.2, part(\"b\").rot(5, 0))\nat(0, part(\"a\").rot(3, 0))"));
 
     // Of two tables going, the one that started last; started together, the first by the list.
     const std::string two = clip_of(R"(part("a"):to({ y = 2 }, 0.5)
@@ -369,6 +402,19 @@ part("a"):to({ fill = "#ff0000", sx = 2 }, 0.4))");
     const Recording rec = recorded(s);
     const CodeSites& code = s.code();
     std::string out, why;
+    // A binding decides x: no value of the code (its function gives it), not going. A back going: where its transition
+    // started, its end.
+    PropValue v;
+    bool going = true;
+    CHECK_FALSE(part_prop_value(rec, "a", 0.6, 0.1, Prop::X, v, going));
+    CHECK_FALSE(going);
+    const std::string back = clip_of(R"(at(0, part("c").y(3, 0))
+at(0.1, part("c").y(5, 0.1):back(0.2)))");
+    PoseScript bk = script_of(back);
+    const Recording bkr = recorded(bk);
+    CHECK(field(bkr, "c", 0.3, Prop::Y, going) == 3);
+    CHECK(going);
+    CHECK(value_at(bkr, "c", Prop::Y, 0.3) != 3);
     // A binding and a back decide: their words.
     CHECK_FALSE(edit_part_prop(rec, "a", 0.6, 0.1, Prop::X, number(1), code, src, out, why));
     CHECK(why == "значение блока считает функция связи: правьте её в коде");
