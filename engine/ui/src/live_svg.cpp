@@ -20,12 +20,20 @@ namespace forge::ui {
 
 namespace {
 
+// The presentation attributes a pose set on a picture, by element of the file and name: the next frame puts them back
+// to the file's before it sets its own.
+struct Written {
+    u64 file = 0; // File::serial: the file as it read then
+    std::vector<std::pair<i32, std::string>> attributes;
+};
+
 // What the scripts said of one element, and the clip it shows (svg_pose).
 struct Live {
     Rml::ObserverPtr<Rml::Element> element;
     std::map<std::string, SvgPart, std::less<>> parts;
     bool posed = false;
     SvgPose pose;
+    std::map<std::string, Written> written; // by the picture's path
 };
 
 // A shape's paint as the tab's picture has it (ThorVG's): 0 … 255 channels, the alpha its opacity of the paint; a
@@ -53,6 +61,7 @@ struct File {
     vector::Shape scratch;
     std::map<i32, std::vector<i32>> leaves; // a part's shapes, by its element (svg_pose)
     std::map<i32, LeafLook> looks;          // a shape's look as the file draws it
+    u64 serial = 0;                         // another each time the file is read
 };
 
 std::unordered_map<Rml::Element*, Live>& lives() {
@@ -94,10 +103,12 @@ std::string num(f64 v) {
 File& file(const std::string& path, const std::string& text) {
     File& f = files()[path];
     if (f.rest && f.text == text) return f;
+    static u64 serial = 0;
     f = {};
     f.text = text;
     f.outline = vector::scan_svg(text);
     f.rest = lunasvg::Document::loadFromData(text.data(), text.size());
+    f.serial = ++serial;
     return f;
 }
 
@@ -288,8 +299,8 @@ std::string matrix_text(const vector::MotionMatrix& m) {
     return "matrix(" + num(m.a) + " " + num(m.b) + " " + num(m.c) + " " + num(m.d) + " " + num(m.e) + " " + num(m.f) + ")";
 }
 
-// A presentation property set on an element: in its `style` when the file writes it there (CSS: `style` wins over
-// the attribute), else as the attribute. Each from the file's `style`, so a frame does not build on the last one.
+// The presentation properties a pose sets, by element. lunasvg's Element::setAttribute sets them over the file's
+// attribute and its `style` alike (and over a stylesheet's rule).
 struct Writes {
     std::map<i32, std::vector<std::pair<std::string, std::string>>> by_element;
     void set(i32 element, std::string name, std::string value) {
@@ -303,46 +314,23 @@ struct Writes {
     }
 };
 
-std::string trimmed(std::string_view s) {
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
-    return std::string(s);
+lunasvg::Element element_at(const File& f, lunasvg::Document& doc, i32 index) {
+    lunasvg::Element e = doc.getElementById(f.outline.elements[static_cast<usize>(index)].id);
+    if (!e && index == 0) e = doc.documentElement();
+    return e;
 }
 
-void write_all(const File& f, lunasvg::Document& doc, const Writes& w) {
+Written write_all(const File& f, lunasvg::Document& doc, const Writes& w) {
+    Written out{f.serial, {}};
     for (const auto& [index, list] : w.by_element) {
-        const vector::SvgElement& rest = f.outline.elements[static_cast<usize>(index)];
-        lunasvg::Element e = doc.getElementById(rest.id);
-        if (!e && index == 0) e = doc.documentElement();
+        lunasvg::Element e = element_at(f, doc, index);
         if (!e) continue;
-        const std::string* style = rest.attr("style");
-        std::string css = style ? *style : std::string();
-        bool css_changed = false;
         for (const auto& [name, value] : list) {
-            bool in_style = false;
-            if (style) {
-                // name: value; … — the declaration of this name takes the value.
-                std::string out;
-                usize at = 0;
-                while (at <= css.size()) {
-                    const usize semi = std::min(css.find(';', at), css.size());
-                    const std::string decl = css.substr(at, semi - at);
-                    const usize colon = decl.find(':');
-                    if (colon != std::string::npos && trimmed(decl.substr(0, colon)) == name) {
-                        out += name + ":" + value;
-                        in_style = true;
-                    } else {
-                        out += decl;
-                    }
-                    if (semi < css.size()) out += ';';
-                    at = semi + 1;
-                }
-                if (in_style) css = out, css_changed = true;
-            }
-            if (!in_style) e.setAttribute(name, value);
+            e.setAttribute(name, value);
+            out.attributes.push_back({index, name});
         }
-        if (css_changed) e.setAttribute("style", css);
     }
+    return out;
 }
 
 // The tab's fill of a part over a shape (forge::pixel::Rig::pose): from the shape's own colour by the share; a shape
@@ -382,7 +370,7 @@ void stroke_over(LeafLook& l, const vector::MotionValue& v) {
     }
 }
 
-void apply_pose(File& f, const std::string& path, lunasvg::Document& doc, const SvgPose& pose) {
+Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, const SvgPose& pose) {
     const vector::SvgOutline& o = f.outline;
     using vector::MotionProp;
     auto has = [](const vector::MotionPartPose& pp, MotionProp p) { return pp.has[static_cast<usize>(p)]; };
@@ -488,7 +476,7 @@ void apply_pose(File& f, const std::string& path, lunasvg::Document& doc, const 
             if (!own_track) w.set(leaf, "opacity", num(l.opacity));
         }
     }
-    write_all(f, doc, w);
+    return write_all(f, doc, w);
 }
 
 void apply(Rml::Element* element, const Rml::String& path, const Rml::String& text, lunasvg::Document& doc) {
@@ -499,8 +487,17 @@ void apply(Rml::Element* element, const Rml::String& path, const Rml::String& te
         problem("«" + file_name(path) + "»: " + f.outline.error);
         return;
     }
+    // What the last frame's pose set goes back to the file's first (the attribute or the `style` the file gives it, ""
+    // when it gives none: inherited or the initial value), so a frame does not build on the last one: a fill or a morph
+    // back at 0, a property the pose leaves.
+    if (const auto it = live->written.find(path); it != live->written.end()) {
+        if (it->second.file == f.serial)
+            for (const auto& [index, name] : it->second.attributes)
+                if (lunasvg::Element e = element_at(f, doc, index)) e.setAttribute(name, f.outline.elements[static_cast<usize>(index)].property(name));
+        live->written.erase(it);
+    }
     for (const auto& [id, part] : live->parts) apply_part(f, path, doc, id, part);
-    if (live->posed && file_name(path) == live->pose.picture) apply_pose(f, path, doc, live->pose);
+    if (live->posed && file_name(path) == live->pose.picture) live->written[path] = apply_pose(f, path, doc, live->pose);
 }
 
 } // namespace
@@ -595,6 +592,7 @@ void svg_unpose(Rml::Element* element) {
     if (!live || !live->posed) return;
     live->posed = false;
     live->pose = {};
+    live->written.clear();
     // Made again from the files: what the clip changed goes, what svg_move and the others said comes back.
     Rml::SVG::SetLive(element, false);
     Rml::SVG::SetLive(element, true);

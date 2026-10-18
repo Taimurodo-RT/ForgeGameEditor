@@ -225,6 +225,47 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
         CHECK_FALSE(forge::ui::svg_color(a, "eyes", "зелёный", &why));
         CHECK(why.find("не цвет") != std::string::npos);
     }
+    SUBCASE("a clip's pose over what was said, then taken off: what was said draws again, the clip's goes") {
+        using forge::vector::MotionProp;
+        CHECK(forge::ui::svg_move(a, "box", 10, 5));
+        forge::vector::MotionPartPose head;
+        head.id = "head";
+        for (usize p = 0; p < forge::vector::kMotionPropCount; ++p) head.values[p] = forge::vector::motion_rest(static_cast<MotionProp>(p));
+        head.has[static_cast<usize>(MotionProp::Opacity)] = true;
+        head.values[static_cast<usize>(MotionProp::Opacity)].v = 0.5;
+        forge::ui::svg_pose(a, {"face.svg", {head}});
+        frame();
+        const std::string moved = replaced(kFace, R"(<rect id="box")", R"x(<rect transform="translate(10 5)" id="box")x");
+        CHECK(differ(pixels(0), drawn(replaced(moved, R"(fill="#f0c040"/>)", R"(fill="#f0c040" opacity="0.5"/>)"))) == 0);
+        REQUIRE(forge::ui::svg_posed(a));
+        CHECK(forge::ui::svg_posed(a)->parts.size() == 1);
+        CHECK_FALSE(forge::ui::svg_posed(b));
+        forge::ui::svg_unpose(a);
+        CHECK_FALSE(forge::ui::svg_posed(a));
+        frame();
+        CHECK(differ(pixels(0), drawn(moved)) == 0);
+        CHECK(differ(pixels(64), file) == 0);
+    }
+    SUBCASE("a clip's frames do not build on each other: a morph and a colour back at 0, a part the next frame lacks, are the file's") {
+        using forge::vector::MotionProp;
+        using forge::vector::MotionValue;
+        auto part = [](const char* id, MotionProp p, MotionValue v) {
+            forge::vector::MotionPartPose pp;
+            pp.id = id;
+            for (usize i = 0; i < forge::vector::kMotionPropCount; ++i) pp.values[i] = forge::vector::motion_rest(static_cast<MotionProp>(i));
+            pp.has[static_cast<usize>(p)] = true;
+            pp.values[static_cast<usize>(p)] = v;
+            return pp;
+        };
+        forge::ui::svg_pose(a, {"face.svg", {part("mouth", MotionProp::Morph, {1, {}, "smile", 0}), part("head", MotionProp::Fill, {1, {0, 0, 255, 255}, {}, 0}),
+                                             part("box", MotionProp::Opacity, {0.3, {}, {}, 0})}});
+        frame();
+        CHECK(differ(pixels(0), file, 8) > 20);
+        forge::ui::svg_pose(a, {"face.svg", {part("mouth", MotionProp::Morph, {0, {}, "", 0}), part("head", MotionProp::Fill, {0, {0, 0, 255, 255}, {}, 0})}});
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        CHECK(differ(pixels(64), file) == 0);
+    }
     SUBCASE("reset: the element takes the file again; what the file lacks is said once") {
         CHECK(forge::ui::svg_move(a, "nose", 3, 3));
         CHECK(forge::ui::svg_morph(a, "box", "smile", 0.5));
