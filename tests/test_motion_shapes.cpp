@@ -5,6 +5,7 @@
 #include "forge/pixel/code_sites.h"
 #include "forge/pixel/draw.h"
 #include "forge/pixel/draw_edit.h"
+#include "forge/pixel/rig.h"
 #include "forge/pixel/script.h"
 
 #include <doctest/doctest.h>
@@ -136,6 +137,10 @@ TEST_CASE("Motion shapes: a new last line of a drawing's function") {
         CHECK_FALSE(insert_drawing_line(old, "return {}", "draw", kRect, out, why));
         CHECK(why == "код изменился: место рисунка устарело");
         CHECK(out.empty());
+        // Text put before it: where its end was stands something else.
+        CHECK_FALSE(insert_drawing_line(old, "-- longer\n" + many, "draw", kRect, out, why));
+        CHECK(why == "код изменился: место рисунка устарело");
+        CHECK(out.empty());
     }
 
     // What is written draws: the new shape last, with the call's numbers.
@@ -211,6 +216,25 @@ TEST_CASE("Motion shapes: the calls of the tools, their points and ids") {
     CHECK(new_shape_id(K::Rect, {"rect_1", "rect_2", "rect_4", "ellipse_3"}) == "rect_3");
     CHECK(new_shape_id(K::Ellipse, {"rect_1", "ellipse_1"}) == "ellipse_2");
     CHECK(new_shape_id(K::Path, {"poly_1"}) == "path_1");
+    // Those ids: the main picture's parts, of an SVG too, and every id of the drawings, a shape's in a group of opacity 0
+    // too (ThorVG draws nothing in such a group, so it is no part).
+    {
+        Rig svg;
+        std::string why;
+        REQUIRE(svg.load(R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect id="rect_1" width="4" height="4"/></svg>)", why));
+        CHECK(new_shape_id(K::Rect, taken_shape_ids(svg, {})) == "rect_2");
+        PoseScript s = script_of("return {\n  clips = { c = function(p) end },\n  draw = function(p, rng)\n    canvas(32, 32)\n"
+                                 "    group(\"g\", { opacity = 0 }, function() rect(\"rect_1\", { x = 0, y = 0, w = 4, h = 4 }) end)\n  end,\n"
+                                 "  drawings = {\n    open = function(p, rng)\n      canvas(32, 32)\n"
+                                 "      rect(\"rect_2\", { x = 0, y = 0, w = 4, h = 4 })\n    end,\n  },\n}\n");
+        const Drawing main = drawn(s), open = drawn(s, "open");
+        Rig rig;
+        REQUIRE(rig.load(drawing_svg(main, 32, 32), why));
+        REQUIRE(rig.parts().size() == 1);
+        CHECK(rig.parts()[0].id == "g");
+        CHECK(taken_shape_ids(rig, {&main, &open}) == std::set<std::string>{"g", "rect_1", "rect_2"});
+        CHECK(new_shape_id(K::Rect, taken_shape_ids(rig, {&main, &open})) == "rect_3");
+    }
     CHECK(std::string(new_shape_word(K::Poly)) == "poly");
     CHECK(std::string(kShapeColor) == "#5968e8");
 }
@@ -409,6 +433,23 @@ return {
     lost.site = -1;
     CHECK_FALSE(can_edit_shape(code, lost, "w", w));
     CHECK(w == "у фигуры нет вызова в коде");
+    // A field written twice: the last one, the one Lua assigns last and the shape is drawn with.
+    {
+        const std::string twice = "return {\n  clips = { c = function(p) end },\n  draw = function(p, rng)\n    canvas(8, 8)\n"
+                                  "    local red = \"#ff0000\"\n"
+                                  "    rect(\"t\", { x = 1, x = 3, y = 0, w = 1, h = 1, fill = red, fill = \"#00ff00\" })\n  end,\n}\n";
+        PoseScript t = script_of(twice);
+        const Drawing dt = drawn(t);
+        CHECK(shape(dt, "t").x == 3);
+        CHECK(shape(dt, "t").fill == "#00ff00");
+        std::string out;
+        REQUIRE(edit_shape_field(t.code(), twice, shape(dt, "t"), "x", "5", out, w));
+        CHECK(out == std::string(twice).replace(twice.find("x = 3"), 5, "x = 5"));
+        REQUIRE(edit_shape_field(t.code(), twice, shape(dt, "t"), "fill", "#0000ff", out, w));
+        CHECK(out == std::string(twice).replace(twice.find("\"#00ff00\""), 9, "\"#0000ff\""));
+        PoseScript again = script_of(out);
+        CHECK(shape(drawn(again), "t").fill == "#0000ff");
+    }
 
     // Each rewrite draws with its new value.
     {

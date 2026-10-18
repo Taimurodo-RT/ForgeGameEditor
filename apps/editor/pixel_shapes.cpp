@@ -20,7 +20,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
-#include <set>
 
 namespace forge::editor_app {
 
@@ -239,26 +238,15 @@ bool PixelEditor::write_shape(const pixel::NewShape& s) {
     if (!can_draw(target, why)) return refuse_edit(why);
     if (code_unsaved()) save_code(); // a step of its own (3б)
     if (!can_draw(target, why)) return refuse_edit(why);
-    // Its number: the least no part of any drawing has, nor a shape drawn without a part.
-    std::set<std::string> taken;
-    auto parts = [&](const pixel::Rig& r) {
-        for (const pixel::Part& p : r.parts()) taken.insert(p.id);
-    };
-    auto shapes = [&](const pixel::Drawing& d) {
-        for (const pixel::DrawShape& x : d.shapes)
-            if (!x.id.empty()) taken.insert(x.id);
-    };
-    parts(rig_);
-    for (const std::string& n : rig_.drawings())
-        if (const pixel::Rig* d = rig_.drawing(n)) parts(*d);
-    if (drawn_) shapes(drawing_);
-    for (const pixel::NamedDrawing& n : others_) shapes(n.drawing);
-    const std::string id = pixel::new_shape_id(s.kind, taken);
+    // Its number: the least no id of any drawing has (the rig's other drawings are put on it from others_).
+    std::vector<const pixel::Drawing*> drawings;
+    if (drawn_) drawings.push_back(&drawing_);
+    for (const pixel::NamedDrawing& n : others_) drawings.push_back(&n.drawing);
+    const std::string id = pixel::new_shape_id(s.kind, pixel::taken_shape_ids(rig_, drawings));
     std::string out;
     if (!pixel::shape_call(s, id, call, why) || !pixel::insert_drawing_line(script_.code(), script_text_, target, call, out, why))
         return refuse_edit(why);
-    pen_.clear();
-    tooling_ = false;
+    // The pen: the code read again drops its points.
     write_script(out, "«" + name() + "»: " + shape_word(s.kind) + " " + id);
     tool_ = Tool::Select;
     m_tool_ = tool_word(tool_);

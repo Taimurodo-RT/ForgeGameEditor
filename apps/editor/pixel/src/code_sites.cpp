@@ -167,18 +167,12 @@ DrawingFunction drawing_function_of(const Builder& b, std::string_view name, con
     f.line = item_line(item);
     auto* fn = item.value->as<Luau::AstExprFunction>();
     if (!fn) return f;
-    const u32 past = b.lines.at(fn->location.end);
-    if (past < 3 || b.src.substr(past - 3, 3) != "end") return f;
+    // The code parsed: its body ends with end.
     f.function = true;
-    f.end = past - 3;
-    f.end_line = fn->location.end.line + 1;
-    Luau::Position after = fn->argLocation ? fn->argLocation->end : fn->location.begin;
-    if (fn->returnAnnotation) after = fn->returnAnnotation->location.end;
-    f.header_line = after.line + 1;
+    f.end = b.lines.at(fn->location.end) - 3;
     if (fn->body->body.size > 0) {
         Luau::AstStat* last = fn->body->body.data[fn->body->body.size - 1];
         f.last = static_cast<i32>(b.lines.at(last->location.begin));
-        f.last_line = last->location.begin.line + 1;
         f.last_return = last->is<Luau::AstStatReturn>();
     }
     return f;
@@ -442,19 +436,25 @@ bool rewrite_arg(std::string_view source, const CallSite& site, usize index, std
     return true;
 }
 
+const CodeField* field_of(const CodeArg& table, std::string_view name) {
+    if (table.kind != ArgKind::Table) return nullptr;
+    for (auto f = table.fields.rbegin(); f != table.fields.rend(); ++f)
+        if (f->name == name) return &*f;
+    return nullptr;
+}
+
 bool rewrite_field(std::string_view source, const CodeArg& table, std::string_view name, std::string_view text,
                    std::string& out, std::string& why) {
     out.clear();
     why.clear();
     if (table.kind != ArgKind::Table) return why = "там не таблица", false;
     if (table.span.end > source.size()) return why = "код изменился: место вызова устарело", false;
-    for (const CodeField& f : table.fields)
-        if (f.name == name) {
-            std::vector<Edit> edits;
-            edits.push_back({f.value.span.begin, f.value.span.end, std::string(text)});
-            out = apply_edits(source, edits);
-            return true;
-        }
+    if (const CodeField* f = field_of(table, name)) {
+        std::vector<Edit> edits;
+        edits.push_back({f->value.span.begin, f->value.span.end, std::string(text)});
+        out = apply_edits(source, edits);
+        return true;
+    }
     const std::string field = (is_name(name) ? std::string(name) : "[" + quote_string(name) + "]") + " = " +
                               std::string(text);
     std::vector<Edit> edits;
@@ -479,9 +479,7 @@ bool rewrite_field(std::string_view source, const CodeArg& table, std::string_vi
 
 bool rewrite_field_number(std::string_view source, const CodeArg& table, std::string_view name, f64 old_value,
                           f64 value, std::string& out, std::string& why) {
-    if (table.kind == ArgKind::Table)
-        for (const CodeField& f : table.fields)
-            if (f.name == name) return rewrite_number(source, f.value, old_value, value, out, why);
+    if (const CodeField* f = field_of(table, name)) return rewrite_number(source, f->value, old_value, value, out, why);
     if (!std::isfinite(value)) {
         out.clear();
         return why = "новое значение — не число", false;
@@ -537,12 +535,12 @@ bool insert_drawing_line(const CodeSites& code, std::string_view source, std::st
     auto ending = [&](u32 at) { return at >= 2 && source[at - 2] == '\r' ? "\r\n" : "\n"; };
     std::vector<Edit> edits;
     const u32 before = f->last_return ? static_cast<u32>(f->last) : f->end;
-    if (starts_line(before) && (f->last_return || f->end_line > f->header_line)) {
+    // Alone on its line (an end on the function's line has its header before it): the call on a line of its own.
+    if (starts_line(before)) {
         const u32 at = line_start(before);
         const std::string indent = f->last >= 0 ? indent_of(source, static_cast<u32>(f->last)) : indent_of(source, f->end) + "  ";
-        // Ended as the line above it is; the first line of the file has none above, so as the line it stands on.
-        const char* eol = at > 0 ? ending(at) : (source.find("\r\n") != std::string_view::npos ? "\r\n" : "\n");
-        edits.push_back({at, at, indent + std::string(line) + eol});
+        // Ended as the line above it is (the function's header is above it).
+        edits.push_back({at, at, indent + std::string(line) + ending(at)});
     } else {
         edits.push_back({before, before, std::string(line) + " "});
     }

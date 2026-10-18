@@ -63,6 +63,9 @@ struct CodeField {
     u32 key = 0; // where the item starts
     CodeArg value;
 };
+// A table's field of that name, as the table has it: the last written, since Lua assigns the fields in order
+// ({ y = 1, y = 2 } has y 2). Null when it has none or is not a table.
+const CodeField* field_of(const CodeArg& table, std::string_view name);
 
 struct CallSite {
     u32 line = 0;          // 1-based: the line of a method's name, else of the arguments' "("
@@ -90,11 +93,8 @@ struct DrawingFunction {
     std::string name;         // "draw", else the drawing's name
     u32 line = 0;             // 1-based, of its key
     bool function = false;    // written here as function … end; false for draw = shared.draw and the like
-    u32 header_line = 0;      // of ")" of its parameters
     u32 end = 0;              // where its "end" starts
-    u32 end_line = 0;
     i32 last = -1;            // where its last statement starts; -1 when its body is empty
-    u32 last_line = 0;
     bool last_return = false; // that statement is return …
 };
 

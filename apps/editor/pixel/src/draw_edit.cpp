@@ -1,4 +1,5 @@
 #include "forge/pixel/draw_edit.h"
+#include "forge/pixel/rig.h"
 
 #include "forge/vector/svg_shape.h"
 
@@ -75,13 +76,6 @@ bool fields_of(const CodeSites& code, const DrawShape& s, Fields& out, std::stri
     return true;
 }
 
-const CodeField* field_in(const CodeArg* table, std::string_view name) {
-    if (!table) return nullptr;
-    for (const CodeField& f : table->fields)
-        if (f.name == name) return &f;
-    return nullptr;
-}
-
 } // namespace
 
 f64 tool_round(f64 v, f64 step) {
@@ -109,6 +103,15 @@ std::string new_shape_id(NewShape::Kind k, const std::set<std::string>& taken) {
         std::string id = std::string(new_shape_word(k)) + "_" + std::to_string(n);
         if (!taken.count(id)) return id;
     }
+}
+
+std::set<std::string> taken_shape_ids(const Rig& main, const std::vector<const Drawing*>& drawings) {
+    std::set<std::string> taken;
+    for (const Part& p : main.parts()) taken.insert(p.id);
+    for (const Drawing* d : drawings)
+        for (const DrawShape& s : d->shapes)
+            if (!s.id.empty()) taken.insert(s.id);
+    return taken;
 }
 
 void add_pen_point(std::vector<vector::Point>& points, vector::Point p) {
@@ -220,11 +223,10 @@ bool can_edit_shape(const CodeSites& code, const DrawShape& s, std::string_view 
     if (std::find(fields.begin(), fields.end(), field) == fields.end()) return why = "у фигуры нет поля «" + std::string(field) + "»", false;
     Fields f;
     if (!fields_of(code, s, f, why)) return false;
-    const CodeField* has = field_in(f.table, field);
+    const CodeField* has = f.table ? field_of(*f.table, field) : nullptr;
+    // A colour of an expression stays the code's. A number field is a number or an expression of one: draw refuses others.
     if (shape_field_is_color(field) && has && has->value.kind != ArgKind::String)
         return why = "цвет «" + std::string(field) + "» задан выражением: правится в коде", false;
-    if (!shape_field_is_color(field) && has && has->value.kind != ArgKind::Number && has->value.kind != ArgKind::Other)
-        return why = "«" + std::string(field) + "» в коде не число: правится в коде", false;
     return true;
 }
 

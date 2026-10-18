@@ -37,6 +37,10 @@ struct NewShape {
 const char* new_shape_word(NewShape::Kind k);
 // The id of a new shape: its word and the least number from 1 that no part has (`taken`, the ids of all drawings).
 std::string new_shape_id(NewShape::Kind k, const std::set<std::string>& taken);
+// Those ids: the parts of the main picture (of an SVG too) and every id the code's drawings give, the main one's and
+// the others'. A shape in a group hidden or of opacity 0 is no part (ThorVG draws nothing in such a group), but its id
+// is in its drawing all the same.
+std::set<std::string> taken_shape_ids(const Rig& main, const std::vector<const Drawing*>& drawings);
 // The pen's points: a click where the last point is adds none.
 void add_pen_point(std::vector<vector::Point>& points, vector::Point p);
 // The call that draws it, as the code writes it (numbers by format_number): rect and ellipse from two corners in any
