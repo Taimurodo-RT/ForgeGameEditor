@@ -3354,6 +3354,8 @@ TEST_CASE("Screen clips file, part 5ж: the parameters, the pieces' changes and 
           "clips.c.tracks[0].pieces[0].by: у перехода by_from и by_to");
     CHECK(read_error(file(params, R"({"part": "a", "prop": "x", "pieces": [{"at": 0, "end": 0.025, "frames": [1, 2, 3, 4], "by": {"height": [1, 2, 3]}}, {"at": 0.025, "hold": 4}]})")) ==
           "clips.c.tracks[0].pieces[0].by.height: нужен список изменений, по одному на кадр (их 4), каждое число");
+    CHECK(read_error(file(params, R"({"part": "a", "prop": "x", "pieces": [{"at": 0, "end": 0.025, "frames": [1, 2, 3, 4], "by": {"height": [1, 2, 3, 4, 5]}}, {"at": 0.025, "hold": 4}]})")) ==
+          "clips.c.tracks[0].pieces[0].by.height: нужен список изменений, по одному на кадр (их 4), каждое число");
     CHECK(read_error(file(params, R"({"part": "a", "prop": "x", "pieces": [{"at": 0, "end": 0.025, "frames": [1, 2, 3, 4], "by": {"height": [1, 2, "3", 4]}}, {"at": 0.025, "hold": 4}]})")) ==
           "clips.c.tracks[0].pieces[0].by.height[2]: нужно число");
     CHECK(read_error(file(params, R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "hold": -6, "by": {"count": 1}}]})", fixed)) ==
@@ -3632,11 +3634,103 @@ TEST_CASE("Screen clips, part 5ж: what a parameter does that a game cannot make
     REQUIRE(grow);
     CHECK(grow->fixed == std::map<std::string, std::string>{{"brow", "рисунок «angry»"}, {"size", "картинка"}});
     CHECK(drawn.gift.notes.back() == "Не меняются: brow в «grow» (рисунок «angry»), size в «grow» (картинка)");
+    // A picture the code cannot draw at a value next to the tab's: no clip changes with it, and the error is said.
+    Hedgehog fails(param_code("size = 14", R"(    grow = function(p, rng) part("nose").x(p.size, 0.2) end,)",
+                              R"(    canvas(64, 64)
+    if p.size > 14 then error("слишком большая") end
+    group("face", { y = 2 }, function()
+      circle("head", { x = 32, y = 28, r = 12, fill = "#c09060" })
+      path("mouth", { d = "M 26 34 Q 32 38 38 34", fill = "none", stroke = "#402010", stroke_width = 1.5 })
+    end)
+    rect("nose", { x = 30, y = 26, w = 4, h = 3, fill = "#a06040" }))"));
+    const MotionClip* big = fails.gift.motion.clip("grow");
+    REQUIRE(big);
+    REQUIRE(big->fixed.count("size"));
+    CHECK(big->fixed.size() == 1);
+    INFO(big->fixed.at("size"));
+    CHECK(big->fixed.at("size").rfind("картинка не рисуется при size = 15: ", 0) == 0);
+    CHECK(big->fixed.at("size").find("слишком большая") != std::string::npos);
     // Without parameters: version 3 at most, no line.
     Hedgehog plain(hedgehog_code(R"(    a = function(p, rng) part("nose").x(3, 0.2) end,)"));
     CHECK(plain.gift.motion.params.empty());
     CHECK(vector::motion_file_version(plain.gift.motion) == 3);
     CHECK(std::none_of(plain.gift.notes.begin(), plain.gift.notes.end(), [](const std::string& n) { return n.find("меняются") != std::string::npos; }));
+}
+
+// Part 5ж: the other ways a clip recorded at another value is another clip, a parameter a clip; and a number a parameter
+// moves only by rounding.
+const char* kOtherClips = R"(    timed = function(p, rng)
+      part("nose").x(3, p.dur / 10)
+      wait(1 - p.dur / 10)
+    end,
+    kinded = function(p, rng)
+      if p.kind > 0.5 then
+        part("nose").x(3)
+        wait(0.2)
+      else
+        part("nose").x(3, 0.2)
+      end
+    end,
+    eased = function(p, rng) part("nose").x(3, 0.2, p.soft > 0.5 and "in_quad" or "linear") end,
+    marked = function(p, rng)
+      part("nose").x(3, 0.2)
+      emit(p.loud > 0.5 and "bang" or "tap")
+    end,
+    copied = function(p, rng)
+      copies(p.which > 0.5 and "nose" or "head", 1, function() end)
+      part("nose").x(3, 0.2)
+    end,
+    ordered = function(p, rng)
+      if p.up > 0.5 then part("nose"):above("face") else part("nose"):below("face") end
+      part("nose").x(3, 0.2)
+    end,
+    fuzzy = function(p, rng)
+      if p.fuzz > 0.5 then all(part("nose").x(3, 0.2), part("nose").blur(1, 0.2)) else part("nose").x(3, 0.2) end
+    end,
+    morphed = function(p, rng) part("mouth"):morph(p.shape > 0.5 and "mouth_o" or "head", 0.2) end,
+    linked = function(p, rng)
+      part("nose"):attach(p.holder > 0.5 and "face" or "head")
+      part("nose").x(3, 0.2)
+    end,
+    swapped = function(p, rng) swap(p.mood > 0.5 and "angry" or "sleepy", 0.2, "linear") end,
+    shown = function(p, rng)
+      local on = p.on > 0.5
+      part("nose").visible(on)
+      part("nose").visible(not on, 0.1)
+      part("nose").visible(on, 0.1)
+    end,
+    tweened = function(p, rng)
+      tween(0.2, function(k) part("head").fill(k > 0.5 and (p.warm > 0.5 and "#ff0000" or "#00ff00") or "#0000ff") end)
+    end,
+    noisy = function(p, rng) part("nose").x(3 + p.near * 0.1 + p.near * 0.2 - p.near * 0.3, 0.2) end,)";
+
+TEST_CASE("Screen clips, part 5ж: the other ways a parameter makes another clip, each its word; a number moved by rounding only") {
+    Hedgehog h(param_code("dur = 2, kind = 0.5, soft = 0.5, loud = 0.5, which = 0.5, up = 0.5, fuzz = 0.5, shape = 0.5, holder = 0.5, "
+                          "mood = 0.5, on = 0.5, warm = 0.5, near = 6",
+                          kOtherClips));
+    const MotionFile& f = h.gift.motion;
+    const std::pair<const char*, std::pair<const char*, const char*>> want[] = {
+        {"timed", {"dur", "время переходов"}},    {"kinded", {"kind", "число переходов"}},  {"eased", {"soft", "сглаживание"}},
+        {"marked", {"loud", "метки"}},             {"copied", {"which", "копии"}},           {"ordered", {"up", "порядок частей"}},
+        {"fuzzy", {"fuzz", "что не рисуется"}},    {"morphed", {"shape", "фигура морфинга"}}, {"linked", {"holder", "крепление"}},
+        {"swapped", {"mood", "рисунок"}},          {"shown", {"on", "видимость"}},           {"tweened", {"warm", "цвет"}},
+    };
+    for (const auto& [clip, fixed] : want) {
+        INFO(clip);
+        const MotionClip* c = f.clip(clip);
+        REQUIRE(c);
+        CHECK(c->fixed == std::map<std::string, std::string>{{fixed.first, fixed.second}});
+    }
+    // A number the parameter moves by rounding only (3 + 0.1·near + 0.2·near − 0.3·near): no change of it, and no other.
+    const MotionClip* noisy = f.clip("noisy");
+    REQUIRE(noisy);
+    CHECK(noisy->fixed.empty());
+    for (const MotionClip& c : f.clips)
+        for (const MotionTrack& t : c.tracks)
+            for (const MotionPiece& pc : t.pieces) {
+                INFO(c.name, " ", t.part);
+                CHECK(pc.by.empty());
+            }
 }
 
 TEST_CASE("Screen clips, part 5ж: the game plays a clip at the parameters given, the same clip with others goes on, what it cannot") {
@@ -3737,6 +3831,7 @@ TEST_CASE("Screen clips, part 5ж: the game plays a clip at the parameters given
         step(12);
         c = now();
         CHECK(c.clip == "jump");
+        CHECK(c.params == std::map<std::string, f64>{{"count", 3}, {"height", 8}});
         CHECK(c.time == doctest::Approx(11.0 / 60));
         is(at8, c.time, "at height 8");
         // The same clip with another height goes on from where it is, with its numbers.
@@ -3746,10 +3841,12 @@ TEST_CASE("Screen clips, part 5ж: the game plays a clip at the parameters given
         is(at_3, c.time, "at height −3, from where it was");
         step(6);
         c = now();
+        CHECK(c.params == std::map<std::string, f64>{{"height", -3}});
         CHECK(c.time == doctest::Approx(17.0 / 60));
         is(at_3, c.time, "at height −3");
         // Without parameters: the file's numbers, going on.
         REQUIRE(play("jump", {}));
+        CHECK(now().params.empty());
         is(*motion.clip("jump"), c.time, "at the file's height");
         CHECK(screens.svg_problems().empty());
 
