@@ -26948,9 +26948,10 @@ return {
                       f.drawings[0].picture == "Скакун.air.svg" && f.part("body", "air") && f.part("dust[2]", "air") && f.part("cap", "air") == nullptr,
                   "the file of clips, version 3: the drawing «air» beside it, its parts that move (not its cap) " + why);
             const vector::MotionClip* j = f.clip("jump");
-            const vector::MotionTrack* d = nullptr;
-            for (const vector::MotionTrack& t : j ? j->tracks : std::vector<vector::MotionTrack>{})
-                if (t.prop == vector::MotionProp::Drawing) d = &t;
+            const vector::MotionTrack* d = nullptr; // into the clip's own tracks, not a copy gone after the loop
+            if (j)
+                for (const vector::MotionTrack& t : j->tracks)
+                    if (t.prop == vector::MotionProp::Drawing) d = &t;
             check(d && d->pieces.size() == 2 && d->pieces[1].kind == vector::MotionPiece::Kind::Ease && std::fabs(d->pieces[1].at - 0.2) < 1e-9 &&
                       d->pieces[1].to.target == "air",
                   "«jump»: the main drawing, then the swap to «air» from 0,2 s");
