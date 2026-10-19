@@ -283,7 +283,9 @@ ui::SvgPose screen_pose(const MotionFile& f, const MotionClip& c, f64 t) {
 
 // The screen's picture of a clip (lunasvg with the attributes and the stage the game gives it) against the tab's
 // (ThorVG) at these moments: inside the shapes (a pixel and its neighbours fully covered, one colour in the tab) the
-// colours within 2; what is covered at all within 1%.
+// colours within 2; where a gradient goes (fully covered, each neighbour within 4 of it in the tab) within 6; where
+// nothing is (the pixel and its neighbours bare in the tab) its cover within 24 (lunasvg draws a sliver of a dash that
+// ThorVG leaves out); what is covered at all within 1%.
 void same_as_tab(const ScreenGift& gift, PoseScript& s, Rig& rig, const PixelDoc& doc, const char* name, std::vector<f64> times,
                  usize min_inside = 500) {
     constexpr u32 kSide = 128;
@@ -302,32 +304,42 @@ void same_as_tab(const ScreenGift& gift, PoseScript& s, Rig& rig, const PixelDoc
         REQUIRE(drew);
         REQUIRE(screen.size() == tab.rgba8.size());
         f64 cover_tab = 0, cover_screen = 0;
-        usize inside = 0, off = 0;
+        usize inside = 0, graded = 0, bare = 0, off = 0;
         std::string where;
         auto at = [&](const std::vector<u8>& px, u32 x, u32 y, u32 ch) { return px[(static_cast<usize>(y) * kSide + x) * 4 + ch]; };
+        auto differs = [&](u32 x, u32 y, int slack, u32 channels) {
+            for (u32 ch = 0; ch < 4; ++ch)
+                if ((channels >> ch & 1) && std::abs(int(at(tab.rgba8, x, y, ch)) - int(at(screen, x, y, ch))) > slack) {
+                    if (++off <= 6)
+                        where += " (" + std::to_string(x) + "," + std::to_string(y) + ": " + std::to_string(at(screen, x, y, 0)) + "," +
+                                 std::to_string(at(screen, x, y, 1)) + "," + std::to_string(at(screen, x, y, 2)) + "," +
+                                 std::to_string(at(screen, x, y, 3)) + " / " + std::to_string(at(tab.rgba8, x, y, 0)) + "," +
+                                 std::to_string(at(tab.rgba8, x, y, 1)) + "," + std::to_string(at(tab.rgba8, x, y, 2)) + "," +
+                                 std::to_string(at(tab.rgba8, x, y, 3)) + ")";
+                    return;
+                }
+        };
         for (u32 y = 0; y < kSide; ++y)
             for (u32 x = 0; x < kSide; ++x) {
                 cover_tab += at(tab.rgba8, x, y, 3);
                 cover_screen += at(screen, x, y, 3);
                 if (x == 0 || y == 0 || x + 1 == kSide || y + 1 == kSide) continue;
-                bool solid = true;
-                for (int dy = -1; dy <= 1 && solid; ++dy)
-                    for (int dx = -1; dx <= 1 && solid; ++dx)
-                        for (u32 ch = 0; ch < 4 && solid; ++ch)
-                            solid = at(tab.rgba8, x + dx, y + dy, ch) == at(tab.rgba8, x, y, ch) && at(tab.rgba8, x, y, 3) == 255;
-                if (!solid) continue;
-                ++inside;
-                for (u32 ch = 0; ch < 4; ++ch)
-                    if (std::abs(int(at(tab.rgba8, x, y, ch)) - int(at(screen, x, y, ch))) > 2) {
-                        if (++off <= 6)
-                            where += " (" + std::to_string(x) + "," + std::to_string(y) + ": " + std::to_string(at(screen, x, y, 0)) + "," +
-                                     std::to_string(at(screen, x, y, 1)) + "," + std::to_string(at(screen, x, y, 2)) + "," +
-                                     std::to_string(at(screen, x, y, 3)) + " / " + std::to_string(at(tab.rgba8, x, y, 0)) + "," +
-                                     std::to_string(at(tab.rgba8, x, y, 1)) + "," + std::to_string(at(tab.rgba8, x, y, 2)) + ")";
-                        break;
+                bool solid = at(tab.rgba8, x, y, 3) == 255, smooth = solid, empty = at(tab.rgba8, x, y, 3) == 0;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        empty = empty && at(tab.rgba8, x + dx, y + dy, 3) == 0;
+                        for (u32 ch = 0; ch < 4; ++ch) {
+                            const int d = std::abs(int(at(tab.rgba8, x + dx, y + dy, ch)) - int(at(tab.rgba8, x, y, ch)));
+                            solid = solid && d == 0;
+                            smooth = smooth && (ch == 3 ? d == 0 : d <= 4);
+                        }
                     }
+                if (solid) ++inside, differs(x, y, 2, 15);
+                else if (smooth) ++graded, differs(x, y, 6, 15);
+                else if (empty) ++bare, differs(x, y, 24, 8);
             }
-        INFO(name, " at ", t, ": ", off, " of ", inside, " inside differ", where, "; cover ", cover_tab, " / ", cover_screen);
+        INFO(name, " at ", t, ": ", off, " of ", inside, " inside, ", graded, " in gradients and ", bare, " bare differ", where, "; cover ",
+             cover_tab, " / ", cover_screen);
         CHECK(inside > min_inside);
         CHECK(off == 0);
         CHECK(std::abs(cover_tab - cover_screen) <= 0.01 * cover_tab);
@@ -1067,7 +1079,7 @@ const char* kStage = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
     <g id="arm" transform="rotate(10 40 28)"><rect id="hand" x="38" y="25" width="6" height="7" fill="#c03030"/></g>
   </g>
   <circle id="ball" cx="10" cy="48" r="5" fill="#30a060" stroke="#104020" stroke-width="1.5"/>
-  <path id="line" d="M 40 52 C 46 40 54 62 60 48" fill="none" stroke="#202020" stroke-width="2.5" stroke-dasharray="4 2"/>
+  <path id="line" d="M 40 52 C 46 40 54 62 60 48" fill="none" stroke="#202020" stroke-width="2.5" stroke-dasharray="4 2" stroke-dashoffset="1.5"/>
   <path id="mouth" d="M 22 44 L 34 44 L 34 48 L 22 48 Z" fill="#402010"/>
   <path id="mouth_o" d="M 23 42 L 33 42 L 31 52 L 25 52 Z" fill="#802020" display="none"/>
   <rect id="box" x="44" y="6" width="14" height="12" fill="#e0e000"/>
@@ -1126,6 +1138,96 @@ const char* kStageCode = R"(return {
 })";
 
 const std::vector<const char*> kStageClips = {"dash", "draw", "draw_morph", "tint", "flash", "mask_in", "mask_out", "mask_shown", "link", "copies", "order"};
+
+// More of what the screen draws as the tab: two gradients (one taking its stops from the other) on white, one seen
+// through; a solid shape on white; a turned group with a gradient plate and an arm holding a hand; a box under a ring
+// of a stroke alone; a hidden shape with a fill and a stroke; a slab, a ball and a triangle with a hidden twin.
+const char* kMore = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2040c0"/>
+      <stop offset="1" stop-color="#c0e0ff"/>
+    </linearGradient>
+    <linearGradient id="sky2" href="#sky" x1="0" y1="0" x2="0" y2="1"/>
+  </defs>
+  <rect x="0" y="0" width="64" height="16" fill="#ffffff"/>
+  <rect id="c" x="2" y="2" width="28" height="12" fill="url(#sky)"/>
+  <rect id="b" x="34" y="2" width="28" height="12" fill="url(#sky2)" fill-opacity="0.6"/>
+  <rect x="0" y="16" width="18" height="18" fill="#ffffff"/>
+  <rect id="d" x="2" y="18" width="14" height="14" fill="#30a060"/>
+  <g id="frame" transform="translate(22 18) rotate(15 8 8)">
+    <rect id="plate" x="0" y="0" width="16" height="10" fill="url(#sky)"/>
+    <g id="arm" transform="rotate(-20 4 12)"><rect id="hand" x="1" y="11" width="6" height="8" fill="#c03030"/></g>
+  </g>
+  <rect id="box" x="44" y="20" width="16" height="16" fill="#e0e000"/>
+  <circle id="ring" cx="52" cy="28" r="6" fill="none" stroke="#000000" stroke-width="3"/>
+  <circle id="hid" cx="12" cy="50" r="5" fill="#ff0000" stroke="#0000ff" stroke-width="4" display="none"/>
+  <rect id="slab" x="2" y="40" width="22" height="22" fill="#8040c0"/>
+  <circle id="ball" cx="34" cy="50" r="4" fill="#30a060"/>
+  <path id="tri" d="M 40 62 L 50 40 L 62 62 Z" fill="#c08030" stroke="#202020" stroke-width="2"/>
+  <path id="tri_same" d="M 40 62 L 50 40 L 62 62 Z" fill="#c08030" stroke="#202020" stroke-width="2" display="none"/>
+</svg>)svg";
+
+const char* kMoreCode = R"(return {
+  clips = {
+    tones = function(p) all(part("c").tint("#ff8040", 0.3), part("b").tint("#40ff80", 0.3), part("d").tint("#ff000080", 0.3)) end,
+    group_fill = function(p)
+      copies("hand", 1, function(i, c) c.x(-14, 0.1) end)
+      part("frame").fill("#2020ff", 0.3)
+    end,
+    group_tint = function(p)
+      copies("plate", 1, function(i, c) c.y(14, 0.1) end)
+      part("frame").tint("#ff4040", 0.3)
+    end,
+    link = function(p)
+      part("hand"):attach("ball")
+      all(part("ball").x(-8, 0.4), part("frame").rot(20, 0.4))
+    end,
+    mask_ring = function(p)
+      part("box"):mask("ring")
+      part("box").x(1, 0.2)
+    end,
+    mask_drawn = function(p)
+      part("box"):mask("ring")
+      part("ring").draw_to(0.5, 0.3)
+    end,
+    mask_hid = function(p)
+      part("slab"):mask("hid")
+      part("hid").x(4, 0.3)
+    end,
+    morph_lines = function(p) all(part("tri"):morph("tri_same", 0.4), part("tri").draw_to(0.6, 0.4)) end,
+  },
+})";
+
+const std::vector<const char*> kMoreClips = {"tones", "group_fill", "group_tint", "link", "mask_ring", "mask_drawn", "mask_hid", "morph_lines"};
+
+// A part's pose made by hand: these values, the rest at rest.
+vector::MotionPartPose posed_part(const char* id, std::initializer_list<std::pair<MotionProp, MotionValue>> values) {
+    vector::MotionPartPose pp;
+    pp.id = id;
+    for (usize i = 0; i < vector::kMotionPropCount; ++i) pp.values[i] = vector::motion_rest(static_cast<MotionProp>(i));
+    for (const auto& [p, v] : values) {
+        pp.has[static_cast<usize>(p)] = true;
+        pp.values[static_cast<usize>(p)] = v;
+    }
+    return pp;
+}
+
+std::vector<u8> screen_of(const char* svg, const ui::SvgPose& pose) {
+    std::vector<u8> px;
+    std::string why;
+    const bool drew = ui::render_posed_svg(svg, pose, 128, 128, px, why);
+    INFO(why);
+    REQUIRE(drew);
+    return px;
+}
+
+usize pixels_off(const std::vector<u8>& a, const std::vector<u8>& b) {
+    REQUIRE(a.size() == b.size());
+    usize n = 0;
+    for (usize i = 0; i < a.size(); i += 4) n += a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2] || a[i + 3] != b[i + 3];
+    return n;
+}
 
 } // namespace
 
@@ -1280,6 +1382,8 @@ TEST_CASE("Screen clips, part 5г: a shape's drawn share is ThorVG's trimpath") 
     REQUIRE(vector::shape_path(vector::scan_svg(picture(R"(<path id="s" d="M 0 0 L 10 0"/>)")), 1, line, why));
     CHECK(vector::trim(line, 0.5, 0.5, true).contours.empty());
     CHECK(vector::trim(line, 0.7, 0.2, true).contours.empty());
+    CHECK(vector::trim(line, -0.1, 0.5, true).contours.empty()); // the share is the caller's to hold within 0 … 1
+    CHECK(vector::trim(line, 0.5, 1.2, true).contours.empty());
     const vector::Path half = vector::trim(line, 0, 0.5, true);
     REQUIRE(half.contours.size() == 1);
     CHECK(half.contours[0].start.x == doctest::Approx(0));
@@ -1392,6 +1496,46 @@ TEST_CASE("Screen clips file, part 5г: the new tracks, copies and order there a
     old.clips[0].order.clear();
     CHECK(vector::write_motion_file(old).find("\"version\": 1") != std::string::npos);
     CHECK(vector::write_motion_file(old).find("copies") == std::string::npos);
+    // Any of the new makes it 2: a new track alone, copies alone, an order alone.
+    MotionFile only = old;
+    only.clips[0].tracks = {hold("a", MotionProp::DrawTo, {0.75, {}, {}, 0, {}})};
+    CHECK(vector::motion_file_version(only) == 2);
+    only.clips[0].tracks = {hold("a", MotionProp::X, {4, {}, {}, 0, {}})};
+    CHECK(vector::motion_file_version(only) == 1);
+    only.clips[0].copies = {{"a[1]", "a", 1, 0.25}};
+    CHECK(vector::motion_file_version(only) == 2);
+    only.clips[0].copies.clear();
+    only.clips[0].order = {{0, "a", vector::MotionOrder::Top, ""}};
+    CHECK(vector::motion_file_version(only) == 2);
+
+    // A mask is one or the other between two holds, never a share of each; a link's place is part of its value.
+    const MotionValue out_mask{2, {}, "lid", 0, {}};
+    CHECK(vector::motion_mix(MotionProp::Mask, vector::motion_rest(MotionProp::Mask), out_mask, 0.5) == vector::motion_rest(MotionProp::Mask));
+    CHECK(vector::motion_mix(MotionProp::Mask, vector::motion_rest(MotionProp::Mask), out_mask, 1) == out_mask);
+    CHECK_FALSE(vector::motion_same(MotionProp::Link, {0, {}, "", 0, {1, 0, 0, 1, -10, 0}}, vector::motion_rest(MotionProp::Link)));
+    CHECK(vector::motion_same(MotionProp::Link, {0, {}, "", 0, {1, 0, 0, 1, 1e-12, 0}}, vector::motion_rest(MotionProp::Link)));
+
+    // A copy not born yet is not posed (it has no element then); born, it is.
+    MotionClip born = c;
+    born.copies[0].born = 0.5;
+    auto posed_ids = [&](f64 t) {
+        std::vector<std::string> ids;
+        for (const vector::MotionPartPose& pp : vector::motion_pose(f, born, t)) ids.push_back(pp.id);
+        return ids;
+    };
+    CHECK(posed_ids(0.4) == std::vector<std::string>{"a"});
+    CHECK(posed_ids(0.5) == std::vector<std::string>{"a", "a[1]"});
+    // On nanoseconds, as a track's piece: a game's moment a hair before the birth and the step is at them.
+    born.copies[0].born = 0.2;
+    f64 played = 0;
+    for (int i = 0; i < 12; ++i) played += 1.0 / 60;
+    REQUIRE(played < 0.2);
+    CHECK(vector::motion_copy_drawn(born.copies[0], played));
+    CHECK_FALSE(vector::motion_copy_drawn(born.copies[0], 0.2 - 1e-6));
+    CHECK(posed_ids(played) == std::vector<std::string>{"a", "a[1]"});
+    born.order = {{0.2, "a", vector::MotionOrder::Top, ""}};
+    CHECK(vector::motion_order_at(born, played).size() == 1);
+    CHECK(vector::motion_order_at(born, 0.2 - 1e-6).empty());
 
     // What it cannot read names the field.
     const std::string part_a1 = R"("parts": {"a": {"pivot": [0, 0], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}, "a[1]": {"pivot": [0, 0], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}},)";
@@ -1402,6 +1546,14 @@ TEST_CASE("Screen clips file, part 5г: the new tracks, copies and order there a
     CHECK(read_error(with(R"(, "copies": [{"id": "a[2]", "source": "a", "number": 1, "born": 0}])")).find("нет в parts") != std::string::npos);
     CHECK(read_error(with(R"(, "copies": [{"id": "a[1]", "source": "a", "number": 2, "born": 0}])")).find("clips.c.copies[0]: number") != std::string::npos);
     CHECK(read_error(with(R"(, "copies": [{"id": "a[1]", "source": "a", "number": 1, "born": 3}])")).find("clips.c.copies[0]: born") != std::string::npos);
+    CHECK(read_error(with(R"(, "copies": [{"id": "a[1]", "source": "a", "number": 1, "born": 0.5}, {"id": "a[2]", "source": "a", "number": 2, "born": 0.2}])"))
+              .find("clips.c.copies[1]: копии не по времени рождения") != std::string::npos);
+    // A copy of a copy, either way round.
+    const std::string part_b = R"("parts": {"a": {"pivot": [0, 0], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}, "a[1]": {"pivot": [0, 0], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}, "b": {"pivot": [0, 0], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}},)";
+    CHECK(read_error(one_track(y, R"(, "copies": [{"id": "a[1]", "source": "a", "number": 1, "born": 0}, {"id": "b", "source": "a[1]", "number": 1, "born": 0}])", part_b))
+              .find("clips.c.copies[1]: копия копии") != std::string::npos);
+    CHECK(read_error(one_track(y, R"(, "copies": [{"id": "a[1]", "source": "a", "number": 1, "born": 0}, {"id": "a", "source": "b", "number": 1, "born": 0}])", part_b))
+              .find("clips.c.copies[1]: копия копии") != std::string::npos);
     CHECK(read_error(with(R"(, "order": [{"at": 0, "part": "a", "kind": "up"}])")).find("clips.c.order[0]: kind") != std::string::npos);
     CHECK(read_error(with(R"(, "order": [{"at": 0, "part": "a", "kind": "above"}])")).find("clips.c.order[0]: other") != std::string::npos);
     CHECK(read_error(with(R"(, "order": [{"at": 0, "part": "a", "kind": "top", "other": "b"}])")).find("clips.c.order[0]: other") != std::string::npos);
@@ -1447,4 +1599,92 @@ TEST_CASE("Screen clips, part 5г: the part a clip names that the picture has no
     c.order = {{0, "sky", vector::MotionOrder::Top, ""}}; // a gradient draws nothing where it is: no part
     REQUIRE(vector::motion_clip_missing(c, svg, part, role));
     CHECK(part == "sky");
+}
+
+TEST_CASE("Screen clips, part 5г: tones of gradients and see-through colours, a group's fill and tone with copies in it, a link out of turned groups, masks of a stroke, a drawn share and a hidden shape, a morph's share") {
+    Rig rig = loaded(kMore);
+    PoseScript s = script_of(kMoreCode);
+    const PixelDoc doc = doc64();
+    for (const char* name : kMoreClips) {
+        INFO(name);
+        CHECK(checked(s, rig, doc, name).not_drawn.empty());
+    }
+    ScreenGift gift;
+    std::string why;
+    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kMore, nullptr, gift, why);
+    INFO(why);
+    REQUIRE(built);
+    CHECK(gift.notes.empty());
+    for (const char* name : kMoreClips) {
+        SUBCASE(name) { same_as_tab(gift, s, rig, doc, name, {0.0, 0.05, 0.1, 0.17, 0.25, 0.3, 0.4}); }
+    }
+    CHECK(ui::svg_problems().empty());
+}
+
+TEST_CASE("Screen clips, part 5г: poses by hand: below in the order, an outline's copies, a hidden group's copy, round links, a part before its carrier") {
+    ui::svg_problems(); // what earlier cases left
+    auto count = [](const std::string& text, const std::string& what) {
+        usize n = 0;
+        for (usize at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
+        return n;
+    };
+    // Below: the part right before its neighbour.
+    const std::string below = ui::posed_stage(kStage, {"Ёжик.svg", {}, {}, {{0, "p2", vector::MotionOrder::Below, "p1"}}});
+    CHECK(below.find("<rect id=\"p2\"") < below.find("<rect id=\"p1\""));
+    // A copy of a shape drawn along its length is an outline too, as its source.
+    const std::string drawn = ui::posed_stage(kStage, {"Ёжик.svg", {posed_part("box[1]", {{MotionProp::DrawTo, {0.5, {}, {}, 0, {}}}})}, {{"box[1]", "box", 1, 0}}, {}});
+    CHECK(count(drawn, "<path id=\"box\"") == 2);
+    CHECK(count(drawn, "<rect id=\"box\"") == 0);
+    // A copy of a hidden group shows nothing, as the group (ThorVG reads none of what is inside it).
+    const std::vector<u8> file = screen_of(kStage, {"Ёжик.svg", {}});
+    CHECK(pixels_off(screen_of(kStage, {"Ёжик.svg", {}, {{"ghost[1]", "ghost", 1, 0}}, {}}), file) == 0);
+    CHECK(ui::svg_problems().empty());
+    // Two parts that carry each other: one link dropped, said.
+    screen_of(kStage, {"Ёжик.svg", {posed_part("box", {{MotionProp::Link, {0, {}, "ball", 0, {}}}}), posed_part("ball", {{MotionProp::Link, {0, {}, "box", 0, {}}}})}});
+    const std::vector<std::string> said = ui::svg_problems();
+    REQUIRE(said.size() == 1);
+    CHECK(said[0].find("крепление по кругу") != std::string::npos);
+    // A carried part placed after its carrier and the groups it is inside, whatever the order of the parts.
+    Rig rig = loaded(kStage);
+    PoseScript s = script_of(kStageCode);
+    ScreenGift gift;
+    std::string why;
+    REQUIRE(build_screen(s, rig, doc64(), "Ёжик", "Ёжик.pixel.json", kStage, nullptr, gift, why));
+    ui::SvgPose pose = screen_pose(gift.motion, *gift.motion.clip("link"), 0.25);
+    REQUIRE(pose.parts.size() >= 3);
+    const std::vector<u8> as_given = screen_of(kStage, pose);
+    std::reverse(pose.parts.begin(), pose.parts.end());
+    CHECK(pixels_off(screen_of(kStage, pose), as_given) == 0);
+    pose.parts.erase(std::remove_if(pose.parts.begin(), pose.parts.end(), [](const vector::MotionPartPose& pp) { return pp.id == "ball"; }), pose.parts.end());
+    CHECK(pixels_off(screen_of(kStage, pose), as_given) > 20); // not carried: elsewhere
+    CHECK(ui::svg_problems().empty());
+}
+
+TEST_CASE("Screen clips, part 5г: a copy born after the clip's end is not given, nor its step; a copy's mask from its birth") {
+    const Rig rig = loaded(kStage);
+    const PixelDoc doc = doc64();
+    PoseScript s = script_of(R"(return { clips = {
+  late = function(p)
+    part("box").y(4, 0.2)
+    at(0.5, copies("ball", 1, function(i, c) c.x(3, 0.1) c:to_top() end))
+  end,
+  masked = function(p)
+    part("box").y(4, 0.2)
+    copies("box", 1, function(i, c) c:mask("lid") c.x(-20, 0.2) end)
+  end,
+} })");
+    const MotionClip late = checked(s, rig, doc, "late");
+    CHECK(late.length == doctest::Approx(0.2));
+    CHECK(late.copies.empty());
+    CHECK(late.order.empty());
+    CHECK(track_of(late, "ball[1]", MotionProp::X) == nullptr);
+    const MotionClip masked = checked(s, rig, doc, "masked");
+    REQUIRE(masked.copies.size() == 1);
+    CHECK(masked.copies[0].born == doctest::Approx(0.2));
+    const MotionTrack* m = track_of(masked, "box[1]", MotionProp::Mask);
+    REQUIRE(m);
+    for (const MotionPiece& pc : m->pieces) CHECK(pc.kind == MotionPiece::Kind::Hold);
+    REQUIRE(m->pieces.size() <= 2);
+    CHECK(m->pieces.back().value.target == "lid");
+    CHECK(m->pieces.back().at <= 0.2 + 1e-9);
 }

@@ -217,17 +217,19 @@ struct MotionPartPose {
     bool moves = false; // one of x … skew_y: its transform is the clip's
     MotionMatrix local; // then: frame⁻¹ · A · frame · own, the part's transform in the file's terms
 };
-// Every part of the clip's tracks at t, in the order of their first tracks. A part that moves without a part in the
-// file's `parts` stays where it is (read_motion_file refuses such a file).
+// Every part of the clip's tracks at t, in the order of their first tracks, but a copy not born yet (it has no element
+// then). A part that moves without a part in the file's `parts` stays where it is (read_motion_file refuses such a
+// file).
 std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t);
 // The first part of the picture a clip's calls name that the picture has not (part 5г): a mask part, a carrier, a part
 // of the order and its neighbour, a copy's source; what names it beside ("маска «eye»", "крепление «eye»", "порядок
 // «eye»", "копия «искра[1]»"). A part is the first element with the id that draws (g, use or a shape). False when the
 // picture has them all.
 bool motion_clip_missing(const MotionClip& clip, const SvgOutline& svg, std::string& part, std::string& role);
-// Whether a copy is drawn at t: born then or before.
+// Whether a copy is drawn at t: born then or before, on nanoseconds (as a track's piece is chosen).
 bool motion_copy_drawn(const MotionCopy& copy, f64 t);
-// The clip's order steps at t or before, in order, but those of a copy not born yet (as the tab leaves them out).
+// The clip's order steps at t or before (on nanoseconds), in order, but those of a copy not born yet (as the tab leaves
+// them out).
 std::vector<MotionOrderStep> motion_order_at(const MotionClip& clip, f64 t);
 
 // Where a clip is after `played` seconds of play: round and round when it loops, else held at its end. `loop` is how

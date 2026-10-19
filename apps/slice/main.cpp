@@ -9184,10 +9184,7 @@ private:
             usize parts = 0;
             for (usize i = 0; why.empty() && i < pose->parts.size(); ++i) {
                 const vector::MotionPartPose& p = pose->parts[i];
-                // A copy ("dust[1]") not born yet is not in the tab's picture.
-                const bool unborn = !p.id.empty() && p.id.back() == ']' && p.id.find('[') != std::string::npos &&
-                                    std::none_of(pose->copies.begin(), pose->copies.end(), [&](const vector::MotionCopy& k) { return k.id == p.id; });
-                if (p.moves && !unborn) {
+                if (p.moves) {
                     ++parts;
                     const auto it = tab->matrix.find(key + " " + p.id);
                     const f64 got[6] = {p.local.a, p.local.b, p.local.c, p.local.d, p.local.e, p.local.f};
@@ -9458,6 +9455,26 @@ private:
             check(st->off == 0 && st->compared >= 200, std::to_string(st->compared) + " кадров с клипом сверены с вкладкой, расходятся " +
                                                            std::to_string(st->off) + (st->first_off.empty() ? "" : ", первый " + st->first_off));
             FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, шагов %u", st->compared, snd.clicks());
+            // Part 5г: a clip naming a part the picture has not is refused, with the part and what names it; the picture
+            // read again once it changed, it plays.
+            const std::filesystem::path picture = s.game_dir() / utf8_path(e.ms_file);
+            const std::string name = path_to_utf8(utf8_path(e.ms_file).filename());
+            std::string lacking = e.ms_svg;
+            const usize torso = lacking.find("id=\"torso\"");
+            const usize from = torso == std::string::npos ? torso : lacking.rfind('<', torso);
+            const usize to = torso == std::string::npos ? torso : lacking.find("/>", torso);
+            if (check_ok(from != std::string::npos && to != std::string::npos, "в «" + name + "» есть «torso»")) {
+                lacking.erase(from, to + 2 - from);
+                const game::ScreenSvg jump{"play", e.ms_screen, e.ms_layer_name, "jump", -1, 1, {}};
+                std::string why;
+                check(write_file_atomic(picture, {reinterpret_cast<const u8*>(lacking.data()), lacking.size()}), "«" + name + "» записан без «torso»");
+                check(!s.screens().svg(jump, &why) && why == "в «" + name + "» нет части «torso»: маска «shine» в клипе «jump»",
+                      "клип с маской из части, которой нет в картинке, не играет: " + why);
+                check(write_file_atomic(picture, {reinterpret_cast<const u8*>(e.ms_svg.data()), e.ms_svg.size()}), "«" + name + "» снова как его отдала вкладка");
+                why.clear();
+                check(s.screens().svg(jump, &why), "картинка прочитана снова: «jump» играет " + why);
+                check(s.screens().svg({"reset", e.ms_screen, e.ms_layer_name, {}, 0, 0, {}}, &why), "картинка снова как в файле " + why);
+            }
             check(s.data_errors().empty(), "данные игры читаются без ошибок");
             s.screens().set_clock(nullptr);
             return true;

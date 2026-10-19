@@ -266,6 +266,38 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
         CHECK(differ(pixels(0), file) == 0);
         CHECK(differ(pixels(64), file) == 0);
     }
+    SUBCASE("a clip's copy (part 5г): drawn on a stage from its birth, not before it once more, nor once the clip is off") {
+        using forge::vector::MotionProp;
+        // The box's copy 20 to the right; the box to the top all along, so a stage is there before the copy is born.
+        forge::vector::MotionPartPose copy;
+        copy.id = "box[1]";
+        for (usize p = 0; p < forge::vector::kMotionPropCount; ++p) copy.values[p] = forge::vector::motion_rest(static_cast<MotionProp>(p));
+        copy.has[static_cast<usize>(MotionProp::X)] = true;
+        copy.values[static_cast<usize>(MotionProp::X)].v = 20;
+        copy.moves = true;
+        copy.local = {1, 0, 0, 1, 20, 0};
+        const std::vector<forge::vector::MotionOrderStep> top{{0, "box", forge::vector::MotionOrder::Top, ""}};
+        const forge::ui::SvgPose before{"face.svg", {}, {}, top}, after{"face.svg", {copy}, {{"box[1]", "box", 1, 0.5}}, top};
+        const std::string box = R"(<rect id="box" x="4" y="4" width="10" height="10" fill="#2040a0"/>)";
+        const std::vector<u8> with_copy = drawn(replaced(kFace, box, box + R"x(<rect transform="translate(20 0)" id="box" x="4" y="4" width="10" height="10" fill="#2040a0"/>)x"));
+        forge::ui::svg_pose(a, before);
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        forge::ui::svg_pose(a, after); // the stage made again: it had no copy
+        frame();
+        CHECK(differ(pixels(0), with_copy) == 0);
+        forge::ui::svg_pose(a, before); // round again, before the birth
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        forge::ui::svg_pose(a, after);
+        frame();
+        CHECK(differ(pixels(0), with_copy) == 0);
+        forge::ui::svg_unpose(a); // the file again, not the stage
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        CHECK(differ(pixels(64), file) == 0);
+        CHECK(forge::ui::svg_problems().empty());
+    }
     SUBCASE("reset: the element takes the file again; what the file lacks is said once") {
         CHECK(forge::ui::svg_move(a, "nose", 3, 3));
         CHECK(forge::ui::svg_morph(a, "box", "smile", 0.5));

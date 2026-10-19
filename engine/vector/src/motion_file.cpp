@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <iterator>
 #include <map>
+#include <set>
 
 namespace forge::vector {
 
@@ -882,7 +883,11 @@ MotionMatrix motion_matrix(f64 x, f64 y, f64 rot, f64 scale, f64 sx, f64 sy, f64
 std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t) {
     std::vector<MotionPartPose> out;
     std::map<std::string, usize, std::less<>> at;
+    std::set<std::string_view> unborn; // a copy not born yet has no element to pose
+    for (const MotionCopy& c : clip.copies)
+        if (!motion_copy_drawn(c, t)) unborn.insert(c.id);
     for (const MotionTrack& tr : clip.tracks) {
+        if (unborn.count(tr.part)) continue;
         auto [it, fresh] = at.try_emplace(tr.part, out.size());
         if (fresh) {
             out.emplace_back();
@@ -939,12 +944,12 @@ bool motion_clip_missing(const MotionClip& clip, const SvgOutline& svg, std::str
     return false;
 }
 
-bool motion_copy_drawn(const MotionCopy& copy, f64 t) { return copy.born <= t; }
+bool motion_copy_drawn(const MotionCopy& copy, f64 t) { return snap_ns(copy.born) <= snap_ns(t); }
 
 std::vector<MotionOrderStep> motion_order_at(const MotionClip& clip, f64 t) {
     std::vector<MotionOrderStep> out;
     for (const MotionOrderStep& st : clip.order) {
-        if (!(st.at <= t)) continue;
+        if (!(snap_ns(st.at) <= snap_ns(t))) continue;
         const auto copy = std::find_if(clip.copies.begin(), clip.copies.end(), [&](const MotionCopy& c) { return c.id == st.part; });
         if (copy == clip.copies.end() || motion_copy_drawn(*copy, t)) out.push_back(st);
     }
