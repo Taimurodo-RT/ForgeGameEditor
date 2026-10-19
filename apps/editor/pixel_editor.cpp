@@ -285,6 +285,8 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("depth", &PartRow::depth);
         s.RegisterMember("shape", &PartRow::shape);
         s.RegisterMember("selected", &PartRow::selected);
+        s.RegisterMember("name", &PartRow::name);
+        s.RegisterMember("camera", &PartRow::camera);
     }
     model.RegisterArray<std::vector<PartRow>>();
     if (auto s = model.RegisterStruct<ParamRow>()) {
@@ -1169,7 +1171,9 @@ void PixelEditor::load_script() {
 // --- parts and pivots --------------------------------------------------------------
 
 bool PixelEditor::select_part(const std::string& id) {
-    if (id == part_ || (!id.empty() && rig().holder(id).part(id) < 0)) return false; // a part of any drawing (part 4д)
+    // A part of any drawing (part 4д); a scene's camera (part 6б).
+    const bool camera = scene_mode_ && scene_ && id == pixel::kCameraPart;
+    if (id == part_ || (!id.empty() && !camera && rig().holder(id).part(id) < 0)) return false;
     part_ = id;
     view_dirty_ = true;
     rebuild();
@@ -1219,7 +1223,8 @@ void PixelEditor::press(f32 x, f32 y) {
             return;
         }
     }
-    const std::string best = part_at(x, y);
+    // The camera's frame pressed on its edge (part 6б): the camera chosen and dragged; inside it, what is under the mouse.
+    const std::string best = scene_mode_ && camera_edge(x, y) ? std::string(pixel::kCameraPart) : part_at(x, y);
     if (rig().shown().copy(best) >= 0) { // part 4г: a copy is the code's
         refuse_edit("копия «" + best + "» правится в коде: copies(…)");
         return;
@@ -1964,7 +1969,10 @@ void PixelEditor::redraw_scene() {
     }
     for (usize i = 1; i < ks.size(); ++i) over_faint(vec[0], vec[i], kOnion);
     vector_ = vec[0];
+    // Part 6б: the player's frame through the camera as the shown frame posed it, the canvas's shape as big as the small
+    // view, and the camera's frame over the scene.
     frame_px_ = {};
+    if (u32 fw = 0, fh = 0; scene_ && through_size(fw, fh)) frame_px_ = scene_->draw_frame(fw, fh);
     if (grid_) pixel::draw_grid(vec[0], texels, pixel::grid_step(to_view().a), static_cast<u32>(std::max<i64>(1, std::lround(dp_))));
     const i64 k = std::max<i64>(1, std::lround(dp_));
     if (const ShownPart s = shown_part(part_); s.rig) {
@@ -1978,8 +1986,9 @@ void PixelEditor::redraw_scene() {
         s.rig->bounds(s.index, texels * s.outer, box);
         outline(vec[0], box, k);
     }
+    draw_camera_frame(vec[0], texels);
     vector_shown_ = vec[0];
-    show(vec[0], {});
+    show(vec[0], frame_px_);
     sync_problem();
     // The tree is of the drawings shown: made again when an actor shows another.
     std::vector<const pixel::Rig*> shown{&rig().shown()};
@@ -2000,7 +2009,8 @@ void PixelEditor::show(const assets::CookedTexture& vec, const assets::CookedTex
         if (!old.empty()) ui_->drop_image(old);
     for (usize i = 0; i < 3; ++i) images_[1][i] = images_[0][i], images_[0][i].clear();
     m_vector_ = m_pixel_ = m_one_ = "";
-    // A scene has no pixel frame (part 6а): its vector alone.
+    // A scene has no pixel frame (part 6а): its small view is the player's frame through the camera (part 6б), at the
+    // view's size already.
     if (!vec.rgba8.empty() && (!px.rgba8.empty() || scene_mode_)) {
         const std::string n = std::to_string(++image_serial_);
         images_[0][0] = "px_v_" + n;
@@ -2110,7 +2120,7 @@ void PixelEditor::rebuild() {
             for (i32 q = p.parent; q >= 0; q = shown.parts()[static_cast<usize>(q)].parent) ++depth;
             const vector::Point pv = shown.pivot(shown.part(p.id));
             m_parts_.push_back({p.id, number_words(std::round(pv.x * 10) / 10) + "; " + number_words(std::round(pv.y * 10) / 10), depth, p.shape,
-                                p.id == part_});
+                                p.id == part_, p.id});
         }
     }
     m_params_.clear();
@@ -2162,11 +2172,13 @@ void PixelEditor::rebuild() {
     rebuild_inspector();
     rebuild_shape();
     rebuild_actor_clip();
+    rebuild_transition(); // part 6б
     m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(frame_limit());
     m_limit_ = std::to_string(frame_limit());
     m_fw_ = std::to_string(doc_.frame_w);
     m_fh_ = std::to_string(doc_.frame_h);
     m_size_ = std::to_string(doc_.frame_w) + " × " + std::to_string(doc_.frame_h);
+    if (scene_mode_ && scene_) m_size_ = number_words(scene_->stage().width()) + " × " + number_words(scene_->stage().height()); // part 6б
     m_game_palette_ = doc_.game_palette;
     m_outline_ = doc_.outline;
     char hex[8];

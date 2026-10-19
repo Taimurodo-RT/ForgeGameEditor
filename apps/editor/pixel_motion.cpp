@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <map>
 #include <set>
 #include <tuple>
 
@@ -618,9 +619,15 @@ void PixelEditor::lay_timeline() {
             }
             // Tracks in the order of the picture's parts and of the properties; a copy's right after its part's, the
             // copies by number (part 4г). The drawing's track first, the parts of the other drawings after the main
-            // one's (part 4д).
-            std::vector<usize> order(r.tracks.size());
-            for (usize i = 0; i < order.size(); ++i) order[i] = i;
+            // one's (part 4д). In a scene the camera's next, its follows on a row «камера · следит» after its tracks
+            // (one block for the x and y a follow moves); the frames of its transitions have no tracks (part 6б).
+            std::vector<usize> order;
+            order.reserve(r.tracks.size());
+            for (usize i = 0; i < r.tracks.size(); ++i)
+                if (!scene_mode_ || r.tracks[i].part >= r.parts.size() || !pixel::camera_part(r.parts[r.tracks[i].part]) ||
+                    r.parts[r.tracks[i].part] == pixel::kCameraPart)
+                    order.push_back(i);
+            auto camera_track = [&](usize i) { return scene_mode_ && r.tracks[i].part < r.parts.size() && r.parts[r.tracks[i].part] == pixel::kCameraPart; };
             auto index = [&](const std::string& id) {
                 if (const i32 i = rig().part(id); i >= 0) return i;
                 const pixel::Rig& h = rig().holder(id);
@@ -630,7 +637,8 @@ void PixelEditor::lay_timeline() {
             auto rank = [&](usize i) {
                 const pixel::Recording::Track& t = r.tracks[i];
                 const std::string id = t.part < r.parts.size() ? r.parts[t.part] : std::string();
-                if (t.prop == pixel::Prop::Drawing) return std::tuple{-1, 0, 0};
+                if (t.prop == pixel::Prop::Drawing) return std::tuple{-2, 0, 0};
+                if (camera_track(i)) return std::tuple{-1, 0, static_cast<int>(t.prop)};
                 i32 p = index(id), copy = 0;
                 if (const i32 c = pixel::copy_of(r, id); c >= 0) {
                     p = index(r.copies[static_cast<usize>(c)].source);
@@ -639,16 +647,64 @@ void PixelEditor::lay_timeline() {
                 return std::tuple{p, copy, static_cast<int>(t.prop)};
             };
             std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) { return rank(a) < rank(b); });
+            // The camera's follows: the block of each that starts first (its x's, else its y's), to the later end of the
+            // two. A camera's track of follows only has no row of its own.
+            struct FollowSpan {
+                u32 block;
+                f64 end;
+            };
+            std::map<u32, FollowSpan> follows; // by Block::ref
+            auto follow_end = [&](const pixel::Recording::Track& t, usize j) { return j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length; };
+            for (usize i : order)
+                if (camera_track(i))
+                    for (usize j = 0; j < r.tracks[i].blocks.size(); ++j)
+                        if (const pixel::Block& b = r.blocks[r.tracks[i].blocks[j]]; b.to == pixel::Block::To::Follow) {
+                            const auto [it, added] = follows.try_emplace(b.ref, FollowSpan{r.tracks[i].blocks[j], follow_end(r.tracks[i], j)});
+                            if (!added) it->second.end = std::max(it->second.end, follow_end(r.tracks[i], j));
+                        }
+            std::vector<i64> rows; // a track's index, -1 the follows' row
+            for (usize k = 0; k < order.size(); ++k) {
+                const pixel::Recording::Track& t = r.tracks[order[k]];
+                const bool camera = camera_track(order[k]);
+                if (!camera || std::any_of(t.blocks.begin(), t.blocks.end(), [&](u32 bi) { return r.blocks[bi].to != pixel::Block::To::Follow; }))
+                    rows.push_back(static_cast<i64>(order[k]));
+                if (camera && !follows.empty() && (k + 1 == order.size() || !camera_track(order[k + 1]))) rows.push_back(-1);
+            }
             usize shown = 0, more = 0;
-            for (usize row = 0; row < order.size(); ++row) {
-                const pixel::Recording::Track& t = r.tracks[order[row]];
+            for (usize row = 0; row < rows.size(); ++row) {
                 char top[48];
                 std::snprintf(top, sizeof top, "top: %.0fpx;", static_cast<f64>(row) * kRowPx);
+                if (rows[row] < 0) {
+                    m_tracks_.push_back({"камера · следит", top});
+                    for (const auto& [ref, f] : follows) {
+                        const pixel::Block& b = r.blocks[f.block];
+                        f64 x0 = tv_.x(b.start), x1 = tv_.x(f.end);
+                        if (x1 < 0 || x0 > w) continue;
+                        if (shown >= kMostBlocks) {
+                            ++more;
+                            continue;
+                        }
+                        ++shown;
+                        x0 = std::max(0.0, x0);
+                        x1 = std::min(w, std::max(x1, x0 + 2 * dp));
+                        const std::string target = ref < r.follows.size() ? r.follows[ref].target : std::string("?");
+                        const i32 bi = static_cast<i32>(f.block);
+                        m_blocks_.push_back({bi, place(x0, x1 - x0) + " " + top, "за «" + target + "»",
+                                             "camera():follow(\"" + target + "\") с " + seconds_words(b.start) +
+                                                 " с: камера у цели, пока её x или y не сдвинут; правится в коде, двойной щелчок — к коду",
+                                             bi == block_, std::find(caret_blocks_.begin(), caret_blocks_.end(), bi) != caret_blocks_.end(), b.site.file > 0});
+                    }
+                    continue;
+                }
+                const pixel::Recording::Track& t = r.tracks[static_cast<usize>(rows[row])];
+                const bool camera = camera_track(static_cast<usize>(rows[row]));
                 m_tracks_.push_back({t.prop == pixel::Prop::Drawing ? std::string(pixel::prop_word(t.prop))
-                                                                    : (t.part < r.parts.size() ? r.parts[t.part] : std::string("?")) + " · " + pixel::prop_word(t.prop),
+                                     : camera ? std::string("камера · ") + (t.prop == pixel::Prop::Scale ? "zoom" : pixel::prop_word(t.prop))
+                                              : (t.part < r.parts.size() ? r.parts[t.part] : std::string("?")) + " · " + pixel::prop_word(t.prop),
                                      top});
                 for (usize j = 0; j < t.blocks.size(); ++j) {
                     const pixel::Block& b = r.blocks[t.blocks[j]];
+                    if (camera && b.to == pixel::Block::To::Follow) continue; // on the follows' row
                     f64 start = b.start;
                     // A binding and a call of the order, the mask or the link hold until the track's next block: the
                     // calls have no length of their own.
@@ -691,6 +747,7 @@ void PixelEditor::lay_timeline() {
     m_tracks_height_ = height;
     lay_sounds();      // part 3в
     lay_actor_clips(); // part 6а
+    lay_transitions(); // part 6б
     tl_laid_w_ = tl_w_;
     place_head();
     for (const char* var : {"px_start", "px_start_style", "px_start_title"}) dirty(var);
@@ -945,16 +1002,27 @@ bool PixelEditor::select_block(i32 index) {
         rebuild_actor_clip();
         lay_actor_clips();
     }
+    if (index >= 0 && transition_ >= 0) { // and of a scene's transition (part 6б)
+        transition_ = -1;
+        rebuild_transition();
+        lay_transitions();
+    }
     m_inspector_.clear();
     m_inspector_call_.clear();
     if (index >= 0) {
         const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
         const std::string part = b.part < rec_.parts.size() ? rec_.parts[b.part] : std::string("?");
-        // The drawing's track is the character's, no part's (part 4д).
-        std::string text = (b.prop == pixel::Prop::Drawing ? std::string() : part + " · ") + pixel::prop_word(b.prop) + "\n";
-        if (b.to == pixel::Block::To::Binding) text += "с " + seconds_words(b.start) + " с, пока на дорожке не начнётся другой блок\n";
+        // The drawing's track is the character's, no part's (part 4д); the camera's scale its zoom (part 6б).
+        const bool camera = part == pixel::kCameraPart, follow = b.to == pixel::Block::To::Follow;
+        std::string text = b.prop == pixel::Prop::Drawing ? std::string(pixel::prop_word(b.prop))
+                           : camera && follow             ? std::string("камера · следит за «") + (b.ref < rec_.follows.size() ? rec_.follows[b.ref].target : "?") + "»"
+                           : camera                       ? std::string("камера · ") + (b.prop == pixel::Prop::Scale ? "zoom" : pixel::prop_word(b.prop))
+                                                          : part + " · " + pixel::prop_word(b.prop);
+        text += "\n";
+        if (b.to == pixel::Block::To::Binding || follow) text += "с " + seconds_words(b.start) + " с, пока на дорожке не начнётся другой блок\n";
         else text += "с " + seconds_words(b.start) + " по " + seconds_words(b.start + b.length) + " с (" + seconds_words(b.length) + " с)\n";
-        if (b.to != pixel::Block::To::Binding)
+        if (follow && b.length > 0) text += "догоняет цель за " + seconds_words(b.length) + " с\n";
+        if (b.to != pixel::Block::To::Binding && !follow)
             text += "откуда " + pixel::value_words(b.prop, b.from) + ", куда " + pixel::value_words(b.prop, b.end) + "\n";
         text += "как: " + timing_words(rec_, b);
         u32 repeats = 0;

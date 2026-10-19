@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -31,7 +32,10 @@ constexpr i64 kCurveW = 64, kCurveH = 40; // a timing's curve in the list, texel
 // "body · y"
 std::string block_name(const pixel::Recording& rec, const pixel::Block& b) {
     if (b.prop == pixel::Prop::Drawing) return pixel::prop_word(b.prop); // the character's track, no part's (part 4д)
-    return (b.part < rec.parts.size() ? rec.parts[b.part] : std::string("?")) + " · " + pixel::prop_word(b.prop);
+    const std::string part = b.part < rec.parts.size() ? rec.parts[b.part] : std::string("?");
+    // A scene's camera (part 6б): its scale is its zoom.
+    if (part == pixel::kCameraPart) return std::string("камера · ") + (b.prop == pixel::Prop::Scale ? "zoom" : pixel::prop_word(b.prop));
+    return part + " · " + pixel::prop_word(b.prop);
 }
 
 constexpr const char* kMidSwap = "посреди смены рисунка часть не тянется: выберите кадр до или после";
@@ -116,6 +120,11 @@ constexpr FieldProp kFieldProps[] = {
     {pixel::Prop::Sy, ""}, {pixel::Prop::SkewX, ""}, {pixel::Prop::SkewY, ""}, {pixel::Prop::Opacity, ""},
     {pixel::Prop::Stroke, "Контур"}, {pixel::Prop::StrokeWidth, ""}, {pixel::Prop::Fill, "Заливка"},
 };
+
+// The camera's fields (part 6б): its place, its zoom (its scale) and its turn.
+constexpr FieldProp kCameraFields[] = {{pixel::Prop::X, "Камера"}, {pixel::Prop::Y, ""}, {pixel::Prop::Scale, ""}, {pixel::Prop::Rot, ""}};
+std::span<const FieldProp> fields_of(bool camera) { return camera ? std::span<const FieldProp>(kCameraFields) : std::span<const FieldProp>(kFieldProps); }
+std::string field_word(pixel::Prop p, bool camera) { return camera && p == pixel::Prop::Scale ? "zoom" : pixel::prop_word(p); }
 
 bool is_field(std::string_view word) {
     for (const FieldProp& f : kFieldProps)
@@ -410,15 +419,17 @@ bool PixelEditor::set_part_field(const std::string& field, const std::string& te
             ed->rebuild_part();
         }
     } fresh{this, field};
+    const bool camera = camera_chosen(); // part 6б: x, y, zoom and rot of the camera
     const FieldProp* f = nullptr;
-    for (const FieldProp& fp : kFieldProps)
-        if (field == pixel::prop_word(fp.prop)) f = &fp;
-    if (!f) return refuse_edit("У части нет поля «" + field + "»");
-    if (!has_ || part_.empty() || rig().holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
-    const std::string id = part_, what = id + " · " + field;
+    for (const FieldProp& fp : fields_of(camera))
+        if (field == field_word(fp.prop, camera)) f = &fp;
+    if (!f) return refuse_edit(camera ? "У камеры нет поля «" + field + "»: есть x, y, zoom и rot" : "У части нет поля «" + field + "»");
+    if (!has_ || part_.empty() || (!camera && rig().holder(part_).part(part_) < 0)) return refuse_edit("Выберите часть");
+    const std::string id = part_, what = (camera ? std::string("камера") : id) + " · " + field;
     pixel::PropValue v;
     std::string out, why;
     if (!value_of_text(f->prop, text, what, v, why)) return refuse_edit(why);
+    if (camera && f->prop == pixel::Prop::Scale && !(v.v > 0)) return refuse_edit("zoom камеры — число больше 0: во сколько раз камера приближает");
     bool saved = false;
     if (!begin_edit(saved)) return false;
     if (rig().swapping()) return refuse_edit("посреди смены рисунка поля части не пишутся: выберите кадр до или после");
@@ -443,9 +454,9 @@ f64 PixelEditor::edge_snap(f64 t) const {
 
 f64 PixelEditor::block_end(i32 index) const {
     const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
-    if (b.to != pixel::Block::To::Binding && !pixel::prop_is_call(b.prop)) return pixel::snap_time(b.start + b.length);
+    if (b.to != pixel::Block::To::Binding && b.to != pixel::Block::To::Follow && !pixel::prop_is_call(b.prop)) return pixel::snap_time(b.start + b.length);
     // A binding holds until its track's next block, and so does a call of the order, the mask or the link (parts 4а,
-    // 4б and 4в).
+    // 4б and 4в) and the camera's follow (part 6б).
     const i32 tr = rec_.track(b.part, b.prop);
     if (tr >= 0) {
         const std::vector<u32>& on = rec_.tracks[static_cast<usize>(tr)].blocks;
@@ -485,6 +496,8 @@ bool PixelEditor::edge_press(f32 x, f32 y, Rml::Element* over, bool again) {
     } else if (id.rfind("px-block-", 0) == 0) {
         if (index < 0 || index >= static_cast<i32>(rec_.blocks.size())) return false;
         const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
+        // A follow lasts to the camera's next place (part 6б): no edge of its own, a click on it.
+        if (b.to == pixel::Block::To::Follow) return false;
         const f64 d0 = std::fabs(at - tv_.x(b.start)), d1 = std::fabs(at - tv_.x(block_end(index)));
         const bool own_start = b.start_site.site >= 0;
         if (d1 <= reach && (d1 <= d0 || !own_start)) what = Drag::BlockEnd;
@@ -574,7 +587,7 @@ void PixelEditor::start_move() {
     play(false);
     redraw(); // the rig in the frame shown: of the new recording when the panel was saved
     if (saved) {
-        const std::string best = part_at(move_x_, move_y_);
+        const std::string best = scene_mode_ && camera_edge(move_x_, move_y_) ? std::string(pixel::kCameraPart) : part_at(move_x_, move_y_);
         if (best.empty()) {
             moving_ = false;
             refuse_edit("Код сохранён; под мышью в новой записи нет части: тяните снова");
@@ -586,6 +599,14 @@ void PixelEditor::start_move() {
             return;
         }
         select_part(best);
+    }
+    // A scene's camera (part 6б): its x and y are the stage's units.
+    if (camera_chosen()) {
+        move_inv_ = pixel::Affine{};
+        move_from_ = view_to_picture(move_x_, move_y_);
+        move_dx_ = move_dy_ = 0;
+        move_started_ = true;
+        return;
     }
     // Part 4д: in a swap the frame is two drawings, and the move would be the new one's only. An actor's part in a
     // scene (part 6а) is in its actor's drawing, carried by the actor's place on the stage.
@@ -609,14 +630,16 @@ bool PixelEditor::move_part(f64 dx, f64 dy) {
     note_.clear();
     bool saved = false;
     if (!begin_edit(saved)) return false;
-    if (part_.empty() || rig().holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
+    const bool camera = camera_chosen(); // part 6б
+    if (part_.empty() || (!camera && rig().holder(part_).part(part_) < 0)) return refuse_edit("Выберите часть");
     if (shown_part(part_).swapping) return refuse_edit(kMidSwap);
     const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
     std::string out, why;
     if (!pixel::edit_part_move(rec_, part_, t_, frame, dx, dy, script().code(), script_text_, out, why))
-        return refuse_edit("«" + part_ + "» не сдвинуть: " + why);
+        return refuse_edit((camera ? std::string("Камеру") : "«" + part_ + "»") + " не сдвинуть: " + why);
     if (out == script_text_) return rebuild(), false;
-    return write_script(out, "«" + name() + "»: «" + part_ + "» сдвинута на " + number_words(dx) + "; " + number_words(dy));
+    return write_script(out, "«" + name() + "»: " + (camera ? std::string("камера сдвинута") : "«" + part_ + "» сдвинута") + " на " + number_words(dx) +
+                                 "; " + number_words(dy));
 }
 
 // --- the inspector -----------------------------------------------------------------------------------------
@@ -715,7 +738,8 @@ void PixelEditor::rebuild_part() {
     i32 block = -1;
     std::string code;
     bool can_code = false;
-    const bool has = has_ && !part_.empty() && rig().holder(part_).part(part_) >= 0;
+    const bool camera = camera_chosen(); // part 6б: its fields alone
+    const bool has = has_ && !part_.empty() && (camera || rig().holder(part_).part(part_) >= 0);
     pixel::PartPose pp;
     if (has) {
         if (shown_ok_)
@@ -736,7 +760,7 @@ void PixelEditor::rebuild_part() {
                 }
         const auto at = rec_ok_ ? std::find(rec_.parts.begin(), rec_.parts.end(), part_) : rec_.parts.end();
         const i32 index = rec_ok_ && at != rec_.parts.end() ? static_cast<i32>(at - rec_.parts.begin()) : -1;
-        for (usize i = 0; i < pixel::kPropCount; ++i) {
+        for (usize i = 0; i < pixel::kPropCount && !camera; ++i) {
             const pixel::Prop p = static_cast<pixel::Prop>(i);
             std::string value;
             switch (p) {
@@ -832,9 +856,10 @@ void PixelEditor::rebuild_fields(bool has, const pixel::PartPose& pp) {
     std::vector<PartField> fields;
     if (has) {
         const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
-        for (const FieldProp& f : kFieldProps) {
+        const bool camera = camera_chosen(); // part 6б
+        for (const FieldProp& f : fields_of(camera)) {
             PartField row;
-            row.name = pixel::prop_word(f.prop);
+            row.name = field_word(f.prop, camera);
             row.section = f.section;
             // What the clip's code gives it; without a recording or with a binding deciding, what the frame shows.
             pixel::PropValue v;
