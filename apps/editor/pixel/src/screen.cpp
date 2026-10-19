@@ -190,6 +190,155 @@ std::string with_root_of(const std::string& text, std::string_view main) {
     return text.substr(0, o.elements.front().begin) + tag + text.substr(o.elements.front().open_end);
 }
 
+// --- parameters from the game (part 5ж) ---------------------------------------------------------
+
+bool same_moment(f64 a, f64 b) { return ns_of(a) == ns_of(b); }
+
+// The first way clip `o` (recorded at another value of a parameter) is another clip than `z`, not in its numbers: what
+// a game cannot make of `z` by moving them. Null when they differ only there. The curves are each one's file's.
+const char* how_other(const MotionFile& fz, const MotionClip& z, const MotionFile& fo, const MotionClip& o) {
+    if (!same_moment(z.length, o.length)) return "длина клипа";
+    if (z.tracks.size() != o.tracks.size()) return "число переходов";
+    for (usize t = 0; t < z.tracks.size(); ++t) {
+        const vector::MotionTrack &a = z.tracks[t], &b = o.tracks[t];
+        if (a.part != b.part || a.prop != b.prop || a.pieces.size() != b.pieces.size()) return "число переходов";
+        for (usize k = 0; k < a.pieces.size(); ++k)
+            if (a.pieces[k].kind != b.pieces[k].kind) return "число переходов";
+    }
+    for (usize t = 0; t < z.tracks.size(); ++t)
+        for (usize k = 0; k < z.tracks[t].pieces.size(); ++k) {
+            const MotionPiece &a = z.tracks[t].pieces[k], &b = o.tracks[t].pieces[k];
+            if (!same_moment(a.at, b.at) || !same_moment(a.length, b.length) || !same_moment(a.end, b.end) || a.frames.size() != b.frames.size())
+                return "время переходов";
+        }
+    for (usize t = 0; t < z.tracks.size(); ++t)
+        for (usize k = 0; k < z.tracks[t].pieces.size(); ++k) {
+            const MotionPiece &a = z.tracks[t].pieces[k], &b = o.tracks[t].pieces[k];
+            if (a.kind != MotionPiece::Kind::Ease) continue;
+            const bool ca = a.curve >= 0 && static_cast<usize>(a.curve) < fz.curves.size(), cb = b.curve >= 0 && static_cast<usize>(b.curve) < fo.curves.size();
+            if (a.has_bezier != b.has_bezier || (a.has_bezier && !(a.bezier == b.bezier)) || ca != cb ||
+                (ca && fz.curves[static_cast<usize>(a.curve)] != fo.curves[static_cast<usize>(b.curve)]) || (!a.has_bezier && !ca && a.timing != b.timing))
+                return "сглаживание";
+        }
+    auto same_marks = [](const vector::MotionMark& a, const vector::MotionMark& b) {
+        return a.sound == b.sound && a.name == b.name && same_moment(a.at, b.at) && same_moment(a.length, b.length);
+    };
+    if (!std::equal(z.marks.begin(), z.marks.end(), o.marks.begin(), o.marks.end(), same_marks)) return "метки";
+    auto same_copies = [](const vector::MotionCopy& a, const vector::MotionCopy& b) {
+        return a.id == b.id && a.source == b.source && a.number == b.number && same_moment(a.born, b.born);
+    };
+    if (!std::equal(z.copies.begin(), z.copies.end(), o.copies.begin(), o.copies.end(), same_copies)) return "копии";
+    auto same_steps = [](const vector::MotionOrderStep& a, const vector::MotionOrderStep& b) {
+        return same_moment(a.at, b.at) && a.part == b.part && a.kind == b.kind && a.other == b.other;
+    };
+    if (!std::equal(z.order.begin(), z.order.end(), o.order.begin(), o.order.end(), same_steps)) return "порядок частей";
+    if (z.not_drawn != o.not_drawn) return "что не рисуется";
+    // What a value has besides its numbers.
+    auto other_than_numbers = [](MotionProp p, const MotionValue& a, const MotionValue& b) -> const char* {
+        switch (p) {
+        case MotionProp::Fill:
+        case MotionProp::Stroke:
+        case MotionProp::Tint:
+        case MotionProp::FlashColor: return a.color == b.color ? nullptr : "цвет";
+        case MotionProp::Morph: return a.target == b.target ? nullptr : "фигура морфинга";
+        case MotionProp::Mask: return a.v == b.v && a.target == b.target ? nullptr : "маска";
+        case MotionProp::Link: return a.target == b.target ? nullptr : "крепление";
+        case MotionProp::Drawing: return a.target == b.target ? nullptr : "рисунок";
+        case MotionProp::Visible: return a.v == b.v ? nullptr : "видимость";
+        default: return nullptr;
+        }
+    };
+    for (usize t = 0; t < z.tracks.size(); ++t) {
+        const MotionProp p = z.tracks[t].prop;
+        for (usize k = 0; k < z.tracks[t].pieces.size(); ++k) {
+            const MotionPiece &a = z.tracks[t].pieces[k], &b = o.tracks[t].pieces[k];
+            const char* w = other_than_numbers(p, a.value, b.value);
+            if (!w) w = other_than_numbers(p, a.from, b.from);
+            if (!w) w = other_than_numbers(p, a.to, b.to);
+            for (usize i = 0; !w && i < a.frames.size(); ++i) w = other_than_numbers(p, a.frames[i], b.frames[i]);
+            if (w) return w;
+        }
+    }
+    return nullptr;
+}
+
+// A value's numbers, as a parameter changes them: its number or share, a stroke width's width, a link's matrix.
+std::vector<f64*> numbers_of(MotionProp p, MotionValue& v) {
+    if (!vector::motion_prop_has_numbers(p)) return {};
+    if (p == MotionProp::Link) return {&v.m.a, &v.m.b, &v.m.c, &v.m.d, &v.m.e, &v.m.f};
+    if (p == MotionProp::StrokeWidth) return {&v.v, &v.n};
+    return {&v.v};
+}
+std::vector<f64*> numbers_of(MotionProp p, vector::MotionDelta& d) {
+    if (!vector::motion_prop_has_numbers(p)) return {};
+    if (p == MotionProp::Link) return {&d.m[0], &d.m[1], &d.m[2], &d.m[3], &d.m[4], &d.m[5]};
+    if (p == MotionProp::StrokeWidth) return {&d.v, &d.n};
+    return {&d.v};
+}
+
+// A value's change per unit from its values at one less (`m`) and one more (`p`): false when its numbers do not move by
+// as much either way.
+bool change_of(MotionProp prop, MotionValue z, MotionValue m, MotionValue p, vector::MotionDelta& out) {
+    out = {};
+    const std::vector<f64*> zs = numbers_of(prop, z), ms = numbers_of(prop, m), ps = numbers_of(prop, p), ds = numbers_of(prop, out);
+    for (usize i = 0; i < zs.size(); ++i) {
+        const f64 a = *ms[i], b = *zs[i], c = *ps[i];
+        if (std::abs((c - b) - (b - a)) > 1e-9 * std::max({1.0, std::abs(a), std::abs(b), std::abs(c)})) return false;
+        const f64 d = (c - a) / 2;
+        *ds[i] = std::abs(d) <= 1e-9 * std::max(1.0, std::abs(b)) ? 0 : d;
+    }
+    return true;
+}
+
+// How clip `base` changes with parameter `prm` (part 5ж): recorded again at one less and one more of it, it is the same
+// clip but for its numbers, each moving by as much either way; then each piece gets its change per unit. Else false
+// with why a game cannot play it at another value.
+bool clip_by(PoseScript& script, const Rig& rig, const PixelDoc& doc, const MotionFile& file, MotionClip& base, const vector::MotionParam& prm,
+             std::string& reason) {
+    MotionClip side[2];
+    MotionFile curves[2]; // each one's easings: the file's are the clip's at the parameter's own value
+    for (int k = 0; k < 2; ++k) {
+        PixelDoc at = doc;
+        const f64 v = prm.value + (k ? 1 : -1);
+        at.params[prm.name] = v;
+        std::string why;
+        if (!screen_clip(script, rig, at, base.name, curves[k], side[k], why)) {
+            reason = "клип не записывается при " + prm.name + " = " + seconds_words(v) + ": " + why;
+            return false;
+        }
+    }
+    for (int k = 0; k < 2; ++k)
+        if (const char* w = how_other(file, base, curves[k], side[k])) return reason = w, false;
+    // Each number's change, the piece's in the order of the file's parameters.
+    std::vector<std::vector<vector::MotionBy>> by(base.tracks.size());
+    for (usize t = 0; t < base.tracks.size(); ++t) {
+        const MotionProp p = base.tracks[t].prop;
+        for (usize k = 0; k < base.tracks[t].pieces.size(); ++k) {
+            const MotionPiece &z = base.tracks[t].pieces[k], &m = side[0].tracks[t].pieces[k], &q = side[1].tracks[t].pieces[k];
+            vector::MotionBy b;
+            b.param = prm.name;
+            bool ok = true;
+            switch (z.kind) {
+            case MotionPiece::Kind::Hold: ok = change_of(p, z.value, m.value, q.value, b.value); break;
+            case MotionPiece::Kind::Ease: ok = change_of(p, z.from, m.from, q.from, b.from) && change_of(p, z.to, m.to, q.to, b.to); break;
+            case MotionPiece::Kind::Frames:
+                b.frames.resize(z.frames.size());
+                for (usize i = 0; i < z.frames.size() && ok; ++i) ok = change_of(p, z.frames[i], m.frames[i], q.frames[i], b.frames[i]);
+                if (std::all_of(b.frames.begin(), b.frames.end(), [](const vector::MotionDelta& d) { return d.zero(); })) b.frames.clear();
+                break;
+            }
+            if (!ok) return reason = "не прямо", false;
+            by[t].push_back(std::move(b));
+        }
+    }
+    for (usize t = 0; t < base.tracks.size(); ++t)
+        for (usize k = 0; k < base.tracks[t].pieces.size(); ++k) {
+            vector::MotionBy& b = by[t][k];
+            if (!b.value.zero() || !b.from.zero() || !b.to.zero() || !b.frames.empty()) base.tracks[t].pieces[k].by.push_back(std::move(b));
+        }
+    return true;
+}
+
 } // namespace
 
 vector::MotionValue screen_value(const Pose& pose, const std::string& id, vector::MotionProp p) {
@@ -632,6 +781,39 @@ bool build_screen(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::
         if (!screen_clip(script, rig, doc, name, f, c, why)) return false;
         f.clips.push_back(std::move(c));
     }
+    // The code's parameters (part 5ж), at the values the tab gives the clips: how each clip changes with each, or why it
+    // does not. A picture the code draws from one the game cannot draw again: no clip changes with that one.
+    for (const ScriptParam& sp : script.params()) {
+        const auto it = doc.params.find(sp.name);
+        f.params.push_back({sp.name, it != doc.params.end() ? it->second : sp.value});
+    }
+    auto picture_with = [&](const vector::MotionParam& prm, std::string& reason) {
+        std::vector<std::pair<std::string, Drawing>> was;
+        for (int k = -1; k <= 1; ++k) {
+            std::map<std::string, f64> values = doc.params;
+            values[prm.name] = prm.value + k;
+            std::vector<std::pair<std::string, Drawing>> now;
+            if (drawn) now.push_back({std::string(vector::kMotionMainDrawing), {}});
+            for (const NamedDrawing& d : drawings) now.push_back({d.name, {}});
+            for (auto& [name, d] : now)
+                if (!(name == std::string(vector::kMotionMainDrawing) ? script.draw(values, doc.seed, d) : script.draw_named(name, values, doc.seed, d)))
+                    return reason = "картинка не рисуется при " + prm.name + " = " + seconds_words(values[prm.name]) + ": " + script.error(), true;
+            if (k == -1) was = now;
+            for (usize i = 0; k != -1 && i < now.size(); ++i)
+                if (!(now[i].second == was[i].second))
+                    return reason = now[i].first == std::string(vector::kMotionMainDrawing) ? std::string("картинка") : "рисунок «" + now[i].first + "»", true;
+        }
+        return false;
+    };
+    for (const vector::MotionParam& prm : f.params) {
+        std::string reason;
+        if (picture_with(prm, reason)) {
+            for (MotionClip& c : f.clips) c.fixed[prm.name] = reason;
+            continue;
+        }
+        for (MotionClip& c : f.clips)
+            if (!clip_by(script, rig, doc, f, c, prm, reason)) c.fixed[prm.name] = reason;
+    }
     // The parts the clips move or link, then every copy (a copy's numbers are its source's), as each drawing has them
     // and in its order; the shapes they morph, a copy's by its source.
     std::set<std::string> moved, morphed;
@@ -690,6 +872,22 @@ bool build_screen(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::
         if (!clips.empty()) left += (left.empty() ? "" : ", ") + std::string(vector::motion_not_drawn_words(w)) + " (" + clips + ")";
     }
     if (!left.empty()) out.notes.insert(out.notes.begin(), "На экране пока не рисуются: " + left);
+    // Which parameters a game changes the clips by, and which not where (part 5ж).
+    std::string changing, fixed;
+    for (const vector::MotionParam& prm : f.params) {
+        bool changes = false;
+        for (const MotionClip& c : f.clips) {
+            if (const auto it = c.fixed.find(prm.name); it != c.fixed.end())
+                fixed += (fixed.empty() ? "" : ", ") + prm.name + " в «" + c.name + "» (" + it->second + ")";
+            for (const vector::MotionTrack& t : c.tracks)
+                for (const MotionPiece& pc : t.pieces)
+                    changes = changes || std::any_of(pc.by.begin(), pc.by.end(), [&](const vector::MotionBy& b) { return b.param == prm.name; });
+        }
+        if (changes) changing += (changing.empty() ? "" : ", ") + prm.name;
+    }
+    if (!changing.empty() || !fixed.empty())
+        out.notes.push_back((changing.empty() ? std::string() : "Из игры меняются: " + changing) + (!changing.empty() && !fixed.empty() ? ". " : "") +
+                            (fixed.empty() ? std::string() : "Не меняются: " + fixed));
     return true;
 }
 

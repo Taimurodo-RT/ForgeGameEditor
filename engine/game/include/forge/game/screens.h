@@ -62,6 +62,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -119,6 +120,8 @@ struct ScreenSvg {
     f64 x = 0, y = 0;
     std::string text;
     f64 blend = 0; // "play": seconds of the clip's play it blends in from what the layer shows (part 5е); 0: at once
+    // "play": the code's parameters given by name (part 5ж): the clip's numbers at them; one not given is the file's.
+    std::map<std::string, f64> params;
 };
 
 // A clip of a character a layer's picture plays (part 5в of docs/models/движение-модель.md): the clip, where it is
