@@ -554,6 +554,9 @@ struct Reader {
                 if (f.drawing(d.name)) return fail(where, "рисунок дважды");
                 if (!yyjson_is_obj(v)) return fail(where, "нужен объект {\"picture\": …, \"parts\": {…}}");
                 if (!text(yyjson_obj_get(v, "picture"), d.picture) || d.picture.empty()) return fail(where, "picture: нужно имя SVG-картинки рисунка строкой");
+                // Beside the picture: a game reads it from the picture's folder, never another.
+                if (d.picture.find_first_of("/\\") != std::string::npos || d.picture == "." || d.picture == "..")
+                    return fail(where, "picture: имя файла рядом с картинкой, без папок");
                 if (yyjson_val* ps = yyjson_obj_get(v, "parts"))
                     if (!parts(ps, where + ".parts", d.parts)) return false;
                 f.drawings.push_back(std::move(d));

@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -321,6 +322,68 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
         frame();
         CHECK(differ(pixels(0), plain) == 0);
         CHECK(differ(pixels(64), plain) == 0);
+        CHECK(forge::ui::svg_problems().empty());
+    }
+    SUBCASE("another drawing (part 5д): shown in place of the file, a swap of two documents in one picture, the main one again") {
+        // «angry»: the head red, a brow over the eyes, no box.
+        const std::string angry = replaced(replaced(kFace, R"(fill="#f0c040")", R"(fill="#e04020")"),
+                                           R"(<rect id="box" x="4" y="4" width="10" height="10" fill="#2040a0"/>)",
+                                           R"(<path id="brow" d="M14 14 L50 14 L50 18 L14 18 Z" fill="#401010"/>)");
+        forge::ui::SvgPose shown{"face.svg", {}, {}, {}};
+        shown.drawings.push_back({"angry", "face.angry.svg", std::make_shared<const std::string>(angry)});
+        shown.drawing = "angry";
+        forge::ui::SvgPose swap = shown, main = shown;
+        swap.swap = true;
+        swap.swap_from = "draw";
+        swap.swap_k = 0.5;
+        main.drawing = "draw";
+        // A swap's picture: the old drawing with its pairs morphing, the new one over it (render_posed_svg), premultiplied
+        // as the plugin keeps it.
+        std::vector<u8> mid;
+        std::string why;
+        REQUIRE(forge::ui::render_posed_svg(kFace, swap, 64, 64, mid, why));
+        for (usize i = 0; i < mid.size(); i += 4)
+            for (usize c = 0; c < 3; ++c) mid[i + c] = u8((mid[i + c] * mid[i + 3] + 127) / 255);
+        const std::vector<u8> to = drawn(angry);
+        CHECK(differ(mid, file, 8) > 100);
+        CHECK(differ(mid, to, 8) > 100);
+
+        forge::ui::svg_pose(a, shown);
+        frame();
+        CHECK(differ(pixels(0), to) == 0);
+        CHECK(differ(pixels(64), file) == 0);
+        forge::ui::svg_pose(a, swap);
+        frame();
+        CHECK(differ(pixels(0), mid, 2) == 0);
+        forge::ui::svg_pose(a, main);
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        forge::ui::svg_pose(a, swap);
+        frame();
+        CHECK(differ(pixels(0), mid, 2) == 0);
+        forge::ui::svg_pose(a, shown); // the swap over: one document again
+        frame();
+        CHECK(differ(pixels(0), to) == 0);
+        forge::ui::svg_pose(a, swap);
+        frame();
+        forge::ui::svg_pose(a, {"other.svg", {}}); // a pose of another picture: this one is its file again
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        forge::ui::svg_pose(a, swap);
+        frame();
+        CHECK(differ(pixels(0), mid, 2) == 0);
+        // The element shows another file and this one again: the plugin reads it anew, nothing over it, and the swap is
+        // made again on it.
+        a->SetAttribute("src", "back_face.svg");
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        a->SetAttribute("src", "face.svg");
+        frame();
+        CHECK(differ(pixels(0), mid, 2) == 0);
+        forge::ui::svg_unpose(a); // the file again, one document
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        CHECK(differ(pixels(64), file) == 0);
         CHECK(forge::ui::svg_problems().empty());
     }
     SUBCASE("reset: the element takes the file again; what the file lacks is said once") {

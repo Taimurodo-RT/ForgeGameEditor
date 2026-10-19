@@ -147,7 +147,9 @@ void problem(std::string line) {
 
 std::string file_name(const std::string& path) {
     const usize slash = path.find_last_of("/\\");
-    return slash == std::string::npos ? path : path.substr(slash + 1);
+    // The checks' pictures (posed_documents) have a key, not a path: the picture's name after \x01.
+    if (slash == std::string::npos) return !path.empty() && path[0] == '\x01' ? path.substr(1) : path;
+    return path.substr(slash + 1);
 }
 
 std::string num(f64 v) {
