@@ -98,6 +98,7 @@
 #include "forge/ui/live_svg.h"
 #include "forge/ui/ui.h"
 #include "forge/vector/ease.h"
+#include "forge/vector/timing.h"
 
 #include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
@@ -9110,7 +9111,10 @@ private:
     // link, dash, drawn share, flash, tint, copies and order are the tab's at each frame too, and drawn as lunasvg draws
     // the pose (its stage); once the clip goes, the picture is its file again. Part 5д: «jump» swaps to the drawing «air»
     // on the way down, the drawing shown and the swap's share the tab's at each frame; a part the picture has not plays
-    // while the drawing has it; the drawing's file gone or not SVG is said and the clip does not play.
+    // while the drawing has it; the drawing's file gone or not SVG is said and the clip does not play. Part 5е: the
+    // scheme's «idle» comes in over 0,2 s from the picture at rest, the code's «jump» over 0,35 s from «idle», which
+    // plays on by its own time without its steps; each frame of a blend is the blend of the two clips' poses at their
+    // moments, as far as smooth of the new clip's play, and drawn as lunasvg draws it.
     void build_motion_edits(Shell& s) {
         struct Tab {
             std::map<std::string, std::array<f64, 6>> matrix; // "clip k part"
@@ -9129,6 +9133,11 @@ private:
             u64 clock = 1'000'000'000;
             u32 frames = 0, compared = 0, off = 0, pause_frames = 0, jump_laps = 0, landed = 0; // landed: the messages «приземлился»
             u32 swapped = 0; // part 5д: frames compared in a swap of drawings
+            u32 blended = 0, start_blend = 0, jump_blend = 0; // part 5е: frames compared in a blend of clips, at the start, into «jump»
+            f64 from_last = -1;                              // «idle»'s moment in the last frame of the blend into «jump»
+            bool blend_drawn = false;
+            std::shared_ptr<vector::MotionFile> file; // the file of clips and the drawings as the game read them first
+            std::vector<forge::ui::SvgDrawing> drawings;
             f64 last = -1, paused_at = -1, paused_clip = -1;
             std::string last_clip, first_off;
             bool clicks[8] = {}, stopped_drawn = false, file_drawn = false, once_drawn = false, faster = false, paused = false, end = false;
@@ -9188,8 +9197,48 @@ private:
             if (to) to(a, page);
         };
         // The pose the layer shows against the tab's frame of its clip at its moment.
-        auto compare = [this, tab, st](Rml::Element* el, const game::ScreenClip& c) {
+        // What differs between two poses, field by field; empty when nothing does.
+        auto pose_differs = [](const forge::ui::SvgPose& a, const forge::ui::SvgPose& b) -> std::string {
+            auto parts = [](const std::vector<vector::MotionPartPose>& x, const std::vector<vector::MotionPartPose>& y) -> std::string {
+                if (x.size() != y.size()) return std::to_string(x.size()) + " частей при " + std::to_string(y.size());
+                for (usize i = 0; i < x.size(); ++i) {
+                    bool same = x[i].id == y[i].id && x[i].moves == y[i].moves && x[i].local == y[i].local;
+                    for (usize j = 0; same && j < vector::kMotionPropCount; ++j) same = x[i].has[j] == y[i].has[j] && x[i].values[j] == y[i].values[j];
+                    if (!same) return "часть «" + x[i].id + "» при «" + y[i].id + "»";
+                }
+                return {};
+            };
+            if (a.picture != b.picture) return "картинка «" + a.picture + "» при «" + b.picture + "»";
+            if (std::string w = parts(a.parts, b.parts); !w.empty()) return w;
+            if (std::string w = parts(a.from_parts, b.from_parts); !w.empty()) return "в старом рисунке " + w;
+            if (!(a.copies == b.copies)) return "копии";
+            if (!(a.order == b.order)) return "порядок";
+            if (a.drawing != b.drawing || a.swap != b.swap || a.swap_from != b.swap_from || a.swap_k != b.swap_k)
+                return "рисунок «" + a.drawing + "» из «" + a.swap_from + "» на " + std::to_string(a.swap_k) + " при «" + b.drawing + "» из «" +
+                       b.swap_from + "» на " + std::to_string(b.swap_k);
+            return {};
+        };
+        auto compare = [this, tab, st, pose_differs](Rml::Element* el, const game::ScreenClip& c) {
             const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
+            // Part 5е: in a blend, the blend of the clip it comes from at its moment (or of the picture at rest) and the clip
+            // at its moment.
+            if (c.blend < 1) {
+                std::string why;
+                const vector::MotionClip* to = st->file ? st->file->clip(c.clip) : nullptr;
+                const vector::MotionClip* from = st->file && !c.from_clip.empty() ? st->file->clip(c.from_clip) : nullptr;
+                if (!pose || !to || (!c.from_clip.empty() && !from)) why = "смена клипов без позы или без клипа в файле";
+                else {
+                    forge::ui::SvgPose old;
+                    if (from) old = forge::ui::clip_pose(pose->picture, *st->file, *from, c.from_time, st->drawings);
+                    else old.picture = pose->picture;
+                    why = pose_differs(*pose, forge::ui::blend_pose(*st->file, old, forge::ui::clip_pose(pose->picture, *st->file, *to, c.time, st->drawings), c.blend));
+                }
+                ++st->compared;
+                ++st->blended;
+                if (!why.empty() && st->off++ == 0)
+                    st->first_off = "смена «" + (c.from_clip.empty() ? std::string("покой") : c.from_clip) + "» → «" + c.clip + "» на " + std::to_string(c.blend) + ": " + why;
+                return;
+            }
             const f64 at = c.time * 120;
             const usize k = static_cast<usize>(std::llround(at));
             const std::string key = c.clip + " " + std::to_string(k);
@@ -9317,6 +9366,18 @@ private:
                 if (links.load(project_data / "logic.json"))
                     for (const logic::Link& l : links.links) own = own || l.code == e.ms_code;
                 check(own, "в logic.json игры связь со своим кодом автора");
+                // Part 5е: the file of clips and the drawings beside the picture, as the game reads them.
+                const std::filesystem::path pic = s.game_dir() / utf8_path(e.ms_file);
+                std::string why;
+                auto file = std::make_shared<vector::MotionFile>();
+                const bool read = read_file(std::filesystem::path(pic).replace_extension(".motion.json"), bytes) &&
+                                  vector::read_motion_file(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), *file, why);
+                check(read, "файл клипов читается: " + why);
+                if (read) st->file = file;
+                for (const vector::MotionDrawing& d : file->drawings) {
+                    check(read_file(pic.parent_path() / utf8_path(d.picture), bytes), "рисунок «" + d.picture + "» читается");
+                    st->drawings.push_back({d.name, d.picture, std::make_shared<const std::string>(bytes.begin(), bytes.end())});
+                }
             }
             if (f == 10) check(s.screens().shown(e.ms_screen), "экран «" + e.ms_screen + "» показан");
             Rml::Element* el = layer(s, e.ms_screen, e.ms_layer);
@@ -9349,6 +9410,32 @@ private:
                       std::string(when) + ": шагов «" + snd.last_click() + "» " + std::to_string(snd.clicks()) + ", ждали " + std::to_string(n) + " «" +
                           e.ms_sound + "»");
             };
+            // Part 5е: the scheme's «idle» over 0,2 s from the picture at rest; the code's «jump» over 0,35 s from «idle», which goes
+            // on 1/60 s a frame round its lap; each as far as smooth of the new clip's play.
+            if (has && c.blend < 1) {
+                const bool start = c.clip == "idle" && t < 0.5, jump = c.clip == "jump" && in(1.15, 1.65);
+                const f64 length = start ? 0.2 : 0.35;
+                check((start && c.from_clip.empty()) || (jump && c.from_clip == "idle"),
+                      "смена клипов только в начале из покоя и в «jump» из «idle»: «" + c.from_clip + "» → «" + c.clip + "» в " + std::to_string(t) + " с");
+                check(std::fabs(c.blend - vector::timing(vector::Timing::Smooth, c.time / length)) < 1e-9,
+                      "доля смены " + std::to_string(c.blend) + " — smooth доли сыгранного «" + c.clip + "» " + std::to_string(c.time));
+                if (jump) {
+                    if (st->from_last >= 0)
+                        check(std::fabs(std::remainder(st->from_last + 1.0 / 60 - c.from_time, 0.5)) < 1e-6,
+                              "«idle» в смене доигрывает 1/60 с за кадр: " + std::to_string(c.from_time));
+                    st->from_last = c.from_time;
+                    ++st->jump_blend;
+                    const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
+                    if (t >= 1.35 && !st->blend_drawn && pose) {
+                        st->blend_drawn = true;
+                        drawn(el, *pose, "посреди смены «idle» → «jump»");
+                    }
+                } else
+                    ++st->start_blend;
+            }
+            if (in(1.65, 1.7))
+                check(st->start_blend >= 11 && st->jump_blend >= 20 && st->blend_drawn,
+                      "смены клипов: в начале " + std::to_string(st->start_blend) + " кадров, в «jump» " + std::to_string(st->jump_blend));
             if (in(0.05, 1.15)) check(has && c.clip == "idle" && c.going && (f < 4 || lap(1.0 / 60)), "схема играет «idle» с начала, 1/60 с за кадр: " + c.clip);
             if (in(1.1, 1.15)) sounds(0, 3, "«idle» прошёл 0, 0,5 и 1 с");
             // «jump» at 1.2 s, played again at 1.3 s while it goes: on, not from 0.
@@ -9484,8 +9571,8 @@ private:
             check(st->off == 0 && st->compared >= 200, std::to_string(st->compared) + " кадров с клипом сверены с вкладкой, расходятся " +
                                                            std::to_string(st->off) + (st->first_off.empty() ? "" : ", первый " + st->first_off));
             check(!tab->shown.empty() && st->swapped >= 10, "смена рисунка «Скакуна»: " + std::to_string(st->swapped) + " кадров в смене сверены с вкладкой");
-            FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, %u из них в смене рисунка, шагов %u", st->compared, st->swapped,
-                       snd.clicks());
+            FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, %u из них в смене рисунка, %u в смене клипов, шагов %u", st->compared,
+                       st->swapped, st->blended, snd.clicks());
             // Part 5г: a clip naming a part the picture has not is refused, with the part and what names it; the picture
             // read again once it changed, it plays.
             const std::filesystem::path picture = s.game_dir() / utf8_path(e.ms_file);

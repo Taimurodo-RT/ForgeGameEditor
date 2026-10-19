@@ -235,6 +235,14 @@ public:
         (void)what, (void)screen, (void)layer, (void)part, (void)x, (void)y, (void)text, (void)why;
         return true;
     }
+    // forge.ui.svg_play: "play" a clip as svg does, with how: its loop (1, 0, or below 0 for the clip's own), speed and
+    // the seconds of a blend into it from what the layer shows (part 5е). A bridge that knows no blend plays at once.
+    struct SvgPlay {
+        f64 loop = -1, speed = 1, blend = 0;
+    };
+    virtual bool svg_play(std::string_view screen, std::string_view layer, std::string_view clip, const SvgPlay& how, std::string* why) {
+        return svg("play", screen, layer, clip, how.loop, how.speed, {}, why);
+    }
     // forge.anim.going: whether the animation a thing is shown with now shows the frame of a mark of that name or a
     // frame of its window. False without a game, or for a thing whose picture has no such mark.
     virtual bool anim_going(flecs::entity_t thing, std::string_view mark) {

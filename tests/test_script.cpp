@@ -342,11 +342,16 @@ TEST_CASE("scripts change the parts of a screen's live SVG picture and ease a sh
     CHECK(morph->params[3].title_ru == std::string("В фигуру (id)"));
 }
 
-TEST_CASE("scripts play a character's clip on a screen's picture: the loop and the speed, and what they cannot be") {
+TEST_CASE("scripts play a character's clip on a screen's picture: the loop, the speed and the blend, and what they cannot be") {
     PoolScope pool;
     Room room;
     struct Bridge final : GameBridge {
         std::vector<std::string> said;
+        std::vector<f64> blends; // part 5е: the blend of each play, the rest as svg says it
+        bool svg_play(std::string_view screen, std::string_view layer, std::string_view clip, const SvgPlay& how, std::string* why) override {
+            blends.push_back(how.blend);
+            return GameBridge::svg_play(screen, layer, clip, how, why);
+        }
         f64 var(std::string_view, std::string*) override { return 0; }
         void set_var(std::string_view, f64) override {}
         void set_text(std::string_view, std::string_view) override {}
@@ -376,6 +381,11 @@ TEST_CASE("scripts play a character's clip on a screen's picture: the loop and t
             forge.ui.svg_play("hud", "Скакун", "idle", { loop = true, speed = 0.5 })
             forge.ui.svg_play("hud", "Скакун", "idle", { loop = false })
             forge.ui.svg_play("hud", "Скакун", "idle", {})
+            forge.ui.svg_play("hud", "Скакун", "run", { blend = 0.2 })
+            forge.ui.svg_play("hud", "Скакун", "run", true, 0.25)
+            forge.ui.svg_play("hud", "Скакун", "run", { loop = false, speed = 2, blend = 0 })
+            forge.ui.svg_play("hud", "Скакун", "run", nil, 0.5)
+            forge.ui.svg_play("hud", "Скакун", "run", false, nil)
             forge.ui.svg_stop("hud", "Скакун")
         end
         return S
@@ -385,7 +395,10 @@ TEST_CASE("scripts play a character's clip on a screen's picture: the loop and t
     CHECK(room.scripts.errors().empty());
     CHECK(bridge.said == std::vector<std::string>{"play hud/Скакун/idle -1 1", "play hud/Скакун/jump 1 1", "play hud/Скакун/jump 0 1",
                                                   "play hud/Скакун/jump -1 1", "play hud/Скакун/idle -1 2", "play hud/Скакун/idle 1 0.5",
-                                                  "play hud/Скакун/idle 0 1", "play hud/Скакун/idle -1 1", "stop hud/Скакун/ 0 0"});
+                                                  "play hud/Скакун/idle 0 1", "play hud/Скакун/idle -1 1", "play hud/Скакун/run -1 1",
+                                                  "play hud/Скакун/run 1 1", "play hud/Скакун/run 0 2", "play hud/Скакун/run -1 1",
+                                                  "play hud/Скакун/run 0 1", "stop hud/Скакун/ 0 0"});
+    CHECK(bridge.blends == std::vector<f64>{0, 0, 0, 0, 0, 0, 0, 0, 0.2, 0.25, 0, 0.5, 0});
     // Each wrong call is the script's error at its line, and the game is not asked: one script each, as a script stops
     // at its first error.
     const char* wrong[][2] = {
@@ -396,13 +409,21 @@ TEST_CASE("scripts play a character's clip on a screen's picture: the loop and t
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = -1 }))", "ui.svg_play: speed: нужно число больше 0"},
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = 0/0 }))", "ui.svg_play: speed: нужно число больше 0"},
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = 1/0 }))", "ui.svg_play: speed: нужно число больше 0"},
-        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { fast = true }))", "ui.svg_play: в таблице только loop и speed, а не «fast»"},
-        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { true }))", "ui.svg_play: в таблице только loop и speed, а не «number»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { fast = true }))", "ui.svg_play: в таблице только loop, speed и blend, а не «fast»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { true }))", "ui.svg_play: в таблице только loop, speed и blend, а не «number»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { blend = -0.1 }))", "ui.svg_play: blend: нужно число секунд, 0 или больше"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { blend = "долго" }))", "ui.svg_play: blend: нужно число секунд, 0 или больше"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { blend = 0/0 }))", "ui.svg_play: blend: нужно число секунд, 0 или больше"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { blend = 1/0 }))", "ui.svg_play: blend: нужно число секунд, 0 или больше"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", true, -1))", "ui.svg_play: 5-е значение (плавно за, с): нужно число секунд, 0 или больше"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", true, "долго"))", "ui.svg_play: 5-е значение (плавно за, с): нужно число секунд, 0 или больше"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { loop = true }, 1/0))", "ui.svg_play: 5-е значение (плавно за, с): нужно число секунд, 0 или больше"},
         {R"(forge.ui.svg_play("hud", "Скакун", "fly"))", "ui.svg_play: в «Скакун.motion.json» нет клипа «fly»: есть «idle», «jump»"},
         {R"(forge.ui.svg_play("hud", "Скакун"))", "missing argument #3 to 'ui.svg_play'"},
         {R"(forge.ui.svg_stop("hud"))", "missing argument #2 to 'ui.svg_stop'"},
     };
     bridge.said.clear();
+    bridge.blends.clear();
     for (usize i = 0; i < std::size(wrong); ++i) {
         const std::string name = "wrong" + std::to_string(i);
         REQUIRE(room.scripts.load(name, "local S = {}\nfunction S.on_start(self)\n  " + std::string(wrong[i][0]) + "\nend\nreturn S\n"));
@@ -419,11 +440,14 @@ TEST_CASE("scripts play a character's clip on a screen's picture: the loop and t
         CHECK(e->line == 3);
     }
     CHECK(bridge.said.empty());
+    CHECK(bridge.blends == std::vector<f64>{0}); // «fly» only: the game says it has no such clip
     const ApiFunction* play = room.scripts.api().find("ui.svg_play");
     REQUIRE(play);
     CHECK(play->kind == ApiKind::Action);
-    CHECK(play->params.size() == 4);
+    REQUIRE(play->params.size() == 5);
     CHECK(play->params[3].title_ru == std::string("Повторять"));
+    CHECK(play->params[4].title_ru == std::string("Плавно за, с"));
+    CHECK(play->params[4].default_lua == std::string("0"));
     const ApiFunction* stop = room.scripts.api().find("ui.svg_stop");
     REQUIRE(stop);
     CHECK(stop->params.size() == 2);

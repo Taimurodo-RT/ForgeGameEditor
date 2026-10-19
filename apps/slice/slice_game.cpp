@@ -403,6 +403,17 @@ public:
         c.text = std::string(text);
         return s_.screens().svg(c, why);
     }
+    bool svg_play(std::string_view screen, std::string_view layer, std::string_view clip, const SvgPlay& how, std::string* why) override {
+        game::ScreenSvg c;
+        c.what = "play";
+        c.screen = std::string(screen);
+        c.layer = std::string(layer);
+        c.part = std::string(clip);
+        c.x = how.loop;
+        c.y = how.speed;
+        c.blend = how.blend;
+        return s_.screens().svg(c, why);
+    }
     bool anim_going(flecs::entity_t thing, std::string_view mark) override { return g_.anim_going(thing, mark); }
 
 private:

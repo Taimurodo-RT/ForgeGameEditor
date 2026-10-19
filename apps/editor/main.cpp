@@ -27259,15 +27259,17 @@ return {
             check(g && g->links.size() == 2, "two wires: " + std::to_string(g ? g->links.size() : 0));
             break;
         }
-        // Its fields typed: «Скакун» plays «idle» at the start; on «приземлился» «Ёжик» plays «idle».
+        // Its fields typed: «Скакун» plays «idle» at the start, blended in over 0,2 s from the picture at rest (part 5е); on
+        // «приземлился» «Ёжик» plays «idle».
         case 16: {
             if (wait(2)) return true;
             const std::string f = "sc-field-" + std::to_string(mg_scheme_) + "-";
             auto type = [&](u32 node, const char* param, const std::string& value) {
                 return ue_type((f + std::to_string(node) + "-" + param).c_str(), value);
             };
-            check(type(mg_nodes_[0], "screen", "hud") && type(mg_nodes_[0], "layer", "Скакун") && type(mg_nodes_[0], "clip", "idle"),
-                  "the first: «hud», «Скакун», «idle»");
+            check(type(mg_nodes_[0], "screen", "hud") && type(mg_nodes_[0], "layer", "Скакун") && type(mg_nodes_[0], "clip", "idle") &&
+                      type(mg_nodes_[0], "blend", "0.2"),
+                  "the first: «hud», «Скакун», «idle», «Плавно за, с» 0.2");
             check(type(mg_nodes_[1], "screen", "hud") && type(mg_nodes_[1], "layer", "Ёжик") && type(mg_nodes_[1], "clip", "idle"),
                   "the second: «hud», «Ёжик», «idle»");
             check(type(mg_nodes_[2], "filter", "приземлился"), "«При сообщении»: «приземлился»");
@@ -27277,6 +27279,7 @@ return {
                 return n && n->value(param) ? *n->value(param) : std::string();
             };
             check(value(mg_nodes_[2], "filter") == "приземлился", "kept on the node");
+            check(value(mg_nodes_[0], "blend") == "0.2", "«Плавно за, с» kept on the node");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(value(mg_nodes_[2], "filter") != "приземлился", "Ctrl+Z: the message not typed");
             key(SDLK_Y, SDL_KMOD_CTRL);
@@ -27359,12 +27362,12 @@ return {
     static constexpr const char* kMgSearch[3] = {"проиграть анимацию", "проиграть анимацию", "при сообщении"};
     // Its moments are away from the steps of «idle» (each 0.5 s of it): a frame sooner or later hears the same.
     static constexpr const char* kMgCode =
-        "-- «Скакун» на HUD: прыгает, прыгает снова и замирает в воздухе, бежит вдвое быстрее, снова как в файле, стоит,\n"
+        "-- «Скакун» на HUD: плавно прыгает, прыгает снова и замирает в воздухе, бежит вдвое быстрее, снова как в файле, стоит,\n"
         "-- прыгает по кругу и допрыгивает этот круг, бежит один раз, снова, замирает, снова с начала, вдвое быстрее\n"
         "-- и клип, которого нет.\n"
         "local ui = forge.ui\n"
         "forge.wait(1.2)\n"
-        "ui.svg_play(\"hud\", \"Скакун\", \"jump\")\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"jump\", { blend = 0.35 }) -- плавно из «idle»\n"
         "forge.wait(0.1)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"jump\") -- идёт дальше, не с начала\n"
         "forge.wait(0.5)\n"
