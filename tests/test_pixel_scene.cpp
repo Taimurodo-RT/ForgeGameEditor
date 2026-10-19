@@ -2,7 +2,7 @@
 // characters of «Векторная» on it, each where and as big as it says; its scene(p) is recorded as a clip, and an actor
 // plays its character's clips in the scene's time (play waits, loop goes round, stop holds), the scene's own
 // transitions of the actor's parts over them by rule 5. The marks of the actors' clips are the scene's at their
-// moments, on every round of a loop. A frame of the scene is the background, the pictures and the actors drawn alone
+// moments, on every round of a loop (one at a clip's end at each round's end, as a game's screen gives it). A frame of the scene is the background, the pictures and the actors drawn alone
 // in their poses, laid over each other in the stage's order.
 
 #include "forge/assets/image.h"
@@ -14,6 +14,7 @@
 #include "forge/pixel/rig.h"
 #include "forge/pixel/scene.h"
 #include "forge/pixel/script.h"
+#include "forge/vector/motion_file.h"
 
 #include <doctest/doctest.h>
 
@@ -31,8 +32,8 @@ using namespace forge::pixel;
 
 namespace {
 
-// The hedgehog: a head and a nose in a body, feet below. walk bobs the head and marks a step halfway, wave turns the
-// nose, stretch is as long as p.len.
+// The hedgehog: a head and a nose in a body, feet below; its file turns the nose round 30, 26. walk bobs the head and
+// marks a step halfway, wave turns the nose, stretch is as long as p.len, land marks its end.
 const char* kHedgehog = R"(return {
   params = { height = 4, len = 1 },
   clips = {
@@ -46,6 +47,10 @@ const char* kHedgehog = R"(return {
     end,
     stretch = function(p)
       wait(p.len)
+    end,
+    land = function(p)
+      wait(0.5)
+      emit("земля")
     end,
   },
   draw = function(p, rng)
@@ -83,9 +88,29 @@ const char* kBeetle = R"(return {
 }
 )";
 
-// «Ресурсы» in memory: the two characters, a 40 × 30 picture and a few broken files.
+// The flag, drawn in «Ресурсы» (no draw in its code): its picture's top left at -10, -20, its 0, 0 the dot's middle.
+// talk opens the mouth.
+const char* kFlag = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="-10 -20 40 40">
+  <rect id="cloth" x="-10" y="-20" width="40" height="40" fill="#ff0000"/>
+  <circle id="dot" cx="0" cy="0" r="5" fill="#0000ff"/>
+  <path id="mouth" d="M 10 8 L 24 8 L 24 10 L 10 10 Z" fill="#000000"/>
+  <path id="open" d="M 10 4 L 24 4 L 24 16 L 10 16 Z" fill="#000000" display="none"/>
+</svg>
+)svg";
+
+const char* kFlagCode = R"(return {
+  clips = {
+    talk = function(p)
+      part("mouth"):morph("open", 0.5)
+    end,
+  },
+}
+)";
+
+// «Ресурсы» in memory: the three characters, a 40 × 30 picture and a few broken files.
 struct Files {
     std::map<std::string, std::vector<u8>> bytes;
+    std::map<std::string, std::string> svgs; // by Guid
 
     void put(const std::string& path, std::string_view text) { bytes[path].assign(text.begin(), text.end()); }
 
@@ -97,7 +122,12 @@ struct Files {
             out = it->second;
             return true;
         };
-        f.svg = [](const std::string& guid, std::string&, std::string& why) { return why = "нет SVG " + guid, false; };
+        f.svg = [this](const std::string& guid, std::string& text, std::string& why) {
+            const auto it = svgs.find(guid);
+            if (it == svgs.end()) return why = "нет SVG " + guid, false;
+            text = it->second;
+            return true;
+        };
         return f;
     }
 };
@@ -119,6 +149,7 @@ void project(Files& f) {
     PixelDoc h;
     h.script = "Ёжик.luau";
     h.frame_w = h.frame_h = 64;
+    h.pivots["nose"] = {30, 26};
     f.put("персонажи/Ёжик.pixel.json", write_pixel_doc(h));
     f.put("персонажи/Ёжик.luau", kHedgehog);
     PixelDoc b;
@@ -128,13 +159,22 @@ void project(Files& f) {
     f.put("персонажи/Жук.pixel.json", write_pixel_doc(b));
     f.put("персонажи/Жук.luau", kBeetle);
     PixelDoc bad = h;
+    bad.pivots.clear();
     bad.script = "Сломан.luau";
     f.put("персонажи/Сломан.pixel.json", write_pixel_doc(bad));
     f.put("персонажи/Сломан.luau", "return {\n  clips = { walk = function(p)\n    wait(1)\n  end },\n  draw = function(p, rng)\n    rect(\"a\", { w = 1 })\n  end,\n}\n");
     PixelDoc sc = h;
+    sc.pivots.clear();
     sc.script = "Сцена.luau";
     f.put("персонажи/Сцена.pixel.json", write_pixel_doc(sc));
     f.put("персонажи/Сцена.luau", new_scene_code("Сцена"));
+    PixelDoc fl;
+    fl.svg = "flag-svg";
+    fl.script = "Флаг.luau";
+    fl.frame_w = fl.frame_h = 40;
+    f.put("персонажи/Флаг.pixel.json", write_pixel_doc(fl));
+    f.put("персонажи/Флаг.luau", kFlagCode);
+    f.svgs["flag-svg"] = kFlag;
     std::vector<u8> png;
     REQUIRE(assets::encode_image(forest(), ".png", png));
     f.bytes["картинки/лес.png"] = png;
@@ -247,6 +287,10 @@ TEST_CASE("Сцена: stage ставит фигуры, картинки и ак
         CHECK(a.x == b.x);
         CHECK(a.y == b.y);
     }
+    // The nose's the one its file gives, not its middle.
+    const vector::Point nose = ar.pivot(ar.part("ёжик/nose"));
+    CHECK(nose.x == 30);
+    CHECK(nose.y == 26);
     CHECK(s.character("лес") == nullptr);
     const std::vector<std::string>& read = s.files();
     for (const char* f : {"картинки/лес.png", "персонажи/Ёжик.pixel.json", "персонажи/Ёжик.luau", "персонажи/Жук.pixel.json", "персонажи/Жук.luau"})
@@ -270,6 +314,48 @@ TEST_CASE("Сцена: stage ставит фигуры, картинки и ак
     Scene bare;
     load(bare, files, "    wait(1)", "    rect(\"a\", { x = 0, y = 0, w = 4, h = 4 })");
     CHECK(bare.stage().background.empty());
+}
+
+TEST_CASE("Сцена: актёр из SVG — его рисунок от начала viewBox") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    at(1, part("флаг/mouth"):morph("флаг/open", 0.2))
+    actor("флаг"):play("talk")
+    wait(1))",
+         "    canvas(160, 120)\n    actor(\"флаг\", \"персонажи/Флаг\", { x = 60, y = 50 })");
+    REQUIRE(s.stage().items.size() == 1);
+    const StageItem& it = s.stage().items[0];
+    CHECK(it.origin.x == -10);
+    CHECK(it.origin.y == -20);
+    CHECK(it.w == 40);
+    CHECK(it.h == 40);
+    record(s);
+    CHECK(s.recording()->length == doctest::Approx(1.5));
+    // Its group is its picture's box where the picture is: its 0, 0 at 60, 50 of the scene.
+    REQUIRE(s.frame(0));
+    Rig& rig = s.rig();
+    f64 b[4];
+    rig.bounds(rig.part("флаг"), translation(0, 0), b);
+    CHECK(b[0] == doctest::Approx(50));
+    CHECK(b[1] == doctest::Approx(30));
+    CHECK(b[2] == doctest::Approx(90));
+    CHECK(b[3] == doctest::Approx(70));
+    auto at = [&](f64 t, u32 x, u32 y) {
+        REQUIRE(s.frame(t));
+        const assets::CookedTexture px = s.draw(160, 120);
+        const u8* p = &px.rgba8[(y * 160 + x) * 4];
+        return Rgba8{p[0], p[1], p[2], p[3]};
+    };
+    CHECK(at(0, 60, 50) == Rgba8{0, 0, 255, 255}); // the dot
+    CHECK(at(0, 51, 31) == Rgba8{255, 0, 0, 255}); // the cloth's top left
+    CHECK(at(0, 48, 50).a == 0);                   // the stage without background
+    // The mouth: shut at first, open at the clip's end and after it; the scene's morph at rest before its start leaves
+    // the clip's, at its end it is the scene's.
+    CHECK(at(0, 77, 63) == Rgba8{255, 0, 0, 255});
+    CHECK(at(0.5, 77, 63) == Rgba8{0, 0, 0, 255});
+    CHECK(at(0.8, 77, 63) == Rgba8{0, 0, 0, 255});
+    CHECK(at(1.4, 77, 63) == Rgba8{0, 0, 0, 255});
 }
 
 TEST_CASE("Сцена: матрица актёра") {
@@ -440,6 +526,7 @@ TEST_CASE("Сцена: что сцене нельзя — со строкой") 
         {"    actor(\"ёжик\"):part(\"нет\")", "у актёра «ёжик» нет части «нет»"},
         {"    actor(\"нет\"):play(\"walk\")", "на сцене нет актёра «нет»"},
         {"    actor(\"лес\"):play(\"walk\")", "на сцене нет актёра «лес»"},
+        {"    actor(\"нет\"):to({ x = 1 }, 0)", "на сцене нет актёра «нет»"},
         {"    actor(\"ёжик\"):play(\"walk\", { speed = 0 })", "speed — число больше 0"},
         {"    actor(\"ёжик\"):play(\"walk\", { blend = 0.2 })", "blend — в части 6г"},
         {"    actor(\"ёжик\"):play(\"walk\", { pace = 1 })", "поля «pace» нет"},
@@ -542,6 +629,11 @@ TEST_CASE("Сцена: переход сцены поверх позы клип�
     PartPose c = clip;
     over_part(c, rest);
     CHECK(c.fill == Rgba8{10, 20, 30, 255});
+    // Hidden by its clip, a part the scene does not hide stays hidden.
+    PartPose hidden;
+    hidden.visible = false;
+    over_part(hidden, PartPose{});
+    CHECK_FALSE(hidden.visible);
 }
 
 TEST_CASE("Сцена: часть актёра — клип в его миг и переход сцены поверх") {
@@ -598,6 +690,18 @@ TEST_CASE("Сцена: часть актёра — клип в его миг и 
     CHECK(head_px[1] == 0);
     CHECK(head_px[2] == 0);
     CHECK(head_px[3] == 255);
+    // A colour of the whole actor is its picture's: the beetle's shell green.
+    Scene green;
+    load(green, files, "    part(\"жук\").fill(\"#00ff00\", 0)\n    wait(1)");
+    record(green);
+    REQUIRE(green.frame(0.5));
+    const assets::CookedTexture shot = green.draw(160, 120);
+    const vector::Point shell = actor_matrix(green.stage().items[2]).apply({24, 18});
+    const u8* shell_px = &shot.rgba8[(static_cast<usize>(shell.y) * 160 + static_cast<usize>(shell.x)) * 4];
+    CHECK(shell_px[0] == 0);
+    CHECK(shell_px[1] == 255);
+    CHECK(shell_px[2] == 0);
+    CHECK(shell_px[3] == 255);
 }
 
 TEST_CASE("Сцена: метки клипов — метки сцены в их мигах") {
@@ -631,6 +735,29 @@ TEST_CASE("Сцена: метки клипов — метки сцены в их
     record(cut);
     REQUIRE(cut.marks(marks));
     CHECK(marks.empty());
+    // A loop's mark at its clip's end: at each round's end, the scene's end too, as a game's screen gives a looped
+    // clip's marks frame by frame.
+    Scene land;
+    load(land, files, "    actor(\"ёжик\"):loop(\"land\")\n    wait(1)");
+    record(land);
+    REQUIRE(land.marks(marks));
+    vector::MotionClip game;
+    game.length = 0.5;
+    game.marks.push_back({false, "земля", 0.5, 0});
+    std::vector<f64> passed;
+    f64 counted = -1;
+    for (int k = 0; k <= 60; ++k) {
+        const f64 played = k / 60.0;
+        passed.insert(passed.end(), vector::motion_marks_passed(game, counted, played, true).size(), played);
+        counted = played;
+    }
+    REQUIRE(passed.size() == 2);
+    REQUIRE(marks.size() == passed.size());
+    for (usize i = 0; i < marks.size(); ++i) {
+        CAPTURE(i);
+        CHECK(marks[i].name == "земля");
+        CHECK(marks[i].time == doctest::Approx(passed[i]));
+    }
     // Before recording there are none.
     Scene fresh;
     load(fresh, files, "    wait(1)");

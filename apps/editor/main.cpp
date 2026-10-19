@@ -27671,6 +27671,21 @@ return {
             check(j.kind == pixel::ActorPlay::Kind::Play && j.start == 0 && std::fabs(j.length - 0.4) < 1e-9 && i.start == 1 && std::fabs(i.length - 0.5) < 1e-9 &&
                       s.kind == pixel::ActorPlay::Kind::Loop && s.start == 0 && std::fabs(s.clip_length - 1) < 1e-9,
                   "«jump» from 0 for 0,4 s, «idle» from 1 for 0,5 s, «stand» round and round from 0:\n" + sc_recorded());
+            // «stand» round and round: its bar on the timeline goes to the scene's end (to the timeline's, zoomed in as it is),
+            // past the end of its clip.
+            f32 bar0 = 0, bar1 = 0, x_start = 0, x_end = 0, x_clip = 0, view_end = 0;
+            Rml::Element* bar = visible(("px-play-" + std::to_string(stand)).c_str());
+            if (bar && bar->IsVisible(true)) {
+                bar0 = bar->GetAbsoluteOffset(Rml::BoxArea::Border).x;
+                bar1 = bar0 + bar->GetBox().GetSize(Rml::BoxArea::Border).x;
+            }
+            if (Rml::Element* track = visible("px-ruler"); track && track->IsVisible(true))
+                view_end = track->GetAbsoluteOffset(Rml::BoxArea::Content).x + track->GetBox().GetSize(Rml::BoxArea::Content).x;
+            const bool laid = px().timeline_x(0, x_start) && px().timeline_x(rec->length, x_end) && px().timeline_x(s.clip_length, x_clip);
+            const f32 to = std::min(x_end, view_end);
+            check(bar && bar->IsVisible(true) && laid && to - x_clip > 10 && std::fabs(bar0 - x_start) < 1.5f && std::fabs(bar1 - to) < 1.5f,
+                  "«stand»'s bar from 0 to the scene's end: " + std::to_string(bar0) + "…" + std::to_string(bar1) + " for " + std::to_string(x_start) + "…" +
+                      std::to_string(to) + ", its clip's end at " + std::to_string(x_clip));
             auto mark_at = [&](const char* name, f64 at) {
                 return std::any_of(rec->marks.begin(), rec->marks.end(), [&](const pixel::Mark& m) { return m.actor == "hop" && m.name == name && std::fabs(m.time - at) < 1e-9; });
             };
@@ -27792,7 +27807,9 @@ return {
             if (head >= 0) drawn->bounds(head, stage.global_matrix(host), b);
             check(px().frame() == 18 && hop && hop->swapping() && head >= 0, "frame 19: «hop» in its swap of drawings");
             check(mb_hold_point({(b[0] + b[2]) / 2, (b[1] + b[3]) / 2}, 0, -3), "pressed on «hop»'s head and dragged");
+            const std::string pressed = px().note();
             mb_let_go();
+            check(pressed == "посреди смены рисунка часть не тянется: выберите кадр до или после", "refused at the press, the part not dragged: «" + pressed + "»");
             check(px().note() == "посреди смены рисунка часть не тянется: выберите кадр до или после" && file(lua) == bytes(sc_moved_) &&
                       step_label() == "«Сцена»: «man» сдвинута на 8; 0",
                   "refused in the swap, nothing written: «" + px().note() + "»");
@@ -27806,6 +27823,11 @@ return {
             mb_let_go();
             const i32 later = sc_play("hop", "idle");
             check(later >= 0 && px_click("px-play-" + std::to_string(later)) && px().actor_clip() == later, "«idle» of «hop» chosen on the timeline");
+            // One thing of the timeline in the inspector: the block of «man» chosen drops «idle», «idle» chosen drops the block.
+            check(click_id("px-block-0") && px().block() == 0 && px().actor_clip() < 0,
+                  "the block of «man» chosen, «idle» not: block " + std::to_string(px().block()) + ", clip " + std::to_string(px().actor_clip()));
+            check(px_click("px-play-" + std::to_string(later)) && px().actor_clip() == later && px().block() < 0,
+                  "«idle» chosen again, the block not: block " + std::to_string(px().block()));
             break;
         }
         case 15: {
@@ -27837,6 +27859,16 @@ return {
                 return true;
             const i32 jump = sc_play("hop", "jump");
             check(jump >= 0 && px_click("px-play-" + std::to_string(jump)) && px().actor_clip() == jump, "«jump» chosen");
+            // Pressed in its middle and moved: a click on the clip, its start not taken.
+            check(mb_hold_edge("px-play-" + std::to_string(jump), 0.2, 0.25, false), "«jump» pressed in its middle and dragged");
+            mb_let_go();
+            check(file(lua) == bytes(sc_later_) && px().note().find("Начало клипа") == std::string::npos && px().actor_clip() == jump,
+                  "not at its start: nothing written, nothing refused, «jump» chosen: «" + px().note() + "»");
+            // The block of «man» chosen drops «jump», «jump» chosen drops the block.
+            check(click_id("px-block-0") && px().block() == 0 && px().actor_clip() < 0,
+                  "the block of «man» chosen, «jump» not: block " + std::to_string(px().block()) + ", clip " + std::to_string(px().actor_clip()));
+            check(px_click("px-play-" + std::to_string(jump)) && px().actor_clip() == jump && px().block() < 0,
+                  "«jump» chosen again, the block not: block " + std::to_string(px().block()));
             break;
         }
         case 17: {

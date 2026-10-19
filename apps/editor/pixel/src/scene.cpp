@@ -538,9 +538,9 @@ bool actor_marks(const Recording& rec, SceneMarkSource& clips, std::vector<Mark>
         for (u64 k = 0;; ++k) {
             const f64 base = snap_time(p.start + static_cast<f64>(k) * round);
             if (k > 0 && (!loop || !(round > 0) || base >= end)) break;
+            // A loop's mark at its clip's end comes at each round's end, as a game's screen gives it
+            // (vector::motion_marks_passed).
             for (const Mark& m : r->marks) {
-                // A loop's mark at its clip's end is the next round's start.
-                if (loop && p.clip_length > 0 && m.time >= p.clip_length) continue;
                 const f64 at = snap_time(base + m.time / p.speed);
                 if (at > end || (at == end && !last)) continue;
                 if (out.size() >= kMaxSceneMarks) {
