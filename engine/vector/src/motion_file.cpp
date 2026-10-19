@@ -15,14 +15,18 @@ namespace forge::vector {
 
 namespace {
 
-constexpr const char* kWords[] = {"x",       "y",       "rot",  "scale",  "sx",           "sy",      "skew_x",
-                                  "skew_y",  "opacity", "fill", "stroke", "stroke_width", "visible", "morph"};
+constexpr const char* kWords[] = {"x",       "y",       "rot",  "scale",  "sx",           "sy",      "skew_x",    "skew_y",
+                                  "opacity", "fill",    "stroke", "stroke_width", "visible", "morph", "dash", "draw_from",
+                                  "draw_to", "tint",    "flash", "flash_color",  "mask",    "link"};
 static_assert(std::size(kWords) == kMotionPropCount);
 
 constexpr f64 kMaxSkew = 89; // forge::pixel::kMaxSkew: past it a skew's tangent runs off to infinity
 
-bool is_color(MotionProp p) { return p == MotionProp::Fill || p == MotionProp::Stroke; }
-bool is_number(MotionProp p) { return static_cast<usize>(p) <= static_cast<usize>(MotionProp::Opacity); }
+bool is_color(MotionProp p) { return p == MotionProp::Fill || p == MotionProp::Stroke || p == MotionProp::Tint || p == MotionProp::FlashColor; }
+bool is_number(MotionProp p) {
+    return static_cast<usize>(p) <= static_cast<usize>(MotionProp::Opacity) || p == MotionProp::Dash || p == MotionProp::DrawFrom ||
+           p == MotionProp::DrawTo || p == MotionProp::Flash;
+}
 
 u8 mix8(u8 a, u8 b, f64 k) { return static_cast<u8>(std::clamp(std::round(a + (b - a) * k), 0.0, 255.0)); }
 
@@ -30,6 +34,12 @@ u8 mix8(u8 a, u8 b, f64 k) { return static_cast<u8>(std::clamp(std::round(a + (b
 f64 snap_ns(f64 t) { return std::round(t * 1e9) / 1e9; }
 
 bool close(f64 a, f64 b) { return std::abs(a - b) <= 1e-9 * std::max({1.0, std::abs(a), std::abs(b)}); }
+
+bool close(const MotionMatrix& m, const MotionMatrix& n) {
+    return close(m.a, n.a) && close(m.b, n.b) && close(m.c, n.c) && close(m.d, n.d) && close(m.e, n.e) && close(m.f, n.f);
+}
+
+constexpr const char* kOrderWords[] = {"top", "bottom", "above", "below"};
 
 f64 curve_at(const std::vector<f64>& c, f64 s) {
     if (c.empty()) return s;
@@ -79,6 +89,17 @@ void put_value(std::string& out, MotionProp p, const MotionValue& v) {
     }
     if (is_number(p)) {
         put_number(out, v.v);
+        return;
+    }
+    if (p == MotionProp::Link) {
+        out += '[';
+        put_string(out, v.target);
+        const f64 m[] = {v.m.a, v.m.b, v.m.c, v.m.d, v.m.e, v.m.f};
+        for (const f64 x : m) {
+            out += ", ";
+            put_number(out, x);
+        }
+        out += ']';
         return;
     }
     out += '[';
@@ -194,6 +215,8 @@ const char* value_shape(MotionProp p) {
     if (is_number(p)) return "число";
     if (is_color(p)) return "[доля, \"#rrggbbaa\"]";
     if (p == MotionProp::StrokeWidth) return "[доля, толщина]";
+    if (p == MotionProp::Mask) return "[0, \"\"] (без маски), [1, \"id части\"] (внутри) или [2, \"id части\"] (снаружи)";
+    if (p == MotionProp::Link) return "[\"id части\" (или \"\", отпущена), a, b, c, d, e, f]";
     return "[доля, \"id фигуры\"]";
 }
 
@@ -205,6 +228,14 @@ bool value(yyjson_val* v, MotionProp p, MotionValue& out) {
         return true;
     }
     if (is_number(p)) return number(v, out.v);
+    if (p == MotionProp::Link) {
+        if (!yyjson_is_arr(v) || yyjson_arr_size(v) != 7 || !text(yyjson_arr_get(v, 0), out.target)) return false;
+        f64 m[6];
+        for (usize i = 0; i < 6; ++i)
+            if (!number(yyjson_arr_get(v, i + 1), m[i])) return false;
+        out.m = {m[0], m[1], m[2], m[3], m[4], m[5]};
+        return true;
+    }
     if (!yyjson_is_arr(v) || yyjson_arr_size(v) != 2 || !number(yyjson_arr_get(v, 0), out.v)) return false;
     yyjson_val* b = yyjson_arr_get(v, 1);
     if (is_color(p)) {
@@ -212,7 +243,9 @@ bool value(yyjson_val* v, MotionProp p, MotionValue& out) {
         return text(b, s) && parse_hex(s, out.color);
     }
     if (p == MotionProp::StrokeWidth) return number(b, out.n);
-    return text(b, out.target);
+    if (!text(b, out.target)) return false;
+    if (p == MotionProp::Mask) return (out.v == 0 && out.target.empty()) || ((out.v == 1 || out.v == 2) && !out.target.empty());
+    return true;
 }
 
 struct Reader {
@@ -290,8 +323,10 @@ struct Reader {
         if (!text(yyjson_obj_get(v, "part"), out.part) || out.part.empty()) return fail(where, "part: нужен id части строкой");
         std::string w;
         if (!text(yyjson_obj_get(v, "prop"), w) || !motion_prop_from_word(w, out.prop))
-            return fail(where, "prop: нет такого свойства «" + w + "»: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, visible, morph");
-        if (motion_prop_moves(out.prop) && !f.part(out.part))
+            return fail(where, "prop: нет такого свойства «" + w +
+                                   "»: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, visible, morph, dash, draw_from, "
+                                   "draw_to, tint, flash, flash_color, mask, link");
+        if ((motion_prop_moves(out.prop) || out.prop == MotionProp::Link) && !f.part(out.part))
             return fail(where, "части «" + out.part + "» нет в parts, а её " + w + " без опоры и рамки не посчитать");
         yyjson_val* pieces = yyjson_obj_get(v, "pieces");
         if (!yyjson_is_arr(pieces) || yyjson_arr_size(pieces) == 0) return fail(where, "pieces: нужен непустой список кусков");
@@ -301,6 +336,8 @@ struct Reader {
             MotionPiece pc;
             const std::string at = where + ".pieces[" + std::to_string(i) + "]";
             if (!piece(item, at, out.prop, pc)) return false;
+            if (motion_prop_held(out.prop) && pc.kind != MotionPiece::Kind::Hold)
+                return fail(at, std::string("у ") + w + " только hold: она меняется вызовом в миг, а не переходом");
             if (i == 0 && pc.at != 0) return fail(at, "первый кусок — с 0");
             if (i > 0 && pc.at <= out.pieces.back().at) return fail(at, "куски не по времени: at не больше, чем у куска перед ним");
             if (pc.at > c.length) return fail(at, "at за концом клипа");
@@ -349,6 +386,63 @@ struct Reader {
                     if (!number(l, m.length) || m.length < 0) return fail(at, "length: нужно число от 0 — окно метки");
                 if (!out.marks.empty() && m.at < out.marks.back().at) return fail(at, "метки не по времени");
                 out.marks.push_back(std::move(m));
+            }
+        }
+        if (yyjson_val* copies = yyjson_obj_get(v, "copies")) {
+            if (!yyjson_is_arr(copies)) return fail(where, "copies: нужен список копий");
+            yyjson_arr_foreach(copies, i, n, item) {
+                const std::string at = where + ".copies[" + std::to_string(i) + "]";
+                if (!yyjson_is_obj(item)) return fail(at, "нужен объект {\"id\": …, \"source\": …, \"number\": …, \"born\": …}");
+                MotionCopy c;
+                if (!text(yyjson_obj_get(item, "id"), c.id) || c.id.empty()) return fail(at, "id: нужен id копии строкой");
+                if (!text(yyjson_obj_get(item, "source"), c.source) || c.source.empty()) return fail(at, "source: нужна часть, копия которой это");
+                if (c.source == c.id) return fail(at, "копия не может зваться, как её часть");
+                yyjson_val* num = yyjson_obj_get(item, "number");
+                if (!yyjson_is_uint(num) || yyjson_get_uint(num) == 0 || yyjson_get_uint(num) > 1u << 20)
+                    return fail(at, "number: нужен номер копии у её части: 1, 2, …");
+                c.number = static_cast<u32>(yyjson_get_uint(num));
+                if (!number(yyjson_obj_get(item, "born"), c.born) || c.born < 0 || c.born > out.length)
+                    return fail(at, "born: нужен миг рождения в клипе, от 0 до его длины");
+                if (!out.copies.empty() && c.born < out.copies.back().born) return fail(at, "копии не по времени рождения");
+                if (!f.part(c.id)) return fail(at, "копии «" + c.id + "» нет в parts: нужны её опорная точка и рамка (у неё они части «" + c.source + "»)");
+                for (const MotionCopy& o : out.copies) {
+                    if (o.id == c.id) return fail(at, "копия «" + c.id + "» дважды");
+                    if (o.source == c.source && o.number == c.number) return fail(at, "у части «" + c.source + "» уже есть копия " + std::to_string(c.number));
+                    if (o.id == c.source || o.source == c.id) return fail(at, "копия копии: «" + c.id + "» и «" + o.id + "»");
+                }
+                out.copies.push_back(std::move(c));
+            }
+            // Each part's copies are numbered 1, 2, … without a gap.
+            std::map<std::string, u32, std::less<>> count;
+            for (const MotionCopy& c : out.copies) ++count[c.source];
+            for (usize k = 0; k < out.copies.size(); ++k)
+                if (out.copies[k].number > count[out.copies[k].source])
+                    return fail(where + ".copies[" + std::to_string(k) + "]", "number: у части «" + out.copies[k].source + "» копий " +
+                                                                                 std::to_string(count[out.copies[k].source]) + ", номера — 1, 2, … без пропусков");
+        }
+        if (yyjson_val* order = yyjson_obj_get(v, "order")) {
+            if (!yyjson_is_arr(order)) return fail(where, "order: нужен список шагов порядка");
+            yyjson_arr_foreach(order, i, n, item) {
+                const std::string at = where + ".order[" + std::to_string(i) + "]";
+                if (!yyjson_is_obj(item)) return fail(at, "нужен объект {\"at\": …, \"part\": …, \"kind\": …}");
+                MotionOrderStep st;
+                if (!number(yyjson_obj_get(item, "at"), st.at) || st.at < 0 || st.at > out.length)
+                    return fail(at, "at: нужен миг шага в клипе, от 0 до его длины");
+                if (!out.order.empty() && st.at < out.order.back().at) return fail(at, "шаги порядка не по времени");
+                if (!text(yyjson_obj_get(item, "part"), st.part) || st.part.empty()) return fail(at, "part: нужен id части строкой");
+                std::string kind;
+                text(yyjson_obj_get(item, "kind"), kind);
+                usize k = 0;
+                while (k < std::size(kOrderWords) && kind != kOrderWords[k]) ++k;
+                if (k == std::size(kOrderWords)) return fail(at, "kind: нет такого шага «" + kind + "»: top, bottom, above или below");
+                st.kind = static_cast<MotionOrder>(k);
+                yyjson_val* other = yyjson_obj_get(item, "other");
+                if (st.kind == MotionOrder::Above || st.kind == MotionOrder::Below) {
+                    if (!text(other, st.other) || st.other.empty()) return fail(at, "other: у " + kind + " нужен сосед, id части строкой");
+                } else if (other) {
+                    return fail(at, "other: у " + kind + " соседа нет");
+                }
+                out.order.push_back(std::move(st));
             }
         }
         if (yyjson_val* nd = yyjson_obj_get(v, "not_drawn")) {
@@ -447,9 +541,21 @@ const char* motion_not_drawn_words(std::string_view word) {
 
 bool motion_prop_moves(MotionProp p) { return static_cast<usize>(p) <= static_cast<usize>(MotionProp::SkewY); }
 
+bool motion_prop_held(MotionProp p) { return p == MotionProp::Mask || p == MotionProp::Link; }
+
+bool motion_prop_new(MotionProp p) { return static_cast<usize>(p) >= static_cast<usize>(MotionProp::Dash); }
+
+const char* motion_order_word(MotionOrder k) {
+    const auto i = static_cast<usize>(k);
+    return i < std::size(kOrderWords) ? kOrderWords[i] : kOrderWords[0];
+}
+
 MotionValue motion_rest(MotionProp p) {
     MotionValue v;
-    v.v = (p == MotionProp::Scale || p == MotionProp::Sx || p == MotionProp::Sy || p == MotionProp::Opacity || p == MotionProp::Visible) ? 1 : 0;
+    v.v = (p == MotionProp::Scale || p == MotionProp::Sx || p == MotionProp::Sy || p == MotionProp::Opacity || p == MotionProp::DrawTo ||
+           p == MotionProp::Visible)
+              ? 1
+              : 0;
     return v;
 }
 
@@ -461,7 +567,7 @@ MotionValue motion_mix(MotionProp p, const MotionValue& a, const MotionValue& b,
         r.v = a.v + (b.v - a.v) * k; // past 0 … 1 too: back and elastic overshoot
         return r;
     }
-    if (p == MotionProp::Visible) return k >= 1 ? b : a; // no values between
+    if (p == MotionProp::Visible || motion_prop_held(p)) return k >= 1 ? b : a; // no values between
     if (p == MotionProp::StrokeWidth && a.v == 1 && b.v == 1) {
         r.v = 1;
         r.n = a.n + (b.n - a.n) * k; // two widths given: as numbers, past them too
@@ -515,6 +621,11 @@ MotionValue motion_plain(MotionProp p, const MotionValue& v) {
         r.v = v.v;
         return r;
     }
+    if (p == MotionProp::Link) {
+        r.target = v.target;
+        r.m = v.m;
+        return r;
+    }
     if (v.v <= 0) return motion_rest(p);
     r.v = v.v;
     if (is_color(p)) r.color = v.color;
@@ -525,7 +636,7 @@ MotionValue motion_plain(MotionProp p, const MotionValue& v) {
 
 bool motion_same(MotionProp p, const MotionValue& a, const MotionValue& b) {
     const MotionValue x = motion_plain(p, a), y = motion_plain(p, b);
-    return close(x.v, y.v) && x.color == y.color && x.target == y.target && close(x.n, y.n);
+    return close(x.v, y.v) && x.color == y.color && x.target == y.target && close(x.n, y.n) && close(x.m, y.m);
 }
 
 usize motion_frame_count(f64 at, f64 end) {
@@ -581,8 +692,17 @@ bool read_motion_file(std::string_view json, MotionFile& out, std::string& why) 
     return ok;
 }
 
+u32 motion_file_version(const MotionFile& f) {
+    for (const MotionClip& c : f.clips) {
+        if (!c.copies.empty() || !c.order.empty()) return 2;
+        for (const MotionTrack& t : c.tracks)
+            if (motion_prop_new(t.prop)) return 2;
+    }
+    return 1;
+}
+
 std::string write_motion_file(const MotionFile& f) {
-    std::string out = "{\n  \"forge\": \"motion\",\n  \"version\": " + std::to_string(kMotionFileVersion) + ",\n  \"character\": ";
+    std::string out = "{\n  \"forge\": \"motion\",\n  \"version\": " + std::to_string(motion_file_version(f)) + ",\n  \"character\": ";
     put_string(out, f.character);
     out += ",\n  \"from\": ";
     put_string(out, f.from);
@@ -655,7 +775,40 @@ std::string write_motion_file(const MotionFile& f) {
             if (w) out += ", ";
             put_string(out, c.not_drawn[w]);
         }
-        out += "]\n    }";
+        out += ']';
+        if (!c.copies.empty()) {
+            out += ",\n      \"copies\": [";
+            for (usize k = 0; k < c.copies.size(); ++k) {
+                const MotionCopy& cp = c.copies[k];
+                out += k ? ",\n        {\"id\": " : "\n        {\"id\": ";
+                put_string(out, cp.id);
+                out += ", \"source\": ";
+                put_string(out, cp.source);
+                out += ", \"number\": " + std::to_string(cp.number) + ", \"born\": ";
+                put_number(out, cp.born);
+                out += '}';
+            }
+            out += "\n      ]";
+        }
+        if (!c.order.empty()) {
+            out += ",\n      \"order\": [";
+            for (usize k = 0; k < c.order.size(); ++k) {
+                const MotionOrderStep& st = c.order[k];
+                out += k ? ",\n        {\"at\": " : "\n        {\"at\": ";
+                put_number(out, st.at);
+                out += ", \"part\": ";
+                put_string(out, st.part);
+                out += ", \"kind\": ";
+                put_string(out, motion_order_word(st.kind));
+                if (st.kind == MotionOrder::Above || st.kind == MotionOrder::Below) {
+                    out += ", \"other\": ";
+                    put_string(out, st.other);
+                }
+                out += '}';
+            }
+            out += "\n      ]";
+        }
+        out += "\n    }";
     }
     out += f.clips.empty() ? "}\n}\n" : "\n  }\n}\n";
     return out;
@@ -702,7 +855,8 @@ MotionValue motion_piece_value(const MotionFile& file, MotionProp p, const Motio
 
 MotionValue motion_track_value(const MotionFile& file, const MotionTrack& track, f64 t, f64 length) {
     if (track.pieces.empty()) return motion_rest(track.prop);
-    t = std::clamp(t, 0.0, std::max(length, 0.0));
+    // On its nanoseconds, as the recording is read: a game's moment a hair before a piece's start (frames added up) is at it.
+    t = snap_ns(std::clamp(t, 0.0, std::max(length, 0.0)));
     auto it = std::upper_bound(track.pieces.begin(), track.pieces.end(), t, [](f64 x, const MotionPiece& p) { return x < p.at; });
     if (it != track.pieces.begin()) --it;
     return motion_piece_value(file, track.prop, *it, t);
@@ -751,6 +905,48 @@ std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip
         const MotionMatrix a = motion_matrix(v(MotionProp::X), v(MotionProp::Y), v(MotionProp::Rot), v(MotionProp::Scale), v(MotionProp::Sx),
                                              v(MotionProp::Sy), v(MotionProp::SkewX), v(MotionProp::SkewY), part->pivot);
         pp.local = inverse(part->frame) * a * part->frame * part->own;
+    }
+    return out;
+}
+
+bool motion_clip_missing(const MotionClip& clip, const SvgOutline& svg, std::string& part, std::string& role) {
+    auto drawn = [&](std::string_view id) {
+        for (const SvgElement& e : svg.elements)
+            if (e.id == id)
+                if (e.tag == "g" || e.tag == "use" || e.tag == "path" || e.tag == "rect" || e.tag == "circle" || e.tag == "ellipse" ||
+                    e.tag == "line" || e.tag == "polyline" || e.tag == "polygon")
+                    return true;
+        return false;
+    };
+    auto copy = [&](std::string_view id) {
+        return std::any_of(clip.copies.begin(), clip.copies.end(), [&](const MotionCopy& c) { return c.id == id; });
+    };
+    auto missing = [&](const std::string& id, std::string what) {
+        if (id.empty() || drawn(id)) return false;
+        part = id;
+        role = std::move(what);
+        return true;
+    };
+    for (const MotionCopy& c : clip.copies)
+        if (missing(c.source, "копия «" + c.id + "»")) return true;
+    for (const MotionTrack& t : clip.tracks) {
+        if (t.prop != MotionProp::Mask && t.prop != MotionProp::Link) continue;
+        for (const MotionPiece& pc : t.pieces)
+            if (missing(pc.value.target, std::string(t.prop == MotionProp::Mask ? "маска «" : "крепление «") + t.part + "»")) return true;
+    }
+    for (const MotionOrderStep& s : clip.order)
+        if ((!copy(s.part) && missing(s.part, "порядок «" + s.part + "»")) || missing(s.other, "порядок «" + s.part + "»")) return true;
+    return false;
+}
+
+bool motion_copy_drawn(const MotionCopy& copy, f64 t) { return copy.born <= t; }
+
+std::vector<MotionOrderStep> motion_order_at(const MotionClip& clip, f64 t) {
+    std::vector<MotionOrderStep> out;
+    for (const MotionOrderStep& st : clip.order) {
+        if (!(st.at <= t)) continue;
+        const auto copy = std::find_if(clip.copies.begin(), clip.copies.end(), [&](const MotionCopy& c) { return c.id == st.part; });
+        if (copy == clip.copies.end() || motion_copy_drawn(*copy, t)) out.push_back(st);
     }
     return out;
 }

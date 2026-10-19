@@ -9106,12 +9106,16 @@ private:
     // «jump» round and round, its mark at each lap, then to the end of that lap; «idle» once, its step at 0 only, the
     // mouth of «jump» gone from the picture; «idle» again once it ended (from 0), stopped, again (from 0), twice as fast
     // (on from where it was); the file of clips written again with «jump» named «hop» and a clip there is not: the
-    // error names the clips of the file as it is now. What the screen does not draw said once.
+    // error names the clips of the file as it is now. What the screen does not draw said once. Part 5г: «jump»'s mask,
+    // link, dash, drawn share, flash, tint, copies and order are the tab's at each frame too, and drawn as lunasvg draws
+    // the pose (its stage); once the clip goes, the picture is its file again.
     void build_motion_edits(Shell& s) {
         struct Tab {
             std::map<std::string, std::array<f64, 6>> matrix; // "clip k part"
             std::map<std::string, std::pair<f64, std::string>> morph;
             std::map<std::string, usize> count; // "clip k": the parts it has
+            std::map<std::string, std::vector<std::pair<vector::MotionProp, vector::MotionValue>>> values; // "clip k part": part 5г
+            std::map<std::string, std::vector<std::string>> copies, order;                               // "clip k"
         };
         struct Seen {
             u64 clock = 1'000'000'000;
@@ -9130,6 +9134,23 @@ private:
             usize k = 0;
             in >> clip >> k >> part >> kind;
             const std::string at = clip + " " + std::to_string(k);
+            if (kind == "copies" || kind == "order") {
+                std::vector<std::string>& list = (kind == "copies" ? tab->copies : tab->order)[at];
+                for (std::string w; in >> w;) list.push_back(w);
+                continue;
+            }
+            if (kind == "value") {
+                std::string word, target;
+                vector::MotionValue v;
+                u32 c[4] = {};
+                in >> word >> v.v >> c[0] >> c[1] >> c[2] >> c[3] >> target >> v.n >> v.m.a >> v.m.b >> v.m.c >> v.m.d >> v.m.e >> v.m.f;
+                v.color = {static_cast<u8>(c[0]), static_cast<u8>(c[1]), static_cast<u8>(c[2]), static_cast<u8>(c[3])};
+                v.target = target == "-" ? std::string() : target;
+                vector::MotionProp prop = vector::MotionProp::X;
+                vector::motion_prop_from_word(word, prop);
+                tab->values[at + " " + part].push_back({prop, v});
+                continue;
+            }
             ++tab->count[at];
             if (kind == "morph") {
                 f64 share = 0;
@@ -9163,7 +9184,10 @@ private:
             usize parts = 0;
             for (usize i = 0; why.empty() && i < pose->parts.size(); ++i) {
                 const vector::MotionPartPose& p = pose->parts[i];
-                if (p.moves) {
+                // A copy ("dust[1]") not born yet is not in the tab's picture.
+                const bool unborn = !p.id.empty() && p.id.back() == ']' && p.id.find('[') != std::string::npos &&
+                                    std::none_of(pose->copies.begin(), pose->copies.end(), [&](const vector::MotionCopy& k) { return k.id == p.id; });
+                if (p.moves && !unborn) {
                     ++parts;
                     const auto it = tab->matrix.find(key + " " + p.id);
                     const f64 got[6] = {p.local.a, p.local.b, p.local.c, p.local.d, p.local.e, p.local.f};
@@ -9184,6 +9208,30 @@ private:
                 }
             }
             if (why.empty() && parts != tab->count[key]) why = std::to_string(parts) + " дорожек частей при " + std::to_string(tab->count[key]) + " у вкладки";
+            // Part 5г: the new properties' values, the copies drawn and the order's steps.
+            for (const auto& [at_part, list] : tab->values) {
+                if (!why.empty() || at_part.rfind(key + " ", 0) != 0) continue;
+                const std::string id = at_part.substr(key.size() + 1);
+                const auto pp = std::find_if(pose->parts.begin(), pose->parts.end(), [&](const vector::MotionPartPose& q) { return q.id == id; });
+                for (const auto& [prop, want] : list) {
+                    if (!why.empty()) break;
+                    const vector::MotionValue got = pp != pose->parts.end() && pp->has[static_cast<usize>(prop)] ? pp->values[static_cast<usize>(prop)]
+                                                                                                                 : vector::motion_rest(prop);
+                    if (!vector::motion_same(prop, got, want))
+                        why = std::string(vector::motion_prop_word(prop)) + " «" + id + "»: " + std::to_string(got.v) + " «" + got.target + "» при " +
+                              std::to_string(want.v) + " «" + want.target + "» у вкладки";
+                }
+            }
+            if (why.empty()) {
+                std::vector<std::string> copies, order;
+                for (const vector::MotionCopy& k : pose->copies) copies.push_back(k.id);
+                for (const vector::MotionOrderStep& o : pose->order)
+                    order.insert(order.end(), {o.part, vector::motion_order_word(o.kind), o.other.empty() ? std::string("-") : o.other});
+                const auto tc = tab->copies.find(key);
+                const auto to = tab->order.find(key);
+                if (copies != (tc == tab->copies.end() ? std::vector<std::string>{} : tc->second)) why = std::to_string(copies.size()) + " копий не те, что у вкладки";
+                else if (order != (to == tab->order.end() ? std::vector<std::string>{} : to->second)) why = "порядок частей не тот, что у вкладки";
+            }
             ++st->compared;
             if (!why.empty() && st->off++ == 0) st->first_off = "«" + key + "»: " + why;
         };

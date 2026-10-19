@@ -5,7 +5,8 @@ add_library(forge_ui STATIC
   src/html.cpp
   src/elements.cpp
   src/gpu_renderer.cpp
-  src/live_svg.cpp)
+  src/live_svg.cpp
+  src/svg_stage.cpp)
 add_library(forge::ui ALIAS forge_ui)
 target_include_directories(forge_ui PUBLIC include)
 target_link_libraries(forge_ui

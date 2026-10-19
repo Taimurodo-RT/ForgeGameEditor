@@ -20,6 +20,10 @@
 // its shapes' fill, stroke and stroke width from their own by the clip's shares (a group first, the parts inside it
 // after), hidden by display: none, its outline morphed with its colours, a fill or stroke its `style` gives changed
 // there.
+//
+// Since part 5г the clip draws everything the tab's main picture draws but blur and shadow: dashes, outlines drawn along
+// their length, tints and flashes (gradients too), masks, links, copies and the parts' order. The element then draws
+// the picture from a stage of it (engine/ui/src/svg_stage.h), made again when the clip needs what it has not.
 
 #include "forge/core/types.h"
 #include "forge/vector/motion_file.h"
@@ -66,6 +70,8 @@ std::vector<std::string> svg_problems();
 struct SvgPose {
     std::string picture;
     std::vector<vector::MotionPartPose> parts;
+    std::vector<vector::MotionCopy> copies;      // the copies drawn now (motion_copy_drawn)
+    std::vector<vector::MotionOrderStep> order;  // the order's steps up to now (motion_order_at)
 };
 // The element shows the pose on its next frame; another pose of the same parts replaces it.
 void svg_pose(Rml::Element* element, SvgPose pose);
@@ -79,6 +85,8 @@ const SvgPose* svg_posed(Rml::Element* element);
 bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, std::vector<u8>& rgba, std::string& why);
 // The attributes the pose gives an element of the picture after it is applied, for checks: "" when none was given.
 std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::string_view id, std::string_view name);
+// The text of the stage a pose draws the picture from, for checks: "" when it draws the file itself.
+std::string posed_stage(std::string_view svg, const SvgPose& pose);
 
 // Ui::init calls it: the SVG plugin asks this file what a live element's pictures are.
 void install_live_svg();

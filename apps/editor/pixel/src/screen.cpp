@@ -25,14 +25,22 @@ i64 ns_of(f64 t) { return std::llround(t * 1e9); }
 f64 seconds(i64 ns) { return static_cast<f64>(ns) / 1e9; }
 
 vector::MotionColor color8(const Rgba8& c) { return {c.r, c.g, c.b, c.a}; }
-MotionValue value_of(const PropValue& v) { return {v.v, color8(v.color), v.target, v.n}; }
+MotionValue value_of(const PropValue& v) { return {v.v, color8(v.color), v.target, v.n, {}}; }
 
+// The same property in the file and in the recording: by its word, the mask's and the link's by name (the code has no
+// field of theirs, so their words differ).
 Prop prop_of(MotionProp p) {
+    if (p == MotionProp::Mask) return Prop::Mask;
+    if (p == MotionProp::Link) return Prop::Link;
     Prop out = Prop::X;
     prop_from_word(vector::motion_prop_word(p), out);
     return out;
 }
-bool motion_prop_of(Prop p, MotionProp& out) { return vector::motion_prop_from_word(prop_word(p), out); }
+bool motion_prop_of(Prop p, MotionProp& out) {
+    if (p == Prop::Mask) return out = MotionProp::Mask, true;
+    if (p == Prop::Link) return out = MotionProp::Link, true;
+    return vector::motion_prop_from_word(prop_word(p), out);
+}
 
 // The moments a piece from `at` to `end` is looked at: 120 times a second from `at`, then the moment before `end`
 // (as a frames piece keeps its values); `at` alone for a piece of no length.
@@ -79,23 +87,14 @@ usize curve_index(MotionFile& file, const std::vector<f64>& curve) {
     return file.curves.size() - 1;
 }
 
-// What a recording's track does that a screen does not draw yet.
+// What a recording's track does that a screen does not draw (since part 5г: the blur, the shadow and the swap).
 const char* not_drawn_of(Prop p) {
     switch (p) {
-    case Prop::Dash: return "dash";
-    case Prop::DrawFrom:
-    case Prop::DrawTo: return "draw";
-    case Prop::Tint: return "tint";
-    case Prop::Flash:
-    case Prop::FlashColor: return "flash";
     case Prop::Blur: return "blur";
     case Prop::Shadow:
     case Prop::ShadowX:
     case Prop::ShadowY:
     case Prop::ShadowBlur: return "shadow";
-    case Prop::Mask: return "mask";
-    case Prop::Link: return "link";
-    case Prop::Order: return "order";
     case Prop::Drawing: return "drawing";
     default: return nullptr;
     }
@@ -104,17 +103,9 @@ const char* not_drawn_of(Prop p) {
 // The same of a frame.
 void not_drawn_in(const Rig& rig, const Pose& pose, std::set<std::string>& out) {
     for (const auto& [id, pp] : pose.parts) {
-        if (pp.dash != 0) out.insert("dash");
-        if (pp.draw_from != 0 || pp.draw_to != 1) out.insert("draw");
-        if (pp.has_tint && pp.tint_k > 0) out.insert("tint");
-        if (pp.flash > 0) out.insert("flash");
         if (pp.blur > 0) out.insert("blur");
         if (pp.has_shadow && pp.shadow_k > 0) out.insert("shadow");
-        if (!pp.mask.empty()) out.insert("mask");
-        if (!pp.carry_by.empty() || pp.carry != Affine{}) out.insert("link");
     }
-    if (!pose.copies.empty()) out.insert("copies");
-    if (!pose.order.empty()) out.insert("order");
     if (!pose.drawing.empty() || pose.swap) out.insert("drawing");
     for (const auto& [id, m] : pose.morphs)
         if (m.k > 0 && !rig.holder_name(m.target).empty()) out.insert("morph_drawing");
@@ -128,7 +119,7 @@ vector::MotionValue screen_value(const Pose& pose, const std::string& id, vector
     MotionValue out = vector::motion_rest(p);
     if (p == MotionProp::Morph) {
         auto m = pose.morphs.find(id);
-        if (m != pose.morphs.end() && m->second.k > 0) out = {m->second.k, {}, m->second.target, 0};
+        if (m != pose.morphs.end() && m->second.k > 0) out = {m->second.k, {}, m->second.target, 0, {}};
         return out;
     }
     auto it = pose.parts.find(id);
@@ -145,16 +136,33 @@ vector::MotionValue screen_value(const Pose& pose, const std::string& id, vector
     case MotionProp::SkewY: out.v = pp.skew_y; break;
     case MotionProp::Opacity: out.v = pp.opacity; break;
     case MotionProp::Fill:
-        if (pp.has_fill) out = {pp.fill_k, color8(pp.fill), {}, 0};
+        if (pp.has_fill) out = {pp.fill_k, color8(pp.fill), {}, 0, {}};
         break;
     case MotionProp::Stroke:
-        if (pp.has_stroke) out = {pp.stroke_k, color8(pp.stroke), {}, 0};
+        if (pp.has_stroke) out = {pp.stroke_k, color8(pp.stroke), {}, 0, {}};
         break;
     case MotionProp::StrokeWidth:
-        if (pp.has_stroke_width) out = {pp.stroke_width_k, {}, {}, pp.stroke_width};
+        if (pp.has_stroke_width) out = {pp.stroke_width_k, {}, {}, pp.stroke_width, {}};
         break;
     case MotionProp::Visible: out.v = pp.visible ? 1 : 0; break;
     case MotionProp::Morph: break;
+    case MotionProp::Dash: out.v = pp.dash; break;
+    case MotionProp::DrawFrom: out.v = pp.draw_from; break;
+    case MotionProp::DrawTo: out.v = pp.draw_to; break;
+    case MotionProp::Tint:
+        if (pp.has_tint) out = {pp.tint_k, color8(pp.tint), {}, 0, {}};
+        break;
+    case MotionProp::Flash: out.v = pp.flash; break;
+    case MotionProp::FlashColor:
+        if (pp.has_flash_color) out = {pp.flash_color_k, color8(pp.flash_color), {}, 0, {}};
+        break;
+    case MotionProp::Mask:
+        if (!pp.mask.empty()) out = {pp.mask_invert ? 2.0 : 1.0, {}, pp.mask, 0, {}};
+        break;
+    case MotionProp::Link:
+        out.target = pp.carry_by;
+        out.m = matrix_of(pp.carry);
+        break;
     }
     return vector::motion_plain(p, out);
 }
@@ -176,11 +184,28 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
             if (rec->parts[i] == id) return static_cast<i32>(i);
         return -1;
     };
-    // The picture's parts only: the copies and the other drawings' parts are not in the SVG the screen shows.
-    auto drawn_part = [&](const std::string& id) { return rig.part(id) >= 0 && copy_of(*rec, id) < 0; };
+    // The copies the screen draws (part 5г): of parts of the picture, born within the clip.
+    std::vector<char> drawn_copy(rec->copies.size(), 0);
+    for (usize i = 0; i < rec->copies.size(); ++i) {
+        const Copy& c = rec->copies[i];
+        drawn_copy[i] = rig.part(c.source) >= 0 && ns_of(c.born) <= length;
+        if (drawn_copy[i]) out.copies.push_back({c.id, c.source, c.number, c.born});
+    }
+    std::stable_sort(out.copies.begin(), out.copies.end(), [](const vector::MotionCopy& a, const vector::MotionCopy& b) { return a.born < b.born; });
+    // The parts the SVG the screen shows has, by rank: the picture's, then the copies by their calls; not the other
+    // drawings' parts. -1 for none of them.
+    const auto picture = static_cast<i32>(rig.parts().size());
+    auto rank_of = [&](const std::string& id) -> i32 {
+        if (const i32 pi = rig.part(id); pi >= 0) return pi;
+        const i32 ci = copy_of(*rec, id);
+        return ci >= 0 && drawn_copy[static_cast<usize>(ci)] ? picture + ci : -1;
+    };
+    auto id_of = [&](i32 rank) -> const std::string& {
+        return rank < picture ? rig.parts()[static_cast<usize>(rank)].id : rec->copies[static_cast<usize>(rank - picture)].id;
+    };
 
     // The tracks: each property of each part the clip ever takes from its rest, by blocks, start_from or pose(t).
-    std::set<std::pair<i32, usize>> wanted; // the part in the rig, the property
+    std::set<std::pair<i32, usize>> wanted; // the part's rank, the property
     std::set<std::string> not_drawn;
     for (const Recording::Track& tr : rec->tracks) {
         const std::string& id = rec->parts[tr.part];
@@ -189,14 +214,12 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
             for (const u32 bi : tr.blocks)
                 if (!rig.holder_name(rec->blocks[bi].value.target).empty()) not_drawn.insert("morph_drawing");
         MotionProp mp;
-        if (motion_prop_of(tr.prop, mp) && drawn_part(id)) wanted.insert({rig.part(id), static_cast<usize>(mp)});
+        if (motion_prop_of(tr.prop, mp) && rank_of(id) >= 0) wanted.insert({rank_of(id), static_cast<usize>(mp)});
     }
-    if (!rec->copies.empty()) not_drawn.insert("copies");
-    if (!rec->start.order.empty()) not_drawn.insert("order");
     for (const StartValue& sv : rec->start.values) {
         if (const char* w = not_drawn_of(sv.prop)) not_drawn.insert(w);
         MotionProp mp;
-        if (motion_prop_of(sv.prop, mp) && drawn_part(sv.part)) wanted.insert({rig.part(sv.part), static_cast<usize>(mp)});
+        if (motion_prop_of(sv.prop, mp) && rank_of(sv.part) >= 0) wanted.insert({rank_of(sv.part), static_cast<usize>(mp)});
     }
     std::vector<i64> whole = moments(0, length);
     if (length > 0) whole.push_back(length);
@@ -205,20 +228,21 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
         if (!pose) return false;
         not_drawn_in(rig, *pose, not_drawn);
         for (const auto& [id, pp] : pose->parts) {
-            if (!drawn_part(id)) continue;
+            const i32 rank = rank_of(id);
+            if (rank < 0) continue;
             for (usize p = 0; p < kProps; ++p) {
                 const auto mp = static_cast<MotionProp>(p);
                 if (mp != MotionProp::Morph && !vector::motion_same(mp, screen_value(*pose, id, mp), vector::motion_rest(mp)))
-                    wanted.insert({rig.part(id), p});
+                    wanted.insert({rank, p});
             }
         }
         for (const auto& [id, m] : pose->morphs)
-            if (m.k > 0 && drawn_part(id)) wanted.insert({rig.part(id), static_cast<usize>(MotionProp::Morph)});
+            if (m.k > 0 && rank_of(id) >= 0) wanted.insert({rank_of(id), static_cast<usize>(MotionProp::Morph)});
     }
 
-    for (const auto& [pi, p] : wanted) {
+    for (const auto& [rank, p] : wanted) {
         const auto mp = static_cast<MotionProp>(p);
-        const std::string& id = rig.parts()[static_cast<usize>(pi)].id;
+        const std::string& id = id_of(rank);
         const i32 rp = rec_part(id);
         const i32 track = rp < 0 ? -1 : rec->track(static_cast<u32>(rp), prop_of(mp));
         // Where pieces start: 0, each deciding block's start, its end when the next one does not cut it.
@@ -253,6 +277,18 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
                 pc.kind = MotionPiece::Kind::Hold;
                 pc.value = vs.front();
                 tr.pieces.push_back(std::move(pc));
+                continue;
+            }
+            // The mask and the link change by a call, at a moment: a hold from each moment it is another.
+            if (vector::motion_prop_held(mp)) {
+                for (usize i = 0; i < ms.size(); ++i) {
+                    if (i > 0 && vector::motion_same(mp, vs[i], vs[i - 1])) continue;
+                    MotionPiece h;
+                    h.kind = MotionPiece::Kind::Hold;
+                    h.at = i == 0 ? pc.at : seconds(ms[i]);
+                    h.value = vs[i];
+                    tr.pieces.push_back(std::move(h));
+                }
                 continue;
             }
             // The deciding block's transition, when it starts here and its formula is the frame at every moment.
@@ -302,6 +338,37 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
         const bool at_rest = tr.pieces.size() == 1 && tr.pieces.front().kind == MotionPiece::Kind::Hold &&
                              vector::motion_same(mp, tr.pieces.front().value, vector::motion_rest(mp));
         if (!at_rest) out.tracks.push_back(std::move(tr));
+    }
+
+    // The order (part 5г): what start_from left, at 0, then the clip's calls by time (start, then as made), of the parts
+    // the screen draws and their neighbours in the picture.
+    auto step_of = [&](const OrderStep& o, f64 at) {
+        vector::MotionOrderStep st;
+        st.at = at;
+        st.part = o.part;
+        st.kind = static_cast<vector::MotionOrder>(o.kind);
+        if (o.kind == OrderStep::Kind::Above || o.kind == OrderStep::Kind::Below) st.other = o.other;
+        return st;
+    };
+    auto drawn_step = [&](const OrderStep& o) {
+        return rank_of(o.part) >= 0 && ((o.kind != OrderStep::Kind::Above && o.kind != OrderStep::Kind::Below) || rig.part(o.other) >= 0);
+    };
+    for (const OrderStep& o : rec->start.order)
+        if (drawn_step(o)) out.order.push_back(step_of(o, 0));
+    std::vector<u32> calls;
+    for (u32 i = 0; i < rec->blocks.size(); ++i)
+        if (rec->blocks[i].prop == Prop::Order && ns_of(rec->blocks[i].start) <= length) calls.push_back(i);
+    std::stable_sort(calls.begin(), calls.end(), [&](u32 a, u32 b) {
+        const Block &x = rec->blocks[a], &y = rec->blocks[b];
+        return x.start != y.start ? x.start < y.start : x.order < y.order;
+    });
+    for (const u32 i : calls) {
+        const Block& b = rec->blocks[i];
+        OrderStep o;
+        o.part = rec->parts[b.part];
+        o.kind = static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(b.value.v), 0, 3));
+        o.other = b.value.target;
+        if (drawn_step(o)) out.order.push_back(step_of(o, b.start));
     }
 
     for (const Mark& m : rec->marks)
@@ -356,33 +423,38 @@ bool build_screen(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::
         if (!screen_clip(script, rig, doc, name, f, c, why)) return false;
         f.clips.push_back(std::move(c));
     }
-    // The parts the clips move, and the ones they morph, in the picture's order.
+    // The parts the clips move or link, in the picture's order, then every copy (a copy's numbers are its source's);
+    // the shapes they morph, a copy's by its source.
     std::set<i32> moved, morphed;
-    for (const MotionClip& c : f.clips)
+    std::vector<vector::MotionCopy> copies;
+    auto source_of = [&](const MotionClip& c, const std::string& id) {
+        for (const vector::MotionCopy& k : c.copies)
+            if (k.id == id) return rig.part(k.source);
+        return rig.part(id);
+    };
+    for (const MotionClip& c : f.clips) {
         for (const vector::MotionTrack& t : c.tracks) {
-            if (vector::motion_prop_moves(t.prop)) moved.insert(rig.part(t.part));
-            if (t.prop == MotionProp::Morph) morphed.insert(rig.part(t.part));
+            if ((vector::motion_prop_moves(t.prop) || t.prop == MotionProp::Link) && rig.part(t.part) >= 0) moved.insert(rig.part(t.part));
+            if (t.prop == MotionProp::Morph) morphed.insert(source_of(c, t.part));
         }
-    for (const i32 pi : moved) {
+        for (const vector::MotionCopy& k : c.copies)
+            if (std::none_of(copies.begin(), copies.end(), [&](const vector::MotionCopy& o) { return o.id == k.id; })) copies.push_back(k);
+    }
+    auto part_of = [&](const std::string& id, i32 pi) {
         vector::MotionPart p;
-        p.id = rig.parts()[static_cast<usize>(pi)].id;
+        p.id = id;
         p.pivot = rig.pivot(pi);
         p.frame = matrix_of(rig.rest_frame(pi));
         p.own = matrix_of(rig.rest_local(pi));
         f.parts.push_back(std::move(p));
-    }
+    };
+    for (const i32 pi : moved) part_of(rig.parts()[static_cast<usize>(pi)].id, pi);
+    for (const vector::MotionCopy& k : copies) part_of(k.id, rig.part(k.source));
     std::vector<std::string> morph_ids;
-    for (const i32 pi : morphed) morph_ids.push_back(rig.parts()[static_cast<usize>(pi)].id);
-    if (drawn) out.svg = drawing_svg(drawing_with_paths(*drawn, morph_ids), doc.frame_w, doc.frame_h);
-    else {
-        out.svg = std::string(svg);
-        for (const i32 pi : morphed) {
-            const Part& part = rig.parts()[static_cast<usize>(pi)];
-            const std::string& tag = rig.outline().elements[static_cast<usize>(part.element)].tag;
-            if (tag != "path")
-                out.notes.push_back("морфинг «" + part.id + "» на экране не рисуется: в «" + f.picture + "» это <" + tag + ">");
-        }
-    }
+    for (const i32 pi : morphed)
+        if (pi >= 0) morph_ids.push_back(rig.parts()[static_cast<usize>(pi)].id);
+    // A morphed shape that is no path in the picture of «Ресурсы» the screen's stage writes as one (part 5г).
+    out.svg = drawn ? drawing_svg(drawing_with_paths(*drawn, morph_ids), doc.frame_w, doc.frame_h) : std::string(svg);
     // What the screen does not draw yet, by word with its clips.
     std::string left;
     for (const char* w : vector::kMotionNotDrawn) {

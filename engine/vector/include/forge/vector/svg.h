@@ -19,6 +19,9 @@ struct SvgElement {
     std::string id;
     i32 parent = -1; // index in SvgOutline::elements; -1 for the root
     u32 line = 1;
+    // Where it is in the text (past a UTF-8 BOM): the '<' of its start tag, past that tag's '>', past its end tag (the
+    // start tag's end for <… />).
+    usize begin = 0, open_end = 0, end = 0;
     std::vector<std::pair<std::string, std::string>> attrs; // as written, entities decoded
 
     const std::string* attr(std::string_view name) const;

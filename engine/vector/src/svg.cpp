@@ -121,6 +121,7 @@ struct Scanner {
     }
 
     bool start_tag() {
+        const usize begin = i;
         step(1); // <
         const u32 at_line = line;
         const std::string_view tag = name();
@@ -129,6 +130,7 @@ struct Scanner {
         e.tag = std::string(local_name(tag));
         if (tag.size() > e.tag.size()) e.prefix = std::string(tag.substr(0, tag.size() - e.tag.size() - 1));
         e.line = at_line;
+        e.begin = begin;
         e.parent = open.empty() ? -1 : open.back();
         if (open.empty() && !out.elements.empty()) return fail("второй корневой элемент <" + e.tag + ">");
         for (;;) {
@@ -136,11 +138,13 @@ struct Scanner {
             if (i >= s.size()) return fail("элемент <" + e.tag + "> не закрыт");
             if (at("/>")) {
                 step(2);
+                e.open_end = e.end = i;
                 out.elements.push_back(std::move(e));
                 return true;
             }
             if (s[i] == '>') {
                 step(1);
+                e.open_end = e.end = i;
                 open.push_back(static_cast<i32>(out.elements.size()));
                 out.elements.push_back(std::move(e));
                 return true;
@@ -172,6 +176,7 @@ struct Scanner {
         if (open.empty() || out.elements[static_cast<usize>(open.back())].tag != tag)
             return fail("</" + std::string(tag) + "> закрывает не тот элемент" +
                         (open.empty() ? std::string() : " (открыт <" + out.elements[static_cast<usize>(open.back())].tag + ">)"));
+        out.elements[static_cast<usize>(open.back())].end = i;
         open.pop_back();
         return true;
     }

@@ -26589,11 +26589,14 @@ return {
         return true;
     }
 
-    // Part 5в (pixel-motion-m, then pixel-motion-m-again): «Скакун», drawn by its code and written by another program:
-    // «Стоит» bobs and steps (a sound), «Прыжок» jumps, opens its mouth (a rect morphing into a hidden path) and goes red
-    // (a tint), then lands (a mark). «Отдать экрану»: «Скакун.svg» and «Скакун.motion.json» in the game's pictures, one
-    // step, byte for byte as the library builds them of the files apart from the tab: the mouth written as a <path>, the
-    // sound and the mark, the loops, the tint said in the note as not drawn on a screen yet. Undone (both files gone) and
+    // Parts 5в and 5г (pixel-motion-m, then pixel-motion-m-again): «Скакун», drawn by its code and written by another
+    // program: «Стоит» bobs and steps (a sound), «Прыжок» jumps, opens its mouth (a rect morphing into a hidden path),
+    // goes red (a tint), its head flashes, its belt's dash runs and it is drawn to 0.6 of its length, the shine on its
+    // torso only inside it (a mask), the dust carried up by the body (a link, let go at the top) below its legs (the
+    // order) with two copies of it flying apart, its legs blurred; then it lands (a mark). «Отдать экрану»: «Скакун.svg»
+    // and «Скакун.motion.json» in the game's pictures, one step, byte for byte as the library builds them of the files
+    // apart from the tab: the mouth written as a <path>, the sound and the mark, the loops, the new tracks, the copies and
+    // the order (version 2), the blur said in the note as not drawn on a screen. Undone (both files gone) and
     // done again byte for byte; given again as it is: «Уже отдано так», no step. Undone; a picture «Скакун.svg» of the
     // game's own, a file of clips from another character and one that does not read refused with the files untouched,
     // then given. A clip that fails refused with its line; the code without the tint given over the pair, undone to the
@@ -26610,17 +26613,20 @@ return {
     int mm_step_ = 0;
     std::vector<u8> mm_doc_, mm_svg_, mm_motion_, mm_other_;
     std::string mm_label_;
-    static constexpr const char* kMmRunner = R"lua(-- «Скакун»: на экран игры, часть 5в. «Стоит» качается и топает, «Прыжок» прыгает, открывает рот и краснеет.
+    static constexpr const char* kMmRunner = R"lua(-- «Скакун»: на экран игры, части 5в и 5г. «Стоит» качается и топает, «Прыжок» прыгает, открывает рот, краснеет и пылит.
 return {
   draw = function(p, rng)
     canvas(32, 48)
     group("body", function()
       rect("torso", { x = 9, y = 16, w = 14, h = 18, r = 3, fill = "#4a7bd0" })
+      circle("shine", { x = 21, y = 19, r = 4, fill = "#ffffff" })
+      path("belt", { d = "M 9 27 L 23 27", stroke = "#f0f0f0", stroke_width = 2, dash = { 3, 2 } })
       circle("head", { x = 16, y = 10, r = 7, fill = "#f0c090" })
       rect("mouth", { x = 13, y = 12, w = 6, h = 2, fill = "#602020" })
       path("mouth_o", { d = "M 13 12 Q 16 17 19 12 Z", fill = "#802020", hidden = true })
     end)
     rect("legs", { x = 11, y = 34, w = 10, h = 10, fill = "#303040", pivot = { 16, 34 } })
+    circle("dust", { x = 16, y = 44, r = 3, fill = "#a08060" })
   end,
   clips = {
     idle = function(p)
@@ -26628,7 +26634,13 @@ return {
       part("body").y(-2, 0.25, "in_out_sine"):to(0, 0.25, "in_out_sine")
     end,
     jump = function(p)
-      all(part("body").y(-10, 0.2, "out_quad"), part("mouth"):morph("mouth_o", 0.2), part("torso").tint("#ff404080", 0.2))
+      part("shine"):mask("torso")
+      part("dust"):attach("body")
+      part("dust"):below("legs")
+      all(part("body").y(-10, 0.2, "out_quad"), part("mouth"):morph("mouth_o", 0.2), part("legs").blur(1, 0.2), part("belt").dash(5, 0.2, "linear"),
+          part("belt").draw_to(0.6, 0.2), part("head").flash(0.5, 0.2), copies("dust", 2, function(i, c) c.x(i * 8 - 12, 0.2) end),
+          part("torso").tint("#ff4040", 0.2))
+      part("dust"):detach()
       part("body").y(0, 0.2, "in_quad")
       emit("приземлился")
     end,
@@ -26637,7 +26649,7 @@ return {
 )lua";
     static constexpr const char* kMmOwn = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><rect id=\"own\" width=\"8\" height=\"8\"/></svg>";
     static constexpr const char* kMmUnread = "{\"clips\": 3}";
-    static constexpr const char* kMmTint = ", part(\"torso\").tint(\"#ff404080\", 0.2))";
+    static constexpr const char* kMmTint = ",\n          part(\"torso\").tint(\"#ff4040\", 0.2))";
     static constexpr const char* kMmFails = "      part(\"legs\").x(2, 0.1)\n      part(\"tail\").x(2, 0.1)\n";
     static std::string mm_replaced(std::string code, const std::string& what, const std::string& with) {
         const usize at = code.find(what);
@@ -26699,7 +26711,7 @@ return {
         const std::string given = "«Скакун»: отдан экрану",
                           note = "Отдано экрану: «Скакун.svg» и «Скакун.motion.json», клипы «idle», «jump». На экране: заливка слоя картинкой "
                                  "«Скакун» в «Интерфейсе», клип — нода «Проиграть анимацию картинки».",
-                          tint_note = " На экране пока не рисуются: тон («jump»).",
+                          blur_note = " На экране пока не рисуются: размытие («jump»).",
                           foreign = "В картинках игры уже есть «%s» не от этого персонажа: переименуйте персонажа или ту картинку";
         auto foreign_of = [&](const char* name) { return mm_replaced(foreign, "%s", name); };
         switch (mm_step_) {
@@ -26739,7 +26751,7 @@ return {
             check(stage > 0 && side > 0 && mm_width("px-stage") == stage && mm_width("px-side") == side,
                   "the note under the views wraps at their width: the views " + std::to_string(mm_width("px-stage")) + " wide as " +
                       std::to_string(stage) + ", the settings " + std::to_string(mm_width("px-side")) + " as " + std::to_string(side));
-            check(there(svg) && there(motion) && px().note() == note + tint_note && step_label() == given,
+            check(there(svg) && there(motion) && px().note() == note + blur_note && step_label() == given,
                   "«Скакун.svg» and «Скакун.motion.json» in the pictures, «" + px().note() + "», one step: " + step_label());
             std::string why;
             check(built(why), "both byte for byte as the library builds them of the files apart from the tab " + why);
@@ -26759,7 +26771,18 @@ return {
                   "«idle» goes round, 0,5 s; «jump» does not, 0,4 s");
             check(i->marks == std::vector<vector::MotionMark>{{true, "шаг", 0, 0}} && j->marks == std::vector<vector::MotionMark>{{false, "приземлился", 0.4, 0}},
                   "the marks: the sound «шаг» at 0 of «idle», «приземлился» at 0,4 s of «jump»");
-            check(i->not_drawn.empty() && j->not_drawn == std::vector<std::string>{"tint"}, "the tint of «jump» the one thing a screen does not draw");
+            check(i->not_drawn.empty() && j->not_drawn == std::vector<std::string>{"blur"}, "the blur of «jump» the one thing a screen does not draw");
+            // Part 5г: the new tracks, the copies and the order, version 2.
+            auto track = [&](const char* part, vector::MotionProp prop) {
+                return std::any_of(j->tracks.begin(), j->tracks.end(), [&](const vector::MotionTrack& t) { return t.part == part && t.prop == prop; });
+            };
+            check(vector::motion_file_version(f) == 2 && track("shine", vector::MotionProp::Mask) && track("dust", vector::MotionProp::Link) &&
+                      track("belt", vector::MotionProp::Dash) && track("belt", vector::MotionProp::DrawTo) && track("head", vector::MotionProp::Flash) &&
+                      track("torso", vector::MotionProp::Tint) && track("dust[2]", vector::MotionProp::X),
+                  "«jump» in the file: the mask, the link, the dash, the drawn share, the flash, the tint and the copies' moves, version 2");
+            check(j->copies == std::vector<vector::MotionCopy>{{"dust[1]", "dust", 1, 0}, {"dust[2]", "dust", 2, 0}} &&
+                      j->order == std::vector<vector::MotionOrderStep>{{0, "dust", vector::MotionOrder::Below, "legs"}} && f.part("dust[1]") && f.part("dust"),
+                  "«jump»'s copies of the dust born at 0, the dust below the legs at 0, their places in the file");
             check(file(lua) == bytes(kMmRunner) && file(doc) == mm_doc_, "the code and the «.pixel.json» untouched");
             check(away(), "out of the panel");
             key(SDLK_Z, SDL_KMOD_CTRL);
@@ -26817,7 +26840,7 @@ return {
         case 8:
             if (hold(idle, "«Ресурсы» have looked")) return true;
             check(px_click("px-give-screen"), "«Отдать экрану»");
-            check(pair_untouched() && px().note() == note + tint_note && step_label() == given, "given: the pair byte for byte as before");
+            check(pair_untouched() && px().note() == note + blur_note && step_label() == given, "given: the pair byte for byte as before");
             // A clip that fails: its line.
             check(put(as().abs(lua), fails), "«Прыжок» moving a part the picture has not, written by another program");
             as().refresh();
@@ -26830,7 +26853,7 @@ return {
             const std::string head = "клип «jump», строка " + std::to_string(line) + ": ";
             check(px().note().rfind(head, 0) == 0 && pair_untouched() && step_label() == given,
                   "refused: «" + px().note() + "» (" + head + "…), the pair untouched, no step");
-            check(put(as().abs(lua), plain), "the code without the tint, written by another program");
+            check(plain != kMmRunner && put(as().abs(lua), plain), "the code without the tint, written by another program");
             as().refresh();
             break;
         }
@@ -26840,7 +26863,8 @@ return {
             if (wait(2)) return true;
             check(px_click("px-give-screen"), "«Отдать экрану»");
             std::string why;
-            check(px().note() == note && step_label() == given && built(why), "given over the pair: «" + px().note() + "», as the library builds it now " + why);
+            check(px().note() == note + blur_note && step_label() == given && built(why),
+                  "given over the pair: «" + px().note() + "», as the library builds it now " + why);
             check(tg_bytes(svg) == mm_svg_ && tg_bytes(motion) != mm_motion_, "the same picture, the clips without the tint");
             const std::vector<u8> now = tg_bytes(motion);
             check(away(), "out of the panel");
@@ -27179,8 +27203,11 @@ return {
     std::string mg_clips_; // «idle», «jump»: the clips of the file, for its error
     std::string mg_pick() { return mg_n_ == 0 ? std::string("pictures/Скакун.svg") : "add:" + path_to_utf8(as().abs("персонажи/Ёжик.svg")); }
     // The tab's frame of each clip of the open character at each 120th of a second, as the scene project compares the
-    // game's with: "clip k part a b c d e f" (the part's matrix in the tab's picture) for each part the clip moves and
-    // "clip k part morph share target" for each it morphs. clips: «idle», «jump» in the file's order.
+    // game's with: "clip k part a b c d e f" (the part's matrix in the tab's picture) for each part the clip moves (a
+    // copy's while it is drawn), "clip k part morph share target" for each it morphs; part 5г: "clip k part value prop v
+    // r g b a target n a b c d e f" (its value as the file has it, "-" for no target) for each track of a new property,
+    // "clip k - copies id …" (the copies drawn) and "clip k - order part kind other …" (the steps up to then, "-" for no
+    // neighbour) when the clip has any. clips: «idle», «jump» in the file's order.
     bool mm_tab(std::vector<std::string>& out, std::string& clips, std::string& why) {
         pixel::PixelDoc doc;
         pixel::Rig rig;
@@ -27197,9 +27224,11 @@ return {
         for (const vector::MotionClip& c : gift.motion.clips) {
             clips += (clips.empty() ? "«" : ", «") + c.name + "»";
             std::set<std::string> moved, morphed;
+            std::set<std::pair<std::string, vector::MotionProp>> valued;
             for (const vector::MotionTrack& t : c.tracks) {
                 if (vector::motion_prop_moves(t.prop)) moved.insert(t.part);
                 if (t.prop == vector::MotionProp::Morph) morphed.insert(t.part);
+                if (vector::motion_prop_new(t.prop)) valued.insert({t.part, t.prop});
             }
             const usize n = static_cast<usize>(std::floor(c.length * 120 + 1e-9));
             for (usize k = 0; k <= n; ++k) {
@@ -27207,11 +27236,35 @@ return {
                 pixel::Pose pose;
                 if (!script.pose(rig, t, c.name, doc.params, doc.seed, pose)) return why = script.error(), false;
                 if (!rig.pose(pose, why)) return false;
+                const std::vector<pixel::DrawnCopy> copies = rig.drawn_copies();
                 for (const std::string& id : moved) {
-                    const pixel::Affine m = rig.matrix(rig.part(id));
+                    i32 index = rig.part(id);
+                    for (const pixel::DrawnCopy& d : copies)
+                        if (d.id == id) index = d.index;
+                    if (index < 0) continue; // a copy not born yet
+                    const pixel::Affine m = rig.matrix(index);
                     std::snprintf(line, sizeof(line), "%s %zu %s %.17g %.17g %.17g %.17g %.17g %.17g", c.name.c_str(), k, id.c_str(), m.a, m.b, m.c,
                                   m.d, m.e, m.f);
                     out.push_back(line);
+                }
+                for (const auto& [id, prop] : valued) {
+                    const vector::MotionValue v = vector::motion_plain(prop, pixel::screen_value(pose, id, prop));
+                    std::snprintf(line, sizeof(line), "%s %zu %s value %s %.17g %u %u %u %u %s %.17g %.17g %.17g %.17g %.17g %.17g %.17g", c.name.c_str(), k,
+                                  id.c_str(), vector::motion_prop_word(prop), v.v, v.color.r, v.color.g, v.color.b, v.color.a,
+                                  v.target.empty() ? "-" : v.target.c_str(), v.n, v.m.a, v.m.b, v.m.c, v.m.d, v.m.e, v.m.f);
+                    out.push_back(line);
+                }
+                if (!c.copies.empty()) {
+                    std::string l = c.name + " " + std::to_string(k) + " - copies";
+                    for (const pixel::PartCopy& d : pose.copies) l += " " + d.id;
+                    out.push_back(l);
+                }
+                if (!c.order.empty()) {
+                    static const char* kKinds[] = {"top", "bottom", "above", "below"};
+                    std::string l = c.name + " " + std::to_string(k) + " - order";
+                    for (const pixel::OrderStep& o : pose.order)
+                        l += " " + o.part + " " + kKinds[static_cast<usize>(o.kind)] + " " + (o.other.empty() ? std::string("-") : o.other);
+                    out.push_back(l);
                 }
                 for (const std::string& id : morphed) {
                     const vector::MotionValue v = pixel::screen_value(pose, id, vector::MotionProp::Morph);
@@ -27237,7 +27290,7 @@ return {
         e.ms_rename_from = "jump";
         e.ms_rename_to = "hop";
         e.ms_code_error = "ui.svg_play: в «Скакун.motion.json» нет клипа «fly»: есть " + mm_replaced(mg_clips_, "«jump»", "«hop»");
-        e.ms_not_drawn = "«Скакун.svg», клип «jump»: на экране пока не рисуется: тон";
+        e.ms_not_drawn = "«Скакун.svg», клип «jump»: на экране пока не рисуется: размытие и тень (на экране игры не рисуются, в запекании есть)";
         e.ms_layer_box.assign(std::begin(kMgBoxes[0]), std::end(kMgBoxes[0]));
         e.ms_tab = mg_tab_;
         return e;
