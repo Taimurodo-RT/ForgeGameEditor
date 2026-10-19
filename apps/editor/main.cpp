@@ -28128,6 +28128,11 @@ return {
             if (hold(rec && !px().stale() && px().code() == sb_base_ && shown("px-play-0"), "the scene recorded")) return true;
             check(element_text("px-through-label") == "Через камеру: кадр игрока 160 × 90" && shown("px-pixel-img") && !shown("px-one"),
                   "the small view «Через камеру»: «" + element_text("px-through-label") + "»");
+            // The canvas's shape, its longer side the vector's.
+            const assets::CookedTexture &through = px().pixel_frame(), &vec = px().vector_view();
+            check(through.width == vec.width && std::abs(static_cast<f64>(through.height) * 160 - static_cast<f64>(through.width) * 90) <= 160,
+                  "«Через камеру» 16 : 9 as wide as the vector: " + std::to_string(through.width) + " × " + std::to_string(through.height) + " for " +
+                      std::to_string(vec.width));
             check(shown("px-part-camera") && element_text("px-part-camera").find("Камера") != std::string::npos &&
                       element_text("px-part-camera").find("кадр игрока") != std::string::npos,
                   "the tree's first row «Камера»: «" + element_text("px-part-camera") + "»");
@@ -28295,7 +28300,10 @@ return {
             sb_corners(s, c);
             check(std::fabs(c[0].x - 40) < 1e-9 && std::fabs(c[0].y - 22.5) < 1e-9 && std::fabs(c[2].x - 120) < 1e-9 && std::fabs(c[2].y - 67.5) < 1e-9,
                   "the frame from 40; 22,5 to 120; 67,5");
-            check(mb_hold_point({40, 45}, 8, 0), "its left edge pressed and dragged by 8; 0");
+            // Pressed 1,5 points of the screen outside the line, within its reach of 4.
+            f32 x0 = 0, x1 = 0, y = 0;
+            check(px().screen_of({40, 45}, x0, y) && px().screen_of({41, 45}, x1, y) && x1 - x0 > 0.5f, "the view's points a unit of the stage");
+            check(mb_hold_point({40 - 1.5 / (x1 - x0), 45}, 8, 0), "its left edge pressed 1,5 points outside it and dragged by 8; 0");
             mb_let_go();
             check(px().part() == "camera", "the camera chosen by its edge: «" + px().part() + "»");
             const std::vector<u8> now = file(lua);
@@ -28315,6 +28323,17 @@ return {
         // y typed into the camera's field: into the table of that line.
         case 15: {
             if (hold(rec && !px().stale() && px().code() == sb_dragged_ && px().part() == "camera" && ue_field("px-pf-x") == "8", "the camera moved by 8")) return true;
+            // x has a block of its own now: its row before zoom's; the follow on its row alone, not on x's.
+            check(element_text("px-track-0") == "камера · x" && element_text("px-track-1") == "камера · zoom" && element_text("px-track-2") == "камера · следит",
+                  "the rows «камера · x», «камера · zoom», «камера · следит»: «" + element_text("px-track-0") + "», «" + element_text("px-track-1") + "», «" +
+                      element_text("px-track-2") + "»");
+            i32 fx = -1;
+            for (usize i = 0; i < rec->blocks.size(); ++i)
+                if (rec->blocks[i].to == pixel::Block::To::Follow && rec->blocks[i].prop == pixel::Prop::X) fx = static_cast<i32>(i);
+            Rml::Element *follow = fx >= 0 ? ed_.find_element(("px-block-" + std::to_string(fx)).c_str()) : nullptr, *row = ed_.find_element("px-track-2");
+            check(follow && row && std::fabs(follow->GetAbsoluteTop() - row->GetAbsoluteTop()) < 1.5f, "the follow's block on the row «камера · следит»: at " +
+                                                                                                       std::to_string(follow ? follow->GetAbsoluteTop() : -1) + " for " +
+                                                                                                       std::to_string(row ? row->GetAbsoluteTop() : -1));
             check(ue_type_enter("px-pf-y", "5"), "5 typed into y with Enter");
             std::string want = sb_dragged_;
             want.replace(want.find("{ x = 8 }"), 9, "{ x = 8, y = 5 }");

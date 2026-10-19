@@ -1166,6 +1166,16 @@ TEST_CASE("Сцена: матрица кадра через камеру") {
     CHECK(q.x == doctest::Approx(80 + std::sqrt(0.5)));
     CHECK(q.y == doctest::Approx(60 - std::sqrt(0.5)));
     CHECK(camera_matrix({}, 160, 120) == Affine{});
+    // The player's frame at a view's side: the stage's shape, its longer side the side, wide or tall.
+    u32 fw = 0, fh = 0;
+    frame_size(160, 90, 400, fw, fh);
+    CHECK((fw == 400 && fh == 225));
+    frame_size(90, 160, 400, fw, fh);
+    CHECK((fw == 225 && fh == 400));
+    frame_size(100, 100, 300, fw, fh);
+    CHECK((fw == 300 && fh == 300));
+    frame_size(1, 2000, 300, fw, fh);
+    CHECK((fw == 1 && fh == 300));
     CHECK(camera_part("camera"));
     CHECK(camera_part("camera/in-new"));
     CHECK(camera_part("camera/out-old"));
@@ -1535,6 +1545,14 @@ TEST_CASE("Сцена: уход — длина сцены и актёры во �
     const assets::CookedTexture f = frame(0.25);
     CHECK(near(pixel_at(f, 150, 88), kBack));
     CHECK(near(pixel_at(f, 150, 92), kOutsideScene));
+    // Its game's frame half shown at its end: after the leave the game's alone, not the scene under it.
+    load(s, files, R"(    leave(function(old, new)
+      new.opacity(0)
+      new.opacity(0.5, 1, "linear")
+    end))");
+    record(s);
+    CHECK(near(pixel_at(frame(0.5), 150, 10), mix(kOutsideScene, kBack, 0.25)));
+    CHECK(near(pixel_at(frame(1), 150, 10), kOutsideScene));
     // Entering and leaving at once: the leave wins.
     load(s, files, R"(    transition("растворение", 2)
     leave("сдвиг", 1, { from = "лево" }))");

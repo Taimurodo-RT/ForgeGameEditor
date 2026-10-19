@@ -588,9 +588,7 @@ bool PixelEditor::camera_corners(f32 x[4], f32 y[4]) const {
 
 bool PixelEditor::through_size(u32& w, u32& h) const {
     if (!scene_mode_ || !scene_) return false;
-    const f64 sw = std::max(1.0, scene_->stage().width()), sh = std::max(1.0, scene_->stage().height()), side = view_px();
-    w = static_cast<u32>(std::max<i64>(1, std::lround(sw >= sh ? side : side * sw / sh)));
-    h = static_cast<u32>(std::max<i64>(1, std::lround(sw >= sh ? side * sh / sw : side)));
+    pixel::frame_size(scene_->stage().width(), scene_->stage().height(), view_px(), w, h);
     return true;
 }
 

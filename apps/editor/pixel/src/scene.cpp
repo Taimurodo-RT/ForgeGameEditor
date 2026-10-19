@@ -67,6 +67,12 @@ Affine camera_matrix(const SceneCamera& cam, f64 w, f64 h) {
     return translation(w / 2, h / 2) * (look * translation(-(w / 2 + cam.x), -(h / 2 + cam.y)));
 }
 
+void frame_size(f64 stage_w, f64 stage_h, f64 side, u32& w, u32& h) {
+    const f64 sw = std::max(1.0, stage_w), sh = std::max(1.0, stage_h);
+    w = static_cast<u32>(std::max<i64>(1, std::lround(sw >= sh ? side : side * sw / sh)));
+    h = static_cast<u32>(std::max<i64>(1, std::lround(sw >= sh ? side * sh / sw : side)));
+}
+
 std::string stage_svg(const Stage& st) {
     Drawing d;
     d.canvas = true;

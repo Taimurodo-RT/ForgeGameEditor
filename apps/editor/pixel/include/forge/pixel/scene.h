@@ -98,6 +98,8 @@ struct SceneCamera {
 // The stage's units to the player's frame, a w × h canvas: q = (w/2, h/2) + zoom · R(−rot) · (p − c), c = the
 // middle of the canvas moved by x, y.
 Affine camera_matrix(const SceneCamera& cam, f64 w, f64 h);
+// The player's frame at a size of a view: the stage's shape, its longer side `side` points, each side at least 1.
+void frame_size(f64 stage_w, f64 stage_h, f64 side, u32& w, u32& h);
 
 // An actor's group's transform: its picture so that `pivot` stands at x, y, turned by rot and scaled round it.
 Affine actor_matrix(const StageItem& actor);
