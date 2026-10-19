@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -2643,6 +2644,21 @@ std::vector<std::string> copy_ids(const ui::SvgPose& p) {
 }
 
 // A renderer that draws nothing: the game's screens here only pose the layer.
+// Files from disk as they are named; the user agent sheet of web pages ("/web/html.rcss", which the game finds in its
+// UI folder) from the UI folder of the sources.
+struct DiskFiles final : Rml::FileInterface {
+    Rml::FileHandle Open(const Rml::String& path) override {
+        if (std::FILE* f = std::fopen(path.c_str(), "rb")) return reinterpret_cast<Rml::FileHandle>(f);
+        const std::string web = path.rfind("/web/", 0) == 0 ? path.substr(1) : path;
+        if (web.rfind("web/", 0) != 0) return 0;
+        return reinterpret_cast<Rml::FileHandle>(std::fopen((std::string(FORGE_SOURCE_DIR "/ui/") + web).c_str(), "rb"));
+    }
+    void Close(Rml::FileHandle file) override { std::fclose(reinterpret_cast<std::FILE*>(file)); }
+    size_t Read(void* buffer, size_t size, Rml::FileHandle file) override { return std::fread(buffer, 1, size, reinterpret_cast<std::FILE*>(file)); }
+    bool Seek(Rml::FileHandle file, long offset, int origin) override { return std::fseek(reinterpret_cast<std::FILE*>(file), offset, origin) == 0; }
+    size_t Tell(Rml::FileHandle file) override { return static_cast<size_t>(std::ftell(reinterpret_cast<std::FILE*>(file))); }
+};
+
 struct NoRender final : Rml::RenderInterface {
     Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex>, Rml::Span<const int>) override { return 1; }
     void RenderGeometry(Rml::CompiledGeometryHandle, Rml::Vector2f, Rml::TextureHandle) override {}
@@ -2871,7 +2887,9 @@ TEST_CASE("Screen clips, part 5е: the game blends a clip in from what the layer
     REQUIRE(put(dir / "pictures" / "Hog.motion.json", vector::write_motion_file(motion)));
 
     NoRender render;
+    DiskFiles files;
     Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&files);
     REQUIRE(Rml::Initialise());
     Rml::Context* context = Rml::CreateContext("blend", {400, 300});
     REQUIRE(context);
