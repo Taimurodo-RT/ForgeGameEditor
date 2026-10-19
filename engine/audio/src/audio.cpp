@@ -307,6 +307,15 @@ void Mixer::pause(Bus bus, bool on) {
     bus_paused_[static_cast<int>(bus)] = on;
 }
 
+bool Mixer::where(Voice v, f64& x, f64& y) const {
+    std::lock_guard lock(mutex_);
+    const Slot* s = find(v);
+    if (!s || !s->at) return false;
+    x = s->x;
+    y = s->y;
+    return true;
+}
+
 u32 Mixer::voices() const {
     std::lock_guard lock(mutex_);
     u32 n = 0;

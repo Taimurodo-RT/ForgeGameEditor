@@ -307,6 +307,9 @@ public:
         (void)library, (void)t;
         return {};
     }
+    // Whether the game catches the emit marks of the animations it plays (part 5а of docs/models/движение-модель.md:
+    // an event of «Логика» and on_anim of Luau); their sounds sound wherever animations play.
+    virtual bool anim_emits() const { return false; }
 
     // --- physics ---
     // The game's own pull: what a level without physics.json has.

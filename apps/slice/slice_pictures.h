@@ -58,6 +58,9 @@ public:
         // What it plays in each pose (by Pose): the template's own animation when it can play on these frames, else
         // the game's rule (pose_rule).
         std::array<forge::objects::Clip, kPoses> clips;
+        // Whether any of them has marks (part 5а of docs/models/движение-модель.md), and its template's name (for the log).
+        bool marks = false;
+        std::string name;
         // Its frame of the sheet in a pose, `ticks` after the pose began.
         u32 at(Pose pose, u64 ticks) const { return frame + forge::objects::clip_frame(clips[static_cast<usize>(pose)], ticks); }
     };
@@ -78,6 +81,8 @@ public:
     // before then).
     const Picture* hero() const { return hero_key_ ? of(hero_key_) : nullptr; }
     bool empty() const { return by_key_.empty(); }
+    // Whether any picture's animations have marks.
+    bool marks() const { return marks_; }
     usize count() const { return by_key_.size(); }
 
 private:
@@ -97,6 +102,7 @@ private:
     std::unordered_map<std::string, Decoded> cache_; // by file and frames
     std::unordered_map<u64, Picture> by_key_;
     u64 hero_key_ = 0;
+    bool marks_ = false;
     std::string signature_ = "-"; // what the last sheet was made from
 };
 

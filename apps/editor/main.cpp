@@ -2082,7 +2082,9 @@ struct Options {
     // the colour of new shapes, a shape's fields, «Привязка», baked, by "pixel-motion-i", opened again and played in the
     // game by "pixel-motion-i-again"; part 4ж, the part's fields and the curve: fields typed by their three rules and
     // refused, «кривая», the points of its graph dragged, a shared curve and a module's, baked and given, by
-    // "pixel-motion-j", opened again and played in the game by "pixel-motion-j-again"); "input" (the tab «Ввод»: the same, the keys of
+    // "pixel-motion-j", opened again and played in the game by "pixel-motion-j-again"; part 5а, marks in the game: sound and emit with a
+    // window typed into the code, baked onto their frames, given, shown in «Покадровая» and trimmed, a thing's own scheme of them, by
+    // "pixel-motion-k", opened again and fired by the game at 60 and 144 frames a second by "pixel-motion-k-again"); "input" (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2368,6 +2370,8 @@ public:
         if (part == "pixel-motion-i-again") return frame < 3 || pixel_motion_i_again_step();
         if (part == "pixel-motion-j") return frame < 3 || pixel_motion_j_step();
         if (part == "pixel-motion-j-again") return frame < 3 || pixel_motion_j_again_step();
+        if (part == "pixel-motion-k") return frame < 3 || pixel_motion_k_step();
+        if (part == "pixel-motion-k-again") return frame < 3 || pixel_motion_k_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -16735,6 +16739,14 @@ private:
                 for (u32 f : clip.frames) e.an_frames.push_back(static_cast<int>(f));
                 e.an_fps.push_back(clip.fps);
                 e.an_loop.push_back(clip.loop ? 1 : 0);
+                for (const objects::ClipEvent& m : clip.events) {
+                    e.mk_of.push_back(t.id);
+                    e.mk_state.push_back(state);
+                    e.mk_name.push_back(m.name);
+                    e.mk_sound.push_back(m.sound ? 1 : 0);
+                    e.mk_frame.push_back(static_cast<int>(m.frame));
+                    e.mk_frames.push_back(static_cast<int>(m.frames));
+                }
             }
         e.an_hero = "hero_look";
         e.an_walker = "beetle";
@@ -19158,20 +19170,32 @@ return {
         const int swung = pj_run({exe, "--project", project, "--self-test", "pixel-motion-j-again"}, eighteen);
         check(swung == 0, "opened from another working folder: the files, the recording and every frame as pixel-motion-j left them; the "
                           "game plays the flag by «Маятник»'s 10 frames (pixel-motion-j-again: exit " + std::to_string(swung) + ")");
+        // Part 5а: the marks of the code, baked, given and shown, then fired by the game on their ticks.
+        const fs::path nineteen = mo_root() / utf8_path("девятнадцатая папка"), twenty = mo_root() / utf8_path("двадцатая папка");
+        fs::create_directories(nineteen, ec);
+        fs::create_directories(twenty, ec);
+        const int marked = pj_run({exe, "--project", project, "--self-test", "pixel-motion-k"}, nineteen);
+        check(marked == 0, "«Барабан»: sound and emit with a window typed into its code, on no frame said; baked on their frames, a window changed and "
+                           "baked again, undone; given to «Флаг» and «Герой» with the marks; «Покадровая» shows them, «Убрать последний» takes and "
+                           "shortens them; «Флаг»'s own scheme of the marks (pixel-motion-k: exit " + std::to_string(marked) + ")");
+        const int drummed = pj_run({exe, "--project", project, "--self-test", "pixel-motion-k-again"}, twenty);
+        check(drummed == 0, "opened from another working folder: the files, the recording, the marks and the scheme as pixel-motion-k left them; the "
+                            "game fires the marks on their ticks at 60 and 144 frames a second (pixel-motion-k-again: exit " + std::to_string(drummed) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
         const std::vector<std::string> ours = {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau", "Шкала", "шаг.wav", "Знак", "Маяк",
-                                               "Тележка", "Искры", "Ларец", "Маятник", "кривые"};
+                                               "Тележка", "Искры", "Ларец", "Маятник", "кривые", "Барабан", "барабан"};
         check(tg_naming(b, ours).empty() && !fs::exists(b / "game" / "sounds" / utf8_path("шаг.wav"), ec),
-              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк», «Тележка», «Искры», «Ларец», «Маятник», «кривые» or the sounds in B: " +
+              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк», «Тележка», «Искры», «Ларец», «Маятник», «кривые», «Барабан» or the sounds in B: " +
                   tg_naming(b, ours));
         check(fs::exists(a / "game" / "sounds" / utf8_path("шаг.wav"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Шкала.png"), ec) &&
                   fs::exists(a / "game" / "pictures" / utf8_path("Знак.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маяк.png"), ec) &&
                   fs::exists(a / "game" / "pictures" / utf8_path("Тележка.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Искры.png"), ec) &&
-                  fs::exists(a / "game" / "pictures" / utf8_path("Ларец.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маятник.png"), ec),
+                  fs::exists(a / "game" / "pictures" / utf8_path("Ларец.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маятник.png"), ec) &&
+                  fs::exists(a / "game" / "pictures" / utf8_path("Барабан.png"), ec),
               "A: the sounds in its sounds/, «pictures/Шкала.png», «pictures/Знак.png», «pictures/Маяк.png», «pictures/Тележка.png», "
-              "«pictures/Искры.png», «pictures/Ларец.png» and «pictures/Маятник.png» given to the flag");
+              "«pictures/Искры.png», «pictures/Ларец.png», «pictures/Маятник.png» and «pictures/Барабан.png» given to the flag");
         const fs::path chars = a / "assets" / utf8_path("персонажи");
         check(fs::exists(a / "game" / "animations" / utf8_path("движения.luau"), ec) && fs::exists(chars / utf8_path("Ёжик.luau"), ec) &&
                   fs::exists(chars / utf8_path("Персонаж.luau"), ec) && fs::exists(chars / utf8_path("Персонаж.png"), ec) &&
@@ -19825,9 +19849,11 @@ return {
             const std::vector<u8> b = file(png);
             assets::CookedTexture strip;
             check(!b.empty() && assets::decode_image(b, strip) && strip.width == 32 * 19 && strip.height == 64, "«Ёжик.png»: 19 frames of 32 × 64");
-            check(d.strip == std::vector<pixel::StripClip>{{"stand", 0, 4, 10, true}, {"air", 4, 15, 30, true}} &&
+            // emit("отрыв") at 0,5 s («отрыв» waits 0,4 s from 0,1 s): the range begins at 0,2 s, its frame 9 (from 0) is
+            // the first to show it.
+            check(d.strip == std::vector<pixel::StripClip>{{"stand", 0, 4, 10, true}, {"air", 4, 15, 30, true, {{"отрыв", false, 9, 1}}}} &&
                       step_label() == "«Ёжик»: запечено в «Ёжик.png», 19 кадров",
-                  "«Стоит» 1–4, «В воздухе» by its range 5–19: " + step_label());
+                  "«Стоит» 1–4, «В воздухе» by its range 5–19, «отрыв» on its frame 10: " + step_label());
             std::string bad;
             for (const auto& [state, first, n] : {std::tuple{"stand", 0u, 4u}, std::tuple{"air", 4u, 15u}})
                 for (u32 k = 0; k < n; ++k) {
@@ -20901,6 +20927,10 @@ return {
   },
 }
 )lua";
+    // Its sounds as baked onto the frames of «Покой» (part 5а): each sound half a frame before frame k first shows on k.
+    static std::vector<pixel::StripEvent> mc_marks() {
+        return {{"шаг", true, 10, 1}, {"нет", true, 20, 1}, {"шум", true, 30, 1}, {"шаг", true, 40, 1}, {"нет", true, 50, 1}, {"шаг", true, 63, 1}};
+    }
     // A WAV of 48 kHz, 16 bits, two channels: the samples left, right, left …
     static std::vector<u8> mc_wav(const std::vector<i16>& samples) {
         std::vector<u8> out;
@@ -21605,9 +21635,9 @@ return {
             assets::CookedTexture strip;
             const std::vector<u8> baked = file(png);
             check(!baked.empty() && assets::decode_image(baked, strip) && strip.width == 16384 && strip.height == 256, "«Шкала.png»: 64 frames of 256 × 256");
-            check(d.strip == std::vector<pixel::StripClip>{{"idle", 0, 64, 30, true}} && px().note() == "Запечено: «Шкала.png», 64 кадра 256 × 256." &&
+            check(d.strip == std::vector<pixel::StripClip>{{"idle", 0, 64, 30, true, mc_marks()}} && px().note() == "Запечено: «Шкала.png», 64 кадра 256 × 256." &&
                       step_label() == "«Шкала»: запечено в «Шкала.png», 64 кадра",
-                  "in the file: «Покой» 1–64; «" + px().note() + "», one step: " + step_label());
+                  "in the file: «Покой» 1–64, its sounds on their frames; «" + px().note() + "», one step: " + step_label());
             const std::string numbers = fl_numbers(strip, 64);
             check(numbers.empty(), "each frame shows its number in the cells; not:" + numbers);
             pixel::PixelDoc dd;
@@ -21643,11 +21673,13 @@ return {
             const objects::Template* t = lib.find("flag");
             objects::Clip all{{}, 30, true};
             for (u32 k = 0; k < 64; ++k) all.frames.push_back(k);
+            for (const pixel::StripEvent& m : mc_marks()) all.events.push_back({m.name, m.sound, m.frame, m.frames});
             check(t && t->picture == "Шкала.png" && t->frames == 64 && t->animations.size() == 1 && an_is("flag", "idle", all) &&
                       objects::read_template(t->file)->frames == 64,
-                  "«Флаг»: «Шкала.png», 64 frames, «Покой» by all of them thirty a second; in its file");
+                  "«Флаг»: «Шкала.png», 64 frames, «Покой» by all of them thirty a second, its sounds on their frames; in its file");
             check(tg_bytes(a / "game" / "pictures" / utf8_path("Шкала.png")) == file(png), "the game's «pictures/Шкала.png»: the strip as baked");
-            check(px().note() == "«Флаг» рисует «Шкала.png», 64 кадра, анимации: «Покой»." && step_label() == "«Флаг»: картинка «Шкала.png» из «Шкала»",
+            check(px().note() == "«Флаг» рисует «Шкала.png», 64 кадра, анимации: «Покой»; метки: «шаг», «нет», «шум»." &&
+                      step_label() == "«Флаг»: картинка «Шкала.png» из «Шкала»",
                   "«" + px().note() + "», one step: " + step_label());
             const std::vector<u8> given = an_file("flag");
             key(SDLK_Z, SDL_KMOD_CTRL);
@@ -25525,6 +25557,595 @@ return { snap = bezier(0.5, 0, 0.5, 1) }
         default: break;
         }
         ++mj_step_;
+        return true;
+    }
+
+    // Part 5а (pixel-motion-k, then pixel-motion-k-again): «Барабан», written by another program without marks: «Покой»
+    // (the stick strikes and comes back, a pause; eight frames ten a second) and «Идёт» (the drum bobs; four frames). In
+    // the panel its marks typed into the code and saved: in «Покой» sound("шаг") at its start, emit("удар", 0.15) as the
+    // stick strikes, sound("звон") after it (the game has no such sound: red on the timeline), emit("эхо") at the end of
+    // the round, which no frame shows (the console says so); in «Идёт» sound("шаг") twice. «Запечь»: the marks on their
+    // frames in the «.pixel.json», the note naming «эхо»; the window made 0,25 s and baked again: the picture byte for
+    // byte, the «.pixel.json» new; both undone and done again. Given to «Флаг» («Покой») and «Герой» («Идёт», «Покой» not),
+    // the notes naming the marks, undone and done again. «Покадровая» shows them under the frames: the flags, the
+    // window's bar, the notes, «Метки: …»; «Убрать последний» five times takes «звон» and shortens the window, each a
+    // step, Ctrl+Z and Ctrl+Y byte for byte. «Логика»: «Флаг»'s own scheme with the mouse: «При метке анимации» «удар»
+    // adds 1 to «барабан.удары», «Каждый шаг» sets «барабан.идёт» to «Идёт метка анимации» of itself. pixel-motion-k-again,
+    // from another working folder: the files, the recording, the marks and the scheme the same; the game fires the marks
+    // on their ticks, at 60 frames a second and at 144.
+    int mk_step_ = 0;
+    std::string mk_code_, mk_label_, mk_seen_;
+    std::vector<u8> mk_doc_, mk_png_, mk_doc2_, mk_flag0_, mk_hero0_, mk_given_;
+    std::vector<std::vector<u8>> mk_trims_; // «Флаг» after each «Убрать последний», the given one first
+    u32 mk_scheme_ = 0, mk_nodes_[5] = {0, 0, 0, 0, 0};
+    usize mk_n_ = 0;
+    static constexpr const char* kMkDrum = R"lua(-- «Барабан»: метки части 5а. Палочка бьёт в «Покое», барабан качается в «Идёт».
+return {
+  draw = function(p, rng)
+    canvas(32, 64)
+    rect("drum", { x = 4, y = 36, w = 24, h = 24, fill = "#b03030", stroke = "#401010", stroke_width = 2 })
+    rect("stick", { x = 15, y = 6, w = 3, h = 28, fill = "#e0c080" })
+  end,
+  clips = {
+    idle = function(p)
+      part("stick"):to({ rot = -40 }, 0.2)
+      part("stick"):to({ rot = 0 }, 0.2)
+      wait(0.4)
+    end,
+    walk = function(p)
+      part("drum"):to({ y = -4 }, 0.2)
+      part("drum"):to({ y = 0 }, 0.2)
+    end,
+  },
+}
+)lua";
+    // The marks typed, each after the line it follows (the first of the text that has it).
+    static constexpr std::pair<const char*, const char*> kMkMarks[] = {
+        {"    idle = function(p)", "\n      sound(\"шаг\")"},
+        {"      part(\"stick\"):to({ rot = -40 }, 0.2)", "\n      emit(\"удар\", 0.15)"},
+        {"      part(\"stick\"):to({ rot = 0 }, 0.2)", "\n      sound(\"звон\")"},
+        {"      wait(0.4)", "\n      emit(\"эхо\")"},
+        {"    walk = function(p)", "\n      sound(\"шаг\")"},
+        {"      part(\"drum\"):to({ y = -4 }, 0.2)", "\n      sound(\"шаг\")"},
+    };
+    static std::string mk_marked() {
+        std::string code = kMkDrum;
+        for (const auto& [after, line] : kMkMarks) {
+            const usize at = code.find(after);
+            if (at != std::string::npos) code.insert(at + std::strlen(after), line);
+        }
+        return code;
+    }
+    // The marks of «Покой» and «Идёт» as baked: on the frames of the strip, and of the template's animation.
+    static std::vector<pixel::StripClip> mk_strip(u32 window) {
+        return {{"idle", 0, 8, 10, true, {{"шаг", true, 0, 1}, {"удар", false, 2, window}, {"звон", true, 4, 1}}},
+                {"walk", 8, 4, 10, true, {{"шаг", true, 0, 1}, {"шаг", true, 2, 1}}}};
+    }
+    static objects::Clip mk_idle() { return {{0, 1, 2, 3, 4, 5, 6, 7}, 10, true, {{"шаг", true, 0, 1}, {"удар", false, 2, 2}, {"звон", true, 4, 1}}}; }
+    static objects::Clip mk_walk() { return {{8, 9, 10, 11}, 10, true, {{"шаг", true, 0, 1}, {"шаг", true, 2, 1}}}; }
+    // The frames of «Покадровая» with their marks as shown: «1 ♪», «3 ⚑ ▬», …; then «Метки: …» under them, when shown.
+    std::string mk_seq() {
+        ed_.context()->Update();
+        std::string out;
+        for (int i = 0;; ++i) {
+            Rml::Element* f = ed_.find_element(("an-seq-" + std::to_string(i)).c_str());
+            if (!f) break;
+            Rml::ElementList marks, windows;
+            f->GetElementsByClassName(marks, "an-mark");
+            f->GetElementsByClassName(windows, "an-window");
+            // A frame's mark and bar stay in the page under data-if; only the shown ones count.
+            const auto hidden = [](Rml::Element* e) { return !e->IsVisible(); };
+            marks.erase(std::remove_if(marks.begin(), marks.end(), hidden), marks.end());
+            windows.erase(std::remove_if(windows.begin(), windows.end(), hidden), windows.end());
+            const std::string mark = marks.empty() ? std::string() : marks[0]->GetAttribute<Rml::String>("name", "?");
+            out += std::to_string(i + 1) + (mark == "music_note" ? " ♪" : mark == "flag" ? " ⚑" : mark.empty() ? "" : " " + mark) +
+                   (windows.empty() ? "" : " ▬") + "; ";
+        }
+        Rml::Element* line = ed_.find_element("an-marks");
+        return out + (line && line->IsVisible() ? element_text("an-marks") : std::string());
+    }
+
+    // In an editor for «Движение А» after pixel-motion-j-again (--self-test pixel-motion-k).
+    bool pixel_motion_k_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string doc = "персонажи/Барабан.pixel.json", lua = "персонажи/Барабан.luau", png = "персонажи/Барабан.png";
+        const pixel::Recording* rec = px().recording();
+        objects::Library& lib = an().library();
+        const std::string marked = mk_marked();
+        std::string wide = marked;
+        wide.replace(wide.find("0.15"), 4, "0.25");
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto put = [&](const fs::path& f, std::string_view text) { return write_file_atomic(f, {reinterpret_cast<const u8*>(text.data()), text.size()}); };
+        auto put_bytes = [&](const fs::path& f, const std::vector<u8>& b) { return write_file_atomic(f, b); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        auto doc_of = [&] {
+            pixel::PixelDoc x;
+            x.script = "Барабан.luau";
+            x.frame_w = 32;
+            x.frame_h = 64;
+            x.clips = {{"idle", 8, 10, true}, {"walk", 4, 10, true}};
+            return bytes(pixel::write_pixel_doc(x));
+        };
+        auto strip_of = [&](const std::vector<u8>& b, std::vector<pixel::StripClip>& out) {
+            pixel::PixelDoc d;
+            std::string why;
+            if (!pixel::read_pixel_doc({reinterpret_cast<const char*>(b.data()), b.size()}, d, why)) return false;
+            out = d.strip;
+            return true;
+        };
+        auto strip_is = [&](u32 window) {
+            std::vector<pixel::StripClip> s;
+            return strip_of(file(doc), s) && s == mk_strip(window);
+        };
+        auto mark_is = [&](usize i, pixel::Mark::Kind kind, const char* name, f64 time, f64 length) {
+            if (!rec || i >= rec->marks.size()) return false;
+            const pixel::Mark& m = rec->marks[i];
+            return m.kind == kind && m.name == name && std::fabs(m.time - time) < 1e-9 && std::fabs(m.length - length) < 1e-9;
+        };
+        auto console_has = [&](const std::string& text) {
+            for (const auto& l : px().console())
+                if (l.text == text) return true;
+            return false;
+        };
+        auto row_of_tpl = [&](const char* id) {
+            const auto& l = px().templates();
+            const objects::Template* t = lib.find(id);
+            const usize i = t ? static_cast<usize>(std::find(l.begin(), l.end(), t->key) - l.begin()) : l.size();
+            return i < l.size() ? "px-tpl-" + std::to_string(i) : std::string();
+        };
+        const std::string bake_note = "Запечено: «Барабан.png», 12 кадров 32 × 64. Клип «Покой»: метки за диапазоном не запечены: эхо 0,8 с.",
+                          bake_label = "«Барабан»: запечено в «Барабан.png», 12 кадров", saved = "«Барабан»: код «Барабан.luau» сохранён";
+        switch (mk_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            mk_code_ = kMkDrum;
+            mk_doc_ = doc_of();
+            std::error_code ec;
+            check(!fs::exists(as().abs(lua), ec) && !fs::exists(as().abs(doc), ec), "no «Барабан» in the game yet");
+            check(fs::exists(a / "game" / "sounds" / utf8_path("шаг.wav"), ec) && !fs::exists(a / "game" / "sounds" / utf8_path("звон.wav"), ec),
+                  "the game has the sound «шаг», no «звон»");
+            check(put(as().abs(lua), kMkDrum) && put_bytes(as().abs(doc), mk_doc_), "«Барабан.luau» and «Барабан.pixel.json» written by another program");
+            as().refresh();
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(idle && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Барабан» listed")) return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Барабан»");
+            break;
+        // The marks typed into the code, each after its line, and saved.
+        case 3: {
+            if (hold(px().code() == kMkDrum && px().clip() == "idle" && rec && !px().stale() && shown("px-block-0"), "«Барабан», its code and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            mk_label_ = step_label();
+            check(file(lua) == bytes(kMkDrum) && file(doc) == mk_doc_, "opened: nothing written");
+            check(std::fabs(rec->length - 0.8) < 1e-9 && px().whole().frames == 8 && rec->marks.empty() && px().console().empty(),
+                  "«Покой»: 0,8 s, 8 frames, no marks, the console empty");
+            std::string code = kMkDrum;
+            for (const auto& [after, line] : kMkMarks) {
+                const usize at = code.find(after) + std::strlen(after);
+                check(mo_caret(pixel::panel_char(code, static_cast<u32>(at))), std::string("the caret after «") + after + "»");
+                mo_type(line);
+                code.insert(at, line);
+            }
+            check(code == marked && px().code() == marked && px().code_unsaved() && file(lua) == bytes(kMkDrum) && step_label() == mk_label_,
+                  "the six marks typed key by key: not written yet\n" + px().code());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(marked) && file(doc) == mk_doc_ && !px().code_unsaved() && step_label() == saved,
+                  "Ctrl+S in the panel: the file what was typed, byte for byte, the «.pixel.json» the same; one step: " + step_label());
+            break;
+        }
+        case 4: {
+            if (hold(rec && rec->marks.size() == 4 && !px().stale() && !shown("px-code-unsaved") && shown("px-mark-3"), "the marks recorded")) return true;
+            using K = pixel::Mark::Kind;
+            check(mark_is(0, K::Sound, "шаг", 0, 0) && mark_is(1, K::Emit, "удар", 0.2, 0.15) && mark_is(2, K::Sound, "звон", 0.4, 0) &&
+                      mark_is(3, K::Emit, "эхо", 0.8, 0),
+                  "recorded: sound «шаг» at 0, emit «удар» at 0,2 for 0,15 s, sound «звон» at 0,4, emit «эхо» at 0,8");
+            check(std::fabs(rec->length - 0.8) < 1e-9 && px().whole().frames == 8, "the marks take no time: 0,8 s, 8 frames still");
+            check(console_has("Клип «Покой»: метки за диапазоном не запекаются: эхо 0,8 с"), "the console: «эхо» on no frame of «Покой»");
+            check(pj_class("px-mark-0", "sound") && !pj_class("px-mark-0", "missing") && !pj_class("px-mark-1", "sound") && pj_class("px-mark-1", "span") &&
+                      pj_class("px-mark-2", "sound") && pj_class("px-mark-2", "missing") && !pj_class("px-mark-3", "span"),
+                  "the timeline: «шаг» a sound, «удар» a window, «звон» a sound with no file (red), «эхо» a mark");
+            mk_code_ = marked;
+            mk_label_ = step_label();
+            break;
+        }
+        // «Запечь»: 12 frames of 32 × 64, the marks on their frames.
+        case 5: {
+            if (hold(idle && rec && !px().stale() && element_text("px-total") == "в картинке 12 кадров из 64", "«в картинке 12 кадров из 64»")) return true;
+            check(px_click("px-bake"), "«Запечь»");
+            assets::CookedTexture strip;
+            mk_png_ = file(png);
+            check(!mk_png_.empty() && assets::decode_image(mk_png_, strip) && strip.width == 384 && strip.height == 64, "«Барабан.png»: 12 frames of 32 × 64");
+            check(px().note() == bake_note && step_label() == bake_label, "«" + px().note() + "», one step: " + step_label());
+            check(strip_is(2), "the «.pixel.json»: «Покой» шаг on frame 1, удар on 3–4, звон on 5; «Идёт» шаг on 1 and 3");
+            pixel::PixelDoc dd;
+            pixel::Rig rig;
+            pixel::PoseScript script;
+            std::string why, bad;
+            check(mo_load(dd, rig, script, why) && dd.clips.size() == 2, "the files read apart from the tab " + why);
+            for (u32 k = 0, at = 0; k < dd.clips.size(); ++k)
+                for (u32 f = 0; f < dd.clips[k].frames; ++f, ++at) {
+                    assets::CookedTexture ref;
+                    if (!pixel::bake_frame(rig, script, dd, dd.clips[k], f, pixel::bake_options(dd, {}), ref, why) || !px_same(px_cut(strip, 32, at), ref))
+                        bad += " " + std::to_string(at + 1) + why;
+                }
+            check(bad.empty(), "each of the 12 frames as the library bakes the files apart from the tab;" + bad);
+            mk_doc_ = file(doc);
+            mk_label_ = step_label();
+            break;
+        }
+        // The window 0,25 s: baked again, the picture the same and the «.pixel.json» new; undone, done again, undone.
+        case 6: {
+            check(away(), "out of the panel");
+            const usize at = marked.find("0.15");
+            check(mo_select(pixel::panel_char(marked, static_cast<u32>(at)), pixel::panel_char(marked, static_cast<u32>(at + 4))), "«0.15» selected");
+            mo_type("0.25");
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(wide) && step_label() == saved, "typed «0.25» and saved: " + step_label());
+            break;
+        }
+        case 7: {
+            if (hold(rec && rec->marks.size() == 4 && std::fabs(rec->marks[1].length - 0.25) < 1e-9 && !px().stale() && idle, "the window recorded"))
+                return true;
+            check(px_click("px-bake"), "«Запечь» again");
+            check(file(png) == mk_png_ && strip_is(3) && px().note() == bake_note && step_label() == bake_label,
+                  "only the marks changed: the picture byte for byte, «удар» on 3–5 in the «.pixel.json»; «" + px().note() + "», one step: " + step_label());
+            mk_doc2_ = file(doc);
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(doc) == mk_doc_ && file(png) == mk_png_ && file(lua) == bytes(wide) && step_label() == saved, "Ctrl+Z: the bake undone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(marked) && file(doc) == mk_doc_ && step_label() == mk_label_, "Ctrl+Z: the code as it was, byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(wide) && file(doc) == mk_doc2_ && file(png) == mk_png_ && step_label() == bake_label, "Ctrl+Y twice: both again");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(marked) && file(doc) == mk_doc_ && file(png) == mk_png_ && step_label() == mk_label_, "Ctrl+Z twice: as baked first");
+            break;
+        }
+        case 8:
+            if (hold(idle && px().code() == marked && rec && rec->marks.size() == 4 && std::fabs(rec->marks[1].length - 0.15) < 1e-9 && !px().stale() &&
+                         as().record_of(as().abs(png)) && shown("px-give-open") && !pj_class("px-give-open", "disabled"),
+                     "the code read again, the picture indexed"))
+                return true;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…»");
+            break;
+        // Given to «Флаг»: «Покой» with its marks.
+        case 9: {
+            const std::string row = row_of_tpl("flag");
+            if (hold(!row.empty() && shown(row), "the templates listed")) return true;
+            check(element_text(row.c_str()).find("сыграет: Покой") != std::string::npos, "«Флаг» will play «Покой»");
+            mk_flag0_ = an_file("flag");
+            check(px_click(row), "a click on «Флаг»");
+            break;
+        }
+        case 10: {
+            const objects::Template* t = lib.find("flag");
+            check(t && t->picture == "Барабан.png" && t->frames == 12 && t->animations.size() == 1 && an_is("flag", "idle", mk_idle()),
+                  "«Флаг»: «Барабан.png», 12 frames, «Покой» by frames 1–8 with its marks; in its file");
+            check(an_text("flag").find("\"events\": [{\"frame\": 0, \"sound\": \"шаг\"}, {\"frame\": 2, \"emit\": \"удар\", \"frames\": 2}, {\"frame\": 4, "
+                                       "\"sound\": \"звон\"}]") != std::string::npos,
+                  "the file: the marks after «loop»\n" + an_text("flag"));
+            check(px().note() == "«Флаг» рисует «Барабан.png», 12 кадров, анимации: «Покой»; метки: «шаг», «удар», «звон»; не отданы: «Идёт» (его шаблон "
+                                 "не играет)." &&
+                      step_label() == "«Флаг»: картинка «Барабан.png» из «Барабан»",
+                  "«" + px().note() + "», one step: " + step_label());
+            const std::vector<u8> given = an_file("flag");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("flag")) == an_lf(mk_flag0_), "Ctrl+Z: «Флаг» as before (line ends aside)");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("flag") == given && an_is("flag", "idle", mk_idle()), "Ctrl+Y: given again, byte for byte");
+            mk_given_ = given;
+            check(px_click("px-give-open") && px().giving(), "«Отдать шаблону…» again");
+            break;
+        }
+        // And to «Герой»: «Идёт» with its steps; «Покой» it does not play.
+        case 11: {
+            const std::string row = row_of_tpl("hero_look");
+            if (hold(!row.empty() && shown(row), "the templates listed")) return true;
+            check(element_text(row.c_str()).find("сыграет: Идёт") != std::string::npos, "«Герой» will play «Идёт»");
+            mk_hero0_ = an_file("hero_look");
+            check(px_click(row), "a click on «Герой»");
+            break;
+        }
+        case 12: {
+            const objects::Template* t = lib.find("hero_look");
+            check(t && t->picture == "Барабан.png" && t->frames == 12 && t->animations.size() == 1 && an_is("hero_look", "walk", mk_walk()),
+                  "«Герой»: «Барабан.png», 12 frames, «Идёт» by frames 9–12 with its steps; in its file");
+            check(px().note() == "«Герой» рисует «Барабан.png», 12 кадров, анимации: «Идёт»; метки: «шаг»; не отданы: «Покой» (его шаблон не играет)." &&
+                      step_label() == "«Герой»: картинка «Барабан.png» из «Барабан»",
+                  "«" + px().note() + "», one step: " + step_label());
+            const std::vector<u8> given = an_file("hero_look");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_lf(an_file("hero_look")) == an_lf(mk_hero0_) && an_file("flag") == mk_given_, "Ctrl+Z: «Герой» as before, «Флаг» as given");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(an_file("hero_look") == given && an_is("hero_look", "walk", mk_walk()), "Ctrl+Y: given again, byte for byte");
+            check(pj_click("an-mode-frames") && an().mode() == "frames", "«Покадровая»");
+            break;
+        }
+        // «Покадровая»: the marks under the frames.
+        case 13:
+            if (wait(2)) return true;
+            check(an_pick("hero_look"), "«Герой»");
+            break;
+        case 14:
+            if (hold(an().selected() && an().selected()->id == "hero_look" && shown("an-state-walk"), "«Герой» shown")) return true;
+            check(pj_click("an-state-walk"), "«Идёт»");
+            break;
+        case 15: {
+            if (wait(2)) return true;
+            const std::string seq = mk_seq();
+            check(seq == "1 ♪; 2; 3 ♪; 4; Метки: звук шаг — кадр 1, звук шаг — кадр 3", "«Идёт»: a note on frames 1 and 3: " + seq);
+            check(an_pick("flag"), "«Флаг»");
+            break;
+        }
+        case 16: {
+            if (hold(an().selected() && an().selected()->id == "flag" && shown("an-seq-7"), "«Флаг» shown")) return true;
+            if (wait(2)) return true;
+            const std::string seq = mk_seq();
+            check(seq == "1 ♪; 2; 3 ⚑ ▬; 4 ▬; 5 ♪; 6; 7; 8; Метки: звук шаг — кадр 1, удар — кадры 3–4, звук звон — кадр 5",
+                  "«Покой»: a note on 1, the flag on 3 and the window's bar on 3–4, a note on 5: " + seq);
+            mk_trims_ = {an_file("flag")};
+            break;
+        }
+        // «Убрать последний» five times: frames 8, 7 and 6 nothing more, 5 takes «звон», 4 shortens «удар».
+        case 17: {
+            if (wait(2)) return true;
+            const usize n = mk_trims_.size();
+            if (n % 2) check(pj_click("an-remove-last"), "«Убрать последний» with the mouse");
+            else key(SDLK_BACKSPACE, SDL_KMOD_NONE);
+            mk_trims_.push_back(an_file("flag"));
+            const std::string want = "«Флаг»: последний кадр из «Покой» убран" + std::string(n == 4 ? ", метка «звон» тоже" : "");
+            check(step_label() == want, "frame " + std::to_string(9 - n) + " taken away, one step: " + step_label());
+            if (n < 5) {
+                --mk_step_;
+                break;
+            }
+            objects::Clip c{{0, 1, 2}, 10, true, {{"шаг", true, 0, 1}, {"удар", false, 2, 1}}};
+            check(an_is("flag", "idle", c), "«Покой»: frames 1–3, шаг on 1, удар on 3 alone");
+            break;
+        }
+        case 18: {
+            if (wait(2)) return true;
+            const std::string seq = mk_seq();
+            check(seq == "1 ♪; 2; 3 ⚑; Метки: звук шаг — кадр 1, удар — кадр 3", "shown so: " + seq);
+            std::string bad;
+            for (usize k = mk_trims_.size() - 1; k > 0; --k) {
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                if (an_file("flag") != mk_trims_[k - 1]) bad += " " + std::to_string(k);
+            }
+            check(bad.empty() && an_is("flag", "idle", mk_idle()), "Ctrl+Z five times: each step back byte for byte;" + bad);
+            for (usize k = 1; k < mk_trims_.size(); ++k) {
+                key(SDLK_Y, SDL_KMOD_CTRL);
+                if (an_file("flag") != mk_trims_[k]) bad += " " + std::to_string(k);
+            }
+            check(bad.empty(), "Ctrl+Y five times: each again byte for byte;" + bad);
+            for (usize k = 1; k < mk_trims_.size(); ++k) key(SDLK_Z, SDL_KMOD_CTRL);
+            check(an_file("flag") == mk_given_ && an_is("flag", "idle", mk_idle()), "Ctrl+Z five times: «Покой» as given, byte for byte");
+            break;
+        }
+        case 19:
+            if (wait(2)) return true;
+            check(mk_seq() == "1 ♪; 2; 3 ⚑ ▬; 4 ▬; 5 ♪; 6; 7; 8; Метки: звук шаг — кадр 1, удар — кадры 3–4, звук звон — кадр 5", "shown as given: " + mk_seq());
+            check(click_tab(6), "«Логика»");
+            break;
+        // «Логика»: «Флаг»'s own scheme, with the mouse.
+        case 20:
+            if (wait(2)) return true;
+            check(click("lg-mode-scheme") && lg().mode() == "scheme", "«Схема»");
+            break;
+        case 21:
+            if (wait(2)) return true;
+            check(click("sc-own-add") && lg().scheme().picking(), "«+ Своя схема вещи» lists the things");
+            break;
+        case 22: {
+            if (wait(2)) return true;
+            check(shown("sc-choice-flag") && click("sc-choice-flag"), "«Флаг» picked");
+            const logic::ThingScheme* own = lg().links().scheme_for("flag");
+            mk_scheme_ = own ? own->id : 0;
+            check(mk_scheme_ != 0, "«Флаг» has a scheme of its own");
+            mk_n_ = 0;
+            break;
+        }
+        // Five nodes from its list.
+        case 23: {
+            static constexpr const char* kSearch[] = {"При метке анимации", "Прибавить к переменной игры", "Задать переменную игры", "Идёт метка анимации",
+                                                      "Этот объект"};
+            if (wait(2)) return true;
+            check(click("sc-add-" + std::to_string(mk_scheme_)) && lg().scheme().palette_open(), "«+ Нода» on its frame");
+            lg().scheme().set_search(kSearch[mk_n_]);
+            break;
+        }
+        case 24: {
+            static constexpr const char* kDefs[] = {"std.event.anim", "api.game.add_var", "api.game.set_var", "api.anim.going", "std.self"};
+            if (wait(2)) return true;
+            const script::Graph* g = lg().scheme().graph(mk_scheme_);
+            const usize before = g ? g->nodes.size() : 0;
+            check(click(std::string("sc-pal-") + kDefs[mk_n_]) && !lg().scheme().palette_open(), std::string(kDefs[mk_n_]) + " added");
+            g = lg().scheme().graph(mk_scheme_);
+            if (g)
+                for (const script::GraphNode& n : g->nodes)
+                    if (n.def == kDefs[mk_n_]) mk_nodes_[mk_n_] = n.uid;
+            check(g && g->nodes.size() == before + 1 && mk_nodes_[mk_n_], "one node more");
+            if (++mk_n_ < 5) {
+                mk_step_ = 23;
+                return true;
+            }
+            break;
+        }
+        // Wired with the mouse, its fields typed.
+        case 25: {
+            if (wait(2)) return true;
+            const script::Graph* g = lg().scheme().graph(mk_scheme_);
+            u32 tick = 0;
+            if (g)
+                for (const script::GraphNode& n : g->nodes)
+                    if (n.def == "std.event.tick") tick = n.uid;
+            const std::string s = "sc-pin-" + std::to_string(mk_scheme_) + "-";
+            auto pin = [&](u32 node, const char* side) { return s + std::to_string(node) + side; };
+            check(click(pin(mk_nodes_[0], "-o-next")) && click(pin(mk_nodes_[1], "-i-in")), "«При метке анимации» → «Прибавить к переменной игры»");
+            check(tick && click(pin(tick, "-o-next")) && click(pin(mk_nodes_[2], "-i-in")), "«Каждый шаг» → «Задать переменную игры»");
+            check(click(pin(mk_nodes_[4], "-o-actor")) && click(pin(mk_nodes_[3], "-i-thing")), "«Этот объект» → «Вещь» of «Идёт метка анимации»");
+            check(click(pin(mk_nodes_[3], "-o-on")) && click(pin(mk_nodes_[2], "-i-value")), "«Да» → «Значение» of «Задать переменную игры»");
+            const std::string f = "sc-field-" + std::to_string(mk_scheme_) + "-";
+            auto type = [&](u32 node, const char* param, const std::string& value) { return ue_type((f + std::to_string(node) + "-" + param).c_str(), value); };
+            check(type(mk_nodes_[0], "filter", "удар") && type(mk_nodes_[1], "name", "барабан.удары") && type(mk_nodes_[2], "name", "барабан.идёт") &&
+                      type(mk_nodes_[3], "mark", "удар"),
+                  "typed: the mark «удар», the variables «барабан.удары» and «барабан.идёт», the mark asked «удар»");
+            break;
+        }
+        case 26: {
+            if (wait(2)) return true;
+            SchemeView& sc = lg().scheme();
+            const script::Graph* g = sc.graph(mk_scheme_);
+            std::string problems;
+            for (u32 n : mk_nodes_) problems += sc.node_problem(mk_scheme_, n);
+            check(g && g->links.size() == 4 && problems.empty() && lg().problem_of(mk_scheme_).empty(),
+                  "four wires, and the scheme works: " + problems + lg().problem_of(mk_scheme_));
+            logic::Logic l;
+            const logic::ThingScheme* own = l.load(ed_.logic_file) ? l.scheme_for("flag") : nullptr;
+            check(own && own->graph.find("std.event.anim") != std::string::npos && own->graph.find("api.anim.going") != std::string::npos &&
+                      own->graph.find("барабан.удары") != std::string::npos && own->graph.find("барабан.идёт") != std::string::npos,
+                  "logic.json keeps it");
+            check(click_tab(3) && ed_.tab() == "animation", "back to «Анимация»");
+            break;
+        }
+        case 27:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        // What the tab shows and the files, beside the games, for pixel-motion-k-again.
+        case 28: {
+            if (hold(rec && !px().stale() && px().opened() == doc && px().clip() == "idle" && shown("px-frame-0"), "«Барабан» and its recording")) return true;
+            if (mb_look(mk_seen_)) return true;
+            std::string marks;
+            for (const pixel::Mark& m : rec->marks)
+                marks += std::string("метка ") + (m.kind == pixel::Mark::Kind::Sound ? "звук " : "") + m.name + " в " + std::to_string(m.time) + " на " +
+                         std::to_string(m.length) + "\n";
+            mk_seen_ = mp_recorded() + marks + mk_seen_;
+            const fs::path root = mo_root();
+            check(put(root / utf8_path("барабан.txt"), mk_seen_) && put_bytes(root / utf8_path("барабан.luau"), file(lua)) &&
+                      put_bytes(root / utf8_path("барабан.pixel.json"), file(doc)) && put_bytes(root / utf8_path("барабан.png"), file(png)) &&
+                      put_bytes(root / utf8_path("флаг барабана.json"), an_file("flag")) &&
+                      put_bytes(root / utf8_path("герой барабана.json"), an_file("hero_look")) &&
+                      put_bytes(root / utf8_path("логика барабана.json"), tg_bytes(ed_.logic_file)),
+                  "what the tab shows and the files, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++mk_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-motion-k (--self-test pixel-motion-k-again).
+    bool pixel_motion_k_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string doc = "персонажи/Барабан.pixel.json", lua = "персонажи/Барабан.luau", png = "персонажи/Барабан.png";
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
+        auto same = [&] {
+            return !left("барабан.luau").empty() && file(lua) == left("барабан.luau") && file(doc) == left("барабан.pixel.json") &&
+                   file(png) == left("барабан.png") && an_file("flag") == left("флаг барабана.json") && an_file("hero_look") == left("герой барабана.json") &&
+                   tg_bytes(ed_.logic_file) == left("логика барабана.json");
+        };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& l = px().listed();
+            const auto it = std::find(l.begin(), l.end(), rel);
+            return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+        };
+        switch (mk_step_) {
+        case 0:
+            check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), mo_root() / utf8_path("девятнадцатая папка")),
+                  "from another working folder: " + path_to_utf8(fs::current_path()));
+            check(same(), "the files as pixel-motion-k left them");
+            check(click_tab(3), "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && listed_at(doc) >= 0 && shown("px-doc-" + std::to_string(listed_at(doc))), "«Барабан» listed"))
+                return true;
+            check(px_click("px-doc-" + std::to_string(listed_at(doc))) && px().opened() == doc, "a click on «Барабан»");
+            break;
+        case 3: {
+            const std::vector<u8> code = left("барабан.luau");
+            const pixel::Recording* rec = px().recording();
+            if (hold(px().code() == std::string(code.begin(), code.end()) && px().clip() == "idle" && rec && !px().stale() && shown("px-frame-0") &&
+                         shown("px-total"),
+                     "«Барабан» and its recording"))
+                return true;
+            if (px().playing()) key(SDLK_SPACE, SDL_KMOD_NONE);
+            if (mb_look(mk_seen_)) return true;
+            std::string marks;
+            for (const pixel::Mark& m : rec->marks)
+                marks += std::string("метка ") + (m.kind == pixel::Mark::Kind::Sound ? "звук " : "") + m.name + " в " + std::to_string(m.time) + " на " +
+                         std::to_string(m.length) + "\n";
+            const std::vector<u8> was = left("барабан.txt");
+            const std::string seen = mp_recorded() + marks + mk_seen_;
+            check(!was.empty() && seen == std::string(was.begin(), was.end()),
+                  "the recording, its marks, the tracks and both views of every frame as pixel-motion-k saw them\n" + seen);
+            check(element_text("px-total") == "в картинке 12 кадров из 64" && !px().edited(), "«" + element_text("px-total") + "», the picture as baked");
+            check(pj_click("an-mode-frames") && an().mode() == "frames", "«Покадровая»");
+            break;
+        }
+        case 4:
+            if (wait(2)) return true;
+            check(an_pick("flag"), "«Флаг»");
+            break;
+        case 5: {
+            if (hold(an().selected() && an().selected()->id == "flag" && shown("an-seq-7"), "«Флаг» shown")) return true;
+            if (wait(2)) return true;
+            check(mk_seq() == "1 ♪; 2; 3 ⚑ ▬; 4 ▬; 5 ♪; 6; 7; 8; Метки: звук шаг — кадр 1, удар — кадры 3–4, звук звон — кадр 5",
+                  "«Покой» with its marks as given: " + mk_seq());
+            check(same(), "looked at: nothing written");
+            check(click_tab(0), "«Уровень»");
+            break;
+        }
+        case 6:
+            if (hold(lv().view_w() > 0, "the level view is laid out")) return true;
+            if (wait(2)) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 7: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            edits::ProjectEdits e = an_edits();
+            e.mk_scheme = "flag";
+            e.mk_mark = "удар";
+            e.mk_count_var = "барабан.удары";
+            e.mk_going_var = "барабан.идёт";
+            check(e.mk_of.size() == 5, "the marks of «Флаг» and «Герой» for the game: " + std::to_string(e.mk_of.size()));
+            int code = tg_play(&e, "ожидания барабана.json", mo_root());
+            check(code == 0, "the game draws «Барабан»'s frames and fires its marks on their ticks: the steps of the hero, «Флаг»'s sounds at its place, "
+                             "its scheme's «При метке анимации» and «Идёт метка анимации» (exit " + std::to_string(code) + ")");
+            code = tg_play(&e, "ожидания барабана 144.json", mo_root(), "project", {"--hz", "144"});
+            check(code == 0, "the same at 144 frames a second, frames of no tick among them (exit " + std::to_string(code) + ")");
+            check(same(), "played: the files as they were");
+            return false;
+        }
+        default: break;
+        }
+        ++mk_step_;
         return true;
     }
 
@@ -32779,7 +33400,7 @@ int main(int argc, char** argv) {
                                          "pixel-motion-c", "pixel-motion-c-again", "pixel-motion-d", "pixel-motion-d-again", "pixel-motion-e",
                                          "pixel-motion-e-again", "pixel-motion-f", "pixel-motion-f-again", "pixel-motion-g",
                                          "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
-                                         "pixel-motion-j-again", "input", "input-a", "input-a-again",
+                                         "pixel-motion-j-again", "pixel-motion-k", "pixel-motion-k-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -32795,7 +33416,8 @@ int main(int argc, char** argv) {
                     "frame-limit-a-low, frame-limit-a-low-again, frame-limit-a-cross, pixel-motion and its parts pixel-motion-a, pixel-motion-b, "
                     "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, pixel-motion-d, pixel-motion-d-again, pixel-motion-e, "
                     "pixel-motion-e-again, pixel-motion-f, pixel-motion-f-again, pixel-motion-g, pixel-motion-g-again, pixel-motion-h, "
-                    "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, "
+                    "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, pixel-motion-k, "
+                    "pixel-motion-k-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "

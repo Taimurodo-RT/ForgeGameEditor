@@ -155,6 +155,18 @@ bool read_frame_limit(const std::filesystem::path& game_dir, u32& limit, std::st
 // checkout on Windows gives). False when the text is not a JSON object.
 bool with_frame_limit(std::string_view json, u32 limit, std::string& out);
 
+// A mark of an animation (part 5а of docs/models/движение-модель.md): emit("удар"[, s]) or sound("шаг") of a clip of
+// «Векторная», baked onto the frame that first shows its moment. `frame` is its place in the animation's frames (from
+// 0), not a frame of the picture; `frames` the frames its window holds, 1 for a plain mark and a sound. The game fires
+// it in the world step its frame begins to show in; a window goes while any of its frames shows.
+struct ClipEvent {
+    std::string name;
+    bool sound = false; // sound("шаг"): the game's sound of that name; else emit("удар")
+    u32 frame = 0, frames = 1;
+
+    bool operator==(const ClipEvent&) const = default;
+};
+
 // An animation of a template's picture in one state the game's module names ("walk"): which frames of its strip show
 // one after another, how many a second, and whether it starts over (else it stays on its last frame). A template
 // without one for a state is drawn by the module's own rule for it (the tab «Анимация»).
@@ -162,6 +174,7 @@ struct Clip {
     std::vector<u32> frames;
     f32 fps = 10;
     bool loop = true;
+    std::vector<ClipEvent> events; // by frame, those of one frame as the clip made them
 
     bool operator==(const Clip&) const = default;
 };
@@ -175,6 +188,31 @@ u32 clip_ticks(f32 fps);
 std::string clip_problem(const Clip& clip, u32 frames, u32 limit);
 // The frame of the strip it shows `ticks` ticks after its state began (of one that can play).
 u32 clip_frame(const Clip& clip, u64 ticks);
+// Its place in its frames then: counted on round with «Повторять», else held on the last.
+u32 clip_place(const Clip& clip, u64 ticks);
+// The events (indices in clip.events) whose frame begins to show at a tick after `was` and not after `now`, in the
+// order they begin; was < 0: the animation began at tick 0, so the events of its first frame count. Each frame of a
+// round once more; past the last frame of one without «Повторять», none. More frames than the animation has between
+// the two (never at 60 ticks a second): the last round of them, each event once.
+std::vector<u32> clip_events(const Clip& clip, i64 was, u64 now);
+// Whether event e goes `ticks` ticks after the state began: the frame shown is one of its window.
+bool clip_event_going(const Clip& clip, const ClipEvent& e, u64 ticks);
+// Why an event cannot be one of the clip's: no name, its place or its window past the frames, a sound with a window.
+// Empty: it can.
+std::string event_problem(const Clip& clip, const ClipEvent& e);
+// What each place of a clip shows under its frame in «Покадровая»: the mark that begins there, an emit's flag over a
+// sound's note, and whether a window of more than one frame goes on there.
+struct FrameMark {
+    enum class Begins : u8 { None, Sound, Emit } begins = Begins::None;
+    bool window = false;
+};
+std::vector<FrameMark> frame_marks(const Clip& clip);
+// The clip's events cut to its frames, after frames were taken away: those that began past them go, a window that
+// went on past them ends at the last; the names of those gone, in order.
+std::vector<std::string> trim_events(Clip& clip);
+// The file of a mark's sound("шаг") among the game's sounds, as «Векторная» finds it: шаг, else шаг.wav, else шаг.ogg
+// in `folder`; empty when none is there or the name is no file of the folder (a / or \ in it).
+std::filesystem::path mark_sound_file(const std::filesystem::path& folder, std::string_view name);
 
 struct Template {
     std::string id;   // "coins": stable, written in the file; the key comes from it

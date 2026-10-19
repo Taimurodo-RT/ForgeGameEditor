@@ -199,8 +199,14 @@ struct Objects {
     flecs::query<forge::scene::Position, forge::sim::Body, Enemy> enemies;
     flecs::query<forge::scene::Position, forge::sim::Body, Hazard> hazards;
     flecs::query<forge::scene::Position, forge::sim::Body> bodies; // a body and nothing else of the above
+    flecs::query<forge::scene::Position, forge::objects::ObjectRef> copies; // of templates (the hero is none: no ObjectRef)
     void init(flecs::world& ecs);
 };
+
+// The pose push_objects draws a copy of a template in, with its picture: a critter walks while it goes on the ground,
+// else stands; anything else is idle.
+Pose critter_pose(const forge::sim::Body& b);
+Pose copy_pose(flecs::entity e);
 
 // Sprites of the villagers, critters, items, crates and the anvil, around
 // the camera (cam_x, cam_y). alpha: how far between ticks (1 when nothing
@@ -269,6 +275,7 @@ public:
     std::string object_note(const forge::objects::Library& library, const forge::objects::Template& t) const override;
     // A template with a picture: the poses of what moves it (mover_of), each with the game's rule (pose_rule).
     std::vector<AnimState> anim_states(const forge::objects::Library& library, const forge::objects::Template& t) const override;
+    bool anim_emits() const override { return true; }
     forge::level::LevelPhysics default_physics() const override { return {0, kGravity}; }
     std::vector<std::string> physics_fills() const override { return {"water", "sand"}; }
     std::unique_ptr<forge::sim::CellSim> make_cells(forge::sim::CollisionRules& rules) const override;

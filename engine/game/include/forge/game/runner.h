@@ -10,6 +10,7 @@
 //   my_game --play                   a new game at once, past the main menu
 //   my_game --ui-scale S             the UI drawn at a display's scale of S, standing for the system's (times the
 //                                    player's «Масштаб интерфейса»; 1 for --test and --screenshot unless given)
+//   my_game --test --hz N            offscreen, N frames a second as on a screen of N Hz (60 unless given)
 
 #include "forge/game/shell.h"
 

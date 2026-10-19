@@ -13,7 +13,7 @@
 
 namespace forge::script {
 
-enum Handler : u8 { OnStart, OnTick, OnEnter, OnLeave, OnHit, OnMessage, kHandlerCount };
+enum Handler : u8 { OnStart, OnTick, OnEnter, OnLeave, OnHit, OnMessage, OnAnim, kHandlerCount };
 extern const char* const kHandlerNames[kHandlerCount];
 
 struct ScriptHost::Impl {
@@ -39,6 +39,7 @@ struct ScriptHost::Impl {
         flecs::entity_t to = 0, from = 0;
         std::string name;
         f64 value = 0;
+        bool anim = false; // a mark of `to`'s animation (ScriptHost::anim), for its on_anim
     };
 
     ScriptHost& host;

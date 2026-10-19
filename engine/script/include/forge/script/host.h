@@ -12,6 +12,7 @@
 //   function S.on_leave(self, other) end
 //   function S.on_hit(self, other) end         -- its rigid body started touching another (0: tiles)
 //   function S.on_message(self, name, value, from) end
+//   function S.on_anim(self, name) end          -- its animation came to a mark (emit) of its picture
 //   return S
 //
 // A handler may also be a list of functions (S.on_tick = {f, g}): each runs
@@ -164,6 +165,9 @@ public:
     // to = 0: to every scripted entity running then (a button's «Сообщение
     // логике»).
     void send(flecs::entity_t to, std::string_view message, f64 value = 0, flecs::entity_t from = 0);
+    // The animation a thing is shown with came to a mark (emit("удар") of «Векторная»): its on_anim at the next tick,
+    // in turn with the messages sent before and after.
+    void anim(flecs::entity_t thing, std::string_view mark);
 
     // Per-node time of graphs compiled with CompileOptions::profile, slowest
     // first, since the start or the last reset.
@@ -229,6 +233,12 @@ public:
                      std::string_view text, std::string* why) {
         (void)what, (void)screen, (void)layer, (void)part, (void)x, (void)y, (void)text, (void)why;
         return true;
+    }
+    // forge.anim.going: whether the animation a thing is shown with now shows the frame of a mark of that name or a
+    // frame of its window. False without a game, or for a thing whose picture has no such mark.
+    virtual bool anim_going(flecs::entity_t thing, std::string_view mark) {
+        (void)thing, (void)mark;
+        return false;
     }
 };
 

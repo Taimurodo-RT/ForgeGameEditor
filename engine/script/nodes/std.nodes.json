@@ -28,6 +28,12 @@
         { "id": "value", "type": "number", "title": { "ru": "Значение", "en": "Value" } },
         { "id": "from", "type": "entity", "title": { "ru": "От кого", "en": "From" } } ],
       "lua": "if {in:filter} == \"\" or {out:name} == {in:filter} then\n    {body}\nend" },
+    { "id": "std.event.anim", "kind": "event", "event": "on_anim", "category": "События", "icon": "flag",
+      "title": { "ru": "При метке анимации", "en": "On animation mark" },
+      "help": { "ru": "Анимация вещи дошла до метки emit(\"удар\") из «Векторной». Пустая метка — любые." },
+      "inputs": [ { "id": "filter", "type": "string", "constant": true, "title": { "ru": "Метка", "en": "Mark" } } ],
+      "outputs": [ { "id": "name", "type": "string", "title": { "ru": "Метка", "en": "Mark" } } ],
+      "lua": "if {in:filter} == \"\" or {out:name} == {in:filter} then\n    {body}\nend" },
 
     { "id": "std.flow.if", "kind": "flow", "category": "Поток", "icon": "call_split",
       "title": { "ru": "Если", "en": "If" },

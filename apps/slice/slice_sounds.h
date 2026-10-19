@@ -41,6 +41,10 @@ public:
     void play(Cue cue, f64 x, f64 y, f32 volume = 1, f32 pitch = 1);
     // An object's own sound (by name), else the usual one (Cue::Count: none).
     void play(const std::string& name, Cue fallback, f64 x, f64 y, f32 volume = 1, f32 range = 16);
+    // The sound of an animation's mark, sound("шаг") (part 5а of docs/models/движение-модель.md): the file
+    // objects::mark_sound_file finds in the sounds folder, at a place in the world as objects' sounds are; false when
+    // there is none (or it does not read).
+    bool play_mark(const std::string& name, f64 x, f64 y);
     // The loops of objects with a «Рядом» sound around (x, y): they start,
     // follow their objects and stop when out of hearing; steps of objects
     // that walk. Each frame while the game runs.
@@ -57,6 +61,9 @@ public:
     // --- for the self-test ---
     u32 played(Cue cue) const { return played_[static_cast<usize>(cue)]; }
     u32 played_named() const { return named_played_; }
+    u32 played_marks() const { return marks_played_; }
+    // The place in the world the last mark's sound plays at, while it plays.
+    bool last_mark_at(f64& x, f64& y) const { return mixer_.where(last_mark_, x, y); }
     u32 loops() const { return static_cast<u32>(loops_.size()); }
 
 private:
@@ -71,8 +78,10 @@ private:
     std::filesystem::path folder_;
     std::array<forge::audio::SoundPtr, static_cast<usize>(Cue::Count)> cues_{};
     std::array<u32, static_cast<usize>(Cue::Count)> played_{};
-    u32 named_played_ = 0;
+    u32 named_played_ = 0, marks_played_ = 0;
+    forge::audio::Voice last_mark_;
     std::unordered_map<std::string, forge::audio::SoundPtr> named_;
+    std::unordered_map<std::string, forge::audio::SoundPtr> marks_; // by the mark's name; null: none there
     std::unordered_map<flecs::entity_t, Loop> loops_;
     std::unordered_map<flecs::entity_t, f64> walked_; // tiles since the last step
 };
