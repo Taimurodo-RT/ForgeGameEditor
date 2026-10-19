@@ -13,12 +13,15 @@
 // Values are as the tab's recording keeps them (forge::pixel::PropValue): a colour, a stroke width and a morph are a
 // share over the part's own with the colour, the width or the target beside it. Since version 2 (part 5г) a clip also
 // has the copies of parts it makes and the steps of the parts' order; since version 3 (part 5д) the file has the
-// character's other drawings (each its own SVG beside the picture) and a clip the track of the drawing shown.
+// character's other drawings (each its own SVG beside the picture) and a clip the track of the drawing shown. Since
+// version 4 (part 5ж) the file has the code's parameters with the values the clips were given at, and a piece how its
+// numbers change with each parameter: a game plays a clip at other values of them.
 
 #include "forge/vector/path.h"
 #include "forge/vector/svg.h"
 #include "forge/vector/timing.h"
 
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -87,6 +90,28 @@ MotionValue motion_plain(MotionProp p, const MotionValue& v);
 // Whether two values show the same: numbers (and a link's matrix) within 1e-9 of each other (relative above 1).
 bool motion_same(MotionProp p, const MotionValue& a, const MotionValue& b);
 
+// What a value's numbers do per unit of a parameter (part 5ж): its number or share `v`, a stroke width's `n`, a link's
+// matrix a … f; a value's colour, target, visibility, mask and drawing do not change with one.
+struct MotionDelta {
+    f64 v = 0, n = 0;
+    f64 m[6] = {0, 0, 0, 0, 0, 0};
+    bool zero() const;
+    bool operator==(const MotionDelta&) const = default;
+};
+// Whether property p has numbers a parameter can change: all but visible, the mask and the drawing.
+bool motion_prop_has_numbers(MotionProp p);
+// v with its numbers moved by `units` of d.
+MotionValue motion_moved(MotionValue v, const MotionDelta& d, f64 units);
+
+// A piece's numbers per unit of parameter `param`: a hold's `value`, a transition's `from` and `to`, a frames piece's
+// `frames` (one a value).
+struct MotionBy {
+    std::string param;
+    MotionDelta value, from, to;
+    std::vector<MotionDelta> frames;
+    bool operator==(const MotionBy&) const = default;
+};
+
 inline constexpr f64 kMotionRate = 120; // frames pieces' values a second
 inline constexpr usize kMotionCurvePoints = 257;
 
@@ -105,6 +130,7 @@ struct MotionPiece {
     // frames: at + i / kMotionRate, the last at `end` (just before it)
     f64 end = 0;
     std::vector<MotionValue> frames;
+    std::vector<MotionBy> by; // how its numbers change with the parameters (version 4), by the file's parameters
     bool operator==(const MotionPiece&) const = default;
 };
 // How many values a frames piece from `at` to `end` has: the moments at + i / kMotionRate before `end`, then `end`.
@@ -168,6 +194,8 @@ struct MotionClip {
     std::vector<std::string> not_drawn;     // what the clip does that a screen does not draw: "blur", "shadow", …
     std::vector<MotionCopy> copies;         // by `born`
     std::vector<MotionOrderStep> order;     // by `at`, steps of one moment as made
+    // The parameters the clip does not change with in a game (version 4), with why: "число переходов", "цвет", …
+    std::map<std::string, std::string> fixed;
     bool operator==(const MotionClip&) const = default;
 };
 
@@ -189,10 +217,18 @@ struct MotionDrawing {
     bool operator==(const MotionDrawing&) const = default;
 };
 
+// A parameter of the code (part 5ж): its name and the value the tab gave the clips at.
+struct MotionParam {
+    std::string name;
+    f64 value = 0;
+    bool operator==(const MotionParam&) const = default;
+};
+
 struct MotionFile {
     std::string character; // its name, for messages: "Ёжик"
     std::string from;      // its file in «Ресурсы»: what «Отдать экрану» knows its own pair by
     std::string picture;   // "Ёжик.svg"
+    std::vector<MotionParam> params;       // the code's, as declared (version 4)
     std::vector<MotionPart> parts;         // the main drawing's
     std::vector<MotionDrawing> drawings;   // the others, by name
     std::vector<std::vector<f64>> curves; // authors' easings, kMotionCurvePoints values over 0 … 1
@@ -204,11 +240,12 @@ struct MotionFile {
     // The part as it stands in drawing `drawing` ("draw" or "": the main one); null when that drawing has no record of it.
     const MotionPart* part(std::string_view id, std::string_view drawing) const;
     const MotionDrawing* drawing(std::string_view name) const; // null for the main one and for none
+    const MotionParam* param(std::string_view name) const;
 };
 
 // The version a game reads up to; write_motion_file writes 1 for a file with nothing of version 2 (an older game reads
-// it), 2 for one with nothing of version 3.
-inline constexpr u32 kMotionFileVersion = 3;
+// it), 2 for one with nothing of version 3, 3 for one without parameters.
+inline constexpr u32 kMotionFileVersion = 4;
 u32 motion_file_version(const MotionFile& file);
 
 // False with why (Russian, naming the field: "clips.idle.tracks[2].pieces[0]: …") when the text is not such a file.
@@ -268,6 +305,11 @@ bool motion_copy_drawn(const MotionCopy& copy, f64 t);
 // The clip's order steps at t or before (on nanoseconds), in order, but those of a copy not born yet (as the tab leaves
 // them out).
 std::vector<MotionOrderStep> motion_order_at(const MotionClip& clip, f64 t);
+
+// Clip `clip` of the file with its numbers at `values` of parameters (part 5ж): each number of each piece plus (value −
+// the file's value) times its change per unit. A parameter the file has not, or the clip does not change with
+// (`fixed`), leaves its numbers as the file has them.
+MotionClip motion_clip_with(const MotionFile& file, const MotionClip& clip, const std::vector<MotionParam>& values);
 
 // Where a clip is after `played` seconds of play: round and round when it loops, else held at its end. `loop` is how
 // the game plays it, which need not be the clip's own (svg_play's `loop`).
