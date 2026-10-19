@@ -19213,8 +19213,8 @@ return {
         check(given == 0, "«Скакун»: «Отдать экрану», «Скакун.svg» and «Скакун.motion.json» as the library builds them of the files, the mouth "
                           "a <path>, the tint said; undone and done again byte for byte, «Уже отдано так»; a picture and a file of clips not its "
                           "own and a clip that fails refused; the code changed and given over the pair, undone to it; part 5д: a drawing «air» "
-                          "given beside the pair, names that make no file and a picture of the game's own refused, renamed with its old file "
-                          "taken away (pixel-motion-m: exit " + std::to_string(given) + ")");
+                          "given beside the pair, given anew when only it changed, the file of clips alone when only the clip changed, names that make no file and a picture of the game's own "
+                          "refused, renamed with its old file taken away (pixel-motion-m: exit " + std::to_string(given) + ")");
         const int given_again = pj_run({exe, "--project", project, "--self-test", "pixel-motion-m-again"}, twenty_four);
         check(given_again == 0, "opened from another working folder: the pair and the drawing as pixel-motion-m left them and as the library builds them there, "
                                 "«Уже отдано так» (pixel-motion-m-again: exit " + std::to_string(given_again) + ")");
@@ -26916,7 +26916,8 @@ return {
             as().refresh();
             break;
         }
-        // Part 5д: the drawing's file beside the pair, one step; undone and done again; «Уже отдано так».
+        // Part 5д: the drawing's file beside the pair, one step; undone and done again; «Уже отдано так»; only the drawing
+        // changed, given anew; only the clip changed, the file of clips alone given anew.
         case 11: {
             if (hold(px().code() == drawn && rec && !px().stale() && idle, "the code with «air» read")) return true;
             if (wait(2)) return true;
@@ -26955,19 +26956,58 @@ return {
             if (wait(2)) return true;
             check(px_click("px-give-screen"), "«Отдать экрану» again");
             check(px().note() == "Уже отдано так" && an().history().cursor() == steps && three_untouched(), "«" + px().note() + "», no step");
+            check(put(as().abs(lua), mm_replaced(drawn, "fill = \"#d04040\"", "fill = \"#40a040\"")), "«air»'s cap green, written by another program");
+            as().refresh();
+            break;
+        // Only the drawing changed: the pair as it was, «Скакун.air.svg» given anew, one step.
+        case 13: {
+            if (hold(px().code() == mm_replaced(drawn, "fill = \"#d04040\"", "fill = \"#40a040\"") && rec && !px().stale() && idle, "the code read again"))
+                return true;
+            if (wait(2)) return true;
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            check(px().note() == note_with("Скакун.air.svg") + blur_note && an().history().cursor() == steps + 1 && built(why),
+                  "given: «" + px().note() + "», one step " + why);
+            check(tg_bytes(svg) == mm_svg3_ && tg_bytes(motion) == mm_motion3_ && !tg_bytes(air).empty() && tg_bytes(air) != mm_air_,
+                  "the pair as it was, «Скакун.air.svg» with the green cap");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && an().history().cursor() == steps, "Ctrl+Z: the three as given before");
+            check(put(as().abs(lua), mm_replaced(drawn, "swap(\"air\", 0.2, \"linear\")", "swap(\"air\", 0.2, \"in_quad\")")),
+                  "the swap to «air» easing in, written by another program");
+            as().refresh();
+            break;
+        }
+        // Only the clip changed: the picture and the drawing as they were, the file of clips given anew, one step.
+        case 14: {
+            if (hold(px().code() == mm_replaced(drawn, "swap(\"air\", 0.2, \"linear\")", "swap(\"air\", 0.2, \"in_quad\")") && rec &&
+                         !px().stale() && idle,
+                     "the code read again"))
+                return true;
+            if (wait(2)) return true;
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            check(px().note() == note_with("Скакун.air.svg") + blur_note && an().history().cursor() == steps + 1 && built(why),
+                  "given: «" + px().note() + "», one step " + why);
+            check(tg_bytes(svg) == mm_svg3_ && tg_bytes(air) == mm_air_ && !tg_bytes(motion).empty() && tg_bytes(motion) != mm_motion3_,
+                  "«Скакун.svg» and «Скакун.air.svg» as they were, the file of clips anew");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && an().history().cursor() == steps, "Ctrl+Z: the three as given before");
             check(put(as().abs(lua), mm_drawn({"air", "Air"})), "two drawings «air» and «Air», written by another program");
             as().refresh();
             break;
+        }
         // Names that make no file, or one file.
-        case 13:
-        case 14: {
-            const std::string code = mm_drawn(mm_step_ == 13 ? std::vector<std::string>{"air", "Air"} : std::vector<std::string>{"злой?"});
+        case 15:
+        case 16: {
+            const std::string code = mm_drawn(mm_step_ == 15 ? std::vector<std::string>{"air", "Air"} : std::vector<std::string>{"злой?"});
             if (hold(px().code() == code && rec && !px().stale() && idle, "the code read again")) return true;
             if (wait(2)) return true;
             check(px_click("px-give-screen"), "«Отдать экрану»");
-            const std::string want = mm_step_ == 13 ? "рисунки «Air» и «air» дали бы один файл" : "рисунок «злой?»: такое имя не годится для имени файла";
+            const std::string want = mm_step_ == 15 ? "рисунки «Air» и «air» дали бы один файл" : "рисунок «злой?»: такое имя не годится для имени файла";
             check(px().note() == want && an().history().cursor() == steps && three_untouched(), "refused: «" + px().note() + "», the files untouched, no step");
-            if (mm_step_ == 13) check(put(as().abs(lua), mm_drawn({"злой?"})), "a drawing «злой?», written by another program");
+            if (mm_step_ == 15) check(put(as().abs(lua), mm_drawn({"злой?"})), "a drawing «злой?», written by another program");
             else {
                 check(put(pictures / utf8_path("Скакун.fly.svg"), kMmOwn), "«Скакун.fly.svg» of the game's own, written by another program");
                 check(put(as().abs(lua), mm_drawn({"fly"})), "«air» named «fly», written by another program");
@@ -26976,7 +27016,7 @@ return {
             break;
         }
         // A picture of the game's own of the drawing's name; then the drawing renamed: its old file taken away.
-        case 15: {
+        case 17: {
             if (hold(px().code() == mm_drawn({"fly"}) && rec && !px().stale() && idle, "the code read again")) return true;
             if (wait(2)) return true;
             const fs::path fly = pictures / utf8_path("Скакун.fly.svg");
@@ -26989,7 +27029,7 @@ return {
             as().refresh();
             break;
         }
-        case 16: {
+        case 18: {
             if (hold(idle, "«Ресурсы» have looked")) return true;
             const fs::path fly = pictures / utf8_path("Скакун.fly.svg");
             check(px_click("px-give-screen"), "«Отдать экрану»");
@@ -27010,7 +27050,7 @@ return {
             break;
         }
         // Only the capitals changed: one file where names do not tell them apart (Windows), two elsewhere.
-        case 17: {
+        case 19: {
             if (hold(px().code() == mm_drawn({"Air"}) && rec && !px().stale() && idle, "the code read again")) return true;
             if (wait(2)) return true;
             const fs::path big = pictures / utf8_path("Скакун.Air.svg");
@@ -27032,7 +27072,7 @@ return {
             break;
         }
         // The files, beside the games, for pixel-motion-m-again.
-        case 18: {
+        case 20: {
             if (hold(px().code() == drawn && rec && !px().stale() && idle, "the code read again")) return true;
             if (wait(2)) return true;
             std::string why;

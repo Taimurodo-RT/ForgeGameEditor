@@ -1499,6 +1499,25 @@ std::vector<std::string> svg_problems() {
     return out;
 }
 
+SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings) {
+    const vector::MotionShown shown = vector::motion_shown(file, clip, at);
+    SvgPose pose;
+    pose.picture = std::move(picture);
+    pose.parts = vector::motion_pose(file, clip, at, shown.drawing);
+    pose.order = vector::motion_order_at(clip, at);
+    for (const vector::MotionCopy& copy : clip.copies)
+        if (vector::motion_copy_drawn(copy, at)) pose.copies.push_back(copy);
+    pose.drawings = std::move(drawings);
+    pose.drawing = shown.drawing;
+    if (shown.swap) {
+        pose.swap = true;
+        pose.swap_from = shown.from;
+        pose.swap_k = shown.k;
+        pose.from_parts = vector::motion_pose(file, clip, at, shown.from);
+    }
+    return pose;
+}
+
 void svg_pose(Rml::Element* element, SvgPose pose) {
     if (!element) return;
     auto& m = lives();

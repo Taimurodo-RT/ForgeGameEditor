@@ -393,30 +393,13 @@ struct GameScreens::Impl : Rml::EventListener {
                 }
                 p.counted = p.played;
             }
-            ui::svg_pose(p.element.get(), pose_at(p.picture, *p.file, p.drawings.get(), c, vector::motion_clip_time(c, p.played, p.loop)));
+            ui::svg_pose(p.element.get(), pose_at(p, vector::motion_clip_time(c, p.played, p.loop)));
         }
     }
 
-    // What a clip shows at a moment: its parts, its copies drawn, its order's steps (part 5г); the drawing shown and the
-    // others' texts, in a swap the one it comes from, how far and the parts as they stand in that one (part 5д).
-    static ui::SvgPose pose_at(const std::string& picture, const vector::MotionFile& file, const Drawings* drawings, const vector::MotionClip& c,
-                               f64 at) {
-        const vector::MotionShown shown = vector::motion_shown(file, c, at);
-        ui::SvgPose pose;
-        pose.picture = picture;
-        pose.parts = vector::motion_pose(file, c, at, shown.drawing);
-        pose.order = vector::motion_order_at(c, at);
-        for (const vector::MotionCopy& copy : c.copies)
-            if (vector::motion_copy_drawn(copy, at)) pose.copies.push_back(copy);
-        if (drawings) pose.drawings = drawings->list;
-        pose.drawing = shown.drawing;
-        if (shown.swap) {
-            pose.swap = true;
-            pose.swap_from = shown.from;
-            pose.swap_k = shown.k;
-            pose.from_parts = vector::motion_pose(file, c, at, shown.from);
-        }
-        return pose;
+    // What a clip that plays shows at a moment (ui::clip_pose), with the character's other drawings as they were read.
+    static ui::SvgPose pose_at(const Playing& p, f64 at) {
+        return ui::clip_pose(p.picture, *p.file, *p.clip, at, p.drawings ? p.drawings->list : std::vector<ui::SvgDrawing>{});
     }
 
     Page* find(std::string_view name) {
@@ -1330,7 +1313,8 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
         const bool loop = c.x < 0 ? s.clip->loop : c.x > 0;
         Impl::Playing* p = impl_->playing_of(s.e);
         // The same clip while it goes keeps going: a call every step does not hold it at its first frame. One that
-        // came to its end without a loop starts again.
+        // came to its end without a loop starts again. The file read again (it or a drawing of it written again) is
+        // another: its clip starts with what it reads now.
         if (p && p->file == s.file && p->clip == s.clip && p->going && (p->loop || p->played < s.clip->length)) {
             if (p->loop && !loop) { // on from where it is in this lap, not from the laps behind it
                 const f64 at = vector::motion_clip_time(*s.clip, p->played, true);
@@ -1339,7 +1323,6 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
             }
             p->loop = loop;
             p->speed = c.y;
-            p->drawings = s.drawings; // a drawing written again
             continue;
         }
         if (!p) {
@@ -1362,7 +1345,7 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
         p->loop = loop;
         p->speed = c.y;
         // Its first frame at once, before the next update moves it on.
-        ui::svg_pose(s.e, Impl::pose_at(p->picture, *p->file, p->drawings.get(), *p->clip, 0));
+        ui::svg_pose(s.e, Impl::pose_at(*p, 0));
     }
     return true;
 }

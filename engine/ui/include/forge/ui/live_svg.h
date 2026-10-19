@@ -93,6 +93,10 @@ struct SvgPose {
     f64 swap_k = 0;
     std::vector<vector::MotionPartPose> from_parts;
 };
+// What a clip of a character's file shows on its picture `picture` at a moment (a game's screen poses each frame of a
+// clip so): its parts, its copies drawn, its order's steps (part 5г); the drawing shown with the others' texts, in a swap
+// the one it comes from, how far and the parts as they stand in that one (part 5д).
+SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings = {});
 // The element shows the pose on its next frame; another pose of the same parts replaces it.
 void svg_pose(Rml::Element* element, SvgPose pose);
 // The pose goes and the element's pictures are made again from their files, with what the changes above said: what a

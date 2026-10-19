@@ -9516,6 +9516,15 @@ private:
                 std::string why;
                 check(put(picture, lacking), "«" + name + "» записан без «torso»");
                 check(s.screens().svg(jump, &why), "без «torso» в «" + name + "» клип играет: она есть в рисунке «air» " + why);
+                // Its first frame at once, with the drawing beside it: «jump»'s mask from 0 and «air»'s text.
+                const std::vector<Rml::Element*> shown = s.screens().layers(e.ms_screen, e.ms_layer_name);
+                const forge::ui::SvgPose* first = shown.size() == 1 ? forge::ui::svg_posed(shown[0]) : nullptr;
+                const bool masked = first && std::any_of(first->parts.begin(), first->parts.end(), [](const vector::MotionPartPose& p) {
+                                        return p.id == "shine" && p.has[static_cast<usize>(vector::MotionProp::Mask)];
+                                    });
+                check(masked && first->drawings.size() == 1 && first->drawings[0].name == "air" && first->drawings[0].text &&
+                          *first->drawings[0].text == e.ms_drawing_svg,
+                      "первый кадр «jump» сразу: маска «shine» и рисунок «air» рядом с картинкой");
                 check(s.screens().svg(reset, &why), "картинка снова как в файле " + why);
                 check(put(air, air_lacking), "«" + air_name + "» записан без «torso»");
                 why.clear();

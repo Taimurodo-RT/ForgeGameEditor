@@ -421,6 +421,20 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
             kept.push_back(std::move(pc));
         }
         tr.pieces = std::move(kept);
+        // The clip's last moment, where a clip that does not loop stays: a call at its very end changes the frame there
+        // only, and the pieces look at the moments before their ends. A hold of it when they give another value there.
+        if (length > 0) {
+            const Pose* pose = frames.at(length, why);
+            if (!pose) return false;
+            const MotionValue last = screen_value(*pose, id, mp);
+            if (!vector::motion_same(mp, vector::motion_track_value(file, tr, out.length, out.length), last)) {
+                MotionPiece h;
+                h.kind = MotionPiece::Kind::Hold;
+                h.at = std::min(seconds(length), out.length);
+                h.value = last;
+                tr.pieces.push_back(std::move(h));
+            }
+        }
         const bool at_rest = tr.pieces.size() == 1 && tr.pieces.front().kind == MotionPiece::Kind::Hold &&
                              vector::motion_same(mp, tr.pieces.front().value, vector::motion_rest(mp));
         if (!at_rest) out.tracks.push_back(std::move(tr));
@@ -461,7 +475,7 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
                 // A hold after a hold or a transition that ends on its drawing says nothing new.
                 const MotionPiece* last = tr.pieces.empty() ? nullptr : &tr.pieces.back();
                 if (last && ((last->kind == MotionPiece::Kind::Hold && last->value.target == vs.front().drawing) ||
-                             (last->kind == MotionPiece::Kind::Ease && pc.at >= last->at + last->length && last->to.target == vs.front().drawing)))
+                             (last->kind == MotionPiece::Kind::Ease && s >= ns_of(last->at + last->length) && last->to.target == vs.front().drawing)))
                     continue;
                 pc.value.target = vs.front().drawing;
                 tr.pieces.push_back(std::move(pc));
@@ -499,9 +513,26 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
                   " с не записывается переходом";
             return false;
         }
-        const bool at_rest = tr.pieces.size() == 1 && tr.pieces.front().kind == MotionPiece::Kind::Hold &&
-                             tr.pieces.front().value.target == vector::kMotionMainDrawing;
-        if (!at_rest) out.tracks.insert(out.tracks.begin(), std::move(tr));
+        // The clip's last moment, as for the parts: a hold of the drawing it shows when the pieces end on another.
+        if (length > 0) {
+            const Pose* pose = frames.at(length, why);
+            if (!pose) return false;
+            const vector::MotionShown last = shown_of(*pose);
+            vector::MotionClip one;
+            one.length = out.length;
+            one.tracks.push_back(tr);
+            if (!same_shown(vector::motion_shown(file, one, out.length), last)) {
+                if (last.swap)
+                    return why = "клип «" + out.name + "»: смена рисунка в " + seconds_words(out.length) + " с не записывается переходом", false;
+                MotionPiece h;
+                h.kind = MotionPiece::Kind::Hold;
+                h.at = std::min(seconds(length), out.length);
+                h.value.target = last.drawing;
+                tr.pieces.push_back(std::move(h));
+            }
+        }
+        // Not a hold of the main drawing alone: the frames (with the last moment's) showed another or a swap.
+        out.tracks.insert(out.tracks.begin(), std::move(tr));
     }
 
     // The order (part 5г): what start_from left, at 0, then the clip's calls by time (start, then as made), of the parts

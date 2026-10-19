@@ -386,6 +386,88 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
         CHECK(differ(pixels(64), file) == 0);
         CHECK(forge::ui::svg_problems().empty());
     }
+    SUBCASE("another drawing (part 5д): what a script said acts on each drawing that has the part; a part none has is said") {
+        // «angry»: the brow only it has; the box only the main drawing has; a tail neither has.
+        const std::string angry = replaced(replaced(kFace, R"(fill="#f0c040")", R"(fill="#e04020")"),
+                                           R"(<rect id="box" x="4" y="4" width="10" height="10" fill="#2040a0"/>)",
+                                           R"(<path id="brow" d="M14 14 L50 14 L50 18 L14 18 Z" fill="#401010"/>)");
+        const std::string moved_brow = replaced(angry, R"(<path id="brow" d=)", R"x(<path id="brow" transform="translate(10 0)" d=)x");
+        const std::string moved_box = replaced(kFace, R"(<rect id="box" x=)", R"x(<rect id="box" transform="translate(3 0)" x=)x");
+        forge::ui::SvgPose shown{"face.svg", {}, {}, {}};
+        shown.drawings.push_back({"angry", "face.angry.svg", std::make_shared<const std::string>(angry)});
+        shown.drawing = "angry";
+        forge::ui::svg_pose(a, shown);
+        CHECK(forge::ui::svg_move(a, "box", 3, 0));
+        CHECK(forge::ui::svg_move(a, "brow", 10, 0));
+        CHECK(forge::ui::svg_move(a, "хвост", 1, 1));
+        frame();
+        CHECK(differ(pixels(0), drawn(moved_brow)) == 0);
+        CHECK(forge::ui::svg_problems() == std::vector<std::string>{"«face.angry.svg»: нет части с id «хвост»"});
+        // In a swap from the main drawing: the box moved in the old one, the brow in the new one over it.
+        forge::ui::SvgPose swap = shown;
+        swap.swap = true;
+        swap.swap_from = "draw";
+        swap.swap_k = 0.5;
+        forge::ui::svg_pose(a, swap);
+        frame();
+        forge::ui::SvgPose want = swap;
+        want.drawings[0].text = std::make_shared<const std::string>(moved_brow);
+        std::vector<u8> mid;
+        std::string why;
+        REQUIRE(forge::ui::render_posed_svg(moved_box, want, 64, 64, mid, why));
+        for (usize i = 0; i < mid.size(); i += 4)
+            for (usize c = 0; c < 3; ++c) mid[i + c] = u8((mid[i + c] * mid[i + 3] + 127) / 255);
+        CHECK(differ(pixels(0), mid, 2) == 0);
+        CHECK(forge::ui::svg_problems() == std::vector<std::string>{"«face.svg»: нет части с id «хвост»"});
+    }
+    SUBCASE("another drawing (part 5д) twice the size, in the element's colour, cropped to its content: the new one over the old at the picture's scale") {
+        // Both drawings in currentColor in part, on a ground the picture's size (cropped to its content, the picture keeps
+        // its scale).
+        const std::string framed = replaced(replaced(kFace, R"(<circle id="head")", "<rect id=\"ground\" x=\"0\" y=\"0\" width=\"64\" height=\"64\" fill=\"#e0e0e0\"/>\n  <circle id=\"head\""),
+                                            R"(<g id="eyes" fill="#202020">)", R"(<g id="eyes" fill="currentColor">)");
+        const std::string angry = replaced(replaced(framed, R"(fill="#f0c040")", R"(fill="#e04020")"),
+                                           R"(<rect id="box" x="4" y="4" width="10" height="10" fill="#2040a0"/>)",
+                                           R"(<path id="brow" d="M14 14 L50 14 L50 18 L14 18 Z" fill="currentColor"/>)");
+        files.svg = framed;
+        a->SetAttribute("src", "back_face.svg");
+        a->SetProperty("width", "128px");
+        a->SetProperty("height", "128px");
+        a->SetProperty("color", "#10c040");
+        forge::ui::SvgPose swap{"back_face.svg", {}, {}, {}};
+        swap.drawings.push_back({"angry", "back_face.angry.svg", std::make_shared<const std::string>(angry)});
+        swap.drawing = "angry";
+        swap.swap = true;
+        swap.swap_from = "draw";
+        swap.swap_k = 0.5;
+        forge::ui::svg_pose(a, swap);
+        frame();
+        // As lunasvg draws both at 128 with the element's colour on their roots (where the plugin gives it).
+        auto coloured = [](const std::string& text) {
+            return replaced(text, R"(<svg xmlns="http://www.w3.org/2000/svg")", R"(<svg xmlns="http://www.w3.org/2000/svg" color="#10c040")");
+        };
+        forge::ui::SvgPose want = swap;
+        want.drawings[0].text = std::make_shared<const std::string>(coloured(angry));
+        std::vector<u8> mid;
+        std::string why;
+        REQUIRE(forge::ui::render_posed_svg(coloured(framed), want, 128, 128, mid, why));
+        for (usize i = 0; i < mid.size(); i += 4)
+            for (usize c = 0; c < 3; ++c) mid[i + c] = u8((mid[i + c] * mid[i + 3] + 127) / 255);
+        CHECK(differ(pixels(0), mid, 2) == 0);
+        // An <svg> element of the file cropped to its content (an <img> has no cropping): the ground fills the picture, so
+        // the same box; the plugin's other way of drawing, the new document over the old there too.
+        b->SetProperty("display", "none");
+        Rml::Element* cropped = a->GetParentNode()->AppendChild(doc->CreateElement("svg"));
+        cropped->SetAttribute("src", "back_face.svg");
+        cropped->SetAttribute("crop-to-content", "");
+        cropped->SetProperty("display", "block");
+        cropped->SetProperty("width", "128px");
+        cropped->SetProperty("height", "128px");
+        cropped->SetProperty("color", "#10c040");
+        forge::ui::svg_pose(cropped, swap);
+        frame();
+        CHECK(differ(pixels(128), mid, 2) == 0);
+        CHECK(forge::ui::svg_problems().empty());
+    }
     SUBCASE("reset: the element takes the file again; what the file lacks is said once") {
         CHECK(forge::ui::svg_move(a, "nose", 3, 3));
         CHECK(forge::ui::svg_morph(a, "box", "smile", 0.5));
