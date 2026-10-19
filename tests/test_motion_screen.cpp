@@ -2786,6 +2786,45 @@ TEST_CASE("Screen clips, part 5е: a blend of two poses, prop by prop, the held 
         }
     CHECK(bare.parts[0].values[static_cast<usize>(MotionProp::Opacity)].v == doctest::Approx(0.25));
     CHECK(bare.parts[1].values[static_cast<usize>(MotionProp::Opacity)].v == doctest::Approx(0.75));
+
+    // Poses made by hand: only what a side has counts, the values of what it has not are not read (here not at rest:
+    // a size of 0, a clear copy, an x of 9).
+    ui::SvgPose hand_a, hand_b;
+    hand_a.picture = hand_b.picture = "Ёжик.svg";
+    vector::MotionPartPose nose_a, nose_b, copy_a;
+    nose_a.id = "nose";
+    nose_a.has[static_cast<usize>(MotionProp::X)] = true;
+    nose_a.values[static_cast<usize>(MotionProp::X)].v = 2;
+    nose_b.id = "nose";
+    nose_b.has[static_cast<usize>(MotionProp::Scale)] = true;
+    nose_b.values[static_cast<usize>(MotionProp::Scale)].v = 2;
+    nose_b.values[static_cast<usize>(MotionProp::X)].v = 9;
+    copy_a.id = "nose[5]";
+    copy_a.has[static_cast<usize>(MotionProp::X)] = true;
+    copy_a.values[static_cast<usize>(MotionProp::X)].v = 1;
+    REQUIRE(nose_a.values[static_cast<usize>(MotionProp::Scale)].v == 0);
+    REQUIRE(copy_a.values[static_cast<usize>(MotionProp::Opacity)].v == 0);
+    hand_a.parts = {nose_a, copy_a};
+    hand_a.copies.push_back({"nose[5]", "nose", 5, 0});
+    hand_b.parts = {nose_b};
+    const ui::SvgPose hand = ui::blend_pose(f, hand_a, hand_b, 0.25);
+    CHECK(value_in(hand, "nose", MotionProp::X).v == doctest::Approx(1.5));
+    CHECK(value_in(hand, "nose", MotionProp::Scale).v == doctest::Approx(1.25));
+    CHECK(value_in(hand, "nose[5]", MotionProp::X).v == doctest::Approx(1));
+    CHECK(value_in(hand, "nose[5]", MotionProp::Opacity).v == doctest::Approx(0.75));
+
+    // A part posed again from its values and `has`: what it had before (moving, its matrix) does not stay, also for a
+    // part the drawing has not.
+    vector::MotionPartPose again = *face;
+    for (bool& h : again.has) h = false;
+    vector::motion_part_pose(f, again);
+    CHECK_FALSE(again.moves);
+    CHECK(again.local == vector::MotionMatrix{});
+    vector::MotionPartPose stray = *face;
+    stray.id = "нет такой";
+    vector::motion_part_pose(f, stray);
+    CHECK_FALSE(stray.moves);
+    CHECK(stray.local == vector::MotionMatrix{});
 }
 
 TEST_CASE("Screen clips, part 5е: a blend's drawings, each weighed by its share on each side, the clip's on top") {
