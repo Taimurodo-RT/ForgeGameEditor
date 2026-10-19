@@ -782,6 +782,53 @@ TEST_CASE("Screen clips: the screen's picture of a pose, part by part in the fil
     CHECK(changed > 1000);
 }
 
+TEST_CASE("Screen clips: shapes without an id take their part's look, past the elements lunasvg leaves out") {
+    // A group's fill and stroke over shapes of its own without ids, a <title>, an editor's element, a shape with a prefix
+    // and a group inside it among them (lunasvg makes no element of the first three); a shape with an id another element
+    // took first; a shape without a fill with an id first taken by one lunasvg does not make.
+    const char* kHand = R"svg(<svg xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="64" height="64" viewBox="0 0 64 64">
+  <rect id="twin" x="44" y="44" width="16" height="16" fill="#808080"/>
+  <g id="team" fill="#2050a0">
+    <title>команда</title>
+    <rect x="4" y="4" width="16" height="16"/>
+    <inkscape:path-effect effect="spiro"><rect id="dup" x="0" y="0" width="64" height="64"/></inkscape:path-effect>
+    <svg:rect x="0" y="0" width="64" height="64"/>
+    <g><rect x="24" y="4" width="16" height="16" fill="#a02020"/></g>
+    <rect id="twin" x="4" y="30" width="16" height="16" stroke="#202020" stroke-width="2"/>
+    <rect id="dup" x="24" y="30" width="16" height="16" fill="none" stroke="#202020" stroke-width="4"/>
+  </g>
+</svg>)svg";
+    const char* kWant = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect x="44" y="44" width="16" height="16" fill="#808080"/>
+  <g fill="#ffffff">
+    <rect x="4" y="4" width="16" height="16" stroke="#00ff00" stroke-width="1"/>
+    <g><rect x="24" y="4" width="16" height="16" fill="#ffffff" stroke="#00ff00" stroke-width="1"/></g>
+    <rect x="4" y="30" width="16" height="16" stroke="#00ff00" stroke-width="2"/>
+    <rect x="24" y="30" width="16" height="16" fill="none" stroke="#00ff00" stroke-width="4"/>
+  </g>
+</svg>)svg";
+    vector::MotionPartPose pp;
+    pp.id = "team";
+    for (usize i = 0; i < vector::kMotionPropCount; ++i) pp.values[i] = vector::motion_rest(static_cast<MotionProp>(i));
+    pp.has[static_cast<usize>(MotionProp::Fill)] = true;
+    pp.values[static_cast<usize>(MotionProp::Fill)] = {1, {255, 255, 255, 255}, {}, 0};
+    pp.has[static_cast<usize>(MotionProp::Stroke)] = true;
+    pp.values[static_cast<usize>(MotionProp::Stroke)] = {1, {0, 255, 0, 255}, {}, 0};
+    std::vector<u8> got, want, rest;
+    std::string why;
+    REQUIRE(ui::render_posed_svg(kHand, {"hand.svg", {pp}}, 64, 64, got, why));
+    REQUIRE(ui::render_posed_svg(kWant, {"want.svg", {}}, 64, 64, want, why));
+    REQUIRE(ui::render_posed_svg(kHand, {"hand.svg", {}}, 64, 64, rest, why));
+    usize off = 0, changed = 0;
+    for (usize i = 0; i < got.size(); ++i) {
+        off += got[i] != want[i];
+        changed += got[i] != rest[i];
+    }
+    INFO(off, " bytes off");
+    CHECK(off == 0);
+    CHECK(changed > 1000);
+}
+
 TEST_CASE("Screen clips: the marks a game passes between two of its frames") {
     MotionClip c;
     c.length = 1;

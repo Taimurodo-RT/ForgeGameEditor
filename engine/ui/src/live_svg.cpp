@@ -62,7 +62,37 @@ struct File {
     std::map<i32, std::vector<i32>> leaves; // a part's shapes, by its element (svg_pose)
     std::map<i32, LeafLook> looks;          // a shape's look as the file draws it
     u64 serial = 0;                         // another each time the file is read
+    // Each element as lunasvg makes it: its place among the elements made under its parent, -1 when lunasvg makes
+    // none of it; whether getElementById finds it (the first element made with that id).
+    struct Made {
+        i32 place = -1;
+        bool by_id = false;
+    };
+    std::vector<Made> made;
 };
+
+// Whether lunasvg makes an element of this tag: it leaves out the others, with all inside them.
+bool lunasvg_makes(const vector::SvgElement& e) {
+    static const char* const kTags[] = {"a", "circle", "clipPath", "defs", "ellipse", "g", "image", "line", "linearGradient",
+                                        "marker", "mask", "path", "pattern", "polygon", "polyline", "radialGradient", "rect",
+                                        "stop", "style", "svg", "symbol", "text", "tspan", "use"};
+    return e.prefix.empty() && std::any_of(std::begin(kTags), std::end(kTags), [&](const char* t) { return e.tag == t; });
+}
+
+std::vector<File::Made> made_of(const vector::SvgOutline& o) {
+    std::vector<File::Made> made(o.elements.size());
+    std::vector<i32> children(o.elements.size(), 0); // made so far under each element
+    std::set<std::string_view> ids;
+    for (usize i = 0; i < o.elements.size(); ++i) {
+        const vector::SvgElement& e = o.elements[i];
+        if (i == 0)
+            made[i].place = 0;
+        else if (e.parent >= 0 && made[static_cast<usize>(e.parent)].place >= 0 && lunasvg_makes(e))
+            made[i].place = children[static_cast<usize>(e.parent)]++;
+        if (made[i].place >= 0 && !e.id.empty()) made[i].by_id = ids.insert(e.id).second;
+    }
+    return made;
+}
 
 std::unordered_map<Rml::Element*, Live>& lives() {
     static std::unordered_map<Rml::Element*, Live> m;
@@ -107,6 +137,7 @@ File& file(const std::string& path, const std::string& text) {
     f = {};
     f.text = text;
     f.outline = vector::scan_svg(text);
+    f.made = made_of(f.outline);
     f.rest = lunasvg::Document::loadFromData(text.data(), text.size());
     f.serial = ++serial;
     return f;
@@ -314,10 +345,19 @@ struct Writes {
     }
 };
 
+// An element of the file in the document: the root, an element lunasvg finds by its id, else (a shape without one,
+// inside a part) by its place among the elements lunasvg makes under the element above it.
 lunasvg::Element element_at(const File& f, lunasvg::Document& doc, i32 index) {
-    lunasvg::Element e = doc.getElementById(f.outline.elements[static_cast<usize>(index)].id);
-    if (!e && index == 0) e = doc.documentElement();
-    return e;
+    const File::Made& m = f.made[static_cast<usize>(index)];
+    if (m.place < 0) return {};
+    if (index == 0) return doc.documentElement();
+    if (m.by_id) return doc.getElementById(f.outline.elements[static_cast<usize>(index)].id);
+    lunasvg::Element up = element_at(f, doc, f.outline.elements[static_cast<usize>(index)].parent);
+    if (!up) return {};
+    i32 place = m.place;
+    for (const lunasvg::Node& n : up.children())
+        if (n.isElement() && place-- == 0) return n.toElement();
+    return {};
 }
 
 Written write_all(const File& f, lunasvg::Document& doc, const Writes& w) {
