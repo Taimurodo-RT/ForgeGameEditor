@@ -526,6 +526,10 @@ void PoseScript::Impl::begin_call() {
     site = -1;
 }
 
+void PoseScript::Impl::hook_done(u64 since) {
+    if (start_ns) start_ns += time_now_ns() - since;
+}
+
 bool PoseScript::Impl::compile(ScriptFile& f) {
     std::string why;
     u32 line = 0;
@@ -592,6 +596,7 @@ bool PoseScript::load(std::string_view source) {
     im.clips.clear();
     im.has_pose = false;
     im.has_draw = false;
+    im.scene = false;
     im.drawings.clear();
     im.error.clear();
     im.error_line = 0;
@@ -671,7 +676,32 @@ bool PoseScript::load(std::string_view source) {
     }
     lua_pop(T, 1);
     std::sort(im.clips.begin(), im.clips.end());
-    if (!im.has_pose && im.clips.empty()) {
+    // A scene (part 6а of docs/models/сцены-модель.md): stage and scene, and nothing of a character's.
+    lua_getfield(T, -1, "stage");
+    const int stage_type = lua_type(T, -1);
+    lua_pop(T, 1);
+    lua_getfield(T, -1, "scene");
+    const int scene_type = lua_type(T, -1);
+    lua_pop(T, 1);
+    if (stage_type != LUA_TNIL || scene_type != LUA_TNIL) {
+        const CodeSites& code = im.files[0].code;
+        if (stage_type != LUA_TFUNCTION)
+            return load_error(code.module_line("stage"), stage_type == LUA_TNIL ? "у сцены нужен stage = function(p, rng) … end: что на сцене"
+                                                                                 : "stage должна быть функцией: stage = function(p, rng) … end");
+        if (scene_type != LUA_TFUNCTION)
+            return load_error(code.module_line("scene"), scene_type == LUA_TNIL ? "у сцены нужен scene = function(p) … end: что в ней происходит"
+                                                                                 : "scene должна быть функцией: scene = function(p) … end");
+        for (const char* own : {"clips", "pose", "draw", "drawings"}) {
+            lua_getfield(T, -1, own);
+            const bool has = !lua_isnil(T, -1);
+            lua_pop(T, 1);
+            if (has)
+                return load_error(code.module_line(own), std::string("у сцены нет ") + own +
+                                                             ": это код персонажа, а сцена — stage и scene (актёры играют клипы своих персонажей)");
+        }
+        im.scene = true;
+    }
+    if (!im.scene && !im.has_pose && im.clips.empty()) {
         im.error = "в таблице скрипта нет ни clips = { walk = function(p) … end }, ни pose = function(t, p, rng, clip) … end";
         lua_pop(im.L, 1);
         return false;
@@ -701,6 +731,7 @@ bool PoseScript::load(std::string_view source) {
 }
 
 bool PoseScript::loaded() const { return impl_->ok; }
+bool PoseScript::is_scene() const { return impl_->ok && impl_->scene; }
 const std::vector<ScriptParam>& PoseScript::params() const { return impl_->params; }
 const std::vector<std::string>& PoseScript::clips() const { return impl_->clips; }
 bool PoseScript::has_pose() const { return impl_->has_pose; }
@@ -796,11 +827,37 @@ bool PoseScript::record(const Rig* rig, std::string_view clip, const std::map<st
         return false;
     }
     if (!std::binary_search(im.clips.begin(), im.clips.end(), clip)) {
-        im.error = "в коде нет клипа «" + std::string(clip) + "»: clips = { " + std::string(clip) + " = function(p) … end }";
+        im.error = im.scene ? "это сцена: у неё нет клипов, её scene(p) записывается целиком"
+                            : "в коде нет клипа «" + std::string(clip) + "»: clips = { " + std::string(clip) + " = function(p) … end }";
         return false;
     }
     std::vector<StartLink> chain;
     return record_from(im, rig, clip, values, seed, lengths, out, nullptr, chain);
+}
+
+bool PoseScript::record_scene(const Rig& rig, const Stage& stage, const SceneHooks& hooks, const std::map<std::string, f64>& values,
+                              u64 seed, const MotionLengths& lengths, Recording& out) {
+    Impl& im = *impl_;
+    out = {};
+    im.error.clear();
+    im.error_line = 0;
+    if (!im.ok) {
+        im.error = "скрипт не загружен";
+        return false;
+    }
+    if (!im.scene) {
+        im.error = "это не сцена: в коде нет stage = function(p, rng) … end и scene = function(p) … end";
+        return false;
+    }
+    lua_State* T = im.module();
+    if (!T) return false;
+    im.scene_stage = &stage;
+    im.hooks = &hooks;
+    const bool ok = record_clip(im, T, &rig, "scene", values, seed, lengths, out);
+    im.scene_stage = nullptr;
+    im.hooks = nullptr;
+    lua_pop(im.L, 1);
+    return ok;
 }
 
 namespace {

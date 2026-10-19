@@ -175,9 +175,10 @@ public:
     // The picture's parts. The copies a pose makes are not among them: their indices come after (drawn_copies, copy).
     std::span<const Part> parts() const;
     i32 part(std::string_view id) const; // -1 when no part of the picture has that id
-    // The picture's own size in its units (its viewBox, else width and height).
+    // The picture's own size in its units (its viewBox, else width and height), and its top left there.
     f64 width() const;
     f64 height() const;
+    vector::Point origin() const;
 
     // A part's pivot (picture units); the centre of its rest bounds until set. Set, it is the part's with this id in
     // every drawing (part 4д).
@@ -193,9 +194,24 @@ public:
     Rig* drawing(std::string_view name);
     const Rig* drawing(std::string_view name) const;
     // The name of the picture a part (or an element) with this id is in: "" for this one, else the first drawing by
-    // name that has it; "" when none has. holder() is that picture.
+    // name that has it; "" when none has. holder() is that picture, or for an id "ёжик/…" that none of them has the
+    // actor hosted in part «ёжик» (host) as its own holder() finds it.
     std::string holder_name(std::string_view id) const;
     const Rig& holder(std::string_view id) const;
+
+    // Part 6а of docs/models/сцены-модель.md: another picture drawn in a group part of this one (a scene's), above its
+    // paints. An actor: its main picture and its drawings, in its own units as the group's children, the one its last
+    // pose() shows (in a swap the two, the old under the new); from then on it is drawn only through this rig and stays
+    // where it is (no move) while this one is alive. Pixels: straight RGBA drawn over 0, 0 … w, h of the group's units.
+    // False with why: no such group, a part hosting already, an actor drawn on its own before or hosted elsewhere.
+    bool host(std::string_view part, Rig& actor, std::string& why);
+    bool host(std::string_view part, const assets::CookedTexture& pixels, f64 w, f64 h, std::string& why);
+    // The actor hosted in a part; null for none.
+    Rig* hosted(std::string_view part);
+    const Rig* hosted(std::string_view part) const;
+    // From a part's own coordinates (its children's, a hosted actor's units) to picture units as the last pose() left
+    // them; identity for no part.
+    Affine global_matrix(i32 part) const;
     // The picture the last pose() showed: this one or a drawing, in a swap the one it goes to; what the tab's tree,
     // bounds and mouse go by.
     Rig& shown();

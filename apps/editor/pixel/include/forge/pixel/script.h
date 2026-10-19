@@ -43,6 +43,7 @@
 namespace forge::pixel {
 
 struct Drawing;
+struct Stage;
 
 struct ScriptParam {
     std::string name;
@@ -54,6 +55,19 @@ using ModuleReader = std::function<bool(std::string_view name, std::string& text
 // The reader of a game's code (step 3 of docs/models/движение-модель.md): animations/name.luau in the game's folder
 // (beside its game.json). A name with a folder in it is refused.
 ModuleReader animations_reader(std::filesystem::path game_dir);
+
+// What a scene's code reaches beyond itself (part 6а of docs/models/сцены-модель.md, scene.h), each false with why.
+struct SceneHooks {
+    // picture(id, file, …): the size of a picture of «Ресурсы», in pixels.
+    std::function<bool(const std::string& file, f64& w, f64& h, std::string& why)> picture;
+    // actor(id, character, …): the area of a character's picture in its units: x, y, w, h.
+    std::function<bool(const std::string& file, f64 area[4], std::string& why)> character;
+    // actor("ёжик"):play("walk", { params }): the length of a clip of the actor's character, recorded with the actor's
+    // parameters and `params` over them.
+    std::function<bool(const std::string& actor, const std::string& clip, const std::map<std::string, f64>& params, f64& length,
+                       std::string& why)>
+        clip_length;
+};
 
 class PoseScript {
 public:
@@ -76,6 +90,17 @@ public:
     // The other drawings of the character (part 4д of docs/models/движение-модель.md): the names of its
     // drawings = { angry = function(p, rng) … end }, sorted; "draw" is never one of them.
     const std::vector<std::string>& drawings() const;
+    // A scene (part 6а of docs/models/сцены-модель.md): the module returns stage = function(p, rng) and
+    // scene = function(p), and neither clips, pose, draw nor drawings.
+    bool is_scene() const;
+    // Runs a scene's stage as draw runs: the declared parameters with `values` over them, rng from `seed`; its pictures
+    // and characters looked at through `hooks`. False with error(), the line of the call that failed in error_line().
+    bool stage(const std::map<std::string, f64>& values, u64 seed, const SceneHooks& hooks, Stage& out);
+    // Records a scene's scene(p) as a clip "scene" of the stage's rig (its actors hosted in it, Rig::host): the
+    // stage's actors and pictures are its parts, «ёжик/head» an actor's; the actors' clips' lengths come from
+    // `hooks`. False with error().
+    bool record_scene(const Rig& rig, const Stage& stage, const SceneHooks& hooks, const std::map<std::string, f64>& values,
+                      u64 seed, const MotionLengths& lengths, Recording& out);
     // Every call of the loaded code and the clip functions: what SiteRef file 0 points into.
     const CodeSites& code() const;
     // The calls of a module a recording required (SiteRef files past 0, by Recording::files); null when not read.

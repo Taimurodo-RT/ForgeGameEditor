@@ -151,6 +151,26 @@ struct Mark {
     std::string name;
     f64 time = 0, length = 0;
     SiteRef site;
+    std::string actor; // a scene's (part 6а): the actor whose clip made it, «ёжик: шаг»; empty for the scene's own
+};
+
+// actor("ёжик"):play("walk"[, { speed, params }]), :loop(…) and :stop() in a scene (part 6а of
+// docs/models/сцены-модель.md): from `start` the actor plays its character's clip, once (holding its last pose after)
+// or round and round, or stands in the pose it showed then. A play waits `length` = clip_length / speed; a loop and a
+// stop do not wait.
+struct ActorPlay {
+    enum class Kind : u8 { Play, Loop, Stop };
+    Kind kind = Kind::Play;
+    std::string actor;
+    std::string clip;   // empty for a stop
+    f64 start = 0;
+    f64 length = 0;      // in the scene's seconds
+    f64 clip_length = 0; // the clip's own (its recording's)
+    f64 speed = 1;
+    std::map<std::string, f64> params; // over the actor's
+    SiteRef site;       // the play(…) call
+    SiteRef start_site; // the at(…) or delay(…) whose first argument is its start, when it starts there
+    u32 order = 0;      // of two that start together, the later made wins
 };
 
 // wait(s) and t:wait(s): a pause the timeline shows as a block too.
@@ -244,6 +264,7 @@ struct Recording {
     std::vector<Bone> bones;       // the parts of links and snaps, with the parts they are inside, a parent before them
     std::vector<Copy> copies;      // in the order of their calls: by number within each part
     StartPose start;               // start_from(…) (part 5б); its parts are among `parts`
+    std::vector<ActorPlay> plays;  // a scene's actors' clips (part 6а), in the order they were laid out
     u64 generation = 0; // the script's recording it came from: bindings are asked of that one only
 
     // resolve(): each track's blocks by start and order.

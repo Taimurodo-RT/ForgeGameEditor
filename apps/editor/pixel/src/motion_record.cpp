@@ -11,6 +11,8 @@
 
 #include "script_impl.h"
 
+#include "forge/core/time.h"
+
 #include <lua.h>
 #include <lualib.h>
 
@@ -32,6 +34,7 @@ using Impl = PoseScript::Impl;
 using Mode = Impl::Mode;
 
 constexpr const char* kPartMeta = "forge.motion.part";
+constexpr const char* kActorMeta = "forge.motion.actor"; // a scene's actor (part 6а): a part with play, loop, stop
 constexpr const char* kPropMeta = "forge.motion.prop";
 constexpr const char* kTaskMeta = "forge.motion.task";
 constexpr const char* kBezierMeta = "forge.motion.bezier";
@@ -97,8 +100,10 @@ bool lua_failed(lua_State* L, MotionState& ms) {
 
 MotionState& motion(lua_State* L, const char* what) {
     Impl& im = impl_of(L);
-    if (im.mode != Mode::Record || !im.motion)
+    if (im.mode != Mode::Record || !im.motion) {
+        if (im.scene) luaL_error(L, "%s — внутри scene = function(p) … end", what);
         luaL_error(L, "%s — внутри функции клипа: clips = { walk = function(p) … end }", what);
+    }
     if (im.motion->in_tween)
         luaL_error(L, "%s — внутри tween(с, функция) только мгновенные значения: body.y(v)", what);
     return *im.motion;
@@ -114,7 +119,8 @@ bool is_meta(lua_State* L, int idx, const char* meta) {
     return same;
 }
 
-void push_part(lua_State* L, const char* id) {
+// A part's handle (or a scene's actor's, with meta kActorMeta).
+void push_part(lua_State* L, const char* id, const char* meta = kPartMeta) {
     lua_newtable(L);
     lua_pushstring(L, id);
     lua_setfield(L, -2, "id");
@@ -129,14 +135,16 @@ void push_part(lua_State* L, const char* id) {
         lua_setreadonly(L, -1, 1);
         lua_setfield(L, -2, prop_word(p));
     }
-    luaL_getmetatable(L, kPartMeta);
+    luaL_getmetatable(L, meta);
     lua_setmetatable(L, -2);
     lua_setreadonly(L, -1, 1);
 }
 
+bool part_handle(lua_State* L, int idx) { return lua_istable(L, idx) && (is_meta(L, idx, kPartMeta) || is_meta(L, idx, kActorMeta)); }
+
 // The id of the part handle at idx; raises when it is none.
 const char* part_id(lua_State* L, int idx, const char* what) {
-    if (!lua_istable(L, idx) || !is_meta(L, idx, kPartMeta))
+    if (!part_handle(L, idx))
         luaL_error(L, "%s — вызывайте у части через двоеточие: part(\"body\"):%s(…)", what, what);
     lua_getfield(L, idx, "id");
     const char* id = lua_tostring(L, -1);
@@ -398,7 +406,46 @@ std::string no_part(const Recording& rec, const std::string& name) {
     return why;
 }
 
+// ---- a scene (part 6а of docs/models/сцены-модель.md) ----
+
+// The item of a scene's stage by id: null outside a scene's recording and for the stage's own shapes.
+const StageItem* scene_item(const Impl& im, std::string_view id) { return im.scene_stage ? im.scene_stage->item(id) : nullptr; }
+
+bool scene_actor_id(const Impl& im, std::string_view id) {
+    const StageItem* it = scene_item(im, id);
+    return it && it->kind == StageItem::Kind::Actor;
+}
+
+// The actor a part of a scene is in («ёжик» of «ёжик/head»); empty for the stage's own parts and outside a scene.
+std::string_view actor_of(const Impl& im, std::string_view id) {
+    const usize slash = id.find('/');
+    if (slash == std::string_view::npos || !scene_actor_id(im, id.substr(0, slash))) return {};
+    return id.substr(0, slash);
+}
+
+// What only a character's own code does to its parts: false with why for an actor's part in a scene.
+bool character_only(const Impl& im, MotionState& ms, std::string_view id, const char* what) {
+    if (actor_of(im, id).empty()) return true;
+    return call_error(ms, "у части актёра «" + std::string(id) + "» нет " + what +
+                              ": пути, привязка, крепление и копии частей — в коде персонажа");
+}
+
+// A part of the scene that goes by another (a path, a target, a carrier) is of the stage: false with why for an
+// actor's part.
+bool stage_target(const Impl& im, MotionState& ms, std::string_view target, const char* what) {
+    if (actor_of(im, target).empty()) return true;
+    return call_error(ms, std::string(what) + ": «" + std::string(target) + "» — часть актёра, а здесь нужна часть сцены или актёр целиком");
+}
+
+// Two parts of one picture: the stage's, or the same actor's (masks, morphs).
+bool same_picture(const Impl& im, MotionState& ms, std::string_view id, std::string_view other, const char* what) {
+    if (actor_of(im, id) == actor_of(im, other)) return true;
+    return call_error(ms, std::string(what) + ": «" + std::string(other) + "» — из другого рисунка: часть актёра — своего актёра, "
+                                                                              "остальное — сцены");
+}
+
 bool check_morph(const Impl& im, MotionState& ms, const char* id, const PropValue& v) {
+    if (v.v > 0 && !same_picture(im, ms, id, v.target, "морфинг")) return false;
     if (!im.rig) return true;
     const Rig& pr = rig_of(*im.rig, *ms.rec, id);
     const i32 p = rig_part(pr, *ms.rec, id);
@@ -441,6 +488,16 @@ bool flush(Impl& im, lua_State* L, usize ci);
 bool add_block(Impl& im, MotionState& ms, const MoveStep& st, u32 part, Prop p, f64 t, f64 length, Block::To to,
                const PropValue* value, u32 ref, const Place& at, i32* index = nullptr) {
     Recording& rec = *ms.rec;
+    // A picture of a scene has no shapes: no colours, widths, dashes, shares drawn or morphs (part 6а).
+    if (const StageItem* it = scene_item(im, rec.parts[part]); it && it->kind == StageItem::Kind::Picture) {
+        constexpr Prop kShapes[] = {Prop::Fill,   Prop::Stroke, Prop::StrokeWidth, Prop::Dash,       Prop::DrawFrom,
+                                    Prop::DrawTo, Prop::Tint,   Prop::Flash,       Prop::FlashColor, Prop::Morph};
+        if (std::find(std::begin(kShapes), std::end(kShapes), p) != std::end(kShapes))
+            return task_error(im, ms, st.site,
+                              "у картинки «" + rec.parts[part] + "» нет «" + prop_word(p) +
+                                  "»: у неё место, поворот, масштаб, наклон, прозрачность, видимость, размытие, тень, маска, порядок, "
+                                  "путь и крепление");
+    }
     if (rec.blocks.size() >= kMaxBlocks)
         return task_error(im, ms, st.site, "в клипе больше " + std::to_string(kMaxBlocks) + " блоков: столько переходов не нужно, проверьте циклы");
     Block b;
@@ -826,7 +883,7 @@ bool layout(Impl& im, lua_State* L, u32 id, const Place& at_in, f64& end) {
         break;
     }
     case Task::Kind::Mark:
-        ms.rec->marks.push_back({task.mark, task.name, t, snap_time(task.number), task.site});
+        ms.rec->marks.push_back({task.mark, task.name, t, snap_time(task.number), task.site, {}});
         end = t;
         break;
     case Task::Kind::Save: {
@@ -840,6 +897,16 @@ bool layout(Impl& im, lua_State* L, u32 id, const Place& at_in, f64& end) {
         break;
     }
     case Task::Kind::TweenFn: ok = layout_tween(im, L, id, at, end); break;
+    case Task::Kind::Play: {
+        // An actor's clip from now (part 6а): a play waits its length, a loop and a stop do not.
+        ActorPlay play = task.play;
+        play.start = t;
+        play.order = ms.order++;
+        if (at.start_t >= 0 && play.start == at.start_t) play.start_site = at.start_site;
+        end = play.kind == ActorPlay::Kind::Play ? t + play.length : t;
+        ms.rec->plays.push_back(std::move(play));
+        break;
+    }
     case Task::Kind::Copies: {
         // Born now; their functions go together from here, as all's (part 4г).
         const auto n = static_cast<u32>(task.number);
@@ -886,7 +953,7 @@ bool collect(lua_State* L, MotionState& ms, int from, const char* what) {
     ms.args.clear();
     const int top = lua_gettop(L);
     for (int i = from; i <= top; ++i) {
-        const int n = lua_istable(L, i) && !is_meta(L, i, kPartMeta) && !is_meta(L, i, kPropMeta) ? lua_objlen(L, i) : -1;
+        const int n = lua_istable(L, i) && !part_handle(L, i) && !is_meta(L, i, kPropMeta) ? lua_objlen(L, i) : -1;
         for (int k = n < 0 ? 0 : 1; k <= std::max(n, 0); ++k) {
             int idx = i;
             if (n >= 0) {
@@ -1175,7 +1242,7 @@ bool copies_task(Impl& im, lua_State* L, MotionState& ms, u32& task) {
     std::string source;
     if (lua_type(L, 1) == LUA_TSTRING) {
         source = lua_tostring(L, 1);
-    } else if (lua_istable(L, 1) && is_meta(L, 1, kPartMeta)) {
+    } else if (part_handle(L, 1)) {
         lua_getfield(L, 1, "id");
         source = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
         lua_pop(L, 1);
@@ -1183,6 +1250,8 @@ bool copies_task(Impl& im, lua_State* L, MotionState& ms, u32& task) {
         return call_error(ms, "copies(\"искра\", n, функция(i, c)): первым — имя части или часть");
     }
     Recording& rec = *ms.rec;
+    if (scene_actor_id(im, source)) return call_error(ms, "копии актёра — не в этой версии: поставьте в stage столько актёров, сколько нужно");
+    if (!character_only(im, ms, source, "copies")) return false;
     if (const i32 c = copy_of(rec, source); c >= 0)
         return call_error(ms, "«" + source + "» — копия, копии делают с части рисунка: copies(\"" + rec.copies[static_cast<usize>(c)].source + "\", …)");
     if (im.rig) {
@@ -1248,6 +1317,7 @@ u32 move_task(Impl& im, MotionState& ms, const char* id, bool single, Prop p, Mo
 // swap("angry", 0.4, "smooth") (part 4д): the character goes to another of its drawings, a transition of the drawing's
 // track (its part kDrawingPart).
 bool swap_task(Impl& im, lua_State* L, MotionState& ms, u32& task) {
+    if (im.scene) return call_error(ms, "swap — у персонажа: рисунок актёра меняют клипы его персонажа");
     MoveStep st;
     st.site = here(im);
     st.value_arg = 0;
@@ -1480,6 +1550,7 @@ bool mask_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& tas
             if (lua_toboolean(L, -1)) v.v = 2;
             lua_pop(L, 1);
         }
+        if (!same_picture(im, ms, id, v.target, "маска")) return false;
         if (im.rig) {
             const Rig& mr = im.rig->holder(v.target);
             const i32 b = mr.part(v.target);
@@ -1546,7 +1617,7 @@ bool need_rig(const Impl& im, MotionState& ms, const char* what) {
 
 // ball:along("route", 0.8, "smooth", { turn = true, from = 0, to = 1, relative = false }).
 bool along_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task) {
-    if (!need_rig(im, ms, "along")) return false;
+    if (!need_rig(im, ms, "along") || !character_only(im, ms, id, "along")) return false;
     MoveStep st;
     st.kind = MoveStep::Kind::Along;
     st.site = here(im);
@@ -1555,6 +1626,7 @@ bool along_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& ta
     const char* path = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
     if (!path) return call_error(ms, "along(\"route\", с, сглаживание, { turn = true }): первым — имя фигуры-пути");
     if (lua_gettop(L) > 5) return call_error(ms, "along: путь, длина, сглаживание и таблица — не больше");
+    if (!stage_target(im, ms, path, "along")) return false;
     // The path from the picture that has it, the part's pivot from its own (part 4д).
     const Rig& rig = im.rig->holder(path);
     const i32 pi = rig.part(path);
@@ -1618,7 +1690,7 @@ int api_part_along(lua_State* L) {
 
 // sword:snap_to("hand_tip"[, с, сглаживание]).
 bool snap_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task) {
-    if (!need_rig(im, ms, "snap_to")) return false;
+    if (!need_rig(im, ms, "snap_to") || !character_only(im, ms, id, "snap_to")) return false;
     MoveStep st;
     st.kind = MoveStep::Kind::Snap;
     st.site = here(im);
@@ -1627,6 +1699,7 @@ bool snap_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& tas
     const char* target = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
     if (!target) return call_error(ms, "snap_to(\"hand_tip\", с, сглаживание): первым — имя части");
     if (lua_gettop(L) > 4) return call_error(ms, "snap_to: часть, длина и сглаживание — не больше");
+    if (!stage_target(im, ms, target, "snap_to")) return false;
     // Each from the picture that has it (part 4д): inside one another only in one picture.
     const Rig& rig = rig_of(*im.rig, *ms.rec, id);
     const Rig& tr = im.rig->holder(target);
@@ -1654,7 +1727,7 @@ int api_part_snap_to(lua_State* L) {
 
 // sword:attach("hand"), sword:detach(): a block «часть · крепление» without a length.
 bool link_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool attach, u32& task) {
-    if (!need_rig(im, ms, attach ? "attach" : "detach")) return false;
+    if (!need_rig(im, ms, attach ? "attach" : "detach") || !character_only(im, ms, id, attach ? "attach" : "detach")) return false;
     MoveStep st;
     st.site = here(im);
     PropValue v;
@@ -1666,6 +1739,7 @@ bool link_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool att
     } else {
         const char* target = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
         if (!target || lua_gettop(L) > 2) return call_error(ms, "attach(\"hand\"): одно имя части, за которой ходить");
+        if (!stage_target(im, ms, target, "attach")) return false;
         const Rig& tr = im.rig->holder(target);
         const i32 ti = tr.part(target);
         if (ti < 0) return call_error(ms, no_part(*ms.rec, target));
@@ -1738,6 +1812,7 @@ int api_part_detach(lua_State* L) { return link_call(L, false); }
 // and asks for idle (script.cpp records it, then this clip again); given it, the pose goes in: its parts, its links
 // with their bones.
 bool start_from_call(Impl& im, lua_State* L, MotionState& ms) {
+    if (im.scene) return call_error(ms, "start_from — у клипа персонажа: сцена начинается с покоя, её актёры — со своих клипов");
     if (lua_gettop(L) != 1 || lua_type(L, 1) != LUA_TSTRING)
         return call_error(ms, "start_from(\"idle\"): одно имя клипа, с позы конца которого начать");
     const std::string name = lua_tostring(L, 1);
@@ -1782,6 +1857,124 @@ int api_part_to_top(lua_State* L) { return order_call(L, OrderStep::Kind::Top, "
 int api_part_to_bottom(lua_State* L) { return order_call(L, OrderStep::Kind::Bottom, "to_bottom"); }
 int api_part_above(lua_State* L) { return order_call(L, OrderStep::Kind::Above, "above"); }
 int api_part_below(lua_State* L) { return order_call(L, OrderStep::Kind::Below, "below"); }
+
+// ---- a scene's actors (part 6а) ----
+
+// The id of the actor handle at idx; raises when it is none.
+const char* actor_id(lua_State* L, int idx, const char* what) {
+    if (!lua_istable(L, idx) || !is_meta(L, idx, kActorMeta))
+        luaL_error(L, "%s — у актёра через двоеточие: actor(\"ёжик\"):%s(…)", what, what);
+    lua_getfield(L, idx, "id");
+    const char* id = lua_tostring(L, -1);
+    lua_pop(L, 1); // the handle keeps the string
+    return id;
+}
+
+// actor("ёжик"):play("walk"[, { speed, params }]), :loop(…), :stop(): an actor's clip from the moment it is laid out.
+// Its length is the recording's of the character's clip with the actor's parameters (and these over them): asked now,
+// so a clip that does not record is an error at this line.
+bool play_task(Impl& im, lua_State* L, MotionState& ms, const char* id, ActorPlay::Kind kind, u32& task) {
+    const char* what = kind == ActorPlay::Kind::Play ? "play" : kind == ActorPlay::Kind::Loop ? "loop" : "stop";
+    if (!im.scene_stage || !im.hooks || !im.hooks->clip_length)
+        return call_error(ms, std::string(what) + " — у актёра сцены: actor(\"ёжик\"):" + what + "(…)");
+    ActorPlay p;
+    p.kind = kind;
+    p.actor = id;
+    p.site = here(im);
+    if (kind == ActorPlay::Kind::Stop) {
+        if (lua_gettop(L) > 1) return call_error(ms, "stop() — без аргументов: актёр стоит в позе, которую показывал");
+    } else {
+        const std::string call = std::string(what) + "(\"walk\"[, { speed = 1, params = { … } }])";
+        if (lua_type(L, 2) != LUA_TSTRING || !*lua_tostring(L, 2)) return call_error(ms, call + ": первым — имя клипа персонажа");
+        p.clip = lua_tostring(L, 2);
+        if (lua_gettop(L) > 3) return call_error(ms, call + ": имя клипа и таблица — не больше");
+        if (!lua_isnoneornil(L, 3)) {
+            if (!lua_istable(L, 3)) return call_error(ms, call + ": вторым — таблица");
+            lua_pushnil(L);
+            while (lua_next(L, 3)) {
+                const std::string key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : "?";
+                bool ok = true;
+                std::string why;
+                if (key == "speed") {
+                    p.speed = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
+                    ok = std::isfinite(p.speed) && p.speed > 0;
+                    why = "speed — число больше 0: во сколько раз быстрее клипа";
+                } else if (key == "params") {
+                    ok = lua_istable(L, -1);
+                    const int t = lua_gettop(L);
+                    lua_pushnil(L);
+                    while (ok && lua_next(L, t)) {
+                        ok = lua_type(L, -2) == LUA_TSTRING && lua_type(L, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(L, -1));
+                        if (ok) p.params[lua_tostring(L, -2)] = lua_tonumber(L, -1);
+                        lua_pop(L, 1);
+                    }
+                    why = "params — таблица чисел по именам параметров персонажа: params = { height = 14 }";
+                } else if (key == "blend") {
+                    ok = false;
+                    why = "blend — в части 6г сцен, вместе с игрой";
+                } else {
+                    ok = false;
+                    why = "поля «" + key + "» нет (есть speed, params)";
+                }
+                if (!ok) {
+                    lua_settop(L, 3);
+                    return call_error(ms, std::string(what) + ": " + why);
+                }
+                lua_pop(L, 1);
+            }
+        }
+        std::string why;
+        const u64 since = time_now_ns();
+        const bool got = im.hooks->clip_length(p.actor, p.clip, p.params, p.clip_length, why);
+        im.hook_done(since); // the character's recording is not the scene's time
+        if (!got) return call_error(ms, "актёр «" + p.actor + "»: " + why);
+        p.length = snap_time(p.clip_length / p.speed);
+    }
+    Task t;
+    t.kind = Task::Kind::Play;
+    t.site = p.site;
+    t.play = std::move(p);
+    task = add_task(ms, std::move(t));
+    return true;
+}
+
+int play_call(lua_State* L, ActorPlay::Kind kind, const char* what) {
+    const char* id = actor_id(L, 1, what);
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, what);
+    u32 task = 0;
+    if (!play_task(im, L, ms, id, kind, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+int api_actor_play(lua_State* L) { return play_call(L, ActorPlay::Kind::Play, "play"); }
+int api_actor_loop(lua_State* L) { return play_call(L, ActorPlay::Kind::Loop, "loop"); }
+int api_actor_stop(lua_State* L) { return play_call(L, ActorPlay::Kind::Stop, "stop"); }
+
+// actor("ёжик"):part("head"): the part «ёжик/head».
+int api_actor_part(lua_State* L) {
+    const char* id = actor_id(L, 1, "part");
+    const char* sub = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+    if (!sub || !*sub || lua_gettop(L) != 2) luaL_error(L, "actor(\"%s\"):part(\"head\"): одно имя части персонажа", id);
+    lua_pushfstring(L, "%s/%s", id, sub);
+    const char* full = lua_tostring(L, -1);
+    Impl& im = impl_of(L);
+    if (im.rig && im.rig->holder(full).part(full) < 0) luaL_error(L, "у актёра «%s» нет части «%s»", id, sub);
+    push_part(L, full);
+    return 1;
+}
+
+// What later parts of a scene bring: an error that names the part, so code written ahead says so.
+int later(lua_State* L, const char* what, const char* step) {
+    luaL_error(L, "%s — в части %s сцен: в этой версии его ещё нет", what, step);
+}
+int api_camera(lua_State* L) { return later(L, "camera", "6б"); }
+int api_transition(lua_State* L) { return later(L, "transition", "6б"); }
+int api_leave(lua_State* L) { return later(L, "leave", "6б"); }
+int api_music(lua_State* L) { return later(L, "music", "6в"); }
+int api_wait_action(lua_State* L) { return later(L, "wait_action", "6в"); }
+int api_talk(lua_State* L) { return later(L, "talk", "6в"); }
 
 // ---- Luau: properties ----
 
@@ -2089,6 +2282,10 @@ int api_part_index(lua_State* L) {
                                   "shadow_blur; методы: to, rest, save, restore, morph, spring, set, to_top, to_bottom, above, "
                                   "below, mask, along, snap_to, attach, detach");
 }
+int api_actor_index(lua_State* L) {
+    return index_with(L, "актёра", "методы: play, loop, stop, part и все методы части: to, rest, save, restore, spring, to_top, "
+                                   "to_bottom, above, below, mask, along, snap_to, attach, detach");
+}
 int api_prop_index(lua_State* L) { return index_with(L, "свойства", "методы: rest, spring; значение — body.y()"); }
 int api_task_index(lua_State* L) { return index_with(L, "перехода", "методы: to, back, wait"); }
 
@@ -2115,6 +2312,17 @@ void methods_meta(lua_State* L, const char* meta, lua_CFunction index, std::init
 
 } // namespace
 
+int scene_actor(lua_State* L) {
+    Impl& im = impl_of(L);
+    if (!im.scene) luaL_error(L, "actor — в сцене: актёр — персонаж на сцене, actor(\"ёжик\")");
+    if (im.mode != Mode::Record && im.mode != Mode::Frame) luaL_error(L, "actor(\"ёжик\") — внутри scene = function(p) … end");
+    const char* id = lua_type(L, 1) == LUA_TSTRING ? lua_tostring(L, 1) : nullptr;
+    if (!id || lua_gettop(L) != 1) luaL_error(L, "actor(\"ёжик\"): одно имя актёра сцены");
+    if (im.scene_stage && !scene_actor_id(im, id)) luaL_error(L, "на сцене нет актёра «%s»: актёров ставит stage, actor(\"%s\", \"персонажи/…\")", id, id);
+    push_part(L, id, kActorMeta);
+    return 1;
+}
+
 void register_motion_api(lua_State* L) {
     methods_meta(L, kPartMeta, &api_part_index,
                  {{"to", &api_part_to}, {"rest", &api_part_rest}, {"save", &api_part_save}, {"restore", &api_part_restore},
@@ -2122,6 +2330,13 @@ void register_motion_api(lua_State* L) {
                   {"to_bottom", &api_part_to_bottom}, {"above", &api_part_above}, {"below", &api_part_below},
                   {"mask", &api_part_mask}, {"along", &api_part_along}, {"snap_to", &api_part_snap_to},
                   {"attach", &api_part_attach}, {"detach", &api_part_detach}});
+    methods_meta(L, kActorMeta, &api_actor_index,
+                 {{"to", &api_part_to}, {"rest", &api_part_rest}, {"save", &api_part_save}, {"restore", &api_part_restore},
+                  {"morph", &api_part_morph}, {"spring", &api_part_spring}, {"to_top", &api_part_to_top},
+                  {"to_bottom", &api_part_to_bottom}, {"above", &api_part_above}, {"below", &api_part_below},
+                  {"mask", &api_part_mask}, {"along", &api_part_along}, {"snap_to", &api_part_snap_to},
+                  {"attach", &api_part_attach}, {"detach", &api_part_detach}, {"play", &api_actor_play},
+                  {"loop", &api_actor_loop}, {"stop", &api_actor_stop}, {"part", &api_actor_part}});
     methods_meta(L, kPropMeta, &api_prop_index, {{"rest", &api_prop_rest}, {"spring", &api_prop_spring}}, &api_prop_call);
     methods_meta(L, kTaskMeta, &api_task_index, {{"to", &api_task_to}, {"back", &api_task_back}, {"wait", &api_task_wait}});
     luaL_newmetatable(L, kBezierMeta);
@@ -2143,6 +2358,8 @@ void register_motion_api(lua_State* L) {
         {"tween", &api_tween},     {"spring", &api_spring},         {"emit", &api_emit},
         {"sound", &api_sound},     {"log", &api_log},               {"copies", &api_copies},
         {"swap", &api_swap},       {"bezier", &api_bezier},     {"start_from", &api_start_from},
+        {"camera", &api_camera},   {"transition", &api_transition}, {"leave", &api_leave},
+        {"music", &api_music},     {"wait_action", &api_wait_action}, {"talk", &api_talk},
     };
     for (const auto& [name, fn] : globals) {
         lua_pushcfunction(L, fn, name);
@@ -2189,10 +2406,14 @@ void add_notes(const Impl& im, const Rig* rig, Recording& rec) {
 
 bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, const std::map<std::string, f64>& values,
                  u64 seed, const MotionLengths& lengths, Recording& out, StartRequest* start, StartPose* ends) {
-    lua_getfield(T, -1, "clips");
-    lua_pushlstring(T, clip.data(), clip.size());
-    lua_gettable(T, -2);
-    lua_remove(T, -2);
+    if (im.scene) {
+        lua_getfield(T, -1, "scene"); // a scene's one clip (part 6а)
+    } else {
+        lua_getfield(T, -1, "clips");
+        lua_pushlstring(T, clip.data(), clip.size());
+        lua_gettable(T, -2);
+        lua_remove(T, -2);
+    }
     im.motion = std::make_unique<MotionState>();
     MotionState& ms = *im.motion;
     ms.rec = &out;

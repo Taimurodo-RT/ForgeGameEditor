@@ -36,6 +36,9 @@ struct DrawShape {
     // Rect: x, y (its top left), w, h, r. Circle: x, y (its centre), r. Ellipse: x, y, rx, ry. Line: x1, y1, x2, y2.
     // Group: x, y, rot, scale, where it stands at rest.
     f64 x = 0, y = 0, w = 0, h = 0, r = 0, rx = 0, ry = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0, rot = 0, scale = 1;
+    // A group's SVG transform as written, in place of x, y, rot and scale: the group a scene puts a picture or an actor
+    // in (scene.h).
+    std::string transform;
     std::vector<f64> points; // Poly: x1, y1, x2, y2, …
     std::string d;           // Path, as written
     std::string fill, stroke; // "#rrggbb" or "none"; empty: SVG's own (a black fill, a stroke on a line only)
