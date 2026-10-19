@@ -1359,12 +1359,25 @@
                     <div id="px-timings" class="px-timings column" data-if="px_timings_open">
                         <div data-for="t : px_timings" class="px-timing-row row" data-attr-id="'px-timing-' + it_index" data-class-selected="t.selected" data-event-click="px_timing(it_index)"><img data-attr-src="t.icon"/><span>{{ t.word }}</span></div>
                     </div>
+                    <div id="px-ease" class="px-ease column" data-if="px_has_ease">
+                        <img id="px-ease-graph" class="px-ease-graph" data-attr-src="px_ease_image" title="Сглаживание: x — доля времени блока, y — доля пути. У кривой bezier(…) точки тянутся мышью; Esc при нажатой кнопке — назад"/>
+                        <span id="px-ease-share" class="an-hint" data-if="px_ease_share != ''">{{ px_ease_share }}</span>
+                        <span id="px-ease-why" class="an-hint px-why" data-if="px_ease_why != ''">{{ px_ease_why }}</span>
+                    </div>
                     <span id="px-block-why" class="an-hint px-why" data-if="px_block_why != ''">{{ px_block_why }}</span>
                 </div>
                 <div class="an-hint" data-if="!px_has_block">Щёлкните блок на таймлайне: здесь будет, что он делает и какой вызов кода его сделал. Края блока тянут его длину и начало.</div>
 
                 <div class="lg-nav-title" data-if="px_has_part">Часть «{{ px_part_name }}»</div>
                 <div id="px-inspect-part" class="px-inspector column" data-if="px_has_part">
+                    <div data-for="f : px_part_fields" class="px-pf column">
+                        <span class="an-label px-pf-section" data-if="f.section != ''" data-attr-id="'px-pf-section-' + f.name">{{ f.section }}</span>
+                        <div class="px-field row">
+                            <span class="px-pf-name" data-attr-id="'px-pf-label-' + f.name" title="Что этому свойству в этот кадр даёт код клипа; стрелка — его переход идёт, в поле его конец">{{ f.label }}</span>
+                            <span class="grow px-pf-now" data-attr-id="'px-pf-now-' + f.name">{{ f.now }}</span>
+                            <input type="text" class="small" data-attr-id="'px-pf-' + f.name" data-attr-value="f.value" data-event-change="px_part_field(f.name, ev.value, ev.linebreak)" data-event-blur="px_part_field_commit(f.name)"/>
+                        </div>
+                    </div>
                     <div data-for="v : px_part_values" class="px-value row" data-attr-id="'px-pv-' + v.name"><span class="grow">{{ v.name }}</span><span class="px-num">{{ v.value }}</span></div>
                     <div class="row px-value" data-if="px_part_code != ''">
                         <span id="px-inspect-call" class="px-call grow">{{ px_part_code }}</span>

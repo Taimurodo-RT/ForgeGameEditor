@@ -34,6 +34,7 @@ using Mode = Impl::Mode;
 constexpr const char* kPartMeta = "forge.motion.part";
 constexpr const char* kPropMeta = "forge.motion.prop";
 constexpr const char* kTaskMeta = "forge.motion.task";
+constexpr const char* kBezierMeta = "forge.motion.bezier";
 // The properties a part has as fields (body.y, { y = 2 }): all but morph, a method of its own, the mask and the order.
 constexpr Prop kHandleProps[] = {Prop::X,          Prop::Y,       Prop::Rot,     Prop::Scale,      Prop::Sx,      Prop::Sy,
                                  Prop::SkewX,      Prop::SkewY,   Prop::Opacity, Prop::Fill,       Prop::Stroke,  Prop::StrokeWidth,
@@ -269,7 +270,13 @@ bool read_timing(Impl& im, lua_State* L, int idx, MotionState& ms, MoveStep& st)
                                       "… in_out_bounce)");
         return true;
     }
-    if (!lua_isfunction(L, idx)) return call_error(ms, "сглаживание — слово или функция(k)");
+    // bezier(x1, y1, x2, y2) (part 4ж): its numbers and its call, computed exactly.
+    if (lua_type(L, idx) == LUA_TUSERDATA && is_meta(L, idx, kBezierMeta)) {
+        st.bezier = static_cast<i32>(ms.rec->beziers.size());
+        ms.rec->beziers.push_back(*static_cast<const BezierUse*>(lua_touserdata(L, idx)));
+        return true;
+    }
+    if (!lua_isfunction(L, idx)) return call_error(ms, "сглаживание — слово, bezier(…) или функция(k)");
     // An author's easing, taken at kCurvePoints points.
     std::vector<f64> curve(kCurvePoints);
     const Mode was = im.mode;
@@ -448,6 +455,7 @@ bool add_block(Impl& im, MotionState& ms, const MoveStep& st, u32 part, Prop p, 
     b.binding = st.binding;
     b.timing = st.timing;
     b.curve = st.curve;
+    b.bezier = st.bezier;
     b.site = st.site;
     b.value_arg = st.value_arg;
     b.length_arg = st.length_arg;
@@ -1886,6 +1894,39 @@ int api_prop_spring(lua_State* L) {
     return 1;
 }
 
+// bezier(x1, y1, x2, y2): CSS's cubic-bezier as an easing (part 4ж), anywhere a timing goes; e(x) gives y at x. It
+// keeps the call that made it, so its numbers are rewritten there.
+constexpr const char* kBezierWrong = "bezier: x1 и x2 — от 0 до 1, y1 и y2 — числа";
+
+int api_bezier(lua_State* L) {
+    vector::Bezier b;
+    f64* n[] = {&b.x1, &b.y1, &b.x2, &b.y2};
+    for (int i = 0; i < 4; ++i) {
+        if (lua_type(L, i + 1) != LUA_TNUMBER) luaL_error(L, "%s", kBezierWrong);
+        *n[i] = lua_tonumber(L, i + 1);
+    }
+    if (!vector::bezier_valid(b)) luaL_error(L, "%s", kBezierWrong);
+    const BezierUse use{b, here(impl_of(L))};
+    *static_cast<BezierUse*>(lua_newuserdata(L, sizeof(BezierUse))) = use;
+    luaL_getmetatable(L, kBezierMeta);
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+int api_bezier_call(lua_State* L) {
+    if (lua_type(L, 2) != LUA_TNUMBER) luaL_error(L, "bezier: кривая(x) — x число от 0 до 1");
+    lua_pushnumber(L, vector::bezier(static_cast<const BezierUse*>(lua_touserdata(L, 1))->curve, lua_tonumber(L, 2)));
+    return 1;
+}
+
+int api_bezier_text(lua_State* L) {
+    const vector::Bezier& b = static_cast<const BezierUse*>(lua_touserdata(L, 1))->curve;
+    const std::string text = "bezier(" + format_number(b.x1) + ", " + format_number(b.y1) + ", " + format_number(b.x2) + ", " +
+                             format_number(b.y2) + ")";
+    lua_pushlstring(L, text.data(), text.size());
+    return 1;
+}
+
 // spring(body.y, 2, "plop"): Motion Canvas's form.
 int api_spring(lua_State* L) {
     Prop p = Prop::X;
@@ -2035,6 +2076,15 @@ void register_motion_api(lua_State* L) {
                   {"attach", &api_part_attach}, {"detach", &api_part_detach}});
     methods_meta(L, kPropMeta, &api_prop_index, {{"rest", &api_prop_rest}, {"spring", &api_prop_spring}}, &api_prop_call);
     methods_meta(L, kTaskMeta, &api_task_index, {{"to", &api_task_to}, {"back", &api_task_back}, {"wait", &api_task_wait}});
+    luaL_newmetatable(L, kBezierMeta);
+    lua_pushcfunction(L, &api_bezier_call, "bezier");
+    lua_setfield(L, -2, "__call");
+    lua_pushcfunction(L, &api_bezier_text, "bezier");
+    lua_setfield(L, -2, "__tostring");
+    lua_pushstring(L, "закрыто");
+    lua_setfield(L, -2, "__metatable");
+    lua_setreadonly(L, -1, 1);
+    lua_pop(L, 1);
     const std::pair<const char*, lua_CFunction> globals[] = {
         {"part", &api_part},       {"parts", &api_parts},           {"all", &api_all},
         {"any", &api_any},         {"chain", &api_chain},           {"sequence", &api_sequence},
@@ -2044,7 +2094,7 @@ void register_motion_api(lua_State* L) {
         {"run", &api_run},         {"spawn", &api_spawn},           {"join", &api_join},
         {"tween", &api_tween},     {"spring", &api_spring},         {"emit", &api_emit},
         {"sound", &api_sound},     {"log", &api_log},               {"copies", &api_copies},
-        {"swap", &api_swap},
+        {"swap", &api_swap},       {"bezier", &api_bezier},
     };
     for (const auto& [name, fn] : globals) {
         lua_pushcfunction(L, fn, name);

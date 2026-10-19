@@ -39,6 +39,20 @@ f64 timing(Timing t, f64 x);
 const char* timing_word(Timing t);
 bool timing_from_word(std::string_view word, Timing& out);
 
+// CSS's cubic-bezier(x1, y1, x2, y2) (part 4ж of docs/models/движение-модель.md): the curve from (0, 0) to (1, 1)
+// with control points (x1, y1) and (x2, y2), x the share of the time and y of the way. With x1 and x2 within 0 … 1
+// x grows with the curve's parameter u, so each x has one u.
+//
+//   bezier({0.25, 0.1, 0.25, 1}, 0.5)   → 0.8024… (CSS's ease)
+struct Bezier {
+    f64 x1 = 0.25, y1 = 0.1, x2 = 0.25, y2 = 1; // CSS's ease
+    bool operator==(const Bezier&) const = default;
+};
+// All four finite, x1 and x2 within 0 … 1.
+bool bezier_valid(const Bezier& b);
+// y at x, x held to 0 … 1; 0 gives 0 and 1 gives 1 exactly. u of x by halving, to 1e-7.
+f64 bezier(const Bezier& b, f64 x);
+
 // A spring as Motion Canvas's: mass, stiffness, damping, the speed it starts with.
 struct Spring {
     f64 mass = 0.05, stiffness = 10, damping = 0.5, velocity = 0;

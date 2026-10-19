@@ -66,6 +66,13 @@ bool has_value(const Recording& rec, const Block& b, std::string& why) {
     return true;
 }
 
+// Why an own value is not written into a table (part 4ж).
+std::string own_in_table(const Recording& rec, const Block& b, Prop p) {
+    const std::string part = b.part < rec.parts.size() ? rec.parts[b.part] : "…";
+    return std::string("своё в таблице { … } не пишется: nil в таблице — нет поля; своё — отдельным вызовом part(") +
+           quote_string(part) + ")." + prop_word(p) + "(nil, …)";
+}
+
 // The call whose argument holds block b's value; null with why.
 const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
     if (prop_is_call(b.prop)) return why = in_code(b.prop), nullptr;
@@ -147,6 +154,7 @@ bool edit_value(const Recording& rec, const Block& b, Prop p, const PropValue& v
     const CodeArg& arg = c->args[static_cast<usize>(b.value_arg)];
     if (b.value_field) {
         if (p == Prop::Morph) return why = "морфинг — отдельным вызовом part(\"…\"):morph(…)", false;
+        if (value_text(p, value) == "nil") return why = own_in_table(rec, b, p), false;
         if (!prop_is_number(p)) return rewrite_field(source, arg, prop_word(p), value_text(p, value), out, why);
         // The old value of another property of the same call: its block from the same step.
         f64 old = p == b.prop ? b.value.v : rest_value(p).v;
@@ -172,16 +180,82 @@ bool edit_length(const Recording& rec, const Block& b, f64 length, const CodeSit
     return number_arg(source, *c, b.length_arg, b.length, length, out, why);
 }
 
-bool edit_timing(const Recording& rec, const Block& b, vector::Timing timing, const CodeSites& code,
-                 std::string_view source, std::string& out, std::string& why) {
+namespace {
+
+// The timing of block b as `text`: in its place, added when the call has none.
+bool timing_text(const Recording& rec, const Block& b, const std::string& text, const CodeSites& code, std::string_view source,
+                 std::string& out, std::string& why) {
     out.clear();
     const CallSite* c = timed_call(rec, b, code, true, why);
     if (!c) return false;
     const auto i = static_cast<usize>(b.timing_arg);
-    const std::string word = quote_string(vector::timing_word(timing));
-    if (i <= c->args.size()) return rewrite_arg(source, *c, i, word, out, why);
+    if (i <= c->args.size()) return rewrite_arg(source, *c, i, text, out, why);
     // body.y(2) → body.y(2, 0, "out"): its length goes first.
-    return rewrite_arg(source, *c, c->args.size(), format_number(b.length) + ", " + word, out, why);
+    return rewrite_arg(source, *c, c->args.size(), format_number(b.length) + ", " + text, out, why);
+}
+
+// The bezier(…) call of block b's easing; null with why.
+const CallSite* bezier_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
+    if (b.bezier < 0 || static_cast<usize>(b.bezier) >= rec.beziers.size()) return why = "у блока нет кривой bezier(…)", nullptr;
+    const SiteRef s = rec.beziers[static_cast<usize>(b.bezier)].site;
+    if (s.file != 0 && s.site >= 0) {
+        const std::string name = s.file < rec.files.size() ? rec.files[s.file] : "?";
+        return why = "кривая из модуля «" + name + ".luau»: правьте её в коде", nullptr;
+    }
+    const CallSite* c = script_call(rec, s, code, why);
+    if (!c) return nullptr;
+    if (c->name != "bezier" || c->args.size() != 4) return why = "кривая не вызовом bezier(…) с четырьмя числами: правьте её в коде", nullptr;
+    return c;
+}
+
+} // namespace
+
+bool edit_timing(const Recording& rec, const Block& b, vector::Timing timing, const CodeSites& code,
+                 std::string_view source, std::string& out, std::string& why) {
+    return timing_text(rec, b, quote_string(vector::timing_word(timing)), code, source, out, why);
+}
+
+bool edit_timing_bezier(const Recording& rec, const Block& b, const vector::Bezier& curve, const CodeSites& code,
+                        std::string_view source, std::string& out, std::string& why) {
+    out.clear();
+    if (!vector::bezier_valid(curve)) return why = "bezier: x1 и x2 — от 0 до 1, y1 и y2 — числа", false;
+    return timing_text(rec, b,
+                       "bezier(" + format_number(curve.x1) + ", " + format_number(curve.y1) + ", " + format_number(curve.x2) + ", " +
+                           format_number(curve.y2) + ")",
+                       code, source, out, why);
+}
+
+bool can_edit_bezier(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
+    why.clear();
+    return bezier_call(rec, b, code, why) != nullptr;
+}
+
+bool edit_bezier(const Recording& rec, const Block& b, const vector::Bezier& curve, const CodeSites& code,
+                 std::string_view source, std::string& out, std::string& why) {
+    out.clear();
+    if (!vector::bezier_valid(curve)) return why = "bezier: x1 и x2 — от 0 до 1, y1 и y2 — числа", false;
+    const CallSite* c = bezier_call(rec, b, code, why);
+    if (!c) return false;
+    const vector::Bezier& was = rec.beziers[static_cast<usize>(b.bezier)].curve;
+    const f64 olds[] = {was.x1, was.y1, was.x2, was.y2}, news[] = {curve.x1, curve.y1, curve.x2, curve.y2};
+    // The last first: the places of those before it stay. One that rounds the same stays as written.
+    std::string text(source), next;
+    for (usize i = 4; i-- > 0;) {
+        if (format_number(olds[i]) == format_number(news[i])) continue;
+        if (!rewrite_number(text, c->args[i], olds[i], news[i], next, why)) return false;
+        text = std::move(next);
+    }
+    out = std::move(text);
+    return true;
+}
+
+usize bezier_users(const Recording& rec, const Block& b) {
+    if (b.bezier < 0 || static_cast<usize>(b.bezier) >= rec.beziers.size()) return 0;
+    const SiteRef s = rec.beziers[static_cast<usize>(b.bezier)].site;
+    usize n = 0;
+    for (const Block& o : rec.blocks)
+        n += o.bezier >= 0 && static_cast<usize>(o.bezier) < rec.beziers.size() && rec.beziers[static_cast<usize>(o.bezier)].site == s;
+    return n;
 }
 
 bool edit_start(const Recording& rec, const Block& b, f64 start, const CodeSites& code, std::string_view source,
@@ -315,6 +389,71 @@ bool edit_part_move(const Recording& rec, std::string_view part, f64 t, f64 fram
     }
     out = std::move(text);
     return true;
+}
+
+namespace {
+
+// Property p of the part in the recording: its track, the block deciding it at t, whether that one goes there.
+struct PartProp {
+    i32 part = -1, track = -1, block = -1;
+    bool going = false;
+};
+
+PartProp part_prop(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p) {
+    PartProp pp;
+    const auto named = std::find(rec.parts.begin(), rec.parts.end(), part);
+    if (named == rec.parts.end()) return pp;
+    pp.part = static_cast<i32>(named - rec.parts.begin());
+    pp.track = rec.track(static_cast<u32>(pp.part), p);
+    pp.block = pp.track < 0 ? -1 : deciding_block(rec, static_cast<u32>(pp.track), t);
+    pp.going = pp.block >= 0 && block_going(rec.blocks[static_cast<usize>(pp.block)], t, frame);
+    return pp;
+}
+
+} // namespace
+
+bool part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, PropValue& out, bool& going) {
+    const PartProp pp = part_prop(rec, part, t, frame, p);
+    going = false;
+    out = rest_value(p);
+    if (pp.block >= 0 && rec.blocks[static_cast<usize>(pp.block)].to == Block::To::Binding) return false;
+    going = pp.going;
+    if (pp.going) return out = rec.blocks[static_cast<usize>(pp.block)].end, true;
+    std::string why;
+    if (pp.track >= 0 && !sample(rec, static_cast<u32>(pp.track), t, nullptr, out, why)) out = rest_value(p);
+    return true;
+}
+
+bool edit_part_prop(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, const PropValue& value,
+                    const CodeSites& code, std::string_view source, std::string& out, std::string& why) {
+    out.clear();
+    if (!std::isfinite(t) || t < 0) return why = "кадр — число секунд не меньше 0", false;
+    if (prop_is_call(p) || p == Prop::Drawing) return why = p == Prop::Drawing ? kDrawingInCode : in_code(p), false;
+    const PartProp pp = part_prop(rec, part, t, frame, p);
+    // Its transition goes: its end.
+    if (pp.going) return edit_value(rec, rec.blocks[static_cast<usize>(pp.block)], p, value, code, source, out, why);
+    // Another property's goes in a table of this file without this field, and this track started nothing since.
+    const Block* into = nullptr;
+    if (pp.part >= 0 && value_text(p, value) != "nil")
+        for (usize i = 0; i < kPropCount; ++i) {
+            const Prop q = static_cast<Prop>(i);
+            const i32 tq = q == p ? -1 : rec.track(static_cast<u32>(pp.part), q);
+            const i32 bq = tq < 0 ? -1 : deciding_block(rec, static_cast<u32>(tq), t);
+            if (bq < 0) continue;
+            const Block& o = rec.blocks[static_cast<usize>(bq)];
+            std::string no;
+            const CallSite* c = o.value_field && block_going(o, t, frame) ? value_call(rec, o, code, no) : nullptr;
+            if (!c || field_of(c->args[static_cast<usize>(o.value_arg)], prop_word(p))) continue;
+            bool since = false;
+            if (pp.track >= 0)
+                for (u32 k : rec.tracks[static_cast<usize>(pp.track)].blocks)
+                    since = since || (rec.blocks[k].start >= o.start && rec.blocks[k].start <= snap_time(t));
+            if (!since && (!into || o.start > into->start)) into = &o;
+        }
+    if (into) return edit_value(rec, *into, p, value, code, source, out, why);
+    // Else a line of its own, at the frame's moment to thousandths, not after it: the frame shows it there.
+    const f64 at = std::floor(t * 1000 + 1e-6) / 1000;
+    return add_at_line(rec, at, part, p, value, 0, code, source, out, why);
 }
 
 } // namespace forge::pixel

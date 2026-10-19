@@ -264,14 +264,19 @@ i32 Recording::track(u32 part, Prop p) const {
     return i < track_of.size() ? track_of[i] : -1;
 }
 
+f64 block_ease(const Recording& rec, const Block& b, f64 s) {
+    if (b.bezier >= 0 && static_cast<usize>(b.bezier) < rec.beziers.size()) return vector::bezier(rec.beziers[static_cast<usize>(b.bezier)].curve, s);
+    if (b.curve >= 0 && static_cast<usize>(b.curve) < rec.curves.size()) return curve_at(rec.curves[static_cast<usize>(b.curve)], s);
+    return vector::timing(b.timing, s);
+}
+
 f64 block_share(const Recording& rec, const Block& b, f64 t) {
     const f64 local = snap_time(t - b.start);
     if (b.length <= 0) return local < 0 ? 0 : 1; // at once, as block_value
     if (local <= 0) return 0;
     if (local >= b.length) return 1;
     const f64 s = local / b.length;
-    return b.curve >= 0 && static_cast<usize>(b.curve) < rec.curves.size() ? curve_at(rec.curves[static_cast<usize>(b.curve)], s)
-                                                                           : vector::timing(b.timing, s);
+    return block_ease(rec, b, s);
 }
 
 bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval, PropValue& out, std::string& why) {
@@ -290,8 +295,7 @@ bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval,
         f64 k = 1;
         if (b.length > 0 && local < b.length) {
             const f64 s = local / b.length;
-            k = b.curve >= 0 && static_cast<usize>(b.curve) < rec.curves.size() ? curve_at(rec.curves[static_cast<usize>(b.curve)], s)
-                                                                               : vector::timing(b.timing, s);
+            k = block_ease(rec, b, s);
         }
         out = {};
         out.v = along_at(rec, b, k);
@@ -329,8 +333,7 @@ bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval,
         out = i + 1 >= b.frames.size() ? b.frames.back() : mix(b.prop, b.frames[i], b.frames[i + 1], x - static_cast<f64>(i));
         return true;
     }
-    f64 k = b.curve >= 0 && static_cast<usize>(b.curve) < rec.curves.size() ? curve_at(rec.curves[static_cast<usize>(b.curve)], s)
-                                                                           : vector::timing(b.timing, s);
+    f64 k = block_ease(rec, b, s);
     if (b.arc >= 0 && static_cast<usize>(b.arc) < rec.blocks.size()) {
         const Block& o = rec.blocks[static_cast<usize>(b.arc)];
         const Block& bx = b.prop == Prop::X ? b : o;
