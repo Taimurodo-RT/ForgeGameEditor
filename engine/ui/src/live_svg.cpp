@@ -32,12 +32,11 @@ struct Written {
 
 struct File;
 
-// A picture a live element draws from a stage (part 5г): what the stage carries, its file, the document made from it.
+// A picture a live element draws from a stage (part 5г): what the stage carries and its file; the plugin's document of
+// the picture is the one made from it.
 struct Staged {
     StageNeeds needs;
     File* file = nullptr;
-    u64 serial = 0;
-    const lunasvg::Document* doc = nullptr;
 };
 
 // What the scripts said of one element, and the clip it shows (svg_pose).
@@ -980,16 +979,19 @@ File* stage_file(File& f, const std::string& path, const void* owner, const Stag
 
 std::unique_ptr<lunasvg::Document> load(const std::string& text) { return lunasvg::Document::loadFromData(text.data(), text.size()); }
 
-void apply(Rml::Element* element, const Rml::String& path, const Rml::String& text, Rml::UniquePtr<lunasvg::Document>& doc) {
+void apply(Rml::Element* element, const Rml::String& path, const Rml::String& text, Rml::UniquePtr<lunasvg::Document>& doc, bool made) {
     Live* live = live_of(element);
     if (!live || !doc) return;
+    // A document the plugin has just read (the first time, or again after the element let it go) is the file's, not a
+    // stage, wherever it stands in memory.
+    if (made) live->staged.erase(path);
     File& f = file(path, text);
     if (!f.outline.error.empty()) {
         problem("«" + file_name(path) + "»: " + f.outline.error);
         return;
     }
     // The picture is drawn from its file, or from a stage (part 5г) when the clip needs one: made again when the clip
-    // needs what it has not, or when the plugin read the file again.
+    // needs what it has not, or when the plugin has read the file again.
     File* drawn = &f;
     const bool posed = live->posed && file_name(path) == live->pose.picture;
     auto staged = live->staged.find(path);
@@ -997,7 +999,7 @@ void apply(Rml::Element* element, const Rml::String& path, const Rml::String& te
         const StageNeeds want = needs_of(f, live->pose);
         if (staged != live->staged.end() || !want.empty()) {
             Staged& s = live->staged[path];
-            File* sf = s.file && s.file->serial == s.serial && s.doc == doc.get() && s.needs.covers(want) ? s.file : nullptr;
+            File* sf = s.file && s.needs.covers(want) ? s.file : nullptr;
             if (!sf) {
                 s.needs.add(want);
                 sf = stage_file(f, path, element, s.needs);
@@ -1005,8 +1007,6 @@ void apply(Rml::Element* element, const Rml::String& path, const Rml::String& te
                 if (fresh) {
                     doc = std::move(fresh);
                     s.file = sf;
-                    s.serial = sf->serial;
-                    s.doc = doc.get();
                     live->written.erase(path);
                 } else {
                     sf = nullptr;
@@ -1016,8 +1016,7 @@ void apply(Rml::Element* element, const Rml::String& path, const Rml::String& te
             if (sf) drawn = sf;
         }
     } else if (staged != live->staged.end()) {
-        if (staged->second.doc == doc.get())
-            if (std::unique_ptr<lunasvg::Document> fresh = load(f.text)) doc = std::move(fresh);
+        if (std::unique_ptr<lunasvg::Document> fresh = load(f.text)) doc = std::move(fresh);
         live->staged.erase(staged);
         live->written.erase(path);
     }

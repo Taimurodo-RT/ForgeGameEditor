@@ -986,6 +986,7 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
   clips = {
     open = function(p) part("mouth"):morph("mouth_o", 0.2) part("nose").x(2, 0.1) end,
     angry = function(p) swap("angry", 0.2) end,
+    angry_top = function(p) swap("angry", 0.1) part("brow"):to_top() wait(0.1) end,
     brow = function(p) part("mouth"):morph("brow", 0.2) end,
     brow_on = function(p) start_from("brow") part("nose").x(1, 0.1) end,
   },
@@ -1038,6 +1039,9 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
     CHECK(gift.motion.from == "персонажи/Персонаж.pixel.json");
     REQUIRE(gift.motion.part("nose"));
     CHECK(gift.motion.clip("angry")->not_drawn == std::vector<std::string>{"drawing"});
+    // A step of another drawing's part: not in the SVG the screen shows, so not given.
+    CHECK(gift.motion.clip("angry_top")->not_drawn == std::vector<std::string>{"drawing"});
+    CHECK(gift.motion.clip("angry_top")->order.empty());
     CHECK(gift.motion.clip("brow")->not_drawn == std::vector<std::string>{"morph_drawing"});
     // From the frames: start_from leaves the mouth morphed into the brow, by no track of the clip's own.
     CHECK(gift.motion.clip("brow_on")->not_drawn == std::vector<std::string>{"morph_drawing"});
@@ -1140,8 +1144,9 @@ const char* kStageCode = R"(return {
 const std::vector<const char*> kStageClips = {"dash", "draw", "draw_morph", "tint", "flash", "mask_in", "mask_out", "mask_shown", "link", "copies", "order"};
 
 // More of what the screen draws as the tab: two gradients (one taking its stops from the other) on white, one seen
-// through; a solid shape on white; a turned group with a gradient plate and an arm holding a hand; a box under a ring
-// of a stroke alone; a hidden shape with a fill and a stroke; a slab, a ball and a triangle with a hidden twin.
+// through; a solid shape on white; a turned group with a plate (its own gradient, narrow enough for its pixels to count
+// as smooth and be checked) and an arm holding a hand; a box under a ring of a stroke alone; a hidden shape with a fill
+// and a stroke; a slab, a ball and a triangle with a hidden twin.
 const char* kMore = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="1" y2="0">
@@ -1149,6 +1154,10 @@ const char* kMore = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 6
       <stop offset="1" stop-color="#c0e0ff"/>
     </linearGradient>
     <linearGradient id="sky2" href="#sky" x1="0" y1="0" x2="0" y2="1"/>
+    <linearGradient id="dusk" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3050a0"/>
+      <stop offset="1" stop-color="#6080c0"/>
+    </linearGradient>
   </defs>
   <rect x="0" y="0" width="64" height="16" fill="#ffffff"/>
   <rect id="c" x="2" y="2" width="28" height="12" fill="url(#sky)"/>
@@ -1156,7 +1165,7 @@ const char* kMore = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 6
   <rect x="0" y="16" width="18" height="18" fill="#ffffff"/>
   <rect id="d" x="2" y="18" width="14" height="14" fill="#30a060"/>
   <g id="frame" transform="translate(22 18) rotate(15 8 8)">
-    <rect id="plate" x="0" y="0" width="16" height="10" fill="url(#sky)"/>
+    <rect id="plate" x="0" y="0" width="16" height="10" fill="url(#dusk)"/>
     <g id="arm" transform="rotate(-20 4 12)"><rect id="hand" x="1" y="11" width="6" height="8" fill="#c03030"/></g>
   </g>
   <rect id="box" x="44" y="20" width="16" height="16" fill="#e0e000"/>

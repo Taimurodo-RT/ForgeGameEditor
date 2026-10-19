@@ -20,8 +20,10 @@ class Element;
 
 namespace SVG {
 
-	/// 'path' is the picture's file (or the key of an inline <svg>), 'text' what the document was read from.
-	using LiveApply = Function<void(Element* element, const String& path, const String& text, UniquePtr<lunasvg::Document>& document)>;
+	/// 'path' is the picture's file (or the key of an inline <svg>), 'text' what the document was read from; 'made' when
+	/// the document has just been read (the first time, or again after the element let it go), not on a Touch.
+	using LiveApply =
+		Function<void(Element* element, const String& path, const String& text, UniquePtr<lunasvg::Document>& document, bool made)>;
 	RMLUICORE_API void SetLiveApply(LiveApply apply);
 	/// Makes the element live, or takes it back to the shared pictures; it takes its pictures again either way.
 	RMLUICORE_API void SetLive(Element* element, bool live);

@@ -256,7 +256,7 @@ namespace SVG {
 
 			// Forge: a live element's document starts as the element's script has it (maybe another one in its place).
 			if (live_element && live_apply)
-				live_apply(live_element, doc.live_path, doc.live_text, doc.svg_document);
+				live_apply(live_element, doc.live_path, doc.live_text, doc.svg_document, true);
 			if (!doc.svg_document)
 				return {};
 
@@ -566,7 +566,7 @@ namespace SVG {
 				continue;
 			SVGDocument& doc = entry.second;
 			if (live_apply && doc.svg_document)
-				live_apply(element, doc.live_path, doc.live_text, doc.svg_document);
+				live_apply(element, doc.live_path, doc.live_text, doc.svg_document, false);
 			for (SVGTexture& texture : doc.textures)
 				texture.texture.Regenerate();
 		}
