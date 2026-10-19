@@ -1,5 +1,7 @@
 #include "forge/pixel/timeline.h"
 
+#include "forge/pixel/scene.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -97,7 +99,9 @@ std::string value_words(Prop p, const PropValue& v) {
 }
 
 std::string block_words(const Recording& rec, const Block& b) {
-    const std::string prop = prop_word(b.prop);
+    // The camera's scale is its zoom (part 6б).
+    const bool camera = b.part < rec.parts.size() && rec.parts[b.part] == kCameraPart;
+    const std::string prop = camera && b.prop == Prop::Scale ? "zoom" : prop_word(b.prop);
     switch (b.to) {
     case Block::To::Binding: return "связь";
     case Block::To::Back: return prop + " → назад";

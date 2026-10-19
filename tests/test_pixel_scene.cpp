@@ -16,6 +16,7 @@
 #include "forge/pixel/rig.h"
 #include "forge/pixel/scene.h"
 #include "forge/pixel/script.h"
+#include "forge/pixel/timeline.h"
 #include "forge/vector/motion_file.h"
 
 #include <doctest/doctest.h>
@@ -1540,4 +1541,99 @@ TEST_CASE("Сцена: уход — длина сцены и актёры во �
     record(s);
     CHECK(s.recording()->length == doctest::Approx(1));
     CHECK(near(pixel_at(frame(0.5), 10, 10), kOutsideScene));
+}
+
+TEST_CASE("Сцена: камера мышью и полями пишет camera()") {
+    Files files;
+    project(files);
+    struct Case {
+        const char* scene; // the scene's lines (from 11)
+        f64 t, dx, dy;
+        const char* written; // the lines after, "" for a refusal
+        const char* says;    // the refusal's words
+        f64 seen = -1;       // where the camera stands moved by dx, dy: the frame's moment, or the end of its transition
+    };
+    const Case cases[] = {
+        // Nothing of the camera's own at 0: a line at(0, camera():to(…)).
+        {"    wait(1)", 0, 8, 0, "    at(0, camera():to({ x = 8 }, 0))\n    wait(1)", ""},
+        {"    wait(1)", 0.5, 8, -2, "    at(0.5, camera():to({ x = 8, y = -2 }, 0))\n    wait(1)", ""},
+        // Its transition going: the end of it.
+        {"    camera():to({ x = 10, zoom = 2 }, 1)", 0.5, 8, 0, "    camera():to({ x = 18, zoom = 2 }, 1)", "", 1},
+        {"    camera().x(10, 1)", 0.5, -4, 0, "    camera().x(6, 1)", "", 1},
+        // Its x going, its y into the same table.
+        {"    camera():to({ x = 10 }, 1)", 0.5, 0, 5, "    camera():to({ x = 10, y = 5 }, 1)", "", 1},
+        // On its path or following: refused with the reason.
+        {"    camera():along(\"дорога\", 1)", 0.5, 8, 0, "", "путь правится в коде"},
+        {"    camera():follow(\"ёжик\")\n    wait(1)", 0.5, 8, 0, "", "камера следит за «ёжик»: правится в коде"},
+        // The follow ended: where it left the camera, a line moves it.
+        {"    camera():follow(\"ёжик\")\n    wait(0.5)\n    camera():follow(nil)\n    wait(0.5)", 0.75, 8, 0,
+         "    at(0.75, camera():to({ x = -32 }, 0))\n    camera():follow(\"ёжик\")\n    wait(0.5)\n    camera():follow(nil)\n    wait(0.5)", ""},
+    };
+    for (const Case& c : cases) {
+        CAPTURE(c.scene);
+        CAPTURE(c.t);
+        Scene s;
+        load(s, files, c.scene);
+        record(s);
+        const std::string text = scene_code(kStage, c.scene);
+        std::string out, why;
+        const bool ok = edit_part_move(*s.recording(), "camera", c.t, 1.0 / 60, c.dx, c.dy, s.script().code(), text, out, why);
+        INFO(why);
+        if (*c.written) {
+            REQUIRE(ok);
+            CHECK(out == scene_code(kStage, c.written));
+            // Recorded again, the camera stands moved by that in that frame, or at the end of the transition going.
+            const f64 seen = c.seen >= 0 ? c.seen : c.t;
+            const SceneCamera was = camera_at(s, seen);
+            Scene moved;
+            load(moved, files, std::string_view(out).substr(std::string_view(out).find("  scene = function(p)\n") + 22,
+                                                            std::string_view(out).rfind("\n  end,") - std::string_view(out).find("  scene = function(p)\n") - 22));
+            record(moved);
+            const SceneCamera now = camera_at(moved, seen);
+            CHECK(now.x == doctest::Approx(was.x + c.dx));
+            CHECK(now.y == doctest::Approx(was.y + c.dy));
+        } else {
+            CHECK_FALSE(ok);
+            CHECK(has(why, c.says));
+        }
+    }
+    // The fields: zoom is the camera's scale, written as zoom.
+    Scene s;
+    load(s, files, "    wait(1)");
+    record(s);
+    std::string text = scene_code(kStage, "    wait(1)"), out, why;
+    PropValue v;
+    v.v = 2;
+    REQUIRE(edit_part_prop(*s.recording(), "camera", 0, 1.0 / 60, Prop::Scale, v, s.script().code(), text, out, why));
+    CHECK(out == scene_code(kStage, "    at(0, camera().zoom(2, 0))\n    wait(1)"));
+    v.v = 30;
+    REQUIRE(edit_part_prop(*s.recording(), "camera", 0, 1.0 / 60, Prop::Rot, v, s.script().code(), text, out, why));
+    CHECK(out == scene_code(kStage, "    at(0, camera().rot(30, 0))\n    wait(1)"));
+    // Into the table of its x going, and its own zoom in it.
+    load(s, files, "    camera():to({ x = 10 }, 1)");
+    record(s);
+    text = scene_code(kStage, "    camera():to({ x = 10 }, 1)");
+    v.v = 1.5;
+    REQUIRE(edit_part_prop(*s.recording(), "camera", 0.5, 1.0 / 60, Prop::Scale, v, s.script().code(), text, out, why));
+    CHECK(out == scene_code(kStage, "    camera():to({ x = 10, zoom = 1.5 }, 1)"));
+    load(s, files, "    camera():to({ x = 10, zoom = 1.5 }, 1)");
+    record(s);
+    text = scene_code(kStage, "    camera():to({ x = 10, zoom = 1.5 }, 1)");
+    v.v = 3;
+    REQUIRE(edit_part_prop(*s.recording(), "camera", 0.5, 1.0 / 60, Prop::Scale, v, s.script().code(), text, out, why));
+    CHECK(out == scene_code(kStage, "    camera():to({ x = 10, zoom = 3 }, 1)"));
+    // Its blocks' words: zoom, the follow and where it stands.
+    load(s, files, "    camera():to({ zoom = 1.5 }, 1)\n    camera():follow(\"ёжик\")\n    camera():follow(nil)");
+    record(s);
+    std::vector<std::string> words;
+    for (const Block& b : s.recording()->blocks) words.push_back(block_words(*s.recording(), b));
+    CHECK(std::count(words.begin(), words.end(), "zoom → 1.5") == 1);
+    CHECK(std::count(words.begin(), words.end(), "следит за ёжик") == 2);
+    CHECK(std::count(words.begin(), words.end(), "стоит") == 2);
+    // A follow's field is what the frame shows: its value is where its target stands.
+    PropValue fx;
+    bool going = false;
+    load(s, files, "    camera():follow(\"ёжик\")\n    wait(1)");
+    record(s);
+    CHECK_FALSE(part_prop_value(*s.recording(), "camera", 0.5, 1.0 / 60, Prop::X, fx, going));
 }
