@@ -163,6 +163,9 @@ struct PoseScript::Impl : BindingEval {
     Stage* stage = nullptr;
     const Stage* scene_stage = nullptr;
     const SceneHooks* hooks = nullptr;
+    // set_scene: the stage and hooks clip "scene" is recorded with by record(), recording() and pose().
+    const Stage* bound_stage = nullptr;
+    const SceneHooks* bound_hooks = nullptr;
 
     // Drawing (draw.cpp): the drawing under way, its ids so far, the groups the call is inside.
     Drawing* drawing = nullptr;

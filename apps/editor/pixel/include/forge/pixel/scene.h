@@ -164,6 +164,10 @@ public:
     // Poses everything at t of the scene: its own transitions, its actors' clips under theirs (at rest without a
     // recording). False with error().
     bool frame(f64 t);
+    // The same with the scene's own pose given (its parts, its actors' and their parts', as the script's frame() of a
+    // recording gives it) and the actors' clips by the plays of `rec` (null: at rest): the tab poses the scene by the
+    // recording on its timeline, a part dragged moved in it. False with error().
+    bool pose(f64 t, const Recording* rec, const Pose& scene);
     // The frame as posed, smooth: the scene's units to the drawing's pixels by px, or fitted in.
     assets::CookedTexture draw(u32 w, u32 h, const Affine& px);
     assets::CookedTexture draw(u32 w, u32 h);
@@ -179,6 +183,8 @@ public:
     const SceneCharacter* character(std::string_view actor) const;
     // The scene's marks and its actors' clips' at their moments of the scene, by time: false with error().
     bool marks(std::vector<Mark>& out);
+    // Only the actors' clips' marks, by the plays of `rec` (a recording of this scene's code), by time.
+    bool actor_marks(const Recording& rec, std::vector<Mark>& out);
     // The files of «Ресурсы» it read: when one changes, it is loaded again.
     const std::vector<std::string>& files() const;
 

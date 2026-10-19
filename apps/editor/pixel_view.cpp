@@ -71,18 +71,18 @@ void PixelEditor::bind_view(Rml::DataModelConstructor& model) {
 
 // --- the zoom -----------------------------------------------------------------------------------------
 
-pixel::Affine PixelEditor::to_view() const { return zoom_.affine() * rig_.to_pixels(kViewPx, kViewPx); }
+pixel::Affine PixelEditor::to_view() const { return zoom_.affine() * rig().to_pixels(kViewPx, kViewPx); }
 
 pixel::Affine PixelEditor::to_texels() const {
     // The view's zoom in its texels: the same steps, its pan view_px() / kViewPx texels a point.
     const f64 k = static_cast<f64>(view_px()) / kViewPx, z = zoom_.zoom();
-    return pixel::Affine{z, 0, 0, z, zoom_.ox * k, zoom_.oy * k} * rig_.to_pixels(view_px(), view_px());
+    return pixel::Affine{z, 0, 0, z, zoom_.ox * k, zoom_.oy * k} * rig().to_pixels(view_px(), view_px());
 }
 
 void PixelEditor::fit_box() {
     zoom_.width = zoom_.height = kViewPx;
-    const f64 w = rig_.width(), h = rig_.height();
-    if (rig_.loaded() && w > 0 && h > 0) {
+    const f64 w = rig().width(), h = rig().height();
+    if (rig().loaded() && w > 0 && h > 0) {
         const f64 s = std::min(kViewPx / w, kViewPx / h);
         zoom_.box[0] = (kViewPx - w * s) / 2, zoom_.box[1] = (kViewPx - h * s) / 2;
         zoom_.box[2] = (kViewPx + w * s) / 2, zoom_.box[3] = (kViewPx + h * s) / 2;
@@ -148,7 +148,7 @@ void PixelEditor::set_picking(bool on) {
 
 void PixelEditor::track_mouse(Rml::Context* context) {
     std::string coords, picked;
-    if (has_ && rig_.loaded() && view_w_ > 0 && hovering(context, "px-vector")) {
+    if (has_ && rig().loaded() && view_w_ > 0 && hovering(context, "px-vector")) {
         const std::string over = texel_words(vector_, view_x_, view_y_, view_w_, view_h_, mouse_x_, mouse_y_);
         if (!over.empty()) {
             coords = pixel::coords_words(view_to_picture(mouse_x_, mouse_y_));
@@ -276,8 +276,8 @@ void PixelEditor::lay_sounds() {
             } else {
                 r.why = "звук «" + m.name + "»: у игры нет папки sounds";
             }
-            if (m.site.file == 0 && m.site.site >= 0 && m.site.site < static_cast<i32>(script_.code().sites().size()))
-                r.line = script_.code().sites()[static_cast<usize>(m.site.site)].line;
+            if (m.site.file == 0 && m.site.site >= 0 && m.site.site < static_cast<i32>(script().code().sites().size()))
+                r.line = script().code().sites()[static_cast<usize>(m.site.site)].line;
             rows.push_back(std::move(r));
         }
     // Their waves: a column a point of the timeline, the clip's end cutting them.

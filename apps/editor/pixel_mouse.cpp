@@ -342,7 +342,7 @@ bool PixelEditor::set_block_value(const std::string& text) {
     pixel::PropValue v;
     std::string out, why;
     if (!value_of_text(b->prop, text, what, v, why)) return refuse_edit(why);
-    if (!pixel::edit_value(rec_, *b, b->prop, v, script_.code(), script_text_, out, why)) return refuse_edit("Значение «" + what + "» не записать: " + why);
+    if (!pixel::edit_value(rec_, *b, b->prop, v, script().code(), script_text_, out, why)) return refuse_edit("Значение «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false; // the same
     const std::string shown = field_of(b->prop, v);
     return write_script(out, "«" + name() + "»: " + what + " = " + (shown.empty() ? std::string("своё") : shown));
@@ -354,7 +354,7 @@ bool PixelEditor::set_block_length(f64 length) {
     if (!b) return false;
     const std::string what = block_name(rec_, *b);
     std::string out, why;
-    if (!pixel::edit_length(rec_, *b, length, script_.code(), script_text_, out, why)) return refuse_edit("Длину «" + what + "» не записать: " + why);
+    if (!pixel::edit_length(rec_, *b, length, script().code(), script_text_, out, why)) return refuse_edit("Длину «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: " + what + ", длина " + thousandths(length) + " с");
 }
@@ -366,7 +366,7 @@ bool PixelEditor::set_block_timing(vector::Timing timing) {
     if (!b) return false;
     const std::string what = block_name(rec_, *b);
     std::string out, why;
-    if (!pixel::edit_timing(rec_, *b, timing, script_.code(), script_text_, out, why)) return refuse_edit("Сглаживание «" + what + "» не записать: " + why);
+    if (!pixel::edit_timing(rec_, *b, timing, script().code(), script_text_, out, why)) return refuse_edit("Сглаживание «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: " + what + ", " + vector::timing_word(timing));
 }
@@ -380,7 +380,7 @@ bool PixelEditor::set_block_bezier_timing() {
     const std::string what = block_name(rec_, *b);
     const vector::Bezier ease; // CSS's ease
     std::string out, why;
-    if (!pixel::edit_timing_bezier(rec_, *b, ease, script_.code(), script_text_, out, why))
+    if (!pixel::edit_timing_bezier(rec_, *b, ease, script().code(), script_text_, out, why))
         return refuse_edit("Сглаживание «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: " + what + ", кривая " + bezier_words(ease));
@@ -392,7 +392,7 @@ bool PixelEditor::set_block_bezier(const vector::Bezier& curve) {
     if (!b) return false;
     const std::string what = block_name(rec_, *b);
     std::string out, why;
-    if (!pixel::edit_bezier(rec_, *b, curve, script_.code(), script_text_, out, why)) return refuse_edit("Кривую «" + what + "» не записать: " + why);
+    if (!pixel::edit_bezier(rec_, *b, curve, script().code(), script_text_, out, why)) return refuse_edit("Кривую «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: " + what + ", кривая " + bezier_words(curve));
 }
@@ -414,20 +414,20 @@ bool PixelEditor::set_part_field(const std::string& field, const std::string& te
     for (const FieldProp& fp : kFieldProps)
         if (field == pixel::prop_word(fp.prop)) f = &fp;
     if (!f) return refuse_edit("У части нет поля «" + field + "»");
-    if (!has_ || part_.empty() || rig_.holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
+    if (!has_ || part_.empty() || rig().holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
     const std::string id = part_, what = id + " · " + field;
     pixel::PropValue v;
     std::string out, why;
     if (!value_of_text(f->prop, text, what, v, why)) return refuse_edit(why);
     bool saved = false;
     if (!begin_edit(saved)) return false;
-    if (rig_.swapping()) return refuse_edit("посреди смены рисунка поля части не пишутся: выберите кадр до или после");
+    if (rig().swapping()) return refuse_edit("посреди смены рисунка поля части не пишутся: выберите кадр до или после");
     play(false);
     const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
     bool going = false;
     pixel::PropValue was;
     if (pixel::part_prop_value(rec_, id, t_, frame, f->prop, was, going) && field_of(f->prop, was) == field_of(f->prop, v)) return rebuild(), false; // the same
-    if (!pixel::edit_part_prop(rec_, id, t_, frame, f->prop, v, script_.code(), script_text_, out, why))
+    if (!pixel::edit_part_prop(rec_, id, t_, frame, f->prop, v, script().code(), script_text_, out, why))
         return refuse_edit("«" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     const std::string shown = field_of(f->prop, v);
@@ -460,19 +460,29 @@ bool PixelEditor::edge_press(f32 x, f32 y, Rml::Element* over, bool again) {
     std::string id;
     for (Rml::Element* e = over; e && id.empty(); e = e->GetParentNode()) {
         const std::string& eid = e->GetId();
-        if (eid.rfind("px-block-", 0) == 0 || eid.rfind("px-pause-", 0) == 0) id = eid;
+        if (eid.rfind("px-block-", 0) == 0 || eid.rfind("px-pause-", 0) == 0 || eid.rfind("px-play-", 0) == 0) id = eid;
     }
     if (id.empty()) {
         if (again) refuse_edit("Код сохранён; под мышью в новой записи нет края: тяните снова");
         return again;
     }
     const f64 reach = kEdgeReach * std::max(1.0f, dp_), at = x - tl_x_;
-    const i32 index = std::atoi(id.c_str() + 9); // after "px-block-" and "px-pause-"
+    const bool actor_clip = id.rfind("px-play-", 0) == 0;
+    const i32 index = std::atoi(id.c_str() + (actor_clip ? 8 : 9)); // after "px-play-", "px-block-" and "px-pause-"
     Drag what = Drag::None;
     std::string why, label;
     bool ok = false;
     f64 edge = 0;
-    if (id.rfind("px-block-", 0) == 0) {
+    if (actor_clip) {
+        // An actor's clip in a scene (part 6а): its start is dragged, as a block's; its length is the character's.
+        if (index < 0 || index >= static_cast<i32>(rec_.plays.size())) return false;
+        const pixel::ActorPlay& p = rec_.plays[static_cast<usize>(index)];
+        if (std::fabs(at - tv_.x(p.start)) > reach) return false; // not at the start: a click on the clip
+        what = Drag::PlayStart;
+        ok = pixel::can_edit_play_start(rec_, p, script().code(), why);
+        label = "Начало клипа «" + p.actor + "» мышью не изменить: ";
+        edge = p.start;
+    } else if (id.rfind("px-block-", 0) == 0) {
         if (index < 0 || index >= static_cast<i32>(rec_.blocks.size())) return false;
         const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
         const f64 d0 = std::fabs(at - tv_.x(b.start)), d1 = std::fabs(at - tv_.x(block_end(index)));
@@ -480,7 +490,7 @@ bool PixelEditor::edge_press(f32 x, f32 y, Rml::Element* over, bool again) {
         if (d1 <= reach && (d1 <= d0 || !own_start)) what = Drag::BlockEnd;
         else if (d0 <= reach && own_start) what = Drag::BlockStart;
         else return false; // not at an edge: a click on the block
-        ok = pixel::can_edit(rec_, b, what == Drag::BlockEnd ? pixel::BlockEdit::Length : pixel::BlockEdit::Start, script_.code(), why);
+        ok = pixel::can_edit(rec_, b, what == Drag::BlockEnd ? pixel::BlockEdit::Length : pixel::BlockEdit::Start, script().code(), why);
         label = (what == Drag::BlockEnd ? "Длину «" : "Начало «") + block_name(rec_, b) + "» мышью не изменить: ";
         edge = what == Drag::BlockEnd ? block_end(index) : b.start;
     } else {
@@ -489,7 +499,7 @@ bool PixelEditor::edge_press(f32 x, f32 y, Rml::Element* over, bool again) {
         edge = pixel::snap_time(p.start + p.length);
         if (std::fabs(at - tv_.x(edge)) > reach) return false;
         what = Drag::PauseEnd;
-        ok = pixel::can_edit_pause(rec_, p, script_.code(), why);
+        ok = pixel::can_edit_pause(rec_, p, script().code(), why);
         label = "Длину паузы мышью не изменить: ";
     }
     // The code that does not record has no places of numbers: that is why, not the call's.
@@ -522,7 +532,7 @@ bool PixelEditor::set_block_end(i32 index, f64 to) {
     const std::string what = block_name(rec_, b);
     const f64 length = pixel::snap_time(to - b.start);
     std::string out, why;
-    if (!pixel::edit_length(rec_, b, length, script_.code(), script_text_, out, why)) return refuse_edit("Длину «" + what + "» не записать: " + why);
+    if (!pixel::edit_length(rec_, b, length, script().code(), script_text_, out, why)) return refuse_edit("Длину «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: " + what + ", длина " + thousandths(length) + " с");
 }
@@ -535,7 +545,7 @@ bool PixelEditor::set_block_start(i32 index, f64 to) {
     const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
     const std::string what = block_name(rec_, b);
     std::string out, why;
-    if (!pixel::edit_start(rec_, b, to, script_.code(), script_text_, out, why)) return refuse_edit("Начало «" + what + "» не записать: " + why);
+    if (!pixel::edit_start(rec_, b, to, script().code(), script_text_, out, why)) return refuse_edit("Начало «" + what + "» не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: " + what + ", начало " + thousandths(to) + " с");
 }
@@ -548,7 +558,7 @@ bool PixelEditor::set_pause_end(usize index, f64 to) {
     const pixel::Pause& p = rec_.pauses[index];
     const f64 length = pixel::snap_time(to - p.start);
     std::string out, why;
-    if (!pixel::edit_pause(rec_, p, length, script_.code(), script_text_, out, why)) return refuse_edit("Длину паузы не записать: " + why);
+    if (!pixel::edit_pause(rec_, p, length, script().code(), script_text_, out, why)) return refuse_edit("Длину паузы не записать: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: пауза " + thousandths(length) + " с");
 }
@@ -570,25 +580,26 @@ void PixelEditor::start_move() {
             refuse_edit("Код сохранён; под мышью в новой записи нет части: тяните снова");
             return;
         }
-        if (rig_.shown().copy(best) >= 0) {
+        if (rig().shown().copy(best) >= 0) {
             moving_ = false;
             refuse_edit("копия «" + best + "» правится в коде: copies(…)");
             return;
         }
         select_part(best);
     }
-    // Part 4д: in a swap the frame is two drawings, and the move would be the new one's only.
-    if (rig_.swapping()) {
+    // Part 4д: in a swap the frame is two drawings, and the move would be the new one's only. An actor's part in a
+    // scene (part 6а) is in its actor's drawing, carried by the actor's place on the stage.
+    const ShownPart s = shown_part(part_);
+    if (s.rig && s.swapping) {
         moving_ = false;
         refuse_edit(kMidSwap);
         return;
     }
-    const i32 i = rig_.shown().part(part_);
-    if (i < 0) {
+    if (!s.rig) {
         moving_ = false;
         return;
     }
-    move_inv_ = pixel::inverse(rig_.shown().carried(i));
+    move_inv_ = pixel::inverse(s.outer * s.rig->carried(s.index));
     move_from_ = view_to_picture(move_x_, move_y_);
     move_dx_ = move_dy_ = 0;
     move_started_ = true;
@@ -598,11 +609,11 @@ bool PixelEditor::move_part(f64 dx, f64 dy) {
     note_.clear();
     bool saved = false;
     if (!begin_edit(saved)) return false;
-    if (part_.empty() || rig_.holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
-    if (rig_.swapping()) return refuse_edit(kMidSwap);
+    if (part_.empty() || rig().holder(part_).part(part_) < 0) return refuse_edit("Выберите часть");
+    if (shown_part(part_).swapping) return refuse_edit(kMidSwap);
     const f64 frame = whole_.fps > 0 ? 1 / static_cast<f64>(whole_.fps) : 0.1;
     std::string out, why;
-    if (!pixel::edit_part_move(rec_, part_, t_, frame, dx, dy, script_.code(), script_text_, out, why))
+    if (!pixel::edit_part_move(rec_, part_, t_, frame, dx, dy, script().code(), script_text_, out, why))
         return refuse_edit("«" + part_ + "» не сдвинуть: " + why);
     if (out == script_text_) return rebuild(), false;
     return write_script(out, "«" + name() + "»: «" + part_ + "» сдвинута на " + number_words(dx) + "; " + number_words(dy));
@@ -667,7 +678,7 @@ void PixelEditor::rebuild_inspector() {
         std::vector<std::string> whys;
         std::string why;
         auto can = [&](pixel::BlockEdit what) {
-            const bool ok = pixel::can_edit(rec_, *b, what, script_.code(), why);
+            const bool ok = pixel::can_edit(rec_, *b, what, script().code(), why);
             if (!ok && std::find(whys.begin(), whys.end(), why) == whys.end()) whys.push_back(why);
             return ok;
         };
@@ -704,7 +715,7 @@ void PixelEditor::rebuild_part() {
     i32 block = -1;
     std::string code;
     bool can_code = false;
-    const bool has = has_ && !part_.empty() && rig_.holder(part_).part(part_) >= 0;
+    const bool has = has_ && !part_.empty() && rig().holder(part_).part(part_) >= 0;
     pixel::PartPose pp;
     if (has) {
         if (shown_ok_)
@@ -777,8 +788,8 @@ void PixelEditor::rebuild_part() {
             const pixel::Block& b = rec_.blocks[static_cast<usize>(block)];
             if (b.site.file > 0 && b.site.file < rec_.files.size()) {
                 code = "из модуля «" + rec_.files[b.site.file] + "»";
-            } else if (b.site.site >= 0 && b.site.site < static_cast<i32>(script_.code().sites().size())) {
-                const pixel::CallSite& site = script_.code().sites()[static_cast<usize>(b.site.site)];
+            } else if (b.site.site >= 0 && b.site.site < static_cast<i32>(script().code().sites().size())) {
+                const pixel::CallSite& site = script().code().sites()[static_cast<usize>(b.site.site)];
                 const usize from = std::min<usize>(site.span.begin, script_text_.size()), to = std::min<usize>(site.span.end, script_text_.size());
                 code = "строка " + std::to_string(site.line) + ": " + call_words(std::string_view(script_text_).substr(from, to - from));
                 can_code = true;
@@ -871,7 +882,7 @@ void PixelEditor::rebuild_ease(const pixel::Block* b) {
     std::string why, share;
     if (b && b->bezier >= 0 && static_cast<usize>(b->bezier) < rec_.beziers.size()) {
         has = true;
-        can = pixel::can_edit_bezier(rec_, *b, script_.code(), why);
+        can = pixel::can_edit_bezier(rec_, *b, script().code(), why);
         const usize n = pixel::bezier_users(rec_, *b);
         if (n > 1) share = "кривая общая: " + count_words(static_cast<u32>(n), "блок", "блока", "блоков");
     }
@@ -1064,7 +1075,7 @@ void PixelEditor::update_hover(Rml::Context* context) {
     std::string id;
     for (const Rml::Element* e = context ? context->GetHoverElement() : nullptr; e && id.empty(); e = e->GetParentNode())
         if (e->IsClassSet("px-part") && e->GetId().rfind("px-part-", 0) == 0) id = e->GetId().substr(8);
-    if (!id.empty() && rig_.shown().part(id) < 0) id.clear();
+    if (!id.empty() && !has_part(id)) id.clear(); // an actor's part in a scene too (part 6а)
     if (id == hovered_) return;
     hovered_ = id;
     view_dirty_ = true;

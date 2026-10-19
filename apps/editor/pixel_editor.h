@@ -43,6 +43,12 @@
 // Part 4е of step 4 «Фигуры мышью»: a row over the views has the tools (a rect, an ellipse, a line, the pen), the colour
 // of new shapes and «Привязка»; a shape drawn is a new last line of the code of the drawing the frame shows. The
 // selected part's «Фигура» has the fields of the call that drew it, each written into the call.
+//
+// Part 6а of docs/models/сцены-модель.md «Сцена и актёры» (pixel_scene.cpp): «Сцены» under the characters, each a
+// «.scene.json» beside its code; a scene opens as a character does, its code the panel's, its stage the vector's (one
+// clip «scene» of the timeline), its actors and their parts in the tree. A part, a picture, an actor or an actor's
+// part dragged writes the scene's code as a character's part does; the actors' clips are a row each on the timeline,
+// a clip's start dragged by frames. A scene has no pixel view, no baking and no giving to a template.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
@@ -50,6 +56,7 @@
 #include "forge/objects/library.h"
 #include "forge/pixel/bake.h"
 #include "forge/pixel/draw_edit.h"
+#include "forge/pixel/scene.h"
 #include "forge/pixel/sound.h"
 #include "forge/pixel/timeline.h"
 #include "forge/pixel/view.h"
@@ -63,6 +70,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -117,7 +125,9 @@ public:
     void check_files();
 
     const pixel::PixelDoc& doc() const { return doc_; }
-    const pixel::Rig& rig() const { return rig_; }
+    // The picture the views show: the character's, or a scene's stage with its actors in it.
+    const pixel::Rig& rig() const { return scene_mode_ && scene_ ? scene_->rig() : rig_; }
+    pixel::Rig& rig() { return scene_mode_ && scene_ ? scene_->rig() : rig_; }
     // Whether the picture is the code's (draw), and the text of the SVG the rig was made of (the file's or the drawing's).
     bool drawn() const { return drawn_; }
     const std::string& picture_svg() const { return svg_text_; }
@@ -428,6 +438,23 @@ public:
     // when the game has these bytes already.
     bool give_screen();
 
+    // --- scenes (part 6а of docs/models/сцены-модель.md, pixel_scene.cpp) ---
+    // The «.scene.json» of the project, by path in «Ресурсы»: open() opens one as it opens a character.
+    const std::vector<std::string>& scenes() const { return scenes_; }
+    bool in_scene() const { return scene_mode_; }
+    // The scene open, as read and recorded; null outside a scene.
+    pixel::Scene* scene() { return scene_mode_ ? scene_.get() : nullptr; }
+    // «Новая сцена»: «сцены/Сцена.luau» and «Сцена.scene.json» in «Ресурсы» («Сцена 2» … when taken), one step.
+    bool create_scene();
+    // The actors' clips on the timeline (the recording's plays): one selected (-1: none), its start dragged by frames
+    // into the code (one step, the at(…) or delay(…) it starts at, as a block's start), its call in the panel, its
+    // actor's character opened.
+    bool select_actor_clip(i32 index);
+    i32 actor_clip() const { return play_; }
+    bool set_actor_clip_start(i32 index, f64 to);
+    bool actor_clip_to_code(i32 index);
+    bool open_actor_character();
+
     // What the views show now (for the self-test): the vector, the pixel frame at its size, both as the UI names them.
     const assets::CookedTexture& vector_view() const { return vector_; }
     // The vector as its view shows it: the selected part's bounds and pivot over it, the outline of the tree's row
@@ -536,7 +563,41 @@ private:
     struct PartFieldRow {
         Rml::String name, label, section, value, now;
     };
+    struct PlayRow {
+        int index = 0;
+        Rml::String style, label, title;
+        bool selected = false, loop = false, stop = false;
+    };
 
+    // The code the tab works on: the character's, or the scene's (part 6а).
+    pixel::PoseScript& script() { return scene_mode_ && scene_ ? scene_->script() : script_; }
+    const pixel::PoseScript& script() const { return scene_mode_ && scene_ ? scene_->script() : script_; }
+    // Part 6а (pixel_scene.cpp): a scene read again (its file, its code, what its stage names), the files it read
+    // looked at, what it reads «Ресурсы» and the game's modules with.
+    void reload_scene();
+    bool scene_files_changed();
+    pixel::SceneFiles scene_files();
+    // A part of the frame shown, of the stage or of an actor (part 6а): the picture it is in, its index there and that
+    // picture's units to the view's; rig null when there is none.
+    struct ShownPart {
+        pixel::Rig* rig = nullptr;
+        i32 index = -1;
+        pixel::Affine outer;
+        bool swapping = false; // the picture it is in shows a swap: two drawings
+    };
+    ShownPart shown_part(const std::string& id);
+    bool has_part(const std::string& id) const; // of the frame shown, an actor's too
+    static bool is_scene_file(const std::string& rel); // «….scene.json»
+    void bind_scene(Rml::DataModelConstructor& model);
+    bool change_scene(const pixel::PixelDoc& after, std::string label); // change() of a scene: its «.scene.json»
+    void rebuild_scene_list();
+    // The part under a point of the view (to_view() of a picture point) in a scene: an actor's, the actor, the stage's.
+    std::string scene_part_at(const vector::Point& v, const pixel::Affine& view);
+    void scene_rows();         // the tree of a scene: its parts, an actor's inside it
+    void lay_actor_clips();    // the actors' rows of clips on the timeline
+    void rebuild_actor_clip(); // the selected clip's inspector
+    void redraw_scene();
+    std::string scene_snapshot();
     pixel::ClipSpec* selected_clip();
     const pixel::ClipSpec* selected_clip() const;
     // The file's new text (one step of the history).
@@ -653,13 +714,30 @@ private:
     ui::Ui* ui_ = nullptr;
     Rml::DataModelHandle model_;
 
-    std::vector<std::string> listed_, svgs_;
+    std::vector<std::string> listed_, svgs_, scenes_;
     std::vector<level::LevelModule::AnimState> states_;
     std::vector<u64> templates_;
     bool list_dirty_ = true;
     u64 lib_seen_ = ~0ull; // the library's version the states and templates were made from
     f64 file_clock_ = 0;
 
+    // A scene open in place of a character (part 6а): its stage's picture and code are rig() and script(); the files
+    // it read and the modules (by their files) watched.
+    bool scene_mode_ = false;
+    std::unique_ptr<pixel::Scene> scene_;
+    pixel::SceneDoc scene_doc_;
+    std::vector<Watched> scene_watch_;
+    std::vector<std::filesystem::path> scene_read_; // what the scene asked for while it was read, there or not
+    std::vector<const pixel::Rig*> shown_rigs_;     // the drawings the tree of a scene was made of
+    // The list's line of each scene not open, kept while its file and its code are as they were.
+    struct SceneInfo {
+        i64 doc = 0, code = 0;
+        std::string sub;
+    };
+    std::map<std::string, SceneInfo> scene_info_;
+    std::string scene_problem_;
+    i32 play_ = -1;          // the actor's clip selected on the timeline
+    std::vector<i32> plays_; // the plays shown, by row of m_plays_
     // The character open.
     std::string rel_;
     std::filesystem::path file_;
@@ -772,7 +850,7 @@ private:
     f32 tl_laid_w_ = -1;
     i32 block_ = -1;
     std::vector<i32> caret_blocks_;
-    enum class Drag : u8 { None, Ruler, From, To, Flag, BlockEnd, BlockStart, PauseEnd };
+    enum class Drag : u8 { None, Ruler, From, To, Flag, BlockEnd, BlockStart, PauseEnd, PlayStart };
     Drag tl_drag_ = Drag::None;
     i32 drag_block_ = -1;
     usize drag_pause_ = 0;
@@ -800,7 +878,11 @@ private:
     std::vector<ConsoleLine> console_;
     Rml::Context* context_ = nullptr;
 
-    std::vector<Row> m_list_;
+    std::vector<Row> m_list_, m_scenes_;
+    std::vector<TrackRow> m_actor_rows_;
+    std::vector<PlayRow> m_plays_;
+    Rml::String m_play_info_, m_play_call_, m_play_why_, m_actor_rows_height_;
+    bool m_scene_ = false, m_has_play_ = false, m_play_can_code_ = false;
     std::vector<SvgRow> m_svgs_;
     std::vector<PartRow> m_parts_;
     std::vector<ParamRow> m_params_;

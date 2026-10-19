@@ -306,6 +306,12 @@
 .px-block.lit { border-color: var(--tertiary); background-color: var(--tertiary-container); color: var(--on-tertiary-container); }
 .px-block.selected { border-color: var(--primary); background-color: var(--primary); color: var(--on-primary); }
 .px-tl.stale .px-block, .px-tl.stale .px-flag, .px-tl.stale .px-pause { opacity: 0.4; }
+/* Part 6а: the actors' clips of a scene, a row for each actor; a loop's bar runs to its next clip, a stop is a mark. */
+.px-plays { height: auto; max-height: 80px; border-top: 1px var(--outline-variant); }
+.px-block.px-play { background-color: var(--tertiary-container); color: var(--on-tertiary-container); }
+.px-block.px-play.loop { border-style: dashed; }
+.px-block.px-play.stop { padding-left: 0px; background-color: var(--outline); }
+.px-block.px-play.selected { border-color: var(--primary); background-color: var(--primary); color: var(--on-primary); }
 .px-tl-note { padding: 2px 0px 2px 128px; }
 .px-over { position: absolute; left: 128px; right: 0px; top: 0px; bottom: 0px; pointer-events: none; }
 .px-head { position: absolute; top: 0px; bottom: 0px; width: 2px; background-color: var(--error); pointer-events: none; }

@@ -10,6 +10,7 @@
 #include "forge/pixel/doc.h"
 #include "forge/pixel/draw.h"
 #include "forge/pixel/motion.h"
+#include "forge/pixel/motion_edit.h"
 #include "forge/pixel/rig.h"
 #include "forge/pixel/scene.h"
 #include "forge/pixel/script.h"
@@ -823,4 +824,142 @@ TEST_CASE("Сцена: ids актёра под его именем") {
     CHECK(q.swap);
     CHECK(q.swap_from == "angry");
     CHECK(q.swap_k == 0.25);
+}
+
+TEST_CASE("Сцена: код сцены — клип «scene» вкладки") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    at(0.5, actor("ёжик"):play("walk"))
+    actor("жук"):play("hop")
+    actor("жук"):loop("hop")
+    part("ёжик"):to({ x = 10 }, 0.5)
+    wait(0.3))");
+    record(s);
+    PoseScript& code = s.script();
+    // Bound to its stage, the scene is one clip "scene": recorded as Scene::record records it.
+    REQUIRE(code.clips() == std::vector<std::string>{"scene"});
+    const Recording* rec = code.recording(s.rig(), "scene", {}, 1);
+    INFO(code.error());
+    REQUIRE(rec);
+    CHECK(rec->length == doctest::Approx(s.recording()->length));
+    REQUIRE(rec->plays.size() == s.recording()->plays.size());
+    for (usize i = 0; i < rec->plays.size(); ++i) {
+        CAPTURE(i);
+        CHECK(rec->plays[i].actor == s.recording()->plays[i].actor);
+        CHECK(rec->plays[i].start == doctest::Approx(s.recording()->plays[i].start));
+        CHECK(rec->plays[i].length == doctest::Approx(s.recording()->plays[i].length));
+    }
+    // Its lengths are the doc's "scene" lengths; another clip is no clip of a scene.
+    CHECK_FALSE(code.recording(s.rig(), "walk", {}, 1));
+    CHECK(has(code.error(), "клипа «walk»"));
+    // The script's pose of it, put on the stage by pose(), draws the frame frame() draws.
+    for (const f64 t : {0.0, 0.6, 0.9, 1.4}) {
+        CAPTURE(t);
+        Pose own;
+        REQUIRE(code.pose(s.rig(), t, "scene", {}, 1, own));
+        REQUIRE(s.pose(t, rec, own));
+        const assets::CookedTexture a = s.draw(160, 120);
+        REQUIRE(s.frame(t));
+        const assets::CookedTexture b = s.draw(160, 120);
+        CHECK(a.rgba8 == b.rgba8);
+    }
+    // Without a recording the actors are at rest: the stage as it stands.
+    REQUIRE(s.pose(0.9, nullptr, {}));
+    const assets::CookedTexture rest = s.draw(160, 120);
+    Scene still;
+    load(still, files, "    wait(1)");
+    REQUIRE(still.frame(0.9));
+    CHECK(still.draw(160, 120).rgba8 == rest.rgba8);
+    // The actors' marks alone, by the plays of the recording given.
+    std::vector<Mark> theirs, all;
+    REQUIRE(s.actor_marks(*rec, theirs));
+    REQUIRE(s.marks(all));
+    CHECK(all.size() == theirs.size() + rec->marks.size());
+    REQUIRE_FALSE(theirs.empty());
+    for (const Mark& m : theirs) CHECK(m.actor == "ёжик");
+    CHECK(theirs.front().time == doctest::Approx(0.75));
+    // A script not bound to a stage is no clip: a scene's code read on its own.
+    PoseScript alone;
+    REQUIRE(alone.load(scene_code(kStage, "    wait(1)")));
+    CHECK(alone.clips().empty());
+    Recording none;
+    CHECK_FALSE(alone.record(&s.rig(), "scene", {}, 1, {}, none));
+    CHECK(has(alone.error(), "это сцена"));
+    // A character's code takes no stage.
+    PoseScript hedgehog;
+    REQUIRE(hedgehog.load(kHedgehog));
+    const std::vector<std::string> clips = hedgehog.clips();
+    hedgehog.set_scene(&s.stage(), nullptr);
+    CHECK(hedgehog.clips() == clips);
+}
+
+TEST_CASE("Сцена: начало клипа актёра тянется, как у блока") {
+    Files files;
+    project(files);
+    Scene s;
+    const std::string scene = R"(    at(0.5, actor("ёжик"):play("walk"))
+    delay(0.25, actor("жук"):play("hop"))
+    actor("жук"):play("hop"))";
+    load(s, files, scene);
+    record(s);
+    const Recording& rec = *s.recording();
+    const std::string text = scene_code(kStage, scene);
+    const CodeSites& code = s.script().code();
+    std::string out, why;
+    // at(…): its number is the start.
+    const ActorPlay& walk = play_of(rec, "ёжик", ActorPlay::Kind::Play);
+    CHECK(walk.start == doctest::Approx(0.5));
+    REQUIRE(can_edit_play_start(rec, walk, code, why));
+    REQUIRE(edit_play_start(rec, walk, 0.75, code, text, out, why));
+    CHECK(has(out, "at(0.75, actor(\"ёжик\"):play(\"walk\"))"));
+    // delay(…): how long after, moved by as much.
+    const ActorPlay& hop = play_of(rec, "жук", ActorPlay::Kind::Play);
+    CHECK(hop.start == doctest::Approx(0.25));
+    REQUIRE(edit_play_start(rec, hop, 0.5, code, text, out, why));
+    CHECK(has(out, "delay(0.5, actor(\"жук\"):play(\"hop\"))"));
+    CHECK_FALSE(edit_play_start(rec, hop, -0.5, code, text, out, why));
+    CHECK(has(why, "не меньше 0"));
+    // One after another: no start of its own in the code.
+    const ActorPlay& next = play_of(rec, "жук", ActorPlay::Kind::Play, 1);
+    CHECK_FALSE(can_edit_play_start(rec, next, code, why));
+    CHECK(has(why, "своего начала в коде у него нет"));
+    CHECK_FALSE(edit_play_start(rec, next, 2, code, text, out, why));
+}
+
+TEST_CASE("Сцена: протяжка мышью пишет строку в scene") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    actor("ёжик"):play("walk")
+    wait(0.5))");
+    record(s);
+    const PoseScript& code = s.script();
+    // The scene's function is its one clip for the code's edits; a top-level scene without stage is not: no scene, it
+    // does not load, and its code has no clip «scene».
+    REQUIRE(code.code().clip("scene"));
+    PoseScript character;
+    CHECK_FALSE(character.load("return {\n  scene = function(p)\n    wait(1)\n  end,\n  clips = {},\n}\n"));
+    CHECK(has(character.error(), "у сцены нужен stage"));
+    CHECK_FALSE(character.code().clip("scene"));
+    // The actor and an actor's part dragged at 0: a first line of scene, as a character's clip has it.
+    const std::string text = scene_code(kStage, "    actor(\"ёжик\"):play(\"walk\")\n    wait(0.5)");
+    std::string out, why;
+    REQUIRE(edit_part_move(*s.recording(), "ёжик", 0, 1.0 / 60, 4, 0, code.code(), text, out, why));
+    INFO(why);
+    const std::string head = "  scene = function(p)\n";
+    CHECK(out == scene_code(kStage, "    at(0, part(\"ёжик\"):to({ x = 4 }, 0))\n    actor(\"ёжик\"):play(\"walk\")\n    wait(0.5)"));
+    REQUIRE(edit_part_move(*s.recording(), "ёжик/head", 0, 1.0 / 60, 0, -3, code.code(), text, out, why));
+    CHECK(has(out, head + "    at(0, part(\"ёжик/head\"):to({ y = -3 }, 0))\n    actor(\"ёжик\"):play(\"walk\")"));
+    // The line it writes is the scene's own: recorded again, the actor stands 4 to the right at 0.
+    Scene moved;
+    REQUIRE(edit_part_move(*s.recording(), "ёжик", 0, 1.0 / 60, 4, 0, code.code(), text, out, why));
+    REQUIRE(moved.load(out, {}, files.scene()));
+    REQUIRE(moved.record());
+    const Block* x = nullptr;
+    for (const Block& b : moved.recording()->blocks)
+        if (moved.recording()->parts[b.part] == "ёжик" && b.prop == Prop::X) x = &b;
+    REQUIRE(x);
+    CHECK(x->start == 0);
+    CHECK(x->value.v == doctest::Approx(4));
 }

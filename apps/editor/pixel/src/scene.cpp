@@ -743,6 +743,7 @@ bool Scene::load(std::string_view code, const SceneDoc& doc, const SceneFiles& f
         im.rig.set_pivot(it.id, {it.x, it.y});
         im.actors.push_back(std::move(a));
     }
+    im.script.set_scene(&im.stage, &im.hooks);
     im.ok = true;
     return true;
 }
@@ -772,6 +773,14 @@ bool Scene::frame(f64 t) {
     Pose scene;
     if (im.recorded && !im.script.frame(im.rec, &im.rig, t, im.doc.params, im.doc.seed, scene))
         return im.fail(im.script.error(), im.script.error_line());
+    return pose(t, im.recorded ? &im.rec : nullptr, scene);
+}
+
+bool Scene::pose(f64 t, const Recording* rec, const Pose& scene) {
+    Impl& im = *impl_;
+    if (!im.ok) return im.error.empty() ? im.fail("сцена не загружена") : false;
+    im.error.clear();
+    im.error_line = 0;
     // The scene's pose: its own parts' on the stage, its actors' over their clips.
     Pose stage;
     std::map<std::string, Pose> over; // by actor
@@ -799,7 +808,7 @@ bool Scene::frame(f64 t) {
     std::string why;
     for (const auto& a : im.actors) {
         Pose pose;
-        const ActorMoment m = im.recorded ? actor_moment(im.rec, a->id, t) : ActorMoment{};
+        const ActorMoment m = rec ? actor_moment(*rec, a->id, t) : ActorMoment{};
         if (m.play) {
             const std::map<std::string, f64> values = im.values(*a, *m.play);
             PoseScript* s = im.script_for(*a->character, values, why);
@@ -843,13 +852,19 @@ const SceneCharacter* Scene::character(std::string_view actor) const {
     return a ? a->character : nullptr;
 }
 
+bool Scene::actor_marks(const Recording& rec, std::vector<Mark>& out) {
+    out.clear();
+    std::string why;
+    if (!pixel::actor_marks(rec, *this, out, why)) return out.clear(), impl_->fail(why);
+    return true;
+}
+
 bool Scene::marks(std::vector<Mark>& out) {
     out.clear();
     Impl& im = *impl_;
     if (!im.recorded) return true;
     std::vector<Mark> theirs;
-    std::string why;
-    if (!actor_marks(im.rec, *this, theirs, why)) return im.fail(why);
+    if (!actor_marks(im.rec, theirs)) return false;
     out = im.rec.marks;
     out.insert(out.end(), theirs.begin(), theirs.end());
     std::stable_sort(out.begin(), out.end(), [](const Mark& a, const Mark& b) { return a.time < b.time; });

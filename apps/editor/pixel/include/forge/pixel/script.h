@@ -101,6 +101,10 @@ public:
     // `hooks`. False with error().
     bool record_scene(const Rig& rig, const Stage& stage, const SceneHooks& hooks, const std::map<std::string, f64>& values,
                       u64 seed, const MotionLengths& lengths, Recording& out);
+    // A scene's stage and hooks (Scene::load does it; null for none): from then on the scene is clip "scene" of
+    // clips(), and record(), recording() and pose() record and read it as a character's clip, with the rig given
+    // (the stage's). They live while this script uses them. Nothing for a script that is not a scene.
+    void set_scene(const Stage* stage, const SceneHooks* hooks);
     // Every call of the loaded code and the clip functions: what SiteRef file 0 points into.
     const CodeSites& code() const;
     // The calls of a module a recording required (SiteRef files past 0, by Recording::files); null when not read.

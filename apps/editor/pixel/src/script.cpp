@@ -597,6 +597,8 @@ bool PoseScript::load(std::string_view source) {
     im.has_pose = false;
     im.has_draw = false;
     im.scene = false;
+    im.bound_stage = nullptr;
+    im.bound_hooks = nullptr;
     im.drawings.clear();
     im.error.clear();
     im.error_line = 0;
@@ -758,6 +760,15 @@ ModuleReader animations_reader(std::filesystem::path game_dir) {
         return true;
     };
 }
+void PoseScript::set_scene(const Stage* stage, const SceneHooks* hooks) {
+    Impl& im = *impl_;
+    if (!im.ok || !im.scene) return;
+    im.bound_stage = stage && hooks ? stage : nullptr;
+    im.bound_hooks = stage && hooks ? hooks : nullptr;
+    im.clips.clear();
+    if (im.bound_stage) im.clips.push_back("scene");
+    im.cache.clear();
+}
 void PoseScript::set_lengths(std::string_view clip, const MotionLengths& lengths) {
     impl_->lengths[std::string(clip)] = lengths;
 }
@@ -826,7 +837,9 @@ bool PoseScript::record(const Rig* rig, std::string_view clip, const std::map<st
         im.error = "скрипт не загружен";
         return false;
     }
-    if (!std::binary_search(im.clips.begin(), im.clips.end(), clip)) {
+    if (im.scene && im.bound_stage && clip == "scene" && rig)
+        return record_scene(*rig, *im.bound_stage, *im.bound_hooks, values, seed, lengths, out);
+    if (im.scene || !std::binary_search(im.clips.begin(), im.clips.end(), clip)) {
         im.error = im.scene ? "это сцена: у неё нет клипов, её scene(p) записывается целиком"
                             : "в коде нет клипа «" + std::string(clip) + "»: clips = { " + std::string(clip) + " = function(p) … end }";
         return false;
