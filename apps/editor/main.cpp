@@ -26602,17 +26602,20 @@ return {
     // done again byte for byte; given again as it is: «Уже отдано так», no step. Undone; a picture «Скакун.svg» of the
     // game's own, a file of clips from another character and one that does not read refused with the files untouched,
     // then given. A clip that fails refused with its line; the code without the tint given over the pair, undone to the
-    // pair byte for byte. pixel-motion-m-again, from another working folder: the pair the same, as the library builds it
-    // there, «Уже отдано так». Then the game, with the mouse and the keys: in «Интерфейс» «Скакун» on the HUD from the
+    // pair byte for byte. Part 5ж: the code with the parameters height (how high «jump» goes) and count (its dust's
+    // copies), height typed 12 and given: the file of clips with them, «jump» by height, count fixed in it, said in the
+    // note; undone and done again. pixel-motion-m-again, from another working folder: the pair the same, as the library
+    // builds it there, «Уже отдано так». Then the game, with the mouse and the keys: in «Интерфейс» «Скакун» on the HUD from the
     // game's pictures and «Ёжик» from «Ресурсы» (a picture without clips); the own scheme of «Табличка» plays «idle» on
     // «Скакун» at the start and, on the message «приземлился», a clip on «Ёжик»; «Жук идёт за героем» with the author's
     // Luau plays «jump» (again while it goes, and once it ended), stops it in the air, plays «idle» twice as fast, takes
-    // the picture back to its file, plays «idle» again, «jump» round and round though its file has no loop, the same
-    // to the end of that lap, «idle» once, again once it ended (from 0), stops it, plays it again (from 0), twice as
+    // the picture back to its file, plays «idle» again, «jump» at height 16 round and round though its file has no loop,
+    // the same at the file's numbers to the end of that lap, «idle» once, again once it ended (from 0), stops it, plays it again (from 0), twice as
     // fast (on from where it is) and asks for a clip there is not, the file of clips written again by the scene with
     // «jump» named «hop» just before. «Играть со стартового»: the scene project with --edits ms_* compares each frame
     // of the clips with the tab's.
     int mm_step_ = 0;
+    usize mm_typed_ = 0; // part 5ж: the history's step after height was typed
     std::vector<u8> mm_doc_, mm_svg_, mm_motion_, mm_other_, mm_svg3_, mm_motion3_, mm_air_;
     std::string mm_label_;
     static constexpr const char* kMmRunner = R"lua(-- «Скакун»: на экран игры, части 5в и 5г. «Стоит» качается и топает, «Прыжок» прыгает, открывает рот, краснеет и пылит.
@@ -26680,6 +26683,13 @@ return {
         std::string list = "  drawings = {\n";
         for (const std::string& n : names) list += "    [\"" + n + "\"] = " + std::string(kMmAir) + ",\n";
         return mm_replaced(code, "  },\n}\n", "  },\n" + list + "  },\n}\n");
+    }
+    // Part 5ж: «Скакун» with the code's parameters: «jump» as high as height (the game changes it), its dust in count
+    // copies (the game cannot: other copies, other tracks). At height 10 and count 2 the same clip as before.
+    static std::string mm_params(const std::string& code) {
+        std::string c = mm_replaced(code, "return {\n", "return {\n  params = { height = 10, count = 2 },\n");
+        c = mm_replaced(c, "part(\"body\").y(-10, 0.2, \"out_quad\")", "part(\"body\").y(-p.height, 0.2, \"out_quad\")");
+        return mm_replaced(c, "copies(\"dust\", 2,", "copies(\"dust\", p.count,");
     }
     f32 mm_width(const char* id) {
         Rml::Element* e = ed_.find_element(id);
@@ -27071,7 +27081,6 @@ return {
             as().refresh();
             break;
         }
-        // The files, beside the games, for pixel-motion-m-again.
         case 20: {
             if (hold(px().code() == drawn && rec && !px().stale() && idle, "the code read again")) return true;
             if (wait(2)) return true;
@@ -27079,8 +27088,61 @@ return {
             check(built(why), "the three the ones the library builds of the files " + why);
             check(px_click("px-give-screen"), "«Отдать экрану»");
             check(px().note() == "Уже отдано так" && three_untouched(), "«" + px().note() + "», the three untouched");
+            check(put(as().abs(lua), mm_params(drawn)), "the code with the parameters height and count, written by another program");
+            as().refresh();
+            break;
+        }
+        // Part 5ж: height typed (12), then given: the file of clips anew with the parameters, the note says which a game
+        // changes and which not where; one step. The files, beside the games, for pixel-motion-m-again.
+        case 21: {
+            if (hold(px().code() == mm_params(drawn) && rec && !px().stale() && idle && shown("px-param-height") && shown("px-param-count"),
+                     "the code read again"))
+                return true;
+            if (wait(2)) return true;
+            check(input_value("px-param-height") == "10" && input_value("px-param-count") == "2" && px().problem().empty(),
+                  "its parameters height 10 and count 2: " + px().problem());
+            check(ue_type("px-param-height", "12") && px().doc().params == std::map<std::string, f64>{{"height", 12.0}} &&
+                      step_label() == "«Скакун»: height = 12",
+                  "height 12 typed: " + step_label());
+            mm_typed_ = an().history().cursor();
+            break;
+        }
+        case 22: {
+            if (hold(idle && !px().stale(), "«Ресурсы» have looked at the «.pixel.json»")) return true;
+            if (wait(2)) return true;
+            const usize typed = mm_typed_;
+            check(an().history().cursor() == typed, "nothing done since height was typed");
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            const std::string params_note = " Из игры меняются: height. Не меняются: count в «jump» (число переходов).";
+            check(px().note() == note_with("Скакун.air.svg") + blur_note + params_note && an().history().cursor() == typed + 1 && built(why),
+                  "given: «" + px().note() + "», one step " + why);
+            check(tg_bytes(svg) == mm_svg3_ && tg_bytes(air) == mm_air_ && tg_bytes(motion) != mm_motion3_,
+                  "«Скакун.svg» and «Скакун.air.svg» as they were, the file of clips anew");
+            const std::vector<u8> now = tg_bytes(motion);
+            vector::MotionFile f;
+            const bool read = vector::read_motion_file(std::string_view(reinterpret_cast<const char*>(now.data()), now.size()), f, why);
+            const vector::MotionClip* jump = read ? f.clip("jump") : nullptr;
+            const vector::MotionClip* idle_clip = read ? f.clip("idle") : nullptr;
+            usize by_height = 0;
+            for (const vector::MotionTrack& t : jump ? jump->tracks : std::vector<vector::MotionTrack>{})
+                for (const vector::MotionPiece& pc : t.pieces)
+                    for (const vector::MotionBy& b : pc.by) by_height += b.param == "height";
+            bool idle_by = false;
+            for (const vector::MotionTrack& t : idle_clip ? idle_clip->tracks : std::vector<vector::MotionTrack>{})
+                for (const vector::MotionPiece& pc : t.pieces) idle_by = idle_by || !pc.by.empty();
+            check(read && vector::motion_file_version(f) == 4 && f.params == std::vector<vector::MotionParam>{{"count", 2}, {"height", 12}} && jump && idle_clip &&
+                      jump->fixed == std::map<std::string, std::string>{{"count", "число переходов"}} && by_height > 0 && idle_clip->fixed.empty() &&
+                      !idle_by,
+                  "the file: version 4, count 2 and height 12 (by name); «jump» by height in " + std::to_string(by_height) +
+                      " pieces, count fixed; «idle» by none " + why);
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && an().history().cursor() == typed, "Ctrl+Z: the three as given before");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(built(why) && tg_bytes(motion) == now && an().history().cursor() == typed + 1, "Ctrl+Y: given with the parameters again " + why);
             const fs::path root = mo_root();
-            check(put_bytes(root / utf8_path("скакун.svg"), mm_svg3_) && put_bytes(root / utf8_path("скакун.motion.json"), mm_motion3_) &&
+            check(put_bytes(root / utf8_path("скакун.svg"), mm_svg3_) && put_bytes(root / utf8_path("скакун.motion.json"), now) &&
                       put_bytes(root / utf8_path("скакун.air.svg"), mm_air_) && put_bytes(root / utf8_path("скакун.luau"), file(lua)) &&
                       put_bytes(root / utf8_path("скакун.pixel.json"), file(doc)),
                   "the files, beside the games");
@@ -27363,7 +27425,7 @@ return {
     // Its moments are away from the steps of «idle» (each 0.5 s of it): a frame sooner or later hears the same.
     static constexpr const char* kMgCode =
         "-- «Скакун» на HUD: плавно прыгает, прыгает снова и замирает в воздухе, бежит вдвое быстрее, снова как в файле, стоит,\n"
-        "-- прыгает по кругу и допрыгивает этот круг, бежит один раз, снова, замирает, снова с начала, вдвое быстрее\n"
+        "-- прыгает выше по кругу и допрыгивает этот круг, бежит один раз, снова, замирает, снова с начала, вдвое быстрее\n"
         "-- и клип, которого нет.\n"
         "local ui = forge.ui\n"
         "forge.wait(1.2)\n"
@@ -27381,9 +27443,9 @@ return {
         "forge.wait(0.5)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"idle\")\n"
         "forge.wait(1)\n"
-        "ui.svg_play(\"hud\", \"Скакун\", \"jump\", true) -- по кругу, хотя в файле без повтора\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"jump\", { loop = true, params = { height = 16 } }) -- выше и по кругу, хотя в файле без повтора\n"
         "forge.wait(1)\n"
-        "ui.svg_play(\"hud\", \"Скакун\", \"jump\", false) -- до конца этого круга\n"
+        "ui.svg_play(\"hud\", \"Скакун\", \"jump\", false) -- до конца этого круга, как в файле\n"
         "forge.wait(0.5)\n"
         "ui.svg_play(\"hud\", \"Скакун\", \"idle\", { loop = false }) -- один раз\n"
         "forge.wait(0.7)\n"
@@ -27406,7 +27468,9 @@ return {
     // copy's while it is drawn), "clip k part morph share target" for each it morphs; part 5г: "clip k part value prop v
     // r g b a target n a b c d e f" (its value as the file has it, "-" for no target) for each track of a new property,
     // "clip k - copies id …" (the copies drawn) and "clip k - order part kind other …" (the steps up to then, "-" for no
-    // neighbour) when the clip has any. clips: «idle», «jump» in the file's order.
+    // neighbour) when the clip has any. clips: «idle», «jump» in the file's order. Part 5ж: the same of «jump» at height
+    // 16, as the author's code plays it, as «jump@height=16».
+    static inline const std::map<std::string, f64> kMgHigh{{"height", 16.0}};
     bool mm_tab(std::vector<std::string>& out, std::string& clips, std::string& why) {
         pixel::PixelDoc doc;
         pixel::Rig rig;
@@ -27422,8 +27486,29 @@ return {
         out.clear();
         clips.clear();
         char line[512];
+        // Each clip at the file's values, and «jump» at height 16 too.
+        struct Play {
+            const vector::MotionClip* clip;
+            std::string key;
+            std::map<std::string, f64> params;
+        };
+        std::vector<Play> plays;
         for (const vector::MotionClip& c : gift.motion.clips) {
             clips += (clips.empty() ? "«" : ", «") + c.name + "»";
+            plays.push_back({&c, c.name, doc.params});
+            if (c.name != "jump") continue;
+            Play high{&c, c.name, doc.params};
+            for (const auto& [name, value] : kMgHigh) {
+                std::ostringstream v;
+                v << value;
+                high.key += "@" + name + "=" + v.str();
+                high.params[name] = value;
+            }
+            plays.push_back(high);
+        }
+        for (const Play& play : plays) {
+            const vector::MotionClip& c = *play.clip;
+            const char* key = play.key.c_str();
             std::set<std::string> moved, morphed;
             std::set<std::pair<std::string, vector::MotionProp>> valued;
             for (const vector::MotionTrack& t : c.tracks) {
@@ -27435,7 +27520,7 @@ return {
             for (usize k = 0; k <= n; ++k) {
                 const f64 t = std::min(vector::motion_frame_moment(0, k), c.length);
                 pixel::Pose pose;
-                if (!script.pose(rig, t, c.name, doc.params, doc.seed, pose)) return why = script.error(), false;
+                if (!script.pose(rig, t, c.name, play.params, doc.seed, pose)) return why = script.error(), false;
                 if (!rig.pose(pose, why)) return false;
                 // Part 5д: the parts as they stand in the drawing shown (in a swap the one it goes to), and which it is.
                 const pixel::Rig& shown = rig.shown();
@@ -27446,37 +27531,37 @@ return {
                         if (d.id == id) index = d.index;
                     if (index < 0) continue; // a copy not born yet, a part this drawing has not
                     const pixel::Affine m = shown.matrix(index);
-                    std::snprintf(line, sizeof(line), "%s %zu %s %.17g %.17g %.17g %.17g %.17g %.17g", c.name.c_str(), k, id.c_str(), m.a, m.b, m.c,
+                    std::snprintf(line, sizeof(line), "%s %zu %s %.17g %.17g %.17g %.17g %.17g %.17g", key, k, id.c_str(), m.a, m.b, m.c,
                                   m.d, m.e, m.f);
                     out.push_back(line);
                 }
                 for (const auto& [id, prop] : valued) {
                     const vector::MotionValue v = vector::motion_plain(prop, pixel::screen_value(pose, id, prop));
-                    std::snprintf(line, sizeof(line), "%s %zu %s value %s %.17g %u %u %u %u %s %.17g %.17g %.17g %.17g %.17g %.17g %.17g", c.name.c_str(), k,
+                    std::snprintf(line, sizeof(line), "%s %zu %s value %s %.17g %u %u %u %u %s %.17g %.17g %.17g %.17g %.17g %.17g %.17g", key, k,
                                   id.c_str(), vector::motion_prop_word(prop), v.v, v.color.r, v.color.g, v.color.b, v.color.a,
                                   v.target.empty() ? "-" : v.target.c_str(), v.n, v.m.a, v.m.b, v.m.c, v.m.d, v.m.e, v.m.f);
                     out.push_back(line);
                 }
                 if (!c.copies.empty()) {
-                    std::string l = c.name + " " + std::to_string(k) + " - copies";
+                    std::string l = play.key + " " + std::to_string(k) + " - copies";
                     for (const pixel::PartCopy& d : pose.copies) l += " " + d.id;
                     out.push_back(l);
                 }
                 if (!c.order.empty()) {
                     static const char* kKinds[] = {"top", "bottom", "above", "below"};
-                    std::string l = c.name + " " + std::to_string(k) + " - order";
+                    std::string l = play.key + " " + std::to_string(k) + " - order";
                     for (const pixel::OrderStep& o : pose.order)
                         l += " " + o.part + " " + kKinds[static_cast<usize>(o.kind)] + " " + (o.other.empty() ? std::string("-") : o.other);
                     out.push_back(l);
                 }
                 if (std::any_of(c.tracks.begin(), c.tracks.end(), [](const vector::MotionTrack& tr) { return tr.prop == vector::MotionProp::Drawing; })) {
-                    std::snprintf(line, sizeof(line), "%s %zu - drawing %s %d %s %.17g", c.name.c_str(), k, pose.drawing.empty() ? "draw" : pose.drawing.c_str(),
+                    std::snprintf(line, sizeof(line), "%s %zu - drawing %s %d %s %.17g", key, k, pose.drawing.empty() ? "draw" : pose.drawing.c_str(),
                                   pose.swap ? 1 : 0, pose.swap_from.empty() ? "draw" : pose.swap_from.c_str(), pose.swap ? pose.swap_k : 0.0);
                     out.push_back(line);
                 }
                 for (const std::string& id : morphed) {
                     const vector::MotionValue v = pixel::screen_value(pose, id, vector::MotionProp::Morph);
-                    std::snprintf(line, sizeof(line), "%s %zu %s morph %.17g %s", c.name.c_str(), k, id.c_str(), v.v, v.target.c_str());
+                    std::snprintf(line, sizeof(line), "%s %zu %s morph %.17g %s", key, k, id.c_str(), v.v, v.target.c_str());
                     out.push_back(line);
                 }
             }

@@ -226,6 +226,7 @@ struct GameScreens::Impl : Rml::EventListener {
         std::shared_ptr<const vector::MotionFile> file;
         std::shared_ptr<const Drawings> drawings;
         std::shared_ptr<const vector::MotionClip> clip;
+        std::map<std::string, f64> params; // the old clip's, as given (part 5ж)
         f64 played = 0, speed = 1;
         bool loop = false;
         ui::SvgPose still;
@@ -1439,6 +1440,7 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
                 blend.file = p->file;
                 blend.drawings = p->drawings;
                 blend.clip = p->clip;
+                blend.params = p->params;
                 blend.played = p->played;
                 blend.speed = p->speed;
                 blend.loop = p->loop;
@@ -1494,11 +1496,13 @@ bool GameScreens::svg_clip(std::string_view screen, std::string_view layer, Scre
         for (const Impl::Playing& p : impl_->playing)
             if (p.element.get() == e) {
                 out.clip = p.clip->name;
+                out.params = p.params;
                 out.time = vector::motion_clip_time(*p.clip, p.played, p.loop);
                 out.going = p.going;
                 out.blend = Impl::blend_share(p);
                 if (out.blend < 1 && p.blend.live) {
                     out.from_clip = p.blend.clip->name;
+                    out.from_params = p.blend.params;
                     out.from_time = vector::motion_clip_time(*p.blend.clip, p.blend.played, p.blend.loop);
                 }
                 return true;

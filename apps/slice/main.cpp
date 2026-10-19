@@ -9134,6 +9134,7 @@ private:
             u32 frames = 0, compared = 0, off = 0, pause_frames = 0, jump_laps = 0, landed = 0; // landed: the messages «приземлился»
             u32 swapped = 0; // part 5д: frames compared in a swap of drawings
             u32 blended = 0, start_blend = 0, jump_blend = 0; // part 5е: frames compared in a blend of clips, at the start, into «jump»
+            u32 high = 0;                                    // part 5ж: frames compared of a clip at the code's parameters
             f64 from_last = -1;                              // «idle»'s moment in the last frame of the blend into «jump»
             bool blend_drawn = false;
             std::shared_ptr<vector::MotionFile> file; // the file of clips and the drawings as the game read them first
@@ -9218,14 +9219,32 @@ private:
                        b.swap_from + "» на " + std::to_string(b.swap_k);
             return {};
         };
-        auto compare = [this, tab, st, pose_differs](Rml::Element* el, const game::ScreenClip& c) {
+        // Part 5ж: a clip played at parameters is the tab's «clip@name=value» (the values as given, by name), and the file's
+        // clip at those values.
+        auto keyed = [](const std::string& clip, const std::map<std::string, f64>& params) {
+            std::string k = clip;
+            for (const auto& [name, value] : params) {
+                std::ostringstream v;
+                v << value;
+                k += "@" + name + "=" + v.str();
+            }
+            return k;
+        };
+        auto clip_at = [st](const std::string& name, const std::map<std::string, f64>& params) -> std::shared_ptr<const vector::MotionClip> {
+            const vector::MotionClip* base = st->file ? st->file->clip(name) : nullptr;
+            if (!base) return nullptr;
+            std::vector<vector::MotionParam> values;
+            for (const auto& [n, v] : params) values.push_back({n, v});
+            return std::make_shared<const vector::MotionClip>(vector::motion_clip_with(*st->file, *base, values));
+        };
+        auto compare = [this, tab, st, pose_differs, keyed, clip_at](Rml::Element* el, const game::ScreenClip& c) {
             const forge::ui::SvgPose* pose = forge::ui::svg_posed(el);
             // Part 5е: in a blend, the blend of the clip it comes from at its moment (or of the picture at rest) and the clip
             // at its moment.
             if (c.blend < 1) {
                 std::string why;
-                const vector::MotionClip* to = st->file ? st->file->clip(c.clip) : nullptr;
-                const vector::MotionClip* from = st->file && !c.from_clip.empty() ? st->file->clip(c.from_clip) : nullptr;
+                const std::shared_ptr<const vector::MotionClip> to = clip_at(c.clip, c.params);
+                const std::shared_ptr<const vector::MotionClip> from = c.from_clip.empty() ? nullptr : clip_at(c.from_clip, c.from_params);
                 if (!pose || !to || (!c.from_clip.empty() && !from)) why = "смена клипов без позы или без клипа в файле";
                 else {
                     forge::ui::SvgPose old;
@@ -9241,7 +9260,8 @@ private:
             }
             const f64 at = c.time * 120;
             const usize k = static_cast<usize>(std::llround(at));
-            const std::string key = c.clip + " " + std::to_string(k);
+            const std::string key = keyed(c.clip, c.params) + " " + std::to_string(k);
+            st->high += !c.params.empty();
             std::string why;
             if (std::fabs(at - static_cast<f64>(k)) > 1e-6) why = "миг клипа " + std::to_string(c.time) + " с не на 120-й доле секунды";
             else if (!pose || pose->picture != "Скакун.svg") why = "слой не показывает позы клипа";
@@ -9374,6 +9394,18 @@ private:
                                   vector::read_motion_file(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), *file, why);
                 check(read, "файл клипов читается: " + why);
                 if (read) st->file = file;
+                // Part 5ж: the tab's «jump» at height 16 is another than at the file's: its body higher at the top.
+                usize higher = 0, frames = 0;
+                for (const auto& [at_part, m] : tab->matrix) {
+                    if (at_part.rfind("jump@height=16 ", 0) != 0) continue;
+                    ++frames;
+                    const auto plain = tab->matrix.find("jump " + at_part.substr(std::string("jump@height=16 ").size()));
+                    higher += plain != tab->matrix.end() && plain->second != m;
+                }
+                check(frames > 0 && higher > 0 && file->param("height") && file->param("height")->value == 12,
+                      "у вкладки кадры «jump» на высоте 16 (" + std::to_string(frames) + ", другие у " + std::to_string(higher) +
+                          "), в файле height 12");
+                FORGE_INFO("self-test: у вкладки кадров «jump» при height 16: %zu, другие, чем при 12: %zu", frames, higher);
                 for (const vector::MotionDrawing& d : file->drawings) {
                     check(read_file(pic.parent_path() / utf8_path(d.picture), bytes), "рисунок «" + d.picture + "» читается");
                     st->drawings.push_back({d.name, d.picture, std::make_shared<const std::string>(bytes.begin(), bytes.end())});
@@ -9478,14 +9510,17 @@ private:
             if (in(3.65, 4.55)) check(has && c.clip == "idle" && c.going && (lap(1.0 / 60) || c.time == 0), "в 3,6 с снова «idle»");
             if (in(4.65, 4.7)) sounds(3, 9, "снова «idle» прошёл 0, 0,5 и 1 с, на паузе тоже");
             // «jump» round and round from 4.6 s, though its file has no loop: its mark at each lap (5 and 5,4 s).
+            // Part 5ж: at height 16, which the tab's frames of «jump@height=16» show; from 5,6 s at the file's numbers.
             if (in(4.65, 5.55)) {
                 check(has && c.clip == "jump" && c.going && c.time < 0.4 && lap(1.0 / 60, 0.4), "в 4,6 с «jump» по кругу: " + std::to_string(c.time));
+                check(has && c.params == std::map<std::string, f64>{{"height", 16.0}}, "в 4,6 с «jump» с height 16");
                 st->jump_laps += same_clip && c.clip == "jump" && step < 0;
             }
             if (in(5.45, 5.55))
                 check(st->jump_laps == 2 && st->landed == 3, "«jump» прошёл два круга, метка — на каждом: сообщений " + std::to_string(st->landed));
             // At 5.6 s without the loop: on to the end of that lap (5,8 s) and held there, the mark once more.
             if (in(5.65, 5.75)) check(has && c.clip == "jump" && c.going && c.time > 0.2 && lap(1.0 / 60, 0.4) && step > 0, "в 5,6 с «jump» идёт дальше, не с начала");
+            if (in(5.65, 6.05)) check(has && c.params.empty(), "в 5,6 с «jump» без параметров: числа файла");
             if (in(5.85, 6.05)) {
                 check(has && c.clip == "jump" && c.going && c.time == 0.4, "«jump» дошёл до конца круга и стоит: " + std::to_string(c.time));
                 check(st->landed == 4, "в конце круга метка ещё раз: сообщений " + std::to_string(st->landed));
@@ -9571,8 +9606,9 @@ private:
             check(st->off == 0 && st->compared >= 200, std::to_string(st->compared) + " кадров с клипом сверены с вкладкой, расходятся " +
                                                            std::to_string(st->off) + (st->first_off.empty() ? "" : ", первый " + st->first_off));
             check(!tab->shown.empty() && st->swapped >= 10, "смена рисунка «Скакуна»: " + std::to_string(st->swapped) + " кадров в смене сверены с вкладкой");
-            FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, %u из них в смене рисунка, %u в смене клипов, шагов %u", st->compared,
-                       st->swapped, st->blended, snd.clicks());
+            check(st->high >= 50, "«jump» при height 16: " + std::to_string(st->high) + " кадров сверены с вкладкой при нём");
+            FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, %u из них в смене рисунка, %u в смене клипов, %u при height 16, шагов %u",
+                       st->compared, st->swapped, st->blended, st->high, snd.clicks());
             // Part 5г: a clip naming a part the picture has not is refused, with the part and what names it; the picture
             // read again once it changed, it plays.
             const std::filesystem::path picture = s.game_dir() / utf8_path(e.ms_file);

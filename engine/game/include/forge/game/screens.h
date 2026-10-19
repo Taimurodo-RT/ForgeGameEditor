@@ -126,13 +126,16 @@ struct ScreenSvg {
 
 // A clip of a character a layer's picture plays (part 5в of docs/models/движение-модель.md): the clip, where it is
 // (seconds of the clip) and whether it goes on. Part 5е: how far a blend into it is (1: none, or over); the clip it
-// blends from while that goes on, and its moment ("" when the blend is from a still pose).
+// blends from while that goes on, and its moment ("" when the blend is from a still pose). Part 5ж: the parameters each
+// plays at, as given.
 struct ScreenClip {
     std::string clip;
+    std::map<std::string, f64> params;
     f64 time = 0;
     bool going = false;
     f64 blend = 1;
     std::string from_clip;
+    std::map<std::string, f64> from_params;
     f64 from_time = 0;
 };
 
