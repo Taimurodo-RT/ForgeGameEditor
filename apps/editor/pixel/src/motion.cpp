@@ -75,7 +75,10 @@ struct World {
             f64* fields[] = {&pp.x, &pp.y, &pp.rot, &pp.scale, &pp.sx, &pp.sy, &pp.skew_x, &pp.skew_y};
             for (usize i = 0; i < std::size(fields); ++i) {
                 const i32 tr = rec.track(part, static_cast<Prop>(i));
-                if (tr < 0) continue;
+                if (tr < 0) {
+                    if (const StartValue* sv = start_value(rec, part, static_cast<Prop>(i))) *fields[i] = sv->value.v; // part 5б
+                    continue;
+                }
                 PropValue v;
                 if (!sample(rec, static_cast<u32>(tr), t, eval, v, why)) return false;
                 *fields[i] = v.v;
@@ -98,17 +101,22 @@ struct World {
             const auto part = static_cast<u32>(named - rec.parts.begin());
             const i32 lt = rec.track(part, Prop::Link);
             const i32 d = lt < 0 ? -1 : deciding_block(rec, static_cast<u32>(lt), t);
+            const PropValue* link = nullptr;
             if (d >= 0) {
                 if (ensure && !ensure(self, static_cast<u32>(d))) return false;
                 const Block& lb = rec.blocks[static_cast<usize>(d)];
                 c = lb.carry;
-                if (lb.value.v > 0) {
-                    const i32 tb = bone_of(rec, lb.value.target);
-                    Affine w;
-                    if (tb < 0) return why = "у записи нет кости части «" + lb.value.target + "»", false;
-                    if (!at(static_cast<u32>(tb), t, w, depth + 1)) return false;
-                    c = w * c;
-                }
+                link = &lb.value;
+            } else if (const StartValue* sv = start_value(rec, part, Prop::Link)) { // part 5б
+                c = sv->carry;
+                link = &sv->value;
+            }
+            if (link && link->v > 0) {
+                const i32 tb = bone_of(rec, link->target);
+                Affine w;
+                if (tb < 0) return why = "у записи нет кости части «" + link->target + "»", false;
+                if (!at(static_cast<u32>(tb), t, w, depth + 1)) return false;
+                c = w * c;
             }
         }
         out = c * parent;
@@ -137,18 +145,23 @@ struct LinkPass {
         const i32 tr = rec.track(b.part, Prop::Link);
         const std::vector<u32>& on = rec.tracks[static_cast<usize>(tr)].blocks;
         const auto it = std::find(on.begin(), on.end(), i);
+        const PropValue* link = nullptr;
         if (it != on.begin()) {
             const u32 p = *(it - 1);
             if (!ensure(p)) return false;
             const Block& pb = rec.blocks[p];
             before = pb.carry;
-            if (pb.value.v > 0) {
-                const i32 tb = bone_of(rec, pb.value.target);
-                Affine wt;
-                if (tb < 0) return why = "у записи нет кости части «" + pb.value.target + "»", false;
-                if (!w.at(static_cast<u32>(tb), b.start, wt)) return false;
-                before = wt * before;
-            }
+            link = &pb.value;
+        } else if (const StartValue* sv = start_value(rec, b.part, Prop::Link)) { // part 5б
+            before = sv->carry;
+            link = &sv->value;
+        }
+        if (link && link->v > 0) {
+            const i32 tb = bone_of(rec, link->target);
+            Affine wt;
+            if (tb < 0) return why = "у записи нет кости части «" + link->target + "»", false;
+            if (!w.at(static_cast<u32>(tb), b.start, wt)) return false;
+            before = wt * before;
         }
         if (b.value.v > 0) {
             const i32 tb = bone_of(rec, b.value.target);
@@ -363,6 +376,14 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why) {
     for (Recording::Track& t : rec.tracks)
         std::stable_sort(t.blocks.begin(), t.blocks.end(),
                          [&](u32 a, u32 b) { return before(rec.blocks[a], rec.blocks[b]); });
+    // Where start_from left the parts (part 5б).
+    rec.start_of.assign(rec.parts.size() * kPropCount, -1);
+    for (usize i = 0; i < rec.start.values.size(); ++i) {
+        const StartValue& sv = rec.start.values[i];
+        const auto named = std::find(rec.parts.begin(), rec.parts.end(), sv.part);
+        if (named == rec.parts.end()) return why = "start_from: у записи нет части «" + sv.part + "»", false;
+        rec.start_of[static_cast<usize>(named - rec.parts.begin()) * kPropCount + static_cast<usize>(sv.prop)] = static_cast<i32>(i);
+    }
 
     // Blocks and saves in the order of time, each from where its track is by then.
     struct Event {
@@ -384,7 +405,7 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why) {
             for (usize p = 0; p < kPropCount; ++p) {
                 const i32 ti = rec.track(s.part, static_cast<Prop>(p));
                 const i32 li = ti >= 0 ? last[static_cast<usize>(ti)] : -1;
-                if (li < 0) s.values[p] = rest_value(static_cast<Prop>(p));
+                if (li < 0) s.values[p] = first_value(rec, s.part, static_cast<Prop>(p));
                 else if (!block_value(rec, rec.blocks[static_cast<usize>(li)], s.time, eval, s.values[p], why)) return false;
             }
             continue;
@@ -392,7 +413,7 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why) {
         Block& b = rec.blocks[e.index];
         const i32 ti = rec.track(b.part, b.prop);
         const i32 li = last[static_cast<usize>(ti)];
-        if (li < 0) b.from = rest_value(b.prop);
+        if (li < 0) b.from = first_value(rec, b.part, b.prop);
         else if (!block_value(rec, rec.blocks[static_cast<usize>(li)], b.start, eval, b.from, why)) return false;
         switch (b.to) {
         case Block::To::Value: b.end = b.value; break;
@@ -460,10 +481,100 @@ bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue
     if (track >= rec.tracks.size()) return why = "нет такой дорожки", false;
     const i32 d = deciding_block(rec, track, t);
     if (d < 0) {
-        out = rest_value(rec.tracks[track].prop);
+        out = first_value(rec, rec.tracks[track].part, rec.tracks[track].prop);
         return true;
     }
     return block_value(rec, rec.blocks[static_cast<usize>(d)], snap_time(t), eval, out, why);
+}
+
+namespace {
+
+// A property's value into the frame: all but the link, the order and the drawing, which have more than a value.
+void put(Pose& out, const std::string& id, Prop prop, const PropValue& v) {
+    if (prop == Prop::Morph) {
+        if (v.v > 0) out.morphs[id] = {v.target, v.v};
+        return;
+    }
+    PartPose& pp = out.parts[id];
+    switch (prop) {
+    case Prop::X: pp.x = v.v; break;
+    case Prop::Y: pp.y = v.v; break;
+    case Prop::Rot: pp.rot = v.v; break;
+    case Prop::Scale: pp.scale = v.v; break;
+    case Prop::Sx: pp.sx = v.v; break;
+    case Prop::Sy: pp.sy = v.v; break;
+    case Prop::SkewX: pp.skew_x = v.v; break;
+    case Prop::SkewY: pp.skew_y = v.v; break;
+    case Prop::Opacity: pp.opacity = v.v; break;
+    case Prop::Fill:
+        pp.has_fill = v.v > 0;
+        pp.fill = v.color;
+        pp.fill_k = v.v;
+        break;
+    case Prop::Stroke:
+        pp.has_stroke = v.v > 0;
+        pp.stroke = v.color;
+        pp.stroke_k = v.v;
+        break;
+    case Prop::StrokeWidth:
+        pp.has_stroke_width = v.v > 0;
+        pp.stroke_width = v.n;
+        pp.stroke_width_k = v.v;
+        break;
+    case Prop::Dash: pp.dash = v.v; break;
+    case Prop::DrawFrom: pp.draw_from = v.v; break;
+    case Prop::DrawTo: pp.draw_to = v.v; break;
+    case Prop::Visible: pp.visible = v.v > 0; break;
+    case Prop::Tint:
+        pp.has_tint = v.v > 0;
+        pp.tint = v.color;
+        pp.tint_k = v.v;
+        break;
+    case Prop::Flash: pp.flash = std::clamp(v.v, 0.0, 1.0); break; // back and springs overshoot: held in 0 … 1
+    case Prop::FlashColor:
+        pp.has_flash_color = v.v > 0;
+        pp.flash_color = v.color;
+        pp.flash_color_k = v.v;
+        break;
+    case Prop::Blur: pp.blur = std::max(v.v, 0.0); break;
+    case Prop::Shadow:
+        pp.has_shadow = v.v > 0;
+        pp.shadow = v.color;
+        pp.shadow_k = v.v;
+        break;
+    case Prop::ShadowX: pp.shadow_x = v.v; break;
+    case Prop::ShadowY: pp.shadow_y = v.v; break;
+    case Prop::ShadowBlur: pp.shadow_blur = std::max(v.v, 0.0); break;
+    case Prop::Mask:
+        pp.mask = v.v > 0 ? v.target : std::string();
+        pp.mask_invert = v.v > 1;
+        break;
+    case Prop::Morph:
+    case Prop::Link:
+    case Prop::Order:
+    case Prop::Drawing: break;
+    }
+}
+
+void put_link(Pose& out, const std::string& id, const PropValue& v, const Affine& carry) {
+    PartPose& pp = out.parts[id];
+    pp.carry_by = v.v > 0 ? v.target : std::string();
+    pp.carry = carry;
+}
+
+std::string drawing_name(const PropValue& v) { return v.target == "draw" ? std::string() : v.target; }
+
+} // namespace
+
+const StartValue* start_value(const Recording& rec, u32 part, Prop p) {
+    const usize i = part * kPropCount + static_cast<usize>(p);
+    const i32 s = i < rec.start_of.size() ? rec.start_of[i] : -1;
+    return s >= 0 && static_cast<usize>(s) < rec.start.values.size() ? &rec.start.values[static_cast<usize>(s)] : nullptr;
+}
+
+PropValue first_value(const Recording& rec, u32 part, Prop p) {
+    const StartValue* sv = start_value(rec, part, p);
+    return sv ? sv->value : rest_value(p);
 }
 
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why) {
@@ -482,97 +593,48 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
         const Recording::Track& tr = rec.tracks[i];
         if (tr.prop == Prop::Order) continue; // all calls of all parts up to t, below
         if (tr.part < unborn.size() && unborn[tr.part]) continue;
+        const std::string& id = rec.parts[tr.part];
         if (tr.prop == Prop::Drawing) {
             // The drawing shown, and in a swap's block the one before it and how far (part 4д); "draw" is the main one.
             const i32 d = deciding_block(rec, i, t);
-            if (d < 0) continue;
+            if (d < 0) {
+                out.drawing = drawing_name(first_value(rec, tr.part, Prop::Drawing)); // where start_from left it (part 5б)
+                continue;
+            }
             const Block& b = rec.blocks[static_cast<usize>(d)];
-            auto name = [](const PropValue& v) { return v.target == "draw" ? std::string() : v.target; };
             const f64 k = block_share(rec, b, at);
-            out.drawing = name(k >= 1 ? b.end : b.from);
-            if (k > 0 && k < 1 && name(b.from) != name(b.end)) {
-                out.drawing = name(b.end);
+            out.drawing = drawing_name(k >= 1 ? b.end : b.from);
+            if (k > 0 && k < 1 && drawing_name(b.from) != drawing_name(b.end)) {
+                out.drawing = drawing_name(b.end);
                 out.swap = true;
-                out.swap_from = name(b.from);
+                out.swap_from = drawing_name(b.from);
                 out.swap_k = k;
             }
             continue;
         }
-        PropValue v;
-        if (!sample(rec, i, t, eval, v, why)) return false;
-        const std::string& id = rec.parts[tr.part];
-        if (tr.prop == Prop::Morph) {
-            if (v.v > 0) out.morphs[id] = {v.target, v.v};
+        if (tr.prop == Prop::Link) {
+            const i32 d = deciding_block(rec, i, t);
+            if (d >= 0) put_link(out, id, rec.blocks[static_cast<usize>(d)].value, rec.blocks[static_cast<usize>(d)].carry);
+            else if (const StartValue* sv = start_value(rec, tr.part, Prop::Link)) put_link(out, id, sv->value, sv->carry);
             continue;
         }
-        PartPose& pp = out.parts[id];
-        switch (tr.prop) {
-        case Prop::X: pp.x = v.v; break;
-        case Prop::Y: pp.y = v.v; break;
-        case Prop::Rot: pp.rot = v.v; break;
-        case Prop::Scale: pp.scale = v.v; break;
-        case Prop::Sx: pp.sx = v.v; break;
-        case Prop::Sy: pp.sy = v.v; break;
-        case Prop::SkewX: pp.skew_x = v.v; break;
-        case Prop::SkewY: pp.skew_y = v.v; break;
-        case Prop::Opacity: pp.opacity = v.v; break;
-        case Prop::Fill:
-            pp.has_fill = v.v > 0;
-            pp.fill = v.color;
-            pp.fill_k = v.v;
-            break;
-        case Prop::Stroke:
-            pp.has_stroke = v.v > 0;
-            pp.stroke = v.color;
-            pp.stroke_k = v.v;
-            break;
-        case Prop::StrokeWidth:
-            pp.has_stroke_width = v.v > 0;
-            pp.stroke_width = v.n;
-            pp.stroke_width_k = v.v;
-            break;
-        case Prop::Dash: pp.dash = v.v; break;
-        case Prop::DrawFrom: pp.draw_from = v.v; break;
-        case Prop::DrawTo: pp.draw_to = v.v; break;
-        case Prop::Visible: pp.visible = v.v > 0; break;
-        case Prop::Tint:
-            pp.has_tint = v.v > 0;
-            pp.tint = v.color;
-            pp.tint_k = v.v;
-            break;
-        case Prop::Flash: pp.flash = std::clamp(v.v, 0.0, 1.0); break; // back and springs overshoot: held in 0 … 1
-        case Prop::FlashColor:
-            pp.has_flash_color = v.v > 0;
-            pp.flash_color = v.color;
-            pp.flash_color_k = v.v;
-            break;
-        case Prop::Blur: pp.blur = std::max(v.v, 0.0); break;
-        case Prop::Shadow:
-            pp.has_shadow = v.v > 0;
-            pp.shadow = v.color;
-            pp.shadow_k = v.v;
-            break;
-        case Prop::ShadowX: pp.shadow_x = v.v; break;
-        case Prop::ShadowY: pp.shadow_y = v.v; break;
-        case Prop::ShadowBlur: pp.shadow_blur = std::max(v.v, 0.0); break;
-        case Prop::Mask:
-            pp.mask = v.v > 0 ? v.target : std::string();
-            pp.mask_invert = v.v > 1;
-            break;
-        case Prop::Link: {
-            const i32 d = deciding_block(rec, i, t);
-            if (d < 0) break;
-            const Block& lb = rec.blocks[static_cast<usize>(d)];
-            pp.carry_by = lb.value.v > 0 ? lb.value.target : std::string();
-            pp.carry = lb.carry;
-            break;
-        }
-        case Prop::Morph:
-        case Prop::Order:
-        case Prop::Drawing: break;
-        }
+        PropValue v;
+        if (!sample(rec, i, t, eval, v, why)) return false;
+        put(out, id, tr.prop, v);
     }
-    // The order: from the SVG's, every call up to t in the order of time (start, then order).
+    // What start_from left where no track moves it (part 5б).
+    for (const StartValue& sv : rec.start.values) {
+        const auto named = std::find(rec.parts.begin(), rec.parts.end(), sv.part);
+        if (named == rec.parts.end() || sv.prop == Prop::Order) continue;
+        const auto part = static_cast<u32>(named - rec.parts.begin());
+        if (rec.track(part, sv.prop) >= 0) continue;
+        if (sv.prop == Prop::Drawing) out.drawing = drawing_name(sv.value);
+        else if (sv.prop == Prop::Link) put_link(out, sv.part, sv.value, sv.carry);
+        else put(out, sv.part, sv.prop, sv.value);
+    }
+    // The order: from the SVG's, what start_from left, then every call up to t in the order of time (start, then
+    // order).
+    out.order.insert(out.order.end(), rec.start.order.begin(), rec.start.order.end());
     std::vector<u32> calls;
     for (u32 i = 0; i < rec.blocks.size(); ++i)
         if (rec.blocks[i].prop == Prop::Order && rec.blocks[i].start <= at && !(rec.blocks[i].part < unborn.size() && unborn[rec.blocks[i].part]))
@@ -584,6 +646,63 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
         step.part = rec.parts[b.part];
         step.kind = static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(b.value.v), 0, 3));
         step.other = b.value.target;
+        out.order.push_back(std::move(step));
+    }
+    return true;
+}
+
+bool end_pose(const Recording& rec, BindingEval* eval, StartPose& out, std::string& why) {
+    out = {};
+    out.clip = rec.clip;
+    const f64 t = snap_time(rec.length);
+    auto is_copy = [&](const std::string& id) { return copy_of(rec, id) >= 0; };
+    for (u32 part = 0; part < rec.parts.size(); ++part) {
+        const std::string& id = rec.parts[part];
+        if (is_copy(id)) continue; // a copy is the clip's own (part 4г)
+        for (usize p = 0; p < kPropCount; ++p) {
+            const Prop prop = static_cast<Prop>(p);
+            if (prop == Prop::Order) continue; // below
+            const i32 tr = rec.track(part, prop);
+            StartValue sv{id, prop, {}, {}};
+            if (tr < 0) {
+                const StartValue* s = start_value(rec, part, prop);
+                if (!s) continue;
+                sv = *s;
+            } else if (prop == Prop::Link || prop == Prop::Drawing) {
+                const i32 d = deciding_block(rec, static_cast<u32>(tr), t);
+                if (d < 0) {
+                    const StartValue* s = start_value(rec, part, prop);
+                    if (!s) continue;
+                    sv = *s;
+                } else if (prop == Prop::Link) {
+                    sv.value = rec.blocks[static_cast<usize>(d)].value;
+                    sv.carry = rec.blocks[static_cast<usize>(d)].carry;
+                } else {
+                    // The drawing the frame shows: in a swap, the one it goes to.
+                    const Block& b = rec.blocks[static_cast<usize>(d)];
+                    sv.value = block_share(rec, b, t) > 0 ? b.end : b.from;
+                }
+            } else if (!sample(rec, static_cast<u32>(tr), t, eval, sv.value, why)) {
+                return false;
+            }
+            if (sv.value == rest_value(prop) && sv.carry == Affine{}) continue;
+            out.values.push_back(std::move(sv));
+        }
+    }
+    // The order: what it started from, then its calls up to the end; none of a copy (its neighbour is a part of the
+    // picture: above and below name no copy).
+    for (const OrderStep& o : rec.start.order) out.order.push_back(o);
+    std::vector<u32> calls;
+    for (u32 i = 0; i < rec.blocks.size(); ++i)
+        if (rec.blocks[i].prop == Prop::Order && rec.blocks[i].start <= t) calls.push_back(i);
+    std::stable_sort(calls.begin(), calls.end(), [&](u32 a, u32 b) { return before(rec.blocks[a], rec.blocks[b]); });
+    for (u32 i : calls) {
+        const Block& b = rec.blocks[i];
+        OrderStep step;
+        step.part = rec.parts[b.part];
+        step.kind = static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(b.value.v), 0, 3));
+        step.other = b.value.target;
+        if (is_copy(step.part)) continue;
         out.order.push_back(std::move(step));
     }
     return true;

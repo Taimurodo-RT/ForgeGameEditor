@@ -1497,6 +1497,12 @@
                         <div id="px-range-to" class="px-edge" title="Конец диапазона (N): тяните по кадрам" data-attr-style="px_range_to"/>
                     </div>
                 </div>
+                <div class="px-tl-row row" data-if="px_start != ''">
+                    <span class="px-tl-name">Начало</span>
+                    <div id="px-starts" class="px-tl-time">
+                        <div id="px-start" class="px-flag" data-attr-style="px_start_style" data-attr-title="px_start_title" data-event-dblclick="px_start_code()"><span>{{ px_start }}</span></div>
+                    </div>
+                </div>
                 <div class="px-tl-row row" data-if="px_flags.size > 0">
                     <span class="px-tl-name">События</span>
                     <div id="px-events" class="px-tl-time">

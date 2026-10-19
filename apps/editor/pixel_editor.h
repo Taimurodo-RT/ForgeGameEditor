@@ -218,6 +218,8 @@ public:
     // A time event's line in the panel (a double click on its flag); the playhead on its flag (the middle button).
     bool flag_to_code(usize event);
     void playhead_to_flag(usize event);
+    // The line of the clip's start_from in the panel (a double click on the flag «из …» at 0, part 5б).
+    bool start_to_code();
     // Where a moment of the clip is on the timeline, the window's pixels; false when it is not laid out.
     bool timeline_x(f64 t, f32& x) const;
 
@@ -555,6 +557,7 @@ private:
     // Part 3а (pixel_motion.cpp).
     void bind_motion(Rml::DataModelConstructor& model);
     const pixel::MotionLengths& lengths_now(const std::string& state) const; // the file's, or the flag's being dragged
+    void give_lengths(); // every clip's to the script, lengths_now's (part 5б)
     bool pose_at(const pixel::ClipSpec& c, f64 t, u32 k, pixel::Pose& out, std::string& why);
     void recount();          // the cuts, the clips' frames, the recording of the selected clip
     void sync_time();        // frame_ of t_, the labels
@@ -773,6 +776,7 @@ private:
     bool drag_only_ = false;
     pixel::MotionLengths drag_lengths_, drag_base_lengths_;
     pixel::Recording drag_rec_;
+    pixel::TimeView drag_view_; // the timeline as at the press of a flag: the clip's length changes under the mouse
     f64 drag_from_ = 0, drag_to_ = 0;
     bool shift_ = false;
     // The code panel.
@@ -824,6 +828,7 @@ private:
          m_part_can_code_ = false;
     Rml::String m_time_, m_shown_fps_, m_head_, m_range_, m_range_from_, m_range_to_, m_more_blocks_, m_tracks_height_, m_code_name_,
         m_inspector_, m_inspector_call_, m_clip_cut_;
+    Rml::String m_start_, m_start_style_, m_start_title_; // the flag «из idle» at 0 (part 5б); empty: none
     bool m_code_unsaved_ = false, m_code_conflict_ = false, m_has_range_ = false, m_loop_view_ = true, m_stale_ = false,
          m_has_rec_ = false, m_code_clip_ = false, m_has_block_ = false;
     Rml::String m_name_, m_vector_, m_pixel_, m_one_, m_problem_, m_note_, m_frame_label_, m_clip_name_, m_seed_, m_fw_, m_fh_,

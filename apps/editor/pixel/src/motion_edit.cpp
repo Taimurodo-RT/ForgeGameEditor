@@ -341,7 +341,7 @@ bool edit_part_move(const Recording& rec, std::string_view part, f64 t, f64 fram
         return true;
     };
     auto current = [&](const Axis& a, f64& v) {
-        PropValue pv = rest_value(a.prop);
+        PropValue pv = known ? first_value(rec, pi, a.prop) : rest_value(a.prop); // where start_from left it (part 5б)
         if (a.track >= 0 && !sample(rec, static_cast<u32>(a.track), t, nullptr, pv, why)) return false;
         v = pv.v;
         return true;
@@ -415,12 +415,14 @@ PartProp part_prop(const Recording& rec, std::string_view part, f64 t, f64 frame
 bool part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 frame, Prop p, PropValue& out, bool& going) {
     const PartProp pp = part_prop(rec, part, t, frame, p);
     going = false;
-    out = rest_value(p);
+    // Before its track's first block, where start_from left it (part 5б).
+    const PropValue first = pp.part >= 0 ? first_value(rec, static_cast<u32>(pp.part), p) : rest_value(p);
+    out = first;
     if (pp.block >= 0 && rec.blocks[static_cast<usize>(pp.block)].to == Block::To::Binding) return false;
     going = pp.going;
     if (pp.going) return out = rec.blocks[static_cast<usize>(pp.block)].end, true;
     std::string why;
-    if (pp.track >= 0 && !sample(rec, static_cast<u32>(pp.track), t, nullptr, out, why)) out = rest_value(p);
+    if (pp.track >= 0 && !sample(rec, static_cast<u32>(pp.track), t, nullptr, out, why)) out = first;
     return true;
 }
 

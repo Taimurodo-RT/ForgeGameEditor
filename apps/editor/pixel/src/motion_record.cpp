@@ -424,7 +424,7 @@ bool value_now(Impl& im, MotionState& ms, u32 part, Prop p, f64 t, PropValue& ou
     if (!resolve_now(im, ms)) return false;
     const i32 tr = ms.rec->track(part, p);
     if (tr < 0) {
-        out = rest_value(p);
+        out = first_value(*ms.rec, part, p); // part 5б
         return true;
     }
     std::string why;
@@ -1077,6 +1077,7 @@ int api_now(lua_State* L) {
             return 1;
         }
         if (!flush_current(im, L)) raise(L, ms);
+        ms.read = true; // no start_from after it (part 5б)
         lua_pushnumber(L, ms.contexts.back().cursor);
         return 1;
     }
@@ -1731,6 +1732,52 @@ int link_call(lua_State* L, bool attach) {
 int api_part_attach(lua_State* L) { return link_call(L, true); }
 int api_part_detach(lua_State* L) { return link_call(L, false); }
 
+// ---- part 5б: the start ----
+
+// start_from("idle"): the clip starts where clip idle stands at its end. Met first with no pose given, the try stops
+// and asks for idle (script.cpp records it, then this clip again); given it, the pose goes in: its parts, its links
+// with their bones.
+bool start_from_call(Impl& im, lua_State* L, MotionState& ms) {
+    if (lua_gettop(L) != 1 || lua_type(L, 1) != LUA_TSTRING)
+        return call_error(ms, "start_from(\"idle\"): одно имя клипа, с позы конца которого начать");
+    const std::string name = lua_tostring(L, 1);
+    const std::string call = "start_from(\"" + name + "\")";
+    if (ms.contexts.size() > 1) return call_error(ms, call + " — в самой функции клипа, не внутри другой функции");
+    StartRequest* req = im.start;
+    if (!ms.tasks.empty() || ms.read || !ms.rec->events.empty() || !ms.rec->start.clip.empty() || (req && !req->wanted.empty()))
+        return call_error(ms, call + " — первая строка клипа: до неё уже переход, ожидание, метка или чтение значения");
+    if (!std::binary_search(im.clips.begin(), im.clips.end(), name))
+        return call_error(ms, "в коде нет клипа «" + name + "»: start_from начинает с позы конца другого клипа");
+    if (!req) return call_error(ms, call + ": клип записывается без начала");
+    if (!req->pose) {
+        req->wanted = name;
+        req->site = here(im);
+        return call_error(ms, call + ": поза конца ещё не записана");
+    }
+    if (req->pose->clip != name) return call_error(ms, call + ": между записями клип начался с другого клипа");
+    StartPose pose = *req->pose;
+    pose.site = here(im);
+    for (const StartValue& sv : pose.values) {
+        part_slot(ms, sv.part.c_str());
+        if (sv.prop != Prop::Link || sv.value.v <= 0) continue;
+        // Held by a part: no link round through it, and both stand by their bones.
+        ms.links.emplace_back(sv.part, sv.value.target);
+        if (!im.rig) continue;
+        const Rig& tr = im.rig->holder(sv.value.target);
+        add_bone(ms, tr, tr.part(sv.value.target));
+        add_bone_of(ms, rig_of(*im.rig, *ms.rec, sv.part), sv.part.c_str());
+    }
+    ms.rec->start = std::move(pose);
+    return true;
+}
+
+int api_start_from(lua_State* L) {
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "start_from");
+    if (!start_from_call(im, L, ms)) raise(L, ms);
+    return 0;
+}
+
 int api_part_to_top(lua_State* L) { return order_call(L, OrderStep::Kind::Top, "to_top"); }
 int api_part_to_bottom(lua_State* L) { return order_call(L, OrderStep::Kind::Bottom, "to_bottom"); }
 int api_part_above(lua_State* L) { return order_call(L, OrderStep::Kind::Above, "above"); }
@@ -1759,6 +1806,7 @@ void push_value(lua_State* L, Prop p, const PropValue& v) {
 bool get_value(Impl& im, lua_State* L, const char* id, Prop p, PropValue& out, std::string& why) {
     if (im.mode == Mode::Record && im.motion) {
         MotionState& ms = *im.motion;
+        ms.read = true; // no start_from after it (part 5б)
         f64 t = ms.tween_t;
         if (ms.in_tween) {
             for (const TweenTrack& tt : ms.tween)
@@ -1783,7 +1831,7 @@ bool get_value(Impl& im, lua_State* L, const char* id, Prop p, PropValue& out, s
         const i32 part = recorded_part(*im.frame_rec, id);
         const i32 tr = part < 0 ? -1 : im.frame_rec->track(static_cast<u32>(part), p);
         if (tr < 0) {
-            out = rest_value(p);
+            out = part < 0 ? rest_value(p) : first_value(*im.frame_rec, static_cast<u32>(part), p); // part 5б
             return true;
         }
         return sample(*im.frame_rec, static_cast<u32>(tr), im.frame_t, &im, out, why);
@@ -2094,7 +2142,7 @@ void register_motion_api(lua_State* L) {
         {"run", &api_run},         {"spawn", &api_spawn},           {"join", &api_join},
         {"tween", &api_tween},     {"spring", &api_spring},         {"emit", &api_emit},
         {"sound", &api_sound},     {"log", &api_log},               {"copies", &api_copies},
-        {"swap", &api_swap},       {"bezier", &api_bezier},
+        {"swap", &api_swap},       {"bezier", &api_bezier},     {"start_from", &api_start_from},
     };
     for (const auto& [name, fn] : globals) {
         lua_pushcfunction(L, fn, name);
@@ -2140,7 +2188,7 @@ void add_notes(const Impl& im, const Rig* rig, Recording& rec) {
 } // namespace
 
 bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, const std::map<std::string, f64>& values,
-                 u64 seed, const MotionLengths& lengths, Recording& out) {
+                 u64 seed, const MotionLengths& lengths, Recording& out, StartRequest* start, StartPose* ends) {
     lua_getfield(T, -1, "clips");
     lua_pushlstring(T, clip.data(), clip.size());
     lua_gettable(T, -2);
@@ -2160,6 +2208,7 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
     lua_getglobal(T, "rng");
     im.mode = Mode::Record;
     im.rig = rig;
+    im.start = start;
     im.rng = frame_seed(seed, 0, clip);
     im.seed = seed;
     const u64 budget = im.budget_ns;
@@ -2171,6 +2220,8 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
         im.fail(lua_tostring(T, -1));
         lua_pop(T, 1);
     }
+    // start_from asked for a pose not given yet, even under pcall: this try ends here (part 5б).
+    if (start && !start->wanted.empty()) ok = false;
     if (ok && !flush(im, T, 0)) {
         ok = false;
         im.fail(ms.error.c_str());
@@ -2196,9 +2247,17 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
         }
     }
     if (ok) add_notes(im, rig, out);
+    if (ok && ends) {
+        // The pose a clip that starts from this one starts with, its bindings asked while they are this recording's.
+        std::string why;
+        if (!end_pose(out, &im, *ends, why)) {
+            ok = false;
+            im.fail(why.c_str());
+        }
+    }
     for (const ScriptFile& f : im.files) out.files.push_back(f.name);
     for (int r : ms.refs) lua_unref(im.L, r);
-    if (ok) {
+    if (ok && !ends) {
         auto& slot = im.bindings[std::string(clip)];
         if (slot.first != LUA_NOREF && slot.second != 0) lua_unref(im.L, slot.first);
         slot = {ms.bindings, out.generation};
@@ -2208,6 +2267,7 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
     im.in_call = false;
     im.mode = Mode::None;
     im.rig = nullptr;
+    im.start = nullptr;
     im.budget_ns = budget;
     im.motion.reset();
     if (!ok) out = {};
