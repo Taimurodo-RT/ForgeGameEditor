@@ -12,7 +12,8 @@
 //           between them
 // Values are as the tab's recording keeps them (forge::pixel::PropValue): a colour, a stroke width and a morph are a
 // share over the part's own with the colour, the width or the target beside it. Since version 2 (part 5г) a clip also
-// has the copies of parts it makes and the steps of the parts' order.
+// has the copies of parts it makes and the steps of the parts' order; since version 3 (part 5д) the file has the
+// character's other drawings (each its own SVG beside the picture) and a clip the track of the drawing shown.
 
 #include "forge/vector/path.h"
 #include "forge/vector/svg.h"
@@ -25,23 +26,27 @@
 namespace forge::vector {
 
 // What a screen plays of a part: its move, turn, scale and skews (its matrix), its opacity and its looks; since version
-// 2 its dash, the share of its outline drawn, its tint and flash, its mask and the part that carries it.
+// 2 its dash, the share of its outline drawn, its tint and flash, its mask and the part that carries it. Since version 3
+// the drawing shown: the track of part "" (the character's), its values a drawing's name.
 enum class MotionProp : u8 {
     X, Y, Rot, Scale, Sx, Sy, SkewX, SkewY, Opacity, Fill, Stroke, StrokeWidth, Visible, Morph,
-    Dash, DrawFrom, DrawTo, Tint, Flash, FlashColor, Mask, Link
+    Dash, DrawFrom, DrawTo, Tint, Flash, FlashColor, Mask, Link, Drawing
 };
-inline constexpr usize kMotionPropCount = 22;
+inline constexpr usize kMotionPropCount = 23;
 // "x", "y", "rot", "scale", "sx", "sy", "skew_x", "skew_y", "opacity", "fill", "stroke", "stroke_width", "visible",
-// "morph", "dash", "draw_from", "draw_to", "tint", "flash", "flash_color", "mask", "link": the words of the code and
-// of the file.
+// "morph", "dash", "draw_from", "draw_to", "tint", "flash", "flash_color", "mask", "link", "drawing": the words of the
+// code and of the file.
 const char* motion_prop_word(MotionProp p);
 bool motion_prop_from_word(std::string_view word, MotionProp& out);
 // The ones the part's matrix is made of (x … skew_y).
 bool motion_prop_moves(MotionProp p);
 // The ones a call changes at a moment, held until the next (mask, link): a track of them is holds only.
 bool motion_prop_held(MotionProp p);
-// The ones of version 2: a file without them is written as version 1.
+// The ones of version 2 and after: a file without them is written as version 1.
 bool motion_prop_new(MotionProp p);
+
+// The name of the main drawing, as the code calls it (swap("draw")); the others are named by their keys in `drawings`.
+inline constexpr const char* kMotionMainDrawing = "draw";
 
 struct MotionColor {
     u8 r = 0, g = 0, b = 0, a = 255;
@@ -60,7 +65,7 @@ MotionMatrix inverse(const MotionMatrix& m);                          // identit
 // v: a number; for fill, stroke, tint and flash_color the share k of `color` over the part's own colour (over white
 // for tint and flash_color), for stroke_width the share of width `n` over its own, for morph the share of the way to
 // shape `target`; visible 1 or 0. The mask: v 0 none, 1 inside part `target`, 2 outside it. The link: carried by part
-// `target` (empty: let go) with the matrix `m` (forge::pixel::Block::carry).
+// `target` (empty: let go) with the matrix `m` (forge::pixel::Block::carry). The drawing: `target` is its name.
 struct MotionValue {
     f64 v = 0;
     MotionColor color;
@@ -69,11 +74,12 @@ struct MotionValue {
     MotionMatrix m;
     bool operator==(const MotionValue&) const = default;
 };
-// At rest: 1 for scale, sx, sy, opacity, draw_to and visible, 0 (the part's own) for the rest: no mask, no link.
+// At rest: 1 for scale, sx, sy, opacity, draw_to and visible, 0 (the part's own) for the rest: no mask, no link; the
+// main drawing.
 MotionValue motion_rest(MotionProp p);
 // From a to b by k, as the recording mixes (forge::pixel::mix): numbers past 0 … 1 too; a colour from none comes in at
-// its own colour; a morph between two targets goes back to the part's own shape and on to the other; visible, the mask
-// and the link change at k = 1.
+// its own colour; a morph between two targets goes back to the part's own shape and on to the other; visible, the mask,
+// the link and the drawing change at k = 1 (a swap's share is motion_shown's).
 MotionValue motion_mix(MotionProp p, const MotionValue& a, const MotionValue& b, f64 k);
 // The same value however written: a colour, a width or a morph at a share of 0 or less is the part's own (its colour,
 // width or target say nothing then).
@@ -174,22 +180,35 @@ struct MotionPart {
     bool operator==(const MotionPart&) const = default;
 };
 
+// Another drawing of the character (version 3): its SVG beside the picture, and its parts the clips move or link (and the
+// copies of its parts) as they stand in it: a part has its own groups and transform in each drawing.
+struct MotionDrawing {
+    std::string name;    // "angry": its key in the code's `drawings`
+    std::string picture; // "Ёжик.angry.svg"
+    std::vector<MotionPart> parts;
+    bool operator==(const MotionDrawing&) const = default;
+};
+
 struct MotionFile {
     std::string character; // its name, for messages: "Ёжик"
     std::string from;      // its file in «Ресурсы»: what «Отдать экрану» knows its own pair by
     std::string picture;   // "Ёжик.svg"
-    std::vector<MotionPart> parts;
+    std::vector<MotionPart> parts;         // the main drawing's
+    std::vector<MotionDrawing> drawings;   // the others, by name
     std::vector<std::vector<f64>> curves; // authors' easings, kMotionCurvePoints values over 0 … 1
     std::vector<MotionClip> clips;
     bool operator==(const MotionFile&) const = default;
 
     const MotionClip* clip(std::string_view name) const;
     const MotionPart* part(std::string_view id) const;
+    // The part as it stands in drawing `drawing` ("draw" or "": the main one); null when that drawing has no record of it.
+    const MotionPart* part(std::string_view id, std::string_view drawing) const;
+    const MotionDrawing* drawing(std::string_view name) const; // null for the main one and for none
 };
 
 // The version a game reads up to; write_motion_file writes 1 for a file with nothing of version 2 (an older game reads
-// it).
-inline constexpr u32 kMotionFileVersion = 2;
+// it), 2 for one with nothing of version 3.
+inline constexpr u32 kMotionFileVersion = 3;
 u32 motion_file_version(const MotionFile& file);
 
 // False with why (Russian, naming the field: "clips.idle.tracks[2].pieces[0]: …") when the text is not such a file.
@@ -205,6 +224,19 @@ MotionValue motion_piece_value(const MotionFile& file, MotionProp p, const Motio
 // A track's value at t: its piece then, t held within the clip's 0 … length.
 MotionValue motion_track_value(const MotionFile& file, const MotionTrack& track, f64 t, f64 length);
 
+// The drawing a clip shows at t (version 3), as the tab's frame has it (forge::pixel::sample_pose): `drawing`, and in a
+// swap the one it comes `from` and how far, k within 0 … 1 exclusive. A transition's share is its easing at t on
+// nanoseconds: at 1 or past it the drawing is its `to`, at 0 or below its `from`, between them a swap; of no length, its
+// `to` at once. No track: the main drawing.
+struct MotionShown {
+    std::string drawing = kMotionMainDrawing;
+    bool swap = false;
+    std::string from;
+    f64 k = 0;
+    bool operator==(const MotionShown&) const = default;
+};
+MotionShown motion_shown(const MotionFile& file, const MotionClip& clip, f64 t);
+
 // The part's move, turn, scale and skews round its pivot (forge::pixel::pose_matrix): T(x, y) · T(pivot) · R · S ·
 // Kx · Ky · T(−pivot), the skews held within ±89 degrees.
 MotionMatrix motion_matrix(f64 x, f64 y, f64 rot, f64 scale, f64 sx, f64 sy, f64 skew_x, f64 skew_y, Point pivot);
@@ -218,14 +250,16 @@ struct MotionPartPose {
     MotionMatrix local; // then: frame⁻¹ · A · frame · own, the part's transform in the file's terms
 };
 // Every part of the clip's tracks at t, in the order of their first tracks, but a copy not born yet (it has no element
-// then). A part that moves without a part in the file's `parts` stays where it is (read_motion_file refuses such a
-// file).
-std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t);
+// then); not the drawing's track. Each part's matrix as it stands in drawing `drawing`: a part that moves without a
+// record there stays where it is (it is not in that drawing: read_motion_file refuses a part with no record at all).
+std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t,
+                                        std::string_view drawing = kMotionMainDrawing);
 // The first part of the picture a clip's calls name that the picture has not (part 5г): a mask part, a carrier, a part
 // of the order and its neighbour, a copy's source; what names it beside ("маска «eye»", "крепление «eye»", "порядок
 // «eye»", "копия «искра[1]»"). A part is the first element with the id that draws (g, use or a shape). False when the
-// picture has them all.
+// picture has them all. With the character's drawings (part 5д), a part any of them has is there.
 bool motion_clip_missing(const MotionClip& clip, const SvgOutline& svg, std::string& part, std::string& role);
+bool motion_clip_missing(const MotionClip& clip, const std::vector<const SvgOutline*>& svgs, std::string& part, std::string& role);
 // Whether a copy is drawn at t: born then or before, on nanoseconds (as a track's piece is chosen).
 bool motion_copy_drawn(const MotionCopy& copy, f64 t);
 // The clip's order steps at t or before (on nanoseconds), in order, but those of a copy not born yet (as the tab leaves

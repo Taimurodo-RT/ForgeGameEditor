@@ -21,6 +21,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -1693,31 +1694,53 @@ bool PixelEditor::give_screen() {
     auto foreign = [&](const std::string& file) {
         return refuse("В картинках игры уже есть «" + file + "» не от этого персонажа: переименуйте персонажа или ту картинку");
     };
+    // The other drawings' files the last gift wrote (part 5д): only plain names of this character's, beside the pair.
+    std::set<std::string> ours;
     if (motion_before) {
         vector::MotionFile was;
         std::string why;
         if (!vector::read_motion_file(std::string_view(reinterpret_cast<const char*>(motion_before->data()), motion_before->size()), was, why) ||
             was.from != rel_)
             return foreign(who + ".motion.json");
+        for (const vector::MotionDrawing& d : was.drawings)
+            if (d.picture.find_first_of("/\\") == std::string::npos && d.picture.size() > who.size() + 5 && d.picture.rfind(who + ".", 0) == 0 &&
+                d.picture.ends_with(".svg"))
+                ours.insert(d.picture);
     } else if (svg_before)
         return foreign(who + ".svg");
     pixel::ScreenGift gift;
     std::string why;
-    const bool ok = pixel::build_screen(script_, rig_, doc_, who, rel_, svg_text_, drawn_ ? &drawing_ : nullptr, gift, why);
+    const bool ok = pixel::build_screen(script_, rig_, doc_, who, rel_, svg_text_, drawn_ ? &drawing_ : nullptr, others_, gift, why);
     view_dirty_ = true; // the frames were the script's: the view shows its own again
     if (!ok) return refuse(why);
     std::vector<u8> svg_bytes = text_bytes(gift.svg), motion_bytes = text_bytes(vector::write_motion_file(gift.motion));
-    if (svg_before == svg_bytes && motion_before == motion_bytes) return refuse("Уже отдано так");
-    std::string clips;
-    for (const vector::MotionClip& c : gift.motion.clips) clips += (clips.empty() ? "«" : ", «") + c.name + "»";
     std::vector<PixelFiles::File> files;
     files.push_back({svg_path, std::move(svg_before), std::move(svg_bytes)});
+    std::string names = "«" + who + ".svg»";
+    for (const pixel::ScreenGift::File& d : gift.drawings) {
+        const fs::path path = lib->pictures_folder() / utf8_path(d.name);
+        std::optional<std::vector<u8>> before = bytes_of(path);
+        // A picture of the game's own, or of another character, is not written over.
+        if (before && !ours.count(d.name))
+            return refuse("В картинках игры уже есть «" + d.name + "» не от этого персонажа: переименуйте рисунок или ту картинку");
+        files.push_back({path, std::move(before), text_bytes(d.text)});
+        names += ", «" + d.name + "»";
+        ours.erase(d.name);
+    }
     files.push_back({motion_path, std::move(motion_before), std::move(motion_bytes)});
+    names += " и «" + who + ".motion.json»";
+    // A drawing gone from the code goes from the game's pictures too.
+    for (const std::string& gone : ours)
+        if (std::optional<std::vector<u8>> before = bytes_of(lib->pictures_folder() / utf8_path(gone)))
+            files.push_back({lib->pictures_folder() / utf8_path(gone), std::move(before), std::nullopt});
+    if (std::all_of(files.begin(), files.end(), [](const PixelFiles::File& f) { return f.before == f.after; })) return refuse("Уже отдано так");
+    std::string clips;
+    for (const vector::MotionClip& c : gift.motion.clips) clips += (clips.empty() ? "«" : ", «") + c.name + "»";
     std::error_code ec;
     const fs::path made = fs::exists(lib->pictures_folder(), ec) ? fs::path() : lib->pictures_folder();
     history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), "«" + who + "»: отдан экрану", made));
     history_.seal();
-    note_ = "Отдано экрану: «" + who + ".svg» и «" + who + ".motion.json», " + (gift.motion.clips.size() == 1 ? "клип " : "клипы ") + clips +
+    note_ = "Отдано экрану: " + names + ", " + (gift.motion.clips.size() == 1 ? "клип " : "клипы ") + clips +
             ". На экране: заливка слоя картинкой «" + who + "» в «Интерфейсе», клип — нода «Проиграть анимацию картинки».";
     for (const std::string& n : gift.notes) note_ += " " + n + ".";
     FORGE_INFO("Векторная: %s", note_.c_str());

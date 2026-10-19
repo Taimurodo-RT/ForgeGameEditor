@@ -455,7 +455,7 @@ TEST_CASE("Screen clips file: what it cannot read names the field") {
     CHECK(read_error("не JSON").find("JSON") != std::string::npos);
     CHECK(read_error(R"({"forge": "motion"})").find("version") != std::string::npos);
     CHECK(read_error(R"({"forge": "picture", "version": 1})").find("forge") != std::string::npos);
-    CHECK(read_error(R"({"forge": "motion", "version": 3, "character": "a", "from": "", "picture": "a.svg", "parts": {}, "curves": [], "clips": {}})")
+    CHECK(read_error(R"({"forge": "motion", "version": 4, "character": "a", "from": "", "picture": "a.svg", "parts": {}, "curves": [], "clips": {}})")
               .find("version") != std::string::npos);
     // A field not of its kind.
     std::string looped = one_track(hold);
@@ -786,7 +786,7 @@ TEST_CASE("Screen clips: the screen's picture (lunasvg) is the tab's (ThorVG)") 
     const PixelDoc doc = doc64();
     ScreenGift gift;
     std::string why;
-    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why);
+    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why);
     INFO(why);
     REQUIRE(built);
     CHECK(gift.svg == kPicture);
@@ -976,7 +976,7 @@ TEST_CASE("Screen clips: what a clip does that the screen does not draw, each fr
 
     // The line of the tab: each word with its clips.
     ScreenGift gift;
-    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     REQUIRE_FALSE(gift.notes.empty());
     CHECK(gift.notes[0] == "На экране пока не рисуются: размытие («blur»), тень («shadow»)");
 }
@@ -1022,7 +1022,10 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
     apply_pivots(rig, doc, &main, &others);
 
     ScreenGift gift;
-    REQUIRE(build_screen(s, rig, doc, "Персонаж", "персонажи/Персонаж.pixel.json", "", &main, gift, why));
+    // The rig's drawings go with their texts (part 5д).
+    CHECK_FALSE(build_screen(s, rig, doc, "Персонаж", "персонажи/Персонаж.pixel.json", "", &main, {}, gift, why));
+    CHECK(why == "у персонажа есть рисунок «angry», а его текста нет: откройте персонажа снова");
+    REQUIRE(build_screen(s, rig, doc, "Персонаж", "персонажи/Персонаж.pixel.json", "", &main, others, gift, why));
     // The mouth morphs: a <path> of the same outline; the nose does not: a <rect> still.
     CHECK(gift.svg.find("<path id=\"mouth\"") != std::string::npos);
     CHECK(gift.svg.find("<rect id=\"mouth\"") == std::string::npos);
@@ -1038,28 +1041,52 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
     CHECK(gift.motion.picture == "Персонаж.svg");
     CHECK(gift.motion.from == "персонажи/Персонаж.pixel.json");
     REQUIRE(gift.motion.part("nose"));
-    CHECK(gift.motion.clip("angry")->not_drawn == std::vector<std::string>{"drawing"});
-    // A step of another drawing's part: not in the SVG the screen shows, so not given.
-    CHECK(gift.motion.clip("angry_top")->not_drawn == std::vector<std::string>{"drawing"});
-    CHECK(gift.motion.clip("angry_top")->order.empty());
-    CHECK(gift.motion.clip("brow")->not_drawn == std::vector<std::string>{"morph_drawing"});
+    // Part 5д: the swaps and the morphs into another drawing's shape are drawn; the drawing goes beside the picture.
+    for (const char* c : {"angry", "angry_top", "brow", "brow_on", "open"}) {
+        INFO(c);
+        CHECK(gift.motion.clip(c)->not_drawn.empty());
+    }
+    REQUIRE(gift.motion.drawings.size() == 1);
+    CHECK(gift.motion.drawings[0].name == "angry");
+    CHECK(gift.motion.drawings[0].picture == "Персонаж.angry.svg");
+    REQUIRE(gift.drawings.size() == 1);
+    CHECK(gift.drawings[0].name == "Персонаж.angry.svg");
+    // The mouth morphs (into the brow): the angry drawing as the tab draws it, its root the main one's.
+    CHECK(gift.drawings[0].text == drawing_svg(drawing_with_paths(others[0].drawing, {"mouth"}), 64, 64));
+    auto drawing_track = [&](const char* c) {
+        const MotionClip* clip = gift.motion.clip(c);
+        const auto t = std::find_if(clip->tracks.begin(), clip->tracks.end(), [](const vector::MotionTrack& k) { return k.prop == MotionProp::Drawing; });
+        return t == clip->tracks.end() ? nullptr : &*t;
+    };
+    REQUIRE(drawing_track("angry"));
+    CHECK(drawing_track("angry")->part.empty());
+    CHECK(drawing_track("open") == nullptr);
+    // A step of another drawing's part: given now, the drawing has it.
+    REQUIRE(gift.motion.clip("angry_top")->order.size() == 1);
+    CHECK(gift.motion.clip("angry_top")->order[0].part == "brow");
     // From the frames: start_from leaves the mouth morphed into the brow, by no track of the clip's own.
-    CHECK(gift.motion.clip("brow_on")->not_drawn == std::vector<std::string>{"morph_drawing"});
-    CHECK(gift.motion.clip("open")->not_drawn.empty());
+    const MotionClip& brow_on = *gift.motion.clip("brow_on");
+    CHECK(std::any_of(brow_on.tracks.begin(), brow_on.tracks.end(), [](const vector::MotionTrack& k) { return k.prop == MotionProp::Morph && k.part == "mouth"; }));
+    // The file reads back as it was written: version 3.
+    const std::string text = vector::write_motion_file(gift.motion);
+    CHECK(text.find("\"version\": 3") != std::string::npos);
+    MotionFile back;
+    REQUIRE(vector::read_motion_file(text, back, why));
+    CHECK(back == gift.motion);
 
     // A file's SVG: written as it is, a morph of a shape that is not a <path> drawn (its stage makes it one, part 5г).
     PoseScript rect_morph = script_of(R"(return { clips = { c = function(p) part("box"):morph("mouth_o", 0.2) end } })");
     const Rig file_rig = loaded();
-    REQUIRE(build_screen(rect_morph, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    REQUIRE(build_screen(rect_morph, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     CHECK(gift.svg == kPicture);
     CHECK(gift.notes.empty());
 
     // No clips, a clip that fails.
     PoseScript none = script_of(R"(return { pose = function(t) end })");
-    CHECK_FALSE(build_screen(none, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    CHECK_FALSE(build_screen(none, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     CHECK(why == "В коде нет клипов: экрану нечего играть");
     PoseScript bad = script_of("return { clips = {\n  ok = function(p) part('ball').x(1, 0.1) end,\n  jump = function(p)\n    part('nope').x(1, 0.1)\n  end,\n} }");
-    CHECK_FALSE(build_screen(bad, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    CHECK_FALSE(build_screen(bad, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     CHECK(why.rfind("клип «jump», строка 4: ", 0) == 0);
 }
 
@@ -1312,7 +1339,7 @@ TEST_CASE("Screen clips, part 5г: the screen's picture (lunasvg) is the tab's (
     const PixelDoc doc = doc64();
     ScreenGift gift;
     std::string why;
-    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, gift, why);
+    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, {}, gift, why);
     INFO(why);
     REQUIRE(built);
     CHECK(gift.svg == kStage);
@@ -1405,7 +1432,7 @@ TEST_CASE("Screen clips, part 5г: the stage a pose draws the picture from") {
     const PixelDoc doc = doc64();
     ScreenGift gift;
     std::string why;
-    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, gift, why));
+    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, {}, gift, why));
     auto stage = [&](const char* clip, f64 t) { return ui::posed_stage(kStage, screen_pose(gift.motion, *gift.motion.clip(clip), t)); };
     auto count = [](const std::string& text, const std::string& what) {
         usize n = 0;
@@ -1620,7 +1647,7 @@ TEST_CASE("Screen clips, part 5г: tones of gradients and see-through colours, a
     }
     ScreenGift gift;
     std::string why;
-    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kMore, nullptr, gift, why);
+    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kMore, nullptr, {}, gift, why);
     INFO(why);
     REQUIRE(built);
     CHECK(gift.notes.empty());
@@ -1658,7 +1685,7 @@ TEST_CASE("Screen clips, part 5г: poses by hand: below in the order, an outline
     PoseScript s = script_of(kStageCode);
     ScreenGift gift;
     std::string why;
-    REQUIRE(build_screen(s, rig, doc64(), "Ёжик", "Ёжик.pixel.json", kStage, nullptr, gift, why));
+    REQUIRE(build_screen(s, rig, doc64(), "Ёжик", "Ёжик.pixel.json", kStage, nullptr, {}, gift, why));
     ui::SvgPose pose = screen_pose(gift.motion, *gift.motion.clip("link"), 0.25);
     REQUIRE(pose.parts.size() >= 3);
     const std::vector<u8> as_given = screen_of(kStage, pose);

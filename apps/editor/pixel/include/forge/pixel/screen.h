@@ -7,6 +7,7 @@
 // formula gives the frame exactly at each 120th of a second and at the moment before the piece's end, else the frame's
 // values 120 times a second.
 
+#include "forge/pixel/bake.h"
 #include "forge/pixel/doc.h"
 #include "forge/pixel/draw.h"
 #include "forge/pixel/rig.h"
@@ -29,16 +30,22 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
                  vector::MotionClip& out, std::string& why);
 
 struct ScreenGift {
+    struct File {
+        std::string name, text; // "Ёжик.angry.svg"
+    };
     vector::MotionFile motion;
     std::string svg;                 // the picture the game shows
+    std::vector<File> drawings;      // the character's other drawings beside it (part 5д), by name
     std::vector<std::string> notes;  // what the screen will not show as the tab does, for the tab's line
 };
 
 // Every clip of the code into a file of `character` given from `from` (its «.pixel.json» in «Ресурсы»), with the parts
 // they move, and the picture: `svg` (the file's text, byte for byte) or, for a character the code draws (`drawn`),
-// its drawing with the parts that morph written as <path>. False with why: a clip that fails, or no clips.
+// its drawing with the parts that morph written as <path>. The code's other drawings (`drawings`, on the rig) go beside
+// it as Ёжик.angry.svg, drawn as the tab draws them with the main picture's root size. False with why: a clip that
+// fails, no clips, a drawing's name that makes no file (or the same file as another's).
 bool build_screen(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::string_view character, std::string_view from,
-                  std::string_view svg, const Drawing* drawn, ScreenGift& out, std::string& why);
+                  std::string_view svg, const Drawing* drawn, const std::vector<NamedDrawing>& drawings, ScreenGift& out, std::string& why);
 
 // The drawing with the shapes of these ids written as <path> of the same outline.
 Drawing drawing_with_paths(const Drawing& d, const std::vector<std::string>& ids);

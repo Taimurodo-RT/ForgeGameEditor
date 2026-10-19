@@ -32,11 +32,17 @@ struct Written {
 
 struct File;
 
-// A picture a live element draws from a stage (part 5г): what the stage carries and its file; the plugin's document of
-// the picture is the one made from it.
-struct Staged {
-    StageNeeds needs;
-    File* file = nullptr;
+// A document a live element's picture draws: the drawing it shows, read from the drawing's file or from a stage of it
+// (part 5г) the clip needs; what the last frame's pose wrote on it. Part 5д: the old drawing, or in a swap also the new
+// one over it.
+struct Slot {
+    std::string drawing;          // "" the main one, the picture's file
+    const File* source = nullptr; // the drawing's file, as it read then (serial); null: nothing read yet
+    u64 serial = 0;
+    StageNeeds needs;    // the stage's
+    File* stage = nullptr; // the stage the document is read from; null: the drawing's own text
+    Written written;
+    bool wrote = false;
 };
 
 // What the scripts said of one element, and the clip it shows (svg_pose).
@@ -45,8 +51,8 @@ struct Live {
     std::map<std::string, SvgPart, std::less<>> parts;
     bool posed = false;
     SvgPose pose;
-    std::map<std::string, Written> written; // by the picture's path
-    std::map<std::string, Staged> staged;   // by the picture's path
+    std::map<std::string, Slot> base; // by the picture's path: the plugin's document
+    std::map<std::string, Slot> top;  // by the picture's path: the document over it in a swap
 };
 
 // A shape's paint as the tab's picture has it (ThorVG's): 0 … 255 channels, the alpha its opacity of the paint; a
@@ -87,6 +93,9 @@ struct File {
     std::shared_ptr<const Stage> stage;
     std::map<i32, vector::MotionMatrix> rest_m;    // an element's own transform
     std::map<std::string, i32, std::less<>> parts; // the element of a part's id (a stage's)
+    std::map<std::string, i32, std::less<>> own;   // stage_part's, by id (own_part)
+    // A drawing's file (part 5д): the text it was read from, as the pose shares it.
+    std::shared_ptr<const std::string> shared;
 };
 
 // Whether lunasvg makes an element of this tag: it leaves out the others, with all inside them.
@@ -161,11 +170,78 @@ File& file(const std::string& path, const std::string& text) {
     return f;
 }
 
+// A drawing's file (part 5д) by the text the pose shares: read again only when the text is another.
+File& drawing_file(const std::string& key, const std::shared_ptr<const std::string>& text) {
+    File& f = files()[key];
+    if (f.rest && text && f.shared == text) return f;
+    static const std::string none;
+    File& g = file(key, text ? *text : none);
+    g.shared = text;
+    return g;
+}
+
 // The key of the stages an element draws from in files() (stage_file) starts so.
 std::string stage_key(const void* owner) {
     char key[32];
     std::snprintf(key, sizeof key, "\x02%p\x03", owner);
     return key;
+}
+
+// The part of a drawing's own file an id names (stage_part), -1 for none.
+i32 own_part(File& f, std::string_view id) {
+    if (const auto it = f.own.find(id); it != f.own.end()) return it->second;
+    const i32 e = stage_part(f.outline, id);
+    f.own.emplace(std::string(id), e);
+    return e;
+}
+
+// A character's drawings as a pose has them (part 5д): the picture's file, the main one, and the others, by name. A
+// drawing's file is in files() by its picture's name beside the picture's (the key), read from the pose's text.
+struct Family {
+    struct Member {
+        std::string name;    // "" the main one
+        std::string key;     // in files(): the picture's path, or the drawing's
+        std::string picture; // for the lines: the picture's path, or the drawing's file name
+        File* file = nullptr;
+    };
+    std::vector<Member> members; // the main one first, then the others by name
+
+    const Member* get(std::string_view name) const {
+        if (name == vector::kMotionMainDrawing) name = {};
+        for (const Member& m : members)
+            if (m.name == name) return &m;
+        return nullptr;
+    }
+    bool others() const { return members.size() > 1; }
+    // Some drawing has a part with the id (forge::pixel::Rig::for_drawing's `known`).
+    bool knows(std::string_view id) const {
+        return std::any_of(members.begin(), members.end(), [&](const Member& m) { return own_part(*m.file, id) >= 0; });
+    }
+};
+
+Family family_of(File& main, const std::string& path, const std::string& key, const SvgPose& pose) {
+    Family fam;
+    fam.members.push_back({"", path, path, &main});
+    std::vector<const SvgDrawing*> ds;
+    for (const SvgDrawing& d : pose.drawings)
+        if (!d.name.empty() && d.name != vector::kMotionMainDrawing) ds.push_back(&d);
+    std::sort(ds.begin(), ds.end(), [](const SvgDrawing* a, const SvgDrawing* b) { return a->name < b->name; });
+    for (const SvgDrawing* d : ds) {
+        if (fam.get(d->name)) continue;
+        File& f = drawing_file(key + d->picture, d->text);
+        if (!f.outline.error.empty()) {
+            problem("«" + d->picture + "»: " + f.outline.error);
+            continue;
+        }
+        fam.members.push_back({d->name, key + d->picture, d->picture, &f});
+    }
+    return fam;
+}
+
+// The directory of a picture's path, with its slash ("" for none).
+std::string dir_of(const std::string& path) {
+    const usize slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
 }
 
 Live* live_of(Rml::Element* element) {
@@ -242,11 +318,12 @@ void fill_down(lunasvg::Element e, const std::string& colour, bool top) {
         if (n.isElement()) fill_down(n.toElement(), colour, false);
 }
 
-void apply_part(File& f, const std::string& path, lunasvg::Document& doc, const std::string& id, const SvgPart& p) {
+// `quiet`: a drawing without the part says nothing, when another drawing of the swap has it (part 5д).
+void apply_part(File& f, const std::string& path, lunasvg::Document& doc, const std::string& id, const SvgPart& p, bool quiet = false) {
     const i32 index = f.outline.find(id);
     lunasvg::Element e = doc.getElementById(id);
     if (index < 0 || !e) {
-        problem("«" + file_name(path) + "»: нет части с id «" + id + "»");
+        if (!quiet) problem("«" + file_name(path) + "»: нет части с id «" + id + "»");
         return;
     }
     const vector::SvgElement& rest = f.outline.elements[static_cast<usize>(index)];
@@ -578,7 +655,155 @@ bool tone_of(const vector::MotionPartPose& pp, Tone& t) {
 // An opacity as ThorVG's SVG loader keeps one: 0 … 255.
 u8 opacity8(const std::string& text) { return to_u8(std::clamp(vector::svg_number(text, 1.0), 0.0, 1.0)); }
 
-Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, const SvgPose& pose) {
+// --- the character's other drawings (part 5д) ------------------------------------------------
+
+// A shape of another drawing in a shape's units (forge::pixel::in_units): its points through the matrix, its stroke as
+// wide as it looks there.
+vector::Shape in_units(vector::Shape s, const vector::MotionMatrix& m) {
+    for (vector::Contour& c : s.path.contours) {
+        c.start = m.apply(c.start);
+        for (vector::Cubic& q : c.curves) q.c1 = m.apply(q.c1), q.c2 = m.apply(q.c2), q.to = m.apply(q.to);
+    }
+    s.look.stroke_width *= std::sqrt(std::abs(m.a * m.d - m.b * m.c));
+    return s;
+}
+
+// The pose a drawing takes of the clip's (forge::pixel::Rig::for_drawing), its parts as they stand in it: the parts it
+// has and those no drawing has (their line stays); a mask or a carrier it lacks and another drawing has does not act
+// there (no mask; the part carried as if its carrier were at rest, C = carry); an order step with a part or a neighbour
+// it lacks is left out; a copy of a part it lacks is not born in it. Without other drawings, the pose as it is.
+SvgPose for_drawing(const SvgPose& pose, const std::vector<vector::MotionPartPose>& parts, File& d, const Family& fam) {
+    using vector::MotionProp;
+    SvgPose out;
+    out.picture = pose.picture;
+    if (!fam.others()) {
+        out.parts = parts;
+        out.copies = pose.copies;
+        out.order = pose.order;
+        return out;
+    }
+    auto own = [&](const std::string& id) -> const std::string& {
+        for (const vector::MotionCopy& c : pose.copies)
+            if (c.id == id) return c.source;
+        return id;
+    };
+    auto takes = [&](const std::string& id) {
+        const std::string& o = own(id);
+        return own_part(d, o) >= 0 || !fam.knows(o);
+    };
+    auto lacks = [&](const std::string& id) { return own_part(d, id) < 0 && fam.knows(id); };
+    for (const vector::MotionCopy& c : pose.copies)
+        if (takes(c.id)) out.copies.push_back(c);
+    for (const vector::MotionPartPose& pp : parts) {
+        if (!takes(pp.id)) continue;
+        vector::MotionPartPose& q = out.parts.emplace_back(pp);
+        const usize mask = static_cast<usize>(MotionProp::Mask), link = static_cast<usize>(MotionProp::Link);
+        if (q.has[mask] && !q.values[mask].target.empty() && lacks(q.values[mask].target)) {
+            q.has[mask] = false;
+            q.values[mask] = vector::motion_rest(MotionProp::Mask);
+        }
+        if (q.has[link] && !q.values[link].target.empty() && lacks(q.values[link].target)) q.values[link].target.clear();
+    }
+    for (const vector::MotionOrderStep& step : pose.order)
+        if (takes(step.part) && (step.other.empty() || !lacks(step.other))) out.order.push_back(step);
+    return out;
+}
+
+// The shape a swap pairs for an id in a drawing as drawn (forge::pixel::Rig::swap_shape): a shape part shown (neither it
+// nor a group of it display: none), or a copy born of a shape part, hidden or not; -1 for none. In a drawing's own file
+// (no stage) a copy's shape is its source's.
+i32 swap_shape(File& f, const SvgPose& pose, const std::string& id) {
+    auto shape = [&](i32 e) { return e >= 0 && shape_tag(f.outline.elements[static_cast<usize>(e)].tag); };
+    for (const vector::MotionCopy& c : pose.copies)
+        if (c.id == id) {
+            const i32 src = part_element(f, c.source);
+            if (!shape(src)) return -1;
+            if (!f.stage) return src;
+            const auto root = f.stage->copy_root.find(id);
+            return root == f.stage->copy_root.end() ? -1 : root->second;
+        }
+    const i32 e = part_element(f, id);
+    return shape(e) && !vector::display_none(f.outline, e) ? e : -1;
+}
+
+// A pair of a swap: one id, a shape in both drawings; its element in the old drawing and in the new.
+struct Pair {
+    std::string id;
+    i32 a = -1, b = -1;
+};
+
+std::vector<Pair> pairs_of(File& a, const SvgPose& pa, File& b, const SvgPose& pb) {
+    std::vector<Pair> out;
+    std::set<std::string> seen;
+    auto pair = [&](const std::string& id) {
+        if (!seen.insert(id).second) return;
+        const i32 x = swap_shape(a, pa, id);
+        const i32 y = x >= 0 ? swap_shape(b, pb, id) : -1;
+        if (y >= 0) out.push_back({id, x, y});
+    };
+    for (usize i = 0; i < a.outline.elements.size(); ++i)
+        if (!a.outline.elements[i].id.empty() && (!a.stage || a.stage->copy_of[i].empty())) pair(a.outline.elements[i].id);
+    for (const vector::MotionCopy& c : pa.copies) pair(c.id);
+    return out;
+}
+
+// What a drawing does in a swap: the new one hides its pairs and says what they are now; the old one morphs each of its
+// pairs from what it is now to that, in its units, by k. Every other shape fades: the old by 1 − k, the new by k.
+struct SwapSide {
+    struct Now {
+        vector::Shape shape; // in its own units
+        bool morphed = false; // by the clip
+    };
+    bool from = false; // the old drawing
+    f64 k = 0;
+    const std::vector<Pair>* pairs = nullptr;
+    File* other = nullptr;  // the other drawing as drawn
+    std::string other_name; // its name, for the key of a pair's morph
+    std::map<i32, Now>* now = nullptr; // the new drawing's pairs, by their element there
+};
+
+// The morph into a shape of another drawing (forge::pixel::Rig::pose_alone): the main drawing's when it has the id, else
+// the first other's by name; the target's look its own, in the morphing shape's units. Null with a line when it does not
+// make.
+const vector::Morph* cross_morph(File& f, const std::string& path, const std::string& part, i32 index, const std::string& target,
+                                 const Family& fam, File*& tf, i32& ti) {
+    const Family::Member* holder = nullptr;
+    for (const Family::Member& m : fam.members)
+        if (m.file->outline.find(target) >= 0) {
+            holder = &m;
+            break;
+        }
+    if (!holder) return morph_of(f, path, part, index, target, -1); // its line: no such shape
+    tf = holder->file;
+    ti = tf->outline.find(target);
+    const std::string key = part + '\n' + target + "\n@" + holder->name + '\n' + std::to_string(tf->serial);
+    if (const auto it = f.morphs.find(key); it != f.morphs.end()) return &it->second;
+    if (f.broken.count(key)) return nullptr;
+    const std::string who = "«" + file_name(path) + "», морфинг «" + part + "» в «" + target + "»: ";
+    auto fail = [&](const std::string& why) {
+        f.broken.insert(key);
+        problem(who + why);
+        return nullptr;
+    };
+    if (!shape_tag(tf->outline.elements[static_cast<usize>(ti)].tag))
+        return fail("в рисунке «" + (holder->name.empty() ? std::string(vector::kMotionMainDrawing) : holder->name) + "» это не фигура");
+    if (f.outline.elements[static_cast<usize>(index)].tag != "path")
+        return fail("морфинг меняет контур d, а «" + part + "» — <" + f.outline.elements[static_cast<usize>(index)].tag +
+                    ">; нарисуйте часть контуром <path>");
+    vector::Shape from, to;
+    std::string why;
+    if (!vector::shape_path(f.outline, index, from.path, why)) return fail(why);
+    if (!vector::shape_path(tf->outline, ti, to.path, why)) return fail("«" + target + "»: " + why);
+    from.look = vector::look_from_svg(f.outline, index);
+    to.look = vector::look_from_svg(tf->outline, ti, from.look);
+    to = in_units(std::move(to), vector::inverse(screen(f, {}, index)) * screen(*tf, {}, ti));
+    return &f.morphs.emplace(key, vector::prepare(from, to)).first->second;
+}
+
+// `fam` and `self` (part 5д): the drawings a morph finds a shape this drawing has not in, when it is not the main one;
+// `side`: what it does in a swap.
+Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, const SvgPose& pose, const Family* fam = nullptr,
+                   std::string_view self = {}, const SwapSide* side = nullptr) {
     const vector::SvgOutline& o = f.outline;
     const Stage* st = f.stage.get();
     using vector::MotionProp;
@@ -616,7 +841,28 @@ Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, con
             w.set(root, "display", drawn && !hidden ? (shown.empty() || shown == "none" ? std::string("inline") : shown) : std::string("none"));
         }
 
-    // Morphs first: the shape's outline and looks become the pair's at k.
+    // A shape's outline and looks become a morph's at k: the clip's, then a swap's.
+    auto put_morph = [&](i32 index, const vector::SvgOutline& to, i32 ti) {
+        w.set(index, "d", vector::to_d(f.scratch.path));
+        LeafLook& l = look(index);
+        const vector::Look& lk = f.scratch.look;
+        if (plain_paint(vector::inherited(o, index, "fill")) && plain_paint(vector::inherited(to, ti, "fill"))) {
+            l.fill = {to_u8(lk.fill.r), to_u8(lk.fill.g), to_u8(lk.fill.b), lk.fill.on ? to_u8(lk.fill.opacity) : u8(0), false};
+            l.fill_set = true;
+        }
+        if (plain_paint(vector::inherited(o, index, "stroke")) && plain_paint(vector::inherited(to, ti, "stroke"))) {
+            l.stroke = {to_u8(lk.stroke.r), to_u8(lk.stroke.g), to_u8(lk.stroke.b), lk.stroke.on ? to_u8(lk.stroke.opacity) : u8(0), false};
+            l.width = lk.stroke.on ? lk.stroke_width : 0;
+            l.stroke_set = true;
+        }
+        l.opacity = lk.opacity;
+        l.morphed = true;
+        l.path = f.scratch.path;
+    };
+
+    // Morphs first: the shape's outline and looks become the pair's at k. A shape of another drawing is a target too
+    // (part 5д), when this one has none with the id.
+    std::map<i32, vector::Shape> morphed; // the shapes the clip morphs, as they are now
     for (const auto& [index, pp] : parts) {
         if (!has(*pp, MotionProp::Morph)) continue;
         const vector::MotionValue& m = val(*pp, MotionProp::Morph);
@@ -625,26 +871,62 @@ Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, con
             problem("«" + file_name(path) + "», морфинг «" + pp->id + "»: это группа, морфинг бывает только у фигуры");
             continue;
         }
-        const i32 ti = target_element(f, m.target);
-        const vector::Morph* mo = morph_of(f, path, pp->id, index, m.target, ti);
+        i32 ti = target_element(f, m.target);
+        File* tf = &f;
+        const vector::Morph* mo = ti < 0 && fam && !self.empty() ? cross_morph(f, path, pp->id, index, m.target, *fam, tf, ti)
+                                                                  : morph_of(f, path, pp->id, index, m.target, ti);
         if (!mo) continue;
         vector::mix(*mo, m.v, f.scratch);
-        w.set(index, "d", vector::to_d(f.scratch.path));
-        LeafLook& l = look(index);
-        const vector::Look& lk = f.scratch.look;
-        if (plain_paint(vector::inherited(o, index, "fill")) && plain_paint(vector::inherited(o, ti, "fill"))) {
-            l.fill = {to_u8(lk.fill.r), to_u8(lk.fill.g), to_u8(lk.fill.b), lk.fill.on ? to_u8(lk.fill.opacity) : u8(0), false};
-            l.fill_set = true;
-        }
-        if (plain_paint(vector::inherited(o, index, "stroke")) && plain_paint(vector::inherited(o, ti, "stroke"))) {
-            l.stroke = {to_u8(lk.stroke.r), to_u8(lk.stroke.g), to_u8(lk.stroke.b), lk.stroke.on ? to_u8(lk.stroke.opacity) : u8(0), false};
-            l.width = lk.stroke.on ? lk.stroke_width : 0;
-            l.stroke_set = true;
-        }
-        l.opacity = lk.opacity;
-        l.morphed = true;
-        l.path = f.scratch.path;
+        put_morph(index, tf->outline, ti);
+        morphed[index] = f.scratch;
     }
+
+    // A swap (part 5д): the new drawing tells what its pairs are now; the old one morphs each of its pairs from what it
+    // is now to that, in its units (the chains of transforms at rest of both shapes to the picture's units).
+    if (side)
+        for (const Pair& pr : *side->pairs) {
+            const i32 e = side->from ? pr.a : pr.b;
+            auto now_of = [&](vector::Shape& out) {
+                if (const auto it = morphed.find(e); it != morphed.end()) {
+                    out = it->second;
+                    return true;
+                }
+                std::string why;
+                out.look = vector::look_from_svg(o, e);
+                if (vector::shape_path(o, e, out.path, why)) return true;
+                problem("«" + file_name(path) + "», смена рисунка, «" + pr.id + "»: " + why);
+                return false;
+            };
+            if (!side->from) {
+                SwapSide::Now n;
+                n.morphed = morphed.count(e) > 0;
+                if (now_of(n.shape)) (*side->now)[e] = std::move(n);
+                continue;
+            }
+            const auto to = side->now->find(pr.b);
+            if (to == side->now->end()) continue;
+            if (o.elements[static_cast<usize>(e)].tag != "path") {
+                problem("«" + file_name(path) + "», смена рисунка, «" + pr.id + "»: фигура не стала контуром");
+                continue;
+            }
+            vector::Shape from;
+            if (!now_of(from)) continue;
+            const vector::Shape target = in_units(to->second.shape, vector::inverse(screen(f, {}, e)) * screen(*side->other, {}, pr.b));
+            // The same pair at rest again and again: made ready once.
+            const vector::Morph* mo = nullptr;
+            vector::Morph fresh;
+            if (!morphed.count(e) && !to->second.morphed) {
+                const std::string key = "\x01" + pr.id + '\n' + side->other_name + '\n' + std::to_string(side->other->serial);
+                auto it = f.morphs.find(key);
+                if (it == f.morphs.end()) it = f.morphs.emplace(key, vector::prepare(from, target)).first;
+                mo = &it->second;
+            } else {
+                fresh = vector::prepare(from, target);
+                mo = &fresh;
+            }
+            vector::mix(*mo, std::clamp(side->k, 0.0, 1.0), f.scratch);
+            put_morph(e, side->other->outline, pr.b);
+        }
 
     // Links (part 5г): the part carrying each, a link that comes back round to its own part dropped (as the tab does).
     std::map<i32, i32> carrier;
@@ -903,6 +1185,22 @@ Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, con
             if (!own_track) w.set(leaf, "opacity", num(l.opacity));
         }
     }
+
+    // A swap (part 5д): the new drawing hides its pairs (the old one draws them); every other shape fades, its opacity
+    // as now times 1 − k in the old drawing, times k in the new.
+    if (side) {
+        const f64 k = std::clamp(side->from ? 1 - side->k : side->k, 0.0, 1.0);
+        std::set<i32> paired;
+        for (const Pair& pr : *side->pairs) paired.insert(side->from ? pr.a : pr.b);
+        if (!side->from)
+            for (const i32 e : paired) w.set(e, "display", "none");
+        for (const i32 leaf : stage_leaves(o, 0)) {
+            if (paired.count(leaf)) continue;
+            const std::string* now = w.get(leaf, "opacity");
+            const f64 own = std::clamp(vector::svg_number(now ? *now : o.elements[static_cast<usize>(leaf)].property("opacity"), 1.0), 0.0, 1.0);
+            w.set(leaf, "opacity", num(own * k));
+        }
+    }
     return write_all(f, doc, w);
 }
 
@@ -959,15 +1257,15 @@ StageNeeds needs_of(File& f, const SvgPose& pose) {
     return n;
 }
 
-// The stage a live element (or a check, `owner` 0) draws a picture from, its file in files(); null with a line when it
-// does not make.
-File* stage_file(File& f, const std::string& path, const void* owner, const StageNeeds& needs) {
+// The stage a live element (or a check) draws a picture from, its file in files() at `key`; null with a line when it does
+// not make. `path` names the picture in the lines.
+File* stage_file(File& f, const std::string& path, const std::string& key, const StageNeeds& needs) {
     Stage stage;
     std::vector<std::string> notes;
     const bool made = make_stage(f.text, f.outline, needs, stage, notes);
     for (const std::string& n : notes) problem("«" + file_name(path) + "»: " + n);
     if (!made) return nullptr;
-    File& sf = file(stage_key(owner) + path, stage.text);
+    File& sf = file(key, stage.text);
     if (sf.outline.elements.size() != stage.file_of.size() || !sf.outline.error.empty()) {
         problem("«" + file_name(path) + "»: сцена картинки не сложилась (" + std::to_string(sf.outline.elements.size()) + " элементов вместо " +
                 std::to_string(stage.file_of.size()) + ")");
@@ -979,59 +1277,153 @@ File* stage_file(File& f, const std::string& path, const void* owner, const Stag
 
 std::unique_ptr<lunasvg::Document> load(const std::string& text) { return lunasvg::Document::loadFromData(text.data(), text.size()); }
 
-void apply(Rml::Element* element, const Rml::String& path, const Rml::String& text, Rml::UniquePtr<lunasvg::Document>& doc, bool made) {
+// Puts drawing `m` in a slot's document: read from the drawing's text, or from a stage of it when `want` needs one (a
+// stage made stays while it covers what is wanted; `posed` false: none). A document that stays gets back first what
+// the last frame's pose set on it (the attribute or the `style` the file gives, "" when it gives none: inherited or the
+// initial value), so a frame does not build on the last one. The file the document is read from; null when it does not
+// read (the slot reads it again next time).
+File* place(Slot& s, const Family::Member& m, const std::string& stage_prefix, const StageNeeds& want, bool posed,
+            Rml::UniquePtr<lunasvg::Document>& doc) {
+    File& d = *m.file;
+    bool fresh = !doc;
+    if (s.source != &d || s.serial != d.serial || s.drawing != m.name) {
+        s = {};
+        s.drawing = m.name;
+        s.source = &d;
+        s.serial = d.serial;
+        fresh = true;
+    }
+    if (!posed && s.stage) {
+        s.stage = nullptr;
+        s.needs = {};
+        fresh = true;
+    }
+    if (posed && (s.stage ? !s.needs.covers(want) : !want.empty())) {
+        s.needs.add(want);
+        File* sf = stage_file(d, m.picture, stage_prefix + m.key, s.needs);
+        if (std::unique_ptr<lunasvg::Document> made = sf ? load(sf->text) : nullptr) {
+            doc = std::move(made);
+            s.stage = sf;
+            s.wrote = false;
+            return sf;
+        }
+        fresh = fresh || s.stage; // drawn from the drawing's own text then
+        s.stage = nullptr;
+        s.needs = {};
+    }
+    File& from = s.stage ? *s.stage : d;
+    if (fresh) {
+        std::unique_ptr<lunasvg::Document> made = load(from.text);
+        if (!made) {
+            problem("«" + file_name(m.picture) + "»: картинка не читается как SVG");
+            s.source = nullptr;
+            return nullptr;
+        }
+        doc = std::move(made);
+        s.wrote = false;
+        return &from;
+    }
+    if (s.wrote && s.written.file == from.serial)
+        for (const auto& [index, name] : s.written.attributes)
+            if (lunasvg::Element e = element_at(from, *doc, index)) e.setAttribute(name, from.outline.elements[static_cast<usize>(index)].property(name));
+    s.wrote = false;
+    return &from;
+}
+
+// A pose on a picture's documents: the drawing shown in `doc` (part 5д: a document of its own when it is not the main
+// one), or in a swap the old drawing in `doc` and the new one in `over`; what the scripts said (`said`) on each. `f` is
+// the picture's file at `path`, its drawings' files in files() by `family_key` and their stages by `stage_prefix`.
+void compose(File& f, const std::string& path, const std::string& family_key, const std::string& stage_prefix, const SvgPose& pose,
+             const std::map<std::string, SvgPart, std::less<>>* said, Slot& base, Slot& top, Rml::UniquePtr<lunasvg::Document>& doc,
+             Rml::UniquePtr<lunasvg::Document>& over) {
+    const Family fam = family_of(f, path, family_key, pose);
+    // The drawing shown, and in a swap the one it comes from (none when it is the same: forge::pixel::Rig::pose).
+    const Family::Member* to = fam.get(pose.drawing);
+    if (!to) {
+        problem("«" + file_name(path) + "»: нет рисунка «" + pose.drawing + "»");
+        to = &fam.members.front();
+    }
+    const Family::Member* from = nullptr;
+    if (pose.swap) {
+        from = fam.get(pose.swap_from);
+        if (!from) problem("«" + file_name(path) + "»: нет рисунка «" + pose.swap_from + "»");
+        if (from == to) from = nullptr;
+    }
+    const Family::Member& b = from ? *from : *to;
+    const SvgPose pb = for_drawing(pose, from ? pose.from_parts : pose.parts, *b.file, fam);
+    SvgPose pt;
+    StageNeeds want = needs_of(*b.file, pb);
+    if (from) {
+        pt = for_drawing(pose, pose.parts, *to->file, fam);
+        // The old drawing's pairs morph: each a <path> of its stage.
+        for (const Pair& pr : pairs_of(*b.file, pb, *to->file, pt))
+            if (b.file->outline.elements[static_cast<usize>(pr.a)].tag != "path") want.outlines.insert(pr.a);
+    }
+    File* drawn_b = place(base, b, stage_prefix, want, true, doc);
+    File* drawn_t = from ? place(top, *to, stage_prefix + "\x04", needs_of(*to->file, pt), true, over) : nullptr;
+    if (!drawn_t) {
+        over.reset();
+        top = {};
+    }
+    if (!drawn_b) return;
+    // What the scripts said, on each drawing drawn; a drawing without the part says nothing when another one has it.
+    if (said)
+        for (const auto& [id, part] : *said) {
+            const bool known = fam.others() && fam.knows(id);
+            apply_part(*drawn_b, b.picture, *doc, id, part, known && own_part(*b.file, id) < 0);
+            if (drawn_t) apply_part(*drawn_t, to->picture, *over, id, part, known && own_part(*to->file, id) < 0);
+        }
+    if (!drawn_t) {
+        base.written = apply_pose(*drawn_b, b.picture, *doc, pb, &fam, b.name);
+        base.wrote = true;
+        return;
+    }
+    // The new drawing first: the old one morphs its pairs to what the new one's are now.
+    const std::vector<Pair> pairs = pairs_of(*drawn_b, pb, *drawn_t, pt);
+    std::map<i32, SwapSide::Now> now;
+    const f64 k = std::isfinite(pose.swap_k) ? std::clamp(pose.swap_k, 0.0, 1.0) : 0.0;
+    const SwapSide in{false, k, &pairs, drawn_b, b.name, &now}, out{true, k, &pairs, drawn_t, to->name, &now};
+    top.written = apply_pose(*drawn_t, to->picture, *over, pt, &fam, to->name, &in);
+    top.wrote = true;
+    base.written = apply_pose(*drawn_b, b.picture, *doc, pb, &fam, b.name, &out);
+    base.wrote = true;
+}
+
+void apply(Rml::Element* element, const Rml::String& path, const Rml::String& text, Rml::UniquePtr<lunasvg::Document>& doc,
+           Rml::UniquePtr<lunasvg::Document>& over, bool made) {
     Live* live = live_of(element);
     if (!live || !doc) return;
     // A document the plugin has just read (the first time, or again after the element let it go) is the file's, not a
-    // stage, wherever it stands in memory.
-    if (made) live->staged.erase(path);
+    // stage nor another drawing, wherever it stands in memory; nothing is over it.
+    if (made) {
+        live->base.erase(path);
+        live->top.erase(path);
+        over.reset();
+    }
     File& f = file(path, text);
     if (!f.outline.error.empty()) {
         problem("«" + file_name(path) + "»: " + f.outline.error);
         return;
     }
-    // The picture is drawn from its file, or from a stage (part 5г) when the clip needs one: made again when the clip
-    // needs what it has not, or when the plugin has read the file again.
-    File* drawn = &f;
-    const bool posed = live->posed && file_name(path) == live->pose.picture;
-    auto staged = live->staged.find(path);
-    if (posed) {
-        const StageNeeds want = needs_of(f, live->pose);
-        if (staged != live->staged.end() || !want.empty()) {
-            Staged& s = live->staged[path];
-            File* sf = s.file && s.needs.covers(want) ? s.file : nullptr;
-            if (!sf) {
-                s.needs.add(want);
-                sf = stage_file(f, path, element, s.needs);
-                std::unique_ptr<lunasvg::Document> fresh = sf ? load(sf->text) : nullptr;
-                if (fresh) {
-                    doc = std::move(fresh);
-                    s.file = sf;
-                    live->written.erase(path);
-                } else {
-                    sf = nullptr;
-                    live->staged.erase(path);
-                }
-            }
-            if (sf) drawn = sf;
-        }
-    } else if (staged != live->staged.end()) {
-        if (std::unique_ptr<lunasvg::Document> fresh = load(f.text)) doc = std::move(fresh);
-        live->staged.erase(staged);
-        live->written.erase(path);
+    auto [it, first] = live->base.try_emplace(path);
+    Slot& base = it->second;
+    if (first) { // the plugin's reading of the file
+        base.source = &f;
+        base.serial = f.serial;
     }
-    // What the last frame's pose set goes back to the file's first (the attribute or the `style` the file gives it, ""
-    // when it gives none: inherited or the initial value), so a frame does not build on the last one: a fill or a morph
-    // back at 0, a property the pose leaves.
-    if (const auto it = live->written.find(path); it != live->written.end()) {
-        if (it->second.file == drawn->serial)
-            for (const auto& [index, name] : it->second.attributes)
-                if (lunasvg::Element e = element_at(*drawn, *doc, index))
-                    e.setAttribute(name, drawn->outline.elements[static_cast<usize>(index)].property(name));
-        live->written.erase(it);
+    Slot& top = live->top[path];
+    const std::string key = stage_key(element);
+    // The picture is drawn from its file, or from a stage (part 5г) when the clip needs one, or from another drawing of
+    // the character (part 5д).
+    if (live->posed && file_name(path) == live->pose.picture) {
+        compose(f, path, "\x05" + dir_of(path), key, live->pose, &live->parts, base, top, doc, over);
+        return;
     }
-    for (const auto& [id, part] : live->parts) apply_part(*drawn, path, *doc, id, part);
-    if (posed) live->written[path] = apply_pose(*drawn, path, *doc, live->pose);
+    over.reset();
+    live->top.erase(path);
+    const Family::Member main{"", path, path, &f};
+    if (File* drawn = place(base, main, key, {}, false, doc))
+        for (const auto& [id, part] : live->parts) apply_part(*drawn, path, *doc, id, part);
 }
 
 } // namespace
@@ -1126,8 +1518,8 @@ void svg_unpose(Rml::Element* element) {
     if (!live || !live->posed) return;
     live->posed = false;
     live->pose = {};
-    live->written.clear();
-    live->staged.clear();
+    live->base.clear();
+    live->top.clear();
     // Made again from the files: what the clip changed goes, what svg_move and the others said comes back.
     Rml::SVG::SetLive(element, false);
     Rml::SVG::SetLive(element, true);
@@ -1140,39 +1532,42 @@ const SvgPose* svg_posed(Rml::Element* element) {
 
 namespace {
 
-std::unique_ptr<lunasvg::Document> posed_document(std::string_view svg, const SvgPose& pose, std::string& why, std::string* stage_text = nullptr) {
+// The documents a pose draws a picture into, for checks (as a live element's apply draws them): the drawing shown, or in
+// a swap the old one in `doc` and the new one in `over`; the stages they are read from ("" none).
+struct Posed {
+    Rml::UniquePtr<lunasvg::Document> doc, over;
+    std::string stage, over_stage;
+};
+
+bool posed_documents(std::string_view svg, const SvgPose& pose, Posed& out, std::string& why) {
     const std::string text(svg);
     File& f = file("\x01" + pose.picture, text); // not a path a live element has
     if (!f.outline.error.empty()) {
         why = f.outline.error;
-        return nullptr;
+        return false;
     }
-    File* drawn = &f;
-    if (const StageNeeds needs = needs_of(f, pose); !needs.empty()) {
-        drawn = stage_file(f, pose.picture, nullptr, needs);
-        if (!drawn) {
-            why = "сцена картинки не сложилась";
-            return nullptr;
-        }
-        if (stage_text) *stage_text = drawn->text;
-    }
-    std::unique_ptr<lunasvg::Document> doc = load(drawn->text);
-    if (!doc) {
+    Slot base, top;
+    compose(f, "\x01" + pose.picture, "\x01\x05", stage_key(nullptr), pose, nullptr, base, top, out.doc, out.over);
+    if (!out.doc || !base.source) {
         why = "картинка не читается как SVG";
-        return nullptr;
+        return false;
     }
-    apply_pose(*drawn, pose.picture, *doc, pose);
-    return doc;
+    if (base.stage) out.stage = base.stage->text;
+    if (top.stage) out.over_stage = top.stage->text;
+    return true;
 }
 
 } // namespace
 
 bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, std::vector<u8>& rgba, std::string& why) {
     rgba.clear();
-    std::unique_ptr<lunasvg::Document> doc = posed_document(svg, pose, why);
-    if (!doc) return false;
-    lunasvg::Bitmap bmp = doc->renderToBitmap(static_cast<int>(w), static_cast<int>(h), 0);
+    Posed p;
+    if (!posed_documents(svg, pose, p, why)) return false;
+    lunasvg::Bitmap bmp = p.doc->renderToBitmap(static_cast<int>(w), static_cast<int>(h), 0);
     if (bmp.isNull()) return why = "картинка не рисуется", false;
+    // The new drawing over the old at its scale, as the SVG plugin draws a live picture's second document.
+    if (p.over && p.doc->width() > 0 && p.doc->height() > 0)
+        p.over->render(bmp, lunasvg::Matrix(static_cast<float>(w / p.doc->width()), 0, 0, static_cast<float>(h / p.doc->height()), 0, 0));
     bmp.convertToRGBA();
     rgba.resize(static_cast<usize>(w) * h * 4);
     for (u32 y = 0; y < h; ++y)
@@ -1181,18 +1576,21 @@ bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, s
     return true;
 }
 
-std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::string_view id, std::string_view name) {
+std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::string_view id, std::string_view name, bool over) {
     std::string why;
-    std::unique_ptr<lunasvg::Document> doc = posed_document(svg, pose, why);
+    Posed p;
+    if (!posed_documents(svg, pose, p, why)) return {};
+    lunasvg::Document* doc = over ? p.over.get() : p.doc.get();
     if (!doc) return {};
     lunasvg::Element e = doc->getElementById(std::string(id));
     return e ? e.getAttribute(std::string(name)) : std::string();
 }
 
-std::string posed_stage(std::string_view svg, const SvgPose& pose) {
-    std::string why, text;
-    posed_document(svg, pose, why, &text);
-    return text;
+std::string posed_stage(std::string_view svg, const SvgPose& pose, bool over) {
+    std::string why;
+    Posed p;
+    posed_documents(svg, pose, p, why);
+    return over ? p.over_stage : p.stage;
 }
 
 void install_live_svg() { Rml::SVG::SetLiveApply(&apply); }

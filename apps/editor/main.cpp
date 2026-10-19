@@ -19005,7 +19005,7 @@ return {
     // The open character as the files on disk have it, apart from the tab: its file, a rig of its picture with the
     // pivots, a script with the game's modules; and, when asked, the code's drawing and the picture's text.
     bool mo_load(pixel::PixelDoc& doc, pixel::Rig& rig, pixel::PoseScript& script, std::string& why, pixel::Drawing* drawn = nullptr,
-                 std::string* picture = nullptr) {
+                 std::string* picture = nullptr, std::vector<pixel::NamedDrawing>* drawings = nullptr) {
         namespace fs = std::filesystem;
         const fs::path doc_file = as().abs(px().opened());
         std::vector<u8> bytes, svg, lua;
@@ -19033,6 +19033,7 @@ return {
         pixel::apply_pivots(rig, doc, script.has_draw() ? &drawing : nullptr, &others);
         if (drawn) *drawn = drawing;
         if (picture) picture->assign(svg.begin(), svg.end());
+        if (drawings) *drawings = std::move(others);
         return true;
     }
     // Frame k of a clip as the files on disk bake it, made apart from the tab (mo_load); by the clip's range, or all of
@@ -26667,9 +26668,10 @@ return {
         pixel::PoseScript script;
         pixel::Drawing drawing;
         std::string picture;
-        if (!mo_load(doc, rig, script, why, &drawing, &picture)) return false;
+        std::vector<pixel::NamedDrawing> drawings;
+        if (!mo_load(doc, rig, script, why, &drawing, &picture, &drawings)) return false;
         script.set_lengths(doc.lengths);
-        return pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, out, why);
+        return pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, drawings, out, why);
     }
 
     // In an editor for «Движение А» after pixel-motion-l-again (--self-test pixel-motion-m).
@@ -27214,10 +27216,12 @@ return {
         pixel::PoseScript script;
         pixel::Drawing drawing;
         std::string picture;
-        if (!mo_load(doc, rig, script, why, &drawing, &picture)) return false;
+        std::vector<pixel::NamedDrawing> drawings;
+        if (!mo_load(doc, rig, script, why, &drawing, &picture, &drawings)) return false;
         script.set_lengths(doc.lengths);
         pixel::ScreenGift gift;
-        if (!pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, gift, why)) return false;
+        if (!pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, drawings, gift, why))
+            return false;
         out.clear();
         clips.clear();
         char line[512];
