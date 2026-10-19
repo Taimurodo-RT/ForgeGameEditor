@@ -4,6 +4,8 @@
 // transitions of the actor's parts over them by rule 5. The marks of the actors' clips are the scene's at their
 // moments, on every round of a loop (one at a clip's end at each round's end, as a game's screen gives it). A frame of the scene is the background, the pictures and the actors drawn alone
 // in their poses, laid over each other in the stage's order.
+// Part 6б: the camera (its matrix, center_on, along, follow and its end) and the transitions in and out, the player's
+// frames of each kind and of one's own function against frames worked out by hand; the errors of both.
 
 #include "forge/assets/image.h"
 #include "forge/pixel/bake.h"
@@ -534,8 +536,6 @@ TEST_CASE("Сцена: что сцене нельзя — со строкой") 
         {"    actor(\"ёжик\"):play()", "первым — имя клипа"},
         {"    actor(\"ёжик\"):stop(1)", "stop() — без аргументов"},
         {"    actor(\"жук\"):play(\"walk\")", "у персонажа «персонажи/Жук» нет клипа «walk» (есть «hop»)"},
-        {"    camera()", "camera — в части 6б"},
-        {"    transition(\"сдвиг\", 1)", "transition — в части 6б"},
         {"    music(\"тема\")", "music — в части 6в"},
         {"    talk(\"разговор\")", "talk — в части 6в"},
     };
@@ -1089,4 +1089,455 @@ TEST_CASE("Сцена: протяжка мышью пишет строку в sc
     REQUIRE(x);
     CHECK(x->start == 0);
     CHECK(x->value.v == doctest::Approx(4));
+}
+
+// ---- part 6б: the camera and the transitions ----
+
+namespace {
+
+// The stage of 6а with a hidden circle for a transition's mask: lines 3–9, the scene's from 12.
+const char* kStageB = R"(    canvas(160, 120)
+    background("#203040")
+    picture("лес", "картинки/лес.png", { x = 8, y = 6 })
+    actor("ёжик", "персонажи/Ёжик", { x = 40, y = 100, pivot = { 32, 60 } })
+    actor("жук", "персонажи/Жук", { x = 120, y = 90, scale = 0.5, rot = 15, pivot = { 24, 16 } })
+    path("дорога", { d = "M 40 100 L 120 100", fill = "none", stroke = "#ffffff", hidden = true })
+    circle("круг", { x = 80, y = 60, r = 30, fill = "#ffffff", hidden = true }))";
+
+// The camera at t of a recorded scene.
+SceneCamera camera_at(Scene& s, f64 t) {
+    const bool ok = s.frame(t);
+    INFO(s.error());
+    REQUIRE(ok);
+    return s.camera();
+}
+
+Rgba8 pixel_at(const assets::CookedTexture& t, u32 x, u32 y) {
+    const u8* p = &t.rgba8[(static_cast<usize>(y) * t.width + x) * 4];
+    return {p[0], p[1], p[2], p[3]};
+}
+
+// Whether a pixel is within 2 of a colour in each channel.
+bool near(Rgba8 got, Rgba8 want) {
+    return std::abs(got.r - want.r) <= 2 && std::abs(got.g - want.g) <= 2 && std::abs(got.b - want.b) <= 2 &&
+           std::abs(got.a - want.a) <= 2;
+}
+
+// a share k of the way from b to a: what a over b at opacity k gives on opaque pixels.
+Rgba8 mix(Rgba8 a, Rgba8 b, f64 k) {
+    auto c = [&](u8 x, u8 y) { return static_cast<u8>(std::lround(x * k + y * (1 - k))); };
+    return {c(a.r, b.r), c(a.g, b.g), c(a.b, b.b), 255};
+}
+
+constexpr Rgba8 kBack{0x20, 0x30, 0x40, 255};
+
+} // namespace
+
+TEST_CASE("Сцена: матрица кадра через камеру") {
+    // The middle of the canvas moved by x, y stands in the middle of the frame; a step right on the scene is zoom
+    // steps in the frame, turned back by rot (the camera turned clockwise, the scene turns the other way).
+    const vector::Point c{90, 55};
+    struct Case {
+        SceneCamera cam;
+        vector::Point right, down; // where c + (1, 0) and c + (0, 1) stand in the frame
+    };
+    const Case cases[] = {
+        {{10, -5, 1, 0}, {81, 60}, {80, 61}},
+        {{10, -5, 2, 0}, {82, 60}, {80, 62}},
+        {{10, -5, 1, 90}, {80, 59}, {81, 60}},
+        {{10, -5, 2, 90}, {80, 58}, {82, 60}},
+        {{10, -5, 2, -90}, {80, 62}, {78, 60}},
+    };
+    for (const Case& k : cases) {
+        CAPTURE(k.cam.zoom);
+        CAPTURE(k.cam.rot);
+        const Affine m = camera_matrix(k.cam, 160, 120);
+        const vector::Point mid = m.apply(c), r = m.apply({c.x + 1, c.y}), d = m.apply({c.x, c.y + 1});
+        CHECK(mid.x == doctest::Approx(80));
+        CHECK(mid.y == doctest::Approx(60));
+        CHECK(r.x == doctest::Approx(k.right.x));
+        CHECK(r.y == doctest::Approx(k.right.y));
+        CHECK(d.x == doctest::Approx(k.down.x));
+        CHECK(d.y == doctest::Approx(k.down.y));
+    }
+    // 45°: a step right goes up and right by √½ each.
+    const vector::Point q = camera_matrix({0, 0, 1, 45}, 160, 120).apply({81, 60});
+    CHECK(q.x == doctest::Approx(80 + std::sqrt(0.5)));
+    CHECK(q.y == doctest::Approx(60 - std::sqrt(0.5)));
+    CHECK(camera_matrix({}, 160, 120) == Affine{});
+    CHECK(camera_part("camera"));
+    CHECK(camera_part("camera/in-new"));
+    CHECK(camera_part("camera/out-old"));
+    CHECK_FALSE(camera_part("cameras"));
+    CHECK_FALSE(camera_part("ёжик"));
+
+    // The camera of a recording: its x, y, zoom and rot, the frame the scene through it.
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    camera():to({ x = 10, y = -5, zoom = 2, rot = 90 }, 1)
+    camera().zoom(1, 1))");
+    record(s);
+    CHECK(s.recording()->length == doctest::Approx(2));
+    CHECK(camera_at(s, 0) == SceneCamera{});
+    CHECK(camera_at(s, 1) == SceneCamera{10, -5, 2, 90});
+    const SceneCamera end = camera_at(s, 2);
+    CHECK(end.x == 10);
+    CHECK(end.zoom == 1);
+    CHECK(s.camera_matrix() == camera_matrix(end, 160, 120));
+    CHECK(s.camera().x == 10);
+    // The frame through it is the scene drawn by its matrix; the stage's own drawing is the whole scene still.
+    REQUIRE(s.frame(1));
+    const assets::CookedTexture through = s.draw_frame(160, 120, Affine{});
+    const assets::CookedTexture want = s.draw(160, 120, s.camera_matrix());
+    CHECK(through.width == 160);
+    CHECK(through.rgba8 == want.rgba8);
+    CHECK(s.draw(160, 120, Affine{}).rgba8 != want.rgba8);
+    // Moved 20 right: the frame's 10, 10 is the scene's 30, 10, the picture's 22, 4.
+    load(s, files, "    camera().x(20)");
+    record(s);
+    REQUIRE(s.frame(0));
+    const assets::CookedTexture moved = s.draw_frame(160, 120, Affine{});
+    const assets::CookedTexture pic = forest();
+    CHECK(near(pixel_at(moved, 10, 10), pixel_at(pic, 22, 4)));
+    CHECK(near(pixel_at(moved, 130, 10), kBack)); // the scene's 150, 10
+    // Fitted into a drawing twice the size: the same frame, each pixel twice.
+    const assets::CookedTexture big = s.draw_frame(320, 240);
+    CHECK(near(pixel_at(big, 21, 21), pixel_at(pic, 22, 4)));
+}
+
+TEST_CASE("Сцена: камера к цели и по пути") {
+    Files files;
+    project(files);
+    Scene s;
+    // To an actor where its pivot stands then, to a shape's middle, to a point of the scene.
+    load(s, files, R"(    part("ёжик").x(20)
+    camera():center_on("ёжик", 1)
+    camera():center_on("круг", 1, "linear")
+    wait(0.5)
+    camera():center_on({ x = 100, y = 30 }, 0))", kStageB);
+    record(s);
+    CHECK(camera_at(s, 0) == SceneCamera{});
+    SceneCamera c = camera_at(s, 1);
+    CHECK(c.x == doctest::Approx(-20)); // 60 - 80
+    CHECK(c.y == doctest::Approx(40));  // 100 - 60
+    c = camera_at(s, 1.5);
+    CHECK(c.x == doctest::Approx(-10));
+    CHECK(c.y == doctest::Approx(20));
+    c = camera_at(s, 2);
+    CHECK(c.x == doctest::Approx(0));
+    CHECK(c.y == doctest::Approx(0));
+    c = camera_at(s, 2.5);
+    CHECK(c.x == doctest::Approx(20));
+    CHECK(c.y == doctest::Approx(-30));
+    CHECK(s.recording()->length == doctest::Approx(2.5));
+    // The frame's middle along the path: the path's start, middle and end.
+    load(s, files, "    camera():along(\"дорога\", 2, \"linear\")", kStageB);
+    record(s);
+    c = camera_at(s, 0);
+    CHECK(c.x == doctest::Approx(-40));
+    CHECK(c.y == doctest::Approx(40));
+    c = camera_at(s, 1);
+    CHECK(c.x == doctest::Approx(0));
+    CHECK(c.y == doctest::Approx(40));
+    c = camera_at(s, 2);
+    CHECK(c.x == doctest::Approx(40));
+    CHECK(c.y == doctest::Approx(40));
+    // part("camera") is the same camera; modules and functions move it as a part.
+    load(s, files, R"(    local cam = part("camera")
+    cam:to({ x = 5 }, 0)
+    all(function() camera().y(7, 0) end))", kStageB);
+    record(s);
+    c = camera_at(s, 0);
+    CHECK(c.x == 5);
+    CHECK(c.y == 7);
+}
+
+TEST_CASE("Сцена: камера следит за актёром") {
+    Files files;
+    project(files);
+    Scene s;
+    // Without a length the frame's middle is on the hedgehog's pivot at once: 40 + 50 t - 80, 100 - 60.
+    load(s, files, R"(    all(part("ёжик").x(100, 2, "linear"), camera():follow("ёжик"))
+    wait(1))");
+    record(s);
+    CHECK(s.recording()->length == doctest::Approx(3));
+    for (const f64 t : {0.0, 0.5, 1.0, 2.0, 3.0}) {
+        CAPTURE(t);
+        const SceneCamera c = camera_at(s, t);
+        CHECK(c.x == doctest::Approx(40 + 50 * std::min(t, 2.0) - 80));
+        CHECK(c.y == doctest::Approx(40));
+        CHECK(c.zoom == 1);
+    }
+    // With one: from where it was to on it, k of the way: middle(t) = target(t) - (1 - k) (target(t0) - middle(t0)).
+    load(s, files, R"(    camera().x(10)
+    all(part("ёжик").x(100, 2, "linear"), camera():follow("ёжик", 1, "linear")))");
+    record(s);
+    for (const f64 t : {0.0, 0.25, 0.5, 1.0, 1.5, 2.0}) {
+        CAPTURE(t);
+        const f64 k = std::min(t, 1.0);
+        const SceneCamera c = camera_at(s, t);
+        CHECK(c.x == doctest::Approx((40 + 50 * t - 80) - (1 - k) * (-40 - 10)));
+        CHECK(c.y == doctest::Approx(40 - (1 - k) * 40));
+    }
+    // follow waits its length.
+    CHECK(s.recording()->length == doctest::Approx(2));
+    // follow(nil) ends it: the camera stands where it left it, the next move goes from there.
+    load(s, files, R"(    spawn(part("ёжик").x(100, 2, "linear"))
+    camera():follow("ёжик")
+    wait(1)
+    camera():follow(nil)
+    wait(0.5)
+    camera().x(0, 1, "linear"))");
+    record(s);
+    CHECK(camera_at(s, 0.5).x == doctest::Approx(-15));
+    CHECK(camera_at(s, 1).x == doctest::Approx(10));
+    CHECK(camera_at(s, 1.25).x == doctest::Approx(10));
+    CHECK(camera_at(s, 1.5).x == doctest::Approx(10));
+    CHECK(camera_at(s, 2).x == doctest::Approx(5));
+    CHECK(camera_at(s, 2).y == doctest::Approx(40));
+    CHECK(camera_at(s, 2.5).x == doctest::Approx(0));
+    // x alone ends it too, y staying where it was; zoom and rot do not.
+    load(s, files, R"(    spawn(all(part("ёжик").x(100, 2, "linear"), part("ёжик").y(-40, 2, "linear")))
+    camera():follow("ёжик")
+    wait(0.5)
+    camera().zoom(2, 0)
+    camera().rot(10, 0)
+    wait(0.5)
+    camera().x(-30, 0))");
+    record(s);
+    SceneCamera c = camera_at(s, 0.75);
+    CHECK(c.x == doctest::Approx(40 + 37.5 - 80));
+    CHECK(c.y == doctest::Approx(100 - 15 - 60));
+    CHECK(c.zoom == 2);
+    CHECK(c.rot == 10);
+    c = camera_at(s, 1);
+    CHECK(c.x == doctest::Approx(-30));
+    CHECK(c.y == doctest::Approx(100 - 20 - 60));
+    c = camera_at(s, 2);
+    CHECK(c.x == doctest::Approx(-30));
+    CHECK(c.y == doctest::Approx(100 - 20 - 60));
+    // A new place of the camera ends it: center_on goes from where the follow had it.
+    load(s, files, R"(    spawn(part("ёжик").x(100, 2, "linear"))
+    camera():follow("ёжик")
+    wait(1)
+    camera():center_on({ x = 80, y = 60 }, 1, "linear"))");
+    record(s);
+    CHECK(camera_at(s, 1).x == doctest::Approx(10));
+    CHECK(camera_at(s, 1.5).x == doctest::Approx(5));
+    CHECK(camera_at(s, 2).x == doctest::Approx(0));
+    CHECK(camera_at(s, 2).y == doctest::Approx(0));
+}
+
+TEST_CASE("Сцена: камера и переходы — ошибки со строкой") {
+    Files files;
+    project(files);
+    struct Case {
+        const char* scene;
+        const char* says;
+    };
+    const Case cases[] = {
+        {"    camera().tint(\"#ff0000\", 0.2)", "у камеры нет свойства «tint»"},
+        {"    camera():mask(\"дорога\")", "у камеры нет свойства «mask»"},
+        {"    camera().zoom(0, 1)", "zoom — число больше 0"},
+        {"    camera():to({ zoom = -1 }, 1)", "zoom — число больше 0"},
+        {"    camera(1)", "camera() — без аргументов"},
+        {"    camera():center_on(\"ёжик/head\", 1)", "часть актёра, а здесь нужна часть сцены"},
+        {"    camera():follow(\"ёжик/head\")", "часть актёра, а здесь нужна часть сцены"},
+        {"    camera():follow(\"camera\")", "камера не идёт к самой себе"},
+        {"    camera():follow(\"нет\")", "нет"},
+        {"    camera():follow(nil, 1)", "follow(nil) — без длины"},
+        {"    camera():center_on({ x = 1 }, 1)", "у точки и x, и y"},
+        {"    part(\"camera/in-new\").x(1)", "нет части"},
+        {"    wait(1) transition(\"растворение\", 1)", "transition — в начале scene"},
+        {"    transition(\"растворение\", 1) transition(\"сдвиг\", 1)", "один раз"},
+        {"    all(function() transition(\"растворение\", 1) end)", "transition — в начале scene"},
+        {"    all(function() leave(\"растворение\", 1) end)", "leave — в самой scene"},
+        {"    leave(\"растворение\", 1) wait(1)", "после leave сцена кончается"},
+        {"    leave(\"растворение\", 1) log(1)", "после leave сцена кончается"},
+        {"    leave(\"растворение\", 1) leave(\"растворение\", 1)", "после leave сцена кончается"},
+        {"    transition(\"вихрь\", 1)", "нет вида «вихрь»"},
+        {"    transition(\"сдвиг\", 1, { from = \"вбок\" })", "from — «право», «лево», «верх» или «низ»"},
+        {"    transition(\"растворение\", 1, { from = \"лево\" })", "from — только у «сдвиг»"},
+        {"    transition(\"сдвиг\", 1, { edge = \"лево\" })", "поля «edge» нет"},
+        {"    transition(function(old, new) new.tint(\"#fff\", 1) end)", "у кадра перехода нет «tint»"},
+        {"    transition(function(old, new) end, 1)", "длина перехода — длина записи функции"},
+        {"    music(\"тема\")", "music — в части 6в"},
+    };
+    for (const Case& c : cases) {
+        CAPTURE(c.scene);
+        Scene s;
+        load(s, files, c.scene);
+        CHECK_FALSE(s.record());
+        INFO(s.error());
+        CHECK(has(s.error(), c.says));
+        CHECK(s.error_line() == 11);
+    }
+    // The name camera is the camera's: a shape or an actor with it, by the line of its call.
+    for (const char* stage : {"    canvas(160, 120)\n    rect(\"camera\", { w = 4, h = 4 })",
+                              "    canvas(160, 120)\n    actor(\"camera\", \"персонажи/Ёжик\", { x = 1, y = 1 })",
+                              "    canvas(160, 120)\n    picture(\"camera\", \"картинки/лес.png\")"}) {
+        CAPTURE(stage);
+        Scene s;
+        CHECK_FALSE(s.load(scene_code(stage, "    wait(1)"), {}, files.scene()));
+        INFO(s.error());
+        CHECK(has(s.error(), "имя camera — у камеры сцены"));
+        CHECK(s.error_line() == 4);
+    }
+    // camera in the stage, and outside a scene: a character's clip.
+    {
+        Scene s;
+        CHECK_FALSE(s.load(scene_code("    canvas(160, 120)\n    camera()", "    wait(1)"), {}, files.scene()));
+        CHECK(has(s.error(), "camera — в scene = function(p) … end"));
+    }
+    for (const char* call : {"camera()", "transition(\"растворение\", 1)", "leave(\"растворение\", 1)"}) {
+        CAPTURE(call);
+        PoseScript code;
+        REQUIRE(code.load(std::string("return {\n  clips = { a = function(p)\n    ") + call + "\n  end },\n}\n"));
+        Recording rec;
+        CHECK_FALSE(code.record(nullptr, "a", {}, 1, {}, rec));
+        INFO(code.error());
+        CHECK(has(code.error(), "только в сцене"));
+        CHECK(code.error_line() == 3);
+    }
+}
+
+TEST_CASE("Сцена: переходы входа и ухода — кадры игрока") {
+    Files files;
+    project(files);
+    const Rgba8 grey = kOutsideScene;
+    Scene s;
+    auto frame = [&](f64 t) {
+        const bool ok = s.frame(t);
+        INFO(s.error());
+        REQUIRE(ok);
+        return s.draw_frame(160, 120, Affine{});
+    };
+    // «растворение»: the scene shows over what was, linear.
+    load(s, files, R"(    transition("растворение", 1)
+    wait(2))");
+    record(s);
+    CHECK(s.recording()->length == doctest::Approx(2)); // transition does not wait
+    REQUIRE(s.recording()->transitions.size() == 1);
+    const SceneTransition& tr = s.recording()->transitions[0];
+    CHECK_FALSE(tr.leave);
+    CHECK(tr.kind == "растворение");
+    CHECK(tr.start == 0);
+    CHECK(tr.length == doctest::Approx(1));
+    CHECK(near(pixel_at(frame(0), 150, 10), grey));
+    CHECK(near(pixel_at(frame(0.25), 150, 10), mix(kBack, grey, 0.25)));
+    CHECK(near(pixel_at(frame(0.5), 150, 10), mix(kBack, grey, 0.5)));
+    CHECK(near(pixel_at(frame(1), 150, 10), kBack));
+    CHECK(frame(1.5).rgba8 == s.draw(160, 120, s.camera_matrix()).rgba8);
+
+    // «сдвиг» from the right: the scene comes in from x = 160, half way at 0.5 (in_out_cubic).
+    load(s, files, "    transition(\"сдвиг\", 1)\n    wait(1)");
+    record(s);
+    CHECK(s.recording()->transitions[0].from == "право");
+    assets::CookedTexture f = frame(0.5);
+    CHECK(near(pixel_at(f, 10, 2), grey));
+    CHECK(near(pixel_at(f, 79, 2), grey));
+    CHECK(near(pixel_at(f, 85, 2), kBack)); // the scene's 5, 2
+    CHECK(near(pixel_at(f, 82 + 10, 10), pixel_at(forest(), 4, 4))); // the scene's 12, 10
+    CHECK(near(pixel_at(frame(0), 150, 10), grey));
+    // From above: at 0.5 the scene's bottom half shows in the frame's top half.
+    load(s, files, "    transition(\"сдвиг\", 1, { from = \"верх\" })\n    wait(1)");
+    record(s);
+    f = frame(0.5);
+    CHECK(near(pixel_at(f, 150, 2), kBack)); // the scene's 150, 62
+    CHECK(near(pixel_at(f, 150, 100), grey));
+    // From the left and below, linear: a quarter in at 0.25.
+    load(s, files, "    transition(\"сдвиг\", 1, { from = \"лево\", ease = \"linear\" })\n    wait(1)");
+    record(s);
+    f = frame(0.25);
+    CHECK(near(pixel_at(f, 38, 60), kBack));   // the scene's 158, 60
+    CHECK(near(pixel_at(f, 42, 60), grey));
+    load(s, files, "    transition(\"сдвиг\", 1, { from = \"низ\", ease = \"linear\" })\n    wait(1)");
+    record(s);
+    f = frame(0.25);
+    CHECK(near(pixel_at(f, 150, 88), grey));
+    CHECK(near(pixel_at(f, 150, 92), kBack)); // the scene's 150, 2
+
+    // «приближение»: from half its size and transparent, round the frame's middle: at 0.5 three quarters, half seen.
+    load(s, files, "    transition(\"приближение\", 1)\n    wait(1)");
+    record(s);
+    f = frame(0.5);
+    CHECK(near(pixel_at(f, 2, 2), grey));         // outside the scene at 0.75
+    CHECK(near(pixel_at(f, 133, 23), mix(kBack, grey, 0.5))); // the scene's 151, 11
+    CHECK(near(pixel_at(f, 18, 60), grey));
+    CHECK(near(pixel_at(f, 22, 60), mix(kBack, grey, 0.5))); // the scene's 3, 60
+
+    // A function of its own: the new frame seen only in the circle as the camera sees it, the camera 20 right.
+    load(s, files, R"(    camera().x(20)
+    transition(function(old, new)
+      new:mask("круг")
+      old.opacity(0.5)
+      wait(1)
+    end)
+    wait(1))", kStageB);
+    record(s);
+    CHECK(s.recording()->transitions[0].kind.empty());
+    CHECK(s.recording()->transitions[0].length == doctest::Approx(1));
+    CHECK(s.recording()->length == doctest::Approx(1));
+    f = frame(0.5);
+    const assets::CookedTexture scene = s.draw(160, 120, s.camera_matrix());
+    // The circle at the scene's 80, 60 is at 60, 60 of the frame: the scene inside it, outside half the grey.
+    CHECK(near(pixel_at(f, 60, 60), pixel_at(scene, 60, 60)));
+    CHECK(near(pixel_at(f, 85, 60), pixel_at(scene, 85, 60)));
+    const Rgba8 half{128, 128, 128, 128};
+    CHECK(near(pixel_at(f, 95, 60), half));
+    CHECK(near(pixel_at(f, 25, 60), half));
+    CHECK(near(pixel_at(f, 60, 25), half));
+    CHECK(frame(1).rgba8 == scene.rgba8);
+}
+
+TEST_CASE("Сцена: уход — длина сцены и актёры во время него") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    actor("ёжик"):loop("walk")
+    wait(1)
+    leave("растворение", 1))");
+    record(s);
+    const Recording& rec = *s.recording();
+    CHECK(rec.length == doctest::Approx(2));
+    REQUIRE(rec.transitions.size() == 1);
+    CHECK(rec.transitions[0].leave);
+    CHECK(rec.transitions[0].start == doctest::Approx(1));
+    CHECK(rec.transitions[0].length == doctest::Approx(1));
+    // The actor's loop goes on while the scene leaves.
+    const ActorMoment m = actor_moment(rec, "ёжик", 1.6);
+    REQUIRE(m.play);
+    CHECK(m.time == doctest::Approx(0.1));
+    auto frame = [&](f64 t) {
+        REQUIRE(s.frame(t));
+        return s.draw_frame(160, 120, Affine{});
+    };
+    CHECK(near(pixel_at(frame(0.5), 150, 10), kBack));
+    CHECK(near(pixel_at(frame(1), 150, 10), kBack));
+    CHECK(near(pixel_at(frame(1.5), 150, 10), mix(kOutsideScene, kBack, 0.5)));
+    CHECK(near(pixel_at(frame(1.75), 150, 10), mix(kOutsideScene, kBack, 0.75)));
+    CHECK(near(pixel_at(frame(2), 150, 10), kOutsideScene));
+    CHECK(near(pixel_at(frame(3), 150, 10), kOutsideScene));
+    // The walk moves the head during the leave: two moments of it differ under the same fade.
+    REQUIRE(s.frame(1.5));
+    const assets::CookedTexture a = s.draw(160, 120, s.camera_matrix());
+    REQUIRE(s.frame(1.6));
+    CHECK(s.draw(160, 120, s.camera_matrix()).rgba8 != a.rgba8);
+    // A leave of its own: the game's frame comes in from below over the scene.
+    load(s, files, R"(    leave(function(old, new)
+      new.y(120)
+      new.y(0, 1, "linear")
+    end))");
+    record(s);
+    CHECK(s.recording()->length == doctest::Approx(1));
+    const assets::CookedTexture f = frame(0.25);
+    CHECK(near(pixel_at(f, 150, 88), kBack));
+    CHECK(near(pixel_at(f, 150, 92), kOutsideScene));
+    // Entering and leaving at once: the leave wins.
+    load(s, files, R"(    transition("растворение", 2)
+    leave("сдвиг", 1, { from = "лево" }))");
+    record(s);
+    CHECK(s.recording()->length == doctest::Approx(1));
+    CHECK(near(pixel_at(frame(0.5), 10, 10), kOutsideScene));
 }

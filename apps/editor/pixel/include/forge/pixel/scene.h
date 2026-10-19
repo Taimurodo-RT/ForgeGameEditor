@@ -1,7 +1,8 @@
 #pragma once
 
-// A scene of «Векторная» (step 6 of docs/models/движение-модель.md, part 6а of docs/models/сцены-модель.md): a
-// cut-scene of the project's characters, pictures and shapes, written as a character's clip is.
+// A scene of «Векторная» (step 6 of docs/models/движение-модель.md, parts 6а and 6б of docs/models/сцены-модель.md): a
+// cut-scene of the project's characters, pictures and shapes, written as a character's clip is, seen by the player
+// through its camera.
 //
 //   return {
 //     params = { speed = 1 },
@@ -13,17 +14,21 @@
 //       path("дорога", { d = "M 300 900 Q 900 860 1300 900", hidden = true })
 //     end,
 //     scene = function(p)                         -- what happens, as a clip
+//       transition("растворение", 0.5)            -- how it comes in over what was (6б)
+//       camera():follow("ёжик", 0.5)              -- the player's frame (6б)
 //       actor("ёжик"):loop("walk")
 //       part("ёжик"):along("дорога", 3 / p.speed)
 //       actor("ёжик"):play("idle")
 //       part("ёжик/head").rot(10, 0.3)
+//       leave("сдвиг", 0.5, { from = "лево" })    -- how it goes back to the game (6б)
 //     end,
 //   }
 //
 // The stage is one SVG (stage_svg): its shapes, and a group for each picture and actor that the rig draws the
 // picture's pixels or the actor's own rig in (Rig::host). The scene's code is recorded as a clip of that rig; an actor
 // plays the clips of its character's code, recorded there and put in the scene's time by the scene's plays
-// (Recording::plays). A frame is one ThorVG drawing of it all.
+// (Recording::plays). A frame is one ThorVG drawing of it all; the player's frame (draw_frame) is that drawing
+// through the camera, in a transition its two frames laid over each other.
 
 #include "forge/pixel/bake.h"
 #include "forge/pixel/doc.h"
@@ -74,6 +79,25 @@ struct Stage {
     const StageItem* item(std::string_view id) const;
     bool operator==(const Stage&) const = default;
 };
+
+// Part 6б: the scene's camera is a part of the recording only, no shape of the stage: its x and y move the middle of its
+// frame from the middle of the canvas, its scale is camera's zoom, its rot the frame's turn. The frames of a
+// transition are parts of the recording too: the old and the new one of the entrance, then of the leave.
+inline constexpr const char* kCameraPart = "camera";
+inline constexpr const char* kLayerParts[4] = {"camera/in-old", "camera/in-new", "camera/out-old", "camera/out-new"};
+// Whether an id is the camera's or a transition frame's.
+bool camera_part(std::string_view id);
+// What was before a scene and the game after it, in the tab: grey of the canvas's size.
+inline constexpr Rgba8 kOutsideScene{128, 128, 128, 255};
+
+// The camera as a frame of the recording puts it.
+struct SceneCamera {
+    f64 x = 0, y = 0, zoom = 1, rot = 0;
+    bool operator==(const SceneCamera&) const = default;
+};
+// The stage's units to the player's frame, a w × h canvas: q = (w/2, h/2) + zoom · R(−rot) · (p − c), c = the
+// middle of the canvas moved by x, y.
+Affine camera_matrix(const SceneCamera& cam, f64 w, f64 h);
 
 // An actor's group's transform: its picture so that `pivot` stands at x, y, turned by rot and scaled round it.
 Affine actor_matrix(const StageItem& actor);
@@ -171,6 +195,15 @@ public:
     // The frame as posed, smooth: the scene's units to the drawing's pixels by px, or fitted in.
     assets::CookedTexture draw(u32 w, u32 h, const Affine& px);
     assets::CookedTexture draw(u32 w, u32 h);
+    // Part 6б: the camera as the last pose() put it, and the stage's units to the player's frame by it.
+    const SceneCamera& camera() const;
+    Affine camera_matrix() const;
+    // The player's frame as the last pose() put it: the scene through the camera; in a transition its two frames,
+    // the old under the new, each in its frame's pose (moved, turned and scaled round the frame's middle, its opacity,
+    // its mask a shape of the stage as the camera sees it); before the scene and after its leave kOutsideScene. In a w
+    // × h drawing by px (the frame's units, the canvas's, to its pixels), or fitted in.
+    assets::CookedTexture draw_frame(u32 w, u32 h, const Affine& px);
+    assets::CookedTexture draw_frame(u32 w, u32 h);
 
     const Stage& stage() const;
     const SceneDoc& doc() const;

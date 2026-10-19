@@ -423,6 +423,19 @@ void over(std::vector<u8>& a, const std::vector<u8>& b) {
     }
 }
 
+// A paint drawn alone into a w × h drawing, then freed: straight RGBA.
+std::vector<u8> render_alone(tvg::Paint* paint, u32 w, u32 h) {
+    std::vector<u32> buffer(static_cast<usize>(w) * h, 0);
+    tvg::SwCanvas* canvas = tvg::SwCanvas::gen();
+    canvas->target(buffer.data(), w, w, h, tvg::ColorSpace::ABGR8888S);
+    canvas->add(paint);
+    canvas->draw(true);
+    canvas->sync();
+    delete canvas;
+    const auto* bytes = reinterpret_cast<const u8*>(buffer.data());
+    return {bytes, bytes + buffer.size() * 4};
+}
+
 } // namespace
 
 // Which picture of a swap a pose is of (part 4д): the old one morphs its pairs into the new one's shapes and fades
@@ -1652,6 +1665,47 @@ assets::CookedTexture Rig::draw_alone(u32 w, u32 h, const Affine& px) {
     m.render(px);
     out.width = w, out.height = h;
     out.rgba8.assign(m.bytes(), m.bytes() + static_cast<usize>(w) * h * 4);
+    return out;
+}
+
+std::vector<u8> Rig::area(i32 part, u32 w, u32 h, const Affine& px) {
+    Impl& m = *impl_;
+    if (!m.pic || part < 0 || static_cast<usize>(part) >= m.recs.size() || w == 0 || h == 0) return {};
+    const PartRec& r = m.recs[static_cast<usize>(part)];
+    if (r.leaves.empty()) return {};
+    // As a mask's copy of the shapes (pose()), where they stand in picture units, then to the drawing.
+    tvg::Scene* scene = tvg::Scene::gen();
+    for (i32 li : r.leaves) {
+        const Leaf& l = m.leaves[static_cast<usize>(li)];
+        auto* d = static_cast<tvg::Shape*>(l.shape->duplicate());
+        u8 cr, cg, cb, fa = 0, sa = 0;
+        const bool fill_grad = d->fill() != nullptr, stroke_grad = d->strokeFill() != nullptr;
+        if (!fill_grad) d->fill(&cr, &cg, &cb, &fa);
+        if (!stroke_grad) d->strokeFill(&cr, &cg, &cb, &sa);
+        const bool fill = fill_grad || fa > 0, stroke = d->strokeWidth() > 0 && (stroke_grad || sa > 0);
+        d->fill(255, 255, 255, fill || !stroke ? 255 : 0);
+        d->strokeFill(255, 255, 255, stroke ? 255 : 0);
+        d->opacity(255);
+        d->visible(true);
+        d->transform(to_tvg(px * m.global(l.shape)));
+        scene->add(d);
+    }
+    const std::vector<u8> rgba = render_alone(scene, w, h);
+    std::vector<u8> out(static_cast<usize>(w) * h);
+    for (usize i = 0; i < out.size(); ++i) out[i] = rgba[i * 4 + 3];
+    return out;
+}
+
+assets::CookedTexture draw_rect(u32 w, u32 h, f64 rw, f64 rh, Rgba8 color, const Affine& px) {
+    assets::CookedTexture out;
+    if (w == 0 || h == 0) return out;
+    Engine engine;
+    tvg::Shape* s = tvg::Shape::gen();
+    s->appendRect(0, 0, static_cast<f32>(rw), static_cast<f32>(rh));
+    s->fill(color.r, color.g, color.b, color.a);
+    s->transform(to_tvg(px));
+    out.width = w, out.height = h;
+    out.rgba8 = render_alone(s, w, h);
     return out;
 }
 

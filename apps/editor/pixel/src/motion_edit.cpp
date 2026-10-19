@@ -61,6 +61,10 @@ bool has_value(const Recording& rec, const Block& b, std::string& why) {
     case Block::To::Saved: return why = "блок возвращает сохранённое save(): его значения в коде нет", false;
     case Block::To::Rest: return why = "блок возвращает в покой: его значения в коде нет", false;
     case Block::To::Binding: return why = "значение блока считает функция связи: правьте её в коде", false;
+    case Block::To::Follow:
+        return why = "камера следит за «" + (b.ref < rec.follows.size() ? rec.follows[b.ref].target : std::string("?")) + "»: правится в коде",
+               false;
+    case Block::To::Hold: return why = "камера стоит, где её оставило слежение: её значения в коде нет", false;
     }
     if (!b.frames.empty()) return why = "значения tween(…) считает его функция: правьте её в коде", false;
     return true;

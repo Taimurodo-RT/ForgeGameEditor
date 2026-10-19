@@ -217,6 +217,10 @@ bool add_shape(lua_State* L, PoseScript::Impl& im, Kind kind, int& fn) {
             err = std::string(what) + ": id «" + id + "» — буквы, цифры, _ и -, не с цифры и не с -";
             return false;
         }
+        if (im.stage && id == kCameraPart) {
+            err = std::string(what) + ": имя camera — у камеры сцены";
+            return false;
+        }
     } else if (!lua_isnil(L, at) && !lua_istable(L, at) && !(kind == Kind::Group && lua_isfunction(L, at))) {
         err = std::string(what) + ": первым идёт id строкой: " + what + "(\"body\", { … })";
         return false;
@@ -394,6 +398,10 @@ bool add_item(lua_State* L, PoseScript::Impl& im, StageItem::Kind kind) {
     const std::string id = lua_tostring(L, 1);
     if (!good_id(id)) {
         err = std::string(what) + ": id «" + id + "» — буквы, цифры, _ и -, не с цифры и не с -";
+        return false;
+    }
+    if (id == kCameraPart) {
+        err = std::string(what) + ": имя camera — у камеры сцены";
         return false;
     }
     int opts = lua_istable(L, 3) ? 3 : 0;

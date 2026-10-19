@@ -108,6 +108,8 @@ std::string block_words(const Recording& rec, const Block& b) {
         return "по " + path + (b.prop == Prop::Rot ? ", поворот" : "");
     }
     case Block::To::Snap: return "к " + (b.ref < rec.snaps.size() ? rec.snaps[b.ref] : std::string("?"));
+    case Block::To::Follow: return "следит за " + (b.ref < rec.follows.size() ? rec.follows[b.ref].target : std::string("?"));
+    case Block::To::Hold: return "стоит";
     case Block::To::Value: break;
     }
     if (!b.frames.empty()) return "tween";

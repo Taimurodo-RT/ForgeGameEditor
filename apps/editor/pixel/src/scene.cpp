@@ -54,6 +54,19 @@ Affine actor_matrix(const StageItem& a) {
     return translation(a.x, a.y) * (turn * (scale * translation(-a.pivot.x, -a.pivot.y)));
 }
 
+bool camera_part(std::string_view id) {
+    if (id == kCameraPart) return true;
+    for (const char* l : kLayerParts)
+        if (id == l) return true;
+    return false;
+}
+
+Affine camera_matrix(const SceneCamera& cam, f64 w, f64 h) {
+    const f64 r = -cam.rot * std::numbers::pi / 180, c = std::cos(r), s = std::sin(r);
+    const Affine look{cam.zoom * c, cam.zoom * s, -cam.zoom * s, cam.zoom * c, 0, 0};
+    return translation(w / 2, h / 2) * (look * translation(-(w / 2 + cam.x), -(h / 2 + cam.y)));
+}
+
 std::string stage_svg(const Stage& st) {
     Drawing d;
     d.canvas = true;
@@ -581,6 +594,12 @@ struct Scene::Impl {
     Rig rig; // after the actors: gone before the pictures it draws of theirs
     SceneHooks hooks;
 
+    // Part 6б: the camera and the transition's frames as the last pose put them, and which of the scene's times it was.
+    SceneCamera camera;
+    PartPose layers[4]; // kLayerParts
+    enum class Phase : u8 { Scene, Enter, Leave, Gone };
+    Phase phase = Phase::Scene;
+
     bool ok = false, recorded = false;
     Recording rec;
     std::vector<std::string> read; // the files of «Ресурсы» asked for, there or not
@@ -781,10 +800,31 @@ bool Scene::pose(f64 t, const Recording* rec, const Pose& scene) {
     if (!im.ok) return im.error.empty() ? im.fail("сцена не загружена") : false;
     im.error.clear();
     im.error_line = 0;
+    // The camera and the transitions' frames (part 6б), not the stage's; which of the scene's times t is.
+    im.camera = {};
+    for (PartPose& l : im.layers) l = {};
+    im.phase = Impl::Phase::Scene;
+    if (rec) {
+        bool entering = false;
+        for (const SceneTransition& tr : rec->transitions) {
+            const f64 end = snap_time(tr.start + tr.length);
+            if (!tr.leave) entering = entering || (t >= tr.start && t < end);
+            else if (t >= tr.start) im.phase = t < end ? Impl::Phase::Leave : Impl::Phase::Gone;
+        }
+        if (entering && im.phase == Impl::Phase::Scene) im.phase = Impl::Phase::Enter;
+    }
     // The scene's pose: its own parts' on the stage, its actors' over their clips.
     Pose stage;
     std::map<std::string, Pose> over; // by actor
     for (const auto& [id, pp] : scene.parts) {
+        if (id == kCameraPart) {
+            im.camera = {pp.x, pp.y, pp.scale, pp.rot};
+            continue;
+        }
+        bool layer = false;
+        for (usize i = 0; i < std::size(kLayerParts); ++i)
+            if (id == kLayerParts[i]) im.layers[i] = pp, layer = true;
+        if (layer) continue;
         if (im.actor(id)) {
             PartPose look;
             split_actor(pp, stage.parts[id], look);
@@ -835,6 +875,74 @@ bool Scene::pose(f64 t, const Recording* rec, const Pose& scene) {
 
 assets::CookedTexture Scene::draw(u32 w, u32 h, const Affine& px) { return impl_->ok ? impl_->rig.draw(w, h, px) : assets::CookedTexture{}; }
 assets::CookedTexture Scene::draw(u32 w, u32 h) { return impl_->ok ? impl_->rig.draw(w, h) : assets::CookedTexture{}; }
+
+const SceneCamera& Scene::camera() const { return impl_->camera; }
+Affine Scene::camera_matrix() const { return pixel::camera_matrix(impl_->camera, impl_->stage.width(), impl_->stage.height()); }
+
+namespace {
+
+// Straight RGBA b over a, pixel by pixel.
+void over(std::vector<u8>& a, const std::vector<u8>& b) {
+    for (usize i = 0; i + 3 < a.size() && i + 3 < b.size(); i += 4) {
+        const u32 sa = b[i + 3];
+        if (sa == 0) continue;
+        if (sa == 255) {
+            std::copy_n(b.begin() + static_cast<std::ptrdiff_t>(i), 4, a.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        const u32 da = a[i + 3];
+        const u32 oa = sa * 255 + da * (255 - sa); // alpha times 255²
+        if (oa == 0) continue;
+        for (int c = 0; c < 3; ++c) a[i + c] = static_cast<u8>((b[i + c] * sa * 255 + a[i + c] * da * (255 - sa) + oa / 2) / oa);
+        a[i + 3] = static_cast<u8>((oa + 127) / 255);
+    }
+}
+
+} // namespace
+
+assets::CookedTexture Scene::draw_frame(u32 w, u32 h, const Affine& px) {
+    Impl& im = *impl_;
+    if (!im.ok) return {};
+    const f64 cw = im.stage.width(), ch = im.stage.height();
+    const Affine look = camera_matrix();
+    auto scene = [&](const Affine& m) { return im.rig.draw(w, h, m * look); };
+    auto outside = [&](const Affine& m) { return draw_rect(w, h, cw, ch, kOutsideScene, m); };
+    using Phase = Impl::Phase;
+    if (im.phase == Phase::Scene) return scene(px);
+    if (im.phase == Phase::Gone) return outside(px);
+    // A transition: its frames, each in its pose round the frame's middle, faded and masked, the new over the old.
+    const bool enter = im.phase == Phase::Enter;
+    const PartPose& old_pose = im.layers[enter ? 0 : 2];
+    const PartPose& new_pose = im.layers[enter ? 1 : 3];
+    auto layer = [&](const PartPose& pp, bool is_scene) {
+        PartPose moved;
+        moved.x = pp.x, moved.y = pp.y, moved.rot = pp.rot, moved.scale = pp.scale;
+        const Affine m = px * pose_matrix(moved, {cw / 2, ch / 2});
+        assets::CookedTexture t = is_scene ? scene(m) : outside(m);
+        const f64 opacity = std::clamp(pp.opacity, 0.0, 1.0);
+        std::vector<u8> mask;
+        if (!pp.mask.empty()) mask = im.rig.area(im.rig.part(pp.mask), w, h, px * look);
+        for (usize i = 0; i * 4 + 3 < t.rgba8.size(); ++i) {
+            f64 a = t.rgba8[i * 4 + 3] * opacity;
+            if (!pp.mask.empty()) {
+                const f64 cover = i < mask.size() ? mask[i] / 255.0 : 0;
+                a *= pp.mask_invert ? 1 - cover : cover;
+            }
+            t.rgba8[i * 4 + 3] = static_cast<u8>(std::clamp(std::round(a), 0.0, 255.0));
+        }
+        return t;
+    };
+    assets::CookedTexture out = layer(old_pose, !enter);
+    const assets::CookedTexture top = layer(new_pose, enter);
+    over(out.rgba8, top.rgba8);
+    return out;
+}
+
+assets::CookedTexture Scene::draw_frame(u32 w, u32 h) {
+    const f64 cw = impl_->stage.width(), ch = impl_->stage.height();
+    const f64 k = std::min(w / cw, h / ch);
+    return draw_frame(w, h, translation((w - cw * k) / 2, (h - ch * k) / 2) * Affine{k, 0, 0, k, 0, 0});
+}
 
 const Stage& Scene::stage() const { return impl_->stage; }
 const SceneDoc& Scene::doc() const { return impl_->doc; }

@@ -235,6 +235,10 @@ public:
     // (in the order drawn now) that covers at least half of it. No half-transparent pixels, no colours in between.
     assets::CookedTexture bake(u32 w, u32 h, const BakeOptions& options);
 
+    // Where a part's shapes cover a w × h drawing by px as the last pose() left them, as the mask of a part takes them
+    // (opaque, a hidden shape its area): a byte of cover a pixel, row by row; empty for a part with no shapes. A
+    // transition's mask in a scene (part 6б of docs/models/сцены-модель.md).
+    std::vector<u8> area(i32 part, u32 w, u32 h, const Affine& px);
     // A part's pose bounds in the pixels of a w × h drawing (after the last pose()): x0, y0, x1, y1.
     void bounds(i32 part, u32 w, u32 h, f64 out[4]);
     // The same in the pixels picture units go to by `px`.
@@ -280,6 +284,10 @@ private:
     // group, not hidden by display="none".
     bool swap_shape(const Pose& pose, const std::string& id) const;
 };
+
+// A rect 0, 0 … rw, rh of one colour in a w × h drawing by px, smooth, straight RGBA (part 6б of the scenes model: what
+// was before a scene and the game after it, in the tab).
+assets::CookedTexture draw_rect(u32 w, u32 h, f64 rw, f64 rh, Rgba8 color, const Affine& px);
 
 // "#rgb", "#rrggbb", "rgb(r, g, b)" and a few names; false for anything else.
 bool parse_color(std::string_view text, Rgba8& out);

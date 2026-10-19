@@ -93,6 +93,11 @@ struct Block {
         Binding, // the script's function `binding`, at each t
         Along,   // x, y or rot of part:along (part 4в): along Recording::alongs[ref] by the timing
         Snap,    // x or y of part:snap_to: `value`, where the pivot of part Recording::snaps[ref] stood at the call
+        // x or y of a scene's camera():follow (part 6б of docs/models/сцены-модель.md): at each t the camera's middle
+        // where the pivot of Recording::follows[ref]'s target stands, less the share 1 − k of how far from it the
+        // camera was at the start; `value` is the number that put the middle on the target then.
+        Follow,
+        Hold, // where the track is at its start: x or y stands where a follow left it (the other one moved, follow(nil))
     };
     To to = To::Value;
     PropValue value;
@@ -244,6 +249,23 @@ struct StartPose {
     std::vector<OrderStep> order;   // the order's calls of `clip` up to its end, before the clip's own
 };
 
+// camera():follow("ёжик"[, s, timing]) in a scene (part 6б of docs/models/сцены-модель.md): the part or actor followed
+// and the camera's pivot, the middle of the canvas, that its x and y move.
+struct Follow {
+    std::string target;
+    vector::Point pivot;
+};
+
+// transition(…) and leave(…) in a scene (part 6б): how the scene comes in over what was before it, from 0, and how it
+// goes out to the game at its end. Their frames are parts of the recording (kLayerParts of scene.h).
+struct SceneTransition {
+    bool leave = false;
+    std::string kind; // "растворение", "сдвиг", "приближение"; empty for the author's own function
+    std::string from; // «сдвиг»'s edge: "право", "лево", "верх", "низ"
+    f64 start = 0, length = 0;
+    SiteRef site; // the call
+};
+
 struct Recording {
     std::string clip;
     f64 length = 0;                 // where the clip's own flow ends; what runs on in the background is cut there
@@ -265,6 +287,8 @@ struct Recording {
     std::vector<Copy> copies;      // in the order of their calls: by number within each part
     StartPose start;               // start_from(…) (part 5б); its parts are among `parts`
     std::vector<ActorPlay> plays;  // a scene's actors' clips (part 6а), in the order they were laid out
+    std::vector<Follow> follows;   // by Block::ref of To::Follow (part 6б)
+    std::vector<SceneTransition> transitions; // a scene's entrance and leave (part 6б), as laid out
     u64 generation = 0; // the script's recording it came from: bindings are asked of that one only
 
     // resolve(): each track's blocks by start and order.
@@ -324,7 +348,7 @@ f64 block_ease(const Recording& rec, const Block& b, f64 s);
 // before the first one.
 i32 deciding_block(const Recording& rec, u32 track, f64 t);
 // Whether block b's transition goes in the frame at t, `frame` seconds long: after its start and not after its end; a
-// block of length 0 in the frame it starts in; a binding from its start on (while it decides).
+// block of length 0 in the frame it starts in; a binding and a camera's follow from its start on (while it decides).
 bool block_going(const Block& b, f64 t, f64 frame);
 // Of all a part's tracks, the deciding block that started last at t or before (of two that started together, the one
 // of the first property in Prop's order); -1 when none has.

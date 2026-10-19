@@ -23,6 +23,7 @@
 #include <functional>
 #include <initializer_list>
 #include <limits>
+#include <span>
 
 namespace forge::pixel {
 
@@ -38,6 +39,8 @@ constexpr const char* kActorMeta = "forge.motion.actor"; // a scene's actor (par
 constexpr const char* kPropMeta = "forge.motion.prop";
 constexpr const char* kTaskMeta = "forge.motion.task";
 constexpr const char* kBezierMeta = "forge.motion.bezier";
+constexpr const char* kCameraMeta = "forge.motion.camera"; // a scene's camera (part 6б)
+constexpr const char* kLayerMeta = "forge.motion.layer";   // a frame of a scene's own transition (part 6б)
 // The properties a part has as fields (body.y, { y = 2 }): all but morph, a method of its own, the mask and the order.
 constexpr Prop kHandleProps[] = {Prop::X,          Prop::Y,       Prop::Rot,     Prop::Scale,      Prop::Sx,      Prop::Sy,
                                  Prop::SkewX,      Prop::SkewY,   Prop::Opacity, Prop::Fill,       Prop::Stroke,  Prop::StrokeWidth,
@@ -47,6 +50,9 @@ constexpr const char* kFieldWords = "x, y, rot, scale, sx, sy, skew_x, skew_y, o
                                     "visible, tint, flash, flash_color, blur, shadow, shadow_x, shadow_y, shadow_blur";
 constexpr const char* kNumberWords = "x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, dash, draw_from, draw_to, flash, blur, shadow_x, "
                                      "shadow_y, shadow_blur";
+// A scene's camera has x, y, zoom (its scale) and rot; a transition's frame x, y, rot, scale and opacity (part 6б).
+constexpr Prop kCameraProps[] = {Prop::X, Prop::Y, Prop::Scale, Prop::Rot};
+constexpr Prop kLayerProps[] = {Prop::X, Prop::Y, Prop::Rot, Prop::Scale, Prop::Opacity};
 constexpr f64 kForever = std::numeric_limits<f64>::infinity();
 constexpr u32 kMaxIterations = 100000;
 constexpr u32 kMaxBindingDepth = 16;
@@ -106,6 +112,8 @@ MotionState& motion(lua_State* L, const char* what) {
     }
     if (im.motion->in_tween)
         luaL_error(L, "%s — внутри tween(с, функция) только мгновенные значения: body.y(v)", what);
+    if (im.motion->left && im.motion->contexts.size() == 1)
+        luaL_error(L, "%s: после leave сцена кончается — leave последней строкой scene", what);
     return *im.motion;
 }
 
@@ -119,12 +127,41 @@ bool is_meta(lua_State* L, int idx, const char* meta) {
     return same;
 }
 
-// A part's handle (or a scene's actor's, with meta kActorMeta).
-void push_part(lua_State* L, const char* id, const char* meta = kPartMeta) {
+// What a handle is of: a part (or a scene's actor), a scene's camera, a frame of its transition (part 6б).
+enum class Handle : u8 { Part, Camera, Layer };
+
+std::span<const Prop> handle_props(Handle h) {
+    if (h == Handle::Camera) return kCameraProps;
+    if (h == Handle::Layer) return kLayerProps;
+    return kHandleProps;
+}
+
+// A property's field: the camera's scale is its zoom.
+const char* field_word(Handle h, Prop p) { return h == Handle::Camera && p == Prop::Scale ? "zoom" : prop_word(p); }
+
+const char* field_words(Handle h) {
+    if (h == Handle::Camera) return "x, y, zoom, rot";
+    if (h == Handle::Layer) return "x, y, rot, scale, opacity";
+    return kFieldWords;
+}
+
+// The handle of a recorded part by its id: the camera and the frames of transitions only in a scene.
+Handle handle_of(const Impl& im, std::string_view id) {
+    if (!im.scene || !camera_part(id)) return Handle::Part;
+    return id == kCameraPart ? Handle::Camera : Handle::Layer;
+}
+
+bool handle_has(Handle h, Prop p) {
+    const std::span<const Prop> props = handle_props(h);
+    return std::find(props.begin(), props.end(), p) != props.end();
+}
+
+// A part's handle (or a scene's actor's, with meta kActorMeta; the camera's and a transition frame's, part 6б).
+void push_part(lua_State* L, const char* id, const char* meta = kPartMeta, Handle h = Handle::Part) {
     lua_newtable(L);
     lua_pushstring(L, id);
     lua_setfield(L, -2, "id");
-    for (Prop p : kHandleProps) {
+    for (Prop p : handle_props(h)) {
         lua_newtable(L);
         lua_pushvalue(L, -2);
         lua_setfield(L, -2, "part");
@@ -133,14 +170,19 @@ void push_part(lua_State* L, const char* id, const char* meta = kPartMeta) {
         luaL_getmetatable(L, kPropMeta);
         lua_setmetatable(L, -2);
         lua_setreadonly(L, -1, 1);
-        lua_setfield(L, -2, prop_word(p));
+        lua_setfield(L, -2, field_word(h, p));
     }
     luaL_getmetatable(L, meta);
     lua_setmetatable(L, -2);
     lua_setreadonly(L, -1, 1);
 }
 
-bool part_handle(lua_State* L, int idx) { return lua_istable(L, idx) && (is_meta(L, idx, kPartMeta) || is_meta(L, idx, kActorMeta)); }
+void push_camera(lua_State* L) { push_part(L, kCameraPart, kCameraMeta, Handle::Camera); }
+
+bool part_handle(lua_State* L, int idx) {
+    return lua_istable(L, idx) && (is_meta(L, idx, kPartMeta) || is_meta(L, idx, kActorMeta) || is_meta(L, idx, kCameraMeta) ||
+                                   is_meta(L, idx, kLayerMeta));
+}
 
 // The id of the part handle at idx; raises when it is none.
 const char* part_id(lua_State* L, int idx, const char* what) {
@@ -269,6 +311,16 @@ bool read_value(lua_State* L, int idx, Prop p, MotionState& ms, PropValue& out) 
     return true;
 }
 
+// A value of a handle's property: the camera's zoom is a number above 0 (part 6б).
+bool read_field(lua_State* L, int idx, Handle h, Prop p, MotionState& ms, PropValue& out) {
+    if (h != Handle::Camera || p != Prop::Scale) return read_value(L, idx, p, ms, out);
+    out = {};
+    if (lua_type(L, idx) != LUA_TNUMBER) return call_error(ms, std::string("zoom: нужно число, а не ") + luaL_typename(L, idx));
+    out.v = lua_tonumber(L, idx);
+    if (!std::isfinite(out.v) || out.v <= 0) return call_error(ms, "zoom — число больше 0: во сколько раз камера приближает");
+    return true;
+}
+
 bool read_timing(Impl& im, lua_State* L, int idx, MotionState& ms, MoveStep& st) {
     if (lua_isnoneornil(L, idx)) return true;
     if (lua_type(L, idx) == LUA_TSTRING) {
@@ -316,25 +368,27 @@ bool read_path(lua_State* L, int idx, MotionState& ms, MoveStep& st) {
     return true;
 }
 
-// {y = 2, sy = 0.9}: the properties in a fixed order, so the recording is the same each time.
-bool read_table(lua_State* L, int idx, MotionState& ms, const char* what, MoveStep& st) {
+// {y = 2, sy = 0.9}: the properties in a fixed order, so the recording is the same each time; the camera's and a
+// transition frame's only theirs (part 6б).
+bool read_table(lua_State* L, int idx, MotionState& ms, const char* what, MoveStep& st, Handle h = Handle::Part) {
     if (!lua_istable(L, idx)) return call_error(ms, std::string(what) + ": нужна таблица, как { y = 2, sy = 0.9 }");
+    const std::span<const Prop> props = handle_props(h);
     lua_pushnil(L);
     while (lua_next(L, idx)) {
-        Prop p;
         const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : nullptr;
-        if (!key || !prop_from_word(key, p) || p == Prop::Morph || prop_is_call(p) || p == Prop::Drawing) {
+        const bool known = key && std::any_of(props.begin(), props.end(), [&](Prop p) { return std::strcmp(key, field_word(h, p)) == 0; });
+        if (!known) {
             const std::string k = key ? key : "?";
             lua_pop(L, 2);
-            return call_error(ms, std::string(what) + ": поля «" + k + "» нет (есть " + kFieldWords + ")");
+            return call_error(ms, std::string(what) + ": поля «" + k + "» нет (есть " + field_words(h) + ")");
         }
         lua_pop(L, 1);
     }
-    for (Prop p : kHandleProps) {
-        lua_getfield(L, idx, prop_word(p));
+    for (Prop p : props) {
+        lua_getfield(L, idx, field_word(h, p));
         if (!lua_isnil(L, -1)) {
             PropValue v;
-            if (!read_value(L, lua_gettop(L), p, ms, v)) {
+            if (!read_field(L, lua_gettop(L), h, p, ms, v)) {
                 lua_pop(L, 1);
                 return false;
             }
@@ -526,6 +580,38 @@ bool add_block(Impl& im, MotionState& ms, const MoveStep& st, u32 part, Prop p, 
 
 bool layout(Impl& im, lua_State* L, u32 id, const Place& at, f64& end);
 
+// ---- a scene's camera (part 6б) ----
+
+// The middle of the scene's canvas: the camera's pivot, which its x and y move.
+vector::Point stage_middle(const Impl& im) {
+    return im.scene_stage ? vector::Point{im.scene_stage->width() / 2, im.scene_stage->height() / 2}
+                          : vector::Point{kSceneWidth / 2, kSceneHeight / 2};
+}
+
+// The camera's bone: it stands by no other part.
+void camera_bone(const Impl& im, MotionState& ms) {
+    if (bone_of(*ms.rec, kCameraPart) < 0) ms.rec->bones.push_back({kCameraPart, stage_middle(im), -1});
+}
+
+// Whether a track of the camera follows at t by the blocks laid so far: the last of them that started by then is a
+// follow's.
+bool following(const Recording& rec, u32 part, Prop p, f64 t) {
+    const Block* last = nullptr;
+    for (const Block& b : rec.blocks)
+        if (b.part == part && b.prop == p && b.start <= t && (!last || b.start > last->start || (b.start == last->start && b.order > last->order)))
+            last = &b;
+    return last && last->to == Block::To::Follow;
+}
+
+// Where x or y alone of the camera is set while it follows, the follow ends: the other one stands where it left it.
+bool end_follow(Impl& im, MotionState& ms, const MoveStep& st, u32 part, Prop moved, f64 t, const Place& at) {
+    const Prop other = moved == Prop::X ? Prop::Y : Prop::X;
+    if (!following(*ms.rec, part, other, t)) return true;
+    MoveStep hold;
+    hold.site = st.site;
+    return add_block(im, ms, hold, part, other, t, 0, Block::To::Hold, nullptr, 0, at);
+}
+
 bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
     const u32 part = ms.tasks[id].part;
     const usize steps = ms.tasks[id].steps.size();
@@ -535,9 +621,12 @@ bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
             if (f.first == p) return;
         first.emplace_back(p, static_cast<u32>(b));
     };
+    const Handle handle = handle_of(im, ms.rec->parts[part]);
     f64 t = at.t;
     for (usize si = 0; si < steps; ++si) {
         const MoveStep st = ms.tasks[id].steps[si];
+        const usize made = ms.rec->blocks.size();
+        const f64 step_t = t;
         switch (st.kind) {
         case MoveStep::Kind::Wait:
             ms.rec->pauses.push_back({snap_time(t), snap_time(st.length), st.site, st.length_arg});
@@ -582,8 +671,10 @@ bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
             const u32 s = stack.back();
             stack.pop_back();
             for (usize p = 0; p < kPropCount; ++p) {
-                // The mask, the link and the order are no values to go back to; the drawing is no part's.
+                // The mask, the link and the order are no values to go back to; the drawing is no part's; the camera
+                // has its own four (part 6б).
                 if (prop_is_call(static_cast<Prop>(p)) || static_cast<Prop>(p) == Prop::Drawing) continue;
+                if (handle != Handle::Part && !handle_has(handle, static_cast<Prop>(p))) continue;
                 i32 b = -1;
                 if (!add_block(im, ms, st, part, static_cast<Prop>(p), t, st.length, Block::To::Saved, nullptr, s, at, &b))
                     return false;
@@ -656,14 +747,54 @@ bool layout_move(Impl& im, MotionState& ms, u32 id, const Place& at, f64& end) {
             t = snap_time(t + st.length);
             break;
         }
+        case MoveStep::Kind::Follow: {
+            // The camera's middle from where it is onto the target's pivot as it stands now, then with it (part 6б).
+            if (!resolve_now(im, ms)) return false;
+            const Recording& rec = *ms.rec;
+            const i32 tb = bone_of(rec, st.target);
+            if (tb < 0) return task_error(im, ms, st.site, "follow: у записи нет кости части «" + st.target + "»");
+            Affine wt;
+            std::string why;
+            if (!bone_world(rec, static_cast<u32>(tb), t, &im, wt, why)) return task_error(im, ms, st.site, why);
+            const vector::Point to = wt.apply(rec.bones[static_cast<usize>(tb)].pivot), pv = stage_middle(im);
+            const auto ref = static_cast<u32>(ms.rec->follows.size());
+            ms.rec->follows.push_back({st.target, pv});
+            for (Prop p : {Prop::X, Prop::Y}) {
+                PropValue v;
+                v.v = p == Prop::X ? to.x - pv.x : to.y - pv.y;
+                i32 b = -1;
+                if (!add_block(im, ms, st, part, p, t, st.length, Block::To::Follow, &v, ref, at, &b)) return false;
+                note_first(p, b);
+            }
+            t = snap_time(t + st.length);
+            break;
+        }
+        case MoveStep::Kind::Unfollow:
+            // follow(nil): the camera stands where the follow left it.
+            for (Prop p : {Prop::X, Prop::Y})
+                if (following(*ms.rec, part, p, t) && !add_block(im, ms, st, part, p, t, 0, Block::To::Hold, nullptr, 0, at)) return false;
+            break;
+        }
+        // x or y alone set ends a follow of the camera's place (part 6б).
+        if (handle == Handle::Camera) {
+            bool x = false, y = false;
+            for (usize b = made; b < ms.rec->blocks.size(); ++b) {
+                const Block& blk = ms.rec->blocks[b];
+                if (blk.to == Block::To::Follow || blk.to == Block::To::Hold) continue;
+                x = x || blk.prop == Prop::X;
+                y = y || blk.prop == Prop::Y;
+            }
+            if (x != y && !end_follow(im, ms, st, part, x ? Prop::X : Prop::Y, step_t, at)) return false;
         }
     }
     end = t;
     return true;
 }
 
-// f(arg[, part]) in a context of its own from at.t: what it leaves runs from there; end is where it ends.
-bool run_function(Impl& im, lua_State* L, int fn, const f64* arg, const Place& at, f64& end, const char* part = nullptr) {
+// f(arg[, part]) in a context of its own from at.t: what it leaves runs from there; end is where it ends. A scene's own
+// transition is f(old, new), the handles of its two frames (part 6б).
+bool run_function(Impl& im, lua_State* L, int fn, const f64* arg, const Place& at, f64& end, const char* part = nullptr,
+                  const char* const* frames = nullptr) {
     MotionState& ms = *im.motion;
     const usize ci = ms.contexts.size();
     ms.contexts.push_back({{}, at.t, at.start_site, at.start_t});
@@ -677,6 +808,7 @@ bool run_function(Impl& im, lua_State* L, int fn, const f64* arg, const Place& a
         push_part(L, part);
         ++n;
     }
+    for (int i = 0; frames && i < 2; ++i, ++n) push_part(L, frames[i], kLayerMeta, Handle::Layer);
     if (lua_pcall(L, n, 0, 0) != LUA_OK) {
         ms.contexts.resize(ci);
         return lua_failed(L, ms);
@@ -789,6 +921,44 @@ bool layout_tween(Impl& im, lua_State* L, u32 id, const Place& at, f64& end) {
     return true;
 }
 
+// A scene's transition (part 6б): from 0, not waiting; its leave from where the scene's flow is, waiting its length.
+// A kind is written as a function would be: its new frame from where it comes to rest.
+bool layout_transition(Impl& im, lua_State* L, u32 id, const Place& at, f64& end) {
+    MotionState& ms = *im.motion;
+    const Task task = ms.tasks[id];
+    if (!task.leave && at.t != 0) return task_error(im, ms, task.site, "transition — в начале scene");
+    const char* const frames[2] = {kLayerParts[task.leave ? 2 : 0], kLayerParts[task.leave ? 3 : 1]};
+    f64 length = task.number;
+    if (task.fn >= 0) {
+        f64 e = at.t;
+        if (!run_function(im, L, task.fn, nullptr, {at.t, false, at.start_site, at.start_t}, e, nullptr, frames)) return false;
+        length = snap_time(e - at.t);
+    } else {
+        const MoveStep& st = task.steps[0];
+        MoveStep set;
+        set.site = st.site;
+        const u32 part = part_slot(ms, frames[1]);
+        const vector::Point mid = stage_middle(im);
+        std::vector<std::pair<Prop, f64>> from;
+        if (task.name == "растворение") from = {{Prop::Opacity, 0}};
+        else if (task.name == "приближение") from = {{Prop::Scale, 0.5}, {Prop::Opacity, 0}};
+        else if (task.from == "лево") from = {{Prop::X, -2 * mid.x}};
+        else if (task.from == "верх") from = {{Prop::Y, -2 * mid.y}};
+        else if (task.from == "низ") from = {{Prop::Y, 2 * mid.y}};
+        else from = {{Prop::X, 2 * mid.x}};
+        for (const auto& [p, v] : from) {
+            PropValue a, b = rest_value(p);
+            a.v = v;
+            if (!add_block(im, ms, set, part, p, at.t, 0, Block::To::Value, &a, 0, at) ||
+                !add_block(im, ms, st, part, p, at.t, length, Block::To::Value, &b, 0, at))
+                return false;
+        }
+    }
+    ms.rec->transitions.push_back({task.leave, task.name, task.from, at.t, length, task.site});
+    end = task.leave ? snap_time(at.t + length) : at.t;
+    return true;
+}
+
 bool layout(Impl& im, lua_State* L, u32 id, const Place& at_in, f64& end) {
     MotionState& ms = *im.motion;
     Place at = at_in;
@@ -897,6 +1067,7 @@ bool layout(Impl& im, lua_State* L, u32 id, const Place& at_in, f64& end) {
         break;
     }
     case Task::Kind::TweenFn: ok = layout_tween(im, L, id, at, end); break;
+    case Task::Kind::Transition: ok = layout_transition(im, L, id, at, end); break;
     case Task::Kind::Play: {
         // An actor's clip from now (part 6а): a play waits its length, a loop and a stop do not.
         ActorPlay play = task.play;
@@ -1193,6 +1364,7 @@ bool log_line(Impl& im, lua_State* L) {
 int api_log(lua_State* L) {
     Impl& im = impl_of(L);
     if (im.mode != Mode::Record || !im.motion) return 0; // a frame's log would repeat each frame
+    if (im.motion->left && im.motion->contexts.size() == 1) luaL_error(L, "log: после leave сцена кончается — leave последней строкой scene");
     if (!log_line(im, L)) raise(L, *im.motion);
     return 0;
 }
@@ -1206,7 +1378,12 @@ int api_part(lua_State* L) {
     if (im.mode == Mode::Record && im.motion && copy_of(*im.motion->rec, id) >= 0)
         luaL_error(L, "«%s» — копия: её берут в copies(…, function(i, c) … end)", id);
     if (!*id) luaL_error(L, "part(\"\"): у части есть имя, её id в рисунке");
-    if (im.rig && im.rig->holder(id).part(id) < 0) luaL_error(L, "в рисунке нет части «%s»", id);
+    // A scene's camera by its name (part 6б); its transitions' frames are given to their functions only.
+    if (im.scene && std::strcmp(id, kCameraPart) == 0) {
+        push_camera(L);
+        return 1;
+    }
+    if ((im.scene && camera_part(id)) || (im.rig && im.rig->holder(id).part(id) < 0)) luaL_error(L, "в рисунке нет части «%s»", id);
     push_part(L, id);
     return 1;
 }
@@ -1348,7 +1525,7 @@ bool part_to(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task)
     st.value_field = true;
     st.length_arg = 1;
     st.timing_arg = 2;
-    if (!read_table(L, 2, ms, "part:to", st) || !read_length(L, 3, ms, "part:to", st.length) ||
+    if (!read_table(L, 2, ms, "part:to", st, handle_of(im, id)) || !read_length(L, 3, ms, "part:to", st.length) ||
         !read_timing(im, L, 4, ms, st) || !read_path(L, 5, ms, st))
         return false;
     task = move_task(im, ms, id, false, Prop::X, std::move(st));
@@ -1372,10 +1549,11 @@ bool rest_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool sin
     st.length_arg = 0;
     st.timing_arg = 1;
     if (!read_length(L, arg, ms, "rest", st.length) || !read_timing(im, L, arg + 1, ms, st)) return false;
+    const Handle h = handle_of(im, id);
     if (single) st.props.emplace_back(p, rest_value(p));
     else
         for (usize i = 0; i < kPropCount; ++i)
-            if (!prop_is_call(static_cast<Prop>(i)) && static_cast<Prop>(i) != Prop::Drawing)
+            if (!prop_is_call(static_cast<Prop>(i)) && static_cast<Prop>(i) != Prop::Drawing && (h == Handle::Part || handle_has(h, static_cast<Prop>(i))))
                 st.props.emplace_back(static_cast<Prop>(i), rest_value(static_cast<Prop>(i)));
     task = move_task(im, ms, id, single, p, std::move(st));
     return true;
@@ -1463,10 +1641,10 @@ bool spring_task(Impl& im, lua_State* L, MotionState& ms, const char* id, bool s
     if (single) {
         if (!prop_is_number(p)) return call_error(ms, std::string("пружина — только у чисел: ") + kNumberWords);
         PropValue v;
-        if (!read_value(L, to, p, ms, v)) return false;
+        if (!read_field(L, to, handle_of(im, id), p, ms, v)) return false;
         st.props.emplace_back(p, std::move(v));
     } else {
-        if (!read_table(L, to, ms, "part:spring", st)) return false;
+        if (!read_table(L, to, ms, "part:spring", st, handle_of(im, id))) return false;
         for (const auto& [q, v] : st.props)
             if (!prop_is_number(q)) return call_error(ms, std::string("пружина — только у чисел: ") + kNumberWords);
     }
@@ -1671,7 +1849,8 @@ bool along_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& ta
         rec.paths.push_back(std::move(line));
     }
     const Rig& own = rig_of(*im.rig, rec, id);
-    al.pivot = own.pivot(rig_part(own, rec, id)); // a copy's is its part's
+    // A copy's is its part's; the camera's the middle of the canvas (part 6б).
+    al.pivot = handle_of(im, id) == Handle::Camera ? stage_middle(im) : own.pivot(rig_part(own, rec, id));
     st.along = static_cast<i32>(rec.alongs.size());
     rec.alongs.push_back(al);
     task = move_task(im, ms, id, false, Prop::X, std::move(st));
@@ -1965,13 +2144,207 @@ int api_actor_part(lua_State* L) {
     return 1;
 }
 
+// ---- a scene's camera and transitions (part 6б) ----
+
+// camera(): the scene's one camera.
+int api_camera(lua_State* L) {
+    Impl& im = impl_of(L);
+    if (!im.scene) luaL_error(L, "camera — только в сцене: у персонажа камеры нет");
+    if (im.mode == Mode::Draw) luaL_error(L, "camera — в scene = function(p) … end, а не в stage: stage ставит то, что на сцене");
+    if (lua_gettop(L) > 0) luaL_error(L, "camera() — без аргументов: камера у сцены одна");
+    push_camera(L);
+    return 1;
+}
+
+// The target of center_on and follow at idx: a part of the scene or an actor as a whole, by name or handle; the
+// camera's bone and the target's are laid in. Empty with why for none.
+bool camera_target(Impl& im, lua_State* L, MotionState& ms, int idx, const char* what, std::string& out) {
+    out.clear();
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        out = lua_tostring(L, idx);
+    } else if (part_handle(L, idx)) {
+        lua_getfield(L, idx, "id");
+        out = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+    } else {
+        return call_error(ms, std::string(what) + ": цель — часть сцены или актёр, \"ёжик\"");
+    }
+    if (camera_part(out)) return call_error(ms, std::string(what) + ": камера не идёт к самой себе — цель — часть сцены или актёр");
+    if (!need_rig(im, ms, what) || !stage_target(im, ms, out, what)) return false;
+    const Rig& tr = im.rig->holder(out);
+    const i32 ti = tr.part(out);
+    if (ti < 0) return call_error(ms, no_part(*ms.rec, out));
+    add_bone(ms, tr, ti);
+    camera_bone(im, ms);
+    return true;
+}
+
+// camera():center_on("ёжик" | { x, y }[, с, сглаживание]): the frame's middle to where a part's or an actor's pivot
+// stands then, as snap_to, or to a point of the stage.
+bool center_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task) {
+    MoveStep st;
+    st.site = here(im);
+    st.length_arg = 1;
+    st.timing_arg = 2;
+    if (lua_gettop(L) > 4) return call_error(ms, "center_on: цель, длина и сглаживание — не больше");
+    if (lua_istable(L, 2) && !part_handle(L, 2)) {
+        f64 xy[2] = {0, 0};
+        lua_pushnil(L);
+        while (lua_next(L, 2)) {
+            const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : nullptr;
+            const bool ok = key && (std::strcmp(key, "x") == 0 || std::strcmp(key, "y") == 0) && lua_type(L, -1) == LUA_TNUMBER &&
+                            std::isfinite(lua_tonumber(L, -1));
+            if (ok) xy[key[0] == 'y'] = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            if (!ok) {
+                lua_pop(L, 1);
+                return call_error(ms, "center_on: точка — { x = …, y = … }, числа в единицах сцены от её левого верхнего угла");
+            }
+        }
+        lua_getfield(L, 2, "x");
+        lua_getfield(L, 2, "y");
+        const bool both = !lua_isnil(L, -1) && !lua_isnil(L, -2);
+        lua_pop(L, 2);
+        if (!both) return call_error(ms, "center_on: у точки и x, и y: { x = 960, y = 540 }");
+        const vector::Point mid = stage_middle(im);
+        PropValue vx, vy;
+        vx.v = xy[0] - mid.x;
+        vy.v = xy[1] - mid.y;
+        st.props.emplace_back(Prop::X, vx);
+        st.props.emplace_back(Prop::Y, vy);
+    } else {
+        st.kind = MoveStep::Kind::Snap;
+        if (!camera_target(im, L, ms, 2, "center_on", st.target)) return false;
+    }
+    if (!read_length(L, 3, ms, "center_on", st.length) || !read_timing(im, L, 4, ms, st)) return false;
+    task = move_task(im, ms, id, false, Prop::X, std::move(st));
+    return true;
+}
+
+int api_camera_center_on(lua_State* L) {
+    const char* id = part_id(L, 1, "center_on");
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "center_on");
+    u32 task = 0;
+    if (!center_task(im, L, ms, id, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+// camera():follow("ёжик"[, с, сглаживание]), camera():follow(nil).
+bool follow_task(Impl& im, lua_State* L, MotionState& ms, const char* id, u32& task) {
+    MoveStep st;
+    st.kind = MoveStep::Kind::Follow;
+    st.site = here(im);
+    st.length_arg = 1;
+    st.timing_arg = 2;
+    if (lua_gettop(L) > 4) return call_error(ms, "follow: цель, длина и сглаживание — не больше");
+    if (lua_isnoneornil(L, 2)) {
+        if (lua_gettop(L) > 2) return call_error(ms, "follow(nil) — без длины: камера сразу стоит, где её оставило слежение");
+        st.kind = MoveStep::Kind::Unfollow;
+        st.length_arg = st.timing_arg = -1;
+    } else if (!camera_target(im, L, ms, 2, "follow", st.target) || !read_length(L, 3, ms, "follow", st.length) ||
+               !read_timing(im, L, 4, ms, st)) {
+        return false;
+    }
+    task = move_task(im, ms, id, false, Prop::X, std::move(st));
+    return true;
+}
+
+int api_camera_follow(lua_State* L) {
+    const char* id = part_id(L, 1, "follow");
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "follow");
+    u32 task = 0;
+    if (!follow_task(im, L, ms, id, task)) raise(L, ms);
+    push_task(L, ms, task);
+    return 1;
+}
+
+constexpr const char* kTransitionKinds[] = {"растворение", "сдвиг", "приближение"};
+constexpr const char* kTransitionEdges[] = {"право", "лево", "верх", "низ"};
+
+// transition(вид | функция, с[, { from, ease }]) and leave(…): a task of the scene's own flow, laid out by
+// layout_transition. A kind's timing is its ease, else its own.
+bool transition_task(Impl& im, lua_State* L, MotionState& ms, bool leave, u32& task) {
+    const std::string what = leave ? "leave" : "transition";
+    const std::string kinds = "«растворение», «сдвиг», «приближение» или своя функция(old, new)";
+    if (ms.contexts.size() != 1)
+        return call_error(ms, leave ? "leave — в самой scene, не внутри функции: после него сцена кончается" : "transition — в начале scene");
+    if (!leave && ms.entered) return call_error(ms, "transition — в начале scene, один раз");
+    Task t;
+    t.kind = Task::Kind::Transition;
+    t.leave = leave;
+    t.site = here(im);
+    MoveStep st;
+    st.site = t.site;
+    if (lua_isfunction(L, 1)) {
+        if (lua_gettop(L) > 1) return call_error(ms, what + "(function(old, new) … end): длина перехода — длина записи функции, других аргументов нет");
+        t.fn = ref_function(L, ms, 1);
+    } else {
+        if (lua_type(L, 1) != LUA_TSTRING) return call_error(ms, what + "(вид, с[, { from, ease }]): вид — " + kinds);
+        t.name = lua_tostring(L, 1);
+        if (std::find(std::begin(kTransitionKinds), std::end(kTransitionKinds), t.name) == std::end(kTransitionKinds))
+            return call_error(ms, what + ": нет вида «" + t.name + "» (есть " + kinds + ")");
+        if (lua_gettop(L) > 3) return call_error(ms, what + ": вид, длина и таблица — не больше");
+        if (!read_length(L, 2, ms, what.c_str(), st.length)) return false;
+        vector::timing_from_word(t.name == "растворение" ? "linear" : "in_out_cubic", st.timing);
+        if (!lua_isnoneornil(L, 3)) {
+            if (!lua_istable(L, 3)) return call_error(ms, what + ": третьим — таблица { from, ease }");
+            lua_pushnil(L);
+            while (lua_next(L, 3)) {
+                const bool known = lua_type(L, -2) == LUA_TSTRING && (std::strcmp(lua_tostring(L, -2), "from") == 0 || std::strcmp(lua_tostring(L, -2), "ease") == 0);
+                const std::string key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : "?";
+                lua_pop(L, 1);
+                if (!known) {
+                    lua_pop(L, 1);
+                    return call_error(ms, what + ": поля «" + key + "» нет (есть from, ease)");
+                }
+            }
+            lua_getfield(L, 3, "from");
+            if (!lua_isnil(L, -1)) {
+                const char* edge = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+                const bool good = std::find_if(std::begin(kTransitionEdges), std::end(kTransitionEdges),
+                                               [&](const char* e) { return std::strcmp(e, edge) == 0; }) != std::end(kTransitionEdges);
+                t.from = edge;
+                lua_pop(L, 1);
+                if (t.name != "сдвиг") return call_error(ms, what + ": from — только у «сдвиг»: с какого края въезжает новый кадр");
+                if (!good) return call_error(ms, what + ": from — «право», «лево», «верх» или «низ»");
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_getfield(L, 3, "ease");
+            const bool eased = !lua_isnil(L, -1) && !read_timing(im, L, lua_gettop(L), ms, st);
+            lua_pop(L, 1);
+            if (eased) return false;
+        }
+        if (t.name == "сдвиг" && t.from.empty()) t.from = "право";
+    }
+    t.number = st.length;
+    t.steps.push_back(std::move(st));
+    if (leave) ms.left = true;
+    else ms.entered = true;
+    task = add_task(ms, std::move(t));
+    return true;
+}
+
+int transition_call(lua_State* L, bool leave) {
+    const char* what = leave ? "leave" : "transition";
+    Impl& im = impl_of(L);
+    if (!im.scene) luaL_error(L, "%s — только в сцене", what);
+    MotionState& ms = motion(L, what);
+    u32 task = 0;
+    if (!transition_task(im, L, ms, leave, task)) raise(L, ms);
+    return 0; // nothing to put in all(…) or spawn(…): it goes in the scene's own flow
+}
+
+int api_transition(lua_State* L) { return transition_call(L, false); }
+int api_leave(lua_State* L) { return transition_call(L, true); }
+
 // What later parts of a scene bring: an error that names the part, so code written ahead says so.
 int later(lua_State* L, const char* what, const char* step) {
     luaL_error(L, "%s — в части %s сцен: в этой версии его ещё нет", what, step);
 }
-int api_camera(lua_State* L) { return later(L, "camera", "6б"); }
-int api_transition(lua_State* L) { return later(L, "transition", "6б"); }
-int api_leave(lua_State* L) { return later(L, "leave", "6б"); }
 int api_music(lua_State* L) { return later(L, "music", "6в"); }
 int api_wait_action(lua_State* L) { return later(L, "wait_action", "6в"); }
 int api_talk(lua_State* L) { return later(L, "talk", "6в"); }
@@ -2050,7 +2423,7 @@ int prop_getter(lua_State* L, Impl& im, const char* id, Prop p) {
 
 bool tween_set(Impl& im, lua_State* L, MotionState& ms, const char* id, Prop p) {
     PropValue v;
-    if (!read_value(L, 2, p, ms, v)) return false;
+    if (!read_field(L, 2, handle_of(im, id), p, ms, v)) return false;
     if (p == Prop::Morph) return call_error(ms, "morph в tween не задаётся");
     const u32 part = part_slot(ms, id);
     TweenTrack* tt = nullptr;
@@ -2062,7 +2435,6 @@ bool tween_set(Impl& im, lua_State* L, MotionState& ms, const char* id, Prop p) 
     }
     tt->frames[ms.tween_frame] = std::move(v);
     tt->set[ms.tween_frame] = 1;
-    (void)im;
     return true;
 }
 
@@ -2084,7 +2456,7 @@ bool prop_task(Impl& im, lua_State* L, MotionState& ms, const char* id, Prop p, 
         st.length_arg = 1;
         st.timing_arg = 2;
         PropValue v;
-        if (!read_value(L, 2, p, ms, v)) return false;
+        if (!read_field(L, 2, handle_of(im, id), p, ms, v)) return false;
         if (!read_length(L, 3, ms, prop_word(p), st.length) || !read_timing(im, L, 4, ms, st)) return false;
         if (!lua_isnoneornil(L, 5))
             return call_error(ms, "дуга — у x и y вместе: part(\"body\"):to({ x = …, y = … }, с, \"smooth\", \"arc\")");
@@ -2211,7 +2583,7 @@ bool task_to(Impl& im, lua_State* L, MotionState& ms, Task& t) {
     st.timing_arg = 2;
     if (t.single) {
         PropValue v;
-        if (!read_value(L, 2, t.prop, ms, v)) return false;
+        if (!read_field(L, 2, handle_of(im, ms.rec->parts[t.part]), t.prop, ms, v)) return false;
         if (t.prop == Prop::Morph) {
             if (v.target == ms.rec->parts[t.part]) v = {};
             if (!check_morph(im, ms, ms.rec->parts[t.part].c_str(), v)) return false;
@@ -2220,7 +2592,7 @@ bool task_to(Impl& im, lua_State* L, MotionState& ms, Task& t) {
         if (!lua_isnoneornil(L, 5)) return call_error(ms, "дуга — у x и y вместе: part(\"body\"):to({ x = …, y = … }, с, \"smooth\", \"arc\")");
     } else {
         st.value_field = true;
-        if (!read_table(L, 2, ms, ":to", st) || !read_path(L, 5, ms, st)) return false;
+        if (!read_table(L, 2, ms, ":to", st, handle_of(im, ms.rec->parts[t.part])) || !read_path(L, 5, ms, st)) return false;
     }
     if (!read_length(L, 3, ms, ":to", st.length) || !read_timing(im, L, 4, ms, st)) return false;
     t.steps.push_back(std::move(st));
@@ -2286,6 +2658,16 @@ int api_actor_index(lua_State* L) {
     return index_with(L, "актёра", "методы: play, loop, stop, part и все методы части: to, rest, save, restore, spring, to_top, "
                                    "to_bottom, above, below, mask, along, snap_to, attach, detach");
 }
+int api_camera_index(lua_State* L) {
+    lua_pushvalue(L, 2);
+    lua_rawget(L, lua_upvalueindex(1));
+    if (!lua_isnil(L, -1)) return 1;
+    const char* key = lua_tostring(L, 2);
+    luaL_error(L, "у камеры нет свойства «%s»: есть x, y, zoom, rot и методы to, center_on, along, follow, save, restore, rest", key ? key : "?");
+}
+int api_layer_index(lua_State* L) {
+    return index_with(L, "кадра перехода", "свойства: x, y, rot, scale, opacity; методы: to, mask");
+}
 int api_prop_index(lua_State* L) { return index_with(L, "свойства", "методы: rest, spring; значение — body.y()"); }
 int api_task_index(lua_State* L) { return index_with(L, "перехода", "методы: to, back, wait"); }
 
@@ -2337,6 +2719,10 @@ void register_motion_api(lua_State* L) {
                   {"mask", &api_part_mask}, {"along", &api_part_along}, {"snap_to", &api_part_snap_to},
                   {"attach", &api_part_attach}, {"detach", &api_part_detach}, {"play", &api_actor_play},
                   {"loop", &api_actor_loop}, {"stop", &api_actor_stop}, {"part", &api_actor_part}});
+    methods_meta(L, kCameraMeta, &api_camera_index,
+                 {{"to", &api_part_to}, {"center_on", &api_camera_center_on}, {"along", &api_part_along}, {"follow", &api_camera_follow},
+                  {"save", &api_part_save}, {"restore", &api_part_restore}, {"rest", &api_part_rest}});
+    methods_meta(L, kLayerMeta, &api_layer_index, {{"to", &api_part_to}, {"mask", &api_part_mask}});
     methods_meta(L, kPropMeta, &api_prop_index, {{"rest", &api_prop_rest}, {"spring", &api_prop_spring}}, &api_prop_call);
     methods_meta(L, kTaskMeta, &api_task_index, {{"to", &api_task_to}, {"back", &api_task_back}, {"wait", &api_task_wait}});
     luaL_newmetatable(L, kBezierMeta);
