@@ -1720,12 +1720,19 @@ bool PixelEditor::give_screen() {
     for (const pixel::ScreenGift::File& d : gift.drawings) {
         const fs::path path = lib->pictures_folder() / utf8_path(d.name);
         std::optional<std::vector<u8>> before = bytes_of(path);
-        // A picture of the game's own, or of another character, is not written over.
-        if (before && !ours.count(d.name))
+        // A picture of the game's own, or of another character, is not written over. A drawing whose name only changed
+        // its capitals is its old file where names do not tell them apart (Windows): that one is kept, not taken away.
+        auto mine = ours.find(d.name);
+        if (before && mine == ours.end())
+            mine = std::find_if(ours.begin(), ours.end(), [&](const std::string& o) {
+                std::error_code ec;
+                return fs::equivalent(lib->pictures_folder() / utf8_path(o), path, ec);
+            });
+        if (before && mine == ours.end())
             return refuse("В картинках игры уже есть «" + d.name + "» не от этого персонажа: переименуйте рисунок или ту картинку");
         files.push_back({path, std::move(before), text_bytes(d.text)});
         names += ", «" + d.name + "»";
-        ours.erase(d.name);
+        if (mine != ours.end()) ours.erase(mine);
     }
     files.push_back({motion_path, std::move(motion_before), std::move(motion_bytes)});
     names += " и «" + who + ".motion.json»";

@@ -1066,13 +1066,13 @@ Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, con
                     continue;
                 }
                 const auto lk = looks.find(leaf);
-                const bool morphed = lk != looks.end() && lk->second.morphed;
+                const bool bent = lk != looks.end() && lk->second.morphed;
                 vector::Path whole;
                 std::string why;
-                if (morphed) whole = lk->second.path;
+                if (bent) whole = lk->second.path;
                 else if (!vector::shape_path(o, leaf, whole, why)) continue;
-                const vector::Path part = a < b ? vector::trim(whole, a, b, !morphed) : vector::Path{};
-                w.set(leaf, "d", part.contours.empty() ? std::string("M0 0") : vector::to_d(part, !morphed));
+                const vector::Path part = a < b ? vector::trim(whole, a, b, !bent) : vector::Path{};
+                w.set(leaf, "d", part.contours.empty() ? std::string("M0 0") : vector::to_d(part, !bent));
             }
         }
         if (has(*pp, MotionProp::Visible)) {
@@ -1198,8 +1198,8 @@ Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, con
             for (const i32 e : paired) w.set(e, "display", "none");
         for (const i32 leaf : stage_leaves(o, 0)) {
             if (paired.count(leaf)) continue;
-            const std::string* now = w.get(leaf, "opacity");
-            const f64 own = std::clamp(vector::svg_number(now ? *now : o.elements[static_cast<usize>(leaf)].property("opacity"), 1.0), 0.0, 1.0);
+            const std::string* given = w.get(leaf, "opacity");
+            const f64 own = std::clamp(vector::svg_number(given ? *given : o.elements[static_cast<usize>(leaf)].property("opacity"), 1.0), 0.0, 1.0);
             w.set(leaf, "opacity", num(own * k));
         }
     }
@@ -1569,7 +1569,7 @@ bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, s
     if (bmp.isNull()) return why = "картинка не рисуется", false;
     // The new drawing over the old at its scale, as the SVG plugin draws a live picture's second document.
     if (p.over && p.doc->width() > 0 && p.doc->height() > 0)
-        p.over->render(bmp, lunasvg::Matrix(static_cast<float>(w / p.doc->width()), 0, 0, static_cast<float>(h / p.doc->height()), 0, 0));
+        p.over->render(bmp, lunasvg::Matrix(static_cast<float>(w) / p.doc->width(), 0, 0, static_cast<float>(h) / p.doc->height(), 0, 0));
     bmp.convertToRGBA();
     rgba.resize(static_cast<usize>(w) * h * 4);
     for (u32 y = 0; y < h; ++y)

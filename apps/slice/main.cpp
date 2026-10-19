@@ -9108,7 +9108,9 @@ private:
     // (on from where it was); the file of clips written again with «jump» named «hop» and a clip there is not: the
     // error names the clips of the file as it is now. What the screen does not draw said once. Part 5г: «jump»'s mask,
     // link, dash, drawn share, flash, tint, copies and order are the tab's at each frame too, and drawn as lunasvg draws
-    // the pose (its stage); once the clip goes, the picture is its file again.
+    // the pose (its stage); once the clip goes, the picture is its file again. Part 5д: «jump» swaps to the drawing «air»
+    // on the way down, the drawing shown and the swap's share the tab's at each frame; a part the picture has not plays
+    // while the drawing has it; the drawing's file gone or not SVG is said and the clip does not play.
     void build_motion_edits(Shell& s) {
         struct Tab {
             std::map<std::string, std::array<f64, 6>> matrix; // "clip k part"
@@ -9116,10 +9118,17 @@ private:
             std::map<std::string, usize> count; // "clip k": the parts it has
             std::map<std::string, std::vector<std::pair<vector::MotionProp, vector::MotionValue>>> values; // "clip k part": part 5г
             std::map<std::string, std::vector<std::string>> copies, order;                               // "clip k"
+            struct Shown {
+                std::string drawing, from;
+                bool swap = false;
+                f64 k = 0;
+            };
+            std::map<std::string, Shown> shown; // "clip k": part 5д, the drawing shown, of the clips that swap
         };
         struct Seen {
             u64 clock = 1'000'000'000;
             u32 frames = 0, compared = 0, off = 0, pause_frames = 0, jump_laps = 0, landed = 0; // landed: the messages «приземлился»
+            u32 swapped = 0; // part 5д: frames compared in a swap of drawings
             f64 last = -1, paused_at = -1, paused_clip = -1;
             std::string last_clip, first_off;
             bool clicks[8] = {}, stopped_drawn = false, file_drawn = false, once_drawn = false, faster = false, paused = false, end = false;
@@ -9134,6 +9143,13 @@ private:
             usize k = 0;
             in >> clip >> k >> part >> kind;
             const std::string at = clip + " " + std::to_string(k);
+            if (kind == "drawing") {
+                Tab::Shown& d = tab->shown[at];
+                int swap = 0;
+                in >> d.drawing >> swap >> d.from >> d.k;
+                d.swap = swap != 0;
+                continue;
+            }
             if (kind == "copies" || kind == "order") {
                 std::vector<std::string>& list = (kind == "copies" ? tab->copies : tab->order)[at];
                 for (std::string w; in >> w;) list.push_back(w);
@@ -9205,6 +9221,19 @@ private:
                 }
             }
             if (why.empty() && parts != tab->count[key]) why = std::to_string(parts) + " дорожек частей при " + std::to_string(tab->count[key]) + " у вкладки";
+            // Part 5д: the drawing shown, in a swap the one it comes from and how far.
+            if (why.empty()) {
+                const auto ts = tab->shown.find(key);
+                const Tab::Shown want = ts == tab->shown.end() ? Tab::Shown{"draw", "draw", false, 0} : ts->second;
+                const std::string drawing = pose->drawing.empty() ? "draw" : pose->drawing, from = pose->swap_from.empty() ? "draw" : pose->swap_from;
+                if (drawing != want.drawing || pose->swap != want.swap)
+                    why = "рисунок «" + drawing + "»" + (pose->swap ? " в смене" : "") + " при «" + want.drawing + "»" + (want.swap ? " в смене" : "") +
+                          " у вкладки";
+                else if (want.swap && (from != want.from || std::fabs(pose->swap_k - want.k) > 1e-9))
+                    why = "смена из «" + from + "» на " + std::to_string(pose->swap_k) + " при «" + want.from + "» на " + std::to_string(want.k) + " у вкладки";
+                else if (want.swap)
+                    ++st->swapped;
+            }
             // Part 5г: the new properties' values, the copies drawn and the order's steps.
             for (const auto& [at_part, list] : tab->values) {
                 if (!why.empty() || at_part.rfind(key + " ", 0) != 0) continue;
@@ -9454,7 +9483,9 @@ private:
             check(problems == std::vector<std::string>{e.ms_not_drawn}, "что экран не рисует, сказано один раз:" + told);
             check(st->off == 0 && st->compared >= 200, std::to_string(st->compared) + " кадров с клипом сверены с вкладкой, расходятся " +
                                                            std::to_string(st->off) + (st->first_off.empty() ? "" : ", первый " + st->first_off));
-            FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, шагов %u", st->compared, snd.clicks());
+            check(!tab->shown.empty() && st->swapped >= 10, "смена рисунка «Скакуна»: " + std::to_string(st->swapped) + " кадров в смене сверены с вкладкой");
+            FORGE_INFO("self-test: клипы на экране: %u кадров сверены с вкладкой, %u из них в смене рисунка, шагов %u", st->compared, st->swapped,
+                       snd.clicks());
             // Part 5г: a clip naming a part the picture has not is refused, with the part and what names it; the picture
             // read again once it changed, it plays.
             const std::filesystem::path picture = s.game_dir() / utf8_path(e.ms_file);
@@ -9463,17 +9494,51 @@ private:
             const usize torso = lacking.find("id=\"torso\"");
             const usize from = torso == std::string::npos ? torso : lacking.rfind('<', torso);
             const usize to = torso == std::string::npos ? torso : lacking.find("/>", torso);
-            if (check_ok(from != std::string::npos && to != std::string::npos, "в «" + name + "» есть «torso»")) {
+            // Part 5д: the drawing «air» has a torso too, so the clip plays until neither has it.
+            const std::filesystem::path air = s.game_dir() / utf8_path(e.ms_drawing_file);
+            const std::string air_name = path_to_utf8(utf8_path(e.ms_drawing_file).filename());
+            auto without_torso = [](std::string text) {
+                const usize at = text.find("id=\"torso\"");
+                const usize a = at == std::string::npos ? at : text.rfind('<', at);
+                const usize b = at == std::string::npos ? at : text.find("/>", at);
+                if (a != std::string::npos && b != std::string::npos) text.erase(a, b + 2 - a);
+                return text;
+            };
+            auto put = [](const std::filesystem::path& where, const std::string& text) {
+                return write_file_atomic(where, {reinterpret_cast<const u8*>(text.data()), text.size()});
+            };
+            const std::string air_lacking = without_torso(e.ms_drawing_svg);
+            if (check_ok(from != std::string::npos && to != std::string::npos && air_lacking != e.ms_drawing_svg,
+                         "в «" + name + "» и «" + air_name + "» есть «torso»")) {
                 lacking.erase(from, to + 2 - from);
                 const game::ScreenSvg jump{"play", e.ms_screen, e.ms_layer_name, "jump", -1, 1, {}};
+                const game::ScreenSvg reset{"reset", e.ms_screen, e.ms_layer_name, {}, 0, 0, {}};
                 std::string why;
-                check(write_file_atomic(picture, {reinterpret_cast<const u8*>(lacking.data()), lacking.size()}), "«" + name + "» записан без «torso»");
-                check(!s.screens().svg(jump, &why) && why == "в «" + name + "» нет части «torso»: маска «shine» в клипе «jump»",
-                      "клип с маской из части, которой нет в картинке, не играет: " + why);
-                check(write_file_atomic(picture, {reinterpret_cast<const u8*>(e.ms_svg.data()), e.ms_svg.size()}), "«" + name + "» снова как его отдала вкладка");
+                check(put(picture, lacking), "«" + name + "» записан без «torso»");
+                check(s.screens().svg(jump, &why), "без «torso» в «" + name + "» клип играет: она есть в рисунке «air» " + why);
+                check(s.screens().svg(reset, &why), "картинка снова как в файле " + why);
+                check(put(air, air_lacking), "«" + air_name + "» записан без «torso»");
+                why.clear();
+                check(!s.screens().svg(jump, &why) && why == "в «" + name + "» и его рисунках нет части «torso»: маска «shine» в клипе «jump»",
+                      "клип с маской из части, которой нет ни в картинке, ни в её рисунках, не играет: " + why);
+                check(put(picture, e.ms_svg) && put(air, e.ms_drawing_svg), "«" + name + "» и «" + air_name + "» снова как их отдала вкладка");
                 why.clear();
                 check(s.screens().svg(jump, &why), "картинка прочитана снова: «jump» играет " + why);
-                check(s.screens().svg({"reset", e.ms_screen, e.ms_layer_name, {}, 0, 0, {}}, &why), "картинка снова как в файле " + why);
+                check(s.screens().svg(reset, &why), "картинка снова как в файле " + why);
+                // The drawing's file gone, or not a picture: the clips do not play, and say which file.
+                std::error_code ec;
+                check(std::filesystem::remove(air, ec), "«" + air_name + "» убран");
+                why.clear();
+                check(!s.screens().svg(jump, &why) && why == "нет «" + air_name + "» рядом с «" + name + "»: отдайте персонажа экрану во вкладке «Векторная»",
+                      "без файла рисунка клип не играет: " + why);
+                check(put(air, "не картинка"), "«" + air_name + "» записан не SVG");
+                why.clear();
+                check(!s.screens().svg(jump, &why) && why.rfind("«" + air_name + "»: ", 0) == 0 && why.size() > air_name.size() + 8,
+                      "с файлом рисунка не SVG клип не играет: " + why);
+                check(put(air, e.ms_drawing_svg), "«" + air_name + "» снова как его отдала вкладка");
+                why.clear();
+                check(s.screens().svg(jump, &why), "файл рисунка прочитан снова: «jump» играет " + why);
+                check(s.screens().svg(reset, &why), "картинка снова как в файле " + why);
             }
             check(s.data_errors().empty(), "данные игры читаются без ошибок");
             s.screens().set_clock(nullptr);

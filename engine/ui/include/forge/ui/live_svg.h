@@ -100,8 +100,8 @@ void svg_pose(Rml::Element* element, SvgPose pose);
 void svg_unpose(Rml::Element* element);
 // The pose the element shows (nullptr: none).
 const SvgPose* svg_posed(Rml::Element* element);
-// A picture's text with a pose on it, drawn w × h as an element draws it (the picture fitted in, centred), straight
-// RGBA: what a screen shows, without one. False with why when the text is not SVG.
+// A picture's text with a pose on it, drawn w × h as an element of that size draws it (stretched to it, as the SVG plugin
+// does), straight RGBA: what a screen shows, without one. False with why when the text is not SVG.
 bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, std::vector<u8>& rgba, std::string& why);
 // The attributes the pose gives an element of the picture after it is applied, for checks: "" when none was given. `over`:
 // of the document drawn over it in a swap (part 5д).

@@ -324,7 +324,7 @@ struct GameScreens::Impl : Rml::EventListener {
             auto text = std::make_shared<const std::string>(reinterpret_cast<const char*>(bytes.data()), bytes.size());
             vector::SvgOutline outline = vector::scan_svg(*text);
             if (!outline.error.empty()) {
-                err = d.picture + ": " + outline.error;
+                err = "«" + d.picture + "»: " + outline.error;
                 break;
             }
             ds->list.push_back({d.name, d.picture, std::move(text)});
